@@ -6,7 +6,7 @@ interface Props {
   sessionState: SessionState
   currentPrice: number
   openOrders: Order[]
-  onPlaceOrder: (side: 'BUY' | 'SELL', triggerPrice: number, quantity: number) => Promise<void>
+  onPlaceOrder: (side: 'BUY' | 'SELL', orderType: 'TARGET' | 'LIMIT', price: number, quantity: number) => Promise<void>
   onCancelOrder: (orderId: string) => Promise<void>
 }
 
@@ -14,24 +14,31 @@ const QUANTITY_OPTIONS = [1, 2, 3, 5, 10]
 
 export default function OrderPanel({ sessionState, currentPrice, openOrders, onPlaceOrder, onCancelOrder }: Props) {
   const [side, setSide] = useState<'BUY' | 'SELL'>('BUY')
-  const [triggerPrice, setTriggerPrice] = useState('')
+  const [orderType, setOrderType] = useState<'TARGET' | 'LIMIT'>('TARGET')
+  const [price, setPrice] = useState('')
   const [quantity, setQuantity] = useState(1)
   const [placing, setPlacing] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   const isActive = sessionState === 'running' || sessionState === 'paused'
+  const parsedPrice = parseFloat(price)
+
+  const autoLimit = orderType === 'TARGET' && !isNaN(parsedPrice)
+    ? side === 'BUY'
+      ? (parsedPrice * 1.01).toFixed(2)
+      : (parsedPrice * 0.99).toFixed(2)
+    : null
 
   const handlePlace = async () => {
-    const price = parseFloat(triggerPrice)
-    if (isNaN(price) || price <= 0) {
-      setError('Enter a valid trigger price')
+    if (isNaN(parsedPrice) || parsedPrice <= 0) {
+      setError(`Enter a valid ${orderType === 'TARGET' ? 'trigger' : 'limit'} price`)
       return
     }
     setError(null)
     setPlacing(true)
     try {
-      await onPlaceOrder(side, price, quantity)
-      setTriggerPrice('')
+      await onPlaceOrder(side, orderType, parsedPrice, quantity)
+      setPrice('')
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to place order')
     } finally {
@@ -39,16 +46,34 @@ export default function OrderPanel({ sessionState, currentPrice, openOrders, onP
     }
   }
 
-  const limitPrice = triggerPrice
-    ? side === 'BUY'
-      ? (parseFloat(triggerPrice) * 1.01).toFixed(2)
-      : (parseFloat(triggerPrice) * 0.99).toFixed(2)
-    : '—'
-
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
       <div style={{ fontSize: 12, fontWeight: 600, color: '#8b949e', textTransform: 'uppercase', letterSpacing: 1 }}>
-        Target Order
+        Orders
+      </div>
+
+      {/* TARGET / LIMIT order type toggle */}
+      <div style={{ display: 'flex', gap: 0, borderRadius: 6, overflow: 'hidden', border: '1px solid #30363d' }}>
+        {(['TARGET', 'LIMIT'] as const).map(t => (
+          <button
+            key={t}
+            disabled={!isActive}
+            onClick={() => { setOrderType(t); setPrice('') }}
+            style={{
+              flex: 1,
+              padding: '4px 0',
+              fontSize: 11,
+              fontWeight: 600,
+              cursor: isActive ? 'pointer' : 'not-allowed',
+              border: 'none',
+              background: orderType === t ? '#1f3a5f' : '#161b22',
+              color: orderType === t ? '#79c0ff' : '#484f58',
+              transition: 'background 0.15s',
+            }}
+          >
+            {t}
+          </button>
+        ))}
       </div>
 
       {/* BUY / SELL toggle */}
@@ -77,13 +102,15 @@ export default function OrderPanel({ sessionState, currentPrice, openOrders, onP
         ))}
       </div>
 
-      {/* Trigger price */}
+      {/* Price input */}
       <div>
-        <div style={{ fontSize: 11, color: '#8b949e', marginBottom: 3 }}>Trigger Price</div>
+        <div style={{ fontSize: 11, color: '#8b949e', marginBottom: 3 }}>
+          {orderType === 'TARGET' ? 'Trigger Price' : 'Limit Price'}
+        </div>
         <input
           type="number"
-          value={triggerPrice}
-          onChange={e => setTriggerPrice(e.target.value)}
+          value={price}
+          onChange={e => setPrice(e.target.value)}
           placeholder={currentPrice > 0 ? currentPrice.toFixed(2) : '0.00'}
           disabled={!isActive}
           style={{
@@ -97,9 +124,16 @@ export default function OrderPanel({ sessionState, currentPrice, openOrders, onP
             boxSizing: 'border-box',
           }}
         />
-        <div style={{ fontSize: 10, color: '#484f58', marginTop: 2 }}>
-          Limit: {isNaN(parseFloat(triggerPrice)) ? '—' : limitPrice}
-        </div>
+        {orderType === 'TARGET' && (
+          <div style={{ fontSize: 10, color: '#484f58', marginTop: 2 }}>
+            Exec limit: {autoLimit ?? '—'} (±1%)
+          </div>
+        )}
+        {orderType === 'LIMIT' && (
+          <div style={{ fontSize: 10, color: '#484f58', marginTop: 2 }}>
+            Fills when price {side === 'BUY' ? '≤' : '≥'} {isNaN(parsedPrice) ? '—' : parsedPrice.toFixed(2)}
+          </div>
+        )}
       </div>
 
       {/* Quantity */}
@@ -143,7 +177,7 @@ export default function OrderPanel({ sessionState, currentPrice, openOrders, onP
           cursor: isActive && !placing ? 'pointer' : 'not-allowed',
         }}
       >
-        {placing ? 'Placing…' : `Place ${side}`}
+        {placing ? 'Placing…' : `Place ${side} ${orderType}`}
       </button>
 
       {/* Open orders */}
@@ -173,12 +207,15 @@ export default function OrderPanel({ sessionState, currentPrice, openOrders, onP
                   background: order.side === 'BUY' ? '#1f3a5f' : '#3d1a1a',
                   color: order.side === 'BUY' ? '#79c0ff' : '#ff7b72',
                   fontWeight: 600,
-                  marginRight: 6,
+                  marginRight: 4,
                 }}>
                   {order.side}
                 </span>
+                <span style={{ color: '#484f58', fontSize: 10, marginRight: 4 }}>
+                  {order.order_type}
+                </span>
                 <span style={{ color: '#e6edf3', flex: 1 }}>
-                  {order.trigger_price.toFixed(2)} × {order.quantity}
+                  {(order.order_type === 'TARGET' ? order.trigger_price : order.limit_price).toFixed(2)} × {order.quantity}
                 </span>
                 <button
                   onClick={() => onCancelOrder(order.order_id)}

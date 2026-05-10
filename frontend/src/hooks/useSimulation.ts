@@ -130,9 +130,9 @@ export function useSimulation() {
     setState(s => ({ ...s, position: pos }))
   }, [state.sessionId])
 
-  const placeOrder = useCallback(async (side: 'BUY' | 'SELL', triggerPrice: number, quantity: number) => {
+  const placeOrder = useCallback(async (side: 'BUY' | 'SELL', orderType: 'TARGET' | 'LIMIT', price: number, quantity: number) => {
     if (!state.sessionId) return
-    const order = await api.placeOrder(state.sessionId, side, triggerPrice, quantity)
+    const order = await api.placeOrder(state.sessionId, side, orderType, price, quantity)
     setState(s => ({ ...s, openOrders: [...s.openOrders, order] }))
   }, [state.sessionId])
 

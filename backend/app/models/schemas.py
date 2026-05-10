@@ -125,7 +125,8 @@ class OrderStatus(str, Enum):
 
 
 class OrderType(str, Enum):
-    TARGET = "TARGET"  # internally a stop-limit; limit auto-set at 1% from trigger
+    TARGET = "TARGET"  # stop-limit: trigger then fill; limit auto-set at 1% from trigger
+    LIMIT = "LIMIT"    # plain limit: fill when price reaches the limit price directly
 
 
 class Order(BaseModel):
@@ -147,7 +148,9 @@ class Order(BaseModel):
 class PlaceOrderRequest(BaseModel):
     session_id: str
     side: TradeSide
-    trigger_price: float
+    order_type: OrderType = OrderType.TARGET
+    trigger_price: float | None = None  # required for TARGET
+    limit_price: float | None = None    # required for LIMIT; auto-computed for TARGET
     quantity: int = 1
 
 

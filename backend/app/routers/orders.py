@@ -1,5 +1,5 @@
 from fastapi import APIRouter, HTTPException, Query
-from app.models.schemas import Order, PlaceOrderRequest
+from app.models.schemas import Order, OrderType, PlaceOrderRequest
 from app.services import order_service, simulation as sim_svc
 
 router = APIRouter(prefix="/api/orders", tags=["orders"])
@@ -12,18 +12,25 @@ async def place_order(req: PlaceOrderRequest):
         raise HTTPException(status_code=404, detail="Session not found")
     if session.current_time is None:
         raise HTTPException(status_code=400, detail="Simulation has not started yet")
-    if req.trigger_price <= 0:
-        raise HTTPException(status_code=400, detail="trigger_price must be positive")
     if req.quantity < 1:
         raise HTTPException(status_code=400, detail="quantity must be at least 1")
+
+    if req.order_type == OrderType.TARGET:
+        if not req.trigger_price or req.trigger_price <= 0:
+            raise HTTPException(status_code=400, detail="trigger_price is required and must be positive for TARGET orders")
+    else:  # LIMIT
+        if not req.limit_price or req.limit_price <= 0:
+            raise HTTPException(status_code=400, detail="limit_price is required and must be positive for LIMIT orders")
 
     order = order_service.place_order(
         session_id=req.session_id,
         symbol=session.symbol,
         side=req.side,
-        trigger_price=req.trigger_price,
+        order_type=req.order_type,
         quantity=req.quantity,
         created_at=int(session.current_time),
+        trigger_price=req.trigger_price,
+        limit_price=req.limit_price,
     )
     return order
 

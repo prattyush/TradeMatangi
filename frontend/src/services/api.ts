@@ -28,7 +28,7 @@ export interface Order {
   user_id: string
   symbol: string
   side: 'BUY' | 'SELL'
-  order_type: 'TARGET'
+  order_type: 'TARGET' | 'LIMIT'
   quantity: number
   trigger_price: number
   limit_price: number
@@ -177,11 +177,17 @@ const api = {
     return res.json()
   },
 
-  async placeOrder(session_id: string, side: 'BUY' | 'SELL', trigger_price: number, quantity: number): Promise<Order> {
+  async placeOrder(session_id: string, side: 'BUY' | 'SELL', order_type: 'TARGET' | 'LIMIT', price: number, quantity: number): Promise<Order> {
+    const body: Record<string, unknown> = { session_id, side, order_type, quantity }
+    if (order_type === 'TARGET') {
+      body.trigger_price = price
+    } else {
+      body.limit_price = price
+    }
     const res = await fetch(`${BACKEND_URL}/api/orders`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ session_id, side, trigger_price, quantity }),
+      body: JSON.stringify(body),
     })
     if (!res.ok) throw new Error(`Place order failed: ${res.status}`)
     return res.json()

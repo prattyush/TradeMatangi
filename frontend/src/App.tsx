@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import Chart from './components/Chart'
 import SessionControls from './components/SessionControls'
 import TradePanel from './components/TradePanel'
@@ -22,6 +22,21 @@ export default function App() {
     { id: 2, intervalMinutes: 5 },
   ])
   const [addInterval, setAddInterval] = useState(15)
+  const chartColumnRef = useRef<HTMLDivElement>(null)
+  const [columnHeight, setColumnHeight] = useState(window.innerHeight - 120)
+
+  useEffect(() => {
+    const obs = new ResizeObserver(entries => {
+      setColumnHeight(entries[0].contentRect.height)
+    })
+    if (chartColumnRef.current) obs.observe(chartColumnRef.current)
+    return () => obs.disconnect()
+  }, [])
+
+  // For 1-2 panes: fill container equally. For 3+: fixed 280px (scrolls).
+  const paneHeight = panes.length <= 2
+    ? Math.max(180, Math.floor((columnHeight - 52 - 12 * (panes.length - 1)) / panes.length))
+    : 280
 
   // ── SSE at app level — dispatches to simulation state ──────────────────────
   const handleSSEMessage = useCallback((event: Record<string, unknown>) => {
@@ -75,7 +90,7 @@ export default function App() {
       {/* Main Content */}
       <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
         {/* Chart column */}
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'auto', padding: 12, gap: 12 }}>
+        <div ref={chartColumnRef} style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'auto', padding: 12, gap: 12 }}>
           {panes.map((pane, idx) => (
             <div key={pane.id} style={{ position: 'relative' }}>
               {panes.length > 1 && (
@@ -96,7 +111,7 @@ export default function App() {
                 intervalMinutes={pane.intervalMinutes}
                 latestTick={sim.latestTick}
                 onPriceUpdate={idx === 0 ? undefined : undefined}  // price shown in TradePanel from sim.currentPrice
-                height={idx === 0 ? 420 : 280}
+                height={paneHeight}
               />
             </div>
           ))}
