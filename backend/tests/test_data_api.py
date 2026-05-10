@@ -45,7 +45,7 @@ class TestSymbolsEndpoint:
         data = resp.json()
         symbols = [s["symbol"] for s in data["symbols"]]
         assert "NIFTY" in symbols
-        assert "RELIANCE" in symbols
+        assert "RELIND" in symbols
 
     async def test_each_symbol_has_display_name(self):
         async with AsyncClient(

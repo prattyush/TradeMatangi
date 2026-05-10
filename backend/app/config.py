@@ -29,22 +29,22 @@ SUPPORTED_SYMBOLS: dict[str, dict] = {
         "breeze_stock_code": "NIFTY",
         "product_type": "cash",
     },
-    "TATAPOWER": {
+    "TATPOW": {
         "display_name": "Tata Power",
         "exchange_code": "NSE",
-        "breeze_stock_code": "TATAPOWER",
+        "breeze_stock_code": "TATPOW",
         "product_type": "cash",
     },
-    "TATAMOTORS": {
+    "TATMOT": {
         "display_name": "Tata Motors",
         "exchange_code": "NSE",
-        "breeze_stock_code": "TATAMOTORS",
+        "breeze_stock_code": "TATMOT",
         "product_type": "cash",
     },
-    "RELIANCE": {
+    "RELIND": {
         "display_name": "Reliance Industries",
         "exchange_code": "NSE",
-        "breeze_stock_code": "RELIANCE",
+        "breeze_stock_code": "RELIND",
         "product_type": "cash",
     },
 }

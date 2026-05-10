@@ -31,65 +31,85 @@ function btn(color: string, disabled = false): CSSProperties {
   }
 }
 
+function formatLocalDate(d: Date): string {
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const dd = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${dd}`
+}
+
+function lastWeekday(): string {
+  const d = new Date()
+  const day = d.getDay()
+  if (day === 6) d.setDate(d.getDate() - 1)      // Saturday → Friday
+  else if (day === 0) d.setDate(d.getDate() - 2)  // Sunday → Friday
+  return formatLocalDate(d)
+}
+
 export default function SessionControls({
   sessionState, currentSymbol, currentDate,
   onSymbolChange, onDateChange,
   onStart, onStop, onPause, onResume,
 }: Props) {
   const [symbols, setSymbols] = useState<SymbolInfo[]>([])
-  const [availableDates, setAvailableDates] = useState<string[]>([])
   const [startTime, setStartTime] = useState('09:15')
   const [speed, setSpeed] = useState(1.0)
   const [loading, setLoading] = useState(false)
+  const [dateError, setDateError] = useState<string | null>(null)
+  const [startError, setStartError] = useState<string | null>(null)
 
   const idle = sessionState === 'idle' || sessionState === 'ended'
   const running = sessionState === 'running'
   const paused = sessionState === 'paused'
 
-  // Load symbols once on mount
+  const today = formatLocalDate(new Date())
+
+  // Load symbols once on mount, then set default date
   useEffect(() => {
     api.getSymbols()
       .then(list => {
         setSymbols(list)
-        // If current symbol not in the list, default to first
         if (list.length > 0 && !list.find(s => s.symbol === currentSymbol)) {
           onSymbolChange(list[0].symbol)
         }
       })
       .catch(() => {/* backend may not be up yet */})
+    onDateChange(lastWeekday())
   }, [])
 
-  // Load available dates whenever currentSymbol changes, notify parent of default date
-  useEffect(() => {
-    if (!currentSymbol) return
-    api.getAvailableDates(currentSymbol).then(dates => {
-      setAvailableDates(dates)
-      if (dates.length > 0) onDateChange(dates[dates.length - 1])
-    }).catch(() => setAvailableDates([]))
-  }, [currentSymbol])
-
-  const handleSymbolChange = (sym: string) => {
-    onSymbolChange(sym)
-  }
-
   const handleDateChange = (d: string) => {
+    if (!d) return
+    const [y, mo, day] = d.split('-').map(Number)
+    const dow = new Date(y, mo - 1, day).getDay()
+    if (dow === 0 || dow === 6) {
+      setDateError('Markets are closed on weekends — please choose a weekday')
+      return
+    }
+    setDateError(null)
     onDateChange(d)
   }
 
   const handleStart = async () => {
-    if (!currentDate) return
+    if (!currentDate || dateError) return
+    setStartError(null)
     setLoading(true)
-    try { await onStart(startTime + ':00', speed) } finally { setLoading(false) }
+    try {
+      await onStart(startTime + ':00', speed)
+    } catch (e) {
+      setStartError(e instanceof Error ? e.message : 'Failed to start session')
+    } finally {
+      setLoading(false)
+    }
   }
 
   return (
-    <div style={{ padding: '12px 16px', background: '#161b22', borderBottom: '1px solid #30363d' }}>
+    <div style={{ padding: '10px 16px', background: '#161b22', borderBottom: '1px solid #30363d' }}>
       <div style={row}>
         <label style={label}>
           Symbol&nbsp;
           <select
             value={currentSymbol}
-            onChange={e => handleSymbolChange(e.target.value)}
+            onChange={e => onSymbolChange(e.target.value)}
             style={selectStyle}
             disabled={!idle}
           >
@@ -104,19 +124,14 @@ export default function SessionControls({
 
         <label style={label}>
           Date&nbsp;
-          <select
+          <input
+            type="date"
             value={currentDate}
+            max={today}
             onChange={e => handleDateChange(e.target.value)}
-            style={selectStyle}
-            disabled={!idle || availableDates.length === 0}
-          >
-            {availableDates.length === 0
-              ? <option value="">No data</option>
-              : availableDates.map(d => (
-                <option key={d} value={d}>{d}</option>
-              ))
-            }
-          </select>
+            style={inputStyle}
+            disabled={!idle}
+          />
         </label>
 
         <label style={label}>
@@ -139,8 +154,12 @@ export default function SessionControls({
         </label>
 
         {idle && (
-          <button style={btn('#1f6feb', loading || !currentDate)} onClick={handleStart} disabled={loading || !currentDate}>
-            {loading ? 'Starting…' : 'Start Replay'}
+          <button
+            style={btn('#1f6feb', loading || !currentDate || !!dateError)}
+            onClick={handleStart}
+            disabled={loading || !currentDate || !!dateError}
+          >
+            {loading ? 'Loading data…' : 'Start Replay'}
           </button>
         )}
         {running && <button style={btn('#6e40c9')} onClick={onPause}>Pause</button>}
@@ -150,6 +169,12 @@ export default function SessionControls({
           <span style={{ ...label, color: '#f85149' }}>Session ended — configure above and restart</span>
         )}
       </div>
+
+      {(dateError || startError) && (
+        <div style={{ marginTop: 6, fontSize: 12, color: '#f85149' }}>
+          {dateError || startError}
+        </div>
+      )}
     </div>
   )
 }
