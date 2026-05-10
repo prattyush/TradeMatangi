@@ -133,17 +133,42 @@ breeze.generate_session(api_secret=credentials_config_parser['icicidirect']['api
 2. The backend should be able to persist these limit, stop limit and target orders and trigger them in the simulated trading environment when the condition for the respective order is fullfilled.
 3. The UI and backend should support clearing of these orders and also display of the open orders when asked for.
 
+**Design Note (2026-05-10, updated 2026-05-10):** Two order types are supported: TARGET (stop-limit) and LIMIT. TARGET: user enters a trigger price; limit execution price is auto-computed at 1% deviation (`BUY limit = trigger × 1.01`, `SELL limit = trigger × 0.99`); BUY fills when `price >= trigger`, SELL when `price <= trigger`. LIMIT: user enters the limit price directly; BUY fills when `price <= limit`, SELL when `price >= limit`. Both types are persisted to DynamoDB. OrderPanel shows a TARGET/LIMIT toggle. Quantity is selectable (default 1 unit); lot-based quantity for options/futures deferred to Phase-III.
+
 ##### Flexible Inputs
 1. UI and backend will allow to choose date on which replay is to be done. And fetch last 2 days of data for the respective symbol.
-2. UI and backend will allow to choose the symbol. The choices can be restricted for now, that is NIFTY, TATAPOWER, TataMotors, RELIANCE.
+2. UI and backend will allow to choose the symbol. The choices can be restricted for now, that is NIFTY, TATPOW (Tata Power), TATMOT (Tata Motors), RELIND (Reliance). These are the ICICI Direct / Breeze API stock codes.
 
 
-#### Phase-III AllSymbols
+#### Phase-III BetaStage
 This phase should support options and futures. We only need to support options and futures for stocks and indexes. No need to support commodity or currency at this phase.
 
+##### Wallet
+1. Wallet should be supported which will be simulated in simulated and paper trading. It will be prefilled with a defalt amount of 150000 rupees for now.
+2. Every placed order, excluding limit and target orders which are just hanging and not placed yet, in run-time should reflect in the wallet. 
+3. Every P&L should reflect in the wallet.
+4. If at run-time the wallet goes negative then the orders should throw UI error and fail.
+5. The wallet should be incremented and decremented with each days trades P&L and should carry forward. In Simulated environemnt where a user can replay 5th May 2026, incur a loss and then trade again at 4th May 2026, in that case the wallet should include the loss of 5th May 2026.
+6. There should be a settings option may be at top corner clicking on that we would have a popup screen, or any other way. I will leave the choice to you. The only requirement is to have a settings option where the wallet can be reset to default value of 150000 rupees or any amount. 
+
+
+##### User
+1. The startup page should be a user signin. Harded inputs for now which is user and password both being abc123.
+2. Make sure that all data persisted in the dynamo db w.r.t to trades, wallet have the userid in it to specify uniqueness. As going forward we would support multiple users thus fetching data per user, that is trades data and also wallet status.
+
+##### FundsRatio
+1. This feature requires to shift from lots or quantity to funds ratio. The funds available are defined as the money in the wallet left when the trading session started. We will have 3 different ratios configured. That is how to money to spend on this buy or sell which will a fixed ratio. The 3 ratios will be defined by "l, m and h". These signify the probabilities of success for that trade, l is low so by default only 3% of capital, m is medium probability so 6% of funds and h is high probability so 12% of funds.
+2. The settings menu will have option to override these default % values for l, m and h for a specific user. 
+3. When taking a trade if the funds % is lower than the money requried to take the trade then it would default to the least possible value if wallet funds allow it. Lets say 3% of 10,000 is 300 for buying a option at price 30 for lot size of 65 > 300, in that case just buy 1 lot that is 65.
+
 ##### OptionsTrading-UI
-1. To support options trading in UI. The UI should show options to choose symbol and then weekly or monthly expiry. Weekly contracts expire on Tuesdays for NSE if not holiday and Monthly on last Tuesday of the month. 
-2. To choose strike price only applicable for options, we should 2 options, first how far from stocks or index current price like 2 means 2 strikes in out of money  and -2 means 2 strike price in money. The second option should be choose price range like within 30-60 where at current time the price of the option/future is within 30-60. 
+1. User can choose whether to trade in symbol or options. Symbol Trading should not be allowed for NIFTY 50 of indices. 
+2. When option trading is selected, that we will have 3 windows, one top window of the symbol candlestick chart, then below 2 panes parallelly of 2 options types Put and Call.
+3. In option trading mode, user can chooose which option to buy Put or Call.
+4. To support options trading in UI. The UI should show options to choose symbol and then weekly or monthly expiry. Weekly contracts expire on Tuesdays for NSE if not holiday and Monthly on last Tuesday of the month. 
+5. To choose strike price only applicable for options, we should 2 options, first how far from stocks or symbol current price like 2 means 2 strikes in out of money  and -2 means 2 strike price in money. For choosing the symbol current price use the replay start time or in case of paper trading the current price.
+6. The second option should be choose the strike price where the option price range is within the ranges. The ranges will be 24-36, 36-60, 60-120, >120 at current time. To find current time use replay start time or current time for paper trading. 
+7. To make it more clear for simulated trading, the user has to choose the option strike prices options that is either price range or how many below or above strike price above the symbols current price, before clicking on start replay, if not choosen default to first out of money strike price based on the symmbol current price. Mentioning again, curent price refers to price in simulated trading environment the price at start time and for paper trading, the current time.
 
 
 #### Phase-IV Entry/Exit Custom Logic
@@ -154,4 +179,116 @@ The details are getting discussed.
 
 
 ## Notes
+
+### Phase-II Implementation Status (as of 2026-05-10)
+
+**Completed (branch: `feature/phase-ii-sprint-3`, PR #5 open against `dev`):**
+
+**Sprint 2 — DynamoDB, Orders, OrderPanel:**
+- DynamoDB Local (Docker) persistence for Sessions and Trades tables; `USE_DYNAMODB_LOCAL=true` env var controls local vs AWS
+- TARGET order engine: in-memory `_orders` store, `check_orders` called each tick in simulation loop, filled orders recorded as trades + emitted as `order_filled` SSE events
+- `/api/orders` REST endpoints: POST (place), GET (list open/all), DELETE (cancel)
+- OrderPanel frontend component: BUY/SELL toggle, trigger price input, quantity picker, open orders list with cancel
+- 85 backend tests
+
+**Sprint 3 — Multi-pane charts, Symbols/Dates, Drawing tools:**
+- Symbol dropdown (NIFTY, TATPOW, TATMOT, RELIND) fetched from `/api/data/symbols`
+- Date picker: `<input type="date">` defaulting to last weekday; weekends blocked client-side; future dates blocked via `max={today}`
+- SSE connection lifted from Chart to App level — all chart panes share one connection
+- Multi-pane charts: add/remove panes with independent intervals; dynamic height via `ResizeObserver` (1–2 panes fill window, 3+ use 280px fixed)
+- EMA(9) orange + EMA(21) blue overlays with toggle; incremental update per closed candle
+- H-Line drawing tool via `series.createPriceLine()`; Trend Line via `chart.addLineSeries()` with click-capture
+- Pre-session candles fix: `updateSymbol`/`updateDate` push state in real-time so Chart pre-loads before Start
+
+**Sprint 3 follow-on — LIMIT orders + data infrastructure:**
+- LIMIT order type alongside TARGET: LIMIT BUY fills when `price <= limit`, SELL when `price >= limit`; OrderPanel has TARGET/LIMIT toggle
+- Breeze fetch → Parquet: `broker_service.fetch_historical` now saves to `data/ohlcdata/<symbol>-DD-MM-YYYY.parquet`; `data_loader.load_dataframe` checks parquet → pickle (legacy migration) → raises
+- `pyarrow` added to `requirements.txt`
+- Simulation `/start` endpoint validates symbol + pre-fetches data (Breeze if needed) before creating session, returning 503/404 with human-readable errors on failure
+- Date picker backend-aware: Breeze errors (expired token, market holiday) surface in the UI as inline error text
+- 98 backend tests passing
+
+**Pending (open PR #5):**
+- PR #5 covers: LIMIT order type, dynamic pane heights, 1% target deviation, symbol renames (TATPOW/TATMOT/RELIND), date picker, parquet/Breeze data fetch
+
+---
+
+### Bugs Fixed in Phase-II
+
+1. **DynamoDB Local `UnrecognizedClientException`**: DynamoDB Local rejects real AWS credentials (ASIA* keys). Fix: when `USE_DYNAMODB_LOCAL=true`, always use hardcoded dummy credentials (`fakeKey`/`fakeSecret`) regardless of what is in `accesskeys.ini`.
+2. **Target order fill not recording trade**: `check_orders` in `_run_session` was filling orders but not calling `record_trade`. Fix: call `record_trade` for each filled order before emitting the `order_filled` SSE event. Frontend `handleOrderFilled` was also updated to refresh position + trades from backend.
+3. **Pre-session candles race condition**: Chart component was fetching historical data at the same time as `startSession` updated `startTime`, causing a race. Fix: `updateSymbol`/`updateDate` update state immediately as the user changes dropdowns; `startSession` only changes `startTime`.
+4. **Docker DynamoDB SQLite permission error**: container ran as non-root; fix was to add `user: root` to `docker-compose.yml`.
+5. **Test patch targets**: after `pickle_path` was made public in `data_loader.py`, test patches needed updating from `app.services.broker_service.DATA_DIR` to `app.services.data_loader.DATA_DIR`.
+
+---
+
+### Technology Decisions Finalized in Phase-II
+
+**DynamoDB persistence pattern**
+Each service (`trading.py`, `order_service.py`, `simulation.py`) lazily imports `get_dynamodb_resource()` inside `_write_*_to_db` helpers. Failures are logged and swallowed — the simulation continues even if DynamoDB is unavailable. This avoids tight coupling between the real-time simulation loop and storage.
+
+**Parquet as primary data format**
+New data fetched from Breeze is stored as `data/ohlcdata/<symbol>-DD-MM-YYYY.parquet`. Legacy pickle files in `data/` are auto-migrated to parquet on first access. The IST-as-UTC timestamp convention (`tz_localize("UTC")`) applies identically to both formats.
+
+**Single SSE connection per app instance**
+SSE is opened once in `App.tsx` (not per chart pane). All panes receive `latestTick` as a prop. This prevents N×SSE connections when N panes are open.
+
+**Order fill → Trade recording**
+When a simulated order fills, the backend: (1) marks order FILLED in memory + DynamoDB, (2) calls `record_trade` to create a trade record, (3) emits `order_filled` SSE event. The frontend removes the order from `openOrders` and refreshes `position` + `trades` via two parallel API calls.
+
+**Breeze data fetch during simulation start**
+`/api/simulation/start` calls `fetch_historical(symbol, date)` synchronously before creating the session. This means the first request for a new date blocks for the Breeze API call (a few seconds), but subsequent replays are instant. Errors (expired token, holiday) return HTTP 503/404 with detail messages that the frontend surfaces inline.
+
+---
+
+### Phase-I Implementation Status (as of 2026-05-10)
+
+**Completed (branch: `feature/phase-i-mvp`):**
+- FastAPI backend: CORSMiddleware, asyncio simulation engine (one `asyncio.Queue` + `asyncio.Event` per session), SSE tick stream, in-memory trade store
+- All 10 REST endpoints implemented — `/api/simulation/*`, `/api/stream/{id}`, `/api/data/historical`, `/api/trades/*`
+- 27 backend unit tests passing (data_loader, simulation state machine, trading)
+- Frontend: React + Vite + TypeScript, Lightweight Charts v4 candlestick replay
+- Session controls: Start with configurable start time + replay speed, Pause, Resume, Stop
+- Buy/Sell with in-memory position tracking, real-time P&L calculated on the frontend
+- Trade history panel showing all trades in the session
+- Historical chart: May 4 + May 5 NIFTY 3-min candles loaded on mount
+- Scripts for WSL and EC2: `start-backend.sh`, `start-frontend.sh`, and stop equivalents
+
+**Known Open Issue:**
+When replay starts at a time after 09:15 (e.g. 10:15), the May 6 candles between 09:15 and the chosen start time are not shown on the chart — the live replay appears disconnected from the prior two days of data. A fix was prototyped (backend `GET /api/data/pre-session` endpoint + frontend `presessionCandles` state in `useSimulation`, effects in `Chart.tsx`) but reverted for further review. The fix approach is sound; it was not a correctness issue.
+
+---
+
+### Technology Decisions Finalized in Phase-I
+
+**SSE over WebSocket** (resolves HS-1)
+SSE (`text/event-stream`) was chosen for the tick stream. Rationale: tick data is server-to-client only, SSE works across multiple uvicorn workers without sticky sessions, and the browser's `EventSource` API handles reconnection automatically. WebSocket would be reconsidered only if bidirectional in-session messaging (e.g. server-initiated trade execution triggers) becomes a requirement.
+
+**IST Timezone Handling** (resolves MS-3)
+The pickle files use a tz-naive `DatetimeIndex` representing IST wall-clock times (e.g. `2026-05-06 09:15:00`). Lightweight Charts interprets Unix timestamps as UTC for display. Rather than converting IST → UTC (which shifts display times by −5:30, showing 03:45 instead of 09:15), the backend uses `df.index.tz_localize("UTC")` — attaching the UTC label to the IST wall-clock value. This makes the Unix timestamps encode the IST time directly so the chart x-axis shows the correct market time without any client-side configuration. Applied consistently in `data_loader.py` for both historical REST and SSE tick timestamps.
+
+**P&L on the Frontend** (resolves MS-1)
+P&L is calculated entirely in the browser: `direction × quantity × (currentPrice − avgEntryPrice)`. No backend round-trip needed. Updated on every SSE tick.
+
+**3-Minute Candle Window Alignment**
+Both sides use epoch-aligned boundaries: pandas `resample("3min")` on the backend and `Math.floor(tick.time / 180) * 180` on the frontend. This guarantees live-streamed ticks aggregate into candles whose timestamps exactly match the pre-loaded historical candles.
+
+**Placeholder User ID** (resolves HS-3)
+Even with no auth in Phase-I, all trades record `user_id = "00000000-0000-0000-0000-000000000001"`. The schema is forward-compatible: swapping in a real UUID when auth lands in a later phase requires no structural change.
+
+**Parquet adopted in Phase-II** (resolves HS-5)
+New Breeze-fetched data is stored as Parquet in `data/ohlcdata/`. Legacy pickle files are still readable and auto-migrate to Parquet on first access. `pyarrow` is the engine (`requirements.txt`). The same IST-as-UTC convention applies to both formats.
+
+---
+
+### WSL `/mnt/d/` Filesystem Constraints
+
+The project lives on the Windows filesystem under `/mnt/d/`. Two constraints apply:
+
+1. **Python venv**: the Windows filesystem does not support the `lib → lib64` symlink that `python -m venv` creates. Create the venv on the Linux filesystem: `python -m venv ~/venvs/tradematangi`.
+
+2. **npm install**: `.bin/` symlinks fail on the Windows filesystem. Always use `npm install --no-bin-links`. Scripts invoke Vite directly via `node node_modules/vite/bin/vite.js` instead of the `.bin/vite` symlink.
+
+These constraints are encoded in `scripts/start-backend.sh` and `scripts/start-frontend.sh`.
 

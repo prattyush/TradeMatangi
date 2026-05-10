@@ -1,1 +1,43 @@
-data/*
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+venv/
+.env
+.env.local
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+htmlcov/
+.coverage
+
+# Node / Frontend
+node_modules/
+.next/
+.cache/
+
+# Data files
+data/*.pickle
+data/*.parquet
+data/*.csv
+data/*.ini
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+backend.log
+
+# Database
+*.db
