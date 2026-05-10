@@ -1,17 +1,52 @@
-import { useCallback } from 'react'
+import { useCallback, useState } from 'react'
 import Chart from './components/Chart'
 import SessionControls from './components/SessionControls'
 import TradePanel from './components/TradePanel'
 import TradeHistory from './components/TradeHistory'
 import OrderPanel from './components/OrderPanel'
 import { useSimulation } from './hooks/useSimulation'
+import { useSSE } from './hooks/useSSE'
+
+interface PaneConfig {
+  id: number
+  intervalMinutes: number
+}
+
+const INTERVAL_OPTIONS = [1, 3, 5, 15, 30]
+let nextPaneId = 3
 
 export default function App() {
   const sim = useSimulation()
+  const [panes, setPanes] = useState<PaneConfig[]>([
+    { id: 1, intervalMinutes: 3 },
+    { id: 2, intervalMinutes: 5 },
+  ])
+  const [addInterval, setAddInterval] = useState(15)
 
-  const handleStart = useCallback(async (startTime: string, speed: number) => {
-    await sim.startSession(startTime, speed)
+  // ── SSE at app level — dispatches to simulation state ──────────────────────
+  const handleSSEMessage = useCallback((event: Record<string, unknown>) => {
+    if (event.type === 'tick') {
+      sim.setLatestTick(event as unknown as Parameters<typeof sim.setLatestTick>[0])
+    } else if (event.type === 'session_ended') {
+      sim.handleSessionEnded()
+    } else if (event.type === 'order_filled') {
+      sim.handleOrderFilled(event.order_id as string)
+    }
+  }, [sim.setLatestTick, sim.handleSessionEnded, sim.handleOrderFilled])
+
+  useSSE(sim.sseUrl, handleSSEMessage)
+
+  const handleStart = useCallback(async (symbol: string, date: string, startTime: string, speed: number) => {
+    await sim.startSession(symbol, date, startTime, speed)
   }, [sim.startSession])
+
+  const addPane = useCallback(() => {
+    setPanes(ps => [...ps, { id: nextPaneId++, intervalMinutes: addInterval }])
+  }, [addInterval])
+
+  const removePane = useCallback((id: number) => {
+    setPanes(ps => ps.filter(p => p.id !== id))
+  }, [])
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden' }}>
@@ -21,7 +56,7 @@ export default function App() {
         display: 'flex', alignItems: 'center', gap: 12,
       }}>
         <span style={{ fontSize: 18, fontWeight: 700, color: '#58a6ff' }}>TradeMatangi</span>
-        <span style={{ fontSize: 12, color: '#484f58' }}>Phase I — Simulated Replay</span>
+        <span style={{ fontSize: 12, color: '#484f58' }}>Phase II — Simulated Replay</span>
       </div>
 
       {/* Session Controls */}
@@ -34,16 +69,59 @@ export default function App() {
       />
 
       {/* Main Content */}
-      <div style={{ display: 'flex', flex: 1, overflow: 'hidden', gap: 0 }}>
-        {/* Chart area */}
-        <div style={{ flex: 1, padding: 12, overflow: 'hidden' }}>
-          <Chart
-            sseUrl={sim.sseUrl}
-            onPriceUpdate={sim.updateCurrentPrice}
-            onSessionEnded={sim.handleSessionEnded}
-            onOrderFilled={sim.handleOrderFilled}
-            preSessionCandles={sim.preSessionCandles}
-          />
+      <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
+        {/* Chart column */}
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'auto', padding: 12, gap: 12 }}>
+          {panes.map((pane, idx) => (
+            <div key={pane.id} style={{ position: 'relative' }}>
+              {panes.length > 1 && (
+                <button
+                  onClick={() => removePane(pane.id)}
+                  title="Remove pane"
+                  style={{
+                    position: 'absolute', top: 6, right: 6, zIndex: 10,
+                    background: 'none', border: 'none', color: '#484f58',
+                    cursor: 'pointer', fontSize: 13, lineHeight: 1,
+                  }}
+                >✕</button>
+              )}
+              <Chart
+                symbol={sim.symbol}
+                tradingDate={sim.date}
+                startTime={sim.startTime}
+                intervalMinutes={pane.intervalMinutes}
+                latestTick={sim.latestTick}
+                onPriceUpdate={idx === 0 ? undefined : undefined}  // price shown in TradePanel from sim.currentPrice
+                height={idx === 0 ? 420 : 280}
+              />
+            </div>
+          ))}
+
+          {/* Add pane control */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, paddingLeft: 2 }}>
+            <span style={{ fontSize: 12, color: '#8b949e' }}>Add pane:</span>
+            <select
+              value={addInterval}
+              onChange={e => setAddInterval(Number(e.target.value))}
+              style={{
+                background: '#161b22', border: '1px solid #30363d', color: '#e6edf3',
+                borderRadius: 6, padding: '3px 8px', fontSize: 12,
+              }}
+            >
+              {INTERVAL_OPTIONS.map(m => (
+                <option key={m} value={m}>{m}m</option>
+              ))}
+            </select>
+            <button
+              onClick={addPane}
+              style={{
+                background: '#21262d', border: '1px solid #30363d', color: '#8b949e',
+                borderRadius: 6, padding: '3px 10px', fontSize: 12, cursor: 'pointer',
+              }}
+            >
+              + Add
+            </button>
+          </div>
         </div>
 
         {/* Right sidebar */}

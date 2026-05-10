@@ -1,16 +1,19 @@
 import { useState, useCallback } from 'react'
-import api, { Trade, Position, OHLCCandle, Order } from '../services/api'
+import api, { Trade, Position, Order, TickEvent } from '../services/api'
 
 export type SessionState = 'idle' | 'running' | 'paused' | 'ended'
 
 export interface SimulationState {
   sessionId: string | null
   sessionState: SessionState
+  symbol: string
+  date: string
+  startTime: string | null
   currentPrice: number
+  latestTick: TickEvent | null
   trades: Trade[]
   position: Position
   sseUrl: string | null
-  preSessionCandles: OHLCCandle[]
   openOrders: Order[]
 }
 
@@ -25,11 +28,14 @@ export function useSimulation() {
   const [state, setState] = useState<SimulationState>({
     sessionId: null,
     sessionState: 'idle',
+    symbol: 'NIFTY',
+    date: '2026-05-06',
+    startTime: null,
     currentPrice: 0,
+    latestTick: null,
     trades: [],
     position: DEFAULT_POSITION,
     sseUrl: null,
-    preSessionCandles: [],
     openOrders: [],
   })
 
@@ -37,39 +43,49 @@ export function useSimulation() {
     setState(s => ({ ...s, currentPrice: price }))
   }, [])
 
-  const handleSessionEnded = useCallback(() => {
-    setState(s => ({ ...s, sessionState: 'ended', sseUrl: null }))
+  const setLatestTick = useCallback((tick: TickEvent) => {
+    setState(s => ({ ...s, latestTick: tick, currentPrice: tick.close }))
   }, [])
 
-  const startSession = useCallback(async (startTime: string, speed: number) => {
-    const res = await api.startSimulation({ start_time: startTime, speed })
-    // Fetch pre-session candles (09:15 → start_time) before opening SSE so
-    // the chart is fully populated before live ticks begin painting.
-    const preSessionCandles = await api.getPreSession(res.symbol, res.date, res.start_time)
+  const handleSessionEnded = useCallback(() => {
+    setState(s => ({ ...s, sessionState: 'ended', sseUrl: null, latestTick: null }))
+  }, [])
+
+  const startSession = useCallback(async (
+    symbol: string,
+    date: string,
+    startTime: string,
+    speed: number,
+  ) => {
+    const res = await api.startSimulation({ symbol, date, start_time: startTime, speed })
     setState(s => ({
       ...s,
       sessionId: res.session_id,
       sessionState: 'running',
+      symbol: res.symbol,
+      date: res.date,
+      startTime: res.start_time,
       sseUrl: api.getSSEUrl(res.session_id),
-      preSessionCandles,
+      latestTick: null,
       trades: [],
-      position: DEFAULT_POSITION,
+      position: { ...DEFAULT_POSITION, symbol: res.symbol },
+      openOrders: [],
     }))
     return res.session_id
   }, [])
 
   const stopSession = useCallback(async () => {
     const id = state.sessionId
-    // Reset to idle immediately so the UI is responsive; fire-and-forget the API call
     setState(s => ({
       ...s,
       sessionId: null,
       sessionState: 'idle',
+      startTime: null,
       sseUrl: null,
       currentPrice: 0,
+      latestTick: null,
       trades: [],
       position: DEFAULT_POSITION,
-      preSessionCandles: [],
       openOrders: [],
     }))
     if (id) api.stopSimulation(id).catch(() => {/* session may already be gone */})
@@ -91,18 +107,14 @@ export function useSimulation() {
     if (!state.sessionId) return
     const trade = await api.buy(state.sessionId)
     setState(s => ({ ...s, trades: [...s.trades, trade] }))
-    await refreshPosition()
+    const pos = await api.getPosition(state.sessionId)
+    setState(s => ({ ...s, position: pos }))
   }, [state.sessionId])
 
   const sell = useCallback(async () => {
     if (!state.sessionId) return
     const trade = await api.sell(state.sessionId)
     setState(s => ({ ...s, trades: [...s.trades, trade] }))
-    await refreshPosition()
-  }, [state.sessionId])
-
-  const refreshPosition = useCallback(async () => {
-    if (!state.sessionId) return
     const pos = await api.getPosition(state.sessionId)
     setState(s => ({ ...s, position: pos }))
   }, [state.sessionId])
@@ -140,6 +152,7 @@ export function useSimulation() {
     buy,
     sell,
     updateCurrentPrice,
+    setLatestTick,
     handleSessionEnded,
     placeOrder,
     cancelOrder,

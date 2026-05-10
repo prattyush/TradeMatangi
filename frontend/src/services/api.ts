@@ -8,6 +8,20 @@ export interface OHLCCandle {
   close: number
 }
 
+export interface TickEvent {
+  type: 'tick'
+  time: number
+  open: number
+  high: number
+  low: number
+  close: number
+}
+
+export interface SymbolInfo {
+  symbol: string
+  display_name: string
+}
+
 export interface Order {
   order_id: string
   session_id: string
@@ -64,14 +78,32 @@ export interface Position {
 }
 
 const api = {
-  async getHistorical(symbol = 'NIFTY'): Promise<HistoricalDataResponse> {
-    const res = await fetch(`${BACKEND_URL}/api/data/historical?symbol=${symbol}`)
+  async getSymbols(): Promise<SymbolInfo[]> {
+    const res = await fetch(`${BACKEND_URL}/api/data/symbols`)
+    if (!res.ok) throw new Error(`Symbols fetch failed: ${res.status}`)
+    const data = await res.json()
+    return data.symbols as SymbolInfo[]
+  },
+
+  async getAvailableDates(symbol: string): Promise<string[]> {
+    const res = await fetch(`${BACKEND_URL}/api/data/available-dates?symbol=${encodeURIComponent(symbol)}`)
+    if (!res.ok) return []
+    const data = await res.json()
+    return data.dates as string[]
+  },
+
+  async getHistorical(symbol = 'NIFTY', tradingDate?: string, intervalMinutes?: number): Promise<HistoricalDataResponse> {
+    let url = `${BACKEND_URL}/api/data/historical?symbol=${encodeURIComponent(symbol)}`
+    if (tradingDate) url += `&trading_date=${tradingDate}`
+    if (intervalMinutes) url += `&interval_minutes=${intervalMinutes}`
+    const res = await fetch(url)
     if (!res.ok) throw new Error(`Historical data fetch failed: ${res.status}`)
     return res.json()
   },
 
-  async getPreSession(symbol: string, tradingDate: string, startTime: string): Promise<OHLCCandle[]> {
-    const url = `${BACKEND_URL}/api/data/pre-session?symbol=${encodeURIComponent(symbol)}&trading_date=${tradingDate}&start_time=${encodeURIComponent(startTime)}`
+  async getPreSession(symbol: string, tradingDate: string, startTime: string, intervalMinutes?: number): Promise<OHLCCandle[]> {
+    let url = `${BACKEND_URL}/api/data/pre-session?symbol=${encodeURIComponent(symbol)}&trading_date=${tradingDate}&start_time=${encodeURIComponent(startTime)}`
+    if (intervalMinutes) url += `&interval_minutes=${intervalMinutes}`
     const res = await fetch(url)
     if (!res.ok) return []
     const data = await res.json()
