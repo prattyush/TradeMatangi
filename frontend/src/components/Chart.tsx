@@ -83,7 +83,7 @@ export default function Chart({
   // Keep drawMode ref in sync with state for use inside chart callbacks
   useEffect(() => { drawModeRef.current = drawMode }, [drawMode])
 
-  // ── Chart initialisation ──────────────────────────────────────────────────
+  // ── Chart initialisation — runs once on mount only ───────────────────────
   useEffect(() => {
     if (!containerRef.current) return
     const chart = createChart(containerRef.current, {
@@ -159,6 +159,11 @@ export default function Chart({
       ro.disconnect()
       chart.remove()
     }
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Height updates — use applyOptions so the chart is never re-created ────
+  useEffect(() => {
+    chartRef.current?.applyOptions({ height })
   }, [height])
 
   // ── EMA visibility toggle ─────────────────────────────────────────────────
