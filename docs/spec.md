@@ -146,7 +146,8 @@ This phase should support options and futures. We only need to support options a
 ##### OptionsTrading-UI
 1. To support options trading in UI. The UI should show options to choose symbol and then weekly or monthly expiry. Weekly contracts expire on Tuesdays for NSE if not holiday and Monthly on last Tuesday of the month. 
 2. To choose strike price only applicable for options, we should 2 options, first how far from stocks or symbol current price like 2 means 2 strikes in out of money  and -2 means 2 strike price in money. For choosing the symbol current price use the replay start time or in case of paper trading the current price.
-3. The second option should be choose price range namely 24-36, 36-60, 60-120, >120 where at current time the price of the option/future is within 30-60. 
+3. The second option should be choose the strike price where the option price range is within the ranges. The ranges will be 24-36, 36-60, 60-120, >120 at current time. To find current time use replay start time or current time for paper trading. 
+4. To make it more clear for simulated trading, the user has to choose the option strike prices options that is either price range or how many below or above strike price above the symbols current price. before clicking on start replay, if not choosen default to first out of money strike price based on the symmbol current price. Mentioning again, curent price refers to price in simulated trading environment the price at start time and for paper trading, the current time.
 
 
 ##### Wallet
@@ -158,7 +159,7 @@ This phase should support options and futures. We only need to support options a
 
 ##### User
 1. The startup page should be a user signin. Harded inputs for now which is user and password both being abc123.
-2. After login, the next should have a settings option, trade analysis option to analyze trades taken by the user. More details about this scren in the trade analysis feature.
+2. After login, a settings option should be available somewhere may be at the top corner, clicking on that we would have a popup screen, or any other way. I will leave the choice to you. The only requirement is to have a settings option after user login which for now will have only wallet update option and updating of wallet should be disabled during running trading
 3. Settings option should be present before any session start, where a user can update funds in the wallet, reset it to another value etc, however, setting menu should not be accessed during trading session whether be it simulated older days or paper trading.
 4. 
 
