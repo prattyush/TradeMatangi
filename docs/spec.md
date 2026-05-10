@@ -20,6 +20,7 @@ The frontend UI platform, react JS, next JS etc, can be chosen as suited. Howeve
 3. The frontend code should be able to be deployed separately on websites like vercel or any other free choices to test. However, only the tested and manually approved version needs to be deployed. Manual testing would be done locally.
 4. The frontend framework can be of your choice, recommending reactJS or NextJs. But just check for NextJs if the running environment of WSL on windows is suitable for testing.
 5. For fetching streaming data from the backend make your technology choice whether websocket or SSE whichever is suitable in a multi user distributed environment.
+6. Apply CORS policy as suitable that is with Access-Control-Allow-Origin=* headers or as suited.
 
 
 
@@ -27,9 +28,9 @@ The backend should follow below guidelines.
 1. The backend should be a fastAPI based backend.
 2. The backend should be able to run threads or parallel processes as it needs to run these trading strategies for entry and exits parallely based on the data.
 3. The backend design is open for discussion, however, it needs to persist data and allow multiple users to run trading sessions simulataneously like simulated trading on older days, paper trading or real trading.
-4. The final project would be deployed in a multiple boxes and in a distributed environment, so the trading strategies which are running should persist some information so that they can be canceled if if the running thread running host is different from the one which got the cancel request for the particular strategy. Basically, it should also support fastapi inbuilt multiple cpu/process deployment where 2 processes of the server is running. The final Project will be using AWS Dynamo Db as database, instead of SQLLite which will be only for initial development beta phase, till all the bugs and features are finalized as Dynamo Db will be costly so will be used for final phase as described in the below phase wise development below.
+4. The final project would be deployed in a multiple boxes and in a distributed environment, so the trading strategies which are running should persist some information so that they can be canceled if if the running thread running host is different from the one which got the cancel request for the particular strategy. Basically, it should also support fastapi inbuilt multiple cpu/process deployment where 2 processes of the server is running. The final Project will be using AWS Dynamo Db as database, instead of Dynamo DB Local which will be only for initial development beta phase, till all the bugs and features are finalized as AWS Dynamo Db will be costly so will be used for final phase as described in the below phase wise development below.
 5. Cost is very important so refrain from using any external databases or tools like lambda or queues like sqs etc.
-6. The backend should persist the data in a SQLLite database, which for 1 version which is deployed in one machine should be in a particular defined folder and later the SQLLite databaset can be shifted to AWS Technologies.
+6. The backend should persist the data in a AWSDynamoDB database, which for initials version which is deployed in one machine as Docker version of Dynamo DB Local, and later the AWSDynamoDB databaset can be shifted to AWS Technologies.
 7. The backend will be deployed separately from the frontend, so the frontend should store the ipaddress of the backend and the port in some config so that it can be changed if required or may be hard coded as seems fit.
 8. The backend will integrate with multiple brokers like Zerodha, Kotak Neo and ICICI Direct.
 9. For Cross-process strategy cancellation try to go with design choices to have < 200ms and the polling may or may not be required. One suggestion would be to only check when the strategy is triggered, then you can check if it is still enabled and if not then cancel. Make sure each time the entry or exit strategy is requested a new unique id is used. Uniqueness will be defined, per user, per symbol, trading date and the strategy name. Use that id to manage the strategy lifecycle. The id can be persisted in the database.
@@ -37,7 +38,7 @@ The backend should follow below guidelines.
 
 Data Storage Guidelines
 1. The fetching of the OHLC Data will be through a broker like ICICI-Direct using Breeze library (https://pypi.org/project/breeze-connect/). The fetched data can be stored in a folder or any suitable directory structure as per choosing. In later version this data will be shifted to S3. 
-2. The trading data or the trades taken and the analysis, needs to be stored separately per user, either in the SQLLite database of simple files as suitable. In later version, the possibiliy of periodic data backup should be present.
+2. The trading data or the trades taken and the analysis, needs to be stored separately per user, either in the AWS DynamoDb Local database (running in Docker at port 8000) of simple files as suitable. In later version, the possibiliy of periodic data backup should be present.
 
 There should be scripts in scripts for starting the backend and frontend for Windows WSL Environment and AWS EC2 for backend as well something like:  
 ```bash
@@ -86,15 +87,17 @@ Below are the list of features:-
 
 ##### Simulated Engine
 1. The backend will support a simulated engine, for a particular symbol for a particular day. When triggered the backend should open a web-socket that the UI will connect to to get the data.
-2. For the buy and sell information it can be stored in memory for this phase, no need to setup SQLLite for this phase.
+2. For the buy and sell information it can be stored in memory for this phase, no need to use AWS Dynamo Db Local for this phase.
 3. The backend will expose trading API for buy and sell, the symbol can be harded for now or not as per choice. It should also have API's to show the older trades taken and the current position.
 
 
 ##### Testing Scenario
 1. For this phase the symbol supported is NIFTY which can be harded.
 2. The trading date would be 6th May 2026.
-3. The NIFTY OHLC Data will be present in the format NIFTY-06-05-2026.pickle (NIFTY-dd-mm-yyyy format) in the folder data/ which can be used by the backend. The file is a dump of a python dataframe with index as DateTimeIndex and columns as open, close, high, low at a second level granularity starting from 09:15am. The DataTimeIndex time would be in IST Format.
+3. The NIFTY OHLC Data will be present in the format NIFTY-06-05-2026.pickle, NIFTY-05-05-2026.pickle and NIFTY-04-05-2026.pickle (NIFTY-dd-mm-yyyy format) in the folder data/ which can be used by the backend. The file is a dump of a python dataframe with index as DateTimeIndex and columns as open, close, high, low at a second level granularity starting from 09:15am. The DataTimeIndex time would be in IST Format.
 4. The time interval for the data to be displayed can be set to 3 minutes for this phase.
+5. For this phase we will be used NIFTY to buy and sell and 1 unit to buy and sell. In next phase buying and selling in NIFTY won't be allowed as it is an index, then options and futures would be introduced or different stocks and respecting the lot sizes of futures and options as described by NSE.
+6. Handle the case that lightweight charts using UTC seconds and the data is present in IST, handle this either in backend or frontend as you seem fit.
 
 
 
@@ -110,7 +113,7 @@ This phase the simulated engine and the UI will support taken symbol and types a
 
 ##### Broker Integration
 1. The backend should integrate with breeze library to fetch the data for the respective symbol. 
-2. The backend should in this phase persist all fetched data from broker and also the trades taken in a database either SQLLite or as suitable.
+2. The backend should in this phase persist all fetched data from broker and also the trades taken in a database DynamoDb Local.
 
 
 ##### Basic AllOrders
