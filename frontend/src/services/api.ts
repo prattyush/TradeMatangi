@@ -54,6 +54,14 @@ const api = {
     return res.json()
   },
 
+  async getPreSession(symbol: string, tradingDate: string, startTime: string): Promise<OHLCCandle[]> {
+    const url = `${BACKEND_URL}/api/data/pre-session?symbol=${encodeURIComponent(symbol)}&trading_date=${tradingDate}&start_time=${encodeURIComponent(startTime)}`
+    const res = await fetch(url)
+    if (!res.ok) return []
+    const data = await res.json()
+    return data.candles ?? []
+  },
+
   async startSimulation(req: SimulationStartRequest = {}): Promise<SimulationStartResponse> {
     const body = { symbol: 'NIFTY', date: '2026-05-06', start_time: '09:15:00', speed: 1.0, ...req }
     const res = await fetch(`${BACKEND_URL}/api/simulation/start`, {

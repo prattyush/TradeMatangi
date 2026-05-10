@@ -40,6 +40,7 @@ export default function App() {
             sseUrl={sim.sseUrl}
             onPriceUpdate={sim.updateCurrentPrice}
             onSessionEnded={sim.handleSessionEnded}
+            preSessionCandles={sim.preSessionCandles}
           />
         </div>
 
