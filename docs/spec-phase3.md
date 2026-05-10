@@ -12,18 +12,19 @@ This phase should support options and futures. We only need to support options a
 
 
 ##### User
-1. The startup page should be a user signin. Harded inputs for now which is user and password both being abc123.
+1. The startup page should be a user signin. Hard coded inputs for now which is user and password both being abc123.
 2. Make sure that all data persisted in the dynamo db w.r.t to trades, wallet have the userid in it to specify uniqueness. As going forward we would support multiple users thus fetching data per user, that is trades data and also wallet status.
 
 ##### FundsRatio
 1. This feature requires to shift from lots or quantity to funds ratio. The funds available are defined as the money in the wallet left when the trading session started. We will have 3 different ratios configured. That is how to money to spend on this buy or sell which will a fixed ratio. The 3 ratios will be defined by "l, m and h". These signify the probabilities of success for that trade, l is low so by default only 3% of capital, m is medium probability so 6% of funds and h is high probability so 12% of funds.
 2. The settings menu will have option to override these default % values for l, m and h for a specific user. 
 3. When taking a trade if the funds % is lower than the money requried to take the trade then it would default to the least possible value if wallet funds allow it. Lets say 3% of 10,000 is 300 for buying a option at price 30 for lot size of 65 > 300, in that case just buy 1 lot that is 65.
+4. When the options of target and limit are selected, then again the quantity won't be present instead it would be the funds ratios l, m or h. Basically every new order will have l, m and h as parameters to select. However, when selecting stoploss the option would be actual quantity, and pre-selected would be the current open position quantity. More details in the stoploss feature info.
 
-##### OptionsTrading-UI
+##### OptionsTrading
 1. User can choose whether to trade in symbol or options. Symbol Trading should not be allowed for NIFTY 50 of indices. 
 2. When option trading is selected, that we will have 3 windows, one top window of the symbol candlestick chart, then below 2 panes parallelly of 2 options types Put and Call.
-3. In option trading mode, user can chooose which option to buy Put or Call.
+3. In option trading mode, user can chooose which option to buy/sell Put or Call. If an option is sold without any open buy position, then used the respective margin for sell and if wallet doesn't have that much money left, throw an error.
 4. To support options trading in UI. The UI should show options to choose symbol and then weekly or monthly expiry. Weekly contracts expire on Tuesdays for NSE if not holiday and Monthly on last Tuesday of the month. 
 5. To choose strike price only applicable for options, we should 2 options, first how far from stocks or symbol current price like 2 means 2 strikes in out of money  and -2 means 2 strike price in money. For choosing the symbol current price use the replay start time or in case of paper trading the current price.
 6. The second option should be choose the strike price where the option price range is within the ranges. The ranges will be 24-36, 36-60, 60-120, >120 at current time. To find current time use replay start time or current time for paper trading. 
@@ -32,4 +33,11 @@ This phase should support options and futures. We only need to support options a
 
 ##### Stoploss
 1. Add one more tag in addition to Target and Limit, this tab will be SL for stoploss. The tab will be enabled only when an trade is running that is either a buy or a sell position is open. Based on the buy or sell position, when stoploss tab is selected, the opposite side i.e if already buy is open, sell would be selected and buy would be disabled and the quantity would be equal to the open position size of the current trade. But the quantity can be changed if required. 
+
+
+##### PAPERTRADING
+1. To support papertrading, only extra that needs to be supported is to fetch current streaming data from a broker. The data will be directly streamed to the UI. Backend can decide to store it if suitable.
+2. Option to choose whether the current session would be papertrading session or simulated trading session.
+3. Use the same wallet for both simulated and paper trading. And the wallet should reflect the P&L.
+4. While persisting trades, include an option to specify that these trades where taken in paper trading case. When doing analysis of trades, simulated and paper trading can be analyzed separately and both are very different situations and require different mental states.
 
