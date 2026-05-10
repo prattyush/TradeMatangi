@@ -51,20 +51,31 @@ export function useSimulation() {
     setState(s => ({ ...s, sessionState: 'ended', sseUrl: null, latestTick: null }))
   }, [])
 
-  const startSession = useCallback(async (
-    symbol: string,
-    date: string,
-    startTime: string,
-    speed: number,
-  ) => {
-    const res = await api.startSimulation({ symbol, date, start_time: startTime, speed })
+  // Update symbol/date in real-time as the user changes the dropdowns.
+  // This pre-loads historical chart data so that when Start is clicked only
+  // startTime changes — eliminating the race between the historical-data
+  // refetch and the pre-session candle fetch.
+  const updateSymbol = useCallback((symbol: string) => {
+    setState(s => ({ ...s, symbol }))
+  }, [])
+
+  const updateDate = useCallback((date: string) => {
+    setState(s => ({ ...s, date }))
+  }, [])
+
+  const startSession = useCallback(async (startTime: string, speed: number) => {
+    // symbol and date are already in state from the dropdown selections.
+    const res = await api.startSimulation({
+      symbol: state.symbol,
+      date: state.date,
+      start_time: startTime,
+      speed,
+    })
     setState(s => ({
       ...s,
       sessionId: res.session_id,
       sessionState: 'running',
-      symbol: res.symbol,
-      date: res.date,
-      startTime: res.start_time,
+      startTime: res.start_time,   // only startTime is new
       sseUrl: api.getSSEUrl(res.session_id),
       latestTick: null,
       trades: [],
@@ -72,7 +83,7 @@ export function useSimulation() {
       openOrders: [],
     }))
     return res.session_id
-  }, [])
+  }, [state.symbol, state.date])
 
   const stopSession = useCallback(async () => {
     const id = state.sessionId
@@ -145,6 +156,8 @@ export function useSimulation() {
   return {
     ...state,
     pnl,
+    updateSymbol,
+    updateDate,
     startSession,
     stopSession,
     pauseSession,

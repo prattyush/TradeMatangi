@@ -41,13 +41,12 @@ def _read_aws_credentials() -> dict[str, str] | None:
 def _build_kwargs() -> dict:
     kwargs: dict = {"region_name": DYNAMODB_REGION}
     if USE_DYNAMODB_LOCAL:
-        # Local DynamoDB accepts any non-empty credentials
+        # DynamoDB Local ignores credentials entirely.  Never pass real AWS keys
+        # here — temporary STS keys (ASIA*) cause UnrecognizedClientException in
+        # some DynamoDB Local versions even though the endpoint is local.
         kwargs["endpoint_url"] = DYNAMODB_LOCAL_ENDPOINT
-        creds = _read_aws_credentials() or {
-            "aws_access_key_id": "fakeKey",
-            "aws_secret_access_key": "fakeSecret",
-        }
-        kwargs.update(creds)
+        kwargs["aws_access_key_id"] = "fakeKey"
+        kwargs["aws_secret_access_key"] = "fakeSecret"
     else:
         # Real AWS: only pass explicit creds if present; otherwise boto3
         # falls back to env vars / instance profile automatically.

@@ -4,7 +4,11 @@ import api, { SymbolInfo } from '../services/api'
 
 interface Props {
   sessionState: SessionState
-  onStart: (symbol: string, date: string, startTime: string, speed: number) => Promise<void>
+  currentSymbol: string
+  currentDate: string
+  onSymbolChange: (symbol: string) => void
+  onDateChange: (date: string) => void
+  onStart: (startTime: string, speed: number) => Promise<void>
   onStop: () => Promise<void>
   onPause: () => Promise<void>
   onResume: () => Promise<void>
@@ -27,11 +31,13 @@ function btn(color: string, disabled = false): CSSProperties {
   }
 }
 
-export default function SessionControls({ sessionState, onStart, onStop, onPause, onResume }: Props) {
+export default function SessionControls({
+  sessionState, currentSymbol, currentDate,
+  onSymbolChange, onDateChange,
+  onStart, onStop, onPause, onResume,
+}: Props) {
   const [symbols, setSymbols] = useState<SymbolInfo[]>([])
-  const [symbol, setSymbol] = useState('NIFTY')
   const [availableDates, setAvailableDates] = useState<string[]>([])
-  const [date, setDate] = useState('')
   const [startTime, setStartTime] = useState('09:15')
   const [speed, setSpeed] = useState(1.0)
   const [loading, setLoading] = useState(false)
@@ -45,27 +51,35 @@ export default function SessionControls({ sessionState, onStart, onStop, onPause
     api.getSymbols()
       .then(list => {
         setSymbols(list)
-        if (list.length > 0 && !list.find(s => s.symbol === symbol)) {
-          setSymbol(list[0].symbol)
+        // If current symbol not in the list, default to first
+        if (list.length > 0 && !list.find(s => s.symbol === currentSymbol)) {
+          onSymbolChange(list[0].symbol)
         }
       })
       .catch(() => {/* backend may not be up yet */})
   }, [])
 
-  // Load available dates whenever symbol changes
+  // Load available dates whenever currentSymbol changes, notify parent of default date
   useEffect(() => {
-    if (!symbol) return
-    api.getAvailableDates(symbol).then(dates => {
+    if (!currentSymbol) return
+    api.getAvailableDates(currentSymbol).then(dates => {
       setAvailableDates(dates)
-      // Default to the latest available date
-      if (dates.length > 0) setDate(dates[dates.length - 1])
+      if (dates.length > 0) onDateChange(dates[dates.length - 1])
     }).catch(() => setAvailableDates([]))
-  }, [symbol])
+  }, [currentSymbol])
+
+  const handleSymbolChange = (sym: string) => {
+    onSymbolChange(sym)
+  }
+
+  const handleDateChange = (d: string) => {
+    onDateChange(d)
+  }
 
   const handleStart = async () => {
-    if (!date) return
+    if (!currentDate) return
     setLoading(true)
-    try { await onStart(symbol, date, startTime + ':00', speed) } finally { setLoading(false) }
+    try { await onStart(startTime + ':00', speed) } finally { setLoading(false) }
   }
 
   return (
@@ -74,13 +88,13 @@ export default function SessionControls({ sessionState, onStart, onStop, onPause
         <label style={label}>
           Symbol&nbsp;
           <select
-            value={symbol}
-            onChange={e => setSymbol(e.target.value)}
+            value={currentSymbol}
+            onChange={e => handleSymbolChange(e.target.value)}
             style={selectStyle}
             disabled={!idle}
           >
             {symbols.length === 0
-              ? <option value="NIFTY">NIFTY</option>
+              ? <option value={currentSymbol}>{currentSymbol}</option>
               : symbols.map(s => (
                 <option key={s.symbol} value={s.symbol}>{s.display_name}</option>
               ))
@@ -91,8 +105,8 @@ export default function SessionControls({ sessionState, onStart, onStop, onPause
         <label style={label}>
           Date&nbsp;
           <select
-            value={date}
-            onChange={e => setDate(e.target.value)}
+            value={currentDate}
+            onChange={e => handleDateChange(e.target.value)}
             style={selectStyle}
             disabled={!idle || availableDates.length === 0}
           >
@@ -125,7 +139,7 @@ export default function SessionControls({ sessionState, onStart, onStop, onPause
         </label>
 
         {idle && (
-          <button style={btn('#1f6feb', loading || !date)} onClick={handleStart} disabled={loading || !date}>
+          <button style={btn('#1f6feb', loading || !currentDate)} onClick={handleStart} disabled={loading || !currentDate}>
             {loading ? 'Starting…' : 'Start Replay'}
           </button>
         )}

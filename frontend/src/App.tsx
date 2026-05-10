@@ -36,8 +36,8 @@ export default function App() {
 
   useSSE(sim.sseUrl, handleSSEMessage)
 
-  const handleStart = useCallback(async (symbol: string, date: string, startTime: string, speed: number) => {
-    await sim.startSession(symbol, date, startTime, speed)
+  const handleStart = useCallback(async (startTime: string, speed: number) => {
+    await sim.startSession(startTime, speed)
   }, [sim.startSession])
 
   const addPane = useCallback(() => {
@@ -62,6 +62,10 @@ export default function App() {
       {/* Session Controls */}
       <SessionControls
         sessionState={sim.sessionState}
+        currentSymbol={sim.symbol}
+        currentDate={sim.date}
+        onSymbolChange={sim.updateSymbol}
+        onDateChange={sim.updateDate}
         onStart={handleStart}
         onStop={sim.stopSession}
         onPause={sim.pauseSession}
