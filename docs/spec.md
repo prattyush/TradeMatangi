@@ -156,12 +156,12 @@ This phase should support options and futures. We only need to support options a
 3. Every P&L should reflect in the wallet.
 4. If at run-time the wallet goes negative then the orders should throw UI error and fail.
 5. The wallet should be incremented and decremented with each days trades P&L and should carry forward. In Simulated environemnt where a user can replay 5th May 2026, incur a loss and then trade again at 4th May 2026, in that case the wallet should include the loss of 5th May 2026.
+6. There should be a settings option may be at top corner clicking on that we would have a popup screen, or any other way. I will leave the choice to you. The only requirement is to have a settings option where the wallet can be reset to default value of 150000 rupees or any amount. 
+7. The wallet should be presisted
 
 ##### User
 1. The startup page should be a user signin. Harded inputs for now which is user and password both being abc123.
-2. After login, a settings option should be available somewhere may be at the top corner, clicking on that we would have a popup screen, or any other way. I will leave the choice to you. The only requirement is to have a settings option after user login which for now will have only wallet update option and updating of wallet should be disabled during running trading
-3. Settings option should be present before any session start, where a user can update funds in the wallet, reset it to another value etc, however, setting menu should not be accessed during trading session whether be it simulated older days or paper trading.
-4. 
+2. Make sure that all data persisted in the dynamo db w.r.t to trades, wallet have the userid in it to specify uniqueness. As going forward we would support multiple users thus fetching data per user, that is trades data and also wallet status.
 
 
 

@@ -1,12 +1,16 @@
 """
-In-memory trading service for Phase-I.
-Stores trades per session; computes position and P&L.
+Trading service: in-memory store (source of truth) with async DynamoDB persistence.
 """
 from __future__ import annotations
 
+import logging
+from decimal import Decimal
 from typing import Literal
+
 from app.models.schemas import Trade, TradeSide, Position
 from app.config import PLACEHOLDER_USER_ID, DEFAULT_SYMBOL
+
+logger = logging.getLogger(__name__)
 
 # {session_id: [Trade, ...]}
 _trades: dict[str, list[Trade]] = {}
@@ -15,6 +19,24 @@ _trades: dict[str, list[Trade]] = {}
 def ensure_session(session_id: str) -> None:
     if session_id not in _trades:
         _trades[session_id] = []
+
+
+def _write_trade_to_db(trade: Trade) -> None:
+    try:
+        from app.services.db import get_dynamodb_resource
+        table = get_dynamodb_resource().Table("Trades")
+        table.put_item(Item={
+            "session_id": trade.session_id,
+            "trade_id": trade.trade_id,
+            "user_id": trade.user_id,
+            "symbol": trade.symbol,
+            "side": trade.side.value,
+            "quantity": trade.quantity,
+            "price": Decimal(str(trade.price)),
+            "timestamp": trade.timestamp,
+        })
+    except Exception:
+        logger.exception("DynamoDB write failed for trade %s", trade.trade_id)
 
 
 def record_trade(
@@ -36,6 +58,7 @@ def record_trade(
         session_id=session_id,
     )
     _trades[session_id].append(trade)
+    _write_trade_to_db(trade)
     return trade
 
 

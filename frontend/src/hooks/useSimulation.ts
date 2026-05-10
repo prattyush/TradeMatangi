@@ -1,5 +1,5 @@
 import { useState, useCallback } from 'react'
-import api, { Trade, Position, OHLCCandle } from '../services/api'
+import api, { Trade, Position, OHLCCandle, Order } from '../services/api'
 
 export type SessionState = 'idle' | 'running' | 'paused' | 'ended'
 
@@ -11,6 +11,7 @@ export interface SimulationState {
   position: Position
   sseUrl: string | null
   preSessionCandles: OHLCCandle[]
+  openOrders: Order[]
 }
 
 const DEFAULT_POSITION: Position = {
@@ -29,6 +30,7 @@ export function useSimulation() {
     position: DEFAULT_POSITION,
     sseUrl: null,
     preSessionCandles: [],
+    openOrders: [],
   })
 
   const updateCurrentPrice = useCallback((price: number) => {
@@ -68,6 +70,7 @@ export function useSimulation() {
       trades: [],
       position: DEFAULT_POSITION,
       preSessionCandles: [],
+      openOrders: [],
     }))
     if (id) api.stopSimulation(id).catch(() => {/* session may already be gone */})
   }, [state.sessionId])
@@ -104,6 +107,22 @@ export function useSimulation() {
     setState(s => ({ ...s, position: pos }))
   }, [state.sessionId])
 
+  const placeOrder = useCallback(async (side: 'BUY' | 'SELL', triggerPrice: number, quantity: number) => {
+    if (!state.sessionId) return
+    const order = await api.placeOrder(state.sessionId, side, triggerPrice, quantity)
+    setState(s => ({ ...s, openOrders: [...s.openOrders, order] }))
+  }, [state.sessionId])
+
+  const cancelOrder = useCallback(async (orderId: string) => {
+    if (!state.sessionId) return
+    await api.cancelOrder(state.sessionId, orderId)
+    setState(s => ({ ...s, openOrders: s.openOrders.filter(o => o.order_id !== orderId) }))
+  }, [state.sessionId])
+
+  const handleOrderFilled = useCallback((orderId: string) => {
+    setState(s => ({ ...s, openOrders: s.openOrders.filter(o => o.order_id !== orderId) }))
+  }, [])
+
   const pnl = (() => {
     const { position, currentPrice } = state
     if (position.side === 'FLAT' || currentPrice === 0) return 0
@@ -122,5 +141,8 @@ export function useSimulation() {
     sell,
     updateCurrentPrice,
     handleSessionEnded,
+    placeOrder,
+    cancelOrder,
+    handleOrderFilled,
   }
 }

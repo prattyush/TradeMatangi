@@ -13,6 +13,7 @@ interface Props {
   sseUrl: string | null
   onPriceUpdate: (price: number) => void
   onSessionEnded: () => void
+  onOrderFilled?: (orderId: string) => void
   preSessionCandles?: OHLCCandle[]
 }
 
@@ -22,7 +23,7 @@ function toCandle(c: OHLCCandle): CandlestickData {
   return { time: c.time as Time, open: c.open, high: c.high, low: c.low, close: c.close }
 }
 
-export default function Chart({ sseUrl, onPriceUpdate, onSessionEnded, preSessionCandles }: Props) {
+export default function Chart({ sseUrl, onPriceUpdate, onSessionEnded, onOrderFilled, preSessionCandles }: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<IChartApi | null>(null)
   const seriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null)
@@ -77,6 +78,11 @@ export default function Chart({ sseUrl, onPriceUpdate, onSessionEnded, preSessio
     if (event.type === 'session_ended') {
       onSessionEnded()
       liveWindowRef.current = null
+      return
+    }
+
+    if (event.type === 'order_filled') {
+      onOrderFilled?.(event.order_id as string)
       return
     }
 
