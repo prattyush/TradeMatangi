@@ -128,12 +128,22 @@ class TestHistoricalEndpoint:
         # 5-min candles → fewer candles than 3-min
         assert len(resp5.json()["candles"]) < len(resp3.json()["candles"])
 
-    async def test_missing_trading_date_returns_422(self):
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
-            resp = await client.get("/api/data/historical?symbol=NIFTY")
-        assert resp.status_code == 422
+    async def test_omitting_trading_date_uses_default(self, tmp_path):
+        # trading_date defaults to 2026-05-06 for backward compat with old frontend
+        write_pickle(tmp_path, "NIFTY", "2026-05-04")
+        write_pickle(tmp_path, "NIFTY", "2026-05-05")
+
+        with (
+            patch("app.routers.data.DATA_DIR", tmp_path),
+            patch("app.services.data_loader.DATA_DIR", tmp_path),
+            patch("app.routers.data._ensure_data"),
+        ):
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                resp = await client.get("/api/data/historical?symbol=NIFTY")
+
+        assert resp.status_code == 200
 
     async def test_unsupported_symbol_returns_400(self):
         async with AsyncClient(

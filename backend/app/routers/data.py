@@ -81,7 +81,7 @@ async def get_available_dates(symbol: str = Query(default=DEFAULT_SYMBOL)):
 @router.get("/historical", response_model=HistoricalDataResponse)
 async def get_historical(
     symbol: str = Query(default=DEFAULT_SYMBOL),
-    trading_date: str = Query(...),
+    trading_date: str = Query(default="2026-05-06"),
     interval_minutes: int = Query(default=CANDLE_INTERVAL_MINUTES, ge=1, le=60),
 ):
     """
