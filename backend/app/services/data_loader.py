@@ -20,8 +20,11 @@ def _pickle_path(symbol: str, date: str) -> Path:
 def load_dataframe(symbol: str, date: str) -> pd.DataFrame:
     """
     Load second-level OHLC data for the given symbol and date.
-    The pickle index is tz-naive IST; we localize and convert to UTC.
-    Returns DataFrame with UTC DatetimeIndex, columns: open, high, low, close.
+    The pickle index is tz-naive IST (e.g. 09:15:00).  We attach the UTC
+    label directly — i.e. we treat "09:15:00 IST" as "09:15:00 UTC" for
+    timestamp purposes.  Lightweight Charts then displays the correct IST
+    market time on the x-axis without any client-side timezone config.
+    Returns DataFrame with UTC-labelled DatetimeIndex, columns: open, high, low, close.
     """
     path = _pickle_path(symbol, date)
     if not path.exists():
@@ -33,8 +36,9 @@ def load_dataframe(symbol: str, date: str) -> pd.DataFrame:
     df = df.rename(columns=str.lower)
     df = df[["open", "high", "low", "close"]]
 
-    # Localize tz-naive IST index to UTC
-    df.index = df.index.tz_localize("Asia/Kolkata").tz_convert("UTC")
+    # Attach UTC label to the naive IST index so that Unix timestamps
+    # produce display-correct times (09:15 shown on chart, not 03:45).
+    df.index = df.index.tz_localize("UTC")
 
     return df
 
@@ -71,16 +75,16 @@ def iter_ticks(
     start_time: str = "09:15:00",
 ) -> Iterator[dict]:
     """
-    Yield one tick dict per second starting from start_time.
-    Each tick: {time, open, high, low, close} with UTC Unix timestamp.
+    Yield one tick dict per second starting from start_time (IST, HH:MM:SS).
+    Each tick: {type, time, open, high, low, close} where time is a Unix
+    timestamp that displays as the IST wall-clock time in Lightweight Charts.
     """
     df = load_dataframe(symbol, date)
 
-    # Filter from the requested start_time (UTC equivalent)
-    # The start_time is provided as IST ("09:15:00") — convert to UTC timestamp
-    date_ist = pd.Timestamp(f"{date} {start_time}", tz="Asia/Kolkata")
-    date_utc = date_ist.tz_convert("UTC")
-    df = df[df.index >= date_utc]
+    # start_time is IST wall-clock; the index is labelled UTC with IST values,
+    # so we compare directly as if start_time is UTC.
+    start_ts = pd.Timestamp(f"{date} {start_time}", tz="UTC")
+    df = df[df.index >= start_ts]
 
     for ts, row in df.iterrows():
         yield {

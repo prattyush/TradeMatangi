@@ -39,7 +39,7 @@ class TestLoadDataframe:
         assert result.index.tz is not None
         assert str(result.index.tz) == "UTC"
 
-    def test_first_timestamp_is_ist_0915_in_utc(self, tmp_path):
+    def test_first_timestamp_displays_as_0915(self, tmp_path):
         df = make_ist_df()
         pickle_path = tmp_path / "NIFTY-06-05-2026.pickle"
         df.to_pickle(pickle_path)
@@ -47,10 +47,10 @@ class TestLoadDataframe:
         with patch("app.services.data_loader.DATA_DIR", tmp_path):
             result = load_dataframe("NIFTY", "2026-05-06")
 
-        # IST 09:15 = UTC 03:45
+        # Index is labelled UTC with IST wall-clock values so charts show 09:15
         first_ts = result.index[0]
-        assert first_ts.hour == 3
-        assert first_ts.minute == 45
+        assert first_ts.hour == 9
+        assert first_ts.minute == 15
         assert first_ts.second == 0
 
     def test_has_required_columns(self, tmp_path):
@@ -133,9 +133,9 @@ class TestCandlesToRecords:
         records = candles_to_records(candles)
 
         assert all(isinstance(r["time"], int) for r in records)
-        # First record UTC timestamp: IST 09:15 → UTC 03:45 → unix
-        expected_utc = pd.Timestamp("2026-05-06 03:45:00", tz="UTC")
-        assert records[0]["time"] == int(expected_utc.timestamp())
+        # Timestamp encodes IST wall-clock as UTC so chart displays 09:15
+        expected = pd.Timestamp("2026-05-06 09:15:00", tz="UTC")
+        assert records[0]["time"] == int(expected.timestamp())
 
 
 class TestIterTicks:
