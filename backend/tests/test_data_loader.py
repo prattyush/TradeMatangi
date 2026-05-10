@@ -9,6 +9,7 @@ from app.services.data_loader import (
     resample_to_candles,
     candles_to_records,
     iter_ticks,
+    pre_session_candles,
 )
 
 
@@ -82,6 +83,30 @@ class TestResampleToCandles:
 
         candles = resample_to_candles(raw)
         assert len(candles) == 2
+
+    def test_custom_interval_5min(self, tmp_path):
+        # 600 seconds = exactly 2 × 5-min candles
+        df = make_ist_df(n_seconds=600)
+        pickle_path = tmp_path / "NIFTY-06-05-2026.pickle"
+        df.to_pickle(pickle_path)
+
+        with patch("app.services.data_loader.DATA_DIR", tmp_path):
+            raw = load_dataframe("NIFTY", "2026-05-06")
+
+        candles = resample_to_candles(raw, interval_minutes=5)
+        assert len(candles) == 2
+
+    def test_custom_interval_1min(self, tmp_path):
+        # 360 seconds = exactly 6 × 1-min candles
+        df = make_ist_df(n_seconds=360)
+        pickle_path = tmp_path / "NIFTY-06-05-2026.pickle"
+        df.to_pickle(pickle_path)
+
+        with patch("app.services.data_loader.DATA_DIR", tmp_path):
+            raw = load_dataframe("NIFTY", "2026-05-06")
+
+        candles = resample_to_candles(raw, interval_minutes=1)
+        assert len(candles) == 6
 
     def test_ohlc_aggregation_correct(self, tmp_path):
         # 360 seconds = 2 × 3-min candles (0-179 = first, 180-359 = second)
@@ -174,3 +199,43 @@ class TestIterTicks:
         for field in ("open", "high", "low", "close"):
             assert field in tick
             assert isinstance(tick[field], float)
+
+
+class TestPreSessionCandles:
+    def test_returns_candles_before_start_time(self, tmp_path):
+        # 600s from 09:15 → data up to 09:25
+        df = make_ist_df(n_seconds=600)
+        pickle_path = tmp_path / "NIFTY-06-05-2026.pickle"
+        df.to_pickle(pickle_path)
+
+        with patch("app.services.data_loader.DATA_DIR", tmp_path):
+            # Start at 09:21 → pre-session covers 09:15–09:21 = 2 × 3-min candles
+            records = pre_session_candles("NIFTY", "2026-05-06", "09:21:00")
+
+        assert len(records) == 2
+        # All candles must be before start_time timestamp
+        start_unix = int(pd.Timestamp("2026-05-06 09:21:00", tz="UTC").timestamp())
+        for r in records:
+            assert r["time"] < start_unix
+
+    def test_returns_empty_when_start_at_market_open(self, tmp_path):
+        df = make_ist_df(n_seconds=300)
+        pickle_path = tmp_path / "NIFTY-06-05-2026.pickle"
+        df.to_pickle(pickle_path)
+
+        with patch("app.services.data_loader.DATA_DIR", tmp_path):
+            records = pre_session_candles("NIFTY", "2026-05-06", "09:15:00")
+
+        assert records == []
+
+    def test_respects_custom_interval(self, tmp_path):
+        # 600s from 09:15 → data up to 09:25
+        df = make_ist_df(n_seconds=600)
+        pickle_path = tmp_path / "NIFTY-06-05-2026.pickle"
+        df.to_pickle(pickle_path)
+
+        with patch("app.services.data_loader.DATA_DIR", tmp_path):
+            # Start at 09:25, 5-min interval → 09:15–09:25 = 2 × 5-min candles
+            records = pre_session_candles("NIFTY", "2026-05-06", "09:25:00", interval_minutes=5)
+
+        assert len(records) == 2

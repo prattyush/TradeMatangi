@@ -43,8 +43,11 @@ def get_trades(session_id: str) -> list[Trade]:
     return _trades.get(session_id, [])
 
 
-def get_position(session_id: str, symbol: str = DEFAULT_SYMBOL) -> Position:
+def get_position(session_id: str, symbol: str | None = None) -> Position:
     trades = _trades.get(session_id, [])
+    # If symbol not provided, infer from the first recorded trade
+    if symbol is None:
+        symbol = trades[0].symbol if trades else DEFAULT_SYMBOL
     symbol_trades = [t for t in trades if t.symbol == symbol]
 
     net_qty = 0

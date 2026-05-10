@@ -19,7 +19,7 @@ class SimulationState(str, Enum):
 
 class SimulationStartRequest(BaseModel):
     symbol: str = "NIFTY"
-    date: str = "2026-05-06"
+    date: str
     start_time: str = "09:15:00"
     speed: float = Field(default=1.0, ge=0.05, le=100.0)
 
@@ -95,3 +95,24 @@ class SessionEvent(BaseModel):
     session_id: str | None = None
     trading_date: str | None = None
     start_time: str | None = None
+
+
+class SymbolInfo(BaseModel):
+    symbol: str
+    display_name: str
+
+
+class SymbolsResponse(BaseModel):
+    symbols: list[SymbolInfo]
+
+
+class AvailableDatesResponse(BaseModel):
+    symbol: str
+    dates: list[str]
+
+
+class PreSessionDataResponse(BaseModel):
+    symbol: str
+    date: str
+    start_time: str
+    candles: list[OHLCCandle]
