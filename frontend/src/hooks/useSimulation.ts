@@ -1,5 +1,5 @@
 import { useState, useCallback } from 'react'
-import api, { Trade, Position } from '../services/api'
+import api, { Trade, Position, OHLCCandle } from '../services/api'
 
 export type SessionState = 'idle' | 'running' | 'paused' | 'ended'
 
@@ -10,6 +10,7 @@ export interface SimulationState {
   trades: Trade[]
   position: Position
   sseUrl: string | null
+  preSessionCandles: OHLCCandle[]
 }
 
 const DEFAULT_POSITION: Position = {
@@ -27,6 +28,7 @@ export function useSimulation() {
     trades: [],
     position: DEFAULT_POSITION,
     sseUrl: null,
+    preSessionCandles: [],
   })
 
   const updateCurrentPrice = useCallback((price: number) => {
@@ -39,11 +41,15 @@ export function useSimulation() {
 
   const startSession = useCallback(async (startTime: string, speed: number) => {
     const res = await api.startSimulation({ start_time: startTime, speed })
+    // Fetch pre-session candles (09:15 → start_time) before opening SSE so
+    // the chart is fully populated before live ticks begin painting.
+    const preSessionCandles = await api.getPreSession(res.symbol, res.date, res.start_time)
     setState(s => ({
       ...s,
       sessionId: res.session_id,
       sessionState: 'running',
       sseUrl: api.getSSEUrl(res.session_id),
+      preSessionCandles,
       trades: [],
       position: DEFAULT_POSITION,
     }))
@@ -61,6 +67,7 @@ export function useSimulation() {
       currentPrice: 0,
       trades: [],
       position: DEFAULT_POSITION,
+      preSessionCandles: [],
     }))
     if (id) api.stopSimulation(id).catch(() => {/* session may already be gone */})
   }, [state.sessionId])

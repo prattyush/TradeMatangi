@@ -13,6 +13,7 @@ interface Props {
   sseUrl: string | null
   onPriceUpdate: (price: number) => void
   onSessionEnded: () => void
+  preSessionCandles?: OHLCCandle[]
 }
 
 const CANDLE_INTERVAL_SECONDS = 3 * 60
@@ -21,7 +22,7 @@ function toCandle(c: OHLCCandle): CandlestickData {
   return { time: c.time as Time, open: c.open, high: c.high, low: c.low, close: c.close }
 }
 
-export default function Chart({ sseUrl, onPriceUpdate, onSessionEnded }: Props) {
+export default function Chart({ sseUrl, onPriceUpdate, onSessionEnded, preSessionCandles }: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<IChartApi | null>(null)
   const seriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null)
@@ -119,6 +120,16 @@ export default function Chart({ sseUrl, onPriceUpdate, onSessionEnded }: Props) 
       close: current.close,
     })
   }, [onPriceUpdate, onSessionEnded])
+
+  // Paint pre-session candles (09:15 → chosen start time) onto the chart
+  // so the current day is connected to the prior-day historical data.
+  useEffect(() => {
+    const series = seriesRef.current
+    if (!series || !preSessionCandles || preSessionCandles.length === 0) return
+    for (const candle of preSessionCandles) {
+      series.update(toCandle(candle))
+    }
+  }, [preSessionCandles])
 
   useSSE(sseUrl, handleSSEMessage)
 

@@ -1,5 +1,5 @@
 """
-Loads NIFTY OHLC pickle files, converts IST→UTC, and provides
+Loads OHLC pickle files, converts IST→UTC, and provides
 both batch (historical REST) and streaming (simulation tick) access.
 """
 from __future__ import annotations
@@ -8,10 +8,10 @@ import pandas as pd
 from pathlib import Path
 from typing import Iterator
 
-from app.config import DATA_DIR, CANDLE_INTERVAL_MINUTES
+from app.config import DATA_DIR, CANDLE_INTERVAL_MINUTES, MARKET_OPEN
 
 
-def _pickle_path(symbol: str, date: str) -> Path:
+def pickle_path(symbol: str, date: str) -> Path:
     """date format: YYYY-MM-DD  →  SYMBOL-DD-MM-YYYY.pickle"""
     y, m, d = date.split("-")
     return DATA_DIR / f"{symbol}-{d}-{m}-{y}.pickle"
@@ -26,7 +26,7 @@ def load_dataframe(symbol: str, date: str) -> pd.DataFrame:
     market time on the x-axis without any client-side timezone config.
     Returns DataFrame with UTC-labelled DatetimeIndex, columns: open, high, low, close.
     """
-    path = _pickle_path(symbol, date)
+    path = pickle_path(symbol, date)
     if not path.exists():
         raise FileNotFoundError(f"Data file not found: {path}")
 
@@ -43,9 +43,12 @@ def load_dataframe(symbol: str, date: str) -> pd.DataFrame:
     return df
 
 
-def resample_to_candles(df: pd.DataFrame) -> pd.DataFrame:
-    """Resample second-level data to CANDLE_INTERVAL_MINUTES-minute OHLC candles."""
-    rule = f"{CANDLE_INTERVAL_MINUTES}min"
+def resample_to_candles(
+    df: pd.DataFrame,
+    interval_minutes: int = CANDLE_INTERVAL_MINUTES,
+) -> pd.DataFrame:
+    """Resample second-level data to interval_minutes-minute OHLC candles."""
+    rule = f"{interval_minutes}min"
     candles = df.resample(rule).agg(
         open=("open", "first"),
         high=("high", "max"),
@@ -67,6 +70,34 @@ def candles_to_records(candles: pd.DataFrame) -> list[dict]:
             "close": round(float(row["close"]), 2),
         })
     return records
+
+
+def pre_session_candles(
+    symbol: str,
+    date: str,
+    start_time: str,
+    interval_minutes: int = CANDLE_INTERVAL_MINUTES,
+) -> list[dict]:
+    """
+    Return candles for `date` from market open (09:15) up to but not
+    including the candle window that contains start_time.
+    Used to fill the gap on the chart before live replay begins.
+    Returns an empty list if start_time is at or before market open.
+    """
+    df = load_dataframe(symbol, date)
+
+    market_open_ts = pd.Timestamp(f"{date} {MARKET_OPEN}", tz="UTC")
+    start_ts = pd.Timestamp(f"{date} {start_time}", tz="UTC")
+
+    if start_ts <= market_open_ts:
+        return []
+
+    window = df[(df.index >= market_open_ts) & (df.index < start_ts)]
+    if window.empty:
+        return []
+
+    candles = resample_to_candles(window, interval_minutes)
+    return candles_to_records(candles)
 
 
 def iter_ticks(

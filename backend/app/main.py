@@ -5,8 +5,8 @@ from app.routers import data, simulation, trading, stream
 
 app = FastAPI(
     title="TradeMatangi Backend",
-    description="Simulated trading platform API — Phase I",
-    version="0.1.0",
+    description="Simulated trading platform API — Phase II",
+    version="0.2.0",
 )
 
 app.add_middleware(

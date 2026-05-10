@@ -133,17 +133,39 @@ breeze.generate_session(api_secret=credentials_config_parser['icicidirect']['api
 2. The backend should be able to persist these limit, stop limit and target orders and trigger them in the simulated trading environment when the condition for the respective order is fullfilled.
 3. The UI and backend should support clearing of these orders and also display of the open orders when asked for.
 
+**Design Note (2026-05-10):** The order types have been simplified. TARGET and STOP_LIMIT are the same concept — there is only one order type called "Target Order". Internally it is always stored and executed as a STOP_LIMIT order: the user enters a trigger price, and the limit execution price is auto-computed at 1% deviation from the trigger (BUY target: `limit = trigger × 1.01`, SELL target: `limit = trigger × 0.99`). Both values are persisted for future real-broker integration. LIMIT as a standalone order type is deferred to a later phase. The UI will show all open target orders and allow individual cancellation. Quantity is selectable (default 1 unit); lot-based quantity for options/futures is deferred to Phase-III.
+
 ##### Flexible Inputs
 1. UI and backend will allow to choose date on which replay is to be done. And fetch last 2 days of data for the respective symbol.
 2. UI and backend will allow to choose the symbol. The choices can be restricted for now, that is NIFTY, TATAPOWER, TataMotors, RELIANCE.
 
 
-#### Phase-III AllSymbols
+#### Phase-III BetaStage
 This phase should support options and futures. We only need to support options and futures for stocks and indexes. No need to support commodity or currency at this phase.
 
 ##### OptionsTrading-UI
 1. To support options trading in UI. The UI should show options to choose symbol and then weekly or monthly expiry. Weekly contracts expire on Tuesdays for NSE if not holiday and Monthly on last Tuesday of the month. 
-2. To choose strike price only applicable for options, we should 2 options, first how far from stocks or index current price like 2 means 2 strikes in out of money  and -2 means 2 strike price in money. The second option should be choose price range like within 30-60 where at current time the price of the option/future is within 30-60. 
+2. To choose strike price only applicable for options, we should 2 options, first how far from stocks or symbol current price like 2 means 2 strikes in out of money  and -2 means 2 strike price in money. For choosing the symbol current price use the replay start time or in case of paper trading the current price.
+3. The second option should be choose the strike price where the option price range is within the ranges. The ranges will be 24-36, 36-60, 60-120, >120 at current time. To find current time use replay start time or current time for paper trading. 
+4. To make it more clear for simulated trading, the user has to choose the option strike prices options that is either price range or how many below or above strike price above the symbols current price. before clicking on start replay, if not choosen default to first out of money strike price based on the symmbol current price. Mentioning again, curent price refers to price in simulated trading environment the price at start time and for paper trading, the current time.
+
+
+##### Wallet
+1. Wallet should be supported which will be simulated in simulated and paper trading. It will be prefilled with a defalt amount of 150000 rupees for now.
+2. Every placed order, excluding limit and target orders which are just hanging and not placed yet, in run-time should reflect in the wallet. 
+3. Every P&L should reflect in the wallet.
+4. If at run-time the wallet goes negative then the orders should throw UI error and fail.
+5. The wallet should be incremented and decremented with each days trades P&L and should carry forward. In Simulated environemnt where a user can replay 5th May 2026, incur a loss and then trade again at 4th May 2026, in that case the wallet should include the loss of 5th May 2026.
+
+##### User
+1. The startup page should be a user signin. Harded inputs for now which is user and password both being abc123.
+2. After login, a settings option should be available somewhere may be at the top corner, clicking on that we would have a popup screen, or any other way. I will leave the choice to you. The only requirement is to have a settings option after user login which for now will have only wallet update option and updating of wallet should be disabled during running trading
+3. Settings option should be present before any session start, where a user can update funds in the wallet, reset it to another value etc, however, setting menu should not be accessed during trading session whether be it simulated older days or paper trading.
+4. 
+
+
+
+
 
 
 #### Phase-IV Entry/Exit Custom Logic
