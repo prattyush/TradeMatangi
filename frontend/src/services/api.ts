@@ -65,6 +65,14 @@ const api = {
     return res.json()
   },
 
+  async stopSimulation(session_id: string): Promise<void> {
+    await fetch(`${BACKEND_URL}/api/simulation/stop`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ session_id }),
+    })
+  },
+
   async pauseSimulation(session_id: string): Promise<void> {
     await fetch(`${BACKEND_URL}/api/simulation/pause`, {
       method: 'POST',

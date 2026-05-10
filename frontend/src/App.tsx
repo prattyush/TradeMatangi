@@ -27,6 +27,7 @@ export default function App() {
       <SessionControls
         sessionState={sim.sessionState}
         onStart={handleStart}
+        onStop={sim.stopSession}
         onPause={sim.pauseSession}
         onResume={sim.resumeSession}
       />

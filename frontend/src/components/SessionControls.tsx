@@ -4,6 +4,7 @@ import { SessionState } from '../hooks/useSimulation'
 interface Props {
   sessionState: SessionState
   onStart: (startTime: string, speed: number) => Promise<void>
+  onStop: () => Promise<void>
   onPause: () => Promise<void>
   onResume: () => Promise<void>
 }
@@ -24,7 +25,7 @@ function btn(color: string, disabled = false): CSSProperties {
   }
 }
 
-export default function SessionControls({ sessionState, onStart, onPause, onResume }: Props) {
+export default function SessionControls({ sessionState, onStart, onStop, onPause, onResume }: Props) {
   const [startTime, setStartTime] = useState('09:15')
   const [speed, setSpeed] = useState(1.0)
   const [loading, setLoading] = useState(false)
@@ -74,8 +75,11 @@ export default function SessionControls({ sessionState, onStart, onPause, onResu
         {paused && (
           <button style={btn('#1f6feb')} onClick={onResume}>Resume</button>
         )}
+        {(running || paused) && (
+          <button style={btn('#b62324')} onClick={onStop}>Stop</button>
+        )}
         {sessionState === 'ended' && (
-          <span style={{ ...label, color: '#f85149' }}>Session ended</span>
+          <span style={{ ...label, color: '#f85149' }}>Session ended — configure above and restart</span>
         )}
       </div>
     </div>

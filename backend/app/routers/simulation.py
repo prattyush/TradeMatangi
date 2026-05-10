@@ -47,6 +47,16 @@ async def resume_simulation(req: SimulationControlRequest):
     return {"status": session.state}
 
 
+@router.post("/stop")
+async def stop_simulation(req: SimulationControlRequest):
+    session = sim_svc.get_session(req.session_id)
+    if not session:
+        # Already stopped or never existed — treat as success
+        return {"status": "stopped"}
+    sim_svc.stop_session(session)
+    return {"status": "stopped"}
+
+
 @router.get("/status", response_model=SimulationStatusResponse)
 async def get_status(session_id: str):
     session = sim_svc.get_session(session_id)

@@ -50,6 +50,21 @@ export function useSimulation() {
     return res.session_id
   }, [])
 
+  const stopSession = useCallback(async () => {
+    const id = state.sessionId
+    // Reset to idle immediately so the UI is responsive; fire-and-forget the API call
+    setState(s => ({
+      ...s,
+      sessionId: null,
+      sessionState: 'idle',
+      sseUrl: null,
+      currentPrice: 0,
+      trades: [],
+      position: DEFAULT_POSITION,
+    }))
+    if (id) api.stopSimulation(id).catch(() => {/* session may already be gone */})
+  }, [state.sessionId])
+
   const pauseSession = useCallback(async () => {
     if (!state.sessionId) return
     await api.pauseSimulation(state.sessionId)
@@ -93,6 +108,7 @@ export function useSimulation() {
     ...state,
     pnl,
     startSession,
+    stopSession,
     pauseSession,
     resumeSession,
     buy,
