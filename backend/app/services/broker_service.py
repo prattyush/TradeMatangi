@@ -16,7 +16,10 @@ import pandas as pd
 from pathlib import Path
 
 from app.config import DATA_DIR, MARKET_OPEN, MARKET_CLOSE, SUPPORTED_SYMBOLS
-from app.services.data_loader import parquet_path, pickle_path
+from app.services.data_loader import parquet_path, pickle_path, validate_and_fill_gaps
+
+_CHUNK_MINUTES = 15   # 900-second windows stay safely under the ~1000-record Breeze API limit
+_MIN_DAY_ROWS = 20000  # A complete trading day has ~22500 rows; below this triggers re-fetch
 
 logger = logging.getLogger(__name__)
 
@@ -102,20 +105,71 @@ def _breeze_to_dataframe(records: list[dict]) -> pd.DataFrame:
 
     df = pd.DataFrame(rows)
     df = df.set_index("datetime").sort_index()
+    df = df[~df.index.duplicated(keep="first")]  # remove duplicates from chunk boundaries
     return df
+
+
+def _fetch_day_paginated(breeze, sym_info: dict, date: str) -> list[dict]:
+    """
+    Fetch a full trading day by issuing 15-minute chunk requests.
+    The Breeze API caps responses at ~1000 records; chunking prevents truncation.
+    """
+    from_ts = pd.Timestamp(f"{date} {MARKET_OPEN}")
+    to_ts = pd.Timestamp(f"{date} {MARKET_CLOSE}")
+    chunk_delta = pd.Timedelta(minutes=_CHUNK_MINUTES)
+
+    all_records: list[dict] = []
+    current = from_ts
+    while current < to_ts:
+        chunk_end = min(current + chunk_delta, to_ts)
+        response = breeze.get_historical_data_v2(
+            interval="1second",
+            from_date=current.strftime("%Y-%m-%d %H:%M:%S"),
+            to_date=chunk_end.strftime("%Y-%m-%d %H:%M:%S"),
+            stock_code=sym_info["breeze_stock_code"],
+            exchange_code=sym_info["exchange_code"],
+            product_type=sym_info["product_type"],
+        )
+
+        if response is None:
+            raise BreezeTokenError(
+                "Breeze returned no response. Your session_token may be expired. "
+                "Please refresh it in data/accesskeys.ini."
+            )
+
+        status = response.get("Status")
+        error = response.get("Error")
+
+        if status == 401 or (error and "session" in str(error).lower()):
+            raise BreezeTokenError(
+                f"Breeze session expired or invalid: {error}. "
+                "Please refresh session_token in data/accesskeys.ini."
+            )
+
+        if status not in (200, None) and error:
+            raise RuntimeError(
+                f"Breeze API error for {sym_info['breeze_stock_code']} "
+                f"{current.strftime('%H:%M')}–{chunk_end.strftime('%H:%M')}: {error}"
+            )
+
+        all_records.extend(response.get("Success") or [])
+        current = chunk_end
+
+    return all_records
 
 
 def fetch_historical(symbol: str, date: str) -> Path:
     """
-    Ensure second-level OHLC data for symbol+date exists as a Parquet file
+    Ensure second-level OHLC data for symbol+date exists as a complete Parquet file
     in data/ohlcdata/.  Returns the parquet path.
 
     Cache order:
-      1. Parquet in ohlcdata/ (primary cache) — return immediately
-      2. Legacy pickle in data/ — convert to parquet, return
-      3. Fetch from Breeze API — save as parquet, return
+      1. Parquet in ohlcdata/ with >= _MIN_DAY_ROWS rows — return immediately
+      2. Legacy pickle in data/ with >= _MIN_DAY_ROWS rows — convert to parquet, return
+      3. Fetch from Breeze API (paginated 15-min chunks) — validate, save as parquet, return
 
     Raises BreezeTokenError on auth failure, BreezeSymbolError for unknown symbols.
+    Incomplete cached files (< _MIN_DAY_ROWS rows) are discarded and re-fetched.
     """
     if symbol not in SUPPORTED_SYMBOLS:
         raise BreezeSymbolError(
@@ -125,50 +179,43 @@ def fetch_historical(symbol: str, date: str) -> Path:
 
     pq = parquet_path(symbol, date)
     if pq.exists():
-        logger.info("Parquet cache hit for %s %s", symbol, date)
-        return pq
+        try:
+            cached_df = pd.read_parquet(pq)
+            if len(cached_df) >= _MIN_DAY_ROWS:
+                logger.info("Parquet cache hit for %s %s (%d rows)", symbol, date, len(cached_df))
+                return pq
+            logger.warning(
+                "Cached parquet for %s %s has only %d rows (< %d), re-fetching",
+                symbol, date, len(cached_df), _MIN_DAY_ROWS,
+            )
+            pq.unlink()
+        except Exception as e:
+            logger.warning("Could not read cached parquet for %s %s: %s — re-fetching", symbol, date, e)
+            pq.unlink(missing_ok=True)
 
-    # Migrate legacy pickle to parquet if it exists
+    # Migrate legacy pickle to parquet if it has enough data
     pkl = pickle_path(symbol, date)
     if pkl.exists():
-        logger.info("Migrating legacy pickle to parquet for %s %s", symbol, date)
-        df = pd.read_pickle(pkl)
-        df.to_parquet(pq)
-        return pq
+        try:
+            pkl_df = pd.read_pickle(pkl)
+            if len(pkl_df) >= _MIN_DAY_ROWS:
+                logger.info("Migrating complete legacy pickle to parquet for %s %s", symbol, date)
+                pkl_df.to_parquet(pq)
+                return pq
+            logger.warning(
+                "Legacy pickle for %s %s has only %d rows, skipping migration — fetching from Breeze",
+                symbol, date, len(pkl_df),
+            )
+        except Exception as e:
+            logger.warning("Could not read legacy pickle for %s %s: %s", symbol, date, e)
 
-    # Fetch from Breeze
-    logger.info("Fetching %s %s from Breeze...", symbol, date)
+    # Fetch from Breeze with pagination
+    logger.info("Fetching %s %s from Breeze (paginated, %d-min chunks)...", symbol, date, _CHUNK_MINUTES)
     sym_info = SUPPORTED_SYMBOLS[symbol]
     breeze = _get_breeze()
 
-    response = breeze.get_historical_data_v2(
-        interval="1second",
-        from_date=f"{date} {MARKET_OPEN}",
-        to_date=f"{date} {MARKET_CLOSE}",
-        stock_code=sym_info["breeze_stock_code"],
-        exchange_code=sym_info["exchange_code"],
-        product_type=sym_info["product_type"],
-    )
+    records = _fetch_day_paginated(breeze, sym_info, date)
 
-    if response is None:
-        raise BreezeTokenError(
-            "Breeze returned no response. Your session_token may be expired. "
-            "Please refresh it in data/accesskeys.ini."
-        )
-
-    status = response.get("Status")
-    error = response.get("Error")
-
-    if status == 401 or (error and "session" in str(error).lower()):
-        raise BreezeTokenError(
-            f"Breeze session expired or invalid: {error}. "
-            "Please refresh session_token in data/accesskeys.ini."
-        )
-
-    if status not in (200, None) and error:
-        raise RuntimeError(f"Breeze API error for {symbol} {date}: {error}")
-
-    records = response.get("Success") or []
     if not records:
         raise RuntimeError(
             f"Breeze returned no data for {symbol} on {date}. "
@@ -178,6 +225,8 @@ def fetch_historical(symbol: str, date: str) -> Path:
     df = _breeze_to_dataframe(records)
     if df.empty:
         raise RuntimeError(f"Could not parse Breeze data for {symbol} on {date}.")
+
+    df = validate_and_fill_gaps(df, date)
 
     tmp = pq.with_name(pq.name + ".tmp")
     try:

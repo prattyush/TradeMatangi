@@ -10,6 +10,7 @@ from app.services.data_loader import (
     candles_to_records,
     iter_ticks,
     pre_session_candles,
+    validate_and_fill_gaps,
 )
 
 
@@ -239,3 +240,64 @@ class TestPreSessionCandles:
             records = pre_session_candles("NIFTY", "2026-05-06", "09:25:00", interval_minutes=5)
 
         assert len(records) == 2
+
+
+class TestValidateAndFillGaps:
+    DATE = "2026-05-06"
+    MARKET_OPEN = pd.Timestamp("2026-05-06 09:15:00")
+    MARKET_CLOSE_LAST = pd.Timestamp("2026-05-06 15:29:59")
+
+    def _full_day_df(self) -> pd.DataFrame:
+        idx = pd.date_range(self.MARKET_OPEN, periods=22500, freq="s")
+        return pd.DataFrame({"open": 100.0, "high": 101.0, "low": 99.0, "close": 100.5}, index=idx)
+
+    def test_complete_data_unchanged_length(self):
+        df = self._full_day_df()
+        result = validate_and_fill_gaps(df, self.DATE)
+        assert len(result) == 22500
+
+    def test_small_gap_is_filled(self):
+        df = self._full_day_df()
+        # Remove 5 minutes (300 rows) in the middle
+        mask = (df.index >= pd.Timestamp("2026-05-06 10:00:00")) & \
+               (df.index < pd.Timestamp("2026-05-06 10:05:00"))
+        df = df[~mask]
+        assert len(df) == 22200
+
+        result = validate_and_fill_gaps(df, self.DATE)
+        assert len(result) == 22500  # gap filled back to full day
+
+    def test_gap_exactly_15_min_is_filled(self):
+        df = self._full_day_df()
+        # Remove exactly 900 rows (15 minutes)
+        mask = (df.index >= pd.Timestamp("2026-05-06 11:00:00")) & \
+               (df.index < pd.Timestamp("2026-05-06 11:15:00"))
+        df = df[~mask]
+        result = validate_and_fill_gaps(df, self.DATE)
+        assert len(result) == 22500
+
+    def test_gap_over_15_min_raises(self):
+        df = self._full_day_df()
+        # Remove 16 minutes (960 rows)
+        mask = (df.index >= pd.Timestamp("2026-05-06 11:00:00")) & \
+               (df.index < pd.Timestamp("2026-05-06 11:16:00"))
+        df = df[~mask]
+        with pytest.raises(RuntimeError, match="gap"):
+            validate_and_fill_gaps(df, self.DATE)
+
+    def test_empty_dataframe_raises(self):
+        df = pd.DataFrame(columns=["open", "high", "low", "close"])
+        with pytest.raises(RuntimeError):
+            validate_and_fill_gaps(df, self.DATE)
+
+    def test_forward_fill_propagates_last_known_price(self):
+        df = self._full_day_df()
+        # Set a distinctive close value just before the gap
+        df.loc[pd.Timestamp("2026-05-06 10:00:00"), "close"] = 999.0
+        # Remove the next 5 seconds
+        gap_idx = pd.date_range("2026-05-06 10:00:01", periods=5, freq="s")
+        df = df.drop(gap_idx, errors="ignore")
+
+        result = validate_and_fill_gaps(df, self.DATE)
+        # The gap seconds should be forward-filled from the 999.0 close
+        assert result.loc[pd.Timestamp("2026-05-06 10:00:05"), "close"] == pytest.approx(999.0)

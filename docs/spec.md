@@ -69,36 +69,8 @@ Below are the list of phases, and each phase has a list of features described. E
 ### Phases
 
 #### Phase-I MVP (Minimum Viable Product)
-This phase will have MVP proof of concept. It will use data which is already present in data/ folder which will have ohlc data for a particular stock symbol. No Integration with brokers is required at this point and neither any user login or user specific feeature. Focus would be to build the basic UI frontend and backend so support basic simulated trading. The first phase will only support simulated trading with older data with basic Buy/Sell buttons.
 
-Below are the list of features:-
-
-##### Chart Display
-1. The UI should support displaying the ohlc data integrating with light-weight chart or any other suitable charting software.
-2. The ohlc data displayed should have at least 3 days of data, with prior 2 days and current data being replayed at second level.
-3. UI should have an option to start the data replay from a specific time let say from 9:39am when the market data for India NSE starts at 9:15am.
-4. The Ui should have a buy and sell button to buy and sell the stock.
-5. The UI should show the trade position and how the P&L is changing at real-time. This feature can be chosen whether the data comes from frontend or backend.
-6. The UI will get the streamming OHLC data from backend preferrably through a websocket or a SSE. Make your technology choice whether websocket or SSE whichever is suitable in a multi user distributed environment. Or any other choices required. Do confirm the choice from the user.
-7. The UI will fetch the data from backend for a required older days.
-8. UI also needs to display trades taken during the simulated trading session. Backend will support the respective API.
-9. The replay speed can be fixed for now lets say at second level or you can introduce a relative speed like .9 which is basically .9 seconds of replay = 1 second. That .9 number can be UI input provided to backend or can be in percentage like 10% faster slower etc.
-
-
-##### Simulated Engine
-1. The backend will support a simulated engine, for a particular symbol for a particular day. When triggered the backend should open a web-socket that the UI will connect to to get the data.
-2. For the buy and sell information it can be stored in memory for this phase, no need to use AWS Dynamo Db Local for this phase.
-3. The backend will expose trading API for buy and sell, the symbol can be harded for now or not as per choice. It should also have API's to show the older trades taken and the current position.
-
-
-##### Testing Scenario
-1. For this phase the symbol supported is NIFTY which can be harded.
-2. The trading date would be 6th May 2026.
-3. The NIFTY OHLC Data will be present in the format NIFTY-06-05-2026.pickle, NIFTY-05-05-2026.pickle and NIFTY-04-05-2026.pickle (NIFTY-dd-mm-yyyy format) in the folder data/ which can be used by the backend. The file is a dump of a python dataframe with index as DateTimeIndex and columns as open, close, high, low at a second level granularity starting from 09:15am. The DataTimeIndex time would be in IST Format.
-4. The time interval for the data to be displayed can be set to 3 minutes for this phase.
-5. For this phase we will be used NIFTY to buy and sell and 1 unit to buy and sell. In next phase buying and selling in NIFTY won't be allowed as it is an index, then options and futures would be introduced or different stocks and respecting the lot sizes of futures and options as described by NSE.
-6. Handle the case that lightweight charts using UTC seconds and the data is present in IST, handle this either in backend or frontend as you seem fit.
-
+Include this phase in the context only when you are implementing or planning phase 1. The phase 1 docs is location at <project root>/docs/spec-phase1.md
 
 
 #### Phase-II Older Data Fetch
@@ -141,34 +113,7 @@ breeze.generate_session(api_secret=credentials_config_parser['icicidirect']['api
 
 
 #### Phase-III BetaStage
-This phase should support options and futures. We only need to support options and futures for stocks and indexes. No need to support commodity or currency at this phase.
-
-##### Wallet
-1. Wallet should be supported which will be simulated in simulated and paper trading. It will be prefilled with a defalt amount of 150000 rupees for now.
-2. Every placed order, excluding limit and target orders which are just hanging and not placed yet, in run-time should reflect in the wallet. 
-3. Every P&L should reflect in the wallet.
-4. If at run-time the wallet goes negative then the orders should throw UI error and fail.
-5. The wallet should be incremented and decremented with each days trades P&L and should carry forward. In Simulated environemnt where a user can replay 5th May 2026, incur a loss and then trade again at 4th May 2026, in that case the wallet should include the loss of 5th May 2026.
-6. There should be a settings option may be at top corner clicking on that we would have a popup screen, or any other way. I will leave the choice to you. The only requirement is to have a settings option where the wallet can be reset to default value of 150000 rupees or any amount. 
-
-
-##### User
-1. The startup page should be a user signin. Harded inputs for now which is user and password both being abc123.
-2. Make sure that all data persisted in the dynamo db w.r.t to trades, wallet have the userid in it to specify uniqueness. As going forward we would support multiple users thus fetching data per user, that is trades data and also wallet status.
-
-##### FundsRatio
-1. This feature requires to shift from lots or quantity to funds ratio. The funds available are defined as the money in the wallet left when the trading session started. We will have 3 different ratios configured. That is how to money to spend on this buy or sell which will a fixed ratio. The 3 ratios will be defined by "l, m and h". These signify the probabilities of success for that trade, l is low so by default only 3% of capital, m is medium probability so 6% of funds and h is high probability so 12% of funds.
-2. The settings menu will have option to override these default % values for l, m and h for a specific user. 
-3. When taking a trade if the funds % is lower than the money requried to take the trade then it would default to the least possible value if wallet funds allow it. Lets say 3% of 10,000 is 300 for buying a option at price 30 for lot size of 65 > 300, in that case just buy 1 lot that is 65.
-
-##### OptionsTrading-UI
-1. User can choose whether to trade in symbol or options. Symbol Trading should not be allowed for NIFTY 50 of indices. 
-2. When option trading is selected, that we will have 3 windows, one top window of the symbol candlestick chart, then below 2 panes parallelly of 2 options types Put and Call.
-3. In option trading mode, user can chooose which option to buy Put or Call.
-4. To support options trading in UI. The UI should show options to choose symbol and then weekly or monthly expiry. Weekly contracts expire on Tuesdays for NSE if not holiday and Monthly on last Tuesday of the month. 
-5. To choose strike price only applicable for options, we should 2 options, first how far from stocks or symbol current price like 2 means 2 strikes in out of money  and -2 means 2 strike price in money. For choosing the symbol current price use the replay start time or in case of paper trading the current price.
-6. The second option should be choose the strike price where the option price range is within the ranges. The ranges will be 24-36, 36-60, 60-120, >120 at current time. To find current time use replay start time or current time for paper trading. 
-7. To make it more clear for simulated trading, the user has to choose the option strike prices options that is either price range or how many below or above strike price above the symbols current price, before clicking on start replay, if not choosen default to first out of money strike price based on the symmbol current price. Mentioning again, curent price refers to price in simulated trading environment the price at start time and for paper trading, the current time.
+Include this phase in the context only when you are implementing or planning phase 3. The phase 3 docs is location at <project root>/docs/spec-phase3.md
 
 
 #### Phase-IV Entry/Exit Custom Logic
