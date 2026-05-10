@@ -105,10 +105,19 @@ async def _run_session(session: SimulationSession) -> None:
             session.last_price = current_price
             await session.queue.put(json.dumps(tick))
 
-            # Check and emit filled orders
+            # Check and emit filled orders; record each fill as a trade
             from app.services.order_service import check_orders
+            from app.services.trading import record_trade
             filled = check_orders(session.session_id, current_price, current_time)
             for order in filled:
+                record_trade(
+                    session_id=session.session_id,
+                    side=order.side,
+                    price=order.filled_price,
+                    timestamp=order.filled_at,
+                    quantity=order.quantity,
+                    symbol=order.symbol,
+                )
                 fill_event = {
                     "type": "order_filled",
                     "order_id": order.order_id,

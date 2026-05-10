@@ -142,9 +142,17 @@ export function useSimulation() {
     setState(s => ({ ...s, openOrders: s.openOrders.filter(o => o.order_id !== orderId) }))
   }, [state.sessionId])
 
-  const handleOrderFilled = useCallback((orderId: string) => {
+  const handleOrderFilled = useCallback(async (orderId: string) => {
+    // Remove from open orders immediately for responsive UI
     setState(s => ({ ...s, openOrders: s.openOrders.filter(o => o.order_id !== orderId) }))
-  }, [])
+    // Refresh trades and position — the fill was recorded as a trade on the backend
+    if (!state.sessionId) return
+    const [pos, trades] = await Promise.all([
+      api.getPosition(state.sessionId),
+      api.getTrades(state.sessionId),
+    ])
+    setState(s => ({ ...s, position: pos, trades }))
+  }, [state.sessionId])
 
   const pnl = (() => {
     const { position, currentPrice } = state
