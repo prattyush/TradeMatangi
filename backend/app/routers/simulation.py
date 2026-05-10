@@ -7,12 +7,36 @@ from app.models.schemas import (
     SimulationState,
 )
 from app.services import simulation as sim_svc
+from app.config import SUPPORTED_SYMBOLS
 
 router = APIRouter(prefix="/api/simulation", tags=["simulation"])
 
 
+def _ensure_session_data(symbol: str, date: str) -> None:
+    """Validate symbol and ensure data is cached before starting a session."""
+    if symbol not in SUPPORTED_SYMBOLS:
+        raise HTTPException(status_code=400, detail=f"Unsupported symbol: {symbol}")
+    try:
+        from app.services.broker_service import (
+            fetch_historical, BreezeTokenError, BreezeSymbolError,
+        )
+        fetch_historical(symbol, date)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        from app.services.broker_service import BreezeTokenError, BreezeSymbolError
+        if isinstance(exc, BreezeTokenError):
+            raise HTTPException(status_code=503, detail=str(exc))
+        if isinstance(exc, BreezeSymbolError):
+            raise HTTPException(status_code=400, detail=str(exc))
+        if isinstance(exc, RuntimeError):
+            raise HTTPException(status_code=404, detail=str(exc))
+        raise HTTPException(status_code=500, detail=f"Data fetch failed: {exc}")
+
+
 @router.post("/start", response_model=SimulationStartResponse)
 async def start_simulation(req: SimulationStartRequest):
+    _ensure_session_data(req.symbol, req.date)
     session = sim_svc.create_session(
         symbol=req.symbol,
         date=req.date,
@@ -51,7 +75,6 @@ async def resume_simulation(req: SimulationControlRequest):
 async def stop_simulation(req: SimulationControlRequest):
     session = sim_svc.get_session(req.session_id)
     if not session:
-        # Already stopped or never existed — treat as success
         return {"status": "stopped"}
     sim_svc.stop_session(session)
     return {"status": "stopped"}

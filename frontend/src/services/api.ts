@@ -8,13 +8,27 @@ export interface OHLCCandle {
   close: number
 }
 
+export interface TickEvent {
+  type: 'tick'
+  time: number
+  open: number
+  high: number
+  low: number
+  close: number
+}
+
+export interface SymbolInfo {
+  symbol: string
+  display_name: string
+}
+
 export interface Order {
   order_id: string
   session_id: string
   user_id: string
   symbol: string
   side: 'BUY' | 'SELL'
-  order_type: 'TARGET'
+  order_type: 'TARGET' | 'LIMIT'
   quantity: number
   trigger_price: number
   limit_price: number
@@ -64,14 +78,32 @@ export interface Position {
 }
 
 const api = {
-  async getHistorical(symbol = 'NIFTY'): Promise<HistoricalDataResponse> {
-    const res = await fetch(`${BACKEND_URL}/api/data/historical?symbol=${symbol}`)
+  async getSymbols(): Promise<SymbolInfo[]> {
+    const res = await fetch(`${BACKEND_URL}/api/data/symbols`)
+    if (!res.ok) throw new Error(`Symbols fetch failed: ${res.status}`)
+    const data = await res.json()
+    return data.symbols as SymbolInfo[]
+  },
+
+  async getAvailableDates(symbol: string): Promise<string[]> {
+    const res = await fetch(`${BACKEND_URL}/api/data/available-dates?symbol=${encodeURIComponent(symbol)}`)
+    if (!res.ok) return []
+    const data = await res.json()
+    return data.dates as string[]
+  },
+
+  async getHistorical(symbol = 'NIFTY', tradingDate?: string, intervalMinutes?: number): Promise<HistoricalDataResponse> {
+    let url = `${BACKEND_URL}/api/data/historical?symbol=${encodeURIComponent(symbol)}`
+    if (tradingDate) url += `&trading_date=${tradingDate}`
+    if (intervalMinutes) url += `&interval_minutes=${intervalMinutes}`
+    const res = await fetch(url)
     if (!res.ok) throw new Error(`Historical data fetch failed: ${res.status}`)
     return res.json()
   },
 
-  async getPreSession(symbol: string, tradingDate: string, startTime: string): Promise<OHLCCandle[]> {
-    const url = `${BACKEND_URL}/api/data/pre-session?symbol=${encodeURIComponent(symbol)}&trading_date=${tradingDate}&start_time=${encodeURIComponent(startTime)}`
+  async getPreSession(symbol: string, tradingDate: string, startTime: string, intervalMinutes?: number): Promise<OHLCCandle[]> {
+    let url = `${BACKEND_URL}/api/data/pre-session?symbol=${encodeURIComponent(symbol)}&trading_date=${tradingDate}&start_time=${encodeURIComponent(startTime)}`
+    if (intervalMinutes) url += `&interval_minutes=${intervalMinutes}`
     const res = await fetch(url)
     if (!res.ok) return []
     const data = await res.json()
@@ -85,7 +117,10 @@ const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     })
-    if (!res.ok) throw new Error(`Start simulation failed: ${res.status}`)
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}))
+      throw new Error(body.detail || `Start simulation failed: ${res.status}`)
+    }
     return res.json()
   },
 
@@ -145,11 +180,17 @@ const api = {
     return res.json()
   },
 
-  async placeOrder(session_id: string, side: 'BUY' | 'SELL', trigger_price: number, quantity: number): Promise<Order> {
+  async placeOrder(session_id: string, side: 'BUY' | 'SELL', order_type: 'TARGET' | 'LIMIT', price: number, quantity: number): Promise<Order> {
+    const body: Record<string, unknown> = { session_id, side, order_type, quantity }
+    if (order_type === 'TARGET') {
+      body.trigger_price = price
+    } else {
+      body.limit_price = price
+    }
     const res = await fetch(`${BACKEND_URL}/api/orders`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ session_id, side, trigger_price, quantity }),
+      body: JSON.stringify(body),
     })
     if (!res.ok) throw new Error(`Place order failed: ${res.status}`)
     return res.json()

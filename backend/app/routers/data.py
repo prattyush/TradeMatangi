@@ -17,7 +17,6 @@ from app.services.data_loader import (
     resample_to_candles,
     candles_to_records,
     pre_session_candles,
-    pickle_path,
 )
 from app.services.broker_service import fetch_historical, BreezeTokenError, BreezeSymbolError
 from app.config import DEFAULT_SYMBOL, CANDLE_INTERVAL_MINUTES, SUPPORTED_SYMBOLS, DATA_DIR
@@ -30,12 +29,10 @@ router = APIRouter(prefix="/api/data", tags=["data"])
 
 def _ensure_data(symbol: str, date: str) -> None:
     """
-    Make sure a pickle exists for symbol+date.
-    Tries Breeze fetch if absent. Raises HTTPException on failure.
+    Ensure a data file exists for symbol+date (parquet or legacy pickle).
+    Triggers a Breeze fetch and saves parquet if nothing cached.
+    Raises HTTPException on failure.
     """
-    path = pickle_path(symbol, date)
-    if path.exists():
-        return
     try:
         fetch_historical(symbol, date)
     except BreezeTokenError as e:

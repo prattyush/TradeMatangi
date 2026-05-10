@@ -1,6 +1,10 @@
 """
-Order service: in-memory TARGET (stop-limit) orders with DynamoDB persistence.
-Limit price is auto-set at 1% deviation from trigger.
+Order service: in-memory LIMIT and TARGET (stop-limit) orders with DynamoDB persistence.
+
+TARGET: user supplies trigger_price; limit auto-set at 1% deviation.
+        BUY fills when price >= trigger; SELL fills when price <= trigger.
+LIMIT:  user supplies limit_price directly; no deviation.
+        BUY fills when price <= limit;   SELL fills when price >= limit.
 """
 from __future__ import annotations
 
@@ -15,7 +19,7 @@ logger = logging.getLogger(__name__)
 # {session_id: {order_id: Order}}
 _orders: dict[str, dict[str, Order]] = {}
 
-_LIMIT_DEVIATION = 0.01  # 1%
+_TARGET_DEVIATION = 0.01  # 1% buffer for stop-limit orders
 
 
 def _ensure_session(session_id: str) -> None:
@@ -23,10 +27,10 @@ def _ensure_session(session_id: str) -> None:
         _orders[session_id] = {}
 
 
-def _limit_price_for(side: TradeSide, trigger_price: float) -> float:
+def _target_limit_price(side: TradeSide, trigger_price: float) -> float:
     if side == TradeSide.BUY:
-        return round(trigger_price * (1 + _LIMIT_DEVIATION), 2)
-    return round(trigger_price * (1 - _LIMIT_DEVIATION), 2)
+        return round(trigger_price * (1 + _TARGET_DEVIATION), 2)
+    return round(trigger_price * (1 - _TARGET_DEVIATION), 2)
 
 
 def _write_order_to_db(order: Order) -> None:
@@ -59,20 +63,34 @@ def place_order(
     session_id: str,
     symbol: str,
     side: TradeSide,
-    trigger_price: float,
+    order_type: OrderType,
     quantity: int,
     created_at: int,
+    trigger_price: float | None = None,
+    limit_price: float | None = None,
 ) -> Order:
     _ensure_session(session_id)
+
+    if order_type == OrderType.TARGET:
+        if trigger_price is None:
+            raise ValueError("trigger_price is required for TARGET orders")
+        actual_trigger = trigger_price
+        actual_limit = _target_limit_price(side, trigger_price)
+    else:  # LIMIT
+        if limit_price is None:
+            raise ValueError("limit_price is required for LIMIT orders")
+        actual_trigger = limit_price   # stored for schema consistency
+        actual_limit = limit_price
+
     order = Order(
         session_id=session_id,
         user_id=PLACEHOLDER_USER_ID,
         symbol=symbol,
         side=side,
-        order_type=OrderType.TARGET,
+        order_type=order_type,
         quantity=quantity,
-        trigger_price=trigger_price,
-        limit_price=_limit_price_for(side, trigger_price),
+        trigger_price=actual_trigger,
+        limit_price=actual_limit,
         status=OrderStatus.PENDING,
         created_at=created_at,
     )
@@ -103,19 +121,29 @@ def cancel_order(session_id: str, order_id: str) -> Order | None:
 
 def check_orders(session_id: str, current_price: float, current_time: int) -> list[Order]:
     """
-    Evaluate all PENDING orders for the session against current_price.
-    Returns the list of newly FILLED orders.
-    Trigger condition: BUY triggers when price >= trigger, SELL when price <= trigger.
+    Evaluate all PENDING orders against current_price and return newly FILLED ones.
+
+    TARGET — BUY: price >= trigger_price  |  SELL: price <= trigger_price
+    LIMIT  — BUY: price <= limit_price    |  SELL: price >= limit_price
     """
     filled: list[Order] = []
     for order in _orders.get(session_id, {}).values():
         if order.status != OrderStatus.PENDING:
             continue
-        triggered = (
-            order.side == TradeSide.BUY and current_price >= order.trigger_price
-        ) or (
-            order.side == TradeSide.SELL and current_price <= order.trigger_price
-        )
+
+        if order.order_type == OrderType.TARGET:
+            triggered = (
+                order.side == TradeSide.BUY and current_price >= order.trigger_price
+            ) or (
+                order.side == TradeSide.SELL and current_price <= order.trigger_price
+            )
+        else:  # LIMIT
+            triggered = (
+                order.side == TradeSide.BUY and current_price <= order.limit_price
+            ) or (
+                order.side == TradeSide.SELL and current_price >= order.limit_price
+            )
+
         if triggered:
             order.status = OrderStatus.FILLED
             order.filled_at = current_time

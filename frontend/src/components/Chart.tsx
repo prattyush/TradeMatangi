@@ -1,148 +1,401 @@
-import { useEffect, useRef, useCallback } from 'react'
+import { useEffect, useRef, useState, useCallback } from 'react'
 import {
   createChart,
   IChartApi,
   ISeriesApi,
   CandlestickData,
+  LineData,
   Time,
+  MouseEventParams,
+  IPriceLine,
 } from 'lightweight-charts'
-import api, { OHLCCandle } from '../services/api'
-import { useSSE } from '../hooks/useSSE'
+import api, { OHLCCandle, TickEvent } from '../services/api'
 
 interface Props {
-  sseUrl: string | null
-  onPriceUpdate: (price: number) => void
-  onSessionEnded: () => void
-  onOrderFilled?: (orderId: string) => void
-  preSessionCandles?: OHLCCandle[]
+  symbol: string
+  tradingDate: string
+  startTime: string | null   // null = no active session
+  intervalMinutes: number
+  latestTick: TickEvent | null
+  onPriceUpdate?: (price: number) => void  // only wired on primary pane
+  height?: number
 }
 
-const CANDLE_INTERVAL_SECONDS = 3 * 60
+type DrawMode = 'none' | 'hline' | 'trendline'
+
+const CANDLE_INTERVAL_SECS = (m: number) => m * 60
 
 function toCandle(c: OHLCCandle): CandlestickData {
   return { time: c.time as Time, open: c.open, high: c.high, low: c.low, close: c.close }
 }
 
-export default function Chart({ sseUrl, onPriceUpdate, onSessionEnded, onOrderFilled, preSessionCandles }: Props) {
+// Incremental EMA: k = 2/(period+1); returns updated EMA value.
+function nextEMA(prev: number, close: number, k: number): number {
+  return close * k + prev * (1 - k)
+}
+
+// Compute full EMA array from an array of closes.
+function computeEMA(closes: number[], period: number): (number | null)[] {
+  if (closes.length === 0) return []
+  const result: (number | null)[] = []
+  const k = 2 / (period + 1)
+  let ema: number | null = null
+  let warmup = 0
+  let sum = 0
+  for (let i = 0; i < closes.length; i++) {
+    sum += closes[i]
+    warmup++
+    if (warmup < period) {
+      result.push(null)
+    } else if (warmup === period) {
+      ema = sum / period
+      result.push(ema)
+    } else {
+      ema = nextEMA(ema!, closes[i], k)
+      result.push(ema)
+    }
+  }
+  return result
+}
+
+export default function Chart({
+  symbol, tradingDate, startTime, intervalMinutes,
+  latestTick, onPriceUpdate, height = 380,
+}: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<IChartApi | null>(null)
   const seriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null)
+  const ema9Ref = useRef<ISeriesApi<'Line'> | null>(null)
+  const ema21Ref = useRef<ISeriesApi<'Line'> | null>(null)
   const liveWindowRef = useRef<{ start: number; open: number; high: number; low: number; close: number } | null>(null)
+  const lastEma9Ref = useRef<number | null>(null)
+  const lastEma21Ref = useRef<number | null>(null)
+  const candleTimesRef = useRef<number[]>([])  // sorted candle timestamps for EMA update
+  const drawModeRef = useRef<DrawMode>('none')
+  const trendPt1Ref = useRef<{ time: number; price: number } | null>(null)
+  const priceLines = useRef<IPriceLine[]>([])
+  const trendLines = useRef<ISeriesApi<'Line'>[]>([])
 
-  // Initialise chart
+  const [showEma, setShowEma] = useState(true)
+  const [drawMode, setDrawMode] = useState<DrawMode>('none')
+  const [trendPending, setTrendPending] = useState(false)
+
+  // Keep drawMode ref in sync with state for use inside chart callbacks
+  useEffect(() => { drawModeRef.current = drawMode }, [drawMode])
+
+  // ── Chart initialisation ──────────────────────────────────────────────────
   useEffect(() => {
     if (!containerRef.current) return
     const chart = createChart(containerRef.current, {
       width: containerRef.current.clientWidth,
-      height: 480,
+      height,
       layout: { background: { color: '#0d1117' }, textColor: '#e6edf3' },
       grid: { vertLines: { color: '#1e2732' }, horzLines: { color: '#1e2732' } },
       timeScale: { timeVisible: true, secondsVisible: false, borderColor: '#30363d' },
       crosshair: { mode: 1 },
     })
     const series = chart.addCandlestickSeries({
-      upColor: '#26a641',
-      downColor: '#f85149',
+      upColor: '#26a641', downColor: '#f85149',
       borderVisible: false,
-      wickUpColor: '#26a641',
-      wickDownColor: '#f85149',
+      wickUpColor: '#26a641', wickDownColor: '#f85149',
     })
+    const e9 = chart.addLineSeries({ color: '#f0883e', lineWidth: 1, priceLineVisible: false, lastValueVisible: false })
+    const e21 = chart.addLineSeries({ color: '#79c0ff', lineWidth: 1, priceLineVisible: false, lastValueVisible: false })
+
     chartRef.current = chart
     seriesRef.current = series
+    ema9Ref.current = e9
+    ema21Ref.current = e21
 
-    // Load historical data
-    api.getHistorical().then(({ candles }) => {
-      if (candles.length > 0) {
-        series.setData(candles.map(toCandle))
-        chart.timeScale().fitContent()
-      }
-    }).catch(console.error)
+    // Click handler for drawing tools
+    chart.subscribeClick((param: MouseEventParams) => {
+      if (!param.point || !param.time || !seriesRef.current) return
+      const price = seriesRef.current.coordinateToPrice(param.point.y)
+      if (price === null) return
+      const time = param.time as number
 
-    const resizeObserver = new ResizeObserver(() => {
-      if (containerRef.current) {
-        chart.applyOptions({ width: containerRef.current.clientWidth })
+      if (drawModeRef.current === 'hline') {
+        const line = seriesRef.current.createPriceLine({
+          price,
+          color: '#e6edf3',
+          lineWidth: 1,
+          lineStyle: 2, // dashed
+          axisLabelVisible: true,
+          title: price.toFixed(0),
+        })
+        priceLines.current.push(line)
+        setDrawMode('none')
+      } else if (drawModeRef.current === 'trendline') {
+        if (!trendPt1Ref.current) {
+          trendPt1Ref.current = { time, price }
+          setTrendPending(true)
+        } else {
+          const p1 = trendPt1Ref.current
+          const trendSeries = chartRef.current!.addLineSeries({
+            color: '#ffa657',
+            lineWidth: 1,
+            priceLineVisible: false,
+            lastValueVisible: false,
+          })
+          const pts = [
+            { time: Math.min(p1.time, time) as Time, value: p1.time <= time ? p1.price : price },
+            { time: Math.max(p1.time, time) as Time, value: p1.time <= time ? price : p1.price },
+          ]
+          trendSeries.setData(pts)
+          trendLines.current.push(trendSeries)
+          trendPt1Ref.current = null
+          setTrendPending(false)
+          setDrawMode('none')
+        }
       }
     })
-    resizeObserver.observe(containerRef.current)
+
+    const ro = new ResizeObserver(() => {
+      if (containerRef.current) chart.applyOptions({ width: containerRef.current.clientWidth })
+    })
+    ro.observe(containerRef.current)
 
     return () => {
-      resizeObserver.disconnect()
+      ro.disconnect()
       chart.remove()
     }
-  }, [])
+  }, [height])
 
-  const handleSSEMessage = useCallback((event: Record<string, unknown>) => {
+  // ── EMA visibility toggle ─────────────────────────────────────────────────
+  useEffect(() => {
+    ema9Ref.current?.applyOptions({ visible: showEma })
+    ema21Ref.current?.applyOptions({ visible: showEma })
+  }, [showEma])
+
+  // ── Historical data (re-fetches when symbol/date/interval change) ─────────
+  useEffect(() => {
     const series = seriesRef.current
-    if (!series) return
+    const e9 = ema9Ref.current
+    const e21 = ema21Ref.current
+    if (!series || !e9 || !e21) return
 
-    if (event.type === 'session_ended') {
-      onSessionEnded()
-      liveWindowRef.current = null
-      return
-    }
+    liveWindowRef.current = null
+    lastEma9Ref.current = null
+    lastEma21Ref.current = null
+    candleTimesRef.current = []
 
-    if (event.type === 'order_filled') {
-      onOrderFilled?.(event.order_id as string)
-      return
-    }
+    api.getHistorical(symbol, tradingDate, intervalMinutes)
+      .then(({ candles }) => {
+        if (candles.length === 0) return
+        series.setData(candles.map(toCandle))
+        chartRef.current?.timeScale().fitContent()
+        candleTimesRef.current = candles.map(c => c.time)
 
-    if (event.type !== 'tick') return
+        const closes = candles.map(c => c.close)
+        const ema9vals = computeEMA(closes, 9)
+        const ema21vals = computeEMA(closes, 21)
 
-    const tick = event as { type: string; time: number; open: number; high: number; low: number; close: number }
-    onPriceUpdate(tick.close)
+        const e9data: LineData[] = []
+        const e21data: LineData[] = []
+        for (let i = 0; i < candles.length; i++) {
+          if (ema9vals[i] !== null) e9data.push({ time: candles[i].time as Time, value: ema9vals[i]! })
+          if (ema21vals[i] !== null) e21data.push({ time: candles[i].time as Time, value: ema21vals[i]! })
+        }
+        e9.setData(e9data)
+        e21.setData(e21data)
 
-    const windowStart = Math.floor(tick.time / CANDLE_INTERVAL_SECONDS) * CANDLE_INTERVAL_SECONDS
+        // Seed last EMA values for incremental updates during live replay
+        const last9 = ema9vals.filter(v => v !== null)
+        const last21 = ema21vals.filter(v => v !== null)
+        if (last9.length) lastEma9Ref.current = last9[last9.length - 1]!
+        if (last21.length) lastEma21Ref.current = last21[last21.length - 1]!
+      })
+      .catch(console.error)
+  }, [symbol, tradingDate, intervalMinutes])
+
+  // ── Pre-session candles (fetched when session starts) ─────────────────────
+  useEffect(() => {
+    const series = seriesRef.current
+    const e9 = ema9Ref.current
+    const e21 = ema21Ref.current
+    if (!startTime || !series || !e9 || !e21) return
+
+    api.getPreSession(symbol, tradingDate, startTime, intervalMinutes)
+      .then(candles => {
+        if (candles.length === 0) return
+        const closes = candles.map(c => c.close)
+        for (const candle of candles) {
+          series.update(toCandle(candle))
+          candleTimesRef.current.push(candle.time)
+        }
+        // Update EMA incrementally for pre-session candles
+        const k9 = 2 / (9 + 1)
+        const k21 = 2 / (21 + 1)
+        for (let i = 0; i < closes.length; i++) {
+          const t = candles[i].time as Time
+          if (lastEma9Ref.current !== null) {
+            lastEma9Ref.current = nextEMA(lastEma9Ref.current, closes[i], k9)
+            e9.update({ time: t, value: lastEma9Ref.current })
+          }
+          if (lastEma21Ref.current !== null) {
+            lastEma21Ref.current = nextEMA(lastEma21Ref.current, closes[i], k21)
+            e21.update({ time: t, value: lastEma21Ref.current })
+          }
+        }
+      })
+      .catch(console.error)
+  }, [startTime, symbol, tradingDate, intervalMinutes])
+
+  // ── Live tick processing ───────────────────────────────────────────────────
+  const intervalSecs = CANDLE_INTERVAL_SECS(intervalMinutes)
+
+  useEffect(() => {
+    const series = seriesRef.current
+    const e9 = ema9Ref.current
+    const e21 = ema21Ref.current
+    if (!latestTick || !series || !e9 || !e21) return
+
+    onPriceUpdate?.(latestTick.close)
+
+    const windowStart = Math.floor(latestTick.time / intervalSecs) * intervalSecs
     const live = liveWindowRef.current
 
+    let candleClosed = false
     if (!live || live.start !== windowStart) {
       if (live) {
-        series.update({
-          time: live.start as Time,
-          open: live.open,
-          high: live.high,
-          low: live.low,
-          close: live.close,
-        })
+        // Candle just closed — update EMA
+        series.update({ time: live.start as Time, open: live.open, high: live.high, low: live.low, close: live.close })
+        const k9 = 2 / (9 + 1)
+        const k21 = 2 / (21 + 1)
+        if (lastEma9Ref.current !== null) {
+          lastEma9Ref.current = nextEMA(lastEma9Ref.current, live.close, k9)
+          e9.update({ time: live.start as Time, value: lastEma9Ref.current })
+        }
+        if (lastEma21Ref.current !== null) {
+          lastEma21Ref.current = nextEMA(lastEma21Ref.current, live.close, k21)
+          e21.update({ time: live.start as Time, value: lastEma21Ref.current })
+        }
+        candleClosed = true
       }
       liveWindowRef.current = {
         start: windowStart,
-        open: tick.open,
-        high: tick.high,
-        low: tick.low,
-        close: tick.close,
+        open: latestTick.open,
+        high: latestTick.high,
+        low: latestTick.low,
+        close: latestTick.close,
       }
     } else {
-      live.high = Math.max(live.high, tick.high)
-      live.low = Math.min(live.low, tick.low)
-      live.close = tick.close
+      live.high = Math.max(live.high, latestTick.high)
+      live.low = Math.min(live.low, latestTick.low)
+      live.close = latestTick.close
     }
 
     const current = liveWindowRef.current!
-    series.update({
-      time: current.start as Time,
-      open: current.open,
-      high: current.high,
-      low: current.low,
-      close: current.close,
-    })
-  }, [onPriceUpdate, onSessionEnded])
+    series.update({ time: current.start as Time, open: current.open, high: current.high, low: current.low, close: current.close })
+    void candleClosed // used above
+  }, [latestTick, intervalSecs, onPriceUpdate])
 
-  // Paint pre-session candles (09:15 → chosen start time) onto the chart
-  // so the current day is connected to the prior-day historical data.
+  // ── Session ended: close the last open candle ──────────────────────────────
+  const prevStartTimeRef = useRef<string | null>(null)
   useEffect(() => {
-    const series = seriesRef.current
-    if (!series || !preSessionCandles || preSessionCandles.length === 0) return
-    for (const candle of preSessionCandles) {
-      series.update(toCandle(candle))
+    if (prevStartTimeRef.current !== null && startTime === null) {
+      // Session stopped — finalise the live window
+      liveWindowRef.current = null
     }
-  }, [preSessionCandles])
+    prevStartTimeRef.current = startTime
+  }, [startTime])
 
-  useSSE(sseUrl, handleSSEMessage)
+  const enterDrawMode = useCallback((mode: DrawMode) => {
+    if (drawModeRef.current === mode) {
+      setDrawMode('none')
+      trendPt1Ref.current = null
+      setTrendPending(false)
+    } else {
+      setDrawMode(mode)
+      trendPt1Ref.current = null
+      setTrendPending(false)
+    }
+  }, [])
+
+  const clearDrawings = useCallback(() => {
+    const series = seriesRef.current
+    if (series) {
+      for (const pl of priceLines.current) {
+        try { series.removePriceLine(pl) } catch { /* already removed */ }
+      }
+      priceLines.current = []
+    }
+    const chart = chartRef.current
+    if (chart) {
+      for (const tl of trendLines.current) {
+        try { chart.removeSeries(tl) } catch { /* already removed */ }
+      }
+      trendLines.current = []
+    }
+    setDrawMode('none')
+    trendPt1Ref.current = null
+    setTrendPending(false)
+  }, [])
+
+  const toolbarBtnStyle = (active: boolean): React.CSSProperties => ({
+    padding: '3px 8px',
+    fontSize: 11,
+    borderRadius: 4,
+    border: `1px solid ${active ? '#f0883e' : '#30363d'}`,
+    background: active ? '#2a1a0a' : '#161b22',
+    color: active ? '#f0883e' : '#8b949e',
+    cursor: 'pointer',
+  })
 
   return (
-    <div
-      ref={containerRef}
-      style={{ width: '100%', borderRadius: 8, overflow: 'hidden', border: '1px solid #30363d' }}
-    />
+    <div style={{ display: 'flex', flexDirection: 'column', border: '1px solid #30363d', borderRadius: 8, overflow: 'hidden' }}>
+      {/* Pane toolbar */}
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 8, padding: '4px 10px',
+        background: '#161b22', borderBottom: '1px solid #21262d', flexWrap: 'wrap',
+      }}>
+        <span style={{ fontSize: 11, color: '#8b949e', marginRight: 4 }}>
+          {intervalMinutes}m
+        </span>
+
+        {/* EMA toggle */}
+        <button onClick={() => setShowEma(v => !v)} style={toolbarBtnStyle(showEma)}>
+          EMA 9/21
+        </button>
+
+        {/* Drawing tools */}
+        <button
+          onClick={() => enterDrawMode('hline')}
+          style={toolbarBtnStyle(drawMode === 'hline')}
+          title="Draw horizontal line — click on chart to place"
+        >
+          H-Line
+        </button>
+        <button
+          onClick={() => enterDrawMode('trendline')}
+          style={toolbarBtnStyle(drawMode === 'trendline')}
+          title="Draw trend line — click two points on chart"
+        >
+          Trend{trendPending ? ' (pt 2)' : ''}
+        </button>
+        {(priceLines.current.length > 0 || trendLines.current.length > 0) && (
+          <button onClick={clearDrawings} style={toolbarBtnStyle(false)}>
+            Clear
+          </button>
+        )}
+
+        {drawMode !== 'none' && !trendPending && (
+          <span style={{ fontSize: 11, color: '#f0883e' }}>
+            {drawMode === 'hline' ? 'Click chart to place' : 'Click first point'}
+          </span>
+        )}
+        {trendPending && (
+          <span style={{ fontSize: 11, color: '#f0883e' }}>Click second point</span>
+        )}
+      </div>
+
+      <div
+        ref={containerRef}
+        style={{
+          width: '100%',
+          cursor: drawMode !== 'none' ? 'crosshair' : 'default',
+        }}
+      />
+    </div>
   )
 }

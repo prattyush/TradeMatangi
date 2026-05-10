@@ -1,6 +1,10 @@
 """
-Loads OHLC pickle files, converts IST→UTC, and provides
+Loads OHLC data files, converts IST→UTC, and provides
 both batch (historical REST) and streaming (simulation tick) access.
+
+Data lookup order: ohlcdata/<symbol>.parquet → legacy <symbol>.pickle
+Parquet files in ohlcdata/ are written by broker_service when Breeze
+fetches new dates.
 """
 from __future__ import annotations
 
@@ -11,8 +15,16 @@ from typing import Iterator
 from app.config import DATA_DIR, CANDLE_INTERVAL_MINUTES, MARKET_OPEN
 
 
+def parquet_path(symbol: str, date: str) -> Path:
+    """date format: YYYY-MM-DD  →  ohlcdata/SYMBOL-DD-MM-YYYY.parquet"""
+    y, m, d = date.split("-")
+    ohlc_dir = DATA_DIR / "ohlcdata"
+    ohlc_dir.mkdir(parents=True, exist_ok=True)
+    return ohlc_dir / f"{symbol}-{d}-{m}-{y}.parquet"
+
+
 def pickle_path(symbol: str, date: str) -> Path:
-    """date format: YYYY-MM-DD  →  SYMBOL-DD-MM-YYYY.pickle"""
+    """date format: YYYY-MM-DD  →  SYMBOL-DD-MM-YYYY.pickle (legacy)"""
     y, m, d = date.split("-")
     return DATA_DIR / f"{symbol}-{d}-{m}-{y}.pickle"
 
@@ -20,26 +32,30 @@ def pickle_path(symbol: str, date: str) -> Path:
 def load_dataframe(symbol: str, date: str) -> pd.DataFrame:
     """
     Load second-level OHLC data for the given symbol and date.
-    The pickle index is tz-naive IST (e.g. 09:15:00).  We attach the UTC
-    label directly — i.e. we treat "09:15:00 IST" as "09:15:00 UTC" for
-    timestamp purposes.  Lightweight Charts then displays the correct IST
-    market time on the x-axis without any client-side timezone config.
-    Returns DataFrame with UTC-labelled DatetimeIndex, columns: open, high, low, close.
+
+    Checks in order: parquet (ohlcdata/) → legacy pickle (data/).
+    Raises FileNotFoundError if neither exists.
+
+    The index is tz-naive IST from the source files.  We attach the UTC
+    label directly — i.e. treat "09:15:00 IST" as "09:15:00 UTC" so that
+    Lightweight Charts displays correct IST market time on the x-axis.
     """
-    path = pickle_path(symbol, date)
-    if not path.exists():
-        raise FileNotFoundError(f"Data file not found: {path}")
+    pq = parquet_path(symbol, date)
+    pkl = pickle_path(symbol, date)
 
-    df = pd.read_pickle(path)
+    if pq.exists():
+        df = pd.read_parquet(pq)
+    elif pkl.exists():
+        df = pd.read_pickle(pkl)
+    else:
+        raise FileNotFoundError(
+            f"No data file found for {symbol} on {date}. "
+            "Start a session to trigger a Breeze fetch, or check the date."
+        )
 
-    # Standardise column names (pickle has open, close, low, high, volume)
     df = df.rename(columns=str.lower)
     df = df[["open", "high", "low", "close"]]
-
-    # Attach UTC label to the naive IST index so that Unix timestamps
-    # produce display-correct times (09:15 shown on chart, not 03:45).
     df.index = df.index.tz_localize("UTC")
-
     return df
 
 
@@ -81,8 +97,6 @@ def pre_session_candles(
     """
     Return candles for `date` from market open (09:15) up to but not
     including the candle window that contains start_time.
-    Used to fill the gap on the chart before live replay begins.
-    Returns an empty list if start_time is at or before market open.
     """
     df = load_dataframe(symbol, date)
 
@@ -112,8 +126,6 @@ def iter_ticks(
     """
     df = load_dataframe(symbol, date)
 
-    # start_time is IST wall-clock; the index is labelled UTC with IST values,
-    # so we compare directly as if start_time is UTC.
     start_ts = pd.Timestamp(f"{date} {start_time}", tz="UTC")
     df = df[df.index >= start_ts]
 

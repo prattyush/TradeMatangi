@@ -11,7 +11,6 @@ from app.services.broker_service import (
     BreezeTokenError,
     BreezeSymbolError,
 )
-from app.services.data_loader import pickle_path as _pickle_path
 
 
 def _make_breeze_records(n: int = 5) -> list[dict]:
@@ -60,23 +59,40 @@ class TestBreezeToDatframe:
 
 class TestFetchHistorical:
     def test_cache_hit_skips_breeze(self, tmp_path):
-        """If pickle exists, Breeze should never be called."""
-        pkl = tmp_path / "NIFTY-06-05-2026.pickle"
-        pd.DataFrame().to_pickle(pkl)  # empty but present
+        """If parquet exists, Breeze should never be called."""
+        ohlc_dir = tmp_path / "ohlcdata"
+        ohlc_dir.mkdir()
+        pq = ohlc_dir / "NIFTY-06-05-2026.parquet"
+        pd.DataFrame({"open": [1.0], "high": [2.0], "low": [0.5], "close": [1.5]}).to_parquet(pq)
 
-        # pickle_path() lives in data_loader and references data_loader.DATA_DIR
         with patch("app.services.data_loader.DATA_DIR", tmp_path):
             with patch("app.services.broker_service._get_breeze") as mock_breeze:
                 result = fetch_historical("NIFTY", "2026-05-06")
 
         mock_breeze.assert_not_called()
-        assert result == pkl
+        assert result == pq
+
+    def test_legacy_pickle_migrated_to_parquet(self, tmp_path):
+        """If only a legacy pickle exists, it should be converted to parquet."""
+        pkl = tmp_path / "NIFTY-06-05-2026.pickle"
+        pd.DataFrame(
+            {"open": [24200.0], "high": [24210.0], "low": [24190.0], "close": [24205.0]},
+            index=pd.to_datetime(["2026-05-06 09:15:00"]),
+        ).to_pickle(pkl)
+
+        with patch("app.services.data_loader.DATA_DIR", tmp_path):
+            with patch("app.services.broker_service._get_breeze") as mock_breeze:
+                result = fetch_historical("NIFTY", "2026-05-06")
+
+        mock_breeze.assert_not_called()
+        assert result.suffix == ".parquet"
+        assert result.exists()
 
     def test_unsupported_symbol_raises(self, tmp_path):
         with pytest.raises(BreezeSymbolError):
             fetch_historical("UNKNOWN", "2026-05-06")
 
-    def test_saves_pickle_on_success(self, tmp_path):
+    def test_saves_parquet_on_success(self, tmp_path):
         mock_breeze = MagicMock()
         mock_breeze.get_historical_data_v2.return_value = {
             "Status": 200,
@@ -85,12 +101,12 @@ class TestFetchHistorical:
         }
 
         with patch("app.services.data_loader.DATA_DIR", tmp_path):
-            with patch("app.services.broker_service.DATA_DIR", tmp_path):
-                with patch("app.services.broker_service._get_breeze", return_value=mock_breeze):
-                    result = fetch_historical("NIFTY", "2026-05-06")
+            with patch("app.services.broker_service._get_breeze", return_value=mock_breeze):
+                result = fetch_historical("NIFTY", "2026-05-06")
 
         assert result.exists()
-        df = pd.read_pickle(result)
+        assert result.suffix == ".parquet"
+        df = pd.read_parquet(result)
         assert len(df) == 10
 
     def test_expired_token_raises_breeze_token_error(self, tmp_path):
