@@ -1,0 +1,43 @@
+from fastapi import APIRouter, HTTPException, Query
+from app.models.schemas import Order, PlaceOrderRequest
+from app.services import order_service, simulation as sim_svc
+
+router = APIRouter(prefix="/api/orders", tags=["orders"])
+
+
+@router.post("", response_model=Order)
+async def place_order(req: PlaceOrderRequest):
+    session = sim_svc.get_session(req.session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if session.current_time is None:
+        raise HTTPException(status_code=400, detail="Simulation has not started yet")
+    if req.trigger_price <= 0:
+        raise HTTPException(status_code=400, detail="trigger_price must be positive")
+    if req.quantity < 1:
+        raise HTTPException(status_code=400, detail="quantity must be at least 1")
+
+    order = order_service.place_order(
+        session_id=req.session_id,
+        symbol=session.symbol,
+        side=req.side,
+        trigger_price=req.trigger_price,
+        quantity=req.quantity,
+        created_at=int(session.current_time),
+    )
+    return order
+
+
+@router.get("", response_model=list[Order])
+async def get_orders(session_id: str = Query(...), open_only: bool = Query(default=True)):
+    if open_only:
+        return order_service.get_open_orders(session_id)
+    return order_service.get_all_orders(session_id)
+
+
+@router.delete("/{order_id}", response_model=Order)
+async def cancel_order(order_id: str, session_id: str = Query(...)):
+    order = order_service.cancel_order(session_id, order_id)
+    if order is None:
+        raise HTTPException(status_code=404, detail="Order not found or already closed")
+    return order

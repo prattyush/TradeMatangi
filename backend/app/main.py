@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.routers import data, simulation, trading, stream
+from app.routers import data, simulation, trading, stream, orders
 
 app = FastAPI(
     title="TradeMatangi Backend",
@@ -21,6 +21,7 @@ app.include_router(data.router)
 app.include_router(simulation.router)
 app.include_router(trading.router)
 app.include_router(stream.router)
+app.include_router(orders.router)
 
 
 @app.get("/health")

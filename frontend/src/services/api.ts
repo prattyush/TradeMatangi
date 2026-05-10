@@ -8,6 +8,22 @@ export interface OHLCCandle {
   close: number
 }
 
+export interface Order {
+  order_id: string
+  session_id: string
+  user_id: string
+  symbol: string
+  side: 'BUY' | 'SELL'
+  order_type: 'TARGET'
+  quantity: number
+  trigger_price: number
+  limit_price: number
+  status: 'PENDING' | 'FILLED' | 'CANCELLED'
+  created_at: number
+  filled_at: number | null
+  filled_price: number | null
+}
+
 export interface HistoricalDataResponse {
   symbol: string
   dates: string[]
@@ -126,6 +142,30 @@ const api = {
   async getPosition(session_id: string): Promise<Position> {
     const res = await fetch(`${BACKEND_URL}/api/trades/position?session_id=${session_id}`)
     if (!res.ok) throw new Error(`Get position failed: ${res.status}`)
+    return res.json()
+  },
+
+  async placeOrder(session_id: string, side: 'BUY' | 'SELL', trigger_price: number, quantity: number): Promise<Order> {
+    const res = await fetch(`${BACKEND_URL}/api/orders`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ session_id, side, trigger_price, quantity }),
+    })
+    if (!res.ok) throw new Error(`Place order failed: ${res.status}`)
+    return res.json()
+  },
+
+  async getOrders(session_id: string, open_only = true): Promise<Order[]> {
+    const res = await fetch(`${BACKEND_URL}/api/orders?session_id=${session_id}&open_only=${open_only}`)
+    if (!res.ok) throw new Error(`Get orders failed: ${res.status}`)
+    return res.json()
+  },
+
+  async cancelOrder(session_id: string, order_id: string): Promise<Order> {
+    const res = await fetch(`${BACKEND_URL}/api/orders/${order_id}?session_id=${session_id}`, {
+      method: 'DELETE',
+    })
+    if (!res.ok) throw new Error(`Cancel order failed: ${res.status}`)
     return res.json()
   },
 

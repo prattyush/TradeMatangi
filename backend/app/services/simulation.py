@@ -7,12 +7,17 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import uuid
 from dataclasses import dataclass, field
+from decimal import Decimal
 from typing import Optional
 
 from app.models.schemas import SimulationState
 from app.services.data_loader import iter_ticks
+from app.config import PLACEHOLDER_USER_ID
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -32,6 +37,23 @@ class SimulationSession:
 
 # Registry of active sessions
 _sessions: dict[str, SimulationSession] = {}
+
+
+def _upsert_session_to_db(session: SimulationSession) -> None:
+    try:
+        from app.services.db import get_dynamodb_resource
+        table = get_dynamodb_resource().Table("Sessions")
+        table.put_item(Item={
+            "session_id": session.session_id,
+            "user_id": PLACEHOLDER_USER_ID,
+            "symbol": session.symbol,
+            "date": session.date,
+            "start_time": session.start_time,
+            "speed": Decimal(str(session.speed)),
+            "state": session.state.value,
+        })
+    except Exception:
+        logger.exception("DynamoDB write failed for session %s", session.session_id)
 
 
 def get_session(session_id: str) -> Optional[SimulationSession]:
@@ -54,6 +76,7 @@ def create_session(
     )
     session.resume_event.set()  # not paused initially
     _sessions[session_id] = session
+    _upsert_session_to_db(session)
     return session
 
 
@@ -76,9 +99,30 @@ async def _run_session(session: SimulationSession) -> None:
             if session.state == SimulationState.ENDED:
                 break
 
-            session.current_time = str(tick["time"])
-            session.last_price = tick["close"]
+            current_time = tick["time"]
+            current_price = tick["close"]
+            session.current_time = str(current_time)
+            session.last_price = current_price
             await session.queue.put(json.dumps(tick))
+
+            # Check and emit filled orders
+            from app.services.order_service import check_orders
+            filled = check_orders(session.session_id, current_price, current_time)
+            for order in filled:
+                fill_event = {
+                    "type": "order_filled",
+                    "order_id": order.order_id,
+                    "side": order.side.value,
+                    "quantity": order.quantity,
+                    "trigger_price": order.trigger_price,
+                    "filled_price": order.filled_price,
+                    "filled_at": order.filled_at,
+                }
+                try:
+                    session.queue.put_nowait(json.dumps(fill_event))
+                except asyncio.QueueFull:
+                    logger.warning("Queue full, dropping order_filled event for %s", order.order_id)
+
             await asyncio.sleep(session.speed)
 
     except asyncio.CancelledError:
@@ -114,4 +158,5 @@ def stop_session(session: SimulationSession) -> None:
     session.resume_event.set()  # unblock if paused
     if session.task and not session.task.done():
         session.task.cancel()
+    _upsert_session_to_db(session)
     _sessions.pop(session.session_id, None)

@@ -116,3 +116,46 @@ class PreSessionDataResponse(BaseModel):
     date: str
     start_time: str
     candles: list[OHLCCandle]
+
+
+class OrderStatus(str, Enum):
+    PENDING = "PENDING"
+    FILLED = "FILLED"
+    CANCELLED = "CANCELLED"
+
+
+class OrderType(str, Enum):
+    TARGET = "TARGET"  # internally a stop-limit; limit auto-set at 1% from trigger
+
+
+class Order(BaseModel):
+    order_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    session_id: str
+    user_id: str
+    symbol: str
+    side: TradeSide
+    order_type: OrderType = OrderType.TARGET
+    quantity: int
+    trigger_price: float
+    limit_price: float
+    status: OrderStatus = OrderStatus.PENDING
+    created_at: int  # Unix timestamp
+    filled_at: int | None = None
+    filled_price: float | None = None
+
+
+class PlaceOrderRequest(BaseModel):
+    session_id: str
+    side: TradeSide
+    trigger_price: float
+    quantity: int = 1
+
+
+class OrderFilledEvent(BaseModel):
+    type: Literal["order_filled"] = "order_filled"
+    order_id: str
+    side: str
+    quantity: int
+    trigger_price: float
+    filled_price: float
+    filled_at: int

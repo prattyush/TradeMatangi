@@ -3,6 +3,7 @@ import Chart from './components/Chart'
 import SessionControls from './components/SessionControls'
 import TradePanel from './components/TradePanel'
 import TradeHistory from './components/TradeHistory'
+import OrderPanel from './components/OrderPanel'
 import { useSimulation } from './hooks/useSimulation'
 
 export default function App() {
@@ -40,6 +41,7 @@ export default function App() {
             sseUrl={sim.sseUrl}
             onPriceUpdate={sim.updateCurrentPrice}
             onSessionEnded={sim.handleSessionEnded}
+            onOrderFilled={sim.handleOrderFilled}
             preSessionCandles={sim.preSessionCandles}
           />
         </div>
@@ -57,6 +59,15 @@ export default function App() {
             onBuy={sim.buy}
             onSell={sim.sell}
           />
+          <div style={{ borderTop: '1px solid #21262d', paddingTop: 12 }}>
+            <OrderPanel
+              sessionState={sim.sessionState}
+              currentPrice={sim.currentPrice}
+              openOrders={sim.openOrders}
+              onPlaceOrder={sim.placeOrder}
+              onCancelOrder={sim.cancelOrder}
+            />
+          </div>
           <TradeHistory trades={sim.trades} />
         </div>
       </div>
