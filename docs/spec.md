@@ -111,9 +111,21 @@ This phase the simulated engine and the UI will support taken symbol and types a
 3. UI should have option to provide dates for which the simulated trading is to be done and based on that the backend will fetch the data.
 4. UI should support drawing horizontal and trend lines on the chart.
 
-##### Broker Integration
+##### BROKER Integration
 1. The backend should integrate with breeze library to fetch the data for the respective symbol. 
 2. The backend should in this phase persist all fetched data from broker and also the trades taken in a database DynamoDb Local.
+3. Use the broker integration to only fetch, don't place orders.
+4. The access credentials are present in the data/ folder in the files accesskeys.ini. It is in config format for python to read. Already added .ini in .gitignore so that it is not included in the git files. The code snippet for creating breeze instance is as below:-
+```
+from breeze_connect import BreezeConnect
+import configparser
+
+credentials_config_parser = configparser.ConfigParser()
+credentials_config_parser.read('data/accesskeys.ini')
+breeze = BreezeConnect(api_key=credentials_config_parser['icicidirect']['api_key'])
+breeze.generate_session(api_secret=credentials_config_parser['icicidirect']['api_secret'],
+                        session_token=credentials_config_parser['icicidirect']['session_token'])
+```
 
 
 ##### Basic AllOrders
@@ -121,9 +133,20 @@ This phase the simulated engine and the UI will support taken symbol and types a
 2. The backend should be able to persist these limit, stop limit and target orders and trigger them in the simulated trading environment when the condition for the respective order is fullfilled.
 3. The UI and backend should support clearing of these orders and also display of the open orders when asked for.
 
+##### Flexible Inputs
+1. UI and backend will allow to choose date on which replay is to be done. And fetch last 2 days of data for the respective symbol.
+2. UI and backend will allow to choose the symbol. The choices can be restricted for now, that is NIFTY, TATAPOWER, TataMotors, RELIANCE.
 
 
-#### Phase-III Entry/Exit Custom Logic
+#### Phase-III AllSymbols
+This phase should support options and futures. We only need to support options and futures for stocks and indexes. No need to support commodity or currency at this phase.
+
+##### OptionsTrading-UI
+1. To support options trading in UI. The UI should show options to choose symbol and then weekly or monthly expiry. Weekly contracts expire on Tuesdays for NSE if not holiday and Monthly on last Tuesday of the month. 
+2. To choose strike price only applicable for options, we should 2 options, first how far from stocks or index current price like 2 means 2 strikes in out of money  and -2 means 2 strike price in money. The second option should be choose price range like within 30-60 where at current time the price of the option/future is within 30-60. 
+
+
+#### Phase-IV Entry/Exit Custom Logic
 
 The details are getting discussed.
 
