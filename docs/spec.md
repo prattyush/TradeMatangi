@@ -155,3 +155,53 @@ The details are getting discussed.
 
 ## Notes
 
+### Phase-I Implementation Status (as of 2026-05-10)
+
+**Completed (branch: `feature/phase-i-mvp`):**
+- FastAPI backend: CORSMiddleware, asyncio simulation engine (one `asyncio.Queue` + `asyncio.Event` per session), SSE tick stream, in-memory trade store
+- All 10 REST endpoints implemented — `/api/simulation/*`, `/api/stream/{id}`, `/api/data/historical`, `/api/trades/*`
+- 27 backend unit tests passing (data_loader, simulation state machine, trading)
+- Frontend: React + Vite + TypeScript, Lightweight Charts v4 candlestick replay
+- Session controls: Start with configurable start time + replay speed, Pause, Resume, Stop
+- Buy/Sell with in-memory position tracking, real-time P&L calculated on the frontend
+- Trade history panel showing all trades in the session
+- Historical chart: May 4 + May 5 NIFTY 3-min candles loaded on mount
+- Scripts for WSL and EC2: `start-backend.sh`, `start-frontend.sh`, and stop equivalents
+
+**Known Open Issue:**
+When replay starts at a time after 09:15 (e.g. 10:15), the May 6 candles between 09:15 and the chosen start time are not shown on the chart — the live replay appears disconnected from the prior two days of data. A fix was prototyped (backend `GET /api/data/pre-session` endpoint + frontend `presessionCandles` state in `useSimulation`, effects in `Chart.tsx`) but reverted for further review. The fix approach is sound; it was not a correctness issue.
+
+---
+
+### Technology Decisions Finalized in Phase-I
+
+**SSE over WebSocket** (resolves HS-1)
+SSE (`text/event-stream`) was chosen for the tick stream. Rationale: tick data is server-to-client only, SSE works across multiple uvicorn workers without sticky sessions, and the browser's `EventSource` API handles reconnection automatically. WebSocket would be reconsidered only if bidirectional in-session messaging (e.g. server-initiated trade execution triggers) becomes a requirement.
+
+**IST Timezone Handling** (resolves MS-3)
+The pickle files use a tz-naive `DatetimeIndex` representing IST wall-clock times (e.g. `2026-05-06 09:15:00`). Lightweight Charts interprets Unix timestamps as UTC for display. Rather than converting IST → UTC (which shifts display times by −5:30, showing 03:45 instead of 09:15), the backend uses `df.index.tz_localize("UTC")` — attaching the UTC label to the IST wall-clock value. This makes the Unix timestamps encode the IST time directly so the chart x-axis shows the correct market time without any client-side configuration. Applied consistently in `data_loader.py` for both historical REST and SSE tick timestamps.
+
+**P&L on the Frontend** (resolves MS-1)
+P&L is calculated entirely in the browser: `direction × quantity × (currentPrice − avgEntryPrice)`. No backend round-trip needed. Updated on every SSE tick.
+
+**3-Minute Candle Window Alignment**
+Both sides use epoch-aligned boundaries: pandas `resample("3min")` on the backend and `Math.floor(tick.time / 180) * 180` on the frontend. This guarantees live-streamed ticks aggregate into candles whose timestamps exactly match the pre-loaded historical candles.
+
+**Placeholder User ID** (resolves HS-3)
+Even with no auth in Phase-I, all trades record `user_id = "00000000-0000-0000-0000-000000000001"`. The schema is forward-compatible: swapping in a real UUID when auth lands in a later phase requires no structural change.
+
+**Pickle loading kept for Phase-I** (defers HS-5)
+The pickle security concern is acknowledged. For Phase-I the pickle files are trusted local data and the backend is not exposed to untrusted parties. A Parquet conversion script is deferred to Phase-II when broker-fetched data is introduced.
+
+---
+
+### WSL `/mnt/d/` Filesystem Constraints
+
+The project lives on the Windows filesystem under `/mnt/d/`. Two constraints apply:
+
+1. **Python venv**: the Windows filesystem does not support the `lib → lib64` symlink that `python -m venv` creates. Create the venv on the Linux filesystem: `python -m venv ~/venvs/tradematangi`.
+
+2. **npm install**: `.bin/` symlinks fail on the Windows filesystem. Always use `npm install --no-bin-links`. Scripts invoke Vite directly via `node node_modules/vite/bin/vite.js` instead of the `.bin/vite` symlink.
+
+These constraints are encoded in `scripts/start-backend.sh` and `scripts/start-frontend.sh`.
+
