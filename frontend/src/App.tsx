@@ -116,7 +116,9 @@ export default function App() {
   const addPane = useCallback(() => {
     if (instrumentType === 'options' && addPaneType !== 'equity' && optionsReady) {
       const interval = { NIFTY: 50, RELIND: 5, TATMOT: 5, TATPOW: 5 }[sim.symbol] ?? 50
-      const strike = optionsReady.atmStrike + addOffset * interval
+      // OTM direction: positive offset = higher strikes for CE, lower for PE
+      const directedOffset = addPaneType === 'PE' ? -addOffset : addOffset
+      const strike = optionsReady.atmStrike + directedOffset * interval
       const right = addPaneType as 'CE' | 'PE'
       setPanes(p => [...p, makeOptionsPane(right, strike, optionsReady.expiry)])
     } else {
@@ -386,7 +388,7 @@ export default function App() {
             </select>
             {addPaneType !== 'equity' && (
               <label style={{ fontSize: 12, color: '#8b949e', display: 'flex', alignItems: 'center', gap: 4 }}>
-                Offset:
+                OTM:
                 <input
                   type="number" value={addOffset} min={-10} max={10}
                   onChange={e => setAddOffset(parseInt(e.target.value) || 0)}
