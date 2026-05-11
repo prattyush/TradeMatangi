@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import re
+import pandas as pd
 from fastapi import APIRouter, HTTPException, Query
 
 from app.models.schemas import (
@@ -11,6 +12,8 @@ from app.models.schemas import (
     SymbolsResponse,
     AvailableDatesResponse,
     PreSessionDataResponse,
+    PriceAtResponse,
+    ExpiryResponse,
 )
 from app.services.data_loader import (
     load_dataframe,
@@ -149,3 +152,58 @@ async def get_pre_session(
         start_time=start_time,
         candles=[OHLCCandle(**c) for c in candles],
     )
+
+
+@router.get("/price-at", response_model=PriceAtResponse)
+async def get_price_at(
+    symbol: str = Query(...),
+    date: str = Query(...),
+    time: str = Query(...),
+):
+    """
+    Return the first available close price at or after the given time on the given date.
+    Used to resolve ATM strike before an options session is configured.
+    time format: HH:MM or HH:MM:SS
+    """
+    if symbol not in SUPPORTED_SYMBOLS:
+        raise HTTPException(status_code=400, detail=f"Unsupported symbol: {symbol}")
+
+    if not re.match(r'^\d{2}:\d{2}(:\d{2})?$', time):
+        raise HTTPException(status_code=422, detail="time must be HH:MM or HH:MM:SS")
+    if len(time) == 5:
+        time = time + ":00"
+
+    _ensure_data(symbol, date)
+
+    try:
+        df = load_dataframe(symbol, date)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail=f"Data not found for {symbol} on {date}")
+
+    target_ts = pd.Timestamp(f"{date} {time}", tz="UTC")
+    rows = df[df.index >= target_ts]
+    if rows.empty:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No data at or after {time} for {symbol} on {date}",
+        )
+
+    price = round(float(rows.iloc[0]["close"]), 2)
+    return PriceAtResponse(symbol=symbol, date=date, time=time, price=price)
+
+
+@router.get("/expiry", response_model=ExpiryResponse)
+async def get_expiry(
+    symbol: str = Query(...),
+    date: str = Query(...),
+):
+    """
+    Return the next valid options expiry date for the given symbol and trading date.
+    NIFTY: next weekly expiry; equities: current month's monthly expiry.
+    """
+    if symbol not in SUPPORTED_SYMBOLS:
+        raise HTTPException(status_code=400, detail=f"Unsupported symbol: {symbol}")
+
+    from app.services.options_service import get_expiry_date
+    expiry = get_expiry_date(symbol, date)
+    return ExpiryResponse(symbol=symbol, date=date, expiry=expiry)

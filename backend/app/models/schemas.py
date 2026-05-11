@@ -22,6 +22,10 @@ class SimulationStartRequest(BaseModel):
     date: str
     start_time: str = "09:15:00"
     speed: float = Field(default=1.0, ge=0.05, le=100.0)
+    instrument_type: str = "equity"   # "equity" or "options"
+    strike: int | None = None          # required when instrument_type="options"
+    expiry: str | None = None          # YYYY-MM-DD; required when instrument_type="options"
+    right: str | None = None           # "CE" or "PE"; required when instrument_type="options"
 
 
 class SimulationStartResponse(BaseModel):
@@ -31,6 +35,10 @@ class SimulationStartResponse(BaseModel):
     start_time: str
     speed: float
     session_capital: float = 0.0
+    instrument_type: str = "equity"
+    strike: int | None = None
+    expiry: str | None = None
+    right: str | None = None
 
 
 class SimulationControlRequest(BaseModel):
@@ -55,6 +63,10 @@ class Trade(BaseModel):
     price: float
     timestamp: int
     session_id: str
+    instrument_type: str = "equity"
+    strike: int | None = None
+    expiry: str | None = None
+    right: str | None = None
 
 
 class Position(BaseModel):
@@ -168,6 +180,19 @@ class OrderFilledEvent(BaseModel):
     trigger_price: float
     filled_price: float
     filled_at: int
+
+
+class PriceAtResponse(BaseModel):
+    symbol: str
+    date: str
+    time: str
+    price: float
+
+
+class ExpiryResponse(BaseModel):
+    symbol: str
+    date: str
+    expiry: str
 
 
 class WalletResponse(BaseModel):

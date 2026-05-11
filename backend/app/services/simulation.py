@@ -31,6 +31,10 @@ class SimulationSession:
     current_time: Optional[str] = None
     last_price: float = 0.0
     session_capital: float = 0.0  # wallet balance snapshotted at session start
+    instrument_type: str = "equity"   # "equity" or "options"
+    strike: Optional[int] = None       # options only
+    expiry: Optional[str] = None       # options only (YYYY-MM-DD)
+    right: Optional[str] = None        # options only ("CE" or "PE")
     queue: asyncio.Queue = field(default_factory=lambda: asyncio.Queue(maxsize=500))
     resume_event: asyncio.Event = field(default_factory=asyncio.Event)
     task: Optional[asyncio.Task] = None
@@ -44,7 +48,7 @@ def _upsert_session_to_db(session: SimulationSession) -> None:
     try:
         from app.services.db import get_dynamodb_resource
         table = get_dynamodb_resource().Table("Sessions")
-        table.put_item(Item={
+        item: dict = {
             "session_id": session.session_id,
             "user_id": FIXED_USER_ID,
             "symbol": session.symbol,
@@ -53,7 +57,13 @@ def _upsert_session_to_db(session: SimulationSession) -> None:
             "speed": Decimal(str(session.speed)),
             "state": session.state.value,
             "session_capital": Decimal(str(session.session_capital)),
-        })
+            "instrument_type": session.instrument_type,
+        }
+        if session.instrument_type == "options":
+            item["strike"] = session.strike
+            item["expiry"] = session.expiry
+            item["right"] = session.right
+        table.put_item(Item=item)
     except Exception:
         logger.exception("DynamoDB write failed for session %s", session.session_id)
 
@@ -67,6 +77,10 @@ def create_session(
     date: str,
     start_time: str,
     speed: float,
+    instrument_type: str = "equity",
+    strike: Optional[int] = None,
+    expiry: Optional[str] = None,
+    right: Optional[str] = None,
 ) -> SimulationSession:
     from app.services import wallet_service
     session_id = str(uuid.uuid4())
@@ -78,6 +92,10 @@ def create_session(
         start_time=start_time,
         speed=speed,
         session_capital=session_capital,
+        instrument_type=instrument_type,
+        strike=strike,
+        expiry=expiry,
+        right=right,
     )
     session.resume_event.set()  # not paused initially
     _sessions[session_id] = session
@@ -97,7 +115,16 @@ async def _run_session(session: SimulationSession) -> None:
     await session.queue.put(json.dumps(start_event))
 
     try:
-        for tick in iter_ticks(session.symbol, session.date, session.start_time):
+        if session.instrument_type == "options" and session.strike and session.expiry and session.right:
+            from app.services.options_service import options_iter_ticks
+            tick_iter = options_iter_ticks(
+                session.symbol, session.date, session.strike,
+                session.expiry, session.right, session.start_time,
+            )
+        else:
+            tick_iter = iter_ticks(session.symbol, session.date, session.start_time)
+
+        for tick in tick_iter:
             # Check for pause
             await session.resume_event.wait()
 
@@ -122,6 +149,10 @@ async def _run_session(session: SimulationSession) -> None:
                     timestamp=order.filled_at,
                     quantity=order.quantity,
                     symbol=order.symbol,
+                    instrument_type=session.instrument_type,
+                    strike=session.strike,
+                    expiry=session.expiry,
+                    right=session.right,
                 )
                 fill_event = {
                     "type": "order_filled",
