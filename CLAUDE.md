@@ -50,9 +50,14 @@ node node_modules/typescript/bin/tsc --noEmit
 - **Wallet carry-forward**: keyed per user + calendar date of the replay. Replaying an earlier date uses that date's prior end-of-day balance, not the most recent session's balance.
 - **Wallet in-memory store**: `wallet_service._wallets` is a `dict[(user_id, date), float]`. In-memory is source of truth per process; DynamoDB is persistence. Carry-forward uses a DynamoDB `query` with `Key("date").lt(target_date), ScanIndexForward=False, Limit=1` — this is O(1) because `date` is the sort key.
 - **Fixed user UUID**: `FIXED_USER_ID = "abc12300-0000-0000-0000-000000000001"` in `config.py`. Used by all services. Do not use `PLACEHOLDER_USER_ID` — that constant was removed in Phase III Sprint 1.
-- **Wallet debit/credit coverage**: BUY order placement debits `qty × actual_limit`; BUY cancel credits back `order.reserved_amount`; SELL order fill credits `qty × filled_price`; direct TradePanel BUY debits `price × 1`, direct SELL credits `price × 1`. SL orders (Sprint 2) must NOT debit wallet.
+- **Wallet debit/credit coverage**: BUY order placement debits `qty × actual_limit`; BUY cancel credits back `order.reserved_amount`; SELL order fill credits `qty × filled_price`; direct TradePanel BUY debits `price × 1`, direct SELL credits `price × 1`. SL orders have **zero wallet impact** — no debit on placement, no credit on fill, no credit on cancel.
 - **DynamoDB `list_tables()` returns `list[str]`**: `list_tables()["TableNames"]` is already a plain list of table name strings. Use `set(dynamodb.list_tables()["TableNames"])` — do not iterate with `t["TableName"]`.
 - **DynamoDB lazy-import patch targets**: services import `get_dynamodb_resource` inside helper functions. In tests, patch `app.services.db.get_dynamodb_resource`, not the module that calls it.
+- **`compute_funds_ratio_quantity` lot_size parameter**: takes explicit `lot_size: int = 1`, NOT auto-derived from `LOT_SIZES`. The router controls whether equity (lot_size=1) or options (lot_size from `LOT_SIZES`) semantics apply. Sprint 2 router always passes lot_size=1.
+- **`PlaceOrderRequest.quantity` is now optional**: `int | None = None`. Required when `funds_ratio_pct` is None; computed server-side from `session_capital × funds_ratio_pct` when provided. Never send both.
+- **FundsRatio localStorage keys**: `fundsRatioMode` (boolean string) and `fundsRatios` (JSON `{l, m, h}` with percentage 0–100). Exported helpers `loadFundsRatioMode()` / `loadFundsRatios()` in `SettingsModal.tsx` for App-level init.
+- **STOPLOSS trigger logic**: identical to TARGET in `check_orders` — BUY fires when `price >= trigger`, SELL fires when `price <= trigger`. Difference from TARGET: `limit_price = trigger_price` (no 1% deviation) and zero wallet impact.
+- **`InsufficientFundsError` constructor**: takes two positional floats `(balance: float, required: float)`, not a string. Use `InsufficientFundsError(current_wallet, unit_cost)`.
 
 ## Phase-III Status
 
@@ -60,4 +65,8 @@ node node_modules/typescript/bin/tsc --noEmit
 
 All wallet mechanics are live. See `docs/spec-phase3.md` Sprint 1 section for full details.
 
-**Next: Sprint 2 — FundsRatio + Stoploss** (see `docs/spec-phase3.md`)
+### Sprint 2 — FundsRatio + Stoploss ✅ COMPLETE (merged to dev, 155 tests passing)
+
+FundsRatio sizing and SL orders are live. See `docs/spec-phase3.md` Sprint 2 section for full details.
+
+**Next: Sprint 3 — Options Data Infrastructure (Backend)** (see `docs/spec-phase3.md`)
