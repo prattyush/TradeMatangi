@@ -187,12 +187,16 @@ export default function App() {
   // ── Per-pane tick routing ────────────────────────────────────────────────────
   // Each tick type has its own state field so React batching doesn't drop earlier
   // ticks when equity + CE + PE all arrive within the same render cycle.
+  // Options ticks are only routed to panes whose strike matches the session strike —
+  // the backend streams exactly one strike, so a pane with a different strike must
+  // not receive those ticks (it only shows historical data).
   const getTickForPane = useCallback((pane: PaneConfig) => {
     if (pane.type === 'equity') return sim.latestEquityTick
+    if (sim.sessionStrike !== null && pane.strike !== sim.sessionStrike) return null
     if (pane.right === 'CE') return sim.latestCETick
     if (pane.right === 'PE') return sim.latestPETick
     return null
-  }, [sim.latestEquityTick, sim.latestCETick, sim.latestPETick])
+  }, [sim.latestEquityTick, sim.latestCETick, sim.latestPETick, sim.sessionStrike])
 
   // ── SSE at app level ─────────────────────────────────────────────────────────
   const handleSSEMessage = useCallback((event: Record<string, unknown>) => {
