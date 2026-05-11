@@ -222,10 +222,14 @@ def _validate_options_gaps(df: pd.DataFrame, date: str) -> pd.DataFrame:
     forward-fill from the first available tick and backward-fill any leading gap.
     No strict gap limit — options data is inherently sparser than equity.
     """
-    market_open = pd.Timestamp(f"{date} {MARKET_OPEN}")
-    market_close = pd.Timestamp(f"{date} {MARKET_CLOSE}") - pd.Timedelta(seconds=1)
     if df.empty:
         raise RuntimeError(f"No options data for {date}.")
+    # Strip tz-awareness so we can reindex with a tz-naive full-day index.
+    # The tz-as-UTC label is re-applied in load_options_dataframe at read time.
+    if df.index.tzinfo is not None:
+        df.index = df.index.tz_localize(None)
+    market_open = pd.Timestamp(f"{date} {MARKET_OPEN}")
+    market_close = pd.Timestamp(f"{date} {MARKET_CLOSE}") - pd.Timedelta(seconds=1)
     full_index = pd.date_range(start=market_open, end=market_close, freq="1s")
     df = df.reindex(full_index).ffill().bfill()
     return df
@@ -304,7 +308,10 @@ def load_options_dataframe(
     df = pd.read_parquet(pq)
     df = df.rename(columns=str.lower)
     df = df[["open", "high", "low", "close"]]
-    df.index = df.index.tz_localize("UTC")
+    if df.index.tzinfo is None:
+        df.index = df.index.tz_localize("UTC")
+    else:
+        df.index = df.index.tz_convert("UTC")
     return df
 
 

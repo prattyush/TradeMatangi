@@ -185,8 +185,10 @@ export default function Chart({
     lastEma21Ref.current = null
     candleTimesRef.current = []
 
+    let cancelled = false
     api.getHistorical(symbol, tradingDate, intervalMinutes)
       .then(({ candles }) => {
+        if (cancelled) return
         if (candles.length === 0) return
         series.setData(candles.map(toCandle))
         chartRef.current?.timeScale().fitContent()
@@ -211,6 +213,7 @@ export default function Chart({
         if (last21.length) lastEma21Ref.current = last21[last21.length - 1]!
       })
       .catch(console.error)
+    return () => { cancelled = true }
   }, [symbol, tradingDate, intervalMinutes, paneType])
 
   // ── Historical data — options (full trading day, loads when session starts) ──
@@ -228,22 +231,34 @@ export default function Chart({
     lastEma21Ref.current = null
     candleTimesRef.current = []
 
+    let cancelled = false
     api.getOptionsHistorical(symbol, tradingDate, strike, expiry, right, intervalMinutes)
       .then(({ candles }) => {
-        if (candles.length === 0) return
-        series.setData(candles.map(toCandle))
-        chartRef.current?.timeScale().fitContent()
-        candleTimesRef.current = candles.map(c => c.time)
+        if (cancelled) return
+        // Only show candles BEFORE the session start window — live ticks will
+        // append from startTime onwards. Loading future candles first would
+        // cause "Cannot update oldest data" when the first live tick arrives.
+        const normalizedStart = startTime.length === 5 ? startTime + ':00' : startTime
+        const startTs = new Date(`${tradingDate}T${normalizedStart}Z`).getTime() / 1000
+        const intervalSecs = intervalMinutes * 60
+        const startWindowTs = Math.floor(startTs / intervalSecs) * intervalSecs
+        const priorCandles = candles.filter(c => c.time < startWindowTs)
 
-        const closes = candles.map(c => c.close)
+        series.setData(priorCandles.map(toCandle))
+        candleTimesRef.current = priorCandles.map(c => c.time)
+
+        if (priorCandles.length === 0) return
+        chartRef.current?.timeScale().fitContent()
+
+        const closes = priorCandles.map(c => c.close)
         const ema9vals = computeEMA(closes, 9)
         const ema21vals = computeEMA(closes, 21)
 
         const e9data: LineData[] = []
         const e21data: LineData[] = []
-        for (let i = 0; i < candles.length; i++) {
-          if (ema9vals[i] !== null) e9data.push({ time: candles[i].time as Time, value: ema9vals[i]! })
-          if (ema21vals[i] !== null) e21data.push({ time: candles[i].time as Time, value: ema21vals[i]! })
+        for (let i = 0; i < priorCandles.length; i++) {
+          if (ema9vals[i] !== null) e9data.push({ time: priorCandles[i].time as Time, value: ema9vals[i]! })
+          if (ema21vals[i] !== null) e21data.push({ time: priorCandles[i].time as Time, value: ema21vals[i]! })
         }
         e9.setData(e9data)
         e21.setData(e21data)
@@ -254,6 +269,7 @@ export default function Chart({
         if (last21.length) lastEma21Ref.current = last21[last21.length - 1]!
       })
       .catch(console.error)
+    return () => { cancelled = true }
   }, [symbol, tradingDate, intervalMinutes, paneType, strike, expiry, right, startTime])
 
   // ── Pre-session candles — equity only (options already have full-day data) ──
@@ -264,8 +280,10 @@ export default function Chart({
     const e21 = ema21Ref.current
     if (!startTime || !series || !e9 || !e21) return
 
+    let cancelled = false
     api.getPreSession(symbol, tradingDate, startTime, intervalMinutes)
       .then(candles => {
+        if (cancelled) return
         if (candles.length === 0) return
         const closes = candles.map(c => c.close)
         for (const candle of candles) {
@@ -287,6 +305,7 @@ export default function Chart({
         }
       })
       .catch(console.error)
+    return () => { cancelled = true }
   }, [startTime, symbol, tradingDate, intervalMinutes, paneType])
 
   // ── Live tick processing — latestTick is already filtered by caller ─────────
@@ -303,32 +322,37 @@ export default function Chart({
     const windowStart = Math.floor(latestTick.time / intervalSecs) * intervalSecs
     const live = liveWindowRef.current
 
-    if (!live || live.start !== windowStart) {
-      if (live) {
-        series.update({ time: live.start as Time, open: live.open, high: live.high, low: live.low, close: live.close })
-        const k9 = 2 / (9 + 1)
-        const k21 = 2 / (21 + 1)
-        if (lastEma9Ref.current !== null) {
-          lastEma9Ref.current = nextEMA(lastEma9Ref.current, live.close, k9)
-          e9.update({ time: live.start as Time, value: lastEma9Ref.current })
+    try {
+      if (!live || live.start !== windowStart) {
+        if (live) {
+          series.update({ time: live.start as Time, open: live.open, high: live.high, low: live.low, close: live.close })
+          const k9 = 2 / (9 + 1)
+          const k21 = 2 / (21 + 1)
+          if (lastEma9Ref.current !== null) {
+            lastEma9Ref.current = nextEMA(lastEma9Ref.current, live.close, k9)
+            e9.update({ time: live.start as Time, value: lastEma9Ref.current })
+          }
+          if (lastEma21Ref.current !== null) {
+            lastEma21Ref.current = nextEMA(lastEma21Ref.current, live.close, k21)
+            e21.update({ time: live.start as Time, value: lastEma21Ref.current })
+          }
         }
-        if (lastEma21Ref.current !== null) {
-          lastEma21Ref.current = nextEMA(lastEma21Ref.current, live.close, k21)
-          e21.update({ time: live.start as Time, value: lastEma21Ref.current })
+        liveWindowRef.current = {
+          start: windowStart,
+          open: latestTick.open, high: latestTick.high, low: latestTick.low, close: latestTick.close,
         }
+      } else {
+        live.high = Math.max(live.high, latestTick.high)
+        live.low = Math.min(live.low, latestTick.low)
+        live.close = latestTick.close
       }
-      liveWindowRef.current = {
-        start: windowStart,
-        open: latestTick.open, high: latestTick.high, low: latestTick.low, close: latestTick.close,
-      }
-    } else {
-      live.high = Math.max(live.high, latestTick.high)
-      live.low = Math.min(live.low, latestTick.low)
-      live.close = latestTick.close
-    }
 
-    const current = liveWindowRef.current!
-    series.update({ time: current.start as Time, open: current.open, high: current.high, low: current.low, close: current.close })
+      const current = liveWindowRef.current!
+      series.update({ time: current.start as Time, open: current.open, high: current.high, low: current.low, close: current.close })
+    } catch (err) {
+      // Chart may be disposed or have out-of-order timestamps; skip this tick
+      console.warn('Chart update skipped:', err)
+    }
   }, [latestTick, intervalSecs, onPriceUpdate])
 
   // ── Session ended: close the last open candle ──────────────────────────────

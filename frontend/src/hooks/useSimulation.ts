@@ -18,7 +18,10 @@ export interface SimulationState {
   // Options dual-stream prices
   currentPriceCE: number
   currentPricePE: number
-  latestTick: TickEvent | null
+  // Per-type latest ticks for chart routing (single latestTick gets overwritten by batching)
+  latestEquityTick: TickEvent | null
+  latestCETick: TickEvent | null
+  latestPETick: TickEvent | null
   trades: Trade[]
   position: Position           // equity position
   positionCE: Position         // options CE position
@@ -50,7 +53,9 @@ export function useSimulation() {
     currentPrice: 0,
     currentPriceCE: 0,
     currentPricePE: 0,
-    latestTick: null,
+    latestEquityTick: null,
+    latestCETick: null,
+    latestPETick: null,
     trades: [],
     position: FLAT_POSITION('NIFTY'),
     positionCE: FLAT_POSITION('NIFTY'),
@@ -67,20 +72,26 @@ export function useSimulation() {
 
   const setLatestTick = useCallback((tick: TickEvent) => {
     setState(s => {
-      const update: Partial<SimulationState> = { latestTick: tick }
+      const update: Partial<SimulationState> = {}
       if (!tick.right) {
         update.currentPrice = tick.close
+        update.latestEquityTick = tick
       } else if (tick.right === 'CE') {
         update.currentPriceCE = tick.close
+        update.latestCETick = tick
       } else if (tick.right === 'PE') {
         update.currentPricePE = tick.close
+        update.latestPETick = tick
       }
       return { ...s, ...update }
     })
   }, [])
 
   const handleSessionEnded = useCallback(() => {
-    setState(s => ({ ...s, sessionState: 'ended', sseUrl: null, latestTick: null }))
+    setState(s => ({
+      ...s, sessionState: 'ended', sseUrl: null,
+      latestEquityTick: null, latestCETick: null, latestPETick: null,
+    }))
   }, [])
 
   const updateSymbol = useCallback((symbol: string) => {
@@ -110,7 +121,9 @@ export function useSimulation() {
       sessionState: 'running',
       startTime: res.start_time,
       sseUrl: api.getSSEUrl(res.session_id),
-      latestTick: null,
+      latestEquityTick: null,
+      latestCETick: null,
+      latestPETick: null,
       currentPrice: 0,
       currentPriceCE: 0,
       currentPricePE: 0,
@@ -140,7 +153,9 @@ export function useSimulation() {
       currentPrice: 0,
       currentPriceCE: 0,
       currentPricePE: 0,
-      latestTick: null,
+      latestEquityTick: null,
+      latestCETick: null,
+      latestPETick: null,
       trades: [],
       position: FLAT_POSITION(s.symbol),
       positionCE: FLAT_POSITION(s.symbol),

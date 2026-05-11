@@ -116,15 +116,21 @@ breeze.generate_session(api_secret=credentials_config_parser['icicidirect']['api
 Include this phase in the context only when you are implementing or planning phase 3. The phase 3 docs is located at `<project root>/docs/spec-phase3.md`
 
 
-#### Phase-IV PaperTrading
+#### Phase-IV BetaMinorUpdates
 
-Include this phase in the context only when you are implementing or planning phase 3. The phase 3 docs is located at `<project root>/docs/spec-phase4.md`
+Include this phase in the context only when you are implementing or planning phase 4. The phase 4 docs is located at `<project root>/docs/spec-phase4.md`
 
-#### Phase-V AutomatedStrategies
+#### Phase-V Strategies
 
-Include this phase in the context only when you are implementing or planning phase 3. The phase 3 docs is located at `<project root>/docs/spec-phase5.md`
+Include this phase in the context only when you are implementing or planning phase 5. The phase 5 docs is located at `<project root>/docs/spec-phase5.md`
 
+#### Phase-VI TradeAnalysis
 
+Include this phase in the context only when you are implementing or planning phase 6. The phase 6 docs is located at `<project root>/docs/spec-phase6.md`
+
+#### Phase-VII PaperTrading
+
+Include this phase in the context only when you are implementing or planning phase 7. The phase 7 docs is located at `<project root>/docs/spec-phase7.md`
 
 
 ## Notes

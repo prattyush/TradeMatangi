@@ -44,13 +44,13 @@ node node_modules/typescript/bin/tsc --noEmit
 - **Breeze API record limit**: `get_historical_data_v2(interval="1second")` silently truncates to ~1000 records per call (~16 min). A full trading day (22 500 rows) requires pagination. Use `broker_service._fetch_day_paginated` which splits the day into 15-min chunks. Never make a single full-day call for 1-second data.
 - **Lightweight Charts — no teardown for layout changes**: calling `chart.remove()` discards all series data. Height/width changes must go through `chart.applyOptions(...)`. The chart init `useEffect` must use `[]` deps (mount only); a separate `useEffect([height])` calls `applyOptions` for height changes.
 - **Options cache path**: options parquet files are stored as `data/ohlcdata/{SYMBOL}-{CE|PE}-{STRIKE}-{EXPIRY}-{DD-MM-YYYY}.parquet`. Equity files remain `data/ohlcdata/{SYMBOL}-{DD-MM-YYYY}.parquet`.
-- **Options lot sizes (hardcoded, current)**: NIFTY=75, RELIND=250, TATMOT=1400, TATPOW=2700. No historical lot size tracking — always use current values.
+- **Options lot sizes (hardcoded, current)**: NIFTY=65, RELIND=250, TATMOT=1400, TATPOW=2700. No historical lot size tracking — always use current values.
 - **NSE options expiry**: date-aware helper required. From 2025-09-01: weekly and monthly expiry on Tuesday (Monday if holiday). Before 2025-09-01: Thursday (Wednesday if holiday). Monthly = last occurrence of that weekday in the month.
 - **FundsRatio capital base**: snapshotted from wallet at `POST /api/simulation/start`. Mid-session wallet changes do not affect l/m/h amounts for that session. Ratios: l=3%, m=6%, h=12% (user-overridable in settings).
 - **Wallet carry-forward**: keyed per user + calendar date of the replay. Replaying an earlier date uses that date's prior end-of-day balance, not the most recent session's balance.
 - **Wallet in-memory store**: `wallet_service._wallets` is a `dict[(user_id, date), float]`. In-memory is source of truth per process; DynamoDB is persistence. Carry-forward uses a DynamoDB `query` with `Key("date").lt(target_date), ScanIndexForward=False, Limit=1` — this is O(1) because `date` is the sort key.
 - **Fixed user UUID**: `FIXED_USER_ID = "abc12300-0000-0000-0000-000000000001"` in `config.py`. Used by all services. Do not use `PLACEHOLDER_USER_ID` — that constant was removed in Phase III Sprint 1.
-- **Wallet debit/credit coverage**: BUY order placement debits `qty × actual_limit`; BUY cancel credits back `order.reserved_amount`; SELL order fill credits `qty × filled_price`; direct TradePanel BUY debits `price × 1`, direct SELL credits `price × 1`. SL orders have **zero wallet impact** — no debit on placement, no credit on fill, no credit on cancel.
+- **Wallet debit/credit coverage**: BUY order placement debits `qty × actual_limit`; BUY cancel credits back `order.reserved_amount`; SELL order fill credits `qty × filled_price`; direct TradePanel BUY debits `price × lot_size`, direct SELL credits `price × lot_size` (lot_size = `LOT_SIZES[symbol]` for options, 1 for equity). SL orders have **zero wallet impact** — no debit on placement, no credit on fill, no credit on cancel.
 - **DynamoDB `list_tables()` returns `list[str]`**: `list_tables()["TableNames"]` is already a plain list of table name strings. Use `set(dynamodb.list_tables()["TableNames"])` — do not iterate with `t["TableName"]`.
 - **DynamoDB lazy-import patch targets**: services import `get_dynamodb_resource` inside helper functions. In tests, patch `app.services.db.get_dynamodb_resource`, not the module that calls it.
 - **`compute_funds_ratio_quantity` lot_size parameter**: takes explicit `lot_size: int = 1`, NOT auto-derived from `LOT_SIZES`. The router controls whether equity (lot_size=1) or options (lot_size from `LOT_SIZES`) semantics apply. Sprint 3 orders router passes `LOT_SIZES[symbol]` for options sessions, 1 for equity.
@@ -64,6 +64,13 @@ node node_modules/typescript/bin/tsc --noEmit
 - **Naked short margin**: checked in `routers/orders.py` for SELL orders in options sessions when position is not LONG. Uses `get_underlying_price_at(symbol, date, unix_ts)` to read equity price from parquet (not `session.last_price` which is the options price). Margin = `underlying_price × lot_size × 0.20`.
 - **Options session also caches equity data**: `POST /api/simulation/start` with `instrument_type=options` calls both `_ensure_session_data` (equity parquet) and `_ensure_options_data` (options parquet). Both must be cached for margin checks and historical chart display.
 - **Simulation wallet_service lazy import**: `create_session` imports `wallet_service` inside the function. In tests, patch `app.services.wallet_service.get_balance` directly, NOT `app.services.simulation.wallet_service`.
+- **tz_localize guard**: always check `df.index.tzinfo` before applying timezone. Use `df.index.tz_localize("UTC")` only when `tzinfo is None`; use `df.index.tz_convert("UTC")` when already tz-aware. Applies to both `data_loader.load_dataframe` and `options_service.load_options_dataframe`.
+- **Options gap-fill tz strip**: `_validate_options_gaps` must strip tz from `df.index` (set `df.index = df.index.tz_localize(None)`) before building tz-naive `pd.date_range` for `reindex`. Mismatched tz causes empty DataFrame after reindex.
+- **Dual-stream options queue**: `SimulationSession.queue` maxsize is 3000 (not 500). `queue.put_nowait` must be wrapped in try/except `asyncio.QueueFull` — raises at high replay speeds otherwise crashing the session.
+- **React setState batching**: multiple `setState` calls in one synchronous burst → only last call wins. For multi-field tick routing, use a single `setState(s => { const update = {}; ...; return {...s, ...update} })` keyed by field, NOT separate `setState` calls per field.
+- **Lightweight Charts "Cannot update oldest data"**: `series.setData(candles)` sets the minimum acceptable timestamp. Any subsequent `series.update(tick)` with `time <= candles[-1].time` throws. For options historical pre-load, filter to `time < startWindowTs` (the first live tick's window start).
+- **Lightweight Charts "Object is disposed"**: async `.then()` callbacks fire after chart teardown if a pane unmounts. Guard all three Chart `useEffect` async paths with `let cancelled = false` + `return () => { cancelled = true }` cleanup.
+- **Pane wrapper flex shrink**: Lightweight Charts sets an explicit pixel `width` on the canvas. Pane wrapper divs must have `minWidth: 0` or flex siblings cannot shrink below that canvas width after a pane is removed.
 
 ## Phase-III Status
 
@@ -79,4 +86,8 @@ FundsRatio sizing and SL orders are live. See `docs/spec-phase3.md` Sprint 2 sec
 
 Options data fetch, expiry/strike calculation, options sessions, and naked short margin check are live. See `docs/spec-phase3.md` Sprint 3 section for full details.
 
-**Next: Sprint 4 — Layout + Options UI (Frontend)** (see `docs/spec-phase3.md`)
+### Sprint 4 — Layout + Options UI (Frontend) ✅ COMPLETE (241 tests passing)
+
+Multi-pane layout, dual-stream options replay, and lot-sized direct trades are live. See `docs/spec-phase3.md` Sprint 4 section for full details.
+
+**Next: Phase IV BetaMinorUpdates** (see `docs/spec-phase4.md`)

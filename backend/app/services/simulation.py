@@ -37,7 +37,7 @@ class SimulationSession:
     strike: Optional[int] = None       # options only
     expiry: Optional[str] = None       # options only (YYYY-MM-DD)
     right: Optional[str] = None        # options only: "CE", "PE", or None (dual-stream)
-    queue: asyncio.Queue = field(default_factory=lambda: asyncio.Queue(maxsize=500))
+    queue: asyncio.Queue = field(default_factory=lambda: asyncio.Queue(maxsize=3000))
     resume_event: asyncio.Event = field(default_factory=asyncio.Event)
     task: Optional[asyncio.Task] = None
 
@@ -114,7 +114,10 @@ def _emit_tick_and_check_orders(
     from app.services.order_service import check_orders
     from app.services.trading import record_trade
 
-    session.queue.put_nowait(json.dumps(tick))
+    try:
+        session.queue.put_nowait(json.dumps(tick))
+    except asyncio.QueueFull:
+        logger.warning("Queue full, dropping tick for session %s at t=%s", session.session_id, tick.get("time"))
 
     current_time = tick["time"]
     current_price = tick["close"]
@@ -190,11 +193,13 @@ async def _run_session(session: SimulationSession) -> None:
 
                 session.current_time = str(ts)
                 for tick in time_to_ticks[ts]:
-                    tick_right = tick["right"]
+                    tick_right = tick.get("right")  # None for equity, "CE"/"PE" for options
                     if tick_right == "CE":
                         session.last_price_ce = tick["close"]
-                    else:
+                    elif tick_right == "PE":
                         session.last_price_pe = tick["close"]
+                    else:
+                        session.last_price = tick["close"]
 
                     fill_events = _emit_tick_and_check_orders(session, tick, tick_right)
                     for fe in fill_events:
@@ -244,6 +249,8 @@ async def _run_session(session: SimulationSession) -> None:
 
     except asyncio.CancelledError:
         pass
+    except Exception:
+        logger.exception("_run_session crashed for session %s", session.session_id)
     finally:
         session.state = SimulationState.ENDED
         end_event = {"type": "session_ended"}

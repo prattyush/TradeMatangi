@@ -185,17 +185,14 @@ export default function App() {
   })()
 
   // ── Per-pane tick routing ────────────────────────────────────────────────────
-  // Equity session: all equity panes get the tick (right is undefined on equity ticks)
-  // Options session: options panes get the tick only if right matches
+  // Each tick type has its own state field so React batching doesn't drop earlier
+  // ticks when equity + CE + PE all arrive within the same render cycle.
   const getTickForPane = useCallback((pane: PaneConfig) => {
-    if (!sim.latestTick) return null
-    const tickRight = sim.latestTick.right
-    if (pane.type === 'equity') {
-      return tickRight ? null : sim.latestTick   // equity panes only get equity (no-right) ticks
-    }
-    // Options pane: only if right matches
-    return tickRight === pane.right ? sim.latestTick : null
-  }, [sim.latestTick])
+    if (pane.type === 'equity') return sim.latestEquityTick
+    if (pane.right === 'CE') return sim.latestCETick
+    if (pane.right === 'PE') return sim.latestPETick
+    return null
+  }, [sim.latestEquityTick, sim.latestCETick, sim.latestPETick])
 
   // ── SSE at app level ─────────────────────────────────────────────────────────
   const handleSSEMessage = useCallback((event: Record<string, unknown>) => {
@@ -227,7 +224,7 @@ export default function App() {
   const rowHeight = Math.max(160, Math.floor((columnHeight - 52) / 2))
 
   const renderPane = (pane: PaneConfig, height: number, style?: React.CSSProperties) => (
-    <div key={pane.id} style={{ position: 'relative', minHeight: height, ...style }}>
+    <div key={pane.id} style={{ position: 'relative', minHeight: height, minWidth: 0, ...style }}>
       {panes.length > 1 && (
         <button
           onClick={e => { e.stopPropagation(); removePane(pane.id) }}

@@ -5,6 +5,7 @@ from app.services import simulation as sim_svc
 from app.services import wallet_service
 from app.services.user_service import get_user_id
 from app.services.wallet_service import InsufficientFundsError
+from app.config import LOT_SIZES
 
 router = APIRouter(prefix="/api/trades", tags=["trades"])
 
@@ -38,8 +39,10 @@ async def buy(req: TradeRequest):
     if price <= 0.0:
         raise HTTPException(status_code=400, detail="No valid price available yet")
 
+    lot_size = LOT_SIZES.get(session.symbol, 1) if session.instrument_type == "options" else 1
+
     try:
-        wallet_service.debit(get_user_id(), price, session.date)
+        wallet_service.debit(get_user_id(), price * lot_size, session.date)
     except InsufficientFundsError as exc:
         raise HTTPException(status_code=402, detail=str(exc))
 
@@ -51,6 +54,7 @@ async def buy(req: TradeRequest):
         strike=session.strike,
         expiry=session.expiry,
         right=right,
+        quantity=lot_size,
     )
     return trade
 
@@ -68,7 +72,9 @@ async def sell(req: TradeRequest):
     if price <= 0.0:
         raise HTTPException(status_code=400, detail="No valid price available yet")
 
-    wallet_service.credit(get_user_id(), price, session.date)
+    lot_size = LOT_SIZES.get(session.symbol, 1) if session.instrument_type == "options" else 1
+
+    wallet_service.credit(get_user_id(), price * lot_size, session.date)
 
     timestamp = int(session.current_time)
     trade = trading_svc.record_trade(
@@ -78,6 +84,7 @@ async def sell(req: TradeRequest):
         strike=session.strike,
         expiry=session.expiry,
         right=right,
+        quantity=lot_size,
     )
     return trade
 

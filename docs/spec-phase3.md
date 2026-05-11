@@ -161,23 +161,58 @@ This phase should support options and futures. We only need to support options a
 
 ---
 
-### Sprint 4 — Layout + Options UI (Frontend)
+### Sprint 4 — Layout + Options UI (Frontend) ✅ COMPLETE (merged to dev, 241 tests passing)
 
 **Goal:** Multi-pane layout system and full options trading UI on top of the Sprint 3 backend.
 
-**Frontend:**
-- Layout control bar (top of screen): buttons for 1/2/3/4 pane presets
-  - 1 pane: full width/height
-  - 2 panes: vertically stacked
-  - 3 panes: 1 full-width on top + 2 half-width below (default for options mode)
-  - 4 panes: 2×2 grid
-- Each pane configurable as: symbol at an interval (equity mode) or Call/Put at a strike+expiry (options mode)
-- Instrument type toggle in session config: Equity vs Options; NIFTY locked to Options only
-- When Options selected: layout switches to 3-pane default; top pane = underlying, bottom two = CE + PE at computed ATM strike
-- Strike configurator per pane: OTM/ITM offset input; calls `GET /api/data/price-at` to resolve and display computed strike before session start
-- Pane header shows: symbol + interval (equity) or strike + expiry + CE/PE (options)
-- Active pane selection: clicking a pane highlights it; Buy/Sell in OrderPanel applies to the active pane's instrument
-- Options panes freely deletable and re-addable with different strike or CE/PE
+**What shipped:**
 
-**Tests:** layout rendering at each preset, pane add/remove, active pane selection, options config before session start
+**Backend (simulation dual-stream):**
+- `SimulationSession` gains `last_price_ce` and `last_price_pe` fields; `queue` maxsize increased 500 → 3000
+- `_run_session` for options sessions merges equity + CE + PE ticks by timestamp into `time_to_ticks` dict, emits all three per timestamp in a single `asyncio.sleep(speed)` interval
+- `_emit_tick_and_check_orders` extracted as helper: wraps `queue.put_nowait` in try/except `asyncio.QueueFull` (drops tick with warning instead of crashing); routes `check_orders` with correct `tick_right`
+- `routers/trading.py` direct BUY/SELL now computes `lot_size = LOT_SIZES.get(symbol, 1)` for options sessions; debits/credits `price × lot_size` and passes `quantity=lot_size` to `record_trade`
+- `config.py` NIFTY lot size corrected 75 → 65
+
+**Backend (data loading):**
+- `data_loader.load_dataframe` and `options_service.load_options_dataframe` both guard against already-tz-aware DataFrames: if `df.index.tzinfo is not None` use `tz_convert("UTC")` instead of `tz_localize("UTC")`
+- `options_service._validate_options_gaps` strips tz before building `pd.date_range` + `reindex` (tz-naive `market_open`/`market_close` timestamps would fail to align with tz-aware index)
+
+**Frontend:**
+- Layout control bar: dropdown for 1/2/3/4 pane presets with `+` / `×` pane add/remove buttons
+- Options session default layout: 3 panes (equity top full-width, CE and PE half-width below)
+- Each pane header shows symbol + interval (equity) or symbol + strike + expiry + CE/PE (options)
+- OTM offset input inline with pane add; calls `GET /api/data/price-at` before session start to resolve ATM strike
+- Active pane highlighting: click to select; `TradePanel` BUY/SELL targets the active pane's right (CE/PE) or equity
+- `useSimulation` gains three separate per-type tick fields: `latestEquityTick`, `latestCETick`, `latestPETick`; `setLatestTick` dispatches by `tick.right` into the correct field using a single functional `setState` to avoid React batching overwrite
+- `App.tsx` `getTickForPane` routes ticks to charts by pane type + right; pane wrapper has `minWidth: 0` to allow flex shrink after canvas has explicit pixel width
+- `Chart.tsx` options historical effect filters full-day candles to pre-session window before `setData` to avoid "Cannot update oldest data" from Lightweight Charts
+- All three async effects in `Chart.tsx` use cancellation flag (`let cancelled = false`) to prevent `Object is disposed` when pane is unmounted before the fetch resolves
+- Live tick handler wrapped in try/catch to swallow rare Lightweight Charts errors without crashing the pane
+
+**Key implementation decisions:**
+- Dual-stream merges by timestamp server-side: the backend builds `time_to_ticks[ts] = [eq_tick, ce_tick, pe_tick]` so all three ticks for a given second are emitted together before the next `asyncio.sleep`. This keeps CE/PE prices synchronized in the frontend.
+- React state batching is a silent killer for multi-field updates in the same callback chain: three consecutive `setLatestTick` calls in one SSE `onmessage` burst → only the last setState wins. Fixed by routing dispatch inside a single `setState(s => ...)` with per-field keys, not by calling `setState` three times.
+- Lightweight Charts timestamp rule: `series.setData()` establishes a minimum timestamp; any subsequent `series.update()` with an equal or earlier timestamp throws "Cannot update oldest data". Filtering pre-session historical data to `time < startWindowTs` prevents this.
+- `chart.remove()` disposes the chart object; any async `.then()` that runs after dispose throws "Object is disposed". The cancellation flag pattern (`let cancelled = false; return () => { cancelled = true }`) guards all three Chart `useEffect` async paths.
+- Flexbox `min-width: auto` on pane wrappers: Lightweight Charts writes an explicit pixel `width` attribute on the canvas. When a pane is removed, the remaining pane's flex container wants to shrink but the canvas `min-width: auto` prevents it. Fixed with `minWidth: 0` on the pane wrapper div.
+
+**Bugs found and fixed during Sprint 4:**
+1. `KeyError: 'right'` in `_run_session` dual-stream loop — equity ticks have no `"right"` key; `tick["right"]` raised `KeyError`. Fixed: `tick.get("right")`.
+2. `asyncio.queues.QueueFull` crash — `queue.put_nowait` not guarded when queue backed up under high replay speeds. Fixed: try/except + queue size 500 → 3000.
+3. `Cannot update oldest data` in options chart — full-day historical candles loaded before session start; live tick at start time was ≤ last loaded candle. Fixed: filter to `time < startWindowTs`.
+4. `Object is disposed` — async fetch `.then()` callback fired after pane unmount. Fixed: cancellation flag in all three Chart `useEffect` effects.
+5. Only PE chart updating — React batched three `setLatestTick(setState)` calls in one event loop tick; last write (PE) won. Fixed: single `setState(s => ...)` with conditional per-field keys.
+6. Newly added pane renders at minimal width — canvas `min-width: auto` prevented flex shrink. Fixed: `minWidth: 0` on pane wrapper.
+7. NIFTY lot size wrong — `config.py` had `"NIFTY": 75`; correct value is 65. Fixed.
+8. Direct TradePanel BUY/SELL ignored lot size — `routers/trading.py` debited `price × 1` and recorded `quantity=1` for options sessions. Fixed: compute `lot_size` from `LOT_SIZES` and use throughout.
+
+**New technical constraints added to CLAUDE.md:**
+- `lot_size` for direct trades: `LOT_SIZES.get(symbol, 1)` when `instrument_type == "options"`, else 1
+- NIFTY lot size is 65 (corrected from 75)
+- `tz_localize` guard: check `df.index.tzinfo` before applying; use `tz_convert` if already tz-aware
+- Options gap-fill strips tz before `pd.date_range` reindex
+- React state batching: multiple `setState` calls in one burst → last wins; use single functional update with per-field keys
+- Cancellation flag required for all async effects on chart components
+- Pane wrapper needs `minWidth: 0` for correct flex behaviour alongside explicit-width canvas
 
