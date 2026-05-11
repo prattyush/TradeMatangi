@@ -15,7 +15,7 @@ from typing import Optional
 
 from app.models.schemas import SimulationState
 from app.services.data_loader import iter_ticks
-from app.config import PLACEHOLDER_USER_ID
+from app.config import FIXED_USER_ID
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +30,7 @@ class SimulationSession:
     state: SimulationState = SimulationState.IDLE
     current_time: Optional[str] = None
     last_price: float = 0.0
+    session_capital: float = 0.0  # wallet balance snapshotted at session start
     queue: asyncio.Queue = field(default_factory=lambda: asyncio.Queue(maxsize=500))
     resume_event: asyncio.Event = field(default_factory=asyncio.Event)
     task: Optional[asyncio.Task] = None
@@ -45,12 +46,13 @@ def _upsert_session_to_db(session: SimulationSession) -> None:
         table = get_dynamodb_resource().Table("Sessions")
         table.put_item(Item={
             "session_id": session.session_id,
-            "user_id": PLACEHOLDER_USER_ID,
+            "user_id": FIXED_USER_ID,
             "symbol": session.symbol,
             "date": session.date,
             "start_time": session.start_time,
             "speed": Decimal(str(session.speed)),
             "state": session.state.value,
+            "session_capital": Decimal(str(session.session_capital)),
         })
     except Exception:
         logger.exception("DynamoDB write failed for session %s", session.session_id)
@@ -66,13 +68,16 @@ def create_session(
     start_time: str,
     speed: float,
 ) -> SimulationSession:
+    from app.services import wallet_service
     session_id = str(uuid.uuid4())
+    session_capital = wallet_service.get_balance(FIXED_USER_ID, date)
     session = SimulationSession(
         session_id=session_id,
         symbol=symbol,
         date=date,
         start_time=start_time,
         speed=speed,
+        session_capital=session_capital,
     )
     session.resume_event.set()  # not paused initially
     _sessions[session_id] = session
@@ -108,7 +113,7 @@ async def _run_session(session: SimulationSession) -> None:
             # Check and emit filled orders; record each fill as a trade
             from app.services.order_service import check_orders
             from app.services.trading import record_trade
-            filled = check_orders(session.session_id, current_price, current_time)
+            filled = check_orders(session.session_id, current_price, current_time, session.date)
             for order in filled:
                 record_trade(
                     session_id=session.session_id,

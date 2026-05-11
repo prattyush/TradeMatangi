@@ -1,5 +1,5 @@
 import { useState, useCallback } from 'react'
-import api, { Trade, Position, Order, TickEvent } from '../services/api'
+import api, { Trade, Position, Order, TickEvent, InsufficientFundsError } from '../services/api'
 
 export type SessionState = 'idle' | 'running' | 'paused' | 'ended'
 
@@ -15,6 +15,8 @@ export interface SimulationState {
   position: Position
   sseUrl: string | null
   openOrders: Order[]
+  walletRefreshKey: number
+  orderError: string | null
 }
 
 const DEFAULT_POSITION: Position = {
@@ -37,6 +39,8 @@ export function useSimulation() {
     position: DEFAULT_POSITION,
     sseUrl: null,
     openOrders: [],
+    walletRefreshKey: 0,
+    orderError: null,
   })
 
   const updateCurrentPrice = useCallback((price: number) => {
@@ -64,7 +68,6 @@ export function useSimulation() {
   }, [])
 
   const startSession = useCallback(async (startTime: string, speed: number) => {
-    // symbol and date are already in state from the dropdown selections.
     const res = await api.startSimulation({
       symbol: state.symbol,
       date: state.date,
@@ -75,12 +78,14 @@ export function useSimulation() {
       ...s,
       sessionId: res.session_id,
       sessionState: 'running',
-      startTime: res.start_time,   // only startTime is new
+      startTime: res.start_time,
       sseUrl: api.getSSEUrl(res.session_id),
       latestTick: null,
       trades: [],
       position: { ...DEFAULT_POSITION, symbol: res.symbol },
       openOrders: [],
+      walletRefreshKey: s.walletRefreshKey + 1,
+      orderError: null,
     }))
     return res.session_id
   }, [state.symbol, state.date])
@@ -130,22 +135,45 @@ export function useSimulation() {
     setState(s => ({ ...s, position: pos }))
   }, [state.sessionId])
 
+  const clearOrderError = useCallback(() => {
+    setState(s => ({ ...s, orderError: null }))
+  }, [])
+
   const placeOrder = useCallback(async (side: 'BUY' | 'SELL', orderType: 'TARGET' | 'LIMIT', price: number, quantity: number) => {
     if (!state.sessionId) return
-    const order = await api.placeOrder(state.sessionId, side, orderType, price, quantity)
-    setState(s => ({ ...s, openOrders: [...s.openOrders, order] }))
+    try {
+      const order = await api.placeOrder(state.sessionId, side, orderType, price, quantity)
+      setState(s => ({
+        ...s,
+        openOrders: [...s.openOrders, order],
+        walletRefreshKey: s.walletRefreshKey + 1,
+        orderError: null,
+      }))
+    } catch (err) {
+      if (err instanceof InsufficientFundsError) {
+        setState(s => ({ ...s, orderError: err.message }))
+      } else {
+        throw err
+      }
+    }
   }, [state.sessionId])
 
   const cancelOrder = useCallback(async (orderId: string) => {
     if (!state.sessionId) return
     await api.cancelOrder(state.sessionId, orderId)
-    setState(s => ({ ...s, openOrders: s.openOrders.filter(o => o.order_id !== orderId) }))
+    setState(s => ({
+      ...s,
+      openOrders: s.openOrders.filter(o => o.order_id !== orderId),
+      walletRefreshKey: s.walletRefreshKey + 1,
+    }))
   }, [state.sessionId])
 
   const handleOrderFilled = useCallback(async (orderId: string) => {
-    // Remove from open orders immediately for responsive UI
-    setState(s => ({ ...s, openOrders: s.openOrders.filter(o => o.order_id !== orderId) }))
-    // Refresh trades and position — the fill was recorded as a trade on the backend
+    setState(s => ({
+      ...s,
+      openOrders: s.openOrders.filter(o => o.order_id !== orderId),
+      walletRefreshKey: s.walletRefreshKey + 1,
+    }))
     if (!state.sessionId) return
     const [pos, trades] = await Promise.all([
       api.getPosition(state.sessionId),
@@ -160,6 +188,10 @@ export function useSimulation() {
     const direction = position.side === 'LONG' ? 1 : -1
     return direction * position.quantity * (currentPrice - position.avg_entry_price)
   })()
+
+  const incrementWalletRefreshKey = useCallback(() => {
+    setState(s => ({ ...s, walletRefreshKey: s.walletRefreshKey + 1 }))
+  }, [])
 
   return {
     ...state,
@@ -178,5 +210,7 @@ export function useSimulation() {
     placeOrder,
     cancelOrder,
     handleOrderFilled,
+    clearOrderError,
+    incrementWalletRefreshKey,
   }
 }

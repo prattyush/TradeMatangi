@@ -57,6 +57,20 @@ export interface SimulationStartResponse {
   date: string
   start_time: string
   speed: number
+  session_capital: number
+}
+
+export interface WalletResponse {
+  user_id: string
+  date: string
+  balance: number
+}
+
+export class InsufficientFundsError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'InsufficientFundsError'
+  }
 }
 
 export interface Trade {
@@ -192,7 +206,27 @@ const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     })
+    if (res.status === 402) {
+      const data = await res.json().catch(() => ({}))
+      throw new InsufficientFundsError(data.detail || 'Insufficient funds')
+    }
     if (!res.ok) throw new Error(`Place order failed: ${res.status}`)
+    return res.json()
+  },
+
+  async getWallet(date: string): Promise<WalletResponse> {
+    const res = await fetch(`${BACKEND_URL}/api/wallet?date=${encodeURIComponent(date)}`)
+    if (!res.ok) throw new Error(`Wallet fetch failed: ${res.status}`)
+    return res.json()
+  },
+
+  async resetWallet(date: string, amount?: number): Promise<WalletResponse> {
+    const res = await fetch(`${BACKEND_URL}/api/wallet/reset?date=${encodeURIComponent(date)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ amount: amount ?? 150000 }),
+    })
+    if (!res.ok) throw new Error(`Wallet reset failed: ${res.status}`)
     return res.json()
   },
 

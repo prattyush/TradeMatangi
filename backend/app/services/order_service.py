@@ -12,7 +12,7 @@ import logging
 from decimal import Decimal
 
 from app.models.schemas import Order, OrderStatus, OrderType, TradeSide
-from app.config import PLACEHOLDER_USER_ID
+from app.config import FIXED_USER_ID
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +66,7 @@ def place_order(
     order_type: OrderType,
     quantity: int,
     created_at: int,
+    trading_date: str,
     trigger_price: float | None = None,
     limit_price: float | None = None,
 ) -> Order:
@@ -82,9 +83,16 @@ def place_order(
         actual_trigger = limit_price   # stored for schema consistency
         actual_limit = limit_price
 
+    # Debit wallet for BUY orders; SELL orders don't require upfront funds
+    reserved_amount = 0.0
+    if side == TradeSide.BUY:
+        reserved_amount = round(quantity * actual_limit, 2)
+        from app.services.wallet_service import debit
+        debit(FIXED_USER_ID, reserved_amount, trading_date)
+
     order = Order(
         session_id=session_id,
-        user_id=PLACEHOLDER_USER_ID,
+        user_id=FIXED_USER_ID,
         symbol=symbol,
         side=side,
         order_type=order_type,
@@ -93,6 +101,7 @@ def place_order(
         limit_price=actual_limit,
         status=OrderStatus.PENDING,
         created_at=created_at,
+        reserved_amount=reserved_amount,
     )
     _orders[session_id][order.order_id] = order
     _write_order_to_db(order)
@@ -110,16 +119,20 @@ def get_all_orders(session_id: str) -> list[Order]:
     return list(_orders.get(session_id, {}).values())
 
 
-def cancel_order(session_id: str, order_id: str) -> Order | None:
+def cancel_order(session_id: str, order_id: str, trading_date: str) -> Order | None:
     order = _orders.get(session_id, {}).get(order_id)
     if order is None or order.status != OrderStatus.PENDING:
         return None
     order.status = OrderStatus.CANCELLED
+    # Credit back the reserved funds for cancelled BUY orders
+    if order.side == TradeSide.BUY and order.reserved_amount > 0:
+        from app.services.wallet_service import credit
+        credit(FIXED_USER_ID, order.reserved_amount, trading_date)
     _write_order_to_db(order)
     return order
 
 
-def check_orders(session_id: str, current_price: float, current_time: int) -> list[Order]:
+def check_orders(session_id: str, current_price: float, current_time: int, trading_date: str = "") -> list[Order]:
     """
     Evaluate all PENDING orders against current_price and return newly FILLED ones.
 
@@ -148,6 +161,10 @@ def check_orders(session_id: str, current_price: float, current_time: int) -> li
             order.status = OrderStatus.FILLED
             order.filled_at = current_time
             order.filled_price = current_price
+            # Credit wallet when a SELL order fills (realises proceeds)
+            if order.side == TradeSide.SELL and trading_date:
+                from app.services.wallet_service import credit
+                credit(FIXED_USER_ID, round(order.quantity * current_price, 2), trading_date)
             _write_order_to_db(order)
             filled.append(order)
     return filled

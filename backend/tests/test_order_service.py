@@ -16,26 +16,31 @@ def clean():
     svc.clear_session(SESSION)
 
 
+DATE = "2026-05-06"
+
+
 @pytest.fixture(autouse=True)
-def no_db(autouse=True):
-    with patch("app.services.order_service._write_order_to_db"):
+def no_db():
+    with patch("app.services.order_service._write_order_to_db"), \
+         patch("app.services.wallet_service.debit"), \
+         patch("app.services.wallet_service.credit"):
         yield
 
 
 def _buy_target(trigger: float, qty: int = 1, ts: int = 1):
-    return svc.place_order(SESSION, "NIFTY", TradeSide.BUY, OrderType.TARGET, qty, ts, trigger_price=trigger)
+    return svc.place_order(SESSION, "NIFTY", TradeSide.BUY, OrderType.TARGET, qty, ts, DATE, trigger_price=trigger)
 
 
 def _sell_target(trigger: float, qty: int = 1, ts: int = 1):
-    return svc.place_order(SESSION, "NIFTY", TradeSide.SELL, OrderType.TARGET, qty, ts, trigger_price=trigger)
+    return svc.place_order(SESSION, "NIFTY", TradeSide.SELL, OrderType.TARGET, qty, ts, DATE, trigger_price=trigger)
 
 
 def _buy_limit(limit: float, qty: int = 1, ts: int = 1):
-    return svc.place_order(SESSION, "NIFTY", TradeSide.BUY, OrderType.LIMIT, qty, ts, limit_price=limit)
+    return svc.place_order(SESSION, "NIFTY", TradeSide.BUY, OrderType.LIMIT, qty, ts, DATE, limit_price=limit)
 
 
 def _sell_limit(limit: float, qty: int = 1, ts: int = 1):
-    return svc.place_order(SESSION, "NIFTY", TradeSide.SELL, OrderType.LIMIT, qty, ts, limit_price=limit)
+    return svc.place_order(SESSION, "NIFTY", TradeSide.SELL, OrderType.LIMIT, qty, ts, DATE, limit_price=limit)
 
 
 class TestPlaceTargetOrder:
@@ -95,22 +100,22 @@ class TestGetOrders:
 class TestCancelOrder:
     def test_cancel_sets_cancelled(self):
         order = _buy_target(100.0)
-        cancelled = svc.cancel_order(SESSION, order.order_id)
+        cancelled = svc.cancel_order(SESSION, order.order_id, DATE)
         assert cancelled is not None
         assert cancelled.status == OrderStatus.CANCELLED
 
     def test_cancel_removes_from_open(self):
         order = _buy_target(100.0)
-        svc.cancel_order(SESSION, order.order_id)
+        svc.cancel_order(SESSION, order.order_id, DATE)
         assert svc.get_open_orders(SESSION) == []
 
     def test_cancel_nonexistent_returns_none(self):
-        assert svc.cancel_order(SESSION, "no-such-id") is None
+        assert svc.cancel_order(SESSION, "no-such-id", DATE) is None
 
     def test_cancel_filled_returns_none(self):
         order = _buy_target(100.0)
         svc.check_orders(SESSION, 100.0, 2)
-        assert svc.cancel_order(SESSION, order.order_id) is None
+        assert svc.cancel_order(SESSION, order.order_id, DATE) is None
 
 
 class TestCheckTargetOrders:
