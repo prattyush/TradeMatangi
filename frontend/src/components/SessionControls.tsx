@@ -285,39 +285,37 @@ export default function SessionControls({
         {sessionState === 'ended' && (
           <span style={{ ...label, color: '#f85149' }}>Session ended — configure above and restart</span>
         )}
+
+        {/* Options offset + status — floated right */}
+        {instrumentType === 'options' && (
+          <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 10 }}>
+            {idle && (
+              <label style={{ ...label, fontSize: 12 }}>
+                Offset&nbsp;
+                <input
+                  type="number"
+                  value={optionsOffset}
+                  onChange={e => handleOffsetChange(parseInt(e.target.value) || 0)}
+                  style={{ ...inputStyle, width: 55, fontSize: 12 }}
+                  min={-10} max={10}
+                />
+                <span style={{ marginLeft: 4, fontSize: 11, color: '#484f58' }}>(0=ATM)</span>
+              </label>
+            )}
+            {fetchingOptions && (
+              <span style={{ fontSize: 12, color: '#8b949e' }}>Fetching…</span>
+            )}
+            {optionsConfig && !fetchingOptions && (
+              <span style={{ fontSize: 12, color: '#3fb950' }}>
+                Strike: {optionsConfig.strike} &nbsp;|&nbsp; Expiry: {optionsConfig.expiry}
+              </span>
+            )}
+            {optionsError && (
+              <span style={{ fontSize: 12, color: '#f85149' }}>{optionsError}</span>
+            )}
+          </div>
+        )}
       </div>
-
-      {/* Options configurator row */}
-      {instrumentType === 'options' && idle && (
-        <div style={{ ...row, marginTop: 8 }}>
-          <span style={{ fontSize: 12, color: '#58a6ff' }}>Options:</span>
-          <label style={{ ...label, fontSize: 12 }}>
-            OTM/ITM offset&nbsp;
-            <input
-              type="number"
-              value={optionsOffset}
-              onChange={e => handleOffsetChange(parseInt(e.target.value) || 0)}
-              style={{ ...inputStyle, width: 60, fontSize: 12 }}
-              min={-10} max={10}
-            />
-            <span style={{ marginLeft: 4, fontSize: 11, color: '#484f58' }}>(0=ATM, +n=OTM, -n=ITM)</span>
-          </label>
-
-          {fetchingOptions && (
-            <span style={{ fontSize: 12, color: '#8b949e' }}>Fetching…</span>
-          )}
-          {optionsConfig && !fetchingOptions && (
-            <span style={{ fontSize: 12, color: '#3fb950' }}>
-              Strike: {optionsConfig.strike} &nbsp;|&nbsp;
-              Expiry: {optionsConfig.expiry} &nbsp;|&nbsp;
-              Underlying: ₹{optionsConfig.underlyingPrice.toFixed(0)}
-            </span>
-          )}
-          {optionsError && (
-            <span style={{ fontSize: 12, color: '#f85149' }}>{optionsError}</span>
-          )}
-        </div>
-      )}
 
       {(dateError || startError) && (
         <div style={{ marginTop: 6, fontSize: 12, color: '#f85149' }}>

@@ -351,20 +351,22 @@ export default function App() {
         padding: '6px 12px', background: '#0d1117', borderBottom: '1px solid #30363d',
         display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap',
       }}>
-        <span style={{ fontSize: 12, color: '#484f58' }}>Layout:</span>
-        {([1, 2, 3, 4] as LayoutPreset[]).map(n => (
-          <button
-            key={n}
-            onClick={() => handleLayoutChange(n)}
+        <label style={{ fontSize: 12, color: '#484f58', display: 'flex', alignItems: 'center', gap: 6 }}>
+          Layout:
+          <select
+            value={layoutPreset}
+            onChange={e => handleLayoutChange(Number(e.target.value) as LayoutPreset)}
             style={{
-              padding: '3px 10px', fontSize: 12, borderRadius: 4,
-              border: `1px solid ${layoutPreset === n ? '#58a6ff' : '#30363d'}`,
-              background: layoutPreset === n ? '#0d2044' : '#161b22',
-              color: layoutPreset === n ? '#58a6ff' : '#8b949e',
-              cursor: 'pointer',
+              background: '#161b22', border: '1px solid #30363d', color: '#e6edf3',
+              borderRadius: 6, padding: '3px 8px', fontSize: 12,
             }}
-          >{n}</button>
-        ))}
+          >
+            <option value={1}>1 Pane</option>
+            <option value={2}>2 Panes</option>
+            <option value={3}>3 Panes</option>
+            <option value={4}>4 Panes</option>
+          </select>
+        </label>
 
         <div style={{ width: 1, height: 16, background: '#30363d', margin: '0 4px' }} />
 
