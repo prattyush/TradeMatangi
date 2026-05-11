@@ -102,7 +102,7 @@ TABLES = [
 
 
 def create_tables():
-    existing = {t["TableName"] for t in dynamodb.list_tables()["TableNames"]}
+    existing = set(dynamodb.list_tables()["TableNames"])
     for table_def in TABLES:
         name = table_def["TableName"]
         if name in existing:
