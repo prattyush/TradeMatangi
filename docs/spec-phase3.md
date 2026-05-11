@@ -48,26 +48,31 @@ This phase should support options and futures. We only need to support options a
 
 ## Phase-III Sprint Plan
 
-### Sprint 1 — User + Wallet
+### Sprint 1 — User + Wallet ✅ COMPLETE (merged to dev)
 
 **Goal:** Foundational user identity and wallet persistence. All other Phase-III features depend on these.
 
-**Backend:**
-- Hardcoded user record in DynamoDB (`Users` table) with a fixed UUID for `abc123`
-- Backfill `user_id` into all existing DynamoDB writes (Trades, Sessions, Orders)
-- `Wallet` DynamoDB table — balance, user_id, last_updated
-- Wallet endpoints: `GET /api/wallet`, `POST /api/wallet/reset`
-- Wallet debit on order placement (limit/target included, SL excluded), credit on fill/cancel
-- Wallet carry-forward: balance keyed per user + calendar date; replaying an earlier date uses that date's starting balance, not the latest session's end balance
-- `POST /api/simulation/start` snapshots wallet balance as `session_capital` (used by FundsRatio in Sprint 2)
+**What shipped:**
+- `Users` DynamoDB table; `abc123` / UUID `abc12300-0000-0000-0000-000000000001` seeded via FastAPI lifespan hook on startup
+- Renamed `PLACEHOLDER_USER_ID` → `FIXED_USER_ID` (new value) in `config.py`; updated all three services
+- `Wallet` DynamoDB table (PK: `user_id` HASH, SK: `date` RANGE YYYY-MM-DD)
+- `wallet_service.py`: in-memory `_wallets` dict, carry-forward via DynamoDB `query` with `Key("date").lt(target_date) + ScanIndexForward=False + Limit=1`, default ₹1,50,000 on no prior record
+- `GET /api/wallet?date=YYYY-MM-DD`, `POST /api/wallet/reset?date=YYYY-MM-DD`
+- Wallet debit on BUY order placement (`qty × actual_limit`), credit on BUY cancel, credit on SELL fill
+- Wallet debit on direct BUY trade (TradePanel button), credit on direct SELL trade
+- `POST /api/simulation/start` returns `session_capital` (wallet balance snapshotted at session start)
+- Frontend: localStorage user init, `WalletWidget` in header (auto-refreshes via `walletRefreshKey` counter), `SettingsModal` (gear icon), red error banner on 402 insufficient-funds
+- 128 backend tests passing, TypeScript clean
 
-**Frontend:**
-- User stored in localStorage on first load (hardcoded, no login page needed)
-- Wallet balance widget in top bar, refreshed after every order event
-- Settings popup (gear icon top-right): wallet reset to ₹1,50,000 or custom amount
-- UI error banner when order blocked due to insufficient wallet
+**Key implementation decisions:**
+- Wallet in-memory dict is process-local source of truth; DynamoDB is persistence. Writes swallow failures same as all other DB writes.
+- `reserved_amount` field added to `Order` model to store the debited amount at placement time (used for cancel credit without recomputing).
+- Direct TradePanel buy/sell debits/credits `price × 1` (qty is always 1 for direct trades). Same 402 path as order panel.
+- `InsufficientFundsError` raised in service, caught in routers, returned as HTTP 402.
 
-**Tests:** wallet debit/credit, carry-forward by calendar date, reset, user_id propagation
+**Bugs found and fixed during Sprint 1:**
+- `setup-dynamodb-tables.py`: `list_tables()["TableNames"]` returns `list[str]` not `list[dict]` — was using `t["TableName"]` inside a set comprehension, causing `TypeError`. Fixed to `set(dynamodb.list_tables()["TableNames"])`.
+- Direct TradePanel buy/sell did not touch wallet — wired up in `routers/trading.py` after initial PR.
 
 ---
 
