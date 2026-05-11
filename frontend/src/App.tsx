@@ -94,8 +94,8 @@ export default function App() {
       setLayoutPreset(3)
       setPanes([
         { id: 1, type: 'equity', intervalMinutes: 3 },
-        makeOptionsPane('CE', cfg.strike, cfg.expiry),
-        makeOptionsPane('PE', cfg.strike, cfg.expiry),
+        makeOptionsPane('CE', cfg.ceStrike, cfg.expiry),
+        makeOptionsPane('PE', cfg.peStrike, cfg.expiry),
       ])
       setActivePaneId(null)  // user must click a CE/PE pane to trade
     } else {
@@ -189,16 +189,21 @@ export default function App() {
   // ── Per-pane tick routing ────────────────────────────────────────────────────
   // Each tick type has its own state field so React batching doesn't drop earlier
   // ticks when equity + CE + PE all arrive within the same render cycle.
-  // Options ticks are only routed to panes whose strike matches the session strike —
-  // the backend streams exactly one strike, so a pane with a different strike must
-  // not receive those ticks (it only shows historical data).
+  // CE and PE may stream at different strikes (when OTM offset != 0), so each is
+  // checked against its own per-right session strike. A pane with a non-matching
+  // strike receives no live ticks and shows history only.
   const getTickForPane = useCallback((pane: PaneConfig) => {
     if (pane.type === 'equity') return sim.latestEquityTick
-    if (sim.sessionStrike !== null && pane.strike !== sim.sessionStrike) return null
-    if (pane.right === 'CE') return sim.latestCETick
-    if (pane.right === 'PE') return sim.latestPETick
+    if (pane.right === 'CE') {
+      if (sim.sessionStrikeCE !== null && pane.strike !== sim.sessionStrikeCE) return null
+      return sim.latestCETick
+    }
+    if (pane.right === 'PE') {
+      if (sim.sessionStrikePE !== null && pane.strike !== sim.sessionStrikePE) return null
+      return sim.latestPETick
+    }
     return null
-  }, [sim.latestEquityTick, sim.latestCETick, sim.latestPETick, sim.sessionStrike])
+  }, [sim.latestEquityTick, sim.latestCETick, sim.latestPETick, sim.sessionStrikeCE, sim.sessionStrikePE])
 
   // ── SSE at app level ─────────────────────────────────────────────────────────
   const handleSSEMessage = useCallback((event: Record<string, unknown>) => {

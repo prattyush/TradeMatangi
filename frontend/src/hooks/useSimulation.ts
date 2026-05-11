@@ -34,6 +34,8 @@ export interface SimulationState {
   sessionInstrumentType: 'equity' | 'options'
   sessionCapital: number
   sessionStrike: number | null
+  sessionStrikeCE: number | null   // CE streaming strike (may differ from PE when OTM offset != 0)
+  sessionStrikePE: number | null   // PE streaming strike
   sessionExpiry: string | null
 }
 
@@ -41,6 +43,8 @@ export interface InstrumentConfig {
   instrument_type: 'equity' | 'options'
   strike?: number
   expiry?: string
+  strike_ce?: number
+  strike_pe?: number
 }
 
 export function useSimulation() {
@@ -67,6 +71,8 @@ export function useSimulation() {
     sessionInstrumentType: 'equity',
     sessionCapital: 0,
     sessionStrike: null,
+    sessionStrikeCE: null,
+    sessionStrikePE: null,
     sessionExpiry: null,
   })
 
@@ -137,6 +143,8 @@ export function useSimulation() {
       sessionInstrumentType: (res.instrument_type as 'equity' | 'options') || 'equity',
       sessionCapital: res.session_capital,
       sessionStrike: res.strike,
+      sessionStrikeCE: res.strike_ce ?? res.strike,
+      sessionStrikePE: res.strike_pe ?? res.strike,
       sessionExpiry: res.expiry,
     }))
     return res.session_id

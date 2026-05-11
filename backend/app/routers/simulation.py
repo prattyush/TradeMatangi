@@ -64,10 +64,15 @@ async def start_simulation(req: SimulationStartRequest):
         if req.right is not None and req.right.upper() not in ("CE", "PE"):
             raise HTTPException(status_code=400, detail="right must be 'CE', 'PE', or null (dual-stream)")
         _ensure_session_data(req.symbol, req.date)  # always cache equity data too (for margin checks)
-        # Dual-stream (right=None): cache both CE and PE
-        rights_to_fetch = [req.right] if req.right else ["CE", "PE"]
-        for r in rights_to_fetch:
-            _ensure_options_data(req.symbol, req.date, req.strike, req.expiry, r)
+        # Dual-stream: cache CE at strike_ce, PE at strike_pe (fall back to strike for both)
+        ce_strike = req.strike_ce if req.strike_ce is not None else req.strike
+        pe_strike = req.strike_pe if req.strike_pe is not None else req.strike
+        if req.right:
+            strike_for_right = ce_strike if req.right.upper() == "CE" else pe_strike
+            _ensure_options_data(req.symbol, req.date, strike_for_right, req.expiry, req.right)
+        else:
+            _ensure_options_data(req.symbol, req.date, ce_strike, req.expiry, "CE")
+            _ensure_options_data(req.symbol, req.date, pe_strike, req.expiry, "PE")
     elif req.instrument_type == "equity":
         _ensure_session_data(req.symbol, req.date)
     else:
@@ -82,6 +87,8 @@ async def start_simulation(req: SimulationStartRequest):
         strike=req.strike,
         expiry=req.expiry,
         right=req.right,
+        strike_ce=req.strike_ce,
+        strike_pe=req.strike_pe,
     )
     sim_svc.start_session(session)
     return SimulationStartResponse(
@@ -95,6 +102,8 @@ async def start_simulation(req: SimulationStartRequest):
         strike=session.strike,
         expiry=session.expiry,
         right=session.right,
+        strike_ce=session.strike_ce,
+        strike_pe=session.strike_pe,
     )
 
 

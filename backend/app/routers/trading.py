@@ -26,6 +26,15 @@ def _resolve_right(session, req_right: str | None) -> str | None:
     return req_right if req_right is not None else session.right
 
 
+def _strike_for_right(session, right: str | None) -> int | None:
+    """Return the correct strike for the given right (CE/PE uses per-right strike if set)."""
+    if right == "CE" and session.strike_ce is not None:
+        return session.strike_ce
+    if right == "PE" and session.strike_pe is not None:
+        return session.strike_pe
+    return session.strike
+
+
 @router.post("/buy", response_model=Trade)
 async def buy(req: TradeRequest):
     session = sim_svc.get_session(req.session_id)
@@ -51,7 +60,7 @@ async def buy(req: TradeRequest):
         req.session_id, TradeSide.BUY, price=price, timestamp=timestamp,
         symbol=session.symbol,
         instrument_type=session.instrument_type,
-        strike=session.strike,
+        strike=_strike_for_right(session, right),
         expiry=session.expiry,
         right=right,
         quantity=lot_size,
@@ -81,7 +90,7 @@ async def sell(req: TradeRequest):
         req.session_id, TradeSide.SELL, price=price, timestamp=timestamp,
         symbol=session.symbol,
         instrument_type=session.instrument_type,
-        strike=session.strike,
+        strike=_strike_for_right(session, right),
         expiry=session.expiry,
         right=right,
         quantity=lot_size,
