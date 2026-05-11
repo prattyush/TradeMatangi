@@ -23,7 +23,7 @@ DYNAMODB_REGION = os.getenv("DYNAMODB_REGION", "us-east-1")
 
 # Options lot sizes — hardcoded current values; update manually if SEBI revises
 LOT_SIZES: dict[str, int] = {
-    "NIFTY": 75,
+    "NIFTY": 65,
     "RELIND": 250,
     "TATMOT": 1400,
     "TATPOW": 2700,

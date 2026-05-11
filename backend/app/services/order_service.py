@@ -94,6 +94,8 @@ def _write_order_to_db(order: Order) -> None:
             item["filled_at"] = order.filled_at
         if order.filled_price is not None:
             item["filled_price"] = Decimal(str(order.filled_price))
+        if order.right is not None:
+            item["right"] = order.right
         table.put_item(Item=item)
     except Exception:
         logger.exception("DynamoDB write failed for order %s", order.order_id)
@@ -110,6 +112,7 @@ def place_order(
     trigger_price: float | None = None,
     limit_price: float | None = None,
     is_stoploss: bool = False,
+    right: str | None = None,
 ) -> Order:
     _ensure_session(session_id)
 
@@ -149,6 +152,7 @@ def place_order(
         created_at=created_at,
         reserved_amount=reserved_amount,
         is_stoploss=is_stoploss,
+        right=right,
     )
     _orders[session_id][order.order_id] = order
     _write_order_to_db(order)
@@ -179,9 +183,18 @@ def cancel_order(session_id: str, order_id: str, trading_date: str) -> Order | N
     return order
 
 
-def check_orders(session_id: str, current_price: float, current_time: int, trading_date: str = "") -> list[Order]:
+def check_orders(
+    session_id: str,
+    current_price: float,
+    current_time: int,
+    trading_date: str = "",
+    tick_right: str | None = None,
+) -> list[Order]:
     """
-    Evaluate all PENDING orders against current_price and return newly FILLED ones.
+    Evaluate PENDING orders against current_price and return newly FILLED ones.
+
+    tick_right: for options dual-stream, only evaluate orders whose right matches
+                the tick's right. None means equity (match orders with right=None).
 
     TARGET   — BUY: price >= trigger_price  |  SELL: price <= trigger_price
     STOPLOSS — BUY: price >= trigger_price  |  SELL: price <= trigger_price  (same logic, no wallet)
@@ -190,6 +203,10 @@ def check_orders(session_id: str, current_price: float, current_time: int, tradi
     filled: list[Order] = []
     for order in _orders.get(session_id, {}).values():
         if order.status != OrderStatus.PENDING:
+            continue
+        # For options ticks: only check orders for the same contract (right).
+        # For equity ticks (tick_right=None): only check orders with right=None.
+        if order.right != tick_right:
             continue
 
         if order.order_type in (OrderType.TARGET, OrderType.STOPLOSS):

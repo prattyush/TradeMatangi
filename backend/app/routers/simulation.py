@@ -56,15 +56,18 @@ def _ensure_options_data(
 @router.post("/start", response_model=SimulationStartResponse)
 async def start_simulation(req: SimulationStartRequest):
     if req.instrument_type == "options":
-        if req.strike is None or req.expiry is None or req.right is None:
+        if req.strike is None or req.expiry is None:
             raise HTTPException(
                 status_code=400,
-                detail="strike, expiry, and right are required for options sessions",
+                detail="strike and expiry are required for options sessions",
             )
-        if req.right.upper() not in ("CE", "PE"):
-            raise HTTPException(status_code=400, detail="right must be 'CE' or 'PE'")
+        if req.right is not None and req.right.upper() not in ("CE", "PE"):
+            raise HTTPException(status_code=400, detail="right must be 'CE', 'PE', or null (dual-stream)")
         _ensure_session_data(req.symbol, req.date)  # always cache equity data too (for margin checks)
-        _ensure_options_data(req.symbol, req.date, req.strike, req.expiry, req.right)
+        # Dual-stream (right=None): cache both CE and PE
+        rights_to_fetch = [req.right] if req.right else ["CE", "PE"]
+        for r in rights_to_fetch:
+            _ensure_options_data(req.symbol, req.date, req.strike, req.expiry, r)
     elif req.instrument_type == "equity":
         _ensure_session_data(req.symbol, req.date)
     else:

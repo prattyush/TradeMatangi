@@ -154,6 +154,48 @@ async def get_pre_session(
     )
 
 
+@router.get("/options-historical", response_model=HistoricalDataResponse)
+async def get_options_historical(
+    symbol: str = Query(...),
+    date: str = Query(...),
+    strike: int = Query(...),
+    expiry: str = Query(...),
+    right: str = Query(...),
+    interval_minutes: int = Query(default=CANDLE_INTERVAL_MINUTES, ge=1, le=60),
+):
+    """
+    Return OHLC candles for an options contract on the given trading date.
+    Fetches from Breeze if not yet cached. Used to populate options chart panes.
+    right: "CE" or "PE"
+    """
+    if symbol not in SUPPORTED_SYMBOLS:
+        raise HTTPException(status_code=400, detail=f"Unsupported symbol: {symbol}")
+    if right.upper() not in ("CE", "PE"):
+        raise HTTPException(status_code=400, detail="right must be CE or PE")
+
+    from app.services.options_service import fetch_options_historical, load_options_dataframe
+    from app.services.broker_service import BreezeTokenError
+    try:
+        fetch_options_historical(symbol, date, strike, expiry, right.upper())
+    except BreezeTokenError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"Options data fetch failed: {e}")
+
+    try:
+        df = load_options_dataframe(symbol, date, strike, expiry, right.upper())
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail=f"Options data not found for {symbol} {right} {strike}")
+
+    candles = resample_to_candles(df, interval_minutes)
+    records = candles_to_records(candles)
+    return HistoricalDataResponse(
+        symbol=f"{symbol}-{right.upper()}-{strike}",
+        dates=[date],
+        candles=[OHLCCandle(**r) for r in records],
+    )
+
+
 @router.get("/price-at", response_model=PriceAtResponse)
 async def get_price_at(
     symbol: str = Query(...),

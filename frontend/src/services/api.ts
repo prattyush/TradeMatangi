@@ -15,6 +15,7 @@ export interface TickEvent {
   high: number
   low: number
   close: number
+  right?: string   // "CE" or "PE" for options dual-stream; undefined for equity
 }
 
 export interface SymbolInfo {
@@ -37,6 +38,7 @@ export interface Order {
   filled_at: number | null
   filled_price: number | null
   is_stoploss: boolean
+  right?: string   // "CE" or "PE" for options orders
 }
 
 export interface HistoricalDataResponse {
@@ -50,6 +52,10 @@ export interface SimulationStartRequest {
   date?: string
   start_time?: string
   speed?: number
+  instrument_type?: 'equity' | 'options'
+  strike?: number
+  expiry?: string   // YYYY-MM-DD
+  // right is omitted for dual-stream options (backend streams both CE and PE)
 }
 
 export interface SimulationStartResponse {
@@ -59,6 +65,10 @@ export interface SimulationStartResponse {
   start_time: string
   speed: number
   session_capital: number
+  instrument_type: string
+  strike: number | null
+  expiry: string | null
+  right: string | null
 }
 
 export interface WalletResponse {
@@ -83,6 +93,7 @@ export interface Trade {
   price: number
   timestamp: number
   session_id: string
+  right?: string   // "CE" or "PE" for options trades
 }
 
 export interface Position {
@@ -90,6 +101,19 @@ export interface Position {
   quantity: number
   avg_entry_price: number
   side: 'LONG' | 'SHORT' | 'FLAT'
+}
+
+export interface PriceAtResponse {
+  symbol: string
+  date: string
+  time: string
+  price: number
+}
+
+export interface ExpiryResponse {
+  symbol: string
+  date: string
+  expiry: string
 }
 
 const api = {
@@ -116,6 +140,26 @@ const api = {
     return res.json()
   },
 
+  async getOptionsHistorical(
+    symbol: string,
+    date: string,
+    strike: number,
+    expiry: string,
+    right: string,
+    intervalMinutes?: number,
+  ): Promise<HistoricalDataResponse> {
+    let url = `${BACKEND_URL}/api/data/options-historical`
+      + `?symbol=${encodeURIComponent(symbol)}`
+      + `&date=${date}`
+      + `&strike=${strike}`
+      + `&expiry=${expiry}`
+      + `&right=${right}`
+    if (intervalMinutes) url += `&interval_minutes=${intervalMinutes}`
+    const res = await fetch(url)
+    if (!res.ok) throw new Error(`Options historical data fetch failed: ${res.status}`)
+    return res.json()
+  },
+
   async getPreSession(symbol: string, tradingDate: string, startTime: string, intervalMinutes?: number): Promise<OHLCCandle[]> {
     let url = `${BACKEND_URL}/api/data/pre-session?symbol=${encodeURIComponent(symbol)}&trading_date=${tradingDate}&start_time=${encodeURIComponent(startTime)}`
     if (intervalMinutes) url += `&interval_minutes=${intervalMinutes}`
@@ -123,6 +167,20 @@ const api = {
     if (!res.ok) return []
     const data = await res.json()
     return data.candles ?? []
+  },
+
+  async getPriceAt(symbol: string, date: string, time: string): Promise<PriceAtResponse> {
+    const url = `${BACKEND_URL}/api/data/price-at?symbol=${encodeURIComponent(symbol)}&date=${date}&time=${encodeURIComponent(time)}`
+    const res = await fetch(url)
+    if (!res.ok) throw new Error(`Price-at fetch failed: ${res.status}`)
+    return res.json()
+  },
+
+  async getExpiry(symbol: string, date: string): Promise<ExpiryResponse> {
+    const url = `${BACKEND_URL}/api/data/expiry?symbol=${encodeURIComponent(symbol)}&date=${date}`
+    const res = await fetch(url)
+    if (!res.ok) throw new Error(`Expiry fetch failed: ${res.status}`)
+    return res.json()
   },
 
   async startSimulation(req: SimulationStartRequest = {}): Promise<SimulationStartResponse> {
@@ -163,21 +221,21 @@ const api = {
     })
   },
 
-  async buy(session_id: string): Promise<Trade> {
+  async buy(session_id: string, right?: string): Promise<Trade> {
     const res = await fetch(`${BACKEND_URL}/api/trades/buy`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ session_id }),
+      body: JSON.stringify({ session_id, ...(right ? { right } : {}) }),
     })
     if (!res.ok) throw new Error(`Buy failed: ${res.status}`)
     return res.json()
   },
 
-  async sell(session_id: string): Promise<Trade> {
+  async sell(session_id: string, right?: string): Promise<Trade> {
     const res = await fetch(`${BACKEND_URL}/api/trades/sell`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ session_id }),
+      body: JSON.stringify({ session_id, ...(right ? { right } : {}) }),
     })
     if (!res.ok) throw new Error(`Sell failed: ${res.status}`)
     return res.json()
@@ -189,8 +247,10 @@ const api = {
     return res.json()
   },
 
-  async getPosition(session_id: string): Promise<Position> {
-    const res = await fetch(`${BACKEND_URL}/api/trades/position?session_id=${session_id}`)
+  async getPosition(session_id: string, right?: string): Promise<Position> {
+    let url = `${BACKEND_URL}/api/trades/position?session_id=${session_id}`
+    if (right) url += `&right=${right}`
+    const res = await fetch(url)
     if (!res.ok) throw new Error(`Get position failed: ${res.status}`)
     return res.json()
   },
@@ -201,7 +261,7 @@ const api = {
     order_type: 'TARGET' | 'LIMIT' | 'STOPLOSS',
     price: number,
     quantityOrRatio: number | null,
-    opts: { is_stoploss?: boolean; funds_ratio_pct?: number } = {},
+    opts: { is_stoploss?: boolean; funds_ratio_pct?: number; right?: string } = {},
   ): Promise<Order> {
     const body: Record<string, unknown> = { session_id, side, order_type, ...opts }
     if (order_type === 'LIMIT') {

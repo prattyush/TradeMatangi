@@ -302,8 +302,8 @@ class TestOptionsParquetPath:
 
 class TestComputeShortMargin:
     def test_nifty_margin(self):
-        # NIFTY lot=75, price=24000 → 24000 * 75 * 0.20 = 360000
-        assert compute_short_margin("NIFTY", 24000.0) == pytest.approx(360000.0)
+        # NIFTY lot=65, price=24000 → 24000 * 65 * 0.20 = 312000
+        assert compute_short_margin("NIFTY", 24000.0) == pytest.approx(312000.0)
 
     def test_tatpow_margin(self):
         # TATPOW lot=2700, price=450 → 450 * 2700 * 0.20 = 243000

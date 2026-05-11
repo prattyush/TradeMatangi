@@ -25,6 +25,16 @@ async def place_order(req: PlaceOrderRequest):
         if not req.limit_price or req.limit_price <= 0:
             raise HTTPException(status_code=400, detail="limit_price is required and must be positive for LIMIT orders")
 
+    # Resolve which options contract this order targets
+    order_right: str | None = None
+    if session.instrument_type == "options":
+        order_right = req.right if req.right is not None else session.right
+        if order_right is None:
+            raise HTTPException(
+                status_code=400,
+                detail="right (CE or PE) is required when placing orders in a dual-stream options session",
+            )
+
     # Naked short margin check for options sessions
     if (
         session.instrument_type == "options"
@@ -33,7 +43,7 @@ async def place_order(req: PlaceOrderRequest):
         and req.order_type != OrderType.STOPLOSS
     ):
         from app.services.trading import get_position
-        position = get_position(session.session_id, session.symbol)
+        position = get_position(session.session_id, session.symbol, right=order_right)
         if position.side != "LONG":  # no open buy position — naked short
             from app.services.options_service import compute_short_margin, get_underlying_price_at
             current_ts = int(session.current_time) if session.current_time else 0
@@ -91,6 +101,7 @@ async def place_order(req: PlaceOrderRequest):
             trigger_price=req.trigger_price,
             limit_price=req.limit_price,
             is_stoploss=req.is_stoploss,
+            right=order_right,
         )
     except InsufficientFundsError as exc:
         raise HTTPException(status_code=402, detail=str(exc))

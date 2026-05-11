@@ -302,6 +302,7 @@ class TestNakedShortMarginCheck:
             price=150.0,
             timestamp=1746511500,
             session_id=session_id,
+            right="CE",
         ))
 
         with patch("app.routers.orders.get_balance", return_value=50000.0), \

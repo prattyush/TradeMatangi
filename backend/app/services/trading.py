@@ -83,12 +83,13 @@ def get_trades(session_id: str) -> list[Trade]:
     return _trades.get(session_id, [])
 
 
-def get_position(session_id: str, symbol: str | None = None) -> Position:
+def get_position(session_id: str, symbol: str | None = None, right: str | None = None) -> Position:
     trades = _trades.get(session_id, [])
-    # If symbol not provided, infer from the first recorded trade
     if symbol is None:
         symbol = trades[0].symbol if trades else DEFAULT_SYMBOL
-    symbol_trades = [t for t in trades if t.symbol == symbol]
+    # For options: filter by right so CE and PE positions are tracked independently.
+    # right=None matches equity trades (those with right=None on the trade record).
+    symbol_trades = [t for t in trades if t.symbol == symbol and t.right == right]
 
     net_qty = 0
     total_buy_value = 0.0

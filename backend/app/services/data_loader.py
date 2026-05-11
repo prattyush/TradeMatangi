@@ -57,7 +57,10 @@ def load_dataframe(symbol: str, date: str) -> pd.DataFrame:
 
     df = df.rename(columns=str.lower)
     df = df[["open", "high", "low", "close"]]
-    df.index = df.index.tz_localize("UTC")
+    if df.index.tzinfo is None:
+        df.index = df.index.tz_localize("UTC")
+    else:
+        df.index = df.index.tz_convert("UTC")
     return df
 
 
