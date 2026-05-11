@@ -106,21 +106,58 @@ This phase should support options and futures. We only need to support options a
 
 ---
 
-### Sprint 3 — Options Data Infrastructure (Backend)
+### Sprint 3 — Options Data Infrastructure (Backend) ✅ COMPLETE (merged to dev, 241 tests passing)
 
 **Goal:** Options OHLC fetch, caching, and streaming working end-to-end before any options UI is built. Highest-risk sprint.
 
-**Backend:**
-- `GET /api/data/price-at?symbol=X&date=YYYY-MM-DD&time=HH:MM` — reads first price at/after given time from cached parquet; fetches from Breeze if not cached
-- Expiry date calculator: date-aware (Thursdays pre-2025-09-01, Tuesdays from 2025-09-01), shifts to previous trading day on holiday
-- ATM strike calculator: `round(price / interval) * interval` where interval=50 for NIFTY, 5 for equities; apply OTM/ITM offset
-- Options fetch + pagination: `get_historical_data_v2(exchange_code="NFO", product_type="options", expiry_date, strike_price, right)` with same 15-min chunking as equity
-- Cache path: `data/ohlcdata/{SYMBOL}-{CE|PE}-{STRIKE}-{EXPIRY}-{DD-MM-YYYY}.parquet`
-- Options session: `POST /api/simulation/start` accepts `instrument_type=options`, `strike`, `expiry`, `right`; streams ticks via existing SSE
-- Naked short margin check: `symbol_price × lot_size × 0.20`; blocked if wallet insufficient
-- DynamoDB Sessions/Trades gain options metadata fields: `strike`, `expiry`, `right`, `instrument_type`
+**What shipped:**
+- `backend/app/services/options_service.py` — new module containing all options infrastructure:
+  - `NSE_HOLIDAYS: frozenset[datetime.date]` — 2025–2026 NSE market holidays hardcoded
+  - `_is_trading_day / _prev_trading_day` — holiday-aware trading day utilities
+  - `_expiry_weekday(date)` → 1 (Tuesday) from 2025-09-01, 3 (Thursday) before; `_CUTOFF_DATE = datetime.date(2025, 9, 1)`
+  - `get_weekly_expiry(date_str)` — next weekly expiry at or after given date; holiday shifts to previous trading day
+  - `get_monthly_expiry(date_str)` — last expiry weekday of the month; holiday shifts to previous trading day
+  - `get_expiry_date(symbol, date_str)` — dispatches to weekly (NIFTY) or monthly (equities); auto-rolls to next month if current month's expiry has passed
+  - `STRIKE_INTERVALS` dict: NIFTY=50, RELIND/TATMOT/TATPOW=5
+  - `get_atm_strike(symbol, price, offset=0)` — `round(price / interval) * interval`; OTM/ITM offset in interval steps
+  - `options_parquet_path(symbol, date, strike, expiry, right)` → `data/ohlcdata/{SYM}-{CE|PE}-{STRIKE}-{ED}-{EM}-{EY}-{DD}-{MM}-{YYYY}.parquet`
+  - `_breeze_expiry_format(expiry)` → `"YYYY-MM-DDTHH:MM:SS.000Z"` (Breeze API ISO format)
+  - `_fetch_options_day_paginated(breeze, symbol, date, strike, expiry, right)` — 15-min chunk pagination for NFO options; passes `exchange_code="NFO"`, `product_type="options"`, `right="call"|"put"`, `strike_price=str(strike)`, `expiry_date=<ISO>`
+  - `_validate_options_gaps(df, date)` — lenient fill (bfill leading gap + ffill trailing); NO strict gap limit unlike equity
+  - `fetch_options_historical(symbol, date, strike, expiry, right)` — cache-first; fetches from Breeze on miss; atomic write via `.tmp` rename
+  - `load_options_dataframe(symbol, date, strike, expiry, right)` — reads parquet; applies same `tz_localize("UTC")` IST-as-UTC trick as equity
+  - `options_iter_ticks(symbol, date, strike, expiry, right, start_time)` — same tick dict format as equity `iter_ticks`
+  - `compute_short_margin(symbol, underlying_price)` — `underlying_price × lot_size × 0.20`
+  - `get_underlying_price_at(symbol, date, unix_ts)` — reads equity parquet at given tick time for margin calc; returns None on failure (swallowed)
+- `GET /api/data/price-at?symbol&date&time` — returns `{symbol, date, time, price}` (first close at/after given time)
+- `GET /api/data/expiry?symbol&date` — returns `{symbol, date, expiry}` using `get_expiry_date`
+- `models/schemas.py`: added `PriceAtResponse`, `ExpiryResponse`; `Trade` gains optional `instrument_type / strike / expiry / right`; `SimulationStartRequest/Response` gain `instrument_type / strike / expiry / right`
+- `services/simulation.py`: `SimulationSession` dataclass gains `instrument_type / strike / expiry / right`; `create_session()` accepts these params; `_run_session` dispatches to `options_iter_ticks` when `instrument_type == "options"`; `_upsert_session_to_db` includes options fields; `record_trade` call passes session options metadata
+- `routers/simulation.py`: `_ensure_options_data()` helper; `start_simulation` validates `instrument_type`, validates `right ∈ {CE, PE}`, calls both `_ensure_session_data` (equity) and `_ensure_options_data` for options sessions
+- `routers/orders.py`: naked short margin check for options SELL orders (not SL/covered); `lot_size` passed from `LOT_SIZES` for options sessions vs 1 for equity
+- `services/trading.py`: `record_trade()` and `_write_trade_to_db()` accept and persist options metadata
+- 86 new tests (68 unit + 18 API); 241 total passing, TypeScript clean
 
-**Tests:** expiry calculation pre/post 2025-09-01 including holiday edge cases, ATM strike calc, paginated options fetch, margin check, cache path generation
+**Key implementation decisions:**
+- Options gap-fill is lenient (bfill + ffill, no gap limit) because far-OTM contracts legitimately have no data from 09:15. Equity validation remains strict (15-min gap limit). The bfill behavior means pre-trade simulation candles show the first available options price for any empty leading period — acceptable approximation for ATM options.
+- `_get_breeze` and `_breeze_to_dataframe` are re-used from `broker_service` (imported inside `fetch_options_historical`) to avoid duplicating Breeze connection logic. Patch target in tests: `app.services.broker_service._get_breeze`, NOT `app.services.options_service._get_breeze`.
+- Underlying price for margin check is read from the equity parquet at the current tick's Unix timestamp (not stored in session state). Equity data is always cached before an options session starts (the router calls `_ensure_session_data` for equity + `_ensure_options_data` for options). Falls back to `session.last_price` if equity read fails.
+- Naked short check fires only when `instrument_type == "options"`, `side == SELL`, not a STOPLOSS order, and position is not LONG. Covered sells (LONG position exists) bypass margin check entirely.
+- Breeze `expiry_date` format: `"YYYY-MM-DDTHH:MM:SS.000Z"` with fixed `T06:00:00.000Z` suffix. This matches what the Breeze API expects for NFO options lookups.
+- Options session also requires equity data to be cached (margin check + historical chart in Sprint 4). The simulation router fetches both on `POST /api/simulation/start`.
+- `options_iter_ticks` uses the same `tz_localize("UTC")` + `ts.timestamp()` path as equity — the frontend's Lightweight Charts timestamp math is identical for both.
+- `get_expiry_date` for equities checks `monthly < trading_date` and rolls to next month. This handles the edge case where a user replays a date after the monthly expiry has already passed (e.g., replaying May 30 when last Thursday of May was May 29).
+
+**Bugs found and fixed during Sprint 3:**
+- `fetch_options_historical` imports `_get_breeze` from `broker_service` at call time (lazy import). Tests patching `app.services.options_service._get_breeze` failed with `AttributeError`. Fixed by patching `app.services.broker_service._get_breeze` instead.
+- `SimulationSession` uses `asyncio.Queue` and `asyncio.Event` as dataclass fields. The options session start test created a real `SimulationSession` and the async `_run_session` task was spawned with no data file — `FileNotFoundError` logged as "Task exception was never retrieved". Fixed by patching `_upsert_session_to_db` and `wallet_service.get_balance` directly (no `wallet_service` module-level import in `simulation.py` — it's a lazy import inside `create_session`).
+
+**New technical constraints added to CLAUDE.md:**
+- Options cache path: `data/ohlcdata/{SYMBOL}-{CE|PE}-{STRIKE}-{EXPIRY}-{DD-MM-YYYY}.parquet`
+- Options lot sizes: hardcoded, current values only (NIFTY=75, RELIND=250, TATMOT=1400, TATPOW=2700)
+- NSE options expiry: date-aware helper in `options_service.py`; cutoff 2025-09-01 (Tuesday vs Thursday)
+- Breeze expiry ISO format: `"YYYY-MM-DDTHH:MM:SS.000Z"` with fixed `T06:00:00.000Z`
+- Naked short margin: `underlying_price × lot_size × 0.20`; underlying read from equity parquet, not options price
 
 ---
 
