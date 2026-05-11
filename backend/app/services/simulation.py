@@ -34,9 +34,11 @@ class SimulationSession:
     last_price_pe: float = 0.0        # PE price (dual-stream options only)
     session_capital: float = 0.0      # wallet balance snapshotted at session start
     instrument_type: str = "equity"   # "equity" or "options"
-    strike: Optional[int] = None       # options only
+    strike: Optional[int] = None       # options: ATM/reference strike
     expiry: Optional[str] = None       # options only (YYYY-MM-DD)
     right: Optional[str] = None        # options only: "CE", "PE", or None (dual-stream)
+    strike_ce: Optional[int] = None    # CE streaming strike (equals strike when offset=0)
+    strike_pe: Optional[int] = None    # PE streaming strike (equals strike when offset=0)
     queue: asyncio.Queue = field(default_factory=lambda: asyncio.Queue(maxsize=3000))
     resume_event: asyncio.Event = field(default_factory=asyncio.Event)
     task: Optional[asyncio.Task] = None
@@ -83,6 +85,8 @@ def create_session(
     strike: Optional[int] = None,
     expiry: Optional[str] = None,
     right: Optional[str] = None,
+    strike_ce: Optional[int] = None,
+    strike_pe: Optional[int] = None,
 ) -> SimulationSession:
     from app.services import wallet_service
     session_id = str(uuid.uuid4())
@@ -98,6 +102,8 @@ def create_session(
         strike=strike,
         expiry=expiry,
         right=right,
+        strike_ce=strike_ce if strike_ce is not None else strike,
+        strike_pe=strike_pe if strike_pe is not None else strike,
     )
     session.resume_event.set()  # not paused initially
     _sessions[session_id] = session
@@ -164,15 +170,19 @@ async def _run_session(session: SimulationSession) -> None:
 
     try:
         # Dual-stream options (right=None): merge equity + CE + PE tick sequences by time.
+        # CE and PE may have different strikes when the user set a non-zero OTM offset.
         if session.instrument_type == "options" and session.strike and session.expiry and session.right is None:
             from app.services.options_service import options_iter_ticks
 
+            ce_strike = session.strike_ce or session.strike
+            pe_strike = session.strike_pe or session.strike
+
             ce_ticks = list(options_iter_ticks(
-                session.symbol, session.date, session.strike,
+                session.symbol, session.date, ce_strike,
                 session.expiry, "CE", session.start_time,
             ))
             pe_ticks = list(options_iter_ticks(
-                session.symbol, session.date, session.strike,
+                session.symbol, session.date, pe_strike,
                 session.expiry, "PE", session.start_time,
             ))
             # Equity ticks have no "right" field — they go to the underlying reference chart

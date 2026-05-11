@@ -71,6 +71,9 @@ node node_modules/typescript/bin/tsc --noEmit
 - **Lightweight Charts "Cannot update oldest data"**: `series.setData(candles)` sets the minimum acceptable timestamp. Any subsequent `series.update(tick)` with `time <= candles[-1].time` throws. For options historical pre-load, filter to `time < startWindowTs` (the first live tick's window start).
 - **Lightweight Charts "Object is disposed"**: async `.then()` callbacks fire after chart teardown if a pane unmounts. Guard all three Chart `useEffect` async paths with `let cancelled = false` + `return () => { cancelled = true }` cleanup.
 - **Pane wrapper flex shrink**: Lightweight Charts sets an explicit pixel `width` on the canvas. Pane wrapper divs must have `minWidth: 0` or flex siblings cannot shrink below that canvas width after a pane is removed.
+- **Options tick routing uses per-right session strike**: `getTickForPane` in `App.tsx` checks CE panes against `sim.sessionStrikeCE` and PE panes against `sim.sessionStrikePE`. CE and PE may stream at different strikes when OTM offset ≠ 0. Panes with a non-matching strike return `null` (history only).
+- **OTM offset is direction-aware**: CE strike = `ATM + N × interval`; PE strike = `ATM − N × interval`. Applies to both initial session panes (via `SessionControls.fetchOptionsData`) and mid-session `addPane`. UI label is "OTM", not "Offset".
+- **`SimulationSession` carries `strike_ce` and `strike_pe`**: both default to `strike` when not provided (ATM sessions, backward compat). `_run_session` dual-stream loads CE ticks from `strike_ce`, PE ticks from `strike_pe`. `routers/trading.py` `_strike_for_right()` returns the correct per-right strike for trade recording.
 
 ## Phase-III Status
 
@@ -86,8 +89,8 @@ FundsRatio sizing and SL orders are live. See `docs/spec-phase3.md` Sprint 2 sec
 
 Options data fetch, expiry/strike calculation, options sessions, and naked short margin check are live. See `docs/spec-phase3.md` Sprint 3 section for full details.
 
-### Sprint 4 — Layout + Options UI (Frontend) ✅ COMPLETE (241 tests passing)
+### Sprint 4 — Layout + Options UI (Frontend) ✅ COMPLETE (merged to dev, 241 tests passing)
 
-Multi-pane layout, dual-stream options replay, and lot-sized direct trades are live. See `docs/spec-phase3.md` Sprint 4 section for full details.
+Multi-pane layout, dual-stream options replay, and lot-sized direct trades are live. Three post-merge fixes: wrong-strike tick routing (bug #9), OTM direction for mid-session addPane (bug #10), and full-stack direction-aware OTM strikes for initial session with per-right CE/PE streaming (bug #11). See Sprint 4 section in `docs/spec-phase3.md` for full details.
 
 **Next: Phase IV BetaMinorUpdates** (see `docs/spec-phase4.md`)

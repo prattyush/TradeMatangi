@@ -94,8 +94,8 @@ export default function App() {
       setLayoutPreset(3)
       setPanes([
         { id: 1, type: 'equity', intervalMinutes: 3 },
-        makeOptionsPane('CE', cfg.strike, cfg.expiry),
-        makeOptionsPane('PE', cfg.strike, cfg.expiry),
+        makeOptionsPane('CE', cfg.ceStrike, cfg.expiry),
+        makeOptionsPane('PE', cfg.peStrike, cfg.expiry),
       ])
       setActivePaneId(null)  // user must click a CE/PE pane to trade
     } else {
@@ -116,7 +116,9 @@ export default function App() {
   const addPane = useCallback(() => {
     if (instrumentType === 'options' && addPaneType !== 'equity' && optionsReady) {
       const interval = { NIFTY: 50, RELIND: 5, TATMOT: 5, TATPOW: 5 }[sim.symbol] ?? 50
-      const strike = optionsReady.atmStrike + addOffset * interval
+      // OTM direction: positive offset = higher strikes for CE, lower for PE
+      const directedOffset = addPaneType === 'PE' ? -addOffset : addOffset
+      const strike = optionsReady.atmStrike + directedOffset * interval
       const right = addPaneType as 'CE' | 'PE'
       setPanes(p => [...p, makeOptionsPane(right, strike, optionsReady.expiry)])
     } else {
@@ -187,12 +189,21 @@ export default function App() {
   // ── Per-pane tick routing ────────────────────────────────────────────────────
   // Each tick type has its own state field so React batching doesn't drop earlier
   // ticks when equity + CE + PE all arrive within the same render cycle.
+  // CE and PE may stream at different strikes (when OTM offset != 0), so each is
+  // checked against its own per-right session strike. A pane with a non-matching
+  // strike receives no live ticks and shows history only.
   const getTickForPane = useCallback((pane: PaneConfig) => {
     if (pane.type === 'equity') return sim.latestEquityTick
-    if (pane.right === 'CE') return sim.latestCETick
-    if (pane.right === 'PE') return sim.latestPETick
+    if (pane.right === 'CE') {
+      if (sim.sessionStrikeCE !== null && pane.strike !== sim.sessionStrikeCE) return null
+      return sim.latestCETick
+    }
+    if (pane.right === 'PE') {
+      if (sim.sessionStrikePE !== null && pane.strike !== sim.sessionStrikePE) return null
+      return sim.latestPETick
+    }
     return null
-  }, [sim.latestEquityTick, sim.latestCETick, sim.latestPETick])
+  }, [sim.latestEquityTick, sim.latestCETick, sim.latestPETick, sim.sessionStrikeCE, sim.sessionStrikePE])
 
   // ── SSE at app level ─────────────────────────────────────────────────────────
   const handleSSEMessage = useCallback((event: Record<string, unknown>) => {
@@ -382,7 +393,7 @@ export default function App() {
             </select>
             {addPaneType !== 'equity' && (
               <label style={{ fontSize: 12, color: '#8b949e', display: 'flex', alignItems: 'center', gap: 4 }}>
-                Offset:
+                OTM:
                 <input
                   type="number" value={addOffset} min={-10} max={10}
                   onChange={e => setAddOffset(parseInt(e.target.value) || 0)}

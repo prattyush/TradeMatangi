@@ -56,6 +56,8 @@ export interface SimulationStartRequest {
   strike?: number
   expiry?: string   // YYYY-MM-DD
   // right is omitted for dual-stream options (backend streams both CE and PE)
+  strike_ce?: number  // CE streaming strike (OTM direction: ATM + offset)
+  strike_pe?: number  // PE streaming strike (OTM direction: ATM - offset)
 }
 
 export interface SimulationStartResponse {
@@ -69,6 +71,8 @@ export interface SimulationStartResponse {
   strike: number | null
   expiry: string | null
   right: string | null
+  strike_ce: number | null
+  strike_pe: number | null
 }
 
 export interface WalletResponse {

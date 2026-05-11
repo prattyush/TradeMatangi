@@ -23,9 +23,11 @@ class SimulationStartRequest(BaseModel):
     start_time: str = "09:15:00"
     speed: float = Field(default=1.0, ge=0.05, le=100.0)
     instrument_type: str = "equity"   # "equity" or "options"
-    strike: int | None = None          # required when instrument_type="options"
+    strike: int | None = None          # ATM/reference strike; required when instrument_type="options"
     expiry: str | None = None          # YYYY-MM-DD; required when instrument_type="options"
     right: str | None = None           # "CE" or "PE"; required when instrument_type="options"
+    strike_ce: int | None = None       # CE streaming strike (defaults to strike when omitted)
+    strike_pe: int | None = None       # PE streaming strike (defaults to strike when omitted)
 
 
 class SimulationStartResponse(BaseModel):
@@ -39,6 +41,8 @@ class SimulationStartResponse(BaseModel):
     strike: int | None = None
     expiry: str | None = None
     right: str | None = None
+    strike_ce: int | None = None
+    strike_pe: int | None = None
 
 
 class SimulationControlRequest(BaseModel):

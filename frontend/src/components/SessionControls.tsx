@@ -18,7 +18,9 @@ interface Props {
 }
 
 export interface OptionsReadyConfig {
-  strike: number
+  strike: number      // ATM/reference strike (= atmStrike when offset=0)
+  ceStrike: number    // CE streaming strike: ATM + offset * interval
+  peStrike: number    // PE streaming strike: ATM - offset * interval
   expiry: string
   atmStrike: number
   underlyingPrice: number
@@ -134,9 +136,13 @@ export default function SessionControls({
       ])
       const interval = STRIKE_INTERVALS[symbol] ?? 50
       const atmStrike = Math.round(priceRes.price / interval) * interval
-      const strike = atmStrike + offset * interval
+      // OTM direction: positive offset = higher strikes for CE, lower for PE
+      const ceStrike = atmStrike + offset * interval
+      const peStrike = atmStrike - offset * interval
       const cfg: OptionsReadyConfig = {
-        strike,
+        strike: atmStrike,
+        ceStrike,
+        peStrike,
         expiry: expiryRes.expiry,
         atmStrike,
         underlyingPrice: priceRes.price,
@@ -194,7 +200,13 @@ export default function SessionControls({
     setLoading(true)
     try {
       const config: InstrumentConfig = instrumentType === 'options' && optionsConfig
-        ? { instrument_type: 'options', strike: optionsConfig.strike, expiry: optionsConfig.expiry }
+        ? {
+            instrument_type: 'options',
+            strike: optionsConfig.strike,
+            expiry: optionsConfig.expiry,
+            strike_ce: optionsConfig.ceStrike,
+            strike_pe: optionsConfig.peStrike,
+          }
         : { instrument_type: 'equity' }
       await onStart(startTime + ':00', speed, config)
     } catch (e) {
@@ -291,7 +303,7 @@ export default function SessionControls({
           <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 10 }}>
             {idle && (
               <label style={{ ...label, fontSize: 12 }}>
-                Offset&nbsp;
+                OTM&nbsp;
                 <input
                   type="number"
                   value={optionsOffset}
