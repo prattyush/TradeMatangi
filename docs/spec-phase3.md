@@ -206,8 +206,9 @@ This phase should support options and futures. We only need to support options a
 6. Newly added pane renders at minimal width — canvas `min-width: auto` prevented flex shrink. Fixed: `minWidth: 0` on pane wrapper.
 7. NIFTY lot size wrong — `config.py` had `"NIFTY": 75`; correct value is 65. Fixed.
 8. Direct TradePanel BUY/SELL ignored lot size — `routers/trading.py` debited `price × 1` and recorded `quantity=1` for options sessions. Fixed: compute `lot_size` from `LOT_SIZES` and use throughout.
-9. Wrong-strike live ticks routed to differently-struck options pane — `getTickForPane` in `App.tsx` routed ticks to any pane matching `right` (`CE`/`PE`) regardless of strike. Backend streams exactly one strike (the session strike); adding a pane with a different offset caused it to receive live ticks from the wrong strike while historical data loaded correctly for the new strike. Fixed: guard in `getTickForPane` returns `null` when `pane.strike !== sim.sessionStrike`, so different-strike panes show history only and receive no incorrect live data.
-10. OTM offset applied identically to CE and PE panes — OTM=3 for a PE pane computed `ATM + 3 × interval` (3 strikes ITM for PE) instead of `ATM − 3 × interval` (3 strikes OTM). Fixed: `directedOffset = addPaneType === 'PE' ? -addOffset : addOffset` in `addPane`. UI label renamed "Offset" → "OTM".
+9. Wrong-strike live ticks routed to differently-struck options pane — `getTickForPane` routed by `right` only; a pane at a different offset received the session-strike prices. Initially fixed with a single `sessionStrike` guard. Superseded by bug #11.
+10. OTM offset applied identically to CE and PE for mid-session `addPane` — OTM=3 gave PE `ATM + 3 × interval` (ITM for PE) instead of `ATM − 3 × interval`. Fixed: `directedOffset = addPaneType === 'PE' ? -addOffset : addOffset`. UI label renamed "Offset" → "OTM".
+11. OTM direction not applied to initial session panes, and CE/PE could only share one backend strike — Full-stack fix: `SessionControls` computes `ceStrike = ATM + N × interval`, `peStrike = ATM − N × interval` and sends both as `strike_ce`/`strike_pe` in the start request. Backend `SimulationSession` stores `strike_ce`/`strike_pe`; `_run_session` dual-stream loads CE data from `strike_ce` and PE data from `strike_pe` independently. `routers/simulation.py` caches options parquet for each right at its own strike. `routers/trading.py` helper `_strike_for_right()` records trades at the correct per-right strike. Frontend `useSimulation` stores `sessionStrikeCE`/`sessionStrikePE`; `getTickForPane` checks each right against its own session strike. Backward compat: `strike_ce`/`strike_pe` default to `strike` when omitted (offset=0 ATM sessions unchanged).
 
 **New technical constraints added to CLAUDE.md:**
 - `lot_size` for direct trades: `LOT_SIZES.get(symbol, 1)` when `instrument_type == "options"`, else 1
@@ -217,6 +218,7 @@ This phase should support options and futures. We only need to support options a
 - React state batching: multiple `setState` calls in one burst → last wins; use single functional update with per-field keys
 - Cancellation flag required for all async effects on chart components
 - Pane wrapper needs `minWidth: 0` for correct flex behaviour alongside explicit-width canvas
-- Options tick routing is strike-aware: `getTickForPane` must check `pane.strike === sim.sessionStrike`; panes with a different strike receive no live ticks (history-only)
-- OTM offset is direction-aware: `directedOffset = right === 'PE' ? -addOffset : addOffset`; positive OTM = higher strikes for CE, lower for PE
+- Options tick routing uses per-right session strike: `getTickForPane` checks CE panes against `sessionStrikeCE`, PE panes against `sessionStrikePE`; panes with a non-matching strike show history only
+- OTM offset is direction-aware: CE = `ATM + N × interval`, PE = `ATM − N × interval`; applies both to initial session panes and mid-session `addPane`
+- `SimulationSession` carries `strike_ce` and `strike_pe` (default to `strike`); `_run_session` dual-stream uses each for its respective right; trades record per-right strike via `_strike_for_right()`
 
