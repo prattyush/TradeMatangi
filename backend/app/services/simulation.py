@@ -29,12 +29,14 @@ class SimulationSession:
     speed: float
     state: SimulationState = SimulationState.IDLE
     current_time: Optional[str] = None
-    last_price: float = 0.0
-    session_capital: float = 0.0  # wallet balance snapshotted at session start
+    last_price: float = 0.0           # equity or single-right options price
+    last_price_ce: float = 0.0        # CE price (dual-stream options only)
+    last_price_pe: float = 0.0        # PE price (dual-stream options only)
+    session_capital: float = 0.0      # wallet balance snapshotted at session start
     instrument_type: str = "equity"   # "equity" or "options"
     strike: Optional[int] = None       # options only
     expiry: Optional[str] = None       # options only (YYYY-MM-DD)
-    right: Optional[str] = None        # options only ("CE" or "PE")
+    right: Optional[str] = None        # options only: "CE", "PE", or None (dual-stream)
     queue: asyncio.Queue = field(default_factory=lambda: asyncio.Queue(maxsize=500))
     resume_event: asyncio.Event = field(default_factory=asyncio.Event)
     task: Optional[asyncio.Task] = None
@@ -103,6 +105,49 @@ def create_session(
     return session
 
 
+def _emit_tick_and_check_orders(
+    session: SimulationSession,
+    tick: dict,
+    tick_right: Optional[str],
+) -> list[dict]:
+    """Put one tick on the queue and return fill events for any triggered orders."""
+    from app.services.order_service import check_orders
+    from app.services.trading import record_trade
+
+    session.queue.put_nowait(json.dumps(tick))
+
+    current_time = tick["time"]
+    current_price = tick["close"]
+    filled = check_orders(
+        session.session_id, current_price, current_time, session.date,
+        tick_right=tick_right,
+    )
+    fill_events = []
+    for order in filled:
+        record_trade(
+            session_id=session.session_id,
+            side=order.side,
+            price=order.filled_price,
+            timestamp=order.filled_at,
+            quantity=order.quantity,
+            symbol=order.symbol,
+            instrument_type=session.instrument_type,
+            strike=session.strike,
+            expiry=session.expiry,
+            right=order.right,
+        )
+        fill_events.append({
+            "type": "order_filled",
+            "order_id": order.order_id,
+            "side": order.side.value,
+            "quantity": order.quantity,
+            "trigger_price": order.trigger_price,
+            "filled_price": order.filled_price,
+            "filled_at": order.filled_at,
+        })
+    return fill_events
+
+
 async def _run_session(session: SimulationSession) -> None:
     session.state = SimulationState.RUNNING
 
@@ -115,60 +160,90 @@ async def _run_session(session: SimulationSession) -> None:
     await session.queue.put(json.dumps(start_event))
 
     try:
-        if session.instrument_type == "options" and session.strike and session.expiry and session.right:
+        # Dual-stream options (right=None): merge CE and PE tick sequences by time.
+        if session.instrument_type == "options" and session.strike and session.expiry and session.right is None:
+            from app.services.options_service import options_iter_ticks
+            from itertools import chain
+
+            ce_ticks = list(options_iter_ticks(
+                session.symbol, session.date, session.strike,
+                session.expiry, "CE", session.start_time,
+            ))
+            pe_ticks = list(options_iter_ticks(
+                session.symbol, session.date, session.strike,
+                session.expiry, "PE", session.start_time,
+            ))
+
+            # Tag each tick with its right and group by timestamp
+            time_to_ticks: dict[int, list[dict]] = {}
+            for t in chain(ce_ticks, pe_ticks):
+                r = "CE" if t in ce_ticks else "PE"
+                time_to_ticks.setdefault(t["time"], []).append({**t, "right": r})
+            # ce_ticks/pe_ticks share id references in two lists — re-tag properly
+            time_to_ticks = {}
+            for t in ce_ticks:
+                time_to_ticks.setdefault(t["time"], []).append({**t, "right": "CE"})
+            for t in pe_ticks:
+                time_to_ticks.setdefault(t["time"], []).append({**t, "right": "PE"})
+
+            for ts in sorted(time_to_ticks.keys()):
+                await session.resume_event.wait()
+                if session.state == SimulationState.ENDED:
+                    break
+
+                session.current_time = str(ts)
+                for tick in time_to_ticks[ts]:
+                    tick_right = tick["right"]
+                    if tick_right == "CE":
+                        session.last_price_ce = tick["close"]
+                    else:
+                        session.last_price_pe = tick["close"]
+
+                    fill_events = _emit_tick_and_check_orders(session, tick, tick_right)
+                    for fe in fill_events:
+                        try:
+                            session.queue.put_nowait(json.dumps(fe))
+                        except asyncio.QueueFull:
+                            logger.warning("Queue full, dropping order_filled event for %s", fe["order_id"])
+
+                await asyncio.sleep(session.speed)
+
+        # Single-contract options (right provided — Sprint 3 compat)
+        elif session.instrument_type == "options" and session.strike and session.expiry and session.right:
             from app.services.options_service import options_iter_ticks
             tick_iter = options_iter_ticks(
                 session.symbol, session.date, session.strike,
                 session.expiry, session.right, session.start_time,
             )
+            for tick in tick_iter:
+                await session.resume_event.wait()
+                if session.state == SimulationState.ENDED:
+                    break
+                session.current_time = str(tick["time"])
+                session.last_price = tick["close"]
+                fill_events = _emit_tick_and_check_orders(session, tick, session.right)
+                for fe in fill_events:
+                    try:
+                        session.queue.put_nowait(json.dumps(fe))
+                    except asyncio.QueueFull:
+                        logger.warning("Queue full, dropping order_filled event for %s", fe["order_id"])
+                await asyncio.sleep(session.speed)
+
+        # Equity
         else:
-            tick_iter = iter_ticks(session.symbol, session.date, session.start_time)
-
-        for tick in tick_iter:
-            # Check for pause
-            await session.resume_event.wait()
-
-            if session.state == SimulationState.ENDED:
-                break
-
-            current_time = tick["time"]
-            current_price = tick["close"]
-            session.current_time = str(current_time)
-            session.last_price = current_price
-            await session.queue.put(json.dumps(tick))
-
-            # Check and emit filled orders; record each fill as a trade
-            from app.services.order_service import check_orders
-            from app.services.trading import record_trade
-            filled = check_orders(session.session_id, current_price, current_time, session.date)
-            for order in filled:
-                record_trade(
-                    session_id=session.session_id,
-                    side=order.side,
-                    price=order.filled_price,
-                    timestamp=order.filled_at,
-                    quantity=order.quantity,
-                    symbol=order.symbol,
-                    instrument_type=session.instrument_type,
-                    strike=session.strike,
-                    expiry=session.expiry,
-                    right=session.right,
-                )
-                fill_event = {
-                    "type": "order_filled",
-                    "order_id": order.order_id,
-                    "side": order.side.value,
-                    "quantity": order.quantity,
-                    "trigger_price": order.trigger_price,
-                    "filled_price": order.filled_price,
-                    "filled_at": order.filled_at,
-                }
-                try:
-                    session.queue.put_nowait(json.dumps(fill_event))
-                except asyncio.QueueFull:
-                    logger.warning("Queue full, dropping order_filled event for %s", order.order_id)
-
-            await asyncio.sleep(session.speed)
+            for tick in iter_ticks(session.symbol, session.date, session.start_time):
+                await session.resume_event.wait()
+                if session.state == SimulationState.ENDED:
+                    break
+                session.current_time = str(tick["time"])
+                session.last_price = tick["close"]
+                fill_events = _emit_tick_and_check_orders(session, tick, None)
+                for fe in fill_events:
+                    try:
+                        session.queue.put_nowait(json.dumps(fe))
+                    except asyncio.QueueFull:
+                        logger.warning("Queue full, dropping order_filled event for %s", fe["order_id"])
+                await asyncio.sleep(session.speed)
 
     except asyncio.CancelledError:
         pass

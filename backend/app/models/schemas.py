@@ -78,6 +78,7 @@ class Position(BaseModel):
 
 class TradeRequest(BaseModel):
     session_id: str
+    right: str | None = None  # "CE" or "PE" for options sessions; None for equity
 
 
 class OHLCCandle(BaseModel):
@@ -101,6 +102,7 @@ class TickEvent(BaseModel):
     high: float
     low: float
     close: float
+    right: str | None = None  # "CE" or "PE" for options ticks; None for equity
 
 
 class SessionEvent(BaseModel):
@@ -159,6 +161,7 @@ class Order(BaseModel):
     filled_price: float | None = None
     reserved_amount: float = 0.0  # wallet amount debited on BUY placement; 0 for SELL
     is_stoploss: bool = False      # SL orders skip all wallet debit/credit
+    right: str | None = None       # "CE" or "PE" for options orders; None for equity
 
 
 class PlaceOrderRequest(BaseModel):
@@ -170,6 +173,7 @@ class PlaceOrderRequest(BaseModel):
     quantity: int | None = None          # required when funds_ratio_pct is None
     funds_ratio_pct: float | None = None  # 0–1 fraction; backend computes quantity
     is_stoploss: bool = False
+    right: str | None = None             # "CE" or "PE" for options orders; None for equity
 
 
 class OrderFilledEvent(BaseModel):

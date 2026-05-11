@@ -9,9 +9,20 @@ from app.services.wallet_service import InsufficientFundsError
 router = APIRouter(prefix="/api/trades", tags=["trades"])
 
 
-def _get_latest_price(session) -> float:
-    """Return the last known close price for the session."""
+def _get_price_for_right(session, right: str | None) -> float:
+    """Return the last known close price for the given right (CE/PE) or equity."""
+    if right == "CE":
+        return getattr(session, "last_price_ce", 0.0)
+    if right == "PE":
+        return getattr(session, "last_price_pe", 0.0)
     return getattr(session, "last_price", 0.0)
+
+
+def _resolve_right(session, req_right: str | None) -> str | None:
+    """For options sessions: use req.right if provided, else fall back to session.right."""
+    if session.instrument_type != "options":
+        return None
+    return req_right if req_right is not None else session.right
 
 
 @router.post("/buy", response_model=Trade)
@@ -22,7 +33,8 @@ async def buy(req: TradeRequest):
     if session.current_time is None:
         raise HTTPException(status_code=400, detail="Simulation has not started yet")
 
-    price = _get_latest_price(session)
+    right = _resolve_right(session, req.right)
+    price = _get_price_for_right(session, right)
     if price <= 0.0:
         raise HTTPException(status_code=400, detail="No valid price available yet")
 
@@ -35,6 +47,10 @@ async def buy(req: TradeRequest):
     trade = trading_svc.record_trade(
         req.session_id, TradeSide.BUY, price=price, timestamp=timestamp,
         symbol=session.symbol,
+        instrument_type=session.instrument_type,
+        strike=session.strike,
+        expiry=session.expiry,
+        right=right,
     )
     return trade
 
@@ -47,7 +63,8 @@ async def sell(req: TradeRequest):
     if session.current_time is None:
         raise HTTPException(status_code=400, detail="Simulation has not started yet")
 
-    price = _get_latest_price(session)
+    right = _resolve_right(session, req.right)
+    price = _get_price_for_right(session, right)
     if price <= 0.0:
         raise HTTPException(status_code=400, detail="No valid price available yet")
 
@@ -57,6 +74,10 @@ async def sell(req: TradeRequest):
     trade = trading_svc.record_trade(
         req.session_id, TradeSide.SELL, price=price, timestamp=timestamp,
         symbol=session.symbol,
+        instrument_type=session.instrument_type,
+        strike=session.strike,
+        expiry=session.expiry,
+        right=right,
     )
     return trade
 
@@ -67,7 +88,9 @@ async def get_trades(session_id: str = Query(...)):
 
 
 @router.get("/position", response_model=Position)
-async def get_position(session_id: str = Query(...)):
+async def get_position(session_id: str = Query(...), right: str | None = Query(default=None)):
     session = sim_svc.get_session(session_id)
     symbol = session.symbol if session else None
-    return trading_svc.get_position(session_id, symbol=symbol)
+    # Resolve effective right: explicit param > session.right (Sprint 3 compat)
+    effective_right = right if right is not None else (session.right if session else None)
+    return trading_svc.get_position(session_id, symbol=symbol, right=effective_right)

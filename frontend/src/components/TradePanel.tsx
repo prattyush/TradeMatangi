@@ -3,21 +3,26 @@ import { SessionState } from '../hooks/useSimulation'
 
 interface Props {
   sessionState: SessionState
+  // Equity / active contract price
   currentPrice: number
   position: Position
   pnl: number
   onBuy: () => Promise<void>
   onSell: () => Promise<void>
+  // Options mode extras
+  activeRight?: 'CE' | 'PE' | null   // null = equity pane active (no quick-trade)
+  activeLabel?: string               // e.g. "NIFTY CE 24000"
 }
 
-function fmt(n: number) {
-  return n.toFixed(2)
-}
+function fmt(n: number) { return n.toFixed(2) }
 
-export default function TradePanel({ sessionState, currentPrice, position, pnl, onBuy, onSell }: Props) {
-  const active = sessionState === 'running' || sessionState === 'paused'
+export default function TradePanel({
+  sessionState, currentPrice, position, pnl,
+  onBuy, onSell,
+  activeRight = null, activeLabel,
+}: Props) {
+  const active = (sessionState === 'running' || sessionState === 'paused') && activeRight !== null
   const pnlColor = pnl > 0 ? '#26a641' : pnl < 0 ? '#f85149' : '#8b949e'
-
   const sideColor = position.side === 'LONG' ? '#26a641' : position.side === 'SHORT' ? '#f85149' : '#8b949e'
 
   return (
@@ -25,12 +30,22 @@ export default function TradePanel({ sessionState, currentPrice, position, pnl, 
       background: '#161b22', border: '1px solid #30363d', borderRadius: 8,
       padding: 16, display: 'flex', flexDirection: 'column', gap: 12, minWidth: 200,
     }}>
+      {activeLabel && (
+        <div style={{ fontSize: 11, color: '#58a6ff', marginBottom: -4 }}>{activeLabel}</div>
+      )}
+
       <div style={{ fontSize: 13, color: '#8b949e' }}>
         LTP&nbsp;
         <span style={{ fontSize: 20, fontWeight: 700, color: '#e6edf3', fontVariantNumeric: 'tabular-nums' }}>
           {currentPrice ? fmt(currentPrice) : '—'}
         </span>
       </div>
+
+      {activeRight === null && sessionState !== 'idle' && sessionState !== 'ended' && (
+        <div style={{ fontSize: 12, color: '#484f58', textAlign: 'center', padding: '4px 0' }}>
+          Select a CE/PE pane to trade
+        </div>
+      )}
 
       <div style={{ display: 'flex', gap: 8 }}>
         <button
