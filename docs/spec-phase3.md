@@ -207,6 +207,7 @@ This phase should support options and futures. We only need to support options a
 7. NIFTY lot size wrong — `config.py` had `"NIFTY": 75`; correct value is 65. Fixed.
 8. Direct TradePanel BUY/SELL ignored lot size — `routers/trading.py` debited `price × 1` and recorded `quantity=1` for options sessions. Fixed: compute `lot_size` from `LOT_SIZES` and use throughout.
 9. Wrong-strike live ticks routed to differently-struck options pane — `getTickForPane` in `App.tsx` routed ticks to any pane matching `right` (`CE`/`PE`) regardless of strike. Backend streams exactly one strike (the session strike); adding a pane with a different offset caused it to receive live ticks from the wrong strike while historical data loaded correctly for the new strike. Fixed: guard in `getTickForPane` returns `null` when `pane.strike !== sim.sessionStrike`, so different-strike panes show history only and receive no incorrect live data.
+10. OTM offset applied identically to CE and PE panes — OTM=3 for a PE pane computed `ATM + 3 × interval` (3 strikes ITM for PE) instead of `ATM − 3 × interval` (3 strikes OTM). Fixed: `directedOffset = addPaneType === 'PE' ? -addOffset : addOffset` in `addPane`. UI label renamed "Offset" → "OTM".
 
 **New technical constraints added to CLAUDE.md:**
 - `lot_size` for direct trades: `LOT_SIZES.get(symbol, 1)` when `instrument_type == "options"`, else 1
@@ -217,4 +218,5 @@ This phase should support options and futures. We only need to support options a
 - Cancellation flag required for all async effects on chart components
 - Pane wrapper needs `minWidth: 0` for correct flex behaviour alongside explicit-width canvas
 - Options tick routing is strike-aware: `getTickForPane` must check `pane.strike === sim.sessionStrike`; panes with a different strike receive no live ticks (history-only)
+- OTM offset is direction-aware: `directedOffset = right === 'PE' ? -addOffset : addOffset`; positive OTM = higher strikes for CE, lower for PE
 
