@@ -5,7 +5,7 @@ import TradePanel from './components/TradePanel'
 import TradeHistory from './components/TradeHistory'
 import OrderPanel from './components/OrderPanel'
 import WalletWidget from './components/WalletWidget'
-import SettingsModal from './components/SettingsModal'
+import SettingsModal, { loadFundsRatioMode, loadFundsRatios, FundsRatios } from './components/SettingsModal'
 import { useSimulation } from './hooks/useSimulation'
 import { useSSE } from './hooks/useSSE'
 
@@ -21,6 +21,8 @@ let nextPaneId = 3
 
 export default function App() {
   const sim = useSimulation()
+  const [fundsRatioMode, setFundsRatioMode] = useState(loadFundsRatioMode)
+  const [fundsRatios, setFundsRatios] = useState<FundsRatios>(loadFundsRatios)
 
   // Seed localStorage user on first load
   useEffect(() => {
@@ -86,7 +88,11 @@ export default function App() {
         <span style={{ fontSize: 12, color: '#484f58' }}>Phase III — Beta</span>
         <div style={{ flex: 1 }} />
         <WalletWidget date={sim.date} refreshKey={sim.walletRefreshKey} />
-        <SettingsModal date={sim.date} onWalletReset={sim.incrementWalletRefreshKey} />
+        <SettingsModal
+          date={sim.date}
+          onWalletReset={sim.incrementWalletRefreshKey}
+          onFundsRatioChange={(mode, ratios) => { setFundsRatioMode(mode); setFundsRatios(ratios) }}
+        />
       </div>
 
       {/* Insufficient funds error banner */}
@@ -193,6 +199,9 @@ export default function App() {
               sessionState={sim.sessionState}
               currentPrice={sim.currentPrice}
               openOrders={sim.openOrders}
+              position={sim.position}
+              fundsRatioMode={fundsRatioMode}
+              fundsRatios={fundsRatios}
               onPlaceOrder={sim.placeOrder}
               onCancelOrder={sim.cancelOrder}
             />

@@ -139,10 +139,16 @@ export function useSimulation() {
     setState(s => ({ ...s, orderError: null }))
   }, [])
 
-  const placeOrder = useCallback(async (side: 'BUY' | 'SELL', orderType: 'TARGET' | 'LIMIT', price: number, quantity: number) => {
+  const placeOrder = useCallback(async (
+    side: 'BUY' | 'SELL',
+    orderType: 'TARGET' | 'LIMIT' | 'STOPLOSS',
+    price: number,
+    quantity: number | null,
+    opts: { is_stoploss?: boolean; funds_ratio_pct?: number } = {},
+  ) => {
     if (!state.sessionId) return
     try {
-      const order = await api.placeOrder(state.sessionId, side, orderType, price, quantity)
+      const order = await api.placeOrder(state.sessionId, side, orderType, price, quantity, opts)
       setState(s => ({
         ...s,
         openOrders: [...s.openOrders, order],

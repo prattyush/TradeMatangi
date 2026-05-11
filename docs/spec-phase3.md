@@ -76,23 +76,33 @@ This phase should support options and futures. We only need to support options a
 
 ---
 
-### Sprint 2 — FundsRatio + Stoploss
+### Sprint 2 — FundsRatio + Stoploss ✅ COMPLETE (merged to dev, 155 tests passing)
 
 **Goal:** Replace quantity with capital-ratio sizing and add the SL tab to the order panel.
 
-**Backend:**
-- FundsRatio calculation: `session_capital × ratio% → target spend → floor(spend / (option_price × lot_size))` = number of lots
-- 1-lot fallback if ratio spend < 1 lot cost; hard error if current wallet < 1 lot cost
-- Hardcoded lot sizes: `NIFTY=75, RELIND=250, TATMOT=1400, TATPOW=2700`; equity uses price × quantity directly
-- Stoploss order type: opposite direction, quantity ≤ open position size, no wallet debit
+**What shipped:**
+- `LOT_SIZES` dict in `config.py` (NIFTY=75, RELIND=250, TATMOT=1400, TATPOW=2700); `DEFAULT_FUNDS_RATIOS` (l=3.0, m=6.0, h=12.0)
+- `OrderType.STOPLOSS` added to enum; `is_stoploss: bool = False` field on `Order` model
+- `PlaceOrderRequest.quantity` changed from `int = 1` to `int | None = None`; `funds_ratio_pct: float | None` added
+- `compute_funds_ratio_quantity(symbol, price, session_capital, funds_ratio_pct, current_wallet, lot_size=1)` in `order_service.py`: `floor(spend / price)` for equity, `floor(spend / (price × lot_size))` for options; 1-unit/lot fallback; `InsufficientFundsError` when wallet can't afford even 1
+- STOPLOSS order placement: no wallet debit regardless of side; `limit_price = trigger_price` (no 1% deviation unlike TARGET)
+- STOPLOSS fill: same trigger logic as TARGET (BUY fires when `price >= trigger`; SELL fires when `price <= trigger`); no wallet credit on fill; no wallet credit on cancel
+- `routers/orders.py`: resolves quantity from `session_capital × funds_ratio_pct` when `funds_ratio_pct` is provided; passes `lot_size=1` for all Sprint 2 equity trades
+- Frontend: `SettingsModal` — Trading Mode toggle (Quantity ↔ FundsRatio) + L/M/H % inputs (default 3/6/12), persisted to localStorage keys `fundsRatioMode` and `fundsRatios`; exports `loadFundsRatioMode` / `loadFundsRatios` helpers for `App.tsx` init
+- Frontend: `OrderPanel` — SL tab enabled only when `position.side !== 'FLAT'`; SL side auto-locked to opposite of position; SL qty pre-filled from position size, capped at position size; L/M/H buttons replace quantity picker in FundsRatio mode; SL orders rendered with orange accent in open orders list
+- `useSimulation.placeOrder` signature extended with `opts: { is_stoploss?, funds_ratio_pct? }`
+- `App.tsx` lifts `fundsRatioMode` / `fundsRatios` state; passes both to `OrderPanel` and `SettingsModal`
+- 155 backend tests passing (27 new), TypeScript clean
 
-**Frontend:**
-- Settings toggle: FundsRatio mode vs Quantity mode (persisted in localStorage)
-- When FundsRatio on: OrderPanel shows L/M/H buttons instead of quantity input for all order types except SL
-- FundsRatio % overrides in Settings popup (l/m/h default 3/6/12, user-editable per user)
-- SL tab: enabled only when a position is open; pre-fills opposite direction + open qty; quantity field always shown; qty capped at open position size
+**Key implementation decisions:**
+- `compute_funds_ratio_quantity` takes explicit `lot_size` parameter (not auto-derived from `LOT_SIZES`) — the router controls equity vs options behaviour. Sprint 2 router always passes `lot_size=1`; Sprint 3 options router will pass the symbol's actual lot size.
+- STOPLOSS has **zero wallet impact** at all lifecycle stages (placement, fill, cancel). The spec explicitly called for a simple implementation; accurate P&L tracking for SL exits is deferred.
+- FundsRatio percentages live entirely in the frontend (localStorage). The backend only sees a `funds_ratio_pct` float (0–1); it has no awareness of the L/M/H label or user preferences storage. This keeps the backend stateless with respect to user UI preferences.
+- STOPLOSS trigger logic reuses the same `check_orders` branch as TARGET — only the wallet and `limit_price` (= trigger, no deviation) differ.
 
-**Tests:** ratio→lots calculation, 1-lot fallback, unaffordable error, SL tab state
+**Bugs found and fixed during Sprint 2:**
+- `InsufficientFundsError.__init__(balance, required)` takes two positional floats, not a string. Initial implementation was calling `InsufficientFundsError("message")` — fixed to `InsufficientFundsError(current_wallet, unit_cost)`.
+- `LOT_SIZES` contains equity symbols (TATPOW=2700, TATMOT=1400, RELIND=250) because they have options/futures. `compute_funds_ratio_quantity` initially derived `lot_size = LOT_SIZES.get(symbol, 1)`, causing equity TATPOW trades to use lot_size=2700. Fixed by making `lot_size` an explicit parameter defaulting to 1.
 
 ---
 
