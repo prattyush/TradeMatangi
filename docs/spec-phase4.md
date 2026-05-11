@@ -7,3 +7,6 @@
 4. Is it possible to draw markers on the symbol which was traded to show buy and sell at the price and the time. The marker can be circle marker at the time and price at which the trade was executed, that is buy or sell, with buy and sell being of different colors.
 5. The user needs to know how much time is left for the bar close, that needs to be displayed and updated with every second of replay or with live data stream. The live OHLC Data fetched  with also have timestamp which can be used. The time to left can also be shown as the current time, ticking which will be same for all the charts, so only 1 is enough. Either, way feel free however, the implementation can be done.
 6. The UI also needs to show the current P&L as per the trades already taken for the day.
+
+##### Options-HistoricalData
+1. Please fetch last 2 days of ohlc data for the selected option as well for both, CE and PE.
