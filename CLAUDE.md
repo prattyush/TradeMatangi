@@ -71,6 +71,7 @@ node node_modules/typescript/bin/tsc --noEmit
 - **Lightweight Charts "Cannot update oldest data"**: `series.setData(candles)` sets the minimum acceptable timestamp. Any subsequent `series.update(tick)` with `time <= candles[-1].time` throws. For options historical pre-load, filter to `time < startWindowTs` (the first live tick's window start).
 - **Lightweight Charts "Object is disposed"**: async `.then()` callbacks fire after chart teardown if a pane unmounts. Guard all three Chart `useEffect` async paths with `let cancelled = false` + `return () => { cancelled = true }` cleanup.
 - **Pane wrapper flex shrink**: Lightweight Charts sets an explicit pixel `width` on the canvas. Pane wrapper divs must have `minWidth: 0` or flex siblings cannot shrink below that canvas width after a pane is removed.
+- **Options tick routing is strike-aware**: `getTickForPane` in `App.tsx` must return `null` when `pane.strike !== sim.sessionStrike` (and `sim.sessionStrike !== null`). The backend streams exactly one strike per session; panes configured for a different strike show historical data only and must not receive the session-strike live ticks.
 
 ## Phase-III Status
 
@@ -86,8 +87,8 @@ FundsRatio sizing and SL orders are live. See `docs/spec-phase3.md` Sprint 2 sec
 
 Options data fetch, expiry/strike calculation, options sessions, and naked short margin check are live. See `docs/spec-phase3.md` Sprint 3 section for full details.
 
-### Sprint 4 — Layout + Options UI (Frontend) ✅ COMPLETE (241 tests passing)
+### Sprint 4 — Layout + Options UI (Frontend) ✅ COMPLETE (merged to dev, 241 tests passing)
 
-Multi-pane layout, dual-stream options replay, and lot-sized direct trades are live. See `docs/spec-phase3.md` Sprint 4 section for full details.
+Multi-pane layout, dual-stream options replay, and lot-sized direct trades are live. One post-merge bug fixed: wrong-strike live ticks routed to differently-struck pane (bug #9 in `docs/spec-phase3.md`). See Sprint 4 section for full details.
 
 **Next: Phase IV BetaMinorUpdates** (see `docs/spec-phase4.md`)
