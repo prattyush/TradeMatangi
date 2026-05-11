@@ -172,8 +172,9 @@ export default function Chart({
     ema21Ref.current?.applyOptions({ visible: showEma })
   }, [showEma])
 
-  // ── Historical data — equity uses prior-2-days endpoint; options uses options-historical ──
+  // ── Historical data — equity (prior 2 days, loads on mount) ─────────────────
   useEffect(() => {
+    if (paneType === 'options') return
     const series = seriesRef.current
     const e9 = ema9Ref.current
     const e21 = ema21Ref.current
@@ -184,11 +185,7 @@ export default function Chart({
     lastEma21Ref.current = null
     candleTimesRef.current = []
 
-    const loadData = paneType === 'options' && strike && expiry && right
-      ? api.getOptionsHistorical(symbol, tradingDate, strike, expiry, right, intervalMinutes)
-      : api.getHistorical(symbol, tradingDate, intervalMinutes)
-
-    loadData
+    api.getHistorical(symbol, tradingDate, intervalMinutes)
       .then(({ candles }) => {
         if (candles.length === 0) return
         series.setData(candles.map(toCandle))
@@ -214,7 +211,50 @@ export default function Chart({
         if (last21.length) lastEma21Ref.current = last21[last21.length - 1]!
       })
       .catch(console.error)
-  }, [symbol, tradingDate, intervalMinutes, paneType, strike, expiry, right])
+  }, [symbol, tradingDate, intervalMinutes, paneType])
+
+  // ── Historical data — options (full trading day, loads when session starts) ──
+  // Backend caches options data during session start, so we wait for startTime.
+  useEffect(() => {
+    if (paneType !== 'options' || !strike || !expiry || !right) return
+    if (!startTime) return
+    const series = seriesRef.current
+    const e9 = ema9Ref.current
+    const e21 = ema21Ref.current
+    if (!series || !e9 || !e21) return
+
+    liveWindowRef.current = null
+    lastEma9Ref.current = null
+    lastEma21Ref.current = null
+    candleTimesRef.current = []
+
+    api.getOptionsHistorical(symbol, tradingDate, strike, expiry, right, intervalMinutes)
+      .then(({ candles }) => {
+        if (candles.length === 0) return
+        series.setData(candles.map(toCandle))
+        chartRef.current?.timeScale().fitContent()
+        candleTimesRef.current = candles.map(c => c.time)
+
+        const closes = candles.map(c => c.close)
+        const ema9vals = computeEMA(closes, 9)
+        const ema21vals = computeEMA(closes, 21)
+
+        const e9data: LineData[] = []
+        const e21data: LineData[] = []
+        for (let i = 0; i < candles.length; i++) {
+          if (ema9vals[i] !== null) e9data.push({ time: candles[i].time as Time, value: ema9vals[i]! })
+          if (ema21vals[i] !== null) e21data.push({ time: candles[i].time as Time, value: ema21vals[i]! })
+        }
+        e9.setData(e9data)
+        e21.setData(e21data)
+
+        const last9 = ema9vals.filter(v => v !== null)
+        const last21 = ema21vals.filter(v => v !== null)
+        if (last9.length) lastEma9Ref.current = last9[last9.length - 1]!
+        if (last21.length) lastEma21Ref.current = last21[last21.length - 1]!
+      })
+      .catch(console.error)
+  }, [symbol, tradingDate, intervalMinutes, paneType, strike, expiry, right, startTime])
 
   // ── Pre-session candles — equity only (options already have full-day data) ──
   useEffect(() => {

@@ -160,10 +160,9 @@ async def _run_session(session: SimulationSession) -> None:
     await session.queue.put(json.dumps(start_event))
 
     try:
-        # Dual-stream options (right=None): merge CE and PE tick sequences by time.
+        # Dual-stream options (right=None): merge equity + CE + PE tick sequences by time.
         if session.instrument_type == "options" and session.strike and session.expiry and session.right is None:
             from app.services.options_service import options_iter_ticks
-            from itertools import chain
 
             ce_ticks = list(options_iter_ticks(
                 session.symbol, session.date, session.strike,
@@ -173,14 +172,12 @@ async def _run_session(session: SimulationSession) -> None:
                 session.symbol, session.date, session.strike,
                 session.expiry, "PE", session.start_time,
             ))
+            # Equity ticks have no "right" field — they go to the underlying reference chart
+            eq_ticks = list(iter_ticks(session.symbol, session.date, session.start_time))
 
-            # Tag each tick with its right and group by timestamp
             time_to_ticks: dict[int, list[dict]] = {}
-            for t in chain(ce_ticks, pe_ticks):
-                r = "CE" if t in ce_ticks else "PE"
-                time_to_ticks.setdefault(t["time"], []).append({**t, "right": r})
-            # ce_ticks/pe_ticks share id references in two lists — re-tag properly
-            time_to_ticks = {}
+            for t in eq_ticks:
+                time_to_ticks.setdefault(t["time"], []).append(t)
             for t in ce_ticks:
                 time_to_ticks.setdefault(t["time"], []).append({**t, "right": "CE"})
             for t in pe_ticks:
