@@ -1,8 +1,8 @@
 from fastapi import APIRouter, HTTPException, Query
-from app.models.schemas import Order, OrderType, PlaceOrderRequest
+from app.models.schemas import Order, OrderType, TradeSide, PlaceOrderRequest
 from app.services import order_service, simulation as sim_svc
 from app.services.wallet_service import InsufficientFundsError, get_balance
-from app.config import FIXED_USER_ID
+from app.config import FIXED_USER_ID, LOT_SIZES
 
 router = APIRouter(prefix="/api/orders", tags=["orders"])
 
@@ -25,6 +25,35 @@ async def place_order(req: PlaceOrderRequest):
         if not req.limit_price or req.limit_price <= 0:
             raise HTTPException(status_code=400, detail="limit_price is required and must be positive for LIMIT orders")
 
+    # Naked short margin check for options sessions
+    if (
+        session.instrument_type == "options"
+        and req.side == TradeSide.SELL
+        and not req.is_stoploss
+        and req.order_type != OrderType.STOPLOSS
+    ):
+        from app.services.trading import get_position
+        position = get_position(session.session_id, session.symbol)
+        if position.side != "LONG":  # no open buy position — naked short
+            from app.services.options_service import compute_short_margin, get_underlying_price_at
+            current_ts = int(session.current_time) if session.current_time else 0
+            underlying_price = get_underlying_price_at(session.symbol, session.date, current_ts)
+            if underlying_price is None:
+                underlying_price = session.last_price  # fallback
+            margin = compute_short_margin(session.symbol, underlying_price)
+            current_wallet = get_balance(FIXED_USER_ID, session.date)
+            if current_wallet < margin:
+                raise HTTPException(
+                    status_code=402,
+                    detail=(
+                        f"Insufficient funds for naked short margin. "
+                        f"Required: ₹{margin:,.2f}, Available: ₹{current_wallet:,.2f}"
+                    ),
+                )
+
+    # Resolve lot_size: 1 for equity; actual lot size for options
+    lot_size = LOT_SIZES.get(session.symbol, 1) if session.instrument_type == "options" else 1
+
     # Resolve quantity: either from funds_ratio_pct (FundsRatio mode) or explicit quantity
     if req.funds_ratio_pct is not None:
         if req.funds_ratio_pct <= 0 or req.funds_ratio_pct > 1:
@@ -41,7 +70,7 @@ async def place_order(req: PlaceOrderRequest):
                 session_capital=session.session_capital,
                 funds_ratio_pct=req.funds_ratio_pct,
                 current_wallet=current_wallet,
-                lot_size=1,  # equity in Sprint 2; Sprint 3 options will pass actual lot size
+                lot_size=lot_size,
             )
         except InsufficientFundsError as exc:
             raise HTTPException(status_code=402, detail=str(exc))

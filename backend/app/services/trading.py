@@ -25,7 +25,7 @@ def _write_trade_to_db(trade: Trade) -> None:
     try:
         from app.services.db import get_dynamodb_resource
         table = get_dynamodb_resource().Table("Trades")
-        table.put_item(Item={
+        item: dict = {
             "session_id": trade.session_id,
             "trade_id": trade.trade_id,
             "user_id": trade.user_id,
@@ -34,7 +34,16 @@ def _write_trade_to_db(trade: Trade) -> None:
             "quantity": trade.quantity,
             "price": Decimal(str(trade.price)),
             "timestamp": trade.timestamp,
-        })
+            "instrument_type": trade.instrument_type,
+        }
+        if trade.instrument_type == "options":
+            if trade.strike is not None:
+                item["strike"] = trade.strike
+            if trade.expiry is not None:
+                item["expiry"] = trade.expiry
+            if trade.right is not None:
+                item["right"] = trade.right
+        table.put_item(Item=item)
     except Exception:
         logger.exception("DynamoDB write failed for trade %s", trade.trade_id)
 
@@ -46,6 +55,10 @@ def record_trade(
     timestamp: int,
     quantity: int = 1,
     symbol: str = DEFAULT_SYMBOL,
+    instrument_type: str = "equity",
+    strike: int | None = None,
+    expiry: str | None = None,
+    right: str | None = None,
 ) -> Trade:
     ensure_session(session_id)
     trade = Trade(
@@ -56,6 +69,10 @@ def record_trade(
         price=price,
         timestamp=timestamp,
         session_id=session_id,
+        instrument_type=instrument_type,
+        strike=strike,
+        expiry=expiry,
+        right=right,
     )
     _trades[session_id].append(trade)
     _write_trade_to_db(trade)
