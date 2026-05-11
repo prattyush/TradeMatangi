@@ -30,6 +30,7 @@ class SimulationStartResponse(BaseModel):
     date: str
     start_time: str
     speed: float
+    session_capital: float = 0.0
 
 
 class SimulationControlRequest(BaseModel):
@@ -143,6 +144,7 @@ class Order(BaseModel):
     created_at: int  # Unix timestamp
     filled_at: int | None = None
     filled_price: float | None = None
+    reserved_amount: float = 0.0  # wallet amount debited on BUY placement; 0 for SELL
 
 
 class PlaceOrderRequest(BaseModel):
@@ -162,3 +164,13 @@ class OrderFilledEvent(BaseModel):
     trigger_price: float
     filled_price: float
     filled_at: int
+
+
+class WalletResponse(BaseModel):
+    user_id: str
+    date: str
+    balance: float
+
+
+class WalletResetRequest(BaseModel):
+    amount: float = 150_000.0

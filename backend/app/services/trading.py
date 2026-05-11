@@ -8,7 +8,7 @@ from decimal import Decimal
 from typing import Literal
 
 from app.models.schemas import Trade, TradeSide, Position
-from app.config import PLACEHOLDER_USER_ID, DEFAULT_SYMBOL
+from app.config import FIXED_USER_ID, DEFAULT_SYMBOL
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +49,7 @@ def record_trade(
 ) -> Trade:
     ensure_session(session_id)
     trade = Trade(
-        user_id=PLACEHOLDER_USER_ID,
+        user_id=FIXED_USER_ID,
         symbol=symbol,
         side=side,
         quantity=quantity,

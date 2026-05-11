@@ -2,6 +2,9 @@ from fastapi import APIRouter, HTTPException, Query
 from app.models.schemas import Trade, Position, TradeRequest, TradeSide
 from app.services import trading as trading_svc
 from app.services import simulation as sim_svc
+from app.services import wallet_service
+from app.services.user_service import get_user_id
+from app.services.wallet_service import InsufficientFundsError
 
 router = APIRouter(prefix="/api/trades", tags=["trades"])
 
@@ -22,6 +25,12 @@ async def buy(req: TradeRequest):
     price = _get_latest_price(session)
     if price <= 0.0:
         raise HTTPException(status_code=400, detail="No valid price available yet")
+
+    try:
+        wallet_service.debit(get_user_id(), price, session.date)
+    except InsufficientFundsError as exc:
+        raise HTTPException(status_code=402, detail=str(exc))
+
     timestamp = int(session.current_time)
     trade = trading_svc.record_trade(
         req.session_id, TradeSide.BUY, price=price, timestamp=timestamp,
@@ -41,6 +50,9 @@ async def sell(req: TradeRequest):
     price = _get_latest_price(session)
     if price <= 0.0:
         raise HTTPException(status_code=400, detail="No valid price available yet")
+
+    wallet_service.credit(get_user_id(), price, session.date)
+
     timestamp = int(session.current_time)
     trade = trading_svc.record_trade(
         req.session_id, TradeSide.SELL, price=price, timestamp=timestamp,

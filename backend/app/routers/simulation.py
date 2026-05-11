@@ -50,6 +50,7 @@ async def start_simulation(req: SimulationStartRequest):
         date=session.date,
         start_time=session.start_time,
         speed=session.speed,
+        session_capital=session.session_capital,
     )
 
 

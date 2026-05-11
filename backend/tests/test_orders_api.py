@@ -18,6 +18,7 @@ def _make_session(session_id: str = SESSION):
     session = MagicMock()
     session.session_id = session_id
     session.symbol = "NIFTY"
+    session.date = "2026-05-06"
     session.current_time = "1746518100"
     session.state = SimulationState.RUNNING
     return session
@@ -32,7 +33,9 @@ def clean():
 
 @pytest.fixture(autouse=True)
 def no_db():
-    with patch("app.services.order_service._write_order_to_db"):
+    with patch("app.services.order_service._write_order_to_db"), \
+         patch("app.services.wallet_service.debit"), \
+         patch("app.services.wallet_service.credit"):
         yield
 
 

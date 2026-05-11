@@ -4,8 +4,12 @@ import SessionControls from './components/SessionControls'
 import TradePanel from './components/TradePanel'
 import TradeHistory from './components/TradeHistory'
 import OrderPanel from './components/OrderPanel'
+import WalletWidget from './components/WalletWidget'
+import SettingsModal from './components/SettingsModal'
 import { useSimulation } from './hooks/useSimulation'
 import { useSSE } from './hooks/useSSE'
+
+const FIXED_USER = { userId: 'abc12300-0000-0000-0000-000000000001', username: 'abc123' }
 
 interface PaneConfig {
   id: number
@@ -17,6 +21,14 @@ let nextPaneId = 3
 
 export default function App() {
   const sim = useSimulation()
+
+  // Seed localStorage user on first load
+  useEffect(() => {
+    if (!localStorage.getItem('user')) {
+      localStorage.setItem('user', JSON.stringify(FIXED_USER))
+    }
+  }, [])
+
   const [panes, setPanes] = useState<PaneConfig[]>([
     { id: 1, intervalMinutes: 3 },
     { id: 2, intervalMinutes: 5 },
@@ -71,8 +83,28 @@ export default function App() {
         display: 'flex', alignItems: 'center', gap: 12,
       }}>
         <span style={{ fontSize: 18, fontWeight: 700, color: '#58a6ff' }}>TradeMatangi</span>
-        <span style={{ fontSize: 12, color: '#484f58' }}>Phase II — Simulated Replay</span>
+        <span style={{ fontSize: 12, color: '#484f58' }}>Phase III — Beta</span>
+        <div style={{ flex: 1 }} />
+        <WalletWidget date={sim.date} refreshKey={sim.walletRefreshKey} />
+        <SettingsModal date={sim.date} onWalletReset={sim.incrementWalletRefreshKey} />
       </div>
+
+      {/* Insufficient funds error banner */}
+      {sim.orderError && (
+        <div style={{
+          background: '#3d1f1f', borderBottom: '1px solid #f85149',
+          padding: '8px 20px', display: 'flex', alignItems: 'center', gap: 12,
+        }}>
+          <span style={{ color: '#f85149', fontSize: 13 }}>{sim.orderError}</span>
+          <button
+            onClick={sim.clearOrderError}
+            style={{
+              marginLeft: 'auto', background: 'none', border: 'none',
+              color: '#8b949e', cursor: 'pointer', fontSize: 14,
+            }}
+          >✕</button>
+        </div>
+      )}
 
       {/* Session Controls */}
       <SessionControls
