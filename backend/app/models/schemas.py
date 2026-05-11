@@ -126,8 +126,9 @@ class OrderStatus(str, Enum):
 
 
 class OrderType(str, Enum):
-    TARGET = "TARGET"  # stop-limit: trigger then fill; limit auto-set at 1% from trigger
-    LIMIT = "LIMIT"    # plain limit: fill when price reaches the limit price directly
+    TARGET = "TARGET"    # stop-limit: trigger then fill; limit auto-set at 1% from trigger
+    LIMIT = "LIMIT"      # plain limit: fill when price reaches the limit price directly
+    STOPLOSS = "STOPLOSS"  # stoploss exit: same trigger logic as TARGET, no wallet effect
 
 
 class Order(BaseModel):
@@ -145,15 +146,18 @@ class Order(BaseModel):
     filled_at: int | None = None
     filled_price: float | None = None
     reserved_amount: float = 0.0  # wallet amount debited on BUY placement; 0 for SELL
+    is_stoploss: bool = False      # SL orders skip all wallet debit/credit
 
 
 class PlaceOrderRequest(BaseModel):
     session_id: str
     side: TradeSide
     order_type: OrderType = OrderType.TARGET
-    trigger_price: float | None = None  # required for TARGET
-    limit_price: float | None = None    # required for LIMIT; auto-computed for TARGET
-    quantity: int = 1
+    trigger_price: float | None = None   # required for TARGET / STOPLOSS
+    limit_price: float | None = None     # required for LIMIT; auto-computed for TARGET
+    quantity: int | None = None          # required when funds_ratio_pct is None
+    funds_ratio_pct: float | None = None  # 0–1 fraction; backend computes quantity
+    is_stoploss: bool = False
 
 
 class OrderFilledEvent(BaseModel):

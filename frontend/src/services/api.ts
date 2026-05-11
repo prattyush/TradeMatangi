@@ -28,7 +28,7 @@ export interface Order {
   user_id: string
   symbol: string
   side: 'BUY' | 'SELL'
-  order_type: 'TARGET' | 'LIMIT'
+  order_type: 'TARGET' | 'LIMIT' | 'STOPLOSS'
   quantity: number
   trigger_price: number
   limit_price: number
@@ -36,6 +36,7 @@ export interface Order {
   created_at: number
   filled_at: number | null
   filled_price: number | null
+  is_stoploss: boolean
 }
 
 export interface HistoricalDataResponse {
@@ -194,12 +195,24 @@ const api = {
     return res.json()
   },
 
-  async placeOrder(session_id: string, side: 'BUY' | 'SELL', order_type: 'TARGET' | 'LIMIT', price: number, quantity: number): Promise<Order> {
-    const body: Record<string, unknown> = { session_id, side, order_type, quantity }
-    if (order_type === 'TARGET') {
-      body.trigger_price = price
-    } else {
+  async placeOrder(
+    session_id: string,
+    side: 'BUY' | 'SELL',
+    order_type: 'TARGET' | 'LIMIT' | 'STOPLOSS',
+    price: number,
+    quantityOrRatio: number | null,
+    opts: { is_stoploss?: boolean; funds_ratio_pct?: number } = {},
+  ): Promise<Order> {
+    const body: Record<string, unknown> = { session_id, side, order_type, ...opts }
+    if (order_type === 'LIMIT') {
       body.limit_price = price
+    } else {
+      body.trigger_price = price  // TARGET and STOPLOSS both use trigger_price
+    }
+    if (opts.funds_ratio_pct != null) {
+      body.funds_ratio_pct = opts.funds_ratio_pct
+    } else {
+      body.quantity = quantityOrRatio
     }
     const res = await fetch(`${BACKEND_URL}/api/orders`, {
       method: 'POST',
