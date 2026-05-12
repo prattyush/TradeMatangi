@@ -29,6 +29,14 @@ def clean_sessions():
     sim._sessions.clear()
 
 
+@pytest.fixture(autouse=True)
+def no_wallet():
+    with patch("app.services.wallet_service.get_balance", return_value=150_000.0), \
+         patch("app.services.wallet_service._write_wallet_to_db"), \
+         patch("app.services.simulation._upsert_session_to_db"):
+        yield
+
+
 class TestCreateSession:
     def test_returns_session_with_id(self):
         s = sim.create_session("NIFTY", "2026-05-06", "09:15:00", 1.0)

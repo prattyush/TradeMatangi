@@ -58,6 +58,28 @@ TABLES = [
         "ProvisionedThroughput": {"ReadCapacityUnits": 5, "WriteCapacityUnits": 5},
     },
     {
+        "TableName": "Users",
+        "KeySchema": [
+            {"AttributeName": "user_id", "KeyType": "HASH"},
+        ],
+        "AttributeDefinitions": [
+            {"AttributeName": "user_id", "AttributeType": "S"},
+        ],
+        "ProvisionedThroughput": {"ReadCapacityUnits": 5, "WriteCapacityUnits": 5},
+    },
+    {
+        "TableName": "Wallet",
+        "KeySchema": [
+            {"AttributeName": "user_id", "KeyType": "HASH"},
+            {"AttributeName": "date", "KeyType": "RANGE"},
+        ],
+        "AttributeDefinitions": [
+            {"AttributeName": "user_id", "AttributeType": "S"},
+            {"AttributeName": "date", "AttributeType": "S"},
+        ],
+        "ProvisionedThroughput": {"ReadCapacityUnits": 5, "WriteCapacityUnits": 5},
+    },
+    {
         "TableName": "Sessions",
         "KeySchema": [
             {"AttributeName": "session_id", "KeyType": "HASH"},
@@ -80,7 +102,7 @@ TABLES = [
 
 
 def create_tables():
-    existing = {t["TableName"] for t in dynamodb.list_tables()["TableNames"]}
+    existing = set(dynamodb.list_tables()["TableNames"])
     for table_def in TABLES:
         name = table_def["TableName"]
         if name in existing:

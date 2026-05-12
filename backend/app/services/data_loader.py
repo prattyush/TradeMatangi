@@ -12,7 +12,9 @@ import pandas as pd
 from pathlib import Path
 from typing import Iterator
 
-from app.config import DATA_DIR, CANDLE_INTERVAL_MINUTES, MARKET_OPEN
+from app.config import DATA_DIR, CANDLE_INTERVAL_MINUTES, MARKET_OPEN, MARKET_CLOSE
+
+_MAX_GAP_SECONDS = 900  # 15 minutes — gaps larger than this cannot be interpolated
 
 
 def parquet_path(symbol: str, date: str) -> Path:
@@ -55,7 +57,48 @@ def load_dataframe(symbol: str, date: str) -> pd.DataFrame:
 
     df = df.rename(columns=str.lower)
     df = df[["open", "high", "low", "close"]]
-    df.index = df.index.tz_localize("UTC")
+    if df.index.tzinfo is None:
+        df.index = df.index.tz_localize("UTC")
+    else:
+        df.index = df.index.tz_convert("UTC")
+    return df
+
+
+def validate_and_fill_gaps(df: pd.DataFrame, date: str) -> pd.DataFrame:
+    """
+    Ensure second-level OHLC data covers the full trading day (MARKET_OPEN..MARKET_CLOSE-1s).
+
+    - Gaps ≤ 15 minutes (900 s) are forward-filled (backward-filled for any leading gap).
+    - Gaps > 15 minutes raise RuntimeError.
+
+    The DataFrame index must be tz-naive with IST wall-clock timestamps (as stored in files).
+    """
+    market_open = pd.Timestamp(f"{date} {MARKET_OPEN}")
+    market_close = pd.Timestamp(f"{date} {MARKET_CLOSE}") - pd.Timedelta(seconds=1)
+
+    if df.empty:
+        raise RuntimeError(f"No data for {date}.")
+
+    sorted_idx = df.index.sort_values()
+
+    leading_gap = max(0.0, (sorted_idx[0] - market_open).total_seconds())
+    diffs = pd.Series(sorted_idx).diff().dt.total_seconds().dropna()
+    max_between = max(0.0, float(diffs.max()) - 1.0) if len(diffs) > 0 else 0.0
+    trailing_gap = max(0.0, (market_close - sorted_idx[-1]).total_seconds())
+
+    max_gap = max(leading_gap, max_between, trailing_gap)
+
+    if max_gap > _MAX_GAP_SECONDS:
+        gap_min = int(max_gap) // 60
+        gap_sec = int(max_gap) % 60
+        raise RuntimeError(
+            f"Data for {date} has a gap of {gap_min}m {gap_sec}s "
+            f"(limit: {_MAX_GAP_SECONDS // 60} minutes). "
+            "Delete the cached file and re-fetch to get complete data."
+        )
+
+    full_index = pd.date_range(start=market_open, end=market_close, freq="1s")
+    df = df.reindex(full_index).ffill().bfill()
     return df
 
 

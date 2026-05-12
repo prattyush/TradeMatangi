@@ -14,12 +14,23 @@ MARKET_CLOSE = "15:30:00"
 
 CANDLE_INTERVAL_MINUTES = 3
 
-PLACEHOLDER_USER_ID = "00000000-0000-0000-0000-000000000001"
+FIXED_USER_ID = "abc12300-0000-0000-0000-000000000001"
 
 # DynamoDB — set USE_DYNAMODB_LOCAL=false to target real AWS DynamoDB
 USE_DYNAMODB_LOCAL = os.getenv("USE_DYNAMODB_LOCAL", "true").lower() == "true"
 DYNAMODB_LOCAL_ENDPOINT = os.getenv("DYNAMODB_LOCAL_ENDPOINT", "http://localhost:8000")
 DYNAMODB_REGION = os.getenv("DYNAMODB_REGION", "us-east-1")
+
+# Options lot sizes — hardcoded current values; update manually if SEBI revises
+LOT_SIZES: dict[str, int] = {
+    "NIFTY": 65,
+    "RELIND": 250,
+    "TATMOT": 1400,
+    "TATPOW": 2700,
+}
+
+# Default FundsRatio percentages (0–100 scale); user can override in Settings
+DEFAULT_FUNDS_RATIOS: dict[str, float] = {"l": 3.0, "m": 6.0, "h": 12.0}
 
 # Supported symbols: key is the canonical ID used throughout the system
 SUPPORTED_SYMBOLS: dict[str, dict] = {

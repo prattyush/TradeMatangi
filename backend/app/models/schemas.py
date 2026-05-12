@@ -22,6 +22,12 @@ class SimulationStartRequest(BaseModel):
     date: str
     start_time: str = "09:15:00"
     speed: float = Field(default=1.0, ge=0.05, le=100.0)
+    instrument_type: str = "equity"   # "equity" or "options"
+    strike: int | None = None          # ATM/reference strike; required when instrument_type="options"
+    expiry: str | None = None          # YYYY-MM-DD; required when instrument_type="options"
+    right: str | None = None           # "CE" or "PE"; required when instrument_type="options"
+    strike_ce: int | None = None       # CE streaming strike (defaults to strike when omitted)
+    strike_pe: int | None = None       # PE streaming strike (defaults to strike when omitted)
 
 
 class SimulationStartResponse(BaseModel):
@@ -30,6 +36,13 @@ class SimulationStartResponse(BaseModel):
     date: str
     start_time: str
     speed: float
+    session_capital: float = 0.0
+    instrument_type: str = "equity"
+    strike: int | None = None
+    expiry: str | None = None
+    right: str | None = None
+    strike_ce: int | None = None
+    strike_pe: int | None = None
 
 
 class SimulationControlRequest(BaseModel):
@@ -54,6 +67,10 @@ class Trade(BaseModel):
     price: float
     timestamp: int
     session_id: str
+    instrument_type: str = "equity"
+    strike: int | None = None
+    expiry: str | None = None
+    right: str | None = None
 
 
 class Position(BaseModel):
@@ -65,6 +82,7 @@ class Position(BaseModel):
 
 class TradeRequest(BaseModel):
     session_id: str
+    right: str | None = None  # "CE" or "PE" for options sessions; None for equity
 
 
 class OHLCCandle(BaseModel):
@@ -88,6 +106,7 @@ class TickEvent(BaseModel):
     high: float
     low: float
     close: float
+    right: str | None = None  # "CE" or "PE" for options ticks; None for equity
 
 
 class SessionEvent(BaseModel):
@@ -125,8 +144,9 @@ class OrderStatus(str, Enum):
 
 
 class OrderType(str, Enum):
-    TARGET = "TARGET"  # stop-limit: trigger then fill; limit auto-set at 1% from trigger
-    LIMIT = "LIMIT"    # plain limit: fill when price reaches the limit price directly
+    TARGET = "TARGET"    # stop-limit: trigger then fill; limit auto-set at 1% from trigger
+    LIMIT = "LIMIT"      # plain limit: fill when price reaches the limit price directly
+    STOPLOSS = "STOPLOSS"  # stoploss exit: same trigger logic as TARGET, no wallet effect
 
 
 class Order(BaseModel):
@@ -143,15 +163,21 @@ class Order(BaseModel):
     created_at: int  # Unix timestamp
     filled_at: int | None = None
     filled_price: float | None = None
+    reserved_amount: float = 0.0  # wallet amount debited on BUY placement; 0 for SELL
+    is_stoploss: bool = False      # SL orders skip all wallet debit/credit
+    right: str | None = None       # "CE" or "PE" for options orders; None for equity
 
 
 class PlaceOrderRequest(BaseModel):
     session_id: str
     side: TradeSide
     order_type: OrderType = OrderType.TARGET
-    trigger_price: float | None = None  # required for TARGET
-    limit_price: float | None = None    # required for LIMIT; auto-computed for TARGET
-    quantity: int = 1
+    trigger_price: float | None = None   # required for TARGET / STOPLOSS
+    limit_price: float | None = None     # required for LIMIT; auto-computed for TARGET
+    quantity: int | None = None          # required when funds_ratio_pct is None
+    funds_ratio_pct: float | None = None  # 0–1 fraction; backend computes quantity
+    is_stoploss: bool = False
+    right: str | None = None             # "CE" or "PE" for options orders; None for equity
 
 
 class OrderFilledEvent(BaseModel):
@@ -162,3 +188,26 @@ class OrderFilledEvent(BaseModel):
     trigger_price: float
     filled_price: float
     filled_at: int
+
+
+class PriceAtResponse(BaseModel):
+    symbol: str
+    date: str
+    time: str
+    price: float
+
+
+class ExpiryResponse(BaseModel):
+    symbol: str
+    date: str
+    expiry: str
+
+
+class WalletResponse(BaseModel):
+    user_id: str
+    date: str
+    balance: float
+
+
+class WalletResetRequest(BaseModel):
+    amount: float = 150_000.0
