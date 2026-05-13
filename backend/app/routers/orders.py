@@ -1,5 +1,5 @@
 from fastapi import APIRouter, HTTPException, Query
-from app.models.schemas import Order, OrderType, TradeSide, PlaceOrderRequest
+from app.models.schemas import Order, OrderType, TradeSide, PlaceOrderRequest, UpdateOrderRequest
 from app.services import order_service, simulation as sim_svc
 from app.services.wallet_service import InsufficientFundsError, get_balance
 from app.config import FIXED_USER_ID, LOT_SIZES
@@ -102,6 +102,7 @@ async def place_order(req: PlaceOrderRequest):
             limit_price=req.limit_price,
             is_stoploss=req.is_stoploss,
             right=order_right,
+            target_deviation_pct=req.target_deviation_pct,
         )
     except InsufficientFundsError as exc:
         raise HTTPException(status_code=402, detail=str(exc))
@@ -122,4 +123,24 @@ async def cancel_order(order_id: str, session_id: str = Query(...)):
     order = order_service.cancel_order(session_id, order_id, trading_date)
     if order is None:
         raise HTTPException(status_code=404, detail="Order not found or already closed")
+    return order
+
+
+@router.patch("/{order_id}", response_model=Order)
+async def update_order(order_id: str, req: UpdateOrderRequest, session_id: str = Query(...)):
+    session = sim_svc.get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if req.trigger_price is None and req.limit_price is None:
+        raise HTTPException(status_code=400, detail="Provide trigger_price or limit_price to update")
+    order = order_service.update_order(
+        session_id=session_id,
+        order_id=order_id,
+        trading_date=session.date,
+        trigger_price=req.trigger_price,
+        limit_price=req.limit_price,
+        target_deviation_pct=req.target_deviation_pct,
+    )
+    if order is None:
+        raise HTTPException(status_code=404, detail="Order not found or not pending")
     return order

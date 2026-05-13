@@ -10,6 +10,7 @@ export interface FundsRatios {
 const DEFAULT_FUNDS_RATIOS: FundsRatios = { l: 3, m: 6, h: 12 }
 const FUNDS_RATIO_MODE_KEY = 'fundsRatioMode'
 const FUNDS_RATIOS_KEY = 'fundsRatios'
+const TARGET_DEVIATION_KEY = 'targetDeviationPct'
 
 export function loadFundsRatioMode(): boolean {
   return localStorage.getItem(FUNDS_RATIO_MODE_KEY) === 'true'
@@ -23,13 +24,20 @@ export function loadFundsRatios(): FundsRatios {
   return { ...DEFAULT_FUNDS_RATIOS }
 }
 
+// Returns deviation as a fraction (0.01 = 1%)
+export function loadTargetDeviationPct(): number {
+  const v = parseFloat(localStorage.getItem(TARGET_DEVIATION_KEY) ?? '')
+  return isNaN(v) || v < 0 ? 0.01 : v / 100
+}
+
 interface Props {
   date: string
   onWalletReset: () => void
   onFundsRatioChange: (mode: boolean, ratios: FundsRatios) => void
+  onTargetDeviationChange: (pct: number) => void  // fraction e.g. 0.01
 }
 
-export default function SettingsModal({ date, onWalletReset, onFundsRatioChange }: Props) {
+export default function SettingsModal({ date, onWalletReset, onFundsRatioChange, onTargetDeviationChange }: Props) {
   const [open, setOpen] = useState(false)
   const [customAmount, setCustomAmount] = useState('')
   const [status, setStatus] = useState<string | null>(null)
@@ -39,6 +47,12 @@ export default function SettingsModal({ date, onWalletReset, onFundsRatioChange 
   const [ratioInputs, setRatioInputs] = useState<{ l: string; m: string; h: string }>(() => {
     const r = loadFundsRatios()
     return { l: String(r.l), m: String(r.m), h: String(r.h) }
+  })
+
+  // TARGET deviation state (stored as % 0-100 in localStorage, exposed as fraction)
+  const [deviationInput, setDeviationInput] = useState<string>(() => {
+    const stored = parseFloat(localStorage.getItem(TARGET_DEVIATION_KEY) ?? '')
+    return String(isNaN(stored) ? 1 : stored)
   })
 
   // Persist + notify parent whenever mode or ratios change
@@ -60,6 +74,18 @@ export default function SettingsModal({ date, onWalletReset, onFundsRatioChange 
     }
     setRatios({ l, m, h })
     setStatus('Saved')
+    setTimeout(() => setStatus(null), 2000)
+  }
+
+  const saveDeviation = () => {
+    const pct = parseFloat(deviationInput)
+    if (isNaN(pct) || pct < 0 || pct > 10) {
+      setStatus('Deviation must be 0–10%')
+      return
+    }
+    localStorage.setItem(TARGET_DEVIATION_KEY, String(pct))
+    onTargetDeviationChange(pct / 100)
+    setStatus(`Deviation saved: ${pct}%`)
     setTimeout(() => setStatus(null), 2000)
   }
 
@@ -183,6 +209,40 @@ export default function SettingsModal({ date, onWalletReset, onFundsRatioChange 
                 </div>
               </div>
             )}
+
+            {/* TARGET Order Deviation */}
+            <div style={{ borderTop: '1px solid #21262d', paddingTop: 16 }}>
+              <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 10, fontWeight: 600 }}>
+                TARGET ORDER DEVIATION
+              </div>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                <input
+                  type="number"
+                  value={deviationInput}
+                  onChange={e => setDeviationInput(e.target.value)}
+                  min={0} max={10} step={0.1}
+                  style={{
+                    width: 80, padding: '5px 8px', background: '#0d1117',
+                    border: '1px solid #30363d', borderRadius: 6,
+                    color: '#e6edf3', fontSize: 13, textAlign: 'center',
+                  }}
+                />
+                <span style={{ fontSize: 12, color: '#8b949e' }}>%</span>
+                <button
+                  onClick={saveDeviation}
+                  style={{
+                    padding: '5px 12px', background: '#1f6feb',
+                    border: 'none', borderRadius: 6, color: '#fff',
+                    cursor: 'pointer', fontSize: 12,
+                  }}
+                >
+                  Save
+                </button>
+              </div>
+              <div style={{ fontSize: 11, color: '#484f58', marginTop: 6 }}>
+                Auto-limit = trigger ± {deviationInput || '1'}% for TARGET orders
+              </div>
+            </div>
 
             {/* Wallet */}
             <div style={{ borderTop: '1px solid #21262d', paddingTop: 16 }}>

@@ -93,4 +93,18 @@ Options data fetch, expiry/strike calculation, options sessions, and naked short
 
 Multi-pane layout, dual-stream options replay, and lot-sized direct trades are live. Three post-merge fixes: wrong-strike tick routing (bug #9), OTM direction for mid-session addPane (bug #10), and full-stack direction-aware OTM strikes for initial session with per-right CE/PE streaming (bug #11). See Sprint 4 section in `docs/spec-phase3.md` for full details.
 
-**Next: Phase IV BetaMinorUpdates** (see `docs/spec-phase4.md`)
+## Phase-IV Status
+
+### Phase IV — BetaMinorUpdates ✅ COMPLETE (263 tests passing)
+
+All 6 features shipped:
+1. **Edit open orders** — click any open order row to edit its trigger/limit price inline
+2. **Pick price from chart** — ⊕ button in edit row captures price from a chart click (active pane only)
+3. **Configurable TARGET deviation %** — Settings → "TARGET ORDER DEVIATION"; default 1%; stored in localStorage; passed as `target_deviation_pct` to backend on each order placement or update
+4. **Trade markers on charts** — BUY (green ↑) and SELL (red ↓) arrow markers on the candlestick series of each relevant pane; markers carry text label `SIDE qty@price`
+5. **Bar close countdown** — each chart toolbar shows `Bar close: M:SS`; turns orange in the last minute
+6. **Day P&L** — header widget shows realized + unrealized P&L for the session (net cash from all trades + current open position mark-to-market); updates on every tick
+
+**Backend**: `PATCH /api/orders/{id}` (update trigger/limit price with wallet re-reservation), `target_deviation_pct` field on `PlaceOrderRequest` and `UpdateOrderRequest`.
+
+**Next: Phase V Strategies** (see `docs/spec-phase5.md`)

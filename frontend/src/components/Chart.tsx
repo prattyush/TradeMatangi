@@ -8,8 +8,9 @@ import {
   Time,
   MouseEventParams,
   IPriceLine,
+  SeriesMarker,
 } from 'lightweight-charts'
-import api, { OHLCCandle, TickEvent } from '../services/api'
+import api, { OHLCCandle, TickEvent, Trade } from '../services/api'
 
 export type PaneType = 'equity' | 'options'
 
@@ -29,6 +30,10 @@ interface Props {
   // Active pane highlighting
   isActive?: boolean
   onActivate?: () => void
+  // Trade markers
+  trades?: Trade[]
+  // Price-pick mode: when non-null, a chart click calls this instead of draw mode
+  onPriceSelect?: ((price: number) => void) | null
 }
 
 type DrawMode = 'none' | 'hline' | 'trendline'
@@ -71,6 +76,8 @@ export default function Chart({
   latestTick, onPriceUpdate, height = 380,
   paneType = 'equity', strike, expiry, right,
   isActive = false, onActivate,
+  trades = [],
+  onPriceSelect = null,
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<IChartApi | null>(null)
@@ -85,12 +92,14 @@ export default function Chart({
   const trendPt1Ref = useRef<{ time: number; price: number } | null>(null)
   const priceLines = useRef<IPriceLine[]>([])
   const trendLines = useRef<ISeriesApi<'Line'>[]>([])
+  const onPriceSelectRef = useRef<((price: number) => void) | null>(null)
 
   const [showEma, setShowEma] = useState(true)
   const [drawMode, setDrawMode] = useState<DrawMode>('none')
   const [trendPending, setTrendPending] = useState(false)
 
   useEffect(() => { drawModeRef.current = drawMode }, [drawMode])
+  useEffect(() => { onPriceSelectRef.current = onPriceSelect ?? null }, [onPriceSelect])
 
   // ── Chart initialisation — runs once on mount only ───────────────────────
   useEffect(() => {
@@ -121,6 +130,12 @@ export default function Chart({
       const price = seriesRef.current.coordinateToPrice(param.point.y)
       if (price === null) return
       const time = param.time as number
+
+      // Price-pick mode takes priority over draw mode
+      if (onPriceSelectRef.current) {
+        onPriceSelectRef.current(price)
+        return
+      }
 
       if (drawModeRef.current === 'hline') {
         const line = seriesRef.current.createPriceLine({
@@ -364,6 +379,32 @@ export default function Chart({
     prevStartTimeRef.current = startTime
   }, [startTime])
 
+  // ── Trade markers ──────────────────────────────────────────────────────────
+  useEffect(() => {
+    const series = seriesRef.current
+    if (!series) return
+    if (trades.length === 0) {
+      series.setMarkers([])
+      return
+    }
+    // Filter trades relevant to this pane
+    const paneTrades = trades.filter(t => {
+      if (paneType === 'equity') return !t.right
+      return t.right === right
+    })
+    const markers: SeriesMarker<Time>[] = paneTrades.map(t => ({
+      time: (Math.floor(t.timestamp / intervalSecs) * intervalSecs) as Time,
+      position: t.side === 'BUY' ? 'belowBar' : 'aboveBar',
+      color: t.side === 'BUY' ? '#26a641' : '#f85149',
+      shape: t.side === 'BUY' ? 'arrowUp' : 'arrowDown',
+      text: `${t.side} ${t.quantity}@${t.price.toFixed(0)}`,
+      size: 1,
+    }))
+    // setMarkers requires sorted by time ascending
+    markers.sort((a, b) => (a.time as number) - (b.time as number))
+    try { series.setMarkers(markers) } catch { /* chart may be disposed */ }
+  }, [trades, paneType, right, intervalSecs])
+
   const enterDrawMode = useCallback((mode: DrawMode) => {
     if (drawModeRef.current === mode) {
       setDrawMode('none')
@@ -403,6 +444,16 @@ export default function Chart({
     color: active ? '#f0883e' : '#8b949e',
     cursor: 'pointer',
   })
+
+  // ── Bar close countdown ────────────────────────────────────────────────────
+  const barCountdown = (() => {
+    if (!latestTick) return null
+    const secsIntoBar = latestTick.time % intervalSecs
+    const remaining = secsIntoBar === 0 ? intervalSecs : intervalSecs - secsIntoBar
+    const m = Math.floor(remaining / 60)
+    const s = remaining % 60
+    return `${m}:${String(s).padStart(2, '0')}`
+  })()
 
   // Pane header label
   const paneLabel = paneType === 'options' && strike && expiry && right
@@ -457,11 +508,25 @@ export default function Chart({
           </span>
         )}
         {trendPending && <span style={{ fontSize: 11, color: '#f0883e' }}>Click second point</span>}
+        {onPriceSelect && (
+          <span style={{ fontSize: 11, color: '#3fb950', fontWeight: 600 }}>
+            ⊕ Click to pick price
+          </span>
+        )}
+        {barCountdown && (
+          <span style={{
+            marginLeft: 'auto', fontSize: 11,
+            color: barCountdown.startsWith('0:') ? '#f0883e' : '#484f58',
+            fontVariantNumeric: 'tabular-nums',
+          }}>
+            Bar close: {barCountdown}
+          </span>
+        )}
       </div>
 
       <div
         ref={containerRef}
-        style={{ width: '100%', cursor: drawMode !== 'none' ? 'crosshair' : 'default' }}
+        style={{ width: '100%', cursor: (drawMode !== 'none' || onPriceSelect) ? 'crosshair' : 'default' }}
       />
     </div>
   )

@@ -5,7 +5,7 @@ import TradePanel from './components/TradePanel'
 import TradeHistory from './components/TradeHistory'
 import OrderPanel from './components/OrderPanel'
 import WalletWidget from './components/WalletWidget'
-import SettingsModal, { loadFundsRatioMode, loadFundsRatios, FundsRatios } from './components/SettingsModal'
+import SettingsModal, { loadFundsRatioMode, loadFundsRatios, loadTargetDeviationPct, FundsRatios } from './components/SettingsModal'
 import { useSimulation, InstrumentConfig } from './hooks/useSimulation'
 import { useSSE } from './hooks/useSSE'
 
@@ -56,6 +56,11 @@ export default function App() {
   const sim = useSimulation()
   const [fundsRatioMode, setFundsRatioMode] = useState(loadFundsRatioMode)
   const [fundsRatios, setFundsRatios] = useState<FundsRatios>(loadFundsRatios)
+  const [targetDeviationPct, setTargetDeviationPct] = useState(loadTargetDeviationPct)
+
+  // ── Price-pick state ────────────────────────────────────────────────────────
+  const [pricePickOrderId, setPricePickOrderId] = useState<string | null>(null)
+  const [injectedEditPrice, setInjectedEditPrice] = useState<{ orderId: string; price: number } | null>(null)
 
   useEffect(() => {
     if (!localStorage.getItem('user')) {
@@ -222,6 +227,14 @@ export default function App() {
     await sim.startSession(startTime, speed, instrumentConfig)
   }, [sim.startSession])
 
+  // ── Price pick: chart clicked in pick mode ───────────────────────────────────
+  const handleChartPriceSelect = useCallback((price: number) => {
+    if (pricePickOrderId) {
+      setInjectedEditPrice({ orderId: pricePickOrderId, price })
+      setPricePickOrderId(null)
+    }
+  }, [pricePickOrderId])
+
   // ── Buy/Sell wired to active right ────────────────────────────────────────────
   const handleBuy = useCallback(async () => {
     await sim.buy(tradingActiveRight)
@@ -230,6 +243,12 @@ export default function App() {
   const handleSell = useCallback(async () => {
     await sim.sell(tradingActiveRight)
   }, [sim.sell, tradingActiveRight])
+
+  // ── Trades filtered per pane for markers ─────────────────────────────────────
+  const getTradesForPane = useCallback((pane: PaneConfig) => {
+    if (pane.type === 'equity') return sim.trades.filter(t => !t.right)
+    return sim.trades.filter(t => t.right === pane.right)
+  }, [sim.trades])
 
   // ── Layout rendering helpers ──────────────────────────────────────────────────
   const rowHeight = Math.max(160, Math.floor((columnHeight - 52) / 2))
@@ -260,7 +279,13 @@ export default function App() {
         expiry={pane.expiry}
         right={pane.right as 'CE' | 'PE' | undefined}
         isActive={pane.id === activePaneId}
-        onActivate={() => setActivePaneId(pane.id)}
+        onActivate={() => {
+          setActivePaneId(pane.id)
+          // Cancel price-pick if user clicks a different pane
+          if (pricePickOrderId && pane.id !== activePaneId) setPricePickOrderId(null)
+        }}
+        trades={getTradesForPane(pane)}
+        onPriceSelect={pricePickOrderId && pane.id === activePaneId ? handleChartPriceSelect : null}
       />
     </div>
   )
@@ -318,11 +343,27 @@ export default function App() {
         <span style={{ fontSize: 18, fontWeight: 700, color: '#58a6ff' }}>TradeMatangi</span>
         <span style={{ fontSize: 12, color: '#484f58' }}>Phase III — Beta</span>
         <div style={{ flex: 1 }} />
+        {sim.sessionState !== 'idle' && (
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 6,
+            background: '#161b22', border: '1px solid #30363d',
+            borderRadius: 6, padding: '4px 10px', fontSize: 12,
+          }}>
+            <span style={{ color: '#8b949e' }}>Day P&L</span>
+            <span style={{
+              fontWeight: 700, fontVariantNumeric: 'tabular-nums',
+              color: sim.dayPnl > 0 ? '#26a641' : sim.dayPnl < 0 ? '#f85149' : '#8b949e',
+            }}>
+              {sim.dayPnl >= 0 ? '+' : ''}{sim.dayPnl.toFixed(2)}
+            </span>
+          </div>
+        )}
         <WalletWidget date={sim.date} refreshKey={sim.walletRefreshKey} />
         <SettingsModal
           date={sim.date}
           onWalletReset={sim.incrementWalletRefreshKey}
           onFundsRatioChange={(mode, ratios) => { setFundsRatioMode(mode); setFundsRatios(ratios) }}
+          onTargetDeviationChange={setTargetDeviationPct}
         />
       </div>
 
@@ -502,13 +543,23 @@ export default function App() {
               position={tradePanelPosition}
               fundsRatioMode={fundsRatioMode}
               fundsRatios={fundsRatios}
+              targetDeviationPct={targetDeviationPct}
               onPlaceOrder={(side, orderType, price, quantity, opts) =>
                 sim.placeOrder(side, orderType, price, quantity, {
                   ...opts,
                   ...(tradingActiveRight ? { right: tradingActiveRight } : {}),
+                  target_deviation_pct: targetDeviationPct,
                 })
               }
               onCancelOrder={sim.cancelOrder}
+              onUpdateOrder={(orderId, triggerPrice, limitPrice) =>
+                sim.updateOrder(orderId, triggerPrice, limitPrice, targetDeviationPct)
+              }
+              onRequestPricePick={orderId => {
+                setPricePickOrderId(orderId)
+                setInjectedEditPrice(null)
+              }}
+              injectedEditPrice={injectedEditPrice}
             />
           </div>
           <TradeHistory trades={sim.trades} />
