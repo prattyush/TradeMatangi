@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, CSSProperties } from 'react'
+import { useState, useEffect, useRef, useCallback, CSSProperties } from 'react'
 import { SessionState } from '../hooks/useSimulation'
 import api, { SymbolInfo } from '../services/api'
 import { InstrumentConfig } from '../hooks/useSimulation'
@@ -98,6 +98,8 @@ export default function SessionControls({
   const [optionsConfig, setOptionsConfig] = useState<OptionsReadyConfig | null>(null)
   const [fetchingOptions, setFetchingOptions] = useState(false)
   const [optionsError, setOptionsError] = useState<string | null>(null)
+  // Only show options errors after the user has explicitly changed something
+  const userInteractedRef = useRef(false)
 
   const idle = sessionState === 'idle' || sessionState === 'ended'
   const running = sessionState === 'running'
@@ -169,6 +171,7 @@ export default function SessionControls({
   }, [instrumentType, currentSymbol, currentDate])
 
   const handleOffsetChange = (newOffset: number) => {
+    userInteractedRef.current = true
     setOptionsOffset(newOffset)
     if (instrumentType === 'options' && currentDate) {
       fetchOptionsData(currentSymbol, currentDate, newOffset)
@@ -183,11 +186,13 @@ export default function SessionControls({
       setDateError('Markets are closed on weekends — please choose a weekday')
       return
     }
+    userInteractedRef.current = true
     setDateError(null)
     onDateChange(d)
   }
 
   const handleSymbolChange = (sym: string) => {
+    userInteractedRef.current = true
     onSymbolChange(sym)
     if (OPTIONS_ONLY_SYMBOLS.has(sym)) {
       setInstrumentType('options')
@@ -248,7 +253,7 @@ export default function SessionControls({
           </button>
           <button
             style={toggleBtn(instrumentType === 'options', !idle)}
-            onClick={() => idle && setInstrumentType('options')}
+            onClick={() => { if (idle) { userInteractedRef.current = true; setInstrumentType('options') } }}
           >
             Options
           </button>
@@ -322,7 +327,7 @@ export default function SessionControls({
                 Strike: {optionsConfig.strike} &nbsp;|&nbsp; Expiry: {optionsConfig.expiry}
               </span>
             )}
-            {optionsError && (
+            {optionsError && userInteractedRef.current && (
               <span style={{ fontSize: 12, color: '#f85149' }}>{optionsError}</span>
             )}
           </div>
