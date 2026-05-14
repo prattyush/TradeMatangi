@@ -17,3 +17,7 @@ This phase will allow trades to be analyzed for manual evaluation and later for 
 
 ##### Persistence
 1. For each trading session, store the trades taken also the wallet value captured at the start of the session. Better to store it in tables and then show it in the trade analysis, as that wallet value would be required to calculate the P&L % w.r.t to wallet value.
+
+
+##### ReloadChart
+1. One of the problems when a new pane is added is that the new pane start to show the data correctly but in the lightweight chart the old value still remains, thus it show the previous candle lowest or highest point from previous strike price value. Let say the value of strike price 73500 was in range of 60 to 61 then I removed the pane added a new pane of strike price 73900, with range around 41-42, then the current candle is showing the currrent price. But the candle has high point of 61. So add an icon to reload chart on the top may be beside the Bar close or anywhere as suited, when clicked the chart data is fetched till previous bar not the current candle and rendered on the chart. The user can click on refresh after the candle finishes to fixed the candles.
