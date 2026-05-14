@@ -164,7 +164,7 @@ async def get_options_historical(
     interval_minutes: int = Query(default=CANDLE_INTERVAL_MINUTES, ge=1, le=60),
 ):
     """
-    Return OHLC candles for an options contract on the given trading date.
+    Return OHLC candles for an options contract for the two trading days prior to date.
     Fetches from Breeze if not yet cached. Used to populate options chart panes.
     right: "CE" or "PE"
     """
@@ -175,24 +175,37 @@ async def get_options_historical(
 
     from app.services.options_service import fetch_options_historical, load_options_dataframe
     from app.services.broker_service import BreezeTokenError
-    try:
-        fetch_options_historical(symbol, date, strike, expiry, right.upper())
-    except BreezeTokenError as e:
-        raise HTTPException(status_code=503, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=503, detail=f"Options data fetch failed: {e}")
 
-    try:
-        df = load_options_dataframe(symbol, date, strike, expiry, right.upper())
-    except FileNotFoundError:
-        raise HTTPException(status_code=404, detail=f"Options data not found for {symbol} {right} {strike}")
+    prior_dates = prior_trading_days(date, n=2)
+    all_candles: list[OHLCCandle] = []
 
-    candles = resample_to_candles(df, interval_minutes)
-    records = candles_to_records(candles)
+    for prior_date in prior_dates:
+        try:
+            fetch_options_historical(symbol, prior_date, strike, expiry, right.upper())
+            df = load_options_dataframe(symbol, prior_date, strike, expiry, right.upper())
+            candles = resample_to_candles(df, interval_minutes)
+            records = candles_to_records(candles)
+            all_candles.extend(OHLCCandle(**r) for r in records)
+        except BreezeTokenError as e:
+            raise HTTPException(status_code=503, detail=str(e))
+        except FileNotFoundError:
+            logger.warning(
+                "Options data not found for %s %s %s on %s — skipping prior day",
+                symbol, right.upper(), strike, prior_date,
+            )
+        except Exception as e:
+            logger.warning("Failed to load options data for %s on %s: %s", symbol, prior_date, e)
+
+    if not all_candles:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Options data not found for {symbol} {right.upper()} {strike}",
+        )
+
     return HistoricalDataResponse(
         symbol=f"{symbol}-{right.upper()}-{strike}",
-        dates=[date],
-        candles=[OHLCCandle(**r) for r in records],
+        dates=prior_dates,
+        candles=all_candles,
     )
 
 

@@ -3,7 +3,7 @@ import { Order, Position } from '../services/api'
 import { SessionState } from '../hooks/useSimulation'
 import { FundsRatios } from './SettingsModal'
 
-type OrderTypeFull = 'TARGET' | 'LIMIT' | 'STOPLOSS'
+type OrderTypeFull = 'TARGET' | 'LIMIT' | 'STOPLOSS' | 'MARKET'
 
 interface Props {
   sessionState: SessionState
@@ -15,7 +15,7 @@ interface Props {
   targetDeviationPct: number   // fraction e.g. 0.01 for 1%
   onPlaceOrder: (
     side: 'BUY' | 'SELL',
-    orderType: OrderTypeFull,
+    orderType: 'TARGET' | 'LIMIT' | 'STOPLOSS',
     price: number,
     quantity: number | null,
     opts: { is_stoploss?: boolean; funds_ratio_pct?: number; target_deviation_pct?: number },
@@ -86,7 +86,12 @@ export default function OrderPanel({
   const ratioPct = fundsRatios[ratio] / 100
 
   const handlePlace = async () => {
-    if (isNaN(parsedPrice) || parsedPrice <= 0) {
+    if (orderType === 'MARKET') {
+      if (currentPrice <= 0) {
+        setError('Waiting for price data')
+        return
+      }
+    } else if (isNaN(parsedPrice) || parsedPrice <= 0) {
       setError(`Enter a valid ${orderType === 'LIMIT' ? 'limit' : 'trigger'} price`)
       return
     }
@@ -100,7 +105,10 @@ export default function OrderPanel({
     setError(null)
     setPlacing(true)
     try {
-      if (orderType === 'STOPLOSS') {
+      if (orderType === 'MARKET') {
+        // Route as LIMIT at current price — fills on the next tick
+        await onPlaceOrder(side, 'LIMIT', currentPrice, null, { funds_ratio_pct: ratioPct })
+      } else if (orderType === 'STOPLOSS') {
         await onPlaceOrder(side, 'STOPLOSS', parsedPrice, slQty, { is_stoploss: true })
       } else if (fundsRatioMode) {
         await onPlaceOrder(side, orderType, parsedPrice, null, {
@@ -170,21 +178,50 @@ export default function OrderPanel({
     </button>
   )
 
+  // L/M/H ratio picker used for Mkt and fundsRatioMode
+  const ratioButtons = (
+    <div style={{ display: 'flex', gap: 4 }}>
+      {RATIO_LABELS.map(lbl => {
+        const key = lbl.toLowerCase() as RatioKey
+        return (
+          <button
+            key={lbl}
+            disabled={!isActive}
+            onClick={() => setRatio(key)}
+            style={{
+              flex: 1, padding: '5px 0', fontSize: 12, fontWeight: 700,
+              borderRadius: 4, cursor: isActive ? 'pointer' : 'not-allowed',
+              border: `1px solid ${ratio === key ? '#388bfd' : '#30363d'}`,
+              background: ratio === key ? '#1f3a5f' : '#161b22',
+              color: ratio === key ? '#79c0ff' : '#8b949e',
+            }}
+          >
+            {lbl}
+            <span style={{ fontSize: 10, display: 'block', color: ratio === key ? '#58a6ff' : '#484f58' }}>
+              {fundsRatios[key]}%
+            </span>
+          </button>
+        )
+      })}
+    </div>
+  )
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
       <div style={{ fontSize: 12, fontWeight: 600, color: '#8b949e', textTransform: 'uppercase', letterSpacing: 1 }}>
         Orders
       </div>
 
-      {/* TARGET / LIMIT / SL toggle */}
+      {/* Tgt / Lmt / SL / Mkt toggle */}
       <div style={{ display: 'flex', gap: 0, borderRadius: 6, overflow: 'hidden', border: '1px solid #30363d' }}>
-        {btn('TARGET', orderType === 'TARGET', () => { setOrderType('TARGET'); setPrice('') }, !isActive)}
-        {btn('LIMIT', orderType === 'LIMIT', () => { setOrderType('LIMIT'); setPrice('') }, !isActive)}
+        {btn('Tgt', orderType === 'TARGET', () => { setOrderType('TARGET'); setPrice('') }, !isActive)}
+        {btn('Lmt', orderType === 'LIMIT', () => { setOrderType('LIMIT'); setPrice('') }, !isActive)}
         {btn('SL', orderType === 'STOPLOSS',
           () => { if (hasPosition) { setOrderType('STOPLOSS'); setPrice('') } },
           !isActive || !hasPosition,
           orderType === 'STOPLOSS' ? '#8b2300' : undefined,
         )}
+        {btn('Mkt', orderType === 'MARKET', () => { setOrderType('MARKET'); setPrice('') }, !isActive)}
       </div>
 
       {/* BUY / SELL toggle */}
@@ -208,42 +245,56 @@ export default function OrderPanel({
         ))}
       </div>
 
-      {/* Price input */}
-      <div>
-        <div style={{ fontSize: 11, color: '#8b949e', marginBottom: 3 }}>
-          {orderType === 'LIMIT' ? 'Limit Price' : 'Trigger / SL Price'}
+      {/* Price input — hidden for Market orders */}
+      {orderType !== 'MARKET' && (
+        <div>
+          <div style={{ fontSize: 11, color: '#8b949e', marginBottom: 3 }}>
+            {orderType === 'LIMIT' ? 'Limit Price' : 'Trigger / SL Price'}
+          </div>
+          <input
+            type="number"
+            value={price}
+            onChange={e => setPrice(e.target.value)}
+            placeholder={currentPrice > 0 ? currentPrice.toFixed(2) : '0.00'}
+            disabled={!isActive}
+            style={{
+              width: '100%', padding: '5px 8px', background: '#0d1117',
+              border: '1px solid #30363d', borderRadius: 6,
+              color: '#e6edf3', fontSize: 13, boxSizing: 'border-box',
+            }}
+          />
+          {orderType === 'TARGET' && (
+            <div style={{ fontSize: 10, color: '#484f58', marginTop: 2 }}>
+              Exec limit: {autoLimit ?? '—'} (±{(deviation * 100).toFixed(1)}%)
+            </div>
+          )}
+          {orderType === 'LIMIT' && (
+            <div style={{ fontSize: 10, color: '#484f58', marginTop: 2 }}>
+              Fills when price {side === 'BUY' ? '≤' : '≥'} {isNaN(parsedPrice) ? '—' : parsedPrice.toFixed(2)}
+            </div>
+          )}
+          {orderType === 'STOPLOSS' && (
+            <div style={{ fontSize: 10, color: '#f0883e', marginTop: 2 }}>
+              Exits at market when price {side === 'SELL' ? '≤' : '≥'} trigger
+            </div>
+          )}
         </div>
-        <input
-          type="number"
-          value={price}
-          onChange={e => setPrice(e.target.value)}
-          placeholder={currentPrice > 0 ? currentPrice.toFixed(2) : '0.00'}
-          disabled={!isActive}
-          style={{
-            width: '100%', padding: '5px 8px', background: '#0d1117',
-            border: '1px solid #30363d', borderRadius: 6,
-            color: '#e6edf3', fontSize: 13, boxSizing: 'border-box',
-          }}
-        />
-        {orderType === 'TARGET' && (
-          <div style={{ fontSize: 10, color: '#484f58', marginTop: 2 }}>
-            Exec limit: {autoLimit ?? '—'} (±{(deviation * 100).toFixed(1)}%)
-          </div>
-        )}
-        {orderType === 'LIMIT' && (
-          <div style={{ fontSize: 10, color: '#484f58', marginTop: 2 }}>
-            Fills when price {side === 'BUY' ? '≤' : '≥'} {isNaN(parsedPrice) ? '—' : parsedPrice.toFixed(2)}
-          </div>
-        )}
-        {orderType === 'STOPLOSS' && (
-          <div style={{ fontSize: 10, color: '#f0883e', marginTop: 2 }}>
-            Exits at market when price {side === 'SELL' ? '≤' : '≥'} trigger
-          </div>
-        )}
-      </div>
+      )}
+
+      {/* Market info hint */}
+      {orderType === 'MARKET' && (
+        <div style={{ fontSize: 10, color: '#484f58' }}>
+          Executes at current price ({currentPrice > 0 ? currentPrice.toFixed(2) : '—'}) using selected capital ratio
+        </div>
+      )}
 
       {/* Quantity / FundsRatio / SL qty */}
-      {orderType === 'STOPLOSS' ? (
+      {orderType === 'MARKET' ? (
+        <div>
+          <div style={{ fontSize: 11, color: '#8b949e', marginBottom: 3 }}>Capital Ratio</div>
+          {ratioButtons}
+        </div>
+      ) : orderType === 'STOPLOSS' ? (
         <div>
           <div style={{ fontSize: 11, color: '#8b949e', marginBottom: 3 }}>
             SL Quantity (max {position.quantity})
@@ -265,30 +316,7 @@ export default function OrderPanel({
       ) : fundsRatioMode ? (
         <div>
           <div style={{ fontSize: 11, color: '#8b949e', marginBottom: 3 }}>Capital Ratio</div>
-          <div style={{ display: 'flex', gap: 4 }}>
-            {RATIO_LABELS.map(lbl => {
-              const key = lbl.toLowerCase() as RatioKey
-              return (
-                <button
-                  key={lbl}
-                  disabled={!isActive}
-                  onClick={() => setRatio(key)}
-                  style={{
-                    flex: 1, padding: '5px 0', fontSize: 12, fontWeight: 700,
-                    borderRadius: 4, cursor: isActive ? 'pointer' : 'not-allowed',
-                    border: `1px solid ${ratio === key ? '#388bfd' : '#30363d'}`,
-                    background: ratio === key ? '#1f3a5f' : '#161b22',
-                    color: ratio === key ? '#79c0ff' : '#8b949e',
-                  }}
-                >
-                  {lbl}
-                  <span style={{ fontSize: 10, display: 'block', color: ratio === key ? '#58a6ff' : '#484f58' }}>
-                    {fundsRatios[key]}%
-                  </span>
-                </button>
-              )
-            })}
-          </div>
+          {ratioButtons}
         </div>
       ) : (
         <div>
@@ -330,8 +358,9 @@ export default function OrderPanel({
           cursor: isActive && !placing ? 'pointer' : 'not-allowed',
         }}
       >
-        {placing ? 'Placing…' : orderType === 'STOPLOSS'
-          ? `Set SL (${side} @ trigger)`
+        {placing ? 'Placing…'
+          : orderType === 'STOPLOSS' ? `Set SL (${side} @ trigger)`
+          : orderType === 'MARKET' ? `${side} Mkt [${ratio.toUpperCase()} · ${fundsRatios[ratio]}%]`
           : fundsRatioMode
             ? `Place ${side} ${orderType} [${ratio.toUpperCase()} · ${fundsRatios[ratio]}%]`
             : `Place ${side} ${orderType}`}

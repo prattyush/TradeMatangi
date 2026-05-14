@@ -95,16 +95,21 @@ Multi-pane layout, dual-stream options replay, and lot-sized direct trades are l
 
 ## Phase-IV Status
 
-### Phase IV — BetaMinorUpdates ✅ COMPLETE (263 tests passing)
+### Phase IV — BetaMinorUpdates ✅ COMPLETE (270 tests passing)
 
-All 6 features shipped:
+All 9 UI-Upgrade features + Options-HistoricalData + TradeP&L shipped:
 1. **Edit open orders** — click any open order row to edit its trigger/limit price inline
 2. **Pick price from chart** — ⊕ button in edit row captures price from a chart click (active pane only)
 3. **Configurable TARGET deviation %** — Settings → "TARGET ORDER DEVIATION"; default 1%; stored in localStorage; passed as `target_deviation_pct` to backend on each order placement or update
 4. **Trade markers on charts** — BUY (green ↑) and SELL (red ↓) arrow markers on the candlestick series of each relevant pane; markers carry text label `SIDE qty@price`
 5. **Bar close countdown** — each chart toolbar shows `Bar close: M:SS`; turns orange in the last minute
-6. **Day P&L** — header widget shows realized + unrealized P&L for the session (net cash from all trades + current open position mark-to-market); updates on every tick
+6. **Day P&L** — header widget shows realized + unrealized P&L minus commission; updates on every tick
+7. **Market tab (Mkt)** — Mkt/Tgt/Lmt/SL tabs in OrderPanel; Mkt always uses L/M/H ratio for sizing, executes as LIMIT at current price; BUY/SELL buttons removed from TradePanel
+8. **Position P&L + Session P&L** — TradePanel shows "Pos P&L" (unrealized) and "Session P&L" (realized + unrealized − commission) below LTP
+9. **Trade history expand popup** — ⛶ icon beside "Trade History" opens a full modal with all columns (Time, Symbol, Side, Qty, Price, Right, Strike, Trade ID)
+10. **Options Historical Data (2 days)** — `GET /api/data/options-historical` now fetches 2 prior trading days of candles (same as equity), with graceful skip on missing prior-day data
+11. **Broker commission in P&L** — Settings → "BROKER COMMISSION"; default ₹10/trade; deducted from Session P&L and Day P&L header; stored in localStorage
 
-**Backend**: `PATCH /api/orders/{id}` (update trigger/limit price with wallet re-reservation), `target_deviation_pct` field on `PlaceOrderRequest` and `UpdateOrderRequest`.
+**Backend**: `PATCH /api/orders/{id}`, `target_deviation_pct` on order schemas, 2-day options historical fetch.
 
 **Next: Phase V Strategies** (see `docs/spec-phase5.md`)

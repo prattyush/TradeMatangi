@@ -3,12 +3,10 @@ import { SessionState } from '../hooks/useSimulation'
 
 interface Props {
   sessionState: SessionState
-  // Equity / active contract price
   currentPrice: number
   position: Position
-  pnl: number
-  onBuy: () => Promise<void>
-  onSell: () => Promise<void>
+  pnl: number           // unrealized position P&L
+  sessionPnl?: number   // realized + unrealized - commission for the full session
   // Options mode extras
   activeRight?: 'CE' | 'PE' | null   // null = equity pane active (no quick-trade)
   activeLabel?: string               // e.g. "NIFTY CE 24000"
@@ -17,13 +15,13 @@ interface Props {
 function fmt(n: number) { return n.toFixed(2) }
 
 export default function TradePanel({
-  sessionState, currentPrice, position, pnl,
-  onBuy, onSell,
+  sessionState, currentPrice, position, pnl, sessionPnl,
   activeRight = null, activeLabel,
 }: Props) {
-  const active = (sessionState === 'running' || sessionState === 'paused') && activeRight !== null
   const pnlColor = pnl > 0 ? '#26a641' : pnl < 0 ? '#f85149' : '#8b949e'
+  const sessionPnlColor = (sessionPnl ?? 0) > 0 ? '#26a641' : (sessionPnl ?? 0) < 0 ? '#f85149' : '#8b949e'
   const sideColor = position.side === 'LONG' ? '#26a641' : position.side === 'SHORT' ? '#f85149' : '#8b949e'
+  const active = sessionState === 'running' || sessionState === 'paused'
 
   return (
     <div style={{
@@ -41,38 +39,11 @@ export default function TradePanel({
         </span>
       </div>
 
-      {activeRight === null && sessionState !== 'idle' && sessionState !== 'ended' && (
+      {activeRight === null && active && (
         <div style={{ fontSize: 12, color: '#484f58', textAlign: 'center', padding: '4px 0' }}>
           Select a CE/PE pane to trade
         </div>
       )}
-
-      <div style={{ display: 'flex', gap: 8 }}>
-        <button
-          onClick={onBuy}
-          disabled={!active}
-          style={{
-            flex: 1, background: active ? '#26a641' : '#21262d',
-            color: active ? '#fff' : '#484f58', border: 'none', borderRadius: 6,
-            padding: '10px 0', fontSize: 15, fontWeight: 700,
-            cursor: active ? 'pointer' : 'not-allowed',
-          }}
-        >
-          BUY
-        </button>
-        <button
-          onClick={onSell}
-          disabled={!active}
-          style={{
-            flex: 1, background: active ? '#f85149' : '#21262d',
-            color: active ? '#fff' : '#484f58', border: 'none', borderRadius: 6,
-            padding: '10px 0', fontSize: 15, fontWeight: 700,
-            cursor: active ? 'pointer' : 'not-allowed',
-          }}
-        >
-          SELL
-        </button>
-      </div>
 
       <div style={{ borderTop: '1px solid #30363d', paddingTop: 10, display: 'flex', flexDirection: 'column', gap: 6 }}>
         <div style={{ fontSize: 13, color: '#8b949e' }}>
@@ -87,11 +58,19 @@ export default function TradePanel({
           </div>
         )}
         <div style={{ fontSize: 13, color: '#8b949e' }}>
-          P&L&nbsp;
+          Pos P&L&nbsp;
           <span style={{ fontWeight: 700, color: pnlColor, fontVariantNumeric: 'tabular-nums' }}>
             {pnl >= 0 ? '+' : ''}{fmt(pnl)}
           </span>
         </div>
+        {active && sessionPnl !== undefined && (
+          <div style={{ fontSize: 13, color: '#8b949e' }}>
+            Session P&L&nbsp;
+            <span style={{ fontWeight: 700, color: sessionPnlColor, fontVariantNumeric: 'tabular-nums' }}>
+              {sessionPnl >= 0 ? '+' : ''}{fmt(sessionPnl)}
+            </span>
+          </div>
+        )}
       </div>
     </div>
   )

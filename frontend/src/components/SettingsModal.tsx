@@ -11,6 +11,7 @@ const DEFAULT_FUNDS_RATIOS: FundsRatios = { l: 3, m: 6, h: 12 }
 const FUNDS_RATIO_MODE_KEY = 'fundsRatioMode'
 const FUNDS_RATIOS_KEY = 'fundsRatios'
 const TARGET_DEVIATION_KEY = 'targetDeviationPct'
+const COMMISSION_KEY = 'commissionPerTrade'
 
 export function loadFundsRatioMode(): boolean {
   return localStorage.getItem(FUNDS_RATIO_MODE_KEY) === 'true'
@@ -30,14 +31,21 @@ export function loadTargetDeviationPct(): number {
   return isNaN(v) || v < 0 ? 0.01 : v / 100
 }
 
+// Returns commission per trade in rupees (default ₹10)
+export function loadCommissionPerTrade(): number {
+  const v = parseFloat(localStorage.getItem(COMMISSION_KEY) ?? '')
+  return isNaN(v) || v < 0 ? 10 : v
+}
+
 interface Props {
   date: string
   onWalletReset: () => void
   onFundsRatioChange: (mode: boolean, ratios: FundsRatios) => void
   onTargetDeviationChange: (pct: number) => void  // fraction e.g. 0.01
+  onCommissionChange: (commission: number) => void  // rupees per trade
 }
 
-export default function SettingsModal({ date, onWalletReset, onFundsRatioChange, onTargetDeviationChange }: Props) {
+export default function SettingsModal({ date, onWalletReset, onFundsRatioChange, onTargetDeviationChange, onCommissionChange }: Props) {
   const [open, setOpen] = useState(false)
   const [customAmount, setCustomAmount] = useState('')
   const [status, setStatus] = useState<string | null>(null)
@@ -53,6 +61,12 @@ export default function SettingsModal({ date, onWalletReset, onFundsRatioChange,
   const [deviationInput, setDeviationInput] = useState<string>(() => {
     const stored = parseFloat(localStorage.getItem(TARGET_DEVIATION_KEY) ?? '')
     return String(isNaN(stored) ? 1 : stored)
+  })
+
+  // Commission per trade in rupees
+  const [commissionInput, setCommissionInput] = useState<string>(() => {
+    const v = parseFloat(localStorage.getItem(COMMISSION_KEY) ?? '')
+    return String(isNaN(v) || v < 0 ? 10 : v)
   })
 
   // Persist + notify parent whenever mode or ratios change
@@ -86,6 +100,18 @@ export default function SettingsModal({ date, onWalletReset, onFundsRatioChange,
     localStorage.setItem(TARGET_DEVIATION_KEY, String(pct))
     onTargetDeviationChange(pct / 100)
     setStatus(`Deviation saved: ${pct}%`)
+    setTimeout(() => setStatus(null), 2000)
+  }
+
+  const saveCommission = () => {
+    const val = parseFloat(commissionInput)
+    if (isNaN(val) || val < 0) {
+      setStatus('Commission must be ≥ 0')
+      return
+    }
+    localStorage.setItem(COMMISSION_KEY, String(val))
+    onCommissionChange(val)
+    setStatus(`Commission saved: ₹${val}`)
     setTimeout(() => setStatus(null), 2000)
   }
 
@@ -241,6 +267,41 @@ export default function SettingsModal({ date, onWalletReset, onFundsRatioChange,
               </div>
               <div style={{ fontSize: 11, color: '#484f58', marginTop: 6 }}>
                 Auto-limit = trigger ± {deviationInput || '1'}% for TARGET orders
+              </div>
+            </div>
+
+            {/* Commission */}
+            <div style={{ borderTop: '1px solid #21262d', paddingTop: 16 }}>
+              <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 10, fontWeight: 600 }}>
+                BROKER COMMISSION
+              </div>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                <span style={{ fontSize: 12, color: '#8b949e' }}>₹</span>
+                <input
+                  type="number"
+                  value={commissionInput}
+                  onChange={e => setCommissionInput(e.target.value)}
+                  min={0} step={1}
+                  style={{
+                    width: 80, padding: '5px 8px', background: '#0d1117',
+                    border: '1px solid #30363d', borderRadius: 6,
+                    color: '#e6edf3', fontSize: 13, textAlign: 'center',
+                  }}
+                />
+                <span style={{ fontSize: 12, color: '#8b949e' }}>per trade</span>
+                <button
+                  onClick={saveCommission}
+                  style={{
+                    padding: '5px 12px', background: '#1f6feb',
+                    border: 'none', borderRadius: 6, color: '#fff',
+                    cursor: 'pointer', fontSize: 12,
+                  }}
+                >
+                  Save
+                </button>
+              </div>
+              <div style={{ fontSize: 11, color: '#484f58', marginTop: 6 }}>
+                Deducted from session P&L for each BUY or SELL
               </div>
             </div>
 
