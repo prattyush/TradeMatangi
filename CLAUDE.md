@@ -74,6 +74,10 @@ node node_modules/typescript/bin/tsc --noEmit
 - **Options tick routing uses per-right session strike**: `getTickForPane` in `App.tsx` checks CE panes against `sim.sessionStrikeCE` and PE panes against `sim.sessionStrikePE`. CE and PE may stream at different strikes when OTM offset ≠ 0. Panes with a non-matching strike return `null` (history only).
 - **OTM offset is direction-aware**: CE strike = `ATM + N × interval`; PE strike = `ATM − N × interval`. Applies to both initial session panes (via `SessionControls.fetchOptionsData`) and mid-session `addPane`. UI label is "OTM", not "Offset".
 - **`SimulationSession` carries `strike_ce` and `strike_pe`**: both default to `strike` when not provided (ATM sessions, backward compat). `_run_session` dual-stream loads CE ticks from `strike_ce`, PE ticks from `strike_pe`. `routers/trading.py` `_strike_for_right()` returns the correct per-right strike for trade recording.
+- **Options historical includes trading date**: `GET /api/data/options-historical` fetches `prior_trading_days(date, n=2) + [date]` (3 dates). The trading date's candles represent the pre-session window; the frontend filters to `c.time < startWindowTs` to avoid "Cannot update oldest data". Never use `prior_trading_days(n=2)` alone for options — that drops the trading day's pre-session candles.
+- **Market tab routes as LIMIT**: The Mkt tab in `OrderPanel.tsx` places a LIMIT order at `currentPrice` with `funds_ratio_pct`. `OrderTypeFull` includes `'MARKET'` as a UI-only state; it is always converted to `'LIMIT'` before calling `onPlaceOrder`. The backend never sees `order_type='MARKET'`.
+- **Commission is frontend-only**: `commissionPerTrade` (localStorage key `commissionPerTrade`, default ₹10) is loaded in `App.tsx` via `loadCommissionPerTrade()`. `netDayPnl = sim.dayPnl - commission × trades.length`. Backend P&L remains gross. Session P&L in TradePanel uses `netDayPnl`.
+- **Chart toolbar paddingRight for remove button**: The pane remove `✕` button in `App.tsx` is `position: absolute, top: 8, right: 8`. Chart.tsx toolbar must have `paddingRight: 36` so the bar-close countdown (which uses `marginLeft: 'auto'`) does not render under the button.
 
 ## Phase-III Status
 
@@ -95,21 +99,34 @@ Multi-pane layout, dual-stream options replay, and lot-sized direct trades are l
 
 ## Phase-IV Status
 
-### Phase IV — BetaMinorUpdates ✅ COMPLETE (270 tests passing)
+### Phase IV — BetaMinorUpdates ✅ COMPLETE (271 tests passing) — PR #14 open, in user testing
 
 All 9 UI-Upgrade features + Options-HistoricalData + TradeP&L shipped:
 1. **Edit open orders** — click any open order row to edit its trigger/limit price inline
 2. **Pick price from chart** — ⊕ button in edit row captures price from a chart click (active pane only)
 3. **Configurable TARGET deviation %** — Settings → "TARGET ORDER DEVIATION"; default 1%; stored in localStorage; passed as `target_deviation_pct` to backend on each order placement or update
 4. **Trade markers on charts** — BUY (green ↑) and SELL (red ↓) arrow markers on the candlestick series of each relevant pane; markers carry text label `SIDE qty@price`
-5. **Bar close countdown** — each chart toolbar shows `Bar close: M:SS`; turns orange in the last minute
+5. **Bar close countdown** — each chart toolbar shows `Bar close: M:SS`; turns orange in the last minute; toolbar has `paddingRight: 36` to avoid overlap with the pane ✕ button
 6. **Day P&L** — header widget shows realized + unrealized P&L minus commission; updates on every tick
 7. **Market tab (Mkt)** — Mkt/Tgt/Lmt/SL tabs in OrderPanel; Mkt always uses L/M/H ratio for sizing, executes as LIMIT at current price; BUY/SELL buttons removed from TradePanel
 8. **Position P&L + Session P&L** — TradePanel shows "Pos P&L" (unrealized) and "Session P&L" (realized + unrealized − commission) below LTP
 9. **Trade history expand popup** — ⛶ icon beside "Trade History" opens a full modal with all columns (Time, Symbol, Side, Qty, Price, Right, Strike, Trade ID)
-10. **Options Historical Data (2 days)** — `GET /api/data/options-historical` now fetches 2 prior trading days of candles (same as equity), with graceful skip on missing prior-day data
+10. **Options Historical Data (2 days + trading date)** — `GET /api/data/options-historical` fetches `prior_trading_days(n=2) + [date]` (3 dates total); prior 2 days = context; trading date filtered by frontend to `time < startWindowTs` = pre-session candles
 11. **Broker commission in P&L** — Settings → "BROKER COMMISSION"; default ₹10/trade; deducted from Session P&L and Day P&L header; stored in localStorage
 
-**Backend**: `PATCH /api/orders/{id}`, `target_deviation_pct` on order schemas, 2-day options historical fetch.
+**Backend**: `PATCH /api/orders/{id}`, `target_deviation_pct` on order schemas, options historical 3-date fetch.
+
+### Phase IV Post-Merge Bugs Fixed
+
+- **Bug #1 — Options pre-session candles missing**: When options-historical was updated to fetch prior 2 days using `prior_trading_days(n=2)`, the trading date itself was dropped, so CE/PE charts no longer showed 09:15–startTime candles. Fix: append `+ [date]` so the trading date is always included; frontend's existing `c.time < startWindowTs` filter handles clipping.
+- **Bug #2 — Bar countdown overlaps ✕ button**: Bar-close countdown used `marginLeft: 'auto'` pushing it flush to the right edge, directly behind the absolute-positioned pane remove button. Fix: `paddingRight: 36` on the Chart toolbar div.
+
+### Phase IV Lessons Learned
+
+- **Options historical needs trading date + prior days**: Unlike equity (which has a separate `/api/data/pre-session` endpoint for the trading day), options historical must include the trading date itself to show pre-session candles. Pattern: `prior_trading_days(n=2) + [date]`.
+- **Market orders via LIMIT**: The simplest "market order" in simulation is a LIMIT order at the current price. LIMIT BUY fills when `price <= limit` — placing at current price fills on the next tick. No new order type or backend endpoint needed.
+- **Commission is frontend-only**: Broker commission is a display-only deduction (`commission × trades.length`) applied to `dayPnl` in App.tsx. The backend P&L calculations remain gross (no commission). This keeps backend/frontend concerns separated.
+- **Absolute-positioned overlays need toolbar padding**: Any absolute-positioned element (like the ✕ pane-remove button) that sits over a flexbox toolbar needs `paddingRight` on the toolbar, not `marginRight` on the last item, because `marginLeft: 'auto'` makes the last item butt against the container edge.
+- **`onPlaceOrder` type in OrderPanel**: The internal `OrderTypeFull` union (`TARGET | LIMIT | STOPLOSS | MARKET`) is broader than what the backend accepts. MARKET is converted to LIMIT internally before calling `onPlaceOrder`, so the prop type for `onPlaceOrder` stays as `TARGET | LIMIT | STOPLOSS`.
 
 **Next: Phase V Strategies** (see `docs/spec-phase5.md`)
