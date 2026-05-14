@@ -221,16 +221,34 @@ export function useSimulation() {
     setState(s => ({ ...s, orderError: null }))
   }, [])
 
+  const updateOrder = useCallback(async (
+    orderId: string,
+    triggerPrice: number | undefined,
+    limitPrice: number | undefined,
+    targetDeviationPct?: number,
+  ) => {
+    if (!state.sessionId) return
+    const updated = await api.updateOrder(state.sessionId, orderId, triggerPrice, limitPrice, targetDeviationPct)
+    setState(s => ({
+      ...s,
+      openOrders: s.openOrders.map(o => o.order_id === orderId ? updated : o),
+      walletRefreshKey: s.walletRefreshKey + 1,
+    }))
+  }, [state.sessionId])
+
   const placeOrder = useCallback(async (
     side: 'BUY' | 'SELL',
     orderType: 'TARGET' | 'LIMIT' | 'STOPLOSS',
     price: number,
     quantity: number | null,
-    opts: { is_stoploss?: boolean; funds_ratio_pct?: number; right?: string } = {},
+    opts: { is_stoploss?: boolean; funds_ratio_pct?: number; right?: string; target_deviation_pct?: number } = {},
   ) => {
     if (!state.sessionId) return
     try {
-      const order = await api.placeOrder(state.sessionId, side, orderType, price, quantity, opts)
+      const order = await api.placeOrder(state.sessionId, side, orderType, price, quantity, {
+        ...opts,
+        ...(opts.target_deviation_pct != null ? { target_deviation_pct: opts.target_deviation_pct } : {}),
+      })
       setState(s => ({
         ...s,
         openOrders: [...s.openOrders, order],
@@ -281,7 +299,51 @@ export function useSimulation() {
     }))
   }, [state.sessionId, state.openOrders])
 
-  // P&L for equity sessions
+  // Day P&L: realized (closed trades) + unrealized (open position), equity
+  const dayPnlEquity = (() => {
+    let net = 0
+    for (const t of state.trades) {
+      if (t.right) continue  // skip options trades
+      net += t.side === 'SELL' ? t.quantity * t.price : -t.quantity * t.price
+    }
+    const { position, currentPrice } = state
+    if (position.side !== 'FLAT' && currentPrice > 0) {
+      net += (position.side === 'LONG' ? 1 : -1) * position.quantity * currentPrice
+    }
+    return net
+  })()
+
+  // Day P&L: CE leg
+  const dayPnlCE = (() => {
+    let net = 0
+    for (const t of state.trades) {
+      if (t.right !== 'CE') continue
+      net += t.side === 'SELL' ? t.quantity * t.price : -t.quantity * t.price
+    }
+    const { positionCE, currentPriceCE } = state
+    if (positionCE.side !== 'FLAT' && currentPriceCE > 0) {
+      net += (positionCE.side === 'LONG' ? 1 : -1) * positionCE.quantity * currentPriceCE
+    }
+    return net
+  })()
+
+  // Day P&L: PE leg
+  const dayPnlPE = (() => {
+    let net = 0
+    for (const t of state.trades) {
+      if (t.right !== 'PE') continue
+      net += t.side === 'SELL' ? t.quantity * t.price : -t.quantity * t.price
+    }
+    const { positionPE, currentPricePE } = state
+    if (positionPE.side !== 'FLAT' && currentPricePE > 0) {
+      net += (positionPE.side === 'LONG' ? 1 : -1) * positionPE.quantity * currentPricePE
+    }
+    return net
+  })()
+
+  const dayPnl = state.sessionInstrumentType === 'options' ? dayPnlCE + dayPnlPE : dayPnlEquity
+
+  // Unrealized P&L for equity sessions
   const pnlEquity = (() => {
     const { position, currentPrice } = state
     if (position.side === 'FLAT' || currentPrice === 0) return 0
@@ -317,6 +379,10 @@ export function useSimulation() {
     pnl,
     pnlEquity,
     pnlOptions,
+    dayPnl,
+    dayPnlEquity,
+    dayPnlCE,
+    dayPnlPE,
     updateSymbol,
     updateDate,
     startSession,
@@ -328,6 +394,7 @@ export function useSimulation() {
     setLatestTick,
     handleSessionEnded,
     placeOrder,
+    updateOrder,
     cancelOrder,
     handleOrderFilled,
     clearOrderError,

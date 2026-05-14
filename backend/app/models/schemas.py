@@ -178,6 +178,13 @@ class PlaceOrderRequest(BaseModel):
     funds_ratio_pct: float | None = None  # 0–1 fraction; backend computes quantity
     is_stoploss: bool = False
     right: str | None = None             # "CE" or "PE" for options orders; None for equity
+    target_deviation_pct: float = 0.01   # deviation used to compute limit from trigger for TARGET orders
+
+
+class UpdateOrderRequest(BaseModel):
+    trigger_price: float | None = None    # new trigger price (TARGET / STOPLOSS)
+    limit_price: float | None = None      # new limit price (LIMIT orders)
+    target_deviation_pct: float = 0.01   # deviation for recomputing TARGET limit from new trigger
 
 
 class OrderFilledEvent(BaseModel):

@@ -21,6 +21,7 @@ _CUTOFF_DATE = datetime.date(2025, 9, 1)  # From this date: Tuesday expiry; befo
 
 STRIKE_INTERVALS: dict[str, int] = {
     "NIFTY": 50,
+    "BSESEN": 100,
     "RELIND": 5,
     "TATMOT": 5,
     "TATPOW": 5,
@@ -66,19 +67,24 @@ def _prev_trading_day(d: datetime.date) -> datetime.date:
     return d
 
 
-def _expiry_weekday(trading_date: datetime.date) -> int:
-    """Target weekday for expiry: 1=Tuesday (from 2025-09-01), 3=Thursday (before)."""
+def _expiry_weekday(trading_date: datetime.date, symbol: str = "NIFTY") -> int:
+    """
+    Target expiry weekday for a symbol.
+    BSESEN: always Thursday (3) — BSE SENSEX expiry never changed.
+    Others (NSE): Tuesday (1) from 2025-09-01, Thursday (3) before.
+    """
+    if symbol == "BSESEN":
+        return 3
     return 1 if trading_date >= _CUTOFF_DATE else 3
 
 
-def get_weekly_expiry(trading_date_str: str) -> str:
+def get_weekly_expiry(trading_date_str: str, symbol: str = "NIFTY") -> str:
     """
     Return the weekly expiry date at or after trading_date.
-    Expiry weekday: Tuesday from 2025-09-01, Thursday before.
     If the computed expiry is a holiday, shifts to the previous trading day.
     """
     d = datetime.date.fromisoformat(trading_date_str)
-    target_wd = _expiry_weekday(d)
+    target_wd = _expiry_weekday(d, symbol)
     days_ahead = (target_wd - d.weekday()) % 7
     expiry = d + datetime.timedelta(days=days_ahead)
     if not _is_trading_day(expiry):
@@ -86,14 +92,13 @@ def get_weekly_expiry(trading_date_str: str) -> str:
     return expiry.isoformat()
 
 
-def get_monthly_expiry(trading_date_str: str) -> str:
+def get_monthly_expiry(trading_date_str: str, symbol: str = "NIFTY") -> str:
     """
     Return the last expiry weekday of the month containing trading_date.
-    Expiry weekday: Tuesday from 2025-09-01, Thursday before.
     If the computed expiry is a holiday, shifts to the previous trading day.
     """
     d = datetime.date.fromisoformat(trading_date_str)
-    target_wd = _expiry_weekday(d)
+    target_wd = _expiry_weekday(d, symbol)
     # Last day of the month
     if d.month == 12:
         last_day = datetime.date(d.year + 1, 1, 1) - datetime.timedelta(days=1)
@@ -110,14 +115,14 @@ def get_monthly_expiry(trading_date_str: str) -> str:
 def get_expiry_date(symbol: str, trading_date_str: str) -> str:
     """
     Return the next valid expiry date for the given symbol.
-    NIFTY: next weekly expiry (at or after trading_date).
+    NIFTY / BSESEN: next weekly expiry (at or after trading_date).
     Equities: monthly expiry (last expiry weekday of the current month;
               if already past, uses next month's expiry).
     """
-    if symbol == "NIFTY":
-        return get_weekly_expiry(trading_date_str)
+    if symbol in ("NIFTY", "BSESEN"):
+        return get_weekly_expiry(trading_date_str, symbol)
 
-    monthly = get_monthly_expiry(trading_date_str)
+    monthly = get_monthly_expiry(trading_date_str, symbol)
     if monthly < trading_date_str:
         # Current month's expiry already passed — advance to next month
         d = datetime.date.fromisoformat(trading_date_str)
@@ -125,7 +130,7 @@ def get_expiry_date(symbol: str, trading_date_str: str) -> str:
             next_month = datetime.date(d.year + 1, 1, 1)
         else:
             next_month = datetime.date(d.year, d.month + 1, 1)
-        monthly = get_monthly_expiry(next_month.isoformat())
+        monthly = get_monthly_expiry(next_month.isoformat(), symbol)
     return monthly
 
 
@@ -176,7 +181,9 @@ def _fetch_options_day_paginated(
     chunk_delta = pd.Timedelta(minutes=_CHUNK_MINUTES)
     right_str = "call" if right.upper() in ("CE", "CALL") else "put"
     expiry_iso = _breeze_expiry_format(expiry)
-    stock_code = SUPPORTED_SYMBOLS.get(symbol, {}).get("breeze_stock_code", symbol)
+    sym_info = SUPPORTED_SYMBOLS.get(symbol, {})
+    stock_code = sym_info.get("breeze_stock_code", symbol)
+    options_exchange = sym_info.get("options_exchange_code", "NFO")
 
     all_records: list[dict] = []
     current = from_ts
@@ -187,7 +194,7 @@ def _fetch_options_day_paginated(
             from_date=current.strftime("%Y-%m-%d %H:%M:%S"),
             to_date=chunk_end.strftime("%Y-%m-%d %H:%M:%S"),
             stock_code=stock_code,
-            exchange_code="NFO",
+            exchange_code=options_exchange,
             product_type="options",
             expiry_date=expiry_iso,
             strike_price=str(strike),

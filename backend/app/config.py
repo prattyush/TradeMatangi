@@ -24,6 +24,7 @@ DYNAMODB_REGION = os.getenv("DYNAMODB_REGION", "us-east-1")
 # Options lot sizes — hardcoded current values; update manually if SEBI revises
 LOT_SIZES: dict[str, int] = {
     "NIFTY": 65,
+    "BSESEN": 20,
     "RELIND": 250,
     "TATMOT": 1400,
     "TATPOW": 2700,
@@ -32,30 +33,48 @@ LOT_SIZES: dict[str, int] = {
 # Default FundsRatio percentages (0–100 scale); user can override in Settings
 DEFAULT_FUNDS_RATIOS: dict[str, float] = {"l": 3.0, "m": 6.0, "h": 12.0}
 
-# Supported symbols: key is the canonical ID used throughout the system
+# Supported symbols: key is the canonical ID used throughout the system.
+# options_exchange_code: exchange used for F&O data (NFO for NSE, BFO for BSE).
+# options_only: True for indices that cannot be traded as equity.
 SUPPORTED_SYMBOLS: dict[str, dict] = {
     "NIFTY": {
         "display_name": "NIFTY 50",
         "exchange_code": "NSE",
         "breeze_stock_code": "NIFTY",
         "product_type": "cash",
+        "options_exchange_code": "NFO",
+        "options_only": True,
+    },
+    "BSESEN": {
+        "display_name": "SENSEX",
+        "exchange_code": "BSE",
+        "breeze_stock_code": "BSESEN",
+        "product_type": "cash",
+        "options_exchange_code": "BFO",
+        "options_only": True,
     },
     "TATPOW": {
         "display_name": "Tata Power",
         "exchange_code": "NSE",
         "breeze_stock_code": "TATPOW",
         "product_type": "cash",
+        "options_exchange_code": "NFO",
+        "options_only": False,
     },
     "TATMOT": {
         "display_name": "Tata Motors",
         "exchange_code": "NSE",
         "breeze_stock_code": "TATMOT",
         "product_type": "cash",
+        "options_exchange_code": "NFO",
+        "options_only": False,
     },
     "RELIND": {
         "display_name": "Reliance Industries",
         "exchange_code": "NSE",
         "breeze_stock_code": "RELIND",
         "product_type": "cash",
+        "options_exchange_code": "NFO",
+        "options_only": False,
     },
 }
