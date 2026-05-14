@@ -72,7 +72,7 @@ node node_modules/typescript/bin/tsc --noEmit
 - **Options gap-fill tz strip**: `_validate_options_gaps` must strip tz from `df.index` (set `df.index = df.index.tz_localize(None)`) before building tz-naive `pd.date_range` for `reindex`. Mismatched tz causes empty DataFrame after reindex.
 - **Dual-stream options queue**: `SimulationSession.queue` maxsize is 3000 (not 500). `queue.put_nowait` must be wrapped in try/except `asyncio.QueueFull` — raises at high replay speeds otherwise crashing the session.
 - **React setState batching**: multiple `setState` calls in one synchronous burst → only last call wins. For multi-field tick routing, use a single `setState(s => { const update = {}; ...; return {...s, ...update} })` keyed by field, NOT separate `setState` calls per field.
-- **Lightweight Charts "Cannot update oldest data"**: `series.setData(candles)` sets the minimum acceptable timestamp. Any subsequent `series.update(tick)` with `time <= candles[-1].time` throws. For options historical pre-load, filter to `time < startWindowTs` (the first live tick's window start).
+- **Lightweight Charts "Cannot update oldest data"**: `series.setData(candles)` sets the minimum acceptable timestamp. Any subsequent `series.update(tick)` with `time <= candles[-1].time` throws. For options historical pre-load, filter to `time < startWindowTs`. For equity pre-session, never use `series.update()` to append pre-session candles — combine everything (historical + pre-session) into a single `series.setData()` call so live ticks can only arrive at times strictly after the last pre-session candle.
 - **Lightweight Charts "Object is disposed"**: async `.then()` callbacks fire after chart teardown if a pane unmounts. Guard all three Chart `useEffect` async paths with `let cancelled = false` + `return () => { cancelled = true }` cleanup.
 - **Pane wrapper flex shrink**: Lightweight Charts sets an explicit pixel `width` on the canvas. Pane wrapper divs must have `minWidth: 0` or flex siblings cannot shrink below that canvas width after a pane is removed.
 - **Options tick routing uses per-right session strike**: `getTickForPane` in `App.tsx` checks CE panes against `sim.sessionStrikeCE` and PE panes against `sim.sessionStrikePE`. CE and PE may stream at different strikes when OTM offset ≠ 0. Panes with a non-matching strike return `null` (history only).
@@ -113,7 +113,7 @@ Multi-pane layout, dual-stream options replay, and lot-sized direct trades are l
 
 ## Phase-IV Status
 
-### Phase IV — BetaMinorUpdates ✅ COMPLETE (278 tests passing) — merged to dev; post-testing fixes in PR #15
+### Phase IV — BetaMinorUpdates ✅ COMPLETE (278 tests passing) — merged to dev; post-testing fixes in PR #17
 
 All 9 UI-Upgrade features + Options-HistoricalData + TradeP&L shipped:
 1. **Edit open orders** — click any open order row to edit its trigger/limit price inline
@@ -146,13 +146,14 @@ All 9 UI-Upgrade features + Options-HistoricalData + TradeP&L shipped:
 
 - **Edit order price step 0.5**: The price input in the open-order edit row now has `step={0.5}` so arrow keys increment/decrement by 0.5 instead of 1.
 
-### Phase IV Post-Testing Bugs Fixed (PR #15)
+### Phase IV Post-Testing Bugs Fixed (PR #17)
 
-- **Bug #8 — Equity replay missing 09:15 bar (NIFTY and SENSEX)**: When `start_time` was 09:18, live ticks started arriving via SSE immediately after session start. The first tick's `series.update({ time: 09:18 })` set the chart's last-update time. The subsequent `getPreSession` call then tried `series.update({ time: 09:15 })`, which threw "Cannot update oldest data" (09:15 < 09:18) and was silently swallowed. Fix: fetch `getHistorical` and `getPreSession` in parallel, combine into one array, and call `series.setData()` once. `setData` is atomic so any live tick arriving after it sees a correct baseline and can `update` at 09:18+.
+- **Bug #8 — SENSEX replay missing 09:15 bar (initial attempt)**: First attempt merged historical + pre-session into a sequential async IIFE so `getHistorical` always resolved before `getPreSession`. This fixed the slow-uncached-BSE race but did not fix the general case — see Bug #11.
+- **Bug #11 — Equity replay missing 09:15 bar (NIFTY and SENSEX)**: With Bug #8's sequential fix in place, NIFTY (fast cached fetch) still missed the pre-session bar. Root cause: live ticks start arriving via SSE immediately after session start. The first tick's `series.update({ time: 09:18 })` set the chart's minimum-acceptable time. The subsequent `getPreSession` call then tried `series.update({ time: 09:15 })`, which threw "Cannot update oldest data" (09:15 < 09:18) and was silently caught. Fix: fetch `getHistorical` and `getPreSession` in parallel via `Promise.all`, combine into one array, and call `series.setData()` once. `setData` commits the full baseline atomically; any live tick at 09:18+ that arrives afterwards is strictly greater than the last candle at 09:15 and succeeds.
 - **Bug #9 — SENSEX OTM offset used wrong strike interval**: `addPane` in `App.tsx` used an inline interval map that was missing `BSESEN: 100`, causing the `?? 50` fallback to apply. CE/PE strikes were half the correct distance from ATM. Fix: add `BSESEN: 100` to the map.
 - **Bug #10 — Mid-session pane addition showed no growing candle**: When removing a CE/PE pane and adding a new one with a different OTM value, the new pane showed only history (no live ticks). Three root causes: (1) ATM was computed from session-start price not live equity price; (2) backend dual-stream loop pre-loaded all ticks into a merged dict and could not change strikes mid-session; (3) options-historical cutoff only covered pre-session candles, leaving a gap between pre-session end and current sim time. Fix: refactored backend to equity-as-master-clock with per-tick CE/PE dict lookup and on-the-fly strike reload; added `liveFromTs` prop to Chart for the history cutoff; `addPane` now uses `sim.currentPrice` for ATM and calls `PUT /update-pane-strike` to update the session.
 
-### Phase IV Post-Testing UX Changes (PR #15)
+### Phase IV Post-Testing UX Changes (PR #17)
 
 - **Brokerage renamed + formula-based**: Settings renamed from "BROKER COMMISSION" to "BROKERAGE"; default changed from ₹10 to ₹1. Commission is now computed backend-side per trade using Indian market charge formula (STT + exchange + GST) plus flat brokerage. `netDayPnl` uses `sum(t.commission)` from trade records instead of flat `commission × count`.
 - **OTM control moved left of Start/Pause/Stop**: OTM input is always visible in the session controls row; disabled in equity mode. Removed separate second-row layout bar — layout/pane controls are injected inline via `SettingsModal.extraControls`.
@@ -162,7 +163,7 @@ All 9 UI-Upgrade features + Options-HistoricalData + TradeP&L shipped:
 
 - **Options historical needs trading date + prior days**: Unlike equity (which has a separate `/api/data/pre-session` endpoint for the trading day), options historical must include the trading date itself to show pre-session candles. Pattern: `prior_trading_days(n=2) + [date]`.
 - **Market orders via LIMIT + deviation**: Placing at exact current price risks not filling if price moves before the next tick. Use 1% above/below to guarantee fill. Still uses LIMIT type — no new backend order type needed.
-- **Commission is frontend-only**: Broker commission is a display-only deduction (`commission × trades.length`) applied to `dayPnl` in App.tsx. The backend P&L calculations remain gross (no commission). This keeps backend/frontend concerns separated.
+- **Commission belongs in the backend, not the frontend**: Initially commission was a frontend-only flat-rate deduction (`commission × trades.length`). Moving it to the backend (`compute_commission` in `trading.py`, stored in `Trade.commission`) means Phase V trade analysis can read accurate per-trade costs directly from DynamoDB. Frontend reads `t.commission` from trade records and sums them — no flat rate needed.
 - **Absolute-positioned overlays need toolbar padding**: Any absolute-positioned element (like the ✕ pane-remove button) that sits over a flexbox toolbar needs `paddingRight` on the toolbar, not `marginRight` on the last item, because `marginLeft: 'auto'` makes the last item butt against the container edge.
 - **`onPlaceOrder` type in OrderPanel**: The internal `OrderTypeFull` union (`TARGET | LIMIT | STOPLOSS | MARKET`) is broader than what the backend accepts. MARKET is converted to LIMIT internally before calling `onPlaceOrder`, so the prop type for `onPlaceOrder` stays as `TARGET | LIMIT | STOPLOSS`.
 - **IST-as-UTC timestamp display**: Any frontend code formatting timestamps from the backend must use `timeZone: 'UTC'` in `toLocaleTimeString`. Using `'Asia/Kolkata'` incorrectly adds +5:30 to what are already IST wall-clock values.
