@@ -15,12 +15,14 @@ SESSION = "api-order-session"
 
 
 def _make_session(session_id: str = SESSION):
+    from app.config import FIXED_USER_ID
     session = MagicMock()
     session.session_id = session_id
     session.symbol = "NIFTY"
     session.date = "2026-05-06"
     session.current_time = "1746518100"
     session.state = SimulationState.RUNNING
+    session.user_id = FIXED_USER_ID
     return session
 
 

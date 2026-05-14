@@ -28,6 +28,7 @@ class SimulationSession:
     date: str
     start_time: str
     speed: float
+    user_id: str = FIXED_USER_ID       # logged-in user who owns this session
     state: SimulationState = SimulationState.IDLE
     current_time: Optional[str] = None
     last_price: float = 0.0           # equity or single-right options price
@@ -56,7 +57,7 @@ def _upsert_session_to_db(session: SimulationSession) -> None:
         table = get_dynamodb_resource().Table("Sessions")
         item: dict = {
             "session_id": session.session_id,
-            "user_id": FIXED_USER_ID,
+            "user_id": session.user_id,
             "symbol": session.symbol,
             "date": session.date,
             "start_time": session.start_time,
@@ -83,6 +84,7 @@ def create_session(
     date: str,
     start_time: str,
     speed: float,
+    user_id: str = FIXED_USER_ID,
     instrument_type: str = "equity",
     strike: Optional[int] = None,
     expiry: Optional[str] = None,
@@ -93,13 +95,14 @@ def create_session(
 ) -> SimulationSession:
     from app.services import wallet_service
     session_id = str(uuid.uuid4())
-    session_capital = wallet_service.get_balance(FIXED_USER_ID, date)
+    session_capital = wallet_service.get_balance(user_id, date)
     session = SimulationSession(
         session_id=session_id,
         symbol=symbol,
         date=date,
         start_time=start_time,
         speed=speed,
+        user_id=user_id,
         session_capital=session_capital,
         instrument_type=instrument_type,
         strike=strike,
@@ -149,6 +152,7 @@ def _emit_tick_and_check_orders(
             expiry=session.expiry,
             right=order.right,
             brokerage_per_order=session.brokerage_per_order,
+            user_id=session.user_id,
         )
         fill_events.append({
             "type": "order_filled",

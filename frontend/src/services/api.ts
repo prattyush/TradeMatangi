@@ -1,5 +1,16 @@
 import { BACKEND_URL } from '../config'
 
+function _authHeaders(): Record<string, string> {
+  try {
+    const stored = localStorage.getItem('auth_user')
+    if (stored) {
+      const { userId } = JSON.parse(stored)
+      if (userId) return { 'X-User-Id': userId }
+    }
+  } catch {}
+  return {}
+}
+
 export interface OHLCCandle {
   time: number
   open: number
@@ -239,7 +250,7 @@ const api = {
     const body = { symbol: 'NIFTY', date: '2026-05-06', start_time: '09:15:00', speed: 1.0, ...req }
     const res = await fetch(`${BACKEND_URL}/api/simulation/start`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ..._authHeaders() },
       body: JSON.stringify(body),
     })
     if (!res.ok) {
@@ -252,7 +263,7 @@ const api = {
   async stopSimulation(session_id: string): Promise<void> {
     await fetch(`${BACKEND_URL}/api/simulation/stop`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ..._authHeaders() },
       body: JSON.stringify({ session_id }),
     })
   },
@@ -260,7 +271,7 @@ const api = {
   async pauseSimulation(session_id: string): Promise<void> {
     await fetch(`${BACKEND_URL}/api/simulation/pause`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ..._authHeaders() },
       body: JSON.stringify({ session_id }),
     })
   },
@@ -268,7 +279,7 @@ const api = {
   async resumeSimulation(session_id: string): Promise<void> {
     await fetch(`${BACKEND_URL}/api/simulation/resume`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ..._authHeaders() },
       body: JSON.stringify({ session_id }),
     })
   },
@@ -276,7 +287,7 @@ const api = {
   async buy(session_id: string, right?: string): Promise<Trade> {
     const res = await fetch(`${BACKEND_URL}/api/trades/buy`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ..._authHeaders() },
       body: JSON.stringify({ session_id, ...(right ? { right } : {}) }),
     })
     if (!res.ok) throw new Error(`Buy failed: ${res.status}`)
@@ -286,7 +297,7 @@ const api = {
   async sell(session_id: string, right?: string): Promise<Trade> {
     const res = await fetch(`${BACKEND_URL}/api/trades/sell`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ..._authHeaders() },
       body: JSON.stringify({ session_id, ...(right ? { right } : {}) }),
     })
     if (!res.ok) throw new Error(`Sell failed: ${res.status}`)
@@ -332,7 +343,7 @@ const api = {
     }
     const res = await fetch(`${BACKEND_URL}/api/orders`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ..._authHeaders() },
       body: JSON.stringify(body),
     })
     if (res.status === 402) {
@@ -356,7 +367,7 @@ const api = {
     if (targetDeviationPct !== undefined) body.target_deviation_pct = targetDeviationPct
     const res = await fetch(`${BACKEND_URL}/api/orders/${order_id}?session_id=${session_id}`, {
       method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ..._authHeaders() },
       body: JSON.stringify(body),
     })
     if (!res.ok) throw new Error(`Update order failed: ${res.status}`)
@@ -364,7 +375,9 @@ const api = {
   },
 
   async getWallet(date: string): Promise<WalletResponse> {
-    const res = await fetch(`${BACKEND_URL}/api/wallet?date=${encodeURIComponent(date)}`)
+    const res = await fetch(`${BACKEND_URL}/api/wallet?date=${encodeURIComponent(date)}`, {
+      headers: _authHeaders(),
+    })
     if (!res.ok) throw new Error(`Wallet fetch failed: ${res.status}`)
     return res.json()
   },
@@ -372,7 +385,7 @@ const api = {
   async resetWallet(date: string, amount?: number): Promise<WalletResponse> {
     const res = await fetch(`${BACKEND_URL}/api/wallet/reset?date=${encodeURIComponent(date)}`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ..._authHeaders() },
       body: JSON.stringify({ amount: amount ?? 150000 }),
     })
     if (!res.ok) throw new Error(`Wallet reset failed: ${res.status}`)
@@ -380,7 +393,9 @@ const api = {
   },
 
   async getOrders(session_id: string, open_only = true): Promise<Order[]> {
-    const res = await fetch(`${BACKEND_URL}/api/orders?session_id=${session_id}&open_only=${open_only}`)
+    const res = await fetch(`${BACKEND_URL}/api/orders?session_id=${session_id}&open_only=${open_only}`, {
+      headers: _authHeaders(),
+    })
     if (!res.ok) throw new Error(`Get orders failed: ${res.status}`)
     return res.json()
   },
@@ -388,6 +403,7 @@ const api = {
   async cancelOrder(session_id: string, order_id: string): Promise<Order | null> {
     const res = await fetch(`${BACKEND_URL}/api/orders/${order_id}?session_id=${session_id}`, {
       method: 'DELETE',
+      headers: _authHeaders(),
     })
     // 404 means the order was already filled or cancelled (SSE race) — treat as success
     if (res.status === 404) return null
@@ -398,7 +414,7 @@ const api = {
   async updatePaneStrike(sessionId: string, right: 'CE' | 'PE', strike: number): Promise<void> {
     const res = await fetch(`${BACKEND_URL}/api/simulation/${sessionId}/update-pane-strike`, {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ..._authHeaders() },
       body: JSON.stringify({ right, strike }),
     })
     if (!res.ok) throw new Error(`Update pane strike failed: ${res.status}`)
@@ -449,13 +465,17 @@ const api = {
     if (opts.startDate) params.set('start_date', opts.startDate)
     if (opts.endDate) params.set('end_date', opts.endDate)
     if (opts.instrumentType) params.set('instrument_type', opts.instrumentType)
-    const res = await fetch(`${BACKEND_URL}/api/analysis/sessions?${params}`)
+    const res = await fetch(`${BACKEND_URL}/api/analysis/sessions?${params}`, {
+      headers: _authHeaders(),
+    })
     if (!res.ok) throw new Error(`Analysis sessions fetch failed: ${res.status}`)
     return res.json()
   },
 
   async getSessionDetail(sessionId: string): Promise<SessionDetail> {
-    const res = await fetch(`${BACKEND_URL}/api/analysis/sessions/${sessionId}`)
+    const res = await fetch(`${BACKEND_URL}/api/analysis/sessions/${sessionId}`, {
+      headers: _authHeaders(),
+    })
     if (!res.ok) throw new Error(`Session detail fetch failed: ${res.status}`)
     return res.json()
   },

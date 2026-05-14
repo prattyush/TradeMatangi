@@ -1,8 +1,8 @@
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
 from app.services import analysis_service
-from app.services.user_service import get_user_id
+from app.dependencies import get_request_user_id
 
 router = APIRouter(prefix="/api/analysis", tags=["analysis"])
 
@@ -51,8 +51,8 @@ async def get_sessions(
     start_date: str | None = Query(default=None, description="YYYY-MM-DD"),
     end_date: str | None = Query(default=None, description="YYYY-MM-DD"),
     instrument_type: str | None = Query(default=None),
+    user_id: str = Depends(get_request_user_id),
 ):
-    user_id = get_user_id()
     sessions = analysis_service.get_sessions_for_user(
         user_id, symbol=symbol,
         start_date=start_date, end_date=end_date,

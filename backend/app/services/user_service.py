@@ -94,5 +94,5 @@ def login_user(email: str, password: str) -> dict | None:
 
 
 def get_user_id() -> str:
-    """Return the fixed user UUID. Used by all existing trading endpoints."""
+    """Return the fixed user UUID. Kept for backward compat."""
     return FIXED_USER_ID

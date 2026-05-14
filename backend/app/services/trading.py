@@ -8,7 +8,7 @@ from decimal import Decimal
 from typing import Literal
 
 from app.models.schemas import Trade, TradeSide, Position
-from app.config import FIXED_USER_ID, DEFAULT_SYMBOL
+from app.config import FIXED_USER_ID, DEFAULT_SYMBOL  # FIXED_USER_ID kept for default arg
 
 logger = logging.getLogger(__name__)
 
@@ -78,10 +78,11 @@ def record_trade(
     expiry: str | None = None,
     right: str | None = None,
     brokerage_per_order: float = 1.0,
+    user_id: str = FIXED_USER_ID,
 ) -> Trade:
     ensure_session(session_id)
     trade = Trade(
-        user_id=FIXED_USER_ID,
+        user_id=user_id,
         symbol=symbol,
         side=side,
         quantity=quantity,
