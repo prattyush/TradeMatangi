@@ -193,9 +193,11 @@ export default function Chart({
   }, [showEma])
 
   // ── Historical + pre-session — equity only ───────────────────────────────────
-  // Pre-session is loaded in sequence AFTER historical to avoid a race where
-  // getHistorical (slow for uncached BSE/BSESEN data) resolves after getPreSession
-  // and series.setData() wipes the pre-session candle added by series.update().
+  // Both fetches run in parallel and are combined into a single series.setData()
+  // call. This eliminates the race where a live tick's series.update(09:18) arrives
+  // before getPreSession resolves; a subsequent series.update(09:15) would throw
+  // "Cannot update oldest data". With setData() the combined history is committed
+  // atomically before any live tick can cause an ordering conflict.
   useEffect(() => {
     if (paneType === 'options') return
     const series = seriesRef.current
@@ -211,54 +213,36 @@ export default function Chart({
     let cancelled = false
     ;(async () => {
       try {
-        const { candles } = await api.getHistorical(symbol, tradingDate, intervalMinutes)
+        const [{ candles: histCandles }, preCandles] = await Promise.all([
+          api.getHistorical(symbol, tradingDate, intervalMinutes),
+          startTime ? api.getPreSession(symbol, tradingDate, startTime, intervalMinutes) : Promise.resolve([]),
+        ])
         if (cancelled) return
-        if (candles.length > 0) {
-          series.setData(candles.map(toCandle))
-          chartRef.current?.timeScale().fitContent()
-          candleTimesRef.current = candles.map(c => c.time)
 
-          const closes = candles.map(c => c.close)
-          const ema9vals = computeEMA(closes, 9)
-          const ema21vals = computeEMA(closes, 21)
+        const allCandles = [...histCandles, ...preCandles]
+        if (allCandles.length === 0) return
 
-          const e9data: LineData[] = []
-          const e21data: LineData[] = []
-          for (let i = 0; i < candles.length; i++) {
-            if (ema9vals[i] !== null) e9data.push({ time: candles[i].time as Time, value: ema9vals[i]! })
-            if (ema21vals[i] !== null) e21data.push({ time: candles[i].time as Time, value: ema21vals[i]! })
-          }
-          e9.setData(e9data)
-          e21.setData(e21data)
+        series.setData(allCandles.map(toCandle))
+        chartRef.current?.timeScale().fitContent()
+        candleTimesRef.current = allCandles.map(c => c.time)
 
-          const last9 = ema9vals.filter(v => v !== null)
-          const last21 = ema21vals.filter(v => v !== null)
-          if (last9.length) lastEma9Ref.current = last9[last9.length - 1]!
-          if (last21.length) lastEma21Ref.current = last21[last21.length - 1]!
+        const closes = allCandles.map(c => c.close)
+        const ema9vals = computeEMA(closes, 9)
+        const ema21vals = computeEMA(closes, 21)
+
+        const e9data: LineData[] = []
+        const e21data: LineData[] = []
+        for (let i = 0; i < allCandles.length; i++) {
+          if (ema9vals[i] !== null) e9data.push({ time: allCandles[i].time as Time, value: ema9vals[i]! })
+          if (ema21vals[i] !== null) e21data.push({ time: allCandles[i].time as Time, value: ema21vals[i]! })
         }
+        e9.setData(e9data)
+        e21.setData(e21data)
 
-        if (!startTime) return
-
-        // Load pre-session candles in sequence — guaranteed to run after setData above
-        const preCandles = await api.getPreSession(symbol, tradingDate, startTime, intervalMinutes)
-        if (cancelled || preCandles.length === 0) return
-
-        const k9 = 2 / (9 + 1)
-        const k21 = 2 / (21 + 1)
-        for (let i = 0; i < preCandles.length; i++) {
-          const candle = preCandles[i]
-          series.update(toCandle(candle))
-          candleTimesRef.current.push(candle.time)
-          const t = candle.time as Time
-          if (lastEma9Ref.current !== null) {
-            lastEma9Ref.current = nextEMA(lastEma9Ref.current, preCandles[i].close, k9)
-            e9.update({ time: t, value: lastEma9Ref.current })
-          }
-          if (lastEma21Ref.current !== null) {
-            lastEma21Ref.current = nextEMA(lastEma21Ref.current, preCandles[i].close, k21)
-            e21.update({ time: t, value: lastEma21Ref.current })
-          }
-        }
+        const last9 = ema9vals.filter(v => v !== null)
+        const last21 = ema21vals.filter(v => v !== null)
+        if (last9.length) lastEma9Ref.current = last9[last9.length - 1]!
+        if (last21.length) lastEma21Ref.current = last21[last21.length - 1]!
       } catch (err) {
         console.error(err)
       }
