@@ -1,36 +1,98 @@
 """
-User service: single hardcoded user for Phase III.
-Seeds the Users DynamoDB table on startup.
-In Phase IV, replace get_user_id() with JWT token validation.
+User service: email/password authentication with bcrypt hashing.
+Phase V adds proper login/register; the FIXED_USER_ID seed remains for
+backward-compat with existing sessions in DynamoDB Local.
 """
 from __future__ import annotations
 
 import logging
-
-from app.config import FIXED_USER_ID
+import uuid
 
 logger = logging.getLogger(__name__)
 
-HARDCODED_USERNAME = "abc123"
-HARDCODED_PASSWORD = "abc123"
+from app.config import FIXED_USER_ID
+
+_SEED_EMAIL = "admin@tradematangi.com"
+_SEED_PASSWORD = "admin123"
+
+
+def _hash_password(password: str) -> str:
+    import bcrypt
+    return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
+
+
+def _check_password(password: str, hashed: str) -> bool:
+    import bcrypt
+    return bcrypt.checkpw(password.encode(), hashed.encode())
 
 
 def seed_user() -> None:
-    """Write the hardcoded user to DynamoDB if not already present. Swallows failures."""
+    """Write the default admin user to DynamoDB on startup (idempotent)."""
     try:
         from app.services.db import get_dynamodb_resource
         table = get_dynamodb_resource().Table("Users")
-        # Idempotent: put_item overwrites but the data is the same
-        table.put_item(Item={
-            "user_id": FIXED_USER_ID,
-            "username": HARDCODED_USERNAME,
-            "password_hash": HARDCODED_PASSWORD,
-        })
-        logger.info("User seeded: %s (%s)", HARDCODED_USERNAME, FIXED_USER_ID)
+        resp = table.get_item(Key={"user_id": FIXED_USER_ID})
+        if "Item" not in resp:
+            table.put_item(Item={
+                "user_id": FIXED_USER_ID,
+                "email": _SEED_EMAIL,
+                "password_hash": _hash_password(_SEED_PASSWORD),
+            })
+            logger.info("Seeded default user: %s", _SEED_EMAIL)
     except Exception:
         logger.exception("Failed to seed user — DynamoDB may not be available yet")
 
 
+def _find_by_email(email: str) -> dict | None:
+    """Scan Users table to find a user by email. Returns None if not found."""
+    try:
+        from app.services.db import get_dynamodb_resource
+        from boto3.dynamodb.conditions import Attr
+        table = get_dynamodb_resource().Table("Users")
+        resp = table.scan(FilterExpression=Attr("email").eq(email))
+        items = resp.get("Items", [])
+        return items[0] if items else None
+    except Exception:
+        logger.exception("DynamoDB scan for email failed")
+        return None
+
+
+def register_user(email: str, password: str) -> dict:
+    """
+    Create a new user. Raises ValueError if email already exists.
+    Returns {user_id, email}.
+    """
+    existing = _find_by_email(email)
+    if existing:
+        raise ValueError("Email already registered")
+    user_id = str(uuid.uuid4())
+    hashed = _hash_password(password)
+    try:
+        from app.services.db import get_dynamodb_resource
+        table = get_dynamodb_resource().Table("Users")
+        table.put_item(Item={
+            "user_id": user_id,
+            "email": email,
+            "password_hash": hashed,
+        })
+    except Exception:
+        logger.exception("DynamoDB write failed for new user %s", email)
+        raise RuntimeError("Could not persist user")
+    return {"user_id": user_id, "email": email}
+
+
+def login_user(email: str, password: str) -> dict | None:
+    """
+    Validate email/password. Returns {user_id, email} on success, None on failure.
+    """
+    user = _find_by_email(email)
+    if not user:
+        return None
+    if not _check_password(password, user.get("password_hash", "")):
+        return None
+    return {"user_id": user["user_id"], "email": user["email"]}
+
+
 def get_user_id() -> str:
-    """Return the current user's UUID. Hardcoded for Phase III; JWT in Phase IV."""
+    """Return the fixed user UUID. Used by all existing trading endpoints."""
     return FIXED_USER_ID

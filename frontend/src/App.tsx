@@ -6,11 +6,22 @@ import TradeHistory from './components/TradeHistory'
 import OrderPanel from './components/OrderPanel'
 import WalletWidget from './components/WalletWidget'
 import SettingsModal, { loadFundsRatioMode, loadFundsRatios, loadTargetDeviationPct, loadBrokeragePerOrder, FundsRatios } from './components/SettingsModal'
+import LoginScreen from './components/LoginScreen'
+import TradeAnalysis from './components/TradeAnalysis'
 import { useSimulation, InstrumentConfig } from './hooks/useSimulation'
 import { useSSE } from './hooks/useSSE'
 import api from './services/api'
 
 const FIXED_USER = { userId: 'abc12300-0000-0000-0000-000000000001', username: 'abc123' }
+
+function loadAuthUser(): { userId: string; email: string } | null {
+  try {
+    const raw = localStorage.getItem('auth_user')
+    return raw ? JSON.parse(raw) : null
+  } catch {
+    return null
+  }
+}
 
 // ── Pane config ──────────────────────────────────────────────────────────────
 interface PaneConfig {
@@ -55,11 +66,37 @@ function defaultPanesForLayout(preset: LayoutPreset, current: PaneConfig[]): Pan
 }
 
 export default function App() {
+  // ── Auth state ──────────────────────────────────────────────────────────────
+  const [authUser, setAuthUser] = useState(loadAuthUser)
+
+  const handleLogin = useCallback((userId: string, email: string) => {
+    const user = { userId, email }
+    localStorage.setItem('auth_user', JSON.stringify(user))
+    localStorage.setItem('user', JSON.stringify({ userId, username: email }))
+    setAuthUser(user)
+  }, [])
+
+  const handleLogout = useCallback(() => {
+    localStorage.removeItem('auth_user')
+    setAuthUser(null)
+  }, [])
+
+  if (!authUser) {
+    return <LoginScreen onLogin={handleLogin} />
+  }
+
+  return <AppInner authUser={authUser} onLogout={handleLogout} />
+}
+
+function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: string }; onLogout: () => void }) {
   const sim = useSimulation()
   const [fundsRatioMode, setFundsRatioMode] = useState(loadFundsRatioMode)
   const [fundsRatios, setFundsRatios] = useState<FundsRatios>(loadFundsRatios)
   const [targetDeviationPct, setTargetDeviationPct] = useState(loadTargetDeviationPct)
   const [brokeragePerOrder, setBrokeragePerOrder] = useState(loadBrokeragePerOrder)
+
+  // ── Trade Analysis modal ────────────────────────────────────────────────────
+  const [showAnalysis, setShowAnalysis] = useState(false)
 
   // ── Price-pick state ────────────────────────────────────────────────────────
   const [pricePickOrderId, setPricePickOrderId] = useState<string | null>(null)
@@ -351,7 +388,7 @@ export default function App() {
         display: 'flex', alignItems: 'center', gap: 12,
       }}>
         <span style={{ fontSize: 18, fontWeight: 700, color: '#58a6ff' }}>TradeMatangi</span>
-        <span style={{ fontSize: 12, color: '#484f58' }}>Phase III — Beta</span>
+        <span style={{ fontSize: 12, color: '#484f58' }}>Phase V</span>
         <div style={{ flex: 1 }} />
         {sim.sessionState !== 'idle' && (
           <div style={{
@@ -369,6 +406,17 @@ export default function App() {
           </div>
         )}
         <WalletWidget date={sim.date} refreshKey={sim.walletRefreshKey} />
+        <button
+          onClick={() => setShowAnalysis(true)}
+          title="Trade Analysis"
+          style={{
+            background: '#161b22', border: '1px solid #30363d',
+            color: '#8b949e', borderRadius: 6, padding: '4px 10px',
+            fontSize: 12, cursor: 'pointer',
+          }}
+        >
+          📊 Analysis
+        </button>
         <SettingsModal
           date={sim.date}
           onWalletReset={sim.incrementWalletRefreshKey}
@@ -376,7 +424,21 @@ export default function App() {
           onTargetDeviationChange={setTargetDeviationPct}
           onBrokerageChange={setBrokeragePerOrder}
         />
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: '#484f58' }}>
+          <span>{authUser.email}</span>
+          <button
+            onClick={onLogout}
+            style={{ background: 'none', border: '1px solid #30363d', color: '#8b949e', borderRadius: 6, padding: '3px 8px', fontSize: 11, cursor: 'pointer' }}
+          >
+            Sign out
+          </button>
+        </div>
       </div>
+
+      {/* Trade Analysis modal */}
+      {showAnalysis && (
+        <TradeAnalysis onClose={() => setShowAnalysis(false)} />
+      )}
 
       {/* Error banner */}
       {sim.orderError && (

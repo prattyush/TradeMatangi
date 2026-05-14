@@ -64,6 +64,15 @@ TABLES = [
         ],
         "AttributeDefinitions": [
             {"AttributeName": "user_id", "AttributeType": "S"},
+            {"AttributeName": "email", "AttributeType": "S"},
+        ],
+        "GlobalSecondaryIndexes": [
+            {
+                "IndexName": "EmailIndex",
+                "KeySchema": [{"AttributeName": "email", "KeyType": "HASH"}],
+                "Projection": {"ProjectionType": "ALL"},
+                "ProvisionedThroughput": {"ReadCapacityUnits": 5, "WriteCapacityUnits": 5},
+            }
         ],
         "ProvisionedThroughput": {"ReadCapacityUnits": 5, "WriteCapacityUnits": 5},
     },

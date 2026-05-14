@@ -82,6 +82,51 @@ export interface WalletResponse {
   balance: number
 }
 
+export interface AuthResponse {
+  user_id: string
+  email: string
+}
+
+// ── Analysis types ──────────────────────────────────────────────────────────
+
+export interface SessionSummary {
+  session_id: string
+  user_id: string
+  symbol: string
+  date: string
+  start_time: string | null
+  instrument_type: string
+  strike: number | null
+  expiry: string | null
+  session_capital: number
+  net_pnl: number
+  pnl_pct: number
+  total_commission: number
+  trade_count: number
+  buy_count: number
+  sell_count: number
+}
+
+export interface AnalysisTrade {
+  trade_id: string
+  session_id: string
+  user_id: string
+  symbol: string
+  side: 'BUY' | 'SELL'
+  quantity: number
+  price: number
+  timestamp: number
+  instrument_type: string
+  right: string | null
+  strike: number | null
+  expiry: string | null
+  commission: number
+}
+
+export interface SessionDetail extends SessionSummary {
+  trades: AnalysisTrade[]
+}
+
 export class InsufficientFundsError extends Error {
   constructor(message: string) {
     super(message)
@@ -361,6 +406,58 @@ const api = {
 
   getSSEUrl(session_id: string): string {
     return `${BACKEND_URL}/api/stream/${session_id}`
+  },
+
+  // ── Auth ───────────────────────────────────────────────────────────────────
+
+  async login(email: string, password: string): Promise<AuthResponse> {
+    const res = await fetch(`${BACKEND_URL}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password }),
+    })
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}))
+      throw new Error(data.detail || `Login failed: ${res.status}`)
+    }
+    return res.json()
+  },
+
+  async register(email: string, password: string): Promise<AuthResponse> {
+    const res = await fetch(`${BACKEND_URL}/api/auth/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password }),
+    })
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}))
+      throw new Error(data.detail || `Registration failed: ${res.status}`)
+    }
+    return res.json()
+  },
+
+  // ── Analysis ───────────────────────────────────────────────────────────────
+
+  async getAnalysisSessions(opts: {
+    symbol?: string
+    startDate?: string
+    endDate?: string
+    instrumentType?: string
+  } = {}): Promise<SessionSummary[]> {
+    const params = new URLSearchParams()
+    if (opts.symbol) params.set('symbol', opts.symbol)
+    if (opts.startDate) params.set('start_date', opts.startDate)
+    if (opts.endDate) params.set('end_date', opts.endDate)
+    if (opts.instrumentType) params.set('instrument_type', opts.instrumentType)
+    const res = await fetch(`${BACKEND_URL}/api/analysis/sessions?${params}`)
+    if (!res.ok) throw new Error(`Analysis sessions fetch failed: ${res.status}`)
+    return res.json()
+  },
+
+  async getSessionDetail(sessionId: string): Promise<SessionDetail> {
+    const res = await fetch(`${BACKEND_URL}/api/analysis/sessions/${sessionId}`)
+    if (!res.ok) throw new Error(`Session detail fetch failed: ${res.status}`)
+    return res.json()
   },
 }
 
