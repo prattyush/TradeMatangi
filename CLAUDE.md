@@ -92,6 +92,13 @@ node node_modules/typescript/bin/tsc --noEmit
 - **`liveFromTs` for mid-session panes**: When a pane is added mid-session, `PaneConfig.liveFromTs` is set to the latest equity tick's timestamp. `Chart.tsx` uses this as the `cutoffTs` for the options-historical filter (`floor(liveFromTs / intervalSecs) * intervalSecs`) so the pane shows all candles up to the current sim time, not just pre-session candles.
 - **Mid-session ATM uses live equity price**: `addPane` in `App.tsx` computes ATM from `sim.currentPrice` (live equity LTP during session) with fallback to `optionsReady.underlyingPrice` (pre-session fetch). Do NOT use session-start ATM for mid-session panes — the underlying may have moved significantly.
 - **SENSEX OTM strike interval in `addPane`**: The inline strike interval map in `addPane` must include `BSESEN: 100`. If omitted, `?? 50` fallback applies and CE/PE strikes are computed at the wrong interval (50 instead of 100).
+- **User isolation via `X-User-Id` header**: `app/dependencies.py` exports `get_request_user_id` — a FastAPI dependency that reads the `X-User-Id` request header, defaulting to `FIXED_USER_ID` when absent (backward compat for tests). Use `Depends(get_request_user_id)` in routers; never import FastAPI's `Header` inside service modules.
+- **`SimulationSession.user_id` carries the owner**: Set at `create_session()` time. All session-scoped DB writes (session upsert, trade record, order place/cancel/fill) use `session.user_id` or `order.user_id` — they do NOT call `get_user_id()` or use `FIXED_USER_ID` directly. Non-session endpoints (wallet, analysis) use the header dependency.
+- **Frontend `X-User-Id` header**: `api.ts` helper `_authHeaders()` reads `localStorage.auth_user` and returns `{'X-User-Id': userId}`. Must be spread into `headers` on every authenticated fetch (simulation, trading, orders, wallet, analysis). Login/register requests do not need it.
+- **Default admin credentials**: `admin@tradematangi.com` / `admin123`, user_id = `FIXED_USER_ID = "abc12300-0000-0000-0000-000000000001"`. Seeded on startup by `seed_user()`. All sessions created before Phase V user isolation are stored under this UUID — log in with these credentials to access historical data.
+- **Analysis chart needs both historical + pre-session for trading day**: `GET /api/data/historical` returns ONLY the 2 prior trading days (not the session date). For the analysis chart to show the actual session's candles (and place trade markers correctly), fetch `getHistorical` (prior context) + `getPreSession(symbol, date, '15:30:00')` (full trading day) in parallel, merge by timestamp, deduplicate, sort, then call `series.setData()` once.
+- **Analysis chart aspect ratio**: height = `max(300, floor(containerWidth × 0.45))`, computed from ResizeObserver entries. Apply both width and height changes via `chart.applyOptions({width, height})` in the same ResizeObserver callback.
+- **`pnl_pct` is stored as percentage**: `analysis_service.compute_session_summary` returns `pnl_pct` as e.g. `9.70` meaning 9.70%, not `0.097`. Display as `{value.toFixed(2)}%` — do NOT multiply by 100.
 
 ## Phase-III Status
 
@@ -177,4 +184,18 @@ All 9 UI-Upgrade features + Options-HistoricalData + TradeP&L shipped:
 - **Brokerage as session-level config**: Storing `brokerage_per_order` on the session (not globally) means each session uses the rate the user had at session start. This avoids mid-session setting changes affecting open sessions. Pass it in `POST /api/simulation/start` and snapshot it into `SimulationSession`.
 - **Backend commission vs frontend display**: Commission calculation was moved to the backend so trade analysis in Phase V can use accurate per-trade commission data. Frontend now reads `t.commission` from trade records. If future analysis features need commission, it is already in DynamoDB per trade.
 
-**Next: Phase V TradeAnalysis** (see `docs/spec-phase5.md`)
+## Phase-V Status
+
+### Phase V — TradeAnalysis ✅ COMPLETE (299 tests passing) — PR #18 open on feature/phase-v-trade-analysis
+
+All four spec items shipped plus full user data isolation:
+
+1. **Login** — `POST /api/auth/login` + `POST /api/auth/register`; bcrypt hashing; `LoginScreen.tsx` auth gate; `localStorage.auth_user`; sign-out in header
+2. **Trade Analysis** — `GET /api/analysis/sessions` + `GET /api/analysis/sessions/{id}`; `TradeAnalysis.tsx` full-screen modal with filters, aggregate stats, per-session expandable cards with trade table + embedded equity chart; options trades direction-mapped to underlying chart markers; chart height scales with modal width (45% ratio, min 300px)
+3. **Persistence** — `session_capital` already in DynamoDB; `analysis_service.py` reads Sessions + Trades via `UserIdIndex` GSI; `pnl_pct` stored as percentage (e.g. 9.70 = 9.70%)
+4. **Reload Chart** — `↻` button in every chart toolbar; increments `localReloadKey`; triggers full historical re-fetch + `series.setData()`
+5. **User data isolation** — `app/dependencies.py` `get_request_user_id`; `SimulationSession.user_id`; all wallet/trade/order writes keyed to actual user; `X-User-Id` header sent by frontend on all authenticated requests
+
+**Default admin**: `admin@tradematangi.com` / `admin123` (user_id = `abc12300-0000-0000-0000-000000000001`) — owns all historical sessions created before Phase V.
+
+**Next: Phase VI Strategies** (see `docs/spec-phase6.md`)
