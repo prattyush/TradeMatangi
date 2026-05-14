@@ -5,11 +5,23 @@ import TradePanel from './components/TradePanel'
 import TradeHistory from './components/TradeHistory'
 import OrderPanel from './components/OrderPanel'
 import WalletWidget from './components/WalletWidget'
-import SettingsModal, { loadFundsRatioMode, loadFundsRatios, loadTargetDeviationPct, loadCommissionPerTrade, FundsRatios } from './components/SettingsModal'
+import SettingsModal, { loadFundsRatioMode, loadFundsRatios, loadTargetDeviationPct, loadBrokeragePerOrder, FundsRatios } from './components/SettingsModal'
+import LoginScreen from './components/LoginScreen'
+import TradeAnalysis from './components/TradeAnalysis'
 import { useSimulation, InstrumentConfig } from './hooks/useSimulation'
 import { useSSE } from './hooks/useSSE'
+import api from './services/api'
 
 const FIXED_USER = { userId: 'abc12300-0000-0000-0000-000000000001', username: 'abc123' }
+
+function loadAuthUser(): { userId: string; email: string } | null {
+  try {
+    const raw = localStorage.getItem('auth_user')
+    return raw ? JSON.parse(raw) : null
+  } catch {
+    return null
+  }
+}
 
 // ── Pane config ──────────────────────────────────────────────────────────────
 interface PaneConfig {
@@ -20,6 +32,7 @@ interface PaneConfig {
   strike?: number
   expiry?: string
   right?: 'CE' | 'PE'
+  liveFromTs?: number
 }
 
 type LayoutPreset = 1 | 2 | 3 | 4
@@ -53,11 +66,37 @@ function defaultPanesForLayout(preset: LayoutPreset, current: PaneConfig[]): Pan
 }
 
 export default function App() {
+  // ── Auth state ──────────────────────────────────────────────────────────────
+  const [authUser, setAuthUser] = useState(loadAuthUser)
+
+  const handleLogin = useCallback((userId: string, email: string) => {
+    const user = { userId, email }
+    localStorage.setItem('auth_user', JSON.stringify(user))
+    localStorage.setItem('user', JSON.stringify({ userId, username: email }))
+    setAuthUser(user)
+  }, [])
+
+  const handleLogout = useCallback(() => {
+    localStorage.removeItem('auth_user')
+    setAuthUser(null)
+  }, [])
+
+  if (!authUser) {
+    return <LoginScreen onLogin={handleLogin} />
+  }
+
+  return <AppInner authUser={authUser} onLogout={handleLogout} />
+}
+
+function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: string }; onLogout: () => void }) {
   const sim = useSimulation()
   const [fundsRatioMode, setFundsRatioMode] = useState(loadFundsRatioMode)
   const [fundsRatios, setFundsRatios] = useState<FundsRatios>(loadFundsRatios)
   const [targetDeviationPct, setTargetDeviationPct] = useState(loadTargetDeviationPct)
-  const [commissionPerTrade, setCommissionPerTrade] = useState(loadCommissionPerTrade)
+  const [brokeragePerOrder, setBrokeragePerOrder] = useState(loadBrokeragePerOrder)
+
+  // ── Trade Analysis modal ────────────────────────────────────────────────────
+  const [showAnalysis, setShowAnalysis] = useState(false)
 
   // ── Price-pick state ────────────────────────────────────────────────────────
   const [pricePickOrderId, setPricePickOrderId] = useState<string | null>(null)
@@ -121,16 +160,28 @@ export default function App() {
   // ── Add pane ────────────────────────────────────────────────────────────────
   const addPane = useCallback(() => {
     if (instrumentType === 'options' && addPaneType !== 'equity' && optionsReady) {
-      const interval = { NIFTY: 50, RELIND: 5, TATMOT: 5, TATPOW: 5 }[sim.symbol] ?? 50
+      const interval = { NIFTY: 50, BSESEN: 100, RELIND: 5, TATMOT: 5, TATPOW: 5 }[sim.symbol] ?? 50
+      const basePrice = sim.currentPrice > 0 ? sim.currentPrice : optionsReady.underlyingPrice
+      const currentAtm = Math.round(basePrice / interval) * interval
       // OTM direction: positive offset = higher strikes for CE, lower for PE
       const directedOffset = addPaneType === 'PE' ? -addOffset : addOffset
-      const strike = optionsReady.atmStrike + directedOffset * interval
+      const strike = currentAtm + directedOffset * interval
       const right = addPaneType as 'CE' | 'PE'
-      setPanes(p => [...p, makeOptionsPane(right, strike, optionsReady.expiry)])
+      const liveFromTs = sim.latestEquityTick?.time ?? undefined
+      const newPane = { ...makeOptionsPane(right, strike, optionsReady.expiry), liveFromTs }
+      setPanes(p => [...p, newPane])
+
+      if (sim.sessionId && (sim.sessionState === 'running' || sim.sessionState === 'paused')) {
+        api.updatePaneStrike(sim.sessionId, right, strike)
+          .then(() => sim.updateSessionStrike(right, strike))
+          .catch((err: unknown) => console.error('Failed to update streaming strike:', err))
+      }
     } else {
       setPanes(p => [...p, makeEquityPane(addInterval)])
     }
-  }, [instrumentType, addPaneType, addInterval, addOffset, optionsReady, sim.symbol])
+  }, [instrumentType, addPaneType, addInterval, addOffset, optionsReady, sim.symbol,
+      sim.currentPrice, sim.latestEquityTick, sim.sessionId, sim.sessionState,
+      sim.updateSessionStrike])
 
   const removePane = useCallback((id: number) => {
     setPanes(p => {
@@ -225,8 +276,8 @@ export default function App() {
   useSSE(sim.sseUrl, handleSSEMessage)
 
   const handleStart = useCallback(async (startTime: string, speed: number, instrumentConfig: InstrumentConfig) => {
-    await sim.startSession(startTime, speed, instrumentConfig)
-  }, [sim.startSession])
+    await sim.startSession(startTime, speed, { ...instrumentConfig, brokerage_per_order: brokeragePerOrder })
+  }, [sim.startSession, brokeragePerOrder])
 
   // ── Price pick: chart clicked in pick mode ───────────────────────────────────
   const handleChartPriceSelect = useCallback((price: number) => {
@@ -236,8 +287,8 @@ export default function App() {
     }
   }, [pricePickOrderId])
 
-  // Net session P&L = dayPnl minus commission for every trade
-  const netDayPnl = sim.dayPnl - commissionPerTrade * sim.trades.length
+  // Net session P&L = gross dayPnl minus per-trade commissions (computed by backend)
+  const netDayPnl = sim.dayPnl - sim.trades.reduce((s, t) => s + (t.commission ?? 0), 0)
 
   // ── Trades filtered per pane for markers ─────────────────────────────────────
   const getTradesForPane = useCallback((pane: PaneConfig) => {
@@ -273,6 +324,7 @@ export default function App() {
         strike={pane.strike}
         expiry={pane.expiry}
         right={pane.right as 'CE' | 'PE' | undefined}
+        liveFromTs={pane.liveFromTs}
         isActive={pane.id === activePaneId}
         onActivate={() => {
           setActivePaneId(pane.id)
@@ -336,7 +388,7 @@ export default function App() {
         display: 'flex', alignItems: 'center', gap: 12,
       }}>
         <span style={{ fontSize: 18, fontWeight: 700, color: '#58a6ff' }}>TradeMatangi</span>
-        <span style={{ fontSize: 12, color: '#484f58' }}>Phase III — Beta</span>
+        <span style={{ fontSize: 12, color: '#484f58' }}>Phase V</span>
         <div style={{ flex: 1 }} />
         {sim.sessionState !== 'idle' && (
           <div style={{
@@ -354,14 +406,39 @@ export default function App() {
           </div>
         )}
         <WalletWidget date={sim.date} refreshKey={sim.walletRefreshKey} />
+        <button
+          onClick={() => setShowAnalysis(true)}
+          title="Trade Analysis"
+          style={{
+            background: '#161b22', border: '1px solid #30363d',
+            color: '#8b949e', borderRadius: 6, padding: '4px 10px',
+            fontSize: 12, cursor: 'pointer',
+          }}
+        >
+          📊 Analysis
+        </button>
         <SettingsModal
           date={sim.date}
           onWalletReset={sim.incrementWalletRefreshKey}
           onFundsRatioChange={(mode, ratios) => { setFundsRatioMode(mode); setFundsRatios(ratios) }}
           onTargetDeviationChange={setTargetDeviationPct}
-          onCommissionChange={setCommissionPerTrade}
+          onBrokerageChange={setBrokeragePerOrder}
         />
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: '#484f58' }}>
+          <span>{authUser.email}</span>
+          <button
+            onClick={onLogout}
+            style={{ background: 'none', border: '1px solid #30363d', color: '#8b949e', borderRadius: 6, padding: '3px 8px', fontSize: 11, cursor: 'pointer' }}
+          >
+            Sign out
+          </button>
+        </div>
       </div>
+
+      {/* Trade Analysis modal */}
+      {showAnalysis && (
+        <TradeAnalysis onClose={() => setShowAnalysis(false)} />
+      )}
 
       {/* Error banner */}
       {sim.orderError && (
@@ -377,7 +454,7 @@ export default function App() {
         </div>
       )}
 
-      {/* Session Controls */}
+      {/* Session Controls — layout/pane controls injected inline via extraControls */}
       <SessionControls
         sessionState={sim.sessionState}
         currentSymbol={sim.symbol}
@@ -389,92 +466,83 @@ export default function App() {
         onPause={sim.pauseSession}
         onResume={sim.resumeSession}
         onOptionsReady={handleOptionsReady}
-      />
+        extraControls={<>
+          <div style={{ width: 1, height: 16, background: '#30363d', margin: '0 4px' }} />
 
-      {/* Layout control bar */}
-      <div style={{
-        padding: '6px 12px', background: '#0d1117', borderBottom: '1px solid #30363d',
-        display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap',
-      }}>
-        <label style={{ fontSize: 12, color: '#484f58', display: 'flex', alignItems: 'center', gap: 6 }}>
-          Layout:
-          <select
-            value={layoutPreset}
-            onChange={e => handleLayoutChange(Number(e.target.value) as LayoutPreset)}
-            style={{
-              background: '#161b22', border: '1px solid #30363d', color: '#e6edf3',
-              borderRadius: 6, padding: '3px 8px', fontSize: 12,
-            }}
-          >
-            <option value={1}>1 Pane</option>
-            <option value={2}>2 Panes</option>
-            <option value={3}>3 Panes</option>
-            <option value={4}>4 Panes</option>
-          </select>
-        </label>
-
-        <div style={{ width: 1, height: 16, background: '#30363d', margin: '0 4px' }} />
-
-        <span style={{ fontSize: 12, color: '#484f58' }}>Add pane:</span>
-
-        {instrumentType === 'options' && (
-          <>
+          <label style={{ fontSize: 12, color: '#484f58', display: 'flex', alignItems: 'center', gap: 6 }}>
+            Layout:
             <select
-              value={addPaneType}
-              onChange={e => setAddPaneType(e.target.value as 'equity' | 'CE' | 'PE')}
+              value={layoutPreset}
+              onChange={e => handleLayoutChange(Number(e.target.value) as LayoutPreset)}
               style={{ background: '#161b22', border: '1px solid #30363d', color: '#e6edf3', borderRadius: 6, padding: '3px 8px', fontSize: 12 }}
             >
-              <option value="equity">Underlying</option>
-              <option value="CE">Call (CE)</option>
-              <option value="PE">Put (PE)</option>
+              <option value={1}>1 Pane</option>
+              <option value={2}>2 Panes</option>
+              <option value={3}>3 Panes</option>
+              <option value={4}>4 Panes</option>
             </select>
-            {addPaneType !== 'equity' && (
-              <label style={{ fontSize: 12, color: '#8b949e', display: 'flex', alignItems: 'center', gap: 4 }}>
-                OTM:
-                <input
-                  type="number" value={addOffset} min={-10} max={10}
-                  onChange={e => setAddOffset(parseInt(e.target.value) || 0)}
-                  style={{ background: '#161b22', border: '1px solid #30363d', color: '#e6edf3', borderRadius: 6, padding: '3px 6px', fontSize: 12, width: 52 }}
-                />
-              </label>
-            )}
-            {addPaneType === 'equity' && (
+          </label>
+
+          <div style={{ width: 1, height: 16, background: '#30363d', margin: '0 4px' }} />
+
+          <span style={{ fontSize: 12, color: '#484f58' }}>Add:</span>
+
+          {instrumentType === 'options' && (
+            <>
               <select
-                value={addInterval}
-                onChange={e => setAddInterval(Number(e.target.value))}
+                value={addPaneType}
+                onChange={e => setAddPaneType(e.target.value as 'equity' | 'CE' | 'PE')}
                 style={{ background: '#161b22', border: '1px solid #30363d', color: '#e6edf3', borderRadius: 6, padding: '3px 8px', fontSize: 12 }}
               >
-                {INTERVAL_OPTIONS.map(m => <option key={m} value={m}>{m}m</option>)}
+                <option value="equity">Underlying</option>
+                <option value="CE">Call (CE)</option>
+                <option value="PE">Put (PE)</option>
               </select>
-            )}
-          </>
-        )}
+              {addPaneType !== 'equity' && (
+                <label style={{ fontSize: 12, color: '#8b949e', display: 'flex', alignItems: 'center', gap: 4 }}>
+                  OTM:
+                  <input
+                    type="number" value={addOffset} min={-10} max={10}
+                    onChange={e => setAddOffset(parseInt(e.target.value) || 0)}
+                    style={{ background: '#161b22', border: '1px solid #30363d', color: '#e6edf3', borderRadius: 6, padding: '3px 6px', fontSize: 12, width: 52 }}
+                  />
+                </label>
+              )}
+              {addPaneType === 'equity' && (
+                <select
+                  value={addInterval}
+                  onChange={e => setAddInterval(Number(e.target.value))}
+                  style={{ background: '#161b22', border: '1px solid #30363d', color: '#e6edf3', borderRadius: 6, padding: '3px 8px', fontSize: 12 }}
+                >
+                  {INTERVAL_OPTIONS.map(m => <option key={m} value={m}>{m}m</option>)}
+                </select>
+              )}
+            </>
+          )}
 
-        {instrumentType === 'equity' && (
-          <select
-            value={addInterval}
-            onChange={e => setAddInterval(Number(e.target.value))}
-            style={{ background: '#161b22', border: '1px solid #30363d', color: '#e6edf3', borderRadius: 6, padding: '3px 8px', fontSize: 12 }}
-          >
-            {INTERVAL_OPTIONS.map(m => <option key={m} value={m}>{m}m</option>)}
-          </select>
-        )}
+          {instrumentType === 'equity' && (
+            <select
+              value={addInterval}
+              onChange={e => setAddInterval(Number(e.target.value))}
+              style={{ background: '#161b22', border: '1px solid #30363d', color: '#e6edf3', borderRadius: 6, padding: '3px 8px', fontSize: 12 }}
+            >
+              {INTERVAL_OPTIONS.map(m => <option key={m} value={m}>{m}m</option>)}
+            </select>
+          )}
 
-        <button
-          onClick={addPane}
-          disabled={instrumentType === 'options' && addPaneType !== 'equity' && !optionsReady}
-          style={{
-            background: '#21262d', border: '1px solid #30363d', color: '#8b949e',
-            borderRadius: 6, padding: '3px 10px', fontSize: 12, cursor: 'pointer',
-          }}
-        >+ Add</button>
+          <button
+            onClick={addPane}
+            disabled={instrumentType === 'options' && addPaneType !== 'equity' && !optionsReady}
+            style={{ background: '#21262d', border: '1px solid #30363d', color: '#8b949e', borderRadius: 6, padding: '3px 10px', fontSize: 12, cursor: 'pointer' }}
+          >+ Add</button>
 
-        {instrumentType === 'options' && (
-          <span style={{ fontSize: 11, color: '#484f58', marginLeft: 4 }}>
-            {activeRight ? `Active: ${activeRight}` : 'Click a CE/PE pane to trade'}
-          </span>
-        )}
-      </div>
+          {instrumentType === 'options' && (
+            <span style={{ fontSize: 11, color: '#484f58' }}>
+              {activeRight ? `Active: ${activeRight}` : 'Click a CE/PE pane to trade'}
+            </span>
+          )}
+        </>}
+      />
 
       {/* Main content */}
       <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>

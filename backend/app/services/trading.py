@@ -8,7 +8,7 @@ from decimal import Decimal
 from typing import Literal
 
 from app.models.schemas import Trade, TradeSide, Position
-from app.config import FIXED_USER_ID, DEFAULT_SYMBOL
+from app.config import FIXED_USER_ID, DEFAULT_SYMBOL  # FIXED_USER_ID kept for default arg
 
 logger = logging.getLogger(__name__)
 
@@ -19,6 +19,23 @@ _trades: dict[str, list[Trade]] = {}
 def ensure_session(session_id: str) -> None:
     if session_id not in _trades:
         _trades[session_id] = []
+
+
+def compute_commission(side: TradeSide, price: float, quantity: int, brokerage_per_order: float = 1.0) -> float:
+    """
+    Compute total commission for one order.
+
+    Exchange charges (ICICI Direct / Indian markets):
+      BUY:  STT 0.006803% of order value
+      SELL: STT 0.0625% + (exchange txn charge 0.06% × 1.18 GST) of order value
+    Plus flat brokerage per order.
+    """
+    total_value = price * quantity
+    if side == TradeSide.BUY:
+        charges = total_value * 0.006803 / 100
+    else:
+        charges = total_value * 0.0625 / 100 + 1.18 * (0.06 / 100) * total_value
+    return round(charges + brokerage_per_order, 4)
 
 
 def _write_trade_to_db(trade: Trade) -> None:
@@ -35,6 +52,7 @@ def _write_trade_to_db(trade: Trade) -> None:
             "price": Decimal(str(trade.price)),
             "timestamp": trade.timestamp,
             "instrument_type": trade.instrument_type,
+            "commission": Decimal(str(trade.commission)),
         }
         if trade.instrument_type == "options":
             if trade.strike is not None:
@@ -59,10 +77,12 @@ def record_trade(
     strike: int | None = None,
     expiry: str | None = None,
     right: str | None = None,
+    brokerage_per_order: float = 1.0,
+    user_id: str = FIXED_USER_ID,
 ) -> Trade:
     ensure_session(session_id)
     trade = Trade(
-        user_id=FIXED_USER_ID,
+        user_id=user_id,
         symbol=symbol,
         side=side,
         quantity=quantity,
@@ -73,6 +93,7 @@ def record_trade(
         strike=strike,
         expiry=expiry,
         right=right,
+        commission=compute_commission(side, price, quantity, brokerage_per_order),
     )
     _trades[session_id].append(trade)
     _write_trade_to_db(trade)

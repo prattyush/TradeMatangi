@@ -45,6 +45,7 @@ export interface InstrumentConfig {
   expiry?: string
   strike_ce?: number
   strike_pe?: number
+  brokerage_per_order?: number
 }
 
 export function useSimulation() {
@@ -106,6 +107,14 @@ export function useSimulation() {
 
   const updateDate = useCallback((date: string) => {
     setState(s => ({ ...s, date }))
+  }, [])
+
+  const updateSessionStrike = useCallback((right: 'CE' | 'PE', strike: number) => {
+    setState(s => ({
+      ...s,
+      sessionStrikeCE: right === 'CE' ? strike : s.sessionStrikeCE,
+      sessionStrikePE: right === 'PE' ? strike : s.sessionStrikePE,
+    }))
   }, [])
 
   const startSession = useCallback(async (
@@ -385,6 +394,7 @@ export function useSimulation() {
     dayPnlPE,
     updateSymbol,
     updateDate,
+    updateSessionStrike,
     startSession,
     stopSession,
     pauseSession,

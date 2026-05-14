@@ -1,13 +1,15 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from app.models.schemas import (
     SimulationStartRequest,
     SimulationStartResponse,
     SimulationControlRequest,
     SimulationStatusResponse,
     SimulationState,
+    UpdatePaneStrikeRequest,
 )
 from app.services import simulation as sim_svc
 from app.config import SUPPORTED_SYMBOLS
+from app.dependencies import get_request_user_id
 
 router = APIRouter(prefix="/api/simulation", tags=["simulation"])
 
@@ -54,7 +56,10 @@ def _ensure_options_data(
 
 
 @router.post("/start", response_model=SimulationStartResponse)
-async def start_simulation(req: SimulationStartRequest):
+async def start_simulation(
+    req: SimulationStartRequest,
+    user_id: str = Depends(get_request_user_id),
+):
     if req.instrument_type == "options":
         if req.strike is None or req.expiry is None:
             raise HTTPException(
@@ -88,12 +93,14 @@ async def start_simulation(req: SimulationStartRequest):
         date=req.date,
         start_time=req.start_time,
         speed=req.speed,
+        user_id=user_id,
         instrument_type=req.instrument_type,
         strike=req.strike,
         expiry=req.expiry,
         right=req.right,
         strike_ce=req.strike_ce,
         strike_pe=req.strike_pe,
+        brokerage_per_order=req.brokerage_per_order,
     )
     sim_svc.start_session(session)
     return SimulationStartResponse(
@@ -109,6 +116,7 @@ async def start_simulation(req: SimulationStartRequest):
         right=session.right,
         strike_ce=session.strike_ce,
         strike_pe=session.strike_pe,
+        brokerage_per_order=session.brokerage_per_order,
     )
 
 
@@ -128,6 +136,32 @@ async def resume_simulation(req: SimulationControlRequest):
         raise HTTPException(status_code=404, detail="Session not found")
     sim_svc.resume_session(session)
     return {"status": session.state}
+
+
+@router.put("/{session_id}/update-pane-strike")
+async def update_pane_strike(session_id: str, req: UpdatePaneStrikeRequest):
+    """
+    Update the CE or PE streaming strike for a running options session.
+    Fetches and caches options data for the new strike before updating.
+    Called when the user adds a new CE/PE pane mid-session.
+    """
+    session = sim_svc.get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if session.instrument_type != "options" or not session.expiry:
+        raise HTTPException(status_code=400, detail="Session is not an options session")
+    if req.right.upper() not in ("CE", "PE"):
+        raise HTTPException(status_code=400, detail="right must be CE or PE")
+
+    # Ensure options data is cached for new strike before updating session
+    _ensure_options_data(session.symbol, session.date, req.strike, session.expiry, req.right.upper())
+
+    if req.right.upper() == "CE":
+        session.strike_ce = req.strike
+    else:
+        session.strike_pe = req.strike
+
+    return {"session_id": session_id, "right": req.right.upper(), "strike": req.strike}
 
 
 @router.post("/stop")

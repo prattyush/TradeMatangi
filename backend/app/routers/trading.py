@@ -3,7 +3,6 @@ from app.models.schemas import Trade, Position, TradeRequest, TradeSide
 from app.services import trading as trading_svc
 from app.services import simulation as sim_svc
 from app.services import wallet_service
-from app.services.user_service import get_user_id
 from app.services.wallet_service import InsufficientFundsError
 from app.config import LOT_SIZES
 
@@ -51,7 +50,7 @@ async def buy(req: TradeRequest):
     lot_size = LOT_SIZES.get(session.symbol, 1) if session.instrument_type == "options" else 1
 
     try:
-        wallet_service.debit(get_user_id(), price * lot_size, session.date)
+        wallet_service.debit(session.user_id, price * lot_size, session.date)
     except InsufficientFundsError as exc:
         raise HTTPException(status_code=402, detail=str(exc))
 
@@ -64,6 +63,8 @@ async def buy(req: TradeRequest):
         expiry=session.expiry,
         right=right,
         quantity=lot_size,
+        brokerage_per_order=session.brokerage_per_order,
+        user_id=session.user_id,
     )
     return trade
 
@@ -83,7 +84,7 @@ async def sell(req: TradeRequest):
 
     lot_size = LOT_SIZES.get(session.symbol, 1) if session.instrument_type == "options" else 1
 
-    wallet_service.credit(get_user_id(), price * lot_size, session.date)
+    wallet_service.credit(session.user_id, price * lot_size, session.date)
 
     timestamp = int(session.current_time)
     trade = trading_svc.record_trade(
@@ -94,6 +95,8 @@ async def sell(req: TradeRequest):
         expiry=session.expiry,
         right=right,
         quantity=lot_size,
+        brokerage_per_order=session.brokerage_per_order,
+        user_id=session.user_id,
     )
     return trade
 

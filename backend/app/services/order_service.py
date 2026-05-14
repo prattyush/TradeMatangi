@@ -114,6 +114,7 @@ def place_order(
     is_stoploss: bool = False,
     right: str | None = None,
     target_deviation_pct: float = _TARGET_DEVIATION,
+    user_id: str = FIXED_USER_ID,
 ) -> Order:
     _ensure_session(session_id)
 
@@ -138,11 +139,11 @@ def place_order(
     if side == TradeSide.BUY and not is_stoploss and order_type != OrderType.STOPLOSS:
         reserved_amount = round(quantity * actual_limit, 2)
         from app.services.wallet_service import debit
-        debit(FIXED_USER_ID, reserved_amount, trading_date)
+        debit(user_id, reserved_amount, trading_date)
 
     order = Order(
         session_id=session_id,
-        user_id=FIXED_USER_ID,
+        user_id=user_id,
         symbol=symbol,
         side=side,
         order_type=order_type,
@@ -179,7 +180,7 @@ def cancel_order(session_id: str, order_id: str, trading_date: str) -> Order | N
     # Credit back the reserved funds for cancelled regular BUY orders (not SL)
     if order.side == TradeSide.BUY and order.reserved_amount > 0 and not order.is_stoploss:
         from app.services.wallet_service import credit
-        credit(FIXED_USER_ID, order.reserved_amount, trading_date)
+        credit(order.user_id, order.reserved_amount, trading_date)
     _write_order_to_db(order)
     return order
 
@@ -205,9 +206,9 @@ def update_order(
             diff = new_reserved - order.reserved_amount
             from app.services.wallet_service import credit, debit
             if diff > 0:
-                debit(FIXED_USER_ID, diff, trading_date)
+                debit(order.user_id, diff, trading_date)
             elif diff < 0:
-                credit(FIXED_USER_ID, -diff, trading_date)
+                credit(order.user_id, -diff, trading_date)
             order.reserved_amount = new_reserved
         order.trigger_price = new_trigger
         order.limit_price = new_limit
@@ -219,9 +220,9 @@ def update_order(
             diff = new_reserved - order.reserved_amount
             from app.services.wallet_service import credit, debit
             if diff > 0:
-                debit(FIXED_USER_ID, diff, trading_date)
+                debit(order.user_id, diff, trading_date)
             elif diff < 0:
-                credit(FIXED_USER_ID, -diff, trading_date)
+                credit(order.user_id, -diff, trading_date)
             order.reserved_amount = new_reserved
         order.limit_price = new_limit
         order.trigger_price = new_limit
@@ -280,7 +281,7 @@ def check_orders(
             # Credit wallet on regular SELL fill; SL orders skip wallet entirely
             if order.side == TradeSide.SELL and trading_date and not order.is_stoploss:
                 from app.services.wallet_service import credit
-                credit(FIXED_USER_ID, round(order.quantity * current_price, 2), trading_date)
+                credit(order.user_id, round(order.quantity * current_price, 2), trading_date)
             _write_order_to_db(order)
             filled.append(order)
     return filled
