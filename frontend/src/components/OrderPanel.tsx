@@ -70,6 +70,13 @@ export default function OrderPanel({
     if (orderType === 'STOPLOSS' && !hasPosition) setOrderType('TARGET')
   }, [hasPosition])
 
+  // Inject chart-picked price into the placement field
+  useEffect(() => {
+    if (injectedEditPrice && injectedEditPrice.orderId === '__new__') {
+      setPrice(injectedEditPrice.price.toFixed(2))
+    }
+  }, [injectedEditPrice])
+
   // Inject chart-picked price into the edit field
   useEffect(() => {
     if (injectedEditPrice && injectedEditPrice.orderId === editingOrderId) {
@@ -106,8 +113,9 @@ export default function OrderPanel({
     setPlacing(true)
     try {
       if (orderType === 'MARKET') {
-        // Route as LIMIT at current price — fills on the next tick
-        await onPlaceOrder(side, 'LIMIT', currentPrice, null, { funds_ratio_pct: ratioPct })
+        // 1% deviation ensures immediate fill: BUY limit above market, SELL limit below
+        const mktPrice = side === 'BUY' ? currentPrice * 1.01 : currentPrice * 0.99
+        await onPlaceOrder(side, 'LIMIT', mktPrice, null, { funds_ratio_pct: ratioPct })
       } else if (orderType === 'STOPLOSS') {
         await onPlaceOrder(side, 'STOPLOSS', parsedPrice, slQty, { is_stoploss: true })
       } else if (fundsRatioMode) {
@@ -251,6 +259,7 @@ export default function OrderPanel({
           <div style={{ fontSize: 11, color: '#8b949e', marginBottom: 3 }}>
             {orderType === 'LIMIT' ? 'Limit Price' : 'Trigger / SL Price'}
           </div>
+          <div style={{ display: 'flex', gap: 4 }}>
           <input
             type="number"
             value={price}
@@ -258,11 +267,23 @@ export default function OrderPanel({
             placeholder={currentPrice > 0 ? currentPrice.toFixed(2) : '0.00'}
             disabled={!isActive}
             style={{
-              width: '100%', padding: '5px 8px', background: '#0d1117',
+              flex: 1, padding: '5px 8px', background: '#0d1117',
               border: '1px solid #30363d', borderRadius: 6,
               color: '#e6edf3', fontSize: 13, boxSizing: 'border-box',
             }}
           />
+          <button
+            onClick={() => onRequestPricePick('__new__')}
+            disabled={!isActive}
+            title="Pick price from chart"
+            style={{
+              padding: '4px 7px', background: '#21262d',
+              border: '1px solid #30363d', borderRadius: 6,
+              color: isActive ? '#8b949e' : '#484f58',
+              cursor: isActive ? 'pointer' : 'not-allowed', fontSize: 11,
+            }}
+          >⊕</button>
+          </div>
           {orderType === 'TARGET' && (
             <div style={{ fontSize: 10, color: '#484f58', marginTop: 2 }}>
               Exec limit: {autoLimit ?? '—'} (±{(deviation * 100).toFixed(1)}%)
@@ -284,7 +305,9 @@ export default function OrderPanel({
       {/* Market info hint */}
       {orderType === 'MARKET' && (
         <div style={{ fontSize: 10, color: '#484f58' }}>
-          Executes at current price ({currentPrice > 0 ? currentPrice.toFixed(2) : '—'}) using selected capital ratio
+          {currentPrice > 0
+            ? `Limit ${side === 'BUY' ? '≤' : '≥'} ${(side === 'BUY' ? currentPrice * 1.01 : currentPrice * 0.99).toFixed(2)} (1% ${side === 'BUY' ? 'above' : 'below'} ${currentPrice.toFixed(2)})`
+            : 'Waiting for price data…'}
         </div>
       )}
 
@@ -436,6 +459,7 @@ export default function OrderPanel({
                         <input
                           type="number"
                           value={editPrice}
+                          step={0.5}
                           onChange={e => setEditPrice(e.target.value)}
                           autoFocus
                           style={{

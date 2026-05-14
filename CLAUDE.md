@@ -40,12 +40,16 @@ node node_modules/typescript/bin/tsc --noEmit
 - **Data file lookup order**: `data_loader.load_dataframe` checks `data/ohlcdata/<symbol>-DD-MM-YYYY.parquet` first, then falls back to legacy `data/<symbol>-DD-MM-YYYY.pickle`. New Breeze-fetched data is always saved as parquet in `data/ohlcdata/`. Legacy pickles are auto-migrated to parquet on first access.
 - **pyarrow required**: parquet support needs `pyarrow` installed (`pip install pyarrow`). It is in `requirements.txt`. The venv must have it.
 - **DynamoDB Local credentials**: when `USE_DYNAMODB_LOCAL=true`, always use hardcoded dummy credentials (`fakeKey`/`fakeSecret`). Never pass real AWS credentials (ASIA* keys) to DynamoDB Local — it will reject them with `UnrecognizedClientException`.
-- **ICICI Direct symbol codes**: The canonical symbol keys in `SUPPORTED_SYMBOLS` match ICICI Direct / Breeze API codes exactly: `NIFTY`, `TATPOW`, `TATMOT`, `RELIND`. Do not use NSE display names (TATAPOWER, TATAMOTORS, RELIANCE) as symbol keys.
+- **ICICI Direct symbol codes**: The canonical symbol keys in `SUPPORTED_SYMBOLS` match ICICI Direct / Breeze API codes exactly: `NIFTY`, `BSESEN`, `TATPOW`, `TATMOT`, `RELIND`. Do not use NSE display names (TATAPOWER, TATAMOTORS, RELIANCE) as symbol keys.
 - **Breeze API record limit**: `get_historical_data_v2(interval="1second")` silently truncates to ~1000 records per call (~16 min). A full trading day (22 500 rows) requires pagination. Use `broker_service._fetch_day_paginated` which splits the day into 15-min chunks. Never make a single full-day call for 1-second data.
 - **Lightweight Charts — no teardown for layout changes**: calling `chart.remove()` discards all series data. Height/width changes must go through `chart.applyOptions(...)`. The chart init `useEffect` must use `[]` deps (mount only); a separate `useEffect([height])` calls `applyOptions` for height changes.
 - **Options cache path**: options parquet files are stored as `data/ohlcdata/{SYMBOL}-{CE|PE}-{STRIKE}-{EXPIRY}-{DD-MM-YYYY}.parquet`. Equity files remain `data/ohlcdata/{SYMBOL}-{DD-MM-YYYY}.parquet`.
-- **Options lot sizes (hardcoded, current)**: NIFTY=65, RELIND=250, TATMOT=1400, TATPOW=2700. No historical lot size tracking — always use current values.
+- **Options lot sizes (hardcoded, current)**: NIFTY=65, BSESEN=20, RELIND=250, TATMOT=1400, TATPOW=2700. No historical lot size tracking — always use current values.
 - **NSE options expiry**: date-aware helper required. From 2025-09-01: weekly and monthly expiry on Tuesday (Monday if holiday). Before 2025-09-01: Thursday (Wednesday if holiday). Monthly = last occurrence of that weekday in the month.
+- **BSE SENSEX expiry**: always weekly Thursday regardless of the NSE cutoff date. `_expiry_weekday(date, symbol)` returns 3 unconditionally for `BSESEN`. Options fetched via `exchange_code="BFO"` (not NFO). Equity index data via `exchange_code="BSE"`.
+- **`options_only` symbols**: `NIFTY` and `BSESEN` have `options_only: True` in `SUPPORTED_SYMBOLS`. Starting an equity session for these returns HTTP 400. Frontend `OPTIONS_ONLY_SYMBOLS` set auto-selects options mode and disables the equity toggle.
+- **`options_exchange_code` in SUPPORTED_SYMBOLS**: each symbol carries `options_exchange_code` (`"NFO"` for NSE symbols, `"BFO"` for BSESEN). `_fetch_options_day_paginated` reads this instead of hardcoding `"NFO"`.
+- **SENSEX strike interval**: 100 points (vs NIFTY 50). Configured in both `options_service.STRIKE_INTERVALS` and frontend `SessionControls.STRIKE_INTERVALS`.
 - **FundsRatio capital base**: snapshotted from wallet at `POST /api/simulation/start`. Mid-session wallet changes do not affect l/m/h amounts for that session. Ratios: l=3%, m=6%, h=12% (user-overridable in settings).
 - **Wallet carry-forward**: keyed per user + calendar date of the replay. Replaying an earlier date uses that date's prior end-of-day balance, not the most recent session's balance.
 - **Wallet in-memory store**: `wallet_service._wallets` is a `dict[(user_id, date), float]`. In-memory is source of truth per process; DynamoDB is persistence. Carry-forward uses a DynamoDB `query` with `Key("date").lt(target_date), ScanIndexForward=False, Limit=1` — this is O(1) because `date` is the sort key.
@@ -75,7 +79,11 @@ node node_modules/typescript/bin/tsc --noEmit
 - **OTM offset is direction-aware**: CE strike = `ATM + N × interval`; PE strike = `ATM − N × interval`. Applies to both initial session panes (via `SessionControls.fetchOptionsData`) and mid-session `addPane`. UI label is "OTM", not "Offset".
 - **`SimulationSession` carries `strike_ce` and `strike_pe`**: both default to `strike` when not provided (ATM sessions, backward compat). `_run_session` dual-stream loads CE ticks from `strike_ce`, PE ticks from `strike_pe`. `routers/trading.py` `_strike_for_right()` returns the correct per-right strike for trade recording.
 - **Options historical includes trading date**: `GET /api/data/options-historical` fetches `prior_trading_days(date, n=2) + [date]` (3 dates). The trading date's candles represent the pre-session window; the frontend filters to `c.time < startWindowTs` to avoid "Cannot update oldest data". Never use `prior_trading_days(n=2)` alone for options — that drops the trading day's pre-session candles.
-- **Market tab routes as LIMIT**: The Mkt tab in `OrderPanel.tsx` places a LIMIT order at `currentPrice` with `funds_ratio_pct`. `OrderTypeFull` includes `'MARKET'` as a UI-only state; it is always converted to `'LIMIT'` before calling `onPlaceOrder`. The backend never sees `order_type='MARKET'`.
+- **Market tab routes as LIMIT with 1% deviation**: The Mkt tab in `OrderPanel.tsx` places a LIMIT order at `currentPrice × 1.01` (BUY) or `currentPrice × 0.99` (SELL). The 1% deviation guarantees the order fills on the next tick even if price moves slightly. `OrderTypeFull` includes `'MARKET'` as a UI-only state; it is always converted to `'LIMIT'` before calling `onPlaceOrder`. The backend never sees `order_type='MARKET'`.
+- **Trade history timestamps use `timeZone: 'UTC'`**: The IST-as-UTC convention means timestamps encode IST wall-clock time as fake-UTC. `toLocaleTimeString` in `TradeHistory.tsx` must use `timeZone: 'UTC'` (not `'Asia/Kolkata'`) to display the correct chart time. Using `'Asia/Kolkata'` adds an extra +5:30, showing times 5.5 hours ahead.
+- **Cancel order 404 = already gone**: `api.cancelOrder` treats HTTP 404 as success (returns `null`). This handles the SSE race where an order fills on the backend but the frontend hasn't received the `order_filled` event yet — user clicks ✕, backend returns 404 (order is FILLED not PENDING), UI removes the order cleanly. Any non-404 error still throws.
+- **Chart price-pick guard**: `chart.subscribeClick` must NOT check `!param.time` before the price-pick branch. `param.time` is null when clicking in empty chart areas (no candle under cursor), but price-pick only needs `param.point.y` for the y-coordinate→price mapping. Move `if (!param.time) return` to after the price-pick handler; drawing modes still need it.
+- **Price pick ⊕ button on placement form**: The `'__new__'` sentinel in `onRequestPricePick` targets the placement price input (not an open order edit row). `injectedEditPrice.orderId === '__new__'` injects the picked price into the `price` state in `OrderPanel`. The same chart-pick flow works for both new orders and edits.
 - **Commission is frontend-only**: `commissionPerTrade` (localStorage key `commissionPerTrade`, default ₹10) is loaded in `App.tsx` via `loadCommissionPerTrade()`. `netDayPnl = sim.dayPnl - commission × trades.length`. Backend P&L remains gross. Session P&L in TradePanel uses `netDayPnl`.
 - **Chart toolbar paddingRight for remove button**: The pane remove `✕` button in `App.tsx` is `position: absolute, top: 8, right: 8`. Chart.tsx toolbar must have `paddingRight: 36` so the bar-close countdown (which uses `marginLeft: 'auto'`) does not render under the button.
 
@@ -99,16 +107,16 @@ Multi-pane layout, dual-stream options replay, and lot-sized direct trades are l
 
 ## Phase-IV Status
 
-### Phase IV — BetaMinorUpdates ✅ COMPLETE (271 tests passing) — PR #14 open, in user testing
+### Phase IV — BetaMinorUpdates ✅ COMPLETE (278 tests passing) — PR #14 open, post-testing fixes applied
 
 All 9 UI-Upgrade features + Options-HistoricalData + TradeP&L shipped:
 1. **Edit open orders** — click any open order row to edit its trigger/limit price inline
-2. **Pick price from chart** — ⊕ button in edit row captures price from a chart click (active pane only)
+2. **Pick price from chart** — ⊕ button in edit row AND in placement form captures price from a chart click (active pane only); uses `'__new__'` sentinel for placement vs order-ID for edits
 3. **Configurable TARGET deviation %** — Settings → "TARGET ORDER DEVIATION"; default 1%; stored in localStorage; passed as `target_deviation_pct` to backend on each order placement or update
 4. **Trade markers on charts** — BUY (green ↑) and SELL (red ↓) arrow markers on the candlestick series of each relevant pane; markers carry text label `SIDE qty@price`
 5. **Bar close countdown** — each chart toolbar shows `Bar close: M:SS`; turns orange in the last minute; toolbar has `paddingRight: 36` to avoid overlap with the pane ✕ button
 6. **Day P&L** — header widget shows realized + unrealized P&L minus commission; updates on every tick
-7. **Market tab (Mkt)** — Mkt/Tgt/Lmt/SL tabs in OrderPanel; Mkt always uses L/M/H ratio for sizing, executes as LIMIT at current price; BUY/SELL buttons removed from TradePanel
+7. **Market tab (Mkt)** — Mkt/Tgt/Lmt/SL tabs in OrderPanel; Mkt uses L/M/H ratio for sizing, executes as LIMIT at `currentPrice × 1.01` (BUY) / `× 0.99` (SELL) for guaranteed fill; BUY/SELL buttons removed from TradePanel
 8. **Position P&L + Session P&L** — TradePanel shows "Pos P&L" (unrealized) and "Session P&L" (realized + unrealized − commission) below LTP
 9. **Trade history expand popup** — ⛶ icon beside "Trade History" opens a full modal with all columns (Time, Symbol, Side, Qty, Price, Right, Strike, Trade ID)
 10. **Options Historical Data (2 days + trading date)** — `GET /api/data/options-historical` fetches `prior_trading_days(n=2) + [date]` (3 dates total); prior 2 days = context; trading date filtered by frontend to `time < startWindowTs` = pre-session candles
@@ -116,17 +124,34 @@ All 9 UI-Upgrade features + Options-HistoricalData + TradeP&L shipped:
 
 **Backend**: `PATCH /api/orders/{id}`, `target_deviation_pct` on order schemas, options historical 3-date fetch.
 
+**New symbol**: SENSEX (`BSESEN`) — BSE index, options only, BFO exchange, weekly Thursday expiry, lot size 20, strike interval 100.
+
 ### Phase IV Post-Merge Bugs Fixed
 
 - **Bug #1 — Options pre-session candles missing**: When options-historical was updated to fetch prior 2 days using `prior_trading_days(n=2)`, the trading date itself was dropped, so CE/PE charts no longer showed 09:15–startTime candles. Fix: append `+ [date]` so the trading date is always included; frontend's existing `c.time < startWindowTs` filter handles clipping.
 - **Bug #2 — Bar countdown overlaps ✕ button**: Bar-close countdown used `marginLeft: 'auto'` pushing it flush to the right edge, directly behind the absolute-positioned pane remove button. Fix: `paddingRight: 36` on the Chart toolbar div.
+- **Bug #3 — Market order may not fill immediately**: Mkt tab was placing LIMIT at exact `currentPrice`. If price ticked up (BUY) or down (SELL) before the next evaluation, the order stayed open. Fix: place at `currentPrice × 1.01` (BUY) / `× 0.99` (SELL) — 1% deviation guarantees fill on the next tick.
+- **Bug #4 — Chart price-pick fails on empty chart area**: `subscribeClick` checked `!param.time` (null when no candle under cursor) before the price-pick branch, causing early return. Fix: move `if (!param.time) return` to after the price-pick handler; price-pick only needs `param.point.y`.
+- **Bug #5 — Trade history shows wrong time**: `toDate` in `TradeHistory.tsx` used `timeZone: 'Asia/Kolkata'`, adding +5:30 to IST-as-UTC timestamps and showing times 5.5 hours ahead of the chart. Fix: use `timeZone: 'UTC'` to read the wall-clock value directly.
+- **Bug #6 — Cancel order shows 404 and stays in UI**: When replay runs fast, an order can fill on the backend before the `order_filled` SSE event reaches the frontend. If user clicks ✕ in that window, the backend returns 404 (order is FILLED, not PENDING) and `api.cancelOrder` throws, leaving the order stuck in the UI. Fix: treat HTTP 404 from DELETE as "already gone" — return `null` instead of throwing; `setState` still removes it from `openOrders`.
+- **Bug #7 — Price pick only on edit row, not placement**: The ⊕ chart-pick button was only in the open-order edit row. Fix: added ⊕ next to the placement price input; uses sentinel `orderId = '__new__'` to route the injected price to the `price` state (not `editPrice`).
+
+### Phase IV Minor Improvements
+
+- **Edit order price step 0.5**: The price input in the open-order edit row now has `step={0.5}` so arrow keys increment/decrement by 0.5 instead of 1.
 
 ### Phase IV Lessons Learned
 
 - **Options historical needs trading date + prior days**: Unlike equity (which has a separate `/api/data/pre-session` endpoint for the trading day), options historical must include the trading date itself to show pre-session candles. Pattern: `prior_trading_days(n=2) + [date]`.
-- **Market orders via LIMIT**: The simplest "market order" in simulation is a LIMIT order at the current price. LIMIT BUY fills when `price <= limit` — placing at current price fills on the next tick. No new order type or backend endpoint needed.
+- **Market orders via LIMIT + deviation**: Placing at exact current price risks not filling if price moves before the next tick. Use 1% above/below to guarantee fill. Still uses LIMIT type — no new backend order type needed.
 - **Commission is frontend-only**: Broker commission is a display-only deduction (`commission × trades.length`) applied to `dayPnl` in App.tsx. The backend P&L calculations remain gross (no commission). This keeps backend/frontend concerns separated.
 - **Absolute-positioned overlays need toolbar padding**: Any absolute-positioned element (like the ✕ pane-remove button) that sits over a flexbox toolbar needs `paddingRight` on the toolbar, not `marginRight` on the last item, because `marginLeft: 'auto'` makes the last item butt against the container edge.
 - **`onPlaceOrder` type in OrderPanel**: The internal `OrderTypeFull` union (`TARGET | LIMIT | STOPLOSS | MARKET`) is broader than what the backend accepts. MARKET is converted to LIMIT internally before calling `onPlaceOrder`, so the prop type for `onPlaceOrder` stays as `TARGET | LIMIT | STOPLOSS`.
+- **IST-as-UTC timestamp display**: Any frontend code formatting timestamps from the backend must use `timeZone: 'UTC'` in `toLocaleTimeString`. Using `'Asia/Kolkata'` incorrectly adds +5:30 to what are already IST wall-clock values.
+- **Cancel 404 = SSE race, not a real error**: In fast replay, order fills and SSE delivery are async. Always treat 404 on a cancel request as "order is already gone" and remove from UI state. Propagating the error leaves the UI stale.
+- **Chart click price-pick needs relaxed guard**: Lightweight Charts sets `param.time = undefined` when the user clicks in an empty area (no candle under cursor). Price-pick only needs the y-coordinate, so guard `!param.time` must come after the price-pick branch, not before it.
+- **Shared pick flow via sentinel orderId**: To reuse the same chart price-pick infrastructure for both "edit open order" and "place new order", use a well-known sentinel string (`'__new__'`) as the orderId. A single `injectedEditPrice` state object routes to whichever consumer matches the orderId.
+- **BSE vs NSE options exchange**: SENSEX options use `exchange_code="BFO"` (BSE Futures & Options), not `"NFO"`. Store `options_exchange_code` in `SUPPORTED_SYMBOLS` so the fetch function doesn't need symbol-specific if/else. Index equity data (for ATM price) uses `exchange_code="BSE"`.
+- **`options_only` flag in config**: Indices (NIFTY, BSESEN) that cannot be traded directly need an `options_only: True` flag in `SUPPORTED_SYMBOLS`. Both backend (HTTP 400 on equity session start) and frontend (`OPTIONS_ONLY_SYMBOLS` set) enforce this. The flag prevents confusion from trying to fetch equity OHLC for an index and trade it directly.
 
 **Next: Phase V Strategies** (see `docs/spec-phase5.md`)

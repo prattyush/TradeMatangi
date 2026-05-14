@@ -126,16 +126,18 @@ export default function Chart({
     ema21Ref.current = e21
 
     chart.subscribeClick((param: MouseEventParams) => {
-      if (!param.point || !param.time || !seriesRef.current) return
+      if (!param.point || !seriesRef.current) return
       const price = seriesRef.current.coordinateToPrice(param.point.y)
       if (price === null) return
-      const time = param.time as number
 
-      // Price-pick mode takes priority over draw mode
+      // Price-pick mode takes priority — doesn't require a candle under the cursor
       if (onPriceSelectRef.current) {
         onPriceSelectRef.current(price)
         return
       }
+
+      if (!param.time) return  // drawing modes need a time reference
+      const time = param.time as number
 
       if (drawModeRef.current === 'hline') {
         const line = seriesRef.current.createPriceLine({

@@ -10,7 +10,9 @@ function fmt(n: number) {
 }
 
 function toDate(ts: number) {
-  return new Date(ts * 1000).toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour12: false })
+  // Timestamps encode IST wall-clock as fake-UTC (see IST-as-UTC constraint).
+  // Extract the UTC time string to get the correct chart time.
+  return new Date(ts * 1000).toLocaleTimeString('en-IN', { timeZone: 'UTC', hour12: false })
 }
 
 export default function TradeHistory({ trades }: Props) {

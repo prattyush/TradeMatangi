@@ -184,11 +184,12 @@ class TestOptionsSimulationStart:
         assert body["right"] == "CE"
 
     def test_equity_session_unaffected(self):
+        # Use an equity symbol (not options_only) — TATPOW supports equity sessions
         with patch("app.routers.simulation._ensure_session_data"), \
              patch("app.services.wallet_service.get_balance", return_value=150000.0), \
              patch("app.services.simulation._upsert_session_to_db"):
             resp = client.post("/api/simulation/start", json={
-                "symbol": "NIFTY",
+                "symbol": "TATPOW",
                 "date": "2026-05-06",
                 "instrument_type": "equity",
                 "speed": 100.0,
@@ -199,6 +200,18 @@ class TestOptionsSimulationStart:
         assert body["strike"] is None
         assert body["expiry"] is None
         assert body["right"] is None
+
+    def test_options_only_symbol_rejects_equity_session(self):
+        # NIFTY and BSESEN are options_only — equity sessions must be rejected
+        for symbol in ("NIFTY", "BSESEN"):
+            resp = client.post("/api/simulation/start", json={
+                "symbol": symbol,
+                "date": "2026-05-06",
+                "instrument_type": "equity",
+                "speed": 100.0,
+            })
+            assert resp.status_code == 400, f"{symbol} should reject equity sessions"
+            assert "index" in resp.json()["detail"].lower()
 
 
 # ---------------------------------------------------------------------------

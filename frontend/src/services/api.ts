@@ -338,10 +338,12 @@ const api = {
     return res.json()
   },
 
-  async cancelOrder(session_id: string, order_id: string): Promise<Order> {
+  async cancelOrder(session_id: string, order_id: string): Promise<Order | null> {
     const res = await fetch(`${BACKEND_URL}/api/orders/${order_id}?session_id=${session_id}`, {
       method: 'DELETE',
     })
+    // 404 means the order was already filled or cancelled (SSE race) — treat as success
+    if (res.status === 404) return null
     if (!res.ok) throw new Error(`Cancel order failed: ${res.status}`)
     return res.json()
   },

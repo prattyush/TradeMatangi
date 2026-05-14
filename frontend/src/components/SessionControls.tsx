@@ -68,10 +68,10 @@ function lastWeekday(): string {
 }
 
 const STRIKE_INTERVALS: Record<string, number> = {
-  NIFTY: 50, RELIND: 5, TATMOT: 5, TATPOW: 5,
+  NIFTY: 50, BSESEN: 100, RELIND: 5, TATMOT: 5, TATPOW: 5,
 }
 
-const OPTIONS_ONLY_SYMBOLS = new Set(['NIFTY'])
+const OPTIONS_ONLY_SYMBOLS = new Set(['NIFTY', 'BSESEN'])
 
 export default function SessionControls({
   sessionState, currentSymbol, currentDate,

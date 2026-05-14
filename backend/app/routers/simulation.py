@@ -74,6 +74,11 @@ async def start_simulation(req: SimulationStartRequest):
             _ensure_options_data(req.symbol, req.date, ce_strike, req.expiry, "CE")
             _ensure_options_data(req.symbol, req.date, pe_strike, req.expiry, "PE")
     elif req.instrument_type == "equity":
+        if SUPPORTED_SYMBOLS.get(req.symbol, {}).get("options_only"):
+            raise HTTPException(
+                status_code=400,
+                detail=f"{req.symbol} is an index — only options sessions are supported",
+            )
         _ensure_session_data(req.symbol, req.date)
     else:
         raise HTTPException(status_code=400, detail="instrument_type must be 'equity' or 'options'")
