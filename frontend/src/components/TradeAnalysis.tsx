@@ -33,24 +33,19 @@ function effectiveSideForChart(trade: AnalysisTrade): 'BUY' | 'SELL' {
 
 // ── Mini Analysis Chart ───────────────────────────────────────────────────────
 
-interface AnalysisChartProps {
-  symbol: string
-  date: string
-  trades: AnalysisTrade[]
-  height?: number
-}
-
-function AnalysisChart({ symbol, date, trades, height = 220 }: AnalysisChartProps) {
+function AnalysisChart({ symbol, date, trades }: { symbol: string; date: string; trades: AnalysisTrade[] }) {
   const containerRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<IChartApi | null>(null)
   const seriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null)
 
-  // Initialise chart once
+  // Init chart once — height is 45% of container width, min 300
   useEffect(() => {
     if (!containerRef.current) return
+    const w = containerRef.current.clientWidth
+    const h = Math.max(300, Math.floor(w * 0.45))
     const chart = createChart(containerRef.current, {
-      width: containerRef.current.clientWidth,
-      height,
+      width: w,
+      height: h,
       layout: { background: { color: '#0d1117' }, textColor: '#e6edf3' },
       grid: { vertLines: { color: '#1e2732' }, horzLines: { color: '#1e2732' } },
       timeScale: { timeVisible: true, secondsVisible: false, borderColor: '#30363d' },
@@ -64,38 +59,55 @@ function AnalysisChart({ symbol, date, trades, height = 220 }: AnalysisChartProp
     chartRef.current = chart
     seriesRef.current = series
 
-    const ro = new ResizeObserver(() => {
-      if (containerRef.current) chart.applyOptions({ width: containerRef.current.clientWidth })
+    const ro = new ResizeObserver(entries => {
+      const width = entries[0].contentRect.width
+      const height = Math.max(300, Math.floor(width * 0.45))
+      chart.applyOptions({ width, height })
     })
     ro.observe(containerRef.current)
 
     return () => { ro.disconnect(); chart.remove() }
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  }, []) // mount only
 
-  useEffect(() => {
-    chartRef.current?.applyOptions({ height })
-  }, [height])
-
-  // Load historical candles
+  // Load prior-2-days history AND full trading-day candles in parallel, then merge.
+  // getHistorical returns only prior trading days (not the session date itself), so
+  // trade markers would land on timestamps absent from the chart and pile up on the
+  // last prior-day bar. getPreSession('15:30:00') fills in the full trading day.
   useEffect(() => {
     if (!seriesRef.current || !symbol || !date) return
     let cancelled = false
     ;(async () => {
       try {
-        const { candles } = await api.getHistorical(symbol, date, 3)
-        if (cancelled || !seriesRef.current) return
-        const data: CandlestickData[] = candles.map((c: OHLCCandle) => ({
+        const toCandle = (c: OHLCCandle): CandlestickData => ({
           time: c.time as Time,
           open: c.open, high: c.high, low: c.low, close: c.close,
-        }))
-        seriesRef.current.setData(data)
-        chartRef.current?.timeScale().fitContent()
+        })
+        const [histResp, tradingDayCandles] = await Promise.all([
+          api.getHistorical(symbol, date, 3),
+          api.getPreSession(symbol, date, '15:30:00', 3),
+        ])
+        if (cancelled || !seriesRef.current) return
+
+        const all = [
+          ...histResp.candles.map(toCandle),
+          ...tradingDayCandles.map(toCandle),
+        ]
+        // deduplicate by timestamp (Map overwrites earlier with later), then sort
+        const byTime = new Map<number, CandlestickData>()
+        all.forEach(c => byTime.set(c.time as number, c))
+        const sorted = Array.from(byTime.values()).sort(
+          (a, b) => (a.time as number) - (b.time as number)
+        )
+        if (sorted.length > 0) {
+          seriesRef.current.setData(sorted)
+          chartRef.current?.timeScale().fitContent()
+        }
       } catch { /* ignore */ }
     })()
     return () => { cancelled = true }
   }, [symbol, date])
 
-  // Add trade markers (options trades mapped to underlying direction)
+  // Trade markers — options trades mapped to underlying chart direction
   useEffect(() => {
     if (!seriesRef.current) return
     if (trades.length === 0) { seriesRef.current.setMarkers([]); return }
