@@ -176,7 +176,8 @@ async def get_options_historical(
     from app.services.options_service import fetch_options_historical, load_options_dataframe
     from app.services.broker_service import BreezeTokenError
 
-    prior_dates = prior_trading_days(date, n=2)
+    # Fetch 2 prior days for context + the trading date itself (pre-session candles)
+    prior_dates = prior_trading_days(date, n=2) + [date]
     all_candles: list[OHLCCandle] = []
 
     for prior_date in prior_dates:
@@ -204,7 +205,7 @@ async def get_options_historical(
 
     return HistoricalDataResponse(
         symbol=f"{symbol}-{right.upper()}-{strike}",
-        dates=prior_dates,
+        dates=prior_dates,  # includes the 2 prior days + the trading date
         candles=all_candles,
     )
 

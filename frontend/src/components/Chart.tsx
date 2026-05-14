@@ -471,9 +471,10 @@ export default function Chart({
         cursor: onActivate ? 'pointer' : 'default',
       }}
     >
-      {/* Pane toolbar */}
+      {/* Pane toolbar — paddingRight leaves room for the absolute-positioned ✕ remove button */}
       <div style={{
         display: 'flex', alignItems: 'center', gap: 8, padding: '4px 10px',
+        paddingRight: 36,
         background: '#161b22', borderBottom: '1px solid #21262d', flexWrap: 'wrap',
       }}>
         <span style={{ fontSize: 11, color: isActive ? '#58a6ff' : '#8b949e', marginRight: 4 }}>
