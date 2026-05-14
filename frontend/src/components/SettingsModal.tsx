@@ -11,7 +11,7 @@ const DEFAULT_FUNDS_RATIOS: FundsRatios = { l: 3, m: 6, h: 12 }
 const FUNDS_RATIO_MODE_KEY = 'fundsRatioMode'
 const FUNDS_RATIOS_KEY = 'fundsRatios'
 const TARGET_DEVIATION_KEY = 'targetDeviationPct'
-const COMMISSION_KEY = 'commissionPerTrade'
+const BROKERAGE_KEY = 'brokeragePerOrder'
 
 export function loadFundsRatioMode(): boolean {
   return localStorage.getItem(FUNDS_RATIO_MODE_KEY) === 'true'
@@ -31,10 +31,10 @@ export function loadTargetDeviationPct(): number {
   return isNaN(v) || v < 0 ? 0.01 : v / 100
 }
 
-// Returns commission per trade in rupees (default ₹10)
-export function loadCommissionPerTrade(): number {
-  const v = parseFloat(localStorage.getItem(COMMISSION_KEY) ?? '')
-  return isNaN(v) || v < 0 ? 10 : v
+// Returns brokerage per order in rupees (default ₹1)
+export function loadBrokeragePerOrder(): number {
+  const v = parseFloat(localStorage.getItem(BROKERAGE_KEY) ?? '')
+  return isNaN(v) || v < 0 ? 1 : v
 }
 
 interface Props {
@@ -42,10 +42,10 @@ interface Props {
   onWalletReset: () => void
   onFundsRatioChange: (mode: boolean, ratios: FundsRatios) => void
   onTargetDeviationChange: (pct: number) => void  // fraction e.g. 0.01
-  onCommissionChange: (commission: number) => void  // rupees per trade
+  onBrokerageChange: (brokerage: number) => void  // rupees per order
 }
 
-export default function SettingsModal({ date, onWalletReset, onFundsRatioChange, onTargetDeviationChange, onCommissionChange }: Props) {
+export default function SettingsModal({ date, onWalletReset, onFundsRatioChange, onTargetDeviationChange, onBrokerageChange }: Props) {
   const [open, setOpen] = useState(false)
   const [customAmount, setCustomAmount] = useState('')
   const [status, setStatus] = useState<string | null>(null)
@@ -63,10 +63,10 @@ export default function SettingsModal({ date, onWalletReset, onFundsRatioChange,
     return String(isNaN(stored) ? 1 : stored)
   })
 
-  // Commission per trade in rupees
-  const [commissionInput, setCommissionInput] = useState<string>(() => {
-    const v = parseFloat(localStorage.getItem(COMMISSION_KEY) ?? '')
-    return String(isNaN(v) || v < 0 ? 10 : v)
+  // Brokerage per order in rupees
+  const [brokerageInput, setBrokerageInput] = useState<string>(() => {
+    const v = parseFloat(localStorage.getItem(BROKERAGE_KEY) ?? '')
+    return String(isNaN(v) || v < 0 ? 1 : v)
   })
 
   // Persist + notify parent whenever mode or ratios change
@@ -103,15 +103,15 @@ export default function SettingsModal({ date, onWalletReset, onFundsRatioChange,
     setTimeout(() => setStatus(null), 2000)
   }
 
-  const saveCommission = () => {
-    const val = parseFloat(commissionInput)
+  const saveBrokerage = () => {
+    const val = parseFloat(brokerageInput)
     if (isNaN(val) || val < 0) {
-      setStatus('Commission must be ≥ 0')
+      setStatus('Brokerage must be ≥ 0')
       return
     }
-    localStorage.setItem(COMMISSION_KEY, String(val))
-    onCommissionChange(val)
-    setStatus(`Commission saved: ₹${val}`)
+    localStorage.setItem(BROKERAGE_KEY, String(val))
+    onBrokerageChange(val)
+    setStatus(`Brokerage saved: ₹${val}`)
     setTimeout(() => setStatus(null), 2000)
   }
 
@@ -270,27 +270,27 @@ export default function SettingsModal({ date, onWalletReset, onFundsRatioChange,
               </div>
             </div>
 
-            {/* Commission */}
+            {/* Brokerage */}
             <div style={{ borderTop: '1px solid #21262d', paddingTop: 16 }}>
               <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 10, fontWeight: 600 }}>
-                BROKER COMMISSION
+                BROKERAGE
               </div>
               <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                 <span style={{ fontSize: 12, color: '#8b949e' }}>₹</span>
                 <input
                   type="number"
-                  value={commissionInput}
-                  onChange={e => setCommissionInput(e.target.value)}
-                  min={0} step={1}
+                  value={brokerageInput}
+                  onChange={e => setBrokerageInput(e.target.value)}
+                  min={0} step={0.5}
                   style={{
                     width: 80, padding: '5px 8px', background: '#0d1117',
                     border: '1px solid #30363d', borderRadius: 6,
                     color: '#e6edf3', fontSize: 13, textAlign: 'center',
                   }}
                 />
-                <span style={{ fontSize: 12, color: '#8b949e' }}>per trade</span>
+                <span style={{ fontSize: 12, color: '#8b949e' }}>per order</span>
                 <button
-                  onClick={saveCommission}
+                  onClick={saveBrokerage}
                   style={{
                     padding: '5px 12px', background: '#1f6feb',
                     border: 'none', borderRadius: 6, color: '#fff',
@@ -301,7 +301,7 @@ export default function SettingsModal({ date, onWalletReset, onFundsRatioChange,
                 </button>
               </div>
               <div style={{ fontSize: 11, color: '#484f58', marginTop: 6 }}>
-                Deducted from session P&L for each BUY or SELL
+                Flat brokerage per order + exchange charges (STT, GST) computed per trade
               </div>
             </div>
 

@@ -1,4 +1,4 @@
-import { useState, useEffect, CSSProperties } from 'react'
+import { useState, useEffect, CSSProperties, ReactNode } from 'react'
 import { SessionState } from '../hooks/useSimulation'
 import api, { SymbolInfo } from '../services/api'
 import { InstrumentConfig } from '../hooks/useSimulation'
@@ -14,6 +14,7 @@ interface Props {
   onPause: () => Promise<void>
   onResume: () => Promise<void>
   onOptionsReady: (cfg: OptionsReadyConfig | null) => void
+  extraControls?: ReactNode
 }
 
 export interface OptionsReadyConfig {
@@ -78,6 +79,7 @@ export default function SessionControls({
   onSymbolChange, onDateChange,
   onStart, onStop, onPause, onResume,
   onOptionsReady,
+  extraControls,
 }: Props) {
   const [symbols, setSymbols] = useState<SymbolInfo[]>([])
   const [startTime, setStartTime] = useState('09:15')
@@ -251,6 +253,20 @@ export default function SessionControls({
           <span style={{ marginLeft: 4 }}>x</span>
         </label>
 
+        {/* OTM offset — always visible; disabled when equity or session active */}
+        <label style={{ ...label, fontSize: 12, opacity: instrumentType === 'equity' ? 0.4 : 1 }}>
+          OTM&nbsp;
+          <input
+            type="number"
+            value={optionsOffset}
+            onChange={e => setOptionsOffset(parseInt(e.target.value) || 0)}
+            style={{ ...inputStyle, width: 55, fontSize: 12 }}
+            min={-10} max={10}
+            disabled={instrumentType === 'equity' || !idle}
+          />
+          <span style={{ marginLeft: 4, fontSize: 11, color: '#484f58' }}>(0=ATM)</span>
+        </label>
+
         {idle && (
           <button
             style={btn('#1f6feb', !canStart)}
@@ -269,22 +285,7 @@ export default function SessionControls({
           <span style={{ ...label, color: '#f85149' }}>Session ended — configure above and restart</span>
         )}
 
-        {/* OTM offset for options — floated right, no pre-fetch status */}
-        {instrumentType === 'options' && idle && (
-          <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 10 }}>
-            <label style={{ ...label, fontSize: 12 }}>
-              OTM&nbsp;
-              <input
-                type="number"
-                value={optionsOffset}
-                onChange={e => setOptionsOffset(parseInt(e.target.value) || 0)}
-                style={{ ...inputStyle, width: 55, fontSize: 12 }}
-                min={-10} max={10}
-              />
-              <span style={{ marginLeft: 4, fontSize: 11, color: '#484f58' }}>(0=ATM)</span>
-            </label>
-          </div>
-        )}
+        {extraControls}
       </div>
 
       {(dateError || startError) && (

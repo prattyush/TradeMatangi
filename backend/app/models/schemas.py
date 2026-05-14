@@ -28,6 +28,7 @@ class SimulationStartRequest(BaseModel):
     right: str | None = None           # "CE" or "PE"; required when instrument_type="options"
     strike_ce: int | None = None       # CE streaming strike (defaults to strike when omitted)
     strike_pe: int | None = None       # PE streaming strike (defaults to strike when omitted)
+    brokerage_per_order: float = 1.0   # flat brokerage deducted per trade (user-configurable)
 
 
 class SimulationStartResponse(BaseModel):
@@ -43,6 +44,7 @@ class SimulationStartResponse(BaseModel):
     right: str | None = None
     strike_ce: int | None = None
     strike_pe: int | None = None
+    brokerage_per_order: float = 1.0
 
 
 class SimulationControlRequest(BaseModel):
@@ -71,6 +73,7 @@ class Trade(BaseModel):
     strike: int | None = None
     expiry: str | None = None
     right: str | None = None
+    commission: float = 0.0  # computed at record time: exchange charges + brokerage
 
 
 class Position(BaseModel):
@@ -185,6 +188,11 @@ class UpdateOrderRequest(BaseModel):
     trigger_price: float | None = None    # new trigger price (TARGET / STOPLOSS)
     limit_price: float | None = None      # new limit price (LIMIT orders)
     target_deviation_pct: float = 0.01   # deviation for recomputing TARGET limit from new trigger
+
+
+class UpdatePaneStrikeRequest(BaseModel):
+    right: str   # "CE" or "PE"
+    strike: int
 
 
 class OrderFilledEvent(BaseModel):
