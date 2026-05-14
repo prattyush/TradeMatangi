@@ -64,6 +64,7 @@ async def buy(req: TradeRequest):
         expiry=session.expiry,
         right=right,
         quantity=lot_size,
+        brokerage_per_order=session.brokerage_per_order,
     )
     return trade
 
@@ -94,6 +95,7 @@ async def sell(req: TradeRequest):
         expiry=session.expiry,
         right=right,
         quantity=lot_size,
+        brokerage_per_order=session.brokerage_per_order,
     )
     return trade
 

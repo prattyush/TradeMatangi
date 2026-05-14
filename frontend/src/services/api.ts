@@ -58,6 +58,7 @@ export interface SimulationStartRequest {
   // right is omitted for dual-stream options (backend streams both CE and PE)
   strike_ce?: number  // CE streaming strike (OTM direction: ATM + offset)
   strike_pe?: number  // PE streaming strike (OTM direction: ATM - offset)
+  brokerage_per_order?: number  // flat brokerage per order (default 1)
 }
 
 export interface SimulationStartResponse {
@@ -97,8 +98,9 @@ export interface Trade {
   price: number
   timestamp: number
   session_id: string
-  right?: string    // "CE" or "PE" for options trades
-  strike?: number   // options strike
+  right?: string       // "CE" or "PE" for options trades
+  strike?: number      // options strike
+  commission: number   // exchange charges + brokerage, computed at record time
 }
 
 export interface Position {
@@ -346,6 +348,15 @@ const api = {
     if (res.status === 404) return null
     if (!res.ok) throw new Error(`Cancel order failed: ${res.status}`)
     return res.json()
+  },
+
+  async updatePaneStrike(sessionId: string, right: 'CE' | 'PE', strike: number): Promise<void> {
+    const res = await fetch(`${BACKEND_URL}/api/simulation/${sessionId}/update-pane-strike`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ right, strike }),
+    })
+    if (!res.ok) throw new Error(`Update pane strike failed: ${res.status}`)
   },
 
   getSSEUrl(session_id: string): string {

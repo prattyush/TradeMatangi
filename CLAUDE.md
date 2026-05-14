@@ -84,8 +84,14 @@ node node_modules/typescript/bin/tsc --noEmit
 - **Cancel order 404 = already gone**: `api.cancelOrder` treats HTTP 404 as success (returns `null`). This handles the SSE race where an order fills on the backend but the frontend hasn't received the `order_filled` event yet — user clicks ✕, backend returns 404 (order is FILLED not PENDING), UI removes the order cleanly. Any non-404 error still throws.
 - **Chart price-pick guard**: `chart.subscribeClick` must NOT check `!param.time` before the price-pick branch. `param.time` is null when clicking in empty chart areas (no candle under cursor), but price-pick only needs `param.point.y` for the y-coordinate→price mapping. Move `if (!param.time) return` to after the price-pick handler; drawing modes still need it.
 - **Price pick ⊕ button on placement form**: The `'__new__'` sentinel in `onRequestPricePick` targets the placement price input (not an open order edit row). `injectedEditPrice.orderId === '__new__'` injects the picked price into the `price` state in `OrderPanel`. The same chart-pick flow works for both new orders and edits.
-- **Commission is frontend-only**: `commissionPerTrade` (localStorage key `commissionPerTrade`, default ₹10) is loaded in `App.tsx` via `loadCommissionPerTrade()`. `netDayPnl = sim.dayPnl - commission × trades.length`. Backend P&L remains gross. Session P&L in TradePanel uses `netDayPnl`.
+- **Brokerage is backend-computed per trade**: `brokeragePerOrder` (localStorage key `brokeragePerOrder`, default ₹1) is passed as `brokerage_per_order` in `POST /api/simulation/start`. `record_trade()` calls `compute_commission(side, price, qty, brokerage_per_order)` and stores the result in `Trade.commission`. `netDayPnl = sim.dayPnl - sum(t.commission for t in trades)`. Do not use a flat `commission × trades.length` formula — commissions differ per trade because value-based charges scale with price and quantity.
+- **Commission formula (Indian markets)**: BUY side: `STT = value × 0.006803%`. SELL side: `STT = value × 0.0625% + exchange_txn_charge = value × 0.06% × 1.18 (GST)`. Plus flat `brokerage_per_order`. Implemented in `trading.py:compute_commission`.
 - **Chart toolbar paddingRight for remove button**: The pane remove `✕` button in `App.tsx` is `position: absolute, top: 8, right: 8`. Chart.tsx toolbar must have `paddingRight: 36` so the bar-close countdown (which uses `marginLeft: 'auto'`) does not render under the button.
+- **Mid-session pane strike update endpoint**: `PUT /api/simulation/{session_id}/update-pane-strike` with body `{right, strike}` must be called before `sim.updateSessionStrike` (frontend state). The endpoint calls `_ensure_options_data` to cache the new strike's parquet before updating `session.strike_ce` or `session.strike_pe`. The frontend calls it async after adding the pane so the pane renders immediately.
+- **Dual-stream master-clock refactor**: `_run_session` iterates equity ticks as the master clock. CE and PE ticks are looked up by timestamp from `ce_by_time`/`pe_by_time` dicts (built via `_load_by_time`). On every equity tick, the loop checks if `session.strike_ce/pe` has changed since last tick and reloads the affected dict from that timestamp forward. This enables mid-session strike changes without restarting the session.
+- **`liveFromTs` for mid-session panes**: When a pane is added mid-session, `PaneConfig.liveFromTs` is set to the latest equity tick's timestamp. `Chart.tsx` uses this as the `cutoffTs` for the options-historical filter (`floor(liveFromTs / intervalSecs) * intervalSecs`) so the pane shows all candles up to the current sim time, not just pre-session candles.
+- **Mid-session ATM uses live equity price**: `addPane` in `App.tsx` computes ATM from `sim.currentPrice` (live equity LTP during session) with fallback to `optionsReady.underlyingPrice` (pre-session fetch). Do NOT use session-start ATM for mid-session panes — the underlying may have moved significantly.
+- **SENSEX OTM strike interval in `addPane`**: The inline strike interval map in `addPane` must include `BSESEN: 100`. If omitted, `?? 50` fallback applies and CE/PE strikes are computed at the wrong interval (50 instead of 100).
 
 ## Phase-III Status
 
@@ -107,7 +113,7 @@ Multi-pane layout, dual-stream options replay, and lot-sized direct trades are l
 
 ## Phase-IV Status
 
-### Phase IV — BetaMinorUpdates ✅ COMPLETE (278 tests passing) — PR #14 open, post-testing fixes applied
+### Phase IV — BetaMinorUpdates ✅ COMPLETE (278 tests passing) — merged to dev; post-testing fixes in PR #15
 
 All 9 UI-Upgrade features + Options-HistoricalData + TradeP&L shipped:
 1. **Edit open orders** — click any open order row to edit its trigger/limit price inline
@@ -140,6 +146,18 @@ All 9 UI-Upgrade features + Options-HistoricalData + TradeP&L shipped:
 
 - **Edit order price step 0.5**: The price input in the open-order edit row now has `step={0.5}` so arrow keys increment/decrement by 0.5 instead of 1.
 
+### Phase IV Post-Testing Bugs Fixed (PR #15)
+
+- **Bug #8 — SENSEX replay missing 09:15 bar**: When `start_time` was 09:18, two separate `useEffect` hooks in `Chart.tsx` fired concurrently — `getHistorical` (slow for uncached BSE data) resolved after `getPreSession`, so `series.setData()` wiped the pre-session candle that `series.update()` had already placed. Fix: merged both into one sequential async IIFE so pre-session candles always load after historical `setData`.
+- **Bug #9 — SENSEX OTM offset used wrong strike interval**: `addPane` in `App.tsx` used an inline interval map that was missing `BSESEN: 100`, causing the `?? 50` fallback to apply. CE/PE strikes were half the correct distance from ATM. Fix: add `BSESEN: 100` to the map.
+- **Bug #10 — Mid-session pane addition showed no growing candle**: When removing a CE/PE pane and adding a new one with a different OTM value, the new pane showed only history (no live ticks). Three root causes: (1) ATM was computed from session-start price not live equity price; (2) backend dual-stream loop pre-loaded all ticks into a merged dict and could not change strikes mid-session; (3) options-historical cutoff only covered pre-session candles, leaving a gap between pre-session end and current sim time. Fix: refactored backend to equity-as-master-clock with per-tick CE/PE dict lookup and on-the-fly strike reload; added `liveFromTs` prop to Chart for the history cutoff; `addPane` now uses `sim.currentPrice` for ATM and calls `PUT /update-pane-strike` to update the session.
+
+### Phase IV Post-Testing UX Changes (PR #15)
+
+- **Brokerage renamed + formula-based**: Settings renamed from "BROKER COMMISSION" to "BROKERAGE"; default changed from ₹10 to ₹1. Commission is now computed backend-side per trade using Indian market charge formula (STT + exchange + GST) plus flat brokerage. `netDayPnl` uses `sum(t.commission)` from trade records instead of flat `commission × count`.
+- **OTM control moved left of Start/Pause/Stop**: OTM input is always visible in the session controls row; disabled in equity mode. Removed separate second-row layout bar — layout/pane controls are injected inline via `SettingsModal.extraControls`.
+- **Layout + Add Pane controls inlined**: The separate layout control bar row is removed. Layout preset selector and Add Pane controls appear inside the session controls row via the `extraControls` prop on `SessionControls`.
+
 ### Phase IV Lessons Learned
 
 - **Options historical needs trading date + prior days**: Unlike equity (which has a separate `/api/data/pre-session` endpoint for the trading day), options historical must include the trading date itself to show pre-session candles. Pattern: `prior_trading_days(n=2) + [date]`.
@@ -153,5 +171,9 @@ All 9 UI-Upgrade features + Options-HistoricalData + TradeP&L shipped:
 - **Shared pick flow via sentinel orderId**: To reuse the same chart price-pick infrastructure for both "edit open order" and "place new order", use a well-known sentinel string (`'__new__'`) as the orderId. A single `injectedEditPrice` state object routes to whichever consumer matches the orderId.
 - **BSE vs NSE options exchange**: SENSEX options use `exchange_code="BFO"` (BSE Futures & Options), not `"NFO"`. Store `options_exchange_code` in `SUPPORTED_SYMBOLS` so the fetch function doesn't need symbol-specific if/else. Index equity data (for ATM price) uses `exchange_code="BSE"`.
 - **`options_only` flag in config**: Indices (NIFTY, BSESEN) that cannot be traded directly need an `options_only: True` flag in `SUPPORTED_SYMBOLS`. Both backend (HTTP 400 on equity session start) and frontend (`OPTIONS_ONLY_SYMBOLS` set) enforce this. The flag prevents confusion from trying to fetch equity OHLC for an index and trade it directly.
+- **React useEffect race for chart data**: Two separate async effects with overlapping data sources can fire concurrently, causing the slower one to overwrite data from the faster. For historical + pre-session data in Chart.tsx, use one sequential async IIFE so each phase only starts after the previous one completes.
+- **Mid-session pane needs three coordinated changes**: Adding a live options pane mid-session requires: (1) backend session state updated for the new strike (`PUT /update-pane-strike`); (2) backend dual-stream loop can react to the strike change per-tick; (3) frontend historical filter uses `liveFromTs` as cutoff so the full history up to current sim time is shown. Missing any one of these produces either no history or no live ticks.
+- **Brokerage as session-level config**: Storing `brokerage_per_order` on the session (not globally) means each session uses the rate the user had at session start. This avoids mid-session setting changes affecting open sessions. Pass it in `POST /api/simulation/start` and snapshot it into `SimulationSession`.
+- **Backend commission vs frontend display**: Commission calculation was moved to the backend so trade analysis in Phase V can use accurate per-trade commission data. Frontend now reads `t.commission` from trade records. If future analysis features need commission, it is already in DynamoDB per trade.
 
-**Next: Phase V Strategies** (see `docs/spec-phase5.md`)
+**Next: Phase V TradeAnalysis** (see `docs/spec-phase5.md`)

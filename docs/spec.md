@@ -120,11 +120,11 @@ Include this phase in the context only when you are implementing or planning pha
 
 Include this phase in the context only when you are implementing or planning phase 4. The phase 4 docs is located at `<project root>/docs/spec-phase4.md`
 
-#### Phase-V Strategies
+#### Phase-V TradeAnalysis
 
 Include this phase in the context only when you are implementing or planning phase 5. The phase 5 docs is located at `<project root>/docs/spec-phase5.md`
 
-#### Phase-VI TradeAnalysis
+#### Phase-VI Strategies
 
 Include this phase in the context only when you are implementing or planning phase 6. The phase 6 docs is located at `<project root>/docs/spec-phase6.md`
 

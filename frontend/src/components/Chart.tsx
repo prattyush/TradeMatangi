@@ -34,6 +34,8 @@ interface Props {
   trades?: Trade[]
   // Price-pick mode: when non-null, a chart click calls this instead of draw mode
   onPriceSelect?: ((price: number) => void) | null
+  // For mid-session panes: timestamp from which live ticks begin (candles before this are history)
+  liveFromTs?: number
 }
 
 type DrawMode = 'none' | 'hline' | 'trendline'
@@ -78,6 +80,7 @@ export default function Chart({
   isActive = false, onActivate,
   trades = [],
   onPriceSelect = null,
+  liveFromTs,
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<IChartApi | null>(null)
@@ -189,7 +192,10 @@ export default function Chart({
     ema21Ref.current?.applyOptions({ visible: showEma })
   }, [showEma])
 
-  // ── Historical data — equity (prior 2 days, loads on mount) ─────────────────
+  // ── Historical + pre-session — equity only ───────────────────────────────────
+  // Pre-session is loaded in sequence AFTER historical to avoid a race where
+  // getHistorical (slow for uncached BSE/BSESEN data) resolves after getPreSession
+  // and series.setData() wipes the pre-session candle added by series.update().
   useEffect(() => {
     if (paneType === 'options') return
     const series = seriesRef.current
@@ -203,35 +209,62 @@ export default function Chart({
     candleTimesRef.current = []
 
     let cancelled = false
-    api.getHistorical(symbol, tradingDate, intervalMinutes)
-      .then(({ candles }) => {
+    ;(async () => {
+      try {
+        const { candles } = await api.getHistorical(symbol, tradingDate, intervalMinutes)
         if (cancelled) return
-        if (candles.length === 0) return
-        series.setData(candles.map(toCandle))
-        chartRef.current?.timeScale().fitContent()
-        candleTimesRef.current = candles.map(c => c.time)
+        if (candles.length > 0) {
+          series.setData(candles.map(toCandle))
+          chartRef.current?.timeScale().fitContent()
+          candleTimesRef.current = candles.map(c => c.time)
 
-        const closes = candles.map(c => c.close)
-        const ema9vals = computeEMA(closes, 9)
-        const ema21vals = computeEMA(closes, 21)
+          const closes = candles.map(c => c.close)
+          const ema9vals = computeEMA(closes, 9)
+          const ema21vals = computeEMA(closes, 21)
 
-        const e9data: LineData[] = []
-        const e21data: LineData[] = []
-        for (let i = 0; i < candles.length; i++) {
-          if (ema9vals[i] !== null) e9data.push({ time: candles[i].time as Time, value: ema9vals[i]! })
-          if (ema21vals[i] !== null) e21data.push({ time: candles[i].time as Time, value: ema21vals[i]! })
+          const e9data: LineData[] = []
+          const e21data: LineData[] = []
+          for (let i = 0; i < candles.length; i++) {
+            if (ema9vals[i] !== null) e9data.push({ time: candles[i].time as Time, value: ema9vals[i]! })
+            if (ema21vals[i] !== null) e21data.push({ time: candles[i].time as Time, value: ema21vals[i]! })
+          }
+          e9.setData(e9data)
+          e21.setData(e21data)
+
+          const last9 = ema9vals.filter(v => v !== null)
+          const last21 = ema21vals.filter(v => v !== null)
+          if (last9.length) lastEma9Ref.current = last9[last9.length - 1]!
+          if (last21.length) lastEma21Ref.current = last21[last21.length - 1]!
         }
-        e9.setData(e9data)
-        e21.setData(e21data)
 
-        const last9 = ema9vals.filter(v => v !== null)
-        const last21 = ema21vals.filter(v => v !== null)
-        if (last9.length) lastEma9Ref.current = last9[last9.length - 1]!
-        if (last21.length) lastEma21Ref.current = last21[last21.length - 1]!
-      })
-      .catch(console.error)
+        if (!startTime) return
+
+        // Load pre-session candles in sequence — guaranteed to run after setData above
+        const preCandles = await api.getPreSession(symbol, tradingDate, startTime, intervalMinutes)
+        if (cancelled || preCandles.length === 0) return
+
+        const k9 = 2 / (9 + 1)
+        const k21 = 2 / (21 + 1)
+        for (let i = 0; i < preCandles.length; i++) {
+          const candle = preCandles[i]
+          series.update(toCandle(candle))
+          candleTimesRef.current.push(candle.time)
+          const t = candle.time as Time
+          if (lastEma9Ref.current !== null) {
+            lastEma9Ref.current = nextEMA(lastEma9Ref.current, preCandles[i].close, k9)
+            e9.update({ time: t, value: lastEma9Ref.current })
+          }
+          if (lastEma21Ref.current !== null) {
+            lastEma21Ref.current = nextEMA(lastEma21Ref.current, preCandles[i].close, k21)
+            e21.update({ time: t, value: lastEma21Ref.current })
+          }
+        }
+      } catch (err) {
+        console.error(err)
+      }
+    })()
     return () => { cancelled = true }
-  }, [symbol, tradingDate, intervalMinutes, paneType])
+  }, [symbol, tradingDate, intervalMinutes, paneType, startTime])
 
   // ── Historical data — options (full trading day, loads when session starts) ──
   // Backend caches options data during session start, so we wait for startTime.
@@ -259,7 +292,10 @@ export default function Chart({
         const startTs = new Date(`${tradingDate}T${normalizedStart}Z`).getTime() / 1000
         const intervalSecs = intervalMinutes * 60
         const startWindowTs = Math.floor(startTs / intervalSecs) * intervalSecs
-        const priorCandles = candles.filter(c => c.time < startWindowTs)
+        const cutoffTs = liveFromTs
+          ? Math.floor(liveFromTs / intervalSecs) * intervalSecs
+          : startWindowTs
+        const priorCandles = candles.filter(c => c.time < cutoffTs)
 
         series.setData(priorCandles.map(toCandle))
         candleTimesRef.current = priorCandles.map(c => c.time)
@@ -287,43 +323,7 @@ export default function Chart({
       })
       .catch(console.error)
     return () => { cancelled = true }
-  }, [symbol, tradingDate, intervalMinutes, paneType, strike, expiry, right, startTime])
-
-  // ── Pre-session candles — equity only (options already have full-day data) ──
-  useEffect(() => {
-    if (paneType === 'options') return  // options charts loaded full-day above
-    const series = seriesRef.current
-    const e9 = ema9Ref.current
-    const e21 = ema21Ref.current
-    if (!startTime || !series || !e9 || !e21) return
-
-    let cancelled = false
-    api.getPreSession(symbol, tradingDate, startTime, intervalMinutes)
-      .then(candles => {
-        if (cancelled) return
-        if (candles.length === 0) return
-        const closes = candles.map(c => c.close)
-        for (const candle of candles) {
-          series.update(toCandle(candle))
-          candleTimesRef.current.push(candle.time)
-        }
-        const k9 = 2 / (9 + 1)
-        const k21 = 2 / (21 + 1)
-        for (let i = 0; i < closes.length; i++) {
-          const t = candles[i].time as Time
-          if (lastEma9Ref.current !== null) {
-            lastEma9Ref.current = nextEMA(lastEma9Ref.current, closes[i], k9)
-            e9.update({ time: t, value: lastEma9Ref.current })
-          }
-          if (lastEma21Ref.current !== null) {
-            lastEma21Ref.current = nextEMA(lastEma21Ref.current, closes[i], k21)
-            e21.update({ time: t, value: lastEma21Ref.current })
-          }
-        }
-      })
-      .catch(console.error)
-    return () => { cancelled = true }
-  }, [startTime, symbol, tradingDate, intervalMinutes, paneType])
+  }, [symbol, tradingDate, intervalMinutes, paneType, strike, expiry, right, startTime, liveFromTs])
 
   // ── Live tick processing — latestTick is already filtered by caller ─────────
   const intervalSecs = CANDLE_INTERVAL_SECS(intervalMinutes)
