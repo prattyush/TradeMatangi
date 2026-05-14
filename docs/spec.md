@@ -133,6 +133,9 @@ Include this phase in the context only when you are implementing or planning pha
 Include this phase in the context only when you are implementing or planning phase 7. The phase 7 docs is located at `<project root>/docs/spec-phase7.md`
 
 
+## Bugs
+The current bugs are added phase wise in `<project root>/docs/bugs.md`
+
 ## Notes
 
 ### Phase-II Implementation Status (as of 2026-05-10, all PRs merged to dev)

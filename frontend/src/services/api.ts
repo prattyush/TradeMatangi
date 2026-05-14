@@ -97,7 +97,8 @@ export interface Trade {
   price: number
   timestamp: number
   session_id: string
-  right?: string   // "CE" or "PE" for options trades
+  right?: string    // "CE" or "PE" for options trades
+  strike?: number   // options strike
 }
 
 export interface Position {
@@ -265,9 +266,10 @@ const api = {
     order_type: 'TARGET' | 'LIMIT' | 'STOPLOSS',
     price: number,
     quantityOrRatio: number | null,
-    opts: { is_stoploss?: boolean; funds_ratio_pct?: number; right?: string } = {},
+    opts: { is_stoploss?: boolean; funds_ratio_pct?: number; right?: string; target_deviation_pct?: number } = {},
   ): Promise<Order> {
-    const body: Record<string, unknown> = { session_id, side, order_type, ...opts }
+    const { target_deviation_pct, ...restOpts } = opts
+    const body: Record<string, unknown> = { session_id, side, order_type, ...restOpts }
     if (order_type === 'LIMIT') {
       body.limit_price = price
     } else {
@@ -277,6 +279,9 @@ const api = {
       body.funds_ratio_pct = opts.funds_ratio_pct
     } else {
       body.quantity = quantityOrRatio
+    }
+    if (target_deviation_pct != null) {
+      body.target_deviation_pct = target_deviation_pct
     }
     const res = await fetch(`${BACKEND_URL}/api/orders`, {
       method: 'POST',
@@ -288,6 +293,26 @@ const api = {
       throw new InsufficientFundsError(data.detail || 'Insufficient funds')
     }
     if (!res.ok) throw new Error(`Place order failed: ${res.status}`)
+    return res.json()
+  },
+
+  async updateOrder(
+    session_id: string,
+    order_id: string,
+    triggerPrice?: number,
+    limitPrice?: number,
+    targetDeviationPct?: number,
+  ): Promise<Order> {
+    const body: Record<string, unknown> = {}
+    if (triggerPrice !== undefined) body.trigger_price = triggerPrice
+    if (limitPrice !== undefined) body.limit_price = limitPrice
+    if (targetDeviationPct !== undefined) body.target_deviation_pct = targetDeviationPct
+    const res = await fetch(`${BACKEND_URL}/api/orders/${order_id}?session_id=${session_id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+    if (!res.ok) throw new Error(`Update order failed: ${res.status}`)
     return res.json()
   },
 
@@ -313,10 +338,12 @@ const api = {
     return res.json()
   },
 
-  async cancelOrder(session_id: string, order_id: string): Promise<Order> {
+  async cancelOrder(session_id: string, order_id: string): Promise<Order | null> {
     const res = await fetch(`${BACKEND_URL}/api/orders/${order_id}?session_id=${session_id}`, {
       method: 'DELETE',
     })
+    // 404 means the order was already filled or cancelled (SSE race) — treat as success
+    if (res.status === 404) return null
     if (!res.ok) throw new Error(`Cancel order failed: ${res.status}`)
     return res.json()
   },

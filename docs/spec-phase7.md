@@ -28,6 +28,6 @@ kite = KiteConnect(api_key=credentials_config_parser['kite']['api_key'], access_
 
 ```
 4. The credentials for kite are present in the data/accesskeys.ini.
-5. Don't use Kite to fetch historical data as it only gives at minute granularity which is of no use. You can use Kite to fetch older data for today's date based on IST and then extrapolate the seconds data from the 1 minute granularity. I will leave the choice to you, but, don't use Kite to fetch historical data for simulated trading, or fetching data for yesterday or day before yesterday or any previous days.
+5. Don't use Kite to fetch historical data as it only gives at minute granularity which is of no use. You can use Kite to fetch older data for today's date based on IST and then extrapolate the seconds data from the 1 minute granularity. I will leave the choice to you, but, don't use Kite to fetch historical data for simulated trading, or fetching data for yesterday or day before yesterday or any previous days. You can also use ICICIDirect to fetch todays data as well, use as suited.
 6. If the access token has expired show an error in UI and mention shifting to ICICIDirect for Streaming Data and revert to ICICIDirect broker. If ICICIDirect is also failing, show an error to UI and stop.
 7. Sometimes the live streaming stops sending data and hangs for both kite and breeze (icicidirect). Please don't timeout and wait. A possible wait would be 5-10 minutes before raising any errors, or maybe wait indefinitely and wait for the user to stop the session.

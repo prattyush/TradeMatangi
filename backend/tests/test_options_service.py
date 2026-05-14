@@ -154,6 +154,37 @@ class TestGetWeeklyExpiryPostCutoff:
 
 
 # ---------------------------------------------------------------------------
+# BSESEN expiry — always Thursday regardless of cutoff date
+# ---------------------------------------------------------------------------
+
+class TestBSESENExpiry:
+    def test_weekday_always_thursday_before_cutoff(self):
+        assert _expiry_weekday(datetime.date(2025, 8, 31), "BSESEN") == 3
+
+    def test_weekday_always_thursday_after_cutoff(self):
+        # Post-cutoff NIFTY switches to Tuesday, but BSESEN stays Thursday
+        assert _expiry_weekday(datetime.date(2025, 9, 1), "BSESEN") == 3
+        assert _expiry_weekday(datetime.date(2026, 5, 6), "BSESEN") == 3
+
+    def test_weekly_expiry_thursday_post_cutoff(self):
+        # 2025-09-15 (Monday) → next Thursday is 2025-09-18 (NIFTY would be Tuesday)
+        assert get_weekly_expiry("2025-09-15", "BSESEN") == "2025-09-18"
+
+    def test_weekly_expiry_on_thursday_itself(self):
+        # Thursday 2025-09-18 → same day
+        assert get_weekly_expiry("2025-09-18", "BSESEN") == "2025-09-18"
+
+    def test_weekly_expiry_day_after_thursday(self):
+        # Friday 2025-09-19 → next Thursday 2025-09-25
+        assert get_weekly_expiry("2025-09-19", "BSESEN") == "2025-09-25"
+
+    def test_get_expiry_date_routes_to_weekly(self):
+        # get_expiry_date for BSESEN should return the next Thursday
+        result = get_expiry_date("BSESEN", "2025-09-15")
+        assert result == "2025-09-18"
+
+
+# ---------------------------------------------------------------------------
 # get_monthly_expiry — pre-cutoff (last Thursday of month)
 # ---------------------------------------------------------------------------
 

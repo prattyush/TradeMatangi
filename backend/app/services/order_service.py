@@ -31,10 +31,10 @@ def _ensure_session(session_id: str) -> None:
         _orders[session_id] = {}
 
 
-def _target_limit_price(side: TradeSide, trigger_price: float) -> float:
+def _target_limit_price(side: TradeSide, trigger_price: float, deviation: float = _TARGET_DEVIATION) -> float:
     if side == TradeSide.BUY:
-        return round(trigger_price * (1 + _TARGET_DEVIATION), 2)
-    return round(trigger_price * (1 - _TARGET_DEVIATION), 2)
+        return round(trigger_price * (1 + deviation), 2)
+    return round(trigger_price * (1 - deviation), 2)
 
 
 def compute_funds_ratio_quantity(
@@ -113,6 +113,7 @@ def place_order(
     limit_price: float | None = None,
     is_stoploss: bool = False,
     right: str | None = None,
+    target_deviation_pct: float = _TARGET_DEVIATION,
 ) -> Order:
     _ensure_session(session_id)
 
@@ -120,7 +121,7 @@ def place_order(
         if trigger_price is None:
             raise ValueError("trigger_price is required for TARGET orders")
         actual_trigger = trigger_price
-        actual_limit = _target_limit_price(side, trigger_price)
+        actual_limit = _target_limit_price(side, trigger_price, target_deviation_pct)
     elif order_type == OrderType.STOPLOSS:
         if trigger_price is None:
             raise ValueError("trigger_price is required for STOPLOSS orders")
@@ -179,6 +180,56 @@ def cancel_order(session_id: str, order_id: str, trading_date: str) -> Order | N
     if order.side == TradeSide.BUY and order.reserved_amount > 0 and not order.is_stoploss:
         from app.services.wallet_service import credit
         credit(FIXED_USER_ID, order.reserved_amount, trading_date)
+    _write_order_to_db(order)
+    return order
+
+
+def update_order(
+    session_id: str,
+    order_id: str,
+    trading_date: str,
+    trigger_price: float | None = None,
+    limit_price: float | None = None,
+    target_deviation_pct: float = _TARGET_DEVIATION,
+) -> Order | None:
+    """Update trigger/limit price of a PENDING order. Handles wallet re-reservation for BUY orders."""
+    order = _orders.get(session_id, {}).get(order_id)
+    if order is None or order.status != OrderStatus.PENDING:
+        return None
+
+    if order.order_type == OrderType.TARGET and trigger_price is not None:
+        new_trigger = trigger_price
+        new_limit = _target_limit_price(order.side, trigger_price, target_deviation_pct)
+        if order.side == TradeSide.BUY and not order.is_stoploss:
+            new_reserved = round(order.quantity * new_limit, 2)
+            diff = new_reserved - order.reserved_amount
+            from app.services.wallet_service import credit, debit
+            if diff > 0:
+                debit(FIXED_USER_ID, diff, trading_date)
+            elif diff < 0:
+                credit(FIXED_USER_ID, -diff, trading_date)
+            order.reserved_amount = new_reserved
+        order.trigger_price = new_trigger
+        order.limit_price = new_limit
+
+    elif order.order_type == OrderType.LIMIT and limit_price is not None:
+        new_limit = limit_price
+        if order.side == TradeSide.BUY and not order.is_stoploss:
+            new_reserved = round(order.quantity * new_limit, 2)
+            diff = new_reserved - order.reserved_amount
+            from app.services.wallet_service import credit, debit
+            if diff > 0:
+                debit(FIXED_USER_ID, diff, trading_date)
+            elif diff < 0:
+                credit(FIXED_USER_ID, -diff, trading_date)
+            order.reserved_amount = new_reserved
+        order.limit_price = new_limit
+        order.trigger_price = new_limit
+
+    elif order.order_type == OrderType.STOPLOSS and trigger_price is not None:
+        order.trigger_price = trigger_price
+        order.limit_price = trigger_price
+
     _write_order_to_db(order)
     return order
 

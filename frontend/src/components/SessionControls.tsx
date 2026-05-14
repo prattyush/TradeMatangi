@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, CSSProperties } from 'react'
+import { useState, useEffect, CSSProperties } from 'react'
 import { SessionState } from '../hooks/useSimulation'
 import api, { SymbolInfo } from '../services/api'
 import { InstrumentConfig } from '../hooks/useSimulation'
@@ -13,14 +13,13 @@ interface Props {
   onStop: () => Promise<void>
   onPause: () => Promise<void>
   onResume: () => Promise<void>
-  // Options config callback — fires when options ATM data is resolved
   onOptionsReady: (cfg: OptionsReadyConfig | null) => void
 }
 
 export interface OptionsReadyConfig {
-  strike: number      // ATM/reference strike (= atmStrike when offset=0)
-  ceStrike: number    // CE streaming strike: ATM + offset * interval
-  peStrike: number    // PE streaming strike: ATM - offset * interval
+  strike: number
+  ceStrike: number
+  peStrike: number
   expiry: string
   atmStrike: number
   underlyingPrice: number
@@ -69,11 +68,10 @@ function lastWeekday(): string {
 }
 
 const STRIKE_INTERVALS: Record<string, number> = {
-  NIFTY: 50, RELIND: 5, TATMOT: 5, TATPOW: 5,
+  NIFTY: 50, BSESEN: 100, RELIND: 5, TATMOT: 5, TATPOW: 5,
 }
 
-// Indices cannot be traded as equity — must use options
-const OPTIONS_ONLY_SYMBOLS = new Set(['NIFTY'])
+const OPTIONS_ONLY_SYMBOLS = new Set(['NIFTY', 'BSESEN'])
 
 export default function SessionControls({
   sessionState, currentSymbol, currentDate,
@@ -88,23 +86,17 @@ export default function SessionControls({
   const [dateError, setDateError] = useState<string | null>(null)
   const [startError, setStartError] = useState<string | null>(null)
 
-  // Instrument type — NIFTY forces options
   const [instrumentType, setInstrumentType] = useState<'equity' | 'options'>(
     OPTIONS_ONLY_SYMBOLS.has(currentSymbol) ? 'options' : 'equity'
   )
-
-  // Options config state
   const [optionsOffset, setOptionsOffset] = useState(0)
-  const [optionsConfig, setOptionsConfig] = useState<OptionsReadyConfig | null>(null)
-  const [fetchingOptions, setFetchingOptions] = useState(false)
-  const [optionsError, setOptionsError] = useState<string | null>(null)
 
   const idle = sessionState === 'idle' || sessionState === 'ended'
   const running = sessionState === 'running'
   const paused = sessionState === 'paused'
   const today = formatLocalDate(new Date())
 
-  // Load symbols once
+  // Load symbols once on mount; set date to last weekday
   useEffect(() => {
     api.getSymbols()
       .then(list => {
@@ -115,65 +107,14 @@ export default function SessionControls({
       })
       .catch(() => {})
     onDateChange(lastWeekday())
-  }, [])
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Force options when NIFTY is selected
   useEffect(() => {
     if (OPTIONS_ONLY_SYMBOLS.has(currentSymbol) && instrumentType !== 'options') {
       setInstrumentType('options')
     }
-  }, [currentSymbol])
-
-  // Fetch ATM price + expiry whenever we're in options mode and symbol/date changes
-  const fetchOptionsData = useCallback(async (symbol: string, date: string, offset: number) => {
-    if (!date) return
-    setFetchingOptions(true)
-    setOptionsError(null)
-    try {
-      const [priceRes, expiryRes] = await Promise.all([
-        api.getPriceAt(symbol, date, '09:15'),
-        api.getExpiry(symbol, date),
-      ])
-      const interval = STRIKE_INTERVALS[symbol] ?? 50
-      const atmStrike = Math.round(priceRes.price / interval) * interval
-      // OTM direction: positive offset = higher strikes for CE, lower for PE
-      const ceStrike = atmStrike + offset * interval
-      const peStrike = atmStrike - offset * interval
-      const cfg: OptionsReadyConfig = {
-        strike: atmStrike,
-        ceStrike,
-        peStrike,
-        expiry: expiryRes.expiry,
-        atmStrike,
-        underlyingPrice: priceRes.price,
-      }
-      setOptionsConfig(cfg)
-      onOptionsReady(cfg)
-    } catch {
-      setOptionsError('Could not fetch options data — check backend connection')
-      setOptionsConfig(null)
-      onOptionsReady(null)
-    } finally {
-      setFetchingOptions(false)
-    }
-  }, [onOptionsReady])
-
-  useEffect(() => {
-    if (instrumentType === 'options' && currentDate && idle) {
-      fetchOptionsData(currentSymbol, currentDate, optionsOffset)
-    }
-    if (instrumentType === 'equity') {
-      setOptionsConfig(null)
-      onOptionsReady(null)
-    }
-  }, [instrumentType, currentSymbol, currentDate])
-
-  const handleOffsetChange = (newOffset: number) => {
-    setOptionsOffset(newOffset)
-    if (instrumentType === 'options' && currentDate) {
-      fetchOptionsData(currentSymbol, currentDate, newOffset)
-    }
-  }
+  }, [currentSymbol]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleDateChange = (d: string) => {
     if (!d) return
@@ -184,14 +125,14 @@ export default function SessionControls({
       return
     }
     setDateError(null)
+    setStartError(null)
     onDateChange(d)
   }
 
   const handleSymbolChange = (sym: string) => {
+    setStartError(null)
     onSymbolChange(sym)
-    if (OPTIONS_ONLY_SYMBOLS.has(sym)) {
-      setInstrumentType('options')
-    }
+    if (OPTIONS_ONLY_SYMBOLS.has(sym)) setInstrumentType('options')
   }
 
   const handleStart = async () => {
@@ -199,15 +140,44 @@ export default function SessionControls({
     setStartError(null)
     setLoading(true)
     try {
-      const config: InstrumentConfig = instrumentType === 'options' && optionsConfig
-        ? {
-            instrument_type: 'options',
-            strike: optionsConfig.strike,
-            expiry: optionsConfig.expiry,
-            strike_ce: optionsConfig.ceStrike,
-            strike_pe: optionsConfig.peStrike,
+      let config: InstrumentConfig = { instrument_type: 'equity' }
+
+      if (instrumentType === 'options') {
+        // Fetch ATM price + expiry only when the user actually starts
+        try {
+          const [priceRes, expiryRes] = await Promise.all([
+            api.getPriceAt(currentSymbol, currentDate, '09:15'),
+            api.getExpiry(currentSymbol, currentDate),
+          ])
+          const interval = STRIKE_INTERVALS[currentSymbol] ?? 50
+          const atmStrike = Math.round(priceRes.price / interval) * interval
+          const ceStrike = atmStrike + optionsOffset * interval
+          const peStrike = atmStrike - optionsOffset * interval
+          const cfg: OptionsReadyConfig = {
+            strike: atmStrike,
+            ceStrike,
+            peStrike,
+            expiry: expiryRes.expiry,
+            atmStrike,
+            underlyingPrice: priceRes.price,
           }
-        : { instrument_type: 'equity' }
+          onOptionsReady(cfg)
+          config = {
+            instrument_type: 'options',
+            strike: cfg.strike,
+            expiry: cfg.expiry,
+            strike_ce: cfg.ceStrike,
+            strike_pe: cfg.peStrike,
+          }
+        } catch {
+          setStartError('Could not fetch options data — check backend connection')
+          setLoading(false)
+          return
+        }
+      } else {
+        onOptionsReady(null)
+      }
+
       await onStart(startTime + ':00', speed, config)
     } catch (e) {
       setStartError(e instanceof Error ? e.message : 'Failed to start session')
@@ -216,8 +186,7 @@ export default function SessionControls({
     }
   }
 
-  const canStart = idle && !loading && !!currentDate && !dateError &&
-    (instrumentType === 'equity' || (!!optionsConfig && !fetchingOptions))
+  const canStart = idle && !loading && !!currentDate && !dateError
 
   return (
     <div style={{ padding: '10px 16px', background: '#161b22', borderBottom: '1px solid #30363d' }}>
@@ -288,7 +257,9 @@ export default function SessionControls({
             onClick={handleStart}
             disabled={!canStart}
           >
-            {loading ? 'Loading data…' : fetchingOptions ? 'Fetching strike…' : 'Start Replay'}
+            {loading
+              ? (instrumentType === 'options' ? 'Fetching strike…' : 'Loading data…')
+              : 'Start Replay'}
           </button>
         )}
         {running && <button style={btn('#6e40c9')} onClick={onPause}>Pause</button>}
@@ -298,33 +269,20 @@ export default function SessionControls({
           <span style={{ ...label, color: '#f85149' }}>Session ended — configure above and restart</span>
         )}
 
-        {/* Options offset + status — floated right */}
-        {instrumentType === 'options' && (
+        {/* OTM offset for options — floated right, no pre-fetch status */}
+        {instrumentType === 'options' && idle && (
           <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 10 }}>
-            {idle && (
-              <label style={{ ...label, fontSize: 12 }}>
-                OTM&nbsp;
-                <input
-                  type="number"
-                  value={optionsOffset}
-                  onChange={e => handleOffsetChange(parseInt(e.target.value) || 0)}
-                  style={{ ...inputStyle, width: 55, fontSize: 12 }}
-                  min={-10} max={10}
-                />
-                <span style={{ marginLeft: 4, fontSize: 11, color: '#484f58' }}>(0=ATM)</span>
-              </label>
-            )}
-            {fetchingOptions && (
-              <span style={{ fontSize: 12, color: '#8b949e' }}>Fetching…</span>
-            )}
-            {optionsConfig && !fetchingOptions && (
-              <span style={{ fontSize: 12, color: '#3fb950' }}>
-                Strike: {optionsConfig.strike} &nbsp;|&nbsp; Expiry: {optionsConfig.expiry}
-              </span>
-            )}
-            {optionsError && (
-              <span style={{ fontSize: 12, color: '#f85149' }}>{optionsError}</span>
-            )}
+            <label style={{ ...label, fontSize: 12 }}>
+              OTM&nbsp;
+              <input
+                type="number"
+                value={optionsOffset}
+                onChange={e => setOptionsOffset(parseInt(e.target.value) || 0)}
+                style={{ ...inputStyle, width: 55, fontSize: 12 }}
+                min={-10} max={10}
+              />
+              <span style={{ marginLeft: 4, fontSize: 11, color: '#484f58' }}>(0=ATM)</span>
+            </label>
           </div>
         )}
       </div>

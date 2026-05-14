@@ -27,7 +27,8 @@ This phase is what will differentiate this platform from others. This phase we w
 ##### AggresiveStoploss Strategy
 1. This strategy is a trade management strategy and can only be selected if a position is open.
 2. This strategy would wait for the bar close and then change the stoploss to 1% below or above the closing price, depending upon whether it is a buy or sell order.
-3. If a stoploss order is already open it would use that and only change the price. And if not at bar close it would find the current open position quantity and direction and create a stoploss order accordingly.
+3. If a stoploss order is already open it would use that and only change the price. 
+4. If no stoploss order is present, it can create one with same open position quantity or ignore it, do as suited.
 
 
 
