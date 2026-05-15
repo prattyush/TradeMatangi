@@ -15,6 +15,7 @@ const BROKERAGE_KEY = 'brokeragePerOrder'
 const STRATEGY_INTERVAL_KEY = 'strategyIntervalSecs'
 const AUTOSTOP_TRIGGER_TYPE_KEY = 'autostopTriggerType'
 const AUTOSTOP_DEVIATION_PCT_KEY = 'autostopDeviationPct'
+const HISTORICAL_DAYS_KEY = 'historicalDays'
 
 export function loadFundsRatioMode(): boolean {
   return localStorage.getItem(FUNDS_RATIO_MODE_KEY) === 'true'
@@ -58,6 +59,12 @@ export function loadAutostopDeviationPct(): number {
   return isNaN(v) || v < 0 ? 1.0 : v
 }
 
+// Historical days for chart context (default 2)
+export function loadHistoricalDays(): number {
+  const v = parseInt(localStorage.getItem(HISTORICAL_DAYS_KEY) ?? '')
+  return isNaN(v) || v < 1 || v > 5 ? 2 : v
+}
+
 interface Props {
   date: string
   onWalletReset: () => void
@@ -65,9 +72,10 @@ interface Props {
   onTargetDeviationChange: (pct: number) => void  // fraction e.g. 0.01
   onBrokerageChange: (brokerage: number) => void  // rupees per order
   onStrategySettingsChange: (intervalSecs: number, triggerType: 'bar' | 'deviation', deviationPct: number) => void
+  onHistoricalDaysChange?: (days: number) => void
 }
 
-export default function SettingsModal({ date, onWalletReset, onFundsRatioChange, onTargetDeviationChange, onBrokerageChange, onStrategySettingsChange }: Props) {
+export default function SettingsModal({ date, onWalletReset, onFundsRatioChange, onTargetDeviationChange, onBrokerageChange, onStrategySettingsChange, onHistoricalDaysChange }: Props) {
   const [open, setOpen] = useState(false)
   const [customAmount, setCustomAmount] = useState('')
   const [status, setStatus] = useState<string | null>(null)
@@ -97,6 +105,19 @@ export default function SettingsModal({ date, onWalletReset, onFundsRatioChange,
   const [autostopDeviationPctInput, setAutostopDeviationPctInput] = useState<string>(() =>
     String(loadAutostopDeviationPct())
   )
+
+  // Historical days
+  const [historicalDays, setHistoricalDays] = useState(loadHistoricalDays)
+
+  useEffect(() => {
+    // Sync from backend on open
+    if (open) {
+      api.getUserSettings().then(s => {
+        setHistoricalDays(s.historical_days)
+        localStorage.setItem(HISTORICAL_DAYS_KEY, String(s.historical_days))
+      }).catch(() => {})
+    }
+  }, [open])
 
   // Persist + notify parent whenever mode or ratios change
   useEffect(() => {
@@ -345,6 +366,49 @@ export default function SettingsModal({ date, onWalletReset, onFundsRatioChange,
               </div>
               <div style={{ fontSize: 11, color: '#484f58', marginTop: 6 }}>
                 Flat brokerage per order + exchange charges (STT, GST) computed per trade
+              </div>
+            </div>
+
+            {/* Historical Days */}
+            <div style={{ borderTop: '1px solid #21262d', paddingTop: 16 }}>
+              <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 10, fontWeight: 600 }}>
+                HISTORICAL DAYS
+              </div>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                <input
+                  type="number"
+                  value={historicalDays}
+                  onChange={e => {
+                    const v = parseInt(e.target.value)
+                    if (!isNaN(v) && v >= 1 && v <= 5) setHistoricalDays(v)
+                  }}
+                  min={1} max={5} step={1}
+                  style={{
+                    width: 70, padding: '5px 8px', background: '#0d1117',
+                    border: '1px solid #30363d', borderRadius: 6,
+                    color: '#e6edf3', fontSize: 13, textAlign: 'center',
+                  }}
+                />
+                <span style={{ fontSize: 12, color: '#8b949e' }}>days (1–5)</span>
+                <button
+                  onClick={() => {
+                    localStorage.setItem(HISTORICAL_DAYS_KEY, String(historicalDays))
+                    api.updateUserSettings({ historical_days: historicalDays }).catch(() => {})
+                    onHistoricalDaysChange?.(historicalDays)
+                    setStatus(`Historical days saved: ${historicalDays}`)
+                    setTimeout(() => setStatus(null), 2000)
+                  }}
+                  style={{
+                    padding: '5px 12px', background: '#1f6feb',
+                    border: 'none', borderRadius: 6, color: '#fff',
+                    cursor: 'pointer', fontSize: 12,
+                  }}
+                >
+                  Save
+                </button>
+              </div>
+              <div style={{ fontSize: 11, color: '#484f58', marginTop: 6 }}>
+                Prior trading days of chart context loaded at session start
               </div>
             </div>
 

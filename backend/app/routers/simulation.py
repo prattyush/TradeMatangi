@@ -102,6 +102,7 @@ async def start_simulation(
         strike_pe=req.strike_pe,
         brokerage_per_order=req.brokerage_per_order,
         strategy_interval_secs=req.strategy_interval_secs,
+        session_type=req.session_type,
     )
     sim_svc.start_session(session)
     return SimulationStartResponse(
@@ -118,6 +119,7 @@ async def start_simulation(
         strike_ce=session.strike_ce,
         strike_pe=session.strike_pe,
         brokerage_per_order=session.brokerage_per_order,
+        session_type=session.session_type,
     )
 
 

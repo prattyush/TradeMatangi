@@ -47,6 +47,7 @@ export interface InstrumentConfig {
   strike_pe?: number
   brokerage_per_order?: number
   strategy_interval_secs?: number
+  session_type?: 'sim' | 'paper'
 }
 
 export function useSimulation() {

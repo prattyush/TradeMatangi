@@ -2,7 +2,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.routers import data, simulation, trading, stream, orders, wallet, auth, analysis, strategies
+from app.routers import data, simulation, trading, stream, orders, wallet, auth, analysis, strategies, users
 
 
 @asynccontextmanager
@@ -36,6 +36,7 @@ app.include_router(orders.router)
 app.include_router(wallet.router)
 app.include_router(analysis.router)
 app.include_router(strategies.router)
+app.include_router(users.router)
 
 
 @app.get("/health")

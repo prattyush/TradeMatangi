@@ -65,6 +65,7 @@ async def buy(req: TradeRequest):
         quantity=lot_size,
         brokerage_per_order=session.brokerage_per_order,
         user_id=session.user_id,
+        session_type=session.session_type,
     )
     return trade
 
@@ -97,6 +98,7 @@ async def sell(req: TradeRequest):
         quantity=lot_size,
         brokerage_per_order=session.brokerage_per_order,
         user_id=session.user_id,
+        session_type=session.session_type,
     )
     return trade
 

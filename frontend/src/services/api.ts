@@ -71,6 +71,11 @@ export interface SimulationStartRequest {
   strike_pe?: number  // PE streaming strike (OTM direction: ATM - offset)
   brokerage_per_order?: number  // flat brokerage per order (default 1)
   strategy_interval_secs?: number  // candle interval for all strategies (180=3min, 300=5min)
+  session_type?: 'sim' | 'paper'   // "paper" when date == today IST
+}
+
+export interface UserSettingsResponse {
+  historical_days: number
 }
 
 // ── Strategy types ──────────────────────────────────────────────────────────
@@ -107,6 +112,7 @@ export interface SimulationStartResponse {
   right: string | null
   strike_ce: number | null
   strike_pe: number | null
+  session_type: string
 }
 
 export interface WalletResponse {
@@ -129,6 +135,7 @@ export interface SessionSummary {
   date: string
   start_time: string | null
   instrument_type: string
+  session_type: string
   strike: number | null
   expiry: string | null
   session_capital: number
@@ -216,10 +223,11 @@ const api = {
     return data.dates as string[]
   },
 
-  async getHistorical(symbol = 'NIFTY', tradingDate?: string, intervalMinutes?: number): Promise<HistoricalDataResponse> {
+  async getHistorical(symbol = 'NIFTY', tradingDate?: string, intervalMinutes?: number, historicalDays?: number): Promise<HistoricalDataResponse> {
     let url = `${BACKEND_URL}/api/data/historical?symbol=${encodeURIComponent(symbol)}`
     if (tradingDate) url += `&trading_date=${tradingDate}`
     if (intervalMinutes) url += `&interval_minutes=${intervalMinutes}`
+    if (historicalDays) url += `&historical_days=${historicalDays}`
     const res = await fetch(url)
     if (!res.ok) throw new Error(`Historical data fetch failed: ${res.status}`)
     return res.json()
@@ -232,6 +240,7 @@ const api = {
     expiry: string,
     right: string,
     intervalMinutes?: number,
+    historicalDays?: number,
   ): Promise<HistoricalDataResponse> {
     let url = `${BACKEND_URL}/api/data/options-historical`
       + `?symbol=${encodeURIComponent(symbol)}`
@@ -240,6 +249,7 @@ const api = {
       + `&expiry=${expiry}`
       + `&right=${right}`
     if (intervalMinutes) url += `&interval_minutes=${intervalMinutes}`
+    if (historicalDays) url += `&historical_days=${historicalDays}`
     const res = await fetch(url)
     if (!res.ok) throw new Error(`Options historical data fetch failed: ${res.status}`)
     return res.json()
@@ -481,12 +491,14 @@ const api = {
     startDate?: string
     endDate?: string
     instrumentType?: string
+    sessionType?: string
   } = {}): Promise<SessionSummary[]> {
     const params = new URLSearchParams()
     if (opts.symbol) params.set('symbol', opts.symbol)
     if (opts.startDate) params.set('start_date', opts.startDate)
     if (opts.endDate) params.set('end_date', opts.endDate)
     if (opts.instrumentType) params.set('instrument_type', opts.instrumentType)
+    if (opts.sessionType) params.set('session_type', opts.sessionType)
     const res = await fetch(`${BACKEND_URL}/api/analysis/sessions?${params}`, {
       headers: _authHeaders(),
     })
@@ -531,6 +543,26 @@ const api = {
       headers: _authHeaders(),
     })
     if (!res.ok) throw new Error(`List strategies failed: ${res.status}`)
+    return res.json()
+  },
+
+  // ── User Settings ──────────────────────────────────────────────────────────
+
+  async getUserSettings(): Promise<UserSettingsResponse> {
+    const res = await fetch(`${BACKEND_URL}/api/users/settings`, {
+      headers: _authHeaders(),
+    })
+    if (!res.ok) return { historical_days: 2 }
+    return res.json()
+  },
+
+  async updateUserSettings(settings: Partial<UserSettingsResponse>): Promise<UserSettingsResponse> {
+    const res = await fetch(`${BACKEND_URL}/api/users/settings`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', ..._authHeaders() },
+      body: JSON.stringify(settings),
+    })
+    if (!res.ok) throw new Error(`Update user settings failed: ${res.status}`)
     return res.json()
   },
 }

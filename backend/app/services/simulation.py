@@ -12,7 +12,7 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from decimal import Decimal
-from typing import Optional
+from typing import Any, Optional
 
 from app.models.schemas import SimulationState
 from app.services.data_loader import iter_ticks
@@ -43,9 +43,13 @@ class SimulationSession:
     strike_pe: Optional[int] = None    # PE streaming strike (equals strike when offset=0)
     brokerage_per_order: float = 1.0    # flat brokerage per trade (from session start config)
     strategy_interval_secs: int = 180   # candle interval for all strategies (180=3min, 300=5min)
+    session_type: str = "sim"           # "sim" (historical replay) or "paper" (live data)
     queue: asyncio.Queue = field(default_factory=lambda: asyncio.Queue(maxsize=3000))
+    # paper_tick_queue: receives raw tick dicts from KiteBroadcaster / BreezeStreamManager
+    paper_tick_queue: asyncio.Queue = field(default_factory=lambda: asyncio.Queue(maxsize=1000))
     resume_event: asyncio.Event = field(default_factory=asyncio.Event)
     task: Optional[asyncio.Task] = None
+    stream_manager: Any = field(default=None, repr=False, compare=False)
 
 
 # Registry of active sessions
@@ -66,6 +70,7 @@ def _upsert_session_to_db(session: SimulationSession) -> None:
             "state": session.state.value,
             "session_capital": Decimal(str(session.session_capital)),
             "instrument_type": session.instrument_type,
+            "session_type": session.session_type,
         }
         if session.instrument_type == "options":
             item["strike"] = session.strike
@@ -94,6 +99,7 @@ def create_session(
     strike_pe: Optional[int] = None,
     brokerage_per_order: float = 1.0,
     strategy_interval_secs: int = 180,
+    session_type: str = "sim",
 ) -> SimulationSession:
     from app.services import wallet_service
     session_id = str(uuid.uuid4())
@@ -114,6 +120,7 @@ def create_session(
         strike_pe=strike_pe if strike_pe is not None else strike,
         brokerage_per_order=brokerage_per_order,
         strategy_interval_secs=strategy_interval_secs,
+        session_type=session_type,
     )
     session.resume_event.set()  # not paused initially
     _sessions[session_id] = session
@@ -156,6 +163,7 @@ def _emit_tick_and_check_orders(
             right=order.right,
             brokerage_per_order=session.brokerage_per_order,
             user_id=session.user_id,
+            session_type=session.session_type,
         )
         fill_events.append({
             "type": "order_filled",
@@ -305,9 +313,255 @@ async def _run_session(session: SimulationSession) -> None:
             pass
 
 
+def _build_breeze_instruments(session: SimulationSession) -> list[dict]:
+    """Build a list of Breeze feed subscription dicts for a paper session."""
+    from app.config import SUPPORTED_SYMBOLS
+    sym_info = SUPPORTED_SYMBOLS.get(session.symbol, {})
+    instruments = [{
+        "exchange_code": sym_info.get("exchange_code", "NSE"),
+        "stock_code": sym_info.get("breeze_stock_code", session.symbol),
+        "product_type": sym_info.get("product_type", "cash"),
+    }]
+    if session.instrument_type == "options" and session.expiry:
+        opts_exchange = sym_info.get("options_exchange_code", "NFO")
+        ce_strike = session.strike_ce or session.strike
+        pe_strike = session.strike_pe or session.strike
+        expiry_kite = f"{session.expiry}T06:00:00.000Z"
+        if session.right in (None, "CE") and ce_strike:
+            instruments.append({
+                "exchange_code": opts_exchange,
+                "stock_code": sym_info.get("breeze_stock_code", session.symbol),
+                "product_type": "options",
+                "expiry_date": expiry_kite,
+                "strike_price": str(ce_strike),
+                "right": "call",
+            })
+        if session.right in (None, "PE") and pe_strike:
+            instruments.append({
+                "exchange_code": opts_exchange,
+                "stock_code": sym_info.get("breeze_stock_code", session.symbol),
+                "product_type": "options",
+                "expiry_date": expiry_kite,
+                "strike_price": str(pe_strike),
+                "right": "put",
+            })
+    return instruments
+
+
+async def _run_paper_session(session: SimulationSession) -> None:
+    """
+    Paper trading session loop.
+
+    Phase 1 — Fast pre-session replay:
+      Fetch today's Breeze historical data (up to last available second), then
+      replay all ticks at near-instant speed so the chart is populated on connect.
+
+    Phase 2 — Live streaming:
+      Register with KiteBroadcaster (or fall back to BreezeStreamManager).
+      The broadcaster pushes 1-second OHLC dicts into session.paper_tick_queue.
+      This loop reads those dicts, evaluates orders/strategies, and puts ticks
+      on session.queue for SSE delivery — exactly as _run_session does.
+    """
+    session.state = SimulationState.RUNNING
+
+    start_event = {
+        "type": "session_started",
+        "session_id": session.session_id,
+        "trading_date": session.date,
+        "start_time": session.start_time,
+    }
+    await session.queue.put(json.dumps(start_event))
+
+    try:
+        # ── Phase 1: fast-replay historical data for today ────────────────────
+        try:
+            from app.services.broker_service import fetch_historical
+            fetch_historical(session.symbol, session.date)
+        except Exception as exc:
+            logger.warning("Paper session %s: could not pre-fetch today's data: %s", session.session_id, exc)
+
+        # Dual-stream options pre-replay
+        if session.instrument_type == "options" and session.strike and session.expiry and session.right is None:
+            from app.services.options_service import options_iter_ticks
+            ce_strike = session.strike_ce or session.strike
+            pe_strike = session.strike_pe or session.strike
+            ce_by_time = {t["time"]: t for t in options_iter_ticks(
+                session.symbol, session.date, ce_strike, session.expiry, "CE", session.start_time
+            )}
+            pe_by_time = {t["time"]: t for t in options_iter_ticks(
+                session.symbol, session.date, pe_strike, session.expiry, "PE", session.start_time
+            )}
+            for eq_tick in iter_ticks(session.symbol, session.date, session.start_time):
+                if session.state == SimulationState.ENDED:
+                    break
+                session.last_price = eq_tick["close"]
+                ts = eq_tick["time"]
+                fill_events = _emit_tick_and_check_orders(session, eq_tick, None)
+                if ts in ce_by_time:
+                    ce_tick = {**ce_by_time[ts], "right": "CE"}
+                    session.last_price_ce = ce_tick["close"]
+                    fill_events += _emit_tick_and_check_orders(session, ce_tick, "CE")
+                if ts in pe_by_time:
+                    pe_tick = {**pe_by_time[ts], "right": "PE"}
+                    session.last_price_pe = pe_tick["close"]
+                    fill_events += _emit_tick_and_check_orders(session, pe_tick, "PE")
+                for fe in fill_events:
+                    try:
+                        session.queue.put_nowait(json.dumps(fe))
+                    except asyncio.QueueFull:
+                        pass
+                await asyncio.sleep(0.001)
+
+        elif session.instrument_type == "options" and session.strike and session.expiry and session.right:
+            from app.services.options_service import options_iter_ticks
+            for tick in options_iter_ticks(
+                session.symbol, session.date, session.strike,
+                session.expiry, session.right, session.start_time,
+            ):
+                if session.state == SimulationState.ENDED:
+                    break
+                session.last_price = tick["close"]
+                fill_events = _emit_tick_and_check_orders(session, tick, session.right)
+                for fe in fill_events:
+                    try:
+                        session.queue.put_nowait(json.dumps(fe))
+                    except asyncio.QueueFull:
+                        pass
+                await asyncio.sleep(0.001)
+
+        else:
+            for tick in iter_ticks(session.symbol, session.date, session.start_time):
+                if session.state == SimulationState.ENDED:
+                    break
+                session.last_price = tick["close"]
+                session.current_time = str(tick["time"])
+                fill_events = _emit_tick_and_check_orders(session, tick, None)
+                for fe in fill_events:
+                    try:
+                        session.queue.put_nowait(json.dumps(fe))
+                    except asyncio.QueueFull:
+                        pass
+                await asyncio.sleep(0.001)
+
+        if session.state == SimulationState.ENDED:
+            return
+
+        # ── Phase 2: live streaming ────────────────────────────────────────────
+        loop = asyncio.get_event_loop()
+        using_kite = False
+
+        try:
+            from app.services import kite_service
+            tokens: list[int] = []
+            rights: list[str | None] = []
+
+            eq_exchange, eq_token = kite_service.fetch_equity_instrument_token(session.symbol)
+            tokens.append(eq_token)
+            rights.append(None)
+
+            if session.instrument_type == "options" and session.expiry:
+                ce_strike = session.strike_ce or session.strike
+                pe_strike = session.strike_pe or session.strike
+                if session.right in (None, "CE") and ce_strike:
+                    ce_token = kite_service.fetch_options_instrument_token(
+                        session.symbol, session.expiry, ce_strike, "CE"
+                    )
+                    tokens.append(ce_token)
+                    rights.append("CE")
+                if session.right in (None, "PE") and pe_strike:
+                    pe_token = kite_service.fetch_options_instrument_token(
+                        session.symbol, session.expiry, pe_strike, "PE"
+                    )
+                    tokens.append(pe_token)
+                    rights.append("PE")
+
+            kite_service.get_broadcaster().register(
+                session.session_id, tokens, rights,
+                session.paper_tick_queue, loop,
+            )
+            using_kite = True
+            logger.info("Paper session %s: Kite live streaming started (%d tokens)", session.session_id, len(tokens))
+
+        except (Exception,) as exc:
+            # Kite unavailable — emit error and try Breeze fallback
+            err_msg = f"Kite unavailable ({exc}). Switching to ICICIDirect for live data."
+            logger.warning("Paper session %s: %s", session.session_id, err_msg)
+            error_event = {"type": "broker_error", "message": err_msg}
+            try:
+                session.queue.put_nowait(json.dumps(error_event))
+            except asyncio.QueueFull:
+                pass
+
+            try:
+                from app.services.kite_service import BreezeStreamManager
+                instruments = _build_breeze_instruments(session)
+                manager = BreezeStreamManager()
+                manager.start(session.paper_tick_queue, loop, instruments)
+                session.stream_manager = manager
+                logger.info("Paper session %s: Breeze fallback streaming started", session.session_id)
+            except Exception as be:
+                both_err = {"type": "broker_error", "message": f"Both Kite and ICICIDirect unavailable. Cannot stream live data: {be}"}
+                try:
+                    session.queue.put_nowait(json.dumps(both_err))
+                except asyncio.QueueFull:
+                    pass
+                logger.error("Paper session %s: all streaming sources failed: %s", session.session_id, be)
+                return
+
+        # ── Phase 3: consume live ticks indefinitely ──────────────────────────
+        while session.state != SimulationState.ENDED:
+            await session.resume_event.wait()
+            if session.state == SimulationState.ENDED:
+                break
+
+            try:
+                payload = await asyncio.wait_for(session.paper_tick_queue.get(), timeout=30.0)
+            except asyncio.TimeoutError:
+                continue  # normal during market close / weekend — no data, keep waiting
+
+            tick_right: str | None = payload.pop("right", None)
+            tick_type = payload.pop("type", "tick")
+            if tick_type != "tick":
+                continue
+
+            if tick_right == "CE":
+                session.last_price_ce = payload["close"]
+            elif tick_right == "PE":
+                session.last_price_pe = payload["close"]
+            else:
+                session.last_price = payload["close"]
+                session.current_time = str(payload["time"])
+
+            tick_for_emit = {**payload}
+            if tick_right:
+                tick_for_emit["right"] = tick_right
+
+            fill_events = _emit_tick_and_check_orders(session, tick_for_emit, tick_right)
+            for fe in fill_events:
+                try:
+                    session.queue.put_nowait(json.dumps(fe))
+                except asyncio.QueueFull:
+                    logger.warning("Queue full dropping fill event for session %s", session.session_id)
+
+    except asyncio.CancelledError:
+        pass
+    except Exception:
+        logger.exception("_run_paper_session crashed for session %s", session.session_id)
+    finally:
+        session.state = SimulationState.ENDED
+        end_event = {"type": "session_ended"}
+        try:
+            session.queue.put_nowait(json.dumps(end_event))
+        except asyncio.QueueFull:
+            pass
+
+
 def start_session(session: SimulationSession) -> None:
     loop = asyncio.get_event_loop()
-    session.task = loop.create_task(_run_session(session))
+    if session.session_type == "paper":
+        session.task = loop.create_task(_run_paper_session(session))
+    else:
+        session.task = loop.create_task(_run_session(session))
 
 
 def pause_session(session: SimulationSession) -> None:
@@ -329,6 +583,21 @@ def stop_session(session: SimulationSession) -> None:
         session.task.cancel()
     _upsert_session_to_db(session)
     _sessions.pop(session.session_id, None)
+    # Stop live streaming if this is a paper session
+    if session.session_type == "paper":
+        if session.stream_manager is not None:
+            # BreezeStreamManager fallback
+            try:
+                session.stream_manager.stop()
+            except Exception as exc:
+                logger.warning("BreezeStreamManager stop error for %s: %s", session.session_id, exc)
+        else:
+            # Kite broadcaster — unregister this session
+            try:
+                from app.services.kite_service import get_broadcaster
+                get_broadcaster().unregister(session.session_id)
+            except Exception as exc:
+                logger.warning("Kite unregister error for %s: %s", session.session_id, exc)
     # Cancel and clean up any running strategies
     try:
         from app.services import strategy_service

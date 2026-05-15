@@ -61,6 +61,7 @@ def _write_trade_to_db(trade: Trade) -> None:
                 item["expiry"] = trade.expiry
             if trade.right is not None:
                 item["right"] = trade.right
+        item["session_type"] = trade.session_type
         table.put_item(Item=item)
     except Exception:
         logger.exception("DynamoDB write failed for trade %s", trade.trade_id)
@@ -79,6 +80,7 @@ def record_trade(
     right: str | None = None,
     brokerage_per_order: float = 1.0,
     user_id: str = FIXED_USER_ID,
+    session_type: str = "sim",
 ) -> Trade:
     ensure_session(session_id)
     trade = Trade(
@@ -94,6 +96,7 @@ def record_trade(
         expiry=expiry,
         right=right,
         commission=compute_commission(side, price, quantity, brokerage_per_order),
+        session_type=session_type,
     )
     _trades[session_id].append(trade)
     _write_trade_to_db(trade)

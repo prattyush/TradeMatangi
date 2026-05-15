@@ -38,6 +38,8 @@ interface Props {
   liveFromTs?: number
   // Increment to trigger a manual data reload (fixes phantom candle after strike change)
   reloadKey?: number
+  // Number of prior trading days to load for chart context (default 2)
+  historicalDays?: number
 }
 
 type DrawMode = 'none' | 'hline' | 'trendline'
@@ -84,6 +86,7 @@ export default function Chart({
   onPriceSelect = null,
   liveFromTs,
   reloadKey = 0,
+  historicalDays,
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<IChartApi | null>(null)
@@ -222,7 +225,7 @@ export default function Chart({
     ;(async () => {
       try {
         const [{ candles: histCandles }, preCandles] = await Promise.all([
-          api.getHistorical(symbol, tradingDate, intervalMinutes),
+          api.getHistorical(symbol, tradingDate, intervalMinutes, historicalDays),
           startTime ? api.getPreSession(symbol, tradingDate, startTime, intervalMinutes) : Promise.resolve([]),
         ])
         if (cancelled) return
@@ -274,7 +277,7 @@ export default function Chart({
     candleTimesRef.current = []
 
     let cancelled = false
-    api.getOptionsHistorical(symbol, tradingDate, strike, expiry, right, intervalMinutes)
+    api.getOptionsHistorical(symbol, tradingDate, strike, expiry, right, intervalMinutes, historicalDays)
       .then(({ candles }) => {
         if (cancelled) return
         // Only show candles BEFORE the session start window — live ticks will

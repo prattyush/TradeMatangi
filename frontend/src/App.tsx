@@ -5,7 +5,7 @@ import TradePanel from './components/TradePanel'
 import TradeHistory from './components/TradeHistory'
 import OrderPanel from './components/OrderPanel'
 import WalletWidget from './components/WalletWidget'
-import SettingsModal, { loadFundsRatioMode, loadFundsRatios, loadTargetDeviationPct, loadBrokeragePerOrder, loadStrategyIntervalSecs, loadAutostopTriggerType, loadAutostopDeviationPct, FundsRatios } from './components/SettingsModal'
+import SettingsModal, { loadFundsRatioMode, loadFundsRatios, loadTargetDeviationPct, loadBrokeragePerOrder, loadStrategyIntervalSecs, loadAutostopTriggerType, loadAutostopDeviationPct, loadHistoricalDays, FundsRatios } from './components/SettingsModal'
 import { StrategyResponse, StartStrategyRequest } from './services/api'
 import LoginScreen from './components/LoginScreen'
 import TradeAnalysis from './components/TradeAnalysis'
@@ -98,7 +98,9 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
   const [stratIntervalSecs, setStratIntervalSecs] = useState(loadStrategyIntervalSecs)
   const [autostopTriggerType, setAutostopTriggerType] = useState(loadAutostopTriggerType)
   const [autostopDeviationPct, setAutostopDeviationPct] = useState(loadAutostopDeviationPct)
+  const [historicalDays, setHistoricalDays] = useState(loadHistoricalDays)
   const [runningStrategies, setRunningStrategies] = useState<StrategyResponse[]>([])
+  const [brokerError, setBrokerError] = useState<string | null>(null)
 
   // ── Trade Analysis modal ────────────────────────────────────────────────────
   const [showAnalysis, setShowAnalysis] = useState(false)
@@ -275,6 +277,8 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
       sim.handleSessionEnded()
     } else if (event.type === 'order_filled') {
       sim.handleOrderFilled(event.order_id as string)
+    } else if (event.type === 'broker_error') {
+      setBrokerError(event.message as string)
     }
   }, [sim.setLatestTick, sim.handleSessionEnded, sim.handleOrderFilled])
 
@@ -369,6 +373,7 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
         }}
         trades={getTradesForPane(pane)}
         onPriceSelect={pricePickOrderId && pane.id === activePaneId ? handleChartPriceSelect : null}
+        historicalDays={historicalDays}
       />
     </div>
   )
@@ -464,6 +469,7 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
             setAutostopTriggerType(triggerType)
             setAutostopDeviationPct(deviationPct)
           }}
+          onHistoricalDaysChange={setHistoricalDays}
         />
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: '#484f58' }}>
           <span>{authUser.email}</span>
@@ -584,6 +590,20 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
           )}
         </>}
       />
+
+      {/* Broker error banner (paper trading) */}
+      {brokerError && (
+        <div style={{
+          background: '#3d1c1c', border: '1px solid #f85149', color: '#f85149',
+          padding: '6px 14px', fontSize: 12, display: 'flex', alignItems: 'center', gap: 8,
+        }}>
+          <span>⚠ {brokerError}</span>
+          <button
+            onClick={() => setBrokerError(null)}
+            style={{ background: 'none', border: 'none', color: '#f85149', cursor: 'pointer', marginLeft: 'auto', fontSize: 14 }}
+          >✕</button>
+        </div>
+      )}
 
       {/* Main content */}
       <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>

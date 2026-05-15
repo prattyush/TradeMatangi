@@ -30,6 +30,7 @@ class SimulationStartRequest(BaseModel):
     strike_pe: int | None = None       # PE streaming strike (defaults to strike when omitted)
     brokerage_per_order: float = 1.0   # flat brokerage deducted per trade (user-configurable)
     strategy_interval_secs: int = 180  # candle interval for all strategies (180=3min, 300=5min)
+    session_type: str = "sim"          # "sim" (historical replay) or "paper" (live data)
 
 
 class SimulationStartResponse(BaseModel):
@@ -46,6 +47,7 @@ class SimulationStartResponse(BaseModel):
     strike_ce: int | None = None
     strike_pe: int | None = None
     brokerage_per_order: float = 1.0
+    session_type: str = "sim"
 
 
 class SimulationControlRequest(BaseModel):
@@ -75,6 +77,7 @@ class Trade(BaseModel):
     expiry: str | None = None
     right: str | None = None
     commission: float = 0.0  # computed at record time: exchange charges + brokerage
+    session_type: str = "sim"  # "sim" or "paper" — inherited from parent session
 
 
 class Position(BaseModel):
@@ -227,6 +230,16 @@ class WalletResponse(BaseModel):
 
 class WalletResetRequest(BaseModel):
     amount: float = 150_000.0
+
+
+# ── User Settings ─────────────────────────────────────────────────────────────
+
+class UserSettingsResponse(BaseModel):
+    historical_days: int = 2
+
+
+class UserSettingsUpdateRequest(BaseModel):
+    historical_days: int = Field(default=2, ge=1, le=5)
 
 
 # ── Strategies ────────────────────────────────────────────────────────────────

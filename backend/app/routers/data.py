@@ -83,15 +83,17 @@ async def get_historical(
     symbol: str = Query(default=DEFAULT_SYMBOL),
     trading_date: str = Query(default="2026-05-06"),
     interval_minutes: int = Query(default=CANDLE_INTERVAL_MINUTES, ge=1, le=60),
+    historical_days: int = Query(default=2, ge=1, le=5),
 ):
     """
-    Return OHLC candles for the two trading days prior to trading_date.
-    Fetches from Breeze if a local pickle is not cached.
+    Return OHLC candles for the N trading days prior to trading_date.
+    historical_days controls how many prior days to fetch (default 2, max 5).
+    Fetches from Breeze if a local parquet is not cached.
     """
     if symbol not in SUPPORTED_SYMBOLS:
         raise HTTPException(status_code=400, detail=f"Unsupported symbol: {symbol}")
 
-    prior_dates = prior_trading_days(trading_date, n=2)
+    prior_dates = prior_trading_days(trading_date, n=historical_days)
     all_candles: list[OHLCCandle] = []
 
     for date in prior_dates:
@@ -162,10 +164,12 @@ async def get_options_historical(
     expiry: str = Query(...),
     right: str = Query(...),
     interval_minutes: int = Query(default=CANDLE_INTERVAL_MINUTES, ge=1, le=60),
+    historical_days: int = Query(default=2, ge=1, le=5),
 ):
     """
-    Return OHLC candles for an options contract for the two trading days prior to date.
-    Fetches from Breeze if not yet cached. Used to populate options chart panes.
+    Return OHLC candles for an options contract for the N trading days prior to date
+    plus the trading date itself (pre-session candles).
+    historical_days controls how many prior days to include (default 2, max 5).
     right: "CE" or "PE"
     """
     if symbol not in SUPPORTED_SYMBOLS:
@@ -176,8 +180,8 @@ async def get_options_historical(
     from app.services.options_service import fetch_options_historical, load_options_dataframe
     from app.services.broker_service import BreezeTokenError
 
-    # Fetch 2 prior days for context + the trading date itself (pre-session candles)
-    prior_dates = prior_trading_days(date, n=2) + [date]
+    # Fetch N prior days for context + the trading date itself (pre-session candles)
+    prior_dates = prior_trading_days(date, n=historical_days) + [date]
     all_candles: list[OHLCCandle] = []
 
     for prior_date in prior_dates:
