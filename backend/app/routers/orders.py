@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException, Query
 from app.models.schemas import Order, OrderType, TradeSide, PlaceOrderRequest, UpdateOrderRequest
 from app.services import order_service, simulation as sim_svc
 from app.services.wallet_service import InsufficientFundsError, get_balance
-from app.config import FIXED_USER_ID, LOT_SIZES
+from app.config import LOT_SIZES
 
 router = APIRouter(prefix="/api/orders", tags=["orders"])
 
@@ -51,7 +51,7 @@ async def place_order(req: PlaceOrderRequest):
             if underlying_price is None:
                 underlying_price = session.last_price  # fallback
             margin = compute_short_margin(session.symbol, underlying_price)
-            current_wallet = get_balance(FIXED_USER_ID, session.date)
+            current_wallet = get_balance(session.user_id, session.date)
             if current_wallet < margin:
                 raise HTTPException(
                     status_code=402,
@@ -73,7 +73,7 @@ async def place_order(req: PlaceOrderRequest):
         if ratio_price is None or ratio_price <= 0:
             raise HTTPException(status_code=400, detail="A valid price is required for FundsRatio quantity computation")
         try:
-            current_wallet = get_balance(FIXED_USER_ID, session.date)
+            current_wallet = get_balance(session.user_id, session.date)
             quantity = order_service.compute_funds_ratio_quantity(
                 symbol=session.symbol,
                 price=ratio_price,
@@ -103,6 +103,7 @@ async def place_order(req: PlaceOrderRequest):
             is_stoploss=req.is_stoploss,
             right=order_right,
             target_deviation_pct=req.target_deviation_pct,
+            user_id=session.user_id,
         )
     except InsufficientFundsError as exc:
         raise HTTPException(status_code=402, detail=str(exc))

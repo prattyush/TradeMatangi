@@ -2,7 +2,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.routers import data, simulation, trading, stream, orders, wallet
+from app.routers import data, simulation, trading, stream, orders, wallet, auth, analysis, strategies
 
 
 @asynccontextmanager
@@ -27,12 +27,15 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(auth.router)
 app.include_router(data.router)
 app.include_router(simulation.router)
 app.include_router(trading.router)
 app.include_router(stream.router)
 app.include_router(orders.router)
 app.include_router(wallet.router)
+app.include_router(analysis.router)
+app.include_router(strategies.router)
 
 
 @app.get("/health")

@@ -72,7 +72,7 @@ node node_modules/typescript/bin/tsc --noEmit
 - **Options gap-fill tz strip**: `_validate_options_gaps` must strip tz from `df.index` (set `df.index = df.index.tz_localize(None)`) before building tz-naive `pd.date_range` for `reindex`. Mismatched tz causes empty DataFrame after reindex.
 - **Dual-stream options queue**: `SimulationSession.queue` maxsize is 3000 (not 500). `queue.put_nowait` must be wrapped in try/except `asyncio.QueueFull` — raises at high replay speeds otherwise crashing the session.
 - **React setState batching**: multiple `setState` calls in one synchronous burst → only last call wins. For multi-field tick routing, use a single `setState(s => { const update = {}; ...; return {...s, ...update} })` keyed by field, NOT separate `setState` calls per field.
-- **Lightweight Charts "Cannot update oldest data"**: `series.setData(candles)` sets the minimum acceptable timestamp. Any subsequent `series.update(tick)` with `time <= candles[-1].time` throws. For options historical pre-load, filter to `time < startWindowTs` (the first live tick's window start).
+- **Lightweight Charts "Cannot update oldest data"**: `series.setData(candles)` sets the minimum acceptable timestamp. Any subsequent `series.update(tick)` with `time <= candles[-1].time` throws. For options historical pre-load, filter to `time < startWindowTs`. For equity pre-session, never use `series.update()` to append pre-session candles — combine everything (historical + pre-session) into a single `series.setData()` call so live ticks can only arrive at times strictly after the last pre-session candle.
 - **Lightweight Charts "Object is disposed"**: async `.then()` callbacks fire after chart teardown if a pane unmounts. Guard all three Chart `useEffect` async paths with `let cancelled = false` + `return () => { cancelled = true }` cleanup.
 - **Pane wrapper flex shrink**: Lightweight Charts sets an explicit pixel `width` on the canvas. Pane wrapper divs must have `minWidth: 0` or flex siblings cannot shrink below that canvas width after a pane is removed.
 - **Options tick routing uses per-right session strike**: `getTickForPane` in `App.tsx` checks CE panes against `sim.sessionStrikeCE` and PE panes against `sim.sessionStrikePE`. CE and PE may stream at different strikes when OTM offset ≠ 0. Panes with a non-matching strike return `null` (history only).
@@ -92,6 +92,22 @@ node node_modules/typescript/bin/tsc --noEmit
 - **`liveFromTs` for mid-session panes**: When a pane is added mid-session, `PaneConfig.liveFromTs` is set to the latest equity tick's timestamp. `Chart.tsx` uses this as the `cutoffTs` for the options-historical filter (`floor(liveFromTs / intervalSecs) * intervalSecs`) so the pane shows all candles up to the current sim time, not just pre-session candles.
 - **Mid-session ATM uses live equity price**: `addPane` in `App.tsx` computes ATM from `sim.currentPrice` (live equity LTP during session) with fallback to `optionsReady.underlyingPrice` (pre-session fetch). Do NOT use session-start ATM for mid-session panes — the underlying may have moved significantly.
 - **SENSEX OTM strike interval in `addPane`**: The inline strike interval map in `addPane` must include `BSESEN: 100`. If omitted, `?? 50` fallback applies and CE/PE strikes are computed at the wrong interval (50 instead of 100).
+- **User isolation via `X-User-Id` header**: `app/dependencies.py` exports `get_request_user_id` — a FastAPI dependency that reads the `X-User-Id` request header, defaulting to `FIXED_USER_ID` when absent (backward compat for tests). Use `Depends(get_request_user_id)` in routers; never import FastAPI's `Header` inside service modules.
+- **`SimulationSession.user_id` carries the owner**: Set at `create_session()` time. All session-scoped DB writes (session upsert, trade record, order place/cancel/fill) use `session.user_id` or `order.user_id` — they do NOT call `get_user_id()` or use `FIXED_USER_ID` directly. Non-session endpoints (wallet, analysis) use the header dependency.
+- **Frontend `X-User-Id` header**: `api.ts` helper `_authHeaders()` reads `localStorage.auth_user` and returns `{'X-User-Id': userId}`. Must be spread into `headers` on every authenticated fetch (simulation, trading, orders, wallet, analysis). Login/register requests do not need it.
+- **Default admin credentials**: `admin@tradematangi.com` / `admin123`, user_id = `FIXED_USER_ID = "abc12300-0000-0000-0000-000000000001"`. Seeded on startup by `seed_user()`. All sessions created before Phase V user isolation are stored under this UUID — log in with these credentials to access historical data.
+- **Analysis chart needs both historical + pre-session for trading day**: `GET /api/data/historical` returns ONLY the 2 prior trading days (not the session date). For the analysis chart to show the actual session's candles (and place trade markers correctly), fetch `getHistorical` (prior context) + `getPreSession(symbol, date, '15:30:00')` (full trading day) in parallel, merge by timestamp, deduplicate, sort, then call `series.setData()` once.
+- **Analysis chart aspect ratio**: height = `max(300, floor(containerWidth × 0.45))`, computed from ResizeObserver entries. Apply both width and height changes via `chart.applyOptions({width, height})` in the same ResizeObserver callback.
+- **`pnl_pct` is stored as percentage**: `analysis_service.compute_session_summary` returns `pnl_pct` as e.g. `9.70` meaning 9.70%, not `0.097`. Display as `{value.toFixed(2)}%` — do NOT multiply by 100.
+- **Strategy registry is in-memory, DynamoDB for cross-process cancel**: `strategy_service._registry[session_id]` is the fast path checked on every tick. DynamoDB Strategies table (with `SessionIdIndex` GSI) is written on start/cancel/complete. Cross-process cancellation works because each strategy checks its DB status once on the first bar-close after being cancelled in-memory — not on every tick.
+- **Bar-close detection per strategy instance**: Each `StrategyInstance` carries `_last_bar_slot` (epoch-aligned slot int) and its own OHLC accumulators. Bar close fires when `current_slot != _last_bar_slot` AND `_last_bar_slot is not None`. Slot formula: `(tick_time // interval_secs) * interval_secs` — same alignment as frontend candles.
+- **`strategy_interval_secs` is session-level, not per-strategy**: Set once in `POST /api/simulation/start` from the Settings Modal; stored on `SimulationSession.strategy_interval_secs`. All strategies in a session share the same interval. Changing it requires a new session.
+- **AutoStop trigger and deviation are per-strategy-start, not session-level**: `autostop_trigger_type` (`"bar"` or `"deviation"`) and `autostop_deviation_pct` are passed in `POST /api/strategies/start` body and stored in `StrategyInstance.metadata`. This lets different AutoStop instances on the same session have different trigger modes if needed.
+- **BreakEven exit uses LIMIT with 1% slippage**: SELL LIMIT at `price × 0.99` fills immediately because SELL LIMIT fires when `current_price >= limit_price`. BUY LIMIT at `price × 1.01` similarly. No new order type needed — reuses the same mechanism as the Mkt tab.
+- **Strategy right-matching for dual-stream options**: `strategy_service.on_tick` only evaluates a strategy when `tick_right == strategy.right`. CE strategies only fire on CE ticks, PE on PE, equity strategies (right=None) on equity ticks. This prevents CE bar closes from triggering a PE AutoStop.
+- **`OrderTypeFull` union + `handlePlace` guard**: Adding `'STRAT'` to the tab union type means `handlePlace` sees it as a possible `orderType`. Add `if (orderType === 'STRAT') return` at the top before any `onPlaceOrder` calls to narrow the type. Without it TypeScript errors on branches that pass `orderType` directly.
+- **Frontend `runningStrategies` is optimistic, not polled**: The list is updated client-side on start (append) and cancel-all (clear). BreakEven/AggressiveStoploss that self-complete server-side remain in the list until the user cancels or starts a new session. Future improvement: reconcile with `GET /api/strategies` on tab open.
+- **`stop_session()` cancels strategies**: `simulation.py:stop_session` calls `strategy_service.cancel_all()` + `clear_session()` so the registry doesn't leak across sessions that share a process.
 
 ## Phase-III Status
 
@@ -113,7 +129,7 @@ Multi-pane layout, dual-stream options replay, and lot-sized direct trades are l
 
 ## Phase-IV Status
 
-### Phase IV — BetaMinorUpdates ✅ COMPLETE (278 tests passing) — merged to dev; post-testing fixes in PR #15
+### Phase IV — BetaMinorUpdates ✅ COMPLETE (278 tests passing) — merged to dev; post-testing fixes in PR #17
 
 All 9 UI-Upgrade features + Options-HistoricalData + TradeP&L shipped:
 1. **Edit open orders** — click any open order row to edit its trigger/limit price inline
@@ -146,13 +162,14 @@ All 9 UI-Upgrade features + Options-HistoricalData + TradeP&L shipped:
 
 - **Edit order price step 0.5**: The price input in the open-order edit row now has `step={0.5}` so arrow keys increment/decrement by 0.5 instead of 1.
 
-### Phase IV Post-Testing Bugs Fixed (PR #15)
+### Phase IV Post-Testing Bugs Fixed (PR #17)
 
-- **Bug #8 — Equity replay missing 09:15 bar (NIFTY and SENSEX)**: When `start_time` was 09:18, live ticks started arriving via SSE immediately after session start. The first tick's `series.update({ time: 09:18 })` set the chart's last-update time. The subsequent `getPreSession` call then tried `series.update({ time: 09:15 })`, which threw "Cannot update oldest data" (09:15 < 09:18) and was silently swallowed. Fix: fetch `getHistorical` and `getPreSession` in parallel, combine into one array, and call `series.setData()` once. `setData` is atomic so any live tick arriving after it sees a correct baseline and can `update` at 09:18+.
+- **Bug #8 — SENSEX replay missing 09:15 bar (initial attempt)**: First attempt merged historical + pre-session into a sequential async IIFE so `getHistorical` always resolved before `getPreSession`. This fixed the slow-uncached-BSE race but did not fix the general case — see Bug #11.
+- **Bug #11 — Equity replay missing 09:15 bar (NIFTY and SENSEX)**: With Bug #8's sequential fix in place, NIFTY (fast cached fetch) still missed the pre-session bar. Root cause: live ticks start arriving via SSE immediately after session start. The first tick's `series.update({ time: 09:18 })` set the chart's minimum-acceptable time. The subsequent `getPreSession` call then tried `series.update({ time: 09:15 })`, which threw "Cannot update oldest data" (09:15 < 09:18) and was silently caught. Fix: fetch `getHistorical` and `getPreSession` in parallel via `Promise.all`, combine into one array, and call `series.setData()` once. `setData` commits the full baseline atomically; any live tick at 09:18+ that arrives afterwards is strictly greater than the last candle at 09:15 and succeeds.
 - **Bug #9 — SENSEX OTM offset used wrong strike interval**: `addPane` in `App.tsx` used an inline interval map that was missing `BSESEN: 100`, causing the `?? 50` fallback to apply. CE/PE strikes were half the correct distance from ATM. Fix: add `BSESEN: 100` to the map.
 - **Bug #10 — Mid-session pane addition showed no growing candle**: When removing a CE/PE pane and adding a new one with a different OTM value, the new pane showed only history (no live ticks). Three root causes: (1) ATM was computed from session-start price not live equity price; (2) backend dual-stream loop pre-loaded all ticks into a merged dict and could not change strikes mid-session; (3) options-historical cutoff only covered pre-session candles, leaving a gap between pre-session end and current sim time. Fix: refactored backend to equity-as-master-clock with per-tick CE/PE dict lookup and on-the-fly strike reload; added `liveFromTs` prop to Chart for the history cutoff; `addPane` now uses `sim.currentPrice` for ATM and calls `PUT /update-pane-strike` to update the session.
 
-### Phase IV Post-Testing UX Changes (PR #15)
+### Phase IV Post-Testing UX Changes (PR #17)
 
 - **Brokerage renamed + formula-based**: Settings renamed from "BROKER COMMISSION" to "BROKERAGE"; default changed from ₹10 to ₹1. Commission is now computed backend-side per trade using Indian market charge formula (STT + exchange + GST) plus flat brokerage. `netDayPnl` uses `sum(t.commission)` from trade records instead of flat `commission × count`.
 - **OTM control moved left of Start/Pause/Stop**: OTM input is always visible in the session controls row; disabled in equity mode. Removed separate second-row layout bar — layout/pane controls are injected inline via `SettingsModal.extraControls`.
@@ -162,7 +179,7 @@ All 9 UI-Upgrade features + Options-HistoricalData + TradeP&L shipped:
 
 - **Options historical needs trading date + prior days**: Unlike equity (which has a separate `/api/data/pre-session` endpoint for the trading day), options historical must include the trading date itself to show pre-session candles. Pattern: `prior_trading_days(n=2) + [date]`.
 - **Market orders via LIMIT + deviation**: Placing at exact current price risks not filling if price moves before the next tick. Use 1% above/below to guarantee fill. Still uses LIMIT type — no new backend order type needed.
-- **Commission is frontend-only**: Broker commission is a display-only deduction (`commission × trades.length`) applied to `dayPnl` in App.tsx. The backend P&L calculations remain gross (no commission). This keeps backend/frontend concerns separated.
+- **Commission belongs in the backend, not the frontend**: Initially commission was a frontend-only flat-rate deduction (`commission × trades.length`). Moving it to the backend (`compute_commission` in `trading.py`, stored in `Trade.commission`) means Phase V trade analysis can read accurate per-trade costs directly from DynamoDB. Frontend reads `t.commission` from trade records and sums them — no flat rate needed.
 - **Absolute-positioned overlays need toolbar padding**: Any absolute-positioned element (like the ✕ pane-remove button) that sits over a flexbox toolbar needs `paddingRight` on the toolbar, not `marginRight` on the last item, because `marginLeft: 'auto'` makes the last item butt against the container edge.
 - **`onPlaceOrder` type in OrderPanel**: The internal `OrderTypeFull` union (`TARGET | LIMIT | STOPLOSS | MARKET`) is broader than what the backend accepts. MARKET is converted to LIMIT internally before calling `onPlaceOrder`, so the prop type for `onPlaceOrder` stays as `TARGET | LIMIT | STOPLOSS`.
 - **IST-as-UTC timestamp display**: Any frontend code formatting timestamps from the backend must use `timeZone: 'UTC'` in `toLocaleTimeString`. Using `'Asia/Kolkata'` incorrectly adds +5:30 to what are already IST wall-clock values.
@@ -176,4 +193,28 @@ All 9 UI-Upgrade features + Options-HistoricalData + TradeP&L shipped:
 - **Brokerage as session-level config**: Storing `brokerage_per_order` on the session (not globally) means each session uses the rate the user had at session start. This avoids mid-session setting changes affecting open sessions. Pass it in `POST /api/simulation/start` and snapshot it into `SimulationSession`.
 - **Backend commission vs frontend display**: Commission calculation was moved to the backend so trade analysis in Phase V can use accurate per-trade commission data. Frontend now reads `t.commission` from trade records. If future analysis features need commission, it is already in DynamoDB per trade.
 
-**Next: Phase V TradeAnalysis** (see `docs/spec-phase5.md`)
+## Phase-V Status
+
+### Phase V — TradeAnalysis ✅ COMPLETE (299 tests passing) — PR #18 open on feature/phase-v-trade-analysis
+
+All four spec items shipped plus full user data isolation:
+
+1. **Login** — `POST /api/auth/login` + `POST /api/auth/register`; bcrypt hashing; `LoginScreen.tsx` auth gate; `localStorage.auth_user`; sign-out in header
+2. **Trade Analysis** — `GET /api/analysis/sessions` + `GET /api/analysis/sessions/{id}`; `TradeAnalysis.tsx` full-screen modal with filters, aggregate stats, per-session expandable cards with trade table + embedded equity chart; options trades direction-mapped to underlying chart markers; chart height scales with modal width (45% ratio, min 300px)
+3. **Persistence** — `session_capital` already in DynamoDB; `analysis_service.py` reads Sessions + Trades via `UserIdIndex` GSI; `pnl_pct` stored as percentage (e.g. 9.70 = 9.70%)
+4. **Reload Chart** — `↻` button in every chart toolbar; increments `localReloadKey`; triggers full historical re-fetch + `series.setData()`
+5. **User data isolation** — `app/dependencies.py` `get_request_user_id`; `SimulationSession.user_id`; all wallet/trade/order writes keyed to actual user; `X-User-Id` header sent by frontend on all authenticated requests
+
+**Default admin**: `admin@tradematangi.com` / `admin123` (user_id = `abc12300-0000-0000-0000-000000000001`) — owns all historical sessions created before Phase V.
+
+## Phase-VI Status
+
+### Phase VI — Strategies ✅ COMPLETE (311 tests passing) — PR on feature/phase-vi-strategies
+
+All three strategy types shipped with full backend engine, REST API, DynamoDB persistence, frontend Strat tab, and settings UI:
+
+1. **AutoStop** (Entry) — bar close → TARGET order at bar high/low or `close ± deviation%`; options always BUY; sized by FundsRatio or explicit qty
+2. **BreakEven** (Exit) — every tick; LIMIT exit at `price × 0.99` (LONG) or `price × 1.01` (SHORT) the moment price reaches avg entry; 100% position exit
+3. **AggressiveStoploss** (TradeManagement) — bar close → move SL to `close × 0.99` (LONG) or `close × 1.01` (SHORT); creates SL if none exists
+
+**Next: Phase VII PaperTrading** (see `docs/spec-phase7.md`)

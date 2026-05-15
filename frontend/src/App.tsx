@@ -5,12 +5,24 @@ import TradePanel from './components/TradePanel'
 import TradeHistory from './components/TradeHistory'
 import OrderPanel from './components/OrderPanel'
 import WalletWidget from './components/WalletWidget'
-import SettingsModal, { loadFundsRatioMode, loadFundsRatios, loadTargetDeviationPct, loadBrokeragePerOrder, FundsRatios } from './components/SettingsModal'
+import SettingsModal, { loadFundsRatioMode, loadFundsRatios, loadTargetDeviationPct, loadBrokeragePerOrder, loadStrategyIntervalSecs, loadAutostopTriggerType, loadAutostopDeviationPct, FundsRatios } from './components/SettingsModal'
+import { StrategyResponse, StartStrategyRequest } from './services/api'
+import LoginScreen from './components/LoginScreen'
+import TradeAnalysis from './components/TradeAnalysis'
 import { useSimulation, InstrumentConfig } from './hooks/useSimulation'
 import { useSSE } from './hooks/useSSE'
 import api from './services/api'
 
 const FIXED_USER = { userId: 'abc12300-0000-0000-0000-000000000001', username: 'abc123' }
+
+function loadAuthUser(): { userId: string; email: string } | null {
+  try {
+    const raw = localStorage.getItem('auth_user')
+    return raw ? JSON.parse(raw) : null
+  } catch {
+    return null
+  }
+}
 
 // ── Pane config ──────────────────────────────────────────────────────────────
 interface PaneConfig {
@@ -55,11 +67,41 @@ function defaultPanesForLayout(preset: LayoutPreset, current: PaneConfig[]): Pan
 }
 
 export default function App() {
+  // ── Auth state ──────────────────────────────────────────────────────────────
+  const [authUser, setAuthUser] = useState(loadAuthUser)
+
+  const handleLogin = useCallback((userId: string, email: string) => {
+    const user = { userId, email }
+    localStorage.setItem('auth_user', JSON.stringify(user))
+    localStorage.setItem('user', JSON.stringify({ userId, username: email }))
+    setAuthUser(user)
+  }, [])
+
+  const handleLogout = useCallback(() => {
+    localStorage.removeItem('auth_user')
+    setAuthUser(null)
+  }, [])
+
+  if (!authUser) {
+    return <LoginScreen onLogin={handleLogin} />
+  }
+
+  return <AppInner authUser={authUser} onLogout={handleLogout} />
+}
+
+function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: string }; onLogout: () => void }) {
   const sim = useSimulation()
   const [fundsRatioMode, setFundsRatioMode] = useState(loadFundsRatioMode)
   const [fundsRatios, setFundsRatios] = useState<FundsRatios>(loadFundsRatios)
   const [targetDeviationPct, setTargetDeviationPct] = useState(loadTargetDeviationPct)
   const [brokeragePerOrder, setBrokeragePerOrder] = useState(loadBrokeragePerOrder)
+  const [stratIntervalSecs, setStratIntervalSecs] = useState(loadStrategyIntervalSecs)
+  const [autostopTriggerType, setAutostopTriggerType] = useState(loadAutostopTriggerType)
+  const [autostopDeviationPct, setAutostopDeviationPct] = useState(loadAutostopDeviationPct)
+  const [runningStrategies, setRunningStrategies] = useState<StrategyResponse[]>([])
+
+  // ── Trade Analysis modal ────────────────────────────────────────────────────
+  const [showAnalysis, setShowAnalysis] = useState(false)
 
   // ── Price-pick state ────────────────────────────────────────────────────────
   const [pricePickOrderId, setPricePickOrderId] = useState<string | null>(null)
@@ -239,8 +281,13 @@ export default function App() {
   useSSE(sim.sseUrl, handleSSEMessage)
 
   const handleStart = useCallback(async (startTime: string, speed: number, instrumentConfig: InstrumentConfig) => {
-    await sim.startSession(startTime, speed, { ...instrumentConfig, brokerage_per_order: brokeragePerOrder })
-  }, [sim.startSession, brokeragePerOrder])
+    setRunningStrategies([])
+    await sim.startSession(startTime, speed, {
+      ...instrumentConfig,
+      brokerage_per_order: brokeragePerOrder,
+      strategy_interval_secs: stratIntervalSecs,
+    })
+  }, [sim.startSession, brokeragePerOrder, stratIntervalSecs])
 
   // ── Price pick: chart clicked in pick mode ───────────────────────────────────
   const handleChartPriceSelect = useCallback((price: number) => {
@@ -249,6 +296,32 @@ export default function App() {
       setPricePickOrderId(null)
     }
   }, [pricePickOrderId])
+
+  // ── Strategy callbacks ────────────────────────────────────────────────────────
+  const handleStartStrategy = useCallback(async (
+    strategyType: StartStrategyRequest['strategy_type'],
+    right: 'CE' | 'PE' | null,
+    opts: { quantity?: number; fundsRatioPct?: number; direction?: 'BUY' | 'SELL' },
+  ) => {
+    if (!sim.sessionId) return
+    const resp = await api.startStrategy({
+      session_id: sim.sessionId,
+      strategy_type: strategyType,
+      right: right ?? undefined,
+      quantity: opts.quantity,
+      funds_ratio_pct: opts.fundsRatioPct,
+      direction: opts.direction,
+      autostop_trigger_type: autostopTriggerType,
+      autostop_deviation_pct: autostopDeviationPct,
+    })
+    setRunningStrategies(prev => [...prev, resp])
+  }, [sim.sessionId, autostopTriggerType, autostopDeviationPct])
+
+  const handleCancelAllStrategies = useCallback(async () => {
+    if (!sim.sessionId) return
+    await api.cancelAllStrategies(sim.sessionId)
+    setRunningStrategies([])
+  }, [sim.sessionId])
 
   // Net session P&L = gross dayPnl minus per-trade commissions (computed by backend)
   const netDayPnl = sim.dayPnl - sim.trades.reduce((s, t) => s + (t.commission ?? 0), 0)
@@ -351,7 +424,7 @@ export default function App() {
         display: 'flex', alignItems: 'center', gap: 12,
       }}>
         <span style={{ fontSize: 18, fontWeight: 700, color: '#58a6ff' }}>TradeMatangi</span>
-        <span style={{ fontSize: 12, color: '#484f58' }}>Phase III — Beta</span>
+        <span style={{ fontSize: 12, color: '#484f58' }}>Phase V</span>
         <div style={{ flex: 1 }} />
         {sim.sessionState !== 'idle' && (
           <div style={{
@@ -369,14 +442,44 @@ export default function App() {
           </div>
         )}
         <WalletWidget date={sim.date} refreshKey={sim.walletRefreshKey} />
+        <button
+          onClick={() => setShowAnalysis(true)}
+          title="Trade Analysis"
+          style={{
+            background: '#161b22', border: '1px solid #30363d',
+            color: '#8b949e', borderRadius: 6, padding: '4px 10px',
+            fontSize: 12, cursor: 'pointer',
+          }}
+        >
+          📊 Analysis
+        </button>
         <SettingsModal
           date={sim.date}
           onWalletReset={sim.incrementWalletRefreshKey}
           onFundsRatioChange={(mode, ratios) => { setFundsRatioMode(mode); setFundsRatios(ratios) }}
           onTargetDeviationChange={setTargetDeviationPct}
           onBrokerageChange={setBrokeragePerOrder}
+          onStrategySettingsChange={(intervalSecs, triggerType, deviationPct) => {
+            setStratIntervalSecs(intervalSecs)
+            setAutostopTriggerType(triggerType)
+            setAutostopDeviationPct(deviationPct)
+          }}
         />
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: '#484f58' }}>
+          <span>{authUser.email}</span>
+          <button
+            onClick={onLogout}
+            style={{ background: 'none', border: '1px solid #30363d', color: '#8b949e', borderRadius: 6, padding: '3px 8px', fontSize: 11, cursor: 'pointer' }}
+          >
+            Sign out
+          </button>
+        </div>
       </div>
+
+      {/* Trade Analysis modal */}
+      {showAnalysis && (
+        <TradeAnalysis onClose={() => setShowAnalysis(false)} />
+      )}
 
       {/* Error banner */}
       {sim.orderError && (
@@ -545,6 +648,13 @@ export default function App() {
               fundsRatioMode={fundsRatioMode}
               fundsRatios={fundsRatios}
               targetDeviationPct={targetDeviationPct}
+              instrumentType={instrumentType}
+              activeRight={instrumentType === 'options' ? activeRight : undefined}
+              positionCE={sim.positionCE}
+              positionPE={sim.positionPE}
+              runningStrategies={runningStrategies}
+              autostopTriggerType={autostopTriggerType}
+              autostopDeviationPct={autostopDeviationPct}
               onPlaceOrder={(side, orderType, price, quantity, opts) =>
                 sim.placeOrder(side, orderType, price, quantity, {
                   ...opts,
@@ -561,6 +671,8 @@ export default function App() {
                 setInjectedEditPrice(null)
               }}
               injectedEditPrice={injectedEditPrice}
+              onStartStrategy={handleStartStrategy}
+              onCancelAllStrategies={handleCancelAllStrategies}
             />
           </div>
           <TradeHistory trades={sim.trades} />

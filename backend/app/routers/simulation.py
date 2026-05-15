@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from app.models.schemas import (
     SimulationStartRequest,
     SimulationStartResponse,
@@ -9,6 +9,7 @@ from app.models.schemas import (
 )
 from app.services import simulation as sim_svc
 from app.config import SUPPORTED_SYMBOLS
+from app.dependencies import get_request_user_id
 
 router = APIRouter(prefix="/api/simulation", tags=["simulation"])
 
@@ -55,7 +56,10 @@ def _ensure_options_data(
 
 
 @router.post("/start", response_model=SimulationStartResponse)
-async def start_simulation(req: SimulationStartRequest):
+async def start_simulation(
+    req: SimulationStartRequest,
+    user_id: str = Depends(get_request_user_id),
+):
     if req.instrument_type == "options":
         if req.strike is None or req.expiry is None:
             raise HTTPException(
@@ -89,6 +93,7 @@ async def start_simulation(req: SimulationStartRequest):
         date=req.date,
         start_time=req.start_time,
         speed=req.speed,
+        user_id=user_id,
         instrument_type=req.instrument_type,
         strike=req.strike,
         expiry=req.expiry,
@@ -96,6 +101,7 @@ async def start_simulation(req: SimulationStartRequest):
         strike_ce=req.strike_ce,
         strike_pe=req.strike_pe,
         brokerage_per_order=req.brokerage_per_order,
+        strategy_interval_secs=req.strategy_interval_secs,
     )
     sim_svc.start_session(session)
     return SimulationStartResponse(

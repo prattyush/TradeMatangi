@@ -36,6 +36,8 @@ interface Props {
   onPriceSelect?: ((price: number) => void) | null
   // For mid-session panes: timestamp from which live ticks begin (candles before this are history)
   liveFromTs?: number
+  // Increment to trigger a manual data reload (fixes phantom candle after strike change)
+  reloadKey?: number
 }
 
 type DrawMode = 'none' | 'hline' | 'trendline'
@@ -81,6 +83,7 @@ export default function Chart({
   trades = [],
   onPriceSelect = null,
   liveFromTs,
+  reloadKey = 0,
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<IChartApi | null>(null)
@@ -100,6 +103,11 @@ export default function Chart({
   const [showEma, setShowEma] = useState(true)
   const [drawMode, setDrawMode] = useState<DrawMode>('none')
   const [trendPending, setTrendPending] = useState(false)
+  const [localReloadKey, setLocalReloadKey] = useState(0)
+
+  // effectiveReloadKey combines the external reloadKey prop with the local one
+  // so both parent-triggered and toolbar-triggered reloads work.
+  const effectiveReloadKey = reloadKey + localReloadKey
 
   useEffect(() => { drawModeRef.current = drawMode }, [drawMode])
   useEffect(() => { onPriceSelectRef.current = onPriceSelect ?? null }, [onPriceSelect])
@@ -248,7 +256,7 @@ export default function Chart({
       }
     })()
     return () => { cancelled = true }
-  }, [symbol, tradingDate, intervalMinutes, paneType, startTime])
+  }, [symbol, tradingDate, intervalMinutes, paneType, startTime, effectiveReloadKey])
 
   // ── Historical data — options (full trading day, loads when session starts) ──
   // Backend caches options data during session start, so we wait for startTime.
@@ -307,7 +315,7 @@ export default function Chart({
       })
       .catch(console.error)
     return () => { cancelled = true }
-  }, [symbol, tradingDate, intervalMinutes, paneType, strike, expiry, right, startTime, liveFromTs])
+  }, [symbol, tradingDate, intervalMinutes, paneType, strike, expiry, right, startTime, liveFromTs, effectiveReloadKey])
 
   // ── Live tick processing — latestTick is already filtered by caller ─────────
   const intervalSecs = CANDLE_INTERVAL_SECS(intervalMinutes)
@@ -431,6 +439,16 @@ export default function Chart({
     cursor: 'pointer',
   })
 
+  // ── Reload handler — re-fetches historical data for the current pane ────────
+  const handleReload = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation()
+    setLocalReloadKey(k => k + 1)
+    liveWindowRef.current = null
+    lastEma9Ref.current = null
+    lastEma21Ref.current = null
+    candleTimesRef.current = []
+  }, [])
+
   // ── Bar close countdown ────────────────────────────────────────────────────
   const barCountdown = (() => {
     if (!latestTick) return null
@@ -489,6 +507,13 @@ export default function Chart({
             Clear
           </button>
         )}
+        <button
+          onClick={handleReload}
+          title="Reload chart data up to the last closed candle (fixes phantom candle after strike change)"
+          style={{ ...toolbarBtnStyle(false), fontSize: 13, padding: '2px 7px' }}
+        >
+          ↻
+        </button>
         {drawMode !== 'none' && !trendPending && (
           <span style={{ fontSize: 11, color: '#f0883e' }}>
             {drawMode === 'hline' ? 'Click chart to place' : 'Click first point'}

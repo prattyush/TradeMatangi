@@ -174,6 +174,7 @@ class TestUpdateOrderWalletReservation:
 # ── PATCH /api/orders/{id} endpoint ──────────────────────────────────────────
 
 def _make_session():
+    from app.config import FIXED_USER_ID
     session = MagicMock()
     session.session_id = SESSION
     session.symbol = "NIFTY"
@@ -181,6 +182,7 @@ def _make_session():
     session.current_time = "1746518100"
     session.instrument_type = "equity"
     session.state = SimulationState.RUNNING
+    session.user_id = FIXED_USER_ID
     return session
 
 

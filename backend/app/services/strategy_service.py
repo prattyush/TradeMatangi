@@ -1,0 +1,398 @@
+"""
+Strategy service: automated trading strategies that run alongside the simulation.
+
+Three strategy types:
+  AutoStop           - Entry: places TARGET order at bar high/low (or % from close) on each bar close.
+  BreakEven          - Exit: exits 100% of position on every tick as soon as price >= avg entry (LONG)
+                       or price <= avg entry (SHORT).
+  AggressiveStoploss - TradeManagement: shifts the SL to 1% from bar close on each bar close.
+
+Lifecycle:
+  - start_strategy()  adds an instance to the in-memory registry and writes to DynamoDB.
+  - on_tick()         is called from _emit_tick_and_check_orders for every tick; evaluates
+                      bar-close and per-tick strategy logic.
+  - cancel_all()      marks all running instances CANCELLED (in-memory + DynamoDB) and clears them.
+  - clear_session()   called on session stop to purge registry state.
+
+Cross-process cancellation:
+  cancel_all() writes CANCELLED status to DynamoDB.  Strategies in a different process
+  detect cancellation on their next trigger by re-reading DB status.  Same-process
+  cancellation is immediate via the in-memory `status` flag.
+"""
+from __future__ import annotations
+
+import logging
+import uuid
+from dataclasses import dataclass, field
+from decimal import Decimal
+from enum import Enum
+
+logger = logging.getLogger(__name__)
+
+
+class StrategyStatus(str, Enum):
+    RUNNING = "RUNNING"
+    CANCELLED = "CANCELLED"
+    COMPLETED = "COMPLETED"
+
+
+@dataclass
+class StrategyInstance:
+    strategy_id: str
+    session_id: str
+    user_id: str
+    strategy_type: str   # "AutoStop" | "BreakEven" | "AggressiveStoploss"
+    symbol: str
+    right: str | None    # "CE" | "PE" | None (equity)
+    status: StrategyStatus
+    metadata: dict       # strategy-specific config (direction, qty, ratio, trigger settings…)
+    # Bar OHLC tracking — reconstructed from ticks, not persisted
+    _last_bar_slot: int | None = field(default=None, repr=False)
+    _bar_open: float = field(default=0.0, repr=False)
+    _bar_high: float = field(default=0.0, repr=False)
+    _bar_low: float = field(default=0.0, repr=False)
+    _bar_close: float = field(default=0.0, repr=False)
+
+
+# session_id → list[StrategyInstance]
+_registry: dict[str, list[StrategyInstance]] = {}
+
+
+# ── Persistence ──────────────────────────────────────────────────────────────
+
+def _write_strategy_to_db(strategy: StrategyInstance) -> None:
+    try:
+        from app.services.db import get_dynamodb_resource
+        table = get_dynamodb_resource().Table("Strategies")
+        item: dict = {
+            "strategy_id": strategy.strategy_id,
+            "session_id": strategy.session_id,
+            "user_id": strategy.user_id,
+            "strategy_type": strategy.strategy_type,
+            "symbol": strategy.symbol,
+            "status": strategy.status.value,
+        }
+        if strategy.right is not None:
+            item["right"] = strategy.right
+        # Store metadata (convert floats to Decimal for DynamoDB)
+        db_meta: dict = {}
+        for k, v in strategy.metadata.items():
+            if isinstance(v, float):
+                db_meta[k] = Decimal(str(v))
+            else:
+                db_meta[k] = v
+        item["metadata"] = db_meta
+        table.put_item(Item=item)
+    except Exception:
+        logger.exception("DynamoDB write failed for strategy %s", strategy.strategy_id)
+
+
+# ── Registry management ───────────────────────────────────────────────────────
+
+def start_strategy(session, strategy_type: str, right: str | None, metadata: dict) -> StrategyInstance:
+    """
+    Register and persist a new strategy instance for a session.
+    `session` is a SimulationSession instance.
+    """
+    strategy = StrategyInstance(
+        strategy_id=str(uuid.uuid4()),
+        session_id=session.session_id,
+        user_id=session.user_id,
+        strategy_type=strategy_type,
+        symbol=session.symbol,
+        right=right,
+        status=StrategyStatus.RUNNING,
+        metadata=metadata,
+    )
+    _registry.setdefault(session.session_id, []).append(strategy)
+    _write_strategy_to_db(strategy)
+    return strategy
+
+
+def cancel_all(session_id: str) -> int:
+    """Cancel all running strategies for a session. Returns number cancelled."""
+    count = 0
+    for s in _registry.get(session_id, []):
+        if s.status == StrategyStatus.RUNNING:
+            s.status = StrategyStatus.CANCELLED
+            _write_strategy_to_db(s)
+            count += 1
+    _registry[session_id] = []
+    return count
+
+
+def list_running(session_id: str) -> list[StrategyInstance]:
+    return [s for s in _registry.get(session_id, []) if s.status == StrategyStatus.RUNNING]
+
+
+def clear_session(session_id: str) -> None:
+    """Remove registry state on session end (no DB update — cancel_all handles that)."""
+    _registry.pop(session_id, None)
+
+
+# ── Tick hook (called from simulation._emit_tick_and_check_orders) ────────────
+
+def on_tick(session, tick: dict, tick_right: str | None) -> None:
+    """
+    Evaluate all strategies for the given session on a single tick.
+    tick_right matches the right of the tick (None=equity, "CE", "PE").
+    Strategies are only evaluated when their right matches the tick's right.
+    """
+    strategies = _registry.get(session.session_id)
+    if not strategies:
+        return
+
+    ts: int = tick["time"]
+    current_price: float = tick["close"]
+    interval_secs: int = getattr(session, "strategy_interval_secs", 180)
+    current_slot: int = (ts // interval_secs) * interval_secs
+
+    for strategy in list(strategies):
+        if strategy.status != StrategyStatus.RUNNING:
+            continue
+
+        # Only evaluate this strategy when the tick's right matches the strategy's right
+        if strategy.right != tick_right:
+            continue
+
+        # ── Bar OHLC tracking ──────────────────────────────────────────────
+        if strategy._last_bar_slot is None:
+            # First tick: initialise bar state
+            strategy._last_bar_slot = current_slot
+            strategy._bar_open = tick["open"]
+            strategy._bar_high = tick["high"]
+            strategy._bar_low = tick["low"]
+            strategy._bar_close = tick["close"]
+        elif current_slot != strategy._last_bar_slot:
+            # Slot changed → previous bar just closed
+            closed_ohlc = {
+                "open": strategy._bar_open,
+                "high": strategy._bar_high,
+                "low": strategy._bar_low,
+                "close": strategy._bar_close,
+            }
+            # Reset for new bar
+            strategy._last_bar_slot = current_slot
+            strategy._bar_open = tick["open"]
+            strategy._bar_high = tick["high"]
+            strategy._bar_low = tick["low"]
+            strategy._bar_close = tick["close"]
+
+            if strategy.status == StrategyStatus.RUNNING:
+                _on_bar_close(strategy, session, closed_ohlc, tick_right, ts)
+        else:
+            strategy._bar_high = max(strategy._bar_high, tick["high"])
+            strategy._bar_low = min(strategy._bar_low, tick["low"])
+            strategy._bar_close = tick["close"]
+
+        # ── Per-tick evaluation (BreakEven only) ──────────────────────────
+        if strategy.strategy_type == "BreakEven" and strategy.status == StrategyStatus.RUNNING:
+            _on_tick_breakeven(strategy, session, current_price, tick_right, ts)
+
+    # Prune completed/cancelled entries
+    _registry[session.session_id] = [
+        s for s in strategies if s.status == StrategyStatus.RUNNING
+    ]
+
+
+# ── Bar-close evaluators ──────────────────────────────────────────────────────
+
+def _on_bar_close(
+    strategy: StrategyInstance,
+    session,
+    closed_ohlc: dict,
+    tick_right: str | None,
+    current_ts: int,
+) -> None:
+    if strategy.strategy_type == "AutoStop":
+        _on_bar_close_autostop(strategy, session, closed_ohlc, tick_right, current_ts)
+    elif strategy.strategy_type == "AggressiveStoploss":
+        _on_bar_close_aggressive_sl(strategy, session, closed_ohlc, tick_right, current_ts)
+
+
+def _on_bar_close_autostop(
+    strategy: StrategyInstance,
+    session,
+    closed_ohlc: dict,
+    tick_right: str | None,
+    current_ts: int,
+) -> None:
+    meta = strategy.metadata
+    trigger_type = meta.get("autostop_trigger_type", "bar")
+    direction = meta.get("direction", "BUY")
+
+    # Compute trigger price from closed bar
+    if trigger_type == "bar":
+        trigger_price = closed_ohlc["high"] if direction == "BUY" else closed_ohlc["low"]
+    else:
+        dev_pct = float(meta.get("autostop_deviation_pct", 1.0))
+        if direction == "BUY":
+            trigger_price = closed_ohlc["close"] * (1 + dev_pct / 100)
+        else:
+            trigger_price = closed_ohlc["close"] * (1 - dev_pct / 100)
+    trigger_price = round(trigger_price, 2)
+
+    # Resolve quantity
+    quantity = meta.get("quantity")
+    if quantity is None:
+        funds_ratio_pct = meta.get("funds_ratio_pct")
+        if funds_ratio_pct is None:
+            logger.warning("AutoStop %s: no quantity or funds_ratio_pct in metadata", strategy.strategy_id)
+            return
+        try:
+            from app.services.order_service import compute_funds_ratio_quantity
+            from app.services.wallet_service import get_balance
+            from app.config import LOT_SIZES
+            lot_size = LOT_SIZES.get(session.symbol, 1) if tick_right else 1
+            current_wallet = get_balance(session.user_id, session.date)
+            quantity = compute_funds_ratio_quantity(
+                session.symbol, trigger_price, session.session_capital,
+                funds_ratio_pct, current_wallet, lot_size=lot_size,
+            )
+        except Exception as exc:
+            logger.warning("AutoStop %s: quantity calc failed: %s", strategy.strategy_id, exc)
+            return
+
+    from app.services.order_service import place_order
+    from app.models.schemas import TradeSide, OrderType
+    side = TradeSide.BUY if direction == "BUY" else TradeSide.SELL
+    try:
+        place_order(
+            session_id=session.session_id,
+            symbol=session.symbol,
+            side=side,
+            order_type=OrderType.TARGET,
+            quantity=quantity,
+            created_at=current_ts,
+            trading_date=session.date,
+            trigger_price=trigger_price,
+            right=tick_right,
+            user_id=session.user_id,
+        )
+        logger.info(
+            "AutoStop %s placed %s TARGET at %.2f for %s right=%s",
+            strategy.strategy_id, direction, trigger_price, session.symbol, tick_right,
+        )
+    except Exception as exc:
+        logger.warning("AutoStop %s: place_order failed: %s", strategy.strategy_id, exc)
+
+
+def _on_bar_close_aggressive_sl(
+    strategy: StrategyInstance,
+    session,
+    closed_ohlc: dict,
+    tick_right: str | None,
+    current_ts: int,
+) -> None:
+    from app.services.trading import get_position
+    from app.models.schemas import TradeSide, OrderType
+    from app.services.order_service import get_open_orders, update_order, place_order
+
+    position = get_position(session.session_id, session.symbol, tick_right)
+    if position.side == "FLAT":
+        return
+
+    close_price = closed_ohlc["close"]
+    if position.side == "LONG":
+        sl_price = round(close_price * 0.99, 2)
+        sl_side = TradeSide.SELL
+    else:  # SHORT
+        sl_price = round(close_price * 1.01, 2)
+        sl_side = TradeSide.BUY
+
+    # Find an existing open SL order for this right
+    open_orders = get_open_orders(session.session_id)
+    sl_orders = [o for o in open_orders if o.is_stoploss and o.right == tick_right]
+
+    if sl_orders:
+        update_order(
+            session_id=session.session_id,
+            order_id=sl_orders[0].order_id,
+            trading_date=session.date,
+            trigger_price=sl_price,
+        )
+        logger.info(
+            "AggressiveStoploss %s updated SL to %.2f for %s right=%s",
+            strategy.strategy_id, sl_price, session.symbol, tick_right,
+        )
+    else:
+        try:
+            place_order(
+                session_id=session.session_id,
+                symbol=session.symbol,
+                side=sl_side,
+                order_type=OrderType.STOPLOSS,
+                quantity=position.quantity,
+                created_at=current_ts,
+                trading_date=session.date,
+                trigger_price=sl_price,
+                is_stoploss=True,
+                right=tick_right,
+                user_id=session.user_id,
+            )
+            logger.info(
+                "AggressiveStoploss %s created SL at %.2f for %s right=%s",
+                strategy.strategy_id, sl_price, session.symbol, tick_right,
+            )
+        except Exception as exc:
+            logger.warning("AggressiveStoploss %s: place_order failed: %s", strategy.strategy_id, exc)
+
+
+# ── Per-tick evaluators ───────────────────────────────────────────────────────
+
+def _on_tick_breakeven(
+    strategy: StrategyInstance,
+    session,
+    current_price: float,
+    tick_right: str | None,
+    current_ts: int,
+) -> None:
+    from app.services.trading import get_position
+    from app.models.schemas import TradeSide, OrderType
+    from app.services.order_service import place_order
+
+    position = get_position(session.session_id, session.symbol, tick_right)
+
+    if position.side == "FLAT":
+        # Nothing to protect; strategy has done its job (or position was never opened)
+        strategy.status = StrategyStatus.COMPLETED
+        _write_strategy_to_db(strategy)
+        return
+
+    avg_entry = position.avg_entry_price
+    should_exit = (
+        (position.side == "LONG" and current_price >= avg_entry) or
+        (position.side == "SHORT" and current_price <= avg_entry)
+    )
+    if not should_exit:
+        return
+
+    # Exit 100% of position via a limit order with slight slippage to guarantee fill
+    if position.side == "LONG":
+        exit_side = TradeSide.SELL
+        exit_price = round(current_price * 0.99, 2)  # SELL fills when price >= limit → immediate
+    else:
+        exit_side = TradeSide.BUY
+        exit_price = round(current_price * 1.01, 2)  # BUY fills when price <= limit → immediate
+
+    try:
+        place_order(
+            session_id=session.session_id,
+            symbol=session.symbol,
+            side=exit_side,
+            order_type=OrderType.LIMIT,
+            quantity=position.quantity,
+            created_at=current_ts,
+            trading_date=session.date,
+            limit_price=exit_price,
+            right=tick_right,
+            user_id=session.user_id,
+        )
+        strategy.status = StrategyStatus.COMPLETED
+        _write_strategy_to_db(strategy)
+        logger.info(
+            "BreakEven %s placed %s LIMIT at %.2f (avg_entry=%.2f) for %s right=%s",
+            strategy.strategy_id, exit_side.value, exit_price, avg_entry, session.symbol, tick_right,
+        )
+    except Exception as exc:
+        logger.warning("BreakEven %s: place_order failed: %s", strategy.strategy_id, exc)
