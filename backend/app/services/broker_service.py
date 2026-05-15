@@ -177,7 +177,12 @@ def fetch_historical(symbol: str, date: str) -> Path:
             f"Supported: {list(SUPPORTED_SYMBOLS.keys())}"
         )
 
+    from datetime import date as _date
+    is_today = date == _date.today().strftime("%Y-%m-%d")
+
     pq = parquet_path(symbol, date)
+    partial_pq: "Path | None" = None  # preserve partial data for today as fallback
+
     if pq.exists():
         try:
             cached_df = pd.read_parquet(pq)
@@ -188,7 +193,11 @@ def fetch_historical(symbol: str, date: str) -> Path:
                 "Cached parquet for %s %s has only %d rows (< %d), re-fetching",
                 symbol, date, len(cached_df), _MIN_DAY_ROWS,
             )
-            pq.unlink()
+            if is_today and len(cached_df) > 0:
+                # Keep partial today data as fallback — Breeze may be unavailable
+                partial_pq = pq
+            else:
+                pq.unlink()
         except Exception as e:
             logger.warning("Could not read cached parquet for %s %s: %s — re-fetching", symbol, date, e)
             pq.unlink(missing_ok=True)
@@ -212,11 +221,23 @@ def fetch_historical(symbol: str, date: str) -> Path:
     # Fetch from Breeze with pagination
     logger.info("Fetching %s %s from Breeze (paginated, %d-min chunks)...", symbol, date, _CHUNK_MINUTES)
     sym_info = SUPPORTED_SYMBOLS[symbol]
-    breeze = _get_breeze()
-
-    records = _fetch_day_paginated(breeze, sym_info, date)
+    try:
+        breeze = _get_breeze()
+        records = _fetch_day_paginated(breeze, sym_info, date)
+    except (BreezeTokenError, Exception) as exc:
+        if partial_pq is not None:
+            # Breeze unavailable but we have partial today data — use it
+            logger.warning(
+                "Breeze unavailable for %s %s (%s); using partial cached data (%s)",
+                symbol, date, exc, partial_pq,
+            )
+            return partial_pq
+        raise
 
     if not records:
+        if partial_pq is not None:
+            logger.warning("Breeze returned no records for %s %s; using partial cache", symbol, date)
+            return partial_pq
         raise RuntimeError(
             f"Breeze returned no data for {symbol} on {date}. "
             "This may be a market holiday or the date is outside available history."
