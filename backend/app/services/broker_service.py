@@ -247,7 +247,7 @@ def fetch_historical(symbol: str, date: str) -> Path:
     if df.empty:
         raise RuntimeError(f"Could not parse Breeze data for {symbol} on {date}.")
 
-    df = validate_and_fill_gaps(df, date)
+    df = validate_and_fill_gaps(df, date, partial=is_today)
 
     tmp = pq.with_name(pq.name + ".tmp")
     try:
