@@ -474,7 +474,7 @@ async def _run_paper_session(session: SimulationSession) -> None:
             return
 
         # ── Phase 2: live streaming ────────────────────────────────────────────
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         using_kite = False
 
         try:
@@ -536,6 +536,8 @@ async def _run_paper_session(session: SimulationSession) -> None:
                 return
 
         # ── Phase 3: consume live ticks indefinitely ──────────────────────────
+        logger.info("Paper session %s: Phase 3 — waiting for live ticks", session.session_id)
+        _phase3_tick_count = 0
         while session.state != SimulationState.ENDED:
             await session.resume_event.wait()
             if session.state == SimulationState.ENDED:
@@ -544,7 +546,14 @@ async def _run_paper_session(session: SimulationSession) -> None:
             try:
                 payload = await asyncio.wait_for(session.paper_tick_queue.get(), timeout=30.0)
             except asyncio.TimeoutError:
+                logger.debug("Paper session %s: Phase 3 — 30s timeout waiting for tick (market may be closed)", session.session_id)
                 continue  # normal during market close / weekend — no data, keep waiting
+
+            _phase3_tick_count += 1
+            if _phase3_tick_count <= 3 or _phase3_tick_count % 60 == 0:
+                logger.info("Paper session %s: Phase 3 tick #%d received: time=%s close=%s right=%s",
+                            session.session_id, _phase3_tick_count,
+                            payload.get("time"), payload.get("close"), payload.get("right"))
 
             tick_right: str | None = payload.pop("right", None)
             tick_type = payload.pop("type", "tick")
@@ -584,7 +593,7 @@ async def _run_paper_session(session: SimulationSession) -> None:
 
 
 def start_session(session: SimulationSession) -> None:
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     if session.session_type == "paper":
         session.task = loop.create_task(_run_paper_session(session))
     else:

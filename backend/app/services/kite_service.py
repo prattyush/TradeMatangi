@@ -348,25 +348,40 @@ class KiteBroadcaster:
     def _on_connect(self, ws, response) -> None:
         with self._lock:
             all_tokens = list(self._token_sessions.keys())
+        logger.info("KiteBroadcaster: WebSocket connected, subscribing %d tokens: %s", len(all_tokens), all_tokens)
         if all_tokens and ws:
             try:
                 ws.subscribe(all_tokens)
                 ws.set_mode(ws.MODE_LTP, all_tokens)
-                logger.info("KiteBroadcaster: subscribed %d tokens", len(all_tokens))
+                logger.info("KiteBroadcaster: subscribed %d tokens in LTP mode", len(all_tokens))
             except Exception as exc:
                 logger.error("KiteBroadcaster on_connect subscribe error: %s", exc)
 
     def _on_ticks(self, ws, ticks) -> None:
+        # IST offset: our convention stores IST wall-clock times as fake-UTC
+        # (tz_localize("UTC") on IST naive datetimes).  Kite's exchange_timestamp
+        # is a naive datetime in UTC (from gmtime).  To match the convention we
+        # add 19800 s (5:30 h) so that "09:15 IST" maps to Unix-for-"09:15 UTC".
+        _IST_OFFSET = 19800
+        if not ticks:
+            return
+        if not getattr(self, '_ticks_logged', False):
+            logger.info("KiteBroadcaster: first tick batch received (%d ticks)", len(ticks))
+            self._ticks_logged = True
+
         for tick in ticks:
             token = tick.get("instrument_token")
             if token is None:
                 continue
             price = float(tick.get("last_price", 0.0))
+            if price == 0.0:
+                continue
             ex_ts = tick.get("exchange_timestamp")
             if ex_ts and isinstance(ex_ts, datetime):
-                ts_second = int(ex_ts.timestamp())
+                # exchange_timestamp is naive UTC from kiteconnect gmtime — add IST offset
+                ts_second = int(ex_ts.timestamp()) + _IST_OFFSET
             else:
-                ts_second = int(_time.time())
+                ts_second = int(_time.time()) + _IST_OFFSET
 
             candle = self._accumulators[token].update(price, ts_second)
             if candle is None:
@@ -385,10 +400,10 @@ class KiteBroadcaster:
                     logger.warning("Tick push failed for session %s: %s", session_id, exc)
 
     def _on_error(self, ws, code, reason) -> None:
-        logger.error("KiteTicker error %s: %s", code, reason)
+        logger.error("KiteTicker error — code=%s reason=%s (ticks will stop)", code, reason)
 
     def _on_close(self, ws, code, reason) -> None:
-        logger.warning("KiteTicker closed %s: %s", code, reason)
+        logger.warning("KiteTicker closed — code=%s reason=%s (no more ticks until reconnect)", code, reason)
         self._connected = False
 
 
