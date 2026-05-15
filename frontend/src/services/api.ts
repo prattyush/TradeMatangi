@@ -70,6 +70,28 @@ export interface SimulationStartRequest {
   strike_ce?: number  // CE streaming strike (OTM direction: ATM + offset)
   strike_pe?: number  // PE streaming strike (OTM direction: ATM - offset)
   brokerage_per_order?: number  // flat brokerage per order (default 1)
+  strategy_interval_secs?: number  // candle interval for all strategies (180=3min, 300=5min)
+}
+
+// ── Strategy types ──────────────────────────────────────────────────────────
+
+export interface StrategyResponse {
+  strategy_id: string
+  strategy_type: string
+  symbol: string
+  right: string | null
+  status: string
+}
+
+export interface StartStrategyRequest {
+  session_id: string
+  strategy_type: 'AutoStop' | 'BreakEven' | 'AggressiveStoploss'
+  right?: 'CE' | 'PE' | null
+  quantity?: number
+  funds_ratio_pct?: number
+  direction?: 'BUY' | 'SELL'
+  autostop_trigger_type?: 'bar' | 'deviation'
+  autostop_deviation_pct?: number
 }
 
 export interface SimulationStartResponse {
@@ -477,6 +499,38 @@ const api = {
       headers: _authHeaders(),
     })
     if (!res.ok) throw new Error(`Session detail fetch failed: ${res.status}`)
+    return res.json()
+  },
+
+  // ── Strategies ─────────────────────────────────────────────────────────────
+
+  async startStrategy(req: StartStrategyRequest): Promise<StrategyResponse> {
+    const res = await fetch(`${BACKEND_URL}/api/strategies/start`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ..._authHeaders() },
+      body: JSON.stringify(req),
+    })
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}))
+      throw new Error(data.detail || `Start strategy failed: ${res.status}`)
+    }
+    return res.json()
+  },
+
+  async cancelAllStrategies(session_id: string): Promise<void> {
+    const res = await fetch(`${BACKEND_URL}/api/strategies/cancel-all`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ..._authHeaders() },
+      body: JSON.stringify({ session_id }),
+    })
+    if (!res.ok) throw new Error(`Cancel strategies failed: ${res.status}`)
+  },
+
+  async listStrategies(session_id: string): Promise<StrategyResponse[]> {
+    const res = await fetch(`${BACKEND_URL}/api/strategies?session_id=${session_id}`, {
+      headers: _authHeaders(),
+    })
+    if (!res.ok) throw new Error(`List strategies failed: ${res.status}`)
     return res.json()
   },
 }

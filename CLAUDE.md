@@ -99,6 +99,15 @@ node node_modules/typescript/bin/tsc --noEmit
 - **Analysis chart needs both historical + pre-session for trading day**: `GET /api/data/historical` returns ONLY the 2 prior trading days (not the session date). For the analysis chart to show the actual session's candles (and place trade markers correctly), fetch `getHistorical` (prior context) + `getPreSession(symbol, date, '15:30:00')` (full trading day) in parallel, merge by timestamp, deduplicate, sort, then call `series.setData()` once.
 - **Analysis chart aspect ratio**: height = `max(300, floor(containerWidth × 0.45))`, computed from ResizeObserver entries. Apply both width and height changes via `chart.applyOptions({width, height})` in the same ResizeObserver callback.
 - **`pnl_pct` is stored as percentage**: `analysis_service.compute_session_summary` returns `pnl_pct` as e.g. `9.70` meaning 9.70%, not `0.097`. Display as `{value.toFixed(2)}%` — do NOT multiply by 100.
+- **Strategy registry is in-memory, DynamoDB for cross-process cancel**: `strategy_service._registry[session_id]` is the fast path checked on every tick. DynamoDB Strategies table (with `SessionIdIndex` GSI) is written on start/cancel/complete. Cross-process cancellation works because each strategy checks its DB status once on the first bar-close after being cancelled in-memory — not on every tick.
+- **Bar-close detection per strategy instance**: Each `StrategyInstance` carries `_last_bar_slot` (epoch-aligned slot int) and its own OHLC accumulators. Bar close fires when `current_slot != _last_bar_slot` AND `_last_bar_slot is not None`. Slot formula: `(tick_time // interval_secs) * interval_secs` — same alignment as frontend candles.
+- **`strategy_interval_secs` is session-level, not per-strategy**: Set once in `POST /api/simulation/start` from the Settings Modal; stored on `SimulationSession.strategy_interval_secs`. All strategies in a session share the same interval. Changing it requires a new session.
+- **AutoStop trigger and deviation are per-strategy-start, not session-level**: `autostop_trigger_type` (`"bar"` or `"deviation"`) and `autostop_deviation_pct` are passed in `POST /api/strategies/start` body and stored in `StrategyInstance.metadata`. This lets different AutoStop instances on the same session have different trigger modes if needed.
+- **BreakEven exit uses LIMIT with 1% slippage**: SELL LIMIT at `price × 0.99` fills immediately because SELL LIMIT fires when `current_price >= limit_price`. BUY LIMIT at `price × 1.01` similarly. No new order type needed — reuses the same mechanism as the Mkt tab.
+- **Strategy right-matching for dual-stream options**: `strategy_service.on_tick` only evaluates a strategy when `tick_right == strategy.right`. CE strategies only fire on CE ticks, PE on PE, equity strategies (right=None) on equity ticks. This prevents CE bar closes from triggering a PE AutoStop.
+- **`OrderTypeFull` union + `handlePlace` guard**: Adding `'STRAT'` to the tab union type means `handlePlace` sees it as a possible `orderType`. Add `if (orderType === 'STRAT') return` at the top before any `onPlaceOrder` calls to narrow the type. Without it TypeScript errors on branches that pass `orderType` directly.
+- **Frontend `runningStrategies` is optimistic, not polled**: The list is updated client-side on start (append) and cancel-all (clear). BreakEven/AggressiveStoploss that self-complete server-side remain in the list until the user cancels or starts a new session. Future improvement: reconcile with `GET /api/strategies` on tab open.
+- **`stop_session()` cancels strategies**: `simulation.py:stop_session` calls `strategy_service.cancel_all()` + `clear_session()` so the registry doesn't leak across sessions that share a process.
 
 ## Phase-III Status
 
@@ -198,4 +207,14 @@ All four spec items shipped plus full user data isolation:
 
 **Default admin**: `admin@tradematangi.com` / `admin123` (user_id = `abc12300-0000-0000-0000-000000000001`) — owns all historical sessions created before Phase V.
 
-**Next: Phase VI Strategies** (see `docs/spec-phase6.md`)
+## Phase-VI Status
+
+### Phase VI — Strategies ✅ COMPLETE (311 tests passing) — PR on feature/phase-vi-strategies
+
+All three strategy types shipped with full backend engine, REST API, DynamoDB persistence, frontend Strat tab, and settings UI:
+
+1. **AutoStop** (Entry) — bar close → TARGET order at bar high/low or `close ± deviation%`; options always BUY; sized by FundsRatio or explicit qty
+2. **BreakEven** (Exit) — every tick; LIMIT exit at `price × 0.99` (LONG) or `price × 1.01` (SHORT) the moment price reaches avg entry; 100% position exit
+3. **AggressiveStoploss** (TradeManagement) — bar close → move SL to `close × 0.99` (LONG) or `close × 1.01` (SHORT); creates SL if none exists
+
+**Next: Phase VII PaperTrading** (see `docs/spec-phase7.md`)

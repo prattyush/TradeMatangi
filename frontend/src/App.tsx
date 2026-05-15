@@ -5,7 +5,8 @@ import TradePanel from './components/TradePanel'
 import TradeHistory from './components/TradeHistory'
 import OrderPanel from './components/OrderPanel'
 import WalletWidget from './components/WalletWidget'
-import SettingsModal, { loadFundsRatioMode, loadFundsRatios, loadTargetDeviationPct, loadBrokeragePerOrder, FundsRatios } from './components/SettingsModal'
+import SettingsModal, { loadFundsRatioMode, loadFundsRatios, loadTargetDeviationPct, loadBrokeragePerOrder, loadStrategyIntervalSecs, loadAutostopTriggerType, loadAutostopDeviationPct, FundsRatios } from './components/SettingsModal'
+import { StrategyResponse, StartStrategyRequest } from './services/api'
 import LoginScreen from './components/LoginScreen'
 import TradeAnalysis from './components/TradeAnalysis'
 import { useSimulation, InstrumentConfig } from './hooks/useSimulation'
@@ -94,6 +95,10 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
   const [fundsRatios, setFundsRatios] = useState<FundsRatios>(loadFundsRatios)
   const [targetDeviationPct, setTargetDeviationPct] = useState(loadTargetDeviationPct)
   const [brokeragePerOrder, setBrokeragePerOrder] = useState(loadBrokeragePerOrder)
+  const [stratIntervalSecs, setStratIntervalSecs] = useState(loadStrategyIntervalSecs)
+  const [autostopTriggerType, setAutostopTriggerType] = useState(loadAutostopTriggerType)
+  const [autostopDeviationPct, setAutostopDeviationPct] = useState(loadAutostopDeviationPct)
+  const [runningStrategies, setRunningStrategies] = useState<StrategyResponse[]>([])
 
   // ── Trade Analysis modal ────────────────────────────────────────────────────
   const [showAnalysis, setShowAnalysis] = useState(false)
@@ -276,8 +281,13 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
   useSSE(sim.sseUrl, handleSSEMessage)
 
   const handleStart = useCallback(async (startTime: string, speed: number, instrumentConfig: InstrumentConfig) => {
-    await sim.startSession(startTime, speed, { ...instrumentConfig, brokerage_per_order: brokeragePerOrder })
-  }, [sim.startSession, brokeragePerOrder])
+    setRunningStrategies([])
+    await sim.startSession(startTime, speed, {
+      ...instrumentConfig,
+      brokerage_per_order: brokeragePerOrder,
+      strategy_interval_secs: stratIntervalSecs,
+    })
+  }, [sim.startSession, brokeragePerOrder, stratIntervalSecs])
 
   // ── Price pick: chart clicked in pick mode ───────────────────────────────────
   const handleChartPriceSelect = useCallback((price: number) => {
@@ -286,6 +296,32 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
       setPricePickOrderId(null)
     }
   }, [pricePickOrderId])
+
+  // ── Strategy callbacks ────────────────────────────────────────────────────────
+  const handleStartStrategy = useCallback(async (
+    strategyType: StartStrategyRequest['strategy_type'],
+    right: 'CE' | 'PE' | null,
+    opts: { quantity?: number; fundsRatioPct?: number; direction?: 'BUY' | 'SELL' },
+  ) => {
+    if (!sim.sessionId) return
+    const resp = await api.startStrategy({
+      session_id: sim.sessionId,
+      strategy_type: strategyType,
+      right: right ?? undefined,
+      quantity: opts.quantity,
+      funds_ratio_pct: opts.fundsRatioPct,
+      direction: opts.direction,
+      autostop_trigger_type: autostopTriggerType,
+      autostop_deviation_pct: autostopDeviationPct,
+    })
+    setRunningStrategies(prev => [...prev, resp])
+  }, [sim.sessionId, autostopTriggerType, autostopDeviationPct])
+
+  const handleCancelAllStrategies = useCallback(async () => {
+    if (!sim.sessionId) return
+    await api.cancelAllStrategies(sim.sessionId)
+    setRunningStrategies([])
+  }, [sim.sessionId])
 
   // Net session P&L = gross dayPnl minus per-trade commissions (computed by backend)
   const netDayPnl = sim.dayPnl - sim.trades.reduce((s, t) => s + (t.commission ?? 0), 0)
@@ -423,6 +459,11 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
           onFundsRatioChange={(mode, ratios) => { setFundsRatioMode(mode); setFundsRatios(ratios) }}
           onTargetDeviationChange={setTargetDeviationPct}
           onBrokerageChange={setBrokeragePerOrder}
+          onStrategySettingsChange={(intervalSecs, triggerType, deviationPct) => {
+            setStratIntervalSecs(intervalSecs)
+            setAutostopTriggerType(triggerType)
+            setAutostopDeviationPct(deviationPct)
+          }}
         />
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: '#484f58' }}>
           <span>{authUser.email}</span>
@@ -607,6 +648,13 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
               fundsRatioMode={fundsRatioMode}
               fundsRatios={fundsRatios}
               targetDeviationPct={targetDeviationPct}
+              instrumentType={instrumentType}
+              activeRight={instrumentType === 'options' ? activeRight : undefined}
+              positionCE={sim.positionCE}
+              positionPE={sim.positionPE}
+              runningStrategies={runningStrategies}
+              autostopTriggerType={autostopTriggerType}
+              autostopDeviationPct={autostopDeviationPct}
               onPlaceOrder={(side, orderType, price, quantity, opts) =>
                 sim.placeOrder(side, orderType, price, quantity, {
                   ...opts,
@@ -623,6 +671,8 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
                 setInjectedEditPrice(null)
               }}
               injectedEditPrice={injectedEditPrice}
+              onStartStrategy={handleStartStrategy}
+              onCancelAllStrategies={handleCancelAllStrategies}
             />
           </div>
           <TradeHistory trades={sim.trades} />

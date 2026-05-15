@@ -42,6 +42,7 @@ class SimulationSession:
     strike_ce: Optional[int] = None    # CE streaming strike (equals strike when offset=0)
     strike_pe: Optional[int] = None    # PE streaming strike (equals strike when offset=0)
     brokerage_per_order: float = 1.0    # flat brokerage per trade (from session start config)
+    strategy_interval_secs: int = 180   # candle interval for all strategies (180=3min, 300=5min)
     queue: asyncio.Queue = field(default_factory=lambda: asyncio.Queue(maxsize=3000))
     resume_event: asyncio.Event = field(default_factory=asyncio.Event)
     task: Optional[asyncio.Task] = None
@@ -92,6 +93,7 @@ def create_session(
     strike_ce: Optional[int] = None,
     strike_pe: Optional[int] = None,
     brokerage_per_order: float = 1.0,
+    strategy_interval_secs: int = 180,
 ) -> SimulationSession:
     from app.services import wallet_service
     session_id = str(uuid.uuid4())
@@ -111,6 +113,7 @@ def create_session(
         strike_ce=strike_ce if strike_ce is not None else strike,
         strike_pe=strike_pe if strike_pe is not None else strike,
         brokerage_per_order=brokerage_per_order,
+        strategy_interval_secs=strategy_interval_secs,
     )
     session.resume_event.set()  # not paused initially
     _sessions[session_id] = session
@@ -163,6 +166,14 @@ def _emit_tick_and_check_orders(
             "filled_price": order.filled_price,
             "filled_at": order.filled_at,
         })
+
+    # Strategy evaluation — fire-and-forget; never raises into the tick loop
+    try:
+        from app.services import strategy_service
+        strategy_service.on_tick(session, tick, tick_right)
+    except Exception as exc:
+        logger.warning("strategy eval error for session %s: %s", session.session_id, exc)
+
     return fill_events
 
 
@@ -318,3 +329,10 @@ def stop_session(session: SimulationSession) -> None:
         session.task.cancel()
     _upsert_session_to_db(session)
     _sessions.pop(session.session_id, None)
+    # Cancel and clean up any running strategies
+    try:
+        from app.services import strategy_service
+        strategy_service.cancel_all(session.session_id)
+        strategy_service.clear_session(session.session_id)
+    except Exception as exc:
+        logger.warning("Could not cancel strategies for session %s: %s", session.session_id, exc)

@@ -46,6 +46,7 @@ export interface InstrumentConfig {
   strike_ce?: number
   strike_pe?: number
   brokerage_per_order?: number
+  strategy_interval_secs?: number
 }
 
 export function useSimulation() {

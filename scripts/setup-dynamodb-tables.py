@@ -107,6 +107,25 @@ TABLES = [
         ],
         "ProvisionedThroughput": {"ReadCapacityUnits": 5, "WriteCapacityUnits": 5},
     },
+    {
+        "TableName": "Strategies",
+        "KeySchema": [
+            {"AttributeName": "strategy_id", "KeyType": "HASH"},
+        ],
+        "AttributeDefinitions": [
+            {"AttributeName": "strategy_id", "AttributeType": "S"},
+            {"AttributeName": "session_id", "AttributeType": "S"},
+        ],
+        "GlobalSecondaryIndexes": [
+            {
+                "IndexName": "SessionIdIndex",
+                "KeySchema": [{"AttributeName": "session_id", "KeyType": "HASH"}],
+                "Projection": {"ProjectionType": "ALL"},
+                "ProvisionedThroughput": {"ReadCapacityUnits": 5, "WriteCapacityUnits": 5},
+            }
+        ],
+        "ProvisionedThroughput": {"ReadCapacityUnits": 5, "WriteCapacityUnits": 5},
+    },
 ]
 
 
