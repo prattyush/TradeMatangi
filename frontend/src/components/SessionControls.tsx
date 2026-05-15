@@ -187,7 +187,8 @@ export default function SessionControls({
         config = { instrument_type: 'equity', session_type: isPaperMode ? 'paper' : 'sim' }
       }
 
-      await onStart(startTime + ':00', isPaperMode ? 1.0 : speed, config)
+      // Paper mode always replays from market open (09:15) to "now", then streams live
+      await onStart(isPaperMode ? '09:15:00' : startTime + ':00', isPaperMode ? 1.0 : speed, config)
     } catch (e) {
       setStartError(e instanceof Error ? e.message : 'Failed to start session')
     } finally {
@@ -241,14 +242,16 @@ export default function SessionControls({
           />
         </label>
 
-        <label style={label}>
-          Start Time&nbsp;
-          <input
-            type="time" step="60" value={startTime}
-            onChange={e => setStartTime(e.target.value)}
-            style={inputStyle} disabled={!idle}
-          />
-        </label>
+        {!isPaperMode && (
+          <label style={label}>
+            Start Time&nbsp;
+            <input
+              type="time" step="60" value={startTime}
+              onChange={e => setStartTime(e.target.value)}
+              style={inputStyle} disabled={!idle}
+            />
+          </label>
+        )}
 
         {isPaperMode ? (
           <span style={{
