@@ -177,30 +177,46 @@ def fetch_historical(symbol: str, date: str) -> Path:
             f"Supported: {list(SUPPORTED_SYMBOLS.keys())}"
         )
 
+    import time as _time
     from datetime import date as _date
     is_today = date == _date.today().strftime("%Y-%m-%d")
+
+    _TODAY_CACHE_TTL = 600  # 10 minutes — re-fetch today's partial data after this
 
     pq = parquet_path(symbol, date)
     partial_pq: "Path | None" = None  # preserve partial data for today as fallback
 
     if pq.exists():
         try:
-            cached_df = pd.read_parquet(pq)
-            if len(cached_df) >= _MIN_DAY_ROWS:
-                logger.info("Parquet cache hit for %s %s (%d rows)", symbol, date, len(cached_df))
-                return pq
-            logger.warning(
-                "Cached parquet for %s %s has only %d rows (< %d), re-fetching",
-                symbol, date, len(cached_df), _MIN_DAY_ROWS,
-            )
-            if is_today and len(cached_df) > 0:
-                # Keep partial today data as fallback — Breeze may be unavailable
-                partial_pq = pq
+            if is_today:
+                age_secs = _time.time() - pq.stat().st_mtime
+                cached_df = pd.read_parquet(pq)
+                if len(cached_df) > 0 and age_secs < _TODAY_CACHE_TTL:
+                    logger.info(
+                        "Parquet cache hit (partial today) for %s %s (%d rows, age %.0fs)",
+                        symbol, date, len(cached_df), age_secs,
+                    )
+                    return pq
+                if len(cached_df) > 0:
+                    partial_pq = pq  # keep as fallback if Breeze fails
+                logger.info(
+                    "Today's parquet for %s %s is %s (%.0fs old) — re-fetching",
+                    symbol, date, "stale" if age_secs >= _TODAY_CACHE_TTL else "empty", age_secs,
+                )
             else:
+                cached_df = pd.read_parquet(pq)
+                if len(cached_df) >= _MIN_DAY_ROWS:
+                    logger.info("Parquet cache hit for %s %s (%d rows)", symbol, date, len(cached_df))
+                    return pq
+                logger.warning(
+                    "Cached parquet for %s %s has only %d rows (< %d), re-fetching",
+                    symbol, date, len(cached_df), _MIN_DAY_ROWS,
+                )
                 pq.unlink()
         except Exception as e:
             logger.warning("Could not read cached parquet for %s %s: %s — re-fetching", symbol, date, e)
-            pq.unlink(missing_ok=True)
+            if not is_today:
+                pq.unlink(missing_ok=True)
 
     # Migrate legacy pickle to parquet if it has enough data
     pkl = pickle_path(symbol, date)
