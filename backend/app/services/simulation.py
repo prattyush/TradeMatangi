@@ -374,9 +374,12 @@ async def _run_paper_session(session: SimulationSession) -> None:
 
     try:
         # ── Phase 1: fast-replay historical data for today ────────────────────
+        logger.info("Paper session %s: Phase 1 — fetching today's data for %s %s",
+                    session.session_id, session.symbol, session.date)
         try:
             from app.services.broker_service import fetch_historical
             fetch_historical(session.symbol, session.date)
+            logger.info("Paper session %s: Phase 1 — equity data ready", session.session_id)
         except Exception as exc:
             logger.warning("Paper session %s: could not pre-fetch today's data: %s", session.session_id, exc)
 
@@ -385,12 +388,21 @@ async def _run_paper_session(session: SimulationSession) -> None:
             from app.services.options_service import options_iter_ticks
             ce_strike = session.strike_ce or session.strike
             pe_strike = session.strike_pe or session.strike
-            ce_by_time = {t["time"]: t for t in options_iter_ticks(
-                session.symbol, session.date, ce_strike, session.expiry, "CE", session.start_time
-            )}
-            pe_by_time = {t["time"]: t for t in options_iter_ticks(
-                session.symbol, session.date, pe_strike, session.expiry, "PE", session.start_time
-            )}
+            logger.info("Paper session %s: Phase 1 — loading CE/PE tick dicts (strike CE=%s PE=%s expiry=%s)",
+                        session.session_id, ce_strike, pe_strike, session.expiry)
+            try:
+                ce_by_time = {t["time"]: t for t in options_iter_ticks(
+                    session.symbol, session.date, ce_strike, session.expiry, "CE", session.start_time
+                )}
+                pe_by_time = {t["time"]: t for t in options_iter_ticks(
+                    session.symbol, session.date, pe_strike, session.expiry, "PE", session.start_time
+                )}
+            except Exception as exc:
+                logger.error("Paper session %s: Phase 1 — options tick load failed: %s", session.session_id, exc)
+                ce_by_time = {}
+                pe_by_time = {}
+            logger.info("Paper session %s: Phase 1 — CE ticks=%d PE ticks=%d",
+                        session.session_id, len(ce_by_time), len(pe_by_time))
             for eq_tick in iter_ticks(session.symbol, session.date, session.start_time):
                 if session.state == SimulationState.ENDED:
                     break
@@ -430,6 +442,9 @@ async def _run_paper_session(session: SimulationSession) -> None:
                 await asyncio.sleep(0.001)
 
         else:
+            pre_replay_count = 0
+            logger.info("Paper session %s: Phase 1 — equity pre-replay from %s",
+                        session.session_id, session.start_time)
             for tick in iter_ticks(session.symbol, session.date, session.start_time):
                 if session.state == SimulationState.ENDED:
                     break
@@ -442,6 +457,9 @@ async def _run_paper_session(session: SimulationSession) -> None:
                     except asyncio.QueueFull:
                         pass
                 await asyncio.sleep(0.001)
+                pre_replay_count += 1
+            logger.info("Paper session %s: Phase 1 — pre-replay done, %d ticks sent",
+                        session.session_id, pre_replay_count)
 
         if session.state == SimulationState.ENDED:
             return

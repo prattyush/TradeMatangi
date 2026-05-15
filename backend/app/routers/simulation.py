@@ -1,3 +1,4 @@
+import logging
 from fastapi import APIRouter, Depends, HTTPException
 from app.models.schemas import (
     SimulationStartRequest,
@@ -11,6 +12,8 @@ from app.services import simulation as sim_svc
 from app.config import SUPPORTED_SYMBOLS
 from app.dependencies import get_request_user_id
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/api/simulation", tags=["simulation"])
 
 
@@ -18,15 +21,18 @@ def _ensure_session_data(symbol: str, date: str) -> None:
     """Validate symbol and ensure equity data is cached before starting a session."""
     if symbol not in SUPPORTED_SYMBOLS:
         raise HTTPException(status_code=400, detail=f"Unsupported symbol: {symbol}")
+    logger.info("start_simulation: fetching equity data %s %s", symbol, date)
     try:
         from app.services.broker_service import (
             fetch_historical, BreezeTokenError, BreezeSymbolError,
         )
         fetch_historical(symbol, date)
+        logger.info("start_simulation: equity data ready %s %s", symbol, date)
     except HTTPException:
         raise
     except Exception as exc:
         from app.services.broker_service import BreezeTokenError, BreezeSymbolError
+        logger.error("start_simulation: equity data fetch failed %s %s — %s", symbol, date, exc)
         if isinstance(exc, BreezeTokenError):
             raise HTTPException(status_code=503, detail=str(exc))
         if isinstance(exc, BreezeSymbolError):
@@ -40,14 +46,17 @@ def _ensure_options_data(
     symbol: str, date: str, strike: int, expiry: str, right: str
 ) -> None:
     """Validate options params and ensure options data is cached."""
+    logger.info("start_simulation: fetching options data %s %s %s %s %s", symbol, date, strike, expiry, right)
     try:
         from app.services.options_service import fetch_options_historical
         from app.services.broker_service import BreezeTokenError
         fetch_options_historical(symbol, date, strike, expiry, right)
+        logger.info("start_simulation: options data ready %s %s %s %s %s", symbol, date, strike, expiry, right)
     except HTTPException:
         raise
     except Exception as exc:
         from app.services.broker_service import BreezeTokenError
+        logger.error("start_simulation: options data fetch failed %s %s %s %s %s — %s", symbol, date, strike, expiry, right, exc)
         if isinstance(exc, BreezeTokenError):
             raise HTTPException(status_code=503, detail=str(exc))
         if isinstance(exc, RuntimeError):

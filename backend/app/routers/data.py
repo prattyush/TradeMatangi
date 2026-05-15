@@ -36,16 +36,21 @@ def _ensure_data(symbol: str, date: str) -> None:
     Triggers a Breeze fetch and saves parquet if nothing cached.
     Raises HTTPException on failure.
     """
+    logger.debug("_ensure_data: fetching %s %s", symbol, date)
     try:
         fetch_historical(symbol, date)
+        logger.debug("_ensure_data: OK %s %s", symbol, date)
     except BreezeTokenError as e:
+        logger.error("_ensure_data: Breeze token error for %s %s — %s", symbol, date, e)
         raise HTTPException(status_code=503, detail=str(e))
     except BreezeSymbolError as e:
+        logger.error("_ensure_data: Breeze symbol error for %s %s — %s", symbol, date, e)
         raise HTTPException(status_code=400, detail=str(e))
     except RuntimeError as e:
+        logger.error("_ensure_data: RuntimeError for %s %s — %s", symbol, date, e)
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
-        logger.exception("Unexpected error fetching %s %s", symbol, date)
+        logger.exception("_ensure_data: unexpected error fetching %s %s", symbol, date)
         raise HTTPException(status_code=500, detail=f"Data fetch failed: {e}")
 
 
