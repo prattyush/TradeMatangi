@@ -97,6 +97,7 @@ export default function Chart({
   const lastEma9Ref = useRef<number | null>(null)
   const lastEma21Ref = useRef<number | null>(null)
   const candleTimesRef = useRef<number[]>([])
+  const latestTickRef = useRef(latestTick)
   const drawModeRef = useRef<DrawMode>('none')
   const trendPt1Ref = useRef<{ time: number; price: number } | null>(null)
   const priceLines = useRef<IPriceLine[]>([])
@@ -112,6 +113,7 @@ export default function Chart({
   // so both parent-triggered and toolbar-triggered reloads work.
   const effectiveReloadKey = reloadKey + localReloadKey
 
+  latestTickRef.current = latestTick
   useEffect(() => { drawModeRef.current = drawMode }, [drawMode])
   useEffect(() => { onPriceSelectRef.current = onPriceSelect ?? null }, [onPriceSelect])
 
@@ -287,9 +289,15 @@ export default function Chart({
         const startTs = new Date(`${tradingDate}T${normalizedStart}Z`).getTime() / 1000
         const intervalSecs = intervalMinutes * 60
         const startWindowTs = Math.floor(startTs / intervalSecs) * intervalSecs
+        // When ticks are already flowing (e.g. refresh during a running session),
+        // use the latest tick's time as the cutoff so all candles up to "now" are
+        // loaded rather than stopping at the session start boundary.
+        const liveTsNow = latestTickRef.current?.time
         const cutoffTs = liveFromTs
           ? Math.floor(liveFromTs / intervalSecs) * intervalSecs
-          : startWindowTs
+          : liveTsNow
+            ? Math.floor(liveTsNow / intervalSecs) * intervalSecs
+            : startWindowTs
         const priorCandles = candles.filter(c => c.time < cutoffTs)
 
         series.setData(priorCandles.map(toCandle))

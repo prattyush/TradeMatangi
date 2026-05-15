@@ -348,6 +348,71 @@ def _build_breeze_instruments(session: SimulationSession) -> list[dict]:
     return instruments
 
 
+def _kite_1min_gap_ticks(symbol: str, date: str, after_ts: int) -> list[dict]:
+    """
+    Return Kite 1-min equity ticks for timestamps strictly after `after_ts`
+    (IST-as-UTC Unix). Non-fatal: returns [] on any error.
+    """
+    try:
+        import pandas as pd
+        from app.services.kite_service import fetch_kite_1min
+        df = fetch_kite_1min(symbol, date)
+        if df.empty:
+            return []
+        if df.index.tzinfo is None:
+            df.index = df.index.tz_localize("UTC")
+        cutoff = pd.Timestamp(after_ts, unit="s", tz="UTC")
+        gap = df[df.index > cutoff]
+        return [
+            {
+                "type": "tick",
+                "time": int(ts.timestamp()),
+                "open":  round(float(row["open"]),  2),
+                "high":  round(float(row["high"]),  2),
+                "low":   round(float(row["low"]),   2),
+                "close": round(float(row["close"]), 2),
+            }
+            for ts, row in gap.iterrows()
+        ]
+    except Exception as exc:
+        logger.warning("Kite 1-min equity gap-fill failed for %s %s: %s", symbol, date, exc)
+        return []
+
+
+def _kite_1min_gap_options_ticks(
+    symbol: str, date: str, strike: int, expiry: str, right: str, after_ts: int
+) -> list[dict]:
+    """
+    Return Kite 1-min options ticks for timestamps strictly after `after_ts`.
+    Non-fatal: returns [] on any error.
+    """
+    try:
+        import pandas as pd
+        from app.services.kite_service import fetch_kite_1min_options
+        df = fetch_kite_1min_options(symbol, date, strike, expiry, right)
+        if df.empty:
+            return []
+        if df.index.tzinfo is None:
+            df.index = df.index.tz_localize("UTC")
+        cutoff = pd.Timestamp(after_ts, unit="s", tz="UTC")
+        gap = df[df.index > cutoff]
+        return [
+            {
+                "type": "tick",
+                "time": int(ts.timestamp()),
+                "open":  round(float(row["open"]),  2),
+                "high":  round(float(row["high"]),  2),
+                "low":   round(float(row["low"]),   2),
+                "close": round(float(row["close"]), 2),
+                "right": right,
+            }
+            for ts, row in gap.iterrows()
+        ]
+    except Exception as exc:
+        logger.warning("Kite 1-min options gap-fill failed for %s %s %s: %s", symbol, date, right, exc)
+        return []
+
+
 async def _run_paper_session(session: SimulationSession) -> None:
     """
     Paper trading session loop.
@@ -383,6 +448,9 @@ async def _run_paper_session(session: SimulationSession) -> None:
         except Exception as exc:
             logger.warning("Paper session %s: could not pre-fetch today's data: %s", session.session_id, exc)
 
+        # Track the last Breeze tick timestamp so we know where the gap starts.
+        _last_breeze_ts: int = 0
+
         # Dual-stream options pre-replay
         if session.instrument_type == "options" and session.strike and session.expiry and session.right is None:
             from app.services.options_service import options_iter_ticks
@@ -409,6 +477,7 @@ async def _run_paper_session(session: SimulationSession) -> None:
                         break
                     session.last_price = eq_tick["close"]
                     ts = eq_tick["time"]
+                    _last_breeze_ts = ts
                     fill_events = _emit_tick_and_check_orders(session, eq_tick, None)
                     if ts in ce_by_time:
                         ce_tick = {**ce_by_time[ts], "right": "CE"}
@@ -427,6 +496,37 @@ async def _run_paper_session(session: SimulationSession) -> None:
             except Exception as exc:
                 logger.warning("Paper session %s: Phase 1 options pre-replay failed: %s", session.session_id, exc)
 
+            # Kite 1-min gap-fill for the period between last Breeze data and now
+            if _last_breeze_ts > 0 and session.state != SimulationState.ENDED:
+                eq_gap = _kite_1min_gap_ticks(session.symbol, session.date, _last_breeze_ts)
+                ce_gap = _kite_1min_gap_options_ticks(session.symbol, session.date, ce_strike, session.expiry, "CE", _last_breeze_ts)
+                pe_gap = _kite_1min_gap_options_ticks(session.symbol, session.date, pe_strike, session.expiry, "PE", _last_breeze_ts)
+                logger.info("Paper session %s: Kite 1-min gap-fill — eq=%d CE=%d PE=%d",
+                            session.session_id, len(eq_gap), len(ce_gap), len(pe_gap))
+                for tick in eq_gap:
+                    if session.state == SimulationState.ENDED: break
+                    session.last_price = tick["close"]
+                    session.current_time = str(tick["time"])
+                    _last_breeze_ts = tick["time"]
+                    for fe in _emit_tick_and_check_orders(session, tick, None):
+                        try: session.queue.put_nowait(json.dumps(fe))
+                        except asyncio.QueueFull: pass
+                    await asyncio.sleep(0.001)
+                for tick in ce_gap:
+                    if session.state == SimulationState.ENDED: break
+                    session.last_price_ce = tick["close"]
+                    for fe in _emit_tick_and_check_orders(session, tick, "CE"):
+                        try: session.queue.put_nowait(json.dumps(fe))
+                        except asyncio.QueueFull: pass
+                    await asyncio.sleep(0.001)
+                for tick in pe_gap:
+                    if session.state == SimulationState.ENDED: break
+                    session.last_price_pe = tick["close"]
+                    for fe in _emit_tick_and_check_orders(session, tick, "PE"):
+                        try: session.queue.put_nowait(json.dumps(fe))
+                        except asyncio.QueueFull: pass
+                    await asyncio.sleep(0.001)
+
         elif session.instrument_type == "options" and session.strike and session.expiry and session.right:
             from app.services.options_service import options_iter_ticks
             try:
@@ -437,6 +537,7 @@ async def _run_paper_session(session: SimulationSession) -> None:
                     if session.state == SimulationState.ENDED:
                         break
                     session.last_price = tick["close"]
+                    _last_breeze_ts = tick["time"]
                     fill_events = _emit_tick_and_check_orders(session, tick, session.right)
                     for fe in fill_events:
                         try:
@@ -446,6 +547,17 @@ async def _run_paper_session(session: SimulationSession) -> None:
                     await asyncio.sleep(0.001)
             except Exception as exc:
                 logger.warning("Paper session %s: Phase 1 single-right pre-replay failed: %s", session.session_id, exc)
+
+            # Kite 1-min equity gap-fill (single-right options; equity not replayed in this branch)
+            if _last_breeze_ts > 0 and session.state != SimulationState.ENDED:
+                for tick in _kite_1min_gap_ticks(session.symbol, session.date, _last_breeze_ts):
+                    if session.state == SimulationState.ENDED: break
+                    session.last_price = tick["close"]
+                    session.current_time = str(tick["time"])
+                    for fe in _emit_tick_and_check_orders(session, tick, None):
+                        try: session.queue.put_nowait(json.dumps(fe))
+                        except asyncio.QueueFull: pass
+                    await asyncio.sleep(0.001)
 
         else:
             pre_replay_count = 0
@@ -457,6 +569,7 @@ async def _run_paper_session(session: SimulationSession) -> None:
                         break
                     session.last_price = tick["close"]
                     session.current_time = str(tick["time"])
+                    _last_breeze_ts = tick["time"]
                     fill_events = _emit_tick_and_check_orders(session, tick, None)
                     for fe in fill_events:
                         try:
@@ -469,6 +582,21 @@ async def _run_paper_session(session: SimulationSession) -> None:
                 logger.warning("Paper session %s: Phase 1 pre-replay failed: %s", session.session_id, exc)
             logger.info("Paper session %s: Phase 1 — pre-replay done, %d ticks sent",
                         session.session_id, pre_replay_count)
+
+            # Kite 1-min gap-fill for equity
+            if _last_breeze_ts > 0 and session.state != SimulationState.ENDED:
+                gap_ticks = _kite_1min_gap_ticks(session.symbol, session.date, _last_breeze_ts)
+                if gap_ticks:
+                    logger.info("Paper session %s: Kite 1-min equity gap-fill — %d ticks",
+                                session.session_id, len(gap_ticks))
+                for tick in gap_ticks:
+                    if session.state == SimulationState.ENDED: break
+                    session.last_price = tick["close"]
+                    session.current_time = str(tick["time"])
+                    for fe in _emit_tick_and_check_orders(session, tick, None):
+                        try: session.queue.put_nowait(json.dumps(fe))
+                        except asyncio.QueueFull: pass
+                    await asyncio.sleep(0.001)
 
         if session.state == SimulationState.ENDED:
             return
@@ -555,8 +683,8 @@ async def _run_paper_session(session: SimulationSession) -> None:
                             session.session_id, _phase3_tick_count,
                             payload.get("time"), payload.get("close"), payload.get("right"))
 
-            tick_right: str | None = payload.pop("right", None)
-            tick_type = payload.pop("type", "tick")
+            tick_right: str | None = payload.get("right")
+            tick_type = payload.get("type", "tick")
             if tick_type != "tick":
                 continue
 
@@ -569,7 +697,7 @@ async def _run_paper_session(session: SimulationSession) -> None:
                 session.current_time = str(payload["time"])
 
             tick_for_emit = {**payload}
-            if tick_right:
+            if tick_right and "right" not in tick_for_emit:
                 tick_for_emit["right"] = tick_right
 
             fill_events = _emit_tick_and_check_orders(session, tick_for_emit, tick_right)

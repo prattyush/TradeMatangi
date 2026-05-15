@@ -191,6 +191,180 @@ def _refresh_instruments_cache(exchange: str, cache_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Kite 1-minute historical data (paper-session gap-fill only)
+# ---------------------------------------------------------------------------
+
+def _kite_1min_df_from_records(records: list[dict]) -> "pd.DataFrame":
+    """Convert kite.historical_data() response to tz-naive IST DataFrame."""
+    import pandas as pd
+    rows = []
+    for r in records:
+        dt = r.get("date")
+        if dt is None:
+            continue
+        # Kite returns IST datetimes; strip tz to keep tz-naive IST convention
+        if hasattr(dt, "tzinfo") and dt.tzinfo is not None:
+            dt = dt.replace(tzinfo=None)
+        rows.append({
+            "datetime": pd.Timestamp(dt),
+            "open":   float(r.get("open",   0)),
+            "high":   float(r.get("high",   0)),
+            "low":    float(r.get("low",    0)),
+            "close":  float(r.get("close",  0)),
+            "volume": float(r.get("volume", 0)),
+        })
+    if not rows:
+        return pd.DataFrame(columns=["open", "high", "low", "close", "volume"])
+    df = pd.DataFrame(rows).set_index("datetime").sort_index()
+    return df[~df.index.duplicated(keep="first")]
+
+
+def fetch_kite_1min(symbol: str, date: str) -> "pd.DataFrame":
+    """
+    Fetch Kite 1-minute equity OHLC for paper-session gap-filling.
+    NOT used for simulation replay — simulation always uses Breeze 1-second data.
+
+    Cache: data/ohlcdata/{SYMBOL}-{DD-MM-YYYY}-kite1m.parquet
+      - Past days: cached permanently (complete day, no re-fetch).
+      - Today: always re-fetches (near real-time data).
+
+    Returns a DataFrame with tz-naive IST DatetimeIndex (same convention as
+    Breeze data so tz_localize("UTC") yields correct IST-as-UTC timestamps).
+    """
+    import os
+    import pandas as pd
+    from datetime import date as _date
+    from app.config import DATA_DIR, MARKET_OPEN, MARKET_CLOSE
+
+    is_today = date == _date.today().strftime("%Y-%m-%d")
+    y, m, d = date.split("-")
+    ohlc_dir = DATA_DIR / "ohlcdata"
+    ohlc_dir.mkdir(parents=True, exist_ok=True)
+    cache_path = ohlc_dir / f"{symbol}-{d}-{m}-{y}-kite1m.parquet"
+    empty = pd.DataFrame(columns=["open", "high", "low", "close", "volume"])
+
+    if not is_today and cache_path.exists():
+        try:
+            df = pd.read_parquet(cache_path)
+            if not df.empty:
+                return df
+        except Exception as exc:
+            logger.warning("Kite 1-min equity cache unreadable for %s %s: %s", symbol, date, exc)
+
+    try:
+        kite = _get_kite()
+        _, token = fetch_equity_instrument_token(symbol)
+    except Exception as exc:
+        logger.warning("Kite 1-min equity: cannot init for %s %s: %s", symbol, date, exc)
+        return empty
+
+    from_ts = pd.Timestamp(f"{date} {MARKET_OPEN}")
+    to_ts = (
+        pd.Timestamp.utcnow() + pd.Timedelta(hours=5, minutes=30)  # current IST
+        if is_today else
+        pd.Timestamp(f"{date} {MARKET_CLOSE}")
+    )
+
+    try:
+        records = kite.historical_data(
+            instrument_token=token,
+            from_date=from_ts.to_pydatetime(),
+            to_date=to_ts.to_pydatetime(),
+            interval="minute",
+            continuous=False,
+            oi=False,
+        )
+    except Exception as exc:
+        logger.warning("Kite 1-min equity fetch failed for %s %s: %s", symbol, date, exc)
+        return empty
+
+    df = _kite_1min_df_from_records(records or [])
+    if df.empty:
+        return empty
+
+    try:
+        tmp = cache_path.with_name(cache_path.name + ".tmp")
+        df.to_parquet(tmp)
+        os.replace(tmp, cache_path)
+    except Exception as exc:
+        logger.warning("Kite 1-min equity: cache write failed for %s %s: %s", symbol, date, exc)
+
+    logger.info("Kite 1-min equity: %d candles for %s %s", len(df), symbol, date)
+    return df
+
+
+def fetch_kite_1min_options(symbol: str, date: str, strike: int, expiry: str, right: str) -> "pd.DataFrame":
+    """
+    Fetch Kite 1-minute options OHLC for paper-session gap-filling.
+    Cache: data/ohlcdata/{SYMBOL}-{CE|PE}-{STRIKE}-{EXPIRY_COMPACT}-{DD-MM-YYYY}-kite1m.parquet
+    Same caching rules as fetch_kite_1min.
+    """
+    import os
+    import pandas as pd
+    from datetime import date as _date
+    from app.config import DATA_DIR, MARKET_OPEN, MARKET_CLOSE
+
+    is_today = date == _date.today().strftime("%Y-%m-%d")
+    y, m, d = date.split("-")
+    expiry_compact = expiry.replace("-", "")
+    ohlc_dir = DATA_DIR / "ohlcdata"
+    ohlc_dir.mkdir(parents=True, exist_ok=True)
+    cache_path = ohlc_dir / f"{symbol}-{right}-{strike}-{expiry_compact}-{d}-{m}-{y}-kite1m.parquet"
+    empty = pd.DataFrame(columns=["open", "high", "low", "close", "volume"])
+
+    if not is_today and cache_path.exists():
+        try:
+            df = pd.read_parquet(cache_path)
+            if not df.empty:
+                return df
+        except Exception as exc:
+            logger.warning("Kite 1-min options cache unreadable for %s %s %s: %s", symbol, right, date, exc)
+
+    try:
+        kite = _get_kite()
+        token = fetch_options_instrument_token(symbol, expiry, strike, right)
+    except Exception as exc:
+        logger.warning("Kite 1-min options: cannot get token for %s %s %s %s: %s",
+                       symbol, right, strike, date, exc)
+        return empty
+
+    from_ts = pd.Timestamp(f"{date} {MARKET_OPEN}")
+    to_ts = (
+        pd.Timestamp.utcnow() + pd.Timedelta(hours=5, minutes=30)
+        if is_today else
+        pd.Timestamp(f"{date} {MARKET_CLOSE}")
+    )
+
+    try:
+        records = kite.historical_data(
+            instrument_token=token,
+            from_date=from_ts.to_pydatetime(),
+            to_date=to_ts.to_pydatetime(),
+            interval="minute",
+            continuous=False,
+            oi=False,
+        )
+    except Exception as exc:
+        logger.warning("Kite 1-min options fetch failed for %s %s %s %s: %s",
+                       symbol, right, strike, date, exc)
+        return empty
+
+    df = _kite_1min_df_from_records(records or [])
+    if df.empty:
+        return empty
+
+    try:
+        tmp = cache_path.with_name(cache_path.name + ".tmp")
+        df.to_parquet(tmp)
+        os.replace(tmp, cache_path)
+    except Exception as exc:
+        logger.warning("Kite 1-min options: cache write failed: %s", exc)
+
+    logger.info("Kite 1-min options: %d candles for %s %s %s %s", len(df), symbol, right, strike, date)
+    return df
+
+
+# ---------------------------------------------------------------------------
 # 1-second OHLC accumulator
 # ---------------------------------------------------------------------------
 
