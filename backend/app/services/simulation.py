@@ -403,61 +403,70 @@ async def _run_paper_session(session: SimulationSession) -> None:
                 pe_by_time = {}
             logger.info("Paper session %s: Phase 1 — CE ticks=%d PE ticks=%d",
                         session.session_id, len(ce_by_time), len(pe_by_time))
-            for eq_tick in iter_ticks(session.symbol, session.date, session.start_time):
-                if session.state == SimulationState.ENDED:
-                    break
-                session.last_price = eq_tick["close"]
-                ts = eq_tick["time"]
-                fill_events = _emit_tick_and_check_orders(session, eq_tick, None)
-                if ts in ce_by_time:
-                    ce_tick = {**ce_by_time[ts], "right": "CE"}
-                    session.last_price_ce = ce_tick["close"]
-                    fill_events += _emit_tick_and_check_orders(session, ce_tick, "CE")
-                if ts in pe_by_time:
-                    pe_tick = {**pe_by_time[ts], "right": "PE"}
-                    session.last_price_pe = pe_tick["close"]
-                    fill_events += _emit_tick_and_check_orders(session, pe_tick, "PE")
-                for fe in fill_events:
-                    try:
-                        session.queue.put_nowait(json.dumps(fe))
-                    except asyncio.QueueFull:
-                        pass
-                await asyncio.sleep(0.001)
+            try:
+                for eq_tick in iter_ticks(session.symbol, session.date, session.start_time):
+                    if session.state == SimulationState.ENDED:
+                        break
+                    session.last_price = eq_tick["close"]
+                    ts = eq_tick["time"]
+                    fill_events = _emit_tick_and_check_orders(session, eq_tick, None)
+                    if ts in ce_by_time:
+                        ce_tick = {**ce_by_time[ts], "right": "CE"}
+                        session.last_price_ce = ce_tick["close"]
+                        fill_events += _emit_tick_and_check_orders(session, ce_tick, "CE")
+                    if ts in pe_by_time:
+                        pe_tick = {**pe_by_time[ts], "right": "PE"}
+                        session.last_price_pe = pe_tick["close"]
+                        fill_events += _emit_tick_and_check_orders(session, pe_tick, "PE")
+                    for fe in fill_events:
+                        try:
+                            session.queue.put_nowait(json.dumps(fe))
+                        except asyncio.QueueFull:
+                            pass
+                    await asyncio.sleep(0.001)
+            except Exception as exc:
+                logger.warning("Paper session %s: Phase 1 options pre-replay failed: %s", session.session_id, exc)
 
         elif session.instrument_type == "options" and session.strike and session.expiry and session.right:
             from app.services.options_service import options_iter_ticks
-            for tick in options_iter_ticks(
-                session.symbol, session.date, session.strike,
-                session.expiry, session.right, session.start_time,
-            ):
-                if session.state == SimulationState.ENDED:
-                    break
-                session.last_price = tick["close"]
-                fill_events = _emit_tick_and_check_orders(session, tick, session.right)
-                for fe in fill_events:
-                    try:
-                        session.queue.put_nowait(json.dumps(fe))
-                    except asyncio.QueueFull:
-                        pass
-                await asyncio.sleep(0.001)
+            try:
+                for tick in options_iter_ticks(
+                    session.symbol, session.date, session.strike,
+                    session.expiry, session.right, session.start_time,
+                ):
+                    if session.state == SimulationState.ENDED:
+                        break
+                    session.last_price = tick["close"]
+                    fill_events = _emit_tick_and_check_orders(session, tick, session.right)
+                    for fe in fill_events:
+                        try:
+                            session.queue.put_nowait(json.dumps(fe))
+                        except asyncio.QueueFull:
+                            pass
+                    await asyncio.sleep(0.001)
+            except Exception as exc:
+                logger.warning("Paper session %s: Phase 1 single-right pre-replay failed: %s", session.session_id, exc)
 
         else:
             pre_replay_count = 0
             logger.info("Paper session %s: Phase 1 — equity pre-replay from %s",
                         session.session_id, session.start_time)
-            for tick in iter_ticks(session.symbol, session.date, session.start_time):
-                if session.state == SimulationState.ENDED:
-                    break
-                session.last_price = tick["close"]
-                session.current_time = str(tick["time"])
-                fill_events = _emit_tick_and_check_orders(session, tick, None)
-                for fe in fill_events:
-                    try:
-                        session.queue.put_nowait(json.dumps(fe))
-                    except asyncio.QueueFull:
-                        pass
-                await asyncio.sleep(0.001)
-                pre_replay_count += 1
+            try:
+                for tick in iter_ticks(session.symbol, session.date, session.start_time):
+                    if session.state == SimulationState.ENDED:
+                        break
+                    session.last_price = tick["close"]
+                    session.current_time = str(tick["time"])
+                    fill_events = _emit_tick_and_check_orders(session, tick, None)
+                    for fe in fill_events:
+                        try:
+                            session.queue.put_nowait(json.dumps(fe))
+                        except asyncio.QueueFull:
+                            pass
+                    await asyncio.sleep(0.001)
+                    pre_replay_count += 1
+            except Exception as exc:
+                logger.warning("Paper session %s: Phase 1 pre-replay failed: %s", session.session_id, exc)
             logger.info("Paper session %s: Phase 1 — pre-replay done, %d ticks sent",
                         session.session_id, pre_replay_count)
 

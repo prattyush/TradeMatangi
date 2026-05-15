@@ -267,7 +267,10 @@ const api = {
   async getPriceAt(symbol: string, date: string, time: string): Promise<PriceAtResponse> {
     const url = `${BACKEND_URL}/api/data/price-at?symbol=${encodeURIComponent(symbol)}&date=${date}&time=${encodeURIComponent(time)}`
     const res = await fetch(url)
-    if (!res.ok) throw new Error(`Price-at fetch failed: ${res.status}`)
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}))
+      throw new Error(body?.detail || `Price-at fetch failed: ${res.status}`)
+    }
     return res.json()
   },
 

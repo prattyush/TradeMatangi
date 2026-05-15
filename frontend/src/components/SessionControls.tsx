@@ -177,8 +177,8 @@ export default function SessionControls({
             strike_pe: cfg.peStrike,
             session_type: isPaperMode ? 'paper' : 'sim',
           }
-        } catch {
-          setStartError('Could not fetch options data — check backend connection')
+        } catch (e) {
+          setStartError(e instanceof Error ? e.message : 'Could not fetch options data — check backend connection')
           setLoading(false)
           return
         }
