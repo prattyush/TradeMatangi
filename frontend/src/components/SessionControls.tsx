@@ -293,7 +293,14 @@ export default function SessionControls({
               : (isPaperMode ? 'Start Paper Trading' : 'Start Replay')}
           </button>
         )}
-        {running && <button style={btn('#6e40c9')} onClick={onPause}>Pause</button>}
+        {running && (
+          <button
+            style={btn('#6e40c9', isPaperMode)}
+            onClick={isPaperMode ? undefined : onPause}
+            disabled={isPaperMode}
+            title={isPaperMode ? 'Pause not available in live paper trading' : undefined}
+          >Pause</button>
+        )}
         {paused && <button style={btn('#1f6feb')} onClick={onResume}>Resume</button>}
         {(running || paused) && <button style={btn('#b62324')} onClick={onStop}>Stop</button>}
         {sessionState === 'ended' && (
