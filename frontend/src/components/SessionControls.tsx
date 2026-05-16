@@ -68,6 +68,10 @@ function lastWeekday(): string {
   return formatLocalDate(d)
 }
 
+function todayIST(): string {
+  return new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' })
+}
+
 const STRIKE_INTERVALS: Record<string, number> = {
   NIFTY: 50, BSESEN: 100, RELIND: 5, TATMOT: 5, TATPOW: 5,
 }
@@ -97,6 +101,7 @@ export default function SessionControls({
   const running = sessionState === 'running'
   const paused = sessionState === 'paused'
   const today = formatLocalDate(new Date())
+  const isPaperMode = currentDate === todayIST()
 
   // Load symbols once on mount; set date to last weekday
   useEffect(() => {
@@ -170,17 +175,20 @@ export default function SessionControls({
             expiry: cfg.expiry,
             strike_ce: cfg.ceStrike,
             strike_pe: cfg.peStrike,
+            session_type: isPaperMode ? 'paper' : 'sim',
           }
-        } catch {
-          setStartError('Could not fetch options data — check backend connection')
+        } catch (e) {
+          setStartError(e instanceof Error ? e.message : 'Could not fetch options data — check backend connection')
           setLoading(false)
           return
         }
       } else {
         onOptionsReady(null)
+        config = { instrument_type: 'equity', session_type: isPaperMode ? 'paper' : 'sim' }
       }
 
-      await onStart(startTime + ':00', speed, config)
+      // Paper mode always replays from market open (09:15) to "now", then streams live
+      await onStart(isPaperMode ? '09:15:00' : startTime + ':00', isPaperMode ? 1.0 : speed, config)
     } catch (e) {
       setStartError(e instanceof Error ? e.message : 'Failed to start session')
     } finally {
@@ -234,24 +242,34 @@ export default function SessionControls({
           />
         </label>
 
-        <label style={label}>
-          Start Time&nbsp;
-          <input
-            type="time" step="60" value={startTime}
-            onChange={e => setStartTime(e.target.value)}
-            style={inputStyle} disabled={!idle}
-          />
-        </label>
+        {!isPaperMode && (
+          <label style={label}>
+            Start Time&nbsp;
+            <input
+              type="time" step="60" value={startTime}
+              onChange={e => setStartTime(e.target.value)}
+              style={inputStyle} disabled={!idle}
+            />
+          </label>
+        )}
 
-        <label style={label}>
-          Speed&nbsp;
-          <input
-            type="number" min={0.05} max={100} step={0.5} value={speed}
-            onChange={e => setSpeed(parseFloat(e.target.value) || 1)}
-            style={{ ...inputStyle, width: 70 }} disabled={!idle}
-          />
-          <span style={{ marginLeft: 4 }}>x</span>
-        </label>
+        {isPaperMode ? (
+          <span style={{
+            background: '#0d4f2e', color: '#3fb950', border: '1px solid #3fb950',
+            borderRadius: 6, padding: '4px 10px', fontSize: 12, fontWeight: 700,
+            letterSpacing: 1,
+          }}>● LIVE</span>
+        ) : (
+          <label style={label}>
+            Speed&nbsp;
+            <input
+              type="number" min={0.05} max={100} step={0.5} value={speed}
+              onChange={e => setSpeed(parseFloat(e.target.value) || 1)}
+              style={{ ...inputStyle, width: 70 }} disabled={!idle}
+            />
+            <span style={{ marginLeft: 4 }}>x</span>
+          </label>
+        )}
 
         {/* OTM offset — always visible; disabled when equity or session active */}
         <label style={{ ...label, fontSize: 12, opacity: instrumentType === 'equity' ? 0.4 : 1 }}>
@@ -269,16 +287,23 @@ export default function SessionControls({
 
         {idle && (
           <button
-            style={btn('#1f6feb', !canStart)}
+            style={btn(isPaperMode ? '#1a7f37' : '#1f6feb', !canStart)}
             onClick={handleStart}
             disabled={!canStart}
           >
             {loading
               ? (instrumentType === 'options' ? 'Fetching strike…' : 'Loading data…')
-              : 'Start Replay'}
+              : (isPaperMode ? 'Start Paper Trading' : 'Start Replay')}
           </button>
         )}
-        {running && <button style={btn('#6e40c9')} onClick={onPause}>Pause</button>}
+        {running && (
+          <button
+            style={btn('#6e40c9', isPaperMode)}
+            onClick={isPaperMode ? undefined : onPause}
+            disabled={isPaperMode}
+            title={isPaperMode ? 'Pause not available in live paper trading' : undefined}
+          >Pause</button>
+        )}
         {paused && <button style={btn('#1f6feb')} onClick={onResume}>Resume</button>}
         {(running || paused) && <button style={btn('#b62324')} onClick={onStop}>Stop</button>}
         {sessionState === 'ended' && (

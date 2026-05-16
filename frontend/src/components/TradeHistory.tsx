@@ -3,6 +3,7 @@ import { Trade } from '../services/api'
 
 interface Props {
   trades: Trade[]
+  historicalTrades?: Trade[]
 }
 
 function fmt(n: number) {
@@ -15,8 +16,33 @@ function toDate(ts: number) {
   return new Date(ts * 1000).toLocaleTimeString('en-IN', { timeZone: 'UTC', hour12: false })
 }
 
-export default function TradeHistory({ trades }: Props) {
+const SEPARATOR_STYLE: React.CSSProperties = {
+  padding: '4px 10px',
+  fontSize: 10,
+  color: '#484f58',
+  textAlign: 'center',
+  borderBottom: '1px solid #21262d',
+  letterSpacing: '0.05em',
+}
+
+const SEPARATOR_STYLE_EXPANDED: React.CSSProperties = {
+  padding: '5px 14px',
+  fontSize: 10,
+  color: '#484f58',
+  textAlign: 'center',
+  borderBottom: '1px solid #21262d',
+  letterSpacing: '0.05em',
+}
+
+export default function TradeHistory({ trades, historicalTrades = [] }: Props) {
   const [expanded, setExpanded] = useState(false)
+
+  const totalCount = trades.length + historicalTrades.length
+  const hasAny = totalCount > 0
+
+  // Compact view: most-recent-first current session, then separator, then historical most-recent-first
+  const currentReversed = [...trades].reverse()
+  const histReversed = [...historicalTrades].reverse()
 
   return (
     <>
@@ -26,10 +52,10 @@ export default function TradeHistory({ trades }: Props) {
       }}>
         <div style={{
           padding: '10px 14px', borderBottom: '1px solid #30363d',
-          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          display: 'flex', alignItems: 'center', gap: 6,
         }}>
-          <span style={{ fontSize: 13, fontWeight: 600 }}>Trade History ({trades.length})</span>
-          {trades.length > 0 && (
+          <span style={{ fontSize: 13, fontWeight: 600 }}>Trade History ({totalCount})</span>
+          {hasAny && (
             <button
               onClick={() => setExpanded(true)}
               title="Expand trade history"
@@ -42,7 +68,7 @@ export default function TradeHistory({ trades }: Props) {
             </button>
           )}
         </div>
-        {trades.length === 0 ? (
+        {!hasAny ? (
           <div style={{ padding: 16, fontSize: 12, color: '#484f58', textAlign: 'center' }}>
             No trades yet
           </div>
@@ -57,7 +83,7 @@ export default function TradeHistory({ trades }: Props) {
                 </tr>
               </thead>
               <tbody>
-                {[...trades].reverse().map(t => (
+                {currentReversed.map(t => (
                   <tr key={t.trade_id} style={{ borderBottom: '1px solid #21262d' }}>
                     <td style={{ padding: '6px 10px', color: '#8b949e' }}>{toDate(t.timestamp)}</td>
                     <td style={{ padding: '6px 10px', fontWeight: 600, color: t.side === 'BUY' ? '#26a641' : '#f85149' }}>
@@ -67,6 +93,21 @@ export default function TradeHistory({ trades }: Props) {
                     <td style={{ padding: '6px 10px', fontVariantNumeric: 'tabular-nums' }}>{fmt(t.price)}</td>
                   </tr>
                 ))}
+                {histReversed.length > 0 && (
+                  <>
+                    <tr><td colSpan={4} style={SEPARATOR_STYLE}>── Previous sessions ──</td></tr>
+                    {histReversed.map(t => (
+                      <tr key={t.trade_id} style={{ borderBottom: '1px solid #21262d', opacity: 0.55 }}>
+                        <td style={{ padding: '6px 10px', color: '#8b949e' }}>{toDate(t.timestamp)}</td>
+                        <td style={{ padding: '6px 10px', fontWeight: 600, color: t.side === 'BUY' ? '#26a641' : '#f85149' }}>
+                          {t.side}
+                        </td>
+                        <td style={{ padding: '6px 10px' }}>{t.quantity}</td>
+                        <td style={{ padding: '6px 10px', fontVariantNumeric: 'tabular-nums' }}>{fmt(t.price)}</td>
+                      </tr>
+                    ))}
+                  </>
+                )}
               </tbody>
             </table>
           </div>
@@ -90,7 +131,7 @@ export default function TradeHistory({ trades }: Props) {
           }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <span style={{ fontSize: 15, fontWeight: 600, color: '#e6edf3' }}>
-                Trade History ({trades.length})
+                Trade History ({totalCount})
               </span>
               <button
                 onClick={() => setExpanded(false)}
@@ -107,7 +148,7 @@ export default function TradeHistory({ trades }: Props) {
                   </tr>
                 </thead>
                 <tbody>
-                  {[...trades].reverse().map(t => (
+                  {currentReversed.map(t => (
                     <tr key={t.trade_id} style={{ borderBottom: '1px solid #21262d' }}>
                       <td style={{ padding: '7px 14px', color: '#8b949e' }}>{toDate(t.timestamp)}</td>
                       <td style={{ padding: '7px 14px', color: '#e6edf3' }}>{t.symbol}</td>
@@ -123,6 +164,27 @@ export default function TradeHistory({ trades }: Props) {
                       </td>
                     </tr>
                   ))}
+                  {histReversed.length > 0 && (
+                    <>
+                      <tr><td colSpan={8} style={SEPARATOR_STYLE_EXPANDED}>── Previous sessions ──</td></tr>
+                      {histReversed.map(t => (
+                        <tr key={t.trade_id} style={{ borderBottom: '1px solid #21262d', opacity: 0.55 }}>
+                          <td style={{ padding: '7px 14px', color: '#8b949e' }}>{toDate(t.timestamp)}</td>
+                          <td style={{ padding: '7px 14px', color: '#e6edf3' }}>{t.symbol}</td>
+                          <td style={{ padding: '7px 14px', fontWeight: 600, color: t.side === 'BUY' ? '#26a641' : '#f85149' }}>
+                            {t.side}
+                          </td>
+                          <td style={{ padding: '7px 14px' }}>{t.quantity}</td>
+                          <td style={{ padding: '7px 14px', fontVariantNumeric: 'tabular-nums' }}>{fmt(t.price)}</td>
+                          <td style={{ padding: '7px 14px', color: '#8b949e' }}>{t.right ?? '—'}</td>
+                          <td style={{ padding: '7px 14px', color: '#8b949e' }}>{t.strike ?? '—'}</td>
+                          <td style={{ padding: '7px 14px', color: '#484f58', fontSize: 10 }}>
+                            {t.trade_id.slice(0, 8)}…
+                          </td>
+                        </tr>
+                      ))}
+                    </>
+                  )}
                 </tbody>
               </table>
             </div>

@@ -109,3 +109,24 @@ This phase will allow trades to be analyzed for manual evaluation and later for 
 - **Analysis chart aspect ratio should scale with container**: Fixed pixel heights break on different screen sizes. Computing height as a fraction of container width (`containerWidth × 0.45`) via ResizeObserver gives a natural chart regardless of display size. The same ResizeObserver that handles width changes can apply the proportional height change via `chart.applyOptions({width, height})`.
 
 - **Default admin credentials are the entry point for all historical data**: All sessions created before Phase V user isolation were stored under `FIXED_USER_ID = "abc12300-0000-0000-0000-000000000001"`. The seeded admin user (`admin@tradematangi.com` / `admin123`) maps to this UUID, so historical data is accessible by logging in with those credentials.
+
+---
+
+## Phase V Implementation Status
+
+### ✅ COMPLETE (299 tests passing) — PR #18 merged to dev
+
+All four spec items shipped plus full user data isolation:
+
+1. **Login** — `POST /api/auth/login` + `POST /api/auth/register`; bcrypt hashing; `LoginScreen.tsx` auth gate; `localStorage.auth_user`; sign-out in header
+2. **Trade Analysis** — `GET /api/analysis/sessions` + `GET /api/analysis/sessions/{id}`; full-screen modal with filters, aggregate stats, per-session expandable cards with trade table + embedded equity chart; chart height = `containerWidth × 0.45`
+3. **Persistence** — `analysis_service.py` reads Sessions + Trades via `UserIdIndex` GSI; `pnl_pct` stored as percentage (e.g. `9.70` = 9.70%)
+4. **Reload Chart** — `↻` button increments `localReloadKey`; triggers full historical re-fetch + `series.setData()`
+5. **User data isolation** — `app/dependencies.py` `get_request_user_id`; `SimulationSession.user_id`; `X-User-Id` header on all authenticated requests
+
+**Default admin**: `admin@tradematangi.com` / `admin123` (user_id = `abc12300-0000-0000-0000-000000000001`) — owns all historical sessions created before Phase V.
+
+### Lessons Learned
+- `order.user_id` makes cancel/update/fill self-contained — user identity travels with the order, not the caller
+- Analysis chart aspect ratio: `containerWidth × 0.45` via ResizeObserver gives natural sizing; apply via `chart.applyOptions({width, height})`
+- Default admin credentials are the entry point for all pre-Phase-V historical data

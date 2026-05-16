@@ -1,9 +1,9 @@
 import { useState, useEffect } from 'react'
-import { Order, Position } from '../services/api'
+import { Order, Position, StrategyResponse } from '../services/api'
 import { SessionState } from '../hooks/useSimulation'
 import { FundsRatios } from './SettingsModal'
 
-type OrderTypeFull = 'TARGET' | 'LIMIT' | 'STOPLOSS' | 'MARKET'
+type OrderTypeFull = 'TARGET' | 'LIMIT' | 'STOPLOSS' | 'MARKET' | 'STRAT'
 
 interface Props {
   sessionState: SessionState
@@ -25,6 +25,20 @@ interface Props {
   // Price-pick from chart
   onRequestPricePick: (orderId: string) => void
   injectedEditPrice: { orderId: string; price: number } | null
+  // Strategy props
+  instrumentType?: 'equity' | 'options'
+  activeRight?: 'CE' | 'PE' | null
+  positionCE?: Position
+  positionPE?: Position
+  runningStrategies?: StrategyResponse[]
+  autostopTriggerType?: 'bar' | 'deviation'
+  autostopDeviationPct?: number
+  onStartStrategy?: (
+    strategyType: 'AutoStop' | 'BreakEven' | 'AggressiveStoploss',
+    right: 'CE' | 'PE' | null,
+    opts: { quantity?: number; fundsRatioPct?: number; direction?: 'BUY' | 'SELL' }
+  ) => Promise<void>
+  onCancelAllStrategies?: () => Promise<void>
 }
 
 const QUANTITY_OPTIONS = [1, 2, 3, 5, 10]
@@ -36,6 +50,15 @@ export default function OrderPanel({
   fundsRatioMode, fundsRatios, targetDeviationPct,
   onPlaceOrder, onCancelOrder, onUpdateOrder,
   onRequestPricePick, injectedEditPrice,
+  instrumentType = 'equity',
+  activeRight = null,
+  positionCE,
+  positionPE,
+  runningStrategies = [],
+  autostopTriggerType = 'bar',
+  autostopDeviationPct = 1.0,
+  onStartStrategy,
+  onCancelAllStrategies,
 }: Props) {
   const [orderType, setOrderType] = useState<OrderTypeFull>('TARGET')
   const [side, setSide] = useState<'BUY' | 'SELL'>('BUY')
@@ -45,6 +68,15 @@ export default function OrderPanel({
   const [slQty, setSlQty] = useState(1)
   const [placing, setPlacing] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  // Strategy tab state
+  const [stratDirection, setStratDirection] = useState<'BUY' | 'SELL'>('BUY')
+  const [stratRight, setStratRight] = useState<'CE' | 'PE'>(activeRight ?? 'CE')
+  const [stratRatio, setStratRatio] = useState<RatioKey>('l')
+  const [stratQty, setStratQty] = useState(1)
+  const [stratLoading, setStratLoading] = useState<string | null>(null)
+  const [stratError, setStratError] = useState<string | null>(null)
+  const [cancellingAll, setCancellingAll] = useState(false)
 
   // Inline edit state
   const [editingOrderId, setEditingOrderId] = useState<string | null>(null)
@@ -93,6 +125,7 @@ export default function OrderPanel({
   const ratioPct = fundsRatios[ratio] / 100
 
   const handlePlace = async () => {
+    if (orderType === 'STRAT') return
     if (orderType === 'MARKET') {
       if (currentPrice <= 0) {
         setError('Waiting for price data')
@@ -170,6 +203,43 @@ export default function OrderPanel({
     }
   }
 
+  // Position for the selected strategy right (options) or equity position
+  const stratPosition = instrumentType === 'options'
+    ? (stratRight === 'CE' ? positionCE : positionPE) ?? { side: 'FLAT', quantity: 0, avg_entry_price: 0, symbol: '' }
+    : position
+  const stratHasPosition = stratPosition.side !== 'FLAT'
+
+  const handleStartStrategy = async (strategyType: 'AutoStop' | 'BreakEven' | 'AggressiveStoploss') => {
+    if (!onStartStrategy) return
+    setStratError(null)
+    setStratLoading(strategyType)
+    try {
+      const right = instrumentType === 'options' ? stratRight : null
+      const direction = (instrumentType === 'options') ? 'BUY' : stratDirection
+      const opts = fundsRatioMode
+        ? { fundsRatioPct: fundsRatios[stratRatio] / 100, direction }
+        : { quantity: stratQty, direction }
+      await onStartStrategy(strategyType, right, opts)
+    } catch (e) {
+      setStratError(e instanceof Error ? e.message : 'Failed to start strategy')
+    } finally {
+      setStratLoading(null)
+    }
+  }
+
+  const handleCancelAll = async () => {
+    if (!onCancelAllStrategies) return
+    setCancellingAll(true)
+    setStratError(null)
+    try {
+      await onCancelAllStrategies()
+    } catch (e) {
+      setStratError(e instanceof Error ? e.message : 'Failed to cancel strategies')
+    } finally {
+      setCancellingAll(false)
+    }
+  }
+
   const btn = (label: string, active: boolean, onClick: () => void, disabled = false, color?: string) => (
     <button
       onClick={onClick}
@@ -220,7 +290,7 @@ export default function OrderPanel({
         Orders
       </div>
 
-      {/* Tgt / Lmt / SL / Mkt toggle */}
+      {/* Tgt / Lmt / SL / Mkt / Strat toggle */}
       <div style={{ display: 'flex', gap: 0, borderRadius: 6, overflow: 'hidden', border: '1px solid #30363d' }}>
         {btn('Tgt', orderType === 'TARGET', () => { setOrderType('TARGET'); setPrice('') }, !isActive)}
         {btn('Lmt', orderType === 'LIMIT', () => { setOrderType('LIMIT'); setPrice('') }, !isActive)}
@@ -230,8 +300,183 @@ export default function OrderPanel({
           orderType === 'STOPLOSS' ? '#8b2300' : undefined,
         )}
         {btn('Mkt', orderType === 'MARKET', () => { setOrderType('MARKET'); setPrice('') }, !isActive)}
+        {btn('Strat', orderType === 'STRAT', () => { setOrderType('STRAT'); setStratError(null) }, !isActive, orderType === 'STRAT' ? '#1a3a2f' : undefined)}
       </div>
 
+      {/* ── Strategy panel (Strat tab) ─────────────────────────────────── */}
+      {orderType === 'STRAT' && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+
+          {/* Right selector (options only) */}
+          {instrumentType === 'options' && (
+            <div>
+              <div style={{ fontSize: 10, color: '#8b949e', marginBottom: 3 }}>Options Right</div>
+              <div style={{ display: 'flex', gap: 4 }}>
+                {(['CE', 'PE'] as const).map(r => (
+                  <button key={r} onClick={() => setStratRight(r)} style={{
+                    flex: 1, padding: '4px 0', fontSize: 12, fontWeight: 700,
+                    border: `1px solid ${stratRight === r ? '#388bfd' : '#30363d'}`,
+                    borderRadius: 4, cursor: 'pointer',
+                    background: stratRight === r ? '#1f3a5f' : '#161b22',
+                    color: stratRight === r ? '#79c0ff' : '#8b949e',
+                  }}>{r}</button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* ── Entry Strategies ── */}
+          <div style={{ borderTop: '1px solid #21262d', paddingTop: 8 }}>
+            <div style={{ fontSize: 10, color: '#3fb950', fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 6 }}>
+              Entry Strategies
+            </div>
+
+            {/* AutoStop */}
+            <div style={{ marginBottom: 6 }}>
+              <div style={{ fontSize: 11, color: '#e6edf3', fontWeight: 600, marginBottom: 4 }}>AutoStop</div>
+              {/* Direction (equity only; options always BUY) */}
+              {instrumentType === 'equity' && (
+                <div style={{ display: 'flex', gap: 4, marginBottom: 4 }}>
+                  {(['BUY', 'SELL'] as const).map(d => (
+                    <button key={d} onClick={() => setStratDirection(d)} style={{
+                      flex: 1, padding: '3px 0', fontSize: 11, fontWeight: 600,
+                      border: 'none', cursor: 'pointer',
+                      background: stratDirection === d ? (d === 'BUY' ? '#1f6feb' : '#da3633') : '#161b22',
+                      color: stratDirection === d ? '#fff' : '#8b949e',
+                    }}>{d}</button>
+                  ))}
+                </div>
+              )}
+              {/* Sizing */}
+              {fundsRatioMode ? (
+                <div style={{ display: 'flex', gap: 3, marginBottom: 4 }}>
+                  {(['l', 'm', 'h'] as RatioKey[]).map(k => (
+                    <button key={k} onClick={() => setStratRatio(k)} style={{
+                      flex: 1, padding: '3px 0', fontSize: 11, fontWeight: 700,
+                      border: `1px solid ${stratRatio === k ? '#388bfd' : '#30363d'}`,
+                      borderRadius: 4, cursor: 'pointer',
+                      background: stratRatio === k ? '#1f3a5f' : '#161b22',
+                      color: stratRatio === k ? '#79c0ff' : '#8b949e',
+                    }}>{k.toUpperCase()}<span style={{ fontSize: 9, display: 'block' }}>{fundsRatios[k]}%</span></button>
+                  ))}
+                </div>
+              ) : (
+                <div style={{ display: 'flex', gap: 3, marginBottom: 4 }}>
+                  {[1, 2, 5, 10].map(q => (
+                    <button key={q} onClick={() => setStratQty(q)} style={{
+                      flex: 1, padding: '3px 0', fontSize: 11, borderRadius: 4,
+                      border: `1px solid ${stratQty === q ? '#388bfd' : '#30363d'}`,
+                      background: stratQty === q ? '#1f3a5f' : '#161b22',
+                      color: stratQty === q ? '#79c0ff' : '#8b949e',
+                      cursor: 'pointer',
+                    }}>{q}</button>
+                  ))}
+                </div>
+              )}
+              <div style={{ fontSize: 9, color: '#484f58', marginBottom: 4 }}>
+                {autostopTriggerType === 'bar'
+                  ? `Trigger: ${stratDirection === 'BUY' || instrumentType === 'options' ? 'bar high' : 'bar low'}`
+                  : `Trigger: close ± ${autostopDeviationPct}%`}
+              </div>
+              <button
+                onClick={() => handleStartStrategy('AutoStop')}
+                disabled={stratLoading === 'AutoStop'}
+                style={{
+                  width: '100%', padding: '5px 0', fontSize: 11, fontWeight: 600,
+                  border: 'none', borderRadius: 4, cursor: stratLoading === 'AutoStop' ? 'not-allowed' : 'pointer',
+                  background: '#1a4a2a', color: '#3fb950',
+                }}
+              >
+                {stratLoading === 'AutoStop' ? 'Starting…' : '▶ Start AutoStop'}
+              </button>
+            </div>
+          </div>
+
+          {/* ── Exit Strategies ── */}
+          <div style={{ borderTop: '1px solid #21262d', paddingTop: 8, opacity: stratHasPosition ? 1 : 0.45 }}>
+            <div style={{ fontSize: 10, color: '#f0883e', fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 6 }}>
+              Exit Strategies {!stratHasPosition && <span style={{ fontWeight: 400, fontSize: 9 }}>(need position)</span>}
+            </div>
+            <div style={{ marginBottom: 2 }}>
+              <div style={{ fontSize: 11, color: '#e6edf3', fontWeight: 600, marginBottom: 4 }}>BreakEven</div>
+              <div style={{ fontSize: 9, color: '#484f58', marginBottom: 4 }}>Exit 100% at avg entry when P&L ≥ 0</div>
+              <button
+                onClick={() => handleStartStrategy('BreakEven')}
+                disabled={!stratHasPosition || stratLoading === 'BreakEven'}
+                style={{
+                  width: '100%', padding: '5px 0', fontSize: 11, fontWeight: 600,
+                  border: 'none', borderRadius: 4,
+                  cursor: stratHasPosition && stratLoading !== 'BreakEven' ? 'pointer' : 'not-allowed',
+                  background: stratHasPosition ? '#3a2a10' : '#161b22',
+                  color: stratHasPosition ? '#f0883e' : '#484f58',
+                }}
+              >
+                {stratLoading === 'BreakEven' ? 'Starting…' : '▶ Start BreakEven'}
+              </button>
+            </div>
+          </div>
+
+          {/* ── Trade Management ── */}
+          <div style={{ borderTop: '1px solid #21262d', paddingTop: 8, opacity: stratHasPosition ? 1 : 0.45 }}>
+            <div style={{ fontSize: 10, color: '#79c0ff', fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 6 }}>
+              Trade Management {!stratHasPosition && <span style={{ fontWeight: 400, fontSize: 9 }}>(need position)</span>}
+            </div>
+            <div>
+              <div style={{ fontSize: 11, color: '#e6edf3', fontWeight: 600, marginBottom: 4 }}>Aggressive SL</div>
+              <div style={{ fontSize: 9, color: '#484f58', marginBottom: 4 }}>Shift SL to 1% from bar close each bar</div>
+              <button
+                onClick={() => handleStartStrategy('AggressiveStoploss')}
+                disabled={!stratHasPosition || stratLoading === 'AggressiveStoploss'}
+                style={{
+                  width: '100%', padding: '5px 0', fontSize: 11, fontWeight: 600,
+                  border: 'none', borderRadius: 4,
+                  cursor: stratHasPosition && stratLoading !== 'AggressiveStoploss' ? 'pointer' : 'not-allowed',
+                  background: stratHasPosition ? '#1a2a4a' : '#161b22',
+                  color: stratHasPosition ? '#79c0ff' : '#484f58',
+                }}
+              >
+                {stratLoading === 'AggressiveStoploss' ? 'Starting…' : '▶ Start Aggressive SL'}
+              </button>
+            </div>
+          </div>
+
+          {/* ── Running Strategies ── */}
+          {runningStrategies.length > 0 && (
+            <div style={{ borderTop: '1px solid #21262d', paddingTop: 8 }}>
+              <div style={{ fontSize: 10, color: '#8b949e', fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 5 }}>
+                Running ({runningStrategies.length})
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 3, marginBottom: 6 }}>
+                {runningStrategies.map(s => (
+                  <div key={s.strategy_id} style={{ fontSize: 10, color: '#3fb950', display: 'flex', gap: 4 }}>
+                    <span>•</span>
+                    <span>{s.strategy_type}</span>
+                    {s.right && <span style={{ color: '#58a6ff' }}>{s.right}</span>}
+                  </div>
+                ))}
+              </div>
+              <button
+                onClick={handleCancelAll}
+                disabled={cancellingAll}
+                style={{
+                  width: '100%', padding: '5px 0', fontSize: 11, fontWeight: 600,
+                  border: '1px solid #6e2a2a', borderRadius: 4,
+                  cursor: cancellingAll ? 'not-allowed' : 'pointer',
+                  background: '#21262d', color: '#f85149',
+                }}
+              >
+                {cancellingAll ? 'Cancelling…' : '✕ Cancel All Strategies'}
+              </button>
+            </div>
+          )}
+
+          {stratError && <div style={{ fontSize: 10, color: '#f85149' }}>{stratError}</div>}
+        </div>
+      )}
+
+      {/* ── Order form (hidden when Strat tab is active) ─────────────── */}
+      {orderType !== 'STRAT' && (
+      <>
       {/* BUY / SELL toggle */}
       <div style={{ display: 'flex', gap: 0, borderRadius: 6, overflow: 'hidden', border: '1px solid #30363d' }}>
         {(['BUY', 'SELL'] as const).map(s => (
@@ -388,6 +633,8 @@ export default function OrderPanel({
             ? `Place ${side} ${orderType} [${ratio.toUpperCase()} · ${fundsRatios[ratio]}%]`
             : `Place ${side} ${orderType}`}
       </button>
+      </>
+      )}
 
       {/* Open orders */}
       {openOrders.length > 0 && (

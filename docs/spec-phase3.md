@@ -222,3 +222,19 @@ This phase should support options and futures. We only need to support options a
 - OTM offset is direction-aware: CE = `ATM + N × interval`, PE = `ATM − N × interval`; applies both to initial session panes and mid-session `addPane`
 - `SimulationSession` carries `strike_ce` and `strike_pe` (default to `strike`); `_run_session` dual-stream uses each for its respective right; trades record per-right strike via `_strike_for_right()`
 
+
+---
+
+## Phase III Implementation Status
+
+### Sprint 1 — User + Wallet ✅ COMPLETE (128 tests passing, merged to dev)
+All wallet mechanics live. Carry-forward keyed by `(user_id, date)`. DynamoDB lazy-import pattern for fault-tolerant persistence.
+
+### Sprint 2 — FundsRatio + Stoploss ✅ COMPLETE (155 tests passing, merged to dev)
+FundsRatio sizing (l=3%, m=6%, h=12%) and SL orders live. SL has zero wallet impact.
+
+### Sprint 3 — Options Data Infrastructure ✅ COMPLETE (241 tests passing, merged to dev)
+Options data fetch, expiry/strike calculation, options sessions, naked short margin check live.
+
+### Sprint 4 — Layout + Options UI ✅ COMPLETE (241 tests passing, merged to dev)
+Multi-pane layout, dual-stream options replay, lot-sized direct trades live. Post-merge fixes: wrong-strike tick routing (bug #9), OTM direction for `addPane` (bug #10), direction-aware OTM strikes for initial session (bug #11).

@@ -12,6 +12,10 @@ const FUNDS_RATIO_MODE_KEY = 'fundsRatioMode'
 const FUNDS_RATIOS_KEY = 'fundsRatios'
 const TARGET_DEVIATION_KEY = 'targetDeviationPct'
 const BROKERAGE_KEY = 'brokeragePerOrder'
+const STRATEGY_INTERVAL_KEY = 'strategyIntervalSecs'
+const AUTOSTOP_TRIGGER_TYPE_KEY = 'autostopTriggerType'
+const AUTOSTOP_DEVIATION_PCT_KEY = 'autostopDeviationPct'
+const HISTORICAL_DAYS_KEY = 'historicalDays'
 
 export function loadFundsRatioMode(): boolean {
   return localStorage.getItem(FUNDS_RATIO_MODE_KEY) === 'true'
@@ -37,15 +41,41 @@ export function loadBrokeragePerOrder(): number {
   return isNaN(v) || v < 0 ? 1 : v
 }
 
+// Strategy interval in seconds (180 = 3min, 300 = 5min)
+export function loadStrategyIntervalSecs(): number {
+  const v = parseInt(localStorage.getItem(STRATEGY_INTERVAL_KEY) ?? '')
+  return isNaN(v) ? 180 : v
+}
+
+// AutoStop trigger type: "bar" (high/low) or "deviation" (% from close)
+export function loadAutostopTriggerType(): 'bar' | 'deviation' {
+  const v = localStorage.getItem(AUTOSTOP_TRIGGER_TYPE_KEY)
+  return v === 'deviation' ? 'deviation' : 'bar'
+}
+
+// AutoStop deviation % (used when trigger type = deviation; e.g. 1.0 = 1%)
+export function loadAutostopDeviationPct(): number {
+  const v = parseFloat(localStorage.getItem(AUTOSTOP_DEVIATION_PCT_KEY) ?? '')
+  return isNaN(v) || v < 0 ? 1.0 : v
+}
+
+// Historical days for chart context (default 2)
+export function loadHistoricalDays(): number {
+  const v = parseInt(localStorage.getItem(HISTORICAL_DAYS_KEY) ?? '')
+  return isNaN(v) || v < 1 || v > 5 ? 2 : v
+}
+
 interface Props {
   date: string
   onWalletReset: () => void
   onFundsRatioChange: (mode: boolean, ratios: FundsRatios) => void
   onTargetDeviationChange: (pct: number) => void  // fraction e.g. 0.01
   onBrokerageChange: (brokerage: number) => void  // rupees per order
+  onStrategySettingsChange: (intervalSecs: number, triggerType: 'bar' | 'deviation', deviationPct: number) => void
+  onHistoricalDaysChange?: (days: number) => void
 }
 
-export default function SettingsModal({ date, onWalletReset, onFundsRatioChange, onTargetDeviationChange, onBrokerageChange }: Props) {
+export default function SettingsModal({ date, onWalletReset, onFundsRatioChange, onTargetDeviationChange, onBrokerageChange, onStrategySettingsChange, onHistoricalDaysChange }: Props) {
   const [open, setOpen] = useState(false)
   const [customAmount, setCustomAmount] = useState('')
   const [status, setStatus] = useState<string | null>(null)
@@ -68,6 +98,26 @@ export default function SettingsModal({ date, onWalletReset, onFundsRatioChange,
     const v = parseFloat(localStorage.getItem(BROKERAGE_KEY) ?? '')
     return String(isNaN(v) || v < 0 ? 1 : v)
   })
+
+  // Strategy settings
+  const [stratIntervalSecs, setStratIntervalSecs] = useState(loadStrategyIntervalSecs)
+  const [autostopTriggerType, setAutostopTriggerType] = useState(loadAutostopTriggerType)
+  const [autostopDeviationPctInput, setAutostopDeviationPctInput] = useState<string>(() =>
+    String(loadAutostopDeviationPct())
+  )
+
+  // Historical days
+  const [historicalDays, setHistoricalDays] = useState(loadHistoricalDays)
+
+  useEffect(() => {
+    // Sync from backend on open
+    if (open) {
+      api.getUserSettings().then(s => {
+        setHistoricalDays(s.historical_days)
+        localStorage.setItem(HISTORICAL_DAYS_KEY, String(s.historical_days))
+      }).catch(() => {})
+    }
+  }, [open])
 
   // Persist + notify parent whenever mode or ratios change
   useEffect(() => {
@@ -100,6 +150,20 @@ export default function SettingsModal({ date, onWalletReset, onFundsRatioChange,
     localStorage.setItem(TARGET_DEVIATION_KEY, String(pct))
     onTargetDeviationChange(pct / 100)
     setStatus(`Deviation saved: ${pct}%`)
+    setTimeout(() => setStatus(null), 2000)
+  }
+
+  const saveStrategySettings = () => {
+    const devPct = parseFloat(autostopDeviationPctInput)
+    if (isNaN(devPct) || devPct < 0 || devPct > 20) {
+      setStatus('Deviation must be 0–20%')
+      return
+    }
+    localStorage.setItem(STRATEGY_INTERVAL_KEY, String(stratIntervalSecs))
+    localStorage.setItem(AUTOSTOP_TRIGGER_TYPE_KEY, autostopTriggerType)
+    localStorage.setItem(AUTOSTOP_DEVIATION_PCT_KEY, String(devPct))
+    onStrategySettingsChange(stratIntervalSecs, autostopTriggerType, devPct)
+    setStatus('Strategy settings saved')
     setTimeout(() => setStatus(null), 2000)
   }
 
@@ -303,6 +367,129 @@ export default function SettingsModal({ date, onWalletReset, onFundsRatioChange,
               <div style={{ fontSize: 11, color: '#484f58', marginTop: 6 }}>
                 Flat brokerage per order + exchange charges (STT, GST) computed per trade
               </div>
+            </div>
+
+            {/* Historical Days */}
+            <div style={{ borderTop: '1px solid #21262d', paddingTop: 16 }}>
+              <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 10, fontWeight: 600 }}>
+                HISTORICAL DAYS
+              </div>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                <input
+                  type="number"
+                  value={historicalDays}
+                  onChange={e => {
+                    const v = parseInt(e.target.value)
+                    if (!isNaN(v) && v >= 1 && v <= 5) setHistoricalDays(v)
+                  }}
+                  min={1} max={5} step={1}
+                  style={{
+                    width: 70, padding: '5px 8px', background: '#0d1117',
+                    border: '1px solid #30363d', borderRadius: 6,
+                    color: '#e6edf3', fontSize: 13, textAlign: 'center',
+                  }}
+                />
+                <span style={{ fontSize: 12, color: '#8b949e' }}>days (1–5)</span>
+                <button
+                  onClick={() => {
+                    localStorage.setItem(HISTORICAL_DAYS_KEY, String(historicalDays))
+                    api.updateUserSettings({ historical_days: historicalDays }).catch(() => {})
+                    onHistoricalDaysChange?.(historicalDays)
+                    setStatus(`Historical days saved: ${historicalDays}`)
+                    setTimeout(() => setStatus(null), 2000)
+                  }}
+                  style={{
+                    padding: '5px 12px', background: '#1f6feb',
+                    border: 'none', borderRadius: 6, color: '#fff',
+                    cursor: 'pointer', fontSize: 12,
+                  }}
+                >
+                  Save
+                </button>
+              </div>
+              <div style={{ fontSize: 11, color: '#484f58', marginTop: 6 }}>
+                Prior trading days of chart context loaded at session start
+              </div>
+            </div>
+
+            {/* Strategy Settings */}
+            <div style={{ borderTop: '1px solid #21262d', paddingTop: 16 }}>
+              <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 10, fontWeight: 600 }}>STRATEGY SETTINGS</div>
+
+              {/* Strategy Candle Interval */}
+              <div style={{ marginBottom: 12 }}>
+                <div style={{ fontSize: 11, color: '#8b949e', marginBottom: 6 }}>Strategy Candle Interval</div>
+                <div style={{ display: 'flex', gap: 0, borderRadius: 6, overflow: 'hidden', border: '1px solid #30363d', width: 'fit-content' }}>
+                  {([{ label: '3 min', value: 180 }, { label: '5 min', value: 300 }] as const).map(opt => (
+                    <button
+                      key={opt.value}
+                      onClick={() => setStratIntervalSecs(opt.value)}
+                      style={{
+                        padding: '5px 16px', fontSize: 12, fontWeight: 600,
+                        border: 'none', cursor: 'pointer',
+                        background: stratIntervalSecs === opt.value ? '#1f3a5f' : '#161b22',
+                        color: stratIntervalSecs === opt.value ? '#79c0ff' : '#484f58',
+                      }}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* AutoStop Trigger Type */}
+              <div style={{ marginBottom: 10 }}>
+                <div style={{ fontSize: 11, color: '#8b949e', marginBottom: 6 }}>AutoStop Trigger</div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {([
+                    { value: 'bar', label: 'Bar High / Low' },
+                    { value: 'deviation', label: '% from Close' },
+                  ] as const).map(opt => (
+                    <label key={opt.value} style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                      <input
+                        type="radio"
+                        name="autostopTrigger"
+                        checked={autostopTriggerType === opt.value}
+                        onChange={() => setAutostopTriggerType(opt.value)}
+                        style={{ accentColor: '#79c0ff' }}
+                      />
+                      <span style={{ fontSize: 12, color: autostopTriggerType === opt.value ? '#e6edf3' : '#8b949e' }}>
+                        {opt.label}
+                      </span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+
+              {/* Deviation % — shown only in deviation mode */}
+              {autostopTriggerType === 'deviation' && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+                  <span style={{ fontSize: 12, color: '#8b949e' }}>Deviation</span>
+                  <input
+                    type="number"
+                    value={autostopDeviationPctInput}
+                    onChange={e => setAutostopDeviationPctInput(e.target.value)}
+                    min={0} max={20} step={0.1}
+                    style={{
+                      width: 70, padding: '4px 8px', background: '#0d1117',
+                      border: '1px solid #30363d', borderRadius: 6,
+                      color: '#e6edf3', fontSize: 13, textAlign: 'center',
+                    }}
+                  />
+                  <span style={{ fontSize: 12, color: '#8b949e' }}>%</span>
+                </div>
+              )}
+
+              <button
+                onClick={saveStrategySettings}
+                style={{
+                  padding: '5px 14px', background: '#1f6feb',
+                  border: 'none', borderRadius: 6, color: '#fff',
+                  cursor: 'pointer', fontSize: 12,
+                }}
+              >
+                Save
+              </button>
             </div>
 
             {/* Wallet */}

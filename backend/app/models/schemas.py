@@ -29,6 +29,8 @@ class SimulationStartRequest(BaseModel):
     strike_ce: int | None = None       # CE streaming strike (defaults to strike when omitted)
     strike_pe: int | None = None       # PE streaming strike (defaults to strike when omitted)
     brokerage_per_order: float = 1.0   # flat brokerage deducted per trade (user-configurable)
+    strategy_interval_secs: int = 180  # candle interval for all strategies (180=3min, 300=5min)
+    session_type: str = "sim"          # "sim" (historical replay) or "paper" (live data)
 
 
 class SimulationStartResponse(BaseModel):
@@ -45,6 +47,7 @@ class SimulationStartResponse(BaseModel):
     strike_ce: int | None = None
     strike_pe: int | None = None
     brokerage_per_order: float = 1.0
+    session_type: str = "sim"
 
 
 class SimulationControlRequest(BaseModel):
@@ -74,6 +77,7 @@ class Trade(BaseModel):
     expiry: str | None = None
     right: str | None = None
     commission: float = 0.0  # computed at record time: exchange charges + brokerage
+    session_type: str = "sim"  # "sim" or "paper" — inherited from parent session
 
 
 class Position(BaseModel):
@@ -226,3 +230,47 @@ class WalletResponse(BaseModel):
 
 class WalletResetRequest(BaseModel):
     amount: float = 150_000.0
+
+
+# ── User Settings ─────────────────────────────────────────────────────────────
+
+class UserSettingsResponse(BaseModel):
+    historical_days: int = 2
+
+
+class UserSettingsUpdateRequest(BaseModel):
+    historical_days: int = Field(default=2, ge=1, le=5)
+
+
+# ── Strategies ────────────────────────────────────────────────────────────────
+
+class StrategyType(str, Enum):
+    AUTO_STOP = "AutoStop"
+    BREAK_EVEN = "BreakEven"
+    AGGRESSIVE_STOPLOSS = "AggressiveStoploss"
+
+
+class StartStrategyRequest(BaseModel):
+    session_id: str
+    strategy_type: StrategyType
+    right: str | None = None              # "CE" | "PE" | None (equity)
+    # Sizing for entry strategies (AutoStop): supply one of these
+    quantity: int | None = None
+    funds_ratio_pct: float | None = None  # 0.0–1.0 fraction of session capital
+    # Direction for AutoStop (equity only; options sessions always use BUY)
+    direction: str = "BUY"               # "BUY" | "SELL"
+    # AutoStop trigger settings
+    autostop_trigger_type: str = "bar"    # "bar" (high/low) | "deviation" (% from close)
+    autostop_deviation_pct: float = 1.0   # % deviation from close (only when type=deviation)
+
+
+class StrategyResponse(BaseModel):
+    strategy_id: str
+    strategy_type: str
+    symbol: str
+    right: str | None
+    status: str
+
+
+class CancelAllStrategiesRequest(BaseModel):
+    session_id: str

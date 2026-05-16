@@ -23,6 +23,7 @@ export interface SimulationState {
   latestCETick: TickEvent | null
   latestPETick: TickEvent | null
   trades: Trade[]
+  historicalTrades: Trade[]    // trades from previous sessions (same symbol+date+type)
   position: Position           // equity position
   positionCE: Position         // options CE position
   positionPE: Position         // options PE position
@@ -46,6 +47,8 @@ export interface InstrumentConfig {
   strike_ce?: number
   strike_pe?: number
   brokerage_per_order?: number
+  strategy_interval_secs?: number
+  session_type?: 'sim' | 'paper'
 }
 
 export function useSimulation() {
@@ -62,6 +65,7 @@ export function useSimulation() {
     latestCETick: null,
     latestPETick: null,
     trades: [],
+    historicalTrades: [],
     position: FLAT_POSITION('NIFTY'),
     positionCE: FLAT_POSITION('NIFTY'),
     positionPE: FLAT_POSITION('NIFTY'),
@@ -130,6 +134,8 @@ export function useSimulation() {
       ...(instrumentConfig || { instrument_type: 'equity' }),
     })
     const sym = res.symbol
+    const instrumentType = (res.instrument_type as 'equity' | 'options') || 'equity'
+    const sessionType = instrumentConfig?.session_type ?? 'sim'
     setState(s => ({
       ...s,
       sessionId: res.session_id,
@@ -143,19 +149,25 @@ export function useSimulation() {
       currentPriceCE: 0,
       currentPricePE: 0,
       trades: [],
+      historicalTrades: [],
       position: FLAT_POSITION(sym),
       positionCE: FLAT_POSITION(sym),
       positionPE: FLAT_POSITION(sym),
       openOrders: [],
       walletRefreshKey: s.walletRefreshKey + 1,
       orderError: null,
-      sessionInstrumentType: (res.instrument_type as 'equity' | 'options') || 'equity',
+      sessionInstrumentType: instrumentType,
       sessionCapital: res.session_capital,
       sessionStrike: res.strike,
       sessionStrikeCE: res.strike_ce ?? res.strike,
       sessionStrikePE: res.strike_pe ?? res.strike,
       sessionExpiry: res.expiry,
     }))
+    // Fire-and-forget: load previous-session trades for same user+symbol+date+type
+    const currentSessionId = res.session_id
+    api.getTradesByContext(sym, state.date, instrumentType, sessionType).then(({ trades }) => {
+      setState(s => ({ ...s, historicalTrades: trades.filter(t => t.session_id !== currentSessionId) }))
+    }).catch(() => {})
     return res.session_id
   }, [state.symbol, state.date])
 
@@ -174,6 +186,7 @@ export function useSimulation() {
       latestCETick: null,
       latestPETick: null,
       trades: [],
+      historicalTrades: [],
       position: FLAT_POSITION(s.symbol),
       positionCE: FLAT_POSITION(s.symbol),
       positionPE: FLAT_POSITION(s.symbol),
@@ -379,6 +392,16 @@ export function useSimulation() {
 
   const pnl = state.sessionInstrumentType === 'options' ? pnlOptions : pnlEquity
 
+  // Realized P&L from previous sessions (net of commissions) — contributes to Day P&L header
+  const prevDayPnl = (() => {
+    let net = 0
+    for (const t of state.historicalTrades) {
+      net += t.side === 'SELL' ? t.quantity * t.price : -t.quantity * t.price
+      net -= (t.commission ?? 0)
+    }
+    return net
+  })()
+
   const incrementWalletRefreshKey = useCallback(() => {
     setState(s => ({ ...s, walletRefreshKey: s.walletRefreshKey + 1 }))
   }, [])
@@ -392,6 +415,7 @@ export function useSimulation() {
     dayPnlEquity,
     dayPnlCE,
     dayPnlPE,
+    prevDayPnl,
     updateSymbol,
     updateDate,
     updateSessionStrike,

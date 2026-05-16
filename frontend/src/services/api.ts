@@ -70,6 +70,33 @@ export interface SimulationStartRequest {
   strike_ce?: number  // CE streaming strike (OTM direction: ATM + offset)
   strike_pe?: number  // PE streaming strike (OTM direction: ATM - offset)
   brokerage_per_order?: number  // flat brokerage per order (default 1)
+  strategy_interval_secs?: number  // candle interval for all strategies (180=3min, 300=5min)
+  session_type?: 'sim' | 'paper'   // "paper" when date == today IST
+}
+
+export interface UserSettingsResponse {
+  historical_days: number
+}
+
+// ── Strategy types ──────────────────────────────────────────────────────────
+
+export interface StrategyResponse {
+  strategy_id: string
+  strategy_type: string
+  symbol: string
+  right: string | null
+  status: string
+}
+
+export interface StartStrategyRequest {
+  session_id: string
+  strategy_type: 'AutoStop' | 'BreakEven' | 'AggressiveStoploss'
+  right?: 'CE' | 'PE' | null
+  quantity?: number
+  funds_ratio_pct?: number
+  direction?: 'BUY' | 'SELL'
+  autostop_trigger_type?: 'bar' | 'deviation'
+  autostop_deviation_pct?: number
 }
 
 export interface SimulationStartResponse {
@@ -85,6 +112,7 @@ export interface SimulationStartResponse {
   right: string | null
   strike_ce: number | null
   strike_pe: number | null
+  session_type: string
 }
 
 export interface WalletResponse {
@@ -107,6 +135,7 @@ export interface SessionSummary {
   date: string
   start_time: string | null
   instrument_type: string
+  session_type: string
   strike: number | null
   expiry: string | null
   session_capital: number
@@ -194,10 +223,11 @@ const api = {
     return data.dates as string[]
   },
 
-  async getHistorical(symbol = 'NIFTY', tradingDate?: string, intervalMinutes?: number): Promise<HistoricalDataResponse> {
+  async getHistorical(symbol = 'NIFTY', tradingDate?: string, intervalMinutes?: number, historicalDays?: number): Promise<HistoricalDataResponse> {
     let url = `${BACKEND_URL}/api/data/historical?symbol=${encodeURIComponent(symbol)}`
     if (tradingDate) url += `&trading_date=${tradingDate}`
     if (intervalMinutes) url += `&interval_minutes=${intervalMinutes}`
+    if (historicalDays) url += `&historical_days=${historicalDays}`
     const res = await fetch(url)
     if (!res.ok) throw new Error(`Historical data fetch failed: ${res.status}`)
     return res.json()
@@ -210,6 +240,7 @@ const api = {
     expiry: string,
     right: string,
     intervalMinutes?: number,
+    historicalDays?: number,
   ): Promise<HistoricalDataResponse> {
     let url = `${BACKEND_URL}/api/data/options-historical`
       + `?symbol=${encodeURIComponent(symbol)}`
@@ -218,6 +249,7 @@ const api = {
       + `&expiry=${expiry}`
       + `&right=${right}`
     if (intervalMinutes) url += `&interval_minutes=${intervalMinutes}`
+    if (historicalDays) url += `&historical_days=${historicalDays}`
     const res = await fetch(url)
     if (!res.ok) throw new Error(`Options historical data fetch failed: ${res.status}`)
     return res.json()
@@ -235,7 +267,10 @@ const api = {
   async getPriceAt(symbol: string, date: string, time: string): Promise<PriceAtResponse> {
     const url = `${BACKEND_URL}/api/data/price-at?symbol=${encodeURIComponent(symbol)}&date=${date}&time=${encodeURIComponent(time)}`
     const res = await fetch(url)
-    if (!res.ok) throw new Error(`Price-at fetch failed: ${res.status}`)
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}))
+      throw new Error(body?.detail || `Price-at fetch failed: ${res.status}`)
+    }
     return res.json()
   },
 
@@ -307,6 +342,22 @@ const api = {
   async getTrades(session_id: string): Promise<Trade[]> {
     const res = await fetch(`${BACKEND_URL}/api/trades?session_id=${session_id}`)
     if (!res.ok) throw new Error(`Get trades failed: ${res.status}`)
+    return res.json()
+  },
+
+  async getTradesByContext(
+    symbol: string,
+    date: string,
+    instrumentType: string,
+    sessionType: string,
+  ): Promise<{ trades: Trade[]; sessionIds: string[] }> {
+    const url = `${BACKEND_URL}/api/trades/by-context`
+      + `?symbol=${encodeURIComponent(symbol)}`
+      + `&date=${date}`
+      + `&instrument_type=${encodeURIComponent(instrumentType)}`
+      + `&session_type=${encodeURIComponent(sessionType)}`
+    const res = await fetch(url, { headers: _authHeaders() })
+    if (!res.ok) return { trades: [], sessionIds: [] }
     return res.json()
   },
 
@@ -459,12 +510,14 @@ const api = {
     startDate?: string
     endDate?: string
     instrumentType?: string
+    sessionType?: string
   } = {}): Promise<SessionSummary[]> {
     const params = new URLSearchParams()
     if (opts.symbol) params.set('symbol', opts.symbol)
     if (opts.startDate) params.set('start_date', opts.startDate)
     if (opts.endDate) params.set('end_date', opts.endDate)
     if (opts.instrumentType) params.set('instrument_type', opts.instrumentType)
+    if (opts.sessionType) params.set('session_type', opts.sessionType)
     const res = await fetch(`${BACKEND_URL}/api/analysis/sessions?${params}`, {
       headers: _authHeaders(),
     })
@@ -477,6 +530,58 @@ const api = {
       headers: _authHeaders(),
     })
     if (!res.ok) throw new Error(`Session detail fetch failed: ${res.status}`)
+    return res.json()
+  },
+
+  // ── Strategies ─────────────────────────────────────────────────────────────
+
+  async startStrategy(req: StartStrategyRequest): Promise<StrategyResponse> {
+    const res = await fetch(`${BACKEND_URL}/api/strategies/start`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ..._authHeaders() },
+      body: JSON.stringify(req),
+    })
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}))
+      throw new Error(data.detail || `Start strategy failed: ${res.status}`)
+    }
+    return res.json()
+  },
+
+  async cancelAllStrategies(session_id: string): Promise<void> {
+    const res = await fetch(`${BACKEND_URL}/api/strategies/cancel-all`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ..._authHeaders() },
+      body: JSON.stringify({ session_id }),
+    })
+    if (!res.ok) throw new Error(`Cancel strategies failed: ${res.status}`)
+  },
+
+  async listStrategies(session_id: string): Promise<StrategyResponse[]> {
+    const res = await fetch(`${BACKEND_URL}/api/strategies?session_id=${session_id}`, {
+      headers: _authHeaders(),
+    })
+    if (!res.ok) throw new Error(`List strategies failed: ${res.status}`)
+    return res.json()
+  },
+
+  // ── User Settings ──────────────────────────────────────────────────────────
+
+  async getUserSettings(): Promise<UserSettingsResponse> {
+    const res = await fetch(`${BACKEND_URL}/api/users/settings`, {
+      headers: _authHeaders(),
+    })
+    if (!res.ok) return { historical_days: 2 }
+    return res.json()
+  },
+
+  async updateUserSettings(settings: Partial<UserSettingsResponse>): Promise<UserSettingsResponse> {
+    const res = await fetch(`${BACKEND_URL}/api/users/settings`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', ..._authHeaders() },
+      body: JSON.stringify(settings),
+    })
+    if (!res.ok) throw new Error(`Update user settings failed: ${res.status}`)
     return res.json()
   },
 }
