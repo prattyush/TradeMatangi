@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from typing import Callable
 from fastapi import APIRouter, Depends, HTTPException
@@ -197,6 +198,25 @@ async def update_pane_strike(session_id: str, req: UpdatePaneStrikeRequest):
         session.strike_ce = req.strike
     else:
         session.strike_pe = req.strike
+
+    # For paper sessions: re-subscribe KiteBroadcaster to the new strike's token so
+    # live ticks flow from the new strike instead of the old one.
+    if session.session_type == "paper":
+        try:
+            from app.services import kite_service
+            new_token = kite_service.fetch_options_instrument_token(
+                session.symbol, session.expiry, req.strike, req.right.upper()
+            )
+            loop = asyncio.get_running_loop()
+            kite_service.get_broadcaster().update_session_right(
+                session.session_id, req.right.upper(), new_token,
+                session.paper_tick_queue, loop,
+            )
+        except Exception as exc:
+            logger.warning(
+                "update_pane_strike: Kite re-subscribe failed for session %s right=%s: %s",
+                session_id, req.right.upper(), exc,
+            )
 
     return {"session_id": session_id, "right": req.right.upper(), "strike": req.strike}
 

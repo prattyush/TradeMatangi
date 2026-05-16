@@ -481,6 +481,56 @@ class KiteBroadcaster:
                 self._connected = False
                 logger.info("KiteBroadcaster: no active sessions, ticker stopped")
 
+    def update_session_right(
+        self,
+        session_id: str,
+        right: str,
+        new_token: int,
+        queue: "asyncio.Queue",
+        loop: "asyncio.AbstractEventLoop",
+    ) -> None:
+        """
+        Replace the instrument token for a given right (CE/PE) in an active session.
+        Called when the user removes a pane and adds a new one with a different strike
+        mid-session so live ticks stream from the new strike instead of the old one.
+        No-op if the session has not yet entered Phase 2 (broadcaster will use the
+        already-updated session.strike_ce/pe when it registers).
+        """
+        orphaned: list[int] = []
+        with self._lock:
+            if session_id not in self._session_tokens:
+                return
+
+            # Find the old token registered for this session + right
+            old_token: int | None = None
+            for token in list(self._session_tokens[session_id]):
+                entry = self._token_sessions.get(token, {}).get(session_id)
+                if entry and entry[1] == right:
+                    old_token = token
+                    break
+
+            if old_token is not None and old_token != new_token:
+                self._token_sessions[old_token].pop(session_id, None)
+                self._session_tokens[session_id].discard(old_token)
+                if not self._token_sessions.get(old_token):
+                    self._token_sessions.pop(old_token, None)
+                    orphaned.append(old_token)
+
+            self._token_sessions[new_token][session_id] = (queue, right, loop)
+            self._session_tokens[session_id].add(new_token)
+
+        if orphaned and self._ticker:
+            try:
+                self._ticker.unsubscribe(orphaned)
+            except Exception as exc:
+                logger.warning("KiteBroadcaster unsubscribe error on strike change: %s", exc)
+
+        self._subscribe_more([new_token])
+        logger.info(
+            "KiteBroadcaster: session %s right=%s token updated (old=%s new=%s)",
+            session_id, right, orphaned[0] if orphaned else "none", new_token,
+        )
+
     def _start(self, tokens: list[int]) -> None:
         try:
             from kiteconnect import KiteTicker

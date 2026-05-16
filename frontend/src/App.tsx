@@ -329,6 +329,8 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
 
   // Net session P&L = gross dayPnl minus per-trade commissions (computed by backend)
   const netDayPnl = sim.dayPnl - sim.trades.reduce((s, t) => s + (t.commission ?? 0), 0)
+  // Total day P&L includes realized P&L from previous sessions for same user+symbol+date+type
+  const totalDayPnl = netDayPnl + sim.prevDayPnl
 
   // ── Trades filtered per pane for markers ─────────────────────────────────────
   const getTradesForPane = useCallback((pane: PaneConfig) => {
@@ -365,6 +367,7 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
         expiry={pane.expiry}
         right={pane.right as 'CE' | 'PE' | undefined}
         liveFromTs={pane.liveFromTs}
+        currentSimTime={sim.latestEquityTick?.time ?? null}
         isActive={pane.id === activePaneId}
         onActivate={() => {
           setActivePaneId(pane.id)
@@ -440,10 +443,15 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
             <span style={{ color: '#8b949e' }}>Day P&L</span>
             <span style={{
               fontWeight: 700, fontVariantNumeric: 'tabular-nums',
-              color: netDayPnl > 0 ? '#26a641' : netDayPnl < 0 ? '#f85149' : '#8b949e',
+              color: totalDayPnl > 0 ? '#26a641' : totalDayPnl < 0 ? '#f85149' : '#8b949e',
             }}>
-              {netDayPnl >= 0 ? '+' : ''}{netDayPnl.toFixed(2)}
+              {totalDayPnl >= 0 ? '+' : ''}{totalDayPnl.toFixed(2)}
             </span>
+            {sim.prevDayPnl !== 0 && (
+              <span style={{ color: '#484f58', fontSize: 10, fontVariantNumeric: 'tabular-nums' }}>
+                (prev {sim.prevDayPnl >= 0 ? '+' : ''}{sim.prevDayPnl.toFixed(2)})
+              </span>
+            )}
           </div>
         )}
         <WalletWidget date={sim.date} refreshKey={sim.walletRefreshKey} />
@@ -695,7 +703,7 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
               onCancelAllStrategies={handleCancelAllStrategies}
             />
           </div>
-          <TradeHistory trades={sim.trades} />
+          <TradeHistory trades={sim.trades} historicalTrades={sim.historicalTrades} />
         </div>
       </div>
     </div>

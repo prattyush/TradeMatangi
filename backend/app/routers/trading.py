@@ -1,3 +1,4 @@
+import logging
 from fastapi import APIRouter, HTTPException, Query
 from app.models.schemas import Trade, Position, TradeRequest, TradeSide
 from app.services import trading as trading_svc
@@ -5,6 +6,10 @@ from app.services import simulation as sim_svc
 from app.services import wallet_service
 from app.services.wallet_service import InsufficientFundsError
 from app.config import LOT_SIZES
+from app.dependencies import get_request_user_id
+from fastapi import Depends
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/trades", tags=["trades"])
 
@@ -101,6 +106,43 @@ async def sell(req: TradeRequest):
         session_type=session.session_type,
     )
     return trade
+
+
+@router.get("/by-context")
+async def get_trades_by_context(
+    symbol: str = Query(...),
+    date: str = Query(...),
+    instrument_type: str = Query(...),
+    session_type: str = Query("sim"),
+    user_id: str = Depends(get_request_user_id),
+):
+    """
+    Return all trades across all sessions for a given user + symbol + date +
+    instrument_type + session_type combination. Used to populate trade history
+    with previous sessions when the user restarts a sim or paper session.
+    """
+    try:
+        from app.services.analysis_service import get_sessions_for_user, get_trades_for_session
+        sessions = get_sessions_for_user(
+            user_id=user_id,
+            symbol=symbol,
+            start_date=date,
+            end_date=date,
+            instrument_type=instrument_type,
+            session_type=session_type,
+        )
+        session_ids = [s.get("session_id") for s in sessions if s.get("session_id")]
+        all_trades: list[dict] = []
+        for sid in session_ids:
+            all_trades.extend(get_trades_for_session(sid))
+        all_trades.sort(key=lambda t: int(t.get("timestamp", 0)))
+        return {"trades": all_trades, "session_ids": session_ids}
+    except Exception as exc:
+        logger.warning(
+            "get_trades_by_context failed for %s %s %s %s: %s",
+            symbol, date, instrument_type, session_type, exc,
+        )
+        return {"trades": [], "session_ids": []}
 
 
 @router.get("", response_model=list[Trade])

@@ -345,6 +345,22 @@ const api = {
     return res.json()
   },
 
+  async getTradesByContext(
+    symbol: string,
+    date: string,
+    instrumentType: string,
+    sessionType: string,
+  ): Promise<{ trades: Trade[]; sessionIds: string[] }> {
+    const url = `${BACKEND_URL}/api/trades/by-context`
+      + `?symbol=${encodeURIComponent(symbol)}`
+      + `&date=${date}`
+      + `&instrument_type=${encodeURIComponent(instrumentType)}`
+      + `&session_type=${encodeURIComponent(sessionType)}`
+    const res = await fetch(url, { headers: _authHeaders() })
+    if (!res.ok) return { trades: [], sessionIds: [] }
+    return res.json()
+  },
+
   async getPosition(session_id: string, right?: string): Promise<Position> {
     let url = `${BACKEND_URL}/api/trades/position?session_id=${session_id}`
     if (right) url += `&right=${right}`
