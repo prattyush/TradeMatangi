@@ -65,12 +65,14 @@ If future load requires scaling out, the correct approach is nginx sticky sessio
 **2. Updated EC2 start script**
 `scripts/start-backend-ec2.sh`: use `uvicorn app.main:app --host 0.0.0.0 --port 8700 --workers 1 --loop uvloop`. Add `uvloop` to `requirements.txt` for async performance on Linux.
 
-**3. Backend IP: use Vite environment variables**
-Do **not** hardcode the IP in React source files. Use Vite env vars so dev vs prod is automatic:
-- `frontend/.env` (checked in, dev): `VITE_API_BASE_URL=http://localhost:8700`
-- `frontend/.env.production` (checked in, prod): `VITE_API_BASE_URL=http://52.66.185.106:8700`
-- `api.ts`: replace the hardcoded base URL with `const API_BASE = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8700'`.
-- Override per-deployment via env file or CI without touching code.
+**3. Frontend API URL: Vite environment variables**
+`npm run build` bakes the backend URL into static files at build time — it must differ between dev and prod without requiring a source edit.
+
+- `frontend/.env` (dev, checked in): `VITE_API_BASE_URL=http://localhost:8700`
+- `frontend/.env.production` (prod, checked in): `VITE_API_BASE_URL=` *(empty string)*
+- `frontend/src/config.ts`: `const BACKEND_URL = import.meta.env.VITE_API_BASE_URL ?? ''`
+
+Why empty string in prod: nginx on EC2 serves the frontend (port 80) and proxies `/api/` to the backend on the same host. The browser makes requests to the same origin, so relative URLs work. **A Vite dev proxy is not needed** — in dev the absolute `http://localhost:8700` URL routes directly; in prod nginx handles it.
 
 ---
 
@@ -85,7 +87,7 @@ Deployment steps:
 3. nginx config: serve static files + `location /api/ { proxy_pass http://localhost:8700; }` + SPA fallback (`try_files $uri /index.html`)
 4. Access at `http://52.66.185.106` (port 80)
 
-Note: the `VITE_API_BASE_URL` env var introduced in Sprint 3 means switching to Vercel later (once HTTPS is set up) is just a config change — no code rework.
+Note: the `VITE_API_BASE_URL` env var introduced in Sprint 3 means switching to a different deployment target later is a config-only change — no code rework.
 
 **Vercel deferred** — requires HTTPS on the backend (nginx + certbot + domain name). Revisit in a future phase once EC2 deployment is stable.
 
@@ -106,9 +108,11 @@ Note: the `VITE_API_BASE_URL` env var introduced in Sprint 3 means switching to 
 - `broker_service` + `kite_service` read tokens from DDB with `accesskeys.ini` fallback
 
 ### Sprint 3 — Backend Deployment Prep
-- `scripts/start-backend-ec2.sh`: `--workers 1 --loop uvloop`
 - `uvloop` in `requirements.txt`
-- `api.ts` + `frontend/.env` + `frontend/.env.production`: Vite env var `VITE_API_BASE_URL`
+- `scripts/start-backend-ec2.sh`: `uvicorn app.main:app --host 0.0.0.0 --port 8700 --workers 1 --loop uvloop`
+- `frontend/src/config.ts`: `const BACKEND_URL = import.meta.env.VITE_API_BASE_URL ?? ''`
+- `frontend/.env` (dev): `VITE_API_BASE_URL=http://localhost:8700`
+- `frontend/.env.production` (prod): `VITE_API_BASE_URL=` (empty — nginx proxies `/api/` on same EC2 host)
 
 ### Sprint 4 — 2-Worker Support via nginx Sticky Sessions *(optional — do after Sprint 1–3 deployed and tested)*
 - nginx config: `map $uri $session_key` extracts `session_id` from `/api/stream/{id}` and `/api/simulation/{id}/...` paths; falls back to `X-Session-Id` header for orders/strategies
