@@ -5,7 +5,7 @@ import TradePanel from './components/TradePanel'
 import TradeHistory from './components/TradeHistory'
 import OrderPanel from './components/OrderPanel'
 import WalletWidget from './components/WalletWidget'
-import SettingsModal, { loadFundsRatioMode, loadFundsRatios, loadTargetDeviationPct, loadBrokeragePerOrder, loadStrategyIntervalSecs, loadAutostopTriggerType, loadAutostopDeviationPct, FundsRatios } from './components/SettingsModal'
+import SettingsModal, { loadFundsRatioMode, loadFundsRatios, loadTargetDeviationPct, loadBrokeragePerOrder, loadStrategyIntervalSecs, loadAutostopTriggerType, loadAutostopDeviationPct, loadHistoricalDays, FundsRatios } from './components/SettingsModal'
 import { StrategyResponse, StartStrategyRequest } from './services/api'
 import LoginScreen from './components/LoginScreen'
 import TradeAnalysis from './components/TradeAnalysis'
@@ -98,7 +98,9 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
   const [stratIntervalSecs, setStratIntervalSecs] = useState(loadStrategyIntervalSecs)
   const [autostopTriggerType, setAutostopTriggerType] = useState(loadAutostopTriggerType)
   const [autostopDeviationPct, setAutostopDeviationPct] = useState(loadAutostopDeviationPct)
+  const [historicalDays, setHistoricalDays] = useState(loadHistoricalDays)
   const [runningStrategies, setRunningStrategies] = useState<StrategyResponse[]>([])
+  const [brokerError, setBrokerError] = useState<string | null>(null)
 
   // ── Trade Analysis modal ────────────────────────────────────────────────────
   const [showAnalysis, setShowAnalysis] = useState(false)
@@ -275,6 +277,8 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
       sim.handleSessionEnded()
     } else if (event.type === 'order_filled') {
       sim.handleOrderFilled(event.order_id as string)
+    } else if (event.type === 'broker_error') {
+      setBrokerError(event.message as string)
     }
   }, [sim.setLatestTick, sim.handleSessionEnded, sim.handleOrderFilled])
 
@@ -325,6 +329,8 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
 
   // Net session P&L = gross dayPnl minus per-trade commissions (computed by backend)
   const netDayPnl = sim.dayPnl - sim.trades.reduce((s, t) => s + (t.commission ?? 0), 0)
+  // Total day P&L includes realized P&L from previous sessions for same user+symbol+date+type
+  const totalDayPnl = netDayPnl + sim.prevDayPnl
 
   // ── Trades filtered per pane for markers ─────────────────────────────────────
   const getTradesForPane = useCallback((pane: PaneConfig) => {
@@ -361,6 +367,7 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
         expiry={pane.expiry}
         right={pane.right as 'CE' | 'PE' | undefined}
         liveFromTs={pane.liveFromTs}
+        currentSimTime={sim.latestEquityTick?.time ?? null}
         isActive={pane.id === activePaneId}
         onActivate={() => {
           setActivePaneId(pane.id)
@@ -369,6 +376,7 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
         }}
         trades={getTradesForPane(pane)}
         onPriceSelect={pricePickOrderId && pane.id === activePaneId ? handleChartPriceSelect : null}
+        historicalDays={historicalDays}
       />
     </div>
   )
@@ -435,10 +443,15 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
             <span style={{ color: '#8b949e' }}>Day P&L</span>
             <span style={{
               fontWeight: 700, fontVariantNumeric: 'tabular-nums',
-              color: netDayPnl > 0 ? '#26a641' : netDayPnl < 0 ? '#f85149' : '#8b949e',
+              color: totalDayPnl > 0 ? '#26a641' : totalDayPnl < 0 ? '#f85149' : '#8b949e',
             }}>
-              {netDayPnl >= 0 ? '+' : ''}{netDayPnl.toFixed(2)}
+              {totalDayPnl >= 0 ? '+' : ''}{totalDayPnl.toFixed(2)}
             </span>
+            {sim.prevDayPnl !== 0 && (
+              <span style={{ color: '#484f58', fontSize: 10, fontVariantNumeric: 'tabular-nums' }}>
+                (prev {sim.prevDayPnl >= 0 ? '+' : ''}{sim.prevDayPnl.toFixed(2)})
+              </span>
+            )}
           </div>
         )}
         <WalletWidget date={sim.date} refreshKey={sim.walletRefreshKey} />
@@ -464,6 +477,7 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
             setAutostopTriggerType(triggerType)
             setAutostopDeviationPct(deviationPct)
           }}
+          onHistoricalDaysChange={setHistoricalDays}
         />
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: '#484f58' }}>
           <span>{authUser.email}</span>
@@ -585,6 +599,20 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
         </>}
       />
 
+      {/* Broker error banner (paper trading) */}
+      {brokerError && (
+        <div style={{
+          background: '#3d1c1c', border: '1px solid #f85149', color: '#f85149',
+          padding: '6px 14px', fontSize: 12, display: 'flex', alignItems: 'center', gap: 8,
+        }}>
+          <span>⚠ {brokerError}</span>
+          <button
+            onClick={() => setBrokerError(null)}
+            style={{ background: 'none', border: 'none', color: '#f85149', cursor: 'pointer', marginLeft: 'auto', fontSize: 14 }}
+          >✕</button>
+        </div>
+      )}
+
       {/* Main content */}
       <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
         {/* Chart column */}
@@ -675,7 +703,7 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
               onCancelAllStrategies={handleCancelAllStrategies}
             />
           </div>
-          <TradeHistory trades={sim.trades} />
+          <TradeHistory trades={sim.trades} historicalTrades={sim.historicalTrades} />
         </div>
       </div>
     </div>

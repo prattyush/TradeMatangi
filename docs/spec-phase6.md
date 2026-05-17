@@ -69,3 +69,20 @@ All three strategy types shipped with full backend engine, REST API, DynamoDB pe
 
 
 
+
+---
+
+## Phase VI Implementation Status
+
+### ✅ COMPLETE (311 tests passing) — PR on feature/phase-vi-strategies
+
+All three strategy types shipped with full backend engine, REST API, DynamoDB persistence, frontend Strat tab, and settings UI:
+
+1. **AutoStop** (Entry) — bar close → TARGET order at bar high/low or `close ± deviation%`; options always BUY; sized by FundsRatio or explicit qty
+2. **BreakEven** (Exit) — every tick; LIMIT exit at `price × 0.99` (LONG) or `price × 1.01` (SHORT) the moment price reaches avg entry; 100% position exit
+3. **AggressiveStoploss** (TradeManagement) — bar close → move SL to `close × 0.99` (LONG) or `close × 1.01` (SHORT); creates SL if none exists
+
+**Next: Phase VII PaperTrading** (see `docs/spec-phase7.md`)
+
+### Lessons Learned
+- **Frontend `runningStrategies` is optimistic**: Updated client-side on start/cancel-all. No live polling against `GET /api/strategies`. Strategies that self-complete server-side stay in the list until user cancels or resets.

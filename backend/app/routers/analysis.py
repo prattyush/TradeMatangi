@@ -14,6 +14,7 @@ class SessionSummary(BaseModel):
     date: str
     start_time: str | None = None
     instrument_type: str = "equity"
+    session_type: str = "sim"
     strike: int | None = None
     expiry: str | None = None
     session_capital: float = 0.0
@@ -51,12 +52,14 @@ async def get_sessions(
     start_date: str | None = Query(default=None, description="YYYY-MM-DD"),
     end_date: str | None = Query(default=None, description="YYYY-MM-DD"),
     instrument_type: str | None = Query(default=None),
+    session_type: str | None = Query(default=None, description="sim or paper"),
     user_id: str = Depends(get_request_user_id),
 ):
     sessions = analysis_service.get_sessions_for_user(
         user_id, symbol=symbol,
         start_date=start_date, end_date=end_date,
         instrument_type=instrument_type,
+        session_type=session_type,
     )
     result = []
     for s in sessions:

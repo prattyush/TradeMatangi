@@ -108,7 +108,7 @@ class TestGetSessions:
             client.get("/api/analysis/sessions?symbol=TATPOW")
         mock_fn.assert_called_once_with(
             FIXED_USER_ID, symbol="TATPOW", start_date=None, end_date=None,
-            instrument_type=None,
+            instrument_type=None, session_type=None,
         )
 
     def test_date_range_filter_forwarded(self):
@@ -117,7 +117,27 @@ class TestGetSessions:
             client.get("/api/analysis/sessions?start_date=2026-05-01&end_date=2026-05-07")
         mock_fn.assert_called_once_with(
             FIXED_USER_ID, symbol=None, start_date="2026-05-01", end_date="2026-05-07",
-            instrument_type=None,
+            instrument_type=None, session_type=None,
+        )
+
+    def test_session_type_filter_sim(self):
+        with patch("app.services.analysis_service.get_sessions_for_user", return_value=[]) as mock_fn, \
+             patch("app.services.analysis_service.get_trades_for_session", return_value=[]):
+            resp = client.get("/api/analysis/sessions?session_type=sim")
+        assert resp.status_code == 200
+        mock_fn.assert_called_once_with(
+            FIXED_USER_ID, symbol=None, start_date=None, end_date=None,
+            instrument_type=None, session_type="sim",
+        )
+
+    def test_session_type_filter_paper(self):
+        with patch("app.services.analysis_service.get_sessions_for_user", return_value=[]) as mock_fn, \
+             patch("app.services.analysis_service.get_trades_for_session", return_value=[]):
+            resp = client.get("/api/analysis/sessions?session_type=paper")
+        assert resp.status_code == 200
+        mock_fn.assert_called_once_with(
+            FIXED_USER_ID, symbol=None, start_date=None, end_date=None,
+            instrument_type=None, session_type="paper",
         )
 
     def test_empty_result(self):

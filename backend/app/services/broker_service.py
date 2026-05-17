@@ -177,21 +177,46 @@ def fetch_historical(symbol: str, date: str) -> Path:
             f"Supported: {list(SUPPORTED_SYMBOLS.keys())}"
         )
 
+    import time as _time
+    from datetime import date as _date
+    is_today = date == _date.today().strftime("%Y-%m-%d")
+
+    _TODAY_CACHE_TTL = 600  # 10 minutes — re-fetch today's partial data after this
+
     pq = parquet_path(symbol, date)
+    partial_pq: "Path | None" = None  # preserve partial data for today as fallback
+
     if pq.exists():
         try:
-            cached_df = pd.read_parquet(pq)
-            if len(cached_df) >= _MIN_DAY_ROWS:
-                logger.info("Parquet cache hit for %s %s (%d rows)", symbol, date, len(cached_df))
-                return pq
-            logger.warning(
-                "Cached parquet for %s %s has only %d rows (< %d), re-fetching",
-                symbol, date, len(cached_df), _MIN_DAY_ROWS,
-            )
-            pq.unlink()
+            if is_today:
+                age_secs = _time.time() - pq.stat().st_mtime
+                cached_df = pd.read_parquet(pq)
+                if len(cached_df) > 0 and age_secs < _TODAY_CACHE_TTL:
+                    logger.info(
+                        "Parquet cache hit (partial today) for %s %s (%d rows, age %.0fs)",
+                        symbol, date, len(cached_df), age_secs,
+                    )
+                    return pq
+                if len(cached_df) > 0:
+                    partial_pq = pq  # keep as fallback if Breeze fails
+                logger.info(
+                    "Today's parquet for %s %s is %s (%.0fs old) — re-fetching",
+                    symbol, date, "stale" if age_secs >= _TODAY_CACHE_TTL else "empty", age_secs,
+                )
+            else:
+                cached_df = pd.read_parquet(pq)
+                if len(cached_df) >= _MIN_DAY_ROWS:
+                    logger.info("Parquet cache hit for %s %s (%d rows)", symbol, date, len(cached_df))
+                    return pq
+                logger.warning(
+                    "Cached parquet for %s %s has only %d rows (< %d), re-fetching",
+                    symbol, date, len(cached_df), _MIN_DAY_ROWS,
+                )
+                pq.unlink()
         except Exception as e:
             logger.warning("Could not read cached parquet for %s %s: %s — re-fetching", symbol, date, e)
-            pq.unlink(missing_ok=True)
+            if not is_today:
+                pq.unlink(missing_ok=True)
 
     # Migrate legacy pickle to parquet if it has enough data
     pkl = pickle_path(symbol, date)
@@ -212,11 +237,23 @@ def fetch_historical(symbol: str, date: str) -> Path:
     # Fetch from Breeze with pagination
     logger.info("Fetching %s %s from Breeze (paginated, %d-min chunks)...", symbol, date, _CHUNK_MINUTES)
     sym_info = SUPPORTED_SYMBOLS[symbol]
-    breeze = _get_breeze()
-
-    records = _fetch_day_paginated(breeze, sym_info, date)
+    try:
+        breeze = _get_breeze()
+        records = _fetch_day_paginated(breeze, sym_info, date)
+    except (BreezeTokenError, Exception) as exc:
+        if partial_pq is not None:
+            # Breeze unavailable but we have partial today data — use it
+            logger.warning(
+                "Breeze unavailable for %s %s (%s); using partial cached data (%s)",
+                symbol, date, exc, partial_pq,
+            )
+            return partial_pq
+        raise
 
     if not records:
+        if partial_pq is not None:
+            logger.warning("Breeze returned no records for %s %s; using partial cache", symbol, date)
+            return partial_pq
         raise RuntimeError(
             f"Breeze returned no data for {symbol} on {date}. "
             "This may be a market holiday or the date is outside available history."
@@ -226,7 +263,7 @@ def fetch_historical(symbol: str, date: str) -> Path:
     if df.empty:
         raise RuntimeError(f"Could not parse Breeze data for {symbol} on {date}.")
 
-    df = validate_and_fill_gaps(df, date)
+    df = validate_and_fill_gaps(df, date, partial=is_today)
 
     tmp = pq.with_name(pq.name + ".tmp")
     try:

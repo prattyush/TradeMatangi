@@ -296,6 +296,7 @@ export default function TradeAnalysis({ onClose }: Props) {
 
   const [symbol, setSymbol] = useState<string>('')
   const [instrumentType, setInstrumentType] = useState<string>('')
+  const [sessionType, setSessionType] = useState<string>('')
   const [startDate, setStartDate] = useState<string>(thirtyDaysAgo)
   const [endDate, setEndDate] = useState<string>(today)
 
@@ -314,6 +315,7 @@ export default function TradeAnalysis({ onClose }: Props) {
         startDate: startDate || undefined,
         endDate: endDate || undefined,
         instrumentType: instrumentType || undefined,
+        sessionType: sessionType || undefined,
       })
       setSessions(data)
     } catch (err: unknown) {
@@ -322,7 +324,7 @@ export default function TradeAnalysis({ onClose }: Props) {
     } finally {
       setLoading(false)
     }
-  }, [symbol, instrumentType, startDate, endDate])
+  }, [symbol, instrumentType, sessionType, startDate, endDate])
 
   // Auto-search on mount
   useEffect(() => { handleSearch() }, []) // eslint-disable-line react-hooks/exhaustive-deps
@@ -383,6 +385,15 @@ export default function TradeAnalysis({ onClose }: Props) {
             Type:
             <select value={instrumentType} onChange={e => setInstrumentType(e.target.value)} style={inputStyle}>
               {INSTRUMENT_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
+            </select>
+          </label>
+
+          <label style={{ fontSize: 12, color: '#484f58', display: 'flex', alignItems: 'center', gap: 6 }}>
+            Session:
+            <select value={sessionType} onChange={e => setSessionType(e.target.value)} style={inputStyle}>
+              <option value="">All</option>
+              <option value="sim">Simulated</option>
+              <option value="paper">Paper</option>
             </select>
           </label>
 

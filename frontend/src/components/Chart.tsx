@@ -38,6 +38,10 @@ interface Props {
   liveFromTs?: number
   // Increment to trigger a manual data reload (fixes phantom candle after strike change)
   reloadKey?: number
+  // Number of prior trading days to load for chart context (default 2)
+  historicalDays?: number
+  // Latest equity tick timestamp — used as fallback cutoff when this pane's latestTick is null
+  currentSimTime?: number | null
 }
 
 type DrawMode = 'none' | 'hline' | 'trendline'
@@ -84,6 +88,8 @@ export default function Chart({
   onPriceSelect = null,
   liveFromTs,
   reloadKey = 0,
+  historicalDays,
+  currentSimTime,
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<IChartApi | null>(null)
@@ -94,6 +100,8 @@ export default function Chart({
   const lastEma9Ref = useRef<number | null>(null)
   const lastEma21Ref = useRef<number | null>(null)
   const candleTimesRef = useRef<number[]>([])
+  const latestTickRef = useRef(latestTick)
+  const currentSimTimeRef = useRef(currentSimTime)
   const drawModeRef = useRef<DrawMode>('none')
   const trendPt1Ref = useRef<{ time: number; price: number } | null>(null)
   const priceLines = useRef<IPriceLine[]>([])
@@ -109,6 +117,8 @@ export default function Chart({
   // so both parent-triggered and toolbar-triggered reloads work.
   const effectiveReloadKey = reloadKey + localReloadKey
 
+  latestTickRef.current = latestTick
+  currentSimTimeRef.current = currentSimTime
   useEffect(() => { drawModeRef.current = drawMode }, [drawMode])
   useEffect(() => { onPriceSelectRef.current = onPriceSelect ?? null }, [onPriceSelect])
 
@@ -222,8 +232,26 @@ export default function Chart({
     ;(async () => {
       try {
         const [{ candles: histCandles }, preCandles] = await Promise.all([
-          api.getHistorical(symbol, tradingDate, intervalMinutes),
-          startTime ? api.getPreSession(symbol, tradingDate, startTime, intervalMinutes) : Promise.resolve([]),
+          api.getHistorical(symbol, tradingDate, intervalMinutes, historicalDays),
+          (() => {
+            // On refresh during a running session, extend pre-session to the current
+            // sim time so completed candles (e.g. 09:15, 09:18, 09:21) are restored
+            // immediately rather than rebuilt tick-by-tick. Guard with a date check so
+            // stale ticks from a previous session never poison a different trading date.
+            const currentTs = currentSimTimeRef.current
+            if (currentTs != null) {
+              const simDate = new Date(currentTs * 1000).toISOString().slice(0, 10)
+              if (simDate === tradingDate) {
+                const totalSecs = currentTs % 86400
+                const h = Math.floor(totalSecs / 3600)
+                const m = Math.floor((totalSecs % 3600) / 60)
+                const s = totalSecs % 60
+                const timeStr = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
+                return api.getPreSession(symbol, tradingDate, timeStr, intervalMinutes)
+              }
+            }
+            return startTime ? api.getPreSession(symbol, tradingDate, startTime, intervalMinutes) : Promise.resolve([])
+          })()
         ])
         if (cancelled) return
 
@@ -274,7 +302,7 @@ export default function Chart({
     candleTimesRef.current = []
 
     let cancelled = false
-    api.getOptionsHistorical(symbol, tradingDate, strike, expiry, right, intervalMinutes)
+    api.getOptionsHistorical(symbol, tradingDate, strike, expiry, right, intervalMinutes, historicalDays)
       .then(({ candles }) => {
         if (cancelled) return
         // Only show candles BEFORE the session start window — live ticks will
@@ -284,9 +312,18 @@ export default function Chart({
         const startTs = new Date(`${tradingDate}T${normalizedStart}Z`).getTime() / 1000
         const intervalSecs = intervalMinutes * 60
         const startWindowTs = Math.floor(startTs / intervalSecs) * intervalSecs
-        const cutoffTs = liveFromTs
-          ? Math.floor(liveFromTs / intervalSecs) * intervalSecs
-          : startWindowTs
+        // When ticks are flowing, compute the cutoff so all COMPLETED candle windows
+        // are loaded from history and the current growing window is left to live ticks.
+        // Priority: equity master-clock (currentSimTimeRef) → pane's own tick → liveFromTs
+        // → startWindowTs. The equity clock is always the most current reference;
+        // options ticks can lag behind due to data gaps, causing a stale cutoffTs that
+        // excludes the most recently completed window.
+        const liveTsNow = currentSimTimeRef.current ?? latestTickRef.current?.time ?? undefined
+        const cutoffTs = liveTsNow
+          ? Math.floor(liveTsNow / intervalSecs) * intervalSecs
+          : liveFromTs
+            ? Math.floor(liveFromTs / intervalSecs) * intervalSecs
+            : startWindowTs
         const priorCandles = candles.filter(c => c.time < cutoffTs)
 
         series.setData(priorCandles.map(toCandle))

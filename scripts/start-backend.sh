@@ -12,6 +12,8 @@ fi
 echo "Installing dependencies..."
 "$VENV/bin/pip" install -q -r "$REPO_ROOT/backend/requirements.txt"
 
+LOG_FILE="$REPO_ROOT/data/logs/backend.log"
 echo "Starting backend on http://0.0.0.0:8700 ..."
+echo "Logs: $LOG_FILE  (tail -f to follow)"
 cd "$REPO_ROOT/backend"
 "$VENV/bin/uvicorn" app.main:app --host 0.0.0.0 --port 8700 --reload

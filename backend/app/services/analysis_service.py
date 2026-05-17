@@ -22,6 +22,7 @@ def get_sessions_for_user(
     start_date: str | None = None,
     end_date: str | None = None,
     instrument_type: str | None = None,
+    session_type: str | None = None,
 ) -> list[dict]:
     """
     Return sessions for a user, optionally filtered by symbol, date range,
@@ -45,6 +46,8 @@ def get_sessions_for_user(
             items = [s for s in items if s.get("date", "") <= end_date]
         if instrument_type:
             items = [s for s in items if s.get("instrument_type") == instrument_type]
+        if session_type:
+            items = [s for s in items if s.get("session_type", "sim") == session_type]
 
         return sorted(items, key=lambda s: (s.get("date", ""), s.get("session_id", "")), reverse=True)
     except Exception:
@@ -100,6 +103,7 @@ def compute_session_summary(session: dict, trades: list[dict]) -> dict:
         "date": session.get("date"),
         "start_time": session.get("start_time"),
         "instrument_type": session.get("instrument_type", "equity"),
+        "session_type": session.get("session_type", "sim"),
         "strike": session.get("strike"),
         "expiry": session.get("expiry"),
         "session_capital": round(session_capital, 2),
