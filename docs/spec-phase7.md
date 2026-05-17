@@ -57,7 +57,7 @@ kite = KiteConnect(api_key=credentials_config_parser['kite']['api_key'], access_
 
 ## Phase VII Implementation Status
 
-### 🚧 In Progress — branch: feature/phase-vii-paper-trading (350 tests passing)
+### 🚧 In Progress — branch: feature/phase-vii-paper-trading (352 tests passing)
 
 #### What is shipped
 
@@ -126,6 +126,7 @@ kite = KiteConnect(api_key=credentials_config_parser['kite']['api_key'], access_
 - **Refresh clears today's CE/PE bars**: Options historical `cutoffTs = startWindowTs` (09:15) on refresh because `liveFromTs` is unset for initial panes. Phase 1 replay already done; Kite streaming only fills from "now". Fix: use `latestTickRef.current?.time` as cutoff so all completed candles up to current position are reloaded.
 - **Chart gap on session restart**: Breeze parquet cached at 14:00; restarting at 14:17 replayed only to 14:00. Kite streaming then started from 14:17 leaving a 17-minute gap. Fix: after Breeze replay, fetch Kite 1-min REST data for the gap period and emit those ticks before Phase 2 starts.
 - **Delete+re-add pane (paper mode) streams old strike's ticks**: `update_pane_strike` updated `session.strike_pe` and frontend `sessionStrikePE` but `KiteBroadcaster` remained subscribed to the old PE token → Phase 3 forwarded old-strike ticks. Fix: added `update_session_right()` to broadcaster; router calls it after updating `session.strike_ce/pe` for paper sessions.
+- **Trade markers from old strike persist after pane is replaced**: Deleting a CE pane for strike 23450 and adding a new CE pane for strike 23500 still showed the 23450 markers. Root cause: `getTradesForPane` in `App.tsx` filtered `t.right === pane.right` only; since `Trade.right` is `"CE"` for both strikes, all CE trades passed the filter. The Chart's internal `paneTrades` filter had the same gap. Fix: added `&& t.strike === pane.strike` to both filters. Two-line change; no new state or effect needed — the marker `useEffect` already re-runs on `trades` prop change, and each new pane mounts a fresh `Chart` instance.
 - **↻ refresh wipes last completed candle on all pane types**: At 09:24:30 with 3-min candles, the 09:21 candle (most recent completed window) was absent after refresh. Root cause (options): `latestTickRef.current?.time` for CE/PE can be stale (09:21:47) while equity is at 09:24:30 — `floor(09:21:47 / 180) * 180 = 09:21:00`, so filter `c.time < 09:21:00` excluded the 09:21 candle. Root cause (equity): `getPreSession("09:15:00")` returns `[]` so refresh lost all in-session candles. Fix: (1) Flip options cutoff priority to `currentSimTimeRef.current ?? latestTickRef.current?.time` — equity master clock is always current. (2) Equity refresh calls `getPreSession(currentSimHHMMSS)` when `currentSimTimeRef.current` matches the trading date, recovering all completed candles immediately.
 - **↻ refresh drops completed candles on CE/PE pane when options tick is null**: At 09:23 with 3-min candles, clicking ↻ on the PE chart left only the growing 09:21 candle; 09:15 and 09:18 vanished. Root cause: `latestTickRef.current?.time` was null for PE when the pane's own tick had never arrived (strike mismatch / gap) → cutoff fell back to `startWindowTs` (09:15) → `priorCandles.filter(c.time < 09:15_ts)` excluded all session candles. Fix (prior to the master-clock flip): added `currentSimTime` prop (equity master-clock) as reliable fallback when the options tick is null.
 - **Trade History empty on session restart for same day**: Restarting a session for the same symbol+date+instrument_type+session_type showed an empty Trade History even though DynamoDB had trades from earlier sessions. Fix: `GET /api/trades/by-context` endpoint + client-side fetch in `startSession` populates `historicalTrades`; Day P&L includes `prevDayPnl` from those trades.
@@ -149,3 +150,20 @@ kite = KiteConnect(api_key=credentials_config_parser['kite']['api_key'], access_
 - **Open order state → price line lifecycle must be tightly coupled**: `IPriceLine` objects returned by `createPriceLine` have no built-in lifecycle. Track them in a `Map<orderId, IPriceLine>` and call `removePriceLine` before rebuilding whenever `openOrders` changes. Forgetting to remove stale lines causes ghost price levels that persist after an order fills.
 - **Trade Analysis options markers need underlying price, not options price**: An options trade at price ₹150 plotted on a NIFTY chart (scale ~24000) would compress the entire chart to show both scales. The correct Y for an options marker on the equity chart is the underlying close at the execution time. Store loaded candles in `useState` (not just a ref) so the markers `useEffect` re-runs once candle data arrives — a ref change does not trigger re-renders.
 - **`useState` vs `useRef` for async-dependent effects**: If effect A (markers) needs data produced by effect B (candle load), and B is async, a plain `useRef` for B's output is invisible to A's dependency array. Using `useState` makes the output part of the render cycle so A runs again when B completes.
+- **Trade marker filter must include `strike`, not just `right`**: Filtering trades by `right === 'CE'` matches every CE trade regardless of strike. When a pane is deleted and recreated at a different strike, the new Chart component receives all same-right trades and renders markers from the old strike. Always filter options trades as `t.right === pane.right && t.strike === pane.strike`. The `Order` frontend type does not carry `strike` (backend schema gap), so open-order price lines still filter by `right` only — a known minor residual issue.
+- **New pane → new Chart mount, no explicit reset needed**: Panes use `pane.id` as the React `key`. Adding a pane always creates a new `id`, mounting a fresh `Chart` with empty refs and a clean effect slate. There is no need to imperatively clear markers or price lines when the strike changes — correct prop filtering is sufficient.
+
+---
+
+#### Open Bugs
+
+- **[BUG-VII-1] Open-order price lines not filtered by strike**: `getOrdersForPane` in `App.tsx` filters `o.right === pane.right` only, so a SELL stoploss placed at CE 23450 shows its dashed price line on any CE pane including a newly added CE 23500 pane.
+  - **Root cause**: The backend `Order` model (`schemas.py`, class `Order`) and the `PlaceOrderRequest` schema both have no `strike` field. The frontend `Order` interface (`api.ts`) also has no `strike`. The order service (`order_service.py`) stores orders without a strike; `check_orders` matches by `right` only. No strike is tracked anywhere in the order lifecycle.
+  - **Fix required**:
+    1. Add `strike: int | None = None` to the backend `Order` model and `PlaceOrderRequest`.
+    2. Populate it in `place_order()` — derive from the session (`session.strike_ce` / `session.strike_pe` based on `right`) or pass explicitly from the router.
+    3. Persist to DynamoDB `Orders` table.
+    4. Add `strike?: number` to the frontend `Order` interface.
+    5. Update `getOrdersForPane` to `o.right === pane.right && o.strike === pane.strike` for options panes.
+    6. Update `check_orders` to filter by `o.right == tick_right` already done; no change needed there since strike matching is already implied by the session's active strike.
+  - **Scope**: Backend schema change + router change + frontend type change + filter change. Moderate effort; no breaking changes to existing sim sessions (old orders have `strike=null`, treated as matching any pane — safe fallback).
