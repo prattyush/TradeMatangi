@@ -65,12 +65,14 @@ If future load requires scaling out, the correct approach is nginx sticky sessio
 **2. Updated EC2 start script**
 `scripts/start-backend-ec2.sh`: use `uvicorn app.main:app --host 0.0.0.0 --port 8700 --workers 1 --loop uvloop`. Add `uvloop` to `requirements.txt` for async performance on Linux.
 
-**3. Backend IP: use Vite environment variables**
-Do **not** hardcode the IP in React source files. Use Vite env vars so dev vs prod is automatic:
-- `frontend/.env` (checked in, dev): `VITE_API_BASE_URL=http://localhost:8700`
-- `frontend/.env.production` (checked in, prod): `VITE_API_BASE_URL=http://52.66.185.106:8700`
-- `api.ts`: replace the hardcoded base URL with `const API_BASE = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8700'`.
-- Override per-deployment via env file or CI without touching code.
+**3. Frontend API URL: Vite environment variables**
+`npm run build` bakes the backend URL into static files at build time. The URL must differ between dev and prod — do not hardcode either value in source.
+
+- `frontend/.env` (dev, checked in): `VITE_API_BASE_URL=http://localhost:8700`
+- `frontend/.env.production` (prod, checked in): `VITE_API_BASE_URL=` *(empty string)*
+- `frontend/src/config.ts`: `const BACKEND_URL = import.meta.env.VITE_API_BASE_URL ?? ''`
+
+Why empty string in prod: nginx on EC2 serves both the frontend (port 80) and proxies `/api/` to the backend on the same host. The browser makes requests to the same origin, so relative URLs (`/api/...`) work. A Vite dev proxy is **not** needed — in dev the absolute `localhost:8700` URL handles routing directly; in prod nginx handles it. No proxy configuration required anywhere.
 
 ---
 
@@ -85,7 +87,7 @@ Deployment steps:
 3. nginx config: serve static files + `location /api/ { proxy_pass http://localhost:8700; }` + SPA fallback (`try_files $uri /index.html`)
 4. Access at `http://52.66.185.106` (port 80)
 
-Note: the `VITE_API_BASE_URL` env var introduced in Sprint 3 means switching to Vercel later (once HTTPS is set up) is just a config change — no code rework.
+Note: the `VITE_API_BASE_URL` env var introduced in Sprint 3 means switching to a different deployment (CDN, Vercel with HTTPS, etc.) later is a config-only change — no code rework.
 
 **Vercel deferred** — requires HTTPS on the backend (nginx + certbot + domain name). Revisit in a future phase once EC2 deployment is stable.
 
@@ -106,9 +108,11 @@ Note: the `VITE_API_BASE_URL` env var introduced in Sprint 3 means switching to 
 - `broker_service` + `kite_service` read tokens from DDB with `accesskeys.ini` fallback
 
 ### Sprint 3 — Backend Deployment Prep
-- `scripts/start-backend-ec2.sh`: `--workers 1 --loop uvloop`
 - `uvloop` in `requirements.txt`
-- `api.ts` + `frontend/.env` + `frontend/.env.production`: Vite env var `VITE_API_BASE_URL`
+- `scripts/start-backend-ec2.sh`: `uvicorn app.main:app --host 0.0.0.0 --port 8700 --workers 1 --loop uvloop`
+- `frontend/src/config.ts`: replace hardcoded `BACKEND_URL` with `import.meta.env.VITE_API_BASE_URL ?? ''`
+- `frontend/.env` (dev): `VITE_API_BASE_URL=http://localhost:8700`
+- `frontend/.env.production` (prod): `VITE_API_BASE_URL=` (empty — nginx on EC2 proxies `/api/` on same origin)
 
 ### Sprint 4 — 2-Worker Support via nginx Sticky Sessions *(optional — do after Sprint 1–3 deployed and tested)*
 - nginx config: `map $uri $session_key` extracts `session_id` from `/api/stream/{id}` and `/api/simulation/{id}/...` paths; falls back to `X-Session-Id` header for orders/strategies
@@ -161,6 +165,59 @@ Note: the `VITE_API_BASE_URL` env var introduced in Sprint 3 means switching to 
 
 ---
 
-### 🔜 Sprint 2 — Admin Token Management
+### Sprint 2 — Admin Token Management ✅ Complete (PR #29, merged to dev 2026-05-17)
+
+**`BrokerTokens` DynamoDB table** (`backend/app/services/token_service.py`):
+- Schema: `pk="config"` (HASH), `sk="icici_session"|"kite_access"` (RANGE), `value=<token>`, `updated_at=<iso-ts>`
+- `_ensure_table()`: creates table lazily on first access (idempotent)
+- `get_token(sk)`: returns full value or `None` if not set
+- `set_token(sk, value)`: writes with UTC `updated_at` timestamp
+- `get_tokens_masked()`: returns last 4 chars visible, rest redacted with `*`
+
+**Admin endpoints** (`backend/app/routers/admin.py`):
+- `GET /api/admin/tokens` — returns masked `{icici_session, kite_access}`; 403 for non-admin
+- `PUT /api/admin/tokens` — body `{icici_session?, kite_access?}`; only non-null fields written; returns masked values; 403 for non-admin
+- `_require_admin` FastAPI dependency: calls `get_user_info(user_id)` → checks `is_admin` field → 403 if absent or false
+
+**User profile endpoint** (`backend/app/routers/auth.py`):
+- `GET /api/auth/me` → `{user_id, email, is_admin}` for the authenticated user
+- `AuthResponse` Pydantic model gains `is_admin: bool = False` — backward-compat default
+
+**`is_admin` flag on Users table** (`backend/app/services/user_service.py`):
+- `seed_user()`: new admin record seeded with `is_admin: True`; existing record missing the field gets `update_item` backfill on startup (one-time migration)
+- `login_user()`: now returns `{user_id, email, is_admin}`
+- `get_user_info(user_id)`: new helper — `get_item` by `user_id`; used by `/me` and `_require_admin`
+
+**Broker DDB token fallback:**
+- `broker_service._read_breeze_credentials()`: `token_service.get_token("icici_session")` overrides `accesskeys.ini session_token`; call wrapped in `try/except` so token_service failures fall back gracefully
+- `kite_service._get_kite()`: same pattern for `kite_access` → `access_token`
+
+**Frontend changes:**
+- `api.ts`: `AuthResponse.is_admin: boolean`; `AdminTokensResponse` interface; `api.getMe()`, `api.getAdminTokens()`, `api.setAdminTokens()`
+- `LoginScreen.tsx`: passes `result.is_admin ?? false` as third arg to `onLogin`
+- `App.tsx`: `authUser` type extended with `isAdmin: boolean`; `loadAuthUser()` defaults missing field to `false`; `handleLogin()` stores `isAdmin`; `useEffect([])` on mount calls `getMe()` to refresh from server
+- `SettingsModal.tsx`: `isAdmin?: boolean` prop; collapsible ADMIN section (amber header, admin-only); `type="password"` inputs for ICICI and Kite tokens; loads masked current values via `getAdminTokens()` on first open (guarded by `useRef`); `saveAdminTokens()` sends only non-empty fields
+
+**Test counts:** 379 backend tests passing (27 new in `test_admin_tokens.py`); TypeScript clean.
+
+---
+
+### Lessons Learned — Sprint 2
+
+**Patch the importing module, not the defining module**
+- `admin.py` imports `get_user_info` with `from app.services.user_service import get_user_info`. The function is bound by value at import time. Patching `app.services.user_service.get_user_info` has no effect on the reference already held in the router module.
+- **Rule:** Patch at the module that holds the reference being called: `app.routers.admin.get_user_info`, not `app.services.user_service.get_user_info`. Same applies to `token_service` in router tests — patch `app.routers.admin.token_service.set_token`.
+
+**`useRef` for one-time async loads in modals**
+- The masked-token fetch should happen once when the modal first opens, not on every open. A `useRef(false)` flag (`adminLoadedRef`) gates the fetch inside `useEffect([open])`. Without it, `getAdminTokens()` fires every time the modal opens — redundant and briefly clears the displayed values on re-open.
+
+**`isAdmin` defaulting in `loadAuthUser`**
+- Old `auth_user` entries in localStorage have no `isAdmin` key. Spreading `{ isAdmin: false, ...parsed }` ensures the default is applied before the stored value, so existing sessions get `false` rather than `undefined`. The server-side `getMe()` on mount then corrects it to the real value.
+
+**DDB token fallback must not propagate token_service errors**
+- If `token_service._ensure_table()` fails (DDB not running), it logs and returns `None`. `broker_service` wraps the `get_token` call in `try/except` and falls back to `accesskeys.ini`. This keeps the broker service functional in local dev where DDB Local may not be running.
+
+---
+
 ### 🔜 Sprint 3 — Backend Deployment Prep
 ### 🔜 Sprint 4 — 2-Worker nginx Sticky Sessions (optional)
