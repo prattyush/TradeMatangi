@@ -277,6 +277,27 @@ def _on_bar_close_autostop(
         logger.warning("AutoStop %s: place_order failed: %s", strategy.strategy_id, exc)
 
 
+def _find_open_exit_orders(session_id: str, exit_side, tick_right: str | None, quantity: int) -> list:
+    """Return pending orders that would close a position: matching side, right, and quantity."""
+    from app.services.order_service import get_open_orders
+    return [
+        o for o in get_open_orders(session_id)
+        if o.side == exit_side and o.right == tick_right and o.quantity == quantity
+    ]
+
+
+def _update_exit_order_price(session_id: str, order, new_price: float, trading_date: str) -> None:
+    """Move trigger/limit price of any pending order type to new_price."""
+    from app.services.order_service import update_order
+    from app.models.schemas import OrderType
+    if order.order_type in (OrderType.TARGET, OrderType.STOPLOSS):
+        update_order(session_id=session_id, order_id=order.order_id,
+                     trading_date=trading_date, trigger_price=new_price)
+    else:  # LIMIT
+        update_order(session_id=session_id, order_id=order.order_id,
+                     trading_date=trading_date, limit_price=new_price)
+
+
 def _on_bar_close_aggressive_sl(
     strategy: StrategyInstance,
     session,
@@ -286,7 +307,7 @@ def _on_bar_close_aggressive_sl(
 ) -> None:
     from app.services.trading import get_position
     from app.models.schemas import TradeSide, OrderType
-    from app.services.order_service import get_open_orders, update_order, place_order
+    from app.services.order_service import place_order
 
     position = get_position(session.session_id, session.symbol, tick_right)
     if position.side == "FLAT":
@@ -300,20 +321,15 @@ def _on_bar_close_aggressive_sl(
         sl_price = round(close_price * 1.01, 2)
         sl_side = TradeSide.BUY
 
-    # Find an existing open SL order for this right
-    open_orders = get_open_orders(session.session_id)
-    sl_orders = [o for o in open_orders if o.is_stoploss and o.right == tick_right]
+    # Find open exit orders matching side, right, and position quantity
+    exit_orders = _find_open_exit_orders(session.session_id, sl_side, tick_right, position.quantity)
 
-    if sl_orders:
-        update_order(
-            session_id=session.session_id,
-            order_id=sl_orders[0].order_id,
-            trading_date=session.date,
-            trigger_price=sl_price,
-        )
+    if exit_orders:
+        for order in exit_orders:
+            _update_exit_order_price(session.session_id, order, sl_price, session.date)
         logger.info(
-            "AggressiveStoploss %s updated SL to %.2f for %s right=%s",
-            strategy.strategy_id, sl_price, session.symbol, tick_right,
+            "AggressiveStoploss %s updated %d exit order(s) to SL=%.2f for %s right=%s",
+            strategy.strategy_id, len(exit_orders), sl_price, session.symbol, tick_right,
         )
     else:
         try:
@@ -321,17 +337,16 @@ def _on_bar_close_aggressive_sl(
                 session_id=session.session_id,
                 symbol=session.symbol,
                 side=sl_side,
-                order_type=OrderType.STOPLOSS,
+                order_type=OrderType.TARGET,
                 quantity=position.quantity,
                 created_at=current_ts,
                 trading_date=session.date,
                 trigger_price=sl_price,
-                is_stoploss=True,
                 right=tick_right,
                 user_id=session.user_id,
             )
             logger.info(
-                "AggressiveStoploss %s created SL at %.2f for %s right=%s",
+                "AggressiveStoploss %s created TARGET SL at %.2f for %s right=%s",
                 strategy.strategy_id, sl_price, session.symbol, tick_right,
             )
         except Exception as exc:
@@ -354,45 +369,52 @@ def _on_tick_breakeven(
     position = get_position(session.session_id, session.symbol, tick_right)
 
     if position.side == "FLAT":
-        # Nothing to protect; strategy has done its job (or position was never opened)
         strategy.status = StrategyStatus.COMPLETED
         _write_strategy_to_db(strategy)
         return
 
     avg_entry = position.avg_entry_price
-    should_exit = (
+    should_protect = (
         (position.side == "LONG" and current_price >= avg_entry) or
         (position.side == "SHORT" and current_price <= avg_entry)
     )
-    if not should_exit:
+    if not should_protect:
         return
 
-    # Exit 100% of position via a limit order with slight slippage to guarantee fill
-    if position.side == "LONG":
-        exit_side = TradeSide.SELL
-        exit_price = round(current_price * 0.99, 2)  # SELL fills when price >= limit → immediate
-    else:
-        exit_side = TradeSide.BUY
-        exit_price = round(current_price * 1.01, 2)  # BUY fills when price <= limit → immediate
+    exit_side = TradeSide.SELL if position.side == "LONG" else TradeSide.BUY
 
-    try:
-        place_order(
-            session_id=session.session_id,
-            symbol=session.symbol,
-            side=exit_side,
-            order_type=OrderType.LIMIT,
-            quantity=position.quantity,
-            created_at=current_ts,
-            trading_date=session.date,
-            limit_price=exit_price,
-            right=tick_right,
-            user_id=session.user_id,
-        )
+    # Find existing open exit orders (matching side, right, position quantity) and move them to breakeven
+    exit_orders = _find_open_exit_orders(session.session_id, exit_side, tick_right, position.quantity)
+
+    if exit_orders:
+        for order in exit_orders:
+            _update_exit_order_price(session.session_id, order, avg_entry, session.date)
         strategy.status = StrategyStatus.COMPLETED
         _write_strategy_to_db(strategy)
         logger.info(
-            "BreakEven %s placed %s LIMIT at %.2f (avg_entry=%.2f) for %s right=%s",
-            strategy.strategy_id, exit_side.value, exit_price, avg_entry, session.symbol, tick_right,
+            "BreakEven %s moved %d exit order(s) to breakeven=%.2f for %s right=%s",
+            strategy.strategy_id, len(exit_orders), avg_entry, session.symbol, tick_right,
         )
-    except Exception as exc:
-        logger.warning("BreakEven %s: place_order failed: %s", strategy.strategy_id, exc)
+    else:
+        # No existing exit order — place a TARGET that fires if price falls back to avg_entry
+        try:
+            place_order(
+                session_id=session.session_id,
+                symbol=session.symbol,
+                side=exit_side,
+                order_type=OrderType.TARGET,
+                quantity=position.quantity,
+                created_at=current_ts,
+                trading_date=session.date,
+                trigger_price=avg_entry,
+                right=tick_right,
+                user_id=session.user_id,
+            )
+            strategy.status = StrategyStatus.COMPLETED
+            _write_strategy_to_db(strategy)
+            logger.info(
+                "BreakEven %s placed TARGET at breakeven=%.2f for %s right=%s",
+                strategy.strategy_id, avg_entry, session.symbol, tick_right,
+            )
+        except Exception as exc:
+            logger.warning("BreakEven %s: place_order failed: %s", strategy.strategy_id, exc)

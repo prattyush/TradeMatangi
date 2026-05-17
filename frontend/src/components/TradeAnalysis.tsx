@@ -4,6 +4,7 @@ import {
   IChartApi,
   ISeriesApi,
   CandlestickData,
+  LineData,
   SeriesMarker,
   Time,
 } from 'lightweight-charts'
@@ -37,6 +38,8 @@ function AnalysisChart({ symbol, date, trades }: { symbol: string; date: string;
   const containerRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<IChartApi | null>(null)
   const seriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null)
+  const tradeMarkerSeriesRef = useRef<ISeriesApi<'Line'> | null>(null)
+  const [candles, setCandles] = useState<CandlestickData[]>([])
 
   // Init chart once — height is 45% of container width, min 300
   useEffect(() => {
@@ -56,8 +59,14 @@ function AnalysisChart({ symbol, date, trades }: { symbol: string; date: string;
       borderVisible: false,
       wickUpColor: '#26a641', wickDownColor: '#f85149',
     })
+    const markerSeries = chart.addLineSeries({
+      lineVisible: false, crosshairMarkerVisible: false,
+      lastValueVisible: false, priceLineVisible: false,
+    })
+
     chartRef.current = chart
     seriesRef.current = series
+    tradeMarkerSeriesRef.current = markerSeries
 
     const ro = new ResizeObserver(entries => {
       const width = entries[0].contentRect.width
@@ -66,7 +75,7 @@ function AnalysisChart({ symbol, date, trades }: { symbol: string; date: string;
     })
     ro.observe(containerRef.current)
 
-    return () => { ro.disconnect(); chart.remove() }
+    return () => { ro.disconnect(); tradeMarkerSeriesRef.current = null; chart.remove() }
   }, []) // mount only
 
   // Load prior-2-days history AND full trading-day candles in parallel, then merge.
@@ -100,6 +109,7 @@ function AnalysisChart({ symbol, date, trades }: { symbol: string; date: string;
         )
         if (sorted.length > 0) {
           seriesRef.current.setData(sorted)
+          setCandles(sorted)
           chartRef.current?.timeScale().fitContent()
         }
       } catch { /* ignore */ }
@@ -107,29 +117,59 @@ function AnalysisChart({ symbol, date, trades }: { symbol: string; date: string;
     return () => { cancelled = true }
   }, [symbol, date])
 
-  // Trade markers — options trades mapped to underlying chart direction
+  // Trade markers — circles at exact price on a transparent line series.
+  // Options trades use the underlying (equity) close at execution time so the
+  // circle lands at the correct Y level on the NIFTY/equity chart.
   useEffect(() => {
-    if (!seriesRef.current) return
-    if (trades.length === 0) { seriesRef.current.setMarkers([]); return }
+    const ms = tradeMarkerSeriesRef.current
+    if (!ms) return
+
+    if (trades.length === 0) {
+      try { ms.setData([]); ms.setMarkers([]) } catch { /* disposed */ }
+      return
+    }
 
     const intervalSecs = 3 * 60
-    const markers: SeriesMarker<Time>[] = trades.map(t => {
-      const side = effectiveSideForChart(t)
-      const label = t.right
-        ? `${t.right} ${t.side} ${t.quantity}@${t.price.toFixed(0)}`
-        : `${t.side} ${t.quantity}@${t.price.toFixed(0)}`
-      return {
-        time: (Math.floor(t.timestamp / intervalSecs) * intervalSecs) as Time,
-        position: side === 'BUY' ? 'belowBar' : 'aboveBar',
-        color: side === 'BUY' ? '#26a641' : '#f85149',
-        shape: side === 'BUY' ? 'arrowUp' : 'arrowDown',
-        text: label,
-        size: 1,
+    const priceBySlot = new Map<number, number>()
+    const markers: SeriesMarker<Time>[] = []
+
+    for (const t of trades) {
+      const slot = Math.floor(t.timestamp / intervalSecs) * intervalSecs
+
+      let yPrice: number
+      if (t.right) {
+        // Options trade: find the underlying candle at this bar and use its close
+        const candle = candles.find(c => (c.time as number) === slot)
+        if (!candle) continue
+        yPrice = candle.close
+      } else {
+        yPrice = t.price
       }
-    })
+
+      priceBySlot.set(slot, yPrice)
+
+      const effectiveSide = effectiveSideForChart(t)
+      const text = t.right
+        ? `${t.right} ${t.side === 'BUY' ? 'B' : 'S'}`
+        : (t.side === 'BUY' ? 'B' : 'S')
+
+      markers.push({
+        time: slot as Time,
+        position: 'inBar' as const,
+        color: effectiveSide === 'BUY' ? '#B388FF' : '#FFA726',
+        shape: 'circle' as const,
+        text,
+        size: 1,
+      })
+    }
+
+    const lineData: LineData[] = Array.from(priceBySlot.entries())
+      .sort(([a], [b]) => a - b)
+      .map(([time, value]) => ({ time: time as Time, value }))
     markers.sort((a, b) => (a.time as number) - (b.time as number))
-    try { seriesRef.current.setMarkers(markers) } catch { /* disposed */ }
-  }, [trades])
+
+    try { ms.setData(lineData); ms.setMarkers(markers) } catch { /* disposed */ }
+  }, [trades, candles])
 
   return (
     <div
