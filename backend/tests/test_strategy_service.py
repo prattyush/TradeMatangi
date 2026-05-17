@@ -160,9 +160,9 @@ class TestBreakEven:
             timestamp=T0, quantity=10, symbol=SYMBOL, user_id=USER_ID,
         )
 
-    def test_long_exits_when_price_reaches_avg_entry(self):
+    def test_long_places_target_sl_at_breakeven_when_no_exit_order(self):
         session = _session()
-        self._add_long_position()  # avg_entry = 100.0
+        self._add_long_position()  # avg_entry = 100.0, qty = 10
 
         svc.start_strategy(session, "BreakEven", None, {})
 
@@ -170,12 +170,34 @@ class TestBreakEven:
         svc.on_tick(session, _tick(T0, c=95.0), None)
         assert len(order_service.get_open_orders(SESSION)) == 0
 
-        # Price at entry — should place exit SELL LIMIT
+        # Price at entry — no existing exit order → place SELL TARGET at avg_entry
         svc.on_tick(session, _tick(T0 + 1, c=100.0), None)
         orders = order_service.get_open_orders(SESSION)
         assert len(orders) == 1
         assert orders[0].side == TradeSide.SELL
-        assert orders[0].order_type == OrderType.LIMIT
+        assert orders[0].order_type == OrderType.TARGET
+        assert orders[0].trigger_price == pytest.approx(100.0)
+
+    def test_long_moves_existing_exit_order_to_breakeven(self):
+        session = _session()
+        self._add_long_position()  # avg_entry = 100.0, qty = 10
+
+        # User has an existing SELL STOPLOSS at 80 (quantity matches position)
+        existing_sl = order_service.place_order(
+            session_id=SESSION, symbol=SYMBOL, side=TradeSide.SELL,
+            order_type=OrderType.STOPLOSS, quantity=10, created_at=T0,
+            trading_date=DATE, trigger_price=80.0, is_stoploss=True, user_id=USER_ID,
+        )
+
+        svc.start_strategy(session, "BreakEven", None, {})
+
+        # Price at avg_entry — should move existing SL to 100.0
+        svc.on_tick(session, _tick(T0 + 1, c=100.0), None)
+
+        orders = order_service.get_open_orders(SESSION)
+        assert len(orders) == 1  # no new order created
+        assert orders[0].order_id == existing_sl.order_id
+        assert orders[0].trigger_price == pytest.approx(100.0)
 
     def test_strategy_marked_completed_after_exit(self):
         session = _session()
@@ -208,9 +230,9 @@ class TestAggressiveStoploss:
             timestamp=T0, quantity=10, symbol=SYMBOL, user_id=USER_ID,
         )
 
-    def test_creates_sl_order_when_none_exists(self):
+    def test_creates_target_sl_order_when_none_exists(self):
         session = _session()
-        self._add_long_position()
+        self._add_long_position()  # qty=10
 
         svc.start_strategy(session, "AggressiveStoploss", None, {})
 
@@ -221,15 +243,16 @@ class TestAggressiveStoploss:
         orders = order_service.get_open_orders(SESSION)
         assert len(orders) == 1
         sl = orders[0]
-        assert sl.is_stoploss is True
+        assert sl.order_type == OrderType.TARGET
+        assert sl.is_stoploss is False
         assert sl.side == TradeSide.SELL  # exit LONG
         assert sl.trigger_price == pytest.approx(110.0 * 0.99)
 
     def test_updates_existing_sl_order(self):
         session = _session()
-        self._add_long_position()
+        self._add_long_position()  # qty=10
 
-        # Place an existing SL order manually
+        # Existing SELL STOPLOSS with matching quantity
         existing_sl = order_service.place_order(
             session_id=SESSION, symbol=SYMBOL, side=TradeSide.SELL,
             order_type=OrderType.STOPLOSS, quantity=10, created_at=T0,
@@ -241,12 +264,33 @@ class TestAggressiveStoploss:
         svc.on_tick(session, _tick(T0, c=110.0), None)
         svc.on_tick(session, _tick(T1, c=112.0), None)  # bar closes
 
-        # SL trigger should have been updated; no new order created
+        # Existing order updated; no new order created
         orders = order_service.get_open_orders(SESSION)
-        sl_orders = [o for o in orders if o.is_stoploss]
-        assert len(sl_orders) == 1
-        assert sl_orders[0].order_id == existing_sl.order_id
-        assert sl_orders[0].trigger_price == pytest.approx(110.0 * 0.99)
+        assert len(orders) == 1
+        assert orders[0].order_id == existing_sl.order_id
+        assert orders[0].trigger_price == pytest.approx(110.0 * 0.99)
+
+    def test_updates_non_stoploss_exit_order(self):
+        """AggressiveStoploss updates any exit-direction order, not just is_stoploss ones."""
+        session = _session()
+        self._add_long_position()  # qty=10
+
+        # Existing SELL TARGET (not flagged as stoploss) with matching quantity
+        existing_tgt = order_service.place_order(
+            session_id=SESSION, symbol=SYMBOL, side=TradeSide.SELL,
+            order_type=OrderType.TARGET, quantity=10, created_at=T0,
+            trading_date=DATE, trigger_price=85.0, user_id=USER_ID,
+        )
+
+        svc.start_strategy(session, "AggressiveStoploss", None, {})
+
+        svc.on_tick(session, _tick(T0, c=110.0), None)
+        svc.on_tick(session, _tick(T1, c=112.0), None)
+
+        orders = order_service.get_open_orders(SESSION)
+        assert len(orders) == 1
+        assert orders[0].order_id == existing_tgt.order_id
+        assert orders[0].trigger_price == pytest.approx(110.0 * 0.99)
 
 
 # ── Cancel All ────────────────────────────────────────────────────────────────

@@ -27,25 +27,25 @@ This phase is what will differentiate this platform from others. This phase we w
 ##### AggresiveStoploss Strategy
 1. This strategy is a trade management strategy and can only be selected if a position is open.
 2. This strategy would wait for the bar close and then change the stoploss to 1% below or above the closing price, depending upon whether it is a buy or sell order.
-3. If a stoploss order is already open it would use that and only change the price. 
-4. If no stoploss order is present, it can create one with same open position quantity or ignore it, do as suited.
+3. If any open exit-direction order exists (SELL if LONG, BUY if SHORT) with quantity matching the current position quantity and the same right (CE/PE/equity), update its trigger/limit price to the new SL level.
+4. If no such order is present, create a TARGET order (with wallet credit on fill) with the position quantity.
 
 ---
 
 ## Phase-VI Status
 
-### Phase VI — Strategies ✅ COMPLETE (311 tests passing) — PR on feature/phase-vi-strategies
+### Phase VI — Strategies ✅ COMPLETE (352 tests passing) — PR on feature/phase-vi-strategies
 
 All three strategy types shipped with full backend engine, REST API, DynamoDB persistence, frontend Strat tab, and settings UI:
 
 1. **AutoStop** (Entry) — waits for a configured-interval bar to close, then places a TARGET order at bar high (BUY) or bar low (SELL); alternatively triggers at `close ± deviation%`. Options sessions always BUY. Sized by FundsRatio (L/M/H) or explicit quantity.
-2. **BreakEven** (Exit) — ticks every price update; exits 100% of position as a LIMIT order the moment `price >= avg_entry` (LONG) or `price <= avg_entry` (SHORT). Only startable when position is open.
-3. **AggressiveStoploss** (TradeManagement) — waits for bar close; moves stoploss to `close × 0.99` (LONG) or `close × 1.01` (SHORT); creates SL order if none exists. Only startable when position is open.
+2. **BreakEven** (TradeManagement) — ticks every price update; when `price >= avg_entry` (LONG) or `price <= avg_entry` (SHORT): finds any open exit-direction order matching side + right + position quantity and moves its trigger price to `avg_entry`; if none found, places a TARGET order at `avg_entry` (fires if price drops back to breakeven). Only startable when position is open.
+3. **AggressiveStoploss** (TradeManagement) — waits for bar close; finds open exit-direction order(s) matching side + right + position quantity and moves trigger price to `close × 0.99` (LONG) or `close × 1.01` (SHORT); if none found, creates a TARGET order with position quantity. Only startable when position is open.
 
 **Backend:**
-- `backend/app/services/strategy_service.py` — in-memory `_registry` per session; bar-close detection via epoch-aligned slot formula; DynamoDB Strategies table with `SessionIdIndex` GSI for cross-process cancellation
+- `backend/app/services/strategy_service.py` — in-memory `_registry` per session; bar-close detection via epoch-aligned slot formula; DynamoDB Strategies table with `SessionIdIndex` GSI for cross-process cancellation; shared `_find_open_exit_orders` / `_update_exit_order_price` helpers used by both BreakEven and AggressiveStoploss
 - `backend/app/routers/strategies.py` — `POST /api/strategies/start`, `POST /api/strategies/cancel-all`, `GET /api/strategies`
-- `backend/tests/test_strategy_service.py` — 12 new tests covering all three strategy types + cancel-all
+- `backend/tests/test_strategy_service.py` — 14 tests covering all three strategy types + cancel-all
 
 **Frontend:**
 - `OrderPanel.tsx` — new **Strat** tab (alongside Mkt/Tgt/Lmt/SL); Entry / Exit / TradeManagement sections; Running Strategies list; Cancel All button; CE/PE selector for options; direction selector for equity AutoStop; no side-panel width change
@@ -60,7 +60,10 @@ All three strategy types shipped with full backend engine, REST API, DynamoDB pe
 - **`OrderTypeFull` union + early guard**: Adding `'STRAT'` to the tab union (`OrderTypeFull`) breaks TypeScript narrowing in `handlePlace` — branches that call `onPlaceOrder` still see `'STRAT'` as a possible value. Fix: add `if (orderType === 'STRAT') return` at the top of `handlePlace` to narrow before the order-type branches. Always add early-return guards when extending a discriminated union that drives a large handler.
 - **Strategy settings travel with the session, not the strategy**: `autostop_trigger_type` and `autostop_deviation_pct` are passed in `POST /api/strategies/start` (not in `POST /api/simulation/start`). This allows different AutoStop instances on the same session to have different settings. The App reads from state (updated by SettingsModal) and forwards on each `startStrategy` call — no re-read from localStorage needed.
 - **In-memory registry + DynamoDB for cross-process cancel**: Strategy evaluation checks the in-memory `_registry` — O(1) per session. DynamoDB is written on start, cancel, and complete. On bar close, each strategy only re-reads DynamoDB if its in-memory status is already CANCELLED (self-cancel path). This avoids a DB read on every bar for the common case.
-- **BreakEven guaranteed fill via LIMIT slippage**: SELL LIMIT at `price × 0.99` fills immediately because SELL LIMIT fills when `current_price >= limit_price`. BUY LIMIT at `price × 1.01` fills immediately for the symmetric reason. The same 1% trick used for Mkt tab orders works here without a new order type.
+- **BreakEven is trade-management, not immediate exit**: Original implementation placed a SELL LIMIT at `price × 0.99` to exit immediately. The correct behavior is trade management: find existing open exit-direction orders (by side + right + position quantity) and move their trigger to `avg_entry` so the position is protected at breakeven if price drops back. Only place a new TARGET order if no exit order exists. Never blindly add a second exit order — that risks double-exiting the position.
+- **Exit-order search must filter by side + right + quantity, not `is_stoploss`**: AggressiveStoploss originally filtered `is_stoploss=True` orders only, missing regular TARGET/LIMIT sell orders the user may have placed as their stoploss. The correct filter is `side == exit_side AND right == tick_right AND quantity == position.quantity`. The `is_stoploss` flag is internal bookkeeping and irrelevant to whether an order acts as the position's protection.
+- **`_update_exit_order_price` must dispatch by order type**: TARGET/STOPLOSS orders update via `trigger_price`; LIMIT orders update via `limit_price`. A single `update_order(trigger_price=x)` call silently does nothing for LIMIT orders. Extract a helper that reads `order.order_type` and passes the right parameter.
+- **Fallback order type should be TARGET, not STOPLOSS**: STOPLOSS orders have zero wallet impact (no credit on fill). When creating a new protective sell order from a strategy, TARGET is the correct type — the fill credits the wallet, giving the user their money back on the trade exit.
 - **Test isolation for strategy + trading state**: `strategy_service` and `trading` each have their own in-memory stores. If a test creates trades via `record_trade` and the next test checks for a flat position, the `clean_registry` fixture must clear both `svc._registry` and `trading.clear_session(SESSION)`. Missing either leaks state across tests.
 - **Bar-close detection is per-strategy-instance, not global**: Each `StrategyInstance` carries its own `_last_bar_slot` and OHLC accumulators. This allows multiple concurrent strategies (AutoStop BUY CE + AutoStop SELL PE) to independently track their own bar state without shared mutable state.
 - **`strategy_interval_secs` on `SimulationSession`, not per-request**: The interval is snapshotted at session start (from `POST /api/simulation/start`) and stored on `SimulationSession`. Individual strategy start requests don't re-specify it — this keeps all strategies on the same bar cadence per session. To change interval, start a new session.
@@ -74,13 +77,13 @@ All three strategy types shipped with full backend engine, REST API, DynamoDB pe
 
 ## Phase VI Implementation Status
 
-### ✅ COMPLETE (311 tests passing) — PR on feature/phase-vi-strategies
+### ✅ COMPLETE (352 tests passing)
 
 All three strategy types shipped with full backend engine, REST API, DynamoDB persistence, frontend Strat tab, and settings UI:
 
 1. **AutoStop** (Entry) — bar close → TARGET order at bar high/low or `close ± deviation%`; options always BUY; sized by FundsRatio or explicit qty
-2. **BreakEven** (Exit) — every tick; LIMIT exit at `price × 0.99` (LONG) or `price × 1.01` (SHORT) the moment price reaches avg entry; 100% position exit
-3. **AggressiveStoploss** (TradeManagement) — bar close → move SL to `close × 0.99` (LONG) or `close × 1.01` (SHORT); creates SL if none exists
+2. **BreakEven** (TradeManagement) — every tick; when price reaches avg entry, moves existing exit-direction order (matched by side + right + qty) to breakeven trigger; places new TARGET if none exists
+3. **AggressiveStoploss** (TradeManagement) — bar close → moves existing exit-direction order (matched by side + right + qty) to `close × 0.99` (LONG) or `close × 1.01` (SHORT); places new TARGET if none exists
 
 **Next: Phase VII PaperTrading** (see `docs/spec-phase7.md`)
 
