@@ -60,9 +60,16 @@ def _get_kite():
     if "kite" not in cfg:
         raise KiteTokenError("No [kite] section in data/accesskeys.ini")
     api_key = cfg["kite"].get("api_key", "").strip()
-    access_token = cfg["kite"].get("access_token", "").strip()
+
+    # DDB token takes precedence over accesskeys.ini (admin sets it daily via UI)
+    try:
+        from app.services.token_service import get_token as _get_ddb_token
+        access_token = _get_ddb_token("kite_access") or cfg["kite"].get("access_token", "").strip()
+    except Exception:
+        access_token = cfg["kite"].get("access_token", "").strip()
+
     if not api_key or not access_token:
-        raise KiteTokenError("Kite api_key or access_token missing in data/accesskeys.ini")
+        raise KiteTokenError("Kite api_key or access_token missing — set via Admin panel or data/accesskeys.ini")
 
     kite = KiteConnect(api_key=api_key)
     kite.set_access_token(access_token)

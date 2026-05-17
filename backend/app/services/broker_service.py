@@ -43,15 +43,26 @@ def _read_breeze_credentials() -> dict[str, str]:
             "Please add api_key, api_secret, and session_token."
         )
     section = config["icicidirect"]
-    for key in ("api_key", "api_secret", "session_token"):
+    for key in ("api_key", "api_secret"):
         if not section.get(key):
             raise BreezeTokenError(
                 f"Missing '{key}' in [icicidirect] section of data/accesskeys.ini."
             )
+    # DDB token takes precedence over accesskeys.ini (admin sets it daily via UI)
+    try:
+        from app.services.token_service import get_token as _get_ddb_token
+        session_token = _get_ddb_token("icici_session") or section.get("session_token", "")
+    except Exception:
+        session_token = section.get("session_token", "")
+    if not session_token:
+        raise BreezeTokenError(
+            "Missing 'session_token' — set it via the Admin panel or in "
+            "[icicidirect] section of data/accesskeys.ini."
+        )
     return {
         "api_key": section["api_key"],
         "api_secret": section["api_secret"],
-        "session_token": section["session_token"],
+        "session_token": session_token,
     }
 
 
