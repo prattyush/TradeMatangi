@@ -161,6 +161,59 @@ Note: the `VITE_API_BASE_URL` env var introduced in Sprint 3 means switching to 
 
 ---
 
-### 🔜 Sprint 2 — Admin Token Management
+### Sprint 2 — Admin Token Management ✅ Complete (PR #29, merged to dev 2026-05-17)
+
+**`BrokerTokens` DynamoDB table** (`backend/app/services/token_service.py`):
+- Schema: `pk="config"` (HASH), `sk="icici_session"|"kite_access"` (RANGE), `value=<token>`, `updated_at=<iso-ts>`
+- `_ensure_table()`: creates table lazily on first access (idempotent)
+- `get_token(sk)`: returns full value or `None` if not set
+- `set_token(sk, value)`: writes with UTC `updated_at` timestamp
+- `get_tokens_masked()`: returns last 4 chars visible, rest redacted with `*`
+
+**Admin endpoints** (`backend/app/routers/admin.py`):
+- `GET /api/admin/tokens` — returns masked `{icici_session, kite_access}`; 403 for non-admin
+- `PUT /api/admin/tokens` — body `{icici_session?, kite_access?}`; only non-null fields written; returns masked values; 403 for non-admin
+- `_require_admin` FastAPI dependency: calls `get_user_info(user_id)` → checks `is_admin` field → 403 if absent or false
+
+**User profile endpoint** (`backend/app/routers/auth.py`):
+- `GET /api/auth/me` → `{user_id, email, is_admin}` for the authenticated user (uses `X-User-Id` header)
+- `AuthResponse` Pydantic model gains `is_admin: bool = False` — backward-compat default
+
+**`is_admin` flag on Users table** (`backend/app/services/user_service.py`):
+- `seed_user()`: new admin record seeded with `is_admin: True`; existing record missing the field gets `update_item` backfill on startup (one-time migration, runs every restart until field present)
+- `login_user()`: now returns `{user_id, email, is_admin}` instead of just `{user_id, email}`
+- `get_user_info(user_id)`: new helper — `get_item` by `user_id`; used by `/me` endpoint and `_require_admin`
+
+**Broker DDB token fallback:**
+- `broker_service._read_breeze_credentials()`: calls `token_service.get_token("icici_session")`; if non-empty, uses it as `session_token` instead of `accesskeys.ini` value; entire call wrapped in `try/except` so token_service failures fall back gracefully
+- `kite_service._get_kite()`: same pattern for `kite_access` → `access_token`
+
+**Frontend changes:**
+- `api.ts`: `AuthResponse.is_admin: boolean`; `AdminTokensResponse` interface; `api.getMe()`, `api.getAdminTokens()`, `api.setAdminTokens()`
+- `LoginScreen.tsx`: passes `result.is_admin ?? false` as third arg to `onLogin`
+- `App.tsx`: `authUser` type extended with `isAdmin: boolean`; `loadAuthUser()` defaults missing field to `false`; `handleLogin()` stores `isAdmin`; `useEffect([])` on mount calls `getMe()` to refresh `isAdmin` from server (handles stale localStorage after role change)
+- `SettingsModal.tsx`: `isAdmin?: boolean` prop; collapsible ADMIN section rendered only when `isAdmin=true`; amber header colour to distinguish from other sections; two `type="password"` inputs for ICICI and Kite tokens; on open loads masked current values via `getAdminTokens()` (guarded by `useRef` to avoid re-fetching on every modal open); `saveAdminTokens()` calls `setAdminTokens` with only non-empty fields
+
+**Test counts:** 379 backend tests passing (27 new in `test_admin_tokens.py`); TypeScript clean.
+
+---
+
+### Lessons Learned — Sprint 2
+
+**Patch the importing module, not the defining module**
+- `admin.py` and `auth.py` import `get_user_info` with `from app.services.user_service import get_user_info`. The function is bound by value at import time. Tests that patched `app.services.user_service.get_user_info` had no effect on the already-bound reference in the router — the real DynamoDB call ran instead.
+- **Rule:** Always patch at the module that holds the reference being called: `app.routers.admin.get_user_info`, not `app.services.user_service.get_user_info`. Same applies to `token_service` in admin router tests — patch `app.routers.admin.token_service.set_token` (the module attribute), not `app.services.token_service.set_token`.
+
+**`useRef` for one-time async loads in modals**
+- The admin masked-token fetch should happen once when the modal first opens, not on every open. A `useRef(false)` flag (`adminLoadedRef`) gates the fetch inside the `useEffect([open])`. Without it, the `getAdminTokens()` call would fire every time the modal was opened — redundant and briefly clears the displayed values on re-open.
+
+**`is_admin` defaulting in `loadAuthUser`**
+- Old `auth_user` entries in localStorage have no `isAdmin` key. Spreading `{ isAdmin: false, ...parsed }` ensures the default is applied before the stored value, so existing sessions get `false` rather than `undefined`. The server-side `getMe()` call on mount then corrects it to the real value.
+
+**DDB token fallback must not propagate token_service errors**
+- If `token_service._ensure_table()` fails (DDB not running, wrong creds), it logs and returns `None`. The caller in `broker_service` wraps the `get_token` call in `try/except` and falls back to `accesskeys.ini`. This keeps the broker service functional even when the admin token path is broken — important for local dev where DDB Local may not be running.
+
+---
+
 ### 🔜 Sprint 3 — Backend Deployment Prep
 ### 🔜 Sprint 4 — 2-Worker nginx Sticky Sessions (optional)
