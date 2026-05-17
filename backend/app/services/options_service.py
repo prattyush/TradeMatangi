@@ -12,7 +12,7 @@ from typing import Iterator
 
 import pandas as pd
 
-from app.config import DATA_DIR, MARKET_OPEN, MARKET_CLOSE, LOT_SIZES, SUPPORTED_SYMBOLS
+from app.config import DATA_DIR, OHLCDATA_DIR, MARKET_OPEN, MARKET_CLOSE, LOT_SIZES, SUPPORTED_SYMBOLS
 
 logger = logging.getLogger(__name__)
 
@@ -155,10 +155,9 @@ def options_parquet_path(
     y, m, d = date.split("-")
     ey, em, ed = expiry.split("-")
     right_str = "CE" if right.upper() in ("CE", "CALL") else "PE"
-    ohlc_dir = DATA_DIR / "ohlcdata"
-    ohlc_dir.mkdir(parents=True, exist_ok=True)
+    OHLCDATA_DIR.mkdir(parents=True, exist_ok=True)
     filename = f"{symbol}-{right_str}-{strike}-{ed}-{em}-{ey}-{d}-{m}-{y}.parquet"
-    return ohlc_dir / filename
+    return OHLCDATA_DIR / filename
 
 
 def _breeze_expiry_format(expiry: str) -> str:

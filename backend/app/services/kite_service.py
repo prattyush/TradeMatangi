@@ -234,13 +234,12 @@ def fetch_kite_1min(symbol: str, date: str) -> "pd.DataFrame":
     import os
     import pandas as pd
     from datetime import date as _date
-    from app.config import DATA_DIR, MARKET_OPEN, MARKET_CLOSE
+    from app.config import OHLCDATA_DIR, MARKET_OPEN, MARKET_CLOSE
 
     is_today = date == _date.today().strftime("%Y-%m-%d")
     y, m, d = date.split("-")
-    ohlc_dir = DATA_DIR / "ohlcdata"
-    ohlc_dir.mkdir(parents=True, exist_ok=True)
-    cache_path = ohlc_dir / f"{symbol}-{d}-{m}-{y}-kite1m.parquet"
+    OHLCDATA_DIR.mkdir(parents=True, exist_ok=True)
+    cache_path = OHLCDATA_DIR / f"{symbol}-{d}-{m}-{y}-kite1m.parquet"
     empty = pd.DataFrame(columns=["open", "high", "low", "close", "volume"])
 
     if not is_today and cache_path.exists():
@@ -302,14 +301,13 @@ def fetch_kite_1min_options(symbol: str, date: str, strike: int, expiry: str, ri
     import os
     import pandas as pd
     from datetime import date as _date
-    from app.config import DATA_DIR, MARKET_OPEN, MARKET_CLOSE
+    from app.config import OHLCDATA_DIR, MARKET_OPEN, MARKET_CLOSE
 
     is_today = date == _date.today().strftime("%Y-%m-%d")
     y, m, d = date.split("-")
     expiry_compact = expiry.replace("-", "")
-    ohlc_dir = DATA_DIR / "ohlcdata"
-    ohlc_dir.mkdir(parents=True, exist_ok=True)
-    cache_path = ohlc_dir / f"{symbol}-{right}-{strike}-{expiry_compact}-{d}-{m}-{y}-kite1m.parquet"
+    OHLCDATA_DIR.mkdir(parents=True, exist_ok=True)
+    cache_path = OHLCDATA_DIR / f"{symbol}-{right}-{strike}-{expiry_compact}-{d}-{m}-{y}-kite1m.parquet"
     empty = pd.DataFrame(columns=["open", "high", "low", "close", "volume"])
 
     if not is_today and cache_path.exists():

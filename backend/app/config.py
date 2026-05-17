@@ -1,8 +1,18 @@
+import configparser
 import os
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 DATA_DIR = Path(os.getenv("DATA_DIR", str(BASE_DIR.parent / "data")))
+
+# Read [paths] from accesskeys.ini so data locations are configurable without
+# code changes. Falls back to DATA_DIR sub-dirs when the section is absent.
+_cfg = configparser.ConfigParser()
+_cfg.read(str(DATA_DIR / "accesskeys.ini"))
+_paths = _cfg["paths"] if _cfg.has_section("paths") else {}
+
+OHLCDATA_DIR = Path(_paths.get("ohlcdata", str(DATA_DIR / "ohlcdata")))
+LOG_DIR = Path(_paths.get("logs", str(DATA_DIR / "logs")))
 
 PORT = int(os.getenv("PORT", "8700"))
 LOG_LEVEL = os.getenv("LOG_LEVEL", "info")
