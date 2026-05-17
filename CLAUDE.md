@@ -131,6 +131,7 @@ node node_modules/typescript/bin/tsc --noEmit
 | Phase IV — BetaMinorUpdates | ✅ Complete | 278 | `docs/spec-phase4.md` |
 | Phase V — TradeAnalysis | ✅ Complete | 299 | `docs/spec-phase5.md` |
 | Phase VI — Strategies | ✅ Complete | 311 | `docs/spec-phase6.md` |
-| Phase VII — PaperTrading | 🚧 In Progress | 350 | `docs/spec-phase7.md` |
+| Phase VII — PaperTrading | ✅ Complete | 350 | `docs/spec-phase7.md` |
+| Phase VIII — Launch | 🔜 Not Started | — | `docs/spec-phase8.md` |
 
 Full status, bugs fixed, and lessons learned for each phase are in the respective phase spec docs.

@@ -429,7 +429,7 @@ export default function Chart({
     tradeMarkerPool.current = []
 
     const paneTrades = (trades ?? []).filter(t =>
-      paneType === 'equity' ? !t.right : t.right === right
+      paneType === 'equity' ? !t.right : t.right === right && t.strike === strike
     )
     if (paneTrades.length === 0) return
 

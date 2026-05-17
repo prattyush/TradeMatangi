@@ -49,7 +49,8 @@ export interface Order {
   filled_at: number | null
   filled_price: number | null
   is_stoploss: boolean
-  right?: string   // "CE" or "PE" for options orders
+  right?: string         // "CE" or "PE" for options orders
+  strike?: number | null // options strike; null for equity or old orders (backward-compat)
 }
 
 export interface HistoricalDataResponse {

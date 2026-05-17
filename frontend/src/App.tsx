@@ -335,12 +335,14 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
   // ── Trades filtered per pane for markers ─────────────────────────────────────
   const getTradesForPane = useCallback((pane: PaneConfig) => {
     if (pane.type === 'equity') return sim.trades.filter(t => !t.right)
-    return sim.trades.filter(t => t.right === pane.right)
+    return sim.trades.filter(t => t.right === pane.right && t.strike === pane.strike)
   }, [sim.trades])
 
   const getOrdersForPane = useCallback((pane: PaneConfig): Order[] => {
     if (pane.type === 'equity') return sim.openOrders.filter(o => !o.right)
-    return sim.openOrders.filter(o => o.right === pane.right)
+    return sim.openOrders.filter(o =>
+      o.right === pane.right && (o.strike == null || o.strike === pane.strike)
+    )
   }, [sim.openOrders])
 
   // ── Layout rendering helpers ──────────────────────────────────────────────────
