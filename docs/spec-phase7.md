@@ -33,6 +33,26 @@ kite = KiteConnect(api_key=credentials_config_parser['kite']['api_key'], access_
 7. Sometimes the live streaming stops sending data and hangs for both kite and breeze (icicidirect). Please don't timeout and wait. A possible wait would be 5-10 minutes before raising any errors, or maybe wait indefinitely and wait for the user to stop the session.
 8. For using Kite API, if you need to fetch the instrument token against the trading symbol, feel to fetch them and store in data/
 9. Kite symbol name for NIFTY is "NIFTY 50", for SENSEX is "SENSEX".
+
+##### Chart Markers
+
+**Live session chart (sim and paper):**
+1. Executed trade markers should be circle markers placed at the exact execution price and time on the chart.
+   - Buy marker color: `#B388FF` (light purple). Sell marker color: `#FFA726` (orange).
+   - Text: `B` for buy, `S` for sell — no quantity or price in the label.
+   - The circle should sit at the execution price on the Y axis, not above/below the candle.
+2. Open order markers should be dashed horizontal price lines on the chart at the order's limit or trigger price.
+   - Color: `#AAAAAA` (neutral gray) for all pending orders.
+   - Label convention: prefix = side (`B` = buy, `S` = sell), suffix = order type (`L` = LIMIT, `T` = TARGET or STOPLOSS). Examples: `BL`, `ST`, `SL`, `BT`.
+   - Stoploss is a Stop Limit → suffix `T`.
+   - For LIMIT orders use `limit_price`; for TARGET/STOPLOSS orders use `trigger_price`.
+   - Lines are removed immediately when an order is filled or cancelled.
+
+**Trade Analysis chart:**
+1. Executed trade markers should be circles consistent with the live session chart (same colors and B/S text).
+2. For options trades, the circle must be placed at the **underlying (equity) price at execution time**, not the options price. Look up the underlying's 3-min candle close at `floor(trade.timestamp / 180) * 180`.
+3. Options marker text: `CE B`, `CE S`, `PE B`, `PE S` (right + actual trade side). Color still follows effective chart direction (bullish buy = `#B388FF`, bearish sell = `#FFA726`).
+4. Equity trade markers: same circles at execution price with `B`/`S` text.
 ---
 
 ## Phase VII Implementation Status
@@ -83,6 +103,12 @@ kite = KiteConnect(api_key=credentials_config_parser['kite']['api_key'], access_
 **Kite service** (`backend/app/services/kite_service.py`):
 - `KiteBroadcaster.update_session_right(session_id, right, new_token, queue, loop)`: atomically swaps the old token for the new one in `_token_sessions` / `_session_tokens`, unsubscribes orphaned tokens, subscribes to the new token — enables mid-session strike changes without restarting the session
 
+**Chart markers — circles at exact price** (`frontend/src/components/Chart.tsx`, `TradeAnalysis.tsx`, `App.tsx`):
+- **Executed trades**: replaced arrow markers on candlestick series with circles on a dedicated transparent `Line` series (`lineVisible: false`, `crosshairMarkerVisible: false`). `position: 'inBar'` on a line series renders the circle at the line's Y value = trade price, placing it at the exact execution price on the price axis. Buy: `#B388FF`, text `B`; Sell: `#FFA726`, text `S`.
+- **Open orders**: `createPriceLine` on the candlestick series with `LineStyle.Dashed`, color `#AAAAAA`. Label = side prefix (`B`/`S`) + type suffix (`L` for LIMIT, `T` for TARGET and STOPLOSS). Price = `limit_price` for LIMIT, `trigger_price` for TARGET/STOPLOSS. Lines tracked in `Map<orderId, IPriceLine>` and rebuilt on every `openOrders` change so fills/cancels remove the line immediately.
+- **App.tsx**: `getOrdersForPane(pane)` helper filters `sim.openOrders` by pane right; passed as `openOrders` prop to each `<Chart>`.
+- **Trade Analysis**: same transparent line series approach; for options trades, looks up the underlying equity `close` at `floor(trade.timestamp/180)*180` from already-loaded `candles` state; marker Y = underlying price (not options price). Text: `CE B`/`PE S` etc. `candles` held in `useState` (not just ref) so the markers effect re-runs once candle data arrives, handling the async race.
+
 **Trade History cross-session** (backend + frontend):
 - **Backend** `GET /api/trades/by-context`: new endpoint in `routers/trading.py`; params `symbol`, `date`, `instrument_type`, `session_type` + `X-User-Id` header; calls `analysis_service.get_sessions_for_user` + `get_trades_for_session`; returns `{trades, session_ids}` sorted by timestamp
 - **Frontend `api.ts`**: `getTradesByContext(symbol, date, instrumentType, sessionType)` → `{trades, sessionIds}`
@@ -119,3 +145,7 @@ kite = KiteConnect(api_key=credentials_config_parser['kite']['api_key'], access_
 - **`getPreSession(startTime)` returns empty when start == market open**: Calling `getPreSession("09:15:00")` returns `[]` because there is nothing "before" the first window. On refresh during a running session, the equity pane needs to call `getPreSession(currentSimHHMMSS)` (with a date guard) to recover completed in-session candles.
 - **Cross-session trade history requires endpoint, not just client state**: Trades from earlier sessions are in DynamoDB only — they never arrive via SSE. A dedicated `GET /api/trades/by-context` endpoint that queries all matching sessions is the cleanest pattern. Client-side fires it once on session start (fire-and-forget) and filters out the current session_id to avoid duplication once SSE trades arrive.
 - **`prevDayPnl` must net commissions like `netDayPnl` does**: Historical trade records in DynamoDB carry per-trade `commission`. Summing raw `SELL - BUY` value without subtracting commission overstates P&L. Apply `t.commission ?? 0` the same way as the current-session `netDayPnl` computation.
+- **`setMarkers` on a candlestick series cannot place circles at exact prices**: LWC `'aboveBar'`/`'belowBar'` positions circles above/below the candle, not at a specific price level. To render a marker at an exact Y coordinate, use a separate `Line` series with `lineVisible: false` and a data point at `{time, value: exactPrice}`. `position: 'inBar'` on a line series renders the marker at the line's own Y value.
+- **Open order state → price line lifecycle must be tightly coupled**: `IPriceLine` objects returned by `createPriceLine` have no built-in lifecycle. Track them in a `Map<orderId, IPriceLine>` and call `removePriceLine` before rebuilding whenever `openOrders` changes. Forgetting to remove stale lines causes ghost price levels that persist after an order fills.
+- **Trade Analysis options markers need underlying price, not options price**: An options trade at price ₹150 plotted on a NIFTY chart (scale ~24000) would compress the entire chart to show both scales. The correct Y for an options marker on the equity chart is the underlying close at the execution time. Store loaded candles in `useState` (not just a ref) so the markers `useEffect` re-runs once candle data arrives — a ref change does not trigger re-renders.
+- **`useState` vs `useRef` for async-dependent effects**: If effect A (markers) needs data produced by effect B (candle load), and B is async, a plain `useRef` for B's output is invisible to A's dependency array. Using `useState` makes the output part of the render cycle so A runs again when B completes.

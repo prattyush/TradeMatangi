@@ -8,9 +8,9 @@ import {
   Time,
   MouseEventParams,
   IPriceLine,
-  SeriesMarker,
+  LineStyle,
 } from 'lightweight-charts'
-import api, { OHLCCandle, TickEvent, Trade } from '../services/api'
+import api, { OHLCCandle, TickEvent, Trade, Order } from '../services/api'
 
 export type PaneType = 'equity' | 'options'
 
@@ -32,6 +32,8 @@ interface Props {
   onActivate?: () => void
   // Trade markers
   trades?: Trade[]
+  // Open order price lines
+  openOrders?: Order[]
   // Price-pick mode: when non-null, a chart click calls this instead of draw mode
   onPriceSelect?: ((price: number) => void) | null
   // For mid-session panes: timestamp from which live ticks begin (candles before this are history)
@@ -85,6 +87,7 @@ export default function Chart({
   paneType = 'equity', strike, expiry, right,
   isActive = false, onActivate,
   trades = [],
+  openOrders,
   onPriceSelect = null,
   liveFromTs,
   reloadKey = 0,
@@ -106,6 +109,8 @@ export default function Chart({
   const trendPt1Ref = useRef<{ time: number; price: number } | null>(null)
   const priceLines = useRef<IPriceLine[]>([])
   const trendLines = useRef<ISeriesApi<'Line'>[]>([])
+  const tradeMarkerPool = useRef<ISeriesApi<'Line'>[]>([])
+  const orderPriceLinesRef = useRef<Map<string, IPriceLine>>(new Map())
   const onPriceSelectRef = useRef<((price: number) => void) | null>(null)
 
   const [showEma, setShowEma] = useState(true)
@@ -140,7 +145,6 @@ export default function Chart({
     })
     const e9 = chart.addLineSeries({ color: '#f0883e', lineWidth: 1, priceLineVisible: false, lastValueVisible: false })
     const e21 = chart.addLineSeries({ color: '#79c0ff', lineWidth: 1, priceLineVisible: false, lastValueVisible: false })
-
     chartRef.current = chart
     seriesRef.current = series
     ema9Ref.current = e9
@@ -197,6 +201,8 @@ export default function Chart({
 
     return () => {
       ro.disconnect()
+      tradeMarkerPool.current = []
+      orderPriceLinesRef.current.clear()
       chart.remove()
     }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
@@ -410,31 +416,72 @@ export default function Chart({
     prevStartTimeRef.current = startTime
   }, [startTime])
 
-  // ── Trade markers ──────────────────────────────────────────────────────────
+  // ── Trade markers — one transparent Line series per trade so each circle lands
+  //    at its own exact execution price even when multiple trades share the same bar ──
+  useEffect(() => {
+    const chart = chartRef.current
+    if (!chart) return
+
+    // Remove all previous marker series
+    for (const s of tradeMarkerPool.current) {
+      try { chart.removeSeries(s) } catch { /* disposed */ }
+    }
+    tradeMarkerPool.current = []
+
+    const paneTrades = (trades ?? []).filter(t =>
+      paneType === 'equity' ? !t.right : t.right === right
+    )
+    if (paneTrades.length === 0) return
+
+    for (const t of paneTrades) {
+      const slot = (Math.floor(t.timestamp / intervalSecs) * intervalSecs) as Time
+      try {
+        const s = chart.addLineSeries({
+          lineVisible: false, crosshairMarkerVisible: false,
+          lastValueVisible: false, priceLineVisible: false,
+        })
+        s.setData([{ time: slot, value: t.price }])
+        s.setMarkers([{
+          time: slot,
+          position: 'inBar' as const,
+          color: t.side === 'BUY' ? '#B388FF' : '#FFA726',
+          shape: 'circle' as const,
+          text: t.side === 'BUY' ? 'B' : 'S',
+          size: 1,
+        }])
+        tradeMarkerPool.current.push(s)
+      } catch { /* chart disposed mid-loop */ }
+    }
+  }, [trades, paneType, right, intervalSecs])
+
+  // ── Open order price lines — dashed horizontal at limit/trigger price ────────
   useEffect(() => {
     const series = seriesRef.current
     if (!series) return
-    if (trades.length === 0) {
-      series.setMarkers([])
-      return
+
+    for (const line of orderPriceLinesRef.current.values()) {
+      try { series.removePriceLine(line) } catch { /* disposed */ }
     }
-    // Filter trades relevant to this pane
-    const paneTrades = trades.filter(t => {
-      if (paneType === 'equity') return !t.right
-      return t.right === right
+    orderPriceLinesRef.current.clear()
+
+    const pending = (openOrders ?? []).filter(o => {
+      if (o.status !== 'PENDING') return false
+      return paneType === 'equity' ? !o.right : o.right === right
     })
-    const markers: SeriesMarker<Time>[] = paneTrades.map(t => ({
-      time: (Math.floor(t.timestamp / intervalSecs) * intervalSecs) as Time,
-      position: t.side === 'BUY' ? 'belowBar' : 'aboveBar',
-      color: t.side === 'BUY' ? '#26a641' : '#f85149',
-      shape: t.side === 'BUY' ? 'arrowUp' : 'arrowDown',
-      text: `${t.side} ${t.quantity}@${t.price.toFixed(0)}`,
-      size: 1,
-    }))
-    // setMarkers requires sorted by time ascending
-    markers.sort((a, b) => (a.time as number) - (b.time as number))
-    try { series.setMarkers(markers) } catch { /* chart may be disposed */ }
-  }, [trades, paneType, right, intervalSecs])
+
+    for (const order of pending) {
+      const price = order.order_type === 'LIMIT' ? order.limit_price : order.trigger_price
+      const label = (order.side === 'BUY' ? 'B' : 'S') + (order.order_type === 'LIMIT' ? 'L' : 'T')
+      try {
+        const line = series.createPriceLine({
+          price, color: '#AAAAAA', lineWidth: 1,
+          lineStyle: LineStyle.Dashed,
+          axisLabelVisible: true, title: label,
+        })
+        orderPriceLinesRef.current.set(order.order_id, line)
+      } catch { /* disposed */ }
+    }
+  }, [openOrders, paneType, right])
 
   const enterDrawMode = useCallback((mode: DrawMode) => {
     if (drawModeRef.current === mode) {
