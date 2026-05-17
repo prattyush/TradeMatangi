@@ -6,7 +6,7 @@ import TradeHistory from './components/TradeHistory'
 import OrderPanel from './components/OrderPanel'
 import WalletWidget from './components/WalletWidget'
 import SettingsModal, { loadFundsRatioMode, loadFundsRatios, loadTargetDeviationPct, loadBrokeragePerOrder, loadStrategyIntervalSecs, loadAutostopTriggerType, loadAutostopDeviationPct, loadHistoricalDays, FundsRatios } from './components/SettingsModal'
-import { StrategyResponse, StartStrategyRequest } from './services/api'
+import { StrategyResponse, StartStrategyRequest, Order } from './services/api'
 import LoginScreen from './components/LoginScreen'
 import TradeAnalysis from './components/TradeAnalysis'
 import { useSimulation, InstrumentConfig } from './hooks/useSimulation'
@@ -338,6 +338,11 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
     return sim.trades.filter(t => t.right === pane.right)
   }, [sim.trades])
 
+  const getOrdersForPane = useCallback((pane: PaneConfig): Order[] => {
+    if (pane.type === 'equity') return sim.openOrders.filter(o => !o.right)
+    return sim.openOrders.filter(o => o.right === pane.right)
+  }, [sim.openOrders])
+
   // ── Layout rendering helpers ──────────────────────────────────────────────────
   const rowHeight = Math.max(160, Math.floor((columnHeight - 52) / 2))
 
@@ -375,6 +380,7 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
           if (pricePickOrderId && pane.id !== activePaneId) setPricePickOrderId(null)
         }}
         trades={getTradesForPane(pane)}
+        openOrders={getOrdersForPane(pane)}
         onPriceSelect={pricePickOrderId && pane.id === activePaneId ? handleChartPriceSelect : null}
         historicalDays={historicalDays}
       />
