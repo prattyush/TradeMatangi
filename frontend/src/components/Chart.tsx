@@ -8,7 +8,6 @@ import {
   Time,
   MouseEventParams,
   IPriceLine,
-  SeriesMarker,
   LineStyle,
 } from 'lightweight-charts'
 import api, { OHLCCandle, TickEvent, Trade, Order } from '../services/api'
@@ -110,7 +109,7 @@ export default function Chart({
   const trendPt1Ref = useRef<{ time: number; price: number } | null>(null)
   const priceLines = useRef<IPriceLine[]>([])
   const trendLines = useRef<ISeriesApi<'Line'>[]>([])
-  const tradeMarkerSeriesRef = useRef<ISeriesApi<'Line'> | null>(null)
+  const tradeMarkerPool = useRef<ISeriesApi<'Line'>[]>([])
   const orderPriceLinesRef = useRef<Map<string, IPriceLine>>(new Map())
   const onPriceSelectRef = useRef<((price: number) => void) | null>(null)
 
@@ -146,16 +145,10 @@ export default function Chart({
     })
     const e9 = chart.addLineSeries({ color: '#f0883e', lineWidth: 1, priceLineVisible: false, lastValueVisible: false })
     const e21 = chart.addLineSeries({ color: '#79c0ff', lineWidth: 1, priceLineVisible: false, lastValueVisible: false })
-    const tradeMarkers = chart.addLineSeries({
-      lineVisible: false, crosshairMarkerVisible: false,
-      lastValueVisible: false, priceLineVisible: false,
-    })
-
     chartRef.current = chart
     seriesRef.current = series
     ema9Ref.current = e9
     ema21Ref.current = e21
-    tradeMarkerSeriesRef.current = tradeMarkers
 
     chart.subscribeClick((param: MouseEventParams) => {
       if (!param.point || !seriesRef.current) return
@@ -208,7 +201,7 @@ export default function Chart({
 
     return () => {
       ro.disconnect()
-      tradeMarkerSeriesRef.current = null
+      tradeMarkerPool.current = []
       orderPriceLinesRef.current.clear()
       chart.remove()
     }
@@ -423,42 +416,42 @@ export default function Chart({
     prevStartTimeRef.current = startTime
   }, [startTime])
 
-  // ── Trade markers — circles at exact execution price on a transparent line series ──
+  // ── Trade markers — one transparent Line series per trade so each circle lands
+  //    at its own exact execution price even when multiple trades share the same bar ──
   useEffect(() => {
-    const ms = tradeMarkerSeriesRef.current
-    if (!ms) return
+    const chart = chartRef.current
+    if (!chart) return
+
+    // Remove all previous marker series
+    for (const s of tradeMarkerPool.current) {
+      try { chart.removeSeries(s) } catch { /* disposed */ }
+    }
+    tradeMarkerPool.current = []
 
     const paneTrades = (trades ?? []).filter(t =>
       paneType === 'equity' ? !t.right : t.right === right
     )
+    if (paneTrades.length === 0) return
 
-    if (paneTrades.length === 0) {
-      try { ms.setData([]); ms.setMarkers([]) } catch { /* disposed */ }
-      return
-    }
-
-    // Build line series data: one data point per candle boundary at the trade price.
-    // When multiple trades land in the same candle, the last one's price is used for
-    // the Y anchor so all markers for that slot render at a consistent level.
-    const priceBySlot = new Map<number, number>()
     for (const t of paneTrades) {
-      priceBySlot.set(Math.floor(t.timestamp / intervalSecs) * intervalSecs, t.price)
+      const slot = (Math.floor(t.timestamp / intervalSecs) * intervalSecs) as Time
+      try {
+        const s = chart.addLineSeries({
+          lineVisible: false, crosshairMarkerVisible: false,
+          lastValueVisible: false, priceLineVisible: false,
+        })
+        s.setData([{ time: slot, value: t.price }])
+        s.setMarkers([{
+          time: slot,
+          position: 'inBar' as const,
+          color: t.side === 'BUY' ? '#B388FF' : '#FFA726',
+          shape: 'circle' as const,
+          text: t.side === 'BUY' ? 'B' : 'S',
+          size: 1,
+        }])
+        tradeMarkerPool.current.push(s)
+      } catch { /* chart disposed mid-loop */ }
     }
-    const lineData: LineData[] = Array.from(priceBySlot.entries())
-      .sort(([a], [b]) => a - b)
-      .map(([time, value]) => ({ time: time as Time, value }))
-
-    const markers: SeriesMarker<Time>[] = paneTrades.map(t => ({
-      time: (Math.floor(t.timestamp / intervalSecs) * intervalSecs) as Time,
-      position: 'inBar' as const,
-      color: t.side === 'BUY' ? '#B388FF' : '#FFA726',
-      shape: 'circle' as const,
-      text: t.side === 'BUY' ? 'B' : 'S',
-      size: 1,
-    }))
-    markers.sort((a, b) => (a.time as number) - (b.time as number))
-
-    try { ms.setData(lineData); ms.setMarkers(markers) } catch { /* chart may be disposed */ }
   }, [trades, paneType, right, intervalSecs])
 
   // ── Open order price lines — dashed horizontal at limit/trigger price ────────
