@@ -152,3 +152,18 @@ kite = KiteConnect(api_key=credentials_config_parser['kite']['api_key'], access_
 - **`useState` vs `useRef` for async-dependent effects**: If effect A (markers) needs data produced by effect B (candle load), and B is async, a plain `useRef` for B's output is invisible to A's dependency array. Using `useState` makes the output part of the render cycle so A runs again when B completes.
 - **Trade marker filter must include `strike`, not just `right`**: Filtering trades by `right === 'CE'` matches every CE trade regardless of strike. When a pane is deleted and recreated at a different strike, the new Chart component receives all same-right trades and renders markers from the old strike. Always filter options trades as `t.right === pane.right && t.strike === pane.strike`. The `Order` frontend type does not carry `strike` (backend schema gap), so open-order price lines still filter by `right` only — a known minor residual issue.
 - **New pane → new Chart mount, no explicit reset needed**: Panes use `pane.id` as the React `key`. Adding a pane always creates a new `id`, mounting a fresh `Chart` with empty refs and a clean effect slate. There is no need to imperatively clear markers or price lines when the strike changes — correct prop filtering is sufficient.
+
+---
+
+#### Open Bugs
+
+- **[BUG-VII-1] Open-order price lines not filtered by strike**: `getOrdersForPane` in `App.tsx` filters `o.right === pane.right` only, so a SELL stoploss placed at CE 23450 shows its dashed price line on any CE pane including a newly added CE 23500 pane.
+  - **Root cause**: The backend `Order` model (`schemas.py`, class `Order`) and the `PlaceOrderRequest` schema both have no `strike` field. The frontend `Order` interface (`api.ts`) also has no `strike`. The order service (`order_service.py`) stores orders without a strike; `check_orders` matches by `right` only. No strike is tracked anywhere in the order lifecycle.
+  - **Fix required**:
+    1. Add `strike: int | None = None` to the backend `Order` model and `PlaceOrderRequest`.
+    2. Populate it in `place_order()` — derive from the session (`session.strike_ce` / `session.strike_pe` based on `right`) or pass explicitly from the router.
+    3. Persist to DynamoDB `Orders` table.
+    4. Add `strike?: number` to the frontend `Order` interface.
+    5. Update `getOrdersForPane` to `o.right === pane.right && o.strike === pane.strike` for options panes.
+    6. Update `check_orders` to filter by `o.right == tick_right` already done; no change needed there since strike matching is already implied by the session's active strike.
+  - **Scope**: Backend schema change + router change + frontend type change + filter change. Moderate effort; no breaking changes to existing sim sessions (old orders have `strike=null`, treated as matching any pane — safe fallback).
