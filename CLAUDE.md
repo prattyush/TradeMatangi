@@ -123,6 +123,11 @@ node node_modules/typescript/bin/tsc --noEmit
 - **Trade markers use a transparent Line series, not candlestick `setMarkers`**: `candlestickSeries.setMarkers()` places shapes above/below bars — cannot target an exact price. Instead, a dedicated `Line` series with `lineVisible: false`, `crosshairMarkerVisible: false`, `lastValueVisible: false`, `priceLineVisible: false` holds one data point per executed trade at `{time: alignedSlot, value: tradePrice}`. `setMarkers` on this series with `position: 'inBar'` renders circles at the line's own Y value = the exact execution price. Buy: `#B388FF`, text `B`; Sell: `#FFA726`, text `S`.
 - **Open order price lines tracked by `Map<orderId, IPriceLine>`**: `createPriceLine` returns an `IPriceLine` that must be explicitly removed via `removePriceLine`. Tracked in `orderPriceLinesRef` (a `Map`). The effect rebuilds all lines on every `openOrders` change — clears the whole map then re-creates. Label = side prefix (`B`/`S`) + type suffix (`L` = LIMIT, `T` = TARGET or STOPLOSS). Price = `limit_price` for LIMIT, `trigger_price` for TARGET/STOPLOSS. Color `#AAAAAA`, `LineStyle.Dashed`.
 - **Trade Analysis options markers use underlying price**: `AnalysisChart` in `TradeAnalysis.tsx` shows the equity (underlying) chart. Options trade prices (~₹150) are off-scale for a NIFTY chart (~24000). The marker Y for options trades = `close` of the underlying's 3-min candle at `floor(trade.timestamp/180)*180`. Candles are held in `useState<CandlestickData[]>` (not a ref) so the markers `useEffect([trades, candles])` re-runs once the async candle load completes. Marker text: `CE B`, `CE S`, `PE B`, `PE S`.
+- **`OHLCDATA_DIR` and `LOG_DIR` from `config.py`**: `config.py` reads `[paths]` section from `data/accesskeys.ini` at startup. `ohlcdata` key → `OHLCDATA_DIR`; `logs` key → `LOG_DIR`. Both fall back to `DATA_DIR/ohlcdata` and `DATA_DIR/logs` when the section is absent. All services (`data_loader`, `options_service`, `kite_service`) import `OHLCDATA_DIR` directly. `main.py` imports `LOG_DIR` for the log file. Do not reconstruct `DATA_DIR / "ohlcdata"` inline in new code.
+- **Daily rotating logs**: `main.py` uses `TimedRotatingFileHandler(when='midnight', backupCount=30)`. Rotated files are named `backend.log.YYYY-MM-DD` automatically. Do not use `RotatingFileHandler` (size-based).
+- **Test parquet isolation — patch `OHLCDATA_DIR`, not `DATA_DIR`**: Tests that need isolated parquet paths must patch `app.services.data_loader.OHLCDATA_DIR` (or `app.services.options_service.OHLCDATA_DIR`) to `tmp_path / "ohlcdata"`. Patching `DATA_DIR` alone no longer affects the parquet lookup. Keep the `DATA_DIR` patch alongside for pickle-fallback tests.
+- **`Order.strike` null backward-compat**: Old DDB records have no `strike` attribute; frontend receives `undefined`. Use `o.strike == null` (loose equality, catches both `undefined` and `null`) in filter guards so old records pass through without a migration.
+- **Trade marker / open-order price line pane filtering**: `getTradesForPane` (App.tsx) filters `t.right === pane.right && t.strike === pane.strike` for options panes. `getOrdersForPane` filters `o.right === pane.right && (o.strike == null || o.strike === pane.strike)` — the null guard handles old orders. Chart.tsx `paneTrades` filter mirrors App.tsx with `t.right === right && t.strike === strike`.
 
 ## Phase Completion Summary
 
@@ -133,6 +138,6 @@ node node_modules/typescript/bin/tsc --noEmit
 | Phase V — TradeAnalysis | ✅ Complete | 299 | `docs/spec-phase5.md` |
 | Phase VI — Strategies | ✅ Complete | 311 | `docs/spec-phase6.md` |
 | Phase VII — PaperTrading | ✅ Complete | 350 | `docs/spec-phase7.md` |
-| Phase VIII — Launch | 🔜 Not Started | — | `docs/spec-phase8.md` |
+| Phase VIII — Launch | 🚧 Sprint 1 Done | 350 | `docs/spec-phase8.md` |
 
 Full status, bugs fixed, and lessons learned for each phase are in the respective phase spec docs.

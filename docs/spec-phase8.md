@@ -93,9 +93,11 @@ Note: the `VITE_API_BASE_URL` env var introduced in Sprint 3 means switching to 
 
 ## Phase VIII Implementation Plan
 
-### Sprint 1 — Bug Fixes
+### Sprint 1 — Bug Fixes + Logging + Config Paths
 - Merge `fix/marker-strike-filter` to dev (cherry-pick 116c4f3, cae3a98, b441b75)
 - Fix BUG-VII-1: add `strike`/`right` to backend `Order` + frontend interface; update `getOrdersForPane`
+- Daily rotating log files (one per day, 30-day retention) via `TimedRotatingFileHandler`
+- Configurable `ohlcdata` and `logs` paths from `accesskeys.ini [paths]` section
 
 ### Sprint 2 — Admin Token Management
 - Seed `is_admin = true` on admin user in Users table; expose on `/api/auth/me`
@@ -119,16 +121,46 @@ Note: the `VITE_API_BASE_URL` env var introduced in Sprint 3 means switching to 
 
 ## Phase VIII Implementation Status
 
-### Sprint 1 — Bug Fixes ✅ Complete
+### Sprint 1 — Bug Fixes + Logging + Config Paths ✅ Complete (PR #27, merged to main 2026-05-17)
 
-- Trade marker strike filter applied (commits from `fix/marker-strike-filter`):
-  - `getTradesForPane` in App.tsx: added `&& t.strike === pane.strike`
-  - `paneTrades` filter in Chart.tsx: added `&& t.strike === strike`
-- BUG-VII-1 fixed:
-  - `backend/app/models/schemas.py`: `Order` and `PlaceOrderRequest` both have `strike: int | None = None`
-  - `backend/app/services/order_service.py`: `place_order()` accepts `strike`; `_write_order_to_db` persists it
-  - `backend/app/routers/orders.py`: resolves `order_strike` from `session.strike_ce`/`strike_pe` and passes to `place_order()`
-  - `frontend/src/services/api.ts`: `Order.strike?: number | null`
-  - `frontend/src/App.tsx`: `getOrdersForPane` filters `o.strike == null || o.strike === pane.strike` for options panes
+**Trade marker strike filter** (from `fix/marker-strike-filter`):
+- `getTradesForPane` in App.tsx: `t.right === pane.right && t.strike === pane.strike`
+- `paneTrades` filter in Chart.tsx: same guard; prevents old strike markers showing on replaced pane
 
-### 🔜 Sprint 2–4 — Not started
+**BUG-VII-1 — Open order price lines missing strike filter:**
+- `backend/app/models/schemas.py`: `Order` and `PlaceOrderRequest` gain `strike: int | None = None`
+- `backend/app/services/order_service.py`: `place_order()` accepts `strike`; `_write_order_to_db` persists to DDB
+- `backend/app/routers/orders.py`: resolves `order_strike` from `session.strike_ce` (CE) or `session.strike_pe` (PE); passes to `place_order()`
+- `frontend/src/services/api.ts`: `Order.strike?: number | null`
+- `frontend/src/App.tsx`: `getOrdersForPane` filters `o.strike == null || o.strike === pane.strike` — null orders pass through for backward-compat
+
+**Daily rotating logs:**
+- `backend/app/main.py`: replaced `RotatingFileHandler` (5 MB size-based) with `TimedRotatingFileHandler(when='midnight', backupCount=30)` — rotated files named `backend.log.YYYY-MM-DD`; 30 days retained
+
+**Configurable data paths from `accesskeys.ini [paths]`:**
+- `backend/app/config.py`: reads `[paths]` section at startup; exports `OHLCDATA_DIR` and `LOG_DIR` with `DATA_DIR/ohlcdata` and `DATA_DIR/logs` as fallbacks
+- `data_loader.py`, `options_service.py`, `kite_service.py`: import `OHLCDATA_DIR` directly
+- `main.py`: imports `LOG_DIR` for log file location
+- Tests: patched `OHLCDATA_DIR` (not `DATA_DIR`) in all parquet-path isolation tests
+
+**Test counts:** 350 backend tests passing; TypeScript clean.
+
+---
+
+### Lessons Learned — Sprint 1
+
+**Test isolation must track the right symbol, not its ancestor**
+- Services now import `OHLCDATA_DIR` at module load time from `config.py`. Tests that patched `DATA_DIR` in the service module were silently passing because the parquet file didn't exist — they fell through to pickle. Once `OHLCDATA_DIR` was a separate module-level name, the fallback stopped working and the configured real path (with actual parquet files) was used, corrupting test data.
+- **Rule:** When a service module exports a derived path constant (e.g. `OHLCDATA_DIR`), tests must patch that constant directly — not the upstream variable it was derived from.
+
+**Backward-compat null guard for new DB fields**
+- Adding `strike` to `Order` meant old DynamoDB records had no `strike` attribute. Frontend `o.strike` would be `undefined`, not `null`. Using `o.strike == null` (loose equality) in the filter catches both `undefined` and `null`, making old records fall through safely without a migration.
+
+**`configparser` for per-deployment path overrides is low-friction**
+- Rather than adding another env var or a separate config file format, reading `[paths]` from the existing `accesskeys.ini` means a single file controls all deployment-specific values (credentials + paths). Deploying on a new machine only requires editing one file.
+
+---
+
+### 🔜 Sprint 2 — Admin Token Management
+### 🔜 Sprint 3 — Backend Deployment Prep
+### 🔜 Sprint 4 — 2-Worker nginx Sticky Sessions (optional)
