@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import api from '../services/api'
 
 export interface FundsRatios {
@@ -67,6 +67,7 @@ export function loadHistoricalDays(): number {
 
 interface Props {
   date: string
+  isAdmin?: boolean
   onWalletReset: () => void
   onFundsRatioChange: (mode: boolean, ratios: FundsRatios) => void
   onTargetDeviationChange: (pct: number) => void  // fraction e.g. 0.01
@@ -75,7 +76,7 @@ interface Props {
   onHistoricalDaysChange?: (days: number) => void
 }
 
-export default function SettingsModal({ date, onWalletReset, onFundsRatioChange, onTargetDeviationChange, onBrokerageChange, onStrategySettingsChange, onHistoricalDaysChange }: Props) {
+export default function SettingsModal({ date, isAdmin, onWalletReset, onFundsRatioChange, onTargetDeviationChange, onBrokerageChange, onStrategySettingsChange, onHistoricalDaysChange }: Props) {
   const [open, setOpen] = useState(false)
   const [customAmount, setCustomAmount] = useState('')
   const [status, setStatus] = useState<string | null>(null)
@@ -109,6 +110,14 @@ export default function SettingsModal({ date, onWalletReset, onFundsRatioChange,
   // Historical days
   const [historicalDays, setHistoricalDays] = useState(loadHistoricalDays)
 
+  // Admin section
+  const [adminOpen, setAdminOpen] = useState(false)
+  const [iciciInput, setIciciInput] = useState('')
+  const [kiteInput, setKiteInput] = useState('')
+  const [iciciMasked, setIciciMasked] = useState<string | null>(null)
+  const [kiteMasked, setKiteMasked] = useState<string | null>(null)
+  const adminLoadedRef = useRef(false)
+
   useEffect(() => {
     // Sync from backend on open
     if (open) {
@@ -116,6 +125,15 @@ export default function SettingsModal({ date, onWalletReset, onFundsRatioChange,
         setHistoricalDays(s.historical_days)
         localStorage.setItem(HISTORICAL_DAYS_KEY, String(s.historical_days))
       }).catch(() => {})
+
+      // Load masked tokens on first open (admin only)
+      if (isAdmin && !adminLoadedRef.current) {
+        adminLoadedRef.current = true
+        api.getAdminTokens().then(t => {
+          setIciciMasked(t.icici_session)
+          setKiteMasked(t.kite_access)
+        }).catch(() => {})
+      }
     }
   }, [open])
 
@@ -177,6 +195,27 @@ export default function SettingsModal({ date, onWalletReset, onFundsRatioChange,
     onBrokerageChange(val)
     setStatus(`Brokerage saved: ₹${val}`)
     setTimeout(() => setStatus(null), 2000)
+  }
+
+  const saveAdminTokens = async () => {
+    const tokens: { icici_session?: string; kite_access?: string } = {}
+    if (iciciInput.trim()) tokens.icici_session = iciciInput.trim()
+    if (kiteInput.trim()) tokens.kite_access = kiteInput.trim()
+    if (!tokens.icici_session && !tokens.kite_access) {
+      setStatus('Enter at least one token')
+      return
+    }
+    try {
+      const result = await api.setAdminTokens(tokens)
+      setIciciMasked(result.icici_session)
+      setKiteMasked(result.kite_access)
+      setIciciInput('')
+      setKiteInput('')
+      setStatus('Tokens saved')
+      setTimeout(() => setStatus(null), 2000)
+    } catch {
+      setStatus('Failed to save tokens')
+    }
   }
 
   const reset = async (amount?: number) => {
@@ -534,6 +573,83 @@ export default function SettingsModal({ date, onWalletReset, onFundsRatioChange,
                 </button>
               </div>
             </div>
+
+            {/* Admin — broker token management (visible to admin users only) */}
+            {isAdmin && (
+              <div style={{ borderTop: '1px solid #21262d', paddingTop: 16 }}>
+                <button
+                  onClick={() => setAdminOpen(o => !o)}
+                  style={{
+                    width: '100%', background: 'none', border: 'none', cursor: 'pointer',
+                    display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                    padding: 0,
+                  }}
+                >
+                  <div style={{ fontSize: 12, color: '#f0883e', fontWeight: 600 }}>ADMIN</div>
+                  <span style={{ fontSize: 11, color: '#8b949e' }}>{adminOpen ? '▲' : '▼'}</span>
+                </button>
+
+                {adminOpen && (
+                  <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 10 }}>
+                    {/* ICICI session token */}
+                    <div>
+                      <div style={{ fontSize: 11, color: '#8b949e', marginBottom: 4 }}>
+                        ICICI Session Token
+                        {iciciMasked && (
+                          <span style={{ color: '#484f58', marginLeft: 6 }}>current: {iciciMasked}</span>
+                        )}
+                      </div>
+                      <input
+                        type="password"
+                        value={iciciInput}
+                        onChange={e => setIciciInput(e.target.value)}
+                        placeholder="Paste new token…"
+                        style={{
+                          width: '100%', padding: '6px 8px', background: '#0d1117',
+                          border: '1px solid #30363d', borderRadius: 6,
+                          color: '#e6edf3', fontSize: 12, boxSizing: 'border-box',
+                        }}
+                      />
+                    </div>
+
+                    {/* Kite access token */}
+                    <div>
+                      <div style={{ fontSize: 11, color: '#8b949e', marginBottom: 4 }}>
+                        Kite Access Token
+                        {kiteMasked && (
+                          <span style={{ color: '#484f58', marginLeft: 6 }}>current: {kiteMasked}</span>
+                        )}
+                      </div>
+                      <input
+                        type="password"
+                        value={kiteInput}
+                        onChange={e => setKiteInput(e.target.value)}
+                        placeholder="Paste new token…"
+                        style={{
+                          width: '100%', padding: '6px 8px', background: '#0d1117',
+                          border: '1px solid #30363d', borderRadius: 6,
+                          color: '#e6edf3', fontSize: 12, boxSizing: 'border-box',
+                        }}
+                      />
+                    </div>
+
+                    <button
+                      onClick={saveAdminTokens}
+                      style={{
+                        padding: '6px 14px', background: '#b08800',
+                        border: 'none', borderRadius: 6, color: '#fff',
+                        cursor: 'pointer', fontSize: 12, alignSelf: 'flex-start',
+                      }}
+                    >
+                      Save Tokens
+                    </button>
+                    <div style={{ fontSize: 11, color: '#484f58' }}>
+                      Tokens rotate daily. DDB values override accesskeys.ini.
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
 
             {status && (
               <div style={{ fontSize: 12, color: '#3fb950' }}>{status}</div>

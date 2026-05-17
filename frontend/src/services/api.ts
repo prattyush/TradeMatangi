@@ -125,6 +125,12 @@ export interface WalletResponse {
 export interface AuthResponse {
   user_id: string
   email: string
+  is_admin: boolean
+}
+
+export interface AdminTokensResponse {
+  icici_session: string | null
+  kite_access: string | null
 }
 
 // ── Analysis types ──────────────────────────────────────────────────────────
@@ -501,6 +507,32 @@ const api = {
       const data = await res.json().catch(() => ({}))
       throw new Error(data.detail || `Registration failed: ${res.status}`)
     }
+    return res.json()
+  },
+
+  async getMe(): Promise<AuthResponse> {
+    const res = await fetch(`${BACKEND_URL}/api/auth/me`, {
+      headers: _authHeaders(),
+    })
+    if (!res.ok) throw new Error(`Get me failed: ${res.status}`)
+    return res.json()
+  },
+
+  async getAdminTokens(): Promise<AdminTokensResponse> {
+    const res = await fetch(`${BACKEND_URL}/api/admin/tokens`, {
+      headers: _authHeaders(),
+    })
+    if (!res.ok) throw new Error(`Get admin tokens failed: ${res.status}`)
+    return res.json()
+  },
+
+  async setAdminTokens(tokens: { icici_session?: string; kite_access?: string }): Promise<AdminTokensResponse> {
+    const res = await fetch(`${BACKEND_URL}/api/admin/tokens`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', ..._authHeaders() },
+      body: JSON.stringify(tokens),
+    })
+    if (!res.ok) throw new Error(`Set admin tokens failed: ${res.status}`)
     return res.json()
   },
 

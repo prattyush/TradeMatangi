@@ -2,7 +2,7 @@ import { useState } from 'react'
 import api from '../services/api'
 
 interface Props {
-  onLogin: (userId: string, email: string) => void
+  onLogin: (userId: string, email: string, isAdmin?: boolean) => void
 }
 
 type Mode = 'login' | 'register'
@@ -22,7 +22,7 @@ export default function LoginScreen({ onLogin }: Props) {
       const result = mode === 'login'
         ? await api.login(email.trim(), password)
         : await api.register(email.trim(), password)
-      onLogin(result.user_id, result.email)
+      onLogin(result.user_id, result.email, result.is_admin ?? false)
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Authentication failed')
     } finally {
