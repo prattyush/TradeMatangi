@@ -27,6 +27,7 @@ async def place_order(req: PlaceOrderRequest):
 
     # Resolve which options contract this order targets
     order_right: str | None = None
+    order_strike: int | None = None
     if session.instrument_type == "options":
         order_right = req.right if req.right is not None else session.right
         if order_right is None:
@@ -34,6 +35,7 @@ async def place_order(req: PlaceOrderRequest):
                 status_code=400,
                 detail="right (CE or PE) is required when placing orders in a dual-stream options session",
             )
+        order_strike = session.strike_ce if order_right == "CE" else session.strike_pe
 
     # Naked short margin check for options sessions
     if (
@@ -102,6 +104,7 @@ async def place_order(req: PlaceOrderRequest):
             limit_price=req.limit_price,
             is_stoploss=req.is_stoploss,
             right=order_right,
+            strike=order_strike,
             target_deviation_pct=req.target_deviation_pct,
             user_id=session.user_id,
         )

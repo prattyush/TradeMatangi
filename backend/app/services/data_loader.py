@@ -12,7 +12,7 @@ import pandas as pd
 from pathlib import Path
 from typing import Iterator
 
-from app.config import DATA_DIR, CANDLE_INTERVAL_MINUTES, MARKET_OPEN, MARKET_CLOSE
+from app.config import DATA_DIR, OHLCDATA_DIR, CANDLE_INTERVAL_MINUTES, MARKET_OPEN, MARKET_CLOSE
 
 _MAX_GAP_SECONDS = 900  # 15 minutes — gaps larger than this cannot be interpolated
 
@@ -20,9 +20,8 @@ _MAX_GAP_SECONDS = 900  # 15 minutes — gaps larger than this cannot be interpo
 def parquet_path(symbol: str, date: str) -> Path:
     """date format: YYYY-MM-DD  →  ohlcdata/SYMBOL-DD-MM-YYYY.parquet"""
     y, m, d = date.split("-")
-    ohlc_dir = DATA_DIR / "ohlcdata"
-    ohlc_dir.mkdir(parents=True, exist_ok=True)
-    return ohlc_dir / f"{symbol}-{d}-{m}-{y}.parquet"
+    OHLCDATA_DIR.mkdir(parents=True, exist_ok=True)
+    return OHLCDATA_DIR / f"{symbol}-{d}-{m}-{y}.parquet"
 
 
 def pickle_path(symbol: str, date: str) -> Path:

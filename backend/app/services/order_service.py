@@ -96,6 +96,8 @@ def _write_order_to_db(order: Order) -> None:
             item["filled_price"] = Decimal(str(order.filled_price))
         if order.right is not None:
             item["right"] = order.right
+        if order.strike is not None:
+            item["strike"] = order.strike
         table.put_item(Item=item)
     except Exception:
         logger.exception("DynamoDB write failed for order %s", order.order_id)
@@ -113,6 +115,7 @@ def place_order(
     limit_price: float | None = None,
     is_stoploss: bool = False,
     right: str | None = None,
+    strike: int | None = None,
     target_deviation_pct: float = _TARGET_DEVIATION,
     user_id: str = FIXED_USER_ID,
 ) -> Order:
@@ -155,6 +158,7 @@ def place_order(
         reserved_amount=reserved_amount,
         is_stoploss=is_stoploss,
         right=right,
+        strike=strike,
     )
     _orders[session_id][order.order_id] = order
     _write_order_to_db(order)

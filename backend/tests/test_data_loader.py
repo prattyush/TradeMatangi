@@ -35,7 +35,7 @@ class TestLoadDataframe:
         pickle_path = tmp_path / "NIFTY-06-05-2026.pickle"
         df.to_pickle(pickle_path)
 
-        with patch("app.services.data_loader.DATA_DIR", tmp_path):
+        with patch("app.services.data_loader.DATA_DIR", tmp_path), patch("app.services.data_loader.OHLCDATA_DIR", tmp_path / "ohlcdata"):
             result = load_dataframe("NIFTY", "2026-05-06")
 
         assert result.index.tz is not None
@@ -46,7 +46,7 @@ class TestLoadDataframe:
         pickle_path = tmp_path / "NIFTY-06-05-2026.pickle"
         df.to_pickle(pickle_path)
 
-        with patch("app.services.data_loader.DATA_DIR", tmp_path):
+        with patch("app.services.data_loader.DATA_DIR", tmp_path), patch("app.services.data_loader.OHLCDATA_DIR", tmp_path / "ohlcdata"):
             result = load_dataframe("NIFTY", "2026-05-06")
 
         # Index is labelled UTC with IST wall-clock values so charts show 09:15
@@ -60,14 +60,14 @@ class TestLoadDataframe:
         pickle_path = tmp_path / "NIFTY-06-05-2026.pickle"
         df.to_pickle(pickle_path)
 
-        with patch("app.services.data_loader.DATA_DIR", tmp_path):
+        with patch("app.services.data_loader.DATA_DIR", tmp_path), patch("app.services.data_loader.OHLCDATA_DIR", tmp_path / "ohlcdata"):
             result = load_dataframe("NIFTY", "2026-05-06")
 
         assert set(["open", "high", "low", "close"]).issubset(result.columns)
         assert "volume" not in result.columns
 
     def test_raises_for_missing_file(self, tmp_path):
-        with patch("app.services.data_loader.DATA_DIR", tmp_path):
+        with patch("app.services.data_loader.DATA_DIR", tmp_path), patch("app.services.data_loader.OHLCDATA_DIR", tmp_path / "ohlcdata"):
             with pytest.raises(FileNotFoundError):
                 load_dataframe("NIFTY", "2026-05-07")
 
@@ -79,7 +79,7 @@ class TestResampleToCandles:
         pickle_path = tmp_path / "NIFTY-06-05-2026.pickle"
         df.to_pickle(pickle_path)
 
-        with patch("app.services.data_loader.DATA_DIR", tmp_path):
+        with patch("app.services.data_loader.DATA_DIR", tmp_path), patch("app.services.data_loader.OHLCDATA_DIR", tmp_path / "ohlcdata"):
             raw = load_dataframe("NIFTY", "2026-05-06")
 
         candles = resample_to_candles(raw)
@@ -91,7 +91,7 @@ class TestResampleToCandles:
         pickle_path = tmp_path / "NIFTY-06-05-2026.pickle"
         df.to_pickle(pickle_path)
 
-        with patch("app.services.data_loader.DATA_DIR", tmp_path):
+        with patch("app.services.data_loader.DATA_DIR", tmp_path), patch("app.services.data_loader.OHLCDATA_DIR", tmp_path / "ohlcdata"):
             raw = load_dataframe("NIFTY", "2026-05-06")
 
         candles = resample_to_candles(raw, interval_minutes=5)
@@ -103,7 +103,7 @@ class TestResampleToCandles:
         pickle_path = tmp_path / "NIFTY-06-05-2026.pickle"
         df.to_pickle(pickle_path)
 
-        with patch("app.services.data_loader.DATA_DIR", tmp_path):
+        with patch("app.services.data_loader.DATA_DIR", tmp_path), patch("app.services.data_loader.OHLCDATA_DIR", tmp_path / "ohlcdata"):
             raw = load_dataframe("NIFTY", "2026-05-06")
 
         candles = resample_to_candles(raw, interval_minutes=1)
@@ -129,7 +129,7 @@ class TestResampleToCandles:
         pickle_path = tmp_path / "NIFTY-06-05-2026.pickle"
         df.to_pickle(pickle_path)
 
-        with patch("app.services.data_loader.DATA_DIR", tmp_path):
+        with patch("app.services.data_loader.DATA_DIR", tmp_path), patch("app.services.data_loader.OHLCDATA_DIR", tmp_path / "ohlcdata"):
             raw = load_dataframe("NIFTY", "2026-05-06")
 
         candles = resample_to_candles(raw)
@@ -152,7 +152,7 @@ class TestCandlesToRecords:
         pickle_path = tmp_path / "NIFTY-06-05-2026.pickle"
         df.to_pickle(pickle_path)
 
-        with patch("app.services.data_loader.DATA_DIR", tmp_path):
+        with patch("app.services.data_loader.DATA_DIR", tmp_path), patch("app.services.data_loader.OHLCDATA_DIR", tmp_path / "ohlcdata"):
             raw = load_dataframe("NIFTY", "2026-05-06")
 
         candles = resample_to_candles(raw)
@@ -171,7 +171,7 @@ class TestIterTicks:
         pickle_path = tmp_path / "NIFTY-06-05-2026.pickle"
         df.to_pickle(pickle_path)
 
-        with patch("app.services.data_loader.DATA_DIR", tmp_path):
+        with patch("app.services.data_loader.DATA_DIR", tmp_path), patch("app.services.data_loader.OHLCDATA_DIR", tmp_path / "ohlcdata"):
             ticks = list(iter_ticks("NIFTY", "2026-05-06", start_time="09:15:00"))
 
         assert len(ticks) == n
@@ -181,7 +181,7 @@ class TestIterTicks:
         pickle_path = tmp_path / "NIFTY-06-05-2026.pickle"
         df.to_pickle(pickle_path)
 
-        with patch("app.services.data_loader.DATA_DIR", tmp_path):
+        with patch("app.services.data_loader.DATA_DIR", tmp_path), patch("app.services.data_loader.OHLCDATA_DIR", tmp_path / "ohlcdata"):
             # Start at 09:16 (1 minute in = 60 seconds skipped)
             ticks = list(iter_ticks("NIFTY", "2026-05-06", start_time="09:16:00"))
 
@@ -192,7 +192,7 @@ class TestIterTicks:
         pickle_path = tmp_path / "NIFTY-06-05-2026.pickle"
         df.to_pickle(pickle_path)
 
-        with patch("app.services.data_loader.DATA_DIR", tmp_path):
+        with patch("app.services.data_loader.DATA_DIR", tmp_path), patch("app.services.data_loader.OHLCDATA_DIR", tmp_path / "ohlcdata"):
             tick = next(iter_ticks("NIFTY", "2026-05-06"))
 
         assert tick["type"] == "tick"
@@ -209,7 +209,7 @@ class TestPreSessionCandles:
         pickle_path = tmp_path / "NIFTY-06-05-2026.pickle"
         df.to_pickle(pickle_path)
 
-        with patch("app.services.data_loader.DATA_DIR", tmp_path):
+        with patch("app.services.data_loader.DATA_DIR", tmp_path), patch("app.services.data_loader.OHLCDATA_DIR", tmp_path / "ohlcdata"):
             # Start at 09:21 → pre-session covers 09:15–09:21 = 2 × 3-min candles
             records = pre_session_candles("NIFTY", "2026-05-06", "09:21:00")
 
@@ -224,7 +224,7 @@ class TestPreSessionCandles:
         pickle_path = tmp_path / "NIFTY-06-05-2026.pickle"
         df.to_pickle(pickle_path)
 
-        with patch("app.services.data_loader.DATA_DIR", tmp_path):
+        with patch("app.services.data_loader.DATA_DIR", tmp_path), patch("app.services.data_loader.OHLCDATA_DIR", tmp_path / "ohlcdata"):
             records = pre_session_candles("NIFTY", "2026-05-06", "09:15:00")
 
         assert records == []
@@ -235,7 +235,7 @@ class TestPreSessionCandles:
         pickle_path = tmp_path / "NIFTY-06-05-2026.pickle"
         df.to_pickle(pickle_path)
 
-        with patch("app.services.data_loader.DATA_DIR", tmp_path):
+        with patch("app.services.data_loader.DATA_DIR", tmp_path), patch("app.services.data_loader.OHLCDATA_DIR", tmp_path / "ohlcdata"):
             # Start at 09:25, 5-min interval → 09:15–09:25 = 2 × 5-min candles
             records = pre_session_candles("NIFTY", "2026-05-06", "09:25:00", interval_minutes=5)
 

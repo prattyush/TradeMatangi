@@ -303,25 +303,25 @@ class TestGetAtmStrike:
 
 class TestOptionsParquetPath:
     def test_ce_path(self, tmp_path):
-        with patch("app.services.options_service.DATA_DIR", tmp_path):
+        with patch("app.services.options_service.OHLCDATA_DIR", tmp_path / "ohlcdata"):
             from app.services.options_service import options_parquet_path as opq
             p = opq("NIFTY", "2026-05-06", 24000, "2026-05-19", "CE")
         assert p.name == "NIFTY-CE-24000-19-05-2026-06-05-2026.parquet"
 
     def test_pe_path(self, tmp_path):
-        with patch("app.services.options_service.DATA_DIR", tmp_path):
+        with patch("app.services.options_service.OHLCDATA_DIR", tmp_path / "ohlcdata"):
             from app.services.options_service import options_parquet_path as opq
             p = opq("NIFTY", "2026-05-06", 24000, "2026-05-19", "PE")
         assert p.name == "NIFTY-PE-24000-19-05-2026-06-05-2026.parquet"
 
     def test_call_alias(self, tmp_path):
-        with patch("app.services.options_service.DATA_DIR", tmp_path):
+        with patch("app.services.options_service.OHLCDATA_DIR", tmp_path / "ohlcdata"):
             from app.services.options_service import options_parquet_path as opq
             p = opq("TATPOW", "2026-05-06", 420, "2026-05-28", "CALL")
         assert p.name == "TATPOW-CE-420-28-05-2026-06-05-2026.parquet"
 
     def test_put_alias(self, tmp_path):
-        with patch("app.services.options_service.DATA_DIR", tmp_path):
+        with patch("app.services.options_service.OHLCDATA_DIR", tmp_path / "ohlcdata"):
             from app.services.options_service import options_parquet_path as opq
             p = opq("RELIND", "2026-05-06", 1400, "2026-05-28", "PUT")
         assert p.name == "RELIND-PE-1400-28-05-2026-06-05-2026.parquet"
@@ -464,7 +464,7 @@ class TestFetchOptionsHistorical:
     def test_cache_hit_skips_breeze(self, tmp_path):
         date = "2026-05-06"
         df = self._make_full_day_df(date)
-        with patch("app.services.options_service.DATA_DIR", tmp_path):
+        with patch("app.services.options_service.OHLCDATA_DIR", tmp_path / "ohlcdata"):
             from app.services.options_service import options_parquet_path as opq
             pq = opq("NIFTY", date, 24000, "2026-05-19", "CE")
             df.to_parquet(pq)
@@ -486,7 +486,7 @@ class TestFetchOptionsHistorical:
         breeze_mock = MagicMock()
         breeze_mock.get_historical_data_v2.return_value = {"Status": 200, "Success": records}
 
-        with patch("app.services.options_service.DATA_DIR", tmp_path), \
+        with patch("app.services.options_service.OHLCDATA_DIR", tmp_path / "ohlcdata"), \
              patch("app.services.broker_service._get_breeze", return_value=breeze_mock):
             result = fetch_options_historical("NIFTY", date, 24000, "2026-05-19", "CE")
             assert result.exists()
@@ -496,7 +496,7 @@ class TestFetchOptionsHistorical:
     def test_no_data_raises(self, tmp_path):
         breeze_mock = MagicMock()
         breeze_mock.get_historical_data_v2.return_value = {"Status": 200, "Success": []}
-        with patch("app.services.options_service.DATA_DIR", tmp_path), \
+        with patch("app.services.options_service.OHLCDATA_DIR", tmp_path / "ohlcdata"), \
              patch("app.services.broker_service._get_breeze", return_value=breeze_mock):
             with pytest.raises(RuntimeError, match="no options data"):
                 fetch_options_historical("NIFTY", "2026-05-06", 24000, "2026-05-19", "CE")
@@ -511,7 +511,7 @@ class TestLoadOptionsDataframe:
         date = "2026-05-06"
         idx = pd.date_range(start=f"{date} 09:15:00", end=f"{date} 15:29:59", freq="1s")
         df = pd.DataFrame({"open": 100.0, "high": 102.0, "low": 98.0, "close": 101.0}, index=idx)
-        with patch("app.services.options_service.DATA_DIR", tmp_path):
+        with patch("app.services.options_service.OHLCDATA_DIR", tmp_path / "ohlcdata"):
             from app.services.options_service import options_parquet_path as opq
             pq = opq("NIFTY", date, 24000, "2026-05-19", "CE")
             df.to_parquet(pq)
@@ -520,7 +520,7 @@ class TestLoadOptionsDataframe:
         assert set(result.columns) == {"open", "high", "low", "close"}
 
     def test_missing_file_raises(self, tmp_path):
-        with patch("app.services.options_service.DATA_DIR", tmp_path):
+        with patch("app.services.options_service.OHLCDATA_DIR", tmp_path / "ohlcdata"):
             with pytest.raises(FileNotFoundError):
                 load_options_dataframe("NIFTY", "2026-05-06", 24000, "2026-05-19", "CE")
 
@@ -534,7 +534,7 @@ class TestOptionsIterTicks:
         date = "2026-05-06"
         idx = pd.date_range(start=f"{date} 09:15:00", end=f"{date} 15:29:59", freq="1s")
         df = pd.DataFrame({"open": 100.0, "high": 102.0, "low": 98.0, "close": 101.0}, index=idx)
-        with patch("app.services.options_service.DATA_DIR", tmp_path):
+        with patch("app.services.options_service.OHLCDATA_DIR", tmp_path / "ohlcdata"):
             from app.services.options_service import options_parquet_path as opq
             pq = opq("NIFTY", date, 24000, "2026-05-19", "CE")
             df.to_parquet(pq)
@@ -548,7 +548,7 @@ class TestOptionsIterTicks:
         date = "2026-05-06"
         idx = pd.date_range(start=f"{date} 09:15:00", end=f"{date} 15:29:59", freq="1s")
         df = pd.DataFrame({"open": 100.0, "high": 102.0, "low": 98.0, "close": 101.0}, index=idx)
-        with patch("app.services.options_service.DATA_DIR", tmp_path):
+        with patch("app.services.options_service.OHLCDATA_DIR", tmp_path / "ohlcdata"):
             from app.services.options_service import options_parquet_path as opq
             pq = opq("NIFTY", date, 24000, "2026-05-19", "CE")
             df.to_parquet(pq)
@@ -568,15 +568,16 @@ class TestGetUnderlyingPriceAt:
         # Unix timestamp for 09:15:00 on 2026-05-06 (as IST-as-UTC)
         target_ts = int(pd.Timestamp(f"{date} 09:15:00", tz="UTC").timestamp())
         df = pd.DataFrame({"open": 200.0, "high": 205.0, "low": 195.0, "close": 202.5}, index=idx)
-        with patch("app.services.options_service.DATA_DIR", tmp_path):
-            with patch("app.services.data_loader.DATA_DIR", tmp_path):
-                from app.services.data_loader import parquet_path
-                pq = parquet_path("NIFTY", date)
-                df.to_parquet(pq)
-                price = get_underlying_price_at("NIFTY", date, target_ts)
+        with patch("app.services.options_service.OHLCDATA_DIR", tmp_path / "ohlcdata"), \
+             patch("app.services.data_loader.DATA_DIR", tmp_path), \
+             patch("app.services.data_loader.OHLCDATA_DIR", tmp_path / "ohlcdata"):
+            from app.services.data_loader import parquet_path
+            pq = parquet_path("NIFTY", date)
+            df.to_parquet(pq)
+            price = get_underlying_price_at("NIFTY", date, target_ts)
         assert price == pytest.approx(202.5)
 
     def test_returns_none_when_unavailable(self, tmp_path):
-        with patch("app.services.options_service.DATA_DIR", tmp_path):
+        with patch("app.services.options_service.OHLCDATA_DIR", tmp_path / "ohlcdata"):
             price = get_underlying_price_at("NIFTY", "2026-05-06", 9999999999)
         assert price is None

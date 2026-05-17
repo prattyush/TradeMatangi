@@ -61,7 +61,7 @@ class TestRunSession:
         pkl = tmp_path / "NIFTY-06-05-2026.pickle"
         df.to_pickle(pkl)
 
-        with patch("app.services.data_loader.DATA_DIR", tmp_path):
+        with patch("app.services.data_loader.DATA_DIR", tmp_path), patch("app.services.data_loader.OHLCDATA_DIR", tmp_path / "ohlcdata"):
             s = sim.create_session("NIFTY", "2026-05-06", "09:15:00", 0.0)
             sim.start_session(s)
             await asyncio.sleep(0.1)
@@ -80,7 +80,7 @@ class TestRunSession:
         pkl = tmp_path / "NIFTY-06-05-2026.pickle"
         df.to_pickle(pkl)
 
-        with patch("app.services.data_loader.DATA_DIR", tmp_path):
+        with patch("app.services.data_loader.DATA_DIR", tmp_path), patch("app.services.data_loader.OHLCDATA_DIR", tmp_path / "ohlcdata"):
             s = sim.create_session("NIFTY", "2026-05-06", "09:15:00", 0.0)
             sim.start_session(s)
             await asyncio.sleep(0.2)

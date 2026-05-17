@@ -103,7 +103,7 @@ class TestFetchHistorical:
         pq = ohlc_dir / "NIFTY-06-05-2026.parquet"
         _make_full_day_df().to_parquet(pq)
 
-        with patch("app.services.data_loader.DATA_DIR", tmp_path):
+        with patch("app.services.data_loader.DATA_DIR", tmp_path), patch("app.services.data_loader.OHLCDATA_DIR", tmp_path / "ohlcdata"):
             with patch("app.services.broker_service._get_breeze") as mock_breeze:
                 result = fetch_historical("NIFTY", "2026-05-06")
 
@@ -122,7 +122,7 @@ class TestFetchHistorical:
         mock_breeze = MagicMock()
         mock_breeze.get_historical_data_v2.side_effect = _chunk_side_effect
 
-        with patch("app.services.data_loader.DATA_DIR", tmp_path):
+        with patch("app.services.data_loader.DATA_DIR", tmp_path), patch("app.services.data_loader.OHLCDATA_DIR", tmp_path / "ohlcdata"):
             with patch("app.services.broker_service._get_breeze", return_value=mock_breeze):
                 result = fetch_historical("NIFTY", "2026-05-06")
 
@@ -135,7 +135,7 @@ class TestFetchHistorical:
         pkl = tmp_path / "NIFTY-06-05-2026.pickle"
         _make_full_day_df().to_pickle(pkl)
 
-        with patch("app.services.data_loader.DATA_DIR", tmp_path):
+        with patch("app.services.data_loader.DATA_DIR", tmp_path), patch("app.services.data_loader.OHLCDATA_DIR", tmp_path / "ohlcdata"):
             with patch("app.services.broker_service._get_breeze") as mock_breeze:
                 result = fetch_historical("NIFTY", "2026-05-06")
 
@@ -152,7 +152,7 @@ class TestFetchHistorical:
         mock_breeze = MagicMock()
         mock_breeze.get_historical_data_v2.side_effect = _chunk_side_effect
 
-        with patch("app.services.data_loader.DATA_DIR", tmp_path):
+        with patch("app.services.data_loader.DATA_DIR", tmp_path), patch("app.services.data_loader.OHLCDATA_DIR", tmp_path / "ohlcdata"):
             with patch("app.services.broker_service._get_breeze", return_value=mock_breeze):
                 result = fetch_historical("NIFTY", "2026-05-06")
 
@@ -167,7 +167,7 @@ class TestFetchHistorical:
         mock_breeze = MagicMock()
         mock_breeze.get_historical_data_v2.side_effect = _chunk_side_effect
 
-        with patch("app.services.data_loader.DATA_DIR", tmp_path):
+        with patch("app.services.data_loader.DATA_DIR", tmp_path), patch("app.services.data_loader.OHLCDATA_DIR", tmp_path / "ohlcdata"):
             with patch("app.services.broker_service._get_breeze", return_value=mock_breeze):
                 result = fetch_historical("NIFTY", "2026-05-06")
 
@@ -186,7 +186,7 @@ class TestFetchHistorical:
             "Success": [],
         }
 
-        with patch("app.services.data_loader.DATA_DIR", tmp_path):
+        with patch("app.services.data_loader.DATA_DIR", tmp_path), patch("app.services.data_loader.OHLCDATA_DIR", tmp_path / "ohlcdata"):
             with patch("app.services.broker_service._get_breeze", return_value=mock_breeze):
                 with pytest.raises(BreezeTokenError):
                     fetch_historical("NIFTY", "2026-05-06")
@@ -199,7 +199,7 @@ class TestFetchHistorical:
             "Success": [],
         }
 
-        with patch("app.services.data_loader.DATA_DIR", tmp_path):
+        with patch("app.services.data_loader.DATA_DIR", tmp_path), patch("app.services.data_loader.OHLCDATA_DIR", tmp_path / "ohlcdata"):
             with patch("app.services.broker_service._get_breeze", return_value=mock_breeze):
                 with pytest.raises(RuntimeError):
                     fetch_historical("NIFTY", "2026-05-06")

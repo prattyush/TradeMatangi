@@ -1,34 +1,33 @@
 import logging
 import logging.handlers
-import os
 from contextlib import asynccontextmanager
-from pathlib import Path
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.config import LOG_DIR
 from app.routers import data, simulation, trading, stream, orders, wallet, auth, analysis, strategies, users
 
 
 def _configure_logging() -> None:
-    log_dir = Path(__file__).resolve().parent.parent.parent / "data" / "logs"
-    log_dir.mkdir(parents=True, exist_ok=True)
-    log_file = log_dir / "backend.log"
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
+    log_file = LOG_DIR / "backend.log"
 
     fmt = logging.Formatter(
         "%(asctime)s %(levelname)-8s %(name)s: %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
     )
 
-    # Rotating file handler — 5 MB per file, keep last 3
-    fh = logging.handlers.RotatingFileHandler(
-        log_file, maxBytes=5 * 1024 * 1024, backupCount=3, encoding="utf-8"
+    # Daily rotating handler — one file per day, keep last 30 days.
+    # Rotated files are named backend.log.YYYY-MM-DD (suffix added automatically).
+    fh = logging.handlers.TimedRotatingFileHandler(
+        log_file, when="midnight", backupCount=30, encoding="utf-8", utc=False
     )
     fh.setLevel(logging.DEBUG)
     fh.setFormatter(fmt)
 
     root = logging.getLogger()
     # Only add if not already configured (uvicorn may have set up handlers)
-    if not any(isinstance(h, logging.handlers.RotatingFileHandler) for h in root.handlers):
+    if not any(isinstance(h, logging.handlers.TimedRotatingFileHandler) for h in root.handlers):
         root.addHandler(fh)
 
     # Ensure our app loggers show at DEBUG level
