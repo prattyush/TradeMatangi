@@ -352,4 +352,28 @@ Updated CLAUDE.md wallet coverage constraint. Corrected the pre-existing test `t
 
 ---
 
+### Trade Analysis — Session Grouping ✅ Complete (branch feature/trade-analysis-session-grouping, 2026-05-18)
+
+**What changed:** The Trade Analysis modal previously showed one card per session, including sessions with no trades. It now groups sessions by `(date, symbol, instrument_type, session_type)` and filters out sessions with zero trades.
+
+**Behaviour:**
+- One card per `(date, symbol, equity/options, sim/paper)` combination.
+- Sessions with no trades are silently excluded.
+- If multiple sessions share the same combination (e.g. user ran two sim sessions on NIFTY options on the same day), they appear as a single merged card with the trade tables separated by a dashed rule labelled "Session 1 · 09:22 / Session 2 · 11:05".
+- A single `AnalysisChart` with all trades from every session in the group — markers span the full day without duplicating the chart.
+- The aggregate stats bar header was renamed from "Sessions" to "Days" to reflect the grouped count.
+- P&L% in the group header is computed against the first session's capital (the capital at the start of the day's first session).
+
+**Key implementation notes (`TradeAnalysis.tsx`):**
+- `groupSessions(sessions: SessionSummary[]): SessionGroup[]` — filters zero-trade sessions, buckets by key, accumulates `totalPnl`, `totalTrades`, `totalCommission`; sorted date-desc then symbol-asc.
+- `GroupCard` fetches all session details in parallel (`Promise.all`) on first expand.
+- `allTrades` is derived from `details` state (not fetched again) so the chart re-renders once details load.
+- Dashed session separator uses a flex row with `borderTop` on two divs flanking the label — no `<hr>` (avoids browser default margins).
+- `TradeTable` extracted as a reusable sub-component to avoid repeating the table markup per session.
+
+**Files changed:**
+- `frontend/src/components/TradeAnalysis.tsx` — full rewrite of list/card logic; `AnalysisChart` and helper functions unchanged.
+
+---
+
 ### 🔜 Sprint 4 — 2-Worker nginx Sticky Sessions (optional)
