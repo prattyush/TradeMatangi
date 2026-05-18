@@ -158,7 +158,7 @@ def _emit_tick_and_check_orders(
             quantity=order.quantity,
             symbol=order.symbol,
             instrument_type=session.instrument_type,
-            strike=session.strike,
+            strike=order.strike if order.strike is not None else session.strike,
             expiry=session.expiry,
             right=order.right,
             brokerage_per_order=session.brokerage_per_order,
@@ -685,6 +685,14 @@ async def _run_paper_session(session: SimulationSession) -> None:
 
             tick_right: str | None = payload.get("right")
             tick_type = payload.get("type", "tick")
+            if tick_type == "broker_error":
+                # Forward connection-lost / reconnect-failed messages to the SSE stream.
+                error_event = {"type": "broker_error", "message": payload.get("message", "Kite connection lost")}
+                try:
+                    session.queue.put_nowait(json.dumps(error_event))
+                except asyncio.QueueFull:
+                    pass
+                continue
             if tick_type != "tick":
                 continue
 

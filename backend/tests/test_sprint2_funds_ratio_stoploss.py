@@ -185,15 +185,17 @@ class TestStoplossWalletOnFill:
             trigger_price=trigger, is_stoploss=True,
         )
 
-    def test_sell_sl_fill_does_not_credit_wallet(self):
+    def test_sell_sl_fill_credits_wallet(self):
+        # BUG-VIII-6: SELL SL fill must credit the wallet — the BUY already debited.
+        # Skipping the credit permanently removes funds even after position is closed.
         self._place_sl(TradeSide.SELL, 24000.0)
         credit_mock = MagicMock()
         with patch("app.services.wallet_service.credit", credit_mock):
             svc.check_orders(SESSION, 23999.0, 100, DATE)
-        credit_mock.assert_not_called()
+        credit_mock.assert_called_once()
 
     def test_regular_sell_fill_does_credit_wallet(self):
-        """Confirm regular SELL fill still credits — SL exclusion is targeted."""
+        """Confirm regular SELL fill still credits."""
         svc.place_order(SESSION, "NIFTY", TradeSide.SELL, OrderType.TARGET, 1, 1, DATE, trigger_price=24000.0)
         credit_mock = MagicMock()
         with patch("app.services.wallet_service.credit", credit_mock):

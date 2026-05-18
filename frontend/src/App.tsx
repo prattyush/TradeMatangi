@@ -15,10 +15,12 @@ import api from './services/api'
 
 const FIXED_USER = { userId: 'abc12300-0000-0000-0000-000000000001', username: 'abc123' }
 
-function loadAuthUser(): { userId: string; email: string } | null {
+function loadAuthUser(): { userId: string; email: string; isAdmin: boolean } | null {
   try {
     const raw = localStorage.getItem('auth_user')
-    return raw ? JSON.parse(raw) : null
+    if (!raw) return null
+    const parsed = JSON.parse(raw)
+    return { isAdmin: false, ...parsed }
   } catch {
     return null
   }
@@ -70,8 +72,8 @@ export default function App() {
   // ── Auth state ──────────────────────────────────────────────────────────────
   const [authUser, setAuthUser] = useState(loadAuthUser)
 
-  const handleLogin = useCallback((userId: string, email: string) => {
-    const user = { userId, email }
+  const handleLogin = useCallback((userId: string, email: string, isAdmin = false) => {
+    const user = { userId, email, isAdmin }
     localStorage.setItem('auth_user', JSON.stringify(user))
     localStorage.setItem('user', JSON.stringify({ userId, username: email }))
     setAuthUser(user)
@@ -82,6 +84,21 @@ export default function App() {
     setAuthUser(null)
   }, [])
 
+  // Refresh isAdmin from server on mount (handles stale localStorage on role change)
+  useEffect(() => {
+    if (!authUser) return
+    api.getMe().then(me => {
+      setAuthUser(prev => prev ? { ...prev, isAdmin: me.is_admin } : prev)
+      const stored = localStorage.getItem('auth_user')
+      if (stored) {
+        try {
+          const parsed = JSON.parse(stored)
+          localStorage.setItem('auth_user', JSON.stringify({ ...parsed, isAdmin: me.is_admin }))
+        } catch { /* ignore */ }
+      }
+    }).catch(() => {})
+  }, [])  // mount only
+
   if (!authUser) {
     return <LoginScreen onLogin={handleLogin} />
   }
@@ -89,7 +106,7 @@ export default function App() {
   return <AppInner authUser={authUser} onLogout={handleLogout} />
 }
 
-function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: string }; onLogout: () => void }) {
+function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: string; isAdmin: boolean }; onLogout: () => void }) {
   const sim = useSimulation()
   const [fundsRatioMode, setFundsRatioMode] = useState(loadFundsRatioMode)
   const [fundsRatios, setFundsRatios] = useState<FundsRatios>(loadFundsRatios)
@@ -476,6 +493,7 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
         </button>
         <SettingsModal
           date={sim.date}
+          isAdmin={authUser.isAdmin}
           onWalletReset={sim.incrementWalletRefreshKey}
           onFundsRatioChange={(mode, ratios) => { setFundsRatioMode(mode); setFundsRatios(ratios) }}
           onTargetDeviationChange={setTargetDeviationPct}

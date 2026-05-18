@@ -191,8 +191,21 @@ async def update_pane_strike(session_id: str, req: UpdatePaneStrikeRequest):
     if req.right.upper() not in ("CE", "PE"):
         raise HTTPException(status_code=400, detail="right must be CE or PE")
 
-    # Ensure options data is cached for new strike before updating session
-    _ensure_options_data(session.symbol, session.date, req.strike, session.expiry, req.right.upper())
+    # Run blocking data fetch in a thread pool so the event loop (and Phase 3 tick
+    # processing) is not frozen while Breeze/parquet I/O happens.
+    # Paper sessions use soft-ensure (swallow errors) — session is already live.
+    # Sim sessions propagate errors — tick loop needs the parquet to exist.
+    loop = asyncio.get_running_loop()
+    if session.session_type == "paper":
+        await loop.run_in_executor(None, lambda: _soft_ensure(
+            lambda: _ensure_options_data(
+                session.symbol, session.date, req.strike, session.expiry, req.right.upper()
+            )
+        ))
+    else:
+        await loop.run_in_executor(None, lambda: _ensure_options_data(
+            session.symbol, session.date, req.strike, session.expiry, req.right.upper()
+        ))
 
     if req.right.upper() == "CE":
         session.strike_ce = req.strike
@@ -204,10 +217,12 @@ async def update_pane_strike(session_id: str, req: UpdatePaneStrikeRequest):
     if session.session_type == "paper":
         try:
             from app.services import kite_service
-            new_token = kite_service.fetch_options_instrument_token(
-                session.symbol, session.expiry, req.strike, req.right.upper()
+            new_token = await loop.run_in_executor(
+                None,
+                lambda: kite_service.fetch_options_instrument_token(
+                    session.symbol, session.expiry, req.strike, req.right.upper()
+                ),
             )
-            loop = asyncio.get_running_loop()
             kite_service.get_broadcaster().update_session_right(
                 session.session_id, req.right.upper(), new_token,
                 session.paper_tick_queue, loop,

@@ -52,7 +52,7 @@ def _load_from_db(user_id: str, date: str) -> float | None:
         from boto3.dynamodb.conditions import Key
         table = get_dynamodb_resource().Table("Wallet")
         resp = table.query(
-            KeyConditionExpression=Key("user_id").eq(user_id) & Key("date").lt(date),
+            KeyConditionExpression=Key("user_id").eq(user_id) & Key("date").lte(date),
             ScanIndexForward=False,
             Limit=1,
         )
