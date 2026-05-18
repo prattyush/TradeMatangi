@@ -56,8 +56,13 @@ if [ -z "$LOG_DIR" ]; then
 fi
 mkdir -p "$LOG_DIR"
 
+# Write to a date-stamped file (matches backend's rotation pattern: frontend.log.YYYY-MM-DD).
+# Update the frontend.log symlink so `tail -f frontend.log` always follows today's file.
+DATED_LOG="$LOG_DIR/frontend.log.$(date +%Y-%m-%d)"
+ln -sf "$DATED_LOG" "$LOG_DIR/frontend.log"
+
 echo "Starting frontend on http://$PUBLIC_IP:5173 ..."
 nohup node node_modules/vite/bin/vite.js --host \
-  > "$LOG_DIR/frontend.log" 2>&1 &
+  >> "$DATED_LOG" 2>&1 &
 
-echo "Frontend started (PID $!). Log: $LOG_DIR/frontend.log"
+echo "Frontend started (PID $!). Log: $DATED_LOG"
