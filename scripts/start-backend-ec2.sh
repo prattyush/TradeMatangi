@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # EC2 / Amazon Linux 2023 variant.
 # AL2023 ships Python 3.9 by default; the codebase uses `X | None` union
-# syntax that requires Python 3.10+. This script selects python3.11 (or any
-# 3.10+ interpreter present) and recreates the venv if it was built with an
-# incompatible version.
+# syntax that requires Python 3.10+. This script selects the highest available
+# 3.10+ interpreter and recreates the venv if it was built with an incompatible
+# version.
 set -e
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -11,7 +11,7 @@ VENV="$HOME/venvs/tradematangi"
 
 # Find a Python 3.10+ interpreter
 PYTHON=""
-for candidate in python3.12 python3.11 python3.10; do
+for candidate in python3.13 python3.12 python3.11 python3.10; do
     if command -v "$candidate" > /dev/null 2>&1; then
         PYTHON="$candidate"
         break
