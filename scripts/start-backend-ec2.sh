@@ -44,6 +44,14 @@ fi
 echo "Installing dependencies..."
 "$VENV/bin/pip" install -q -r "$REPO_ROOT/backend/requirements.txt"
 
+# Resolve LOG_DIR from accesskeys.ini — mirrors config.py logic
+INI="$REPO_ROOT/data/accesskeys.ini"
+LOG_DIR=$(awk -F'=' '/^\[paths\]/{f=1;next} /^\[/{f=0} f&&/^logs[[:space:]]*/{gsub(/^[[:space:]]+|[[:space:]]+$/,"",$2); print $2; exit}' "$INI" 2>/dev/null || true)
+if [ -z "$LOG_DIR" ]; then
+    LOG_DIR="$REPO_ROOT/data/logs"
+fi
+mkdir -p "$LOG_DIR"
+
 echo "Starting backend on port 8700..."
 cd "$REPO_ROOT/backend"
 nohup "$VENV/bin/uvicorn" app.main:app \
@@ -52,6 +60,6 @@ nohup "$VENV/bin/uvicorn" app.main:app \
   --workers 1 \
   --loop uvloop \
   --log-level info \
-  > "$REPO_ROOT/backend.log" 2>&1 &
+  > "$LOG_DIR/backend.log" 2>&1 &
 
-echo "Backend started (PID $!). Log: $REPO_ROOT/backend.log"
+echo "Backend started (PID $!). Log: $LOG_DIR/backend.log"

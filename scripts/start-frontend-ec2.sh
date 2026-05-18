@@ -48,5 +48,21 @@ if [ ! -d "node_modules" ]; then
     npm install
 fi
 
+# Resolve LOG_DIR from accesskeys.ini — mirrors config.py logic
+INI="$REPO_ROOT/data/accesskeys.ini"
+LOG_DIR=$(awk -F'=' '/^\[paths\]/{f=1;next} /^\[/{f=0} f&&/^logs[[:space:]]*/{gsub(/^[[:space:]]+|[[:space:]]+$/,"",$2); print $2; exit}' "$INI" 2>/dev/null || true)
+if [ -z "$LOG_DIR" ]; then
+    LOG_DIR="$REPO_ROOT/data/logs"
+fi
+mkdir -p "$LOG_DIR"
+
+# Write to a date-stamped file (matches backend's rotation pattern: frontend.log.YYYY-MM-DD).
+# Update the frontend.log symlink so `tail -f frontend.log` always follows today's file.
+DATED_LOG="$LOG_DIR/frontend.log.$(date +%Y-%m-%d)"
+ln -sf "$DATED_LOG" "$LOG_DIR/frontend.log"
+
 echo "Starting frontend on http://$PUBLIC_IP:5173 ..."
-node node_modules/vite/bin/vite.js --host
+nohup node node_modules/vite/bin/vite.js --host \
+  >> "$DATED_LOG" 2>&1 &
+
+echo "Frontend started (PID $!). Log: $DATED_LOG"
