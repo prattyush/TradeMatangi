@@ -195,3 +195,43 @@ class TestCheckLimitOrders:
         _sell_limit(24000.0)
         filled = svc.check_orders(SESSION, 23999.0, 100)
         assert filled == []
+
+
+def _sell_stoploss(trigger: float, qty: int = 1, ts: int = 1):
+    return svc.place_order(
+        SESSION, "NIFTY", TradeSide.SELL, OrderType.STOPLOSS, qty, ts, DATE,
+        trigger_price=trigger, is_stoploss=True,
+    )
+
+
+class TestSLWalletCredit:
+    """SELL SL fills must credit the wallet (BUG-VIII-6 regression guard)."""
+
+    def test_sell_sl_fill_credits_wallet(self):
+        """Closing a long position via SL should return funds to the wallet."""
+        _sell_stoploss(23800.0, qty=10)
+        with patch("app.services.wallet_service.credit") as mock_credit, \
+             patch("app.services.order_service._write_order_to_db"):
+            svc.check_orders(SESSION, 23800.0, 100, trading_date=DATE)
+        mock_credit.assert_called_once()
+        args = mock_credit.call_args[0]
+        # credit(user_id, amount, date) — amount = qty × price = 10 × 23800
+        assert args[1] == pytest.approx(238000.0)
+
+    def test_sell_sl_fill_credits_at_filled_price(self):
+        """Credit amount uses the actual filled price, not the trigger price."""
+        _sell_stoploss(23800.0, qty=5)
+        # Price overshoots below trigger — filled at 23750
+        with patch("app.services.wallet_service.credit") as mock_credit, \
+             patch("app.services.order_service._write_order_to_db"):
+            svc.check_orders(SESSION, 23750.0, 100, trading_date=DATE)
+        args = mock_credit.call_args[0]
+        assert args[1] == pytest.approx(5 * 23750.0)
+
+    def test_sell_target_still_credits_wallet(self):
+        """Regression: SELL TARGET (non-SL) must still credit the wallet."""
+        _sell_target(23900.0, qty=3)
+        with patch("app.services.wallet_service.credit") as mock_credit, \
+             patch("app.services.order_service._write_order_to_db"):
+            svc.check_orders(SESSION, 23900.0, 100, trading_date=DATE)
+        mock_credit.assert_called_once()

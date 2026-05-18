@@ -434,6 +434,10 @@ class KiteBroadcaster:
         self._accumulators: dict[int, _OHLCAccumulator] = defaultdict(_OHLCAccumulator)
         self._ticker = None
         self._connected = False
+        # Restart guard: only one 403-triggered restart timer allowed at a time.
+        # Generation bumps whenever the ticker is replaced so stale timers no-op.
+        self._restart_pending = False
+        self._restart_generation = 0
 
     def register(
         self,
@@ -484,6 +488,10 @@ class KiteBroadcaster:
                     pass
                 self._ticker = None
                 self._connected = False
+                # Invalidate any pending restart timer so it doesn't fire after a
+                # new session starts and replaces the ticker with a fresh one.
+                self._restart_generation += 1
+                self._restart_pending = False
                 logger.info("KiteBroadcaster: no active sessions, ticker stopped")
 
     def update_session_right(
@@ -542,6 +550,12 @@ class KiteBroadcaster:
         except ImportError as exc:
             raise KiteConnectionError("kiteconnect not installed") from exc
 
+        # Bump generation before creating the ticker so any 403-retry timer that
+        # was scheduled for the previous ticker becomes stale and will no-op.
+        with self._lock:
+            self._restart_generation += 1
+            self._restart_pending = False
+
         cfg = self._read_config()
         ticker = KiteTicker(cfg["api_key"], cfg["access_token"])
         ticker.on_connect = self._on_connect
@@ -570,9 +584,61 @@ class KiteBroadcaster:
             raise KiteTokenError("No [kite] section in data/accesskeys.ini")
         api_key = cfg["kite"].get("api_key", "").strip()
         access_token = cfg["kite"].get("access_token", "").strip()
+        # DDB override: daily-rotating token set via Admin panel takes precedence.
+        try:
+            from app.services.token_service import get_token as _ddb_token
+            ddb = _ddb_token("kite_access")
+            if ddb:
+                access_token = ddb
+        except Exception:
+            pass
         if not api_key or not access_token:
             raise KiteTokenError("Kite api_key or access_token missing")
         return {"api_key": api_key, "access_token": access_token}
+
+    def _notify_sessions_error(self, message: str) -> None:
+        """Push a broker_error dict to every registered session's paper_tick_queue."""
+        with self._lock:
+            entries = {
+                sid: (queue, loop)
+                for token_map in self._token_sessions.values()
+                for sid, (queue, _right, loop) in token_map.items()
+            }
+        payload = {"type": "broker_error", "message": message}
+        for sid, (queue, loop) in entries.items():
+            try:
+                loop.call_soon_threadsafe(queue.put_nowait, payload)
+            except Exception:
+                pass
+
+    def _restart_with_fresh_creds(self, gen: int) -> None:
+        """Re-create the KiteTicker with fresh credentials (reads DDB token)."""
+        with self._lock:
+            if gen != self._restart_generation:
+                # A newer ticker was already created (new session registered, or
+                # unregister closed the ticker) — this timer is stale, skip.
+                return
+            if not self._token_sessions:
+                self._restart_pending = False
+                return
+            all_tokens = list(self._token_sessions.keys())
+            old_ticker = self._ticker
+            self._ticker = None
+        if old_ticker:
+            try:
+                old_ticker.close()
+            except Exception:
+                pass
+        try:
+            self._start(all_tokens)  # bumps _restart_generation, clears _restart_pending
+            logger.info("KiteBroadcaster: reconnected with fresh credentials (%d tokens)", len(all_tokens))
+        except Exception as exc:
+            with self._lock:
+                self._restart_pending = False
+            logger.error("KiteBroadcaster: reconnect failed: %s", exc)
+            self._notify_sessions_error(
+                f"Kite reconnect failed — update token in Admin settings: {exc}"
+            )
 
     def _on_connect(self, ws, response) -> None:
         with self._lock:
@@ -629,11 +695,24 @@ class KiteBroadcaster:
                     logger.warning("Tick push failed for session %s: %s", session_id, exc)
 
     def _on_error(self, ws, code, reason) -> None:
-        logger.error("KiteTicker error — code=%s reason=%s (ticks will stop)", code, reason)
+        logger.error("KiteTicker error — code=%s reason=%s", code, reason)
+        # 403 on WebSocket upgrade = auth issue or concurrent connection limit.
+        # kiteconnect keeps retrying with the same stale token; schedule a single
+        # restart that re-reads credentials from DDB before reconnecting.
+        if "403" in str(reason) or "Forbidden" in str(reason):
+            with self._lock:
+                if self._restart_pending:
+                    return  # timer already queued — don't stack another one
+                self._restart_pending = True
+                gen = self._restart_generation
+            threading.Timer(5.0, lambda: self._restart_with_fresh_creds(gen)).start()
 
     def _on_close(self, ws, code, reason) -> None:
-        logger.warning("KiteTicker closed — code=%s reason=%s (no more ticks until reconnect)", code, reason)
+        logger.warning("KiteTicker closed — code=%s reason=%s", code, reason)
         self._connected = False
+        self._notify_sessions_error(
+            "Kite connection lost — attempting to reconnect. Ticks may be delayed."
+        )
 
 
 _broadcaster: KiteBroadcaster | None = None

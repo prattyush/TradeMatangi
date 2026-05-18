@@ -12,12 +12,13 @@ fi
 echo "Installing dependencies..."
 "$VENV/bin/pip" install -q -r "$REPO_ROOT/backend/requirements.txt"
 
-echo "Starting backend with 2 workers on port 8700..."
+echo "Starting backend on port 8700..."
 cd "$REPO_ROOT/backend"
 nohup "$VENV/bin/uvicorn" app.main:app \
   --host 0.0.0.0 \
   --port 8700 \
-  --workers 2 \
+  --workers 1 \
+  --loop uvloop \
   --log-level info \
   > "$REPO_ROOT/backend.log" 2>&1 &
 

@@ -219,5 +219,137 @@ Note: the `VITE_API_BASE_URL` env var introduced in Sprint 3 means switching to 
 
 ---
 
-### 🔜 Sprint 3 — Backend Deployment Prep
+### Sprint 3 — Backend Deployment Prep ✅ Complete (PR #33, branch docs/phase-viii-sprint-3-design, 2026-05-18)
+
+**Changes:**
+- `uvloop>=0.19.0` added to `backend/requirements.txt`
+- `scripts/start-backend-ec2.sh`: `--workers 1 --loop uvloop` (single worker required; in-memory state breaks multi-worker)
+- `frontend/src/config.ts`: `export const BACKEND_URL = import.meta.env.VITE_API_BASE_URL ?? ''`
+- `frontend/src/vite-env.d.ts`: new — declares `ImportMetaEnv` so TypeScript accepts `import.meta.env`
+- `frontend/.env`: `VITE_API_BASE_URL=http://localhost:8700` (dev, committed via `!frontend/.env` gitignore negation)
+- `frontend/.env.production`: `VITE_API_BASE_URL=` empty — nginx on EC2 proxies `/api/` same-origin
+- `.gitignore`: `!frontend/.env` negation so non-secret dev URL is committed
+
+---
+
+### Bugs Fixed Post-Sprint-2 (2026-05-18)
+
+#### BUG-VIII-1: Admin user DynamoDB record corrupted from early phase
+
+**Symptom:** Login with `admin@tradematangi.com` / `admin123` returned "Invalid email or password."
+
+**Root cause:** The admin record in DynamoDB was written in an early phase before proper auth existed:
+- `password_hash` field contained plain text `"abc123"` (not bcrypt)
+- Record had `username` field instead of `email`
+- `seed_user()` skips re-seeding when the `user_id` already exists, so the corrupt record persisted
+
+**Fix:** One-time manual DynamoDB update via Python to set `email = "admin@tradematangi.com"` and `password_hash = bcrypt("admin123")`. No code change — `seed_user()` logic remains correct for new deployments.
+
+---
+
+#### BUG-VIII-2: Paper trading options streaming stops when pane is added/removed with different strike
+
+**Symptom:** Deleting a CE/PE pane and adding it back with a different strike caused all chart streaming (including equity) to stop. In simulation mode, streaming resumed after pane data loaded; in paper mode it did not.
+
+**Root cause — event loop freeze:**
+`update_pane_strike` (async endpoint) called `_ensure_options_data` and `fetch_options_instrument_token` as synchronous blocking calls. For paper mode, `_ensure_options_data` fetches today's Breeze data (~10–30s). This froze the asyncio event loop, blocking Phase 3 from processing Kite ticks. In simulation mode the same freeze occurred but the tick loop is driven from pre-loaded in-memory data so it resumed immediately. In paper mode Phase 3 depends on the Kite WebSocket and can be stuck at a 30s timeout.
+
+**Root cause — Kite reconnect storms:**
+`_on_error` scheduled a new `threading.Timer` on every 403 error. kiteconnect retries rapidly, so dozens of restart timers piled up. Each timer called `_restart_with_fresh_creds` which closed and replaced the ticker. When the user stopped the old session and started a new one, a stale timer from the old session's 403 errors fired after the new session had already registered and created a healthy new ticker — closing it and breaking the new session.
+
+**Fixes:**
+- `routers/simulation.py` — `update_pane_strike`: wraps `_ensure_options_data` in `loop.run_in_executor` (thread pool). For paper mode uses `_soft_ensure` wrapper so data errors don't fail the live session. `fetch_options_instrument_token` also moved to executor.
+- `kite_service.py` — `KiteBroadcaster`:
+  - `_restart_pending: bool` flag: only one restart timer in flight at a time; `_on_error` returns early if already scheduled.
+  - `_restart_generation: int` counter: bumped in `_start` and `unregister` (when closing last session's ticker). `_restart_with_fresh_creds(gen)` compares `gen` to current generation and no-ops if stale — prevents old timers from closing a new session's healthy ticker.
+  - `_read_config`: reads DDB token_service first (same pattern as `_get_kite`), so updating the Kite token in Admin settings takes effect on the next reconnect attempt.
+  - `_notify_sessions_error`: pushes `{"type": "broker_error", "message": ...}` dict to every registered session's `paper_tick_queue`.
+  - `_on_close`: calls `_notify_sessions_error` so frontend shows the orange broker error banner.
+- `simulation.py` (service) — Phase 3 loop: handles `broker_error` type from `paper_tick_queue` by forwarding to `session.queue` as JSON for SSE delivery.
+
+---
+
+#### BUG-VIII-3: Wallet reset not persisting across page refresh / backend restart
+
+**Symptom:** Setting wallet to ₹12,000 via Settings showed correctly, but after page refresh reverted to ₹1,50,000.
+
+**Root cause:** `wallet_service._load_from_db` queries DynamoDB with `Key("date").lt(date)` — strictly less than. When `reset()` writes a record for today's date, a subsequent cold-start of `get_or_init_wallet` (empty in-memory cache) skips today's own record because `today < today` is false. It falls back to carry-forward from the previous day or to `DEFAULT_BALANCE = 150,000`.
+
+**Fix:** Changed `Key("date").lt(date)` → `Key("date").lte(date)` in `_load_from_db`. With `ScanIndexForward=False, Limit=1`, today's own record is returned first (most recent), correctly restoring the reset value. All 14 wallet tests pass.
+
+---
+
+#### BUG-VIII-4: Paper trading options chart shows flat bars after refresh (2026-05-18)
+
+**Symptom:** On first render, CE/PE options chart data was correct up to ~10:39, then bars from 10:42 to 10:51 appeared flat at 10:39's close price. On page refresh at 11:24, all bars from 10:39 to 11:24 were flat at 10:39's close, wiping out correctly-streamed data.
+
+**Root cause — backend gap-fill writes fake future bars to parquet:**
+`_validate_options_gaps` always reindexed from `market_open` to `market_close` (15:29:59), regardless of whether it was today's partial day. For paper trading, Breeze fetches data up to the last completed second (e.g., 10:39). The ffill from 10:39 to 15:30 created fake flat bars that were **saved into the parquet file**.
+
+**Root cause — frontend cutoffTs includes the flat bars:**
+On refresh, `cutoffTs = currentSimTimeRef.current` (live equity tick time, e.g., 11:24). The historical API returns candles filtered to `time < 11:24`, which includes all the flat 10:39-priced bars. `series.setData()` overwrites correctly-streamed bars with these imposters.
+
+**Fix** (`backend/app/services/options_service.py`):
+- `_validate_options_gaps(partial=False)`: added `partial` parameter. When `partial=True`, reindex stops at `df.index[-1]` (last actual Breeze row) instead of `market_close` — no fake future bars saved to parquet.
+- `fetch_options_historical`: passes `partial=is_today` to gap-fill; adds **10-min TTL re-fetch** for today's parquet (mirroring equity's `_TODAY_CACHE_TTL`). Stale partial cache used as fallback if Breeze is temporarily unavailable.
+- 5 new tests: `test_partial_stops_at_last_row`, `test_partial_no_flat_future_bars`, `test_non_partial_still_fills_full_day`, `test_today_partial_saved_without_future_bars`, `test_today_stale_cache_refetches`.
+
+**Result:** On refresh, historical shows correct Breeze data up to last fetch (within 10 min), then live ticks fill in from current time. No flat-bar region.
+
+---
+
+#### BUG-VIII-5: Trade markers (buy/sell circles) missing in paper trading options (2026-05-18)
+
+**Symptom:** Buy/sell execution markers appeared correctly in simulation trading (when using the TradePanel direct buttons) but were absent in paper trading options charts (where limit orders are the natural workflow).
+
+**Root cause:** In `_emit_tick_and_check_orders` (simulation.py), filled orders were recorded with `strike=session.strike` — the base ATM strike — not the order's actual per-right strike. The `Order` model already carries `order.strike` correctly set at placement time (via `orders.py:_strike_for_right`: `session.strike_ce` for CE, `session.strike_pe` for PE). But the fill path ignored it.
+
+The frontend marker filter is strict equality: `t.strike === pane.strike`. The pane's strike is `session.strike_ce` or `session.strike_pe`. For OTM sessions (`strike_ce ≠ session.strike`), the mismatch caused all trades to be filtered out.
+
+**Why simulation appeared to work:** Simulation users typically used the TradePanel's direct BUY/SELL buttons, which call `api.buy()`/`api.sell()` → `_strike_for_right()` → correct strike. Paper trading users place limit/SL orders via the order panel, which fill through `_emit_tick_and_check_orders` — where the bug lived.
+
+**Fix** (`backend/app/services/simulation.py`): One-line change in `_emit_tick_and_check_orders`:
+```python
+strike=order.strike if order.strike is not None else session.strike,
+```
+`order.strike` is always populated for orders placed since Sprint 1; fallback to `session.strike` handles any pre-existing DDB orders.
+
+---
+
+#### BUG-VIII-6: SELL stoploss fill not crediting wallet (2026-05-18)
+
+**Symptom:** After buying shares and closing via a stoploss SELL order, the wallet showed the BUY debit but not the SELL credit — funds were permanently removed even after fully exiting the position.
+
+**Root cause:** In `order_service.check_orders`, the wallet credit for SELL fills was gated on `not order.is_stoploss`. Since `OrderPanel.tsx` sends `is_stoploss=True` for all SL-tab orders, this condition was always false — sale proceeds were never returned.
+
+The original design said "SL orders have zero wallet impact" which is correct for *placement* (no upfront debit for SELL SL) and *cancel* (nothing to refund), but wrong for *fill* — a SELL always returns cash regardless of order type.
+
+**Fix** (`backend/app/services/order_service.py`): Removed `not order.is_stoploss` guard from the SELL credit condition:
+```python
+# Before (wrong): credited only if not is_stoploss
+if order.side == TradeSide.SELL and trading_date and not order.is_stoploss:
+# After (correct): all SELL fills credit the wallet
+if order.side == TradeSide.SELL and trading_date:
+```
+Updated CLAUDE.md wallet coverage constraint. Corrected the pre-existing test `test_sell_sl_fill_does_not_credit_wallet` (which asserted the wrong behaviour) and added 3 regression tests in `TestSLWalletCredit`.
+
+---
+
+### Lessons Learned — Post-Sprint Bugs (BUG-VIII-4 to BUG-VIII-6)
+
+**Partial vs full-day gap-fill must be mode-aware**
+- For past dates, filling a full day with ffill is correct — options don't always trade every second.
+- For today's date (paper trading), ffill to market_close writes fake future bars that corrupt the historical display after refresh. The partial pattern from equity's `validate_and_fill_gaps(partial=True)` should have been applied to options from the start.
+- **Rule:** Any parquet written for today's date must stop gap-fill at the last actual data row. Mirror the TTL + partial pattern from `broker_service.fetch_historical` in every data-fetch service.
+
+**Order fill path must use order-level fields, not session-level fields**
+- `Order.strike` was added in Sprint 1 specifically to support per-right strikes. The fill path in `_emit_tick_and_check_orders` was the only place that still used `session.strike` (a session-level aggregate). This created a split: direct TradePanel trades used `_strike_for_right()` correctly; order-fill trades silently used the wrong strike.
+- **Rule:** When recording a trade from a filled order, always use order-level fields (`order.strike`, `order.right`) rather than re-deriving from the session. The order was placed with exact values; the session aggregate is lossy.
+
+**Wallet credit/debit rules must be symmetric around position lifecycle**
+- A BUY that debits the wallet must be paired with a SELL that credits — regardless of the SELL's mechanism (LIMIT, TARGET, STOPLOSS). The original "SL = zero wallet impact" rule was designed for placement and cancel (correct) but was incorrectly extended to fill (wrong).
+- **Rule:** Any order that exits a position by selling an asset must credit the wallet. The `is_stoploss` flag controls debit-on-placement and refund-on-cancel only. Never use it to suppress a fill credit.
+
+---
+
 ### 🔜 Sprint 4 — 2-Worker nginx Sticky Sessions (optional)

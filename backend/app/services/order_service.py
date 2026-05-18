@@ -282,8 +282,11 @@ def check_orders(
             order.status = OrderStatus.FILLED
             order.filled_at = current_time
             order.filled_price = current_price
-            # Credit wallet on regular SELL fill; SL orders skip wallet entirely
-            if order.side == TradeSide.SELL and trading_date and not order.is_stoploss:
+            # Credit wallet on every SELL fill (LIMIT, TARGET, or SL).
+            # SL placement has no debit; the corresponding BUY already debited. Skipping
+            # the credit here would permanently remove those funds from the wallet even
+            # after the position is fully closed.
+            if order.side == TradeSide.SELL and trading_date:
                 from app.services.wallet_service import credit
                 credit(order.user_id, round(order.quantity * current_price, 2), trading_date)
             _write_order_to_db(order)
