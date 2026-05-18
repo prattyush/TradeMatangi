@@ -219,5 +219,64 @@ Note: the `VITE_API_BASE_URL` env var introduced in Sprint 3 means switching to 
 
 ---
 
-### 🔜 Sprint 3 — Backend Deployment Prep
+### Sprint 3 — Backend Deployment Prep ✅ Complete (PR #33, branch docs/phase-viii-sprint-3-design, 2026-05-18)
+
+**Changes:**
+- `uvloop>=0.19.0` added to `backend/requirements.txt`
+- `scripts/start-backend-ec2.sh`: `--workers 1 --loop uvloop` (single worker required; in-memory state breaks multi-worker)
+- `frontend/src/config.ts`: `export const BACKEND_URL = import.meta.env.VITE_API_BASE_URL ?? ''`
+- `frontend/src/vite-env.d.ts`: new — declares `ImportMetaEnv` so TypeScript accepts `import.meta.env`
+- `frontend/.env`: `VITE_API_BASE_URL=http://localhost:8700` (dev, committed via `!frontend/.env` gitignore negation)
+- `frontend/.env.production`: `VITE_API_BASE_URL=` empty — nginx on EC2 proxies `/api/` same-origin
+- `.gitignore`: `!frontend/.env` negation so non-secret dev URL is committed
+
+---
+
+### Bugs Fixed Post-Sprint-2 (2026-05-18)
+
+#### BUG-VIII-1: Admin user DynamoDB record corrupted from early phase
+
+**Symptom:** Login with `admin@tradematangi.com` / `admin123` returned "Invalid email or password."
+
+**Root cause:** The admin record in DynamoDB was written in an early phase before proper auth existed:
+- `password_hash` field contained plain text `"abc123"` (not bcrypt)
+- Record had `username` field instead of `email`
+- `seed_user()` skips re-seeding when the `user_id` already exists, so the corrupt record persisted
+
+**Fix:** One-time manual DynamoDB update via Python to set `email = "admin@tradematangi.com"` and `password_hash = bcrypt("admin123")`. No code change — `seed_user()` logic remains correct for new deployments.
+
+---
+
+#### BUG-VIII-2: Paper trading options streaming stops when pane is added/removed with different strike
+
+**Symptom:** Deleting a CE/PE pane and adding it back with a different strike caused all chart streaming (including equity) to stop. In simulation mode, streaming resumed after pane data loaded; in paper mode it did not.
+
+**Root cause — event loop freeze:**
+`update_pane_strike` (async endpoint) called `_ensure_options_data` and `fetch_options_instrument_token` as synchronous blocking calls. For paper mode, `_ensure_options_data` fetches today's Breeze data (~10–30s). This froze the asyncio event loop, blocking Phase 3 from processing Kite ticks. In simulation mode the same freeze occurred but the tick loop is driven from pre-loaded in-memory data so it resumed immediately. In paper mode Phase 3 depends on the Kite WebSocket and can be stuck at a 30s timeout.
+
+**Root cause — Kite reconnect storms:**
+`_on_error` scheduled a new `threading.Timer` on every 403 error. kiteconnect retries rapidly, so dozens of restart timers piled up. Each timer called `_restart_with_fresh_creds` which closed and replaced the ticker. When the user stopped the old session and started a new one, a stale timer from the old session's 403 errors fired after the new session had already registered and created a healthy new ticker — closing it and breaking the new session.
+
+**Fixes:**
+- `routers/simulation.py` — `update_pane_strike`: wraps `_ensure_options_data` in `loop.run_in_executor` (thread pool). For paper mode uses `_soft_ensure` wrapper so data errors don't fail the live session. `fetch_options_instrument_token` also moved to executor.
+- `kite_service.py` — `KiteBroadcaster`:
+  - `_restart_pending: bool` flag: only one restart timer in flight at a time; `_on_error` returns early if already scheduled.
+  - `_restart_generation: int` counter: bumped in `_start` and `unregister` (when closing last session's ticker). `_restart_with_fresh_creds(gen)` compares `gen` to current generation and no-ops if stale — prevents old timers from closing a new session's healthy ticker.
+  - `_read_config`: reads DDB token_service first (same pattern as `_get_kite`), so updating the Kite token in Admin settings takes effect on the next reconnect attempt.
+  - `_notify_sessions_error`: pushes `{"type": "broker_error", "message": ...}` dict to every registered session's `paper_tick_queue`.
+  - `_on_close`: calls `_notify_sessions_error` so frontend shows the orange broker error banner.
+- `simulation.py` (service) — Phase 3 loop: handles `broker_error` type from `paper_tick_queue` by forwarding to `session.queue` as JSON for SSE delivery.
+
+---
+
+#### BUG-VIII-3: Wallet reset not persisting across page refresh / backend restart
+
+**Symptom:** Setting wallet to ₹12,000 via Settings showed correctly, but after page refresh reverted to ₹1,50,000.
+
+**Root cause:** `wallet_service._load_from_db` queries DynamoDB with `Key("date").lt(date)` — strictly less than. When `reset()` writes a record for today's date, a subsequent cold-start of `get_or_init_wallet` (empty in-memory cache) skips today's own record because `today < today` is false. It falls back to carry-forward from the previous day or to `DEFAULT_BALANCE = 150,000`.
+
+**Fix:** Changed `Key("date").lt(date)` → `Key("date").lte(date)` in `_load_from_db`. With `ScanIndexForward=False, Limit=1`, today's own record is returned first (most recent), correctly restoring the reset value. All 14 wallet tests pass.
+
+---
+
 ### 🔜 Sprint 4 — 2-Worker nginx Sticky Sessions (optional)

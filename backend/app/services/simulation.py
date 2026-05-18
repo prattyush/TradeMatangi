@@ -685,6 +685,14 @@ async def _run_paper_session(session: SimulationSession) -> None:
 
             tick_right: str | None = payload.get("right")
             tick_type = payload.get("type", "tick")
+            if tick_type == "broker_error":
+                # Forward connection-lost / reconnect-failed messages to the SSE stream.
+                error_event = {"type": "broker_error", "message": payload.get("message", "Kite connection lost")}
+                try:
+                    session.queue.put_nowait(json.dumps(error_event))
+                except asyncio.QueueFull:
+                    pass
+                continue
             if tick_type != "tick":
                 continue
 
