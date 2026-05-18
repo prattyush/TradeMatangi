@@ -48,8 +48,16 @@ if [ ! -d "node_modules" ]; then
     npm install
 fi
 
+# Resolve LOG_DIR from accesskeys.ini — mirrors config.py logic
+INI="$REPO_ROOT/data/accesskeys.ini"
+LOG_DIR=$(awk -F'=' '/^\[paths\]/{f=1;next} /^\[/{f=0} f&&/^logs[[:space:]]*/{gsub(/^[[:space:]]+|[[:space:]]+$/,"",$2); print $2; exit}' "$INI" 2>/dev/null || true)
+if [ -z "$LOG_DIR" ]; then
+    LOG_DIR="$REPO_ROOT/data/logs"
+fi
+mkdir -p "$LOG_DIR"
+
 echo "Starting frontend on http://$PUBLIC_IP:5173 ..."
 nohup node node_modules/vite/bin/vite.js --host \
-  > "$REPO_ROOT/frontend.log" 2>&1 &
+  > "$LOG_DIR/frontend.log" 2>&1 &
 
-echo "Frontend started (PID $!). Log: $REPO_ROOT/frontend.log"
+echo "Frontend started (PID $!). Log: $LOG_DIR/frontend.log"
