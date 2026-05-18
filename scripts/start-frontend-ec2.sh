@@ -49,4 +49,7 @@ if [ ! -d "node_modules" ]; then
 fi
 
 echo "Starting frontend on http://$PUBLIC_IP:5173 ..."
-node node_modules/vite/bin/vite.js --host
+nohup node node_modules/vite/bin/vite.js --host \
+  > "$REPO_ROOT/frontend.log" 2>&1 &
+
+echo "Frontend started (PID $!). Log: $REPO_ROOT/frontend.log"
