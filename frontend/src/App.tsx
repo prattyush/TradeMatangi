@@ -293,11 +293,15 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
     } else if (event.type === 'session_ended') {
       sim.handleSessionEnded()
     } else if (event.type === 'order_filled') {
-      sim.handleOrderFilled(event.order_id as string)
+      sim.handleOrderFilled(event.order_id as string, event.right as string | null | undefined)
+    } else if (event.type === 'order_placed') {
+      // Strategy-placed orders (e.g. AutoStop TARGET) surfaced so the UI shows them
+      // in the open orders panel and the SL tab can be used after they fill.
+      sim.addOpenOrder(event as unknown as import('./services/api').Order)
     } else if (event.type === 'broker_error') {
       setBrokerError(event.message as string)
     }
-  }, [sim.setLatestTick, sim.handleSessionEnded, sim.handleOrderFilled])
+  }, [sim.setLatestTick, sim.handleSessionEnded, sim.handleOrderFilled, sim.addOpenOrder])
 
   useSSE(sim.sseUrl, handleSSEMessage)
 

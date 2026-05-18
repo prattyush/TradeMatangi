@@ -352,4 +352,59 @@ Updated CLAUDE.md wallet coverage constraint. Corrected the pre-existing test `t
 
 ---
 
+### Trade Analysis — Session Grouping ✅ Complete (branch feature/trade-analysis-session-grouping, 2026-05-18)
+
+**What changed:** The Trade Analysis modal previously showed one card per session, including sessions with no trades. It now groups sessions by `(date, symbol, instrument_type, session_type)` and filters out sessions with zero trades.
+
+**Behaviour:**
+- One card per `(date, symbol, equity/options, sim/paper)` combination.
+- Sessions with no trades are silently excluded.
+- If multiple sessions share the same combination (e.g. user ran two sim sessions on NIFTY options on the same day), they appear as a single merged card with the trade tables separated by a dashed rule labelled "Session 1 · 09:22 / Session 2 · 11:05".
+- A single `AnalysisChart` with all trades from every session in the group — markers span the full day without duplicating the chart.
+- The aggregate stats bar header was renamed from "Sessions" to "Days" to reflect the grouped count.
+- P&L% in the group header is computed against the first session's capital (the capital at the start of the day's first session).
+
+**Key implementation notes (`TradeAnalysis.tsx`):**
+- `groupSessions(sessions: SessionSummary[]): SessionGroup[]` — filters zero-trade sessions, buckets by key, accumulates `totalPnl`, `totalTrades`, `totalCommission`; sorted date-desc then symbol-asc.
+- `GroupCard` fetches all session details in parallel (`Promise.all`) on first expand.
+- `allTrades` is derived from `details` state (not fetched again) so the chart re-renders once details load.
+- Dashed session separator uses a flex row with `borderTop` on two divs flanking the label — no `<hr>` (avoids browser default margins).
+- `TradeTable` extracted as a reusable sub-component to avoid repeating the table markup per session.
+
+**Files changed:**
+- `frontend/src/components/TradeAnalysis.tsx` — full rewrite of list/card logic; `AnalysisChart` and helper functions unchanged.
+
+---
+
+### AutoStop Order Visibility + SL Tab Fix ✅ Complete (PR #35, merged to dev 2026-05-18)
+
+**Symptom:** After an AutoStop strategy places a TARGET entry order and it fills, the SL tab remained greyed out (showing FLAT position). AutoStop pending orders also never appeared in the open orders panel — the user could not see or cancel them.
+
+**Root cause — two cooperating gaps:**
+
+1. **`order_filled` event missing `right`**: The SSE event only carried `order_id`. The frontend recovered `right` by looking up the order in `openOrders`. But AutoStop places orders server-side — they were never added to the frontend's `openOrders` list. So `right` resolved to `undefined`, the equity position was refreshed instead of CE/PE, and `positionCE`/`positionPE` stayed FLAT.
+
+2. **No `order_placed` event for strategy orders**: Orders placed by `strategy_service.on_tick` were invisible to the frontend. The open orders panel only showed orders placed by the user via the UI.
+
+**Fix (`simulation.py` — `_emit_tick_and_check_orders`):**
+- Added `"right": order.right` to every `order_filled` event dict.
+- After calling `strategy_service.on_tick`, snapshot open orders before vs after; for any new orders emit an `order_placed` event containing the full order fields.
+
+**Fix (frontend):**
+- `handleOrderFilled` signature changed to `(orderId, right)` — reads `right` from the event payload instead of looking up in `openOrders`. Dependency on `state.openOrders` removed from the callback.
+- New `addOpenOrder` action in `useSimulation` appends a single order to `openOrders`.
+- `App.tsx handleSSEMessage` handles `order_placed` by calling `addOpenOrder` — strategy-placed orders now appear in the open orders panel immediately.
+
+**Lessons learned:**
+- SSE event payloads must be self-contained. Never rely on client-side state to reconstruct fields that the server already knows — if the order wasn't placed by the frontend, the lookup silently returns `undefined`.
+- Strategy-placed orders are a separate lifecycle from user-placed orders. Any server-side action that creates UI-visible state (open order, position change) needs a corresponding SSE event. The `order_placed` pattern is the right primitive.
+- The `order_filled` + `order_placed` event pair makes the SSE stream the single source of truth for order lifecycle, regardless of who placed the order.
+
+**Files changed:**
+- `backend/app/services/simulation.py` — `order_filled` gets `right`; `order_placed` emitted for strategy orders
+- `frontend/src/hooks/useSimulation.ts` — `handleOrderFilled(orderId, right)`, `addOpenOrder`
+- `frontend/src/App.tsx` — handles `order_placed` event
+
+---
+
 ### 🔜 Sprint 4 — 2-Worker nginx Sticky Sessions (optional)

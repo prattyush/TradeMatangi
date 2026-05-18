@@ -173,12 +173,37 @@ def _emit_tick_and_check_orders(
             "trigger_price": order.trigger_price,
             "filled_price": order.filled_price,
             "filled_at": order.filled_at,
+            "right": order.right,
         })
 
-    # Strategy evaluation — fire-and-forget; never raises into the tick loop
+    # Strategy evaluation — snapshot open orders before/after so strategy-placed
+    # orders (e.g. AutoStop TARGET) are surfaced to the frontend via order_placed events.
     try:
         from app.services import strategy_service
+        from app.services.order_service import get_open_orders
+        before_ids = {o.order_id for o in get_open_orders(session.session_id)}
         strategy_service.on_tick(session, tick, tick_right)
+        for new_order in get_open_orders(session.session_id):
+            if new_order.order_id not in before_ids:
+                fill_events.append({
+                    "type": "order_placed",
+                    "order_id": new_order.order_id,
+                    "session_id": new_order.session_id,
+                    "user_id": new_order.user_id,
+                    "symbol": new_order.symbol,
+                    "side": new_order.side.value,
+                    "order_type": new_order.order_type.value,
+                    "quantity": new_order.quantity,
+                    "trigger_price": new_order.trigger_price,
+                    "limit_price": new_order.limit_price,
+                    "status": new_order.status.value,
+                    "created_at": new_order.created_at,
+                    "filled_at": new_order.filled_at,
+                    "filled_price": new_order.filled_price,
+                    "is_stoploss": new_order.is_stoploss,
+                    "right": new_order.right,
+                    "strike": new_order.strike,
+                })
     except Exception as exc:
         logger.warning("strategy eval error for session %s: %s", session.session_id, exc)
 

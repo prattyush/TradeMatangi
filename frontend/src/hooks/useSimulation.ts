@@ -286,6 +286,10 @@ export function useSimulation() {
     }
   }, [state.sessionId])
 
+  const addOpenOrder = useCallback((order: Order) => {
+    setState(s => ({ ...s, openOrders: [...s.openOrders, order] }))
+  }, [])
+
   const cancelOrder = useCallback(async (orderId: string) => {
     if (!state.sessionId) return
     await api.cancelOrder(state.sessionId, orderId)
@@ -296,16 +300,14 @@ export function useSimulation() {
     }))
   }, [state.sessionId])
 
-  const handleOrderFilled = useCallback(async (orderId: string) => {
-    // Find the order to know its right
-    const order = state.openOrders.find(o => o.order_id === orderId)
+  const handleOrderFilled = useCallback(async (orderId: string, right: string | null | undefined) => {
     setState(s => ({
       ...s,
       openOrders: s.openOrders.filter(o => o.order_id !== orderId),
       walletRefreshKey: s.walletRefreshKey + 1,
     }))
     if (!state.sessionId) return
-    const right = order?.right
+    // Use right from the event payload — order may not be in openOrders if placed by a strategy
     const [posCE, posPE, posEq, trades] = await Promise.all([
       right === 'CE' ? api.getPosition(state.sessionId, 'CE') : Promise.resolve(null),
       right === 'PE' ? api.getPosition(state.sessionId, 'PE') : Promise.resolve(null),
@@ -319,7 +321,7 @@ export function useSimulation() {
       ...(posEq ? { position: posEq } : {}),
       trades,
     }))
-  }, [state.sessionId, state.openOrders])
+  }, [state.sessionId])
 
   // Day P&L: realized (closed trades) + unrealized (open position), equity
   const dayPnlEquity = (() => {
@@ -431,6 +433,7 @@ export function useSimulation() {
     updateOrder,
     cancelOrder,
     handleOrderFilled,
+    addOpenOrder,
     clearOrderError,
     incrementWalletRefreshKey,
   }
