@@ -158,7 +158,7 @@ def _emit_tick_and_check_orders(
             quantity=order.quantity,
             symbol=order.symbol,
             instrument_type=session.instrument_type,
-            strike=session.strike,
+            strike=order.strike if order.strike is not None else session.strike,
             expiry=session.expiry,
             right=order.right,
             brokerage_per_order=session.brokerage_per_order,
