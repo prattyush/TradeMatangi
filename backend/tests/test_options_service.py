@@ -387,6 +387,26 @@ class TestValidateOptionsGaps:
         with pytest.raises(RuntimeError, match="No options data"):
             _validate_options_gaps(df, "2026-05-06")
 
+    def test_partial_stops_at_last_row(self):
+        # partial=True: reindex should stop at last actual data row, not market_close
+        df = self._make_df("2026-05-06", "09:15:00", "10:39:00")
+        result = _validate_options_gaps(df, "2026-05-06", partial=True)
+        assert result.index[-1] == pd.Timestamp("2026-05-06 10:39:00")
+        market_close = pd.Timestamp("2026-05-06 15:29:59")
+        assert result.index[-1] != market_close
+
+    def test_partial_no_flat_future_bars(self):
+        # partial=True: no gap-fill beyond last actual row — no fake future bars
+        df = self._make_df("2026-05-06", "09:15:00", "10:39:00", price=123.0)
+        result = _validate_options_gaps(df, "2026-05-06", partial=True)
+        assert pd.Timestamp("2026-05-06 10:45:00") not in result.index
+
+    def test_non_partial_still_fills_full_day(self):
+        # partial=False (default): should still fill to market_close for historical days
+        df = self._make_df("2026-05-06", "09:15:00", "10:39:00")
+        result = _validate_options_gaps(df, "2026-05-06", partial=False)
+        assert result.index[-1] == pd.Timestamp("2026-05-06 15:29:59")
+
 
 # ---------------------------------------------------------------------------
 # _fetch_options_day_paginated
@@ -500,6 +520,54 @@ class TestFetchOptionsHistorical:
              patch("app.services.broker_service._get_breeze", return_value=breeze_mock):
             with pytest.raises(RuntimeError, match="no options data"):
                 fetch_options_historical("NIFTY", "2026-05-06", 24000, "2026-05-19", "CE")
+
+    def test_today_partial_saved_without_future_bars(self, tmp_path):
+        # For today's date, parquet should stop at last actual row, not market_close.
+        today = datetime.date.today().strftime("%Y-%m-%d")
+        expiry = (datetime.date.today() + datetime.timedelta(days=7)).strftime("%Y-%m-%d")
+        start_sec = 9 * 3600 + 15 * 60  # 09:15:00
+        records = [
+            {"datetime": f"{today} {(start_sec + i) // 3600:02d}:{((start_sec + i) % 3600) // 60:02d}:{(start_sec + i) % 60:02d}",
+             "open": 100.0, "high": 102.0, "low": 98.0, "close": 101.0}
+            for i in range(5400)  # 09:15 to 10:39:59 (90 min × 60 sec)
+        ]
+        breeze_mock = MagicMock()
+        breeze_mock.get_historical_data_v2.return_value = {"Status": 200, "Success": records}
+        with patch("app.services.options_service.OHLCDATA_DIR", tmp_path / "ohlcdata"), \
+             patch("app.services.broker_service._get_breeze", return_value=breeze_mock):
+            result = fetch_options_historical("NIFTY", today, 24000, expiry, "CE")
+            saved = pd.read_parquet(result)
+            market_close = pd.Timestamp(f"{today} 15:29:59")
+            # Partial mode: last row must be at or near 10:39, not market_close
+            assert saved.index[-1] < market_close
+
+    def test_today_stale_cache_refetches(self, tmp_path):
+        # Stale today parquet (> TTL) triggers a re-fetch from Breeze.
+        today = datetime.date.today().strftime("%Y-%m-%d")
+        expiry = (datetime.date.today() + datetime.timedelta(days=7)).strftime("%Y-%m-%d")
+        records = [
+            {"datetime": f"{today} 09:{15 + i // 60:02d}:{i % 60:02d}",
+             "open": 200.0, "high": 202.0, "low": 198.0, "close": 201.0}
+            for i in range(60)
+        ]
+        breeze_mock = MagicMock()
+        breeze_mock.get_historical_data_v2.return_value = {"Status": 200, "Success": records}
+        ohlcdata = tmp_path / "ohlcdata"
+        ohlcdata.mkdir(parents=True, exist_ok=True)
+        with patch("app.services.options_service.OHLCDATA_DIR", ohlcdata), \
+             patch("app.services.broker_service._get_breeze", return_value=breeze_mock):
+            from app.services.options_service import options_parquet_path as opq
+            pq = opq("NIFTY", today, 24000, expiry, "CE")
+            # Pre-write a stale parquet with old close price
+            old_idx = pd.date_range(f"{today} 09:15:00", f"{today} 09:30:00", freq="1s")
+            old_df = pd.DataFrame({"open": 50.0, "high": 50.0, "low": 50.0, "close": 50.0}, index=old_idx)
+            old_df.to_parquet(pq)
+            import os, time as _time
+            os.utime(pq, (_time.time() - 700, _time.time() - 700))  # mark as 700s old (> TTL)
+            result = fetch_options_historical("NIFTY", today, 24000, expiry, "CE")
+            saved = pd.read_parquet(result)
+            # Should have re-fetched: new data has close=201.0, not old 50.0
+            assert float(saved.iloc[0]["close"]) == pytest.approx(201.0)
 
 
 # ---------------------------------------------------------------------------

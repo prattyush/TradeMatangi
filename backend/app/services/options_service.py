@@ -221,12 +221,16 @@ def _fetch_options_day_paginated(
     return all_records
 
 
-def _validate_options_gaps(df: pd.DataFrame, date: str) -> pd.DataFrame:
+def _validate_options_gaps(df: pd.DataFrame, date: str, partial: bool = False) -> pd.DataFrame:
     """
-    Fill options data to cover the full trading day.
+    Fill options data to cover the full trading day (or up to last actual row when partial).
     Options may not trade from exact market open (far-OTM contracts), so we
     forward-fill from the first available tick and backward-fill any leading gap.
     No strict gap limit — options data is inherently sparser than equity.
+
+    partial=True (today's live data): reindex only from market_open to the last actual row.
+    This prevents fake flat bars from being written into the parquet for future hours
+    that haven't happened yet (paper trading / intraday fetch).
     """
     if df.empty:
         raise RuntimeError(f"No options data for {date}.")
@@ -235,10 +239,17 @@ def _validate_options_gaps(df: pd.DataFrame, date: str) -> pd.DataFrame:
     if df.index.tzinfo is not None:
         df.index = df.index.tz_localize(None)
     market_open = pd.Timestamp(f"{date} {MARKET_OPEN}")
-    market_close = pd.Timestamp(f"{date} {MARKET_CLOSE}") - pd.Timedelta(seconds=1)
-    full_index = pd.date_range(start=market_open, end=market_close, freq="1s")
+    if partial:
+        # Stop at the last actual data row — no fake future bars for incomplete days.
+        end_ts = df.index[-1]
+    else:
+        end_ts = pd.Timestamp(f"{date} {MARKET_CLOSE}") - pd.Timedelta(seconds=1)
+    full_index = pd.date_range(start=market_open, end=end_ts, freq="1s")
     df = df.reindex(full_index).ffill().bfill()
     return df
+
+
+_OPTIONS_TODAY_CACHE_TTL = 600  # 10 min — re-fetch today's partial options data
 
 
 def fetch_options_historical(
@@ -248,17 +259,41 @@ def fetch_options_historical(
     Ensure options OHLC data for the given contract and date is cached as Parquet.
     Returns the cache path. Fetches from Breeze if not cached.
     Raises RuntimeError when Breeze returns no data (holiday / contract inactive).
+
+    For today's date (paper trading): parquet is re-fetched after _OPTIONS_TODAY_CACHE_TTL
+    seconds so the chart always shows near-current Breeze data. Gap-fill stops at the last
+    actual row (partial mode) — no fake flat bars for hours that haven't happened yet.
     """
+    import time as _time
+
     from app.services.broker_service import _get_breeze, _breeze_to_dataframe
 
+    is_today = date == datetime.date.today().strftime("%Y-%m-%d")
     pq = options_parquet_path(symbol, date, strike, expiry, right)
+    partial_pq: Path | None = None  # fallback if Breeze unavailable for today
+
     if pq.exists():
         try:
             cached_df = pd.read_parquet(pq)
             if not cached_df.empty:
-                logger.info("Options parquet cache hit: %s", pq.name)
-                return pq
-            pq.unlink()
+                if is_today:
+                    age_secs = _time.time() - pq.stat().st_mtime
+                    if age_secs < _OPTIONS_TODAY_CACHE_TTL:
+                        logger.info(
+                            "Options parquet cache hit (partial today): %s (age %.0fs)",
+                            pq.name, age_secs,
+                        )
+                        return pq
+                    partial_pq = pq
+                    logger.info(
+                        "Today's options parquet %s is stale (%.0fs) — re-fetching",
+                        pq.name, age_secs,
+                    )
+                else:
+                    logger.info("Options parquet cache hit: %s", pq.name)
+                    return pq
+            else:
+                pq.unlink()
         except Exception as e:
             logger.warning("Could not read cached options parquet %s: %s — re-fetching", pq.name, e)
             pq.unlink(missing_ok=True)
@@ -267,10 +302,25 @@ def fetch_options_historical(
         "Fetching options data: %s %s strike=%s expiry=%s right=%s",
         symbol, date, strike, expiry, right,
     )
-    breeze = _get_breeze()
-    records = _fetch_options_day_paginated(breeze, symbol, date, strike, expiry, right)
+    try:
+        breeze = _get_breeze()
+        records = _fetch_options_day_paginated(breeze, symbol, date, strike, expiry, right)
+    except Exception as exc:
+        if partial_pq is not None:
+            logger.warning(
+                "Breeze unavailable for options %s %s %s on %s (%s); using partial cache",
+                symbol, right, strike, date, exc,
+            )
+            return partial_pq
+        raise
 
     if not records:
+        if partial_pq is not None:
+            logger.warning(
+                "Breeze returned no options records for %s %s %s on %s; using partial cache",
+                symbol, right, strike, date,
+            )
+            return partial_pq
         raise RuntimeError(
             f"Breeze returned no options data for {symbol} {right} {strike} "
             f"expiry={expiry} on {date}. "
@@ -283,7 +333,7 @@ def fetch_options_historical(
             f"Could not parse Breeze options data for {symbol} {right} {strike} on {date}."
         )
 
-    df = _validate_options_gaps(df, date)
+    df = _validate_options_gaps(df, date, partial=is_today)
 
     tmp = pq.with_name(pq.name + ".tmp")
     try:
