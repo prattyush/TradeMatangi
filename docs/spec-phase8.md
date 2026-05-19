@@ -407,4 +407,108 @@ Updated CLAUDE.md wallet coverage constraint. Corrected the pre-existing test `t
 
 ---
 
+### AutoStop Lifecycle Bugs ✅ Complete (2026-05-19)
+
+Two bugs in `_on_bar_close_autostop` in `strategy_service.py`:
+
+#### Bug A — AutoStop never stopped (fired on every bar close)
+
+**Symptom:** Once started, AutoStop placed a new TARGET order on every single bar close for the remainder of the session instead of placing one and stopping.
+
+**Root cause:** `_on_bar_close_autostop` never set `strategy.status = StrategyStatus.COMPLETED`. The pruning logic at the end of `on_tick` removes only non-`RUNNING` strategies. Since AutoStop always stayed `RUNNING`, it fired indefinitely.
+
+**Fix:** After a successful `place_order` call, set `strategy.status = StrategyStatus.COMPLETED` and write to DynamoDB. Added `return` on the failure path so a failed bar does not incorrectly mark the strategy complete.
+
+#### Bug B — AutoStop markers missing on OTM options panes
+
+**Symptom:** For OTM options sessions (where `strike_ce ≠ strike_pe ≠ session.strike`), AutoStop-placed orders filled correctly but produced no trade marker on the chart.
+
+**Root cause:** `_on_bar_close_autostop` called `place_order(...)` without passing `strike`. The order was stored with `strike=None`. When the order filled, `_emit_tick_and_check_orders` fell back to `session.strike` (the base strike) for `record_trade`. The frontend marker filter (`t.strike === pane.strike`) compared `session.strike` against `strike_ce` or `strike_pe` — a mismatch for OTM sessions.
+
+**Fix:** Resolve the per-right strike before calling `place_order`:
+```python
+if tick_right == "CE":
+    order_strike = getattr(session, "strike_ce", None) or getattr(session, "strike", None)
+elif tick_right == "PE":
+    order_strike = getattr(session, "strike_pe", None) or getattr(session, "strike", None)
+else:
+    order_strike = None
+```
+Pass `strike=order_strike` to `place_order`. The fill path's existing `order.strike if order.strike is not None else session.strike` fallback then uses the correct value.
+
+**ATM sessions were unaffected** (`strike == strike_ce == strike_pe`); OTM sessions now show markers on the correct pane.
+
+**New tests added (2):** `test_autostop_is_one_shot_fires_only_on_first_bar_close`, `test_autostop_completed_after_firing`.
+
+**Files changed:**
+- `backend/app/services/strategy_service.py` — `_on_bar_close_autostop`: per-right strike resolution + `COMPLETED` status after placement
+- `backend/tests/test_strategy_service.py` — 2 new one-shot tests
+
+---
+
+### Wallet Widget Stale-Fetch Fix ✅ Complete (2026-05-19)
+
+**Symptom:** After resetting the wallet via the Settings modal (or after a rapid sequence of order fills), the `WalletWidget` sometimes continued displaying the old balance. A page refresh always showed the correct value.
+
+**Root cause:** `WalletWidget.useEffect([date, refreshKey])` started a new `api.getWallet(date)` fetch on every `refreshKey` change (order fills, manual reset). With no `AbortController` cleanup, concurrent in-flight requests could resolve out of order. A request that started *before* the reset could resolve *after* the reset's response, overwriting the correct new balance with a stale value.
+
+**Fix:** Added `let cancelled = false` + cleanup function in the `useEffect`:
+```typescript
+return () => { cancelled = true }
+```
+All `.then` / `.finally` callbacks check `if (!cancelled)` before calling `setBalance` or `setLoading`, so only the latest request's response is applied.
+
+**Files changed:**
+- `frontend/src/components/WalletWidget.tsx`
+
+---
+
+### AggressiveStoploss — "Only in Profit" Guard ✅ Complete (2026-05-19)
+
+**Feature:** Optional mode that skips placing/updating the stoploss when the bar closes at a loss (below entry for LONG, above entry for SHORT). The strategy keeps running and resumes updating the SL on the next bar that closes in profit.
+
+**Use case:** User enters at ₹35, the bar closes at ₹32 (below entry). Without the guard, the SL would be placed at 32 × 0.99 = ₹31.68 — locking in a loss. With the guard enabled, the SL is skipped and the trade is allowed to recover. On the next bar that closes at ₹42 (above entry), the SL is placed at 42 × 0.99 = ₹41.58 — protecting the profit.
+
+**Implementation:**
+
+*Backend:*
+- `StartStrategyRequest.only_in_profit: bool = False` (opt-in, backward-compat default)
+- Routed into strategy `metadata["only_in_profit"]` in `routers/strategies.py`
+- Guard in `_on_bar_close_aggressive_sl` before `sl_price` computation:
+  ```python
+  if meta.get("only_in_profit", False):
+      if position.side == "LONG" and close_price <= position.avg_entry_price:
+          return
+      if position.side == "SHORT" and close_price >= position.avg_entry_price:
+          return
+  ```
+
+*Frontend:*
+- `StartStrategyRequest` interface: `only_in_profit?: boolean`
+- `OrderPanel.tsx`: "Only when in profit" checkbox above the `▶ Start Aggressive SL` button; local `aggrSlOnlyInProfit` state; passed through `onStartStrategy` opts
+- `App.tsx`: `handleStartStrategy` forwards `opts.onlyInProfit ?? false` as `only_in_profit` in the API request
+
+**New tests added (2):** `test_only_in_profit_skips_when_close_below_entry`, `test_only_in_profit_places_sl_when_close_above_entry`.
+
+**Lessons learned:**
+
+**AggressiveStoploss was already a continuous strategy — no lifecycle change needed**
+Unlike AutoStop (which was one-shot and needed `COMPLETED` status), AggressiveStoploss is intentionally long-running. It fires on every bar close and never self-completes — even when the position goes FLAT it keeps "running" and silently returns early each bar. This is correct because the user may re-enter and want the SL strategy to resume automatically. The distinction between one-shot and continuous strategies must be explicit in the design: AutoStop = entry setup (one-shot), AggressiveStoploss = trade management (continuous).
+
+**Strategy metadata is the right extension point for per-strategy flags**
+All strategy configuration passes through `StartStrategyRequest` → `metadata` dict → `StrategyInstance.metadata`. Adding a flag is a one-line change in three places (schema, router, service logic) with no new tables, endpoints, or state. The `only_in_profit` pattern is reusable for future strategy flags.
+
+**Test count:** 391 backend tests passing; TypeScript clean.
+
+**Files changed:**
+- `backend/app/models/schemas.py` — `only_in_profit: bool = False` on `StartStrategyRequest`
+- `backend/app/routers/strategies.py` — routes `only_in_profit` into metadata
+- `backend/app/services/strategy_service.py` — profit guard in `_on_bar_close_aggressive_sl`
+- `frontend/src/services/api.ts` — `only_in_profit?: boolean` on `StartStrategyRequest`
+- `frontend/src/components/OrderPanel.tsx` — checkbox + state + opts passthrough
+- `frontend/src/App.tsx` — `only_in_profit` in `api.startStrategy` call
+- `backend/tests/test_strategy_service.py` — 2 new tests
+
+---
+
 ### 🔜 Sprint 4 — 2-Worker nginx Sticky Sessions (optional)

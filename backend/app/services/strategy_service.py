@@ -253,6 +253,14 @@ def _on_bar_close_autostop(
             logger.warning("AutoStop %s: quantity calc failed: %s", strategy.strategy_id, exc)
             return
 
+    # Resolve per-right strike so trade markers appear on the correct options pane
+    if tick_right == "CE":
+        order_strike = getattr(session, "strike_ce", None) or getattr(session, "strike", None)
+    elif tick_right == "PE":
+        order_strike = getattr(session, "strike_pe", None) or getattr(session, "strike", None)
+    else:
+        order_strike = None
+
     from app.services.order_service import place_order
     from app.models.schemas import TradeSide, OrderType
     side = TradeSide.BUY if direction == "BUY" else TradeSide.SELL
@@ -267,6 +275,7 @@ def _on_bar_close_autostop(
             trading_date=session.date,
             trigger_price=trigger_price,
             right=tick_right,
+            strike=order_strike,
             user_id=session.user_id,
         )
         logger.info(
@@ -275,6 +284,11 @@ def _on_bar_close_autostop(
         )
     except Exception as exc:
         logger.warning("AutoStop %s: place_order failed: %s", strategy.strategy_id, exc)
+        return
+
+    # One-shot: mark COMPLETED so AutoStop doesn't fire again on the next bar
+    strategy.status = StrategyStatus.COMPLETED
+    _write_strategy_to_db(strategy)
 
 
 def _find_open_exit_orders(session_id: str, exit_side, tick_right: str | None, quantity: int) -> list:
@@ -314,6 +328,14 @@ def _on_bar_close_aggressive_sl(
         return
 
     close_price = closed_ohlc["close"]
+
+    meta = strategy.metadata
+    if meta.get("only_in_profit", False):
+        if position.side == "LONG" and close_price <= position.avg_entry_price:
+            return  # bar closed at a loss — skip SL update
+        if position.side == "SHORT" and close_price >= position.avg_entry_price:
+            return
+
     if position.side == "LONG":
         sl_price = round(close_price * 0.99, 2)
         sl_side = TradeSide.SELL
