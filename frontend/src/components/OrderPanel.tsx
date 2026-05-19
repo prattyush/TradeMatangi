@@ -36,7 +36,7 @@ interface Props {
   onStartStrategy?: (
     strategyType: 'AutoStop' | 'BreakEven' | 'AggressiveStoploss',
     right: 'CE' | 'PE' | null,
-    opts: { quantity?: number; fundsRatioPct?: number; direction?: 'BUY' | 'SELL' }
+    opts: { quantity?: number; fundsRatioPct?: number; direction?: 'BUY' | 'SELL'; onlyInProfit?: boolean }
   ) => Promise<void>
   onCancelAllStrategies?: () => Promise<void>
 }
@@ -77,6 +77,7 @@ export default function OrderPanel({
   const [stratLoading, setStratLoading] = useState<string | null>(null)
   const [stratError, setStratError] = useState<string | null>(null)
   const [cancellingAll, setCancellingAll] = useState(false)
+  const [aggrSlOnlyInProfit, setAggrSlOnlyInProfit] = useState(false)
 
   // Inline edit state
   const [editingOrderId, setEditingOrderId] = useState<string | null>(null)
@@ -219,7 +220,8 @@ export default function OrderPanel({
       const opts = fundsRatioMode
         ? { fundsRatioPct: fundsRatios[stratRatio] / 100, direction }
         : { quantity: stratQty, direction }
-      await onStartStrategy(strategyType, right, opts)
+      const extraOpts = strategyType === 'AggressiveStoploss' ? { onlyInProfit: aggrSlOnlyInProfit } : {}
+      await onStartStrategy(strategyType, right, { ...opts, ...extraOpts })
     } catch (e) {
       setStratError(e instanceof Error ? e.message : 'Failed to start strategy')
     } finally {
@@ -424,6 +426,15 @@ export default function OrderPanel({
             <div>
               <div style={{ fontSize: 11, color: '#e6edf3', fontWeight: 600, marginBottom: 4 }}>Aggressive SL</div>
               <div style={{ fontSize: 9, color: '#484f58', marginBottom: 4 }}>Shift SL to 1% from bar close each bar</div>
+              <label style={{ fontSize: 10, color: '#8b949e', display: 'flex', alignItems: 'center', gap: 5, marginBottom: 5, cursor: 'pointer' }}>
+                <input
+                  type="checkbox"
+                  checked={aggrSlOnlyInProfit}
+                  onChange={e => setAggrSlOnlyInProfit(e.target.checked)}
+                  style={{ accentColor: '#79c0ff' }}
+                />
+                Only when in profit
+              </label>
               <button
                 onClick={() => handleStartStrategy('AggressiveStoploss')}
                 disabled={!stratHasPosition || stratLoading === 'AggressiveStoploss'}

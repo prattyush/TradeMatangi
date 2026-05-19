@@ -65,6 +65,7 @@ def start_strategy(req: StartStrategyRequest, user_id: str = Depends(get_request
         "autostop_trigger_type": req.autostop_trigger_type,
         "autostop_deviation_pct": req.autostop_deviation_pct,
         "direction": direction,
+        "only_in_profit": req.only_in_profit,
     }
     if req.quantity is not None:
         metadata["quantity"] = req.quantity

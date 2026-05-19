@@ -16,11 +16,13 @@ export default function WalletWidget({ date, refreshKey }: Props) {
 
   useEffect(() => {
     if (!date) return
+    let cancelled = false
     setLoading(true)
     api.getWallet(date)
-      .then(w => setBalance(w.balance))
+      .then(w => { if (!cancelled) setBalance(w.balance) })
       .catch(() => {/* backend may not be running */})
-      .finally(() => setLoading(false))
+      .finally(() => { if (!cancelled) setLoading(false) })
+    return () => { cancelled = true }
   }, [date, refreshKey])
 
   const color = balance !== null && balance < 0 ? '#f85149' : '#3fb950'

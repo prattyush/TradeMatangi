@@ -326,7 +326,7 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
   const handleStartStrategy = useCallback(async (
     strategyType: StartStrategyRequest['strategy_type'],
     right: 'CE' | 'PE' | null,
-    opts: { quantity?: number; fundsRatioPct?: number; direction?: 'BUY' | 'SELL' },
+    opts: { quantity?: number; fundsRatioPct?: number; direction?: 'BUY' | 'SELL'; onlyInProfit?: boolean },
   ) => {
     if (!sim.sessionId) return
     const resp = await api.startStrategy({
@@ -338,6 +338,7 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
       direction: opts.direction,
       autostop_trigger_type: autostopTriggerType,
       autostop_deviation_pct: autostopDeviationPct,
+      only_in_profit: opts.onlyInProfit ?? false,
     })
     setRunningStrategies(prev => [...prev, resp])
   }, [sim.sessionId, autostopTriggerType, autostopDeviationPct])

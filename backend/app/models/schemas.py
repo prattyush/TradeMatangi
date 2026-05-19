@@ -264,6 +264,8 @@ class StartStrategyRequest(BaseModel):
     # AutoStop trigger settings
     autostop_trigger_type: str = "bar"    # "bar" (high/low) | "deviation" (% from close)
     autostop_deviation_pct: float = 1.0   # % deviation from close (only when type=deviation)
+    # AggressiveStoploss settings
+    only_in_profit: bool = False          # skip SL update when close is at a loss
 
 
 class StrategyResponse(BaseModel):
