@@ -98,6 +98,7 @@ export interface StartStrategyRequest {
   direction?: 'BUY' | 'SELL'
   autostop_trigger_type?: 'bar' | 'deviation'
   autostop_deviation_pct?: number
+  only_in_profit?: boolean
 }
 
 export interface SimulationStartResponse {

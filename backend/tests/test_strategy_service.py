@@ -117,6 +117,36 @@ class TestAutoStopBarMode:
         assert orders[0].side == TradeSide.SELL
         assert orders[0].trigger_price == pytest.approx(90.0)  # bar-1 low
 
+    def test_autostop_is_one_shot_fires_only_on_first_bar_close(self):
+        """AutoStop must mark itself COMPLETED after placing the order — it must not fire again."""
+        session = _session()
+        svc.start_strategy(session, "AutoStop", None, {
+            "direction": "BUY", "quantity": 1,
+            "autostop_trigger_type": "bar", "autostop_deviation_pct": 1.0,
+        })
+
+        svc.on_tick(session, _tick(T0, h=120.0, c=110.0), None)
+        # Bar-1 closes → places order
+        svc.on_tick(session, _tick(T1, h=115.0, c=112.0), None)
+        assert len(order_service.get_open_orders(SESSION)) == 1
+
+        # Bar-2 closes → strategy should NOT fire again
+        svc.on_tick(session, _tick(T2, h=130.0, c=125.0), None)
+        assert len(order_service.get_open_orders(SESSION)) == 1  # still only 1 order
+
+    def test_autostop_completed_after_firing(self):
+        """Strategy instance status must be COMPLETED once the order is placed."""
+        session = _session()
+        strat = svc.start_strategy(session, "AutoStop", None, {
+            "direction": "BUY", "quantity": 1,
+            "autostop_trigger_type": "bar", "autostop_deviation_pct": 1.0,
+        })
+
+        svc.on_tick(session, _tick(T0, h=120.0, c=110.0), None)
+        assert strat.status == StrategyStatus.RUNNING
+        svc.on_tick(session, _tick(T1, h=115.0, c=112.0), None)
+        assert strat.status == StrategyStatus.COMPLETED
+
 
 class TestAutoStopDeviationMode:
     def test_buy_places_target_at_close_plus_deviation(self):
@@ -290,6 +320,34 @@ class TestAggressiveStoploss:
         orders = order_service.get_open_orders(SESSION)
         assert len(orders) == 1
         assert orders[0].order_id == existing_tgt.order_id
+        assert orders[0].trigger_price == pytest.approx(110.0 * 0.99)
+
+    def test_only_in_profit_skips_when_close_below_entry(self):
+        """SL must NOT be placed when bar closes below avg_entry with only_in_profit=True."""
+        session = _session()
+        self._add_long_position()  # avg_entry = 100.0
+
+        svc.start_strategy(session, "AggressiveStoploss", None, {"only_in_profit": True})
+
+        # Bar closes at 95 (below entry 100) → should skip
+        svc.on_tick(session, _tick(T0, c=95.0), None)
+        svc.on_tick(session, _tick(T1, c=97.0), None)
+
+        assert len(order_service.get_open_orders(SESSION)) == 0
+
+    def test_only_in_profit_places_sl_when_close_above_entry(self):
+        """SL must be placed when bar closes above avg_entry with only_in_profit=True."""
+        session = _session()
+        self._add_long_position()  # avg_entry = 100.0
+
+        svc.start_strategy(session, "AggressiveStoploss", None, {"only_in_profit": True})
+
+        # Bar closes at 110 (above entry 100) → should place SL
+        svc.on_tick(session, _tick(T0, c=110.0), None)
+        svc.on_tick(session, _tick(T1, c=112.0), None)
+
+        orders = order_service.get_open_orders(SESSION)
+        assert len(orders) == 1
         assert orders[0].trigger_price == pytest.approx(110.0 * 0.99)
 
 
