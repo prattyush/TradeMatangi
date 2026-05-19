@@ -46,6 +46,11 @@ DEFAULT_FUNDS_RATIOS: dict[str, float] = {"l": 3.0, "m": 6.0, "h": 12.0}
 # Supported symbols: key is the canonical ID used throughout the system.
 # options_exchange_code: exchange used for F&O data (NFO for NSE, BFO for BSE).
 # options_only: True for indices that cannot be traded as equity.
+# Kotak Neo real-trading: price slippage applied to immediate buy/sell
+# A BUY limit is placed at LTP × (1 + KOTAK_SLIPPAGE_PCT) to guarantee fill.
+# A SELL limit is placed at LTP × (1 − KOTAK_SLIPPAGE_PCT).
+KOTAK_SLIPPAGE_PCT: float = 0.005  # 0.5%
+
 SUPPORTED_SYMBOLS: dict[str, dict] = {
     "NIFTY": {
         "display_name": "NIFTY 50",

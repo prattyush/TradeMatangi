@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import api from '../services/api'
+import KotakTOTPModal from './KotakTOTPModal'
 
 export interface FundsRatios {
   l: number  // percentage 0-100
@@ -68,6 +69,7 @@ export function loadHistoricalDays(): number {
 interface Props {
   date: string
   isAdmin?: boolean
+  isRealTradingUser?: boolean
   onWalletReset: () => void
   onFundsRatioChange: (mode: boolean, ratios: FundsRatios) => void
   onTargetDeviationChange: (pct: number) => void  // fraction e.g. 0.01
@@ -76,7 +78,7 @@ interface Props {
   onHistoricalDaysChange?: (days: number) => void
 }
 
-export default function SettingsModal({ date, isAdmin, onWalletReset, onFundsRatioChange, onTargetDeviationChange, onBrokerageChange, onStrategySettingsChange, onHistoricalDaysChange }: Props) {
+export default function SettingsModal({ date, isAdmin, isRealTradingUser, onWalletReset, onFundsRatioChange, onTargetDeviationChange, onBrokerageChange, onStrategySettingsChange, onHistoricalDaysChange }: Props) {
   const [open, setOpen] = useState(false)
   const [customAmount, setCustomAmount] = useState('')
   const [status, setStatus] = useState<string | null>(null)
@@ -118,6 +120,16 @@ export default function SettingsModal({ date, isAdmin, onWalletReset, onFundsRat
   const [kiteMasked, setKiteMasked] = useState<string | null>(null)
   const adminLoadedRef = useRef(false)
 
+  // Real trading whitelist (admin)
+  const [whitelistOpen, setWhitelistOpen] = useState(false)
+  const [whitelist, setWhitelist] = useState<{ email: string; added_at?: string }[]>([])
+  const [whitelistEmailInput, setWhitelistEmailInput] = useState('')
+  const [whitelistLoading, setWhitelistLoading] = useState(false)
+
+  // Broker connection (real trading users)
+  const [kotakAuthenticated, setKotakAuthenticated] = useState<boolean | null>(null)
+  const [showKotakTOTP, setShowKotakTOTP] = useState(false)
+
   useEffect(() => {
     // Sync from backend on open
     if (open) {
@@ -133,6 +145,11 @@ export default function SettingsModal({ date, isAdmin, onWalletReset, onFundsRat
           setIciciMasked(t.icici_session)
           setKiteMasked(t.kite_access)
         }).catch(() => {})
+      }
+
+      // Load Kotak status for real trading users
+      if (isRealTradingUser || isAdmin) {
+        api.kotakStatus().then(s => setKotakAuthenticated(s.authenticated)).catch(() => setKotakAuthenticated(false))
       }
     }
   }, [open])
@@ -215,6 +232,39 @@ export default function SettingsModal({ date, isAdmin, onWalletReset, onFundsRat
       setTimeout(() => setStatus(null), 2000)
     } catch {
       setStatus('Failed to save tokens')
+    }
+  }
+
+  const loadWhitelist = async () => {
+    setWhitelistLoading(true)
+    try {
+      const list = await api.getRealTradingWhitelist()
+      setWhitelist(list)
+    } catch { /* ignore */ } finally {
+      setWhitelistLoading(false)
+    }
+  }
+
+  const addToWhitelist = async () => {
+    const email = whitelistEmailInput.trim().toLowerCase()
+    if (!email || !email.includes('@')) { setStatus('Invalid email'); return }
+    try {
+      await api.addToRealTradingWhitelist(email)
+      setWhitelistEmailInput('')
+      await loadWhitelist()
+      setStatus('Added to whitelist')
+      setTimeout(() => setStatus(null), 2000)
+    } catch (e) {
+      setStatus(e instanceof Error ? e.message : 'Failed to add')
+    }
+  }
+
+  const removeFromWhitelist = async (email: string) => {
+    try {
+      await api.removeFromRealTradingWhitelist(email)
+      setWhitelist(w => w.filter(e => e.email !== email))
+    } catch {
+      setStatus('Failed to remove')
     }
   }
 
@@ -646,8 +696,96 @@ export default function SettingsModal({ date, isAdmin, onWalletReset, onFundsRat
                     <div style={{ fontSize: 11, color: '#484f58' }}>
                       Tokens rotate daily. DDB values override accesskeys.ini.
                     </div>
+
+                    {/* Real Trading Whitelist */}
+                    <div style={{ marginTop: 8 }}>
+                      <button
+                        onClick={() => { setWhitelistOpen(o => !o); if (!whitelistOpen) loadWhitelist() }}
+                        style={{
+                          background: 'none', border: 'none', cursor: 'pointer', padding: 0,
+                          display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%',
+                        }}
+                      >
+                        <span style={{ fontSize: 11, color: '#8b949e', fontWeight: 600 }}>REAL TRADING ACCESS</span>
+                        <span style={{ fontSize: 11, color: '#8b949e' }}>{whitelistOpen ? '▲' : '▼'}</span>
+                      </button>
+                      {whitelistOpen && (
+                        <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                          {whitelistLoading ? (
+                            <span style={{ fontSize: 11, color: '#484f58' }}>Loading…</span>
+                          ) : whitelist.length === 0 ? (
+                            <span style={{ fontSize: 11, color: '#484f58' }}>No whitelisted users</span>
+                          ) : (
+                            whitelist.map(entry => (
+                              <div key={entry.email} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 12, color: '#e6edf3' }}>
+                                <span>{entry.email}</span>
+                                <button
+                                  onClick={() => removeFromWhitelist(entry.email)}
+                                  style={{ background: 'none', border: 'none', color: '#f85149', cursor: 'pointer', fontSize: 12 }}
+                                >✕</button>
+                              </div>
+                            ))
+                          )}
+                          <div style={{ display: 'flex', gap: 6, marginTop: 4 }}>
+                            <input
+                              type="email"
+                              value={whitelistEmailInput}
+                              onChange={e => setWhitelistEmailInput(e.target.value)}
+                              onKeyDown={e => e.key === 'Enter' && addToWhitelist()}
+                              placeholder="user@example.com"
+                              style={{
+                                flex: 1, padding: '5px 8px', background: '#0d1117',
+                                border: '1px solid #30363d', borderRadius: 6,
+                                color: '#e6edf3', fontSize: 12,
+                              }}
+                            />
+                            <button
+                              onClick={addToWhitelist}
+                              style={{
+                                padding: '5px 10px', background: '#1f6feb', border: 'none',
+                                borderRadius: 6, color: '#fff', cursor: 'pointer', fontSize: 12,
+                              }}
+                            >Add</button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
                   </div>
                 )}
+              </div>
+            )}
+
+            {/* Broker connection (for real trading users) */}
+            {(isRealTradingUser || isAdmin) && (
+              <div style={{ borderTop: '1px solid #21262d', paddingTop: 16 }}>
+                <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 10, fontWeight: 600 }}>BROKER</div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <span style={{ fontSize: 13, color: '#e6edf3' }}>Kotak Neo</span>
+                  {kotakAuthenticated === null ? (
+                    <span style={{ fontSize: 12, color: '#484f58' }}>checking…</span>
+                  ) : kotakAuthenticated ? (
+                    <span style={{
+                      fontSize: 12, color: '#3fb950',
+                      background: 'rgba(63,185,80,0.1)', border: '1px solid rgba(63,185,80,0.3)',
+                      borderRadius: 4, padding: '2px 8px',
+                    }}>Connected</span>
+                  ) : (
+                    <>
+                      <span style={{
+                        fontSize: 12, color: '#f85149',
+                        background: 'rgba(248,81,73,0.1)', border: '1px solid rgba(248,81,73,0.3)',
+                        borderRadius: 4, padding: '2px 8px',
+                      }}>Not connected</span>
+                      <button
+                        onClick={() => setShowKotakTOTP(true)}
+                        style={{
+                          padding: '4px 12px', background: '#d4a017', border: 'none',
+                          borderRadius: 6, color: '#0d1117', cursor: 'pointer', fontSize: 12, fontWeight: 600,
+                        }}
+                      >Connect</button>
+                    </>
+                  )}
+                </div>
               </div>
             )}
 
@@ -656,6 +794,15 @@ export default function SettingsModal({ date, isAdmin, onWalletReset, onFundsRat
             )}
           </div>
         </div>
+      )}
+      {showKotakTOTP && (
+        <KotakTOTPModal
+          onSuccess={() => {
+            setShowKotakTOTP(false)
+            setKotakAuthenticated(true)
+          }}
+          onCancel={() => setShowKotakTOTP(false)}
+        />
       )}
     </>
   )

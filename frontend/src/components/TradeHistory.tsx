@@ -4,6 +4,8 @@ import { Trade } from '../services/api'
 interface Props {
   trades: Trade[]
   historicalTrades?: Trade[]
+  sessionType?: string
+  onRefresh?: () => Promise<void>
 }
 
 function fmt(n: number) {
@@ -34,8 +36,9 @@ const SEPARATOR_STYLE_EXPANDED: React.CSSProperties = {
   letterSpacing: '0.05em',
 }
 
-export default function TradeHistory({ trades, historicalTrades = [] }: Props) {
+export default function TradeHistory({ trades, historicalTrades = [], sessionType, onRefresh }: Props) {
   const [expanded, setExpanded] = useState(false)
+  const [refreshing, setRefreshing] = useState(false)
 
   const totalCount = trades.length + historicalTrades.length
   const hasAny = totalCount > 0
@@ -55,6 +58,23 @@ export default function TradeHistory({ trades, historicalTrades = [] }: Props) {
           display: 'flex', alignItems: 'center', gap: 6,
         }}>
           <span style={{ fontSize: 13, fontWeight: 600 }}>Trade History ({totalCount})</span>
+          {sessionType === 'real' && onRefresh && (
+            <button
+              onClick={async () => {
+                setRefreshing(true)
+                try { await onRefresh() } finally { setRefreshing(false) }
+              }}
+              disabled={refreshing}
+              title="Refresh from Kotak"
+              style={{
+                background: 'none', border: 'none', color: refreshing ? '#484f58' : '#8b949e',
+                cursor: refreshing ? 'default' : 'pointer', fontSize: 14, lineHeight: 1, padding: '0 2px',
+                marginLeft: 'auto',
+              }}
+            >
+              {refreshing ? '…' : '🔄'}
+            </button>
+          )}
           {hasAny && (
             <button
               onClick={() => setExpanded(true)}
@@ -62,6 +82,7 @@ export default function TradeHistory({ trades, historicalTrades = [] }: Props) {
               style={{
                 background: 'none', border: 'none', color: '#8b949e',
                 cursor: 'pointer', fontSize: 14, lineHeight: 1, padding: '0 2px',
+                marginLeft: sessionType === 'real' ? undefined : 'auto',
               }}
             >
               ⛶

@@ -118,6 +118,7 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
   const [historicalDays, setHistoricalDays] = useState(loadHistoricalDays)
   const [runningStrategies, setRunningStrategies] = useState<StrategyResponse[]>([])
   const [brokerError, setBrokerError] = useState<string | null>(null)
+  const [isRealTradingUser, setIsRealTradingUser] = useState(false)
 
   // ── Trade Analysis modal ────────────────────────────────────────────────────
   const [showAnalysis, setShowAnalysis] = useState(false)
@@ -130,6 +131,8 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
     if (!localStorage.getItem('user')) {
       localStorage.setItem('user', JSON.stringify(FIXED_USER))
     }
+    // Check real trading access on mount
+    api.checkRealTradingAccess().then(r => setIsRealTradingUser(r.has_access)).catch(() => {})
   }, [])
 
   // ── Pane state ──────────────────────────────────────────────────────────────
@@ -499,6 +502,7 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
         <SettingsModal
           date={sim.date}
           isAdmin={authUser.isAdmin}
+          isRealTradingUser={isRealTradingUser}
           onWalletReset={sim.incrementWalletRefreshKey}
           onFundsRatioChange={(mode, ratios) => { setFundsRatioMode(mode); setFundsRatios(ratios) }}
           onTargetDeviationChange={setTargetDeviationPct}
@@ -552,6 +556,7 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
         onPause={sim.pauseSession}
         onResume={sim.resumeSession}
         onOptionsReady={handleOptionsReady}
+        isRealTradingUser={isRealTradingUser || authUser.isAdmin}
         extraControls={<>
           <div style={{ width: 1, height: 16, background: '#30363d', margin: '0 4px' }} />
 
@@ -734,7 +739,15 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
               onCancelAllStrategies={handleCancelAllStrategies}
             />
           </div>
-          <TradeHistory trades={sim.trades} historicalTrades={sim.historicalTrades} />
+          <TradeHistory
+            trades={sim.trades}
+            historicalTrades={sim.historicalTrades}
+            sessionType={sim.sessionType}
+            onRefresh={sim.sessionId ? async () => {
+              const trades = await api.getTrades(sim.sessionId!)
+              sim.setTrades(trades)
+            } : undefined}
+          />
         </div>
       </div>
     </div>

@@ -38,6 +38,7 @@ export interface SimulationState {
   sessionStrikeCE: number | null   // CE streaming strike (may differ from PE when OTM offset != 0)
   sessionStrikePE: number | null   // PE streaming strike
   sessionExpiry: string | null
+  sessionType: string              // 'sim' | 'paper' | 'real'
 }
 
 export interface InstrumentConfig {
@@ -48,7 +49,7 @@ export interface InstrumentConfig {
   strike_pe?: number
   brokerage_per_order?: number
   strategy_interval_secs?: number
-  session_type?: 'sim' | 'paper'
+  session_type?: 'sim' | 'paper' | 'real'
 }
 
 export function useSimulation() {
@@ -79,6 +80,7 @@ export function useSimulation() {
     sessionStrikeCE: null,
     sessionStrikePE: null,
     sessionExpiry: null,
+    sessionType: 'sim',
   })
 
   const setLatestTick = useCallback((tick: TickEvent) => {
@@ -162,6 +164,7 @@ export function useSimulation() {
       sessionStrikeCE: res.strike_ce ?? res.strike,
       sessionStrikePE: res.strike_pe ?? res.strike,
       sessionExpiry: res.expiry,
+      sessionType,
     }))
     // Fire-and-forget: load previous-session trades for same user+symbol+date+type
     const currentSessionId = res.session_id
@@ -209,7 +212,10 @@ export function useSimulation() {
 
   const buy = useCallback(async (right?: string) => {
     if (!state.sessionId) return
-    const trade = await api.buy(state.sessionId, right)
+    const resp = await api.buy(state.sessionId, right)
+    // For real sessions, backend returns {status:"broker_pending"} — trade arrives via SSE order_filled
+    if ('status' in resp && resp.status === 'broker_pending') return
+    const trade = resp as import('../services/api').Trade
     setState(s => ({ ...s, trades: [...s.trades, trade] }))
     if (right === 'CE' || right === 'PE') {
       const pos = await api.getPosition(state.sessionId, right)
@@ -225,7 +231,10 @@ export function useSimulation() {
 
   const sell = useCallback(async (right?: string) => {
     if (!state.sessionId) return
-    const trade = await api.sell(state.sessionId, right)
+    const resp = await api.sell(state.sessionId, right)
+    // For real sessions, backend returns {status:"broker_pending"} — trade arrives via SSE order_filled
+    if ('status' in resp && resp.status === 'broker_pending') return
+    const trade = resp as import('../services/api').Trade
     setState(s => ({ ...s, trades: [...s.trades, trade] }))
     if (right === 'CE' || right === 'PE') {
       const pos = await api.getPosition(state.sessionId, right)
@@ -408,6 +417,10 @@ export function useSimulation() {
     setState(s => ({ ...s, walletRefreshKey: s.walletRefreshKey + 1 }))
   }, [])
 
+  const setTrades = useCallback((trades: Trade[]) => {
+    setState(s => ({ ...s, trades }))
+  }, [])
+
   return {
     ...state,
     pnl,
@@ -436,5 +449,6 @@ export function useSimulation() {
     addOpenOrder,
     clearOrderError,
     incrementWalletRefreshKey,
+    setTrades,
   }
 }
