@@ -90,12 +90,13 @@ _EQUITY_TOKENS: dict[str, tuple[str, int]] = {
     "BSESEN": ("BSE", 265),
 }
 
-# Mapping from our symbol keys to Kite instrument "name" field
+# Maps our symbol keys → NSE tradingsymbol (equity lookup) / NFO name field (options lookup).
+# Update when NSE renames/recodes a stock (e.g. TATAMOTORS → TMCV after the 2025 CV/PV demerger).
 _KITE_NAMES: dict[str, str] = {
     "NIFTY":  "NIFTY",
     "BSESEN": "SENSEX",
     "TATPOW": "TATPOWER",
-    "TATMOT": "TATAMOTORS",
+    "TATMOT": "TMCV",       # renamed from TATAMOTORS after Apr-2025 CV/PV demerger
     "RELIND": "RELIANCE",
 }
 

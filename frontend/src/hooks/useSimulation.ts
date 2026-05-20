@@ -309,6 +309,14 @@ export function useSimulation() {
     }))
   }, [state.sessionId])
 
+  const handleOrderCancelled = useCallback((orderId: string) => {
+    setState(s => ({
+      ...s,
+      openOrders: s.openOrders.filter(o => o.order_id !== orderId),
+      walletRefreshKey: s.walletRefreshKey + 1,
+    }))
+  }, [])
+
   const handleOrderFilled = useCallback(async (orderId: string, right: string | null | undefined) => {
     setState(s => ({
       ...s,
@@ -446,6 +454,7 @@ export function useSimulation() {
     updateOrder,
     cancelOrder,
     handleOrderFilled,
+    handleOrderCancelled,
     addOpenOrder,
     clearOrderError,
     incrementWalletRefreshKey,

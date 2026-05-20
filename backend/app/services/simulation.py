@@ -990,37 +990,22 @@ def _emit_tick_and_check_orders_real(
                 "Real session %s: failed to forward order %s to Kotak: %s",
                 session.session_id, order.order_id, exc,
             )
+            # Revert the order — check_orders already marked it FILLED, undo that.
+            from app.models.schemas import OrderStatus
+            order.status = OrderStatus.CANCELLED
+            # Credit back reserved funds for BUY orders so wallet stays consistent.
+            if order.side.value == "BUY" and order.reserved_amount > 0:
+                from app.services import wallet_service
+                wallet_service.credit(order.user_id, order.reserved_amount, session.date)
+            # Notify frontend: remove from open orders, show error banner.
+            cancel_event = {"type": "order_cancelled", "order_id": order.order_id}
             error_event = {"type": "broker_error", "message": f"Kotak order failed: {exc}"}
-            try:
-                session.queue.put_nowait(json.dumps(error_event))
-            except asyncio.QueueFull:
-                pass
-            # Still record the trade locally so the UI is consistent
-            record_trade(
-                session_id=session.session_id,
-                side=order.side,
-                price=order.filled_price,
-                timestamp=order.filled_at,
-                quantity=order.quantity,
-                symbol=order.symbol,
-                instrument_type=session.instrument_type,
-                strike=order.strike if order.strike is not None else session.strike,
-                expiry=session.expiry,
-                right=order.right,
-                brokerage_per_order=session.brokerage_per_order,
-                user_id=session.user_id,
-                session_type=session.session_type,
-            )
-            fill_events.append({
-                "type": "order_filled",
-                "order_id": order.order_id,
-                "side": order.side.value,
-                "quantity": order.quantity,
-                "trigger_price": order.trigger_price,
-                "filled_price": order.filled_price,
-                "filled_at": order.filled_at,
-                "right": order.right,
-            })
+            for evt in (cancel_event, error_event):
+                try:
+                    session.queue.put_nowait(json.dumps(evt))
+                except asyncio.QueueFull:
+                    pass
+            # Do NOT record the trade — wait for actual Kotak fill confirmation.
 
     # Strategy evaluation (same as sim/paper)
     try:

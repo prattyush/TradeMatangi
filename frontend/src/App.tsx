@@ -139,6 +139,7 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
   const [panes, setPanes] = useState<PaneConfig[]>(DEFAULT_EQUITY_PANES)
   const [layoutPreset, setLayoutPreset] = useState<LayoutPreset>(2)
   const [activePaneId, setActivePaneId] = useState<number | null>(1)
+  const [maximizedPaneId, setMaximizedPaneId] = useState<number | null>(null)
 
   // ── Options mode state ──────────────────────────────────────────────────────
   const [instrumentType, setInstrumentType] = useState<'equity' | 'options'>('equity')
@@ -216,6 +217,7 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
       return next.length === 0 ? p : next  // keep at least one pane
     })
     setActivePaneId(a => a === id ? null : a)
+    setMaximizedPaneId(m => m === id ? null : m)
   }, [])
 
   // ── Active pane derivations ─────────────────────────────────────────────────
@@ -301,10 +303,13 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
       // Strategy-placed orders (e.g. AutoStop TARGET) surfaced so the UI shows them
       // in the open orders panel and the SL tab can be used after they fill.
       sim.addOpenOrder(event as unknown as import('./services/api').Order)
+    } else if (event.type === 'order_cancelled') {
+      // Kotak rejected a forwarded order — remove it from open orders and credit wallet back
+      sim.handleOrderCancelled(event.order_id as string)
     } else if (event.type === 'broker_error') {
       setBrokerError(event.message as string)
     }
-  }, [sim.setLatestTick, sim.handleSessionEnded, sim.handleOrderFilled, sim.addOpenOrder])
+  }, [sim.setLatestTick, sim.handleSessionEnded, sim.handleOrderFilled, sim.handleOrderCancelled, sim.addOpenOrder])
 
   useSSE(sim.sseUrl, handleSSEMessage)
 
@@ -373,49 +378,57 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
   // ── Layout rendering helpers ──────────────────────────────────────────────────
   const rowHeight = Math.max(160, Math.floor((columnHeight - 52) / 2))
 
-  const renderPane = (pane: PaneConfig, height: number, style?: React.CSSProperties) => (
-    <div key={pane.id} style={{ position: 'relative', minHeight: height, minWidth: 0, ...style }}>
-      {panes.length > 1 && (
-        <button
-          onClick={e => { e.stopPropagation(); removePane(pane.id) }}
-          title="Remove pane"
-          style={{
-            position: 'absolute', top: 8, right: 8, zIndex: 10,
-            background: 'rgba(13,17,23,0.8)', border: 'none',
-            color: '#484f58', cursor: 'pointer', fontSize: 13, lineHeight: 1, borderRadius: 4,
-            padding: '1px 5px',
+  const renderPane = (pane: PaneConfig, height: number, style?: React.CSSProperties) => {
+    const isMaximized = maximizedPaneId === pane.id
+    return (
+      <div key={pane.id} style={{ position: 'relative', minHeight: height, minWidth: 0, ...style }}>
+        {panes.length > 1 && !isMaximized && (
+          <button
+            onClick={e => { e.stopPropagation(); removePane(pane.id) }}
+            title="Remove pane"
+            style={{
+              position: 'absolute', top: 8, right: 8, zIndex: 10,
+              background: 'rgba(13,17,23,0.8)', border: 'none',
+              color: '#484f58', cursor: 'pointer', fontSize: 13, lineHeight: 1, borderRadius: 4,
+              padding: '1px 5px',
+            }}
+          >✕</button>
+        )}
+        <Chart
+          symbol={sim.symbol}
+          tradingDate={sim.date}
+          startTime={sim.startTime}
+          intervalMinutes={pane.intervalMinutes}
+          latestTick={getTickForPane(pane)}
+          height={height}
+          paneType={pane.type}
+          strike={pane.strike}
+          expiry={pane.expiry}
+          right={pane.right as 'CE' | 'PE' | undefined}
+          liveFromTs={pane.liveFromTs}
+          currentSimTime={sim.latestEquityTick?.time ?? null}
+          isActive={pane.id === activePaneId}
+          onActivate={() => {
+            setActivePaneId(pane.id)
+            if (pricePickOrderId && pane.id !== activePaneId) setPricePickOrderId(null)
           }}
-        >✕</button>
-      )}
-      <Chart
-        symbol={sim.symbol}
-        tradingDate={sim.date}
-        startTime={sim.startTime}
-        intervalMinutes={pane.intervalMinutes}
-        latestTick={getTickForPane(pane)}
-        height={height}
-        paneType={pane.type}
-        strike={pane.strike}
-        expiry={pane.expiry}
-        right={pane.right as 'CE' | 'PE' | undefined}
-        liveFromTs={pane.liveFromTs}
-        currentSimTime={sim.latestEquityTick?.time ?? null}
-        isActive={pane.id === activePaneId}
-        onActivate={() => {
-          setActivePaneId(pane.id)
-          // Cancel price-pick if user clicks a different pane
-          if (pricePickOrderId && pane.id !== activePaneId) setPricePickOrderId(null)
-        }}
-        trades={getTradesForPane(pane)}
-        openOrders={getOrdersForPane(pane)}
-        onPriceSelect={pricePickOrderId && pane.id === activePaneId ? handleChartPriceSelect : null}
-        historicalDays={historicalDays}
-      />
-    </div>
-  )
+          trades={getTradesForPane(pane)}
+          openOrders={getOrdersForPane(pane)}
+          onPriceSelect={pricePickOrderId && pane.id === activePaneId ? handleChartPriceSelect : null}
+          historicalDays={historicalDays}
+          onMaximize={() => setMaximizedPaneId(isMaximized ? null : pane.id)}
+          isMaximized={isMaximized}
+        />
+      </div>
+    )
+  }
 
   const renderLayout = () => {
     const gap = 12
+    if (maximizedPaneId !== null) {
+      const pane = panes.find(p => p.id === maximizedPaneId)
+      if (pane) return renderPane(pane, Math.max(160, columnHeight - 52))
+    }
     if (layoutPreset === 1) {
       const h = columnHeight - 52
       return panes[0] ? renderPane(panes[0], Math.max(160, h)) : null

@@ -62,7 +62,7 @@ _SYMBOL_MAP: dict[str, tuple[str, str]] = {
     "NIFTY":  ("NIFTY",       "nse_fo"),
     "BSESEN": ("SENSEX",      "bse_fo"),
     "TATPOW": ("TATPOWER",    "nse_cm"),
-    "TATMOT": ("TATAMOTORS",  "nse_cm"),
+    "TATMOT": ("TMCV",        "nse_cm"),   # renamed from TATAMOTORS after Apr-2025 CV/PV demerger
     "RELIND": ("RELIANCE",    "nse_cm"),
 }
 
@@ -224,9 +224,12 @@ class KotakNeoService:
         client = self._get_client()
         try:
             limits = client.limits()
+            self._check_api_response(limits)
             if isinstance(limits, dict):
                 return float(limits.get("Net", 0) or 0)
             return 0.0
+        except KotakError:
+            raise
         except Exception as exc:
             raise KotakError(str(exc)) from exc
 
@@ -235,12 +238,15 @@ class KotakNeoService:
         client = self._get_client()
         try:
             resp = client.order_report()
+            self._check_api_response(resp)
             if isinstance(resp, list):
                 return resp
             if isinstance(resp, dict):
                 data = resp.get("data", [])
                 return data if isinstance(data, list) else []
             return []
+        except KotakError:
+            raise
         except Exception as exc:
             raise KotakError(str(exc)) from exc
 
@@ -351,16 +357,40 @@ class KotakNeoService:
             )
         return _SYMBOL_MAP[symbol]
 
+    def _check_api_response(self, resp: Any) -> None:
+        """
+        Raise KotakError if resp is a Kotak error dict (stat=Not_Ok / errMsg present).
+        stCode 100008 = session expired — also marks the service as unauthenticated so
+        the next is_authenticated() check returns False and prompts a re-TOTP.
+        """
+        if not isinstance(resp, dict):
+            return
+        if resp.get("stat") == "Not_Ok" or resp.get("errMsg"):
+            err_msg = resp.get("errMsg") or "unknown error"
+            st_code = resp.get("stCode")
+            if st_code == 100008:
+                # Session expired — force re-authentication
+                with self._lock:
+                    self._authenticated = False
+                    self._client = None
+                raise KotakError(
+                    f"Kotak session expired (unauthorized) — please reconnect via Settings. "
+                    f"(code {st_code})"
+                )
+            raise KotakError(f"Kotak API error: {err_msg} (code {st_code})")
+
     def _extract_order_id(self, resp: Any) -> str:
         """Parse Kotak place_order response to extract the order number."""
+        self._check_api_response(resp)
         if isinstance(resp, dict):
-            # Various Kotak response shapes
             for key in ("nOrdNo", "order_id"):
                 if resp.get(key):
                     return str(resp[key])
             data = resp.get("data")
-            if isinstance(data, dict) and data.get("nOrdNo"):
-                return str(data["nOrdNo"])
+            if isinstance(data, dict):
+                self._check_api_response(data)
+                if data.get("nOrdNo"):
+                    return str(data["nOrdNo"])
         raise KotakError(f"Unexpected Kotak order response (no order ID): {resp!r}")
 
 

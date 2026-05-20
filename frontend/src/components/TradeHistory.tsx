@@ -58,36 +58,36 @@ export default function TradeHistory({ trades, historicalTrades = [], sessionTyp
           display: 'flex', alignItems: 'center', gap: 6,
         }}>
           <span style={{ fontSize: 13, fontWeight: 600 }}>Trade History ({totalCount})</span>
-          {sessionType === 'real' && onRefresh && (
-            <button
-              onClick={async () => {
-                setRefreshing(true)
-                try { await onRefresh() } finally { setRefreshing(false) }
-              }}
-              disabled={refreshing}
-              title="Refresh from Kotak"
-              style={{
-                background: 'none', border: 'none', color: refreshing ? '#484f58' : '#8b949e',
-                cursor: refreshing ? 'default' : 'pointer', fontSize: 14, lineHeight: 1, padding: '0 2px',
-                marginLeft: 'auto',
-              }}
-            >
-              {refreshing ? '…' : '🔄'}
-            </button>
-          )}
-          {hasAny && (
-            <button
-              onClick={() => setExpanded(true)}
-              title="Expand trade history"
-              style={{
-                background: 'none', border: 'none', color: '#8b949e',
-                cursor: 'pointer', fontSize: 14, lineHeight: 1, padding: '0 2px',
-                marginLeft: sessionType === 'real' ? undefined : 'auto',
-              }}
-            >
-              ⛶
-            </button>
-          )}
+          <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 2 }}>
+            {sessionType === 'real' && onRefresh && (
+              <button
+                onClick={async () => {
+                  setRefreshing(true)
+                  try { await onRefresh() } finally { setRefreshing(false) }
+                }}
+                disabled={refreshing}
+                title="Refresh from Kotak"
+                style={{
+                  background: 'none', border: 'none', color: refreshing ? '#484f58' : '#8b949e',
+                  cursor: refreshing ? 'default' : 'pointer', fontSize: 14, lineHeight: 1, padding: '0 2px',
+                }}
+              >
+                {refreshing ? '…' : '🔄'}
+              </button>
+            )}
+            {hasAny && (
+              <button
+                onClick={() => setExpanded(true)}
+                title="Expand trade history"
+                style={{
+                  background: 'none', border: 'none', color: '#8b949e',
+                  cursor: 'pointer', fontSize: 14, lineHeight: 1, padding: '0 2px',
+                }}
+              >
+                ⛶
+              </button>
+            )}
+          </div>
         </div>
         {!hasAny ? (
           <div style={{ padding: 16, fontSize: 12, color: '#484f58', textAlign: 'center' }}>

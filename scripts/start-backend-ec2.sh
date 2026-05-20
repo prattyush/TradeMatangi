@@ -43,6 +43,7 @@ fi
 
 echo "Installing dependencies..."
 "$VENV/bin/pip" install -q -r "$REPO_ROOT/backend/requirements.txt"
+"$VENV/bin/pip" install -q --no-deps "neo_api_client @ git+https://github.com/Kotak-Neo/Kotak-neo-api-v2.git@v2.0.1"
 
 # Resolve LOG_DIR from accesskeys.ini — mirrors config.py logic
 INI="$REPO_ROOT/data/accesskeys.ini"
