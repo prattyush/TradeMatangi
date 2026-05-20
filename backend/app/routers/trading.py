@@ -1,13 +1,15 @@
+import asyncio
+import json
 import logging
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import JSONResponse
 from app.models.schemas import Trade, Position, TradeRequest, TradeSide
 from app.services import trading as trading_svc
 from app.services import simulation as sim_svc
 from app.services import wallet_service
 from app.services.wallet_service import InsufficientFundsError
-from app.config import LOT_SIZES
+from app.config import LOT_SIZES, KOTAK_SLIPPAGE_PCT
 from app.dependencies import get_request_user_id
-from fastapi import Depends
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +41,81 @@ def _strike_for_right(session, right: str | None) -> int | None:
     return session.strike
 
 
-@router.post("/buy", response_model=Trade)
+def _place_kotak_direct(session, side: TradeSide, price: float, lot_size: int, right) -> JSONResponse:
+    """Place an immediate buy/sell on Kotak as a limit order; fill arrives via SSE order_filled."""
+    from app.services.kotak_service import get_service as get_kotak, KotakError
+
+    if side == TradeSide.BUY:
+        kotak_price = round(price * (1 + KOTAK_SLIPPAGE_PCT), 2)
+        side_code = "B"
+    else:
+        kotak_price = round(price * (1 - KOTAK_SLIPPAGE_PCT), 2)
+        side_code = "S"
+
+    try:
+        kotak_svc = get_kotak()
+        kotak_order_id = kotak_svc.place_limit_order(
+            symbol=session.symbol,
+            side=side_code,
+            qty=lot_size,
+            price=kotak_price,
+        )
+    except KotakError as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
+
+    loop = asyncio.get_event_loop()
+
+    def _make_cb(sess, trade_side: TradeSide, qty: int, rt):
+        def on_fill(k_id: str, fill_side: str, fill_qty: int, fill_price: float):
+            if trade_side == TradeSide.BUY:
+                try:
+                    wallet_service.debit(sess.user_id, round(fill_price * fill_qty, 2), sess.date)
+                except Exception:
+                    pass
+            else:
+                wallet_service.credit(sess.user_id, round(fill_price * fill_qty, 2), sess.date)
+
+            trading_svc.record_trade(
+                sess.session_id, trade_side,
+                price=fill_price,
+                timestamp=int(sess.current_time) if sess.current_time else 0,
+                symbol=sess.symbol,
+                instrument_type=sess.instrument_type,
+                strike=_strike_for_right(sess, rt),
+                expiry=sess.expiry,
+                right=rt,
+                quantity=fill_qty,
+                brokerage_per_order=sess.brokerage_per_order,
+                user_id=sess.user_id,
+                session_type=sess.session_type,
+            )
+            evt = {
+                "type": "order_filled",
+                "order_id": f"direct_{k_id}",
+                "side": trade_side.value,
+                "quantity": fill_qty,
+                "trigger_price": fill_price,
+                "filled_price": fill_price,
+                "filled_at": int(sess.current_time) if sess.current_time else 0,
+                "right": rt,
+            }
+            try:
+                sess.queue.put_nowait(json.dumps(evt))
+            except Exception:
+                pass
+
+        return on_fill
+
+    kotak_svc.register_fill_callback(
+        kotak_order_id, _make_cb(session, side, lot_size, right), loop
+    )
+    return JSONResponse(
+        status_code=202,
+        content={"status": "broker_pending", "kotak_order_id": kotak_order_id},
+    )
+
+
+@router.post("/buy")
 async def buy(req: TradeRequest):
     session = sim_svc.get_session(req.session_id)
     if not session:
@@ -53,6 +129,9 @@ async def buy(req: TradeRequest):
         raise HTTPException(status_code=400, detail="No valid price available yet")
 
     lot_size = LOT_SIZES.get(session.symbol, 1) if session.instrument_type == "options" else 1
+
+    if session.session_type == "real":
+        return _place_kotak_direct(session, TradeSide.BUY, price, lot_size, right)
 
     try:
         wallet_service.debit(session.user_id, price * lot_size, session.date)
@@ -75,7 +154,7 @@ async def buy(req: TradeRequest):
     return trade
 
 
-@router.post("/sell", response_model=Trade)
+@router.post("/sell")
 async def sell(req: TradeRequest):
     session = sim_svc.get_session(req.session_id)
     if not session:
@@ -89,6 +168,9 @@ async def sell(req: TradeRequest):
         raise HTTPException(status_code=400, detail="No valid price available yet")
 
     lot_size = LOT_SIZES.get(session.symbol, 1) if session.instrument_type == "options" else 1
+
+    if session.session_type == "real":
+        return _place_kotak_direct(session, TradeSide.SELL, price, lot_size, right)
 
     wallet_service.credit(session.user_id, price * lot_size, session.date)
 

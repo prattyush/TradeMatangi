@@ -80,6 +80,29 @@ async def start_simulation(
     user_id: str = Depends(get_request_user_id),
 ):
     is_paper = (req.session_type == "paper")
+    is_real = (req.session_type == "real")
+
+    if is_real:
+        # Real trading: whitelist + Kotak auth + fund sync
+        from app.services import real_trading_service
+        from app.services.user_service import get_user_info
+        info = get_user_info(user_id)
+        is_admin = bool(info and info.get("is_admin"))
+        if not is_admin and not real_trading_service.is_whitelisted_user(user_id):
+            raise HTTPException(status_code=403, detail="Real trading access is not enabled for your account")
+        from app.services.kotak_service import get_service as get_kotak, KotakError
+        kotak_svc = get_kotak()
+        if not kotak_svc.is_authenticated():
+            raise HTTPException(status_code=401, detail="Kotak login required. Please authenticate via /api/kotak/login before starting a real session.")
+        try:
+            funds = kotak_svc.get_funds()
+            from app.services import wallet_service
+            wallet_service.reset(user_id, req.date, funds)
+        except KotakError as exc:
+            raise HTTPException(status_code=502, detail=f"Could not fetch Kotak funds: {exc}")
+
+    # Paper and real sessions use best-effort data caching — Kite streams live ticks
+    use_soft_ensure = is_paper or is_real
 
     if req.instrument_type == "options":
         if req.strike is None or req.expiry is None:
@@ -89,8 +112,7 @@ async def start_simulation(
             )
         if req.right is not None and req.right.upper() not in ("CE", "PE"):
             raise HTTPException(status_code=400, detail="right must be 'CE', 'PE', or null (dual-stream)")
-        if is_paper:
-            # Paper mode: data fetch is best-effort — Kite streams live ticks even without Breeze
+        if use_soft_ensure:
             _soft_ensure(lambda: _ensure_session_data(req.symbol, req.date))
             ce_strike = req.strike_ce if req.strike_ce is not None else req.strike
             pe_strike = req.strike_pe if req.strike_pe is not None else req.strike
@@ -116,7 +138,7 @@ async def start_simulation(
                 status_code=400,
                 detail=f"{req.symbol} is an index — only options sessions are supported",
             )
-        if is_paper:
+        if use_soft_ensure:
             _soft_ensure(lambda: _ensure_session_data(req.symbol, req.date))
         else:
             _ensure_session_data(req.symbol, req.date)
@@ -196,7 +218,7 @@ async def update_pane_strike(session_id: str, req: UpdatePaneStrikeRequest):
     # Paper sessions use soft-ensure (swallow errors) — session is already live.
     # Sim sessions propagate errors — tick loop needs the parquet to exist.
     loop = asyncio.get_running_loop()
-    if session.session_type == "paper":
+    if session.session_type in ("paper", "real"):
         await loop.run_in_executor(None, lambda: _soft_ensure(
             lambda: _ensure_options_data(
                 session.symbol, session.date, req.strike, session.expiry, req.right.upper()
@@ -212,9 +234,8 @@ async def update_pane_strike(session_id: str, req: UpdatePaneStrikeRequest):
     else:
         session.strike_pe = req.strike
 
-    # For paper sessions: re-subscribe KiteBroadcaster to the new strike's token so
-    # live ticks flow from the new strike instead of the old one.
-    if session.session_type == "paper":
+    # For paper/real sessions: re-subscribe KiteBroadcaster to the new strike's token
+    if session.session_type in ("paper", "real"):
         try:
             from app.services import kite_service
             new_token = await loop.run_in_executor(

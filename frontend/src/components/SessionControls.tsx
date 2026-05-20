@@ -2,6 +2,7 @@ import { useState, useEffect, CSSProperties, ReactNode } from 'react'
 import { SessionState } from '../hooks/useSimulation'
 import api, { SymbolInfo } from '../services/api'
 import { InstrumentConfig } from '../hooks/useSimulation'
+import KotakTOTPModal from './KotakTOTPModal'
 
 interface Props {
   sessionState: SessionState
@@ -15,6 +16,7 @@ interface Props {
   onResume: () => Promise<void>
   onOptionsReady: (cfg: OptionsReadyConfig | null) => void
   extraControls?: ReactNode
+  isRealTradingUser?: boolean
 }
 
 export interface OptionsReadyConfig {
@@ -84,6 +86,7 @@ export default function SessionControls({
   onStart, onStop, onPause, onResume,
   onOptionsReady,
   extraControls,
+  isRealTradingUser = false,
 }: Props) {
   const [symbols, setSymbols] = useState<SymbolInfo[]>([])
   const [startTime, setStartTime] = useState('09:15')
@@ -91,6 +94,8 @@ export default function SessionControls({
   const [loading, setLoading] = useState(false)
   const [dateError, setDateError] = useState<string | null>(null)
   const [startError, setStartError] = useState<string | null>(null)
+  const [showTOTP, setShowTOTP] = useState(false)
+  const [pendingStart, setPendingStart] = useState<(() => Promise<void>) | null>(null)
 
   const [instrumentType, setInstrumentType] = useState<'equity' | 'options'>(
     OPTIONS_ONLY_SYMBOLS.has(currentSymbol) ? 'options' : 'equity'
@@ -101,7 +106,9 @@ export default function SessionControls({
   const running = sessionState === 'running'
   const paused = sessionState === 'paused'
   const today = formatLocalDate(new Date())
-  const isPaperMode = currentDate === todayIST()
+  const isToday = currentDate === todayIST()
+  const isRealMode = isRealTradingUser && isToday
+  const isPaperMode = isToday && !isRealMode
 
   // Load symbols once on mount; set date to last weekday
   useEffect(() => {
@@ -142,15 +149,15 @@ export default function SessionControls({
     if (OPTIONS_ONLY_SYMBOLS.has(sym)) setInstrumentType('options')
   }
 
-  const handleStart = async () => {
+  const _doStart = async () => {
     if (!currentDate || dateError) return
     setStartError(null)
     setLoading(true)
     try {
+      const sessionType = isRealMode ? 'real' : (isPaperMode ? 'paper' : 'sim')
       let config: InstrumentConfig = { instrument_type: 'equity' }
 
       if (instrumentType === 'options') {
-        // Fetch ATM price + expiry only when the user actually starts
         try {
           const [priceRes, expiryRes] = await Promise.all([
             api.getPriceAt(currentSymbol, currentDate, '09:15'),
@@ -175,7 +182,7 @@ export default function SessionControls({
             expiry: cfg.expiry,
             strike_ce: cfg.ceStrike,
             strike_pe: cfg.peStrike,
-            session_type: isPaperMode ? 'paper' : 'sim',
+            session_type: sessionType,
           }
         } catch (e) {
           setStartError(e instanceof Error ? e.message : 'Could not fetch options data — check backend connection')
@@ -184,11 +191,10 @@ export default function SessionControls({
         }
       } else {
         onOptionsReady(null)
-        config = { instrument_type: 'equity', session_type: isPaperMode ? 'paper' : 'sim' }
+        config = { instrument_type: 'equity', session_type: sessionType }
       }
 
-      // Paper mode always replays from market open (09:15) to "now", then streams live
-      await onStart(isPaperMode ? '09:15:00' : startTime + ':00', isPaperMode ? 1.0 : speed, config)
+      await onStart(isToday ? '09:15:00' : startTime + ':00', isToday ? 1.0 : speed, config)
     } catch (e) {
       setStartError(e instanceof Error ? e.message : 'Failed to start session')
     } finally {
@@ -196,9 +202,50 @@ export default function SessionControls({
     }
   }
 
+  const handleStart = async () => {
+    if (!currentDate || dateError) return
+    if (isRealMode) {
+      // Check Kotak authentication before starting real session
+      setLoading(true)
+      try {
+        const status = await api.kotakStatus()
+        if (!status.authenticated) {
+          // Store the start action and show TOTP modal
+          setPendingStart(() => _doStart)
+          setShowTOTP(true)
+          setLoading(false)
+          return
+        }
+      } catch {
+        // If we can't check status, try starting anyway (server will reject with 401)
+      } finally {
+        setLoading(false)
+      }
+    }
+    await _doStart()
+  }
+
   const canStart = idle && !loading && !!currentDate && !dateError
 
   return (
+    <>
+    {showTOTP && (
+      <KotakTOTPModal
+        onSuccess={async () => {
+          setShowTOTP(false)
+          if (pendingStart) {
+            const fn = pendingStart
+            setPendingStart(null)
+            await fn()
+          }
+        }}
+        onCancel={() => {
+          setShowTOTP(false)
+          setPendingStart(null)
+          setLoading(false)
+        }}
+      />
+    )}
     <div style={{ padding: '10px 16px', background: '#161b22', borderBottom: '1px solid #30363d' }}>
       <div style={row}>
         <label style={label}>
@@ -253,7 +300,13 @@ export default function SessionControls({
           </label>
         )}
 
-        {isPaperMode ? (
+        {isRealMode ? (
+          <span style={{
+            background: 'rgba(248,81,73,0.15)', color: '#f85149', border: '1px solid #f85149',
+            borderRadius: 6, padding: '4px 10px', fontSize: 12, fontWeight: 700,
+            letterSpacing: 1,
+          }}>● REAL</span>
+        ) : isPaperMode ? (
           <span style={{
             background: '#0d4f2e', color: '#3fb950', border: '1px solid #3fb950',
             borderRadius: 6, padding: '4px 10px', fontSize: 12, fontWeight: 700,
@@ -287,21 +340,23 @@ export default function SessionControls({
 
         {idle && (
           <button
-            style={btn(isPaperMode ? '#1a7f37' : '#1f6feb', !canStart)}
+            style={btn(isRealMode ? '#b62324' : isPaperMode ? '#1a7f37' : '#1f6feb', !canStart)}
             onClick={handleStart}
             disabled={!canStart}
           >
             {loading
               ? (instrumentType === 'options' ? 'Fetching strike…' : 'Loading data…')
-              : (isPaperMode ? 'Start Paper Trading' : 'Start Replay')}
+              : isRealMode ? 'Start Real Trading'
+              : isPaperMode ? 'Start Paper Trading'
+              : 'Start Replay'}
           </button>
         )}
         {running && (
           <button
-            style={btn('#6e40c9', isPaperMode)}
-            onClick={isPaperMode ? undefined : onPause}
-            disabled={isPaperMode}
-            title={isPaperMode ? 'Pause not available in live paper trading' : undefined}
+            style={btn('#6e40c9', isToday)}
+            onClick={isToday ? undefined : onPause}
+            disabled={isToday}
+            title={isToday ? 'Pause not available in live trading' : undefined}
           >Pause</button>
         )}
         {paused && <button style={btn('#1f6feb')} onClick={onResume}>Resume</button>}
@@ -319,5 +374,6 @@ export default function SessionControls({
         </div>
       )}
     </div>
+    </>
   )
 }

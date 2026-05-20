@@ -43,7 +43,9 @@ class SimulationSession:
     strike_pe: Optional[int] = None    # PE streaming strike (equals strike when offset=0)
     brokerage_per_order: float = 1.0    # flat brokerage per trade (from session start config)
     strategy_interval_secs: int = 180   # candle interval for all strategies (180=3min, 300=5min)
-    session_type: str = "sim"           # "sim" (historical replay) or "paper" (live data)
+    session_type: str = "sim"           # "sim", "paper", or "real"
+    # Real trading: maps our order_id → Kotak order ID for Kotak-placed orders
+    kotak_order_map: dict[str, str] = field(default_factory=dict)
     queue: asyncio.Queue = field(default_factory=lambda: asyncio.Queue(maxsize=3000))
     # paper_tick_queue: receives raw tick dicts from KiteBroadcaster / BreezeStreamManager
     paper_tick_queue: asyncio.Queue = field(default_factory=lambda: asyncio.Queue(maxsize=1000))
@@ -753,10 +755,297 @@ async def _run_paper_session(session: SimulationSession) -> None:
             pass
 
 
+async def _run_real_session(session: SimulationSession) -> None:
+    """
+    Real trading session: uses the same Kite tick-stream infrastructure as
+    paper trading for chart data, but order execution goes to Kotak Neo.
+    The wallet is pre-synced from Kotak at session start (handled in the router).
+    Limit/Target triggered fills are forwarded to Kotak after local detection.
+    """
+    session.state = SimulationState.RUNNING
+    loop = asyncio.get_running_loop()
+
+    start_event = {
+        "type": "session_started",
+        "session_id": session.session_id,
+        "trading_date": session.date,
+        "start_time": session.start_time,
+    }
+    await session.queue.put(json.dumps(start_event))
+
+    try:
+        # Phase 1: fast-replay today's historical data (same as paper)
+        logger.info("Real session %s: Phase 1 — fetching today's data for %s",
+                    session.session_id, session.symbol)
+        try:
+            from app.services.broker_service import fetch_historical
+            fetch_historical(session.symbol, session.date)
+        except Exception as exc:
+            logger.warning("Real session %s: could not pre-fetch today's data: %s", session.session_id, exc)
+
+        _last_breeze_ts: int = 0
+        try:
+            from app.services.data_loader import iter_ticks
+            for tick in iter_ticks(session.symbol, session.date, session.start_time):
+                if session.state == SimulationState.ENDED:
+                    break
+                session.last_price = tick["close"]
+                session.current_time = str(tick["time"])
+                _last_breeze_ts = tick["time"]
+                fill_events = _emit_tick_and_check_orders_real(session, tick, None, loop)
+                for fe in fill_events:
+                    try:
+                        session.queue.put_nowait(json.dumps(fe))
+                    except asyncio.QueueFull:
+                        pass
+                await asyncio.sleep(0.001)
+        except Exception as exc:
+            logger.warning("Real session %s: Phase 1 pre-replay failed: %s", session.session_id, exc)
+
+        # Kite 1-min gap fill
+        if _last_breeze_ts > 0 and session.state != SimulationState.ENDED:
+            for tick in _kite_1min_gap_ticks(session.symbol, session.date, _last_breeze_ts):
+                if session.state == SimulationState.ENDED:
+                    break
+                session.last_price = tick["close"]
+                session.current_time = str(tick["time"])
+                for fe in _emit_tick_and_check_orders_real(session, tick, None, loop):
+                    try:
+                        session.queue.put_nowait(json.dumps(fe))
+                    except asyncio.QueueFull:
+                        pass
+                await asyncio.sleep(0.001)
+
+        if session.state == SimulationState.ENDED:
+            return
+
+        # Phase 2: Kite live streaming (same as paper)
+        try:
+            from app.services import kite_service
+            eq_exchange, eq_token = kite_service.fetch_equity_instrument_token(session.symbol)
+            kite_service.get_broadcaster().register(
+                session.session_id, [eq_token], [None],
+                session.paper_tick_queue, loop,
+            )
+            logger.info("Real session %s: Kite live streaming started", session.session_id)
+        except Exception as exc:
+            logger.warning("Real session %s: Kite unavailable — %s", session.session_id, exc)
+            error_event = {"type": "broker_error", "message": f"Kite unavailable: {exc}"}
+            try:
+                session.queue.put_nowait(json.dumps(error_event))
+            except asyncio.QueueFull:
+                pass
+
+        # Phase 3: consume live ticks
+        logger.info("Real session %s: Phase 3 — consuming live ticks", session.session_id)
+        while session.state != SimulationState.ENDED:
+            await session.resume_event.wait()
+            if session.state == SimulationState.ENDED:
+                break
+            try:
+                payload = await asyncio.wait_for(session.paper_tick_queue.get(), timeout=30.0)
+            except asyncio.TimeoutError:
+                continue
+
+            tick_type = payload.get("type", "tick")
+            if tick_type == "broker_error":
+                error_event = {"type": "broker_error", "message": payload.get("message", "")}
+                try:
+                    session.queue.put_nowait(json.dumps(error_event))
+                except asyncio.QueueFull:
+                    pass
+                continue
+            if tick_type != "tick":
+                continue
+
+            session.last_price = payload["close"]
+            session.current_time = str(payload["time"])
+
+            fill_events = _emit_tick_and_check_orders_real(session, payload, None, loop)
+            for fe in fill_events:
+                try:
+                    session.queue.put_nowait(json.dumps(fe))
+                except asyncio.QueueFull:
+                    pass
+
+    except asyncio.CancelledError:
+        pass
+    except Exception:
+        logger.exception("_run_real_session crashed for session %s", session.session_id)
+    finally:
+        session.state = SimulationState.ENDED
+        end_event = {"type": "session_ended"}
+        try:
+            session.queue.put_nowait(json.dumps(end_event))
+        except asyncio.QueueFull:
+            pass
+
+
+def _emit_tick_and_check_orders_real(
+    session: SimulationSession,
+    tick: dict,
+    tick_right: Optional[str],
+    loop: Any,
+) -> list[dict]:
+    """
+    Like _emit_tick_and_check_orders but for real sessions:
+    when a LIMIT or TARGET order is triggered locally, forward it to Kotak
+    as a limit order instead of directly marking it filled.
+    Fills from Kotak arrive asynchronously via the order-feed WebSocket.
+    """
+    from app.services.order_service import check_orders
+    from app.services.trading import record_trade
+    from app.services.kotak_service import get_service as get_kotak, KotakError
+    from app.config import KOTAK_SLIPPAGE_PCT
+
+    try:
+        session.queue.put_nowait(json.dumps(tick))
+    except asyncio.QueueFull:
+        logger.warning("Queue full, dropping tick for real session %s", session.session_id)
+
+    current_time = tick["time"]
+    current_price = tick["close"]
+    triggered = check_orders(
+        session.session_id, current_price, current_time, session.date,
+        tick_right=tick_right,
+    )
+
+    fill_events: list[dict] = []
+    kotak_svc = get_kotak()
+
+    for order in triggered:
+        # SL orders placed on Kotak at creation time; fill comes via WebSocket.
+        # For LIMIT/TARGET, forward to Kotak now as a market-ish limit order.
+        if order.is_stoploss or (order.kotak_order_id and order.kotak_order_id in session.kotak_order_map.values()):
+            # Already placed on Kotak — the fill will arrive via order-feed WebSocket.
+            continue
+
+        # Forward triggered LIMIT/TARGET to Kotak as limit order
+        side_code = "B" if order.side.value == "BUY" else "S"
+        price = order.filled_price or current_price
+        if order.side.value == "BUY":
+            kotak_price = round(price * (1 + KOTAK_SLIPPAGE_PCT), 2)
+        else:
+            kotak_price = round(price * (1 - KOTAK_SLIPPAGE_PCT), 2)
+
+        try:
+            kotak_order_id = kotak_svc.place_limit_order(
+                symbol=session.symbol,
+                side=side_code,
+                qty=order.quantity,
+                price=kotak_price,
+            )
+            session.kotak_order_map[order.order_id] = kotak_order_id
+            logger.info(
+                "Real session %s: forwarded triggered %s order %s to Kotak (kotak_id=%s price=%.2f)",
+                session.session_id, order.order_type.value, order.order_id, kotak_order_id, kotak_price,
+            )
+
+            def _make_fill_cb(ord_id: str, sess: SimulationSession):
+                def on_kotak_fill(kotak_id: str, fill_side: str, fill_qty: int, fill_price: float):
+                    from app.services.order_service import get_order
+                    from app.services import wallet_service
+                    o = get_order(sess.session_id, ord_id)
+                    if o is None:
+                        return
+                    record_trade(
+                        session_id=sess.session_id,
+                        side=o.side,
+                        price=fill_price,
+                        timestamp=int(sess.current_time) if sess.current_time else 0,
+                        quantity=fill_qty,
+                        symbol=o.symbol,
+                        instrument_type=sess.instrument_type,
+                        strike=o.strike if o.strike is not None else sess.strike,
+                        expiry=sess.expiry,
+                        right=o.right,
+                        brokerage_per_order=sess.brokerage_per_order,
+                        user_id=sess.user_id,
+                        session_type=sess.session_type,
+                    )
+                    if o.side.value == "SELL":
+                        wallet_service.credit(sess.user_id, fill_price * fill_qty, sess.date)
+                    else:
+                        wallet_service.debit(sess.user_id, fill_price * fill_qty, sess.date)
+                    evt = {
+                        "type": "order_filled",
+                        "order_id": ord_id,
+                        "side": o.side.value,
+                        "quantity": fill_qty,
+                        "trigger_price": o.trigger_price,
+                        "filled_price": fill_price,
+                        "filled_at": int(sess.current_time) if sess.current_time else 0,
+                        "right": o.right,
+                    }
+                    try:
+                        sess.queue.put_nowait(json.dumps(evt))
+                    except asyncio.QueueFull:
+                        pass
+                return on_kotak_fill
+
+            kotak_svc.register_fill_callback(kotak_order_id, _make_fill_cb(order.order_id, session), loop)
+
+        except KotakError as exc:
+            logger.error(
+                "Real session %s: failed to forward order %s to Kotak: %s",
+                session.session_id, order.order_id, exc,
+            )
+            # Revert the order — check_orders already marked it FILLED, undo that.
+            from app.models.schemas import OrderStatus
+            order.status = OrderStatus.CANCELLED
+            # Credit back reserved funds for BUY orders so wallet stays consistent.
+            if order.side.value == "BUY" and order.reserved_amount > 0:
+                from app.services import wallet_service
+                wallet_service.credit(order.user_id, order.reserved_amount, session.date)
+            # Notify frontend: remove from open orders, show error banner.
+            cancel_event = {"type": "order_cancelled", "order_id": order.order_id}
+            error_event = {"type": "broker_error", "message": f"Kotak order failed: {exc}"}
+            for evt in (cancel_event, error_event):
+                try:
+                    session.queue.put_nowait(json.dumps(evt))
+                except asyncio.QueueFull:
+                    pass
+            # Do NOT record the trade — wait for actual Kotak fill confirmation.
+
+    # Strategy evaluation (same as sim/paper)
+    try:
+        from app.services import strategy_service
+        from app.services.order_service import get_open_orders
+        before_ids = {o.order_id for o in get_open_orders(session.session_id)}
+        strategy_service.on_tick(session, tick, tick_right)
+        for new_order in get_open_orders(session.session_id):
+            if new_order.order_id not in before_ids:
+                fill_events.append({
+                    "type": "order_placed",
+                    "order_id": new_order.order_id,
+                    "session_id": new_order.session_id,
+                    "user_id": new_order.user_id,
+                    "symbol": new_order.symbol,
+                    "side": new_order.side.value,
+                    "order_type": new_order.order_type.value,
+                    "quantity": new_order.quantity,
+                    "trigger_price": new_order.trigger_price,
+                    "limit_price": new_order.limit_price,
+                    "status": new_order.status.value,
+                    "created_at": new_order.created_at,
+                    "filled_at": new_order.filled_at,
+                    "filled_price": new_order.filled_price,
+                    "is_stoploss": new_order.is_stoploss,
+                    "right": new_order.right,
+                    "strike": new_order.strike,
+                })
+    except Exception as exc:
+        logger.warning("strategy eval error for real session %s: %s", session.session_id, exc)
+
+    return fill_events
+
+
 def start_session(session: SimulationSession) -> None:
     loop = asyncio.get_running_loop()
     if session.session_type == "paper":
         session.task = loop.create_task(_run_paper_session(session))
+    elif session.session_type == "real":
+        session.task = loop.create_task(_run_real_session(session))
     else:
         session.task = loop.create_task(_run_session(session))
 
@@ -780,8 +1069,8 @@ def stop_session(session: SimulationSession) -> None:
         session.task.cancel()
     _upsert_session_to_db(session)
     _sessions.pop(session.session_id, None)
-    # Stop live streaming if this is a paper session
-    if session.session_type == "paper":
+    # Stop live streaming for paper and real sessions
+    if session.session_type in ("paper", "real"):
         if session.stream_manager is not None:
             # BreezeStreamManager fallback
             try:

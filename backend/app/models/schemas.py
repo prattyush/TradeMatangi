@@ -30,7 +30,7 @@ class SimulationStartRequest(BaseModel):
     strike_pe: int | None = None       # PE streaming strike (defaults to strike when omitted)
     brokerage_per_order: float = 1.0   # flat brokerage deducted per trade (user-configurable)
     strategy_interval_secs: int = 180  # candle interval for all strategies (180=3min, 300=5min)
-    session_type: str = "sim"          # "sim" (historical replay) or "paper" (live data)
+    session_type: str = "sim"          # "sim" (historical replay), "paper" (live data), or "real" (Kotak live orders)
 
 
 class SimulationStartResponse(BaseModel):
@@ -174,6 +174,7 @@ class Order(BaseModel):
     is_stoploss: bool = False      # SL orders skip all wallet debit/credit
     right: str | None = None       # "CE" or "PE" for options orders; None for equity
     strike: int | None = None      # options strike price; None for equity
+    kotak_order_id: str | None = None  # set for real-session orders placed on Kotak
 
 
 class PlaceOrderRequest(BaseModel):
@@ -278,3 +279,28 @@ class StrategyResponse(BaseModel):
 
 class CancelAllStrategiesRequest(BaseModel):
     session_id: str
+
+
+# ── Kotak Neo / Real Trading ──────────────────────────────────────────────────
+
+class KotakLoginRequest(BaseModel):
+    totp: str
+
+
+class KotakStatusResponse(BaseModel):
+    authenticated: bool
+    broker: str = "KotakNeo"
+
+
+class KotakFundsResponse(BaseModel):
+    balance: float
+
+
+class WhitelistAddRequest(BaseModel):
+    email: str
+
+
+class WhitelistEntry(BaseModel):
+    email: str
+    user_id: str | None = None
+    added_at: str | None = None

@@ -101,6 +101,11 @@ Include this phase in the context only when you are implementing or planning pha
 Include this phase in the context only when you are implementing or planning phase 8. The phase 8 docs is located at `<project root>/docs/spec-phase8.md`
 
 
+#### Phase-IX RealTrading
+
+Include this phase in the context only when you are implementing or planning phase 9. The phase 9 docs is located at `<project root>/docs/spec-phase9.md`
+
+
 ## Bugs
 The current bugs are added phase wise in `<project root>/docs/bugs.md`
 

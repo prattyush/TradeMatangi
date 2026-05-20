@@ -72,7 +72,7 @@ export interface SimulationStartRequest {
   strike_pe?: number  // PE streaming strike (OTM direction: ATM - offset)
   brokerage_per_order?: number  // flat brokerage per order (default 1)
   strategy_interval_secs?: number  // candle interval for all strategies (180=3min, 300=5min)
-  session_type?: 'sim' | 'paper'   // "paper" when date == today IST
+  session_type?: 'sim' | 'paper' | 'real'   // "paper" or "real" when date == today IST
 }
 
 export interface UserSettingsResponse {
@@ -327,7 +327,7 @@ const api = {
     })
   },
 
-  async buy(session_id: string, right?: string): Promise<Trade> {
+  async buy(session_id: string, right?: string): Promise<Trade | { status: string; kotak_order_id?: string }> {
     const res = await fetch(`${BACKEND_URL}/api/trades/buy`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ..._authHeaders() },
@@ -337,7 +337,7 @@ const api = {
     return res.json()
   },
 
-  async sell(session_id: string, right?: string): Promise<Trade> {
+  async sell(session_id: string, right?: string): Promise<Trade | { status: string; kotak_order_id?: string }> {
     const res = await fetch(`${BACKEND_URL}/api/trades/sell`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ..._authHeaders() },
@@ -617,6 +617,82 @@ const api = {
     })
     if (!res.ok) throw new Error(`Update user settings failed: ${res.status}`)
     return res.json()
+  },
+
+  // ── Kotak Neo ──────────────────────────────────────────────────────────────
+
+  async kotakLogin(totp: string): Promise<void> {
+    const res = await fetch(`${BACKEND_URL}/api/kotak/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ..._authHeaders() },
+      body: JSON.stringify({ totp }),
+    })
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}))
+      throw new Error(data.detail || `Kotak login failed: ${res.status}`)
+    }
+  },
+
+  async kotakStatus(): Promise<{ authenticated: boolean; broker: string }> {
+    const res = await fetch(`${BACKEND_URL}/api/kotak/status`, {
+      headers: _authHeaders(),
+    })
+    if (!res.ok) return { authenticated: false, broker: 'KotakNeo' }
+    return res.json()
+  },
+
+  async kotakFunds(): Promise<{ balance: number }> {
+    const res = await fetch(`${BACKEND_URL}/api/kotak/funds`, {
+      headers: _authHeaders(),
+    })
+    if (!res.ok) throw new Error(`Kotak funds fetch failed: ${res.status}`)
+    return res.json()
+  },
+
+  async kotakOrderHistory(): Promise<{ orders: Record<string, unknown>[] }> {
+    const res = await fetch(`${BACKEND_URL}/api/kotak/order-history`, {
+      headers: _authHeaders(),
+    })
+    if (!res.ok) throw new Error(`Kotak order history failed: ${res.status}`)
+    return res.json()
+  },
+
+  async checkRealTradingAccess(): Promise<{ has_access: boolean }> {
+    const res = await fetch(`${BACKEND_URL}/api/kotak/check-access`, {
+      headers: _authHeaders(),
+    })
+    if (!res.ok) return { has_access: false }
+    return res.json()
+  },
+
+  // ── Real Trading Whitelist (admin) ─────────────────────────────────────────
+
+  async getRealTradingWhitelist(): Promise<{ email: string; added_at?: string }[]> {
+    const res = await fetch(`${BACKEND_URL}/api/admin/real-trading/whitelist`, {
+      headers: _authHeaders(),
+    })
+    if (!res.ok) throw new Error(`Whitelist fetch failed: ${res.status}`)
+    return res.json()
+  },
+
+  async addToRealTradingWhitelist(email: string): Promise<void> {
+    const res = await fetch(`${BACKEND_URL}/api/admin/real-trading/whitelist`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ..._authHeaders() },
+      body: JSON.stringify({ email }),
+    })
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}))
+      throw new Error(data.detail || `Add to whitelist failed: ${res.status}`)
+    }
+  },
+
+  async removeFromRealTradingWhitelist(email: string): Promise<void> {
+    const res = await fetch(`${BACKEND_URL}/api/admin/real-trading/whitelist/${encodeURIComponent(email)}`, {
+      method: 'DELETE',
+      headers: _authHeaders(),
+    })
+    if (!res.ok && res.status !== 204) throw new Error(`Remove from whitelist failed: ${res.status}`)
   },
 }
 

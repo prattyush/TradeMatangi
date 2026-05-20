@@ -1,5 +1,5 @@
 """
-Admin-only endpoints for broker token management.
+Admin-only endpoints for broker token management and real-trading whitelist.
 All routes return 403 when the requesting user does not have is_admin=True.
 """
 from fastapi import APIRouter, Depends, HTTPException
@@ -8,6 +8,7 @@ from pydantic import BaseModel
 from app.dependencies import get_request_user_id
 from app.services import token_service
 from app.services.user_service import get_user_info
+from app.models.schemas import WhitelistAddRequest, WhitelistEntry
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
@@ -51,3 +52,38 @@ async def set_tokens(req: SetTokensRequest, user_id: str = Depends(_require_admi
         icici_session=masked.get("icici_session"),
         kite_access=masked.get("kite_access"),
     )
+
+
+# ── Real Trading Whitelist ─────────────────────────────────────────────────────
+
+@router.get("/real-trading/whitelist", response_model=list[WhitelistEntry])
+async def get_real_trading_whitelist(user_id: str = Depends(_require_admin)):
+    """Return all emails whitelisted for real trading."""
+    from app.services import real_trading_service
+    items = real_trading_service.get_whitelist()
+    return [WhitelistEntry(**item) for item in items]
+
+
+@router.post("/real-trading/whitelist", response_model=WhitelistEntry, status_code=201)
+async def add_real_trading_whitelist(
+    req: WhitelistAddRequest,
+    user_id: str = Depends(_require_admin),
+):
+    """Add an email to the real trading whitelist."""
+    from app.services import real_trading_service
+    email = req.email.strip().lower()
+    if not email or "@" not in email:
+        raise HTTPException(status_code=400, detail="Invalid email address")
+    item = real_trading_service.add_to_whitelist(email)
+    return WhitelistEntry(**item)
+
+
+@router.delete("/real-trading/whitelist/{email}", status_code=204)
+async def remove_real_trading_whitelist(
+    email: str,
+    user_id: str = Depends(_require_admin),
+):
+    """Remove an email from the real trading whitelist."""
+    from app.services import real_trading_service
+    real_trading_service.remove_from_whitelist(email)
+    return None
