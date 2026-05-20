@@ -176,6 +176,10 @@ def get_all_orders(session_id: str) -> list[Order]:
     return list(_orders.get(session_id, {}).values())
 
 
+def get_order(session_id: str, order_id: str) -> Order | None:
+    return _orders.get(session_id, {}).get(order_id)
+
+
 def cancel_order(session_id: str, order_id: str, trading_date: str) -> Order | None:
     order = _orders.get(session_id, {}).get(order_id)
     if order is None or order.status != OrderStatus.PENDING:
@@ -259,6 +263,9 @@ def check_orders(
     filled: list[Order] = []
     for order in _orders.get(session_id, {}).values():
         if order.status != OrderStatus.PENDING:
+            continue
+        # Skip orders placed directly on Kotak broker; fills arrive via order-feed WebSocket.
+        if order.kotak_order_id:
             continue
         # For options ticks: only check orders for the same contract (right).
         # For equity ticks (tick_right=None): only check orders with right=None.

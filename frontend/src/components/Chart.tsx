@@ -36,6 +36,9 @@ interface Props {
   openOrders?: Order[]
   // Price-pick mode: when non-null, a chart click calls this instead of draw mode
   onPriceSelect?: ((price: number) => void) | null
+  // Maximize / restore this pane
+  onMaximize?: () => void
+  isMaximized?: boolean
   // For mid-session panes: timestamp from which live ticks begin (candles before this are history)
   liveFromTs?: number
   // Increment to trigger a manual data reload (fixes phantom candle after strike change)
@@ -89,6 +92,8 @@ export default function Chart({
   trades = [],
   openOrders,
   onPriceSelect = null,
+  onMaximize,
+  isMaximized = false,
   liveFromTs,
   reloadKey = 0,
   historicalDays,
@@ -435,6 +440,8 @@ export default function Chart({
 
     for (const t of paneTrades) {
       const slot = (Math.floor(t.timestamp / intervalSecs) * intervalSecs) as Time
+      // PE is inverted: BUY PE = short Nifty, SELL PE = long Nifty
+      const isLongDirection = right === 'PE' ? t.side === 'SELL' : t.side === 'BUY'
       try {
         const s = chart.addLineSeries({
           lineVisible: false, crosshairMarkerVisible: false,
@@ -444,7 +451,7 @@ export default function Chart({
         s.setMarkers([{
           time: slot,
           position: 'inBar' as const,
-          color: t.side === 'BUY' ? '#B388FF' : '#FFA726',
+          color: isLongDirection ? '#FFFFFF' : '#FF4D4D',
           shape: 'circle' as const,
           text: t.side === 'BUY' ? 'B' : 'S',
           size: 1,
@@ -598,6 +605,15 @@ export default function Chart({
         >
           ↻
         </button>
+        {onMaximize && (
+          <button
+            onClick={e => { e.stopPropagation(); onMaximize() }}
+            title={isMaximized ? 'Restore pane layout' : 'Maximize this pane'}
+            style={{ ...toolbarBtnStyle(false), fontSize: 13, padding: '2px 7px' }}
+          >
+            {isMaximized ? '⤡' : '⤢'}
+          </button>
+        )}
         {drawMode !== 'none' && !trendPending && (
           <span style={{ fontSize: 11, color: '#f0883e' }}>
             {drawMode === 'hline' ? 'Click chart to place' : 'Click first point'}

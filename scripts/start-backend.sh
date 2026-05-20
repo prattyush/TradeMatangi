@@ -11,6 +11,7 @@ fi
 
 echo "Installing dependencies..."
 "$VENV/bin/pip" install -q -r "$REPO_ROOT/backend/requirements.txt"
+"$VENV/bin/pip" install -q --no-deps "neo_api_client @ git+https://github.com/Kotak-Neo/Kotak-neo-api-v2.git@v2.0.1"
 
 LOG_FILE="$REPO_ROOT/data/logs/backend.log"
 echo "Starting backend on http://0.0.0.0:8700 ..."
