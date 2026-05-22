@@ -657,6 +657,15 @@ const api = {
     return res.json()
   },
 
+  async reconcileKotakOrders(sessionId: string): Promise<{ reconciled: number }> {
+    const res = await fetch(
+      `${BACKEND_URL}/api/kotak/reconcile?session_id=${sessionId}`,
+      { method: 'POST', headers: _authHeaders() }
+    )
+    if (!res.ok) throw new Error(`Kotak reconcile failed: ${res.status}`)
+    return res.json()
+  },
+
   async checkRealTradingAccess(): Promise<{ has_access: boolean }> {
     const res = await fetch(`${BACKEND_URL}/api/kotak/check-access`, {
       headers: _authHeaders(),
