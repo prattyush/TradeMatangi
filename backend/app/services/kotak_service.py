@@ -80,6 +80,7 @@ class KotakNeoService:
         self._lock = threading.Lock()
         # kotak_order_id → (callback, asyncio_loop)
         self._fill_callbacks: dict[str, tuple[Callable, Any]] = {}
+        self._reject_callbacks: dict[str, tuple[Callable, Any]] = {}
 
     # ── Authentication ────────────────────────────────────────────────────────
 
@@ -270,6 +271,20 @@ class KotakNeoService:
         with self._lock:
             self._fill_callbacks.pop(kotak_order_id, None)
 
+    def register_reject_callback(
+        self,
+        kotak_order_id: str,
+        callback: Callable,
+        loop: Any,
+    ) -> None:
+        """Register a callback fired when `kotak_order_id` is rejected by the exchange."""
+        with self._lock:
+            self._reject_callbacks[kotak_order_id] = (callback, loop)
+
+    def deregister_reject_callback(self, kotak_order_id: str) -> None:
+        with self._lock:
+            self._reject_callbacks.pop(kotak_order_id, None)
+
     # ── WebSocket order feed ──────────────────────────────────────────────────
 
     def _start_order_feed(self) -> None:
@@ -318,32 +333,54 @@ class KotakNeoService:
 
             order_id = str(order_data.get("nOrdNo", ""))
             order_status = str(order_data.get("ordSt", "")).lower()
-            # "complete" or "filled" = successful execution
-            if order_status not in ("complete", "filled"):
-                return
 
-            avg_prc = order_data.get("avgPrc", "0") or "0"
-            qty_str = order_data.get("qty", "0") or "0"
-            side_code = order_data.get("trnsTp", "B")
+            if order_status in ("complete", "filled"):
+                avg_prc = order_data.get("avgPrc", "0") or "0"
+                qty_str = order_data.get("qty", "0") or "0"
+                side_code = order_data.get("trnsTp", "B")
 
-            with self._lock:
-                entry = self._fill_callbacks.get(order_id)
-            if entry is None:
-                return
+                with self._lock:
+                    entry = self._fill_callbacks.get(order_id)
+                if entry is None:
+                    return
 
-            callback, loop = entry
-            filled_price = float(avg_prc)
-            qty = int(qty_str)
-            side = "BUY" if side_code == "B" else "SELL"
+                callback, loop = entry
+                filled_price = float(avg_prc)
+                qty = int(qty_str)
+                side = "BUY" if side_code == "B" else "SELL"
 
-            logger.info(
-                "Kotak order %s filled: side=%s qty=%d price=%.2f",
-                order_id, side, qty, filled_price,
-            )
-            loop.call_soon_threadsafe(callback, order_id, side, qty, filled_price)
+                logger.info(
+                    "Kotak order %s filled: side=%s qty=%d price=%.2f",
+                    order_id, side, qty, filled_price,
+                )
+                loop.call_soon_threadsafe(callback, order_id, side, qty, filled_price)
 
-            with self._lock:
-                self._fill_callbacks.pop(order_id, None)
+                with self._lock:
+                    self._fill_callbacks.pop(order_id, None)
+                    self._reject_callbacks.pop(order_id, None)
+
+            elif order_status in ("rejected", "cancelled"):
+                reject_reason = (
+                    order_data.get("rejRsn")
+                    or order_data.get("rjRsn")
+                    or order_data.get("rejectionReason")
+                    or "Order rejected by exchange"
+                )
+                logger.warning(
+                    "Kotak order %s %s: %s", order_id, order_status, reject_reason
+                )
+
+                with self._lock:
+                    entry = self._reject_callbacks.get(order_id)
+                    self._fill_callbacks.pop(order_id, None)
+                    self._reject_callbacks.pop(order_id, None)
+
+                if entry is not None:
+                    r_callback, r_loop = entry
+                    r_loop.call_soon_threadsafe(r_callback, order_id, str(reject_reason))
+
+            else:
+                logger.debug("Kotak order %s status update: %s", order_id, order_status)
 
         except Exception as exc:
             logger.warning("Kotak order feed message parsing error: %s", exc)

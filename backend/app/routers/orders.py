@@ -184,6 +184,32 @@ async def place_order(req: PlaceOrderRequest):
                 return on_fill
 
             kotak_svc.register_fill_callback(kotak_order_id, _make_sl_fill_cb(order.order_id, session), loop)
+
+            def _make_sl_reject_cb(ord_id: str, sess):
+                def on_reject(kotak_id: str, reason: str):
+                    import logging as _log
+                    import json as _json
+                    from app.services.order_service import get_order, _write_order_to_db
+                    from app.models.schemas import OrderStatus
+                    o = get_order(sess.session_id, ord_id)
+                    if o is None:
+                        return
+                    _log.getLogger(__name__).warning(
+                        "Kotak rejected SL order %s for session %s: %s",
+                        ord_id, sess.session_id, reason,
+                    )
+                    o.status = OrderStatus.CANCELLED
+                    _write_order_to_db(o)
+                    cancel_event = {"type": "order_cancelled", "order_id": ord_id}
+                    error_event = {"type": "broker_error", "message": f"Kotak rejected SL order: {reason}"}
+                    for evt in (cancel_event, error_event):
+                        try:
+                            sess.queue.put_nowait(_json.dumps(evt))
+                        except Exception:
+                            pass
+                return on_reject
+
+            kotak_svc.register_reject_callback(kotak_order_id, _make_sl_reject_cb(order.order_id, session), loop)
             order_service._write_order_to_db(order)
         except KotakError as exc:
             # Roll back the local order placement on Kotak failure
