@@ -72,16 +72,21 @@ Look at each of the bugs, fix them and then mark them resolved as well if approv
 - **Fix 2**: New `POST /api/kotak/reconcile?session_id=...` endpoint. Fetches `order_report()` from Kotak, inverts `session.kotak_order_map` to map kotak_order_id → local order_id, and for each filled order still PENDING locally: records the trade, updates wallet, marks FILLED, emits `order_filled` SSE. `onRefresh` now calls reconcile first, then re-fetches trades and refreshes wallet. Files: `kotak.py`, `api.ts`, `App.tsx`.
 - **Key**: `order_report()` response — `stat == 'Ok'` means success; orders in `data` list. Fill fields: `nOrdNo`, `ordSt` ("complete"/"filled"), `avgPrc`/`flPrc`, `flQty`/`qty`.
 
-**[RESOLVED]** Kotak order-feed WebSocket `_on_message` silently drops all fills/rejects — `data` is a list, not a dict.
-- **Symptom**: Even after PR #60 connected the WebSocket, fills/rejects streamed via the order-feed never triggered fill or reject callbacks. The reconcile button was required for every fill.
-- **Root cause**: The inner order-feed message structure is `{"type":"order","data":[{...}]}` — `data` is a **list** of one order dict, not a plain dict. `_on_message` did `order_data = outer.get("data", {})` then `if not isinstance(order_data, dict): return`, which silently returned for every real message.
-- **Fix**: Unwrap the list before the dict check — `if isinstance(order_data, list): order_data = order_data[0]`. File: `backend/app/services/kotak_service.py:343-348`.
+**[RESOLVED]** Kotak order-feed `_on_message` silently drops all fills/rejects — `data` is a list, not a dict (PR #62, 2026-05-22).
+- **Symptom**: Even after PR #60 connected the WebSocket, fills/rejects never triggered callbacks. The reconcile button was the only way to pick up fills.
+- **Root cause**: The inner message structure is `{"type":"order","data":[{...}]}` — `data` is a list. The `isinstance(order_data, dict)` guard returned silently for every real message.
+- **Fix**: Normalize payload to a list, iterate all items. `if isinstance(raw_orders, dict): raw_orders = [raw_orders]`. Processes all order updates per message, not just the first. File: `kotak_service.py`.
 
-**[RESOLVED]** Reconcile endpoint missed fills whose `stat` field is `"complete"` but `ordSt` is not yet updated; also used wrong filled-qty field name.
-- **Symptom**: Some orders visible as filled in Kotak UI still showed as PENDING after clicking 🔄, because `ordSt` hadn't propagated to `"complete"` in time while `stat` had.
-- **Root cause 1**: Reconcile checked only `ordSt` for completion status. The Kotak `order_report` response carries two parallel status fields — `stat` and `ordSt` — either of which can reach `"complete"` or `"filled"` first.
-- **Root cause 2**: The filled-quantity field in `order_report` rows is `fldQty`, not `flQty`. The code fell through to `qty` (total ordered qty) instead, which happens to match for fully-filled orders but is semantically wrong.
-- **Fix**: Changed the status check to `status_ordst not in (...) and status_stat not in (...)` so either field triggers reconciliation. Changed qty probe order to `fldQty → flQty → qty`. File: `backend/app/routers/kotak.py:99-112`.
+**[RESOLVED]** Reconcile endpoint missed fills when `stat` reaches "complete" before `ordSt`; wrong filled-qty field (PR #62, 2026-05-22).
+- **Root cause 1**: Checked only `ordSt`. Kotak `order_report` has two parallel status fields — either can arrive first.
+- **Root cause 2**: Used `flQty`; actual field is `fldQty`.
+- **Fix**: Check both `ordSt` and `stat`; probe qty as `fldQty → flQty → qty`. File: `kotak.py`.
+- **Also**: Added `KotakNeoService._normalize_order()` which converts all raw Kotak field names (`nOrdNo`, `ordSt`, `trnsTp`, `fldQty`, `avgPrc`, …) to stable UI-friendly keys (`kotak_order_id`, `status`, `side`, `filled_quantity`, `filled_price`, …). `get_order_history()` now returns normalized dicts; reconcile endpoint uses normalized names throughout.
+
+**[RESOLVED]** Kotak order-feed WebSocket callbacks crash — wrong arity (PR #64, 2026-05-22).
+- **Symptom**: Log showed `"Kotak Neo order feed WebSocket subscribed"` immediately followed by `ERROR: KotakNeoService._on_open() takes 1 positional argument but 2 were given`. WebSocket opened but no messages were ever processed.
+- **Root cause**: Kotak's `NeoWebSocket` calls `on_open`, `on_close`, and `on_error` with the ws object as an extra positional argument. All three were defined as `(self)` only.
+- **Fix**: Changed to `(self, *args)`. `_on_error` extracts `args[0]` for the log line. File: `kotak_service.py`.
 
 **[RESOLVED]** Kotak Neo rejects orders with non-tick-aligned prices (PR #58, 2026-05-22).
 - **Symptom**: Orders placed at prices like ₹456.23 (not a multiple of ₹0.05) were rejected by the exchange. `round(price, 2)` allows 1-paise precision but NSE/BSE minimum tick is 5 paise.
