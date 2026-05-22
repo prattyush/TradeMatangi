@@ -425,24 +425,44 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
 
   const renderLayout = () => {
     const gap = 12
-    if (maximizedPaneId !== null) {
-      const pane = panes.find(p => p.id === maximizedPaneId)
-      if (pane) return renderPane(pane, Math.max(160, columnHeight - 52))
-    }
+    const maxH = Math.max(160, columnHeight - 52)
+
+    // Maximize is handled inline per-layout rather than with a separate top-level
+    // branch. Keeping the same flex container structure means the pane wrapper div's
+    // DOM parent never changes, so React never unmounts/remounts Chart components.
+    // Non-maximized panes get display:none — still mounted, liveWindowRef preserved.
+
     if (layoutPreset === 1) {
       const h = columnHeight - 52
       return panes[0] ? renderPane(panes[0], Math.max(160, h)) : null
     }
+
     if (layoutPreset === 2) {
       const h = Math.max(160, Math.floor((columnHeight - 52 - gap) / 2))
       return (
         <div style={{ display: 'flex', flexDirection: 'column', gap }}>
-          {panes.slice(0, 2).map(p => renderPane(p, h))}
+          {panes.slice(0, 2).map(p => {
+            if (maximizedPaneId === null) return renderPane(p, h)
+            return renderPane(p, maxH, p.id === maximizedPaneId ? undefined : { display: 'none' })
+          })}
         </div>
       )
     }
+
     if (layoutPreset === 3) {
       // Row 1: full-width top pane; Row 2: two half-width panes
+      if (maximizedPaneId !== null) {
+        const maxInRow2 = panes[1]?.id === maximizedPaneId || panes[2]?.id === maximizedPaneId
+        return (
+          <div style={{ display: 'flex', flexDirection: 'column', gap }}>
+            {panes[0] && renderPane(panes[0], maxH, panes[0].id === maximizedPaneId ? undefined : { display: 'none' })}
+            <div style={{ display: maxInRow2 ? 'flex' : 'none', gap }}>
+              {panes[1] && renderPane(panes[1], maxH, panes[1].id === maximizedPaneId ? { flex: 1 } : { flex: 1, display: 'none' })}
+              {panes[2] && renderPane(panes[2], maxH, panes[2].id === maximizedPaneId ? { flex: 1 } : { flex: 1, display: 'none' })}
+            </div>
+          </div>
+        )
+      }
       return (
         <div style={{ display: 'flex', flexDirection: 'column', gap }}>
           {panes[0] && renderPane(panes[0], rowHeight)}
@@ -453,7 +473,24 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
         </div>
       )
     }
+
     // layout 4: 2×2 grid
+    if (maximizedPaneId !== null) {
+      const maxInRow1 = panes[0]?.id === maximizedPaneId || panes[1]?.id === maximizedPaneId
+      const maxInRow2 = panes[2]?.id === maximizedPaneId || panes[3]?.id === maximizedPaneId
+      return (
+        <div style={{ display: 'flex', flexDirection: 'column', gap }}>
+          <div style={{ display: maxInRow1 ? 'flex' : 'none', gap }}>
+            {panes[0] && renderPane(panes[0], maxH, panes[0].id === maximizedPaneId ? { flex: 1 } : { flex: 1, display: 'none' })}
+            {panes[1] && renderPane(panes[1], maxH, panes[1].id === maximizedPaneId ? { flex: 1 } : { flex: 1, display: 'none' })}
+          </div>
+          <div style={{ display: maxInRow2 ? 'flex' : 'none', gap }}>
+            {panes[2] && renderPane(panes[2], maxH, panes[2].id === maximizedPaneId ? { flex: 1 } : { flex: 1, display: 'none' })}
+            {panes[3] && renderPane(panes[3], maxH, panes[3].id === maximizedPaneId ? { flex: 1 } : { flex: 1, display: 'none' })}
+          </div>
+        </div>
+      )
+    }
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap }}>
         <div style={{ display: 'flex', gap }}>

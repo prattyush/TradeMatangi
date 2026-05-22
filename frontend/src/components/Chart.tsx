@@ -199,8 +199,11 @@ export default function Chart({
       }
     })
 
-    const ro = new ResizeObserver(() => {
-      if (containerRef.current) chart.applyOptions({ width: containerRef.current.clientWidth })
+    const ro = new ResizeObserver(entries => {
+      // Skip when the container is hidden (display:none during maximize of another pane)
+      // to avoid applyOptions({ width: 0 }) which can corrupt the Lightweight Charts canvas.
+      const w = entries[0].contentRect.width
+      if (w > 0) chart.applyOptions({ width: w })
     })
     ro.observe(containerRef.current)
 
