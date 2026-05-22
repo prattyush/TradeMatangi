@@ -40,6 +40,14 @@ Look at each of the bugs, fix them and then mark them resolved as well if approv
 
 ## Post-Phase-IX UI Fixes
 
+### Real Trading Bugs
+
+**[RESOLVED]** Kotak Neo rejects equity orders with "symbol is wrong" for TATMOT (and potentially TATPOW/RELIND).
+- **Symptom**: Placing a BUY/SELL order in real trading for TATMOT fails — Kotak API returns an error indicating the trading symbol is invalid.
+- **Root cause**: Kotak Neo `nse_cm` (NSE cash market) requires the `-EQ` suffix for equity trading symbols (e.g. `TMCV-EQ`, not `TMCV`). The `_SYMBOL_MAP` in `kotak_service.py` was missing this suffix for all three equity symbols: `TATPOWER`, `TMCV`, `RELIANCE`.
+- **Fix**: Updated `_SYMBOL_MAP` to `TATPOWER-EQ`, `TMCV-EQ`, `RELIANCE-EQ` for the `nse_cm` entries. Index/options symbols (`NIFTY` on `nse_fo`, `SENSEX` on `bse_fo`) do not use this suffix.
+- **File**: `backend/app/services/kotak_service.py` — `_SYMBOL_MAP`.
+
 ### UI Bugs
 
 **[RESOLVED]** Trade marker colors — BUY/SELL distinction unclear on dark background (PR #50, 2026-05-22).
