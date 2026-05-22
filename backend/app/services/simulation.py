@@ -985,6 +985,34 @@ def _emit_tick_and_check_orders_real(
 
             kotak_svc.register_fill_callback(kotak_order_id, _make_fill_cb(order.order_id, session), loop)
 
+            def _make_reject_cb(ord_id: str, sess: SimulationSession):
+                def on_reject(kotak_id: str, reason: str):
+                    from app.services.order_service import get_order, _write_order_to_db
+                    from app.models.schemas import OrderStatus
+                    from app.services import wallet_service
+                    o = get_order(sess.session_id, ord_id)
+                    if o is None:
+                        return
+                    logger.warning(
+                        "Real session %s: Kotak rejected order %s: %s",
+                        sess.session_id, ord_id, reason,
+                    )
+                    o.status = OrderStatus.CANCELLED
+                    # Credit back the upfront wallet reservation for BUY orders
+                    if o.side.value == "BUY" and o.reserved_amount > 0:
+                        wallet_service.credit(o.user_id, o.reserved_amount, sess.date)
+                    _write_order_to_db(o)
+                    cancel_event = {"type": "order_cancelled", "order_id": ord_id}
+                    error_event = {"type": "broker_error", "message": f"Kotak rejected order: {reason}"}
+                    for evt in (cancel_event, error_event):
+                        try:
+                            sess.queue.put_nowait(json.dumps(evt))
+                        except asyncio.QueueFull:
+                            pass
+                return on_reject
+
+            kotak_svc.register_reject_callback(kotak_order_id, _make_reject_cb(order.order_id, session), loop)
+
         except KotakError as exc:
             logger.error(
                 "Real session %s: failed to forward order %s to Kotak: %s",
