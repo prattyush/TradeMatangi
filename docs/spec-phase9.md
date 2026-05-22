@@ -285,3 +285,36 @@ Chart.tsx uses `isLongDirection = right === 'PE' ? t.side === 'SELL' : t.side ==
 
 **TradeHistory button layout: wrap both action buttons in one `marginLeft: auto` container**
 The 🔄 refresh button and ⛶ expand button must share a single wrapper `div` with `marginLeft: 'auto'`. If each button independently applies `marginLeft: 'auto'`, removing one of them (e.g. 🔄 when `sessionType !== 'real'`) causes the remaining button to lose its right-alignment. Wrapper pattern: `<div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 2 }}>`.
+
+---
+
+### Bugs Fixed Post-Merge (2026-05-22 session — PR #50)
+
+#### Trade marker color scheme revised
+
+**Change:** Marker colors switched from directional (long/short Nifty) to raw instrument side — BUY = white `#FFFFFF`, SELL = bright yellow `#FFE600` — on all live chart panes (equity, CE, PE). The analysis/underlying chart in `TradeAnalysis.tsx` retains directional mapping via `effectiveSideForChart` but also updated red → yellow.
+
+**Rationale:** Red (`#FF4D4D`) blends with red down-candles. The PE-inversion made CE/PE Buy markers show different colors for the same instrument-level action, confusing traders. Raw-side coloring is intuitive: every Buy you place is white, every Sell is yellow.
+
+**Files:** `Chart.tsx` (removed `isLongDirection`; `color = t.side === 'BUY' ? '#FFFFFF' : '#FFE600'`), `TradeAnalysis.tsx` (`#FF4D4D` → `#FFE600`), `CLAUDE.md` (updated invariant).
+
+---
+
+#### BUG-POST-IX-1: Maximizing a chart resets the current in-progress candle bar
+
+**Symptom:** With a 3-min candle accumulating for ~2 minutes, clicking ⤢ to maximize that chart causes the bar to restart from the current streaming value — the high/low/open accumulated so far are lost. Reproduced on equity, CE, and PE panes in both sim and paper sessions.
+
+**Root cause:** `renderLayout()` had a standalone `if (maximizedPaneId !== null)` branch at the top that returned only the maximized pane as a direct child of the chart column div. Multi-pane layouts (2/3/4) wrapped pane wrappers inside intermediate flex containers. Switching between branches changed each pane wrapper's DOM parent. React treats a DOM-parent change as an unmount+remount — regardless of the `key` prop — resetting all Chart refs including `liveWindowRef.current`. The next tick then started a fresh OHLC accumulation from scratch.
+
+**First fix attempt (partial — failed for paper trading):** Restored `liveWindowRef.current` from the last candle in the re-fetched historical data after `series.setData()`. This worked for simulation (past-date parquets are complete) but not paper trading — the options parquet for today is cached with a 10-minute TTL, so the current partial candle may not exist in the cached file. `candles.find(c => c.time === cutoffTs)` returned `undefined` and no restore occurred.
+
+**Final fix (App.tsx):** Removed the standalone maximize branch. Each layout preset (2, 3, 4) now handles maximize inline while preserving its flex container structure:
+- Non-maximized panes → `{ display: 'none' }`: still mounted, Chart refs intact.
+- Layout 3/4 row containers that hold no maximized pane → `display: none` on the container itself (avoids phantom layout gap) while inner pane wrappers remain in the React tree.
+- Pane DOM parent never changes across maximize/restore → no React remount.
+
+**Fix (Chart.tsx ResizeObserver):** Guard against `applyOptions({ width: 0 })` when a pane transitions to `display: none`. A hidden element reports `contentRect.width = 0`; skipping the update prevents potential canvas corruption. The observer fires again with the correct width when the pane becomes visible.
+
+**Fix (Chart.tsx partial-candle restore — kept as safety net):** After `series.setData()` in both the equity and options historical effects, restores `liveWindowRef.current` from the last fetched candle if its timestamp equals the current bar slot. This covers hard-refresh during a running session (chart mounts fresh from page load, not maximize toggle).
+
+**Key lesson:** React component identity is tied to position within the **same DOM parent**, not just the `key` prop. Any component whose parent element changes between renders is unmounted and remounted. For layout-driven show/hide, always prefer CSS (`display: none`) over conditional rendering — the component stays mounted and all refs/state survive.
