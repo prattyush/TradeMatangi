@@ -30,6 +30,15 @@ from typing import Any, Callable
 
 logger = logging.getLogger(__name__)
 
+# NSE/BSE minimum tick size is ₹0.05 (5 paise). Kotak rejects prices that are
+# not multiples of this value.
+_TICK_SIZE = 0.05
+
+
+def _round_to_tick(price: float) -> float:
+    """Round price to the nearest ₹0.05 tick."""
+    return round(round(price / _TICK_SIZE) * _TICK_SIZE, 2)
+
 
 class KotakError(Exception):
     """Raised when Kotak Neo API returns an error or is misconfigured."""
@@ -157,7 +166,7 @@ class KotakNeoService:
             resp = client.place_order(
                 exchange_segment=exchange_seg,
                 product="MIS",
-                price=str(round(price, 2)),
+                price=str(_round_to_tick(price)),
                 order_type="L",
                 quantity=str(qty),
                 validity="DAY",
@@ -191,7 +200,7 @@ class KotakNeoService:
             resp = client.place_order(
                 exchange_segment=exchange_seg,
                 product="MIS",
-                price=str(round(limit_price, 2)),
+                price=str(_round_to_tick(limit_price)),
                 order_type="SL",
                 quantity=str(qty),
                 validity="DAY",
@@ -201,7 +210,7 @@ class KotakNeoService:
                 disclosed_quantity="0",
                 market_protection="0",
                 pf="N",
-                trigger_price=str(round(trigger_price, 2)),
+                trigger_price=str(_round_to_tick(trigger_price)),
                 tag=None,
             )
             return self._extract_order_id(resp)
