@@ -881,6 +881,110 @@ async def _run_real_session(session: SimulationSession) -> None:
             pass
 
 
+def _register_kotak_sl_for_order(session: SimulationSession, order: Any, loop: Any) -> None:
+    """
+    Place a locally-created SL order on Kotak and register fill/reject callbacks.
+    Called by strategies in real sessions that need to place a broker-side SL immediately.
+    """
+    from app.services.kotak_service import get_service as get_kotak, KotakError
+    from app.services.trading import record_trade
+    from app.services import wallet_service, order_service
+    from app.models.schemas import OrderStatus
+    from app.config import KOTAK_SLIPPAGE_PCT
+
+    kotak_svc = get_kotak()
+    trigger = order.trigger_price
+    if order.side.value == "BUY":
+        kotak_limit = round(trigger * (1 + KOTAK_SLIPPAGE_PCT), 2)
+    else:
+        kotak_limit = round(trigger * (1 - KOTAK_SLIPPAGE_PCT), 2)
+
+    if order.right and session.instrument_type == "options":
+        kotak_order_id = kotak_svc.place_options_sl_order(
+            symbol=session.symbol,
+            right=order.right,
+            strike=order.strike if order.strike is not None else session.strike,
+            expiry=session.expiry,
+            side="B" if order.side.value == "BUY" else "S",
+            qty=order.quantity,
+            trigger_price=trigger,
+            limit_price=kotak_limit,
+        )
+    else:
+        kotak_order_id = kotak_svc.place_sl_order(
+            symbol=session.symbol,
+            side="B" if order.side.value == "BUY" else "S",
+            qty=order.quantity,
+            trigger_price=trigger,
+            limit_price=kotak_limit,
+        )
+
+    order.kotak_order_id = kotak_order_id
+    session.kotak_order_map[order.order_id] = kotak_order_id
+    order_service._write_order_to_db(order)
+
+    def _fill_cb(k_id: str, fill_side: str, fill_qty: int, fill_price: float):
+        o = order_service.get_order(session.session_id, order.order_id)
+        if o is None:
+            return
+        o.status = OrderStatus.FILLED
+        o.filled_price = fill_price
+        o.filled_at = int(session.current_time) if session.current_time else 0
+        record_trade(
+            session_id=session.session_id,
+            side=o.side,
+            price=fill_price,
+            timestamp=o.filled_at,
+            quantity=fill_qty,
+            symbol=o.symbol,
+            instrument_type=session.instrument_type,
+            strike=o.strike if o.strike is not None else session.strike,
+            expiry=session.expiry,
+            right=o.right,
+            brokerage_per_order=session.brokerage_per_order,
+            user_id=session.user_id,
+            session_type=session.session_type,
+        )
+        if o.side.value == "SELL":
+            wallet_service.credit(session.user_id, round(fill_price * fill_qty, 2), session.date)
+        evt = {
+            "type": "order_filled",
+            "order_id": order.order_id,
+            "side": o.side.value,
+            "quantity": fill_qty,
+            "trigger_price": o.trigger_price,
+            "filled_price": fill_price,
+            "filled_at": o.filled_at,
+            "right": o.right,
+        }
+        try:
+            session.queue.put_nowait(json.dumps(evt))
+        except asyncio.QueueFull:
+            pass
+
+    def _reject_cb(k_id: str, reason: str):
+        o = order_service.get_order(session.session_id, order.order_id)
+        if o is None:
+            return
+        logger.warning("Kotak rejected strategy SL %s: %s", order.order_id, reason)
+        o.status = OrderStatus.CANCELLED
+        order_service._write_order_to_db(o)
+        cancel_event = {"type": "order_cancelled", "order_id": order.order_id}
+        error_event = {"type": "broker_error", "message": f"Kotak rejected SL: {reason}"}
+        for evt in (cancel_event, error_event):
+            try:
+                session.queue.put_nowait(json.dumps(evt))
+            except asyncio.QueueFull:
+                pass
+
+    kotak_svc.register_fill_callback(kotak_order_id, _fill_cb, loop)
+    kotak_svc.register_reject_callback(kotak_order_id, _reject_cb, loop)
+    logger.info(
+        "Strategy SL order %s placed on Kotak (kotak_id=%s trigger=%.2f)",
+        order.order_id, kotak_order_id, trigger,
+    )
+
+
 def _emit_tick_and_check_orders_real(
     session: SimulationSession,
     tick: dict,
@@ -929,12 +1033,23 @@ def _emit_tick_and_check_orders_real(
             kotak_price = round(price * (1 - KOTAK_SLIPPAGE_PCT), 2)
 
         try:
-            kotak_order_id = kotak_svc.place_limit_order(
-                symbol=session.symbol,
-                side=side_code,
-                qty=order.quantity,
-                price=kotak_price,
-            )
+            if order.right and session.instrument_type == "options":
+                kotak_order_id = kotak_svc.place_options_limit_order(
+                    symbol=session.symbol,
+                    right=order.right,
+                    strike=order.strike if order.strike is not None else session.strike,
+                    expiry=session.expiry,
+                    side=side_code,
+                    qty=order.quantity,
+                    price=kotak_price,
+                )
+            else:
+                kotak_order_id = kotak_svc.place_limit_order(
+                    symbol=session.symbol,
+                    side=side_code,
+                    qty=order.quantity,
+                    price=kotak_price,
+                )
             session.kotak_order_map[order.order_id] = kotak_order_id
             logger.info(
                 "Real session %s: forwarded triggered %s order %s to Kotak (kotak_id=%s price=%.2f)",
@@ -1035,12 +1150,12 @@ def _emit_tick_and_check_orders_real(
                     pass
             # Do NOT record the trade — wait for actual Kotak fill confirmation.
 
-    # Strategy evaluation (same as sim/paper)
+    # Strategy evaluation — pass loop so real-session strategies can place Kotak orders
     try:
         from app.services import strategy_service
         from app.services.order_service import get_open_orders
         before_ids = {o.order_id for o in get_open_orders(session.session_id)}
-        strategy_service.on_tick(session, tick, tick_right)
+        strategy_service.on_tick(session, tick, tick_right, loop=loop)
         for new_order in get_open_orders(session.session_id):
             if new_order.order_id not in before_ids:
                 fill_events.append({

@@ -794,10 +794,17 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
             historicalTrades={sim.historicalTrades}
             sessionType={sim.sessionType}
             onRefresh={sim.sessionId ? async () => {
-              await api.reconcileKotakOrders(sim.sessionId!)
+              const result = await api.reconcileKotakOrders(sim.sessionId!)
               const trades = await api.getTrades(sim.sessionId!)
               sim.setTrades(trades)
               sim.incrementWalletRefreshKey()
+              const openCount = result.open_orders?.length ?? 0
+              if (result.reconciled > 0 || openCount > 0) {
+                const parts: string[] = []
+                if (result.reconciled > 0) parts.push(`${result.reconciled} fill(s) reconciled`)
+                if (openCount > 0) parts.push(`${openCount} order(s) still open on Kotak`)
+                setBrokerError(parts.join(' — '))
+              }
             } : undefined}
           />
         </div>

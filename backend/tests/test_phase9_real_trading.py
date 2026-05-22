@@ -385,3 +385,246 @@ class TestRealSessionStartup:
                 "session_type": "real",
             }, headers=ADMIN_HEADERS)
         assert resp.status_code == 401
+
+
+# ── Options trading symbol construction ──────────────────────────────────────
+
+class TestOptionsSymbolConstruction:
+    """Tests for _build_options_trading_symbol and _is_monthly_expiry in kotak_service."""
+
+    def _sym(self, base, expiry, strike, right, symbol="NIFTY"):
+        from app.services.kotak_service import _build_options_trading_symbol
+        return _build_options_trading_symbol(base, expiry, strike, right, symbol)
+
+    def test_monthly_nifty_pe(self):
+        # May 26, 2026 is last Tuesday of May 2026 → monthly → NIFTY26MAY23500PE
+        assert self._sym("NIFTY", "2026-05-26", 23500, "PE") == "NIFTY26MAY23500PE"
+
+    def test_weekly_nifty_june_2(self):
+        # June 2, 2026 is a Tuesday but NOT last Tuesday of June → weekly → NIFTY2660223500PE
+        assert self._sym("NIFTY", "2026-06-02", 23500, "PE") == "NIFTY2660223500PE"
+
+    def test_monthly_sensex_ce(self):
+        # May 28, 2026 is last Thursday of May 2026 (SENSEX → always Thursday) → SENSEX26MAY76000CE
+        assert self._sym("SENSEX", "2026-05-28", 76000, "CE", symbol="BSESEN") == "SENSEX26MAY76000CE"
+
+    def test_weekly_sensex_june_4(self):
+        # June 4, 2026 is Thursday but NOT last Thursday of June → SENSEX2660476000CE
+        assert self._sym("SENSEX", "2026-06-04", 76000, "CE", symbol="BSESEN") == "SENSEX2660476000CE"
+
+    def test_october_weekly_two_digit_month(self):
+        # October 1, 2026 is a weekly; month=10 (two digits) → NIFTY261001XXXX
+        result = self._sym("NIFTY", "2026-10-01", 24000, "CE")
+        assert result == "NIFTY261001" + "24000CE"
+
+    def test_december_weekly_two_digit_month(self):
+        # Dec 3, 2026 → month=12, day=03 → NIFTY261203XXXXX
+        result = self._sym("NIFTY", "2026-12-03", 23000, "PE")
+        assert result == "NIFTY261203" + "23000PE"
+
+    def test_resolve_options_symbol_nifty(self):
+        """KotakNeoService._resolve_options_symbol returns correct symbol and exchange."""
+        from app.services.kotak_service import get_service
+        svc = get_service()
+        sym, exchange = svc._resolve_options_symbol("NIFTY", "CE", 24700, "2026-05-26")
+        assert sym == "NIFTY26MAY24700CE"
+        assert exchange == "nse_fo"
+
+    def test_resolve_options_symbol_sensex(self):
+        from app.services.kotak_service import get_service
+        svc = get_service()
+        sym, exchange = svc._resolve_options_symbol("BSESEN", "CE", 80000, "2026-06-04")
+        assert sym == "SENSEX2660480000CE"
+        assert exchange == "bse_fo"
+
+    def test_resolve_options_symbol_unsupported_raises(self):
+        from app.services.kotak_service import get_service, KotakError
+        svc = get_service()
+        with pytest.raises(KotakError, match="does not support options trading"):
+            svc._resolve_options_symbol("RELIND", "CE", 1000, "2026-05-26")
+
+
+# ── Options order routing in real sessions ────────────────────────────────────
+
+class TestOptionsOrderRouting:
+    """Verify that place_options_sl_order and place_options_limit_order use the right symbol."""
+
+    def test_place_options_limit_order_calls_correct_symbol(self):
+        from app.services.kotak_service import get_service, KotakError
+
+        svc = get_service()
+        mock_client = MagicMock()
+        mock_client.place_order.return_value = {"nOrdNo": "ORD001"}
+        svc._client = mock_client
+        svc._authenticated = True
+
+        svc.place_options_limit_order(
+            symbol="NIFTY",
+            right="CE",
+            strike=24700,
+            expiry="2026-06-02",   # weekly
+            side="B",
+            qty=65,
+            price=150.0,
+        )
+
+        call_kwargs = mock_client.place_order.call_args.kwargs
+        assert call_kwargs["trading_symbol"] == "NIFTY2660224700CE"
+        assert call_kwargs["exchange_segment"] == "nse_fo"
+        assert call_kwargs["order_type"] == "L"
+        assert call_kwargs["quantity"] == "65"
+
+    def test_place_options_sl_order_calls_correct_symbol(self):
+        from app.services.kotak_service import get_service
+
+        svc = get_service()
+        mock_client = MagicMock()
+        mock_client.place_order.return_value = {"nOrdNo": "ORD002"}
+        svc._client = mock_client
+        svc._authenticated = True
+
+        svc.place_options_sl_order(
+            symbol="NIFTY",
+            right="PE",
+            strike=24000,
+            expiry="2026-05-26",   # monthly
+            side="S",
+            qty=65,
+            trigger_price=140.0,
+            limit_price=139.0,
+        )
+
+        call_kwargs = mock_client.place_order.call_args.kwargs
+        assert call_kwargs["trading_symbol"] == "NIFTY26MAY24000PE"
+        assert call_kwargs["exchange_segment"] == "nse_fo"
+        assert call_kwargs["order_type"] == "SL"
+
+    def test_modify_sl_order_calls_modify(self):
+        from app.services.kotak_service import get_service
+
+        svc = get_service()
+        mock_client = MagicMock()
+        mock_client.modify_order.return_value = {"stat": "Ok"}
+        svc._client = mock_client
+        svc._authenticated = True
+
+        svc.modify_sl_order("ORD123", new_trigger=145.0, new_limit=144.0)
+
+        mock_client.modify_order.assert_called_once()
+        call_kwargs = mock_client.modify_order.call_args.kwargs
+        assert call_kwargs["order_id"] == "ORD123"
+        assert call_kwargs["order_type"] == "SL"
+
+
+# ── Strategy SL modification in real sessions ─────────────────────────────────
+
+class TestStrategySLModification:
+    """Verify _update_exit_order_price calls modify_sl_order for real-session Kotak orders."""
+
+    def test_update_exit_order_price_calls_modify_in_real_session(self):
+        from app.services.strategy_service import _update_exit_order_price
+        from app.models.schemas import OrderType, TradeSide, OrderStatus
+
+        order = MagicMock()
+        order.order_id = "ord_sl_1"
+        order.side.value = "SELL"
+        order.order_type = OrderType.STOPLOSS
+        order.kotak_order_id = "KOTAK_ORD_001"
+
+        session = MagicMock()
+        session.session_type = "real"
+        session.session_id = "sess_real"
+        session.date = "2026-05-26"
+
+        mock_kotak = MagicMock()
+        with patch("app.services.order_service.update_order") as mock_update, \
+             patch("app.services.kotak_service.get_service", return_value=mock_kotak):
+            _update_exit_order_price(session, order, 150.0)
+
+        mock_kotak.modify_sl_order.assert_called_once()
+        call_args = mock_kotak.modify_sl_order.call_args
+        assert call_args[0][0] == "KOTAK_ORD_001"   # kotak_order_id
+        assert call_args[0][1] == 150.0              # new_trigger
+        mock_update.assert_called_once()
+
+    def test_update_exit_order_price_no_kotak_id_skips_modify(self):
+        from app.services.strategy_service import _update_exit_order_price
+        from app.models.schemas import OrderType
+
+        order = MagicMock()
+        order.order_id = "ord_local"
+        order.side.value = "SELL"
+        order.order_type = OrderType.TARGET
+        order.kotak_order_id = None
+
+        session = MagicMock()
+        session.session_type = "real"
+        session.session_id = "sess_real"
+        session.date = "2026-05-26"
+
+        mock_kotak = MagicMock()
+        with patch("app.services.order_service.update_order"), \
+             patch("app.services.kotak_service.get_service", return_value=mock_kotak):
+            _update_exit_order_price(session, order, 150.0)
+
+        mock_kotak.modify_sl_order.assert_not_called()
+
+    def test_update_exit_order_price_sim_session_skips_modify(self):
+        from app.services.strategy_service import _update_exit_order_price
+        from app.models.schemas import OrderType
+
+        order = MagicMock()
+        order.order_id = "ord_sim"
+        order.side.value = "SELL"
+        order.order_type = OrderType.STOPLOSS
+        order.kotak_order_id = "KOTAK_123"
+
+        session = MagicMock()
+        session.session_type = "sim"   # not real
+        session.session_id = "sess_sim"
+        session.date = "2026-05-26"
+
+        mock_kotak = MagicMock()
+        with patch("app.services.order_service.update_order"), \
+             patch("app.services.kotak_service.get_service", return_value=mock_kotak):
+            _update_exit_order_price(session, order, 150.0)
+
+        mock_kotak.modify_sl_order.assert_not_called()
+
+
+# ── Reconcile returns open orders ─────────────────────────────────────────────
+
+class TestReconcileOpenOrders:
+    """Verify /api/kotak/reconcile returns open_orders in its response."""
+
+    def test_reconcile_response_includes_open_orders(self):
+        kotak_orders = [
+            {"kotak_order_id": "K1", "status": "complete", "filled_price": 150.0,
+             "filled_quantity": 65, "quantity": 65},
+            {"kotak_order_id": "K2", "status": "open", "filled_price": 0,
+             "filled_quantity": 0, "quantity": 65},
+        ]
+        mock_kotak_svc = MagicMock()
+        mock_kotak_svc.get_order_history.return_value = kotak_orders
+
+        mock_session = MagicMock()
+        mock_session.session_type = "real"
+        mock_session.kotak_order_map = {}
+        mock_session.current_time = 1000
+        mock_session.user_id = FIXED_USER_ID
+        mock_session.date = "2026-05-26"
+
+        with patch("app.routers.kotak.get_service", return_value=mock_kotak_svc), \
+             patch("app.services.real_trading_service.is_whitelisted_user", return_value=True), \
+             patch("app.services.user_service.get_user_info", return_value={"is_admin": True}), \
+             patch("app.services.simulation.get_session", return_value=mock_session):
+            resp = client.post(
+                "/api/kotak/reconcile?session_id=sess_test",
+                headers=ADMIN_HEADERS,
+            )
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "open_orders" in data
+        assert len(data["open_orders"]) == 1
+        assert data["open_orders"][0]["status"] == "open"
