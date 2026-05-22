@@ -38,6 +38,32 @@ Look at each of the bugs, fix them and then mark them resolved as well if approv
   - **Frontend `App.tsx`**: Passes `historicalTrades={sim.historicalTrades}` to `<TradeHistory>`. Day P&L header shows `totalDayPnl = netDayPnl + sim.prevDayPnl` with a grayed `(prev ±X)` annotation when previous-session P&L is non-zero. Session P&L (right TradePanel) remains current-session-only.
 - **Key constraint**: Only previous sessions (not current) are loaded from DynamoDB; current session trades arrive via SSE `order_filled` events and `sim.trades` as before.
 
+## Post-Phase-IX UI Fixes
+
+### Real Trading Bugs
+
+**[RESOLVED]** Kotak Neo rejects equity orders with "symbol is wrong" for TATMOT (and potentially TATPOW/RELIND).
+- **Symptom**: Placing a BUY/SELL order in real trading for TATMOT fails — Kotak API returns an error indicating the trading symbol is invalid.
+- **Root cause**: Kotak Neo `nse_cm` (NSE cash market) requires the `-EQ` suffix for equity trading symbols (e.g. `TMCV-EQ`, not `TMCV`). The `_SYMBOL_MAP` in `kotak_service.py` was missing this suffix for all three equity symbols: `TATPOWER`, `TMCV`, `RELIANCE`.
+- **Fix**: Updated `_SYMBOL_MAP` to `TATPOWER-EQ`, `TMCV-EQ`, `RELIANCE-EQ` for the `nse_cm` entries. Index/options symbols (`NIFTY` on `nse_fo`, `SENSEX` on `bse_fo`) do not use this suffix.
+- **File**: `backend/app/services/kotak_service.py` — `_SYMBOL_MAP`.
+
+### UI Bugs
+
+**[RESOLVED]** Trade marker colors — BUY/SELL distinction unclear on dark background (PR #50, 2026-05-22).
+- **Symptom**: Old colors were directional (long Nifty = white, short Nifty = red `#FF4D4D`). Red blends with red down-candles; the PE-inversion logic meant PE-Buy showed red (confusing instrument-level traders).
+- **New spec**: Marker color follows raw instrument side — BUY = white `#FFFFFF`, SELL = bright yellow `#FFE600`. Applied to all panes (equity, CE, PE). Analysis/underlying chart keeps directional mapping (CE Buy→white, CE Sell→yellow, PE Buy→yellow, PE Sell→white) via `effectiveSideForChart`.
+- **Files**: `Chart.tsx` (removed `isLongDirection`; color = `t.side === 'BUY' ? '#FFFFFF' : '#FFE600'`), `TradeAnalysis.tsx` (same yellow), `CLAUDE.md` (updated invariant).
+
+**[RESOLVED]** Maximizing any chart resets the current in-progress candle bar (PR #50, 2026-05-22).
+- **Symptom**: While a 3-min candle has been accumulating for ~2 minutes, clicking ⤢ to maximize the chart causes it to restart from the current streaming value — losing the bar's high/low/open. Reproduced on equity, CE, PE panes in both sim and paper sessions.
+- **Root cause**: The old `renderLayout()` had a standalone `if (maximizedPaneId !== null)` branch that returned only the maximized pane as a direct child of the chart column div. Multi-pane layouts (2/3/4) wrap pane wrappers in intermediate flex containers. Switching branches changed each pane wrapper's DOM parent — React treats a DOM-parent change as unmount+remount regardless of `key`, resetting all Chart refs including `liveWindowRef.current`. The next tick then restarted the bar from scratch.
+- **Why a partial fix failed for paper trading**: A first fix attempted to restore `liveWindowRef.current` from the last candle in the re-fetched historical data. This worked for simulation (past-date parquet is complete) but not paper trading — the options parquet for today is cached with a 10-minute TTL and may not yet contain the current partial candle, so `candles.find(c => c.time === cutoffTs)` returned `undefined`.
+- **Final fix (App.tsx)**: Removed the standalone maximize branch. Each layout preset now handles maximize inline while preserving its flex container structure. Non-maximized panes get `{ display: 'none' }` — still mounted, `liveWindowRef` intact. For layouts 3/4, row containers holding no maximized pane get `display: none` (avoids layout gaps) while pane wrappers inside remain in the React tree.
+- **Fix (Chart.tsx ResizeObserver)**: Added `if (w > 0)` guard so `chart.applyOptions({ width: 0 })` is never called when a pane transitions to `display: none`.
+- **Fix (Chart.tsx partial-candle restore)**: Kept as safety net for hard-refresh during a running session. After `series.setData()` in both equity and options historical effects, restores `liveWindowRef.current` from the last fetched candle if its timestamp matches the current bar slot.
+- **Key lesson**: React component identity is tied to position within the **same DOM parent**, not just the `key` prop. Use CSS `display: none` for layout-driven show/hide — never conditional rendering.
+
 ---
 
 ## Phase-IV BetaMinorUpdates
