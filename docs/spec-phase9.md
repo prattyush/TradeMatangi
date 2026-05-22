@@ -324,3 +324,73 @@ The 🔄 refresh button and ⛶ expand button must share a single wrapper `div` 
 **Fix (Chart.tsx partial-candle restore — kept as safety net):** After `series.setData()` in both the equity and options historical effects, restores `liveWindowRef.current` from the last fetched candle if its timestamp equals the current bar slot. This covers hard-refresh during a running session (chart mounts fresh from page load, not maximize toggle).
 
 **Key lesson:** React component identity is tied to position within the **same DOM parent**, not just the `key` prop. Any component whose parent element changes between renders is unmounted and remounted. For layout-driven show/hide, always prefer CSS (`display: none`) over conditional rendering — the component stays mounted and all refs/state survive.
+
+---
+
+### Options & Strategies for Real Trading (PR #67, 2026-05-22)
+
+**Status:** COMPLETE — merged to dev. Test count: 436 (16 new).
+
+#### Architecture additions
+
+**Options order routing in real sessions:**
+
+- `_build_options_trading_symbol(base, expiry, strike, right, symbol)` in `kotak_service.py` — computes the correct Kotak/NSE-BSE trading symbol string without needing the Kite instruments CSV.
+  - Monthly expiry (last occurrence of expiry weekday in the month): `{BASE}{YY}{MON3}{STRIKE}{RIGHT}` e.g. `NIFTY26MAY24700CE`, `SENSEX26MAY76000CE`
+  - Weekly non-monthly: `{BASE}{YY}{M}{DD}{STRIKE}{RIGHT}` e.g. `NIFTY2660224700CE` (June 2 = 26+6+02), `SENSEX2660476000CE` (June 4 = 26+6+04)
+  - Oct/Nov/Dec month uses two digits: `NIFTY261001...` (Oct 1), `NIFTY261203...` (Dec 3)
+  - "Last of month" check: `(expiry + timedelta(7)).month != expiry.month` → True = monthly contract
+  - Expiry weekday: NIFTY → Tuesday from 2025-09-01, Thursday before; BSESEN → always Thursday
+
+- `_is_monthly_expiry(expiry_dt, symbol)` — module-level helper implementing the above check
+- `_resolve_options_symbol(symbol, right, strike, expiry)` — returns `(kotak_trading_symbol, exchange_segment)`; NIFTY → `nse_fo`, BSESEN → `bse_fo`
+- `place_options_limit_order(symbol, right, strike, expiry, side, qty, price)` — options limit order
+- `place_options_sl_order(symbol, right, strike, expiry, side, qty, trigger_price, limit_price)` — options SL order
+- `modify_sl_order(kotak_order_id, new_trigger, new_limit)` — modifies trigger/limit of an existing Kotak SL order via `client.modify_order()`
+
+**`routers/orders.py` SL routing** — real-session STOPLOSS block now branches on `session.instrument_type`:
+- `options` → `kotak_svc.place_options_sl_order(right=order.right, strike=order.strike or session.strike, expiry=session.expiry, ...)`
+- `equity` → `kotak_svc.place_sl_order(symbol=session.symbol, ...)`
+
+**`simulation.py` triggered order forwarding** — `_emit_tick_and_check_orders_real()` checks `order.right` before forwarding:
+- Options orders (`order.right` set) → `place_options_limit_order(...)`
+- Equity orders → `place_limit_order(...)`
+
+**`_register_kotak_sl_for_order(session, order, loop)`** — new module-level helper in `simulation.py`. Encapsulates the full SL placement + fill/reject callback registration pattern so strategies can call it without duplicating the closure code from `orders.py`.
+
+**Strategy real-session routing:**
+
+- `strategy_service.on_tick(session, tick, tick_right, loop=None)` — `loop` parameter added; passed down through `_on_bar_close` → `_on_bar_close_aggressive_sl` and `_on_tick_breakeven`
+- `_emit_tick_and_check_orders_real()` passes `loop=loop` when calling `strategy_service.on_tick()`
+- `_update_exit_order_price(session, order, new_price)` — signature changed from `(session_id, order, price, trading_date)` to `(session, order, price)`. For real sessions with `order.kotak_order_id` set, also calls `get_kotak().modify_sl_order(order.kotak_order_id, new_price, kotak_limit)` — this is what makes BreakEven/AggressiveStoploss SL modifications reach the broker immediately.
+- **BreakEven / AggressiveStoploss fallback** (no existing exit order found): for real sessions (`loop is not None`) places `OrderType.STOPLOSS` locally then calls `_register_kotak_sl_for_order` to route it to Kotak. For sim/paper: places `OrderType.TARGET` locally as before.
+
+**Reconcile enhancement** — `POST /api/kotak/reconcile` now returns `open_orders` (list of Kotak orders with status `"open"` / `"trigger pending"` / `"amo"`) in addition to `reconciled` count. Frontend `onRefresh` handler shows a toast with both counts. `api.ts` return type updated to `{ reconciled: number; open_orders: unknown[] }`.
+
+#### Files modified (PR #67)
+
+- `backend/app/services/kotak_service.py` — `_is_monthly_expiry`, `_build_options_trading_symbol`, `_resolve_options_symbol`, `place_options_limit_order`, `place_options_sl_order`, `modify_sl_order`
+- `backend/app/services/simulation.py` — `_register_kotak_sl_for_order` helper; options routing in `_emit_tick_and_check_orders_real`; pass `loop` to `strategy_service.on_tick`
+- `backend/app/routers/orders.py` — branch on `instrument_type` for real STOPLOSS placement
+- `backend/app/services/strategy_service.py` — `loop` param on `on_tick`, `_on_bar_close`, `_on_bar_close_aggressive_sl`, `_on_tick_breakeven`; `_update_exit_order_price` signature + Kotak modify call; real-session SL routing in fallback paths
+- `backend/app/routers/kotak.py` — reconcile returns `open_orders`
+- `backend/tests/test_phase9_real_trading.py` — 16 new tests (symbol construction, options order routing, `modify_sl_order`, strategy SL modification, reconcile open_orders)
+- `frontend/src/App.tsx` — refresh toast shows open_orders count
+- `frontend/src/services/api.ts` — `reconcileKotakOrders` return type includes `open_orders`
+
+#### Lessons Learned — Options & Strategies
+
+**Kotak options trading symbol is formula-based — no instrument CSV needed**
+The NSE/BSE options trading symbol can be computed directly from expiry date, strike, and right. Monthly vs weekly distinction: if `(expiry + 7 days).month != expiry.month`, it is the last occurrence of the weekday → monthly format (`MON3`). Otherwise → weekly format (single-digit month Jan–Sep, two-digit Oct–Dec, plus 2-digit zero-padded day). This avoids a Kite API dependency and works for any future expiry date.
+
+**Strategy `_update_exit_order_price` must modify the broker-side order**
+BreakEven and AggressiveStoploss shift SL prices by calling `_update_exit_order_price`. Before this fix, only the local `Order` record was updated — the actual Kotak SL order kept its original trigger. The fix: when `order.kotak_order_id` is set and session is real, call `modify_sl_order()` on the broker alongside the local update. Failure to modify on the broker side is logged as a warning but does not abort the local update.
+
+**Strategies need the event loop for real-session Kotak routing**
+The asyncio event loop is required to register thread-safe fill/reject callbacks for Kotak orders (`loop.call_soon_threadsafe`). Strategies run synchronously inside `_emit_tick_and_check_orders_real`, which already has `loop` in scope. Adding `loop=None` to `on_tick` and threading it through the call chain is the clean pattern — sim/paper sessions pass `None` and strategies skip broker routing entirely.
+
+**BreakEven/AggressiveStoploss fallback uses STOPLOSS not TARGET in real sessions**
+When no existing exit order is found, the "place new exit" fallback used `OrderType.TARGET` (waits for price to cross trigger, then forwards to Kotak). For real sessions, the spec requires immediate broker placement — so the fallback places `OrderType.STOPLOSS` locally and calls `_register_kotak_sl_for_order` straight away. This means the SL is active on Kotak from the moment the strategy fires, not only when price eventually crosses the trigger.
+
+**`_register_kotak_sl_for_order` avoids duplicating callback closure code**
+The fill/reject callback pattern (closure over `order_id` + `session`, recording trade, updating wallet, emitting SSE) was duplicated across `orders.py` and `simulation.py`. Extracting it into `_register_kotak_sl_for_order` in `simulation.py` provides a single place to call from strategies, keeping the closure logic DRY. Import is lazy (`from app.services.simulation import _register_kotak_sl_for_order`) to avoid circular imports.
