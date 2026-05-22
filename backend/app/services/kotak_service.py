@@ -344,13 +344,14 @@ class KotakNeoService:
         except Exception as exc:
             logger.warning("Failed to start Kotak order feed WebSocket: %s", exc)
 
-    def _on_open(self) -> None:
+    def _on_open(self, *args: Any) -> None:
         logger.info("Kotak Neo order feed WebSocket opened")
 
-    def _on_close(self) -> None:
+    def _on_close(self, *args: Any) -> None:
         logger.warning("Kotak Neo order feed WebSocket closed")
 
-    def _on_error(self, error: Any) -> None:
+    def _on_error(self, *args: Any) -> None:
+        error = args[0] if args else "unknown"
         logger.error("Kotak Neo order feed WebSocket error: %s", error)
 
     def _on_message(self, message: Any) -> None:
