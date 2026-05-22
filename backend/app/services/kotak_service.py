@@ -243,18 +243,49 @@ class KotakNeoService:
         except Exception as exc:
             raise KotakError(str(exc)) from exc
 
+    @staticmethod
+    def _normalize_order(raw: dict) -> dict:
+        """Convert a raw Kotak order dict to a stable, UI-friendly shape."""
+        status_raw = (
+            str(raw.get("ordSt") or raw.get("stat") or "").lower()
+        )
+        side_code = str(raw.get("trnsTp", "B")).upper()
+        price_type = str(raw.get("prcTp", "L")).upper()
+        order_type_map = {"L": "LIMIT", "MKT": "MARKET", "SL": "SL", "SL-M": "SL-M"}
+        return {
+            "kotak_order_id": str(raw.get("nOrdNo", "")),
+            "status": status_raw,
+            "side": "BUY" if side_code == "B" else "SELL",
+            "symbol": str(raw.get("trdSym") or raw.get("sym") or ""),
+            "exchange": str(raw.get("exSeg", "")),
+            "quantity": int(raw.get("qty") or 0),
+            "filled_quantity": int(raw.get("fldQty") or raw.get("flQty") or 0),
+            "limit_price": float(raw.get("prc") or 0),
+            "trigger_price": float(raw.get("trgPrc") or 0),
+            "filled_price": float(raw.get("avgPrc") or raw.get("flPrc") or 0),
+            "order_type": order_type_map.get(price_type, price_type),
+            "order_time": str(raw.get("ordDtTm") or raw.get("ordEntTm") or ""),
+            "product": str(raw.get("prod", "")),
+            "reject_reason": str(
+                raw.get("rejRsn") or raw.get("rjRsn") or raw.get("rejectionReason") or ""
+            ),
+        }
+
     def get_order_history(self) -> list[dict]:
-        """Return today's orders from Kotak as a list of dicts."""
+        """Return today's orders from Kotak normalized to a stable dict shape."""
         client = self._get_client()
         try:
             resp = client.order_report()
             self._check_api_response(resp)
             if isinstance(resp, list):
-                return resp
-            if isinstance(resp, dict):
-                data = resp.get("data", [])
-                return data if isinstance(data, list) else []
-            return []
+                raw_list = resp
+            elif isinstance(resp, dict):
+                raw_list = resp.get("data", [])
+                if not isinstance(raw_list, list):
+                    raw_list = []
+            else:
+                raw_list = []
+            return [self._normalize_order(o) for o in raw_list if isinstance(o, dict)]
         except KotakError:
             raise
         except Exception as exc:
