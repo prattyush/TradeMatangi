@@ -297,7 +297,7 @@ class KotakNeoService:
     # ── WebSocket order feed ──────────────────────────────────────────────────
 
     def _start_order_feed(self) -> None:
-        """Attach order-feed WebSocket callbacks. Called immediately after login."""
+        """Start the Kotak order-feed WebSocket (runs in a background thread)."""
         if self._client is None:
             return
         try:
@@ -305,9 +305,13 @@ class KotakNeoService:
             self._client.on_error = self._on_error
             self._client.on_close = self._on_close
             self._client.on_open = self._on_open
-            logger.info("Kotak Neo order feed WebSocket callbacks registered")
+            # subscribe_to_orderfeed() creates the NeoWebSocket and calls
+            # get_order_feed() which starts the WS in a background thread.
+            # Setting on_* attributes before calling this is required.
+            self._client.subscribe_to_orderfeed()
+            logger.info("Kotak Neo order feed WebSocket subscribed")
         except Exception as exc:
-            logger.warning("Failed to set up Kotak order feed callbacks: %s", exc)
+            logger.warning("Failed to start Kotak order feed WebSocket: %s", exc)
 
     def _on_open(self) -> None:
         logger.info("Kotak Neo order feed WebSocket opened")

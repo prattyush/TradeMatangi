@@ -794,8 +794,10 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
             historicalTrades={sim.historicalTrades}
             sessionType={sim.sessionType}
             onRefresh={sim.sessionId ? async () => {
+              await api.reconcileKotakOrders(sim.sessionId!)
               const trades = await api.getTrades(sim.sessionId!)
               sim.setTrades(trades)
+              sim.incrementWalletRefreshKey()
             } : undefined}
           />
         </div>
