@@ -325,7 +325,8 @@ class KotakNeoService:
     def _on_message(self, message: Any) -> None:
         """
         Handle incoming messages from the Kotak order feed WebSocket.
-        Sample structure: {"type":"order_feed","data":"{\"type\":\"order\",\"data\":{...}}"}
+        Sample structure: {"type":"order_feed","data":"{\"type\":\"order\",\"data\":[{...}]}"}
+        data field may be a list (typical) or a plain dict.
         """
         try:
             if isinstance(message, (bytes, bytearray)):
@@ -341,6 +342,10 @@ class KotakNeoService:
                 return
 
             order_data = outer.get("data", {})
+            if isinstance(order_data, list):
+                if not order_data:
+                    return
+                order_data = order_data[0]
             if not isinstance(order_data, dict):
                 return
 

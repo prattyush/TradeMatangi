@@ -96,8 +96,9 @@ async def kotak_reconcile(
     reconciled = 0
     for ko in kotak_orders:
         k_id = str(ko.get("nOrdNo", ""))
-        status = str(ko.get("ordSt", "")).lower()
-        if status not in ("complete", "filled"):
+        status_ordst = str(ko.get("ordSt", "")).lower()
+        status_stat = str(ko.get("stat", "")).lower()
+        if status_ordst not in ("complete", "filled") and status_stat not in ("complete", "filled"):
             continue
 
         order_id = reverse_map.get(k_id)
@@ -109,7 +110,7 @@ async def kotak_reconcile(
             continue  # already processed or unknown
 
         avg_prc = float(ko.get("avgPrc") or ko.get("flPrc") or "0")
-        fill_qty = int(ko.get("flQty") or ko.get("qty") or "0")
+        fill_qty = int(ko.get("fldQty") or ko.get("flQty") or ko.get("qty") or "0")
         if avg_prc <= 0 or fill_qty <= 0:
             continue
 
