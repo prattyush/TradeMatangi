@@ -72,6 +72,17 @@ Look at each of the bugs, fix them and then mark them resolved as well if approv
 - **Fix 2**: New `POST /api/kotak/reconcile?session_id=...` endpoint. Fetches `order_report()` from Kotak, inverts `session.kotak_order_map` to map kotak_order_id → local order_id, and for each filled order still PENDING locally: records the trade, updates wallet, marks FILLED, emits `order_filled` SSE. `onRefresh` now calls reconcile first, then re-fetches trades and refreshes wallet. Files: `kotak.py`, `api.ts`, `App.tsx`.
 - **Key**: `order_report()` response — `stat == 'Ok'` means success; orders in `data` list. Fill fields: `nOrdNo`, `ordSt` ("complete"/"filled"), `avgPrc`/`flPrc`, `flQty`/`qty`.
 
+**[RESOLVED]** Kotak order-feed WebSocket `_on_message` silently drops all fills/rejects — `data` is a list, not a dict.
+- **Symptom**: Even after PR #60 connected the WebSocket, fills/rejects streamed via the order-feed never triggered fill or reject callbacks. The reconcile button was required for every fill.
+- **Root cause**: The inner order-feed message structure is `{"type":"order","data":[{...}]}` — `data` is a **list** of one order dict, not a plain dict. `_on_message` did `order_data = outer.get("data", {})` then `if not isinstance(order_data, dict): return`, which silently returned for every real message.
+- **Fix**: Unwrap the list before the dict check — `if isinstance(order_data, list): order_data = order_data[0]`. File: `backend/app/services/kotak_service.py:343-348`.
+
+**[RESOLVED]** Reconcile endpoint missed fills whose `stat` field is `"complete"` but `ordSt` is not yet updated; also used wrong filled-qty field name.
+- **Symptom**: Some orders visible as filled in Kotak UI still showed as PENDING after clicking 🔄, because `ordSt` hadn't propagated to `"complete"` in time while `stat` had.
+- **Root cause 1**: Reconcile checked only `ordSt` for completion status. The Kotak `order_report` response carries two parallel status fields — `stat` and `ordSt` — either of which can reach `"complete"` or `"filled"` first.
+- **Root cause 2**: The filled-quantity field in `order_report` rows is `fldQty`, not `flQty`. The code fell through to `qty` (total ordered qty) instead, which happens to match for fully-filled orders but is semantically wrong.
+- **Fix**: Changed the status check to `status_ordst not in (...) and status_stat not in (...)` so either field triggers reconciliation. Changed qty probe order to `fldQty → flQty → qty`. File: `backend/app/routers/kotak.py:99-112`.
+
 **[RESOLVED]** Kotak Neo rejects orders with non-tick-aligned prices (PR #58, 2026-05-22).
 - **Symptom**: Orders placed at prices like ₹456.23 (not a multiple of ₹0.05) were rejected by the exchange. `round(price, 2)` allows 1-paise precision but NSE/BSE minimum tick is 5 paise.
 - **Fix**: Added `_round_to_tick(price)` helper in `kotak_service.py` using `round(round(price / 0.05) * 0.05, 2)`. Applied to all three price fields sent to Kotak: limit price, SL trigger price, SL limit price. Callers unchanged — rounding happens centrally at the API boundary.

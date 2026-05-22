@@ -243,18 +243,49 @@ class KotakNeoService:
         except Exception as exc:
             raise KotakError(str(exc)) from exc
 
+    @staticmethod
+    def _normalize_order(raw: dict) -> dict:
+        """Convert a raw Kotak order dict to a stable, UI-friendly shape."""
+        status_raw = (
+            str(raw.get("ordSt") or raw.get("stat") or "").lower()
+        )
+        side_code = str(raw.get("trnsTp", "B")).upper()
+        price_type = str(raw.get("prcTp", "L")).upper()
+        order_type_map = {"L": "LIMIT", "MKT": "MARKET", "SL": "SL", "SL-M": "SL-M"}
+        return {
+            "kotak_order_id": str(raw.get("nOrdNo", "")),
+            "status": status_raw,
+            "side": "BUY" if side_code == "B" else "SELL",
+            "symbol": str(raw.get("trdSym") or raw.get("sym") or ""),
+            "exchange": str(raw.get("exSeg", "")),
+            "quantity": int(raw.get("qty") or 0),
+            "filled_quantity": int(raw.get("fldQty") or raw.get("flQty") or 0),
+            "limit_price": float(raw.get("prc") or 0),
+            "trigger_price": float(raw.get("trgPrc") or 0),
+            "filled_price": float(raw.get("avgPrc") or raw.get("flPrc") or 0),
+            "order_type": order_type_map.get(price_type, price_type),
+            "order_time": str(raw.get("ordDtTm") or raw.get("ordEntTm") or ""),
+            "product": str(raw.get("prod", "")),
+            "reject_reason": str(
+                raw.get("rejRsn") or raw.get("rjRsn") or raw.get("rejectionReason") or ""
+            ),
+        }
+
     def get_order_history(self) -> list[dict]:
-        """Return today's orders from Kotak as a list of dicts."""
+        """Return today's orders from Kotak normalized to a stable dict shape."""
         client = self._get_client()
         try:
             resp = client.order_report()
             self._check_api_response(resp)
             if isinstance(resp, list):
-                return resp
-            if isinstance(resp, dict):
-                data = resp.get("data", [])
-                return data if isinstance(data, list) else []
-            return []
+                raw_list = resp
+            elif isinstance(resp, dict):
+                raw_list = resp.get("data", [])
+                if not isinstance(raw_list, list):
+                    raw_list = []
+            else:
+                raw_list = []
+            return [self._normalize_order(o) for o in raw_list if isinstance(o, dict)]
         except KotakError:
             raise
         except Exception as exc:
@@ -325,7 +356,8 @@ class KotakNeoService:
     def _on_message(self, message: Any) -> None:
         """
         Handle incoming messages from the Kotak order feed WebSocket.
-        Sample structure: {"type":"order_feed","data":"{\"type\":\"order\",\"data\":{...}}"}
+        Sample structure: {"type":"order_feed","data":"{\"type\":\"order\",\"data\":[{...}]}"}
+        data field may be a list (typical) or a plain dict.
         """
         try:
             if isinstance(message, (bytes, bytearray)):
@@ -340,57 +372,63 @@ class KotakNeoService:
             if not isinstance(outer, dict) or outer.get("type") != "order":
                 return
 
-            order_data = outer.get("data", {})
-            if not isinstance(order_data, dict):
+            raw_orders = outer.get("data", {})
+            if isinstance(raw_orders, dict):
+                raw_orders = [raw_orders]
+            elif not isinstance(raw_orders, list) or not raw_orders:
                 return
 
-            order_id = str(order_data.get("nOrdNo", ""))
-            order_status = str(order_data.get("ordSt", "")).lower()
+            for order_data in raw_orders:
+                if not isinstance(order_data, dict):
+                    continue
 
-            if order_status in ("complete", "filled"):
-                avg_prc = order_data.get("avgPrc", "0") or "0"
-                qty_str = order_data.get("qty", "0") or "0"
-                side_code = order_data.get("trnsTp", "B")
+                order_id = str(order_data.get("nOrdNo", ""))
+                order_status = str(order_data.get("ordSt", "")).lower()
 
-                with self._lock:
-                    entry = self._fill_callbacks.get(order_id)
-                if entry is None:
-                    return
+                if order_status in ("complete", "filled"):
+                    avg_prc = order_data.get("avgPrc", "0") or "0"
+                    qty_str = order_data.get("qty", "0") or "0"
+                    side_code = order_data.get("trnsTp", "B")
 
-                callback, loop = entry
-                filled_price = float(avg_prc)
-                qty = int(qty_str)
-                side = "BUY" if side_code == "B" else "SELL"
+                    with self._lock:
+                        entry = self._fill_callbacks.get(order_id)
+                    if entry is None:
+                        continue
 
-                logger.info(
-                    "Kotak order %s filled: side=%s qty=%d price=%.2f",
-                    order_id, side, qty, filled_price,
-                )
-                loop.call_soon_threadsafe(callback, order_id, side, qty, filled_price)
+                    callback, loop = entry
+                    filled_price = float(avg_prc)
+                    qty = int(qty_str)
+                    side = "BUY" if side_code == "B" else "SELL"
 
-                with self._lock:
-                    self._fill_callbacks.pop(order_id, None)
-                    self._reject_callbacks.pop(order_id, None)
+                    logger.info(
+                        "Kotak order %s filled: side=%s qty=%d price=%.2f",
+                        order_id, side, qty, filled_price,
+                    )
+                    loop.call_soon_threadsafe(callback, order_id, side, qty, filled_price)
 
-            elif order_status in ("rejected", "cancelled"):
-                reject_reason = (
-                    order_data.get("rejRsn")
-                    or order_data.get("rjRsn")
-                    or order_data.get("rejectionReason")
-                    or "Order rejected by exchange"
-                )
-                logger.warning(
-                    "Kotak order %s %s: %s", order_id, order_status, reject_reason
-                )
+                    with self._lock:
+                        self._fill_callbacks.pop(order_id, None)
+                        self._reject_callbacks.pop(order_id, None)
 
-                with self._lock:
-                    entry = self._reject_callbacks.get(order_id)
-                    self._fill_callbacks.pop(order_id, None)
-                    self._reject_callbacks.pop(order_id, None)
+                elif order_status in ("rejected", "cancelled"):
+                    reject_reason = (
+                        order_data.get("rejRsn")
+                        or order_data.get("rjRsn")
+                        or order_data.get("rejectionReason")
+                        or "Order rejected by exchange"
+                    )
+                    logger.warning(
+                        "Kotak order %s %s: %s", order_id, order_status, reject_reason
+                    )
 
-                if entry is not None:
-                    r_callback, r_loop = entry
-                    r_loop.call_soon_threadsafe(r_callback, order_id, str(reject_reason))
+                    with self._lock:
+                        entry = self._reject_callbacks.get(order_id)
+                        self._fill_callbacks.pop(order_id, None)
+                        self._reject_callbacks.pop(order_id, None)
+
+                    if entry is not None:
+                        r_callback, r_loop = entry
+                        r_loop.call_soon_threadsafe(r_callback, order_id, str(reject_reason))
 
             else:
                 logger.debug("Kotak order %s status update: %s", order_id, order_status)
