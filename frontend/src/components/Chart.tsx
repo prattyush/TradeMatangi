@@ -199,8 +199,11 @@ export default function Chart({
       }
     })
 
-    const ro = new ResizeObserver(() => {
-      if (containerRef.current) chart.applyOptions({ width: containerRef.current.clientWidth })
+    const ro = new ResizeObserver(entries => {
+      // Skip when the container is hidden (display:none during maximize of another pane)
+      // to avoid applyOptions({ width: 0 }) which can corrupt the Lightweight Charts canvas.
+      const w = entries[0].contentRect.width
+      if (w > 0) chart.applyOptions({ width: w })
     })
     ro.observe(containerRef.current)
 
@@ -273,6 +276,18 @@ export default function Chart({
         chartRef.current?.timeScale().fitContent()
         candleTimesRef.current = allCandles.map(c => c.time)
 
+        // If a session is running, restore the partial candle accumulation so
+        // a remount (e.g., maximize toggling the DOM parent) doesn't reset the
+        // current bar to just the latest tick's OHLC.
+        const liveTs = currentSimTimeRef.current
+        if (liveTs != null && allCandles.length > 0) {
+          const iSecs = intervalMinutes * 60
+          const last = allCandles[allCandles.length - 1]
+          if (last.time === Math.floor(liveTs / iSecs) * iSecs) {
+            liveWindowRef.current = { start: last.time, open: last.open, high: last.high, low: last.low, close: last.close }
+          }
+        }
+
         const closes = allCandles.map(c => c.close)
         const ema9vals = computeEMA(closes, 9)
         const ema21vals = computeEMA(closes, 21)
@@ -339,6 +354,20 @@ export default function Chart({
 
         series.setData(priorCandles.map(toCandle))
         candleTimesRef.current = priorCandles.map(c => c.time)
+
+        // Restore current partial candle accumulation from historical data.
+        // priorCandles excludes the current slot (c.time < cutoffTs) to prevent
+        // "Cannot update oldest data" on the next live tick, but the current slot
+        // candle may still exist in the full `candles` array. Restoring here means
+        // a remount (e.g., maximize) continues bar accumulation rather than losing
+        // the in-progress bar and restarting from the next arriving tick.
+        const liveTsForRestore = currentSimTimeRef.current ?? latestTickRef.current?.time
+        if (liveTsForRestore != null) {
+          const partialCandle = candles.find(c => c.time === cutoffTs)
+          if (partialCandle) {
+            liveWindowRef.current = { start: partialCandle.time, open: partialCandle.open, high: partialCandle.high, low: partialCandle.low, close: partialCandle.close }
+          }
+        }
 
         if (priorCandles.length === 0) return
         chartRef.current?.timeScale().fitContent()
@@ -440,8 +469,6 @@ export default function Chart({
 
     for (const t of paneTrades) {
       const slot = (Math.floor(t.timestamp / intervalSecs) * intervalSecs) as Time
-      // PE is inverted: BUY PE = short Nifty, SELL PE = long Nifty
-      const isLongDirection = right === 'PE' ? t.side === 'SELL' : t.side === 'BUY'
       try {
         const s = chart.addLineSeries({
           lineVisible: false, crosshairMarkerVisible: false,
@@ -451,7 +478,7 @@ export default function Chart({
         s.setMarkers([{
           time: slot,
           position: 'inBar' as const,
-          color: isLongDirection ? '#FFFFFF' : '#FF4D4D',
+          color: t.side === 'BUY' ? '#FFFFFF' : '#FFE600',
           shape: 'circle' as const,
           text: t.side === 'BUY' ? 'B' : 'S',
           size: 1,
