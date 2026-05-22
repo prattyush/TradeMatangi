@@ -109,6 +109,25 @@ def _place_kotak_direct(session, side: TradeSide, price: float, lot_size: int, r
     kotak_svc.register_fill_callback(
         kotak_order_id, _make_cb(session, side, lot_size, right), loop
     )
+
+    def _make_direct_reject_cb(sess):
+        def on_reject(kotak_id: str, reason: str):
+            import logging as _log
+            import json as _json
+            _log.getLogger(__name__).warning(
+                "Kotak rejected direct order %s for session %s: %s",
+                kotak_id, sess.session_id, reason,
+            )
+            error_event = {"type": "broker_error", "message": f"Kotak rejected order: {reason}"}
+            try:
+                sess.queue.put_nowait(_json.dumps(error_event))
+            except Exception:
+                pass
+        return on_reject
+
+    kotak_svc.register_reject_callback(
+        kotak_order_id, _make_direct_reject_cb(session), loop
+    )
     return JSONResponse(
         status_code=202,
         content={"status": "broker_pending", "kotak_order_id": kotak_order_id},
