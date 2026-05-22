@@ -48,6 +48,27 @@ Look at each of the bugs, fix them and then mark them resolved as well if approv
 - **Fix**: Updated `_SYMBOL_MAP` to `TATPOWER-EQ`, `TMCV-EQ`, `RELIANCE-EQ` for the `nse_cm` entries. Index/options symbols (`NIFTY` on `nse_fo`, `SENSEX` on `bse_fo`) do not use this suffix.
 - **File**: `backend/app/services/kotak_service.py` — `_SYMBOL_MAP`.
 
+**[RESOLVED]** Kotak-rejected orders silently dropped — no UI feedback, no log, wallet permanently deducted (PR #56, 2026-05-22).
+- **Symptom**: Orders rejected by Kotak (visible in Kotak UI) were invisible in TradeMatangi — no error banner, no log line, no order removal. For BUY LIMIT/TARGET orders the upfront wallet reservation was never credited back.
+- **Root cause**: `KotakNeoService._on_message` only handled `"complete"`/`"filled"` statuses. `"rejected"` and `"cancelled"` WebSocket messages returned early without any action.
+- **Fix**:
+  - Added `_reject_callbacks` dict to `KotakNeoService` with `register_reject_callback` / `deregister_reject_callback` methods.
+  - `_on_message` now dispatches reject callbacks + logs `WARNING` on `"rejected"`/`"cancelled"` status; cleans up both fill and reject maps on either event; all other statuses get a `DEBUG` log.
+  - `simulation.py`: reject callback for triggered LIMIT/TARGET orders reverts status to `CANCELLED`, credits back `reserved_amount` for BUY orders, emits `order_cancelled` + `broker_error` SSE.
+  - `orders.py`: same for SL orders placed directly on Kotak at placement time.
+  - `trading.py`: reject callback for direct TradePanel buy/sell emits `broker_error` SSE (no wallet credit needed — direct orders only debit on fill).
+- **Files**: `kotak_service.py`, `simulation.py`, `orders.py`, `trading.py`.
+
+**[RESOLVED]** TradeHistory 🔄 and ⛶ buttons pushed to far right instead of beside title (PR #56, 2026-05-22).
+- **Symptom**: Both buttons were wrapped in a `marginLeft: auto` flex container, pushing them to the far right of the Trade History header.
+- **Fix**: Removed the wrapper div; buttons now sit directly in the header flex row after the "Trade History (n)" span. Refresh (🔄) is real-trading-only; Maximize (⛶) shows only when trades exist.
+- **File**: `frontend/src/components/TradeHistory.tsx`.
+
+**[RESOLVED]** Kotak Neo rejects orders with non-tick-aligned prices (PR #58, 2026-05-22).
+- **Symptom**: Orders placed at prices like ₹456.23 (not a multiple of ₹0.05) were rejected by the exchange. `round(price, 2)` allows 1-paise precision but NSE/BSE minimum tick is 5 paise.
+- **Fix**: Added `_round_to_tick(price)` helper in `kotak_service.py` using `round(round(price / 0.05) * 0.05, 2)`. Applied to all three price fields sent to Kotak: limit price, SL trigger price, SL limit price. Callers unchanged — rounding happens centrally at the API boundary.
+- **File**: `backend/app/services/kotak_service.py`.
+
 ### UI Bugs
 
 **[RESOLVED]** Trade marker colors — BUY/SELL distinction unclear on dark background (PR #50, 2026-05-22).
