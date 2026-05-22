@@ -69,16 +69,22 @@ here trnsTp is S or B which is Sell and Buy respectively. ordSt moves from OPEN,
 4. Please choose how you want to solve if today's date is selected switching between paper trading or real trading. i am fine with only have real trading option for whiltelisted accounts.
 
 
+##### Options & Strategies
+1. Support options for Nifty50 and SENSEX in realtrading. For sensex the exchanges are (bse_cm and bse_fo(options)). For NIFTY they are (nse_cm and nse_fo)
+2. Add support of strategies for real-trading, with AutoStop Order Strategy not actually placing a stop-limit order to KotakNeo, but instead keep it locally and when it is triggers place the order in Kotak-Neo.
+3. For Aggresive StopLoss and Breakeven which modify Stoploss. They should always go directly to Kotak-Neo. As shifting stoploss is very very important for trades. So, they should be directly applied to the broker.
+4. When fetching kotak neo orders when the user clicks on trading history refresh, also fetch open orders (like stoploss or any open limit orders due to not getting filled) and update if required. Limit orders can be left open or partially filled as according to SEBI Regulations, all market orders placed through API should be limit orders. And technically, any limit order can remain open if it is fully filled, partially filled maybe.
+  
 ##### More
 1. More things to come. lets finish this first.
 
 ---
 
-## Implementation Status — Phase IX (as of 2026-05-20)
+## Implementation Status — Phase IX (as of 2026-05-22)
 
-**Status:** COMPLETE — PR #46 open on `feature/phase9-real-trading` (2026-05-19), awaiting merge to dev.
+**Status:** COMPLETE — all PRs merged to dev and main.
 
-**Test count:** 420 passing (391 pre-phase + 29 new in `test_phase9_real_trading.py`). TypeScript clean.
+**Test count:** 436 passing (420 pre-feature + 16 new for Options & Strategies). TypeScript clean.
 
 ---
 
