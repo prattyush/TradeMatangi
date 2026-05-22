@@ -657,7 +657,7 @@ const api = {
     return res.json()
   },
 
-  async reconcileKotakOrders(sessionId: string): Promise<{ reconciled: number }> {
+  async reconcileKotakOrders(sessionId: string): Promise<{ reconciled: number; open_orders: unknown[] }> {
     const res = await fetch(
       `${BACKEND_URL}/api/kotak/reconcile?session_id=${sessionId}`,
       { method: 'POST', headers: _authHeaders() }

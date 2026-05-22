@@ -19,6 +19,13 @@ Order routing in real sessions:
   - LIMIT / TARGET   → simulated locally; on trigger → placed on Kotak as limit
   - TradePanel BUY   → Kotak LIMIT at LTP × (1 + KOTAK_SLIPPAGE_PCT)
   - TradePanel SELL  → Kotak LIMIT at LTP × (1 − KOTAK_SLIPPAGE_PCT)
+
+Options trading symbol format (Kotak / NSE-BSE convention):
+  Monthly expiry (last weekday occurrence of month): {BASE}{YY}{MON3}{STRIKE}{RIGHT}
+    e.g. NIFTY26MAY23500PE, SENSEX26MAY76000CE
+  Weekly non-monthly: {BASE}{YY}{M_DIGITS}{DD}{STRIKE}{RIGHT}
+    e.g. NIFTY2660223500PE (June-2), SENSEX2660476000CE (June-4)
+    Month Jan-Sep = single digit; Oct-Dec = two digits (10/11/12).
 """
 from __future__ import annotations
 
@@ -26,6 +33,7 @@ import configparser
 import json
 import logging
 import threading
+from datetime import date, datetime, timedelta
 from typing import Any, Callable
 
 logger = logging.getLogger(__name__)
@@ -38,6 +46,34 @@ _TICK_SIZE = 0.05
 def _round_to_tick(price: float) -> float:
     """Round price to the nearest ₹0.05 tick."""
     return round(round(price / _TICK_SIZE) * _TICK_SIZE, 2)
+
+
+# ---------------------------------------------------------------------------
+# Options trading symbol helpers
+# ---------------------------------------------------------------------------
+
+def _is_monthly_expiry(expiry_dt: date, symbol: str) -> bool:
+    """True if expiry_dt is the last occurrence of the expiry weekday in its month."""
+    return (expiry_dt + timedelta(days=7)).month != expiry_dt.month
+
+
+def _build_options_trading_symbol(base: str, expiry: str, strike: int, right: str, symbol: str) -> str:
+    """
+    Construct the Kotak / NSE-BSE options trading symbol string.
+
+    Monthly expiry  → {BASE}{YY}{MON3}{STRIKE}{RIGHT}  e.g. NIFTY26MAY23500PE
+    Weekly non-monthly → {BASE}{YY}{M}{DD}{STRIKE}{RIGHT}  e.g. NIFTY2660223500PE
+    Oct/Nov/Dec month part uses two digits (10/11/12).
+    """
+    expiry_dt = datetime.strptime(expiry, "%Y-%m-%d").date()
+    yy = expiry_dt.strftime("%y")          # "26"
+    if _is_monthly_expiry(expiry_dt, symbol):
+        month_part = expiry_dt.strftime("%b").upper()   # "MAY", "OCT", …
+    else:
+        m = expiry_dt.month
+        dd = expiry_dt.strftime("%d")                   # "02", "14", …
+        month_part = f"{m}{dd}"                         # "602", "1001", …
+    return f"{base}{yy}{month_part}{strike}{right}"
 
 
 class KotakError(Exception):
@@ -214,6 +250,102 @@ class KotakNeoService:
                 tag=None,
             )
             return self._extract_order_id(resp)
+        except KotakError:
+            raise
+        except Exception as exc:
+            raise KotakError(str(exc)) from exc
+
+    def place_options_limit_order(
+        self,
+        symbol: str,
+        right: str,     # "CE" or "PE"
+        strike: int,
+        expiry: str,    # "YYYY-MM-DD"
+        side: str,      # "B" or "S"
+        qty: int,
+        price: float,
+    ) -> str:
+        """Place a limit order on an options contract. Returns the Kotak order ID."""
+        client = self._get_client()
+        kotak_sym, exchange_seg = self._resolve_options_symbol(symbol, right, strike, expiry)
+        try:
+            resp = client.place_order(
+                exchange_segment=exchange_seg,
+                product="MIS",
+                price=str(_round_to_tick(price)),
+                order_type="L",
+                quantity=str(qty),
+                validity="DAY",
+                trading_symbol=kotak_sym,
+                transaction_type=side,
+                amo="NO",
+                disclosed_quantity="0",
+                market_protection="0",
+                pf="N",
+                trigger_price="0",
+                tag=None,
+            )
+            return self._extract_order_id(resp)
+        except KotakError:
+            raise
+        except Exception as exc:
+            raise KotakError(str(exc)) from exc
+
+    def place_options_sl_order(
+        self,
+        symbol: str,
+        right: str,     # "CE" or "PE"
+        strike: int,
+        expiry: str,    # "YYYY-MM-DD"
+        side: str,      # "B" or "S"
+        qty: int,
+        trigger_price: float,
+        limit_price: float,
+    ) -> str:
+        """Place an SL limit order on an options contract. Returns the Kotak order ID."""
+        client = self._get_client()
+        kotak_sym, exchange_seg = self._resolve_options_symbol(symbol, right, strike, expiry)
+        try:
+            resp = client.place_order(
+                exchange_segment=exchange_seg,
+                product="MIS",
+                price=str(_round_to_tick(limit_price)),
+                order_type="SL",
+                quantity=str(qty),
+                validity="DAY",
+                trading_symbol=kotak_sym,
+                transaction_type=side,
+                amo="NO",
+                disclosed_quantity="0",
+                market_protection="0",
+                pf="N",
+                trigger_price=str(_round_to_tick(trigger_price)),
+                tag=None,
+            )
+            return self._extract_order_id(resp)
+        except KotakError:
+            raise
+        except Exception as exc:
+            raise KotakError(str(exc)) from exc
+
+    def modify_sl_order(
+        self,
+        kotak_order_id: str,
+        new_trigger: float,
+        new_limit: float,
+    ) -> None:
+        """Modify the trigger and limit price of an existing SL order on Kotak."""
+        client = self._get_client()
+        try:
+            resp = client.modify_order(
+                order_id=kotak_order_id,
+                price=str(_round_to_tick(new_limit)),
+                trigger_price=str(_round_to_tick(new_trigger)),
+                order_type="SL",
+                validity="DAY",
+                disclosed_quantity="0",
+            )
+            self._check_api_response(resp)
         except KotakError:
             raise
         except Exception as exc:
@@ -438,6 +570,21 @@ class KotakNeoService:
             logger.warning("Kotak order feed message parsing error: %s", exc)
 
     # ── Helpers ───────────────────────────────────────────────────────────────
+
+    def _resolve_options_symbol(self, symbol: str, right: str, strike: int, expiry: str) -> tuple[str, str]:
+        """Return (kotak_trading_symbol, exchange_segment) for an options contract."""
+        from app.config import SUPPORTED_SYMBOLS
+        if symbol == "NIFTY":
+            base = "NIFTY"
+        elif symbol == "BSESEN":
+            base = "SENSEX"
+        else:
+            raise KotakError(f"Symbol '{symbol}' does not support options trading on Kotak Neo")
+        sym_info = SUPPORTED_SYMBOLS.get(symbol, {})
+        exchange = "bse_fo" if sym_info.get("options_exchange_code") == "BFO" else "nse_fo"
+        kotak_sym = _build_options_trading_symbol(base, expiry, strike, right, symbol)
+        logger.debug("Resolved options symbol %s → %s (%s)", f"{symbol} {right} {strike} {expiry}", kotak_sym, exchange)
+        return kotak_sym, exchange
 
     def _resolve_symbol(self, symbol: str) -> tuple[str, str]:
         if symbol not in _SYMBOL_MAP:

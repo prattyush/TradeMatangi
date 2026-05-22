@@ -163,7 +163,12 @@ async def kotak_reconcile(
         )
         reconciled += 1
 
-    return {"reconciled": reconciled}
+    # Collect currently open/pending Kotak orders for informational display
+    open_kotak_orders = [
+        ko for ko in kotak_orders
+        if ko.get("status") in ("open", "trigger pending", "amo")
+    ]
+    return {"reconciled": reconciled, "open_orders": open_kotak_orders}
 
 
 @router.get("/check-access")

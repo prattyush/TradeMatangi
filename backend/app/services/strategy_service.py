@@ -132,11 +132,12 @@ def clear_session(session_id: str) -> None:
 
 # ── Tick hook (called from simulation._emit_tick_and_check_orders) ────────────
 
-def on_tick(session, tick: dict, tick_right: str | None) -> None:
+def on_tick(session, tick: dict, tick_right: str | None, loop=None) -> None:
     """
     Evaluate all strategies for the given session on a single tick.
     tick_right matches the right of the tick (None=equity, "CE", "PE").
     Strategies are only evaluated when their right matches the tick's right.
+    loop: asyncio event loop, provided by real sessions to enable broker-side order routing.
     """
     strategies = _registry.get(session.session_id)
     if not strategies:
@@ -179,7 +180,7 @@ def on_tick(session, tick: dict, tick_right: str | None) -> None:
             strategy._bar_close = tick["close"]
 
             if strategy.status == StrategyStatus.RUNNING:
-                _on_bar_close(strategy, session, closed_ohlc, tick_right, ts)
+                _on_bar_close(strategy, session, closed_ohlc, tick_right, ts, loop)
         else:
             strategy._bar_high = max(strategy._bar_high, tick["high"])
             strategy._bar_low = min(strategy._bar_low, tick["low"])
@@ -187,7 +188,7 @@ def on_tick(session, tick: dict, tick_right: str | None) -> None:
 
         # ── Per-tick evaluation (BreakEven only) ──────────────────────────
         if strategy.strategy_type == "BreakEven" and strategy.status == StrategyStatus.RUNNING:
-            _on_tick_breakeven(strategy, session, current_price, tick_right, ts)
+            _on_tick_breakeven(strategy, session, current_price, tick_right, ts, loop)
 
     # Prune completed/cancelled entries
     _registry[session.session_id] = [
@@ -203,11 +204,12 @@ def _on_bar_close(
     closed_ohlc: dict,
     tick_right: str | None,
     current_ts: int,
+    loop=None,
 ) -> None:
     if strategy.strategy_type == "AutoStop":
         _on_bar_close_autostop(strategy, session, closed_ohlc, tick_right, current_ts)
     elif strategy.strategy_type == "AggressiveStoploss":
-        _on_bar_close_aggressive_sl(strategy, session, closed_ohlc, tick_right, current_ts)
+        _on_bar_close_aggressive_sl(strategy, session, closed_ohlc, tick_right, current_ts, loop)
 
 
 def _on_bar_close_autostop(
@@ -300,16 +302,37 @@ def _find_open_exit_orders(session_id: str, exit_side, tick_right: str | None, q
     ]
 
 
-def _update_exit_order_price(session_id: str, order, new_price: float, trading_date: str) -> None:
-    """Move trigger/limit price of any pending order type to new_price."""
+def _update_exit_order_price(session, order, new_price: float) -> None:
+    """
+    Move trigger/limit price of a pending exit order to new_price.
+    For real sessions: also modifies the order on Kotak if it was placed there.
+    """
     from app.services.order_service import update_order
     from app.models.schemas import OrderType
+
+    # For real sessions with a Kotak-placed SL: update the broker-side order too.
+    if getattr(session, "session_type", "sim") == "real" and getattr(order, "kotak_order_id", None):
+        try:
+            from app.services.kotak_service import get_service as get_kotak, KotakError
+            from app.config import KOTAK_SLIPPAGE_PCT
+            if order.side.value == "BUY":
+                kotak_limit = round(new_price * (1 + KOTAK_SLIPPAGE_PCT), 2)
+            else:
+                kotak_limit = round(new_price * (1 - KOTAK_SLIPPAGE_PCT), 2)
+            get_kotak().modify_sl_order(order.kotak_order_id, new_price, kotak_limit)
+            logger.info(
+                "Modified Kotak SL %s to trigger=%.2f limit=%.2f",
+                order.kotak_order_id, new_price, kotak_limit,
+            )
+        except Exception as exc:
+            logger.warning("Failed to modify Kotak SL %s: %s", order.kotak_order_id, exc)
+
     if order.order_type in (OrderType.TARGET, OrderType.STOPLOSS):
-        update_order(session_id=session_id, order_id=order.order_id,
-                     trading_date=trading_date, trigger_price=new_price)
+        update_order(session_id=session.session_id, order_id=order.order_id,
+                     trading_date=session.date, trigger_price=new_price)
     else:  # LIMIT
-        update_order(session_id=session_id, order_id=order.order_id,
-                     trading_date=trading_date, limit_price=new_price)
+        update_order(session_id=session.session_id, order_id=order.order_id,
+                     trading_date=session.date, limit_price=new_price)
 
 
 def _on_bar_close_aggressive_sl(
@@ -318,6 +341,7 @@ def _on_bar_close_aggressive_sl(
     closed_ohlc: dict,
     tick_right: str | None,
     current_ts: int,
+    loop=None,
 ) -> None:
     from app.services.trading import get_position
     from app.models.schemas import TradeSide, OrderType
@@ -348,18 +372,22 @@ def _on_bar_close_aggressive_sl(
 
     if exit_orders:
         for order in exit_orders:
-            _update_exit_order_price(session.session_id, order, sl_price, session.date)
+            _update_exit_order_price(session, order, sl_price)
         logger.info(
             "AggressiveStoploss %s updated %d exit order(s) to SL=%.2f for %s right=%s",
             strategy.strategy_id, len(exit_orders), sl_price, session.symbol, tick_right,
         )
     else:
+        # Real sessions: place SL directly on Kotak so it's broker-managed immediately.
+        # Sim/paper: place a local TARGET order that the tick engine monitors.
+        is_real = getattr(session, "session_type", "sim") == "real" and loop is not None
+        order_type = OrderType.STOPLOSS if is_real else OrderType.TARGET
         try:
-            place_order(
+            new_order = place_order(
                 session_id=session.session_id,
                 symbol=session.symbol,
                 side=sl_side,
-                order_type=OrderType.TARGET,
+                order_type=order_type,
                 quantity=position.quantity,
                 created_at=current_ts,
                 trading_date=session.date,
@@ -367,9 +395,18 @@ def _on_bar_close_aggressive_sl(
                 right=tick_right,
                 user_id=session.user_id,
             )
+            if is_real:
+                try:
+                    from app.services.simulation import _register_kotak_sl_for_order
+                    _register_kotak_sl_for_order(session, new_order, loop)
+                except Exception as k_exc:
+                    logger.warning(
+                        "AggressiveStoploss %s: Kotak SL registration failed: %s",
+                        strategy.strategy_id, k_exc,
+                    )
             logger.info(
-                "AggressiveStoploss %s created TARGET SL at %.2f for %s right=%s",
-                strategy.strategy_id, sl_price, session.symbol, tick_right,
+                "AggressiveStoploss %s created %s SL at %.2f for %s right=%s",
+                strategy.strategy_id, order_type.value, sl_price, session.symbol, tick_right,
             )
         except Exception as exc:
             logger.warning("AggressiveStoploss %s: place_order failed: %s", strategy.strategy_id, exc)
@@ -383,6 +420,7 @@ def _on_tick_breakeven(
     current_price: float,
     tick_right: str | None,
     current_ts: int,
+    loop=None,
 ) -> None:
     from app.services.trading import get_position
     from app.models.schemas import TradeSide, OrderType
@@ -410,7 +448,7 @@ def _on_tick_breakeven(
 
     if exit_orders:
         for order in exit_orders:
-            _update_exit_order_price(session.session_id, order, avg_entry, session.date)
+            _update_exit_order_price(session, order, avg_entry)
         strategy.status = StrategyStatus.COMPLETED
         _write_strategy_to_db(strategy)
         logger.info(
@@ -418,13 +456,17 @@ def _on_tick_breakeven(
             strategy.strategy_id, len(exit_orders), avg_entry, session.symbol, tick_right,
         )
     else:
-        # No existing exit order — place a TARGET that fires if price falls back to avg_entry
+        # No existing exit order.
+        # Real sessions: place a STOPLOSS directly on Kotak (broker-managed immediately).
+        # Sim/paper: place a local TARGET that fires if price falls back to avg_entry.
+        is_real = getattr(session, "session_type", "sim") == "real" and loop is not None
+        order_type = OrderType.STOPLOSS if is_real else OrderType.TARGET
         try:
-            place_order(
+            new_order = place_order(
                 session_id=session.session_id,
                 symbol=session.symbol,
                 side=exit_side,
-                order_type=OrderType.TARGET,
+                order_type=order_type,
                 quantity=position.quantity,
                 created_at=current_ts,
                 trading_date=session.date,
@@ -432,11 +474,20 @@ def _on_tick_breakeven(
                 right=tick_right,
                 user_id=session.user_id,
             )
+            if is_real:
+                try:
+                    from app.services.simulation import _register_kotak_sl_for_order
+                    _register_kotak_sl_for_order(session, new_order, loop)
+                except Exception as k_exc:
+                    logger.warning(
+                        "BreakEven %s: Kotak SL registration failed: %s",
+                        strategy.strategy_id, k_exc,
+                    )
             strategy.status = StrategyStatus.COMPLETED
             _write_strategy_to_db(strategy)
             logger.info(
-                "BreakEven %s placed TARGET at breakeven=%.2f for %s right=%s",
-                strategy.strategy_id, avg_entry, session.symbol, tick_right,
+                "BreakEven %s placed %s at breakeven=%.2f for %s right=%s",
+                strategy.strategy_id, order_type.value, avg_entry, session.symbol, tick_right,
             )
         except Exception as exc:
             logger.warning("BreakEven %s: place_order failed: %s", strategy.strategy_id, exc)

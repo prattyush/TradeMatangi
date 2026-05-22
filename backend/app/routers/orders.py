@@ -129,13 +129,25 @@ async def place_order(req: PlaceOrderRequest):
 
         try:
             kotak_svc = get_kotak()
-            kotak_order_id = kotak_svc.place_sl_order(
-                symbol=session.symbol,
-                side="B" if req.side == TradeSide.BUY else "S",
-                qty=quantity,
-                trigger_price=trigger,
-                limit_price=kotak_limit,
-            )
+            if session.instrument_type == "options":
+                kotak_order_id = kotak_svc.place_options_sl_order(
+                    symbol=session.symbol,
+                    right=order.right,
+                    strike=order.strike if order.strike is not None else session.strike,
+                    expiry=session.expiry,
+                    side="B" if req.side == TradeSide.BUY else "S",
+                    qty=quantity,
+                    trigger_price=trigger,
+                    limit_price=kotak_limit,
+                )
+            else:
+                kotak_order_id = kotak_svc.place_sl_order(
+                    symbol=session.symbol,
+                    side="B" if req.side == TradeSide.BUY else "S",
+                    qty=quantity,
+                    trigger_price=trigger,
+                    limit_price=kotak_limit,
+                )
             order.kotak_order_id = kotak_order_id
             session.kotak_order_map[order.order_id] = kotak_order_id
 
