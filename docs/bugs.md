@@ -1,0 +1,71 @@
+
+# Bugs
+This document has the bugs which are found while testing. They are divided at Phase wise.
+Look at each of the bugs, fix them and then mark them resolved as well if approved manually. Do get manual approval against each bug to resolve it.
+
+## Phase-VII PaperTrading
+
+### Open Bugs
+
+**[RESOLVED — Phase VIII Sprint 1]** Open order price lines not filtered by strike (BUG-VII-1).
+- `getOrdersForPane` in App.tsx filtered by `right` only. A SELL order on CE 23450 showed its dashed price line on a CE 23500 pane.
+- Fix: added `strike: int | None = None` to backend `Order` model + `PlaceOrderRequest`; router resolves strike from `session.strike_ce`/`strike_pe` by `order_right`; `_write_order_to_db` persists it; frontend `Order` interface has `strike?: number | null`; `getOrdersForPane` filters `o.strike == null || o.strike === pane.strike`. Trade marker fix (116c4f3) also applied: `getTradesForPane` + internal `paneTrades` filter both check `t.strike === pane.strike`.
+
+### UI Bugs
+
+**[RESOLVED]** PE (or CE) options chart in Simulated Trading loses its completed candles after clicking the ↻ refresh button.
+- **Symptom**: At 09:23 with 3-min candles, clicking ↻ on the PE chart leaves only the growing 09:21 candle. The completed 09:15 and 09:18 candles vanish.
+- **Root cause**: The cutoff filter in the options historical `.then()` callback used `latestTickRef.current?.time`. When the PE pane's `latestTick` prop is null (due to a strike mismatch, or options data gap), this is undefined/null → falls back to `startWindowTs` (09:15 boundary). `priorCandles.filter(c => c.time < 09:15_ts)` excludes all current-session candles (09:15, 09:18, …), leaving `series.setData([])`. Only the live tick restores 09:21.
+- **Fix**: Added `currentSimTime` prop (equity master-clock time from `sim.latestEquityTick?.time`) and a `currentSimTimeRef` in Chart.tsx. The cutoff now uses `latestTickRef.current?.time ?? currentSimTimeRef.current ?? undefined`, so the equity clock serves as a reliable fallback when the options pane's own tick is null. App.tsx passes `currentSimTime={sim.latestEquityTick?.time ?? null}` to all Chart instances.
+
+**[RESOLVED]** ↻ refresh misses the most recently completed candle window for all chart types (CE, PE, Equity, Index).
+- **Symptom**: Refreshing at 09:24:30 with 3-min candles shows 09:15 and 09:18 correctly but 09:21 (the last fully completed window before the current growing 09:24 candle) is absent. Affects all pane types.
+- **Root cause (options panes)**: `liveTsNow` was `latestTickRef.current?.time` (the pane's own latest tick). For options data with gaps, the PE/CE tick can be stuck in the 09:21 window (e.g. 09:21:47) while the equity clock is already at 09:24:30. `Math.floor(09:21:47 / 180) * 180 = 09:21:00_ts` → `priorCandles.filter(c.time < 09:21:00_ts)` excludes the 09:21 candle. **Root cause (equity panes)**: `getPreSession(startTime)` with `startTime = "09:15:00"` returns `[]` (start_ts == market_open_ts), so equity panes never load today's completed candles from the backend on refresh — they rebuild one tick at a time.
+- **Fix**: Two changes in Chart.tsx. (1) Options cutoff: flip priority to `currentSimTimeRef.current ?? latestTickRef.current?.time` so the equity master-clock (always current) drives the cutoff instead of the potentially-stale options tick. (2) Equity pre-session: when `currentSimTimeRef.current` is non-null and matches `tradingDate`, call `getPreSession(tradingDate, currentSimTimeHHMMSS)` instead of `getPreSession(startTime)`, returning all completed candles up to the current window boundary.
+
+### Data Bugs
+
+### Missed Feature Implementations
+
+**[RESOLVED]** Trade History does not show trades from previous sessions on the same date for the same symbol + instrument type.
+- **Use case**: User trades NIFTY options 09:15–10:00, stops, restarts at 10:15 (sim or paper). The new session's Trade History starts empty — previous trades are invisible.
+- **Scope**: `user + symbol + date + instrument_type + session_type` combination. For options, ALL strikes/expiries on that date are included (strikes change mid-day, user wants full picture).
+- **Fix**:
+  - **Backend**: Added `GET /api/trades/by-context` endpoint in `routers/trading.py`. Params: `symbol`, `date`, `instrument_type`, `session_type` (+ `X-User-Id` header). Reuses `analysis_service.get_sessions_for_user` + `get_trades_for_session`. Returns `{trades, session_ids}` sorted by timestamp.
+  - **Frontend `api.ts`**: Added `getTradesByContext(symbol, date, instrumentType, sessionType)` returning `{trades, sessionIds}`.
+  - **Frontend `useSimulation.ts`**: Added `historicalTrades: Trade[]` to `SimulationState`. After `startSession`, fires a background `getTradesByContext` call and filters to exclude the current session_id. Added `prevDayPnl` computed value (realized P&L from historicalTrades net of commissions). Cleared on `stopSession`.
+  - **Frontend `TradeHistory.tsx`**: Accepts `historicalTrades?: Trade[]` prop. Current session trades listed first (most-recent-first), then `── Previous sessions ──` separator, then historical trades at 55% opacity.
+  - **Frontend `App.tsx`**: Passes `historicalTrades={sim.historicalTrades}` to `<TradeHistory>`. Day P&L header shows `totalDayPnl = netDayPnl + sim.prevDayPnl` with a grayed `(prev ±X)` annotation when previous-session P&L is non-zero. Session P&L (right TradePanel) remains current-session-only.
+- **Key constraint**: Only previous sessions (not current) are loaded from DynamoDB; current session trades arrive via SSE `order_filled` events and `sim.trades` as before.
+
+## Post-Phase-IX UI Fixes
+
+### UI Bugs
+
+**[RESOLVED]** Trade marker colors — BUY/SELL distinction unclear on dark background (PR #50, 2026-05-22).
+- **Symptom**: Old colors were directional (long Nifty = white, short Nifty = red `#FF4D4D`). Red blends with red down-candles; the PE-inversion logic meant PE-Buy showed red (confusing instrument-level traders).
+- **New spec**: Marker color follows raw instrument side — BUY = white `#FFFFFF`, SELL = bright yellow `#FFE600`. Applied to all panes (equity, CE, PE). Analysis/underlying chart keeps the directional mapping (CE Buy→white, CE Sell→yellow, PE Buy→yellow, PE Sell→white) via `effectiveSideForChart`.
+- **Files**: `Chart.tsx` (removed `isLongDirection`; color = `t.side === 'BUY' ? '#FFFFFF' : '#FFE600'`), `TradeAnalysis.tsx` (same yellow), `CLAUDE.md` (updated invariant).
+
+**[RESOLVED]** Maximizing any chart resets the current in-progress candle bar (PR #50, 2026-05-22).
+- **Symptom**: While a 3-min candle has been accumulating for, say, 2 minutes, clicking ⤢ to maximize the chart causes it to restart from the current streaming value — losing the bar's high/low/open computed so far. Reproduced on all pane types (equity, CE, PE) in both sim and paper sessions.
+- **Root cause (first discovered)**: The old `renderLayout()` had a standalone `if (maximizedPaneId !== null)` branch that returned only the maximized pane as a direct child of the chart column div. Multi-pane layouts (2/3/4) put pane wrappers inside intermediate flex containers. Switching branches changed each pane wrapper's DOM parent, which React treats as an unmount+remount — resetting all Chart refs including `liveWindowRef.current`. The next arriving tick then started a new candle OHLC from scratch.
+- **Why a partial fix failed for paper trading**: A first fix attempted to restore `liveWindowRef.current` from the last candle returned by the historical data re-fetch. This worked for simulation (past-date parquet is complete) but not for paper trading — the options parquet for today is cached with a 10-minute TTL and may not contain the current partial candle yet, so `candles.find(c => c.time === cutoffTs)` returned `undefined`.
+- **Final fix (App.tsx)**: Removed the standalone maximize branch entirely. Each layout preset (2, 3, 4) now handles maximize inline while keeping its flex container structure intact. Non-maximized panes get `{ display: 'none' }` — they stay mounted in the React tree so `liveWindowRef.current` is never touched. For layouts 3/4, row containers that hold no maximized pane get `display: none` on the container itself (eliminates layout gaps) while pane wrappers inside remain in the tree.
+- **Fix (Chart.tsx ResizeObserver)**: Added `if (w > 0)` guard so `chart.applyOptions({ width: 0 })` is never called when a pane's container transitions to `display: none` (maximizing another pane). The observer fires again with the real width when the pane becomes visible.
+- **Fix (Chart.tsx partial-candle restore)**: Kept as a safety net for hard-refresh during a running session. After `series.setData()` in both the equity and options historical effects, restores `liveWindowRef.current` from the last fetched candle if its timestamp matches the current slot.
+- **Key lesson**: React component identity is tied to position within the **same DOM parent**, not just the `key` prop. A component whose parent element changes is always remounted, regardless of key stability. For layout-driven show/hide, always use CSS (`display: none`) rather than conditional rendering.
+
+---
+
+## Phase-IV BetaMinorUpdates
+
+### UI Bugs
+
+
+
+### Data Bugs
+
+
+### Missed Feature Implementations
+
