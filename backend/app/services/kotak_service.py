@@ -59,11 +59,11 @@ def _read_kotak_credentials() -> dict[str, str]:
 # ---------------------------------------------------------------------------
 
 _SYMBOL_MAP: dict[str, tuple[str, str]] = {
-    "NIFTY":  ("NIFTY",       "nse_fo"),
-    "BSESEN": ("SENSEX",      "bse_fo"),
-    "TATPOW": ("TATPOWER",    "nse_cm"),
-    "TATMOT": ("TMCV",        "nse_cm"),   # renamed from TATAMOTORS after Apr-2025 CV/PV demerger
-    "RELIND": ("RELIANCE",    "nse_cm"),
+    "NIFTY":  ("NIFTY",          "nse_fo"),
+    "BSESEN": ("SENSEX",         "bse_fo"),
+    "TATPOW": ("TATPOWER-EQ",    "nse_cm"),
+    "TATMOT": ("TMCV-EQ",        "nse_cm"),   # renamed from TATAMOTORS after Apr-2025 CV/PV demerger; -EQ suffix required by Kotak Neo for nse_cm equity
+    "RELIND": ("RELIANCE-EQ",    "nse_cm"),
 }
 
 
