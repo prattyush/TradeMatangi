@@ -478,7 +478,7 @@ export default function Chart({
         s.setMarkers([{
           time: slot,
           position: 'inBar' as const,
-          color: t.side === 'BUY' ? '#FFFFFF' : '#FFE600',
+          color: t.side === 'BUY' ? '#FFFFFF' : '#00AAFF',
           shape: 'circle' as const,
           text: t.side === 'BUY' ? 'B' : 'S',
           size: 1,

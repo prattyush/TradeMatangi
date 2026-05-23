@@ -187,7 +187,7 @@ function AnalysisChart({ symbol, date, trades }: { symbol: string; date: string;
       markers.push({
         time: slot as Time,
         position: 'inBar' as const,
-        color: effectiveSide === 'BUY' ? '#FFFFFF' : '#FFE600',
+        color: effectiveSide === 'BUY' ? '#FFFFFF' : '#00AAFF',
         shape: 'circle' as const,
         text,
         size: 1,
