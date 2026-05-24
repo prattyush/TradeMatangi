@@ -47,11 +47,14 @@ class SimulationSession:
     # Real trading: maps our order_id → Kotak order ID for Kotak-placed orders
     kotak_order_map: dict[str, str] = field(default_factory=dict)
     queue: asyncio.Queue = field(default_factory=lambda: asyncio.Queue(maxsize=3000))
-    # paper_tick_queue: receives raw tick dicts from KiteBroadcaster / BreezeStreamManager
+    # paper_tick_queue: receives raw tick dicts from KiteBroadcaster / BreezeStreamManager / KotakBroadcaster
     paper_tick_queue: asyncio.Queue = field(default_factory=lambda: asyncio.Queue(maxsize=1000))
     resume_event: asyncio.Event = field(default_factory=asyncio.Event)
     task: Optional[asyncio.Task] = None
     stream_manager: Any = field(default=None, repr=False, compare=False)
+    # True when KotakBroadcaster is the active streaming source for this session.
+    # Used by stop_session() to call the correct unregister() method.
+    kotak_streaming: bool = False
 
 
 # Registry of active sessions
@@ -440,6 +443,89 @@ def _kite_1min_gap_options_ticks(
         return []
 
 
+async def _setup_kotak_streaming(session: SimulationSession, loop: "asyncio.AbstractEventLoop") -> bool:
+    """
+    Subscribe a paper/real session to the KotakBroadcaster for live market data.
+    Returns True on success, False if Kotak is not authenticated.
+    Raises KotakError on subscription failure.
+
+    Token lookup: resolves Kotak scrip tokens from the cached instrument master.
+    The master is downloaded lazily on first use (requires Kotak auth).
+    """
+    from app.services import kotak_service as ks
+
+    if not ks.get_kotak_broadcaster().is_ready():
+        logger.warning(
+            "KotakBroadcaster: Kotak Neo not authenticated — cannot use Kotak streaming "
+            "for session %s", session.session_id,
+        )
+        return False
+
+    tokens: list[str] = []
+    exchanges: list[str] = []
+    rights: list[str | None] = []
+
+    # Equity / index token
+    eq_token, eq_exchange = ks.fetch_kotak_equity_instrument_token(session.symbol)
+    tokens.append(eq_token)
+    exchanges.append(eq_exchange)
+    rights.append(None)
+    logger.info(
+        "_setup_kotak_streaming: session %s equity token=%s exchange=%s",
+        session.session_id, eq_token, eq_exchange,
+    )
+
+    # Options tokens (when running an options session)
+    if session.instrument_type == "options" and session.expiry:
+        ce_strike = session.strike_ce or session.strike
+        pe_strike = session.strike_pe or session.strike
+        if session.right in (None, "CE") and ce_strike:
+            try:
+                ce_token, ce_exchange = ks.fetch_kotak_options_instrument_token(
+                    session.symbol, session.expiry, ce_strike, "CE"
+                )
+                tokens.append(ce_token)
+                exchanges.append(ce_exchange)
+                rights.append("CE")
+                logger.info(
+                    "_setup_kotak_streaming: session %s CE token=%s exchange=%s",
+                    session.session_id, ce_token, ce_exchange,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "_setup_kotak_streaming: session %s could not resolve CE token: %s",
+                    session.session_id, exc,
+                )
+        if session.right in (None, "PE") and pe_strike:
+            try:
+                pe_token, pe_exchange = ks.fetch_kotak_options_instrument_token(
+                    session.symbol, session.expiry, pe_strike, "PE"
+                )
+                tokens.append(pe_token)
+                exchanges.append(pe_exchange)
+                rights.append("PE")
+                logger.info(
+                    "_setup_kotak_streaming: session %s PE token=%s exchange=%s",
+                    session.session_id, pe_token, pe_exchange,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "_setup_kotak_streaming: session %s could not resolve PE token: %s",
+                    session.session_id, exc,
+                )
+
+    ks.get_kotak_broadcaster().register(
+        session.session_id, tokens, exchanges, rights,
+        session.paper_tick_queue, loop,
+    )
+    session.kotak_streaming = True
+    logger.info(
+        "_setup_kotak_streaming: session %s registered %d tokens with KotakBroadcaster",
+        session.session_id, len(tokens),
+    )
+    return True
+
+
 async def _run_paper_session(session: SimulationSession) -> None:
     """
     Paper trading session loop.
@@ -630,65 +716,131 @@ async def _run_paper_session(session: SimulationSession) -> None:
 
         # ── Phase 2: live streaming ────────────────────────────────────────────
         loop = asyncio.get_running_loop()
-        using_kite = False
 
-        try:
-            from app.services import kite_service
-            tokens: list[int] = []
-            rights: list[str | None] = []
+        # Determine streaming source from admin config (default: kite)
+        from app.services import token_service as _ts
+        stream_source = _ts.get_token("live_stream_source") or "kite"
+        logger.info(
+            "Paper session %s: Phase 2 — live streaming source=%s",
+            session.session_id, stream_source,
+        )
 
-            eq_exchange, eq_token = kite_service.fetch_equity_instrument_token(session.symbol)
-            tokens.append(eq_token)
-            rights.append(None)
-
-            if session.instrument_type == "options" and session.expiry:
-                ce_strike = session.strike_ce or session.strike
-                pe_strike = session.strike_pe or session.strike
-                if session.right in (None, "CE") and ce_strike:
-                    ce_token = kite_service.fetch_options_instrument_token(
-                        session.symbol, session.expiry, ce_strike, "CE"
-                    )
-                    tokens.append(ce_token)
-                    rights.append("CE")
-                if session.right in (None, "PE") and pe_strike:
-                    pe_token = kite_service.fetch_options_instrument_token(
-                        session.symbol, session.expiry, pe_strike, "PE"
-                    )
-                    tokens.append(pe_token)
-                    rights.append("PE")
-
-            kite_service.get_broadcaster().register(
-                session.session_id, tokens, rights,
-                session.paper_tick_queue, loop,
+        # ── Kotak streaming path ──────────────────────────────────────────────
+        if stream_source == "kotak":
+            logger.info(
+                "Paper session %s: attempting Kotak Neo live streaming …",
+                session.session_id,
             )
-            using_kite = True
-            logger.info("Paper session %s: Kite live streaming started (%d tokens)", session.session_id, len(tokens))
-
-        except (Exception,) as exc:
-            # Kite unavailable — emit error and try Breeze fallback
-            err_msg = f"Kite unavailable ({exc}). Switching to ICICIDirect for live data."
-            logger.warning("Paper session %s: %s", session.session_id, err_msg)
-            error_event = {"type": "broker_error", "message": err_msg}
             try:
-                session.queue.put_nowait(json.dumps(error_event))
-            except asyncio.QueueFull:
-                pass
-
-            try:
-                from app.services.kite_service import BreezeStreamManager
-                instruments = _build_breeze_instruments(session)
-                manager = BreezeStreamManager()
-                manager.start(session.paper_tick_queue, loop, instruments)
-                session.stream_manager = manager
-                logger.info("Paper session %s: Breeze fallback streaming started", session.session_id)
-            except Exception as be:
-                both_err = {"type": "broker_error", "message": f"Both Kite and ICICIDirect unavailable. Cannot stream live data: {be}"}
+                ok = await _setup_kotak_streaming(session, loop)
+                if ok:
+                    logger.info(
+                        "Paper session %s: Kotak Neo live streaming active",
+                        session.session_id,
+                    )
+                else:
+                    # Kotak not authenticated — fall through to Kite
+                    warn_msg = (
+                        "Kotak Neo not authenticated. "
+                        "Falling back to Kite for live data."
+                    )
+                    logger.warning("Paper session %s: %s", session.session_id, warn_msg)
+                    try:
+                        session.queue.put_nowait(json.dumps({
+                            "type": "broker_error", "message": warn_msg,
+                        }))
+                    except asyncio.QueueFull:
+                        pass
+                    stream_source = "kite"  # fall through
+            except Exception as kotak_exc:
+                warn_msg = (
+                    f"Kotak Neo streaming failed ({kotak_exc}). "
+                    f"Falling back to Kite for live data."
+                )
+                logger.warning("Paper session %s: %s", session.session_id, warn_msg)
                 try:
-                    session.queue.put_nowait(json.dumps(both_err))
+                    session.queue.put_nowait(json.dumps({
+                        "type": "broker_error", "message": warn_msg,
+                    }))
                 except asyncio.QueueFull:
                     pass
-                logger.error("Paper session %s: all streaming sources failed: %s", session.session_id, be)
-                return
+                stream_source = "kite"  # fall through
+
+        # ── Kite streaming path (also reached as Kotak fallback) ──────────────
+        if stream_source == "kite":
+            try:
+                from app.services import kite_service
+                tokens: list[int] = []
+                rights: list[str | None] = []
+
+                eq_exchange, eq_token = kite_service.fetch_equity_instrument_token(session.symbol)
+                tokens.append(eq_token)
+                rights.append(None)
+
+                if session.instrument_type == "options" and session.expiry:
+                    ce_strike = session.strike_ce or session.strike
+                    pe_strike = session.strike_pe or session.strike
+                    if session.right in (None, "CE") and ce_strike:
+                        ce_token = kite_service.fetch_options_instrument_token(
+                            session.symbol, session.expiry, ce_strike, "CE"
+                        )
+                        tokens.append(ce_token)
+                        rights.append("CE")
+                    if session.right in (None, "PE") and pe_strike:
+                        pe_token = kite_service.fetch_options_instrument_token(
+                            session.symbol, session.expiry, pe_strike, "PE"
+                        )
+                        tokens.append(pe_token)
+                        rights.append("PE")
+
+                kite_service.get_broadcaster().register(
+                    session.session_id, tokens, rights,
+                    session.paper_tick_queue, loop,
+                )
+                logger.info(
+                    "Paper session %s: Kite live streaming started (%d tokens)",
+                    session.session_id, len(tokens),
+                )
+
+            except Exception as kite_exc:
+                # Kite unavailable — emit error and try Breeze fallback
+                err_msg = (
+                    f"Kite unavailable ({kite_exc}). "
+                    f"Switching to ICICIDirect for live data."
+                )
+                logger.warning("Paper session %s: %s", session.session_id, err_msg)
+                try:
+                    session.queue.put_nowait(json.dumps({"type": "broker_error", "message": err_msg}))
+                except asyncio.QueueFull:
+                    pass
+
+                try:
+                    from app.services.kite_service import BreezeStreamManager
+                    instruments = _build_breeze_instruments(session)
+                    manager = BreezeStreamManager()
+                    manager.start(session.paper_tick_queue, loop, instruments)
+                    session.stream_manager = manager
+                    logger.info(
+                        "Paper session %s: Breeze fallback streaming started",
+                        session.session_id,
+                    )
+                except Exception as be:
+                    both_err = {
+                        "type": "broker_error",
+                        "message": (
+                            f"Both Kite and ICICIDirect unavailable. "
+                            f"Cannot stream live data: {be}"
+                        ),
+                    }
+                    try:
+                        session.queue.put_nowait(json.dumps(both_err))
+                    except asyncio.QueueFull:
+                        pass
+                    logger.error(
+                        "Paper session %s: all streaming sources failed: %s",
+                        session.session_id, be,
+                    )
+                    return
 
         # ── Phase 3: consume live ticks indefinitely ──────────────────────────
         logger.info("Paper session %s: Phase 3 — waiting for live ticks", session.session_id)
@@ -819,22 +971,82 @@ async def _run_real_session(session: SimulationSession) -> None:
         if session.state == SimulationState.ENDED:
             return
 
-        # Phase 2: Kite live streaming (same as paper)
-        try:
-            from app.services import kite_service
-            eq_exchange, eq_token = kite_service.fetch_equity_instrument_token(session.symbol)
-            kite_service.get_broadcaster().register(
-                session.session_id, [eq_token], [None],
-                session.paper_tick_queue, loop,
+        # Phase 2: live streaming — Kotak Neo or Kite based on admin setting
+        from app.services import token_service as _ts_real
+        real_stream_source = _ts_real.get_token("live_stream_source") or "kite"
+        logger.info(
+            "Real session %s: Phase 2 — live streaming source=%s",
+            session.session_id, real_stream_source,
+        )
+
+        # Kotak streaming path for real sessions
+        if real_stream_source == "kotak":
+            logger.info(
+                "Real session %s: attempting Kotak Neo live streaming …",
+                session.session_id,
             )
-            logger.info("Real session %s: Kite live streaming started", session.session_id)
-        except Exception as exc:
-            logger.warning("Real session %s: Kite unavailable — %s", session.session_id, exc)
-            error_event = {"type": "broker_error", "message": f"Kite unavailable: {exc}"}
             try:
-                session.queue.put_nowait(json.dumps(error_event))
-            except asyncio.QueueFull:
-                pass
+                ok = await _setup_kotak_streaming(session, loop)
+                if ok:
+                    logger.info(
+                        "Real session %s: Kotak Neo live streaming active",
+                        session.session_id,
+                    )
+                else:
+                    warn_msg = (
+                        "Kotak Neo not authenticated for live streaming. "
+                        "Falling back to Kite."
+                    )
+                    logger.warning(
+                        "Real session %s: %s", session.session_id, warn_msg,
+                    )
+                    try:
+                        session.queue.put_nowait(json.dumps({
+                            "type": "broker_error", "message": warn_msg,
+                        }))
+                    except asyncio.QueueFull:
+                        pass
+                    real_stream_source = "kite"
+            except Exception as kotak_exc:
+                warn_msg = (
+                    f"Kotak Neo streaming failed ({kotak_exc}). Falling back to Kite."
+                )
+                logger.warning(
+                    "Real session %s: %s", session.session_id, warn_msg,
+                )
+                try:
+                    session.queue.put_nowait(json.dumps({
+                        "type": "broker_error", "message": warn_msg,
+                    }))
+                except asyncio.QueueFull:
+                    pass
+                real_stream_source = "kite"
+
+        # Kite streaming path (also reached as Kotak fallback)
+        if real_stream_source == "kite":
+            try:
+                from app.services import kite_service
+                eq_exchange, eq_token = kite_service.fetch_equity_instrument_token(session.symbol)
+                kite_service.get_broadcaster().register(
+                    session.session_id, [eq_token], [None],
+                    session.paper_tick_queue, loop,
+                )
+                logger.info(
+                    "Real session %s: Kite live streaming started",
+                    session.session_id,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Real session %s: Kite unavailable — %s", session.session_id, exc,
+                )
+                error_event = {
+                    "type": "broker_error",
+                    "message": f"Kite unavailable: {exc}",
+                }
+                try:
+                    session.queue.put_nowait(json.dumps(error_event))
+                except asyncio.QueueFull:
+                    pass
 
         # Phase 3: consume live ticks
         logger.info("Real session %s: Phase 3 — consuming live ticks", session.session_id)
@@ -1216,17 +1428,39 @@ def stop_session(session: SimulationSession) -> None:
     if session.session_type in ("paper", "real"):
         if session.stream_manager is not None:
             # BreezeStreamManager fallback
+            logger.info(
+                "stop_session %s: stopping BreezeStreamManager", session.session_id,
+            )
             try:
                 session.stream_manager.stop()
             except Exception as exc:
-                logger.warning("BreezeStreamManager stop error for %s: %s", session.session_id, exc)
+                logger.warning(
+                    "BreezeStreamManager stop error for %s: %s", session.session_id, exc,
+                )
+        elif session.kotak_streaming:
+            # KotakBroadcaster — unregister this session
+            logger.info(
+                "stop_session %s: unregistering from KotakBroadcaster", session.session_id,
+            )
+            try:
+                from app.services.kotak_service import get_kotak_broadcaster
+                get_kotak_broadcaster().unregister(session.session_id)
+            except Exception as exc:
+                logger.warning(
+                    "KotakBroadcaster unregister error for %s: %s", session.session_id, exc,
+                )
         else:
-            # Kite broadcaster — unregister this session
+            # KiteBroadcaster — unregister this session
+            logger.info(
+                "stop_session %s: unregistering from KiteBroadcaster", session.session_id,
+            )
             try:
                 from app.services.kite_service import get_broadcaster
                 get_broadcaster().unregister(session.session_id)
             except Exception as exc:
-                logger.warning("Kite unregister error for %s: %s", session.session_id, exc)
+                logger.warning(
+                    "Kite unregister error for %s: %s", session.session_id, exc,
+                )
     # Cancel and clean up any running strategies
     try:
         from app.services import strategy_service

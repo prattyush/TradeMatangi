@@ -141,6 +141,13 @@ node node_modules/typescript/bin/tsc --noEmit
 - **`Order.strike` null backward-compat**: Old DDB records have no `strike` attribute; frontend receives `undefined`. Use `o.strike == null` (loose equality, catches both `undefined` and `null`) in filter guards so old records pass through without a migration.
 - **Trade marker / open-order price line pane filtering**: `getTradesForPane` (App.tsx) filters `t.right === pane.right && t.strike === pane.strike` for options panes. `getOrdersForPane` filters `o.right === pane.right && (o.strike == null || o.strike === pane.strike)` — the null guard handles old orders. Chart.tsx `paneTrades` filter mirrors App.tsx with `t.right === right && t.strike === strike`.
 
+- **`KotakBroadcaster` singleton**: `_kotak_broadcaster` in `kotak_service.py`, mirrors `KiteBroadcaster`. One NeoWebSocket shared by all live sessions; `_KotakOHLCAccumulator` aggregates LTP → 1-second OHLC; fan-out via `loop.call_soon_threadsafe`. `get_kotak_broadcaster()` is the factory. `KotakNeoService._on_message` dispatches `stock_feed` type messages to a registered `_market_data_callback` (set by `KotakBroadcaster.register()` via `_service.register_market_data_callback()`). Order-feed handling is untouched.
+- **Kotak instrument master cache**: `data/kotak_instruments.json`, refreshed every 24 h via `client.master_data(exchange_segments=[...])`. `fetch_kotak_equity_instrument_token(symbol)` and `fetch_kotak_options_instrument_token(symbol, expiry, strike, right)` resolve Kotak scrip tokens from this cache. Both raise `KotakError` if cache is empty (Kotak not authenticated) or token not found.
+- **`live_stream_source` admin setting**: stored in `BrokerTokens` DynamoDB table via `token_service.get_token("live_stream_source")` (values: `"kite"` | `"kotak"`, default `"kite"`). Changed via `GET/PUT /api/admin/stream-source` (admin-only). Both `_run_paper_session` and `_run_real_session` Phase 2 read this setting. Fallback chain for paper: Kotak → Kite → Breeze. For real: Kotak → Kite (no Breeze fallback).
+- **`SimulationSession.kotak_streaming: bool`**: set to `True` by `_setup_kotak_streaming()` when KotakBroadcaster is active for that session. `stop_session()` uses this flag to call `get_kotak_broadcaster().unregister()` instead of `get_broadcaster().unregister()` (Kite).
+- **Settings modal tab structure**: admin users see `[General] [Admin]` tabs (state `activeTab`). Non-admin users see no tabs (same single-column layout). Admin tab content: BROKER TOKENS, LIVE STREAMING SOURCE toggle, REAL TRADING ACCESS whitelist, BROKER CONNECTION. General tab: all existing trading/wallet/strategy settings + BROKER section for real trading users. `api.getStreamSource()` / `api.setStreamSource()` → `GET/PUT /api/admin/stream-source`.
+- **SELL marker color update**: On live chart panes (equity, CE, PE), SELL marker color is bright blue `#00AAFF` (not `#FFE600` yellow — that was an intermediate state). On the analysis/underlying chart, `effectiveSideForChart` applies: CE BUY → White, CE SELL → Blue, PE BUY → Blue (bearish), PE SELL → White (bullish). See `Chart.tsx` and `TradeAnalysis.tsx`.
+
 ## Phase Completion Summary
 
 | Phase | Status | Tests | Details |
@@ -151,6 +158,12 @@ node node_modules/typescript/bin/tsc --noEmit
 | Phase VI — Strategies | ✅ Complete | 311 | `docs/spec-phase6.md` |
 | Phase VII — PaperTrading | ✅ Complete | 350 | `docs/spec-phase7.md` |
 | Phase VIII — Launch | ✅ Complete | 391 | `docs/spec-phase8.md` |
-| Phase IX — RealTrading | 🚧 PR #46 open (feature/phase9-real-trading) | 420 | `docs/spec-phase9.md` |
+| Phase IX — RealTrading | ✅ Complete | 436 | `docs/spec-phase9.md` |
 
 Full status, bugs fixed, and lessons learned for each phase are in the respective phase spec docs.
+
+### Post-Phase IX features (merged to dev)
+
+| Feature | PR | Status |
+|---------|-----|--------|
+| Kotak Neo live streaming + Admin Settings tab | #73 (feature/kotak-streaming-admin-tab) | 🚧 open (target: dev) |

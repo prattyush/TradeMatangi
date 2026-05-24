@@ -394,3 +394,107 @@ When no existing exit order is found, the "place new exit" fallback used `OrderT
 
 **`_register_kotak_sl_for_order` avoids duplicating callback closure code**
 The fill/reject callback pattern (closure over `order_id` + `session`, recording trade, updating wallet, emitting SSE) was duplicated across `orders.py` and `simulation.py`. Extracting it into `_register_kotak_sl_for_order` in `simulation.py` provides a single place to call from strategies, keeping the closure logic DRY. Import is lazy (`from app.services.simulation import _register_kotak_sl_for_order`) to avoid circular imports.
+
+---
+
+### Options Indicator Analysis Script (2026-05-24)
+
+**Status:** COMPLETE — merged to dev.
+
+#### What it does
+
+`scripts/options_indicator.py` is a standalone Python analysis tool that, given a date, symbol, OTM offset, and anchor time:
+
+1. Loads the underlying 1-second parquet from `data/ohlcdata/`, fetches CE and PE options parquets (from cache if present, otherwise via Breeze).
+2. Computes ATM from the underlying price at the anchor time; derives `CE strike = ATM + N×interval`, `PE strike = ATM − N×interval`.
+3. Resamples all three to 1-minute OHLC starting at the anchor time.
+4. Computes four ratio indicators per 1-min bar (each bar's close vs its own open as the % change):
+   - `CE% / PE%`
+   - `PE% / CE%`
+   - `(Und% / CE%) × 10`  — scaled ×10 so the small underlying moves are visible on the same ±1 y-axis
+   - `(Und% / PE%) × 10`
+5. Plots 7 panels in a dark-themed matplotlib figure: 3 candlestick charts (Underlying, CE, PE) + 4 individual indicator panels (one per ratio), each with its own y-axis.
+
+```bash
+# Interactive display
+python scripts/options_indicator.py --date 2026-05-22 --symbol NIFTY --otm 2 --time 09:30
+
+# Save to file (headless / EC2)
+python scripts/options_indicator.py --date 2026-05-22 --symbol NIFTY --otm 2 --time 09:30 --save out.png
+```
+
+#### Files created / modified
+
+| File | Change |
+|------|--------|
+| `scripts/options_indicator.py` | New — 364-line standalone analysis script |
+| `scripts/start-backend.sh` | Added `pip install mplfinance matplotlib` after requirements install |
+| `scripts/start-backend-ec2.sh` | Same mplfinance/matplotlib install line |
+
+#### Lessons Learned — Options Indicator Script
+
+**Keep each indicator on its own subplot when scales differ**
+Plotting `CE%/PE%` (often 2–10×) and `Und%/CE%` (often 0.05–0.2×) on the same y-axis makes the smaller series invisible. One panel per ratio with independent auto-scaled y-axes is the correct pattern for ratio indicators whose magnitudes can differ by an order of magnitude.
+
+**Scale the small ratio, not the components**
+`Und%` moves roughly 10× less than `CE%` or `PE%` in absolute terms. The fix is `(Und%/CE%) × 10` — the full ratio is computed first (`_safe_ratio`), then the result series is multiplied by 10. Scaling a component (e.g. multiplying only the numerator or denominator) changes the meaning of the ratio; scaling the result preserves it and just shifts the visual range.
+
+**Clip ratios to avoid chart-destroying outliers**
+When CE% or PE% crosses zero, the ratio spikes to ±∞. `_safe_ratio` returns `NaN` for denominators below 1e-8 (shown as a gap in the line) and clips the remaining values to ±10. This keeps the chart readable without losing information on the non-degenerate bars.
+
+**Integer x-axis with formatted labels avoids mplfinance alignment issues**
+mplfinance uses its own internal x-axis coordinate system when plotting into external axes (`ax=`). Mixing mplfinance candle axes with matplotlib indicator axes using `sharex` leads to misaligned ticks. The simpler solution: draw candles manually (matplotlib `FancyBboxPatch` + `plot` for wicks) so all 7 panels share integer positions 0…N-1 with formatted `HH:MM` tick labels — no coordinate mismatch possible.
+
+**`mplfinance` and `matplotlib` are script-only dependencies**
+These packages are not needed by the FastAPI backend. Rather than adding them to `backend/requirements.txt` (which would slow down every deployment), they are installed via an extra `pip install` line in the start-backend scripts, which already run on every startup to ensure the venv is current. The script itself imports them at the top level and prints a helpful install hint on `ImportError`.
+
+---
+
+### Kotak Neo Live Streaming + Admin Settings Tab (2026-05-24, PR #73)
+
+**Status:** PR #73 open (feature/kotak-streaming-admin-tab → dev).
+
+#### What it does
+
+Adds Kotak Neo as an alternative live market-data streaming source for paper and real trading sessions, with an admin toggle in the Settings UI to switch between Kite and Kotak Neo.
+
+**Backend:**
+- `KotakBroadcaster` singleton in `kotak_service.py` — one NeoWebSocket shared by all sessions; `_KotakOHLCAccumulator` aggregates LTP → 1-second OHLC; fan-out via `loop.call_soon_threadsafe`. Mirrors `KiteBroadcaster` exactly.
+- `KotakNeoService._on_message` now dispatches `stock_feed` type messages to a registered `_market_data_callback` (set by `KotakBroadcaster`). Order-feed handling unchanged.
+- Instrument master cache: `data/kotak_instruments.json` downloaded via `client.master_data()`, refreshed every 24 h. `fetch_kotak_equity_instrument_token` / `fetch_kotak_options_instrument_token` resolve scrip tokens.
+- `live_stream_source` admin setting stored in DynamoDB `BrokerTokens` table via `token_service`. `GET/PUT /api/admin/stream-source` in `admin.py` (admin-only).
+- `_setup_kotak_streaming(session, loop)` async helper registers a session with `KotakBroadcaster`, resolving equity + options tokens.
+- `_run_paper_session` and `_run_real_session` Phase 2 check `live_stream_source`. Fallback chain: Kotak (if authenticated) → Kite → Breeze (paper only).
+- `SimulationSession.kotak_streaming: bool` tracks which broadcaster to unregister in `stop_session()`.
+
+**Frontend:**
+- Settings modal: admin users see `[General] [Admin]` tabs. Non-admin layout unchanged.
+- Admin tab: BROKER TOKENS, LIVE STREAMING SOURCE toggle (Kite / Kotak Neo with inline Kotak status), REAL TRADING ACCESS whitelist, BROKER CONNECTION.
+- `api.getStreamSource()` / `api.setStreamSource()` call `GET/PUT /api/admin/stream-source`.
+
+#### Files modified (PR #73)
+
+| File | Change |
+|------|--------|
+| `backend/app/services/kotak_service.py` | `KotakBroadcaster`, `_KotakOHLCAccumulator`, instrument master cache helpers, `register_market_data_callback`, stock_feed dispatch in `_on_message` |
+| `backend/app/routers/admin.py` | `GET/PUT /api/admin/stream-source` endpoints |
+| `backend/app/services/simulation.py` | `_setup_kotak_streaming` helper; Phase 2 streaming source check in paper + real sessions; `kotak_streaming` field on `SimulationSession`; `stop_session` Kotak unregister path |
+| `frontend/src/components/SettingsModal.tsx` | Tab refactor (General / Admin); streaming source toggle; admin content moved to Admin tab |
+| `frontend/src/services/api.ts` | `getStreamSource()` / `setStreamSource()` |
+
+#### Lessons Learned — Kotak Neo Streaming
+
+**Kotak order-feed and market-data messages share one WebSocket — dispatch by type**
+`KotakNeoService._on_message` already received all NeoWebSocket messages. Rather than creating a second WebSocket, we added a `_market_data_callback` field and dispatch `stock_feed` type messages there while leaving `order_feed` handling intact. The broadcaster registers its handler via `register_market_data_callback()` before calling `client.subscribe()`.
+
+**Kotak scrip tokens differ from Kite instrument tokens**
+Kite uses integer instrument tokens from downloaded CSV files. Kotak uses string scrip codes from its `master_data()` API response. Field names vary across SDK versions (`pScrip`, `instrument_token`, `token` — all checked defensively). A daily 24-h cache at `data/kotak_instruments.json` avoids repeated API calls while staying fresh enough for daily expirations.
+
+**LTP field names are not standardised across Kotak SDK versions**
+The market data tick may carry LTP as `ltP`, `ltp`, `last_price`, or `ltp_price` depending on the SDK version. `_process_tick` tries all four in order. Same pattern for instrument token field names and exchange timestamps.
+
+**`loop.call_soon_threadsafe` requires the event loop to actually be running**
+`KotakBroadcaster._process_tick` fans out to session queues via `loop.call_soon_threadsafe(queue.put_nowait, payload)`. This schedules the put on the asyncio event loop from the background WebSocket thread. In unit tests, the loop must be running (use `asyncio.run()` or `await asyncio.sleep(0)`) for the callback to execute — synchronous `queue.put_nowait` will see an empty queue if the loop has no iteration.
+
+**Streaming source selection is global, not per-session**
+The `live_stream_source` setting applies at the time each new session is started. Active sessions are unaffected by a mid-flight source change — they continue with the broadcaster they registered with at Phase 2 startup. `stop_session()` reads `session.kotak_streaming` (not the current global setting) so it always unregisters from the correct broadcaster.

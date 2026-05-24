@@ -29,14 +29,26 @@ Options trading symbol format (Kotak / NSE-BSE convention):
 """
 from __future__ import annotations
 
+import asyncio
 import configparser
 import json
 import logging
 import threading
+import time
+from collections import defaultdict
+from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from typing import Any, Callable
 
 logger = logging.getLogger(__name__)
+
+# IST offset in seconds (5h 30min) — same convention as kite_service.py:
+# exchange timestamps are treated as IST wall-clock encoded as fake-UTC so
+# Lightweight Charts displays 09:15 instead of 03:45.
+_IST_OFFSET = 19800
+
+# Kotak instrument master file cache TTL (24 hours).
+_INSTRUMENTS_CACHE_TTL_SECS = 86400
 
 # NSE/BSE minimum tick size is ₹0.05 (5 paise). Kotak rejects prices that are
 # not multiples of this value.
@@ -78,6 +90,199 @@ def _build_options_trading_symbol(base: str, expiry: str, strike: int, right: st
 
 class KotakError(Exception):
     """Raised when Kotak Neo API returns an error or is misconfigured."""
+
+
+# ---------------------------------------------------------------------------
+# Instrument master cache helpers
+# ---------------------------------------------------------------------------
+
+def _get_instruments_cache_path():
+    from app.config import DATA_DIR
+    return DATA_DIR / "kotak_instruments.json"
+
+
+def _load_kotak_master_from_api() -> list[dict]:
+    """
+    Download the Kotak Neo instrument master via neo_api_client and cache to disk.
+    Returns normalised list of {instrument_token, symbol, exchange, name} dicts.
+    Called lazily when the cache is missing or stale.
+    """
+    try:
+        client = _service._get_client()
+    except KotakError as exc:
+        logger.error("KotakBroadcaster: cannot download master — Kotak not authenticated: %s", exc)
+        return []
+
+    logger.info("KotakBroadcaster: downloading instrument master from Kotak Neo API …")
+    try:
+        data = client.master_data(exchange_segments=["nse_cm", "nse_fo", "bse_fo"])
+        if isinstance(data, dict):
+            raw = data.get("data") or data.get("instruments") or []
+        elif isinstance(data, list):
+            raw = data
+        else:
+            raw = []
+
+        normalized: list[dict] = []
+        for inst in raw:
+            if not isinstance(inst, dict):
+                continue
+            normalized.append({
+                "instrument_token": str(
+                    inst.get("pScrip") or inst.get("instrument_token") or inst.get("token") or ""
+                ),
+                "symbol": str(
+                    inst.get("dScrip") or inst.get("trdSym") or inst.get("symbol") or ""
+                ),
+                "exchange": str(
+                    inst.get("exSeg") or inst.get("sExchange") or inst.get("exchange_segment") or ""
+                ),
+                "name": str(
+                    inst.get("sym") or inst.get("cname") or inst.get("company_name") or ""
+                ),
+                "instrument_type": str(
+                    inst.get("instType") or inst.get("instrument_type") or ""
+                ),
+            })
+
+        logger.info("KotakBroadcaster: downloaded %d instruments from master", len(normalized))
+
+        cache_path = _get_instruments_cache_path()
+        try:
+            import tempfile, os
+            tmp = str(cache_path) + ".tmp"
+            with open(tmp, "w") as f:
+                json.dump(normalized, f)
+            os.replace(tmp, cache_path)
+            logger.info("KotakBroadcaster: cached instruments to %s", cache_path)
+        except Exception as e:
+            logger.warning("KotakBroadcaster: cache write failed: %s", e)
+
+        return normalized
+    except Exception as exc:
+        logger.error("KotakBroadcaster: failed to download instrument master: %s", exc)
+        return []
+
+
+def _get_kotak_instruments() -> list[dict]:
+    """
+    Return cached Kotak Neo instrument master, refreshing from API if stale (> 24h).
+    Returns an empty list when Kotak is not authenticated and no cache exists.
+    """
+    cache_path = _get_instruments_cache_path()
+    if cache_path.exists():
+        age = time.time() - cache_path.stat().st_mtime
+        if age < _INSTRUMENTS_CACHE_TTL_SECS:
+            try:
+                with open(cache_path) as f:
+                    instruments = json.load(f)
+                logger.debug(
+                    "KotakBroadcaster: loaded %d instruments from cache (age=%.0fs)",
+                    len(instruments), age,
+                )
+                return instruments
+            except Exception as e:
+                logger.warning("KotakBroadcaster: cache read failed, re-downloading: %s", e)
+
+    logger.info(
+        "KotakBroadcaster: instrument cache missing or stale (%.0fs old), downloading …",
+        time.time() - cache_path.stat().st_mtime if cache_path.exists() else -1,
+    )
+    return _load_kotak_master_from_api()
+
+
+def fetch_kotak_equity_instrument_token(symbol: str) -> tuple[str, str]:
+    """
+    Return (instrument_token, exchange_segment) for the equity / index instrument.
+    Used by KotakBroadcaster to subscribe to live price feed.
+    Raises KotakError if the token cannot be resolved.
+    """
+    if symbol not in _SYMBOL_MAP:
+        raise KotakError(f"Symbol '{symbol}' not configured for Kotak Neo streaming")
+
+    kotak_sym, exchange_seg = _SYMBOL_MAP[symbol]
+    instruments = _get_kotak_instruments()
+
+    if not instruments:
+        raise KotakError(
+            f"Kotak Neo instrument master is empty. "
+            f"Ensure Kotak Neo is authenticated and re-try."
+        )
+
+    # Exact match first
+    matches = [
+        inst for inst in instruments
+        if inst["symbol"] == kotak_sym and inst["exchange"] == exchange_seg
+    ]
+    # Partial fallback
+    if not matches:
+        matches = [
+            inst for inst in instruments
+            if kotak_sym.upper() in inst["symbol"].upper() and inst["exchange"] == exchange_seg
+        ]
+
+    if not matches:
+        raise KotakError(
+            f"Instrument token not found for {symbol} "
+            f"(kotak_sym={kotak_sym!r}, exchange={exchange_seg!r}) "
+            f"in Kotak master ({len(instruments)} instruments)"
+        )
+
+    token = matches[0]["instrument_token"]
+    if not token:
+        raise KotakError(
+            f"Instrument token is blank for {symbol} (kotak_sym={kotak_sym!r}); "
+            f"master data may be malformed"
+        )
+
+    logger.info(
+        "KotakBroadcaster: resolved %s → token=%s exchange=%s",
+        symbol, token, exchange_seg,
+    )
+    return token, exchange_seg
+
+
+def fetch_kotak_options_instrument_token(
+    symbol: str,
+    expiry: str,
+    strike: int,
+    right: str,
+) -> tuple[str, str]:
+    """
+    Return (instrument_token, exchange_segment) for an options contract.
+    expiry: "YYYY-MM-DD", right: "CE" or "PE".
+    Raises KotakError if not found in master.
+    """
+    from app.config import SUPPORTED_SYMBOLS
+    sym_info = SUPPORTED_SYMBOLS.get(symbol, {})
+    exchange_seg = "bse_fo" if sym_info.get("options_exchange_code") == "BFO" else "nse_fo"
+    base = "SENSEX" if symbol == "BSESEN" else symbol
+
+    kotak_sym = _build_options_trading_symbol(base, expiry, strike, right, symbol)
+    instruments = _get_kotak_instruments()
+
+    if not instruments:
+        raise KotakError(
+            f"Kotak Neo instrument master is empty — cannot resolve options token for {kotak_sym}"
+        )
+
+    matches = [
+        inst for inst in instruments
+        if inst["symbol"] == kotak_sym and inst["exchange"] == exchange_seg
+    ]
+
+    if not matches:
+        raise KotakError(
+            f"Options token not found for {kotak_sym} ({exchange_seg}) "
+            f"in Kotak master ({len(instruments)} instruments)"
+        )
+
+    token = matches[0]["instrument_token"]
+    logger.info(
+        "KotakBroadcaster: resolved options %s → token=%s exchange=%s",
+        kotak_sym, token, exchange_seg,
+    )
+    return token, exchange_seg
 
 
 # ---------------------------------------------------------------------------
@@ -126,6 +331,8 @@ class KotakNeoService:
         # kotak_order_id → (callback, asyncio_loop)
         self._fill_callbacks: dict[str, tuple[Callable, Any]] = {}
         self._reject_callbacks: dict[str, tuple[Callable, Any]] = {}
+        # KotakBroadcaster registers here to receive stock_feed messages
+        self._market_data_callback: Callable | None = None
 
     # ── Authentication ────────────────────────────────────────────────────────
 
@@ -457,6 +664,21 @@ class KotakNeoService:
         with self._lock:
             self._reject_callbacks.pop(kotak_order_id, None)
 
+    # ── Market data callback (used by KotakBroadcaster) ──────────────────────
+
+    def register_market_data_callback(self, callback: Callable | None) -> None:
+        """
+        Register (or clear) a callback for incoming market data (stock_feed) messages.
+        Called by KotakBroadcaster to hook into the shared NeoWebSocket.
+        The callback receives the raw message dict and runs in the WebSocket thread.
+        """
+        with self._lock:
+            self._market_data_callback = callback
+        logger.info(
+            "KotakNeoService: market data callback %s",
+            "registered" if callback else "cleared",
+        )
+
     # ── WebSocket order feed ──────────────────────────────────────────────────
 
     def _start_order_feed(self) -> None:
@@ -488,16 +710,38 @@ class KotakNeoService:
 
     def _on_message(self, message: Any) -> None:
         """
-        Handle incoming messages from the Kotak order feed WebSocket.
-        Sample structure: {"type":"order_feed","data":"{\"type\":\"order\",\"data\":[{...}]}"}
-        data field may be a list (typical) or a plain dict.
+        Handle incoming messages from the Kotak NeoWebSocket.
+        Dispatches by "type" field:
+          - "order_feed"  → order fill / reject callbacks
+          - "stock_feed"  → market data callback (KotakBroadcaster)
+        Sample order_feed: {"type":"order_feed","data":"{\"type\":\"order\",\"data\":[{...}]}"}
         """
         try:
             if isinstance(message, (bytes, bytearray)):
                 message = message.decode()
             if isinstance(message, str):
                 message = json.loads(message)
-            if not isinstance(message, dict) or message.get("type") != "order_feed":
+            if not isinstance(message, dict):
+                return
+
+            msg_type = message.get("type")
+            logger.debug("KotakNeoService: WebSocket message type=%s", msg_type)
+
+            # Dispatch market data to KotakBroadcaster if registered
+            if msg_type == "stock_feed":
+                with self._lock:
+                    cb = self._market_data_callback
+                if cb is not None:
+                    try:
+                        cb(message)
+                    except Exception as exc:
+                        logger.warning(
+                            "KotakNeoService: market data callback raised: %s", exc
+                        )
+                return
+
+            if msg_type != "order_feed":
+                logger.debug("KotakNeoService: ignoring unknown message type=%s", msg_type)
                 return
 
             raw_data = message.get("data")
@@ -635,6 +879,410 @@ class KotakNeoService:
 # ---------------------------------------------------------------------------
 
 _service = KotakNeoService()
+
+
+# ---------------------------------------------------------------------------
+# 1-second OHLC accumulator for Kotak market data ticks
+# ---------------------------------------------------------------------------
+
+@dataclass
+class _KotakOHLCAccumulator:
+    """
+    Accumulates LTP ticks into completed 1-second OHLC candles.
+    Identical logic to _OHLCAccumulator in kite_service.py.
+    """
+    open: float = 0.0
+    high: float = 0.0
+    low: float = 0.0
+    close: float = 0.0
+    current_second: int = 0
+
+    def update(self, price: float, ts_second: int) -> dict | None:
+        """
+        Feed a price. Returns a completed candle dict when the second boundary
+        is crossed, otherwise None.
+        """
+        if self.current_second == 0:
+            self.current_second = ts_second
+            self.open = self.high = self.low = self.close = price
+            return None
+
+        if ts_second == self.current_second:
+            self.high = max(self.high, price)
+            self.low = min(self.low, price)
+            self.close = price
+            return None
+
+        completed = {
+            "type": "tick",
+            "time": self.current_second,
+            "open": round(self.open, 2),
+            "high": round(self.high, 2),
+            "low": round(self.low, 2),
+            "close": round(self.close, 2),
+        }
+        self.current_second = ts_second
+        self.open = self.high = self.low = self.close = price
+        return completed
+
+
+# ---------------------------------------------------------------------------
+# KotakBroadcaster — module-level singleton for Kotak Neo market data
+# ---------------------------------------------------------------------------
+
+class KotakBroadcaster:
+    """
+    Kotak Neo market data WebSocket broadcaster.
+
+    Mirrors KiteBroadcaster: one shared WebSocket connection (via the
+    authenticated KotakNeoService), fan-out to all registered session queues.
+
+    Market data arrives on the same NeoWebSocket as order feed; the service
+    dispatches "stock_feed" type messages here via register_market_data_callback.
+    Completed 1-second OHLC candles are pushed to session queues using
+    loop.call_soon_threadsafe so asyncio loops receive them safely from the
+    background WebSocket thread.
+
+    Authentication: KotakNeoService must be authenticated before register() is
+    called. is_ready() should be checked before use; paper sessions fall back to
+    Kite if Kotak is not available.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        # Kotak scrip token str → {session_id: (queue, right, loop)}
+        self._token_sessions: dict[str, dict[str, tuple]] = defaultdict(dict)
+        # session_id → set[token_str]
+        self._session_tokens: dict[str, set[str]] = defaultdict(set)
+        # token_str → exchange_segment (for (un)subscribe calls)
+        self._token_exchange: dict[str, str] = {}
+        # per-token OHLC accumulator
+        self._accumulators: dict[str, _KotakOHLCAccumulator] = defaultdict(_KotakOHLCAccumulator)
+        self._subscribed = False
+
+    def is_ready(self) -> bool:
+        """True when Kotak Neo is authenticated and ready to stream market data."""
+        return _service.is_authenticated()
+
+    def register(
+        self,
+        session_id: str,
+        tokens: list[str],
+        exchanges: list[str],
+        rights: list[str | None],
+        queue: "asyncio.Queue",
+        loop: "asyncio.AbstractEventLoop",
+    ) -> None:
+        """
+        Register a session for the given Kotak scrip tokens.
+
+        tokens[i]:    Kotak instrument token string (from master data)
+        exchanges[i]: exchange_segment for tokens[i] (e.g. "nse_cm", "nse_fo")
+        rights[i]:    "CE", "PE", or None (equity/index)
+
+        Raises KotakError if Kotak is not authenticated or subscription fails.
+        """
+        logger.info(
+            "KotakBroadcaster: registering session %s with %d tokens: %s",
+            session_id, len(tokens),
+            [(t, r) for t, r in zip(tokens, rights)],
+        )
+        with self._lock:
+            for token, exchange, right in zip(tokens, exchanges, rights):
+                self._token_sessions[token][session_id] = (queue, right, loop)
+                self._session_tokens[session_id].add(token)
+                self._token_exchange[token] = exchange
+
+        self._subscribe_all()
+
+    def _subscribe_all(self) -> None:
+        """Register market data callback and subscribe to all tracked tokens."""
+        with self._lock:
+            token_dicts = [
+                {"instrument_token": tok, "exchange_segment": exch}
+                for tok, exch in self._token_exchange.items()
+            ]
+
+        if not token_dicts:
+            return
+
+        try:
+            _service.register_market_data_callback(self._on_ticks)
+            client = _service._get_client()
+            client.subscribe(
+                instrument_tokens=token_dicts,
+                isIndex=False,
+                isDepth=False,
+            )
+            self._subscribed = True
+            logger.info(
+                "KotakBroadcaster: subscribed to %d instruments: %s",
+                len(token_dicts),
+                [d["instrument_token"] for d in token_dicts],
+            )
+        except KotakError:
+            raise
+        except Exception as exc:
+            logger.error("KotakBroadcaster: subscription call failed: %s", exc)
+            raise KotakError(f"Kotak market data subscription failed: {exc}") from exc
+
+    def unregister(self, session_id: str) -> None:
+        """Remove a session; unsubscribes tokens that have no remaining sessions."""
+        logger.info("KotakBroadcaster: unregistering session %s", session_id)
+        orphaned: list[str] = []
+        with self._lock:
+            owned = self._session_tokens.pop(session_id, set())
+            for token in owned:
+                self._token_sessions[token].pop(session_id, None)
+                if not self._token_sessions[token]:
+                    del self._token_sessions[token]
+                    self._token_exchange.pop(token, None)
+                    orphaned.append(token)
+
+        if orphaned:
+            logger.info("KotakBroadcaster: unsubscribing orphaned tokens: %s", orphaned)
+            try:
+                client = _service._get_client()
+                client.un_subscribe(
+                    instrument_tokens=[{"instrument_token": t} for t in orphaned]
+                )
+            except Exception as exc:
+                logger.warning("KotakBroadcaster: un_subscribe error: %s", exc)
+
+        with self._lock:
+            has_sessions = bool(any(self._token_sessions.values()))
+
+        if not has_sessions:
+            self._subscribed = False
+            _service.register_market_data_callback(None)
+            logger.info(
+                "KotakBroadcaster: no active sessions — market data callback cleared"
+            )
+
+    def update_session_right(
+        self,
+        session_id: str,
+        right: str,
+        new_token: str,
+        new_exchange: str,
+        queue: "asyncio.Queue",
+        loop: "asyncio.AbstractEventLoop",
+    ) -> None:
+        """
+        Swap the instrument token for a given right (CE/PE) in a live session.
+        Called when the user changes the options strike mid-session.
+        """
+        orphaned: list[str] = []
+        with self._lock:
+            if session_id not in self._session_tokens:
+                logger.debug(
+                    "KotakBroadcaster: update_session_right — session %s not registered",
+                    session_id,
+                )
+                return
+
+            old_token: str | None = None
+            for token in list(self._session_tokens[session_id]):
+                entry = self._token_sessions.get(token, {}).get(session_id)
+                if entry and entry[1] == right:
+                    old_token = token
+                    break
+
+            if old_token is not None and old_token != new_token:
+                self._token_sessions[old_token].pop(session_id, None)
+                self._session_tokens[session_id].discard(old_token)
+                if not self._token_sessions.get(old_token):
+                    self._token_sessions.pop(old_token, None)
+                    self._token_exchange.pop(old_token, None)
+                    orphaned.append(old_token)
+
+            self._token_sessions[new_token][session_id] = (queue, right, loop)
+            self._session_tokens[session_id].add(new_token)
+            self._token_exchange[new_token] = new_exchange
+
+        if orphaned:
+            try:
+                client = _service._get_client()
+                client.un_subscribe(
+                    instrument_tokens=[{"instrument_token": t} for t in orphaned]
+                )
+            except Exception as exc:
+                logger.warning(
+                    "KotakBroadcaster: un_subscribe error on strike change: %s", exc
+                )
+
+        # Subscribe new token
+        try:
+            client = _service._get_client()
+            client.subscribe(
+                instrument_tokens=[
+                    {"instrument_token": new_token, "exchange_segment": new_exchange}
+                ],
+                isIndex=False,
+                isDepth=False,
+            )
+            logger.info(
+                "KotakBroadcaster: session %s right=%s token updated "
+                "(old=%s new=%s exchange=%s)",
+                session_id, right,
+                orphaned[0] if orphaned else "none", new_token, new_exchange,
+            )
+        except Exception as exc:
+            logger.error(
+                "KotakBroadcaster: failed to subscribe new token %s: %s",
+                new_token, exc,
+            )
+
+    # ── Internal tick handler ─────────────────────────────────────────────────
+
+    def _on_ticks(self, message: Any) -> None:
+        """
+        Receive market data messages dispatched by KotakNeoService._on_message.
+        Runs in the WebSocket background thread — must be thread-safe.
+        Expected format: {"type": "stock_feed", "data": {...} | [{...}, ...]}
+        """
+        try:
+            if isinstance(message, (bytes, bytearray)):
+                message = message.decode()
+            if isinstance(message, str):
+                message = json.loads(message)
+            if not isinstance(message, dict):
+                return
+
+            msg_type = message.get("type", "")
+            if msg_type != "stock_feed":
+                logger.debug("KotakBroadcaster: ignoring type=%s", msg_type)
+                return
+
+            raw_data = message.get("data", {})
+            if isinstance(raw_data, dict):
+                ticks = [raw_data]
+            elif isinstance(raw_data, list):
+                ticks = raw_data
+            elif isinstance(raw_data, str):
+                try:
+                    parsed = json.loads(raw_data)
+                    ticks = parsed if isinstance(parsed, list) else [parsed]
+                except Exception:
+                    logger.warning(
+                        "KotakBroadcaster: could not parse nested data string: %.100s …",
+                        raw_data,
+                    )
+                    return
+            else:
+                logger.debug(
+                    "KotakBroadcaster: unexpected data type %s", type(raw_data).__name__
+                )
+                return
+
+            for tick in ticks:
+                if isinstance(tick, dict):
+                    self._process_tick(tick)
+
+        except Exception as exc:
+            logger.warning("KotakBroadcaster: _on_ticks error: %s", exc)
+
+    def _process_tick(self, tick: dict) -> None:
+        """
+        Process a single Kotak market data tick dict.
+        Accumulates into 1-second OHLC and fans out completed candles to sessions.
+        Field names are defensive to handle variation across SDK versions.
+        """
+        # Instrument token — various field names in different SDK versions
+        token = str(
+            tick.get("instrument_token") or
+            tick.get("scrip_token") or
+            tick.get("pScrip") or
+            tick.get("token") or
+            ""
+        )
+        if not token:
+            logger.debug(
+                "KotakBroadcaster: tick missing token — keys: %s",
+                list(tick.keys())[:10],
+            )
+            return
+
+        # LTP — try all known field names
+        ltp_raw = (
+            tick.get("ltP") or tick.get("ltp") or
+            tick.get("last_price") or tick.get("ltp_price") or
+            tick.get("close") or 0
+        )
+        try:
+            price = float(ltp_raw)
+        except (TypeError, ValueError):
+            logger.debug(
+                "KotakBroadcaster: invalid LTP %r for token %s", ltp_raw, token
+            )
+            return
+
+        if price <= 0:
+            return
+
+        # Timestamp: prefer exchange timestamp; add IST offset to align with
+        # the fake-UTC convention used throughout the platform.
+        ts_raw = (
+            tick.get("exchange_timestamp") or
+            tick.get("timestamp") or
+            tick.get("ttime") or
+            None
+        )
+        if ts_raw is not None:
+            try:
+                ts_int = int(ts_raw)
+                # If the timestamp looks like epoch seconds in IST-range add offset;
+                # if it's already large enough, treat as-is.
+                ts_second = ts_int + _IST_OFFSET if ts_int < 2_000_000_000 else ts_int
+            except (TypeError, ValueError):
+                ts_second = int(time.time()) + _IST_OFFSET
+        else:
+            ts_second = int(time.time()) + _IST_OFFSET
+
+        # Update OHLC accumulator for this token
+        with self._lock:
+            acc = self._accumulators[token]
+        completed = acc.update(price, ts_second)
+        if completed is None:
+            return
+
+        # Retrieve registered sessions for this token
+        with self._lock:
+            session_entries = dict(self._token_sessions.get(token, {}))
+
+        if not session_entries:
+            logger.debug(
+                "KotakBroadcaster: no sessions for token %s — dropped candle", token
+            )
+            return
+
+        logger.debug(
+            "KotakBroadcaster: token=%s OHLC O=%.2f H=%.2f L=%.2f C=%.2f ts=%d "
+            "sessions=%d",
+            token,
+            completed["open"], completed["high"],
+            completed["low"], completed["close"],
+            completed["time"], len(session_entries),
+        )
+
+        for sid, (queue, right, loop) in session_entries.items():
+            tick_payload = {**completed, "right": right}
+            try:
+                loop.call_soon_threadsafe(queue.put_nowait, tick_payload)
+            except Exception as exc:
+                logger.warning(
+                    "KotakBroadcaster: failed to push tick for session %s: %s",
+                    sid, exc,
+                )
+
+
+# Module-level KotakBroadcaster singleton — shared across all active sessions.
+_kotak_broadcaster = KotakBroadcaster()
+
+
+def get_kotak_broadcaster() -> KotakBroadcaster:
+    """Return the module-level KotakBroadcaster singleton."""
+    return _kotak_broadcaster
 
 
 def get_service() -> KotakNeoService:
