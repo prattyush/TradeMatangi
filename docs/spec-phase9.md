@@ -447,3 +447,54 @@ mplfinance uses its own internal x-axis coordinate system when plotting into ext
 
 **`mplfinance` and `matplotlib` are script-only dependencies**
 These packages are not needed by the FastAPI backend. Rather than adding them to `backend/requirements.txt` (which would slow down every deployment), they are installed via an extra `pip install` line in the start-backend scripts, which already run on every startup to ensure the venv is current. The script itself imports them at the top level and prints a helpful install hint on `ImportError`.
+
+---
+
+### Kotak Neo Live Streaming + Admin Settings Tab (2026-05-24, PR #73)
+
+**Status:** PR #73 open (feature/kotak-streaming-admin-tab → dev).
+
+#### What it does
+
+Adds Kotak Neo as an alternative live market-data streaming source for paper and real trading sessions, with an admin toggle in the Settings UI to switch between Kite and Kotak Neo.
+
+**Backend:**
+- `KotakBroadcaster` singleton in `kotak_service.py` — one NeoWebSocket shared by all sessions; `_KotakOHLCAccumulator` aggregates LTP → 1-second OHLC; fan-out via `loop.call_soon_threadsafe`. Mirrors `KiteBroadcaster` exactly.
+- `KotakNeoService._on_message` now dispatches `stock_feed` type messages to a registered `_market_data_callback` (set by `KotakBroadcaster`). Order-feed handling unchanged.
+- Instrument master cache: `data/kotak_instruments.json` downloaded via `client.master_data()`, refreshed every 24 h. `fetch_kotak_equity_instrument_token` / `fetch_kotak_options_instrument_token` resolve scrip tokens.
+- `live_stream_source` admin setting stored in DynamoDB `BrokerTokens` table via `token_service`. `GET/PUT /api/admin/stream-source` in `admin.py` (admin-only).
+- `_setup_kotak_streaming(session, loop)` async helper registers a session with `KotakBroadcaster`, resolving equity + options tokens.
+- `_run_paper_session` and `_run_real_session` Phase 2 check `live_stream_source`. Fallback chain: Kotak (if authenticated) → Kite → Breeze (paper only).
+- `SimulationSession.kotak_streaming: bool` tracks which broadcaster to unregister in `stop_session()`.
+
+**Frontend:**
+- Settings modal: admin users see `[General] [Admin]` tabs. Non-admin layout unchanged.
+- Admin tab: BROKER TOKENS, LIVE STREAMING SOURCE toggle (Kite / Kotak Neo with inline Kotak status), REAL TRADING ACCESS whitelist, BROKER CONNECTION.
+- `api.getStreamSource()` / `api.setStreamSource()` call `GET/PUT /api/admin/stream-source`.
+
+#### Files modified (PR #73)
+
+| File | Change |
+|------|--------|
+| `backend/app/services/kotak_service.py` | `KotakBroadcaster`, `_KotakOHLCAccumulator`, instrument master cache helpers, `register_market_data_callback`, stock_feed dispatch in `_on_message` |
+| `backend/app/routers/admin.py` | `GET/PUT /api/admin/stream-source` endpoints |
+| `backend/app/services/simulation.py` | `_setup_kotak_streaming` helper; Phase 2 streaming source check in paper + real sessions; `kotak_streaming` field on `SimulationSession`; `stop_session` Kotak unregister path |
+| `frontend/src/components/SettingsModal.tsx` | Tab refactor (General / Admin); streaming source toggle; admin content moved to Admin tab |
+| `frontend/src/services/api.ts` | `getStreamSource()` / `setStreamSource()` |
+
+#### Lessons Learned — Kotak Neo Streaming
+
+**Kotak order-feed and market-data messages share one WebSocket — dispatch by type**
+`KotakNeoService._on_message` already received all NeoWebSocket messages. Rather than creating a second WebSocket, we added a `_market_data_callback` field and dispatch `stock_feed` type messages there while leaving `order_feed` handling intact. The broadcaster registers its handler via `register_market_data_callback()` before calling `client.subscribe()`.
+
+**Kotak scrip tokens differ from Kite instrument tokens**
+Kite uses integer instrument tokens from downloaded CSV files. Kotak uses string scrip codes from its `master_data()` API response. Field names vary across SDK versions (`pScrip`, `instrument_token`, `token` — all checked defensively). A daily 24-h cache at `data/kotak_instruments.json` avoids repeated API calls while staying fresh enough for daily expirations.
+
+**LTP field names are not standardised across Kotak SDK versions**
+The market data tick may carry LTP as `ltP`, `ltp`, `last_price`, or `ltp_price` depending on the SDK version. `_process_tick` tries all four in order. Same pattern for instrument token field names and exchange timestamps.
+
+**`loop.call_soon_threadsafe` requires the event loop to actually be running**
+`KotakBroadcaster._process_tick` fans out to session queues via `loop.call_soon_threadsafe(queue.put_nowait, payload)`. This schedules the put on the asyncio event loop from the background WebSocket thread. In unit tests, the loop must be running (use `asyncio.run()` or `await asyncio.sleep(0)`) for the callback to execute — synchronous `queue.put_nowait` will see an empty queue if the loop has no iteration.
+
+**Streaming source selection is global, not per-session**
+The `live_stream_source` setting applies at the time each new session is started. Active sessions are unaffected by a mid-flight source change — they continue with the broadcaster they registered with at Phase 2 startup. `stop_session()` reads `session.kotak_streaming` (not the current global setting) so it always unregisters from the correct broadcaster.

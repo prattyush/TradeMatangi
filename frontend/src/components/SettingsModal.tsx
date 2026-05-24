@@ -112,13 +112,18 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, onWall
   // Historical days
   const [historicalDays, setHistoricalDays] = useState(loadHistoricalDays)
 
-  // Admin section
-  const [adminOpen, setAdminOpen] = useState(false)
+  // Active tab: 'general' (default) or 'admin' (admin only)
+  const [activeTab, setActiveTab] = useState<'general' | 'admin'>('general')
+
+  // Admin section — broker tokens
   const [iciciInput, setIciciInput] = useState('')
   const [kiteInput, setKiteInput] = useState('')
   const [iciciMasked, setIciciMasked] = useState<string | null>(null)
   const [kiteMasked, setKiteMasked] = useState<string | null>(null)
   const adminLoadedRef = useRef(false)
+
+  // Admin section — live streaming source
+  const [streamSource, setStreamSource] = useState<'kite' | 'kotak'>('kite')
 
   // Real trading whitelist (admin)
   const [whitelistOpen, setWhitelistOpen] = useState(false)
@@ -138,13 +143,14 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, onWall
         localStorage.setItem(HISTORICAL_DAYS_KEY, String(s.historical_days))
       }).catch(() => {})
 
-      // Load masked tokens on first open (admin only)
+      // Load masked tokens and stream source on first open (admin only)
       if (isAdmin && !adminLoadedRef.current) {
         adminLoadedRef.current = true
         api.getAdminTokens().then(t => {
           setIciciMasked(t.icici_session)
           setKiteMasked(t.kite_access)
         }).catch(() => {})
+        api.getStreamSource().then(r => setStreamSource(r.source)).catch(() => {})
       }
 
       // Load Kotak status for real trading users
@@ -235,6 +241,17 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, onWall
     }
   }
 
+  const saveStreamSource = async (src: 'kite' | 'kotak') => {
+    try {
+      await api.setStreamSource(src)
+      setStreamSource(src)
+      setStatus(`Streaming source set to: ${src === 'kite' ? 'Kite' : 'Kotak Neo'}`)
+      setTimeout(() => setStatus(null), 2500)
+    } catch {
+      setStatus('Failed to save streaming source')
+    }
+  }
+
   const loadWhitelist = async () => {
     setWhitelistLoading(true)
     try {
@@ -313,6 +330,43 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, onWall
                 style={{ background: 'none', border: 'none', color: '#8b949e', cursor: 'pointer', fontSize: 16 }}
               >✕</button>
             </div>
+
+            {/* Tab bar — only shown to admin users */}
+            {isAdmin && (
+              <div style={{
+                display: 'flex',
+                borderBottom: '1px solid #21262d',
+                marginBottom: 4,
+                marginTop: -8,
+              }}>
+                {(['general', 'admin'] as const).map(tab => (
+                  <button
+                    key={tab}
+                    onClick={() => setActiveTab(tab)}
+                    style={{
+                      flex: 1,
+                      padding: '7px 0',
+                      background: 'none',
+                      border: 'none',
+                      borderBottom: activeTab === tab
+                        ? '2px solid #1f6feb'
+                        : '2px solid transparent',
+                      color: activeTab === tab ? '#79c0ff' : '#8b949e',
+                      fontSize: 12,
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                      textTransform: 'uppercase',
+                      letterSpacing: '0.5px',
+                    }}
+                  >
+                    {tab}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {/* ── General tab content ── */}
+            {(!isAdmin || activeTab === 'general') && <>
 
             {/* Trading Mode */}
             <div style={{ borderTop: '1px solid #21262d', paddingTop: 16 }}>
@@ -624,137 +678,6 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, onWall
               </div>
             </div>
 
-            {/* Admin — broker token management (visible to admin users only) */}
-            {isAdmin && (
-              <div style={{ borderTop: '1px solid #21262d', paddingTop: 16 }}>
-                <button
-                  onClick={() => setAdminOpen(o => !o)}
-                  style={{
-                    width: '100%', background: 'none', border: 'none', cursor: 'pointer',
-                    display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                    padding: 0,
-                  }}
-                >
-                  <div style={{ fontSize: 12, color: '#f0883e', fontWeight: 600 }}>ADMIN</div>
-                  <span style={{ fontSize: 11, color: '#8b949e' }}>{adminOpen ? '▲' : '▼'}</span>
-                </button>
-
-                {adminOpen && (
-                  <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 10 }}>
-                    {/* ICICI session token */}
-                    <div>
-                      <div style={{ fontSize: 11, color: '#8b949e', marginBottom: 4 }}>
-                        ICICI Session Token
-                        {iciciMasked && (
-                          <span style={{ color: '#484f58', marginLeft: 6 }}>current: {iciciMasked}</span>
-                        )}
-                      </div>
-                      <input
-                        type="password"
-                        value={iciciInput}
-                        onChange={e => setIciciInput(e.target.value)}
-                        placeholder="Paste new token…"
-                        style={{
-                          width: '100%', padding: '6px 8px', background: '#0d1117',
-                          border: '1px solid #30363d', borderRadius: 6,
-                          color: '#e6edf3', fontSize: 12, boxSizing: 'border-box',
-                        }}
-                      />
-                    </div>
-
-                    {/* Kite access token */}
-                    <div>
-                      <div style={{ fontSize: 11, color: '#8b949e', marginBottom: 4 }}>
-                        Kite Access Token
-                        {kiteMasked && (
-                          <span style={{ color: '#484f58', marginLeft: 6 }}>current: {kiteMasked}</span>
-                        )}
-                      </div>
-                      <input
-                        type="password"
-                        value={kiteInput}
-                        onChange={e => setKiteInput(e.target.value)}
-                        placeholder="Paste new token…"
-                        style={{
-                          width: '100%', padding: '6px 8px', background: '#0d1117',
-                          border: '1px solid #30363d', borderRadius: 6,
-                          color: '#e6edf3', fontSize: 12, boxSizing: 'border-box',
-                        }}
-                      />
-                    </div>
-
-                    <button
-                      onClick={saveAdminTokens}
-                      style={{
-                        padding: '6px 14px', background: '#b08800',
-                        border: 'none', borderRadius: 6, color: '#fff',
-                        cursor: 'pointer', fontSize: 12, alignSelf: 'flex-start',
-                      }}
-                    >
-                      Save Tokens
-                    </button>
-                    <div style={{ fontSize: 11, color: '#484f58' }}>
-                      Tokens rotate daily. DDB values override accesskeys.ini.
-                    </div>
-
-                    {/* Real Trading Whitelist */}
-                    <div style={{ marginTop: 8 }}>
-                      <button
-                        onClick={() => { setWhitelistOpen(o => !o); if (!whitelistOpen) loadWhitelist() }}
-                        style={{
-                          background: 'none', border: 'none', cursor: 'pointer', padding: 0,
-                          display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%',
-                        }}
-                      >
-                        <span style={{ fontSize: 11, color: '#8b949e', fontWeight: 600 }}>REAL TRADING ACCESS</span>
-                        <span style={{ fontSize: 11, color: '#8b949e' }}>{whitelistOpen ? '▲' : '▼'}</span>
-                      </button>
-                      {whitelistOpen && (
-                        <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 6 }}>
-                          {whitelistLoading ? (
-                            <span style={{ fontSize: 11, color: '#484f58' }}>Loading…</span>
-                          ) : whitelist.length === 0 ? (
-                            <span style={{ fontSize: 11, color: '#484f58' }}>No whitelisted users</span>
-                          ) : (
-                            whitelist.map(entry => (
-                              <div key={entry.email} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 12, color: '#e6edf3' }}>
-                                <span>{entry.email}</span>
-                                <button
-                                  onClick={() => removeFromWhitelist(entry.email)}
-                                  style={{ background: 'none', border: 'none', color: '#f85149', cursor: 'pointer', fontSize: 12 }}
-                                >✕</button>
-                              </div>
-                            ))
-                          )}
-                          <div style={{ display: 'flex', gap: 6, marginTop: 4 }}>
-                            <input
-                              type="email"
-                              value={whitelistEmailInput}
-                              onChange={e => setWhitelistEmailInput(e.target.value)}
-                              onKeyDown={e => e.key === 'Enter' && addToWhitelist()}
-                              placeholder="user@example.com"
-                              style={{
-                                flex: 1, padding: '5px 8px', background: '#0d1117',
-                                border: '1px solid #30363d', borderRadius: 6,
-                                color: '#e6edf3', fontSize: 12,
-                              }}
-                            />
-                            <button
-                              onClick={addToWhitelist}
-                              style={{
-                                padding: '5px 10px', background: '#1f6feb', border: 'none',
-                                borderRadius: 6, color: '#fff', cursor: 'pointer', fontSize: 12,
-                              }}
-                            >Add</button>
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-
             {/* Broker connection (for real trading users) */}
             {(isRealTradingUser || isAdmin) && (
               <div style={{ borderTop: '1px solid #21262d', paddingTop: 16 }}>
@@ -791,6 +714,235 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, onWall
 
             {status && (
               <div style={{ fontSize: 12, color: '#3fb950' }}>{status}</div>
+            )}
+
+            </> /* end General tab */}
+
+            {/* ── Admin tab content (admin only) ── */}
+            {isAdmin && activeTab === 'admin' && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+
+                {/* Broker Tokens */}
+                <div>
+                  <div style={{ fontSize: 12, color: '#f0883e', fontWeight: 600, marginBottom: 10 }}>
+                    BROKER TOKENS
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                    <div>
+                      <div style={{ fontSize: 11, color: '#8b949e', marginBottom: 4 }}>
+                        ICICI Session Token
+                        {iciciMasked && (
+                          <span style={{ color: '#484f58', marginLeft: 6 }}>current: {iciciMasked}</span>
+                        )}
+                      </div>
+                      <input
+                        type="password"
+                        value={iciciInput}
+                        onChange={e => setIciciInput(e.target.value)}
+                        placeholder="Paste new token…"
+                        style={{
+                          width: '100%', padding: '6px 8px', background: '#0d1117',
+                          border: '1px solid #30363d', borderRadius: 6,
+                          color: '#e6edf3', fontSize: 12, boxSizing: 'border-box',
+                        }}
+                      />
+                    </div>
+                    <div>
+                      <div style={{ fontSize: 11, color: '#8b949e', marginBottom: 4 }}>
+                        Kite Access Token
+                        {kiteMasked && (
+                          <span style={{ color: '#484f58', marginLeft: 6 }}>current: {kiteMasked}</span>
+                        )}
+                      </div>
+                      <input
+                        type="password"
+                        value={kiteInput}
+                        onChange={e => setKiteInput(e.target.value)}
+                        placeholder="Paste new token…"
+                        style={{
+                          width: '100%', padding: '6px 8px', background: '#0d1117',
+                          border: '1px solid #30363d', borderRadius: 6,
+                          color: '#e6edf3', fontSize: 12, boxSizing: 'border-box',
+                        }}
+                      />
+                    </div>
+                    <button
+                      onClick={saveAdminTokens}
+                      style={{
+                        padding: '6px 14px', background: '#b08800',
+                        border: 'none', borderRadius: 6, color: '#fff',
+                        cursor: 'pointer', fontSize: 12, alignSelf: 'flex-start',
+                      }}
+                    >
+                      Save Tokens
+                    </button>
+                    <div style={{ fontSize: 11, color: '#484f58' }}>
+                      Tokens rotate daily. DDB values override accesskeys.ini.
+                    </div>
+                  </div>
+                </div>
+
+                {/* Live Streaming Source */}
+                <div style={{ borderTop: '1px solid #21262d', paddingTop: 16 }}>
+                  <div style={{ fontSize: 12, color: '#f0883e', fontWeight: 600, marginBottom: 10 }}>
+                    LIVE STREAMING SOURCE
+                  </div>
+                  <div style={{
+                    display: 'flex', gap: 0, borderRadius: 6, overflow: 'hidden',
+                    border: '1px solid #30363d', width: 'fit-content',
+                  }}>
+                    {([
+                      { key: 'kite' as const, label: 'Kite' },
+                      { key: 'kotak' as const, label: 'Kotak Neo' },
+                    ]).map(({ key, label }) => (
+                      <button
+                        key={key}
+                        onClick={() => saveStreamSource(key)}
+                        style={{
+                          padding: '6px 20px',
+                          fontSize: 12,
+                          fontWeight: 600,
+                          border: 'none',
+                          cursor: 'pointer',
+                          background: streamSource === key ? '#1f3a5f' : '#161b22',
+                          color: streamSource === key ? '#79c0ff' : '#484f58',
+                          transition: 'background 0.15s',
+                        }}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                  <div style={{ fontSize: 11, color: '#484f58', marginTop: 6 }}>
+                    Applies to all new paper and real sessions.
+                    Kotak Neo requires TOTP login; falls back to Kite if not authenticated.
+                  </div>
+
+                  {/* Show Kotak connection status inline when Kotak is selected */}
+                  {streamSource === 'kotak' && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 10 }}>
+                      <span style={{ fontSize: 12, color: '#8b949e' }}>Kotak status:</span>
+                      {kotakAuthenticated === null ? (
+                        <span style={{ fontSize: 12, color: '#484f58' }}>checking…</span>
+                      ) : kotakAuthenticated ? (
+                        <span style={{
+                          fontSize: 12, color: '#3fb950',
+                          background: 'rgba(63,185,80,0.1)', border: '1px solid rgba(63,185,80,0.3)',
+                          borderRadius: 4, padding: '2px 8px',
+                        }}>Connected</span>
+                      ) : (
+                        <>
+                          <span style={{
+                            fontSize: 12, color: '#f85149',
+                            background: 'rgba(248,81,73,0.1)', border: '1px solid rgba(248,81,73,0.3)',
+                            borderRadius: 4, padding: '2px 8px',
+                          }}>Not connected</span>
+                          <button
+                            onClick={() => setShowKotakTOTP(true)}
+                            style={{
+                              padding: '3px 10px', background: '#d4a017', border: 'none',
+                              borderRadius: 6, color: '#0d1117', cursor: 'pointer',
+                              fontSize: 11, fontWeight: 600,
+                            }}
+                          >Connect</button>
+                        </>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                {/* Real Trading Whitelist */}
+                <div style={{ borderTop: '1px solid #21262d', paddingTop: 16 }}>
+                  <button
+                    onClick={() => { setWhitelistOpen(o => !o); if (!whitelistOpen) loadWhitelist() }}
+                    style={{
+                      background: 'none', border: 'none', cursor: 'pointer', padding: 0,
+                      display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%',
+                    }}
+                  >
+                    <span style={{ fontSize: 12, color: '#f0883e', fontWeight: 600 }}>REAL TRADING ACCESS</span>
+                    <span style={{ fontSize: 11, color: '#8b949e' }}>{whitelistOpen ? '▲' : '▼'}</span>
+                  </button>
+                  {whitelistOpen && (
+                    <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                      {whitelistLoading ? (
+                        <span style={{ fontSize: 11, color: '#484f58' }}>Loading…</span>
+                      ) : whitelist.length === 0 ? (
+                        <span style={{ fontSize: 11, color: '#484f58' }}>No whitelisted users</span>
+                      ) : (
+                        whitelist.map(entry => (
+                          <div key={entry.email} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 12, color: '#e6edf3' }}>
+                            <span>{entry.email}</span>
+                            <button
+                              onClick={() => removeFromWhitelist(entry.email)}
+                              style={{ background: 'none', border: 'none', color: '#f85149', cursor: 'pointer', fontSize: 12 }}
+                            >✕</button>
+                          </div>
+                        ))
+                      )}
+                      <div style={{ display: 'flex', gap: 6, marginTop: 4 }}>
+                        <input
+                          type="email"
+                          value={whitelistEmailInput}
+                          onChange={e => setWhitelistEmailInput(e.target.value)}
+                          onKeyDown={e => e.key === 'Enter' && addToWhitelist()}
+                          placeholder="user@example.com"
+                          style={{
+                            flex: 1, padding: '5px 8px', background: '#0d1117',
+                            border: '1px solid #30363d', borderRadius: 6,
+                            color: '#e6edf3', fontSize: 12,
+                          }}
+                        />
+                        <button
+                          onClick={addToWhitelist}
+                          style={{
+                            padding: '5px 10px', background: '#1f6feb', border: 'none',
+                            borderRadius: 6, color: '#fff', cursor: 'pointer', fontSize: 12,
+                          }}
+                        >Add</button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Broker connection (connect Kotak for real trading / admin) */}
+                <div style={{ borderTop: '1px solid #21262d', paddingTop: 16 }}>
+                  <div style={{ fontSize: 12, color: '#f0883e', fontWeight: 600, marginBottom: 10 }}>
+                    BROKER CONNECTION
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <span style={{ fontSize: 13, color: '#e6edf3' }}>Kotak Neo</span>
+                    {kotakAuthenticated === null ? (
+                      <span style={{ fontSize: 12, color: '#484f58' }}>checking…</span>
+                    ) : kotakAuthenticated ? (
+                      <span style={{
+                        fontSize: 12, color: '#3fb950',
+                        background: 'rgba(63,185,80,0.1)', border: '1px solid rgba(63,185,80,0.3)',
+                        borderRadius: 4, padding: '2px 8px',
+                      }}>Connected</span>
+                    ) : (
+                      <>
+                        <span style={{
+                          fontSize: 12, color: '#f85149',
+                          background: 'rgba(248,81,73,0.1)', border: '1px solid rgba(248,81,73,0.3)',
+                          borderRadius: 4, padding: '2px 8px',
+                        }}>Not connected</span>
+                        <button
+                          onClick={() => setShowKotakTOTP(true)}
+                          style={{
+                            padding: '4px 12px', background: '#d4a017', border: 'none',
+                            borderRadius: 6, color: '#0d1117', cursor: 'pointer', fontSize: 12, fontWeight: 600,
+                          }}
+                        >Connect</button>
+                      </>
+                    )}
+                  </div>
+                </div>
+
+                {status && (
+                  <div style={{ fontSize: 12, color: '#3fb950' }}>{status}</div>
+                )}
+              </div>
             )}
           </div>
         </div>

@@ -703,6 +703,29 @@ const api = {
     })
     if (!res.ok && res.status !== 204) throw new Error(`Remove from whitelist failed: ${res.status}`)
   },
+
+  // ── Live streaming source (admin) ──────────────────────────────────────────
+
+  async getStreamSource(): Promise<{ source: 'kite' | 'kotak' }> {
+    const res = await fetch(`${BACKEND_URL}/api/admin/stream-source`, {
+      headers: _authHeaders(),
+    })
+    if (!res.ok) return { source: 'kite' }
+    return res.json()
+  },
+
+  async setStreamSource(source: 'kite' | 'kotak'): Promise<{ source: string }> {
+    const res = await fetch(`${BACKEND_URL}/api/admin/stream-source`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', ..._authHeaders() },
+      body: JSON.stringify({ source }),
+    })
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}))
+      throw new Error(data.detail || `Set stream source failed: ${res.status}`)
+    }
+    return res.json()
+  },
 }
 
 export default api
