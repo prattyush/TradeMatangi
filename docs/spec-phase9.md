@@ -394,3 +394,56 @@ When no existing exit order is found, the "place new exit" fallback used `OrderT
 
 **`_register_kotak_sl_for_order` avoids duplicating callback closure code**
 The fill/reject callback pattern (closure over `order_id` + `session`, recording trade, updating wallet, emitting SSE) was duplicated across `orders.py` and `simulation.py`. Extracting it into `_register_kotak_sl_for_order` in `simulation.py` provides a single place to call from strategies, keeping the closure logic DRY. Import is lazy (`from app.services.simulation import _register_kotak_sl_for_order`) to avoid circular imports.
+
+---
+
+### Options Indicator Analysis Script (2026-05-24)
+
+**Status:** COMPLETE — merged to dev.
+
+#### What it does
+
+`scripts/options_indicator.py` is a standalone Python analysis tool that, given a date, symbol, OTM offset, and anchor time:
+
+1. Loads the underlying 1-second parquet from `data/ohlcdata/`, fetches CE and PE options parquets (from cache if present, otherwise via Breeze).
+2. Computes ATM from the underlying price at the anchor time; derives `CE strike = ATM + N×interval`, `PE strike = ATM − N×interval`.
+3. Resamples all three to 1-minute OHLC starting at the anchor time.
+4. Computes four ratio indicators per 1-min bar (each bar's close vs its own open as the % change):
+   - `CE% / PE%`
+   - `PE% / CE%`
+   - `(Und% / CE%) × 10`  — scaled ×10 so the small underlying moves are visible on the same ±1 y-axis
+   - `(Und% / PE%) × 10`
+5. Plots 7 panels in a dark-themed matplotlib figure: 3 candlestick charts (Underlying, CE, PE) + 4 individual indicator panels (one per ratio), each with its own y-axis.
+
+```bash
+# Interactive display
+python scripts/options_indicator.py --date 2026-05-22 --symbol NIFTY --otm 2 --time 09:30
+
+# Save to file (headless / EC2)
+python scripts/options_indicator.py --date 2026-05-22 --symbol NIFTY --otm 2 --time 09:30 --save out.png
+```
+
+#### Files created / modified
+
+| File | Change |
+|------|--------|
+| `scripts/options_indicator.py` | New — 364-line standalone analysis script |
+| `scripts/start-backend.sh` | Added `pip install mplfinance matplotlib` after requirements install |
+| `scripts/start-backend-ec2.sh` | Same mplfinance/matplotlib install line |
+
+#### Lessons Learned — Options Indicator Script
+
+**Keep each indicator on its own subplot when scales differ**
+Plotting `CE%/PE%` (often 2–10×) and `Und%/CE%` (often 0.05–0.2×) on the same y-axis makes the smaller series invisible. One panel per ratio with independent auto-scaled y-axes is the correct pattern for ratio indicators whose magnitudes can differ by an order of magnitude.
+
+**Scale the small ratio, not the components**
+`Und%` moves roughly 10× less than `CE%` or `PE%` in absolute terms. The fix is `(Und%/CE%) × 10` — the full ratio is computed first (`_safe_ratio`), then the result series is multiplied by 10. Scaling a component (e.g. multiplying only the numerator or denominator) changes the meaning of the ratio; scaling the result preserves it and just shifts the visual range.
+
+**Clip ratios to avoid chart-destroying outliers**
+When CE% or PE% crosses zero, the ratio spikes to ±∞. `_safe_ratio` returns `NaN` for denominators below 1e-8 (shown as a gap in the line) and clips the remaining values to ±10. This keeps the chart readable without losing information on the non-degenerate bars.
+
+**Integer x-axis with formatted labels avoids mplfinance alignment issues**
+mplfinance uses its own internal x-axis coordinate system when plotting into external axes (`ax=`). Mixing mplfinance candle axes with matplotlib indicator axes using `sharex` leads to misaligned ticks. The simpler solution: draw candles manually (matplotlib `FancyBboxPatch` + `plot` for wicks) so all 7 panels share integer positions 0…N-1 with formatted `HH:MM` tick labels — no coordinate mismatch possible.
+
+**`mplfinance` and `matplotlib` are script-only dependencies**
+These packages are not needed by the FastAPI backend. Rather than adding them to `backend/requirements.txt` (which would slow down every deployment), they are installed via an extra `pip install` line in the start-backend scripts, which already run on every startup to ensure the venv is current. The script itself imports them at the top level and prints a helpful install hint on `ImportError`.
