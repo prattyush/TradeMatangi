@@ -993,6 +993,8 @@ class KotakBroadcaster:
         self._session_tokens: dict[str, set[str]] = defaultdict(set)
         # token_str → exchange_segment (for (un)subscribe calls)
         self._token_exchange: dict[str, str] = {}
+        # token_str → True if this is an index instrument (NIFTY/SENSEX underlying)
+        self._token_is_index: dict[str, bool] = {}
         # per-token OHLC accumulator
         self._accumulators: dict[str, _KotakOHLCAccumulator] = defaultdict(_KotakOHLCAccumulator)
         self._subscribed = False
@@ -1009,54 +1011,84 @@ class KotakBroadcaster:
         rights: list[str | None],
         queue: "asyncio.Queue",
         loop: "asyncio.AbstractEventLoop",
+        is_indices: list[bool] | None = None,
     ) -> None:
         """
         Register a session for the given Kotak scrip tokens.
 
-        tokens[i]:    Kotak instrument token string (from master data)
-        exchanges[i]: exchange_segment for tokens[i] (e.g. "nse_cm", "nse_fo")
-        rights[i]:    "CE", "PE", or None (equity/index)
+        tokens[i]:     Kotak instrument token string (from master data)
+        exchanges[i]:  exchange_segment for tokens[i] (e.g. "nse_cm", "nse_fo")
+        rights[i]:     "CE", "PE", or None (equity/index)
+        is_indices[i]: True when token is an index (NIFTY/SENSEX underlying) —
+                       Kotak requires a separate subscribe call with isIndex=True
+                       for indices. Defaults to False for all tokens when omitted.
 
         Raises KotakError if Kotak is not authenticated or subscription fails.
         """
+        if is_indices is None:
+            is_indices = [False] * len(tokens)
         logger.info(
             "KotakBroadcaster: registering session %s with %d tokens: %s",
             session_id, len(tokens),
-            [(t, r) for t, r in zip(tokens, rights)],
+            [(t, r, idx) for t, r, idx in zip(tokens, rights, is_indices)],
         )
         with self._lock:
-            for token, exchange, right in zip(tokens, exchanges, rights):
+            for token, exchange, right, is_idx in zip(tokens, exchanges, rights, is_indices):
                 self._token_sessions[token][session_id] = (queue, right, loop)
                 self._session_tokens[session_id].add(token)
                 self._token_exchange[token] = exchange
+                self._token_is_index[token] = is_idx
 
         self._subscribe_all()
 
     def _subscribe_all(self) -> None:
-        """Register market data callback and subscribe to all tracked tokens."""
+        """Register market data callback and subscribe to all tracked tokens.
+
+        Kotak requires separate subscribe() calls for index instruments (isIndex=True)
+        and regular scrips (isIndex=False) — mixing them in one call causes indices
+        to silently receive no data.
+        """
         with self._lock:
-            token_dicts = [
+            index_dicts = [
                 {"instrument_token": tok, "exchange_segment": exch}
                 for tok, exch in self._token_exchange.items()
+                if self._token_is_index.get(tok, False)
+            ]
+            scrip_dicts = [
+                {"instrument_token": tok, "exchange_segment": exch}
+                for tok, exch in self._token_exchange.items()
+                if not self._token_is_index.get(tok, False)
             ]
 
-        if not token_dicts:
+        if not index_dicts and not scrip_dicts:
             return
 
         try:
             _service.register_market_data_callback(self._on_ticks)
             client = _service._get_client()
-            client.subscribe(
-                instrument_tokens=token_dicts,
-                isIndex=False,
-                isDepth=False,
-            )
+            if index_dicts:
+                client.subscribe(
+                    instrument_tokens=index_dicts,
+                    isIndex=True,
+                    isDepth=False,
+                )
+                logger.info(
+                    "KotakBroadcaster: subscribed %d index instruments (isIndex=True): %s",
+                    len(index_dicts),
+                    [d["instrument_token"] for d in index_dicts],
+                )
+            if scrip_dicts:
+                client.subscribe(
+                    instrument_tokens=scrip_dicts,
+                    isIndex=False,
+                    isDepth=False,
+                )
+                logger.info(
+                    "KotakBroadcaster: subscribed %d scrip instruments (isIndex=False): %s",
+                    len(scrip_dicts),
+                    [d["instrument_token"] for d in scrip_dicts],
+                )
             self._subscribed = True
-            logger.info(
-                "KotakBroadcaster: subscribed to %d instruments: %s",
-                len(token_dicts),
-                [d["instrument_token"] for d in token_dicts],
-            )
         except KotakError:
             raise
         except Exception as exc:
@@ -1074,6 +1106,7 @@ class KotakBroadcaster:
                 if not self._token_sessions[token]:
                     del self._token_sessions[token]
                     exch = self._token_exchange.pop(token, "")
+                    self._token_is_index.pop(token, None)
                     orphaned.append((token, exch))
 
         if orphaned:
@@ -1137,11 +1170,13 @@ class KotakBroadcaster:
                 if not self._token_sessions.get(old_token):
                     self._token_sessions.pop(old_token, None)
                     old_exch = self._token_exchange.pop(old_token, "")
+                    self._token_is_index.pop(old_token, None)
                     orphaned.append((old_token, old_exch))
 
             self._token_sessions[new_token][session_id] = (queue, right, loop)
             self._session_tokens[session_id].add(new_token)
             self._token_exchange[new_token] = new_exchange
+            self._token_is_index[new_token] = False  # strike updates are always options, never indices
 
         if orphaned:
             try:

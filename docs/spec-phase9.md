@@ -536,3 +536,26 @@ All four bugs came from assuming API shape from documentation or analogies rathe
 
 **`modify_order` quantity is mandatory even in the order-id-only path**
 `modification_with_orderid` (the path taken when only `order_id` is provided) still sends `"qt": quantity` in its POST body. Passing `quantity=None` sends a null field which the exchange rejects. Always pass the current order quantity even when modifying only price/trigger.
+
+---
+
+### Kotak Index Subscribe Fix (2026-05-25, PR #76)
+
+**Status:** PR #76 open (fix/kotak-api-corrections → dev).
+
+#### Bug Fixed
+
+**BUG-KOTAK-5: NIFTY/SENSEX underlying received no ticks in Kotak streaming**
+- Root cause: `KotakBroadcaster._subscribe_all()` called `client.subscribe(..., isIndex=False)` for all tokens including NIFTY and SENSEX. Kotak Neo requires `isIndex=True` for index instruments — this selects the `INDEX_SUBS` subscription type in `NeoWebSocket.get_live_feed()`. All tokens in a single `subscribe()` call share the same subscription type, so mixing index and scrip instruments in one call means indices silently receive no data.
+- Symptom: In options real-trading sessions, CE and PE ticks flowed normally (options are on `nse_fo`/`bse_fo` as scrips), but the NIFTY/SENSEX underlying equity chart showed no live ticks.
+- Fix:
+  - Added `_token_is_index: dict[str, bool]` to `KotakBroadcaster` to track which tokens are index instruments.
+  - `register()` accepts a new optional `is_indices: list[bool]` parameter. Defaults to all-`False` for backward compatibility.
+  - `_subscribe_all()` groups tokens into two lists and makes two separate `client.subscribe()` calls: one with `isIndex=True` for indices, one with `isIndex=False` for scrips.
+  - `_setup_kotak_streaming()` in `simulation.py` reads `SUPPORTED_SYMBOLS[symbol]["options_only"]` to determine whether the equity/index token is an index. NIFTY and BSESEN are `options_only: True` → `isIndex=True`. Equity scrips (TATPOW, TATMOT, RELIND) and all CE/PE options tokens always use `isIndex=False`.
+  - `unregister()` and `update_session_right()` clean up `_token_is_index` for orphaned tokens. New tokens from strike changes are always options → `False`.
+
+#### Lesson Learned
+
+**Index subscriptions need a separate `client.subscribe()` call**
+The `isIndex` flag is not per-instrument — it applies to the entire batch passed to a single `subscribe()` call. When building a multi-instrument broadcaster, always separate index tokens from scrip tokens and subscribe them in distinct calls.
