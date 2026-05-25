@@ -77,7 +77,7 @@ SUPPORTED_SYMBOLS: dict[str, dict] = {
         "options_only": False,
     },
     "TATMOT": {
-        "display_name": "Tata Motors",
+        "display_name": "Tata Motors CV",  # post-Apr-2025 demerger: TATMOT = Commercial Vehicles entity (NSE: TMCV)
         "exchange_code": "NSE",
         "breeze_stock_code": "TATMOT",
         "product_type": "cash",
