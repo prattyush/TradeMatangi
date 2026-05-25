@@ -274,4 +274,29 @@ async def update_order(order_id: str, req: UpdateOrderRequest, session_id: str =
     )
     if order is None:
         raise HTTPException(status_code=404, detail="Order not found or not pending")
+
+    # For real sessions: STOPLOSS orders are placed directly on Kotak as SL orders.
+    # Forward price changes to Kotak so the broker-side order stays in sync.
+    # TARGET orders are held locally until triggered, so no Kotak call is needed.
+    if (
+        session.session_type == "real"
+        and order.kotak_order_id
+        and order.order_type == OrderType.STOPLOSS
+    ):
+        try:
+            from app.services.kotak_service import get_service as get_kotak, KotakError
+            from app.config import KOTAK_SLIPPAGE_PCT
+            import logging as _log
+            new_trigger = order.trigger_price
+            if order.side == TradeSide.BUY:
+                kotak_limit = round(new_trigger * (1 + KOTAK_SLIPPAGE_PCT), 2)
+            else:
+                kotak_limit = round(new_trigger * (1 - KOTAK_SLIPPAGE_PCT), 2)
+            get_kotak().modify_sl_order(order.kotak_order_id, new_trigger, kotak_limit, order.quantity)
+        except Exception as exc:
+            _log.getLogger(__name__).warning(
+                "Failed to forward SL price change to Kotak (order %s kotak_id %s): %s",
+                order_id, order.kotak_order_id, exc,
+            )
+
     return order
