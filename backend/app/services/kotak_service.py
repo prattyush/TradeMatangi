@@ -104,64 +104,99 @@ def _get_instruments_cache_path():
 def _load_kotak_master_from_api() -> list[dict]:
     """
     Download the Kotak Neo instrument master via neo_api_client and cache to disk.
+
+    Uses client.scrip_master(exchange_segment=seg) which returns a CSV URL string.
+    Downloads each CSV and parses it; normalises into stable dicts.
     Returns normalised list of {instrument_token, symbol, exchange, name} dicts.
     Called lazily when the cache is missing or stale.
     """
+    import csv
+    import urllib.request
+
     try:
         client = _service._get_client()
     except KotakError as exc:
         logger.error("KotakBroadcaster: cannot download master — Kotak not authenticated: %s", exc)
         return []
 
-    logger.info("KotakBroadcaster: downloading instrument master from Kotak Neo API …")
-    try:
-        data = client.master_data(exchange_segments=["nse_cm", "nse_fo", "bse_fo"])
-        if isinstance(data, dict):
-            raw = data.get("data") or data.get("instruments") or []
-        elif isinstance(data, list):
-            raw = data
-        else:
-            raw = []
+    segments = ["nse_cm", "nse_fo", "bse_fo"]
+    normalized: list[dict] = []
 
-        normalized: list[dict] = []
-        for inst in raw:
-            if not isinstance(inst, dict):
-                continue
-            normalized.append({
-                "instrument_token": str(
-                    inst.get("pScrip") or inst.get("instrument_token") or inst.get("token") or ""
-                ),
-                "symbol": str(
-                    inst.get("dScrip") or inst.get("trdSym") or inst.get("symbol") or ""
-                ),
-                "exchange": str(
-                    inst.get("exSeg") or inst.get("sExchange") or inst.get("exchange_segment") or ""
-                ),
-                "name": str(
-                    inst.get("sym") or inst.get("cname") or inst.get("company_name") or ""
-                ),
-                "instrument_type": str(
-                    inst.get("instType") or inst.get("instrument_type") or ""
-                ),
-            })
-
-        logger.info("KotakBroadcaster: downloaded %d instruments from master", len(normalized))
-
-        cache_path = _get_instruments_cache_path()
+    for seg in segments:
+        logger.info("KotakBroadcaster: fetching scrip master URL for segment %s …", seg)
         try:
-            import tempfile, os
-            tmp = str(cache_path) + ".tmp"
-            with open(tmp, "w") as f:
-                json.dump(normalized, f)
-            os.replace(tmp, cache_path)
-            logger.info("KotakBroadcaster: cached instruments to %s", cache_path)
-        except Exception as e:
-            logger.warning("KotakBroadcaster: cache write failed: %s", e)
+            url = client.scrip_master(exchange_segment=seg)
+            if not isinstance(url, str) or not url.startswith("http"):
+                logger.warning(
+                    "KotakBroadcaster: scrip_master(%s) returned unexpected value: %r — skipping",
+                    seg, url,
+                )
+                continue
 
-        return normalized
-    except Exception as exc:
-        logger.error("KotakBroadcaster: failed to download instrument master: %s", exc)
+            logger.info("KotakBroadcaster: downloading master CSV for %s from %s", seg, url)
+            req = urllib.request.Request(url, headers={"User-Agent": "TradeMatangi/1.0"})
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                content = resp.read().decode("utf-8", errors="replace")
+
+            reader = csv.DictReader(content.splitlines())
+            count = 0
+            for row in reader:
+                # Kotak scrip master CSV column names (pSymbol = numeric token,
+                # pTrdSymbol = trading symbol used in place_order, pExchSeg = exchange).
+                token = str(
+                    row.get("pSymbol") or row.get("pScrip") or
+                    row.get("instrument_token") or row.get("token") or ""
+                ).strip()
+                symbol = str(
+                    row.get("pTrdSymbol") or row.get("trdSym") or
+                    row.get("dScrip") or row.get("symbol") or ""
+                ).strip()
+                exchange = str(
+                    row.get("pExchSeg") or row.get("exSeg") or
+                    row.get("exchange_segment") or seg
+                ).strip()
+                name = str(
+                    row.get("pSymbolName") or row.get("sym") or
+                    row.get("cname") or row.get("company_name") or ""
+                ).strip()
+                inst_type = str(
+                    row.get("pInstType") or row.get("instType") or
+                    row.get("instrument_type") or ""
+                ).strip()
+                if token and symbol:
+                    normalized.append({
+                        "instrument_token": token,
+                        "symbol": symbol,
+                        "exchange": exchange,
+                        "name": name,
+                        "instrument_type": inst_type,
+                    })
+                    count += 1
+            logger.info(
+                "KotakBroadcaster: parsed %d instruments from %s master CSV", count, seg
+            )
+        except Exception as exc:
+            logger.error(
+                "KotakBroadcaster: failed to download/parse master for segment %s: %s", seg, exc
+            )
+
+    logger.info("KotakBroadcaster: total %d instruments across all segments", len(normalized))
+
+    if not normalized:
         return []
+
+    cache_path = _get_instruments_cache_path()
+    try:
+        import os
+        tmp = str(cache_path) + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(normalized, f)
+        os.replace(tmp, cache_path)
+        logger.info("KotakBroadcaster: cached instruments to %s", cache_path)
+    except Exception as e:
+        logger.warning("KotakBroadcaster: cache write failed: %s", e)
+
+    return normalized
 
 
 def _get_kotak_instruments() -> list[dict]:
@@ -540,6 +575,7 @@ class KotakNeoService:
         kotak_order_id: str,
         new_trigger: float,
         new_limit: float,
+        qty: int,
     ) -> None:
         """Modify the trigger and limit price of an existing SL order on Kotak."""
         client = self._get_client()
@@ -547,9 +583,10 @@ class KotakNeoService:
             resp = client.modify_order(
                 order_id=kotak_order_id,
                 price=str(_round_to_tick(new_limit)),
-                trigger_price=str(_round_to_tick(new_trigger)),
                 order_type="SL",
+                quantity=str(qty),
                 validity="DAY",
+                trigger_price=str(_round_to_tick(new_trigger)),
                 disclosed_quantity="0",
             )
             self._check_api_response(resp)
@@ -1029,22 +1066,28 @@ class KotakBroadcaster:
     def unregister(self, session_id: str) -> None:
         """Remove a session; unsubscribes tokens that have no remaining sessions."""
         logger.info("KotakBroadcaster: unregistering session %s", session_id)
-        orphaned: list[str] = []
+        orphaned: list[tuple[str, str]] = []   # (token, exchange_segment)
         with self._lock:
             owned = self._session_tokens.pop(session_id, set())
             for token in owned:
                 self._token_sessions[token].pop(session_id, None)
                 if not self._token_sessions[token]:
                     del self._token_sessions[token]
-                    self._token_exchange.pop(token, None)
-                    orphaned.append(token)
+                    exch = self._token_exchange.pop(token, "")
+                    orphaned.append((token, exch))
 
         if orphaned:
-            logger.info("KotakBroadcaster: unsubscribing orphaned tokens: %s", orphaned)
+            logger.info(
+                "KotakBroadcaster: unsubscribing orphaned tokens: %s",
+                [t for t, _ in orphaned],
+            )
             try:
                 client = _service._get_client()
                 client.un_subscribe(
-                    instrument_tokens=[{"instrument_token": t} for t in orphaned]
+                    instrument_tokens=[
+                        {"instrument_token": t, "exchange_segment": e}
+                        for t, e in orphaned
+                    ]
                 )
             except Exception as exc:
                 logger.warning("KotakBroadcaster: un_subscribe error: %s", exc)
@@ -1072,7 +1115,7 @@ class KotakBroadcaster:
         Swap the instrument token for a given right (CE/PE) in a live session.
         Called when the user changes the options strike mid-session.
         """
-        orphaned: list[str] = []
+        orphaned: list[tuple[str, str]] = []  # (token, exchange_segment)
         with self._lock:
             if session_id not in self._session_tokens:
                 logger.debug(
@@ -1093,8 +1136,8 @@ class KotakBroadcaster:
                 self._session_tokens[session_id].discard(old_token)
                 if not self._token_sessions.get(old_token):
                     self._token_sessions.pop(old_token, None)
-                    self._token_exchange.pop(old_token, None)
-                    orphaned.append(old_token)
+                    old_exch = self._token_exchange.pop(old_token, "")
+                    orphaned.append((old_token, old_exch))
 
             self._token_sessions[new_token][session_id] = (queue, right, loop)
             self._session_tokens[session_id].add(new_token)
@@ -1104,7 +1147,10 @@ class KotakBroadcaster:
             try:
                 client = _service._get_client()
                 client.un_subscribe(
-                    instrument_tokens=[{"instrument_token": t} for t in orphaned]
+                    instrument_tokens=[
+                        {"instrument_token": t, "exchange_segment": e}
+                        for t, e in orphaned
+                    ]
                 )
             except Exception as exc:
                 logger.warning(
@@ -1188,11 +1234,11 @@ class KotakBroadcaster:
         Accumulates into 1-second OHLC and fans out completed candles to sessions.
         Field names are defensive to handle variation across SDK versions.
         """
-        # Instrument token — various field names in different SDK versions
+        # Instrument token — websocket sends "tk"; keep fallbacks for safety
         token = str(
+            tick.get("tk") or
             tick.get("instrument_token") or
             tick.get("scrip_token") or
-            tick.get("pScrip") or
             tick.get("token") or
             ""
         )
