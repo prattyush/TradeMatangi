@@ -170,5 +170,4 @@ Full status, bugs fixed, and lessons learned for each phase are in the respectiv
 | Feature | PR | Status |
 |---------|-----|--------|
 | Kotak Neo live streaming + Admin Settings tab | #73 (feature/kotak-streaming-admin-tab) | ✅ merged to dev |
-| Kotak Neo API corrections (scrip_master, token field, modify qty) | #75 (fix/kotak-api-corrections) | ✅ merged to dev |
-| Kotak index subscribe fix (isIndex=True for NIFTY/SENSEX) | #76 (fix/kotak-api-corrections) | 🚧 open (target: dev) |
+| Kotak Neo API corrections (scrip_master, token field, modify qty, isIndex) | #75 (fix/kotak-api-corrections) | 🚧 open (target: dev) |
