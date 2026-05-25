@@ -149,7 +149,11 @@ export default function OrderPanel({
       if (orderType === 'MARKET') {
         // 1% deviation ensures immediate fill: BUY limit above market, SELL limit below
         const mktPrice = side === 'BUY' ? currentPrice * 1.01 : currentPrice * 0.99
-        await onPlaceOrder(side, 'LIMIT', mktPrice, null, { funds_ratio_pct: ratioPct })
+        if (fundsRatioMode) {
+          await onPlaceOrder(side, 'LIMIT', mktPrice, null, { funds_ratio_pct: ratioPct })
+        } else {
+          await onPlaceOrder(side, 'LIMIT', mktPrice, quantity, {})
+        }
       } else if (orderType === 'STOPLOSS') {
         await onPlaceOrder(side, 'STOPLOSS', parsedPrice, slQty, { is_stoploss: true })
       } else if (fundsRatioMode) {
@@ -568,12 +572,7 @@ export default function OrderPanel({
       )}
 
       {/* Quantity / FundsRatio / SL qty */}
-      {orderType === 'MARKET' ? (
-        <div>
-          <div style={{ fontSize: 11, color: '#8b949e', marginBottom: 3 }}>Capital Ratio</div>
-          {ratioButtons}
-        </div>
-      ) : orderType === 'STOPLOSS' ? (
+      {orderType === 'STOPLOSS' ? (
         <div>
           <div style={{ fontSize: 11, color: '#8b949e', marginBottom: 3 }}>
             SL Quantity (max {position.quantity})
