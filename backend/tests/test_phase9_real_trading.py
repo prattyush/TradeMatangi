@@ -508,12 +508,13 @@ class TestOptionsOrderRouting:
         svc._client = mock_client
         svc._authenticated = True
 
-        svc.modify_sl_order("ORD123", new_trigger=145.0, new_limit=144.0)
+        svc.modify_sl_order("ORD123", new_trigger=145.0, new_limit=144.0, qty=10)
 
         mock_client.modify_order.assert_called_once()
         call_kwargs = mock_client.modify_order.call_args.kwargs
         assert call_kwargs["order_id"] == "ORD123"
         assert call_kwargs["order_type"] == "SL"
+        assert call_kwargs["quantity"] == "10"
 
 
 # ── Strategy SL modification in real sessions ─────────────────────────────────

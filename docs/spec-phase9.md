@@ -488,13 +488,74 @@ Adds Kotak Neo as an alternative live market-data streaming source for paper and
 `KotakNeoService._on_message` already received all NeoWebSocket messages. Rather than creating a second WebSocket, we added a `_market_data_callback` field and dispatch `stock_feed` type messages there while leaving `order_feed` handling intact. The broadcaster registers its handler via `register_market_data_callback()` before calling `client.subscribe()`.
 
 **Kotak scrip tokens differ from Kite instrument tokens**
-Kite uses integer instrument tokens from downloaded CSV files. Kotak uses string scrip codes from its `master_data()` API response. Field names vary across SDK versions (`pScrip`, `instrument_token`, `token` — all checked defensively). A daily 24-h cache at `data/kotak_instruments.json` avoids repeated API calls while staying fresh enough for daily expirations.
+Kite uses integer instrument tokens from downloaded CSV files. Kotak uses numeric scrip codes from the `scrip_master` CSV (column `pSymbol`). The CSV is obtained by calling `client.scrip_master(exchange_segment=seg)` once per segment — it returns a URL string; download the CSV and parse with `csv.DictReader`. Key CSV columns: `pSymbol` (token for `subscribe`), `pTrdSymbol` (trading symbol for `place_order`), `pExchSeg` (exchange). A daily 24-h cache at `data/kotak_instruments.json` avoids repeated API calls.
 
-**LTP field names are not standardised across Kotak SDK versions**
-The market data tick may carry LTP as `ltP`, `ltp`, `last_price`, or `ltp_price` depending on the SDK version. `_process_tick` tries all four in order. Same pattern for instrument token field names and exchange timestamps.
+**Kotak WebSocket stock_feed tick field names are short codes**
+In `stock_feed` messages, each tick dict uses short field names defined in `settings.py:stock_key_mapping`: `"tk"` (instrument token — matches `pSymbol` from master), `"e"` (exchange segment), `"ltp"` (LTP — lowercase). `_process_tick` must check `tick.get("tk")` first for token matching. LTP falls back through `"ltp"`, `"last_price"`, etc. for safety but `"ltp"` is the authoritative field.
 
 **`loop.call_soon_threadsafe` requires the event loop to actually be running**
 `KotakBroadcaster._process_tick` fans out to session queues via `loop.call_soon_threadsafe(queue.put_nowait, payload)`. This schedules the put on the asyncio event loop from the background WebSocket thread. In unit tests, the loop must be running (use `asyncio.run()` or `await asyncio.sleep(0)`) for the callback to execute — synchronous `queue.put_nowait` will see an empty queue if the loop has no iteration.
 
 **Streaming source selection is global, not per-session**
 The `live_stream_source` setting applies at the time each new session is started. Active sessions are unaffected by a mid-flight source change — they continue with the broadcaster they registered with at Phase 2 startup. `stop_session()` reads `session.kotak_streaming` (not the current global setting) so it always unregisters from the correct broadcaster.
+
+---
+
+### Kotak Neo API Corrections (2026-05-25, PR #75)
+
+**Status:** PR #75 open (fix/kotak-api-corrections → dev).
+
+Five API bugs found by reading the installed `neo_api_client` v2 source at `~/venvs/tradematangi/lib/python3.12/site-packages/neo_api_client/`.
+
+#### Bugs Fixed
+
+**BUG-KOTAK-1: `client.master_data()` doesn't exist**
+- Root cause: Method was invented — no such function in neo_api_client v2. The correct method is `client.scrip_master(exchange_segment=seg)`, called once per exchange segment. When called with `exchange_segment`, it returns a CSV URL **string** (not data); the CSV must be downloaded separately via `urllib.request`.
+- CSV column names: `pSymbol` (numeric instrument token), `pTrdSymbol` (trading symbol for `place_order`), `pExchSeg` (exchange segment), `pSymbolName` (company name), `pInstType` (instrument type).
+- Fix: Replaced `_load_kotak_master_from_api()` entirely. Calls `scrip_master()` for `nse_cm`, `nse_fo`, `bse_fo`; downloads each CSV URL; parses with `csv.DictReader`; normalises rows using correct column names with fallbacks.
+
+**BUG-KOTAK-2: `_process_tick()` never matched subscribed tokens**
+- Root cause: WebSocket `stock_feed` messages carry the instrument token as `"tk"` (defined in `settings.py:stock_key_mapping`). Code looked for `"instrument_token"`, `"scrip_token"`, `"pScrip"`, `"token"` — none matched. Every tick was silently dropped; KotakBroadcaster fan-out never fired.
+- Fix: Added `tick.get("tk")` as the first lookup in `_process_tick()`.
+
+**BUG-KOTAK-3: `modify_sl_order()` always raised TypeError**
+- Root cause: `client.modify_order(order_id, price, order_type, quantity, validity, ...)` requires `quantity` as the 4th positional argument. `modify_sl_order()` never passed it → Python-level TypeError on every SL price modification attempt by strategies.
+- Fix: Added `qty: int` parameter to `modify_sl_order()`; passes `quantity=str(qty)` to `client.modify_order`. Updated `strategy_service.py:_update_exit_order_price` caller to pass `order.quantity`.
+
+**BUG-KOTAK-4: `un_subscribe` calls missing `exchange_segment`**
+- Root cause: `unregister()` and `update_session_right()` built un_subscribe dicts as `[{"instrument_token": t}]` without `exchange_segment`. Also, both popped from `_token_exchange` before extracting the exchange value (so the exchange was lost).
+- Fix: Collect `(token, exchange)` tuples *before* popping from `_token_exchange`; include `"exchange_segment"` in all un_subscribe dicts.
+
+#### Lessons Learned
+
+**Read the installed SDK source before writing integration code**
+All four bugs came from assuming API shape from documentation or analogies rather than reading the actual installed code. The SDK source is at `~/venvs/tradematangi/lib/python3.12/site-packages/neo_api_client/`. Key files: `neo_api.py` (main class), `NeoWebSocket.py` (WebSocket handler + tick field names), `settings.py` (field name mappings, `stock_key_mapping`), `api/scrip_master_api.py` (scrip_master return format), `api/modify_order_api.py` (modify_order parameter contract).
+
+**`scrip_master()` returns a URL, not data**
+`ScripMasterAPI.scrip_master_init(exchange_segment)` hits a REST endpoint that returns `{"data": {"filesPaths": [...]}}`, then filters for the matching segment CSV URL and returns it as a string. Callers must download the URL and parse the CSV — the SDK does not do this for you.
+
+**`modify_order` quantity is mandatory even in the order-id-only path**
+`modification_with_orderid` (the path taken when only `order_id` is provided) still sends `"qt": quantity` in its POST body. Passing `quantity=None` sends a null field which the exchange rejects. Always pass the current order quantity even when modifying only price/trigger.
+
+---
+
+### Kotak Index Subscribe Fix (2026-05-25, PR #76)
+
+**Status:** PR #76 open (fix/kotak-api-corrections → dev).
+
+#### Bug Fixed
+
+**BUG-KOTAK-5: NIFTY/SENSEX underlying received no ticks in Kotak streaming**
+- Root cause: `KotakBroadcaster._subscribe_all()` called `client.subscribe(..., isIndex=False)` for all tokens including NIFTY and SENSEX. Kotak Neo requires `isIndex=True` for index instruments — this selects the `INDEX_SUBS` subscription type in `NeoWebSocket.get_live_feed()`. All tokens in a single `subscribe()` call share the same subscription type, so mixing index and scrip instruments in one call means indices silently receive no data.
+- Symptom: In options real-trading sessions, CE and PE ticks flowed normally (options are on `nse_fo`/`bse_fo` as scrips), but the NIFTY/SENSEX underlying equity chart showed no live ticks.
+- Fix:
+  - Added `_token_is_index: dict[str, bool]` to `KotakBroadcaster` to track which tokens are index instruments.
+  - `register()` accepts a new optional `is_indices: list[bool]` parameter. Defaults to all-`False` for backward compatibility.
+  - `_subscribe_all()` groups tokens into two lists and makes two separate `client.subscribe()` calls: one with `isIndex=True` for indices, one with `isIndex=False` for scrips.
+  - `_setup_kotak_streaming()` in `simulation.py` reads `SUPPORTED_SYMBOLS[symbol]["options_only"]` to determine whether the equity/index token is an index. NIFTY and BSESEN are `options_only: True` → `isIndex=True`. Equity scrips (TATPOW, TATMOT, RELIND) and all CE/PE options tokens always use `isIndex=False`.
+  - `unregister()` and `update_session_right()` clean up `_token_is_index` for orphaned tokens. New tokens from strike changes are always options → `False`.
+
+#### Lesson Learned
+
+**Index subscriptions need a separate `client.subscribe()` call**
+The `isIndex` flag is not per-instrument — it applies to the entire batch passed to a single `subscribe()` call. When building a multi-instrument broadcaster, always separate index tokens from scrip tokens and subscribe them in distinct calls.

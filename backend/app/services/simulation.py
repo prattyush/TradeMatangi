@@ -461,18 +461,23 @@ async def _setup_kotak_streaming(session: SimulationSession, loop: "asyncio.Abst
         )
         return False
 
+    from app.config import SUPPORTED_SYMBOLS
+
     tokens: list[str] = []
     exchanges: list[str] = []
     rights: list[str | None] = []
+    is_indices: list[bool] = []
 
-    # Equity / index token
+    # Equity / index token — NIFTY and BSESEN are index instruments (options_only symbols)
     eq_token, eq_exchange = ks.fetch_kotak_equity_instrument_token(session.symbol)
+    sym_is_index = SUPPORTED_SYMBOLS.get(session.symbol, {}).get("options_only", False)
     tokens.append(eq_token)
     exchanges.append(eq_exchange)
     rights.append(None)
+    is_indices.append(sym_is_index)
     logger.info(
-        "_setup_kotak_streaming: session %s equity token=%s exchange=%s",
-        session.session_id, eq_token, eq_exchange,
+        "_setup_kotak_streaming: session %s equity token=%s exchange=%s isIndex=%s",
+        session.session_id, eq_token, eq_exchange, sym_is_index,
     )
 
     # Options tokens (when running an options session)
@@ -487,6 +492,7 @@ async def _setup_kotak_streaming(session: SimulationSession, loop: "asyncio.Abst
                 tokens.append(ce_token)
                 exchanges.append(ce_exchange)
                 rights.append("CE")
+                is_indices.append(False)
                 logger.info(
                     "_setup_kotak_streaming: session %s CE token=%s exchange=%s",
                     session.session_id, ce_token, ce_exchange,
@@ -504,6 +510,7 @@ async def _setup_kotak_streaming(session: SimulationSession, loop: "asyncio.Abst
                 tokens.append(pe_token)
                 exchanges.append(pe_exchange)
                 rights.append("PE")
+                is_indices.append(False)
                 logger.info(
                     "_setup_kotak_streaming: session %s PE token=%s exchange=%s",
                     session.session_id, pe_token, pe_exchange,
@@ -517,6 +524,7 @@ async def _setup_kotak_streaming(session: SimulationSession, loop: "asyncio.Abst
     ks.get_kotak_broadcaster().register(
         session.session_id, tokens, exchanges, rights,
         session.paper_tick_queue, loop,
+        is_indices=is_indices,
     )
     session.kotak_streaming = True
     logger.info(

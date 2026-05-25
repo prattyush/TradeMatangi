@@ -319,7 +319,7 @@ def _update_exit_order_price(session, order, new_price: float) -> None:
                 kotak_limit = round(new_price * (1 + KOTAK_SLIPPAGE_PCT), 2)
             else:
                 kotak_limit = round(new_price * (1 - KOTAK_SLIPPAGE_PCT), 2)
-            get_kotak().modify_sl_order(order.kotak_order_id, new_price, kotak_limit)
+            get_kotak().modify_sl_order(order.kotak_order_id, new_price, kotak_limit, order.quantity)
             logger.info(
                 "Modified Kotak SL %s to trigger=%.2f limit=%.2f",
                 order.kotak_order_id, new_price, kotak_limit,
