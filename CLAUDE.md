@@ -33,8 +33,10 @@ node node_modules/typescript/bin/tsc --noEmit
 
 ## Key Technical Constraints
 
-@docs/backend-technical-constraints.md
-@docs/frontend-technical-constraints.md
+Look into backend technical constraints doc when needed which is located at docs/backend-technical-constraints.md
+
+Look into frontend technical constraints doc when needed which is located at docs/frontend-technical-constraints.md
+
 
 <!-- Shared invariants that span both sides — keep these here so they're always visible -->
 - **IST timestamps**: data files (pickle and parquet) have tz-naive IST DatetimeIndex. The backend uses `df.index.tz_localize("UTC")` (NOT `tz_localize("Asia/Kolkata").tz_convert("UTC")`). This makes Unix timestamps encode IST wall-clock values so Lightweight Charts shows 09:15, not 03:45. Do not change this without updating all timestamp comparisons in `data_loader.py` and the frontend `CANDLE_INTERVAL_SECONDS` window math.
