@@ -119,7 +119,7 @@ def _load_kotak_master_from_api() -> list[dict]:
         logger.error("KotakBroadcaster: cannot download master — Kotak not authenticated: %s", exc)
         return []
 
-    segments = ["nse_cm", "nse_fo", "bse_fo"]
+    segments = ["nse_cm", "nse_fo", "bse_cm", "bse_fo"]  # bse_cm needed for SENSEX index token
     normalized: list[dict] = []
 
     for seg in segments:
@@ -344,8 +344,8 @@ def _read_kotak_credentials() -> dict[str, str]:
 # ---------------------------------------------------------------------------
 
 _SYMBOL_MAP: dict[str, tuple[str, str]] = {
-    "NIFTY":  ("NIFTY",          "nse_fo"),
-    "BSESEN": ("SENSEX",         "bse_fo"),
+    "NIFTY":  ("NIFTY",          "nse_cm"),   # NIFTY 50 index lives in nse_cm (token 26000); nse_fo only has futures/options
+    "BSESEN": ("SENSEX",         "bse_cm"),   # SENSEX index lives in bse_cm; bse_fo only has futures/options
     "TATPOW": ("TATPOWER-EQ",    "nse_cm"),
     "TATMOT": ("TMCV-EQ",        "nse_cm"),   # renamed from TATAMOTORS after Apr-2025 CV/PV demerger; -EQ suffix required by Kotak Neo for nse_cm equity
     "RELIND": ("RELIANCE-EQ",    "nse_cm"),
@@ -368,6 +368,8 @@ class KotakNeoService:
         self._reject_callbacks: dict[str, tuple[Callable, Any]] = {}
         # KotakBroadcaster registers here to receive stock_feed messages
         self._market_data_callback: Callable | None = None
+        # Called by _on_open so KotakBroadcaster can re-subscribe after reconnect
+        self._reconnect_callback: Callable | None = None
 
     # ── Authentication ────────────────────────────────────────────────────────
 
@@ -716,6 +718,15 @@ class KotakNeoService:
             "registered" if callback else "cleared",
         )
 
+    def register_reconnect_callback(self, callback: Callable | None) -> None:
+        """
+        Register (or clear) a no-arg callback invoked by _on_open after a WebSocket
+        reconnect. KotakBroadcaster uses this to re-subscribe to market data tokens
+        because Kotak drops all subscriptions when the connection is re-established.
+        """
+        with self._lock:
+            self._reconnect_callback = callback
+
     # ── WebSocket order feed ──────────────────────────────────────────────────
 
     def _start_order_feed(self) -> None:
@@ -737,6 +748,13 @@ class KotakNeoService:
 
     def _on_open(self, *args: Any) -> None:
         logger.info("Kotak Neo order feed WebSocket opened")
+        with self._lock:
+            cb = self._reconnect_callback
+        if cb is not None:
+            try:
+                cb()
+            except Exception as exc:
+                logger.warning("KotakNeoService: reconnect callback error: %s", exc)
 
     def _on_close(self, *args: Any) -> None:
         logger.warning("Kotak Neo order feed WebSocket closed")
@@ -1039,7 +1057,27 @@ class KotakBroadcaster:
                 self._token_exchange[token] = exchange
                 self._token_is_index[token] = is_idx
 
+        _service.register_reconnect_callback(self._on_reconnect)
         self._subscribe_all()
+
+    def _on_reconnect(self) -> None:
+        """
+        Called by KotakNeoService._on_open after a WebSocket reconnect.
+        Kotak drops all market data subscriptions when the connection drops, so we
+        must re-subscribe every tracked token on each successful reconnect.
+        Runs on the WebSocket background thread — must be thread-safe and not raise.
+        """
+        with self._lock:
+            n = len(self._token_exchange)
+        logger.info(
+            "KotakBroadcaster: WebSocket reconnected — re-subscribing %d tokens", n
+        )
+        try:
+            self._subscribe_all()
+        except Exception as exc:
+            logger.error(
+                "KotakBroadcaster: re-subscription after reconnect failed: %s", exc
+            )
 
     def _subscribe_all(self) -> None:
         """Register market data callback and subscribe to all tracked tokens.
@@ -1131,8 +1169,9 @@ class KotakBroadcaster:
         if not has_sessions:
             self._subscribed = False
             _service.register_market_data_callback(None)
+            _service.register_reconnect_callback(None)
             logger.info(
-                "KotakBroadcaster: no active sessions — market data callback cleared"
+                "KotakBroadcaster: no active sessions — market data and reconnect callbacks cleared"
             )
 
     def update_session_right(
