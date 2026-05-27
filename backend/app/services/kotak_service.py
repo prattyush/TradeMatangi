@@ -370,6 +370,8 @@ class KotakNeoService:
         self._market_data_callback: Callable | None = None
         # Called by _on_open so KotakBroadcaster can re-subscribe after reconnect
         self._reconnect_callback: Callable | None = None
+        # Pending reconnect timer (cancelled if _on_open fires first)
+        self._reconnect_timer: threading.Timer | None = None
 
     # ── Authentication ────────────────────────────────────────────────────────
 
@@ -749,6 +751,10 @@ class KotakNeoService:
     def _on_open(self, *args: Any) -> None:
         logger.info("Kotak Neo order feed WebSocket opened")
         with self._lock:
+            # Cancel any pending reconnect timer — the connection is already up.
+            if self._reconnect_timer is not None:
+                self._reconnect_timer.cancel()
+                self._reconnect_timer = None
             cb = self._reconnect_callback
         if cb is not None:
             try:
@@ -757,7 +763,25 @@ class KotakNeoService:
                 logger.warning("KotakNeoService: reconnect callback error: %s", exc)
 
     def _on_close(self, *args: Any) -> None:
-        logger.warning("Kotak Neo order feed WebSocket closed")
+        logger.warning("Kotak Neo order feed WebSocket closed — scheduling reconnect in 5 s")
+        with self._lock:
+            if self._reconnect_timer is not None:
+                self._reconnect_timer.cancel()
+            t = threading.Timer(5.0, self._attempt_reconnect_order_feed)
+            self._reconnect_timer = t
+        t.start()
+
+    def _attempt_reconnect_order_feed(self) -> None:
+        with self._lock:
+            self._reconnect_timer = None
+            if not self._authenticated or self._client is None:
+                logger.info("Kotak Neo: reconnect skipped — not authenticated")
+                return
+        logger.info("Kotak Neo: attempting order feed reconnect after connection close")
+        try:
+            self._start_order_feed()
+        except Exception as exc:
+            logger.warning("Kotak Neo: order feed reconnect failed: %s", exc)
 
     def _on_error(self, *args: Any) -> None:
         error = args[0] if args else "unknown"
