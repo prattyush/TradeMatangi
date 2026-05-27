@@ -40,6 +40,27 @@ Look at each of the bugs, fix them and then mark them resolved as well if approv
 
 ## Post-Phase-IX UI Fixes
 
+### Streaming Bugs
+
+**[RESOLVED]** Kite live streaming never starts after server runs 48+ hours without a token, then token is added and a PaperTrading/RealTrading session is started (PR #90, 2026-05-27).
+- **Symptom**: Chart historical data loads (Phase 1) but no live ticks arrive (Phase 2). Restarting the backend fixes it.
+- **Root cause**: `KiteBroadcaster._start()` set `self._connected = True` on the main thread immediately after `ticker.connect(threaded=True)`. If the WebSocket handshake failed quickly (403 — typically because previous ghost KiteTicker threads from a long-running server were still occupying Kite's 3-concurrent-connection limit), kiteconnect's background thread fired `_on_close → _connected = False` before or concurrently with the main thread writing `True`, leaving `_connected = True` on a dead ticker. Subsequent `register()` calls then invoked `_subscribe_more()` on the dead ticker (silent no-op) instead of launching a fresh connection. The 5-second 403-restart timer would eventually reconnect, but only if the user waited long enough, and only if the new connection also succeeded (which it wouldn't if ghost connections persisted).
+- **Secondary root cause**: `_on_connect` never set `_connected = True`, so after kiteconnect's internal auto-reconnect fired `_on_connect`, `_connected` stayed `False`, causing the next `register()` to spawn a duplicate KiteTicker and burn another connection slot.
+- **Fix**:
+  - Moved `self._connected = True` from `_start()` to `_on_connect()` (the only authoritative place).
+  - Added `ws is not self._ticker` guard in `_on_connect()` to ignore stale callbacks from replaced tickers.
+  - `_start()` now saves and closes the old `_ticker` under lock before creating a new one, eliminating ghost connections.
+  - New `_ticker` is stored under lock *before* `connect()` so concurrent `register()` calls see a non-None ticker and skip `_start()`.
+  - `register()` gate changed: `_ticker is None` → `_start`; `_connected` → `_subscribe_more`; else (handshake in flight) → no-op (`_on_connect` will subscribe all `_token_sessions` tokens when it fires).
+- **Applies to**: PaperTrading and RealTrading sessions on the Kite streaming path.
+- **Files**: `backend/app/services/kite_service.py`.
+
+**[RESOLVED]** Kotak Neo market-data and order-feed WebSockets silently die after a connection drop on a long-running server; streaming stops without prompting re-authentication (PR #90, 2026-05-27).
+- **Symptom**: After the server runs for an extended period, Kotak Neo streaming stops delivering ticks. `_authenticated` stays `True` so `is_ready()` returns `True` and no TOTP prompt appears, but no market data arrives.
+- **Root cause**: `KotakNeoService._on_close()` only logged a warning. If `neo_api_client`'s `NeoWebSocket` did not auto-reconnect, `_on_open` (and hence `_reconnect_callback` → `KotakBroadcaster._on_reconnect` → `_subscribe_all`) never fired, leaving all subscriptions dead.
+- **Fix**: `_on_close()` schedules a 5-second `_attempt_reconnect_order_feed` timer that calls `_start_order_feed()` if still authenticated — no TOTP required. `_on_open()` cancels the timer if `neo_api_client` auto-reconnects first, preventing a duplicate `subscribe_to_orderfeed()` call.
+- **Files**: `backend/app/services/kotak_service.py`.
+
 ### Real Trading Bugs
 
 **[RESOLVED]** Kotak Neo rejects equity orders with "symbol is wrong" for TATMOT (and potentially TATPOW/RELIND).
