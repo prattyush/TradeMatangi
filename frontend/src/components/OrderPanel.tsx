@@ -33,10 +33,19 @@ interface Props {
   runningStrategies?: StrategyResponse[]
   autostopTriggerType?: 'bar' | 'deviation'
   autostopDeviationPct?: number
+  breakevenMode?: 'shift_sl' | 'limit_order'
+  targetProfitBufferTicks?: number
   onStartStrategy?: (
-    strategyType: 'AutoStop' | 'BreakEven' | 'AggressiveStoploss',
+    strategyType: 'AutoStop' | 'BreakEven' | 'AggressiveStoploss' | 'TargetProfit',
     right: 'CE' | 'PE' | null,
-    opts: { quantity?: number; fundsRatioPct?: number; direction?: 'BUY' | 'SELL'; onlyInProfit?: boolean }
+    opts: {
+      quantity?: number
+      fundsRatioPct?: number
+      direction?: 'BUY' | 'SELL'
+      onlyInProfit?: boolean
+      targetProfitValue?: number
+      targetProfitIsPct?: boolean
+    }
   ) => Promise<void>
   onCancelAllStrategies?: () => Promise<void>
 }
@@ -57,6 +66,8 @@ export default function OrderPanel({
   runningStrategies = [],
   autostopTriggerType = 'bar',
   autostopDeviationPct = 1.0,
+  breakevenMode = 'shift_sl',
+  targetProfitBufferTicks = 3,
   onStartStrategy,
   onCancelAllStrategies,
 }: Props) {
@@ -78,6 +89,8 @@ export default function OrderPanel({
   const [stratError, setStratError] = useState<string | null>(null)
   const [cancellingAll, setCancellingAll] = useState(false)
   const [aggrSlOnlyInProfit, setAggrSlOnlyInProfit] = useState(false)
+  const [tpValue, setTpValue] = useState('')
+  const [tpIsPct, setTpIsPct] = useState(false)
 
   // Inline edit state
   const [editingOrderId, setEditingOrderId] = useState<string | null>(null)
@@ -214,7 +227,9 @@ export default function OrderPanel({
     : position
   const stratHasPosition = stratPosition.side !== 'FLAT'
 
-  const handleStartStrategy = async (strategyType: 'AutoStop' | 'BreakEven' | 'AggressiveStoploss') => {
+  const handleStartStrategy = async (
+    strategyType: 'AutoStop' | 'BreakEven' | 'AggressiveStoploss' | 'TargetProfit',
+  ) => {
     if (!onStartStrategy) return
     setStratError(null)
     setStratLoading(strategyType)
@@ -224,7 +239,18 @@ export default function OrderPanel({
       const opts = fundsRatioMode
         ? { fundsRatioPct: fundsRatios[stratRatio] / 100, direction }
         : { quantity: stratQty, direction }
-      const extraOpts = strategyType === 'AggressiveStoploss' ? { onlyInProfit: aggrSlOnlyInProfit } : {}
+      let extraOpts: Record<string, unknown> = {}
+      if (strategyType === 'AggressiveStoploss') {
+        extraOpts = { onlyInProfit: aggrSlOnlyInProfit }
+      } else if (strategyType === 'TargetProfit') {
+        const v = parseFloat(tpValue)
+        if (isNaN(v) || v <= 0) {
+          setStratError('Enter a valid target value')
+          setStratLoading(null)
+          return
+        }
+        extraOpts = { targetProfitValue: v, targetProfitIsPct: tpIsPct }
+      }
       await onStartStrategy(strategyType, right, { ...opts, ...extraOpts })
     } catch (e) {
       setStratError(e instanceof Error ? e.message : 'Failed to start strategy')
@@ -403,9 +429,13 @@ export default function OrderPanel({
             <div style={{ fontSize: 10, color: '#f0883e', fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 6 }}>
               Exit Strategies {!stratHasPosition && <span style={{ fontWeight: 400, fontSize: 9 }}>(need position)</span>}
             </div>
-            <div style={{ marginBottom: 2 }}>
+            <div style={{ marginBottom: 8 }}>
               <div style={{ fontSize: 11, color: '#e6edf3', fontWeight: 600, marginBottom: 4 }}>BreakEven</div>
-              <div style={{ fontSize: 9, color: '#484f58', marginBottom: 4 }}>Exit 100% at avg entry when P&L ≥ 0</div>
+              <div style={{ fontSize: 9, color: '#484f58', marginBottom: 4 }}>
+                {breakevenMode === 'limit_order'
+                  ? 'Places limit order at breakeven + buffer when reached'
+                  : 'Shifts SL to breakeven + buffer when price hits threshold'}
+              </div>
               <button
                 onClick={() => handleStartStrategy('BreakEven')}
                 disabled={!stratHasPosition || stratLoading === 'BreakEven'}
@@ -418,6 +448,51 @@ export default function OrderPanel({
                 }}
               >
                 {stratLoading === 'BreakEven' ? 'Starting…' : '▶ Start BreakEven'}
+              </button>
+            </div>
+
+            {/* TargetProfit */}
+            <div style={{ marginBottom: 2 }}>
+              <div style={{ fontSize: 11, color: '#e6edf3', fontWeight: 600, marginBottom: 4 }}>Target Profit</div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                <input
+                  type="number"
+                  value={tpValue}
+                  onChange={e => setTpValue(e.target.value)}
+                  placeholder={tpIsPct ? '% of capital' : 'price'}
+                  min={0}
+                  step={tpIsPct ? 0.1 : 0.05}
+                  style={{
+                    flex: 1, padding: '4px 6px', background: '#0d1117',
+                    border: '1px solid #30363d', borderRadius: 4,
+                    color: '#e6edf3', fontSize: 12,
+                  }}
+                />
+                <label style={{ fontSize: 10, color: '#8b949e', display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                  <input
+                    type="checkbox"
+                    checked={tpIsPct}
+                    onChange={e => setTpIsPct(e.target.checked)}
+                    style={{ accentColor: '#79c0ff' }}
+                  />
+                  % of Capital
+                </label>
+              </div>
+              <div style={{ fontSize: 9, color: '#484f58', marginBottom: 4 }}>
+                Buffer: {targetProfitBufferTicks} tick{targetProfitBufferTicks > 1 ? 's' : ''} — configure in Settings → Strategies
+              </div>
+              <button
+                onClick={() => handleStartStrategy('TargetProfit')}
+                disabled={!stratHasPosition || stratLoading === 'TargetProfit'}
+                style={{
+                  width: '100%', padding: '5px 0', fontSize: 11, fontWeight: 600,
+                  border: 'none', borderRadius: 4,
+                  cursor: stratHasPosition && stratLoading !== 'TargetProfit' ? 'pointer' : 'not-allowed',
+                  background: stratHasPosition ? '#3a2a10' : '#161b22',
+                  color: stratHasPosition ? '#f0883e' : '#484f58',
+                }}
+              >
+                {stratLoading === 'TargetProfit' ? 'Starting…' : '▶ Start TargetProfit'}
               </button>
             </div>
           </div>

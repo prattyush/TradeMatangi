@@ -39,7 +39,11 @@ def start_strategy(req: StartStrategyRequest, user_id: str = Depends(get_request
         raise HTTPException(status_code=400, detail="right must be 'CE' or 'PE'")
 
     # Exit and TradeManagement strategies require an open position
-    if req.strategy_type in (StrategyType.BREAK_EVEN, StrategyType.AGGRESSIVE_STOPLOSS):
+    if req.strategy_type in (
+        StrategyType.BREAK_EVEN,
+        StrategyType.AGGRESSIVE_STOPLOSS,
+        StrategyType.TARGET_PROFIT,
+    ):
         position = get_position(session.session_id, session.symbol, right)
         if position.side == "FLAT":
             raise HTTPException(
@@ -55,6 +59,19 @@ def start_strategy(req: StartStrategyRequest, user_id: str = Depends(get_request
                 detail="AutoStop requires quantity or funds_ratio_pct",
             )
 
+    # TargetProfit requires a target value
+    if req.strategy_type == StrategyType.TARGET_PROFIT:
+        if req.target_profit_value is None:
+            raise HTTPException(
+                status_code=400,
+                detail="TargetProfit requires target_profit_value",
+            )
+        if req.target_profit_value <= 0:
+            raise HTTPException(
+                status_code=400,
+                detail="target_profit_value must be positive",
+            )
+
     # For options sessions AutoStop is always BUY
     direction = req.direction.upper()
     if session.instrument_type == "options" and req.strategy_type == StrategyType.AUTO_STOP:
@@ -66,6 +83,10 @@ def start_strategy(req: StartStrategyRequest, user_id: str = Depends(get_request
         "autostop_deviation_pct": req.autostop_deviation_pct,
         "direction": direction,
         "only_in_profit": req.only_in_profit,
+        "breakeven_mode": req.breakeven_mode,
+        "target_profit_value": req.target_profit_value,
+        "target_profit_is_pct": req.target_profit_is_pct,
+        "target_profit_buffer_ticks": max(1, min(5, req.target_profit_buffer_ticks)),
     }
     if req.quantity is not None:
         metadata["quantity"] = req.quantity

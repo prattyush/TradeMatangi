@@ -18,6 +18,8 @@ const AUTOSTOP_TRIGGER_TYPE_KEY = 'autostopTriggerType'
 const AUTOSTOP_DEVIATION_PCT_KEY = 'autostopDeviationPct'
 const HISTORICAL_DAYS_KEY = 'historicalDays'
 const PNL_PCT_MODE_KEY = 'pnlPctMode'
+const BREAKEVEN_MODE_KEY = 'breakevenMode'
+const TARGET_PROFIT_BUFFER_TICKS_KEY = 'targetProfitBufferTicks'
 
 export function loadPnlPctMode(): boolean {
   return localStorage.getItem(PNL_PCT_MODE_KEY) === 'true'
@@ -71,6 +73,18 @@ export function loadHistoricalDays(): number {
   return isNaN(v) || v < 1 || v > 5 ? 2 : v
 }
 
+// Breakeven mode: "shift_sl" (default) or "limit_order"
+export function loadBreakevenMode(): 'shift_sl' | 'limit_order' {
+  const v = localStorage.getItem(BREAKEVEN_MODE_KEY)
+  return v === 'limit_order' ? 'limit_order' : 'shift_sl'
+}
+
+// TargetProfit buffer ticks (1–5, default 3)
+export function loadTargetProfitBufferTicks(): number {
+  const v = parseInt(localStorage.getItem(TARGET_PROFIT_BUFFER_TICKS_KEY) ?? '')
+  return isNaN(v) || v < 1 || v > 5 ? 3 : v
+}
+
 interface Props {
   date: string
   isAdmin?: boolean
@@ -80,7 +94,7 @@ interface Props {
   onFundsRatioChange: (mode: boolean, ratios: FundsRatios) => void
   onTargetDeviationChange: (pct: number) => void  // fraction e.g. 0.01
   onBrokerageChange: (brokerage: number) => void  // rupees per order
-  onStrategySettingsChange: (intervalSecs: number, triggerType: 'bar' | 'deviation', deviationPct: number) => void
+  onStrategySettingsChange: (intervalSecs: number, triggerType: 'bar' | 'deviation', deviationPct: number, breakevenMode: 'shift_sl' | 'limit_order', bufferTicks: number) => void
   onHistoricalDaysChange?: (days: number) => void
   onPnlPctModeChange?: (enabled: boolean) => void
 }
@@ -120,8 +134,12 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
   // Historical days
   const [historicalDays, setHistoricalDays] = useState(loadHistoricalDays)
 
-  // Active tab: 'general' (default) or 'admin' (admin only)
-  const [activeTab, setActiveTab] = useState<'general' | 'admin'>('general')
+  // Strategies settings
+  const [breakevenMode, setBreakevenMode] = useState(loadBreakevenMode)
+  const [targetProfitBufferTicks, setTargetProfitBufferTicks] = useState(loadTargetProfitBufferTicks)
+
+  // Active tab: 'general' | 'strategies' | 'admin' (admin only)
+  const [activeTab, setActiveTab] = useState<'general' | 'strategies' | 'admin'>('general')
 
   // Admin section — broker tokens
   const [iciciInput, setIciciInput] = useState('')
@@ -218,7 +236,9 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
     localStorage.setItem(STRATEGY_INTERVAL_KEY, String(stratIntervalSecs))
     localStorage.setItem(AUTOSTOP_TRIGGER_TYPE_KEY, autostopTriggerType)
     localStorage.setItem(AUTOSTOP_DEVIATION_PCT_KEY, String(devPct))
-    onStrategySettingsChange(stratIntervalSecs, autostopTriggerType, devPct)
+    localStorage.setItem(BREAKEVEN_MODE_KEY, breakevenMode)
+    localStorage.setItem(TARGET_PROFIT_BUFFER_TICKS_KEY, String(targetProfitBufferTicks))
+    onStrategySettingsChange(stratIntervalSecs, autostopTriggerType, devPct, breakevenMode, targetProfitBufferTicks)
     setStatus('Strategy settings saved')
     setTimeout(() => setStatus(null), 2000)
   }
@@ -346,42 +366,43 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
               >✕</button>
             </div>
 
-            {/* Tab bar — only shown to admin users */}
-            {isAdmin && (
-              <div style={{
-                display: 'flex',
-                borderBottom: '1px solid #21262d',
-                marginBottom: 4,
-                marginTop: -8,
-              }}>
-                {(['general', 'admin'] as const).map(tab => (
-                  <button
-                    key={tab}
-                    onClick={() => setActiveTab(tab)}
-                    style={{
-                      flex: 1,
-                      padding: '7px 0',
-                      background: 'none',
-                      border: 'none',
-                      borderBottom: activeTab === tab
-                        ? '2px solid #1f6feb'
-                        : '2px solid transparent',
-                      color: activeTab === tab ? '#79c0ff' : '#8b949e',
-                      fontSize: 12,
-                      fontWeight: 600,
-                      cursor: 'pointer',
-                      textTransform: 'uppercase',
-                      letterSpacing: '0.5px',
-                    }}
-                  >
-                    {tab}
-                  </button>
-                ))}
-              </div>
-            )}
+            {/* Tab bar — General + Strategies for all users; Admin tab for admins only */}
+            <div style={{
+              display: 'flex',
+              borderBottom: '1px solid #21262d',
+              marginBottom: 4,
+              marginTop: -8,
+            }}>
+              {(isAdmin
+                ? ['general', 'strategies', 'admin'] as const
+                : ['general', 'strategies'] as const
+              ).map(tab => (
+                <button
+                  key={tab}
+                  onClick={() => setActiveTab(tab)}
+                  style={{
+                    flex: 1,
+                    padding: '7px 0',
+                    background: 'none',
+                    border: 'none',
+                    borderBottom: activeTab === tab
+                      ? '2px solid #1f6feb'
+                      : '2px solid transparent',
+                    color: activeTab === tab ? '#79c0ff' : '#8b949e',
+                    fontSize: 12,
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.5px',
+                  }}
+                >
+                  {tab}
+                </button>
+              ))}
+            </div>
 
             {/* ── General tab content ── */}
-            {(!isAdmin || activeTab === 'general') && <>
+            {activeTab === 'general' && <>
 
             {/* Trading Mode */}
             <div style={{ borderTop: '1px solid #21262d', paddingTop: 16 }}>
@@ -594,86 +615,6 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
               </div>
             </div>
 
-            {/* Strategy Settings */}
-            <div style={{ borderTop: '1px solid #21262d', paddingTop: 16 }}>
-              <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 10, fontWeight: 600 }}>STRATEGY SETTINGS</div>
-
-              {/* Strategy Candle Interval */}
-              <div style={{ marginBottom: 12 }}>
-                <div style={{ fontSize: 11, color: '#8b949e', marginBottom: 6 }}>Strategy Candle Interval</div>
-                <div style={{ display: 'flex', gap: 0, borderRadius: 6, overflow: 'hidden', border: '1px solid #30363d', width: 'fit-content' }}>
-                  {([{ label: '3 min', value: 180 }, { label: '5 min', value: 300 }] as const).map(opt => (
-                    <button
-                      key={opt.value}
-                      onClick={() => setStratIntervalSecs(opt.value)}
-                      style={{
-                        padding: '5px 16px', fontSize: 12, fontWeight: 600,
-                        border: 'none', cursor: 'pointer',
-                        background: stratIntervalSecs === opt.value ? '#1f3a5f' : '#161b22',
-                        color: stratIntervalSecs === opt.value ? '#79c0ff' : '#484f58',
-                      }}
-                    >
-                      {opt.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* AutoStop Trigger Type */}
-              <div style={{ marginBottom: 10 }}>
-                <div style={{ fontSize: 11, color: '#8b949e', marginBottom: 6 }}>AutoStop Trigger</div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                  {([
-                    { value: 'bar', label: 'Bar High / Low' },
-                    { value: 'deviation', label: '% from Close' },
-                  ] as const).map(opt => (
-                    <label key={opt.value} style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
-                      <input
-                        type="radio"
-                        name="autostopTrigger"
-                        checked={autostopTriggerType === opt.value}
-                        onChange={() => setAutostopTriggerType(opt.value)}
-                        style={{ accentColor: '#79c0ff' }}
-                      />
-                      <span style={{ fontSize: 12, color: autostopTriggerType === opt.value ? '#e6edf3' : '#8b949e' }}>
-                        {opt.label}
-                      </span>
-                    </label>
-                  ))}
-                </div>
-              </div>
-
-              {/* Deviation % — shown only in deviation mode */}
-              {autostopTriggerType === 'deviation' && (
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
-                  <span style={{ fontSize: 12, color: '#8b949e' }}>Deviation</span>
-                  <input
-                    type="number"
-                    value={autostopDeviationPctInput}
-                    onChange={e => setAutostopDeviationPctInput(e.target.value)}
-                    min={0} max={20} step={0.1}
-                    style={{
-                      width: 70, padding: '4px 8px', background: '#0d1117',
-                      border: '1px solid #30363d', borderRadius: 6,
-                      color: '#e6edf3', fontSize: 13, textAlign: 'center',
-                    }}
-                  />
-                  <span style={{ fontSize: 12, color: '#8b949e' }}>%</span>
-                </div>
-              )}
-
-              <button
-                onClick={saveStrategySettings}
-                style={{
-                  padding: '5px 14px', background: '#1f6feb',
-                  border: 'none', borderRadius: 6, color: '#fff',
-                  cursor: 'pointer', fontSize: 12,
-                }}
-              >
-                Save
-              </button>
-            </div>
-
             {/* Wallet */}
             <div style={{ borderTop: '1px solid #21262d', paddingTop: 16 }}>
               <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 10, fontWeight: 600 }}>WALLET</div>
@@ -764,8 +705,148 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
 
             </> /* end General tab */}
 
+            {/* ── Strategies tab content ── */}
+            {activeTab === 'strategies' && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
+
+                {/* Strategy Candle Interval */}
+                <div style={{ borderTop: '1px solid #21262d', paddingTop: 16 }}>
+                  <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 10, fontWeight: 600 }}>STRATEGY CANDLE INTERVAL</div>
+                  <div style={{ display: 'flex', gap: 0, borderRadius: 6, overflow: 'hidden', border: '1px solid #30363d', width: 'fit-content' }}>
+                    {([{ label: '3 min', value: 180 }, { label: '5 min', value: 300 }] as const).map(opt => (
+                      <button
+                        key={opt.value}
+                        onClick={() => setStratIntervalSecs(opt.value)}
+                        style={{
+                          padding: '5px 16px', fontSize: 12, fontWeight: 600,
+                          border: 'none', cursor: 'pointer',
+                          background: stratIntervalSecs === opt.value ? '#1f3a5f' : '#161b22',
+                          color: stratIntervalSecs === opt.value ? '#79c0ff' : '#484f58',
+                        }}
+                      >
+                        {opt.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* AutoStop Trigger Type */}
+                <div style={{ borderTop: '1px solid #21262d', paddingTop: 16 }}>
+                  <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 10, fontWeight: 600 }}>AUTOSTOP TRIGGER</div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 10 }}>
+                    {([
+                      { value: 'bar', label: 'Bar High / Low' },
+                      { value: 'deviation', label: '% from Close' },
+                    ] as const).map(opt => (
+                      <label key={opt.value} style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                        <input
+                          type="radio"
+                          name="autostopTriggerStrat"
+                          checked={autostopTriggerType === opt.value}
+                          onChange={() => setAutostopTriggerType(opt.value)}
+                          style={{ accentColor: '#79c0ff' }}
+                        />
+                        <span style={{ fontSize: 12, color: autostopTriggerType === opt.value ? '#e6edf3' : '#8b949e' }}>
+                          {opt.label}
+                        </span>
+                      </label>
+                    ))}
+                  </div>
+                  {autostopTriggerType === 'deviation' && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <span style={{ fontSize: 12, color: '#8b949e' }}>Deviation</span>
+                      <input
+                        type="number"
+                        value={autostopDeviationPctInput}
+                        onChange={e => setAutostopDeviationPctInput(e.target.value)}
+                        min={0} max={20} step={0.1}
+                        style={{
+                          width: 70, padding: '4px 8px', background: '#0d1117',
+                          border: '1px solid #30363d', borderRadius: 6,
+                          color: '#e6edf3', fontSize: 13, textAlign: 'center',
+                        }}
+                      />
+                      <span style={{ fontSize: 12, color: '#8b949e' }}>%</span>
+                    </div>
+                  )}
+                </div>
+
+                {/* Breakeven Mode */}
+                <div style={{ borderTop: '1px solid #21262d', paddingTop: 16 }}>
+                  <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 10, fontWeight: 600 }}>BREAKEVEN MODE</div>
+                  <div style={{ display: 'flex', gap: 0, borderRadius: 6, overflow: 'hidden', border: '1px solid #30363d', width: 'fit-content' }}>
+                    {([
+                      { label: 'Shift SL', value: 'shift_sl' as const },
+                      { label: 'Limit Order', value: 'limit_order' as const },
+                    ]).map(opt => (
+                      <button
+                        key={opt.value}
+                        onClick={() => setBreakevenMode(opt.value)}
+                        style={{
+                          padding: '5px 16px', fontSize: 12, fontWeight: 600,
+                          border: 'none', cursor: 'pointer',
+                          background: breakevenMode === opt.value ? '#1f3a5f' : '#161b22',
+                          color: breakevenMode === opt.value ? '#79c0ff' : '#484f58',
+                        }}
+                      >
+                        {opt.label}
+                      </button>
+                    ))}
+                  </div>
+                  <div style={{ fontSize: 11, color: '#484f58', marginTop: 6 }}>
+                    {breakevenMode === 'shift_sl'
+                      ? 'Moves stoploss trigger to breakeven + buffer when price reaches threshold'
+                      : 'Cancels stoploss and places immediate limit order at breakeven + buffer'}
+                  </div>
+                </div>
+
+                {/* TargetProfit Buffer Ticks */}
+                <div style={{ borderTop: '1px solid #21262d', paddingTop: 16 }}>
+                  <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 10, fontWeight: 600 }}>TARGET PROFIT BUFFER TICKS</div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <input
+                      type="number"
+                      value={targetProfitBufferTicks}
+                      onChange={e => {
+                        const v = parseInt(e.target.value)
+                        if (!isNaN(v) && v >= 1 && v <= 5) setTargetProfitBufferTicks(v)
+                      }}
+                      min={1} max={5} step={1}
+                      style={{
+                        width: 70, padding: '5px 8px', background: '#0d1117',
+                        border: '1px solid #30363d', borderRadius: 6,
+                        color: '#e6edf3', fontSize: 13, textAlign: 'center',
+                      }}
+                    />
+                    <span style={{ fontSize: 12, color: '#8b949e' }}>ticks (1–5)</span>
+                  </div>
+                  <div style={{ fontSize: 11, color: '#484f58', marginTop: 6 }}>
+                    Extra ticks past target price before limit order triggers (each tick = ₹0.05)
+                  </div>
+                </div>
+
+                {/* Save button for all strategy settings */}
+                <div style={{ borderTop: '1px solid #21262d', paddingTop: 16 }}>
+                  <button
+                    onClick={saveStrategySettings}
+                    style={{
+                      padding: '5px 14px', background: '#1f6feb',
+                      border: 'none', borderRadius: 6, color: '#fff',
+                      cursor: 'pointer', fontSize: 12,
+                    }}
+                  >
+                    Save
+                  </button>
+                  {status && (
+                    <span style={{ fontSize: 12, color: '#3fb950', marginLeft: 10 }}>{status}</span>
+                  )}
+                </div>
+
+              </div>
+            )}
+
             {/* ── Admin tab content (admin only) ── */}
-            {isAdmin && activeTab === 'admin' && (
+            {activeTab === 'admin' && isAdmin && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
 
                 {/* Broker Tokens */}

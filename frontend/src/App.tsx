@@ -5,7 +5,7 @@ import TradePanel from './components/TradePanel'
 import TradeHistory from './components/TradeHistory'
 import OrderPanel from './components/OrderPanel'
 import WalletWidget from './components/WalletWidget'
-import SettingsModal, { loadFundsRatioMode, loadFundsRatios, loadTargetDeviationPct, loadBrokeragePerOrder, loadStrategyIntervalSecs, loadAutostopTriggerType, loadAutostopDeviationPct, loadHistoricalDays, loadPnlPctMode, FundsRatios } from './components/SettingsModal'
+import SettingsModal, { loadFundsRatioMode, loadFundsRatios, loadTargetDeviationPct, loadBrokeragePerOrder, loadStrategyIntervalSecs, loadAutostopTriggerType, loadAutostopDeviationPct, loadHistoricalDays, loadPnlPctMode, loadBreakevenMode, loadTargetProfitBufferTicks, FundsRatios } from './components/SettingsModal'
 import { StrategyResponse, StartStrategyRequest, Order } from './services/api'
 import LoginScreen from './components/LoginScreen'
 import TradeAnalysis from './components/TradeAnalysis'
@@ -115,6 +115,8 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
   const [stratIntervalSecs, setStratIntervalSecs] = useState(loadStrategyIntervalSecs)
   const [autostopTriggerType, setAutostopTriggerType] = useState(loadAutostopTriggerType)
   const [autostopDeviationPct, setAutostopDeviationPct] = useState(loadAutostopDeviationPct)
+  const [breakevenMode, setBreakevenMode] = useState(loadBreakevenMode)
+  const [targetProfitBufferTicks, setTargetProfitBufferTicks] = useState(loadTargetProfitBufferTicks)
   const [historicalDays, setHistoricalDays] = useState(loadHistoricalDays)
   const [pnlPctMode, setPnlPctMode] = useState(loadPnlPctMode)
   const [runningStrategies, setRunningStrategies] = useState<StrategyResponse[]>([])
@@ -335,7 +337,14 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
   const handleStartStrategy = useCallback(async (
     strategyType: StartStrategyRequest['strategy_type'],
     right: 'CE' | 'PE' | null,
-    opts: { quantity?: number; fundsRatioPct?: number; direction?: 'BUY' | 'SELL'; onlyInProfit?: boolean },
+    opts: {
+      quantity?: number
+      fundsRatioPct?: number
+      direction?: 'BUY' | 'SELL'
+      onlyInProfit?: boolean
+      targetProfitValue?: number
+      targetProfitIsPct?: boolean
+    },
   ) => {
     if (!sim.sessionId) return
     const resp = await api.startStrategy({
@@ -348,9 +357,13 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
       autostop_trigger_type: autostopTriggerType,
       autostop_deviation_pct: autostopDeviationPct,
       only_in_profit: opts.onlyInProfit ?? false,
+      breakeven_mode: breakevenMode,
+      target_profit_value: opts.targetProfitValue,
+      target_profit_is_pct: opts.targetProfitIsPct ?? false,
+      target_profit_buffer_ticks: targetProfitBufferTicks,
     })
     setRunningStrategies(prev => [...prev, resp])
-  }, [sim.sessionId, autostopTriggerType, autostopDeviationPct])
+  }, [sim.sessionId, autostopTriggerType, autostopDeviationPct, breakevenMode, targetProfitBufferTicks])
 
   const handleCancelAllStrategies = useCallback(async () => {
     if (!sim.sessionId) return
@@ -569,10 +582,12 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
           onFundsRatioChange={(mode, ratios) => { setFundsRatioMode(mode); setFundsRatios(ratios) }}
           onTargetDeviationChange={setTargetDeviationPct}
           onBrokerageChange={setBrokeragePerOrder}
-          onStrategySettingsChange={(intervalSecs, triggerType, deviationPct) => {
+          onStrategySettingsChange={(intervalSecs, triggerType, deviationPct, bkMode, bufTicks) => {
             setStratIntervalSecs(intervalSecs)
             setAutostopTriggerType(triggerType)
             setAutostopDeviationPct(deviationPct)
+            setBreakevenMode(bkMode)
+            setTargetProfitBufferTicks(bufTicks)
           }}
           onHistoricalDaysChange={setHistoricalDays}
           onPnlPctModeChange={setPnlPctMode}
@@ -787,6 +802,8 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
               runningStrategies={runningStrategies}
               autostopTriggerType={autostopTriggerType}
               autostopDeviationPct={autostopDeviationPct}
+              breakevenMode={breakevenMode}
+              targetProfitBufferTicks={targetProfitBufferTicks}
               onPlaceOrder={(side, orderType, price, quantity, opts) =>
                 sim.placeOrder(side, orderType, price, quantity, {
                   ...opts,
