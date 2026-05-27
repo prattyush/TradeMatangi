@@ -35,6 +35,7 @@ interface Props {
   autostopDeviationPct?: number
   breakevenMode?: 'shift_sl' | 'limit_order'
   targetProfitBufferTicks?: number
+  aggrSlOnlyInProfit?: boolean
   onStartStrategy?: (
     strategyType: 'AutoStop' | 'BreakEven' | 'AggressiveStoploss' | 'TargetProfit',
     right: 'CE' | 'PE' | null,
@@ -68,6 +69,7 @@ export default function OrderPanel({
   autostopDeviationPct = 1.0,
   breakevenMode = 'shift_sl',
   targetProfitBufferTicks = 3,
+  aggrSlOnlyInProfit = false,
   onStartStrategy,
   onCancelAllStrategies,
 }: Props) {
@@ -88,7 +90,6 @@ export default function OrderPanel({
   const [stratLoading, setStratLoading] = useState<string | null>(null)
   const [stratError, setStratError] = useState<string | null>(null)
   const [cancellingAll, setCancellingAll] = useState(false)
-  const [aggrSlOnlyInProfit, setAggrSlOnlyInProfit] = useState(false)
   const [tpValue, setTpValue] = useState('')
   const [tpIsPct, setTpIsPct] = useState(false)
 
@@ -240,9 +241,7 @@ export default function OrderPanel({
         ? { fundsRatioPct: fundsRatios[stratRatio] / 100, direction }
         : { quantity: stratQty, direction }
       let extraOpts: Record<string, unknown> = {}
-      if (strategyType === 'AggressiveStoploss') {
-        extraOpts = { onlyInProfit: aggrSlOnlyInProfit }
-      } else if (strategyType === 'TargetProfit') {
+      if (strategyType === 'TargetProfit') {
         const v = parseFloat(tpValue)
         if (isNaN(v) || v <= 0) {
           setStratError('Enter a valid target value')
@@ -504,16 +503,9 @@ export default function OrderPanel({
             </div>
             <div>
               <div style={{ fontSize: 11, color: '#e6edf3', fontWeight: 600, marginBottom: 4 }}>Aggressive SL</div>
-              <div style={{ fontSize: 9, color: '#484f58', marginBottom: 4 }}>Shift SL to 1% from bar close each bar</div>
-              <label style={{ fontSize: 10, color: '#8b949e', display: 'flex', alignItems: 'center', gap: 5, marginBottom: 5, cursor: 'pointer' }}>
-                <input
-                  type="checkbox"
-                  checked={aggrSlOnlyInProfit}
-                  onChange={e => setAggrSlOnlyInProfit(e.target.checked)}
-                  style={{ accentColor: '#79c0ff' }}
-                />
-                Only when in profit
-              </label>
+              <div style={{ fontSize: 9, color: '#484f58', marginBottom: 4 }}>
+                Shift SL to 1% from bar close each bar{aggrSlOnlyInProfit ? ' · only in profit' : ''}
+              </div>
               <button
                 onClick={() => handleStartStrategy('AggressiveStoploss')}
                 disabled={!stratHasPosition || stratLoading === 'AggressiveStoploss'}

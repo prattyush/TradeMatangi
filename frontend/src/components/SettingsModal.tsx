@@ -20,6 +20,7 @@ const HISTORICAL_DAYS_KEY = 'historicalDays'
 const PNL_PCT_MODE_KEY = 'pnlPctMode'
 const BREAKEVEN_MODE_KEY = 'breakevenMode'
 const TARGET_PROFIT_BUFFER_TICKS_KEY = 'targetProfitBufferTicks'
+const AGGR_SL_ONLY_IN_PROFIT_KEY = 'aggrSlOnlyInProfit'
 
 export function loadPnlPctMode(): boolean {
   return localStorage.getItem(PNL_PCT_MODE_KEY) === 'true'
@@ -85,6 +86,11 @@ export function loadTargetProfitBufferTicks(): number {
   return isNaN(v) || v < 1 || v > 5 ? 3 : v
 }
 
+// AggressiveStoploss: only update SL when position is in profit (default false)
+export function loadAggrSlOnlyInProfit(): boolean {
+  return localStorage.getItem(AGGR_SL_ONLY_IN_PROFIT_KEY) === 'true'
+}
+
 interface Props {
   date: string
   isAdmin?: boolean
@@ -94,7 +100,7 @@ interface Props {
   onFundsRatioChange: (mode: boolean, ratios: FundsRatios) => void
   onTargetDeviationChange: (pct: number) => void  // fraction e.g. 0.01
   onBrokerageChange: (brokerage: number) => void  // rupees per order
-  onStrategySettingsChange: (intervalSecs: number, triggerType: 'bar' | 'deviation', deviationPct: number, breakevenMode: 'shift_sl' | 'limit_order', bufferTicks: number) => void
+  onStrategySettingsChange: (intervalSecs: number, triggerType: 'bar' | 'deviation', deviationPct: number, breakevenMode: 'shift_sl' | 'limit_order', bufferTicks: number, aggrSlOnlyInProfit: boolean) => void
   onHistoricalDaysChange?: (days: number) => void
   onPnlPctModeChange?: (enabled: boolean) => void
 }
@@ -137,6 +143,7 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
   // Strategies settings
   const [breakevenMode, setBreakevenMode] = useState(loadBreakevenMode)
   const [targetProfitBufferTicks, setTargetProfitBufferTicks] = useState(loadTargetProfitBufferTicks)
+  const [aggrSlOnlyInProfit, setAggrSlOnlyInProfit] = useState(loadAggrSlOnlyInProfit)
 
   // Active tab: 'general' | 'strategies' | 'admin' (admin only)
   const [activeTab, setActiveTab] = useState<'general' | 'strategies' | 'admin'>('general')
@@ -238,7 +245,8 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
     localStorage.setItem(AUTOSTOP_DEVIATION_PCT_KEY, String(devPct))
     localStorage.setItem(BREAKEVEN_MODE_KEY, breakevenMode)
     localStorage.setItem(TARGET_PROFIT_BUFFER_TICKS_KEY, String(targetProfitBufferTicks))
-    onStrategySettingsChange(stratIntervalSecs, autostopTriggerType, devPct, breakevenMode, targetProfitBufferTicks)
+    localStorage.setItem(AGGR_SL_ONLY_IN_PROFIT_KEY, String(aggrSlOnlyInProfit))
+    onStrategySettingsChange(stratIntervalSecs, autostopTriggerType, devPct, breakevenMode, targetProfitBufferTicks, aggrSlOnlyInProfit)
     setStatus('Strategy settings saved')
     setTimeout(() => setStatus(null), 2000)
   }
@@ -822,6 +830,23 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
                   </div>
                   <div style={{ fontSize: 11, color: '#484f58', marginTop: 6 }}>
                     Extra ticks past target price before limit order triggers (each tick = ₹0.05)
+                  </div>
+                </div>
+
+                {/* Aggressive SL: only in profit */}
+                <div style={{ borderTop: '1px solid #21262d', paddingTop: 16 }}>
+                  <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 10, fontWeight: 600 }}>AGGRESSIVE SL</div>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                    <input
+                      type="checkbox"
+                      checked={aggrSlOnlyInProfit}
+                      onChange={e => setAggrSlOnlyInProfit(e.target.checked)}
+                      style={{ accentColor: '#79c0ff' }}
+                    />
+                    <span style={{ fontSize: 12, color: '#e6edf3' }}>Only update SL when in profit</span>
+                  </label>
+                  <div style={{ fontSize: 11, color: '#484f58', marginTop: 6 }}>
+                    Skip SL shift when bar closes below avg entry price
                   </div>
                 </div>
 
