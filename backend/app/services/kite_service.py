@@ -460,10 +460,12 @@ class KiteBroadcaster:
                 self._session_tokens[session_id].add(token)
             new_tokens = list(tokens)
 
-        if not self._connected:
+        if self._ticker is None:
             self._start(new_tokens)
-        else:
+        elif self._connected:
             self._subscribe_more(new_tokens)
+        # else: ticker exists but _on_connect hasn't fired yet; it will subscribe
+        # all tokens from _token_sessions once the handshake completes.
 
     def unregister(self, session_id: str) -> None:
         """Remove session; unsubscribes tokens with no remaining subscribers."""
@@ -553,9 +555,18 @@ class KiteBroadcaster:
 
         # Bump generation before creating the ticker so any 403-retry timer that
         # was scheduled for the previous ticker becomes stale and will no-op.
+        # Also save and clear the old ticker so it can be closed outside the lock.
         with self._lock:
             self._restart_generation += 1
             self._restart_pending = False
+            old_ticker = self._ticker
+            self._ticker = None
+
+        if old_ticker:
+            try:
+                old_ticker.close()
+            except Exception:
+                pass
 
         cfg = self._read_config()
         ticker = KiteTicker(cfg["api_key"], cfg["access_token"])
@@ -563,9 +574,13 @@ class KiteBroadcaster:
         ticker.on_ticks = self._on_ticks
         ticker.on_error = self._on_error
         ticker.on_close = self._on_close
+
+        # Set _ticker under lock before connect() so that concurrent register()
+        # calls see a non-None ticker and don't launch a second _start.
+        # _connected is set to True in _on_connect once the handshake completes.
+        with self._lock:
+            self._ticker = ticker
         ticker.connect(threaded=True)
-        self._ticker = ticker
-        self._connected = True
         _time.sleep(1.0)  # allow websocket handshake to complete
         logger.info("KiteBroadcaster started")
 
@@ -643,6 +658,13 @@ class KiteBroadcaster:
 
     def _on_connect(self, ws, response) -> None:
         with self._lock:
+            # Guard against stale callbacks from a replaced ticker (e.g. after
+            # _restart_with_fresh_creds swapped in a new ticker while kiteconnect's
+            # auto-reconnect fired on the old one).
+            if ws is not self._ticker:
+                logger.debug("KiteBroadcaster: stale _on_connect from replaced ticker — ignored")
+                return
+            self._connected = True
             all_tokens = list(self._token_sessions.keys())
         logger.info("KiteBroadcaster: WebSocket connected, subscribing %d tokens: %s", len(all_tokens), all_tokens)
         if all_tokens and ws:
