@@ -251,6 +251,7 @@ class StrategyType(str, Enum):
     AUTO_STOP = "AutoStop"
     BREAK_EVEN = "BreakEven"
     AGGRESSIVE_STOPLOSS = "AggressiveStoploss"
+    TARGET_PROFIT = "TargetProfit"
 
 
 class StartStrategyRequest(BaseModel):
@@ -267,6 +268,12 @@ class StartStrategyRequest(BaseModel):
     autostop_deviation_pct: float = 1.0   # % deviation from close (only when type=deviation)
     # AggressiveStoploss settings
     only_in_profit: bool = False          # skip SL update when close is at a loss
+    # TargetProfit settings
+    target_profit_value: float | None = None   # absolute price or % of capital
+    target_profit_is_pct: bool = False         # True = % of session capital; False = absolute price
+    target_profit_buffer_ticks: int = 3        # ticks past target to trigger (1–5)
+    # Breakeven mode
+    breakeven_mode: str = "shift_sl"           # "shift_sl" | "limit_order"
 
 
 class StrategyResponse(BaseModel):

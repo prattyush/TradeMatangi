@@ -22,12 +22,32 @@ Cross-process cancellation:
 from __future__ import annotations
 
 import logging
+import math
 import uuid
 from dataclasses import dataclass, field
 from decimal import Decimal
 from enum import Enum
 
 logger = logging.getLogger(__name__)
+
+# ── Tick-size helpers ─────────────────────────────────────────────────────────
+
+_TICK_SIZE = 0.05  # NSE/BSE minimum price increment
+
+
+def _ceil_tick(price: float) -> float:
+    """Round price UP to the nearest ₹0.05 tick."""
+    return round(math.ceil(round(price / _TICK_SIZE, 10)) * _TICK_SIZE, 2)
+
+
+def _main_buffer(price: float) -> float:
+    """max(3 ticks, 0.25% of price), ceiled to tick."""
+    return _ceil_tick(max(3 * _TICK_SIZE, 0.0025 * price))
+
+
+def _trigger_buffer(price: float) -> float:
+    """0.3% of price, ceiled to tick — ensures LTP is on the correct side of a new SL."""
+    return _ceil_tick(0.003 * price)
 
 
 class StrategyStatus(str, Enum):
@@ -186,9 +206,11 @@ def on_tick(session, tick: dict, tick_right: str | None, loop=None) -> None:
             strategy._bar_low = min(strategy._bar_low, tick["low"])
             strategy._bar_close = tick["close"]
 
-        # ── Per-tick evaluation (BreakEven only) ──────────────────────────
+        # ── Per-tick evaluation (BreakEven + TargetProfit) ───────────────
         if strategy.strategy_type == "BreakEven" and strategy.status == StrategyStatus.RUNNING:
             _on_tick_breakeven(strategy, session, current_price, tick_right, ts, loop)
+        elif strategy.strategy_type == "TargetProfit" and strategy.status == StrategyStatus.RUNNING:
+            _on_tick_target_profit(strategy, session, current_price, tick_right, ts, loop)
 
     # Prune completed/cancelled entries
     _registry[session.session_id] = [
@@ -414,6 +436,104 @@ def _on_bar_close_aggressive_sl(
 
 # ── Per-tick evaluators ───────────────────────────────────────────────────────
 
+def _cancel_exit_and_place_limit(
+    strategy: StrategyInstance,
+    session,
+    exit_orders: list,
+    exit_side,
+    limit_price: float,
+    quantity: int,
+    tick_right: str | None,
+    current_ts: int,
+    loop=None,
+) -> None:
+    """
+    Cancel existing exit orders and place a new LIMIT order at limit_price.
+
+    For real sessions with a Kotak SL order:
+      1. Try to atomically modify SL → LIMIT via modify_sl_to_limit_order().
+         On success the local order type + price are updated in-place; no new order placed.
+      2. If that fails (API error), fall back to cancel the Kotak SL + re-place as Kotak LIMIT.
+    For sim/paper: cancel local orders + place a local LIMIT order.
+    """
+    from app.services.order_service import cancel_order, place_order, update_order
+    from app.models.schemas import OrderType
+
+    is_real = getattr(session, "session_type", "sim") == "real" and loop is not None
+    need_new_order = True  # set to False when atomic modify succeeds for all orders
+
+    if exit_orders:
+        need_new_order = False  # assume orders will be converted; flip back if fallback needed
+        for order in exit_orders:
+            kotak_id = getattr(order, "kotak_order_id", None)
+            if is_real and kotak_id:
+                # Preferred: atomic SL → LIMIT (no window without broker-side protection)
+                try:
+                    from app.services.kotak_service import get_service as get_kotak
+                    get_kotak().modify_sl_to_limit_order(kotak_id, limit_price, order.quantity)
+                    # Update local order to reflect the new type/price
+                    update_order(
+                        session_id=session.session_id,
+                        order_id=order.order_id,
+                        trading_date=session.date,
+                        limit_price=limit_price,
+                    )
+                    order.order_type = OrderType.LIMIT
+                    order.limit_price = limit_price
+                    logger.info(
+                        "Strategy %s: atomically converted Kotak SL %s → LIMIT at %.2f",
+                        strategy.strategy_id, kotak_id, limit_price,
+                    )
+                    continue  # this order is handled; move to next
+                except Exception as exc:
+                    logger.warning(
+                        "Strategy %s: modify_sl_to_limit failed (%s) — cancel+re-place fallback",
+                        strategy.strategy_id, exc,
+                    )
+                    # Cancel broker-side SL
+                    try:
+                        get_kotak().cancel_order(kotak_id)
+                    except Exception as k_exc:
+                        logger.warning(
+                            "Strategy %s: Kotak cancel_order %s failed: %s",
+                            strategy.strategy_id, kotak_id, k_exc,
+                        )
+
+            # Cancel local order (reached for sim/paper or after real-trading fallback)
+            try:
+                cancel_order(session.session_id, order.order_id, session.date)
+            except Exception as exc:
+                logger.warning(
+                    "Strategy %s: cancel_order %s failed: %s",
+                    strategy.strategy_id, order.order_id, exc,
+                )
+            need_new_order = True  # at least one order was cancelled → place replacement
+
+    if need_new_order:
+        # Place a local LIMIT order.  For sim/paper the tick engine fills it directly.
+        # For real sessions, _emit_tick_and_check_orders_real forwards it to Kotak on
+        # the next tick when the LIMIT triggers (price has already passed the target).
+        try:
+            place_order(
+                session_id=session.session_id,
+                symbol=session.symbol,
+                side=exit_side,
+                order_type=OrderType.LIMIT,
+                quantity=quantity,
+                created_at=current_ts,
+                trading_date=session.date,
+                limit_price=limit_price,
+                right=tick_right,
+                user_id=session.user_id,
+            )
+            logger.info(
+                "Strategy %s: placed new LIMIT %s at %.2f for %s right=%s",
+                strategy.strategy_id, exit_side.value, limit_price, session.symbol, tick_right,
+            )
+        except Exception as exc:
+            logger.warning("Strategy %s: place LIMIT order failed: %s", strategy.strategy_id, exc)
+
+
 def _on_tick_breakeven(
     strategy: StrategyInstance,
     session,
@@ -434,60 +554,181 @@ def _on_tick_breakeven(
         return
 
     avg_entry = position.avg_entry_price
-    should_protect = (
-        (position.side == "LONG" and current_price >= avg_entry) or
-        (position.side == "SHORT" and current_price <= avg_entry)
-    )
+    brokerage = getattr(session, "brokerage_per_order", 0.0)
+    commission_per_share = (2.0 * brokerage) / position.quantity if position.quantity > 0 else 0.0
+
+    # True breakeven includes round-trip commissions
+    if position.side == "LONG":
+        true_breakeven = avg_entry + commission_per_share
+    else:
+        true_breakeven = avg_entry - commission_per_share
+
+    # New SL price: true_breakeven + execution buffer (ceiled to tick)
+    new_sl_price = _ceil_tick(true_breakeven + _main_buffer(true_breakeven))
+
+    breakeven_mode = strategy.metadata.get("breakeven_mode", "shift_sl")
+
+    if breakeven_mode == "limit_order":
+        # Trigger when price reaches new_sl_price (LONG) or true_breakeven (SHORT)
+        if position.side == "LONG":
+            should_protect = current_price >= new_sl_price
+        else:
+            should_protect = current_price <= true_breakeven
+    else:  # shift_sl
+        # Extra trigger_buffer ensures LTP is safely past new_sl_price for real trading
+        t_buf = _trigger_buffer(true_breakeven)
+        if position.side == "LONG":
+            should_protect = current_price >= new_sl_price + t_buf
+        else:
+            should_protect = current_price <= new_sl_price - t_buf
+
     if not should_protect:
         return
 
     exit_side = TradeSide.SELL if position.side == "LONG" else TradeSide.BUY
-
-    # Find existing open exit orders (matching side, right, position quantity) and move them to breakeven
     exit_orders = _find_open_exit_orders(session.session_id, exit_side, tick_right, position.quantity)
 
-    if exit_orders:
-        for order in exit_orders:
-            _update_exit_order_price(session, order, avg_entry)
+    if breakeven_mode == "limit_order":
+        # Cancel existing SL orders and place an immediate LIMIT order at new_sl_price
+        _cancel_exit_and_place_limit(
+            strategy, session, exit_orders, exit_side,
+            new_sl_price, position.quantity, tick_right, current_ts, loop,
+        )
         strategy.status = StrategyStatus.COMPLETED
         _write_strategy_to_db(strategy)
         logger.info(
-            "BreakEven %s moved %d exit order(s) to breakeven=%.2f for %s right=%s",
-            strategy.strategy_id, len(exit_orders), avg_entry, session.symbol, tick_right,
+            "BreakEven %s (limit_order mode) placed LIMIT at %.2f for %s right=%s",
+            strategy.strategy_id, new_sl_price, session.symbol, tick_right,
         )
     else:
-        # No existing exit order.
-        # Real sessions: place a STOPLOSS directly on Kotak (broker-managed immediately).
-        # Sim/paper: place a local TARGET that fires if price falls back to avg_entry.
-        is_real = getattr(session, "session_type", "sim") == "real" and loop is not None
-        order_type = OrderType.STOPLOSS if is_real else OrderType.TARGET
-        try:
-            new_order = place_order(
-                session_id=session.session_id,
-                symbol=session.symbol,
-                side=exit_side,
-                order_type=order_type,
-                quantity=position.quantity,
-                created_at=current_ts,
-                trading_date=session.date,
-                trigger_price=avg_entry,
-                right=tick_right,
-                user_id=session.user_id,
-            )
-            if is_real:
-                try:
-                    from app.services.simulation import _register_kotak_sl_for_order
-                    _register_kotak_sl_for_order(session, new_order, loop)
-                except Exception as k_exc:
-                    logger.warning(
-                        "BreakEven %s: Kotak SL registration failed: %s",
-                        strategy.strategy_id, k_exc,
-                    )
+        # shift_sl mode: move existing exit orders to new_sl_price
+        if exit_orders:
+            for order in exit_orders:
+                _update_exit_order_price(session, order, new_sl_price)
             strategy.status = StrategyStatus.COMPLETED
             _write_strategy_to_db(strategy)
             logger.info(
-                "BreakEven %s placed %s at breakeven=%.2f for %s right=%s",
-                strategy.strategy_id, order_type.value, avg_entry, session.symbol, tick_right,
+                "BreakEven %s (shift_sl mode) moved %d exit order(s) to %.2f for %s right=%s",
+                strategy.strategy_id, len(exit_orders), new_sl_price, session.symbol, tick_right,
+            )
+        else:
+            # No existing exit order — place a new SL/TARGET at new_sl_price
+            is_real = getattr(session, "session_type", "sim") == "real" and loop is not None
+            order_type = OrderType.STOPLOSS if is_real else OrderType.TARGET
+            try:
+                new_order = place_order(
+                    session_id=session.session_id,
+                    symbol=session.symbol,
+                    side=exit_side,
+                    order_type=order_type,
+                    quantity=position.quantity,
+                    created_at=current_ts,
+                    trading_date=session.date,
+                    trigger_price=new_sl_price,
+                    right=tick_right,
+                    user_id=session.user_id,
+                )
+                if is_real:
+                    try:
+                        from app.services.simulation import _register_kotak_sl_for_order
+                        _register_kotak_sl_for_order(session, new_order, loop)
+                    except Exception as k_exc:
+                        logger.warning(
+                            "BreakEven %s: Kotak SL registration failed: %s",
+                            strategy.strategy_id, k_exc,
+                        )
+                strategy.status = StrategyStatus.COMPLETED
+                _write_strategy_to_db(strategy)
+                logger.info(
+                    "BreakEven %s (shift_sl mode) placed new %s at %.2f for %s right=%s",
+                    strategy.strategy_id, order_type.value, new_sl_price, session.symbol, tick_right,
+                )
+            except Exception as exc:
+                logger.warning("BreakEven %s: place_order failed: %s", strategy.strategy_id, exc)
+
+
+def _on_tick_target_profit(
+    strategy: StrategyInstance,
+    session,
+    current_price: float,
+    tick_right: str | None,
+    current_ts: int,
+    loop=None,
+) -> None:
+    from app.services.trading import get_position
+    from app.models.schemas import TradeSide, OrderType
+    from app.services.order_service import place_order
+
+    position = get_position(session.session_id, session.symbol, tick_right)
+
+    if position.side == "FLAT":
+        strategy.status = StrategyStatus.COMPLETED
+        _write_strategy_to_db(strategy)
+        return
+
+    meta = strategy.metadata
+    raw_value = float(meta.get("target_profit_value", 0))
+    is_pct = bool(meta.get("target_profit_is_pct", False))
+    buffer_ticks = int(meta.get("target_profit_buffer_ticks", 3))
+
+    avg_entry = position.avg_entry_price
+
+    if is_pct:
+        session_capital = float(getattr(session, "session_capital", 0))
+        target_pnl = (raw_value / 100.0) * session_capital
+        if position.quantity <= 0:
+            return
+        if position.side == "LONG":
+            target_price = _ceil_tick(avg_entry + target_pnl / position.quantity)
+        else:
+            target_price = _ceil_tick(avg_entry - target_pnl / position.quantity)
+    else:
+        target_price = _ceil_tick(raw_value)
+
+    tick_buffer = buffer_ticks * _TICK_SIZE
+    if position.side == "LONG":
+        triggered = current_price >= target_price + tick_buffer
+    else:
+        triggered = current_price <= target_price - tick_buffer
+
+    if not triggered:
+        return
+
+    exit_side = TradeSide.SELL if position.side == "LONG" else TradeSide.BUY
+    exit_orders = _find_open_exit_orders(session.session_id, exit_side, tick_right, position.quantity)
+
+    if exit_orders:
+        _cancel_exit_and_place_limit(
+            strategy, session, exit_orders, exit_side,
+            target_price, position.quantity, tick_right, current_ts, loop,
+        )
+    else:
+        # No existing exit order — place new LIMIT order directly.
+        # Real sessions: forwarded to Kotak on next tick via _emit_tick_and_check_orders_real.
+        try:
+            place_order(
+                session_id=session.session_id,
+                symbol=session.symbol,
+                side=exit_side,
+                order_type=OrderType.LIMIT,
+                quantity=position.quantity,
+                created_at=current_ts,
+                trading_date=session.date,
+                limit_price=target_price,
+                right=tick_right,
+                user_id=session.user_id,
+            )
+            logger.info(
+                "TargetProfit %s: placed new LIMIT %s at %.2f for %s right=%s",
+                strategy.strategy_id, exit_side.value, target_price, session.symbol, tick_right,
             )
         except Exception as exc:
-            logger.warning("BreakEven %s: place_order failed: %s", strategy.strategy_id, exc)
+            logger.warning("TargetProfit %s: place LIMIT failed: %s", strategy.strategy_id, exc)
+            return
+
+    strategy.status = StrategyStatus.COMPLETED
+    _write_strategy_to_db(strategy)
+    logger.info(
+        "TargetProfit %s completed: target=%.2f trigger=%.2f for %s right=%s",
+        strategy.strategy_id, target_price, current_price, session.symbol, tick_right,
+    )
