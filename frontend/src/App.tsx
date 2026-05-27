@@ -5,7 +5,7 @@ import TradePanel from './components/TradePanel'
 import TradeHistory from './components/TradeHistory'
 import OrderPanel from './components/OrderPanel'
 import WalletWidget from './components/WalletWidget'
-import SettingsModal, { loadFundsRatioMode, loadFundsRatios, loadTargetDeviationPct, loadBrokeragePerOrder, loadStrategyIntervalSecs, loadAutostopTriggerType, loadAutostopDeviationPct, loadHistoricalDays, FundsRatios } from './components/SettingsModal'
+import SettingsModal, { loadFundsRatioMode, loadFundsRatios, loadTargetDeviationPct, loadBrokeragePerOrder, loadStrategyIntervalSecs, loadAutostopTriggerType, loadAutostopDeviationPct, loadHistoricalDays, loadPnlPctMode, FundsRatios } from './components/SettingsModal'
 import { StrategyResponse, StartStrategyRequest, Order } from './services/api'
 import LoginScreen from './components/LoginScreen'
 import TradeAnalysis from './components/TradeAnalysis'
@@ -116,6 +116,7 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
   const [autostopTriggerType, setAutostopTriggerType] = useState(loadAutostopTriggerType)
   const [autostopDeviationPct, setAutostopDeviationPct] = useState(loadAutostopDeviationPct)
   const [historicalDays, setHistoricalDays] = useState(loadHistoricalDays)
+  const [pnlPctMode, setPnlPctMode] = useState(loadPnlPctMode)
   const [runningStrategies, setRunningStrategies] = useState<StrategyResponse[]>([])
   const [brokerError, setBrokerError] = useState<string | null>(null)
   const [isRealTradingUser, setIsRealTradingUser] = useState(false)
@@ -375,6 +376,13 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
     )
   }, [sim.openOrders])
 
+  const getPositionForPane = useCallback((pane: PaneConfig) => {
+    if (pane.type === 'equity') return sim.position
+    if (pane.right === 'CE') return sim.positionCE
+    if (pane.right === 'PE') return sim.positionPE
+    return sim.position
+  }, [sim.position, sim.positionCE, sim.positionPE])
+
   // ── Layout rendering helpers ──────────────────────────────────────────────────
   const rowHeight = Math.max(160, Math.floor((columnHeight - 52) / 2))
 
@@ -418,6 +426,9 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
           historicalDays={historicalDays}
           onMaximize={() => setMaximizedPaneId(isMaximized ? null : pane.id)}
           isMaximized={isMaximized}
+          position={getPositionForPane(pane)}
+          pnlPctMode={pnlPctMode}
+          sessionCapital={sim.sessionCapital}
         />
       </div>
     )
@@ -553,6 +564,7 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
           date={sim.date}
           isAdmin={authUser.isAdmin}
           isRealTradingUser={isRealTradingUser}
+          sessionActive={sim.sessionState === 'running' || sim.sessionState === 'paused'}
           onWalletReset={sim.incrementWalletRefreshKey}
           onFundsRatioChange={(mode, ratios) => { setFundsRatioMode(mode); setFundsRatios(ratios) }}
           onTargetDeviationChange={setTargetDeviationPct}
@@ -563,6 +575,7 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
             setAutostopDeviationPct(deviationPct)
           }}
           onHistoricalDaysChange={setHistoricalDays}
+          onPnlPctModeChange={setPnlPctMode}
         />
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: '#484f58' }}>
           <span>{authUser.email}</span>
@@ -722,6 +735,8 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
             sessionPnl={sim.sessionState !== 'idle' && sim.sessionState !== 'ended' ? netDayPnl : undefined}
             activeRight={instrumentType === 'options' ? activeRight : undefined}
             activeLabel={activeLabel}
+            pnlPctMode={pnlPctMode}
+            sessionCapital={sim.sessionCapital}
           />
 
           {/* Combined P&L for options (both CE + PE) */}
@@ -736,7 +751,10 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
                 color: sim.pnl > 0 ? '#26a641' : sim.pnl < 0 ? '#f85149' : '#8b949e',
                 fontVariantNumeric: 'tabular-nums',
               }}>
-                {sim.pnl >= 0 ? '+' : ''}{sim.pnl.toFixed(2)}
+                {pnlPctMode && sim.sessionCapital > 0
+                  ? `${sim.pnl >= 0 ? '+' : ''}${((sim.pnl / sim.sessionCapital) * 100).toFixed(2)}%`
+                  : `${sim.pnl >= 0 ? '+' : ''}${sim.pnl.toFixed(2)}`
+                }
               </span>
               {idle || (
                 <div style={{ marginTop: 6, display: 'flex', flexDirection: 'column', gap: 3 }}>

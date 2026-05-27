@@ -10,7 +10,7 @@ import {
   IPriceLine,
   LineStyle,
 } from 'lightweight-charts'
-import api, { OHLCCandle, TickEvent, Trade, Order } from '../services/api'
+import api, { OHLCCandle, TickEvent, Trade, Order, Position } from '../services/api'
 
 export type PaneType = 'equity' | 'options'
 
@@ -47,6 +47,10 @@ interface Props {
   historicalDays?: number
   // Latest equity tick timestamp — used as fallback cutoff when this pane's latestTick is null
   currentSimTime?: number | null
+  // Position for this pane — used to annotate stoploss label with projected P&L
+  position?: Position
+  pnlPctMode?: boolean
+  sessionCapital?: number
 }
 
 type DrawMode = 'none' | 'hline' | 'trendline'
@@ -98,6 +102,9 @@ export default function Chart({
   reloadKey = 0,
   historicalDays,
   currentSimTime,
+  position,
+  pnlPctMode,
+  sessionCapital,
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<IChartApi | null>(null)
@@ -505,7 +512,21 @@ export default function Chart({
 
     for (const order of pending) {
       const price = order.order_type === 'LIMIT' ? order.limit_price : order.trigger_price
-      const label = (order.side === 'BUY' ? 'B' : 'S') + (order.order_type === 'LIMIT' ? 'L' : 'T')
+      let label = (order.side === 'BUY' ? 'B' : 'S') + (order.order_type === 'LIMIT' ? 'L' : 'T')
+
+      if (order.order_type === 'STOPLOSS' && position && position.side !== 'FLAT') {
+        const dir = position.side === 'LONG' ? 1 : -1
+        const grossPnl = dir * (order.trigger_price - position.avg_entry_price) * position.quantity
+        let pnlStr: string
+        if (pnlPctMode && sessionCapital && sessionCapital > 0) {
+          const pct = (grossPnl / sessionCapital) * 100
+          pnlStr = `${pct >= 0 ? '+' : ''}${pct.toFixed(1)}%`
+        } else {
+          pnlStr = `${grossPnl >= 0 ? '+' : ''}${Math.round(grossPnl)}`
+        }
+        label = `ST ${pnlStr}`
+      }
+
       try {
         const line = series.createPriceLine({
           price, color: '#AAAAAA', lineWidth: 1,
@@ -515,7 +536,7 @@ export default function Chart({
         orderPriceLinesRef.current.set(order.order_id, line)
       } catch { /* disposed */ }
     }
-  }, [openOrders, paneType, right])
+  }, [openOrders, paneType, right, position, pnlPctMode, sessionCapital])
 
   const enterDrawMode = useCallback((mode: DrawMode) => {
     if (drawModeRef.current === mode) {
