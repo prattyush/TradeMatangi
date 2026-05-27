@@ -599,6 +599,34 @@ class KotakNeoService:
         except Exception as exc:
             raise KotakError(str(exc)) from exc
 
+    def modify_sl_to_limit_order(
+        self,
+        kotak_order_id: str,
+        limit_price: float,
+        qty: int,
+    ) -> None:
+        """
+        Convert an existing SL order to a plain LIMIT order by calling modify_order
+        with order_type="L" and trigger_price="0".  Atomic — no window without
+        broker-side protection.  Raises KotakError if the API does not support it.
+        """
+        client = self._get_client()
+        try:
+            resp = client.modify_order(
+                order_id=kotak_order_id,
+                price=str(_round_to_tick(limit_price)),
+                order_type="L",
+                quantity=str(qty),
+                validity="DAY",
+                trigger_price="0",
+                disclosed_quantity="0",
+            )
+            self._check_api_response(resp)
+        except KotakError:
+            raise
+        except Exception as exc:
+            raise KotakError(str(exc)) from exc
+
     def cancel_order(self, kotak_order_id: str) -> None:
         """Cancel an open order on Kotak."""
         client = self._get_client()

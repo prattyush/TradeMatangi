@@ -39,6 +39,7 @@ class MockSession:
     instrument_type: str = "equity"
     session_capital: float = 150_000.0
     strategy_interval_secs: int = INTERVAL
+    brokerage_per_order: float = 0.0
 
 
 def _session():
@@ -190,53 +191,143 @@ class TestBreakEven:
             timestamp=T0, quantity=10, symbol=SYMBOL, user_id=USER_ID,
         )
 
-    def test_long_places_target_sl_at_breakeven_when_no_exit_order(self):
+    def test_long_places_target_sl_at_breakeven_plus_buffer_when_no_exit_order(self):
+        """shift_sl mode: places TARGET at avg_entry + buffer once price passes trigger threshold."""
         session = _session()
         self._add_long_position()  # avg_entry = 100.0, qty = 10
+        # expected: main_buffer(100) = ceil(max(0.15, 0.25)) = 0.25
+        # new_sl_price = 100.25; trigger_buffer(100) = ceil(0.30) = 0.30
+        # shift_sl trigger threshold: 100.25 + 0.30 = 100.55
 
-        svc.start_strategy(session, "BreakEven", None, {})
+        svc.start_strategy(session, "BreakEven", None, {"breakeven_mode": "shift_sl"})
 
-        # Price below entry — no order
-        svc.on_tick(session, _tick(T0, c=95.0), None)
+        # Price below trigger threshold — no order
+        svc.on_tick(session, _tick(T0, c=100.0), None)
         assert len(order_service.get_open_orders(SESSION)) == 0
 
-        # Price at entry — no existing exit order → place SELL TARGET at avg_entry
-        svc.on_tick(session, _tick(T0 + 1, c=100.0), None)
+        # Price at trigger threshold → place SELL TARGET at new_sl_price
+        svc.on_tick(session, _tick(T0 + 1, c=100.55), None)
         orders = order_service.get_open_orders(SESSION)
         assert len(orders) == 1
         assert orders[0].side == TradeSide.SELL
         assert orders[0].order_type == OrderType.TARGET
-        assert orders[0].trigger_price == pytest.approx(100.0)
+        assert orders[0].trigger_price == pytest.approx(100.25)
 
-    def test_long_moves_existing_exit_order_to_breakeven(self):
+    def test_long_moves_existing_exit_order_to_breakeven_plus_buffer(self):
+        """shift_sl mode: moves existing SL to avg_entry + buffer when threshold is reached."""
         session = _session()
         self._add_long_position()  # avg_entry = 100.0, qty = 10
 
-        # User has an existing SELL STOPLOSS at 80 (quantity matches position)
         existing_sl = order_service.place_order(
             session_id=SESSION, symbol=SYMBOL, side=TradeSide.SELL,
             order_type=OrderType.STOPLOSS, quantity=10, created_at=T0,
             trading_date=DATE, trigger_price=80.0, is_stoploss=True, user_id=USER_ID,
         )
 
-        svc.start_strategy(session, "BreakEven", None, {})
+        svc.start_strategy(session, "BreakEven", None, {"breakeven_mode": "shift_sl"})
 
-        # Price at avg_entry — should move existing SL to 100.0
-        svc.on_tick(session, _tick(T0 + 1, c=100.0), None)
+        # Price at trigger threshold — should move existing SL to new_sl_price=100.25
+        svc.on_tick(session, _tick(T0 + 1, c=100.6), None)
 
         orders = order_service.get_open_orders(SESSION)
-        assert len(orders) == 1  # no new order created
+        assert len(orders) == 1
         assert orders[0].order_id == existing_sl.order_id
-        assert orders[0].trigger_price == pytest.approx(100.0)
+        assert orders[0].trigger_price == pytest.approx(100.25)
 
     def test_strategy_marked_completed_after_exit(self):
         session = _session()
         self._add_long_position()
 
-        svc.start_strategy(session, "BreakEven", None, {})
-        svc.on_tick(session, _tick(T0, c=100.0), None)  # exits
+        svc.start_strategy(session, "BreakEven", None, {"breakeven_mode": "shift_sl"})
+        svc.on_tick(session, _tick(T0, c=100.6), None)  # above trigger threshold → exits
 
         # Strategy should have been pruned from registry
+        assert svc.list_running(SESSION) == []
+
+    def _add_short_position(self):
+        from app.services.trading import record_trade
+        record_trade(
+            session_id=SESSION, side=TradeSide.SELL, price=100.0,
+            timestamp=T0, quantity=10, symbol=SYMBOL, user_id=USER_ID,
+        )
+
+    def test_breakeven_shift_sl_with_commission_long(self):
+        """Commission inflates true_breakeven, raising new_sl_price and trigger threshold."""
+        session = MockSession(brokerage_per_order=10.0)  # 2×10/10 = 2.0 per share
+        self._add_long_position()  # avg_entry=100.0, qty=10
+        # true_breakeven = 102.0
+        # main_buffer(102.0) = ceil(max(0.15, 0.255)) = ceil(5.1)*0.05 = 0.30
+        # new_sl_price = ceil(102.30) = 102.30
+        # trigger_buffer(102.0) = ceil(0.306/0.05)*0.05 = ceil(6.12)*0.05 = 0.35
+        # shift_sl threshold = 102.30 + 0.35 = 102.65
+
+        svc.start_strategy(session, "BreakEven", None, {"breakeven_mode": "shift_sl"})
+
+        svc.on_tick(session, _tick(T0, c=102.64), None)
+        assert len(order_service.get_open_orders(SESSION)) == 0
+
+        svc.on_tick(session, _tick(T0 + 1, c=102.65), None)
+        orders = order_service.get_open_orders(SESSION)
+        assert len(orders) == 1
+        assert orders[0].side == TradeSide.SELL
+        assert orders[0].order_type == OrderType.TARGET
+        assert orders[0].trigger_price == pytest.approx(102.30)
+
+    def test_breakeven_shift_sl_short(self):
+        """shift_sl SHORT: trigger when price falls to new_sl_price - trigger_buffer."""
+        session = _session()
+        self._add_short_position()  # avg_entry=100.0, qty=10 SHORT
+        # true_breakeven=100.0; new_sl_price=100.25; trigger_buffer=0.30
+        # threshold: price <= 100.25 - 0.30 = 99.95
+
+        svc.start_strategy(session, "BreakEven", None, {"breakeven_mode": "shift_sl"})
+
+        svc.on_tick(session, _tick(T0, c=99.96), None)
+        assert len(order_service.get_open_orders(SESSION)) == 0
+
+        svc.on_tick(session, _tick(T0 + 1, c=99.95), None)
+        orders = order_service.get_open_orders(SESSION)
+        assert len(orders) == 1
+        assert orders[0].side == TradeSide.BUY
+        assert orders[0].order_type == OrderType.TARGET
+        assert orders[0].trigger_price == pytest.approx(100.25)
+
+    def test_breakeven_limit_order_mode_long(self):
+        """limit_order mode LONG: triggers at new_sl_price, places LIMIT (not TARGET)."""
+        session = _session()
+        self._add_long_position()  # avg_entry=100.0, qty=10
+        # new_sl_price=100.25 is the trigger threshold in limit_order mode
+
+        svc.start_strategy(session, "BreakEven", None, {"breakeven_mode": "limit_order"})
+
+        svc.on_tick(session, _tick(T0, c=100.24), None)
+        assert len(order_service.get_open_orders(SESSION)) == 0
+
+        svc.on_tick(session, _tick(T0 + 1, c=100.25), None)
+        orders = order_service.get_open_orders(SESSION)
+        assert len(orders) == 1
+        assert orders[0].side == TradeSide.SELL
+        assert orders[0].order_type == OrderType.LIMIT
+        assert orders[0].limit_price == pytest.approx(100.25)
+        assert svc.list_running(SESSION) == []
+
+    def test_breakeven_limit_order_mode_short(self):
+        """limit_order mode SHORT: triggers at true_breakeven, places BUY LIMIT at new_sl_price."""
+        session = _session()
+        self._add_short_position()  # avg_entry=100.0, qty=10 SHORT
+        # true_breakeven=100.0 is trigger; limit placed at new_sl_price=100.25
+
+        svc.start_strategy(session, "BreakEven", None, {"breakeven_mode": "limit_order"})
+
+        svc.on_tick(session, _tick(T0, c=100.1), None)
+        assert len(order_service.get_open_orders(SESSION)) == 0
+
+        svc.on_tick(session, _tick(T0 + 1, c=100.0), None)
+        orders = order_service.get_open_orders(SESSION)
+        assert len(orders) == 1
+        assert orders[0].side == TradeSide.BUY
+        assert orders[0].order_type == OrderType.LIMIT
+        assert orders[0].limit_price == pytest.approx(100.25)
         assert svc.list_running(SESSION) == []
 
     def test_flat_position_completes_strategy(self):
@@ -248,6 +339,151 @@ class TestBreakEven:
         # Strategy completed, no orders placed
         assert svc.list_running(SESSION) == []
         assert order_service.get_open_orders(SESSION) == []
+
+
+# ── TargetProfit ──────────────────────────────────────────────────────────────
+
+class TestTargetProfit:
+    def _add_long_position(self, qty=10, avg_price=100.0):
+        from app.services.trading import record_trade
+        record_trade(
+            session_id=SESSION, side=TradeSide.BUY, price=avg_price,
+            timestamp=T0, quantity=qty, symbol=SYMBOL, user_id=USER_ID,
+        )
+
+    def _add_short_position(self, qty=10, avg_price=100.0):
+        from app.services.trading import record_trade
+        record_trade(
+            session_id=SESSION, side=TradeSide.SELL, price=avg_price,
+            timestamp=T0, quantity=qty, symbol=SYMBOL, user_id=USER_ID,
+        )
+
+    def test_long_absolute_price(self):
+        """LONG: triggers at target+buffer_ticks, places SELL LIMIT at target_price."""
+        session = _session()
+        self._add_long_position(qty=10, avg_price=100.0)
+        # target_price=105.0; tick_buffer=3×0.05=0.15; threshold=105.15
+
+        svc.start_strategy(session, "TargetProfit", None, {
+            "target_profit_value": 105.0,
+            "target_profit_is_pct": False,
+            "target_profit_buffer_ticks": 3,
+        })
+
+        svc.on_tick(session, _tick(T0, c=105.14), None)
+        assert len(order_service.get_open_orders(SESSION)) == 0
+
+        svc.on_tick(session, _tick(T0 + 1, c=105.15), None)
+        orders = order_service.get_open_orders(SESSION)
+        assert len(orders) == 1
+        assert orders[0].side == TradeSide.SELL
+        assert orders[0].order_type == OrderType.LIMIT
+        assert orders[0].limit_price == pytest.approx(105.0)
+        assert svc.list_running(SESSION) == []
+
+    def test_long_pct_of_capital(self):
+        """% mode: target_price computed from session_capital."""
+        session = _session()  # session_capital=150_000
+        self._add_long_position(qty=100, avg_price=100.0)
+        # target_pnl = (2.0/100)*150_000 = 3000; target_price = ceil(100+30) = 130.0
+        # threshold = 130.0 + 3×0.05 = 130.15
+
+        svc.start_strategy(session, "TargetProfit", None, {
+            "target_profit_value": 2.0,
+            "target_profit_is_pct": True,
+            "target_profit_buffer_ticks": 3,
+        })
+
+        svc.on_tick(session, _tick(T0, c=130.14), None)
+        assert len(order_service.get_open_orders(SESSION)) == 0
+
+        svc.on_tick(session, _tick(T0 + 1, c=130.15), None)
+        orders = order_service.get_open_orders(SESSION)
+        assert len(orders) == 1
+        assert orders[0].side == TradeSide.SELL
+        assert orders[0].order_type == OrderType.LIMIT
+        assert orders[0].limit_price == pytest.approx(130.0)
+
+    def test_short_absolute_price(self):
+        """SHORT: triggers at target-buffer_ticks, places BUY LIMIT at target_price."""
+        session = _session()
+        self._add_short_position(qty=10, avg_price=100.0)
+        # target_price=95.0; tick_buffer=0.15; threshold=95.0-0.15=94.85
+
+        svc.start_strategy(session, "TargetProfit", None, {
+            "target_profit_value": 95.0,
+            "target_profit_is_pct": False,
+            "target_profit_buffer_ticks": 3,
+        })
+
+        svc.on_tick(session, _tick(T0, c=94.86), None)
+        assert len(order_service.get_open_orders(SESSION)) == 0
+
+        svc.on_tick(session, _tick(T0 + 1, c=94.85), None)
+        orders = order_service.get_open_orders(SESSION)
+        assert len(orders) == 1
+        assert orders[0].side == TradeSide.BUY
+        assert orders[0].order_type == OrderType.LIMIT
+        assert orders[0].limit_price == pytest.approx(95.0)
+        assert svc.list_running(SESSION) == []
+
+    def test_no_existing_sl_creates_limit_directly(self):
+        """No prior exit order — places new LIMIT order immediately when target is hit."""
+        session = _session()
+        self._add_long_position(qty=10, avg_price=100.0)
+
+        svc.start_strategy(session, "TargetProfit", None, {
+            "target_profit_value": 110.0,
+            "target_profit_is_pct": False,
+            "target_profit_buffer_ticks": 3,
+        })
+
+        svc.on_tick(session, _tick(T0, c=110.15), None)
+        orders = order_service.get_open_orders(SESSION)
+        assert len(orders) == 1
+        assert orders[0].order_type == OrderType.LIMIT
+        assert orders[0].limit_price == pytest.approx(110.0)
+        assert svc.list_running(SESSION) == []
+
+    def test_converts_existing_sl_to_limit(self):
+        """Existing TARGET exit order is cancelled and replaced by LIMIT at target_price."""
+        session = _session()
+        self._add_long_position(qty=10, avg_price=100.0)
+
+        existing_sl = order_service.place_order(
+            session_id=SESSION, symbol=SYMBOL, side=TradeSide.SELL,
+            order_type=OrderType.TARGET, quantity=10, created_at=T0,
+            trading_date=DATE, trigger_price=90.0, is_stoploss=True, user_id=USER_ID,
+        )
+
+        svc.start_strategy(session, "TargetProfit", None, {
+            "target_profit_value": 110.0,
+            "target_profit_is_pct": False,
+            "target_profit_buffer_ticks": 3,
+        })
+
+        svc.on_tick(session, _tick(T0, c=110.15), None)
+        open_orders = order_service.get_open_orders(SESSION)
+        assert len(open_orders) == 1
+        assert open_orders[0].order_type == OrderType.LIMIT
+        assert open_orders[0].limit_price == pytest.approx(110.0)
+
+        all_orders = order_service.get_all_orders(SESSION)
+        old = next(o for o in all_orders if o.order_id == existing_sl.order_id)
+        assert old.status == OrderStatus.CANCELLED
+        assert svc.list_running(SESSION) == []
+
+
+def test_ceil_tick():
+    """_ceil_tick always rounds UP to the nearest ₹0.05 tick."""
+    from app.services.strategy_service import _ceil_tick
+    assert _ceil_tick(100.0) == 100.0
+    assert _ceil_tick(100.01) == pytest.approx(100.05)
+    assert _ceil_tick(100.049) == pytest.approx(100.05)
+    assert _ceil_tick(100.05) == pytest.approx(100.05)
+    assert _ceil_tick(100.051) == pytest.approx(100.10)
+    assert _ceil_tick(0.0) == 0.0
+    assert _ceil_tick(0.001) == pytest.approx(0.05)
 
 
 # ── AggressiveStoploss ────────────────────────────────────────────────────────

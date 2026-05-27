@@ -91,7 +91,7 @@ export interface StrategyResponse {
 
 export interface StartStrategyRequest {
   session_id: string
-  strategy_type: 'AutoStop' | 'BreakEven' | 'AggressiveStoploss'
+  strategy_type: 'AutoStop' | 'BreakEven' | 'AggressiveStoploss' | 'TargetProfit'
   right?: 'CE' | 'PE' | null
   quantity?: number
   funds_ratio_pct?: number
@@ -99,6 +99,10 @@ export interface StartStrategyRequest {
   autostop_trigger_type?: 'bar' | 'deviation'
   autostop_deviation_pct?: number
   only_in_profit?: boolean
+  target_profit_value?: number
+  target_profit_is_pct?: boolean
+  target_profit_buffer_ticks?: number
+  breakeven_mode?: 'shift_sl' | 'limit_order'
 }
 
 export interface SimulationStartResponse {
