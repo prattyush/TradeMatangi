@@ -17,6 +17,11 @@ const STRATEGY_INTERVAL_KEY = 'strategyIntervalSecs'
 const AUTOSTOP_TRIGGER_TYPE_KEY = 'autostopTriggerType'
 const AUTOSTOP_DEVIATION_PCT_KEY = 'autostopDeviationPct'
 const HISTORICAL_DAYS_KEY = 'historicalDays'
+const PNL_PCT_MODE_KEY = 'pnlPctMode'
+
+export function loadPnlPctMode(): boolean {
+  return localStorage.getItem(PNL_PCT_MODE_KEY) === 'true'
+}
 
 export function loadFundsRatioMode(): boolean {
   return localStorage.getItem(FUNDS_RATIO_MODE_KEY) === 'true'
@@ -70,19 +75,22 @@ interface Props {
   date: string
   isAdmin?: boolean
   isRealTradingUser?: boolean
+  sessionActive?: boolean
   onWalletReset: () => void
   onFundsRatioChange: (mode: boolean, ratios: FundsRatios) => void
   onTargetDeviationChange: (pct: number) => void  // fraction e.g. 0.01
   onBrokerageChange: (brokerage: number) => void  // rupees per order
   onStrategySettingsChange: (intervalSecs: number, triggerType: 'bar' | 'deviation', deviationPct: number) => void
   onHistoricalDaysChange?: (days: number) => void
+  onPnlPctModeChange?: (enabled: boolean) => void
 }
 
-export default function SettingsModal({ date, isAdmin, isRealTradingUser, onWalletReset, onFundsRatioChange, onTargetDeviationChange, onBrokerageChange, onStrategySettingsChange, onHistoricalDaysChange }: Props) {
+export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessionActive, onWalletReset, onFundsRatioChange, onTargetDeviationChange, onBrokerageChange, onStrategySettingsChange, onHistoricalDaysChange, onPnlPctModeChange }: Props) {
   const [open, setOpen] = useState(false)
   const [customAmount, setCustomAmount] = useState('')
   const [status, setStatus] = useState<string | null>(null)
 
+  const [pnlPctMode, setPnlPctMode] = useState(loadPnlPctMode)
   const [fundsRatioMode, setFundsRatioMode] = useState(loadFundsRatioMode)
   const [ratios, setRatios] = useState<FundsRatios>(loadFundsRatios)
   const [ratioInputs, setRatioInputs] = useState<{ l: string; m: string; h: string }>(() => {
@@ -168,6 +176,13 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, onWall
   }, [fundsRatioMode, ratios])
 
   const toggleMode = () => setFundsRatioMode(m => !m)
+
+  const togglePnlPctMode = () => {
+    const next = !pnlPctMode
+    setPnlPctMode(next)
+    localStorage.setItem(PNL_PCT_MODE_KEY, String(next))
+    onPnlPctModeChange?.(next)
+  }
 
   const saveRatios = () => {
     const l = parseFloat(ratioInputs.l)
@@ -512,6 +527,30 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, onWall
               </div>
             </div>
 
+            {/* P&L Display Mode */}
+            <div style={{ borderTop: '1px solid #21262d', paddingTop: 16 }}>
+              <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 10, fontWeight: 600 }}>P&L DISPLAY MODE</div>
+              <div style={{ display: 'flex', gap: 0, borderRadius: 6, overflow: 'hidden', border: '1px solid #30363d', width: 'fit-content' }}>
+                {([{ label: '₹ Monetary', value: false }, { label: '% of Capital', value: true }] as const).map(opt => (
+                  <button
+                    key={String(opt.value)}
+                    onClick={() => { if (pnlPctMode !== opt.value) togglePnlPctMode() }}
+                    style={{
+                      padding: '5px 16px', fontSize: 12, fontWeight: 600,
+                      border: 'none', cursor: 'pointer',
+                      background: pnlPctMode === opt.value ? '#1f3a5f' : '#161b22',
+                      color: pnlPctMode === opt.value ? '#79c0ff' : '#484f58',
+                    }}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+              <div style={{ fontSize: 11, color: '#484f58', marginTop: 6 }}>
+                Pos P&L and Session P&L show % of session capital when enabled
+              </div>
+            </div>
+
             {/* Historical Days */}
             <div style={{ borderTop: '1px solid #21262d', paddingTop: 16 }}>
               <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 10, fontWeight: 600 }}>
@@ -638,44 +677,51 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, onWall
             {/* Wallet */}
             <div style={{ borderTop: '1px solid #21262d', paddingTop: 16 }}>
               <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 10, fontWeight: 600 }}>WALLET</div>
-              <button
-                onClick={() => reset()}
-                style={{
-                  width: '100%', padding: '8px 12px', background: '#21262d',
-                  border: '1px solid #30363d', borderRadius: 6, color: '#e6edf3',
-                  cursor: 'pointer', fontSize: 13, marginBottom: 10,
-                }}
-              >
-                Reset to ₹1,50,000
-              </button>
-
-              <div style={{ display: 'flex', gap: 8 }}>
-                <input
-                  type="number"
-                  value={customAmount}
-                  onChange={e => setCustomAmount(e.target.value)}
-                  placeholder="Custom amount"
-                  style={{
-                    flex: 1, padding: '6px 10px', background: '#0d1117',
-                    border: '1px solid #30363d', borderRadius: 6,
-                    color: '#e6edf3', fontSize: 13,
-                  }}
-                />
+              <div style={{ opacity: sessionActive ? 0.4 : 1, pointerEvents: sessionActive ? 'none' : 'auto' }}>
                 <button
-                  onClick={() => {
-                    const amt = parseFloat(customAmount)
-                    if (amt > 0) reset(amt)
-                  }}
-                  disabled={!customAmount || parseFloat(customAmount) <= 0}
+                  onClick={() => reset()}
                   style={{
-                    padding: '6px 12px', background: '#1f6feb',
-                    border: 'none', borderRadius: 6, color: '#fff',
-                    cursor: 'pointer', fontSize: 13,
+                    width: '100%', padding: '8px 12px', background: '#21262d',
+                    border: '1px solid #30363d', borderRadius: 6, color: '#e6edf3',
+                    cursor: 'pointer', fontSize: 13, marginBottom: 10,
                   }}
                 >
-                  Set
+                  Reset to ₹1,50,000
                 </button>
+
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <input
+                    type="number"
+                    value={customAmount}
+                    onChange={e => setCustomAmount(e.target.value)}
+                    placeholder="Custom amount"
+                    style={{
+                      flex: 1, padding: '6px 10px', background: '#0d1117',
+                      border: '1px solid #30363d', borderRadius: 6,
+                      color: '#e6edf3', fontSize: 13,
+                    }}
+                  />
+                  <button
+                    onClick={() => {
+                      const amt = parseFloat(customAmount)
+                      if (amt > 0) reset(amt)
+                    }}
+                    disabled={!customAmount || parseFloat(customAmount) <= 0}
+                    style={{
+                      padding: '6px 12px', background: '#1f6feb',
+                      border: 'none', borderRadius: 6, color: '#fff',
+                      cursor: 'pointer', fontSize: 13,
+                    }}
+                  >
+                    Set
+                  </button>
+                </div>
               </div>
+              {sessionActive && (
+                <div style={{ fontSize: 11, color: '#8b949e', marginTop: 8 }}>
+                  Wallet cannot be changed during an active session
+                </div>
+              )}
             </div>
 
             {/* Broker connection (for real trading users) */}

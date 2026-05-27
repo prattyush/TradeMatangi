@@ -10,16 +10,27 @@ interface Props {
   // Options mode extras
   activeRight?: 'CE' | 'PE' | null   // null = equity pane active (no quick-trade)
   activeLabel?: string               // e.g. "NIFTY CE 24000"
+  // P&L display mode
+  pnlPctMode?: boolean
+  sessionCapital?: number
 }
 
 function fmt(n: number) { return n.toFixed(2) }
 
 export default function TradePanel({
   sessionState, currentPrice, position, pnl, sessionPnl,
-  activeRight = null, activeLabel,
+  activeRight = null, activeLabel, pnlPctMode, sessionCapital,
 }: Props) {
   const pnlColor = pnl > 0 ? '#26a641' : pnl < 0 ? '#f85149' : '#8b949e'
   const sessionPnlColor = (sessionPnl ?? 0) > 0 ? '#26a641' : (sessionPnl ?? 0) < 0 ? '#f85149' : '#8b949e'
+
+  const fmtPnl = (val: number) => {
+    if (pnlPctMode && sessionCapital && sessionCapital > 0) {
+      const pct = (val / sessionCapital) * 100
+      return `${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%`
+    }
+    return `${val >= 0 ? '+' : ''}${fmt(val)}`
+  }
   const sideColor = position.side === 'LONG' ? '#26a641' : position.side === 'SHORT' ? '#f85149' : '#8b949e'
   const active = sessionState === 'running' || sessionState === 'paused'
 
@@ -60,14 +71,14 @@ export default function TradePanel({
         <div style={{ fontSize: 13, color: '#8b949e' }}>
           Pos P&L&nbsp;
           <span style={{ fontWeight: 700, color: pnlColor, fontVariantNumeric: 'tabular-nums' }}>
-            {pnl >= 0 ? '+' : ''}{fmt(pnl)}
+            {fmtPnl(pnl)}
           </span>
         </div>
         {active && sessionPnl !== undefined && (
           <div style={{ fontSize: 13, color: '#8b949e' }}>
             Session P&L&nbsp;
             <span style={{ fontWeight: 700, color: sessionPnlColor, fontVariantNumeric: 'tabular-nums' }}>
-              {sessionPnl >= 0 ? '+' : ''}{fmt(sessionPnl)}
+              {fmtPnl(sessionPnl)}
             </span>
           </div>
         )}
