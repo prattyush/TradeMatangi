@@ -594,7 +594,7 @@ export default function OrderPanel({
             placeholder={currentPrice > 0 ? currentPrice.toFixed(2) : '0.00'}
             disabled={!isActive}
             style={{
-              flex: 1, padding: '5px 8px', background: '#0d1117',
+              flex: 1, minWidth: 0, padding: '5px 8px', background: '#0d1117',
               border: '1px solid #30363d', borderRadius: 6,
               color: '#e6edf3', fontSize: 13, boxSizing: 'border-box',
             }}
@@ -610,6 +610,18 @@ export default function OrderPanel({
               cursor: isActive ? 'pointer' : 'not-allowed', fontSize: 11,
             }}
           >⊕</button>
+          <button
+            onClick={() => currentPrice > 0 && setPrice(currentPrice.toFixed(2))}
+            disabled={!isActive || currentPrice <= 0}
+            title="Use last traded price"
+            style={{
+              padding: '4px 7px', background: '#21262d',
+              border: '1px solid #30363d', borderRadius: 6,
+              color: isActive && currentPrice > 0 ? '#8b949e' : '#484f58',
+              cursor: isActive && currentPrice > 0 ? 'pointer' : 'not-allowed',
+              fontSize: 10, whiteSpace: 'nowrap',
+            }}
+          >LTP</button>
           </div>
           {orderType === 'TARGET' && (
             <div style={{ fontSize: 10, color: '#484f58', marginTop: 2 }}>
@@ -787,7 +799,7 @@ export default function OrderPanel({
                           onChange={e => setEditPrice(e.target.value)}
                           autoFocus
                           style={{
-                            flex: 1, padding: '4px 6px', background: '#0d1117',
+                            flex: 1, minWidth: 0, padding: '4px 6px', background: '#0d1117',
                             border: '1px solid #388bfd', borderRadius: 4,
                             color: '#e6edf3', fontSize: 12,
                           }}
@@ -803,6 +815,18 @@ export default function OrderPanel({
                         >
                           ⊕
                         </button>
+                        <button
+                          onClick={() => currentPrice > 0 && setEditPrice(currentPrice.toFixed(2))}
+                          disabled={currentPrice <= 0}
+                          title="Use last traded price"
+                          style={{
+                            padding: '4px 7px', background: '#21262d',
+                            border: '1px solid #30363d', borderRadius: 4,
+                            color: currentPrice > 0 ? '#8b949e' : '#484f58',
+                            cursor: currentPrice > 0 ? 'pointer' : 'not-allowed',
+                            fontSize: 10, whiteSpace: 'nowrap',
+                          }}
+                        >LTP</button>
                       </div>
                       {order.order_type === 'TARGET' && editPrice && !isNaN(parseFloat(editPrice)) && (
                         <div style={{ fontSize: 10, color: '#484f58' }}>
