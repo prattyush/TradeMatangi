@@ -142,11 +142,6 @@ export default function LoginScreen({ onLogin }: Props) {
           )}
         </div>
 
-        {mode === 'login' && (
-          <div style={{ marginTop: 12, textAlign: 'center', fontSize: 12, color: '#30363d' }}>
-            Default: admin@tradematangi.com / admin123
-          </div>
-        )}
       </div>
     </div>
   )

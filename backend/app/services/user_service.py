@@ -118,6 +118,28 @@ def login_user(email: str, password: str) -> dict | None:
     }
 
 
+def change_password(user_id: str, old_password: str, new_password: str) -> bool:
+    """
+    Update password after verifying old_password. Returns False if user not found
+    or old_password is wrong.
+    """
+    user = get_user_info(user_id)
+    if not user or not _check_password(old_password, user.get("password_hash", "")):
+        return False
+    try:
+        from app.services.db import get_dynamodb_resource
+        table = get_dynamodb_resource().Table("Users")
+        table.update_item(
+            Key={"user_id": user_id},
+            UpdateExpression="SET password_hash = :h",
+            ExpressionAttributeValues={":h": _hash_password(new_password)},
+        )
+    except Exception:
+        logger.exception("DynamoDB update failed when changing password for %s", user_id)
+        raise RuntimeError("Could not update password")
+    return True
+
+
 def get_user_id() -> str:
     """Return the fixed user UUID. Kept for backward compat."""
     return FIXED_USER_ID

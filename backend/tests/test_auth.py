@@ -70,3 +70,43 @@ class TestLogin:
             resp = client.post("/api/auth/login",
                                json={"email": "nobody@example.com", "password": "pass"})
         assert resp.status_code == 401
+
+
+# ── Change Password ───────────────────────────────────────────────────────────
+
+_CHANGE_URL = "/api/auth/change-password"
+_USER_ID = "test-user-001"
+_HEADERS = {"X-User-Id": _USER_ID}
+
+
+class TestChangePassword:
+    def test_success(self):
+        user = {"user_id": _USER_ID, "email": "u@example.com", "password_hash": _hashed("oldpass1")}
+        mock_table = MagicMock()
+        with patch("app.services.user_service.get_user_info", return_value=user), \
+             patch("app.services.db.get_dynamodb_resource") as mock_db:
+            mock_db.return_value.Table.return_value = mock_table
+            resp = client.post(_CHANGE_URL,
+                               json={"old_password": "oldpass1", "new_password": "newpass1"},
+                               headers=_HEADERS)
+        assert resp.status_code == 204
+        mock_table.update_item.assert_called_once()
+
+    def test_wrong_old_password_returns_401(self):
+        user = {"user_id": _USER_ID, "email": "u@example.com", "password_hash": _hashed("correct")}
+        with patch("app.services.user_service.get_user_info", return_value=user):
+            resp = client.post(_CHANGE_URL,
+                               json={"old_password": "wrong", "new_password": "newpass1"},
+                               headers=_HEADERS)
+        assert resp.status_code == 401
+
+    def test_short_new_password_returns_400(self):
+        resp = client.post(_CHANGE_URL,
+                           json={"old_password": "oldpass1", "new_password": "abc"},
+                           headers=_HEADERS)
+        assert resp.status_code == 400
+
+    def test_unauthenticated_returns_error(self):
+        resp = client.post(_CHANGE_URL,
+                           json={"old_password": "old", "new_password": "newpass1"})
+        assert resp.status_code in (401, 422)
