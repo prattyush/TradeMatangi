@@ -180,7 +180,7 @@ export default function Chart({
       layout: { background: { color: '#0d1117' }, textColor: '#e6edf3' },
       grid: { vertLines: { color: '#1e2732' }, horzLines: { color: '#1e2732' } },
       timeScale: { timeVisible: true, secondsVisible: false, borderColor: '#30363d' },
-      crosshair: { mode: 1 },
+      crosshair: { mode: 0 },
     })
     const series = chart.addCandlestickSeries({
       upColor: '#26a641', downColor: '#f85149',
