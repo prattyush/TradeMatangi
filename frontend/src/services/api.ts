@@ -515,6 +515,18 @@ const api = {
     return res.json()
   },
 
+  async changePassword(oldPassword: string, newPassword: string): Promise<void> {
+    const res = await fetch(`${BACKEND_URL}/api/auth/change-password`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ..._authHeaders() },
+      body: JSON.stringify({ old_password: oldPassword, new_password: newPassword }),
+    })
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}))
+      throw new Error(data.detail ?? `Failed to change password: ${res.status}`)
+    }
+  },
+
   async getMe(): Promise<AuthResponse> {
     const res = await fetch(`${BACKEND_URL}/api/auth/me`, {
       headers: _authHeaders(),

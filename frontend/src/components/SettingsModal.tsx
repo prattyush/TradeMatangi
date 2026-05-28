@@ -168,7 +168,19 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
   const [kotakAuthenticated, setKotakAuthenticated] = useState<boolean | null>(null)
   const [showKotakTOTP, setShowKotakTOTP] = useState(false)
 
+  // Change password
+  const [pwOld, setPwOld] = useState('')
+  const [pwNew, setPwNew] = useState('')
+  const [pwConfirm, setPwConfirm] = useState('')
+  const [pwVisible, setPwVisible] = useState(false)
+  const [pwStatus, setPwStatus] = useState<{ msg: string; ok: boolean } | null>(null)
+  const [pwLoading, setPwLoading] = useState(false)
+
   useEffect(() => {
+    if (!open) {
+      setPwOld(''); setPwNew(''); setPwConfirm(''); setPwVisible(false); setPwStatus(null)
+      return
+    }
     // Sync from backend on open
     if (open) {
       api.getUserSettings().then(s => {
@@ -249,6 +261,28 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
     onStrategySettingsChange(stratIntervalSecs, autostopTriggerType, devPct, breakevenMode, targetProfitBufferTicks, aggrSlOnlyInProfit)
     setStatus('Strategy settings saved')
     setTimeout(() => setStatus(null), 2000)
+  }
+
+  const handleChangePassword = async () => {
+    setPwStatus(null)
+    if (pwNew !== pwConfirm) {
+      setPwStatus({ msg: 'New passwords do not match', ok: false })
+      return
+    }
+    if (pwNew.length < 6) {
+      setPwStatus({ msg: 'New password must be at least 6 characters', ok: false })
+      return
+    }
+    setPwLoading(true)
+    try {
+      await api.changePassword(pwOld, pwNew)
+      setPwOld(''); setPwNew(''); setPwConfirm('')
+      setPwStatus({ msg: 'Password changed successfully', ok: true })
+    } catch (e: unknown) {
+      setPwStatus({ msg: e instanceof Error ? e.message : 'Failed to change password', ok: false })
+    } finally {
+      setPwLoading(false)
+    }
   }
 
   const saveBrokerage = () => {
@@ -710,6 +744,81 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
             {status && (
               <div style={{ fontSize: 12, color: '#3fb950' }}>{status}</div>
             )}
+
+            {/* Change Password */}
+            <div style={{ borderTop: '1px solid #21262d', paddingTop: 16 }}>
+              <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 10, fontWeight: 600 }}>CHANGE PASSWORD</div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                <div>
+                  <div style={{ fontSize: 11, color: '#8b949e', marginBottom: 3 }}>Current password</div>
+                  <input
+                    type="password"
+                    value={pwOld}
+                    onChange={e => setPwOld(e.target.value)}
+                    placeholder="Current password"
+                    style={{
+                      width: '100%', padding: '6px 10px', background: '#0d1117',
+                      border: '1px solid #30363d', borderRadius: 6,
+                      color: '#e6edf3', fontSize: 13, boxSizing: 'border-box',
+                    }}
+                  />
+                </div>
+                <div>
+                  <div style={{ fontSize: 11, color: '#8b949e', marginBottom: 3 }}>New password</div>
+                  <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                    <input
+                      type={pwVisible ? 'text' : 'password'}
+                      value={pwNew}
+                      onChange={e => setPwNew(e.target.value)}
+                      placeholder="New password"
+                      style={{
+                        flex: 1, padding: '6px 10px', background: '#0d1117',
+                        border: '1px solid #30363d', borderRadius: 6,
+                        color: '#e6edf3', fontSize: 13,
+                      }}
+                    />
+                    <button
+                      onClick={() => setPwVisible(v => !v)}
+                      style={{
+                        padding: '6px 10px', background: '#21262d', border: '1px solid #30363d',
+                        borderRadius: 6, color: '#8b949e', cursor: 'pointer', fontSize: 12,
+                        flexShrink: 0,
+                      }}
+                    >{pwVisible ? 'Hide' : 'Show'}</button>
+                  </div>
+                </div>
+                <div>
+                  <div style={{ fontSize: 11, color: '#8b949e', marginBottom: 3 }}>Confirm new password</div>
+                  <input
+                    type="password"
+                    value={pwConfirm}
+                    onChange={e => setPwConfirm(e.target.value)}
+                    placeholder="Confirm new password"
+                    style={{
+                      width: '100%', padding: '6px 10px', background: '#0d1117',
+                      border: '1px solid #30363d', borderRadius: 6,
+                      color: '#e6edf3', fontSize: 13, boxSizing: 'border-box',
+                    }}
+                  />
+                </div>
+                <button
+                  onClick={handleChangePassword}
+                  disabled={pwLoading || !pwOld || !pwNew || !pwConfirm}
+                  style={{
+                    padding: '6px 14px', background: pwLoading || !pwOld || !pwNew || !pwConfirm ? '#21262d' : '#1f6feb',
+                    border: 'none', borderRadius: 6,
+                    color: pwLoading || !pwOld || !pwNew || !pwConfirm ? '#484f58' : '#fff',
+                    cursor: pwLoading || !pwOld || !pwNew || !pwConfirm ? 'not-allowed' : 'pointer',
+                    fontSize: 12, fontWeight: 600, alignSelf: 'flex-start',
+                  }}
+                >{pwLoading ? 'Changing…' : 'Change Password'}</button>
+                {pwStatus && (
+                  <div style={{ fontSize: 12, color: pwStatus.ok ? '#3fb950' : '#f85149' }}>
+                    {pwStatus.msg}
+                  </div>
+                )}
+              </div>
+            </div>
 
             </> /* end General tab */}
 
