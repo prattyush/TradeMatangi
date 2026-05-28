@@ -53,7 +53,26 @@ interface Props {
   sessionCapital?: number
 }
 
-type DrawMode = 'none' | 'hline' | 'trendline'
+type DrawMode = 'none' | 'hline' | 'trendline' | 'fibretracement' | 'channel'
+
+type Drawing =
+  | { type: 'hline'; ref: IPriceLine }
+  | { type: 'trendline' | 'fibretracement' | 'channel'; refs: ISeriesApi<'Line'>[] }
+
+const FIB_LEVELS = [
+  { ratio: 0,    color: '#e6edf3', label: '0' },
+  { ratio: 0.25, color: '#34d399', label: '25' },
+  { ratio: 0.5,  color: '#60a5fa', label: '50' },
+  { ratio: 0.75, color: '#fbbf24', label: '75' },
+  { ratio: 1.0,  color: '#e6edf3', label: '100' },
+]
+
+const DRAW_LABEL: Partial<Record<DrawMode, string>> = {
+  hline: 'H-Line',
+  trendline: 'Trend',
+  fibretracement: 'Fib',
+  channel: 'Channel',
+}
 
 const CANDLE_INTERVAL_SECS = (m: number) => m * 60
 
@@ -118,16 +137,19 @@ export default function Chart({
   const latestTickRef = useRef(latestTick)
   const currentSimTimeRef = useRef(currentSimTime)
   const drawModeRef = useRef<DrawMode>('none')
-  const trendPt1Ref = useRef<{ time: number; price: number } | null>(null)
-  const priceLines = useRef<IPriceLine[]>([])
-  const trendLines = useRef<ISeriesApi<'Line'>[]>([])
+  const drawPtsRef = useRef<{ time: number; price: number }[]>([])
+  const drawingsRef = useRef<Drawing[]>([])
+  const ignoreNextClickRef = useRef(false)
   const tradeMarkerPool = useRef<ISeriesApi<'Line'>[]>([])
   const orderPriceLinesRef = useRef<Map<string, IPriceLine>>(new Map())
   const onPriceSelectRef = useRef<((price: number) => void) | null>(null)
+  const drawDropdownRef = useRef<HTMLDivElement>(null)
 
   const [showEma, setShowEma] = useState(true)
   const [drawMode, setDrawMode] = useState<DrawMode>('none')
-  const [trendPending, setTrendPending] = useState(false)
+  const [drawStep, setDrawStep] = useState(0)
+  const [drawingCount, setDrawingCount] = useState(0)
+  const [drawDropdownOpen, setDrawDropdownOpen] = useState(false)
   const [localReloadKey, setLocalReloadKey] = useState(0)
 
   // effectiveReloadKey combines the external reloadKey prop with the local one
@@ -138,6 +160,16 @@ export default function Chart({
   currentSimTimeRef.current = currentSimTime
   useEffect(() => { drawModeRef.current = drawMode }, [drawMode])
   useEffect(() => { onPriceSelectRef.current = onPriceSelect ?? null }, [onPriceSelect])
+  useEffect(() => {
+    if (!drawDropdownOpen) return
+    const close = (e: MouseEvent) => {
+      if (drawDropdownRef.current && !drawDropdownRef.current.contains(e.target as Node)) {
+        setDrawDropdownOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', close)
+    return () => document.removeEventListener('mousedown', close)
+  }, [drawDropdownOpen])
 
   // ── Chart initialisation — runs once on mount only ───────────────────────
   useEffect(() => {
@@ -164,6 +196,8 @@ export default function Chart({
 
     chart.subscribeClick((param: MouseEventParams) => {
       if (!param.point || !seriesRef.current) return
+      // Absorb the click that activated the draw mode (e.g. dropdown item click)
+      if (ignoreNextClickRef.current) { ignoreNextClickRef.current = false; return }
       const price = seriesRef.current.coordinateToPrice(param.point.y)
       if (price === null) return
 
@@ -176,31 +210,106 @@ export default function Chart({
       if (!param.time) return  // drawing modes need a time reference
       const time = param.time as number
 
-      if (drawModeRef.current === 'hline') {
+      const mode = drawModeRef.current
+      if (mode === 'hline') {
         const line = seriesRef.current.createPriceLine({
           price, color: '#e6edf3', lineWidth: 1, lineStyle: 2,
           axisLabelVisible: true, title: price.toFixed(0),
         })
-        priceLines.current.push(line)
+        drawingsRef.current.push({ type: 'hline', ref: line })
+        setDrawingCount(c => c + 1)
         setDrawMode('none')
-      } else if (drawModeRef.current === 'trendline') {
-        if (!trendPt1Ref.current) {
-          trendPt1Ref.current = { time, price }
-          setTrendPending(true)
+      } else if (mode === 'trendline') {
+        const pts = drawPtsRef.current
+        if (pts.length === 0) {
+          drawPtsRef.current = [{ time, price }]
+          setDrawStep(1)
         } else {
-          const p1 = trendPt1Ref.current
+          const p1 = pts[0]
           const trendSeries = chartRef.current!.addLineSeries({
             color: '#ffa657', lineWidth: 1,
             priceLineVisible: false, lastValueVisible: false,
           })
-          const pts = [
+          const ordered = [
             { time: Math.min(p1.time, time) as Time, value: p1.time <= time ? p1.price : price },
             { time: Math.max(p1.time, time) as Time, value: p1.time <= time ? price : p1.price },
           ]
-          trendSeries.setData(pts)
-          trendLines.current.push(trendSeries)
-          trendPt1Ref.current = null
-          setTrendPending(false)
+          trendSeries.setData(ordered)
+          drawingsRef.current.push({ type: 'trendline', refs: [trendSeries] })
+          setDrawingCount(c => c + 1)
+          drawPtsRef.current = []
+          setDrawStep(0)
+          setDrawMode('none')
+        }
+      } else if (mode === 'fibretracement') {
+        const pts = drawPtsRef.current
+        if (pts.length === 0) {
+          drawPtsRef.current = [{ time, price }]
+          setDrawStep(1)
+        } else {
+          const p1 = pts[0]
+          const tStart = Math.min(p1.time, time) as Time
+          const tEnd = Math.max(p1.time, time) as Time
+          const pLow = Math.min(p1.price, price)
+          const pHigh = Math.max(p1.price, price)
+          const range = pHigh - pLow
+          const fibRefs: ISeriesApi<'Line'>[] = []
+          for (const lvl of FIB_LEVELS) {
+            const lvlPrice = pLow + range * lvl.ratio
+            const s = chartRef.current!.addLineSeries({
+              color: lvl.color, lineWidth: 1,
+              priceLineVisible: false, lastValueVisible: false,
+            })
+            s.setData([
+              { time: tStart, value: lvlPrice },
+              { time: tEnd, value: lvlPrice },
+            ])
+            fibRefs.push(s)
+          }
+          drawingsRef.current.push({ type: 'fibretracement', refs: fibRefs })
+          setDrawingCount(c => c + 1)
+          drawPtsRef.current = []
+          setDrawStep(0)
+          setDrawMode('none')
+        }
+      } else if (mode === 'channel') {
+        const pts = drawPtsRef.current
+        if (pts.length === 0) {
+          drawPtsRef.current = [{ time, price }]
+          setDrawStep(1)
+        } else if (pts.length === 1) {
+          drawPtsRef.current = [...pts, { time, price }]
+          setDrawStep(2)
+        } else {
+          const [p1, p2] = pts
+          const tStart = Math.min(p1.time, p2.time) as Time
+          const tEnd = Math.max(p1.time, p2.time) as Time
+          const baseStartPrice = p1.time <= p2.time ? p1.price : p2.price
+          const baseEndPrice = p1.time <= p2.time ? p2.price : p1.price
+          const timeDiff = (tEnd as number) - (tStart as number)
+          const slope = timeDiff !== 0 ? (baseEndPrice - baseStartPrice) / timeDiff : 0
+          const lineAt = (t: number) => baseStartPrice + slope * (t - (tStart as number))
+          const offset = price - lineAt(time)
+          const baseline = chartRef.current!.addLineSeries({
+            color: '#ffa657', lineWidth: 1,
+            priceLineVisible: false, lastValueVisible: false,
+          })
+          baseline.setData([
+            { time: tStart, value: baseStartPrice },
+            { time: tEnd, value: baseEndPrice },
+          ])
+          const parallel = chartRef.current!.addLineSeries({
+            color: '#79c0ff', lineWidth: 1,
+            priceLineVisible: false, lastValueVisible: false,
+          })
+          parallel.setData([
+            { time: tStart, value: baseStartPrice + offset },
+            { time: tEnd, value: baseEndPrice + offset },
+          ])
+          drawingsRef.current.push({ type: 'channel', refs: [baseline, parallel] })
+          setDrawingCount(c => c + 1)
+          drawPtsRef.current = []
+          setDrawStep(0)
           setDrawMode('none')
         }
       }
@@ -539,35 +648,29 @@ export default function Chart({
   }, [openOrders, paneType, right, position, pnlPctMode, sessionCapital])
 
   const enterDrawMode = useCallback((mode: DrawMode) => {
-    if (drawModeRef.current === mode) {
-      setDrawMode('none')
-      trendPt1Ref.current = null
-      setTrendPending(false)
-    } else {
-      setDrawMode(mode)
-      trendPt1Ref.current = null
-      setTrendPending(false)
-    }
+    setDrawDropdownOpen(false)
+    setDrawMode(drawModeRef.current === mode ? 'none' : mode)
+    drawPtsRef.current = []
+    setDrawStep(0)
+    // Clear the guard: dropdown items near the canvas top may not trigger LWC's subscribeClick,
+    // leaving the guard set from onMouseDown and absorbing the first canvas click.
+    ignoreNextClickRef.current = false
   }, [])
 
-  const clearDrawings = useCallback(() => {
-    const series = seriesRef.current
-    if (series) {
-      for (const pl of priceLines.current) {
-        try { series.removePriceLine(pl) } catch { /* already removed */ }
+  const clearLastDrawing = useCallback(() => {
+    const drawing = drawingsRef.current.pop()
+    if (!drawing) return
+    if (drawing.type === 'hline') {
+      try { seriesRef.current?.removePriceLine(drawing.ref) } catch { /* already removed */ }
+    } else {
+      for (const s of drawing.refs) {
+        try { chartRef.current?.removeSeries(s) } catch { /* already removed */ }
       }
-      priceLines.current = []
     }
-    const chart = chartRef.current
-    if (chart) {
-      for (const tl of trendLines.current) {
-        try { chart.removeSeries(tl) } catch { /* already removed */ }
-      }
-      trendLines.current = []
-    }
+    setDrawingCount(c => c - 1)
     setDrawMode('none')
-    trendPt1Ref.current = null
-    setTrendPending(false)
+    drawPtsRef.current = []
+    setDrawStep(0)
   }, [])
 
   const toolbarBtnStyle = (active: boolean): React.CSSProperties => ({
@@ -627,22 +730,49 @@ export default function Chart({
         <button onClick={e => { e.stopPropagation(); setShowEma(v => !v) }} style={toolbarBtnStyle(showEma)}>
           EMA 9/21
         </button>
-        <button
-          onClick={e => { e.stopPropagation(); enterDrawMode('hline') }}
-          style={toolbarBtnStyle(drawMode === 'hline')}
-          title="Draw horizontal line — click on chart to place"
-        >
-          H-Line
-        </button>
-        <button
-          onClick={e => { e.stopPropagation(); enterDrawMode('trendline') }}
-          style={toolbarBtnStyle(drawMode === 'trendline')}
-          title="Draw trend line — click two points on chart"
-        >
-          Trend{trendPending ? ' (pt 2)' : ''}
-        </button>
-        {(priceLines.current.length > 0 || trendLines.current.length > 0) && (
-          <button onClick={e => { e.stopPropagation(); clearDrawings() }} style={toolbarBtnStyle(false)}>
+
+        {/* Drawing tools dropdown */}
+        <div style={{ position: 'relative' }} ref={drawDropdownRef}>
+          <button
+            onClick={e => { e.stopPropagation(); setDrawDropdownOpen(v => !v) }}
+            style={toolbarBtnStyle(drawMode !== 'none')}
+            title="Drawing tools"
+          >
+            {DRAW_LABEL[drawMode] ?? 'Draw'} ▾
+          </button>
+          {drawDropdownOpen && (
+            <div style={{
+              position: 'absolute', top: '100%', left: 0, zIndex: 100,
+              background: '#161b22', border: '1px solid #30363d',
+              borderRadius: 4, minWidth: 155, marginTop: 2,
+            }}>
+              {([
+                { mode: 'hline',          label: '─ Horizontal Line' },
+                { mode: 'trendline',      label: '↗ Trend Line' },
+                { mode: 'fibretracement', label: '◫ Fib Retracement' },
+                { mode: 'channel',        label: '⊟ Parallel Channel' },
+              ] as { mode: DrawMode; label: string }[]).map(({ mode: m, label }) => (
+                <div
+                  key={m}
+                  // onMouseDown fires before LWC's 'click' handler — set the guard here
+                  // so the dropdown selection click is never forwarded to the chart.
+                  onMouseDown={() => { if (m !== drawModeRef.current) ignoreNextClickRef.current = true }}
+                  onClick={e => { e.stopPropagation(); enterDrawMode(m) }}
+                  style={{
+                    padding: '5px 10px', cursor: 'pointer', fontSize: 11,
+                    color: drawMode === m ? '#f0883e' : '#e6edf3',
+                    background: drawMode === m ? '#2a1a0a' : 'transparent',
+                  }}
+                >
+                  {label}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {drawingCount > 0 && (
+          <button onClick={e => { e.stopPropagation(); clearLastDrawing() }} style={toolbarBtnStyle(false)}>
             Clear
           </button>
         )}
@@ -662,12 +792,14 @@ export default function Chart({
             {isMaximized ? '⤡' : '⤢'}
           </button>
         )}
-        {drawMode !== 'none' && !trendPending && (
+        {drawMode !== 'none' && (
           <span style={{ fontSize: 11, color: '#f0883e' }}>
-            {drawMode === 'hline' ? 'Click chart to place' : 'Click first point'}
+            {drawMode === 'hline' && 'Click chart to place'}
+            {drawMode === 'trendline' && (drawStep === 0 ? 'Click first point' : 'Click second point')}
+            {drawMode === 'fibretracement' && (drawStep === 0 ? 'Click start point' : 'Click end point')}
+            {drawMode === 'channel' && (drawStep === 0 ? 'Click baseline start' : drawStep === 1 ? 'Click baseline end' : 'Click channel offset point')}
           </span>
         )}
-        {trendPending && <span style={{ fontSize: 11, color: '#f0883e' }}>Click second point</span>}
         {onPriceSelect && (
           <span style={{ fontSize: 11, color: '#3fb950', fontWeight: 600 }}>
             ⊕ Click to pick price
