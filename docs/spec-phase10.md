@@ -11,10 +11,12 @@ GuardRails are programs which when triggered will run for limited time or till t
 3. BAN -> This guardrail should be triggered for a session or not is part of settings. If the settings says yes, then it would trigger for all sessions. This guardrail checks if a trader has suffered > x% of capital in losses, or % trades taken in a session are in loss. When the trigger hits, it stop trading completely. The % of capital loss or % of losing trades are part of settings. There is no stop option for this guardrail. 
 4. Guardrail settings -> Include another tab in settings for GuardRail settings.
 5. For all guardrail when are active, if user tries to trade, a popup with reason is shown on why his trading is stopped.
+6. Make sure the guardrail works for options, equity and for paper, real and simulation trading. The guardrails are separate per user, per session.
 
 
 ##### Bugs
 1. Check if Target Profit when used with %, does it calculate that percentage for the current trade against the session's starting capital. Also, the Pos P&L shows high percentage when trade is open, when it is closed everything is right. Can you check if the Position P&L Percentage calculation is also right and used teh % of capital at the session start. Capital here means wallet value.
+2. In the UI. Phase V is added next to Trade Matangi. Can you remove the phase.
 
 ##### More
 1. More bugs or features will be added in discussion.

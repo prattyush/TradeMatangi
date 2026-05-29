@@ -22,6 +22,36 @@ const BREAKEVEN_MODE_KEY = 'breakevenMode'
 const TARGET_PROFIT_BUFFER_TICKS_KEY = 'targetProfitBufferTicks'
 const AGGR_SL_ONLY_IN_PROFIT_KEY = 'aggrSlOnlyInProfit'
 
+const GUARDRAIL_BLOCK_BARS_KEY = 'guardrailBlockBars'
+const GUARDRAIL_COOLDOWN_LOSSES_KEY = 'guardrailCooldownLosses'
+const GUARDRAIL_BAN_CAPITAL_PCT_KEY = 'guardrailBanCapitalPct'
+const GUARDRAIL_BAN_LOSS_TRADE_PCT_KEY = 'guardrailBanLossTradePct'
+const GUARDRAIL_BAN_ENABLED_KEY = 'guardrailBanEnabled'
+const GUARDRAIL_COOLDOWN_ENABLED_KEY = 'guardrailCooldownEnabled'
+
+export function loadGuardRailBlockBars(): number {
+  const v = parseInt(localStorage.getItem(GUARDRAIL_BLOCK_BARS_KEY) ?? '')
+  return isNaN(v) || v < 1 || v > 20 ? 3 : v
+}
+export function loadGuardRailCooldownLosses(): number {
+  const v = parseInt(localStorage.getItem(GUARDRAIL_COOLDOWN_LOSSES_KEY) ?? '')
+  return isNaN(v) || v < 1 || v > 20 ? 3 : v
+}
+export function loadGuardRailBanCapitalPct(): number {
+  const v = parseFloat(localStorage.getItem(GUARDRAIL_BAN_CAPITAL_PCT_KEY) ?? '')
+  return isNaN(v) || v < 1 || v > 100 ? 10.0 : v
+}
+export function loadGuardRailBanLossTradePct(): number {
+  const v = parseFloat(localStorage.getItem(GUARDRAIL_BAN_LOSS_TRADE_PCT_KEY) ?? '')
+  return isNaN(v) || v < 1 || v > 100 ? 60.0 : v
+}
+export function loadGuardRailBanEnabled(): boolean {
+  return localStorage.getItem(GUARDRAIL_BAN_ENABLED_KEY) === 'true'
+}
+export function loadGuardRailCooldownEnabled(): boolean {
+  return localStorage.getItem(GUARDRAIL_COOLDOWN_ENABLED_KEY) === 'true'
+}
+
 export function loadPnlPctMode(): boolean {
   return localStorage.getItem(PNL_PCT_MODE_KEY) === 'true'
 }
@@ -91,6 +121,15 @@ export function loadAggrSlOnlyInProfit(): boolean {
   return localStorage.getItem(AGGR_SL_ONLY_IN_PROFIT_KEY) === 'true'
 }
 
+export interface GuardRailSettingsLocal {
+  blockBars: number
+  cooldownLosses: number
+  banCapitalPct: number
+  banLossTradePct: number
+  banEnabled: boolean
+  cooldownEnabled: boolean
+}
+
 interface Props {
   date: string
   isAdmin?: boolean
@@ -103,9 +142,10 @@ interface Props {
   onStrategySettingsChange: (intervalSecs: number, triggerType: 'bar' | 'deviation', deviationPct: number, breakevenMode: 'shift_sl' | 'limit_order', bufferTicks: number, aggrSlOnlyInProfit: boolean) => void
   onHistoricalDaysChange?: (days: number) => void
   onPnlPctModeChange?: (enabled: boolean) => void
+  onGuardRailSettingsChange?: (settings: GuardRailSettingsLocal) => void
 }
 
-export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessionActive, onWalletReset, onFundsRatioChange, onTargetDeviationChange, onBrokerageChange, onStrategySettingsChange, onHistoricalDaysChange, onPnlPctModeChange }: Props) {
+export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessionActive, onWalletReset, onFundsRatioChange, onTargetDeviationChange, onBrokerageChange, onStrategySettingsChange, onHistoricalDaysChange, onPnlPctModeChange, onGuardRailSettingsChange }: Props) {
   const [open, setOpen] = useState(false)
   const [customAmount, setCustomAmount] = useState('')
   const [status, setStatus] = useState<string | null>(null)
@@ -145,8 +185,16 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
   const [targetProfitBufferTicks, setTargetProfitBufferTicks] = useState(loadTargetProfitBufferTicks)
   const [aggrSlOnlyInProfit, setAggrSlOnlyInProfit] = useState(loadAggrSlOnlyInProfit)
 
-  // Active tab: 'general' | 'strategies' | 'admin' (admin only)
-  const [activeTab, setActiveTab] = useState<'general' | 'strategies' | 'admin'>('general')
+  // Active tab
+  const [activeTab, setActiveTab] = useState<'general' | 'strategies' | 'guardrails' | 'admin'>('general')
+
+  // GuardRails settings state
+  const [grBanEnabled, setGrBanEnabled] = useState(loadGuardRailBanEnabled)
+  const [grCooldownEnabled, setGrCooldownEnabled] = useState(loadGuardRailCooldownEnabled)
+  const [grBlockBarsInput, setGrBlockBarsInput] = useState(() => String(loadGuardRailBlockBars()))
+  const [grCooldownLossesInput, setGrCooldownLossesInput] = useState(() => String(loadGuardRailCooldownLosses()))
+  const [grBanCapitalInput, setGrBanCapitalInput] = useState(() => String(loadGuardRailBanCapitalPct()))
+  const [grBanLossTradeInput, setGrBanLossTradeInput] = useState(() => String(loadGuardRailBanLossTradePct()))
 
   // Admin section — broker tokens
   const [iciciInput, setIciciInput] = useState('')
@@ -186,6 +234,21 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
       api.getUserSettings().then(s => {
         setHistoricalDays(s.historical_days)
         localStorage.setItem(HISTORICAL_DAYS_KEY, String(s.historical_days))
+      }).catch(() => {})
+
+      api.getGuardRailSettings().then(s => {
+        setGrBlockBarsInput(String(s.guardrail_block_bars))
+        setGrCooldownLossesInput(String(s.guardrail_cooldown_losses))
+        setGrBanCapitalInput(String(s.guardrail_ban_capital_pct))
+        setGrBanLossTradeInput(String(s.guardrail_ban_loss_trade_pct))
+        setGrBanEnabled(s.guardrail_ban_enabled)
+        setGrCooldownEnabled(s.guardrail_cooldown_enabled)
+        localStorage.setItem(GUARDRAIL_BLOCK_BARS_KEY, String(s.guardrail_block_bars))
+        localStorage.setItem(GUARDRAIL_COOLDOWN_LOSSES_KEY, String(s.guardrail_cooldown_losses))
+        localStorage.setItem(GUARDRAIL_BAN_CAPITAL_PCT_KEY, String(s.guardrail_ban_capital_pct))
+        localStorage.setItem(GUARDRAIL_BAN_LOSS_TRADE_PCT_KEY, String(s.guardrail_ban_loss_trade_pct))
+        localStorage.setItem(GUARDRAIL_BAN_ENABLED_KEY, String(s.guardrail_ban_enabled))
+        localStorage.setItem(GUARDRAIL_COOLDOWN_ENABLED_KEY, String(s.guardrail_cooldown_enabled))
       }).catch(() => {})
 
       // Load masked tokens and stream source on first open (admin only)
@@ -282,6 +345,38 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
       setPwStatus({ msg: e instanceof Error ? e.message : 'Failed to change password', ok: false })
     } finally {
       setPwLoading(false)
+    }
+  }
+
+  const saveGuardRailSettings = async () => {
+    const blockBars = parseInt(grBlockBarsInput)
+    const cooldownLosses = parseInt(grCooldownLossesInput)
+    const banCapitalPct = parseFloat(grBanCapitalInput)
+    const banLossTradePct = parseFloat(grBanLossTradeInput)
+    if (isNaN(blockBars) || blockBars < 1 || blockBars > 20) { setStatus('Block bars must be 1–20'); return }
+    if (isNaN(cooldownLosses) || cooldownLosses < 1 || cooldownLosses > 20) { setStatus('Cooldown losses must be 1–20'); return }
+    if (isNaN(banCapitalPct) || banCapitalPct < 1 || banCapitalPct > 100) { setStatus('Capital % must be 1–100'); return }
+    if (isNaN(banLossTradePct) || banLossTradePct < 1 || banLossTradePct > 100) { setStatus('Loss trade % must be 1–100'); return }
+    try {
+      await api.updateGuardRailSettings({
+        guardrail_block_bars: blockBars,
+        guardrail_cooldown_losses: cooldownLosses,
+        guardrail_ban_capital_pct: banCapitalPct,
+        guardrail_ban_loss_trade_pct: banLossTradePct,
+        guardrail_ban_enabled: grBanEnabled,
+        guardrail_cooldown_enabled: grCooldownEnabled,
+      })
+      localStorage.setItem(GUARDRAIL_BLOCK_BARS_KEY, String(blockBars))
+      localStorage.setItem(GUARDRAIL_COOLDOWN_LOSSES_KEY, String(cooldownLosses))
+      localStorage.setItem(GUARDRAIL_BAN_CAPITAL_PCT_KEY, String(banCapitalPct))
+      localStorage.setItem(GUARDRAIL_BAN_LOSS_TRADE_PCT_KEY, String(banLossTradePct))
+      localStorage.setItem(GUARDRAIL_BAN_ENABLED_KEY, String(grBanEnabled))
+      localStorage.setItem(GUARDRAIL_COOLDOWN_ENABLED_KEY, String(grCooldownEnabled))
+      onGuardRailSettingsChange?.({ blockBars, cooldownLosses, banCapitalPct, banLossTradePct, banEnabled: grBanEnabled, cooldownEnabled: grCooldownEnabled })
+      setStatus('GuardRail settings saved')
+      setTimeout(() => setStatus(null), 2000)
+    } catch {
+      setStatus('Failed to save GuardRail settings')
     }
   }
 
@@ -408,7 +503,7 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
               >✕</button>
             </div>
 
-            {/* Tab bar — General + Strategies for all users; Admin tab for admins only */}
+            {/* Tab bar */}
             <div style={{
               display: 'flex',
               borderBottom: '1px solid #21262d',
@@ -416,8 +511,8 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
               marginTop: -8,
             }}>
               {(isAdmin
-                ? ['general', 'strategies', 'admin'] as const
-                : ['general', 'strategies'] as const
+                ? ['general', 'strategies', 'guardrails', 'admin'] as const
+                : ['general', 'strategies', 'guardrails'] as const
               ).map(tab => (
                 <button
                   key={tab}
@@ -976,6 +1071,115 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
                   )}
                 </div>
 
+              </div>
+            )}
+
+            {/* ── GuardRails tab content ── */}
+            {activeTab === 'guardrails' && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                <div style={{ fontSize: 11, color: '#8b949e', background: '#0d1117', borderRadius: 6, padding: '8px 12px' }}>
+                  Settings apply to new sessions. Use the BLOCK button during a session for immediate pause.
+                </div>
+
+                {/* BLOCK guardrail */}
+                <div style={{ borderTop: '1px solid #21262d', paddingTop: 12 }}>
+                  <div style={{ fontSize: 12, color: '#f0883e', fontWeight: 600, marginBottom: 10 }}>BLOCK</div>
+                  <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 10 }}>
+                    Manual trigger. Stops trading for <strong style={{ color: '#e6edf3' }}>n</strong> bars from the triggered bar.
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <span style={{ fontSize: 12, color: '#8b949e', flex: 1 }}>Block bars (n)</span>
+                    <input
+                      type="number" min={1} max={20}
+                      value={grBlockBarsInput}
+                      onChange={e => setGrBlockBarsInput(e.target.value)}
+                      style={{ width: 60, background: '#0d1117', border: '1px solid #30363d', borderRadius: 4, color: '#e6edf3', padding: '4px 8px', fontSize: 12 }}
+                    />
+                  </div>
+                </div>
+
+                {/* COOLDOWN guardrail */}
+                <div style={{ borderTop: '1px solid #21262d', paddingTop: 12 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
+                    <div style={{ fontSize: 12, color: '#f0883e', fontWeight: 600, flex: 1 }}>COOLDOWN</div>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+                      <input
+                        type="checkbox"
+                        checked={grCooldownEnabled}
+                        onChange={e => setGrCooldownEnabled(e.target.checked)}
+                        style={{ cursor: 'pointer' }}
+                      />
+                      <span style={{ fontSize: 11, color: '#8b949e' }}>Enabled</span>
+                    </label>
+                  </div>
+                  <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 10 }}>
+                    Triggers a block after <strong style={{ color: '#e6edf3' }}>p</strong> consecutive loss trades. Uses the same block bars (n) setting.
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <span style={{ fontSize: 12, color: '#8b949e', flex: 1 }}>Consecutive losses (p)</span>
+                    <input
+                      type="number" min={1} max={20}
+                      value={grCooldownLossesInput}
+                      onChange={e => setGrCooldownLossesInput(e.target.value)}
+                      style={{ width: 60, background: '#0d1117', border: '1px solid #30363d', borderRadius: 4, color: '#e6edf3', padding: '4px 8px', fontSize: 12 }}
+                    />
+                  </div>
+                </div>
+
+                {/* BAN guardrail */}
+                <div style={{ borderTop: '1px solid #21262d', paddingTop: 12 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
+                    <div style={{ fontSize: 12, color: '#f85149', fontWeight: 600, flex: 1 }}>BAN</div>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+                      <input
+                        type="checkbox"
+                        checked={grBanEnabled}
+                        onChange={e => setGrBanEnabled(e.target.checked)}
+                        style={{ cursor: 'pointer' }}
+                      />
+                      <span style={{ fontSize: 11, color: '#8b949e' }}>Enabled</span>
+                    </label>
+                  </div>
+                  <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 10 }}>
+                    Permanently stops trading when capital loss exceeds x% <em>or</em> y% of trades in the session are losses. No override.
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <span style={{ fontSize: 12, color: '#8b949e', flex: 1 }}>Capital loss limit (x%)</span>
+                      <input
+                        type="number" min={1} max={100} step={0.5}
+                        value={grBanCapitalInput}
+                        onChange={e => setGrBanCapitalInput(e.target.value)}
+                        style={{ width: 70, background: '#0d1117', border: '1px solid #30363d', borderRadius: 4, color: '#e6edf3', padding: '4px 8px', fontSize: 12 }}
+                      />
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <span style={{ fontSize: 12, color: '#8b949e', flex: 1 }}>Losing trades limit (y%)</span>
+                      <input
+                        type="number" min={1} max={100} step={1}
+                        value={grBanLossTradeInput}
+                        onChange={e => setGrBanLossTradeInput(e.target.value)}
+                        style={{ width: 70, background: '#0d1117', border: '1px solid #30363d', borderRadius: 4, color: '#e6edf3', padding: '4px 8px', fontSize: 12 }}
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Save */}
+                <div style={{ borderTop: '1px solid #21262d', paddingTop: 12, display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <button
+                    onClick={saveGuardRailSettings}
+                    style={{
+                      background: '#21262d', border: '1px solid #30363d', color: '#e6edf3',
+                      borderRadius: 6, padding: '7px 18px', fontSize: 12, cursor: 'pointer',
+                    }}
+                  >
+                    Save GuardRail Settings
+                  </button>
+                  {status && (
+                    <span style={{ fontSize: 12, color: status.startsWith('Failed') ? '#f85149' : '#3fb950' }}>{status}</span>
+                  )}
+                </div>
               </div>
             )}
 

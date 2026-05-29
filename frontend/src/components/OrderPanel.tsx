@@ -49,6 +49,7 @@ interface Props {
     }
   ) => Promise<void>
   onCancelAllStrategies?: () => Promise<void>
+  onGuardRailBlocked?: (type: 'BLOCK' | 'COOLDOWN' | 'BAN', reason: string) => void
 }
 
 const QUANTITY_OPTIONS = [1, 2, 3, 5, 10]
@@ -72,6 +73,7 @@ export default function OrderPanel({
   aggrSlOnlyInProfit = false,
   onStartStrategy,
   onCancelAllStrategies,
+  onGuardRailBlocked,
 }: Props) {
   const [orderType, setOrderType] = useState<OrderTypeFull>('TARGET')
   const [side, setSide] = useState<'BUY' | 'SELL'>('BUY')
@@ -180,7 +182,14 @@ export default function OrderPanel({
       }
       setPrice('')
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to place order')
+      const msg = e instanceof Error ? e.message : 'Failed to place order'
+      if (msg.startsWith('GUARDRAIL:') && onGuardRailBlocked) {
+        const reason = msg.slice('GUARDRAIL:'.length).trim()
+        const type = reason.startsWith('BAN') ? 'BAN' : reason.startsWith('COOLDOWN') ? 'COOLDOWN' : 'BLOCK'
+        onGuardRailBlocked(type, reason)
+      } else {
+        setError(msg)
+      }
     } finally {
       setPlacing(false)
     }

@@ -55,6 +55,16 @@ class SimulationSession:
     # True when KotakBroadcaster is the active streaming source for this session.
     # Used by stop_session() to call the correct unregister() method.
     kotak_streaming: bool = False
+    # GuardRails runtime state (snapshotted from UserSettings at create_session)
+    guardrail_block_until_bar: int = 0        # Unix bar-slot ts; blocked while current_bar_slot <= this
+    guardrail_ban_active: bool = False
+    guardrail_cooldown_enabled: bool = False
+    guardrail_consecutive_losses: int = 0
+    guardrail_block_bars: int = 3             # n bars for BLOCK/COOLDOWN
+    guardrail_cooldown_losses: int = 3        # p consecutive losses for COOLDOWN trigger
+    guardrail_ban_capital_pct: float = 10.0   # x% capital loss triggers BAN
+    guardrail_ban_loss_trade_pct: float = 60.0 # y% of trades in loss triggers BAN
+    guardrail_ban_enabled: bool = False
 
 
 # Registry of active sessions
@@ -130,6 +140,8 @@ def create_session(
     session.resume_event.set()  # not paused initially
     _sessions[session_id] = session
     _upsert_session_to_db(session)
+    from app.services.guardrail_service import initialize_guardrails
+    initialize_guardrails(session, user_id)
     return session
 
 

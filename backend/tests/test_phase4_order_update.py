@@ -183,6 +183,10 @@ def _make_session():
     session.instrument_type = "equity"
     session.state = SimulationState.RUNNING
     session.user_id = FIXED_USER_ID
+    session.guardrail_ban_active = False
+    session.guardrail_block_until_bar = 0
+    session.guardrail_block_bars = 3
+    session.interval = 180
     return session
 
 

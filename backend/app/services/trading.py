@@ -100,6 +100,11 @@ def record_trade(
     )
     _trades[session_id].append(trade)
     _write_trade_to_db(trade)
+    try:
+        from app.services.guardrail_service import on_trade_record
+        on_trade_record(session_id)
+    except Exception:
+        logger.debug("guardrail on_trade_record skipped for session %s", session_id)
     return trade
 
 

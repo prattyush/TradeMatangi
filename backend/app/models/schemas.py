@@ -311,3 +311,36 @@ class WhitelistEntry(BaseModel):
     email: str
     user_id: str | None = None
     added_at: str | None = None
+
+
+# ── GuardRails ────────────────────────────────────────────────────────────────
+
+class GuardRailSettingsResponse(BaseModel):
+    guardrail_block_bars: int = 3
+    guardrail_cooldown_losses: int = 3
+    guardrail_ban_capital_pct: float = 10.0
+    guardrail_ban_loss_trade_pct: float = 60.0
+    guardrail_ban_enabled: bool = False
+    guardrail_cooldown_enabled: bool = False
+
+
+class GuardRailSettingsUpdateRequest(BaseModel):
+    guardrail_block_bars: int | None = Field(default=None, ge=1, le=20)
+    guardrail_cooldown_losses: int | None = Field(default=None, ge=1, le=20)
+    guardrail_ban_capital_pct: float | None = Field(default=None, ge=1.0, le=100.0)
+    guardrail_ban_loss_trade_pct: float | None = Field(default=None, ge=1.0, le=100.0)
+    guardrail_ban_enabled: bool | None = None
+    guardrail_cooldown_enabled: bool | None = None
+
+
+class GuardRailStatusResponse(BaseModel):
+    block_active: bool
+    block_until_bar: int
+    ban_active: bool
+    cooldown_enabled: bool
+    consecutive_losses: int
+    settings: GuardRailSettingsResponse
+
+
+class TriggerBlockRequest(BaseModel):
+    session_id: str
