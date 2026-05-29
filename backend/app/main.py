@@ -5,7 +5,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import LOG_DIR
-from app.routers import data, simulation, trading, stream, orders, wallet, auth, analysis, strategies, users, admin, kotak
+from app.routers import data, simulation, trading, stream, orders, wallet, auth, analysis, strategies, users, admin, kotak, guardrails
 
 
 def _configure_logging() -> None:
@@ -76,6 +76,7 @@ app.include_router(strategies.router)
 app.include_router(users.router)
 app.include_router(admin.router)
 app.include_router(kotak.router)
+app.include_router(guardrails.router)
 
 
 @app.get("/health")

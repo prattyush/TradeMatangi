@@ -5,6 +5,7 @@ import TradePanel from './components/TradePanel'
 import TradeHistory from './components/TradeHistory'
 import OrderPanel from './components/OrderPanel'
 import WalletWidget from './components/WalletWidget'
+import GuardRailPopup from './components/GuardRailPopup'
 import SettingsModal, { loadFundsRatioMode, loadFundsRatios, loadTargetDeviationPct, loadBrokeragePerOrder, loadStrategyIntervalSecs, loadAutostopTriggerType, loadAutostopDeviationPct, loadHistoricalDays, loadPnlPctMode, loadBreakevenMode, loadTargetProfitBufferTicks, loadAggrSlOnlyInProfit, FundsRatios } from './components/SettingsModal'
 import { StrategyResponse, StartStrategyRequest, Order } from './services/api'
 import LoginScreen from './components/LoginScreen'
@@ -123,6 +124,8 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
   const [runningStrategies, setRunningStrategies] = useState<StrategyResponse[]>([])
   const [brokerError, setBrokerError] = useState<string | null>(null)
   const [isRealTradingUser, setIsRealTradingUser] = useState(false)
+  const [guardrailPopup, setGuardrailPopup] = useState<{ type: 'BLOCK' | 'COOLDOWN' | 'BAN'; reason: string } | null>(null)
+  const [combinedPnlOpen, setCombinedPnlOpen] = useState(false)
 
   // ── Trade Analysis modal ────────────────────────────────────────────────────
   const [showAnalysis, setShowAnalysis] = useState(false)
@@ -301,6 +304,11 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
       sim.setLatestTick(event as unknown as Parameters<typeof sim.setLatestTick>[0])
     } else if (event.type === 'session_ended') {
       sim.handleSessionEnded()
+      setGuardrailPopup(null)
+    } else if (event.type === 'guardrail_activated') {
+      const grType = (event.guardrail_type as string ?? 'BLOCK').toUpperCase() as 'BLOCK' | 'COOLDOWN' | 'BAN'
+      const grReason = (event.reason as string) ?? 'Trading paused by guardrail'
+      setGuardrailPopup({ type: grType, reason: grReason })
     } else if (event.type === 'order_filled') {
       sim.handleOrderFilled(event.order_id as string, event.right as string | null | undefined)
     } else if (event.type === 'order_placed') {
@@ -313,7 +321,7 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
     } else if (event.type === 'broker_error') {
       setBrokerError(event.message as string)
     }
-  }, [sim.setLatestTick, sim.handleSessionEnded, sim.handleOrderFilled, sim.handleOrderCancelled, sim.addOpenOrder])
+  }, [sim.setLatestTick, sim.handleSessionEnded, sim.handleOrderFilled, sim.handleOrderCancelled, sim.addOpenOrder, setGuardrailPopup])
 
   useSSE(sim.sseUrl, handleSSEMessage)
 
@@ -540,7 +548,6 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
         display: 'flex', alignItems: 'center', gap: 12,
       }}>
         <span style={{ fontSize: 18, fontWeight: 700, color: '#58a6ff' }}>TradeMatangi</span>
-        <span style={{ fontSize: 12, color: '#484f58' }}>Phase V</span>
         <div style={{ flex: 1 }} />
         {sim.sessionState !== 'idle' && (
           <div style={{
@@ -561,6 +568,27 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
               </span>
             )}
           </div>
+        )}
+        {(sim.sessionState === 'running' || sim.sessionState === 'paused') && !guardrailPopup?.type && (
+          <button
+            onClick={async () => {
+              if (!sim.sessionId) return
+              try {
+                const result = await api.triggerBlock(sim.sessionId)
+                setGuardrailPopup({ type: 'BLOCK', reason: result.reason })
+              } catch (e) {
+                const msg = e instanceof Error ? e.message : 'Block failed'
+                if (msg.includes('BAN')) setGuardrailPopup({ type: 'BAN', reason: msg })
+              }
+            }}
+            title="Trigger BLOCK guardrail — pause trading for n bars"
+            style={{
+              background: '#3d1f1f', border: '1px solid #f0883e', color: '#f0883e',
+              borderRadius: 6, padding: '4px 10px', fontSize: 12, cursor: 'pointer', fontWeight: 600,
+            }}
+          >
+            BLOCK
+          </button>
         )}
         <WalletWidget date={sim.date} refreshKey={sim.walletRefreshKey} />
         <button
@@ -593,6 +621,7 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
           }}
           onHistoricalDaysChange={setHistoricalDays}
           onPnlPctModeChange={setPnlPctMode}
+          onGuardRailSettingsChange={() => {}}
         />
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: '#484f58' }}>
           <span>{authUser.email}</span>
@@ -715,6 +744,15 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
         </>}
       />
 
+      {/* GuardRail popup */}
+      {guardrailPopup && (
+        <GuardRailPopup
+          type={guardrailPopup.type}
+          reason={guardrailPopup.reason}
+          onClose={guardrailPopup.type !== 'BAN' ? () => setGuardrailPopup(null) : undefined}
+        />
+      )}
+
       {/* Broker error banner (paper trading) */}
       {brokerError && (
         <div style={{
@@ -756,24 +794,30 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
             sessionCapital={sim.sessionCapital}
           />
 
-          {/* Combined P&L for options (both CE + PE) */}
+          {/* Combined P&L for options (both CE + PE) — collapsible */}
           {instrumentType === 'options' && sim.sessionState !== 'idle' && sim.sessionState !== 'ended' && (
             <div style={{
               background: '#161b22', border: '1px solid #30363d', borderRadius: 8,
-              padding: '10px 16px', fontSize: 12,
+              padding: '8px 14px', fontSize: 12,
             }}>
-              <div style={{ color: '#8b949e', marginBottom: 6 }}>Combined P&L</div>
-              <span style={{
-                fontWeight: 700, fontSize: 15,
-                color: sim.pnl > 0 ? '#26a641' : sim.pnl < 0 ? '#f85149' : '#8b949e',
-                fontVariantNumeric: 'tabular-nums',
-              }}>
-                {pnlPctMode && sim.sessionCapital > 0
-                  ? `${sim.pnl >= 0 ? '+' : ''}${((sim.pnl / sim.sessionCapital) * 100).toFixed(2)}%`
-                  : `${sim.pnl >= 0 ? '+' : ''}${sim.pnl.toFixed(2)}`
-                }
-              </span>
-              {idle || (
+              <div
+                onClick={() => setCombinedPnlOpen(o => !o)}
+                style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', userSelect: 'none' }}
+              >
+                <span style={{ color: '#8b949e', fontSize: 11 }}>{combinedPnlOpen ? '▾' : '▸'}</span>
+                <span style={{ color: '#8b949e' }}>Combined P&L</span>
+                <span style={{
+                  marginLeft: 'auto', fontWeight: 700, fontSize: 14,
+                  color: sim.pnl > 0 ? '#26a641' : sim.pnl < 0 ? '#f85149' : '#8b949e',
+                  fontVariantNumeric: 'tabular-nums',
+                }}>
+                  {pnlPctMode && sim.sessionCapital > 0
+                    ? `${sim.pnl >= 0 ? '+' : ''}${((sim.pnl / sim.sessionCapital) * 100).toFixed(2)}%`
+                    : `${sim.pnl >= 0 ? '+' : ''}${sim.pnl.toFixed(2)}`
+                  }
+                </span>
+              </div>
+              {combinedPnlOpen && !idle && (
                 <div style={{ marginTop: 6, display: 'flex', flexDirection: 'column', gap: 3 }}>
                   <div style={{ color: '#8b949e', fontSize: 11 }}>
                     CE pos: <span style={{ color: '#e6edf3' }}>{sim.positionCE.side}</span>
@@ -825,6 +869,7 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
               injectedEditPrice={injectedEditPrice}
               onStartStrategy={handleStartStrategy}
               onCancelAllStrategies={handleCancelAllStrategies}
+              onGuardRailBlocked={(type, reason) => setGuardrailPopup({ type, reason })}
             />
           </div>
           <TradeHistory

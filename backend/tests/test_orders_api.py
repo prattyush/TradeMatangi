@@ -23,6 +23,10 @@ def _make_session(session_id: str = SESSION):
     session.current_time = "1746518100"
     session.state = SimulationState.RUNNING
     session.user_id = FIXED_USER_ID
+    session.guardrail_ban_active = False
+    session.guardrail_block_until_bar = 0
+    session.guardrail_block_bars = 3
+    session.interval = 180
     return session
 
 
