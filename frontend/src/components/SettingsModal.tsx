@@ -192,7 +192,7 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
   const [aggrSlOnlyInProfit, setAggrSlOnlyInProfit] = useState(loadAggrSlOnlyInProfit)
 
   // Active tab
-  const [activeTab, setActiveTab] = useState<'general' | 'strategies' | 'guardrails' | 'admin'>('general')
+  const [activeTab, setActiveTab] = useState<'general' | 'strategies' | 'guardrails' | 'admin' | 'profile'>('general')
 
   // GuardRails settings state
   const [grBanEnabled, setGrBanEnabled] = useState(loadGuardRailBanEnabled)
@@ -524,8 +524,8 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
               marginTop: -8,
             }}>
               {(isAdmin
-                ? ['general', 'strategies', 'guardrails', 'admin'] as const
-                : ['general', 'strategies', 'guardrails'] as const
+                ? ['general', 'strategies', 'guardrails', 'admin', 'profile'] as const
+                : ['general', 'strategies', 'guardrails', 'profile'] as const
               ).map(tab => (
                 <button
                   key={tab}
@@ -852,81 +852,6 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
             {status && (
               <div style={{ fontSize: 12, color: '#3fb950' }}>{status}</div>
             )}
-
-            {/* Change Password */}
-            <div style={{ borderTop: '1px solid #21262d', paddingTop: 16 }}>
-              <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 10, fontWeight: 600 }}>CHANGE PASSWORD</div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                <div>
-                  <div style={{ fontSize: 11, color: '#8b949e', marginBottom: 3 }}>Current password</div>
-                  <input
-                    type="password"
-                    value={pwOld}
-                    onChange={e => setPwOld(e.target.value)}
-                    placeholder="Current password"
-                    style={{
-                      width: '100%', padding: '6px 10px', background: '#0d1117',
-                      border: '1px solid #30363d', borderRadius: 6,
-                      color: '#e6edf3', fontSize: 13, boxSizing: 'border-box',
-                    }}
-                  />
-                </div>
-                <div>
-                  <div style={{ fontSize: 11, color: '#8b949e', marginBottom: 3 }}>New password</div>
-                  <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                    <input
-                      type={pwVisible ? 'text' : 'password'}
-                      value={pwNew}
-                      onChange={e => setPwNew(e.target.value)}
-                      placeholder="New password"
-                      style={{
-                        flex: 1, padding: '6px 10px', background: '#0d1117',
-                        border: '1px solid #30363d', borderRadius: 6,
-                        color: '#e6edf3', fontSize: 13,
-                      }}
-                    />
-                    <button
-                      onClick={() => setPwVisible(v => !v)}
-                      style={{
-                        padding: '6px 10px', background: '#21262d', border: '1px solid #30363d',
-                        borderRadius: 6, color: '#8b949e', cursor: 'pointer', fontSize: 12,
-                        flexShrink: 0,
-                      }}
-                    >{pwVisible ? 'Hide' : 'Show'}</button>
-                  </div>
-                </div>
-                <div>
-                  <div style={{ fontSize: 11, color: '#8b949e', marginBottom: 3 }}>Confirm new password</div>
-                  <input
-                    type="password"
-                    value={pwConfirm}
-                    onChange={e => setPwConfirm(e.target.value)}
-                    placeholder="Confirm new password"
-                    style={{
-                      width: '100%', padding: '6px 10px', background: '#0d1117',
-                      border: '1px solid #30363d', borderRadius: 6,
-                      color: '#e6edf3', fontSize: 13, boxSizing: 'border-box',
-                    }}
-                  />
-                </div>
-                <button
-                  onClick={handleChangePassword}
-                  disabled={pwLoading || !pwOld || !pwNew || !pwConfirm}
-                  style={{
-                    padding: '6px 14px', background: pwLoading || !pwOld || !pwNew || !pwConfirm ? '#21262d' : '#1f6feb',
-                    border: 'none', borderRadius: 6,
-                    color: pwLoading || !pwOld || !pwNew || !pwConfirm ? '#484f58' : '#fff',
-                    cursor: pwLoading || !pwOld || !pwNew || !pwConfirm ? 'not-allowed' : 'pointer',
-                    fontSize: 12, fontWeight: 600, alignSelf: 'flex-start',
-                  }}
-                >{pwLoading ? 'Changing…' : 'Change Password'}</button>
-                {pwStatus && (
-                  <div style={{ fontSize: 12, color: pwStatus.ok ? '#3fb950' : '#f85149' }}>
-                    {pwStatus.msg}
-                  </div>
-                )}
-              </div>
-            </div>
 
             </> /* end General tab */}
 
@@ -1431,6 +1356,85 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
                 {status && (
                   <div style={{ fontSize: 12, color: '#3fb950' }}>{status}</div>
                 )}
+              </div>
+            )}
+
+            {/* ── Profile tab content ── */}
+            {activeTab === 'profile' && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                <div style={{ borderTop: '1px solid #21262d', paddingTop: 16 }}>
+                  <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 10, fontWeight: 600 }}>CHANGE PASSWORD</div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    <div>
+                      <div style={{ fontSize: 11, color: '#8b949e', marginBottom: 3 }}>Current password</div>
+                      <input
+                        type="password"
+                        value={pwOld}
+                        onChange={e => setPwOld(e.target.value)}
+                        placeholder="Current password"
+                        style={{
+                          width: '100%', padding: '6px 10px', background: '#0d1117',
+                          border: '1px solid #30363d', borderRadius: 6,
+                          color: '#e6edf3', fontSize: 13, boxSizing: 'border-box',
+                        }}
+                      />
+                    </div>
+                    <div>
+                      <div style={{ fontSize: 11, color: '#8b949e', marginBottom: 3 }}>New password</div>
+                      <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                        <input
+                          type={pwVisible ? 'text' : 'password'}
+                          value={pwNew}
+                          onChange={e => setPwNew(e.target.value)}
+                          placeholder="New password"
+                          style={{
+                            flex: 1, padding: '6px 10px', background: '#0d1117',
+                            border: '1px solid #30363d', borderRadius: 6,
+                            color: '#e6edf3', fontSize: 13,
+                          }}
+                        />
+                        <button
+                          onClick={() => setPwVisible(v => !v)}
+                          style={{
+                            padding: '6px 10px', background: '#21262d', border: '1px solid #30363d',
+                            borderRadius: 6, color: '#8b949e', cursor: 'pointer', fontSize: 12,
+                            flexShrink: 0,
+                          }}
+                        >{pwVisible ? 'Hide' : 'Show'}</button>
+                      </div>
+                    </div>
+                    <div>
+                      <div style={{ fontSize: 11, color: '#8b949e', marginBottom: 3 }}>Confirm new password</div>
+                      <input
+                        type="password"
+                        value={pwConfirm}
+                        onChange={e => setPwConfirm(e.target.value)}
+                        placeholder="Confirm new password"
+                        style={{
+                          width: '100%', padding: '6px 10px', background: '#0d1117',
+                          border: '1px solid #30363d', borderRadius: 6,
+                          color: '#e6edf3', fontSize: 13, boxSizing: 'border-box',
+                        }}
+                      />
+                    </div>
+                    <button
+                      onClick={handleChangePassword}
+                      disabled={pwLoading || !pwOld || !pwNew || !pwConfirm}
+                      style={{
+                        padding: '6px 14px', background: pwLoading || !pwOld || !pwNew || !pwConfirm ? '#21262d' : '#1f6feb',
+                        border: 'none', borderRadius: 6,
+                        color: pwLoading || !pwOld || !pwNew || !pwConfirm ? '#484f58' : '#fff',
+                        cursor: pwLoading || !pwOld || !pwNew || !pwConfirm ? 'not-allowed' : 'pointer',
+                        fontSize: 12, fontWeight: 600, alignSelf: 'flex-start',
+                      }}
+                    >{pwLoading ? 'Changing…' : 'Change Password'}</button>
+                    {pwStatus && (
+                      <div style={{ fontSize: 12, color: pwStatus.ok ? '#3fb950' : '#f85149' }}>
+                        {pwStatus.msg}
+                      </div>
+                    )}
+                  </div>
+                </div>
               </div>
             )}
           </div>

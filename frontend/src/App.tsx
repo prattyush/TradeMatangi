@@ -133,6 +133,8 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
   // ── Price-pick state ────────────────────────────────────────────────────────
   const [pricePickOrderId, setPricePickOrderId] = useState<string | null>(null)
   const [injectedEditPrice, setInjectedEditPrice] = useState<{ orderId: string; price: number } | null>(null)
+  const [tpPickActive, setTpPickActive] = useState(false)
+  const [injectedTpPrice, setInjectedTpPrice] = useState<number | null>(null)
 
   useEffect(() => {
     if (!localStorage.getItem('user')) {
@@ -336,11 +338,14 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
 
   // ── Price pick: chart clicked in pick mode ───────────────────────────────────
   const handleChartPriceSelect = useCallback((price: number) => {
-    if (pricePickOrderId) {
+    if (tpPickActive) {
+      setInjectedTpPrice(price)
+      setTpPickActive(false)
+    } else if (pricePickOrderId) {
       setInjectedEditPrice({ orderId: pricePickOrderId, price })
       setPricePickOrderId(null)
     }
-  }, [pricePickOrderId])
+  }, [pricePickOrderId, tpPickActive])
 
   // ── Strategy callbacks ────────────────────────────────────────────────────────
   const handleStartStrategy = useCallback(async (
@@ -440,11 +445,14 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
           isActive={pane.id === activePaneId}
           onActivate={() => {
             setActivePaneId(pane.id)
-            if (pricePickOrderId && pane.id !== activePaneId) setPricePickOrderId(null)
+            if ((pricePickOrderId || tpPickActive) && pane.id !== activePaneId) {
+              setPricePickOrderId(null)
+              setTpPickActive(false)
+            }
           }}
           trades={getTradesForPane(pane)}
           openOrders={getOrdersForPane(pane)}
-          onPriceSelect={pricePickOrderId && pane.id === activePaneId ? handleChartPriceSelect : null}
+          onPriceSelect={(pricePickOrderId || tpPickActive) && pane.id === activePaneId ? handleChartPriceSelect : null}
           historicalDays={historicalDays}
           onMaximize={() => setMaximizedPaneId(isMaximized ? null : pane.id)}
           isMaximized={isMaximized}
@@ -867,6 +875,8 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
                 setInjectedEditPrice(null)
               }}
               injectedEditPrice={injectedEditPrice}
+              onRequestTpPick={() => { setTpPickActive(true); setInjectedTpPrice(null) }}
+              injectedTpPrice={injectedTpPrice}
               onStartStrategy={handleStartStrategy}
               onCancelAllStrategies={handleCancelAllStrategies}
               onGuardRailBlocked={(type, reason) => setGuardrailPopup({ type, reason })}
