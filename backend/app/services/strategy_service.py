@@ -35,6 +35,15 @@ logger = logging.getLogger(__name__)
 _TICK_SIZE = 0.05  # NSE/BSE minimum price increment
 
 
+def _session_strike(session, tick_right: str | None) -> int | None:
+    """Return the correct strike for the given tick right, using per-right strike when available."""
+    if tick_right == "CE":
+        return getattr(session, "strike_ce", None) or getattr(session, "strike", None)
+    if tick_right == "PE":
+        return getattr(session, "strike_pe", None) or getattr(session, "strike", None)
+    return getattr(session, "strike", None)
+
+
 def _ceil_tick(price: float) -> float:
     """Round price UP to the nearest ₹0.05 tick."""
     return round(math.ceil(round(price / _TICK_SIZE, 10)) * _TICK_SIZE, 2)
@@ -524,6 +533,7 @@ def _cancel_exit_and_place_limit(
                 trading_date=session.date,
                 limit_price=limit_price,
                 right=tick_right,
+                strike=_session_strike(session, tick_right),
                 user_id=session.user_id,
             )
             logger.info(
@@ -626,6 +636,7 @@ def _on_tick_breakeven(
                     trading_date=session.date,
                     trigger_price=new_sl_price,
                     right=tick_right,
+                    strike=_session_strike(session, tick_right),
                     user_id=session.user_id,
                 )
                 if is_real:
@@ -716,6 +727,7 @@ def _on_tick_target_profit(
                 trading_date=session.date,
                 limit_price=target_price,
                 right=tick_right,
+                strike=_session_strike(session, tick_right),
                 user_id=session.user_id,
             )
             logger.info(

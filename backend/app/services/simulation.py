@@ -201,6 +201,7 @@ def _emit_tick_and_check_orders(
     try:
         from app.services import strategy_service
         from app.services.order_service import get_open_orders, get_order, OrderStatus
+        running_before = {s.strategy_id: s for s in strategy_service.list_running(session.session_id)}
         before_ids = {o.order_id for o in get_open_orders(session.session_id)}
         strategy_service.on_tick(session, tick, tick_right)
         after_open_orders = get_open_orders(session.session_id)
@@ -232,6 +233,11 @@ def _emit_tick_and_check_orders(
                     "right": new_order.right,
                     "strike": new_order.strike,
                 })
+        # Emit completion events for strategies that just finished
+        running_after_ids = {s.strategy_id for s in strategy_service.list_running(session.session_id)}
+        for sid, strat in running_before.items():
+            if sid not in running_after_ids:
+                fill_events.append({"type": "strategy_completed", "strategy_id": sid, "right": strat.right})
     except Exception as exc:
         logger.warning("strategy eval error for session %s: %s", session.session_id, exc)
 
@@ -1397,6 +1403,7 @@ def _emit_tick_and_check_orders_real(
     try:
         from app.services import strategy_service
         from app.services.order_service import get_open_orders, get_order, OrderStatus
+        running_before = {s.strategy_id: s for s in strategy_service.list_running(session.session_id)}
         before_ids = {o.order_id for o in get_open_orders(session.session_id)}
         strategy_service.on_tick(session, tick, tick_right, loop=loop)
         after_open_orders = get_open_orders(session.session_id)
@@ -1428,6 +1435,11 @@ def _emit_tick_and_check_orders_real(
                     "right": new_order.right,
                     "strike": new_order.strike,
                 })
+        # Emit completion events for strategies that just finished
+        running_after_ids = {s.strategy_id for s in strategy_service.list_running(session.session_id)}
+        for sid, strat in running_before.items():
+            if sid not in running_after_ids:
+                fill_events.append({"type": "strategy_completed", "strategy_id": sid, "right": strat.right})
     except Exception as exc:
         logger.warning("strategy eval error for real session %s: %s", session.session_id, exc)
 
