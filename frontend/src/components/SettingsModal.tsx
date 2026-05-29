@@ -505,7 +505,8 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
         >
           <div style={{
             background: '#161b22', border: '1px solid #30363d', borderRadius: 10,
-            padding: 24, minWidth: 340, display: 'flex', flexDirection: 'column', gap: 16,
+            padding: 24, width: 440, display: 'flex', flexDirection: 'column', gap: 16,
+            maxHeight: '90vh', boxSizing: 'border-box',
           }}>
             {/* Header */}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -539,17 +540,19 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
                       ? '2px solid #1f6feb'
                       : '2px solid transparent',
                     color: activeTab === tab ? '#79c0ff' : '#8b949e',
-                    fontSize: 12,
+                    fontSize: 11,
                     fontWeight: 600,
                     cursor: 'pointer',
                     textTransform: 'uppercase',
-                    letterSpacing: '0.5px',
+                    letterSpacing: 0,
                   }}
                 >
                   {tab}
                 </button>
               ))}
             </div>
+
+            <div style={{ overflowY: 'auto', flex: 1 }}>
 
             {/* ── General tab content ── */}
             {activeTab === 'general' && <>
@@ -1437,6 +1440,8 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
                 </div>
               </div>
             )}
+
+            </div>{/* end scrollable tab content */}
           </div>
         </div>
       )}
