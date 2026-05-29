@@ -53,6 +53,7 @@ Look into frontend technical constraints doc when needed which is located at doc
 | Phase VII — PaperTrading | ✅ Complete | 350 | `docs/spec-phase7.md` |
 | Phase VIII — Launch | ✅ Complete | 391 | `docs/spec-phase8.md` |
 | Phase IX — RealTrading | ✅ Complete | 436 | `docs/spec-phase9.md` |
+| Phase X — GuardRails | ✅ Complete | 494 | `docs/spec-phase10.md` |
 
 Full status, bugs fixed, and lessons learned for each phase are in the respective phase spec docs.
 

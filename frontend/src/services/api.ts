@@ -220,6 +220,27 @@ export interface ExpiryResponse {
   expiry: string
 }
 
+// ── GuardRails ─────────────────────────────────────────────────────────────
+
+export interface GuardRailSettings {
+  guardrail_block_bars: number
+  guardrail_cooldown_block_bars: number
+  guardrail_cooldown_losses: number
+  guardrail_ban_capital_pct: number
+  guardrail_ban_loss_trade_pct: number
+  guardrail_ban_enabled: boolean
+  guardrail_cooldown_enabled: boolean
+}
+
+export interface GuardRailStatusResponse {
+  block_active: boolean
+  block_until_bar: number
+  ban_active: boolean
+  cooldown_enabled: boolean
+  consecutive_losses: number
+  settings: GuardRailSettings
+}
+
 const api = {
   async getSymbols(): Promise<SymbolInfo[]> {
     const res = await fetch(`${BACKEND_URL}/api/data/symbols`)
@@ -337,6 +358,10 @@ const api = {
       headers: { 'Content-Type': 'application/json', ..._authHeaders() },
       body: JSON.stringify({ session_id, ...(right ? { right } : {}) }),
     })
+    if (res.status === 403) {
+      const data = await res.json().catch(() => ({}))
+      throw new Error(data.detail || `Buy failed: ${res.status}`)
+    }
     if (!res.ok) throw new Error(`Buy failed: ${res.status}`)
     return res.json()
   },
@@ -347,6 +372,10 @@ const api = {
       headers: { 'Content-Type': 'application/json', ..._authHeaders() },
       body: JSON.stringify({ session_id, ...(right ? { right } : {}) }),
     })
+    if (res.status === 403) {
+      const data = await res.json().catch(() => ({}))
+      throw new Error(data.detail || `Sell failed: ${res.status}`)
+    }
     if (!res.ok) throw new Error(`Sell failed: ${res.status}`)
     return res.json()
   },
@@ -412,6 +441,10 @@ const api = {
     if (res.status === 402) {
       const data = await res.json().catch(() => ({}))
       throw new InsufficientFundsError(data.detail || 'Insufficient funds')
+    }
+    if (res.status === 403) {
+      const data = await res.json().catch(() => ({}))
+      throw new Error(data.detail || `Place order failed: ${res.status}`)
     }
     if (!res.ok) throw new Error(`Place order failed: ${res.status}`)
     return res.json()
@@ -739,6 +772,50 @@ const api = {
     if (!res.ok) {
       const data = await res.json().catch(() => ({}))
       throw new Error(data.detail || `Set stream source failed: ${res.status}`)
+    }
+    return res.json()
+  },
+
+  // ── GuardRails ─────────────────────────────────────────────────────────────
+
+  async triggerBlock(session_id: string): Promise<{ status: string; reason: string; until_bar: number }> {
+    const res = await fetch(`${BACKEND_URL}/api/guardrails/block`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ..._authHeaders() },
+      body: JSON.stringify({ session_id }),
+    })
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}))
+      throw new Error(data.detail || `Block failed: ${res.status}`)
+    }
+    return res.json()
+  },
+
+  async getGuardRailStatus(session_id: string): Promise<GuardRailStatusResponse> {
+    const res = await fetch(`${BACKEND_URL}/api/guardrails/status?session_id=${session_id}`, {
+      headers: _authHeaders(),
+    })
+    if (!res.ok) throw new Error(`GuardRail status failed: ${res.status}`)
+    return res.json()
+  },
+
+  async getGuardRailSettings(): Promise<GuardRailSettings> {
+    const res = await fetch(`${BACKEND_URL}/api/guardrails/settings`, {
+      headers: _authHeaders(),
+    })
+    if (!res.ok) throw new Error(`GuardRail settings failed: ${res.status}`)
+    return res.json()
+  },
+
+  async updateGuardRailSettings(settings: Partial<GuardRailSettings>): Promise<GuardRailSettings> {
+    const res = await fetch(`${BACKEND_URL}/api/guardrails/settings`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ..._authHeaders() },
+      body: JSON.stringify(settings),
+    })
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}))
+      throw new Error(data.detail || `GuardRail settings update failed: ${res.status}`)
     }
     return res.json()
   },

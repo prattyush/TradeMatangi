@@ -15,6 +15,11 @@ async def place_order(req: PlaceOrderRequest):
     if session.current_time is None:
         raise HTTPException(status_code=400, detail="Simulation has not started yet")
 
+    from app.services.guardrail_service import check_guardrails
+    blocked, reason = check_guardrails(session)
+    if blocked:
+        raise HTTPException(status_code=403, detail=f"GUARDRAIL:{reason}")
+
     if req.order_type == OrderType.TARGET:
         if not req.trigger_price or req.trigger_price <= 0:
             raise HTTPException(status_code=400, detail="trigger_price is required and must be positive for TARGET orders")

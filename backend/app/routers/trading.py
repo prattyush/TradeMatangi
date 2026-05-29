@@ -142,6 +142,11 @@ async def buy(req: TradeRequest):
     if session.current_time is None:
         raise HTTPException(status_code=400, detail="Simulation has not started yet")
 
+    from app.services.guardrail_service import check_guardrails
+    blocked, reason = check_guardrails(session)
+    if blocked:
+        raise HTTPException(status_code=403, detail=f"GUARDRAIL:{reason}")
+
     right = _resolve_right(session, req.right)
     price = _get_price_for_right(session, right)
     if price <= 0.0:
@@ -180,6 +185,11 @@ async def sell(req: TradeRequest):
         raise HTTPException(status_code=404, detail="Session not found")
     if session.current_time is None:
         raise HTTPException(status_code=400, detail="Simulation has not started yet")
+
+    from app.services.guardrail_service import check_guardrails
+    blocked, reason = check_guardrails(session)
+    if blocked:
+        raise HTTPException(status_code=403, detail=f"GUARDRAIL:{reason}")
 
     right = _resolve_right(session, req.right)
     price = _get_price_for_right(session, right)
