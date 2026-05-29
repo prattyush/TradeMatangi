@@ -114,3 +114,16 @@ Settings like `n`, `p`, `x%`, `y%` are user-preference controls, not admin contr
 
 **Removed "confirmed value" state variables.**
 An initial design had four `useState` variables (`grBlockBars`, `grCooldownLosses`, `grBanCapitalPct`, `grBanLossTradePct`) to track saved values separately from input strings. They were never read — only the input strings and the backend/localStorage were the source of truth. Removing them eliminated 4 TypeScript `TS6133` errors and simplified the component.
+
+---
+
+### Post-Merge Fixes (2026-05-29)
+
+**PR #102 — GuardRail expiry time + separate cooldown block bars**
+- BLOCK reason string changed from raw Unix timestamp to human-readable `"resumes after 09:35"`. Uses `datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%H:%M")` which honours the IST-as-UTC convention.
+- COOLDOWN gets its own `guardrail_cooldown_block_bars` setting (default 3), independent of `guardrail_block_bars` for the manual BLOCK button. Rationale: a panic-trading cooldown may warrant a longer pause than a voluntary break.
+- New field added to: `SimulationSession`, `DEFAULT_SETTINGS`, `get_settings()`, `GuardRailSettingsResponse`, `GuardRailSettingsUpdateRequest`, `GuardRailSettings` (TypeScript), `SettingsModal` (new input in COOLDOWN section).
+
+**PR #104 — Time picker scroll throttle** (`fix/time-picker-scroll-throttle`)
+- Native `<input type="time">` fires dozens of wheel events per scroll gesture; start time was jumping uncontrollably.
+- Fix: non-passive `wheel` listener (`passive: false` required so `preventDefault()` suppresses browser's built-in increment) with a 180ms throttle ref. Each physical scroll notch = exactly ±1 minute. File: `frontend/src/components/SessionControls.tsx`.

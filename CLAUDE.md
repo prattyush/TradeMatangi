@@ -70,3 +70,10 @@ Full status, bugs fixed, and lessons learned for each phase are in the respectiv
 | LTP button in price inputs + global button click animation | #96 (feature/ltp-button-click-animation) | ✅ merged to dev + main |
 | Change Password in Settings General tab + remove admin credentials hint from login | #98 (feature/change-password-settings) | ✅ merged to dev + main |
 | Drawing tools dropdown (H-Line, Trend, Fib Retracement, Parallel Channel) + LIFO Clear + free crosshair | #100 (feature/drawing-tools-fib-channel) | ✅ merged to dev + main |
+
+### Post-Phase X fixes (merged to dev + main)
+
+| Fix | PR | Status |
+|-----|-----|--------|
+| GuardRail BLOCK reason: human-readable expiry time ("resumes after 09:35") + separate cooldown block bars (n) setting | #102 (feature/guardrails-phase10) | ✅ merged to dev + main |
+| Time picker scroll throttle: 1 step per 180ms, prevents runaway jumps on Start Time input | #104 (fix/time-picker-scroll-throttle) | ✅ merged to dev + main |
