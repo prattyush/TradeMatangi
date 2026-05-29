@@ -23,6 +23,7 @@ const TARGET_PROFIT_BUFFER_TICKS_KEY = 'targetProfitBufferTicks'
 const AGGR_SL_ONLY_IN_PROFIT_KEY = 'aggrSlOnlyInProfit'
 
 const GUARDRAIL_BLOCK_BARS_KEY = 'guardrailBlockBars'
+const GUARDRAIL_COOLDOWN_BLOCK_BARS_KEY = 'guardrailCooldownBlockBars'
 const GUARDRAIL_COOLDOWN_LOSSES_KEY = 'guardrailCooldownLosses'
 const GUARDRAIL_BAN_CAPITAL_PCT_KEY = 'guardrailBanCapitalPct'
 const GUARDRAIL_BAN_LOSS_TRADE_PCT_KEY = 'guardrailBanLossTradePct'
@@ -31,6 +32,10 @@ const GUARDRAIL_COOLDOWN_ENABLED_KEY = 'guardrailCooldownEnabled'
 
 export function loadGuardRailBlockBars(): number {
   const v = parseInt(localStorage.getItem(GUARDRAIL_BLOCK_BARS_KEY) ?? '')
+  return isNaN(v) || v < 1 || v > 20 ? 3 : v
+}
+export function loadGuardRailCooldownBlockBars(): number {
+  const v = parseInt(localStorage.getItem(GUARDRAIL_COOLDOWN_BLOCK_BARS_KEY) ?? '')
   return isNaN(v) || v < 1 || v > 20 ? 3 : v
 }
 export function loadGuardRailCooldownLosses(): number {
@@ -123,6 +128,7 @@ export function loadAggrSlOnlyInProfit(): boolean {
 
 export interface GuardRailSettingsLocal {
   blockBars: number
+  cooldownBlockBars: number
   cooldownLosses: number
   banCapitalPct: number
   banLossTradePct: number
@@ -192,6 +198,7 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
   const [grBanEnabled, setGrBanEnabled] = useState(loadGuardRailBanEnabled)
   const [grCooldownEnabled, setGrCooldownEnabled] = useState(loadGuardRailCooldownEnabled)
   const [grBlockBarsInput, setGrBlockBarsInput] = useState(() => String(loadGuardRailBlockBars()))
+  const [grCooldownBlockBarsInput, setGrCooldownBlockBarsInput] = useState(() => String(loadGuardRailCooldownBlockBars()))
   const [grCooldownLossesInput, setGrCooldownLossesInput] = useState(() => String(loadGuardRailCooldownLosses()))
   const [grBanCapitalInput, setGrBanCapitalInput] = useState(() => String(loadGuardRailBanCapitalPct()))
   const [grBanLossTradeInput, setGrBanLossTradeInput] = useState(() => String(loadGuardRailBanLossTradePct()))
@@ -238,12 +245,14 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
 
       api.getGuardRailSettings().then(s => {
         setGrBlockBarsInput(String(s.guardrail_block_bars))
+        setGrCooldownBlockBarsInput(String(s.guardrail_cooldown_block_bars))
         setGrCooldownLossesInput(String(s.guardrail_cooldown_losses))
         setGrBanCapitalInput(String(s.guardrail_ban_capital_pct))
         setGrBanLossTradeInput(String(s.guardrail_ban_loss_trade_pct))
         setGrBanEnabled(s.guardrail_ban_enabled)
         setGrCooldownEnabled(s.guardrail_cooldown_enabled)
         localStorage.setItem(GUARDRAIL_BLOCK_BARS_KEY, String(s.guardrail_block_bars))
+        localStorage.setItem(GUARDRAIL_COOLDOWN_BLOCK_BARS_KEY, String(s.guardrail_cooldown_block_bars))
         localStorage.setItem(GUARDRAIL_COOLDOWN_LOSSES_KEY, String(s.guardrail_cooldown_losses))
         localStorage.setItem(GUARDRAIL_BAN_CAPITAL_PCT_KEY, String(s.guardrail_ban_capital_pct))
         localStorage.setItem(GUARDRAIL_BAN_LOSS_TRADE_PCT_KEY, String(s.guardrail_ban_loss_trade_pct))
@@ -350,16 +359,19 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
 
   const saveGuardRailSettings = async () => {
     const blockBars = parseInt(grBlockBarsInput)
+    const cooldownBlockBars = parseInt(grCooldownBlockBarsInput)
     const cooldownLosses = parseInt(grCooldownLossesInput)
     const banCapitalPct = parseFloat(grBanCapitalInput)
     const banLossTradePct = parseFloat(grBanLossTradeInput)
     if (isNaN(blockBars) || blockBars < 1 || blockBars > 20) { setStatus('Block bars must be 1–20'); return }
+    if (isNaN(cooldownBlockBars) || cooldownBlockBars < 1 || cooldownBlockBars > 20) { setStatus('Cooldown block bars must be 1–20'); return }
     if (isNaN(cooldownLosses) || cooldownLosses < 1 || cooldownLosses > 20) { setStatus('Cooldown losses must be 1–20'); return }
     if (isNaN(banCapitalPct) || banCapitalPct < 1 || banCapitalPct > 100) { setStatus('Capital % must be 1–100'); return }
     if (isNaN(banLossTradePct) || banLossTradePct < 1 || banLossTradePct > 100) { setStatus('Loss trade % must be 1–100'); return }
     try {
       await api.updateGuardRailSettings({
         guardrail_block_bars: blockBars,
+        guardrail_cooldown_block_bars: cooldownBlockBars,
         guardrail_cooldown_losses: cooldownLosses,
         guardrail_ban_capital_pct: banCapitalPct,
         guardrail_ban_loss_trade_pct: banLossTradePct,
@@ -367,12 +379,13 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
         guardrail_cooldown_enabled: grCooldownEnabled,
       })
       localStorage.setItem(GUARDRAIL_BLOCK_BARS_KEY, String(blockBars))
+      localStorage.setItem(GUARDRAIL_COOLDOWN_BLOCK_BARS_KEY, String(cooldownBlockBars))
       localStorage.setItem(GUARDRAIL_COOLDOWN_LOSSES_KEY, String(cooldownLosses))
       localStorage.setItem(GUARDRAIL_BAN_CAPITAL_PCT_KEY, String(banCapitalPct))
       localStorage.setItem(GUARDRAIL_BAN_LOSS_TRADE_PCT_KEY, String(banLossTradePct))
       localStorage.setItem(GUARDRAIL_BAN_ENABLED_KEY, String(grBanEnabled))
       localStorage.setItem(GUARDRAIL_COOLDOWN_ENABLED_KEY, String(grCooldownEnabled))
-      onGuardRailSettingsChange?.({ blockBars, cooldownLosses, banCapitalPct, banLossTradePct, banEnabled: grBanEnabled, cooldownEnabled: grCooldownEnabled })
+      onGuardRailSettingsChange?.({ blockBars, cooldownBlockBars, cooldownLosses, banCapitalPct, banLossTradePct, banEnabled: grBanEnabled, cooldownEnabled: grCooldownEnabled })
       setStatus('GuardRail settings saved')
       setTimeout(() => setStatus(null), 2000)
     } catch {
@@ -1113,16 +1126,27 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
                     </label>
                   </div>
                   <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 10 }}>
-                    Triggers a block after <strong style={{ color: '#e6edf3' }}>p</strong> consecutive loss trades. Uses the same block bars (n) setting.
+                    Triggers a trading pause after <strong style={{ color: '#e6edf3' }}>p</strong> consecutive loss trades for <strong style={{ color: '#e6edf3' }}>n</strong> bars.
                   </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <span style={{ fontSize: 12, color: '#8b949e', flex: 1 }}>Consecutive losses (p)</span>
-                    <input
-                      type="number" min={1} max={20}
-                      value={grCooldownLossesInput}
-                      onChange={e => setGrCooldownLossesInput(e.target.value)}
-                      style={{ width: 60, background: '#0d1117', border: '1px solid #30363d', borderRadius: 4, color: '#e6edf3', padding: '4px 8px', fontSize: 12 }}
-                    />
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <span style={{ fontSize: 12, color: '#8b949e', flex: 1 }}>Consecutive losses (p)</span>
+                      <input
+                        type="number" min={1} max={20}
+                        value={grCooldownLossesInput}
+                        onChange={e => setGrCooldownLossesInput(e.target.value)}
+                        style={{ width: 60, background: '#0d1117', border: '1px solid #30363d', borderRadius: 4, color: '#e6edf3', padding: '4px 8px', fontSize: 12 }}
+                      />
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <span style={{ fontSize: 12, color: '#8b949e', flex: 1 }}>Cooldown block bars (n)</span>
+                      <input
+                        type="number" min={1} max={20}
+                        value={grCooldownBlockBarsInput}
+                        onChange={e => setGrCooldownBlockBarsInput(e.target.value)}
+                        style={{ width: 60, background: '#0d1117', border: '1px solid #30363d', borderRadius: 4, color: '#e6edf3', padding: '4px 8px', fontSize: 12 }}
+                      />
+                    </div>
                   </div>
                 </div>
 

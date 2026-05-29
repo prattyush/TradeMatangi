@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import logging
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
 from app.models.schemas import TradeSide
@@ -61,6 +62,7 @@ def initialize_guardrails(session: "SimulationSession", user_id: str) -> None:
         settings = {}
 
     session.guardrail_block_bars = int(settings.get("guardrail_block_bars", 3))
+    session.guardrail_cooldown_block_bars = int(settings.get("guardrail_cooldown_block_bars", 3))
     session.guardrail_cooldown_losses = int(settings.get("guardrail_cooldown_losses", 3))
     session.guardrail_ban_capital_pct = float(settings.get("guardrail_ban_capital_pct", 10.0))
     session.guardrail_ban_loss_trade_pct = float(settings.get("guardrail_ban_loss_trade_pct", 60.0))
@@ -85,7 +87,8 @@ def check_guardrails(session: "SimulationSession") -> tuple[bool, str]:
         current_slot = _current_bar_slot(session)
         if current_slot <= session.guardrail_block_until_bar:
             n = session.guardrail_block_bars
-            return True, f"BLOCK: trading paused for {n} bars — expires after bar at {session.guardrail_block_until_bar}"
+            expiry_time = datetime.fromtimestamp(session.guardrail_block_until_bar, tz=timezone.utc).strftime("%H:%M")
+            return True, f"BLOCK: trading paused for {n} bars — resumes after {expiry_time}"
 
     return False, ""
 
@@ -139,11 +142,12 @@ def _check_cooldown(session: "SimulationSession") -> None:
     if losses >= p:
         interval = session.strategy_interval_secs or 180
         current_slot = _current_bar_slot(session)
-        n = session.guardrail_block_bars
+        n = session.guardrail_cooldown_block_bars
         until_bar = current_slot + n * interval
         session.guardrail_block_until_bar = until_bar
         session.guardrail_consecutive_losses = 0  # reset after triggering
-        reason = f"COOLDOWN: {p} consecutive losses — trading paused for {n} bars"
+        expiry_time = datetime.fromtimestamp(until_bar, tz=timezone.utc).strftime("%H:%M")
+        reason = f"COOLDOWN: {p} consecutive losses — trading paused for {n} bars (resumes after {expiry_time})"
         _emit_guardrail_event(session, "COOLDOWN", reason, until_bar)
         logger.info("COOLDOWN triggered on session %s until bar %s", session.session_id, until_bar)
 

@@ -224,6 +224,7 @@ export interface ExpiryResponse {
 
 export interface GuardRailSettings {
   guardrail_block_bars: number
+  guardrail_cooldown_block_bars: number
   guardrail_cooldown_losses: number
   guardrail_ban_capital_pct: number
   guardrail_ban_loss_trade_pct: number

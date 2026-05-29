@@ -60,7 +60,8 @@ class SimulationSession:
     guardrail_ban_active: bool = False
     guardrail_cooldown_enabled: bool = False
     guardrail_consecutive_losses: int = 0
-    guardrail_block_bars: int = 3             # n bars for BLOCK/COOLDOWN
+    guardrail_block_bars: int = 3             # n bars for manual BLOCK
+    guardrail_cooldown_block_bars: int = 3    # n bars for COOLDOWN block (separate from manual BLOCK)
     guardrail_cooldown_losses: int = 3        # p consecutive losses for COOLDOWN trigger
     guardrail_ban_capital_pct: float = 10.0   # x% capital loss triggers BAN
     guardrail_ban_loss_trade_pct: float = 60.0 # y% of trades in loss triggers BAN

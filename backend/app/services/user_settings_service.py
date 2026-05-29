@@ -10,6 +10,7 @@ logger = logging.getLogger(__name__)
 DEFAULT_SETTINGS: dict = {
     "historical_days": 2,
     "guardrail_block_bars": 3,
+    "guardrail_cooldown_block_bars": 3,
     "guardrail_cooldown_losses": 3,
     "guardrail_ban_capital_pct": 10.0,
     "guardrail_ban_loss_trade_pct": 60.0,
@@ -50,6 +51,7 @@ def get_settings(user_id: str) -> dict:
         return {
             "historical_days": int(item.get("historical_days", DEFAULT_SETTINGS["historical_days"])),
             "guardrail_block_bars": int(item.get("guardrail_block_bars", DEFAULT_SETTINGS["guardrail_block_bars"])),
+            "guardrail_cooldown_block_bars": int(item.get("guardrail_cooldown_block_bars", DEFAULT_SETTINGS["guardrail_cooldown_block_bars"])),
             "guardrail_cooldown_losses": int(item.get("guardrail_cooldown_losses", DEFAULT_SETTINGS["guardrail_cooldown_losses"])),
             "guardrail_ban_capital_pct": float(item.get("guardrail_ban_capital_pct", DEFAULT_SETTINGS["guardrail_ban_capital_pct"])),
             "guardrail_ban_loss_trade_pct": float(item.get("guardrail_ban_loss_trade_pct", DEFAULT_SETTINGS["guardrail_ban_loss_trade_pct"])),

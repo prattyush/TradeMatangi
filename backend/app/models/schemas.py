@@ -317,6 +317,7 @@ class WhitelistEntry(BaseModel):
 
 class GuardRailSettingsResponse(BaseModel):
     guardrail_block_bars: int = 3
+    guardrail_cooldown_block_bars: int = 3
     guardrail_cooldown_losses: int = 3
     guardrail_ban_capital_pct: float = 10.0
     guardrail_ban_loss_trade_pct: float = 60.0
@@ -326,6 +327,7 @@ class GuardRailSettingsResponse(BaseModel):
 
 class GuardRailSettingsUpdateRequest(BaseModel):
     guardrail_block_bars: int | None = Field(default=None, ge=1, le=20)
+    guardrail_cooldown_block_bars: int | None = Field(default=None, ge=1, le=20)
     guardrail_cooldown_losses: int | None = Field(default=None, ge=1, le=20)
     guardrail_ban_capital_pct: float | None = Field(default=None, ge=1.0, le=100.0)
     guardrail_ban_loss_trade_pct: float | None = Field(default=None, ge=1.0, le=100.0)
