@@ -195,13 +195,23 @@ def _emit_tick_and_check_orders(
         })
 
     # Strategy evaluation — snapshot open orders before/after so strategy-placed
-    # orders (e.g. AutoStop TARGET) are surfaced to the frontend via order_placed events.
+    # orders (e.g. AutoStop TARGET) are surfaced to the frontend via order_placed events,
+    # and strategy-cancelled orders (e.g. stoploss cancelled by TargetProfit) emit
+    # order_cancelled events so the UI removes them immediately.
     try:
         from app.services import strategy_service
-        from app.services.order_service import get_open_orders
+        from app.services.order_service import get_open_orders, get_order, OrderStatus
         before_ids = {o.order_id for o in get_open_orders(session.session_id)}
         strategy_service.on_tick(session, tick, tick_right)
-        for new_order in get_open_orders(session.session_id):
+        after_open_orders = get_open_orders(session.session_id)
+        after_ids = {o.order_id for o in after_open_orders}
+        # Emit cancellation events for orders the strategy cancelled
+        for order_id in before_ids - after_ids:
+            o = get_order(session.session_id, order_id)
+            if o and o.status == OrderStatus.CANCELLED:
+                fill_events.append({"type": "order_cancelled", "order_id": order_id})
+        # Emit placed events for new strategy orders
+        for new_order in after_open_orders:
             if new_order.order_id not in before_ids:
                 fill_events.append({
                     "type": "order_placed",
@@ -1386,10 +1396,18 @@ def _emit_tick_and_check_orders_real(
     # Strategy evaluation — pass loop so real-session strategies can place Kotak orders
     try:
         from app.services import strategy_service
-        from app.services.order_service import get_open_orders
+        from app.services.order_service import get_open_orders, get_order, OrderStatus
         before_ids = {o.order_id for o in get_open_orders(session.session_id)}
         strategy_service.on_tick(session, tick, tick_right, loop=loop)
-        for new_order in get_open_orders(session.session_id):
+        after_open_orders = get_open_orders(session.session_id)
+        after_ids = {o.order_id for o in after_open_orders}
+        # Emit cancellation events for orders the strategy cancelled
+        for order_id in before_ids - after_ids:
+            o = get_order(session.session_id, order_id)
+            if o and o.status == OrderStatus.CANCELLED:
+                fill_events.append({"type": "order_cancelled", "order_id": order_id})
+        # Emit placed events for new strategy orders
+        for new_order in after_open_orders:
             if new_order.order_id not in before_ids:
                 fill_events.append({
                     "type": "order_placed",
