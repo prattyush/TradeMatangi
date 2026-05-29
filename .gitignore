@@ -22,10 +22,7 @@ node_modules/
 .cache/
 
 # Data files
-data/*.pickle
-data/*.parquet
-data/*.csv
-data/*.ini
+data/
 
 # IDE
 .idea/
