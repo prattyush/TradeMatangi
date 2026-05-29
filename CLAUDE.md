@@ -80,3 +80,4 @@ Full status, bugs fixed, and lessons learned for each phase are in the respectiv
 | Settings: move Change Password to new Profile tab; TargetProfit chart price-pick (⊕) button; data/ added to .gitignore | #107 (feature/profile-tab-settings) | ✅ merged to dev + main |
 | Settings modal: fixed width 440px + tab font 11px so 5 tab labels don't crowd; tab content scrollable | #110 (fix/settings-modal-fixed-width) | ✅ merged to dev + main |
 | TargetProfit/BreakEven: emit order_cancelled SSE event when strategy cancels stoploss so UI removes it | #111 (fix/targetprofit-stoploss-cancel-event) | ✅ merged to dev + main |
+| Strategy completed UI + SELL marker strike fix: emit strategy_completed SSE event; pass per-right strike on strategy LIMIT orders | #113 (fix/strategy-completed-sell-marker) | ✅ merged to dev + main |
