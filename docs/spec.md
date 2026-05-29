@@ -105,6 +105,10 @@ Include this phase in the context only when you are implementing or planning pha
 
 Include this phase in the context only when you are implementing or planning phase 9. The phase 9 docs is located at `<project root>/docs/spec-phase9.md`
 
+#### Phase-X GuardRails
+
+Include this phase in the context only when you are implementing or planning phase 10. The phase 10 docs is located at `<project root>/docs/spec-phase10.md`
+
 
 ## Bugs
 The current bugs are added phase wise in `<project root>/docs/bugs.md`
