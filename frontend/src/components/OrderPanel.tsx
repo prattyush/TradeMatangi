@@ -25,6 +25,8 @@ interface Props {
   // Price-pick from chart
   onRequestPricePick: (orderId: string) => void
   injectedEditPrice: { orderId: string; price: number } | null
+  onRequestTpPick?: () => void
+  injectedTpPrice?: number | null
   // Strategy props
   instrumentType?: 'equity' | 'options'
   activeRight?: 'CE' | 'PE' | null
@@ -61,6 +63,8 @@ export default function OrderPanel({
   fundsRatioMode, fundsRatios, targetDeviationPct,
   onPlaceOrder, onCancelOrder, onUpdateOrder,
   onRequestPricePick, injectedEditPrice,
+  onRequestTpPick,
+  injectedTpPrice,
   instrumentType = 'equity',
   activeRight = null,
   positionCE,
@@ -132,6 +136,11 @@ export default function OrderPanel({
       setEditPrice(injectedEditPrice.price.toFixed(2))
     }
   }, [injectedEditPrice])
+
+  // Inject chart-picked price into TP field
+  useEffect(() => {
+    if (injectedTpPrice != null) setTpValue(injectedTpPrice.toFixed(2))
+  }, [injectedTpPrice])
 
   const autoLimit = orderType === 'TARGET' && !isNaN(parsedPrice)
     ? side === 'BUY'
@@ -476,6 +485,17 @@ export default function OrderPanel({
                     color: '#e6edf3', fontSize: 12,
                   }}
                 />
+                {!tpIsPct && onRequestTpPick && (
+                  <button
+                    onClick={onRequestTpPick}
+                    title="Pick price from chart"
+                    style={{
+                      padding: '4px 7px', background: '#21262d',
+                      border: '1px solid #30363d', borderRadius: 4,
+                      color: '#8b949e', cursor: 'pointer', fontSize: 11,
+                    }}
+                  >⊕</button>
+                )}
                 <label style={{ fontSize: 10, color: '#8b949e', display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer', whiteSpace: 'nowrap' }}>
                   <input
                     type="checkbox"
