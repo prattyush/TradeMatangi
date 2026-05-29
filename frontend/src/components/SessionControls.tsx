@@ -1,4 +1,4 @@
-import { useState, useEffect, CSSProperties, ReactNode } from 'react'
+import { useState, useEffect, useRef, useCallback, CSSProperties, ReactNode } from 'react'
 import { SessionState } from '../hooks/useSimulation'
 import api, { SymbolInfo } from '../services/api'
 import { InstrumentConfig } from '../hooks/useSimulation'
@@ -101,6 +101,31 @@ export default function SessionControls({
     OPTIONS_ONLY_SYMBOLS.has(currentSymbol) ? 'options' : 'equity'
   )
   const [optionsOffset, setOptionsOffset] = useState(0)
+
+  // Throttle ref for time-picker scroll: one step per 180ms to prevent runaway scrolling
+  const timeScrollThrottleRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const timeInputRef = useRef<HTMLInputElement | null>(null)
+
+  const handleTimeWheel = useCallback((e: WheelEvent) => {
+    e.preventDefault()
+    if (timeScrollThrottleRef.current) return
+    timeScrollThrottleRef.current = setTimeout(() => {
+      timeScrollThrottleRef.current = null
+    }, 180)
+    const direction = e.deltaY > 0 ? 1 : -1
+    setStartTime(prev => {
+      const [h, m] = prev.split(':').map(Number)
+      const totalMins = Math.max(0, Math.min(23 * 60 + 59, h * 60 + m + direction))
+      return `${String(Math.floor(totalMins / 60)).padStart(2, '0')}:${String(totalMins % 60).padStart(2, '0')}`
+    })
+  }, [])
+
+  useEffect(() => {
+    const el = timeInputRef.current
+    if (!el) return
+    el.addEventListener('wheel', handleTimeWheel, { passive: false })
+    return () => el.removeEventListener('wheel', handleTimeWheel)
+  }, [handleTimeWheel])
 
   const idle = sessionState === 'idle' || sessionState === 'ended'
   const running = sessionState === 'running'
@@ -293,6 +318,7 @@ export default function SessionControls({
           <label style={label}>
             Start Time&nbsp;
             <input
+              ref={timeInputRef}
               type="time" step="60" value={startTime}
               onChange={e => setStartTime(e.target.value)}
               style={inputStyle} disabled={!idle}
