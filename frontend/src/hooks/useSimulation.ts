@@ -39,6 +39,7 @@ export interface SimulationState {
   sessionStrikePE: number | null   // PE streaming strike
   sessionExpiry: string | null
   sessionType: string              // 'sim' | 'paper' | 'real'
+  brokeragePerOrder: number        // flat brokerage per trade (from user settings)
 }
 
 export interface InstrumentConfig {
@@ -81,6 +82,7 @@ export function useSimulation() {
     sessionStrikePE: null,
     sessionExpiry: null,
     sessionType: 'sim',
+    brokeragePerOrder: 0,
   })
 
   const setLatestTick = useCallback((tick: TickEvent) => {
@@ -165,6 +167,7 @@ export function useSimulation() {
       sessionStrikePE: res.strike_pe ?? res.strike,
       sessionExpiry: res.expiry,
       sessionType,
+      brokeragePerOrder: instrumentConfig?.brokerage_per_order ?? 0,
     }))
     // Fire-and-forget: load previous-session trades for same user+symbol+date+type
     const currentSessionId = res.session_id
@@ -384,27 +387,46 @@ export function useSimulation() {
 
   const dayPnl = state.sessionInstrumentType === 'options' ? dayPnlCE + dayPnlPE : dayPnlEquity
 
-  // Unrealized P&L for equity sessions (gross mark-to-market minus entry commission)
+  // Mirrors backend compute_commission — used to estimate exit cost at current price
+  const estimateExitCommission = (side: 'BUY' | 'SELL', price: number, qty: number): number => {
+    if (price === 0 || qty === 0) return 0
+    const val = price * qty
+    const charges = side === 'BUY'
+      ? val * 0.006803 / 100
+      : val * 0.0625 / 100 + 1.18 * (0.06 / 100) * val
+    return charges + state.brokeragePerOrder
+  }
+
+  // Unrealized P&L net of entry commission + estimated exit commission at current price
   const pnlEquity = (() => {
     const { position, currentPrice } = state
     if (position.side === 'FLAT' || currentPrice === 0) return 0
     const direction = position.side === 'LONG' ? 1 : -1
-    return direction * position.quantity * (currentPrice - position.avg_entry_price) - position.entry_commission
+    const exitSide = position.side === 'LONG' ? 'SELL' : 'BUY'
+    return direction * position.quantity * (currentPrice - position.avg_entry_price)
+      - position.entry_commission
+      - estimateExitCommission(exitSide, currentPrice, position.quantity)
   })()
 
-  // P&L for options sessions (CE + PE combined, each net of entry commission)
+  // P&L for options sessions (CE + PE combined, each net of both commissions)
   const pnlOptions = (() => {
     const ce = (() => {
       const { positionCE, currentPriceCE } = state
       if (positionCE.side === 'FLAT' || currentPriceCE === 0) return 0
       const dir = positionCE.side === 'LONG' ? 1 : -1
-      return dir * positionCE.quantity * (currentPriceCE - positionCE.avg_entry_price) - positionCE.entry_commission
+      const exitSide = positionCE.side === 'LONG' ? 'SELL' : 'BUY'
+      return dir * positionCE.quantity * (currentPriceCE - positionCE.avg_entry_price)
+        - positionCE.entry_commission
+        - estimateExitCommission(exitSide, currentPriceCE, positionCE.quantity)
     })()
     const pe = (() => {
       const { positionPE, currentPricePE } = state
       if (positionPE.side === 'FLAT' || currentPricePE === 0) return 0
       const dir = positionPE.side === 'LONG' ? 1 : -1
-      return dir * positionPE.quantity * (currentPricePE - positionPE.avg_entry_price) - positionPE.entry_commission
+      const exitSide = positionPE.side === 'LONG' ? 'SELL' : 'BUY'
+      return dir * positionPE.quantity * (currentPricePE - positionPE.avg_entry_price)
+        - positionPE.entry_commission
+        - estimateExitCommission(exitSide, currentPricePE, positionPE.quantity)
     })()
     return ce + pe
   })()
