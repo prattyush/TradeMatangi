@@ -53,7 +53,7 @@ Look into frontend technical constraints doc when needed which is located at doc
 | Phase VII — PaperTrading | ✅ Complete | 350 | `docs/spec-phase7.md` |
 | Phase VIII — Launch | ✅ Complete | 391 | `docs/spec-phase8.md` |
 | Phase IX — RealTrading | ✅ Complete | 436 | `docs/spec-phase9.md` |
-| Phase X — GuardRails | ✅ Complete | 494 | `docs/spec-phase10.md` |
+| Phase X — GuardRails | ✅ Complete | 495 | `docs/spec-phase10.md` |
 
 Full status, bugs fixed, and lessons learned for each phase are in the respective phase spec docs.
 
@@ -81,3 +81,4 @@ Full status, bugs fixed, and lessons learned for each phase are in the respectiv
 | Settings modal: fixed width 440px + tab font 11px so 5 tab labels don't crowd; tab content scrollable | #110 (fix/settings-modal-fixed-width) | ✅ merged to dev + main |
 | TargetProfit/BreakEven: emit order_cancelled SSE event when strategy cancels stoploss so UI removes it | #111 (fix/targetprofit-stoploss-cancel-event) | ✅ merged to dev + main |
 | Strategy completed UI + SELL marker strike fix: emit strategy_completed SSE event; pass per-right strike on strategy LIMIT orders | #113 (fix/strategy-completed-sell-marker) | ✅ merged to dev + main |
+| AutoStop guardrail bypass fix + button color: check_guardrails() added to AutoStop bar-close path; AutoStop button brighter green (#56d364 text, #1f4d2e bg, green border); 495 tests | #116 (fix/autostop-guardrail-button-color) | ✅ merged to dev + main |
