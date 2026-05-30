@@ -432,8 +432,8 @@ export default function OrderPanel({
                 disabled={stratLoading === 'AutoStop'}
                 style={{
                   width: '100%', padding: '5px 0', fontSize: 11, fontWeight: 600,
-                  border: 'none', borderRadius: 4, cursor: stratLoading === 'AutoStop' ? 'not-allowed' : 'pointer',
-                  background: '#1a4a2a', color: '#3fb950',
+                  border: '1px solid #2ea043', borderRadius: 4, cursor: stratLoading === 'AutoStop' ? 'not-allowed' : 'pointer',
+                  background: '#1f4d2e', color: '#56d364',
                 }}
               >
                 {stratLoading === 'AutoStop' ? 'Starting…' : '▶ Start AutoStop'}

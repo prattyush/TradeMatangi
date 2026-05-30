@@ -40,6 +40,11 @@ class MockSession:
     session_capital: float = 150_000.0
     strategy_interval_secs: int = INTERVAL
     brokerage_per_order: float = 0.0
+    current_time: int = T0
+    # Guardrail defaults — no guardrails active
+    guardrail_ban_active: bool = False
+    guardrail_block_until_bar: int = 0
+    guardrail_block_bars: int = 3
 
 
 def _session():
@@ -147,6 +152,27 @@ class TestAutoStopBarMode:
         assert strat.status == StrategyStatus.RUNNING
         svc.on_tick(session, _tick(T1, h=115.0, c=112.0), None)
         assert strat.status == StrategyStatus.COMPLETED
+
+
+    def test_autostop_skipped_when_guardrail_blocked(self):
+        """AutoStop must not place an order when the BLOCK guardrail is active."""
+        session = _session()
+        # Simulate a BLOCK guardrail: block_until_bar set to a bar that covers the close event
+        session.guardrail_block_until_bar = T1  # current_slot at T1 <= until_bar → blocked
+        session.guardrail_ban_active = False
+        session.guardrail_block_bars = 3
+        session.current_time = T1  # used by _current_bar_slot inside check_guardrails
+
+        svc.start_strategy(session, "AutoStop", None, {
+            "direction": "BUY", "quantity": 1,
+            "autostop_trigger_type": "bar", "autostop_deviation_pct": 1.0,
+        })
+
+        svc.on_tick(session, _tick(T0, h=120.0, c=108.0), None)
+        # Bar-1 closes at T1 — guardrail should prevent order placement
+        svc.on_tick(session, _tick(T1, h=115.0, c=112.0), None)
+
+        assert len(order_service.get_open_orders(SESSION)) == 0
 
 
 class TestAutoStopDeviationMode:
