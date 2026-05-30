@@ -294,6 +294,12 @@ def _on_bar_close_autostop(
     else:
         order_strike = None
 
+    from app.services.guardrail_service import check_guardrails
+    blocked, reason = check_guardrails(session)
+    if blocked:
+        logger.info("AutoStop %s skipped — guardrail active: %s", strategy.strategy_id, reason)
+        return
+
     from app.services.order_service import place_order
     from app.models.schemas import TradeSide, OrderType
     side = TradeSide.BUY if direction == "BUY" else TradeSide.SELL
