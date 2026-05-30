@@ -120,28 +120,52 @@ def get_position(session_id: str, symbol: str | None = None, right: str | None =
     # right=None matches equity trades (those with right=None on the trade record).
     symbol_trades = [t for t in trades if t.symbol == symbol and t.right == right]
 
+    # FIFO matching: only lots that are still open contribute to avg_entry.
+    # Without FIFO, a closed trade followed by a new entry would dilute avg_entry
+    # with already-realised lots (e.g. buy@100 → sell@90 → buy@85 → avg shown as 92.5
+    # instead of the correct 85).
+    from collections import deque
+    buy_queue: deque = deque()   # (price, qty) open long lots
+    sell_queue: deque = deque()  # (price, qty) open short lots
     net_qty = 0
-    total_buy_value = 0.0
-    total_buy_qty = 0
 
     for t in symbol_trades:
+        remaining = t.quantity
         if t.side == TradeSide.BUY:
             net_qty += t.quantity
-            total_buy_value += t.price * t.quantity
-            total_buy_qty += t.quantity
-        else:
+            # Consume any open short lots first (covers a short)
+            while remaining > 0 and sell_queue:
+                s_price, s_qty = sell_queue[0]
+                matched = min(remaining, s_qty)
+                remaining -= matched
+                if matched == s_qty:
+                    sell_queue.popleft()
+                else:
+                    sell_queue[0] = (s_price, s_qty - matched)
+            if remaining > 0:
+                buy_queue.append((t.price, remaining))
+        else:  # SELL
             net_qty -= t.quantity
+            # Consume open long lots first (closes a long)
+            while remaining > 0 and buy_queue:
+                b_price, b_qty = buy_queue[0]
+                matched = min(remaining, b_qty)
+                remaining -= matched
+                if matched == b_qty:
+                    buy_queue.popleft()
+                else:
+                    buy_queue[0] = (b_price, b_qty - matched)
+            if remaining > 0:
+                sell_queue.append((t.price, remaining))
 
     if net_qty > 0:
         side: Literal["LONG", "SHORT", "FLAT"] = "LONG"
-        avg_entry = total_buy_value / total_buy_qty if total_buy_qty > 0 else 0.0
+        total_qty = sum(q for _, q in buy_queue)
+        avg_entry = sum(p * q for p, q in buy_queue) / total_qty if total_qty > 0 else 0.0
     elif net_qty < 0:
         side = "SHORT"
-        # For short positions avg_entry is the avg sell price — compute separately
-        sell_trades = [t for t in symbol_trades if t.side == TradeSide.SELL]
-        total_sell_value = sum(t.price * t.quantity for t in sell_trades)
-        total_sell_qty = sum(t.quantity for t in sell_trades)
-        avg_entry = total_sell_value / total_sell_qty if total_sell_qty > 0 else 0.0
+        total_qty = sum(q for _, q in sell_queue)
+        avg_entry = sum(p * q for p, q in sell_queue) / total_qty if total_qty > 0 else 0.0
     else:
         side = "FLAT"
         avg_entry = 0.0
