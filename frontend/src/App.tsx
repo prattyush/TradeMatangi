@@ -258,7 +258,7 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
     if (instrumentType === 'options') {
       if (activeRight === 'CE') return sim.positionCE
       if (activeRight === 'PE') return sim.positionPE
-      return { symbol: sim.symbol, quantity: 0, avg_entry_price: 0, side: 'FLAT' as const }
+      return { symbol: sim.symbol, quantity: 0, avg_entry_price: 0, side: 'FLAT' as const, entry_commission: 0 }
     }
     return sim.position
   })()

@@ -85,6 +85,7 @@ class Position(BaseModel):
     quantity: int
     avg_entry_price: float
     side: Literal["LONG", "SHORT", "FLAT"]
+    entry_commission: float = 0.0  # sum of commissions for the open lots (FIFO-apportioned)
 
 
 class TradeRequest(BaseModel):

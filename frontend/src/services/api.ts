@@ -205,6 +205,7 @@ export interface Position {
   quantity: number
   avg_entry_price: number
   side: 'LONG' | 'SHORT' | 'FLAT'
+  entry_commission: number  // sum of commissions for the currently-open lots (FIFO-apportioned)
 }
 
 export interface PriceAtResponse {

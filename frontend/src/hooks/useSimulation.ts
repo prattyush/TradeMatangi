@@ -4,7 +4,7 @@ import api, { Trade, Position, Order, TickEvent, InsufficientFundsError } from '
 export type SessionState = 'idle' | 'running' | 'paused' | 'ended'
 
 const FLAT_POSITION = (symbol: string): Position => ({
-  symbol, quantity: 0, avg_entry_price: 0, side: 'FLAT',
+  symbol, quantity: 0, avg_entry_price: 0, side: 'FLAT', entry_commission: 0,
 })
 
 export interface SimulationState {
@@ -384,27 +384,27 @@ export function useSimulation() {
 
   const dayPnl = state.sessionInstrumentType === 'options' ? dayPnlCE + dayPnlPE : dayPnlEquity
 
-  // Unrealized P&L for equity sessions
+  // Unrealized P&L for equity sessions (gross mark-to-market minus entry commission)
   const pnlEquity = (() => {
     const { position, currentPrice } = state
     if (position.side === 'FLAT' || currentPrice === 0) return 0
     const direction = position.side === 'LONG' ? 1 : -1
-    return direction * position.quantity * (currentPrice - position.avg_entry_price)
+    return direction * position.quantity * (currentPrice - position.avg_entry_price) - position.entry_commission
   })()
 
-  // P&L for options sessions (CE + PE combined)
+  // P&L for options sessions (CE + PE combined, each net of entry commission)
   const pnlOptions = (() => {
     const ce = (() => {
       const { positionCE, currentPriceCE } = state
       if (positionCE.side === 'FLAT' || currentPriceCE === 0) return 0
       const dir = positionCE.side === 'LONG' ? 1 : -1
-      return dir * positionCE.quantity * (currentPriceCE - positionCE.avg_entry_price)
+      return dir * positionCE.quantity * (currentPriceCE - positionCE.avg_entry_price) - positionCE.entry_commission
     })()
     const pe = (() => {
       const { positionPE, currentPricePE } = state
       if (positionPE.side === 'FLAT' || currentPricePE === 0) return 0
       const dir = positionPE.side === 'LONG' ? 1 : -1
-      return dir * positionPE.quantity * (currentPricePE - positionPE.avg_entry_price)
+      return dir * positionPE.quantity * (currentPricePE - positionPE.avg_entry_price) - positionPE.entry_commission
     })()
     return ce + pe
   })()
