@@ -54,7 +54,7 @@ Look into frontend technical constraints doc when needed which is located at doc
 | Phase VIII — Launch | ✅ Complete | 391 | `docs/spec-phase8.md` |
 | Phase IX — RealTrading | ✅ Complete | 436 | `docs/spec-phase9.md` |
 | Phase X — GuardRails | ✅ Complete | 495 | `docs/spec-phase10.md` |
-| Phase XI — AI Helper | 🔨 In Progress (Step 1 done) | — | `docs/spec-phase11.md`, `docs/architecture.md` |
+| Phase XI — AI Helper | 🔨 In Progress (Step 3 done) | — | `docs/spec-phase11.md`, `docs/architecture.md` |
 
 Full status, bugs fixed, and lessons learned for each phase are in the respective phase spec docs.
 
@@ -78,6 +78,8 @@ Full status, bugs fixed, and lessons learned for each phase are in the respectiv
 |------|-----|--------|
 | Architecture planning: `docs/architecture.md`, `docs/spec-phase11.md` | #123 (docs/phase11-architecture-planning) | ✅ merged to dev + main |
 | Step 1 Foundation: `aihelper/` server skeleton, DynamoDB stores, LiteLLM + LangFuse wiring, processor strategies, scripts | #125 (feature/phase11-step1-foundation) | ✅ merged to dev + main |
+| Step 2 Hook Plumbing: backend bar-close + session-stop hooks; aihelper hook endpoints + BarCloseProcessor wired | #127 (feature/aihelper-step2-hook-plumbing) | ✅ merged to feature/aihelper |
+| Step 3 Command Flow: `/ai/chat` intent dispatch, field extraction/validation, AICommand DynamoDB registration, hotword recall + save, list commands | #128 (feature/aihelper-step3-command-flow) | ✅ merged to feature/aihelper |
 
 ### Post-Phase X fixes (merged to dev + main)
 
