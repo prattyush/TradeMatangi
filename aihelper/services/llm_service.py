@@ -9,7 +9,10 @@ from typing import Any
 
 import litellm
 
-from config import MODEL_INTENT_CLASSIFIER, MODEL_COMMAND_EVALUATOR, MODEL_ANALYSIS, MODEL_FALLBACK
+from config import (
+    MODEL_INTENT_CLASSIFIER, MODEL_COMMAND_EVALUATOR,
+    MODEL_ANALYSIS, MODEL_FALLBACK,
+)
 
 logger = logging.getLogger("aihelper.services.llm_service")
 
@@ -132,6 +135,79 @@ async def evaluate_command(
         MODEL_COMMAND_EVALUATOR,
         [{"role": "system", "content": system}],
     )
+
+
+async def extract_command_fields(message: str) -> dict[str, Any]:
+    """
+    Extract trading command fields from natural language.
+    Returns structured fields for command registration.
+
+    Output schema:
+      {order_type, quantity_type, quantity_value, right, trigger, price_expr, hotword, missing_fields}
+    """
+    system = (
+        "You are parsing a natural language trading command for Indian markets (NSE/NFO).\n"
+        "Extract these fields and return JSON only:\n\n"
+        "{\n"
+        '  "order_type":     "market" | "limit" | "target" | null,\n'
+        '  "quantity_type":  "ratio_l" | "ratio_m" | "ratio_h" | "fixed" | null,\n'
+        '  "quantity_value": <number or null — only for "fixed" type>,\n'
+        '  "right":          "CE" | "PE" | null,\n'
+        '  "trigger":        "<normalized entry condition using bar params: '
+        "low/high/close/open/bear/bull/prev_bar.X>\",\n"
+        '  "price_expr":     "<price expression: market | (open+close)/2 | close+0.5 | '
+        "89.5 | prev_bar.high | etc>\",\n"
+        '  "hotword":        "<strategy name if user says save as X or call this X, else null>",\n'
+        '  "missing_fields": ["<list of field names that are absent or ambiguous>"]\n'
+        "}\n\n"
+        "Rules:\n"
+        "- quantity_type: L/low/small → ratio_l; M/medium → ratio_m; H/high/large → ratio_h\n"
+        "- right: set to CE or PE only if user explicitly mentions it; else null\n"
+        "- price_expr: for market order_type → always 'market'; "
+        "for target/limit → extract from message; null if unclear\n"
+        "- trigger: normalize to bar-param expressions; null if entry condition not stated\n"
+        "- missing_fields: include 'order_type' if absent, 'quantity_type' if absent,\n"
+        "  'trigger' if entry condition not stated, 'price_expr' if not determinable\n"
+        "- Do NOT include 'right' in missing_fields — the caller handles options vs equity"
+    )
+    return await _complete(
+        MODEL_INTENT_CLASSIFIER,
+        [{"role": "system", "content": system}, {"role": "user", "content": message}],
+    )
+
+
+async def extract_hotword_name(message: str) -> str | None:
+    """Extract the strategy hotword name from a recall message like 'use pullback buy'."""
+    system = (
+        "Extract the strategy hotword name from the user's message.\n"
+        "Examples:\n"
+        '  "use pullback buy"           → {"hotword": "pullback buy"}\n'
+        '  "activate my trend entry"    → {"hotword": "trend entry"}\n'
+        '  "run the gap fill strategy"  → {"hotword": "gap fill strategy"}\n'
+        'Respond with JSON only: {"hotword": "<name>" | null}'
+    )
+    result = await _complete(
+        MODEL_INTENT_CLASSIFIER,
+        [{"role": "system", "content": system}, {"role": "user", "content": message}],
+    )
+    return result.get("hotword")
+
+
+async def answer_question(message: str) -> str:
+    """Answer a general trading or platform question. Returns plain text."""
+    system = (
+        "You are a helpful assistant for the Trade Matangi trading platform (Indian markets, NSE/NFO).\n"
+        "Answer the user's question concisely. Focus on trading concepts, platform usage, "
+        "and Indian market specifics.\n"
+        "Respond with plain text only (no JSON)."
+    )
+    result = await _complete(
+        MODEL_INTENT_CLASSIFIER,
+        [{"role": "system", "content": system}, {"role": "user", "content": message}],
+        json_mode=False,
+        temperature=0.3,
+    )
+    return result.get("text", "I'm here to help with trading commands and analysis. Could you rephrase?")
 
 
 async def analyze_trades(trades: list[dict], date_range: str) -> dict[str, Any]:
