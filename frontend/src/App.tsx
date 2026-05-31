@@ -10,6 +10,7 @@ import SettingsModal, { loadFundsRatioMode, loadFundsRatios, loadTargetDeviation
 import { StrategyResponse, StartStrategyRequest, Order } from './services/api'
 import LoginScreen from './components/LoginScreen'
 import TradeAnalysis from './components/TradeAnalysis'
+import AIChatPanel from './components/AIChatPanel'
 import { useSimulation, InstrumentConfig } from './hooks/useSimulation'
 import { useSSE } from './hooks/useSSE'
 import api from './services/api'
@@ -904,6 +905,14 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
           />
         </div>
       </div>
+
+      <AIChatPanel
+        sessionId={sim.sessionId}
+        userId={authUser.userId}
+        symbol={sim.symbol || null}
+        strikeCe={sim.sessionStrikeCE}
+        strikePe={sim.sessionStrikePE}
+      />
     </div>
   )
 }
