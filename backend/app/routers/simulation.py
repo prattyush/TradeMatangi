@@ -2,6 +2,7 @@ import asyncio
 import logging
 from typing import Callable
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 from app.models.schemas import (
     SimulationStartRequest,
     SimulationStartResponse,
@@ -279,3 +280,21 @@ async def get_status(session_id: str):
         symbol=session.symbol,
         date=session.date,
     )
+
+
+class AICommandsActiveRequest(BaseModel):
+    session_id: str
+
+
+@router.post("/ai-commands/active")
+async def set_ai_commands_active(req: AICommandsActiveRequest):
+    """
+    Called by aihelper after registering an AI command (Step 3).
+    Tells the backend to start firing bar-close hooks to aihelper for this session.
+    """
+    session = sim_svc.get_session(req.session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    session.ai_commands_active = True
+    logger.info("AI commands active for session %s", req.session_id)
+    return {"status": "ok", "session_id": req.session_id}
