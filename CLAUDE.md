@@ -54,7 +54,7 @@ Look into frontend technical constraints doc when needed which is located at doc
 | Phase VIII — Launch | ✅ Complete | 391 | `docs/spec-phase8.md` |
 | Phase IX — RealTrading | ✅ Complete | 436 | `docs/spec-phase9.md` |
 | Phase X — GuardRails | ✅ Complete | 495 | `docs/spec-phase10.md` |
-| Phase XI — AI Helper | 🔨 In Progress (Step 7 done) | — | `docs/spec-phase11.md`, `docs/architecture.md` |
+| Phase XI — AI Helper | 🔨 In Progress (Step 8 done) | — | `docs/spec-phase11.md`, `docs/architecture.md` |
 
 Full status, bugs fixed, and lessons learned for each phase are in the respective phase spec docs.
 
@@ -84,7 +84,7 @@ Full status, bugs fixed, and lessons learned for each phase are in the respectiv
 | Step 5 Decision Visibility: `AIChatPanel` floating overlay; `aiGetDecisions()` + `aiChat()` in api.ts; `AI_HELPER_URL` in config; decisions rendered as structured cards in chat | #130 (feature/aihelper-step5-decision-visibility) | ✅ merged to feature/aihelper |
 | Step 6 Hotword Strategies: `StrategyItem` Pydantic model in strategies router (Decimal coercion); `aiGetStrategies()` + `aiDeleteStrategy()` in api.ts; Chat/Hotwords tab in AIChatPanel with list, Use, Delete | #131 (feature/aihelper-step6-hotword-strategies) | ✅ merged to feature/aihelper |
 | Step 7 Chat UI: `GET /ai/session/{id}/commands` + `DELETE /ai/commands/{id}` in commands router; `CommandItem` + `aiGetCommands()` + `aiCancelCommand()` in api.ts; Commands tab in AIChatPanel with status badges (Watching/Executed/Cancelled), cancel buttons, trigger/order chips; 12 new aihelper tests | #132 (feature/aihelper-step7-chat-ui-commands) | ✅ merged to feature/aihelper |
-| Step 8 Trade Analysis: `GET /api/analysis/trades` backend endpoint; `extract_date_range()` LLM date parser; `run_analysis()` + `parse_date_range()` complete in analysis_service; `_handle_analysis()` in chat.py; `AnalysisResult` types in api.ts; structured analysis card in AIChatPanel (stats chips, pattern cards, suggestions); 12 aihelper + 8 backend tests | #133 (feature/aihelper-step8-trade-analysis) | ✅ open on feature/aihelper |
+| Step 8 Trade Analysis: `GET /api/analysis/trades` backend endpoint; `extract_date_range()` LLM date parser; `run_analysis()` + `parse_date_range()` complete in analysis_service; `_handle_analysis()` in chat.py; `AnalysisResult` types in api.ts; structured analysis card in AIChatPanel (stats chips, pattern cards, suggestions); 12 aihelper + 8 backend tests | #133 (feature/aihelper-step8-trade-analysis) | ✅ merged to feature/aihelper |
 
 ### Post-Phase X fixes (merged to dev + main)
 
