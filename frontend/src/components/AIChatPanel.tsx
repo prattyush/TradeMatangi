@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
-import api, { DecisionItem, DecisionAction, StrategyItem } from '../services/api'
+import api, { DecisionItem, DecisionAction, StrategyItem, CommandItem } from '../services/api'
 
 interface UserMessage {
   id: string
@@ -21,7 +21,7 @@ interface DecisionMessage {
 }
 
 type ChatMessage = UserMessage | AssistantMessage | DecisionMessage
-type PanelTab = 'chat' | 'hotwords'
+type PanelTab = 'chat' | 'commands' | 'hotwords'
 
 interface Props {
   sessionId: string | null
@@ -63,9 +63,23 @@ function formatResult(result: string): string {
   return result
 }
 
+function formatQty(quantityType: string, quantityValue?: number | null): string {
+  if (quantityType === 'ratio_l') return 'L ratio'
+  if (quantityType === 'ratio_m') return 'M ratio'
+  if (quantityType === 'ratio_h') return 'H ratio'
+  if (quantityType === 'fixed') return `${quantityValue ?? '?'} lots`
+  return quantityType
+}
+
 let _msgCounter = 0
 function nextId(): string {
   return `m${++_msgCounter}`
+}
+
+const STATUS_BADGE: Record<CommandItem['status'], { label: string; color: string; bg: string; border: string }> = {
+  active:    { label: 'Watching',   color: '#56d364', bg: '#1f4d2e', border: '#2d6a3f' },
+  executed:  { label: 'Executed',   color: '#8b949e', bg: '#21262d', border: '#30363d' },
+  cancelled: { label: 'Cancelled',  color: '#f85149', bg: '#2d1b1b', border: '#6e3333' },
 }
 
 export default function AIChatPanel({ sessionId, userId, symbol, strikeCe, strikePe }: Props) {
@@ -77,6 +91,9 @@ export default function AIChatPanel({ sessionId, userId, symbol, strikeCe, strik
   const [strategies, setStrategies] = useState<StrategyItem[]>([])
   const [strategiesLoading, setStrategiesLoading] = useState(false)
   const [deletingHotword, setDeletingHotword] = useState<string | null>(null)
+  const [commands, setCommands] = useState<CommandItem[]>([])
+  const [commandsLoading, setCommandsLoading] = useState(false)
+  const [cancellingCommand, setCancellingCommand] = useState<string | null>(null)
   const lastSeenTsRef = useRef<string | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
@@ -87,6 +104,7 @@ export default function AIChatPanel({ sessionId, userId, symbol, strikeCe, strik
   // Reset chat state when session changes
   useEffect(() => {
     setMessages([])
+    setCommands([])
     lastSeenTsRef.current = null
   }, [sessionId])
 
@@ -102,6 +120,19 @@ export default function AIChatPanel({ sessionId, userId, symbol, strikeCe, strik
       setMessages(prev => [...prev, ...decisionMsgs])
     } catch {
       // silently ignore — aihelper may not be running
+    }
+  }, [sessionId])
+
+  const fetchCommands = useCallback(async () => {
+    if (!sessionId) return
+    setCommandsLoading(true)
+    try {
+      const items = await api.aiGetCommands(sessionId)
+      setCommands(items)
+    } catch {
+      setCommands([])
+    } finally {
+      setCommandsLoading(false)
     }
   }, [sessionId])
 
@@ -124,10 +155,9 @@ export default function AIChatPanel({ sessionId, userId, symbol, strikeCe, strik
 
   const handleTabChange = useCallback((t: PanelTab) => {
     setTab(t)
-    if (t === 'hotwords') {
-      fetchStrategies()
-    }
-  }, [fetchStrategies])
+    if (t === 'hotwords') fetchStrategies()
+    if (t === 'commands') fetchCommands()
+  }, [fetchStrategies, fetchCommands])
 
   const handleDelete = useCallback(async (hotword: string) => {
     setDeletingHotword(hotword)
@@ -145,6 +175,20 @@ export default function AIChatPanel({ sessionId, userId, symbol, strikeCe, strik
     setTab('chat')
     setInputText(`use ${hotword}`)
   }, [])
+
+  const handleCancelCommand = useCallback(async (commandId: string) => {
+    setCancellingCommand(commandId)
+    try {
+      await api.aiCancelCommand(commandId, userId)
+      setCommands(prev => prev.map(c =>
+        c.command_id === commandId ? { ...c, status: 'cancelled', cancel_reason: 'user_cancelled' } : c
+      ))
+    } catch {
+      // silently ignore
+    } finally {
+      setCancellingCommand(null)
+    }
+  }, [userId])
 
   const handleSend = useCallback(async () => {
     const text = inputText.trim()
@@ -169,6 +213,10 @@ export default function AIChatPanel({ sessionId, userId, symbol, strikeCe, strik
       setMessages(prev => [...prev, {
         id: nextId(), role: 'assistant', text: data.message, status: data.status,
       }])
+      // Refresh commands list if a new command was registered
+      if (data.status === 'watching' && data.command_id) {
+        fetchCommands()
+      }
     } catch {
       setMessages(prev => [...prev, {
         id: nextId(), role: 'assistant',
@@ -178,7 +226,7 @@ export default function AIChatPanel({ sessionId, userId, symbol, strikeCe, strik
     } finally {
       setLoading(false)
     }
-  }, [inputText, sessionId, userId, symbol, strikeCe, strikePe, loading, fetchAndAppendDecisions])
+  }, [inputText, sessionId, userId, symbol, strikeCe, strikePe, loading, fetchAndAppendDecisions, fetchCommands])
 
   if (!open) {
     return (
@@ -222,30 +270,22 @@ export default function AIChatPanel({ sessionId, userId, symbol, strikeCe, strik
 
         {/* Tabs */}
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 4 }}>
-          <button
-            onClick={() => handleTabChange('chat')}
-            style={{
-              background: tab === 'chat' ? '#1f4d2e' : 'none',
-              border: `1px solid ${tab === 'chat' ? '#56d364' : '#30363d'}`,
-              color: tab === 'chat' ? '#56d364' : '#8b949e',
-              borderRadius: 6, padding: '3px 10px', fontSize: 11,
-              cursor: 'pointer', fontWeight: tab === 'chat' ? 700 : 400,
-            }}
-          >
-            Chat
-          </button>
-          <button
-            onClick={() => handleTabChange('hotwords')}
-            style={{
-              background: tab === 'hotwords' ? '#1f4d2e' : 'none',
-              border: `1px solid ${tab === 'hotwords' ? '#56d364' : '#30363d'}`,
-              color: tab === 'hotwords' ? '#56d364' : '#8b949e',
-              borderRadius: 6, padding: '3px 10px', fontSize: 11,
-              cursor: 'pointer', fontWeight: tab === 'hotwords' ? 700 : 400,
-            }}
-          >
-            Hotwords
-          </button>
+          {(['chat', 'commands', 'hotwords'] as PanelTab[]).map(t => (
+            <button
+              key={t}
+              onClick={() => handleTabChange(t)}
+              style={{
+                background: tab === t ? '#1f4d2e' : 'none',
+                border: `1px solid ${tab === t ? '#56d364' : '#30363d'}`,
+                color: tab === t ? '#56d364' : '#8b949e',
+                borderRadius: 6, padding: '3px 8px', fontSize: 11,
+                cursor: 'pointer', fontWeight: tab === t ? 700 : 400,
+                textTransform: 'capitalize',
+              }}
+            >
+              {t}
+            </button>
+          ))}
         </div>
 
         <button
@@ -392,6 +432,155 @@ export default function AIChatPanel({ sessionId, userId, symbol, strikeCe, strik
             </button>
           </div>
         </>
+      )}
+
+      {/* Commands tab */}
+      {tab === 'commands' && (
+        <div style={{ flex: 1, overflowY: 'auto', padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+            <span style={{ color: '#8b949e', fontSize: 11 }}>
+              Commands for this session
+            </span>
+            <button
+              onClick={fetchCommands}
+              disabled={commandsLoading || !sessionId}
+              style={{
+                background: 'none', border: '1px solid #30363d',
+                color: '#8b949e', borderRadius: 6, padding: '2px 8px',
+                fontSize: 11, cursor: 'pointer',
+                opacity: (commandsLoading || !sessionId) ? 0.5 : 1,
+              }}
+            >
+              {commandsLoading ? '…' : '↻ Refresh'}
+            </button>
+          </div>
+
+          {!sessionId && (
+            <div style={{ color: '#484f58', fontSize: 12, textAlign: 'center', marginTop: 20 }}>
+              Start a trading session to see commands.
+            </div>
+          )}
+
+          {sessionId && commandsLoading && commands.length === 0 && (
+            <div style={{ color: '#484f58', fontSize: 12, textAlign: 'center', marginTop: 20 }}>
+              Loading…
+            </div>
+          )}
+
+          {sessionId && !commandsLoading && commands.length === 0 && (
+            <div style={{ color: '#484f58', fontSize: 12, textAlign: 'center', marginTop: 20 }}>
+              No commands this session.{'\n'}
+              <span style={{ fontSize: 11 }}>
+                Type a command in the Chat tab to add one.
+              </span>
+            </div>
+          )}
+
+          {commands.map(cmd => {
+            const badge = STATUS_BADGE[cmd.status]
+            const isActive = cmd.status === 'active'
+            const shortTrigger = cmd.parsed_trigger.length > 80
+              ? cmd.parsed_trigger.slice(0, 80) + '…'
+              : cmd.parsed_trigger
+            const symbolLabel = [
+              cmd.symbol,
+              cmd.right,
+              cmd.strike ? `(${cmd.strike})` : null,
+            ].filter(Boolean).join(' ')
+
+            return (
+              <div key={cmd.command_id} style={{
+                background: '#161b22',
+                border: `1px solid ${isActive ? '#21262d' : '#1c2128'}`,
+                borderRadius: 8, padding: '9px 11px',
+                opacity: cmd.status === 'cancelled' ? 0.65 : 1,
+              }}>
+                {/* Status badge row */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
+                  <span style={{
+                    background: badge.bg, border: `1px solid ${badge.border}`,
+                    color: badge.color, borderRadius: 4, padding: '1px 7px',
+                    fontSize: 10, fontWeight: 700, flexShrink: 0,
+                  }}>
+                    {badge.label}
+                  </span>
+
+                  {cmd.hotword && (
+                    <span style={{
+                      color: '#56d364', fontSize: 10,
+                      background: '#1f4d2e', border: '1px solid #2d6a3f',
+                      borderRadius: 4, padding: '1px 6px',
+                    }}>
+                      {cmd.hotword}
+                    </span>
+                  )}
+
+                  {symbolLabel && (
+                    <span style={{ color: '#8b949e', fontSize: 10, marginLeft: 2 }}>
+                      {symbolLabel}
+                    </span>
+                  )}
+
+                  {isActive && (
+                    <button
+                      onClick={() => handleCancelCommand(cmd.command_id)}
+                      disabled={cancellingCommand === cmd.command_id}
+                      title="Cancel this command"
+                      style={{
+                        marginLeft: 'auto',
+                        background: 'none', border: '1px solid #f85149',
+                        color: '#f85149', borderRadius: 5, padding: '2px 8px',
+                        fontSize: 10, cursor: 'pointer',
+                        opacity: cancellingCommand === cmd.command_id ? 0.5 : 1,
+                        flexShrink: 0,
+                      }}
+                    >
+                      {cancellingCommand === cmd.command_id ? '…' : 'Cancel'}
+                    </button>
+                  )}
+                </div>
+
+                {/* Order details row */}
+                <div style={{ display: 'flex', gap: 6, marginBottom: 5, flexWrap: 'wrap' }}>
+                  <span style={{
+                    color: '#8b949e', fontSize: 10,
+                    background: '#21262d', borderRadius: 3, padding: '1px 5px',
+                  }}>
+                    {cmd.order_type}
+                  </span>
+                  <span style={{
+                    color: '#8b949e', fontSize: 10,
+                    background: '#21262d', borderRadius: 3, padding: '1px 5px',
+                  }}>
+                    {formatQty(cmd.quantity_type, cmd.quantity_value)}
+                  </span>
+                  {cmd.parsed_price_expr && cmd.parsed_price_expr !== 'market' && (
+                    <span style={{
+                      color: '#8b949e', fontSize: 10,
+                      background: '#21262d', borderRadius: 3, padding: '1px 5px',
+                    }}>
+                      @ {cmd.parsed_price_expr}
+                    </span>
+                  )}
+                </div>
+
+                {/* Trigger */}
+                {shortTrigger && (
+                  <div style={{ color: '#8b949e', fontSize: 11, wordBreak: 'break-word', marginBottom: 3 }}>
+                    {shortTrigger}
+                  </div>
+                )}
+
+                {/* Timestamps */}
+                <div style={{ color: '#484f58', fontSize: 10 }}>
+                  {cmd.created_at && `Added ${formatBarTime(cmd.created_at)}`}
+                  {cmd.fired_at && ` · Fired ${formatBarTime(cmd.fired_at)}`}
+                  {cmd.cancel_reason && ` · ${cmd.cancel_reason.replace(/_/g, ' ')}`}
+                </div>
+              </div>
+            )
+          })}
+        </div>
       )}
 
       {/* Hotwords tab */}

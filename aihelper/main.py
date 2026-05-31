@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import config  # noqa: F401 — sets LangFuse/LiteLLM env vars on import
 from config import LOG_DIR, PROCESSOR_TYPE
 import state
-from routers import chat, hook, decisions, strategies
+from routers import chat, hook, decisions, strategies, commands
 
 
 def _configure_logging() -> None:
@@ -86,6 +86,7 @@ app.include_router(chat.router)
 app.include_router(hook.router)
 app.include_router(decisions.router)
 app.include_router(strategies.router)
+app.include_router(commands.router)
 
 
 @app.get("/health")
