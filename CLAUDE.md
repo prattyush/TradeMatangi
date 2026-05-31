@@ -54,7 +54,7 @@ Look into frontend technical constraints doc when needed which is located at doc
 | Phase VIII — Launch | ✅ Complete | 391 | `docs/spec-phase8.md` |
 | Phase IX — RealTrading | ✅ Complete | 436 | `docs/spec-phase9.md` |
 | Phase X — GuardRails | ✅ Complete | 495 | `docs/spec-phase10.md` |
-| Phase XI — AI Helper | 📋 Architecture Planned | — | `docs/spec-phase11.md`, `docs/architecture.md` |
+| Phase XI — AI Helper | 🔨 In Progress (Step 1 done) | — | `docs/spec-phase11.md`, `docs/architecture.md` |
 
 Full status, bugs fixed, and lessons learned for each phase are in the respective phase spec docs.
 
@@ -77,6 +77,7 @@ Full status, bugs fixed, and lessons learned for each phase are in the respectiv
 | Item | PR | Status |
 |------|-----|--------|
 | Architecture planning: `docs/architecture.md`, `docs/spec-phase11.md` | #123 (docs/phase11-architecture-planning) | ✅ merged to dev + main |
+| Step 1 Foundation: `aihelper/` server skeleton, DynamoDB stores, LiteLLM + LangFuse wiring, processor strategies, scripts | #125 (feature/phase11-step1-foundation) | ✅ merged to dev + main |
 
 ### Post-Phase X fixes (merged to dev + main)
 
