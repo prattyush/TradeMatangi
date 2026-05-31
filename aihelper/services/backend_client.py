@@ -30,10 +30,10 @@ async def place_order(session_id: str, payload: dict[str, Any]) -> dict:
 
 
 async def notify_ai_commands_active(session_id: str) -> None:
-    """POST /api/ai/commands/active — tell backend to start firing bar-close hooks."""
+    """POST /api/simulation/ai-commands/active — tell backend to start firing bar-close hooks."""
     client = get_client()
     try:
-        resp = await client.post("/api/ai/commands/active", json={"session_id": session_id})
+        resp = await client.post("/api/simulation/ai-commands/active", json={"session_id": session_id})
         resp.raise_for_status()
     except Exception as exc:
         logger.warning("Failed to notify backend of active commands: %s", exc)

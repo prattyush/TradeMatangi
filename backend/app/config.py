@@ -19,6 +19,8 @@ LOG_LEVEL = os.getenv("LOG_LEVEL", "info")
 
 DEFAULT_SYMBOL = "NIFTY"
 
+AI_HELPER_URL = os.getenv("AI_HELPER_URL", "http://localhost:8701")
+
 MARKET_OPEN = "09:15:00"
 MARKET_CLOSE = "15:30:00"
 

@@ -5,7 +5,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 import config  # noqa: F401 — sets LangFuse/LiteLLM env vars on import
-from config import LOG_DIR
+from config import LOG_DIR, PROCESSOR_TYPE
+import state
 from routers import chat, hook, decisions, strategies
 
 
@@ -39,10 +40,30 @@ _configure_logging()
 logger = logging.getLogger(__name__)
 
 
+def _create_processor():
+    from services.command_evaluator import evaluate
+
+    if PROCESSOR_TYPE == "drop_if_busy":
+        from processors.drop_if_busy import DropIfBusyProcessor
+        p = DropIfBusyProcessor()
+    elif PROCESSOR_TYPE == "background_tasks":
+        from processors.background_tasks import BackgroundTasksProcessor
+        p = BackgroundTasksProcessor()
+    else:
+        from processors.bounded_queue import BoundedQueueProcessor
+        p = BoundedQueueProcessor()
+
+    p.set_evaluator(evaluate)
+    logger.info("Processor created: %s (type=%s)", type(p).__name__, PROCESSOR_TYPE)
+    return p
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    state.processor = _create_processor()
     logger.info("aihelper starting up on port %s", config.AI_HELPER_PORT)
     yield
+    state.processor = None
     logger.info("aihelper shutting down")
 
 
