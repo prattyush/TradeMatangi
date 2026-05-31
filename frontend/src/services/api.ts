@@ -279,6 +279,15 @@ export interface AIChatResponse {
   commands?: unknown[] | null
 }
 
+export interface StrategyItem {
+  hotword: string
+  strategy_text: string
+  description?: string
+  created_at: string
+  last_used_at?: string
+  use_count?: number
+}
+
 const api = {
   async getSymbols(): Promise<SymbolInfo[]> {
     const res = await fetch(`${BACKEND_URL}/api/data/symbols`)
@@ -876,6 +885,21 @@ const api = {
     const res = await fetch(url)
     if (!res.ok) throw new Error(`AI decisions fetch failed: ${res.status}`)
     return res.json()
+  },
+
+  async aiGetStrategies(userId: string): Promise<StrategyItem[]> {
+    const res = await fetch(`${AI_HELPER_URL}/ai/strategies?user_id=${encodeURIComponent(userId)}`)
+    if (!res.ok) throw new Error(`AI strategies fetch failed: ${res.status}`)
+    const data = await res.json()
+    return (data.strategies ?? []) as StrategyItem[]
+  },
+
+  async aiDeleteStrategy(userId: string, hotword: string): Promise<void> {
+    const res = await fetch(
+      `${AI_HELPER_URL}/ai/strategies/${encodeURIComponent(hotword)}?user_id=${encodeURIComponent(userId)}`,
+      { method: 'DELETE' },
+    )
+    if (!res.ok) throw new Error(`AI strategy delete failed: ${res.status}`)
   },
 }
 
