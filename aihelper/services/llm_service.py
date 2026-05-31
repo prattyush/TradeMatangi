@@ -85,13 +85,14 @@ async def evaluate_command(
     quantity_value: Any,
     bars: list[dict],
     position: dict | None,
+    command_text: str = "",
 ) -> dict[str, Any]:
     """
-    Evaluate whether the entry condition is met for the current bar.
-    Returns {"should_trade": bool, "reason": str, "computed_price": float | null}
+    Evaluate whether the entry/exit condition is met for the current bar.
+    Returns {"should_trade": bool, "side": "BUY"|"SELL", "reason": str, "computed_price": float|null}
     """
     if not bars:
-        return {"should_trade": False, "reason": "No bars available", "computed_price": None}
+        return {"should_trade": False, "side": "BUY", "reason": "No bars available", "computed_price": None}
 
     current = bars[-1]
     prev = bars[-2] if len(bars) >= 2 else {}
@@ -100,8 +101,8 @@ async def evaluate_command(
 
     system = (
         "You are a trading execution engine for Indian equity/options markets (NSE/NFO).\n"
-        "Evaluate whether the entry condition is met by the bar that just closed, "
-        "and compute the order price from the price expression.\n\n"
+        "Evaluate whether the condition is met by the bar that just closed, "
+        "determine the trade side (BUY/SELL), and compute the order price.\n\n"
         "Evaluate ONLY the most recent bar (last in the list). Previous bars are context only.\n"
         "Do NOT fire on a condition already met in an earlier bar.\n\n"
         f"Current bar (just closed):\n"
@@ -113,7 +114,8 @@ async def evaluate_command(
         f"low={prev.get('low')}  close={prev.get('close')}\n\n"
         f"Current position (null if none):\n{position_json}\n\n"
         f"All bars for additional context (oldest → newest):\n{json.dumps(bars)}\n\n"
-        f"Entry condition to evaluate:\n"
+        f"Command text (original natural language):\n{command_text}\n\n"
+        f"Condition to evaluate:\n"
         f"  Trigger      : {parsed_trigger}\n"
         f"  Price expr   : {parsed_price_expr}\n"
         f"  Order type   : {order_type}\n"
@@ -121,8 +123,10 @@ async def evaluate_command(
         + (f" {quantity_value}" if quantity_value is not None else "") + "\n\n"
         "Rules:\n"
         "- Respond with JSON only.\n"
-        '- Schema: {"should_trade": true|false, "reason": "<1-2 sentences>", "computed_price": <number|null>}\n'
-        "- computed_price is required (non-null) when should_trade is true.\n"
+        '- Schema: {"should_trade": true|false, "side": "BUY"|"SELL", '
+        '"reason": "<1-2 sentences>", "computed_price": <number|null>}\n'
+        "- side: infer BUY or SELL from the command text; entry → BUY, exit → SELL.\n"
+        "- computed_price: required (non-null) when should_trade is true and order_type != market.\n"
         "- Price expression evaluation:\n"
         '    "market"           → computed_price = null\n'
         '    "(open+close)/2"   → computed_price = round((open+close)/2 to nearest 0.05)\n'
@@ -133,7 +137,10 @@ async def evaluate_command(
     )
     return await _complete(
         MODEL_COMMAND_EVALUATOR,
-        [{"role": "system", "content": system}],
+        [
+            {"role": "system", "content": system},
+            {"role": "user", "content": "Evaluate the condition for this bar close."},
+        ],
     )
 
 

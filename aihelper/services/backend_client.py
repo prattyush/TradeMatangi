@@ -22,9 +22,19 @@ def get_client() -> httpx.AsyncClient:
 
 
 async def place_order(session_id: str, payload: dict[str, Any]) -> dict:
-    """POST /api/trading — place a trade order on behalf of the AI command."""
+    """
+    POST /api/trades/buy or /api/trades/sell based on payload["side"].
+    payload must have: side ("BUY"|"SELL"), right ("CE"|"PE"|null).
+    """
+    side = payload.get("side", "").upper()
+    if side not in ("BUY", "SELL"):
+        raise ValueError(f"place_order: invalid side '{side}'")
+    endpoint = "/api/trades/buy" if side == "BUY" else "/api/trades/sell"
+    body: dict[str, Any] = {"session_id": session_id}
+    if payload.get("right") is not None:
+        body["right"] = payload["right"]
     client = get_client()
-    resp = await client.post("/api/trading", json={**payload, "session_id": session_id})
+    resp = await client.post(endpoint, json=body)
     resp.raise_for_status()
     return resp.json()
 
