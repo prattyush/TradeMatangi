@@ -72,6 +72,12 @@ Full status, bugs fixed, and lessons learned for each phase are in the respectiv
 | Change Password in Settings General tab + remove admin credentials hint from login | #98 (feature/change-password-settings) | ✅ merged to dev + main |
 | Drawing tools dropdown (H-Line, Trend, Fib Retracement, Parallel Channel) + LIFO Clear + free crosshair | #100 (feature/drawing-tools-fib-channel) | ✅ merged to dev + main |
 
+### Phase XI — AI Helper (in progress)
+
+| Item | PR | Status |
+|------|-----|--------|
+| Architecture planning: `docs/architecture.md`, `docs/spec-phase11.md` | #123 (docs/phase11-architecture-planning) | ✅ merged to dev + main |
+
 ### Post-Phase X fixes (merged to dev + main)
 
 | Fix | PR | Status |
