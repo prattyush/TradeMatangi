@@ -81,3 +81,15 @@ def cancel_command(user_id: str, command_id: str, reason: str = "user_cancelled"
 
 def list_active_commands_for_session(session_id: str) -> list[dict]:
     return get_active_commands_for_session(session_id)
+
+
+def list_all_commands_for_session(session_id: str) -> list[dict]:
+    """Query SessionCommandsIndex GSI — all statuses, newest-first by created_at."""
+    resp = _table().query(
+        IndexName="SessionCommandsIndex",
+        KeyConditionExpression="session_id = :sid",
+        ExpressionAttributeValues={":sid": session_id},
+    )
+    items = resp.get("Items", [])
+    items.sort(key=lambda x: x.get("created_at", ""), reverse=True)
+    return items

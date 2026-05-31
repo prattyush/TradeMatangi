@@ -288,6 +288,27 @@ export interface StrategyItem {
   use_count?: number
 }
 
+export interface CommandItem {
+  command_id: string
+  user_id: string
+  session_id: string
+  command_text: string
+  status: 'active' | 'executed' | 'cancelled'
+  order_type: string
+  quantity_type: string
+  quantity_value?: number | null
+  parsed_trigger: string
+  parsed_price_expr: string
+  symbol?: string | null
+  right?: string | null
+  strike?: number | null
+  hotword?: string | null
+  one_shot: boolean
+  created_at: string
+  fired_at?: string | null
+  cancel_reason?: string | null
+}
+
 const api = {
   async getSymbols(): Promise<SymbolInfo[]> {
     const res = await fetch(`${BACKEND_URL}/api/data/symbols`)
@@ -900,6 +921,20 @@ const api = {
       { method: 'DELETE' },
     )
     if (!res.ok) throw new Error(`AI strategy delete failed: ${res.status}`)
+  },
+
+  async aiGetCommands(sessionId: string): Promise<CommandItem[]> {
+    const res = await fetch(`${AI_HELPER_URL}/ai/session/${encodeURIComponent(sessionId)}/commands`)
+    if (!res.ok) throw new Error(`AI commands fetch failed: ${res.status}`)
+    return res.json()
+  },
+
+  async aiCancelCommand(commandId: string, userId: string): Promise<void> {
+    const res = await fetch(
+      `${AI_HELPER_URL}/ai/commands/${encodeURIComponent(commandId)}?user_id=${encodeURIComponent(userId)}`,
+      { method: 'DELETE' },
+    )
+    if (!res.ok) throw new Error(`AI command cancel failed: ${res.status}`)
   },
 }
 
