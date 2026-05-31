@@ -110,6 +110,11 @@ Include this phase in the context only when you are implementing or planning pha
 Include this phase in the context only when you are implementing or planning phase 10. The phase 10 docs is located at `<project root>/docs/spec-phase10.md`
 
 
+#### Phase-XI AI Helper
+
+Include this phase in the context only when you are implementing or planning phase 11. The phase 11 docs is located at `<project root>/docs/spec-phase11.md`
+
+
 ## Bugs
 The current bugs are added phase wise in `<project root>/docs/bugs.md`
 
