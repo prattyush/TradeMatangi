@@ -1,4 +1,4 @@
-import { BACKEND_URL } from '../config'
+import { BACKEND_URL, AI_HELPER_URL } from '../config'
 
 function _authHeaders(): Record<string, string> {
   try {
@@ -240,6 +240,43 @@ export interface GuardRailStatusResponse {
   cooldown_enabled: boolean
   consecutive_losses: number
   settings: GuardRailSettings
+}
+
+// ── AI Helper types ─────────────────────────────────────────────────────────
+
+export interface DecisionAction {
+  side?: string
+  quantity_type?: string
+  quantity_value?: number | null
+  price_type?: string
+  price_value?: number | null
+}
+
+export interface DecisionItem {
+  command_id: string
+  command_text: string
+  bar_time: string
+  reason: string
+  action: DecisionAction
+  action_result: string
+  timestamp: string
+}
+
+export interface AIChatRequest {
+  message: string
+  session_id: string
+  user_id: string
+  symbol?: string | null
+  strike_ce?: number | null
+  strike_pe?: number | null
+}
+
+export interface AIChatResponse {
+  status: string
+  message: string
+  command_id?: string | null
+  hotword?: string | null
+  commands?: unknown[] | null
 }
 
 const api = {
@@ -818,6 +855,26 @@ const api = {
       const data = await res.json().catch(() => ({}))
       throw new Error(data.detail || `GuardRail settings update failed: ${res.status}`)
     }
+    return res.json()
+  },
+
+  // ── AI Helper ──────────────────────────────────────────────────────────────
+
+  async aiChat(req: AIChatRequest): Promise<AIChatResponse> {
+    const res = await fetch(`${AI_HELPER_URL}/ai/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(req),
+    })
+    if (!res.ok) throw new Error(`AI chat failed: ${res.status}`)
+    return res.json()
+  },
+
+  async aiGetDecisions(sessionId: string, since?: string | null): Promise<DecisionItem[]> {
+    let url = `${AI_HELPER_URL}/ai/session/${encodeURIComponent(sessionId)}/decisions`
+    if (since) url += `?since=${encodeURIComponent(since)}`
+    const res = await fetch(url)
+    if (!res.ok) throw new Error(`AI decisions fetch failed: ${res.status}`)
     return res.json()
   },
 }
