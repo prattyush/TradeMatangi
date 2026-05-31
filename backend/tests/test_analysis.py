@@ -196,6 +196,74 @@ class TestGetSessionDetail:
             assert field in t
 
 
+# ── GET /api/analysis/trades ──────────────────────────────────────────────────
+
+class TestGetTradesForAnalysis:
+    def test_returns_sessions_with_embedded_trades(self):
+        with patch("app.services.analysis_service.get_sessions_for_user", return_value=[SESSION_A]), \
+             patch("app.services.analysis_service.get_trades_for_session", return_value=TRADES_A):
+            resp = client.get(
+                f"/api/analysis/trades?user_id={FIXED_USER_ID}&from=2026-05-01&to=2026-05-31"
+            )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert isinstance(data, list)
+        assert len(data) == 1
+        assert data[0]["session_id"] == "sess-001"
+        assert data[0]["symbol"] == "NIFTY"
+        assert "trades" in data[0]
+        assert len(data[0]["trades"]) == 2
+
+    def test_trade_items_have_required_fields(self):
+        with patch("app.services.analysis_service.get_sessions_for_user", return_value=[SESSION_A]), \
+             patch("app.services.analysis_service.get_trades_for_session", return_value=TRADES_A):
+            resp = client.get(
+                f"/api/analysis/trades?user_id={FIXED_USER_ID}&from=2026-05-01&to=2026-05-31"
+            )
+        trade = resp.json()[0]["trades"][0]
+        for field in ("trade_id", "side", "price", "quantity", "timestamp", "commission"):
+            assert field in trade
+
+    def test_session_summary_fields_present(self):
+        with patch("app.services.analysis_service.get_sessions_for_user", return_value=[SESSION_A]), \
+             patch("app.services.analysis_service.get_trades_for_session", return_value=TRADES_A):
+            resp = client.get(
+                f"/api/analysis/trades?user_id={FIXED_USER_ID}&from=2026-05-01&to=2026-05-31"
+            )
+        s = resp.json()[0]
+        for field in ("date", "symbol", "session_type", "instrument_type", "session_capital", "net_pnl", "pnl_pct"):
+            assert field in s
+
+    def test_empty_result_when_no_sessions(self):
+        with patch("app.services.analysis_service.get_sessions_for_user", return_value=[]):
+            resp = client.get(
+                f"/api/analysis/trades?user_id={FIXED_USER_ID}&from=2026-05-01&to=2026-05-31"
+            )
+        assert resp.status_code == 200
+        assert resp.json() == []
+
+    def test_requires_user_id(self):
+        resp = client.get("/api/analysis/trades?from=2026-05-01&to=2026-05-31")
+        assert resp.status_code == 422
+
+    def test_requires_from_date(self):
+        resp = client.get(f"/api/analysis/trades?user_id={FIXED_USER_ID}&to=2026-05-31")
+        assert resp.status_code == 422
+
+    def test_requires_to_date(self):
+        resp = client.get(f"/api/analysis/trades?user_id={FIXED_USER_ID}&from=2026-05-01")
+        assert resp.status_code == 422
+
+    def test_date_range_forwarded_to_service(self):
+        with patch("app.services.analysis_service.get_sessions_for_user", return_value=[]) as mock_fn:
+            client.get(
+                f"/api/analysis/trades?user_id={FIXED_USER_ID}&from=2026-05-10&to=2026-05-20"
+            )
+        mock_fn.assert_called_once_with(
+            FIXED_USER_ID, start_date="2026-05-10", end_date="2026-05-20",
+        )
+
+
 # ── analysis_service unit tests ───────────────────────────────────────────────
 
 class TestComputeSessionSummary:

@@ -75,3 +75,50 @@ async def get_session_detail(session_id: str):
     if not detail:
         raise HTTPException(status_code=404, detail="Session not found")
     return detail
+
+
+@router.get("/trades")
+async def get_trades_for_analysis(
+    user_id: str = Query(...),
+    from_date: str = Query(..., alias="from", description="YYYY-MM-DD"),
+    to_date: str = Query(..., alias="to", description="YYYY-MM-DD"),
+) -> list[dict]:
+    """
+    Fetch sessions + trades for a user in a date range.
+    Used by aihelper analysis service — not for the frontend UI.
+    Returns: [{session summary fields..., "trades": [{trade fields...}]}]
+    """
+    sessions = analysis_service.get_sessions_for_user(
+        user_id, start_date=from_date, end_date=to_date,
+    )
+    result = []
+    for s in sessions:
+        trades = analysis_service.get_trades_for_session(s["session_id"])
+        summary = analysis_service.compute_session_summary(s, trades)
+        trade_list = [
+            {
+                "trade_id": t.get("trade_id", ""),
+                "side": t.get("side", ""),
+                "price": float(t.get("price", 0)),
+                "quantity": int(t.get("quantity", 0)),
+                "timestamp": int(t.get("timestamp", 0)),
+                "right": t.get("right"),
+                "strike": t.get("strike"),
+                "commission": float(t.get("commission", 0)),
+            }
+            for t in trades
+        ]
+        result.append({
+            "session_id": summary.get("session_id", ""),
+            "date": summary.get("date", ""),
+            "symbol": summary.get("symbol", ""),
+            "session_type": summary.get("session_type", "sim"),
+            "instrument_type": summary.get("instrument_type", "equity"),
+            "session_capital": summary.get("session_capital", 0),
+            "net_pnl": summary.get("net_pnl", 0),
+            "pnl_pct": summary.get("pnl_pct", 0),
+            "total_commission": summary.get("total_commission", 0),
+            "trade_count": summary.get("trade_count", 0),
+            "trades": trade_list,
+        })
+    return result

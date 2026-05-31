@@ -217,6 +217,32 @@ async def answer_question(message: str) -> str:
     return result.get("text", "I'm here to help with trading commands and analysis. Could you rephrase?")
 
 
+async def extract_date_range(message: str, today: str) -> dict[str, Any]:
+    """
+    Parse a date range from a user's analysis request.
+    Returns {"from_date": "YYYY-MM-DD", "to_date": "YYYY-MM-DD", "period_description": str}
+    Falls back to last 7 days on parse error.
+    """
+    system = (
+        f"Today's date is {today}.\n"
+        "Extract the date range the user wants to analyze. Return JSON only:\n"
+        '{"from_date": "YYYY-MM-DD", "to_date": "YYYY-MM-DD", "period_description": "<short label>"}\n\n'
+        "Rules:\n"
+        '- "last 7 days" / "past week" → from = today − 7 days, to = today\n'
+        '- "last month" / "past month" / "last 30 days" → from = today − 30 days, to = today\n'
+        '- "last 3 days" → from = today − 3 days, to = today\n'
+        '- "today" → from = today, to = today\n'
+        '- "yesterday" → from = today − 1 day, to = today − 1 day\n'
+        '- "from YYYY-MM-DD to YYYY-MM-DD" → use those dates literally\n'
+        '- If no date range mentioned → default: last 7 days\n'
+        '- period_description: human-readable label (e.g. "last 7 days", "May 2026")'
+    )
+    return await _complete(
+        MODEL_INTENT_CLASSIFIER,
+        [{"role": "system", "content": system}, {"role": "user", "content": message}],
+    )
+
+
 async def analyze_trades(trades: list[dict], date_range: str) -> dict[str, Any]:
     """
     Analyze trade history and return structured insights.
