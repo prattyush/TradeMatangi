@@ -12,7 +12,7 @@ from fastapi import APIRouter
 from pydantic import BaseModel
 
 from db import commands_store, strategies_store
-from services import backend_client, intent_classifier, llm_service
+from services import backend_client, intent_classifier, llm_service, analysis_service
 
 logger = logging.getLogger("aihelper.routers.chat")
 
@@ -53,6 +53,7 @@ class ChatResponse(BaseModel):
     command_id: str | None = None
     hotword: str | None = None
     commands: list | None = None
+    analysis: dict | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -235,6 +236,28 @@ async def _handle_hotword(req: ChatRequest) -> ChatResponse:
     )
 
 
+async def _handle_analysis(req: ChatRequest) -> ChatResponse:
+    from_date, to_date, period_desc = await analysis_service.parse_date_range(req.message)
+    logger.info(
+        "Analysis: user=%s period=%s (%s → %s)",
+        req.user_id, period_desc, from_date, to_date,
+    )
+    try:
+        result = await analysis_service.run_analysis(req.user_id, from_date, to_date, period_desc)
+    except Exception:
+        logger.exception("Analysis failed")
+        return ChatResponse(
+            status="error",
+            message="Failed to fetch or analyze trade data. Make sure the backend is running.",
+        )
+    summary = result.get("summary", "No summary available.")
+    return ChatResponse(
+        status="analysis",
+        message=f"Trade analysis for {period_desc}:\n\n{summary}",
+        analysis=result,
+    )
+
+
 async def _handle_list_commands(req: ChatRequest) -> ChatResponse:
     active_cmds = commands_store.list_active_commands_for_session(req.session_id)
     saved = strategies_store.list_strategies(req.user_id)
@@ -284,11 +307,7 @@ async def chat(req: ChatRequest) -> ChatResponse:
     if intent == "list_commands":
         return await _handle_list_commands(req)
     if intent == "analysis":
-        # Step 8
-        return ChatResponse(
-            status="pending",
-            message="Trade analysis is not yet available in this version.",
-        )
+        return await _handle_analysis(req)
 
     # "question" or unrecognised
     try:

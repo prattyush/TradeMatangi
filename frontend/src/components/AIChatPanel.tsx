@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
-import api, { DecisionItem, DecisionAction, StrategyItem, CommandItem } from '../services/api'
+import api, { DecisionItem, DecisionAction, StrategyItem, CommandItem, AnalysisResult } from '../services/api'
 
 interface UserMessage {
   id: string
@@ -20,7 +20,14 @@ interface DecisionMessage {
   decision: DecisionItem
 }
 
-type ChatMessage = UserMessage | AssistantMessage | DecisionMessage
+interface AnalysisMessage {
+  id: string
+  role: 'analysis'
+  analysis: AnalysisResult
+  periodLabel: string
+}
+
+type ChatMessage = UserMessage | AssistantMessage | DecisionMessage | AnalysisMessage
 type PanelTab = 'chat' | 'commands' | 'hotwords'
 
 interface Props {
@@ -210,9 +217,17 @@ export default function AIChatPanel({ sessionId, userId, symbol, strikeCe, strik
         strike_ce: strikeCe,
         strike_pe: strikePe,
       })
-      setMessages(prev => [...prev, {
-        id: nextId(), role: 'assistant', text: data.message, status: data.status,
-      }])
+      if (data.status === 'analysis' && data.analysis) {
+        // Extract period label from message (e.g. "Trade analysis for last 7 days:")
+        const periodLabel = data.message.replace(/^Trade analysis for /, '').replace(/:.*$/s, '').trim()
+        setMessages(prev => [...prev, {
+          id: nextId(), role: 'analysis', analysis: data.analysis!, periodLabel,
+        }])
+      } else {
+        setMessages(prev => [...prev, {
+          id: nextId(), role: 'assistant', text: data.message, status: data.status,
+        }])
+      }
       // Refresh commands list if a new command was registered
       if (data.status === 'watching' && data.command_id) {
         fetchCommands()
@@ -342,6 +357,108 @@ export default function AIChatPanel({ sessionId, userId, symbol, strikeCe, strik
                       whiteSpace: 'pre-wrap', wordBreak: 'break-word',
                     }}>
                       {m.text}
+                    </div>
+                  </div>
+                )
+              }
+
+              // Analysis message
+              if (msg.role === 'analysis') {
+                const am = msg as AnalysisMessage
+                const a = am.analysis
+                const stats = a.notable_stats ?? {}
+                return (
+                  <div key={msg.id} style={{ alignSelf: 'flex-start', width: '95%' }}>
+                    <div style={{
+                      background: '#0d1117', border: '1px solid #1f6feb',
+                      borderRadius: 10, padding: '10px 12px', fontSize: 11,
+                    }}>
+                      <div style={{ color: '#58a6ff', fontWeight: 700, marginBottom: 6, fontSize: 12 }}>
+                        📊 Trade Analysis — {am.periodLabel}
+                      </div>
+
+                      {/* Summary */}
+                      <div style={{ color: '#e6edf3', marginBottom: 8, lineHeight: 1.5, wordBreak: 'break-word' }}>
+                        {a.summary}
+                      </div>
+
+                      {/* Notable Stats */}
+                      {Object.keys(stats).length > 0 && (
+                        <div style={{
+                          display: 'flex', flexWrap: 'wrap', gap: 5, marginBottom: 8,
+                        }}>
+                          {stats.win_rate && (
+                            <span style={{ background: '#161b22', border: '1px solid #30363d', borderRadius: 4, padding: '2px 7px', color: '#8b949e', fontSize: 10 }}>
+                              Win rate: <strong style={{ color: '#e6edf3' }}>{stats.win_rate}</strong>
+                            </span>
+                          )}
+                          {stats.avg_profit_pct && (
+                            <span style={{ background: '#161b22', border: '1px solid #30363d', borderRadius: 4, padding: '2px 7px', color: '#8b949e', fontSize: 10 }}>
+                              Avg profit: <strong style={{ color: '#56d364' }}>{stats.avg_profit_pct}</strong>
+                            </span>
+                          )}
+                          {stats.avg_loss_pct && (
+                            <span style={{ background: '#161b22', border: '1px solid #30363d', borderRadius: 4, padding: '2px 7px', color: '#8b949e', fontSize: 10 }}>
+                              Avg loss: <strong style={{ color: '#f85149' }}>{stats.avg_loss_pct}</strong>
+                            </span>
+                          )}
+                          {stats.best_time_of_day && (
+                            <span style={{ background: '#161b22', border: '1px solid #30363d', borderRadius: 4, padding: '2px 7px', color: '#8b949e', fontSize: 10 }}>
+                              Best time: <strong style={{ color: '#e6edf3' }}>{stats.best_time_of_day}</strong>
+                            </span>
+                          )}
+                          {stats.worst_time_of_day && (
+                            <span style={{ background: '#161b22', border: '1px solid #30363d', borderRadius: 4, padding: '2px 7px', color: '#8b949e', fontSize: 10 }}>
+                              Worst time: <strong style={{ color: '#e6edf3' }}>{stats.worst_time_of_day}</strong>
+                            </span>
+                          )}
+                        </div>
+                      )}
+
+                      {/* Patterns */}
+                      {a.patterns && a.patterns.length > 0 && (
+                        <div style={{ marginBottom: 8 }}>
+                          <div style={{ color: '#484f58', fontSize: 10, marginBottom: 4 }}>PATTERNS</div>
+                          {a.patterns.map((p, i) => (
+                            <div key={i} style={{
+                              background: '#161b22',
+                              border: `1px solid ${p.type === 'positive' ? '#238636' : '#6e3333'}`,
+                              borderRadius: 6, padding: '5px 8px', marginBottom: 4,
+                            }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginBottom: 2 }}>
+                                <span style={{ fontSize: 10 }}>{p.type === 'positive' ? '✓' : '✗'}</span>
+                                <span style={{ color: p.type === 'positive' ? '#56d364' : '#f85149', fontWeight: 600, fontSize: 11 }}>
+                                  {p.title}
+                                </span>
+                                {p.frequency && (
+                                  <span style={{ color: '#484f58', fontSize: 10, marginLeft: 'auto', flexShrink: 0 }}>
+                                    {p.frequency}
+                                  </span>
+                                )}
+                              </div>
+                              <div style={{ color: '#8b949e', fontSize: 10, lineHeight: 1.4, wordBreak: 'break-word' }}>
+                                {p.detail}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      {/* Suggestions */}
+                      {a.suggestions && a.suggestions.length > 0 && (
+                        <div>
+                          <div style={{ color: '#484f58', fontSize: 10, marginBottom: 4 }}>SUGGESTIONS</div>
+                          {a.suggestions.map((s, i) => (
+                            <div key={i} style={{
+                              color: '#8b949e', fontSize: 11, marginBottom: 3,
+                              paddingLeft: 8, borderLeft: '2px solid #1f6feb',
+                              wordBreak: 'break-word', lineHeight: 1.4,
+                            }}>
+                              {s}
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   </div>
                 )

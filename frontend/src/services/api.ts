@@ -271,12 +271,35 @@ export interface AIChatRequest {
   strike_pe?: number | null
 }
 
+export interface AnalysisPattern {
+  type: 'positive' | 'negative'
+  title: string
+  detail: string
+  frequency: string
+}
+
+export interface AnalysisNotableStats {
+  win_rate?: string
+  avg_profit_pct?: string
+  avg_loss_pct?: string
+  best_time_of_day?: string
+  worst_time_of_day?: string
+}
+
+export interface AnalysisResult {
+  summary: string
+  patterns: AnalysisPattern[]
+  suggestions: string[]
+  notable_stats: AnalysisNotableStats
+}
+
 export interface AIChatResponse {
   status: string
   message: string
   command_id?: string | null
   hotword?: string | null
   commands?: unknown[] | null
+  analysis?: AnalysisResult | null
 }
 
 export interface StrategyItem {
