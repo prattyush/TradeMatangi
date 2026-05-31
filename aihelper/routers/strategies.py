@@ -2,10 +2,12 @@
 Hotword strategy management — saved strategies per user.
 GET  /ai/strategies           — list all saved strategies
 DELETE /ai/strategies/{hotword} — remove a saved strategy
-Full implementation in Step 6 (hotword strategies).
 """
 import logging
+from typing import Optional
+
 from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel, field_validator
 
 from db import strategies_store
 
@@ -14,7 +16,21 @@ logger = logging.getLogger("aihelper.routers.strategies")
 router = APIRouter()
 
 
-@router.get("/ai/strategies")
+class StrategyItem(BaseModel):
+    hotword: str
+    strategy_text: str
+    description: Optional[str] = None
+    created_at: str
+    last_used_at: Optional[str] = None
+    use_count: Optional[int] = None
+
+    @field_validator("use_count", mode="before")
+    @classmethod
+    def coerce_decimal(cls, v):
+        return int(v) if v is not None else None
+
+
+@router.get("/ai/strategies", response_model=dict)
 async def list_strategies(user_id: str):
     """List all saved hotword strategies for a user."""
     try:
@@ -22,7 +38,8 @@ async def list_strategies(user_id: str):
     except Exception:
         logger.exception("Error listing strategies for user %s", user_id)
         items = []
-    return {"strategies": items}
+    parsed = [StrategyItem(**item).model_dump(exclude_none=False) for item in items]
+    return {"strategies": parsed}
 
 
 @router.delete("/ai/strategies/{hotword}")
