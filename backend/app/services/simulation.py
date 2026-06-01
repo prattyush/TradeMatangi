@@ -1536,6 +1536,8 @@ async def _fire_bar_close_hook(
     from app.config import AI_HELPER_URL
     import httpx
 
+    from app.services import user_settings_service
+    user_settings = user_settings_service.get_settings(session.user_id)
     payload = {
         "user_id": session.user_id,
         "session_id": session.session_id,
@@ -1545,6 +1547,11 @@ async def _fire_bar_close_hook(
         "position": None,   # populated in Step 4 (trade execution)
         "timestamp": datetime.fromtimestamp(slot_ts, tz=timezone.utc).isoformat(),
         "session_type": session.session_type,
+        "funds_ratios": {
+            "ratio_l": user_settings["funds_ratio_l_pct"],
+            "ratio_m": user_settings["funds_ratio_m_pct"],
+            "ratio_h": user_settings["funds_ratio_h_pct"],
+        },
     }
     try:
         async with httpx.AsyncClient(timeout=0.1) as client:

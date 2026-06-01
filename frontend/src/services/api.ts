@@ -77,6 +77,9 @@ export interface SimulationStartRequest {
 
 export interface UserSettingsResponse {
   historical_days: number
+  funds_ratio_l_pct?: number
+  funds_ratio_m_pct?: number
+  funds_ratio_h_pct?: number
 }
 
 // ── Strategy types ──────────────────────────────────────────────────────────
