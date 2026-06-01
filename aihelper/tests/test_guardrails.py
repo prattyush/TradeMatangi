@@ -434,7 +434,7 @@ class TestChatCommandSanitization:
     def test_sanitize_called_before_llm_extract(self):
         """sanitize_command_text must be called with the raw message before extract_command_fields."""
         from guardrails.validator import sanitize_command_text as _real_sanitize
-        classify = AsyncMock(return_value=("command", 0.95))
+        classify = AsyncMock(return_value=("entry_command", 0.95))
         notify = AsyncMock()
         captured_extract_args = []
         sanitize_call_count = [0]
@@ -467,7 +467,7 @@ class TestChatCommandSanitization:
         dirty_body = dict(_CHAT_BODY)
         dirty_body["message"] = "If CE low < prev low buy `os.system()` ratio L"
 
-        classify = AsyncMock(return_value=("command", 0.95))
+        classify = AsyncMock(return_value=("entry_command", 0.95))
         extract = AsyncMock(return_value=_EXTRACTED_FIELDS)
         notify = AsyncMock()
 
@@ -493,7 +493,7 @@ class TestChatCommandSanitization:
         dirty_body = dict(_CHAT_BODY)
         dirty_body["message"] = "buy CE`injection` ratio L target"
 
-        classify = AsyncMock(return_value=("command", 0.95))
+        classify = AsyncMock(return_value=("entry_command", 0.95))
         extract = AsyncMock(return_value=_EXTRACTED_FIELDS)
         notify = AsyncMock()
         stored_items = []

@@ -124,6 +124,126 @@ async def get_user_funds_ratios(user_id: str) -> dict[str, float]:
         return _DEFAULT_RATIO_PCT.copy()
 
 
+async def get_position(session_id: str, right: str | None) -> dict:
+    """GET /api/trades/position — return current open position for session/right."""
+    client = get_client()
+    params: dict[str, Any] = {"session_id": session_id}
+    if right is not None:
+        params["right"] = right
+    resp = await client.get("/api/trades/position", params=params)
+    resp.raise_for_status()
+    return resp.json()
+
+
+async def get_open_orders(session_id: str) -> list[dict]:
+    """GET /api/orders?open_only=true — return all pending orders for the session."""
+    client = get_client()
+    resp = await client.get("/api/orders", params={"session_id": session_id, "open_only": "true"})
+    resp.raise_for_status()
+    return resp.json()
+
+
+async def update_stoploss_order(session_id: str, order_id: str, trigger_price: float) -> dict:
+    """PATCH /api/orders/{order_id} — update stoploss trigger price."""
+    client = get_client()
+    resp = await client.patch(
+        f"/api/orders/{order_id}",
+        params={"session_id": session_id},
+        json={"trigger_price": round(trigger_price, 2)},
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
+async def create_stoploss_order(
+    session_id: str,
+    right: str | None,
+    trigger_price: float,
+    quantity: int,
+    side: str = "SELL",
+) -> dict:
+    """POST /api/orders — create a new stoploss order."""
+    client = get_client()
+    body: dict[str, Any] = {
+        "session_id": session_id,
+        "side": side,
+        "order_type": "STOPLOSS",
+        "trigger_price": round(trigger_price, 2),
+        "quantity": quantity,
+        "is_stoploss": True,
+    }
+    if right is not None:
+        body["right"] = right
+    resp = await client.post("/api/orders", json=body)
+    resp.raise_for_status()
+    return resp.json()
+
+
+async def update_or_create_stoploss(
+    session_id: str,
+    right: str | None,
+    trigger_price: float,
+    position: dict,
+) -> dict:
+    """
+    Find an existing STOPLOSS order for the right and update it, or create a new one.
+    Position dict is used to determine the order side (SELL for LONG, BUY for SHORT)
+    and the quantity.
+    """
+    qty = int(position.get("qty", 0))
+    pos_side = (position.get("side") or "LONG").upper()
+    order_side = "BUY" if pos_side == "SHORT" else "SELL"
+
+    try:
+        orders = await get_open_orders(session_id)
+        sl_order = next(
+            (o for o in orders if o.get("is_stoploss") and o.get("right") == right),
+            None,
+        )
+    except Exception as exc:
+        logger.warning("get_open_orders failed (%s), will attempt to create new SL", exc)
+        sl_order = None
+
+    if sl_order:
+        result = await update_stoploss_order(session_id, sl_order["order_id"], trigger_price)
+        return {"action": "updated", "order": result}
+    else:
+        result = await create_stoploss_order(session_id, right, trigger_price, qty, side=order_side)
+        return {"action": "created", "order": result}
+
+
+async def exit_position_market(session_id: str, right: str | None) -> dict:
+    """POST /api/trades/sell — exit the open position at market price."""
+    client = get_client()
+    body: dict[str, Any] = {"session_id": session_id}
+    if right is not None:
+        body["right"] = right
+    resp = await client.post("/api/trades/sell", json=body)
+    resp.raise_for_status()
+    return resp.json()
+
+
+async def start_takeprofit_strategy(
+    session_id: str,
+    right: str | None,
+    target_price: float,
+) -> dict:
+    """POST /api/strategies/start — start a TargetProfit strategy at the given price."""
+    client = get_client()
+    body: dict[str, Any] = {
+        "session_id": session_id,
+        "strategy_type": "TargetProfit",
+        "target_profit_value": round(target_price, 2),
+        "target_profit_is_pct": False,
+        "direction": "BUY",
+    }
+    if right is not None:
+        body["right"] = right
+    resp = await client.post("/api/strategies/start", json=body)
+    resp.raise_for_status()
+    return resp.json()
+
+
 async def close() -> None:
     global _client
     if _client and not _client.is_closed:

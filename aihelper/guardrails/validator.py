@@ -63,3 +63,26 @@ def validate_action(action: dict[str, Any], position: dict | None) -> tuple[bool
         return False, "SELL blocked — no open position"
 
     return True, ""
+
+
+_ALLOWED_EXIT_ACTIONS = {"update_stoploss", "exit_position", "start_takeprofit"}
+
+
+def validate_exit_action(action: dict[str, Any], position: dict | None) -> tuple[bool, str]:
+    """
+    Validate the LLM-produced exit action dict before dispatching to backend.
+    Returns (ok, rejection_reason).
+    """
+    exit_action = action.get("exit_action", "")
+    if exit_action not in _ALLOWED_EXIT_ACTIONS:
+        return False, f"Unknown exit_action '{exit_action}'"
+
+    if exit_action in ("update_stoploss", "start_takeprofit"):
+        price = action.get("computed_price")
+        if price is None or float(price) <= 0:
+            return False, f"{exit_action} requires a positive computed_price"
+
+    if not position or int(position.get("qty", 0)) == 0:
+        return False, "No open position to exit"
+
+    return True, ""
