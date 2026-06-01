@@ -13,7 +13,9 @@ from config import (
     MODEL_INTENT_CLASSIFIER, MODEL_COMMAND_EVALUATOR,
     MODEL_ANALYSIS, MODEL_FALLBACK,
 )
-from observability.tracing import observe
+from langfuse import get_client as _get_langfuse_client
+
+from observability.tracing import observe, tracing_enabled
 
 logger = logging.getLogger("aihelper.services.llm_service")
 
@@ -46,6 +48,20 @@ async def _complete(
             kwargs["model"] = attempt_model
             resp = await litellm.acompletion(**kwargs)
             content = resp.choices[0].message.content
+
+            if tracing_enabled:
+                try:
+                    cost = litellm.completion_cost(completion_response=resp)
+                    _get_langfuse_client().update_current_generation(
+                        model=resp.model,
+                        usage={
+                            "input": resp.usage.prompt_tokens,
+                            "output": resp.usage.completion_tokens,
+                        },
+                        metadata={"cost_usd": cost},
+                    )
+                except Exception:
+                    pass  # tracing must never break inference
 
             if json_mode:
                 return json.loads(content)
