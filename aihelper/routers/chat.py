@@ -117,6 +117,8 @@ async def _persist_command(
     # Optional nullable fields — omit rather than store None in DynamoDB
     if extracted.get("right"):
         item["right"] = extracted["right"]
+    if extracted.get("trigger_right"):
+        item["trigger_right"] = extracted["trigger_right"]
     if strike is not None:
         item["strike"] = strike
     if extracted.get("quantity_value") is not None:

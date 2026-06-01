@@ -173,7 +173,7 @@ async def extract_command_fields(message: str) -> dict[str, Any]:
     Returns structured fields for command registration.
 
     Output schema:
-      {order_type, quantity_type, quantity_value, right, trigger, price_expr, hotword, missing_fields}
+      {order_type, quantity_type, quantity_value, right, trigger_right, trigger, price_expr, hotword, missing_fields}
     """
     system = (
         "You are parsing a natural language trading command for Indian markets (NSE/NFO).\n"
@@ -183,6 +183,7 @@ async def extract_command_fields(message: str) -> dict[str, Any]:
         '  "quantity_type":  "ratio_l" | "ratio_m" | "ratio_h" | "fixed" | null,\n'
         '  "quantity_value": <number or null — only for "fixed" type>,\n'
         '  "right":          "CE" | "PE" | null,\n'
+        '  "trigger_right":  "CE" | "PE" | null,\n'
         '  "trigger":        "<normalized entry condition using bar params: '
         "low/high/close/open/bear/bull/prev_bar.X>\",\n"
         '  "price_expr":     "<price expression: market | (open+close)/2 | close+0.5 | '
@@ -192,13 +193,22 @@ async def extract_command_fields(message: str) -> dict[str, Any]:
         "}\n\n"
         "Rules:\n"
         "- quantity_type: L/low/small → ratio_l; M/medium → ratio_m; H/high/large → ratio_h\n"
-        "- right: set to CE or PE only if user explicitly mentions it; else null\n"
+        "- right: the OPTIONS LEG for the order — set to CE or PE only if explicitly mentioned; else null\n"
+        "- trigger_right: which bar stream should trigger evaluation:\n"
+        "    set to 'CE' if the trigger condition is explicitly about CE bar behaviour\n"
+        "    set to 'PE' if the trigger condition is explicitly about PE bar behaviour\n"
+        "    set to null if the trigger is about Nifty/underlying bars, or the stream is unspecified\n"
+        "  Examples:\n"
+        "    'when CE bar closes bull' → trigger_right='CE'\n"
+        "    'when PE bar low breaks previous low' → trigger_right='PE'\n"
+        "    'when Nifty crosses 25000' → trigger_right=null\n"
+        "    'when bar closes green' (no stream specified) → trigger_right=null\n"
         "- price_expr: for market order_type → always 'market'; "
         "for target/limit → extract from message; null if unclear\n"
         "- trigger: normalize to bar-param expressions; null if entry condition not stated\n"
         "- missing_fields: include 'order_type' if absent, 'quantity_type' if absent,\n"
         "  'trigger' if entry condition not stated, 'price_expr' if not determinable\n"
-        "- Do NOT include 'right' in missing_fields — the caller handles options vs equity"
+        "- Do NOT include 'right' or 'trigger_right' in missing_fields — the caller handles these"
     )
     return await _complete(
         MODEL_INTENT_CLASSIFIER,
