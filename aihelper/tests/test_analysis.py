@@ -29,7 +29,7 @@ for _mod in _stub_modules:
 # observability.tracing.observe must be a no-op pass-through decorator so that
 # @observe(name=...) decorators in chat.py / llm_service.py don't wrap async
 # functions in a MagicMock (which breaks 'await _chat_observed(req)').
-def _noop_observe(name=None):
+def _noop_observe(name=None, as_type=None):
     def _decorator(fn):
         return fn
     return _decorator
