@@ -109,7 +109,7 @@ export default function AIChatPanel({ sessionId, userId, symbol, strikeCe, strik
 
   const effectivePos = useMemo(() => {
     if (pos) return pos
-    const PANEL_W = 380, PANEL_H = 520, MARGIN = 24
+    const PANEL_W = 480, PANEL_H = 640, MARGIN = 24
     return {
       x: (typeof window !== 'undefined' ? window.innerWidth : 800) - PANEL_W - MARGIN,
       y: (typeof window !== 'undefined' ? window.innerHeight : 600) - PANEL_H - MARGIN,
@@ -305,7 +305,7 @@ export default function AIChatPanel({ sessionId, userId, symbol, strikeCe, strik
   return (
     <div style={{
       position: 'fixed', left: effectivePos.x, top: effectivePos.y,
-      width: 380, height: 520,
+      width: 480, height: 640,
       background: '#0d1117', border: '1px solid #30363d',
       borderRadius: 12, display: 'flex', flexDirection: 'column',
       zIndex: 1000, boxShadow: '0 4px 24px rgba(0,0,0,0.6)',
@@ -363,7 +363,7 @@ export default function AIChatPanel({ sessionId, userId, symbol, strikeCe, strik
             display: 'flex', flexDirection: 'column', gap: 8,
           }}>
             {messages.length === 0 && (
-              <div style={{ color: '#484f58', fontSize: 12, textAlign: 'center', marginTop: 20 }}>
+              <div style={{ color: '#484f58', fontSize: 13, textAlign: 'center', marginTop: 20 }}>
                 {sessionId
                   ? 'AI decisions appear here when commands fire. Type a command below.'
                   : 'Start a trading session to use AI commands.'}
@@ -377,7 +377,7 @@ export default function AIChatPanel({ sessionId, userId, symbol, strikeCe, strik
                     <div style={{
                       background: '#1f4d2e', border: '1px solid #2d6a3f',
                       borderRadius: '12px 12px 2px 12px',
-                      padding: '7px 11px', fontSize: 12, color: '#e6edf3',
+                      padding: '8px 12px', fontSize: 14, color: '#e6edf3',
                       whiteSpace: 'pre-wrap', wordBreak: 'break-word',
                     }}>
                       {msg.text}
@@ -396,7 +396,7 @@ export default function AIChatPanel({ sessionId, userId, symbol, strikeCe, strik
                       background: '#161b22',
                       border: `1px solid ${isError ? '#f85149' : isWatching ? '#56d364' : '#30363d'}`,
                       borderRadius: '2px 12px 12px 12px',
-                      padding: '7px 11px', fontSize: 12, color: '#e6edf3',
+                      padding: '8px 12px', fontSize: 14, color: '#e6edf3',
                       whiteSpace: 'pre-wrap', wordBreak: 'break-word',
                     }}>
                       {m.text}
@@ -544,7 +544,7 @@ export default function AIChatPanel({ sessionId, userId, symbol, strikeCe, strik
             })}
 
             {loading && (
-              <div style={{ alignSelf: 'flex-start', color: '#484f58', fontSize: 11 }}>
+              <div style={{ alignSelf: 'flex-start', color: '#484f58', fontSize: 13 }}>
                 AI is thinking…
               </div>
             )}
@@ -572,7 +572,7 @@ export default function AIChatPanel({ sessionId, userId, symbol, strikeCe, strik
               style={{
                 flex: 1, resize: 'none', background: '#0d1117',
                 border: '1px solid #30363d', color: '#e6edf3',
-                borderRadius: 8, padding: '6px 10px', fontSize: 12,
+                borderRadius: 8, padding: '7px 10px', fontSize: 14,
                 fontFamily: 'inherit', outline: 'none',
                 opacity: !sessionId ? 0.5 : 1,
               }}
@@ -582,10 +582,10 @@ export default function AIChatPanel({ sessionId, userId, symbol, strikeCe, strik
               disabled={!sessionId || loading || !inputText.trim()}
               style={{
                 background: '#1f4d2e', border: '1px solid #56d364',
-                color: '#56d364', borderRadius: 8, padding: '6px 14px',
-                fontSize: 12, cursor: 'pointer', fontWeight: 600,
+                color: '#56d364', borderRadius: 8, padding: '7px 16px',
+                fontSize: 14, cursor: 'pointer', fontWeight: 600,
                 opacity: (!sessionId || loading || !inputText.trim()) ? 0.4 : 1,
-                flexShrink: 0, height: 56,
+                flexShrink: 0, alignSelf: 'stretch',
               }}
             >
               Send
@@ -616,19 +616,19 @@ export default function AIChatPanel({ sessionId, userId, symbol, strikeCe, strik
           </div>
 
           {!sessionId && (
-            <div style={{ color: '#484f58', fontSize: 12, textAlign: 'center', marginTop: 20 }}>
+            <div style={{ color: '#484f58', fontSize: 13, textAlign: 'center', marginTop: 20 }}>
               Start a trading session to see commands.
             </div>
           )}
 
           {sessionId && commandsLoading && commands.length === 0 && (
-            <div style={{ color: '#484f58', fontSize: 12, textAlign: 'center', marginTop: 20 }}>
+            <div style={{ color: '#484f58', fontSize: 13, textAlign: 'center', marginTop: 20 }}>
               Loading…
             </div>
           )}
 
           {sessionId && !commandsLoading && commands.length === 0 && (
-            <div style={{ color: '#484f58', fontSize: 12, textAlign: 'center', marginTop: 20 }}>
+            <div style={{ color: '#484f58', fontSize: 13, textAlign: 'center', marginTop: 20 }}>
               No commands this session.{'\n'}
               <span style={{ fontSize: 11 }}>
                 Type a command in the Chat tab to add one.
@@ -765,13 +765,13 @@ export default function AIChatPanel({ sessionId, userId, symbol, strikeCe, strik
           </div>
 
           {strategiesLoading && strategies.length === 0 && (
-            <div style={{ color: '#484f58', fontSize: 12, textAlign: 'center', marginTop: 20 }}>
+            <div style={{ color: '#484f58', fontSize: 13, textAlign: 'center', marginTop: 20 }}>
               Loading…
             </div>
           )}
 
           {!strategiesLoading && strategies.length === 0 && (
-            <div style={{ color: '#484f58', fontSize: 12, textAlign: 'center', marginTop: 20 }}>
+            <div style={{ color: '#484f58', fontSize: 13, textAlign: 'center', marginTop: 20 }}>
               No saved hotwords yet.{'\n'}
               <span style={{ fontSize: 11 }}>
                 Add "save as 'name'" to any command to save it.
