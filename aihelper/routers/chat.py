@@ -13,6 +13,7 @@ from pydantic import BaseModel
 
 from db import commands_store, strategies_store
 from services import backend_client, intent_classifier, llm_service, analysis_service
+from guardrails.validator import sanitize_command_text
 
 logger = logging.getLogger("aihelper.routers.chat")
 
@@ -150,7 +151,8 @@ def _validate_extracted(
 # ---------------------------------------------------------------------------
 
 async def _handle_command(req: ChatRequest) -> ChatResponse:
-    extracted = await llm_service.extract_command_fields(req.message)
+    sanitized = sanitize_command_text(req.message)
+    extracted = await llm_service.extract_command_fields(sanitized)
 
     # Market orders always use "market" price expression
     if extracted.get("order_type") == "market" and not extracted.get("price_expr"):
@@ -174,7 +176,7 @@ async def _handle_command(req: ChatRequest) -> ChatResponse:
         strategies_store.put_strategy({
             "user_id": req.user_id,
             "hotword": hotword,
-            "strategy_text": req.message,
+            "strategy_text": sanitized,
             "description": _build_summary(extracted, req.symbol, _strike_for(extracted, req.strike_ce, req.strike_pe)),
             "created_at": now,
             "last_used_at": now,
@@ -183,7 +185,7 @@ async def _handle_command(req: ChatRequest) -> ChatResponse:
 
     command_id = await _persist_command(
         req.user_id, req.session_id, req.symbol,
-        req.strike_ce, req.strike_pe, extracted, req.message,
+        req.strike_ce, req.strike_pe, extracted, sanitized,
     )
     strike = _strike_for(extracted, req.strike_ce, req.strike_pe)
     summary = _build_summary(extracted, req.symbol, strike)
@@ -214,7 +216,7 @@ async def _handle_hotword(req: ChatRequest) -> ChatResponse:
             message=f"Hotword '{hotword}' not found.{hint}",
         )
 
-    strategy_text = strategy["strategy_text"]
+    strategy_text = sanitize_command_text(strategy["strategy_text"])
     extracted = await llm_service.extract_command_fields(strategy_text)
     if extracted.get("order_type") == "market" and not extracted.get("price_expr"):
         extracted["price_expr"] = "market"

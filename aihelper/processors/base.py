@@ -30,6 +30,7 @@ class BarCloseHook(BaseModel):
     bars: list[OHLCBar]            # last 15 bars, oldest → newest
     position: PositionInfo | None = None
     timestamp: str
+    session_type: str | None = None  # "sim" | "paper" | "real"; None treated as sim
 
 
 class BarCloseProcessor(ABC):

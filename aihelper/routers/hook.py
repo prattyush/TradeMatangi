@@ -11,6 +11,9 @@ from pydantic import BaseModel
 import state
 from processors.base import BarCloseHook
 from db import commands_store
+from guardrails.validator import check_market_hours
+
+_LIVE_SESSION_TYPES = {"paper", "real"}
 
 logger = logging.getLogger("aihelper.routers.hook")
 
@@ -43,6 +46,16 @@ async def bar_close(hook: BarCloseHook):
     if not commands:
         logger.debug("bar_close: no active commands for session %s — skipping", hook.session_id)
         return {"status": "no_commands", "commands": 0}
+
+    # Market-hours guardrail for live sessions (paper/real); simulation bypasses this
+    if hook.session_type in _LIVE_SESSION_TYPES:
+        ok, reason = check_market_hours()
+        if not ok:
+            logger.info(
+                "bar_close: outside market hours (%s) for session %s — skipping",
+                reason, hook.session_id,
+            )
+            return {"status": "outside_market_hours", "commands": 0}
 
     # Submit to pluggable processor (returns immediately; evaluation is async)
     if state.processor is not None:
