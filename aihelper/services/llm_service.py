@@ -20,8 +20,13 @@ logger = logging.getLogger("aihelper.services.llm_service")
 # Suppress verbose litellm success/failure logging
 litellm.suppress_debug_info = True
 
+# LiteLLM → LangFuse: creates a litellm-acompletion generation nested under
+# the active @observe span so every LLM call is visible with model/cost/tokens.
+if tracing_enabled:
+    litellm.success_callback = ["langfuse"]
+    litellm.failure_callback = ["langfuse"]
 
-@observe(name="llm_complete", as_type="generation")
+
 async def _complete(
     model: str,
     messages: list[dict[str, str]],
@@ -32,8 +37,6 @@ async def _complete(
     Call LiteLLM async completion.
     Returns the parsed JSON body on success.
     Falls back to MODEL_FALLBACK on error.
-    Decorated as a LangFuse generation so model/usage/cost appear directly
-    on this span — no LiteLLM callback needed (avoids duplicate entries).
     """
     kwargs: dict[str, Any] = {
         "model": model,
@@ -49,18 +52,18 @@ async def _complete(
             resp = await litellm.acompletion(**kwargs)
             content = resp.choices[0].message.content
 
+            # Propagate model/cost onto the calling @observe span so the parent
+            # trace shows the info without waiting to expand into the generation.
             if langfuse_context is not None:
                 try:
                     cost = litellm.completion_cost(completion_response=resp)
                     langfuse_context.update_current_observation(
-                        model=resp.model,
-                        output=content,
-                        usage={
-                            "input": resp.usage.prompt_tokens,
-                            "output": resp.usage.completion_tokens,
-                            "total": resp.usage.total_tokens,
-                        },
-                        metadata={"cost_usd": cost},
+                        metadata={
+                            "model": resp.model,
+                            "cost_usd": cost,
+                            "prompt_tokens": resp.usage.prompt_tokens,
+                            "completion_tokens": resp.usage.completion_tokens,
+                        }
                     )
                 except Exception:
                     pass  # tracing must never break inference
