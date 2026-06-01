@@ -285,7 +285,9 @@ export function useSimulation() {
       })
       setState(s => ({
         ...s,
-        openOrders: [...s.openOrders, order],
+        openOrders: s.openOrders.some(o => o.order_id === order.order_id)
+          ? s.openOrders
+          : [...s.openOrders, order],
         walletRefreshKey: s.walletRefreshKey + 1,
         orderError: null,
       }))
