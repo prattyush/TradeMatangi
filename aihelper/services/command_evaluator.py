@@ -25,6 +25,17 @@ async def evaluate(hook: BarCloseHook, command: dict[str, Any]) -> dict[str, Any
     """
     command_id = command.get("command_id", "")
     session_id = hook.session_id
+
+    # Skip if the command targets a specific options leg but this hook is for a different stream.
+    # e.g. a CE command must not fire on the Nifty or PE bar-close hook.
+    command_right = command.get("right")  # "CE" | "PE" | None
+    if command_right and command_right != hook.right:
+        logger.debug(
+            "evaluate: skipping command=%s (right=%s) on hook right=%s",
+            command_id, command_right, hook.right,
+        )
+        return {"outcome": "skipped_wrong_stream", "command_id": command_id}
+
     logger.debug("evaluate: command=%s session=%s bars=%d", command_id, session_id, len(hook.bars))
 
     # Convert Pydantic models to plain dicts for JSON serialisation
