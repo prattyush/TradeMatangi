@@ -26,13 +26,16 @@ async def evaluate(hook: BarCloseHook, command: dict[str, Any]) -> dict[str, Any
     command_id = command.get("command_id", "")
     session_id = hook.session_id
 
-    # Skip if the command targets a specific options leg but this hook is for a different stream.
-    # e.g. a CE command must not fire on the Nifty or PE bar-close hook.
-    command_right = command.get("right")  # "CE" | "PE" | None
-    if command_right and command_right != hook.right:
+    # Skip if this hook's stream doesn't match the command's trigger stream.
+    # trigger_right = which bar-close stream should activate the command:
+    #   "CE"/"PE" → only fire on that options leg's bar close
+    #   None      → fire on any stream (Nifty or options), for commands triggered by the underlying
+    # Fall back to command["right"] for old commands that predate trigger_right.
+    trigger_right = command.get("trigger_right") or command.get("right")
+    if trigger_right and trigger_right != hook.right:
         logger.debug(
-            "evaluate: skipping command=%s (right=%s) on hook right=%s",
-            command_id, command_right, hook.right,
+            "evaluate: skipping command=%s (trigger_right=%s) on hook right=%s",
+            command_id, trigger_right, hook.right,
         )
         return {"outcome": "skipped_wrong_stream", "command_id": command_id}
 
