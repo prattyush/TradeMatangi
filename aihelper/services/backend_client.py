@@ -81,7 +81,7 @@ async def place_order(session_id: str, payload: dict[str, Any]) -> dict:
     if payload.get("right") is not None:
         body["right"] = payload["right"]
 
-    resp = await client.post("/api/orders/place", json=body)
+    resp = await client.post("/api/orders", json=body)
     resp.raise_for_status()
     return resp.json()
 
