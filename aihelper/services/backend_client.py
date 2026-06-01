@@ -107,6 +107,23 @@ async def get_trades(user_id: str, from_date: str, to_date: str) -> list[dict]:
     return resp.json()
 
 
+async def get_user_funds_ratios(user_id: str) -> dict[str, float]:
+    """GET /api/users/settings — return the user-configured funds ratio percentages."""
+    client = get_client()
+    try:
+        resp = await client.get("/api/users/settings", headers={"X-User-Id": user_id})
+        resp.raise_for_status()
+        data = resp.json()
+        return {
+            "ratio_l": data.get("funds_ratio_l_pct", _DEFAULT_RATIO_PCT["ratio_l"]),
+            "ratio_m": data.get("funds_ratio_m_pct", _DEFAULT_RATIO_PCT["ratio_m"]),
+            "ratio_h": data.get("funds_ratio_h_pct", _DEFAULT_RATIO_PCT["ratio_h"]),
+        }
+    except Exception as exc:
+        logger.warning("Failed to fetch user funds ratios for %s: %s", user_id, exc)
+        return _DEFAULT_RATIO_PCT.copy()
+
+
 async def close() -> None:
     global _client
     if _client and not _client.is_closed:

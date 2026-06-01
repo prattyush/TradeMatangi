@@ -285,7 +285,9 @@ export function useSimulation() {
       })
       setState(s => ({
         ...s,
-        openOrders: [...s.openOrders, order],
+        openOrders: s.openOrders.some(o => o.order_id === order.order_id)
+          ? s.openOrders
+          : [...s.openOrders, order],
         walletRefreshKey: s.walletRefreshKey + 1,
         orderError: null,
       }))
@@ -299,7 +301,10 @@ export function useSimulation() {
   }, [state.sessionId])
 
   const addOpenOrder = useCallback((order: Order) => {
-    setState(s => ({ ...s, openOrders: [...s.openOrders, order] }))
+    setState(s => {
+      if (s.openOrders.some(o => o.order_id === order.order_id)) return s
+      return { ...s, openOrders: [...s.openOrders, order] }
+    })
   }, [])
 
   const cancelOrder = useCallback(async (orderId: string) => {

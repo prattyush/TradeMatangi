@@ -1,3 +1,4 @@
+import json
 from fastapi import APIRouter, HTTPException, Query
 from app.models.schemas import Order, OrderType, TradeSide, PlaceOrderRequest, UpdateOrderRequest
 from app.services import order_service, simulation as sim_svc
@@ -234,6 +235,28 @@ async def place_order(req: PlaceOrderRequest):
             order_service._write_order_to_db(order)
             raise HTTPException(status_code=502, detail=f"Kotak SL order failed: {exc}")
 
+    try:
+        session.queue.put_nowait(json.dumps({
+            "type": "order_placed",
+            "order_id": order.order_id,
+            "session_id": order.session_id,
+            "user_id": order.user_id,
+            "symbol": order.symbol,
+            "side": order.side.value,
+            "order_type": order.order_type.value,
+            "quantity": order.quantity,
+            "trigger_price": order.trigger_price,
+            "limit_price": order.limit_price,
+            "status": order.status.value,
+            "created_at": order.created_at,
+            "filled_at": order.filled_at,
+            "filled_price": order.filled_price,
+            "is_stoploss": order.is_stoploss,
+            "right": order.right,
+            "strike": order.strike,
+        }))
+    except Exception:
+        pass
     return order
 
 

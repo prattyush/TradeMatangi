@@ -13,15 +13,15 @@ from config import (
     MODEL_INTENT_CLASSIFIER, MODEL_COMMAND_EVALUATOR,
     MODEL_ANALYSIS, MODEL_FALLBACK,
 )
-from observability.tracing import observe, tracing_enabled
+from observability.tracing import observe, tracing_enabled, langfuse_context
 
 logger = logging.getLogger("aihelper.services.llm_service")
 
 # Suppress verbose litellm success/failure logging
 litellm.suppress_debug_info = True
 
-# Wire LiteLLM → LangFuse callback so every LLM call is captured as a
-# generation and auto-nested under any active @observe parent span.
+# LiteLLM → LangFuse: creates a litellm-acompletion generation nested under
+# the active @observe span so every LLM call is visible with model/cost/tokens.
 if tracing_enabled:
     litellm.success_callback = ["langfuse"]
     litellm.failure_callback = ["langfuse"]
@@ -51,6 +51,23 @@ async def _complete(
             kwargs["model"] = attempt_model
             resp = await litellm.acompletion(**kwargs)
             content = resp.choices[0].message.content
+
+            # Propagate model/cost onto the calling @observe span so the parent
+            # trace shows the info without waiting to expand into the generation.
+            if langfuse_context is not None:
+                try:
+                    cost = litellm.completion_cost(completion_response=resp)
+                    langfuse_context.update_current_observation(
+                        metadata={
+                            "model": resp.model,
+                            "cost_usd": cost,
+                            "prompt_tokens": resp.usage.prompt_tokens,
+                            "completion_tokens": resp.usage.completion_tokens,
+                        }
+                    )
+                except Exception:
+                    pass  # tracing must never break inference
+
             if json_mode:
                 return json.loads(content)
             return {"text": content}
