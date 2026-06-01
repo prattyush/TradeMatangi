@@ -1544,6 +1544,7 @@ async def _fire_bar_close_hook(
         "bars": bars,
         "position": None,   # populated in Step 4 (trade execution)
         "timestamp": datetime.fromtimestamp(slot_ts, tz=timezone.utc).isoformat(),
+        "session_type": session.session_type,
     }
     try:
         async with httpx.AsyncClient(timeout=0.1) as client:
