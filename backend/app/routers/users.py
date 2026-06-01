@@ -17,5 +17,5 @@ async def update_user_settings(
     req: UserSettingsUpdateRequest,
     user_id: str = Depends(get_request_user_id),
 ):
-    updated = user_settings_service.update_settings(user_id, req.model_dump())
+    updated = user_settings_service.update_settings(user_id, req.model_dump(exclude_none=True))
     return UserSettingsResponse(**updated)

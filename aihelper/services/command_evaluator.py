@@ -16,11 +16,12 @@ logger = logging.getLogger("aihelper.services.command_evaluator")
 
 
 @observe(name="evaluate_command")
-async def evaluate(hook: BarCloseHook, command: dict[str, Any]) -> None:
+async def evaluate(hook: BarCloseHook, command: dict[str, Any]) -> dict[str, Any]:
     """
     Evaluate one active AICommand against the current bar close.
     LLM decides should_trade; if yes → guardrail check → place order → log decision.
     No-ops (should_trade=False) produce no log entry.
+    Returns a summary dict so LangFuse captures a meaningful output.
     """
     command_id = command.get("command_id", "")
     session_id = hook.session_id
@@ -43,14 +44,18 @@ async def evaluate(hook: BarCloseHook, command: dict[str, Any]) -> None:
         )
     except Exception:
         logger.exception("LLM evaluate_command failed for command %s", command_id)
-        return
+        return {"outcome": "llm_error", "command_id": command_id}
 
     if not llm_result.get("should_trade"):
         logger.debug(
             "evaluate: no-op command=%s reason=%s",
             command_id, llm_result.get("reason", "")[:80],
         )
-        return
+        return {
+            "outcome": "no_trade",
+            "command_id": command_id,
+            "reason": llm_result.get("reason", ""),
+        }
 
     # Build action object
     side = llm_result.get("side", "BUY").upper()
@@ -75,7 +80,11 @@ async def evaluate(hook: BarCloseHook, command: dict[str, Any]) -> None:
             session_id, now, command, hook.timestamp,
             reason_text, action, "rejected_guardrail",
         )
-        return
+        return {
+            "outcome": "rejected_guardrail",
+            "command_id": command_id,
+            "reason": rejection_reason,
+        }
 
     # Place order via backend
     try:
@@ -88,6 +97,7 @@ async def evaluate(hook: BarCloseHook, command: dict[str, Any]) -> None:
                 "quantity_type": command.get("quantity_type", "ratio_l"),
                 "quantity_value": command.get("quantity_value"),
                 "computed_price": llm_result.get("computed_price"),
+                "funds_ratios": hook.funds_ratios,
             },
         )
         action_result = "order_placed"
@@ -110,6 +120,14 @@ async def evaluate(hook: BarCloseHook, command: dict[str, Any]) -> None:
             commands_store.mark_command_executed(command["user_id"], command_id)
         except Exception:
             logger.exception("Failed to mark command %s as executed", command_id)
+
+    return {
+        "outcome": action_result,
+        "command_id": command_id,
+        "side": side,
+        "reason": reason_text,
+        "computed_price": llm_result.get("computed_price"),
+    }
 
 
 def _log_decision(
