@@ -14,6 +14,7 @@ from pydantic import BaseModel
 from db import commands_store, strategies_store
 from services import backend_client, intent_classifier, llm_service, analysis_service
 from guardrails.validator import sanitize_command_text
+from observability.tracing import observe
 
 logger = logging.getLogger("aihelper.routers.chat")
 
@@ -330,13 +331,9 @@ async def _handle_list_commands(req: ChatRequest) -> ChatResponse:
 # Main endpoint
 # ---------------------------------------------------------------------------
 
-@router.post("/ai/chat", response_model=ChatResponse)
-async def chat(req: ChatRequest) -> ChatResponse:
-    logger.info(
-        "chat(): session=%s user=%s message=%r",
-        req.session_id, req.user_id, req.message[:80],
-    )
-
+@observe(name="chat")
+async def _chat_observed(req: ChatRequest) -> ChatResponse:
+    """Business logic — wrapped with LangFuse tracing. Called by the route handler."""
     intent, confidence = await intent_classifier.classify(req.message)
     logger.debug("Intent: %s (confidence=%.2f)", intent, confidence)
 
@@ -358,3 +355,12 @@ async def chat(req: ChatRequest) -> ChatResponse:
         logger.exception("answer_question failed")
         answer = "I'm here to help with trading commands and analysis. Could you rephrase?"
     return ChatResponse(status="answer", message=answer)
+
+
+@router.post("/ai/chat", response_model=ChatResponse)
+async def chat(req: ChatRequest) -> ChatResponse:
+    logger.info(
+        "chat(): session=%s user=%s message=%r",
+        req.session_id, req.user_id, req.message[:80],
+    )
+    return await _chat_observed(req)

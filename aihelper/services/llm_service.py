@@ -13,11 +13,18 @@ from config import (
     MODEL_INTENT_CLASSIFIER, MODEL_COMMAND_EVALUATOR,
     MODEL_ANALYSIS, MODEL_FALLBACK,
 )
+from observability.tracing import observe, tracing_enabled
 
 logger = logging.getLogger("aihelper.services.llm_service")
 
 # Suppress verbose litellm success/failure logging
 litellm.suppress_debug_info = True
+
+# Wire LiteLLM → LangFuse callback so every LLM call is captured as a
+# generation and auto-nested under any active @observe parent span.
+if tracing_enabled:
+    litellm.success_callback = ["langfuse"]
+    litellm.failure_callback = ["langfuse"]
 
 
 async def _complete(
@@ -56,6 +63,7 @@ async def _complete(
     raise RuntimeError("All LLM attempts failed")
 
 
+@observe(name="classify_intent")
 async def classify_intent(message: str) -> dict[str, Any]:
     """
     Classify user message intent.
@@ -79,6 +87,7 @@ async def classify_intent(message: str) -> dict[str, Any]:
     )
 
 
+@observe(name="extract_cancel_params")
 async def extract_cancel_params(message: str) -> dict[str, Any]:
     """
     Extract cancel target from a cancel_commands intent message.
@@ -100,6 +109,7 @@ async def extract_cancel_params(message: str) -> dict[str, Any]:
     )
 
 
+@observe(name="llm_evaluate_command")
 async def evaluate_command(
     parsed_trigger: str,
     parsed_price_expr: str,
@@ -167,6 +177,7 @@ async def evaluate_command(
     )
 
 
+@observe(name="extract_command_fields")
 async def extract_command_fields(message: str) -> dict[str, Any]:
     """
     Extract trading command fields from natural language.
@@ -206,6 +217,7 @@ async def extract_command_fields(message: str) -> dict[str, Any]:
     )
 
 
+@observe(name="extract_hotword_name")
 async def extract_hotword_name(message: str) -> str | None:
     """Extract the strategy hotword name from a recall message like 'use pullback buy'."""
     system = (
@@ -223,6 +235,7 @@ async def extract_hotword_name(message: str) -> str | None:
     return result.get("hotword")
 
 
+@observe(name="answer_question")
 async def answer_question(message: str) -> str:
     """Answer a general trading or platform question. Returns plain text."""
     system = (
@@ -240,6 +253,7 @@ async def answer_question(message: str) -> str:
     return result.get("text", "I'm here to help with trading commands and analysis. Could you rephrase?")
 
 
+@observe(name="extract_date_range")
 async def extract_date_range(message: str, today: str) -> dict[str, Any]:
     """
     Parse a date range from a user's analysis request.
@@ -266,6 +280,7 @@ async def extract_date_range(message: str, today: str) -> dict[str, Any]:
     )
 
 
+@observe(name="analyze_trades")
 async def analyze_trades(trades: list[dict], date_range: str) -> dict[str, Any]:
     """
     Analyze trade history and return structured insights.
