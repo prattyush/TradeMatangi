@@ -40,6 +40,13 @@ _cfg.AI_HELPER_PORT = 8701
 import state as _state  # noqa: E402
 _state.processor = None
 
+# Force-evict so we get the real commands module, not a MagicMock stub that
+# another test file (test_command_evaluator.py) may have placed in sys.modules.
+sys.modules.pop("routers.commands", None)
+import routers as _routers_pkg  # noqa: E402
+if hasattr(_routers_pkg, "commands"):
+    delattr(_routers_pkg, "commands")
+
 from fastapi.testclient import TestClient  # noqa: E402
 from routers import commands  # noqa: E402
 
