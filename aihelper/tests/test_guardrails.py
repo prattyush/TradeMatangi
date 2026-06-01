@@ -52,6 +52,26 @@ _state.processor = MagicMock()
 _state.processor.submit = AsyncMock()
 _state.processor.clear_session = MagicMock()
 
+# Force-evict modules that must be real in this test file so they re-import fresh
+# with the correct config values set above (guards against stale stubs from other
+# test files that may have imported these with a bare MagicMock config earlier).
+for _real_mod in [
+    "guardrails", "guardrails.validator",
+    "routers.hook", "routers.chat",
+]:
+    sys.modules.pop(_real_mod, None)
+
+# Also clear the submodule attributes from their parent packages so that
+# `from package import submodule` always triggers a real import rather than
+# returning a cached (stale) attribute from the package object.
+import routers as _routers_pkg  # noqa: E402
+for _attr in ("hook", "chat"):
+    if hasattr(_routers_pkg, _attr):
+        delattr(_routers_pkg, _attr)
+import guardrails as _guardrails_pkg  # noqa: E402
+if hasattr(_guardrails_pkg, "validator"):
+    delattr(_guardrails_pkg, "validator")
+
 from fastapi.testclient import TestClient  # noqa: E402
 from fastapi import FastAPI  # noqa: E402
 from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
