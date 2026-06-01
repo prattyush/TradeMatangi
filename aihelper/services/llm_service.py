@@ -13,7 +13,7 @@ from config import (
     MODEL_INTENT_CLASSIFIER, MODEL_COMMAND_EVALUATOR,
     MODEL_ANALYSIS, MODEL_FALLBACK,
 )
-from observability.tracing import observe, tracing_enabled, langfuse_context
+from observability.tracing import observe, tracing_enabled
 
 logger = logging.getLogger("aihelper.services.llm_service")
 
@@ -45,20 +45,6 @@ async def _complete(
     }
     if json_mode:
         kwargs["response_format"] = {"type": "json_object"}
-
-    # Link LiteLLM generations to the active @observe trace so they appear
-    # nested instead of landing in orphaned separate traces.
-    if langfuse_context is not None:
-        try:
-            trace_id = langfuse_context.get_current_trace_id()
-            obs_id = langfuse_context.get_current_observation_id()
-            if trace_id:
-                kwargs["metadata"] = {
-                    "existing_trace_id": trace_id,
-                    "parent_observation_id": obs_id,
-                }
-        except Exception:
-            pass
 
     for attempt_model in (model, MODEL_FALLBACK):
         try:
