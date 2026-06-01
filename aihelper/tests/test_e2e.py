@@ -185,7 +185,7 @@ class TestCommandRegistration:
     """POST /ai/chat with command intent registers the command and notifies backend."""
 
     def test_chat_returns_watching_status(self):
-        with patch("services.intent_classifier.classify", new=AsyncMock(return_value=("command", 0.95))), \
+        with patch("services.intent_classifier.classify", new=AsyncMock(return_value=("entry_command", 0.95))), \
              patch("services.llm_service.extract_command_fields", new=AsyncMock(return_value=_EXTRACTED_FIELDS)), \
              patch("db.commands_store.put_command") as mock_put, \
              patch("services.backend_client.notify_ai_commands_active", new=AsyncMock()), \
@@ -197,7 +197,7 @@ class TestCommandRegistration:
         assert body["status"] == "watching"
 
     def test_chat_returns_command_id(self):
-        with patch("services.intent_classifier.classify", new=AsyncMock(return_value=("command", 0.95))), \
+        with patch("services.intent_classifier.classify", new=AsyncMock(return_value=("entry_command", 0.95))), \
              patch("services.llm_service.extract_command_fields", new=AsyncMock(return_value=_EXTRACTED_FIELDS)), \
              patch("db.commands_store.put_command"), \
              patch("services.backend_client.notify_ai_commands_active", new=AsyncMock()), \
@@ -214,7 +214,7 @@ class TestCommandRegistration:
         def capture_put(item):
             stored.append(item)
 
-        with patch("services.intent_classifier.classify", new=AsyncMock(return_value=("command", 0.95))), \
+        with patch("services.intent_classifier.classify", new=AsyncMock(return_value=("entry_command", 0.95))), \
              patch("services.llm_service.extract_command_fields", new=AsyncMock(return_value=_EXTRACTED_FIELDS)), \
              patch("db.commands_store.put_command", side_effect=capture_put), \
              patch("services.backend_client.notify_ai_commands_active", new=AsyncMock()), \
@@ -240,7 +240,7 @@ class TestCommandRegistration:
         async def capture_notify(session_id):
             notified_sessions.append(session_id)
 
-        with patch("services.intent_classifier.classify", new=AsyncMock(return_value=("command", 0.95))), \
+        with patch("services.intent_classifier.classify", new=AsyncMock(return_value=("entry_command", 0.95))), \
              patch("services.llm_service.extract_command_fields", new=AsyncMock(return_value=_EXTRACTED_FIELDS)), \
              patch("db.commands_store.put_command"), \
              patch("services.backend_client.notify_ai_commands_active", new=capture_notify), \
@@ -251,7 +251,7 @@ class TestCommandRegistration:
         assert _SESSION_ID in notified_sessions
 
     def test_summary_contains_symbol_and_trigger(self):
-        with patch("services.intent_classifier.classify", new=AsyncMock(return_value=("command", 0.95))), \
+        with patch("services.intent_classifier.classify", new=AsyncMock(return_value=("entry_command", 0.95))), \
              patch("services.llm_service.extract_command_fields", new=AsyncMock(return_value=_EXTRACTED_FIELDS)), \
              patch("db.commands_store.put_command"), \
              patch("services.backend_client.notify_ai_commands_active", new=AsyncMock()), \
@@ -271,7 +271,7 @@ class TestCommandRegistration:
             "price_expr": None,
             "missing_fields": ["order_type", "trigger"],
         }
-        with patch("services.intent_classifier.classify", new=AsyncMock(return_value=("command", 0.95))), \
+        with patch("services.intent_classifier.classify", new=AsyncMock(return_value=("entry_command", 0.95))), \
              patch("services.llm_service.extract_command_fields", new=AsyncMock(return_value=incomplete_fields)), \
              patch("db.commands_store.put_command") as mock_put:
             resp = client.post("/ai/chat", json=_CHAT_BODY)
@@ -567,7 +567,7 @@ class TestFullFlow:
             stored_commands[item["command_id"]] = item
 
         # Phase 1: register command
-        with patch("services.intent_classifier.classify", new=AsyncMock(return_value=("command", 0.95))), \
+        with patch("services.intent_classifier.classify", new=AsyncMock(return_value=("entry_command", 0.95))), \
              patch("services.llm_service.extract_command_fields", new=AsyncMock(return_value=_EXTRACTED_FIELDS)), \
              patch("db.commands_store.put_command", side_effect=capture_put), \
              patch("services.backend_client.notify_ai_commands_active", new=AsyncMock()), \

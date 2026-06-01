@@ -79,12 +79,15 @@ async def _complete(
 async def classify_intent(message: str) -> dict[str, Any]:
     """
     Classify user message intent.
-    Returns {"intent": "command|analysis|question|hotword|list_commands|cancel_commands", "confidence": float}
+    Returns {"intent": "entry_command|exit_command|analysis|question|hotword|list_commands|cancel_commands",
+             "confidence": float}
     """
     system = (
         "You are a trading assistant for Indian markets (NSE/NFO). Classify the user's message "
         "into exactly one of these intents:\n"
-        '- "command"          : an entry, exit, or partial-exit instruction tied to market conditions\n'
+        '- "entry_command"    : an instruction to enter a trade (buy/sell) when a bar condition is met\n'
+        '- "exit_command"     : an instruction to exit a position, update a stoploss, or start a '
+        'TakeProfit strategy when a bar condition is met\n'
         '- "analysis"         : a request to analyze past trades\n'
         '- "question"         : a general question about the platform or markets\n'
         '- "hotword"          : a reference to a saved strategy by name (e.g. "use pullback entry")\n'
@@ -299,6 +302,129 @@ async def extract_date_range(message: str, today: str) -> dict[str, Any]:
     return await _complete(
         MODEL_INTENT_CLASSIFIER,
         [{"role": "system", "content": system}, {"role": "user", "content": message}],
+    )
+
+
+@observe(name="extract_exit_command_fields")
+async def extract_exit_command_fields(message: str) -> dict[str, Any]:
+    """
+    Extract exit command fields from natural language.
+    Returns structured fields for exit command registration.
+
+    Output schema:
+      {right, trigger_right, exit_action, exit_price_expr, trigger, hotword, missing_fields}
+    """
+    system = (
+        "You are parsing a natural language exit command for Indian markets (NSE/NFO).\n"
+        "Extract these fields and return JSON only:\n\n"
+        "{\n"
+        '  "right":           "CE" | "PE" | null,\n'
+        '  "trigger_right":   "CE" | "PE" | null,\n'
+        '  "exit_action":     "update_stoploss" | "exit_position" | "start_takeprofit" | null,\n'
+        '  "exit_price_expr": "<price expression or null>",\n'
+        '  "trigger":         "<normalized exit condition using bar params: '
+        "low/high/close/open/bear/bull/prev_bar.X>\",\n"
+        '  "hotword":         "<strategy name if user says save as X or call this X, else null>",\n'
+        '  "missing_fields":  ["<list of field names that are absent or ambiguous>"]\n'
+        "}\n\n"
+        "Rules:\n"
+        "- exit_action inference:\n"
+        "    'exit position' / 'exit immediately' / 'square off' / 'close position' → exit_position\n"
+        "    'update stoploss' / 'move SL' / 'shift SL' / 'set SL to' → update_stoploss\n"
+        "    'start take profit' / 'start TP strategy' / 'take profit at' → start_takeprofit\n"
+        "    If ambiguous → null\n"
+        "- exit_price_expr: required for update_stoploss (new SL price) and start_takeprofit (TP target);\n"
+        "    null for exit_position; null if not determinable\n"
+        "    Examples: 'prev_bar.low', 'close - 1', 'open of the current bar', '89.5'\n"
+        "- right: the OPTIONS LEG affected — CE or PE if explicitly mentioned; null for equity\n"
+        "- trigger_right: which bar stream triggers evaluation (same rules as entry commands):\n"
+        "    'CE' if trigger condition is about CE bar behaviour\n"
+        "    'PE' if trigger condition is about PE bar behaviour\n"
+        "    null if trigger is about Nifty/underlying bars or stream is unspecified\n"
+        "- trigger: normalize to bar-param expressions; null if exit condition not stated\n"
+        "- missing_fields: include 'exit_action' if not determinable, 'trigger' if absent,\n"
+        "    'exit_price_expr' if required but not determinable\n"
+        "- Do NOT include 'right' or 'trigger_right' in missing_fields"
+    )
+    return await _complete(
+        MODEL_INTENT_CLASSIFIER,
+        [{"role": "system", "content": system}, {"role": "user", "content": message}],
+    )
+
+
+@observe(name="evaluate_exit_command", as_type="generation")
+async def evaluate_exit_command(
+    parsed_trigger: str,
+    exit_action: str,
+    exit_price_expr: str | None,
+    bars: list[dict],
+    position: dict | None,
+    command_text: str = "",
+) -> dict[str, Any]:
+    """
+    Evaluate whether the exit condition is met for the current bar.
+    Returns {"should_exit": bool, "exit_action": str, "computed_price": float|null, "reason": str}
+    """
+    if not bars:
+        return {
+            "should_exit": False,
+            "exit_action": exit_action,
+            "computed_price": None,
+            "reason": "No bars available",
+        }
+
+    current = bars[-1]
+    prev = bars[-2] if len(bars) >= 2 else {}
+    bar_color = "bear" if current.get("close", 0) < current.get("open", 0) else "bull"
+    position_json = json.dumps(position) if position else "null"
+
+    system = (
+        "You are a trading exit execution engine for Indian equity/options markets (NSE/NFO).\n"
+        "Evaluate whether the exit condition is met by the bar that just closed, "
+        "and compute the exit/stoploss/target price if required.\n\n"
+        "Evaluate ONLY the most recent bar (last in the list). Previous bars are context only.\n"
+        "Do NOT fire on a condition already met in an earlier bar.\n\n"
+        f"Current bar (just closed):\n"
+        f"  open={current.get('open')}  high={current.get('high')}  "
+        f"low={current.get('low')}  close={current.get('close')}\n"
+        f"  bar_color={bar_color}\n\n"
+        f"Previous bar:\n"
+        f"  open={prev.get('open')}  high={prev.get('high')}  "
+        f"low={prev.get('low')}  close={prev.get('close')}\n\n"
+        f"Current position (null if none):\n{position_json}\n\n"
+        f"All bars for additional context (oldest → newest):\n{json.dumps(bars)}\n\n"
+        f"Command text (original natural language):\n{command_text}\n\n"
+        f"Exit condition to evaluate:\n"
+        f"  Trigger      : {parsed_trigger}\n"
+        f"  Exit action  : {exit_action}\n"
+        f"  Price expr   : {exit_price_expr or 'N/A (exit_position needs no price)'}\n\n"
+        "Rules:\n"
+        "- Respond with JSON only.\n"
+        '- Schema: {"should_exit": true|false, "exit_action": "<exit_action value>", '
+        '"computed_price": <number|null>, "reason": "<1-2 sentences>"}\n'
+        "- should_exit: true only if the trigger condition is fully met by the CURRENT bar.\n"
+        "- exit_action: echo the exit_action value from the condition above.\n"
+        "- computed_price:\n"
+        "    exit_position   → null (no price needed; market sell will be used)\n"
+        "    update_stoploss → evaluate exit_price_expr against bar params\n"
+        "    start_takeprofit→ evaluate exit_price_expr against bar params\n"
+        "- Price expression evaluation examples:\n"
+        '    "prev_bar.low"        → use the previous bar low value\n'
+        '    "prev_bar.high"       → use the previous bar high value\n'
+        '    "close - 1"           → current bar close minus 1\n'
+        '    "open of current bar" → current bar open\n'
+        '    "<fixed number>"      → that number\n'
+        "- All computed prices must be rounded to nearest ₹0.05 (NSE minimum tick size).\n"
+        "- If position is FLAT or null, set should_exit=false, "
+        'reason="No open position to exit".\n'
+        "- If the trigger cannot be evaluated from available data, set should_exit=false."
+    )
+    return await _complete(
+        MODEL_COMMAND_EVALUATOR,
+        [
+            {"role": "system", "content": system},
+            {"role": "user", "content": "Evaluate the exit condition for this bar close."},
+        ],
     )
 
 

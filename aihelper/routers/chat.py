@@ -33,6 +33,21 @@ Examples:
 place a target order at (open+close)/2 with quantity ratio L."
 • "If CE bars close crosses 89.5, place a target order at close+0.5 with trade quantity ratio L.\""""
 
+EXIT_VALIDATION_PROMPT = """\
+For adding an exit command, please mention:
+
+1) Symbol — CE or PE (required for options sessions)
+2) Action — one of:
+   • "exit position" — exit immediately at market
+   • "update stoploss to <price>" — update/create SL order
+   • "start take profit at <price>" — start TakeProfit strategy
+3) Exit Criteria — defined using bar parameters: low, high, close, open, bear, bull
+
+Examples:
+• "Exit CE position when the first bear body bar appears."
+• "Start Take Profit strategy in CE at the previous bar's high when CE closes above 90."
+• "Update stoploss to the low of the current bar minus 1, when the bar is bull in CE.\""""
+
 class ChatRequest(BaseModel):
     message: str
     session_id: str
@@ -305,6 +320,122 @@ async def _handle_cancel(req: ChatRequest) -> ChatResponse:
     )
 
 
+def _validate_exit_extracted(
+    extracted: dict[str, Any],
+    is_options: bool,
+) -> set[str]:
+    """Return set of missing field names for exit commands; empty = valid."""
+    missing = set(extracted.get("missing_fields") or [])
+    for field in ("exit_action", "trigger"):
+        if not extracted.get(field):
+            missing.add(field)
+    # price expression required for SL update and TP start
+    if extracted.get("exit_action") in ("update_stoploss", "start_takeprofit"):
+        if not extracted.get("exit_price_expr"):
+            missing.add("exit_price_expr")
+    if is_options and not extracted.get("right"):
+        missing.add("right")
+    return missing
+
+
+def _build_exit_summary(
+    extracted: dict[str, Any],
+    symbol: str | None,
+    strike: int | None,
+) -> str:
+    right = extracted.get("right") or ""
+    if strike:
+        symbol_str = f"{symbol or ''} {right} ({strike})".strip()
+    else:
+        symbol_str = (f"{symbol or ''} {right}".strip()) if right else (symbol or "")
+    action = extracted.get("exit_action", "exit_position")
+    price_expr = extracted.get("exit_price_expr")
+    trigger = extracted.get("trigger", "condition met")
+    if price_expr:
+        return f"Watching {symbol_str}: {action} at {price_expr} — fires when {trigger}"
+    return f"Watching {symbol_str}: {action} — fires when {trigger}"
+
+
+async def _persist_exit_command(
+    user_id: str,
+    session_id: str,
+    symbol: str | None,
+    strike_ce: int | None,
+    strike_pe: int | None,
+    extracted: dict[str, Any],
+    original_text: str,
+) -> str:
+    """Write exit AICommand to DynamoDB, notify backend, return command_id."""
+    strike = _strike_for(extracted, strike_ce, strike_pe)
+    command_id = str(uuid.uuid4())
+    now = datetime.now(timezone.utc).isoformat()
+
+    item: dict[str, Any] = {
+        "user_id": user_id,
+        "command_id": command_id,
+        "session_id": session_id,
+        "symbol": symbol or "",
+        "command_type": "exit",
+        "exit_action": extracted["exit_action"],
+        "parsed_trigger": extracted.get("trigger", ""),
+        "command_text": original_text,
+        "status": "active",
+        "one_shot": True,
+        "created_at": now,
+    }
+    if extracted.get("right"):
+        item["right"] = extracted["right"]
+    if extracted.get("trigger_right"):
+        item["trigger_right"] = extracted["trigger_right"]
+    if strike is not None:
+        item["strike"] = strike
+    if extracted.get("exit_price_expr"):
+        item["exit_price_expr"] = extracted["exit_price_expr"]
+    if extracted.get("hotword"):
+        item["hotword"] = extracted["hotword"]
+
+    commands_store.put_command(item)
+    await backend_client.notify_ai_commands_active(session_id)
+    logger.info("Registered exit command %s session=%s user=%s", command_id, session_id, user_id)
+    return command_id
+
+
+async def _handle_exit_command(req: ChatRequest) -> ChatResponse:
+    sanitized = sanitize_command_text(req.message)
+    extracted = await llm_service.extract_exit_command_fields(sanitized)
+
+    is_options = req.strike_ce is not None or req.strike_pe is not None
+    missing = _validate_exit_extracted(extracted, is_options)
+    if missing:
+        logger.info("Exit command validation failed — missing: %s", missing)
+        return ChatResponse(status="validation_required", message=EXIT_VALIDATION_PROMPT)
+
+    # Advisory position check — warn user if no open position, but still save the command
+    position_warning: str | None = None
+    try:
+        right = extracted.get("right")
+        pos = await backend_client.get_position(req.session_id, right)
+        if pos.get("side") == "FLAT":
+            sym_label = right or "equity"
+            position_warning = (
+                f"Note: No open {sym_label} position found. "
+                "Command saved but will auto-cancel at bar close if still no position."
+            )
+    except Exception:
+        pass  # non-fatal — position check is advisory only
+
+    command_id = await _persist_exit_command(
+        req.user_id, req.session_id, req.symbol,
+        req.strike_ce, req.strike_pe, extracted, sanitized,
+    )
+    strike = _strike_for(extracted, req.strike_ce, req.strike_pe)
+    summary = _build_exit_summary(extracted, req.symbol, strike)
+    if position_warning:
+        summary = f"{summary}\n\n{position_warning}"
+
+    return ChatResponse(status="watching", message=summary, command_id=command_id)
+
+
 async def _handle_list_commands(req: ChatRequest) -> ChatResponse:
     active_cmds = commands_store.list_active_commands_for_session(req.session_id)
     saved = strategies_store.list_strategies(req.user_id)
@@ -343,8 +474,10 @@ async def _chat_observed(req: ChatRequest) -> ChatResponse:
     intent, confidence = await intent_classifier.classify(req.message)
     logger.debug("Intent: %s (confidence=%.2f)", intent, confidence)
 
-    if intent == "command":
+    if intent == "entry_command":
         return await _handle_command(req)
+    if intent == "exit_command":
+        return await _handle_exit_command(req)
     if intent == "hotword":
         return await _handle_hotword(req)
     if intent == "list_commands":
