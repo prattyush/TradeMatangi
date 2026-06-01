@@ -81,7 +81,14 @@ async def evaluate(hook: BarCloseHook, command: dict[str, Any]) -> None:
     try:
         await backend_client.place_order(
             session_id=session_id,
-            payload={"side": side, "right": command.get("right")},
+            payload={
+                "side": side,
+                "order_type": command.get("order_type", "market"),
+                "right": command.get("right"),
+                "quantity_type": command.get("quantity_type", "ratio_l"),
+                "quantity_value": command.get("quantity_value"),
+                "computed_price": llm_result.get("computed_price"),
+            },
         )
         action_result = "order_placed"
         logger.info(

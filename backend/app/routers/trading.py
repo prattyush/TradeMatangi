@@ -16,6 +16,16 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/trades", tags=["trades"])
 
 
+def _emit_trade_event(session, trade: Trade) -> None:
+    """Push a new_trade SSE event so the frontend adds the trade without a page reload."""
+    try:
+        event = {"type": "new_trade"}
+        event.update(trade.model_dump(mode="json"))
+        session.queue.put_nowait(json.dumps(event))
+    except Exception:
+        logger.debug("Could not emit new_trade SSE event for trade %s", trade.trade_id)
+
+
 def _get_price_for_right(session, right: str | None) -> float:
     """Return the last known close price for the given right (CE/PE) or equity."""
     if right == "CE":
@@ -175,6 +185,7 @@ async def buy(req: TradeRequest):
         user_id=session.user_id,
         session_type=session.session_type,
     )
+    _emit_trade_event(session, trade)
     return trade
 
 
@@ -216,6 +227,7 @@ async def sell(req: TradeRequest):
         user_id=session.user_id,
         session_type=session.session_type,
     )
+    _emit_trade_event(session, trade)
     return trade
 
 

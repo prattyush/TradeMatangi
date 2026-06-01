@@ -59,17 +59,40 @@ async def _complete(
 async def classify_intent(message: str) -> dict[str, Any]:
     """
     Classify user message intent.
-    Returns {"intent": "command|analysis|question|hotword|list_commands", "confidence": float}
+    Returns {"intent": "command|analysis|question|hotword|list_commands|cancel_commands", "confidence": float}
     """
     system = (
         "You are a trading assistant for Indian markets (NSE/NFO). Classify the user's message "
         "into exactly one of these intents:\n"
-        '- "command"       : an entry, exit, or partial-exit instruction tied to market conditions\n'
-        '- "analysis"      : a request to analyze past trades\n'
-        '- "question"      : a general question about the platform or markets\n'
-        '- "hotword"       : a reference to a saved strategy by name (e.g. "use pullback entry")\n'
-        '- "list_commands" : a request to see currently active commands or saved hotwords\n'
+        '- "command"          : an entry, exit, or partial-exit instruction tied to market conditions\n'
+        '- "analysis"         : a request to analyze past trades\n'
+        '- "question"         : a general question about the platform or markets\n'
+        '- "hotword"          : a reference to a saved strategy by name (e.g. "use pullback entry")\n'
+        '- "list_commands"    : a request to see currently active commands or saved hotwords\n'
+        '- "cancel_commands"  : a request to cancel one or more active watching commands '
+        '(e.g. "cancel all", "cancel 1", "cancel CE commands", "stop all PE orders")\n'
         'Respond with JSON only: {"intent": "<type>", "confidence": 0.0–1.0}'
+    )
+    return await _complete(
+        MODEL_INTENT_CLASSIFIER,
+        [{"role": "system", "content": system}, {"role": "user", "content": message}],
+    )
+
+
+async def extract_cancel_params(message: str) -> dict[str, Any]:
+    """
+    Extract cancel target from a cancel_commands intent message.
+    Returns {"right": "CE"|"PE"|null, "index": int|null, "cancel_all": bool}
+    - right: CE or PE if only that leg is mentioned; null means all
+    - index: 1-based command index if user says "cancel 1" / "cancel command 2"; null otherwise
+    - cancel_all: true when no specific index is given
+    """
+    system = (
+        'Extract cancel parameters from this trading command cancellation message. '
+        'Return JSON only: {"right": "CE" | "PE" | null, "index": integer | null, "cancel_all": boolean}\n'
+        '- right: "CE" if only CE/call commands are mentioned, "PE" if only PE/put, null otherwise\n'
+        '- index: 1-based integer if the user references a specific command by number; null otherwise\n'
+        '- cancel_all: true when no specific index is referenced'
     )
     return await _complete(
         MODEL_INTENT_CLASSIFIER,

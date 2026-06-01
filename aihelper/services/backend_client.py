@@ -21,20 +21,60 @@ def get_client() -> httpx.AsyncClient:
     return _client
 
 
+_RATIO_PCT: dict[str, float] = {"ratio_l": 0.03, "ratio_m": 0.06, "ratio_h": 0.12}
+
+
 async def place_order(session_id: str, payload: dict[str, Any]) -> dict:
     """
-    POST /api/trades/buy or /api/trades/sell based on payload["side"].
-    payload must have: side ("BUY"|"SELL"), right ("CE"|"PE"|null).
+    Route to the correct backend endpoint based on order_type:
+    - "market" → POST /api/trades/buy or /api/trades/sell (immediate fill)
+    - "limit"  → POST /api/orders/place  (pending limit order; shows in Open Orders)
+    - "target" → POST /api/orders/place  (pending target/stop-limit; shows in Open Orders)
+    payload fields: side, order_type, right, quantity_type, quantity_value, computed_price
     """
     side = payload.get("side", "").upper()
     if side not in ("BUY", "SELL"):
         raise ValueError(f"place_order: invalid side '{side}'")
-    endpoint = "/api/trades/buy" if side == "BUY" else "/api/trades/sell"
-    body: dict[str, Any] = {"session_id": session_id}
+    order_type = (payload.get("order_type") or "market").lower()
+    client = get_client()
+
+    if order_type == "market":
+        endpoint = "/api/trades/buy" if side == "BUY" else "/api/trades/sell"
+        body: dict[str, Any] = {"session_id": session_id}
+        if payload.get("right") is not None:
+            body["right"] = payload["right"]
+        resp = await client.post(endpoint, json=body)
+        resp.raise_for_status()
+        return resp.json()
+
+    # Limit or Target — place a pending order via /api/orders/place
+    computed_price = payload.get("computed_price")
+    if computed_price is None:
+        raise ValueError(f"place_order: computed_price required for {order_type} order")
+
+    body = {
+        "session_id": session_id,
+        "side": side,
+        "order_type": order_type.upper(),
+    }
+    if order_type == "limit":
+        body["limit_price"] = float(computed_price)
+    else:  # target
+        body["trigger_price"] = float(computed_price)
+
+    qty_type = payload.get("quantity_type", "ratio_l")
+    qty_value = payload.get("quantity_value")
+    if qty_type in _RATIO_PCT:
+        body["funds_ratio_pct"] = _RATIO_PCT[qty_type]
+    elif qty_type == "fixed" and qty_value is not None:
+        body["quantity"] = int(qty_value)
+    else:
+        body["funds_ratio_pct"] = _RATIO_PCT["ratio_l"]
+
     if payload.get("right") is not None:
         body["right"] = payload["right"]
-    client = get_client()
-    resp = await client.post(endpoint, json=body)
+
+    resp = await client.post("/api/orders/place", json=body)
     resp.raise_for_status()
     return resp.json()
 

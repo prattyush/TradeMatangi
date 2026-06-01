@@ -325,8 +325,10 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
       setRunningStrategies(prev => prev.filter(s => s.strategy_id !== (event.strategy_id as string)))
     } else if (event.type === 'broker_error') {
       setBrokerError(event.message as string)
+    } else if (event.type === 'new_trade') {
+      sim.addTradeFromSSE(event as unknown as import('./services/api').Trade)
     }
-  }, [sim.setLatestTick, sim.handleSessionEnded, sim.handleOrderFilled, sim.handleOrderCancelled, sim.addOpenOrder, setGuardrailPopup, setRunningStrategies])
+  }, [sim.setLatestTick, sim.handleSessionEnded, sim.handleOrderFilled, sim.handleOrderCancelled, sim.addOpenOrder, sim.addTradeFromSSE, setGuardrailPopup, setRunningStrategies])
 
   useSSE(sim.sseUrl, handleSSEMessage)
 
