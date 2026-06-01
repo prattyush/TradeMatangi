@@ -54,7 +54,7 @@ Look into frontend technical constraints doc when needed which is located at doc
 | Phase VIII — Launch | ✅ Complete | 391 | `docs/spec-phase8.md` |
 | Phase IX — RealTrading | ✅ Complete | 436 | `docs/spec-phase9.md` |
 | Phase X — GuardRails | ✅ Complete | 495 | `docs/spec-phase10.md` |
-| Phase XI — AI Helper | 🔨 In Progress (Step 10 done) | — | `docs/spec-phase11.md`, `docs/architecture.md` |
+| Phase XI — AI Helper | 🔨 In Progress (ExitFeatures done) | 513 backend / 136 aihelper | `docs/spec-phase11.md`, `docs/architecture.md` |
 
 Full status, bugs fixed, and lessons learned for each phase are in the respective phase spec docs.
 
@@ -94,6 +94,7 @@ Full status, bugs fixed, and lessons learned for each phase are in the respectiv
 | AI Helper order/tracing fixes: (1) `POST /api/orders` emits `order_placed` SSE so AI-placed limit/target orders appear in UI open orders panel (all modes + instruments); (2) `placeOrder()` + `addOpenOrder()` both deduplicate by `order_id` (fixes duplicate entries + ghost ST chart lines from SSE-before-HTTP race); (3) pin `langfuse<3.0.0` + fix import to `langfuse.decorators.observe` (fixes LiteLLM `AttributeError: module has no attribute 'version'`); (4) chat label shows actual user-configured ratio % via `backend_client.get_user_funds_ratios()` instead of hardcoded 3/6/12%; (5) `tracing.py` gains `as_type` + `langfuse_context` export; `_complete` stamps model/cost_usd/tokens as `metadata` on calling span | #140 (fix/aihelper-limit-target-orders-visible) | ✅ merged to feature/aihelper |
 | LangFuse 4.x upgrade + chat UI resize: (1) `langfuse>=4.0.0` — 4.x is near-realtime vs 3.x 10-min lag; `langfuse.decorators` removed in 4.x, `observe` now imported from `langfuse` directly; LiteLLM `success_callback=["langfuse"]` broken in 4.x (`sdk_integration` kwarg dropped from Langfuse constructor) — replaced with `@observe(as_type="generation")` on `_complete`; `types.SimpleNamespace` shim adds `langfuse.version` for LiteLLM compat; `update_current_generation(model, usage, metadata)` stamps model/tokens/cost_usd on each span; stale `"langfuse.decorators"` removed from all 5 test stub lists; (2) `AIChatPanel` width 380→480, height 520→640; message bubble + input textarea fontSize 12→14 | #141 (fix/langfuse-trace-linking) | ✅ merged to feature/aihelper |
 | ExitFeatures: bar-close triggered exit commands — `exit_position`, `update_stoploss`, `start_takeprofit`; intent classifier `"command"` renamed `"entry_command"` / `"exit_command"`; `_backfill_bar_history()` seeds up to 15 historical bars on first hook fire; 7 new backend_client async functions; `validate_exit_action` guardrail; `_evaluate_exit()` in command_evaluator; advisory position check in chat router; 31 new tests; 510 backend + 136 aihelper tests | #142 (feature/exit-commands) | ✅ merged to feature/aihelper |
+| Backfill gap fix (paper/real): `_backfill_bar_history()` now calls `fetch_kite_1min` / `fetch_kite_1min_options` for paper and real sessions so live bars streamed after session start are included; simulation sessions unchanged (Breeze parquet); 3 new tests; 513 backend tests | #143 (fix/backfill-paper-real-kite) | ✅ merged to feature/aihelper |
 
 ### Post-Phase X fixes (merged to dev + main)
 
