@@ -21,7 +21,6 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 _STUB_MODULES = [
     "config", "state",
     "db.dynamo",
-    "langfuse", "langfuse.decorators",
     "litellm",
 ]
 for _mod in _STUB_MODULES:

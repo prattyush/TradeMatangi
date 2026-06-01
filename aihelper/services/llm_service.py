@@ -13,20 +13,17 @@ from config import (
     MODEL_INTENT_CLASSIFIER, MODEL_COMMAND_EVALUATOR,
     MODEL_ANALYSIS, MODEL_FALLBACK,
 )
-from observability.tracing import observe, tracing_enabled, langfuse_context
+from langfuse import get_client as _get_langfuse_client
+
+from observability.tracing import observe, tracing_enabled
 
 logger = logging.getLogger("aihelper.services.llm_service")
 
 # Suppress verbose litellm success/failure logging
 litellm.suppress_debug_info = True
 
-# LiteLLM → LangFuse: creates a litellm-acompletion generation nested under
-# the active @observe span so every LLM call is visible with model/cost/tokens.
-if tracing_enabled:
-    litellm.success_callback = ["langfuse"]
-    litellm.failure_callback = ["langfuse"]
 
-
+@observe(name="llm_complete", as_type="generation")
 async def _complete(
     model: str,
     messages: list[dict[str, str]],
@@ -52,18 +49,16 @@ async def _complete(
             resp = await litellm.acompletion(**kwargs)
             content = resp.choices[0].message.content
 
-            # Propagate model/cost onto the calling @observe span so the parent
-            # trace shows the info without waiting to expand into the generation.
-            if langfuse_context is not None:
+            if tracing_enabled:
                 try:
                     cost = litellm.completion_cost(completion_response=resp)
-                    langfuse_context.update_current_observation(
-                        metadata={
-                            "model": resp.model,
-                            "cost_usd": cost,
-                            "prompt_tokens": resp.usage.prompt_tokens,
-                            "completion_tokens": resp.usage.completion_tokens,
-                        }
+                    _get_langfuse_client().update_current_generation(
+                        model=resp.model,
+                        usage={
+                            "input": resp.usage.prompt_tokens,
+                            "output": resp.usage.completion_tokens,
+                        },
+                        metadata={"cost_usd": cost},
                     )
                 except Exception:
                     pass  # tracing must never break inference

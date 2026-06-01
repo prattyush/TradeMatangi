@@ -24,7 +24,6 @@ _STUB_MODULES = [
     "processors.bounded_queue", "processors.drop_if_busy",
     "processors.background_tasks",
     "db.dynamo",
-    "langfuse", "langfuse.decorators",
     "litellm",
 ]
 for _mod in _STUB_MODULES:

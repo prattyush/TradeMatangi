@@ -19,7 +19,6 @@ _stub_modules = [
     "db.commands_store",
     "db.strategies_store",
     "db.decision_log_store",
-    "langfuse", "langfuse.decorators",
     "litellm",
 ]
 for _mod in _stub_modules:
