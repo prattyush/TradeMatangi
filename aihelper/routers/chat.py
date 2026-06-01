@@ -33,13 +33,6 @@ Examples:
 place a target order at (open+close)/2 with quantity ratio L."
 • "If CE bars close crosses 89.5, place a target order at close+0.5 with trade quantity ratio L.\""""
 
-_QTY_LABELS = {
-    "ratio_l": "ratio L (3% of wallet)",
-    "ratio_m": "ratio M (6% of wallet)",
-    "ratio_h": "ratio H (12% of wallet)",
-}
-
-
 class ChatRequest(BaseModel):
     message: str
     session_id: str
@@ -62,11 +55,19 @@ class ChatResponse(BaseModel):
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _build_summary(extracted: dict[str, Any], symbol: str | None, strike: int | None) -> str:
-    qty_label = _QTY_LABELS.get(
-        extracted.get("quantity_type", ""),
-        f"qty {extracted.get('quantity_value')}",
-    )
+def _build_summary(
+    extracted: dict[str, Any],
+    symbol: str | None,
+    strike: int | None,
+    funds_ratios: dict[str, float] | None = None,
+) -> str:
+    ratios = funds_ratios or {"ratio_l": 0.03, "ratio_m": 0.06, "ratio_h": 0.12}
+    qty_type = extracted.get("quantity_type", "")
+    if qty_type in ratios:
+        label_name = qty_type.replace("ratio_", "").upper()
+        qty_label = f"ratio {label_name} ({ratios[qty_type] * 100:.0f}% of wallet)"
+    else:
+        qty_label = f"qty {extracted.get('quantity_value')}"
     right = extracted.get("right") or ""
     if strike:
         symbol_str = f"{symbol or ''} {right} ({strike})".strip()
@@ -167,6 +168,8 @@ async def _handle_command(req: ChatRequest) -> ChatResponse:
         logger.info("Command validation failed — missing: %s", missing)
         return ChatResponse(status="validation_required", message=VALIDATION_PROMPT)
 
+    funds_ratios = await backend_client.get_user_funds_ratios(req.user_id)
+
     hotword = extracted.get("hotword")
     if hotword:
         existing = strategies_store.get_strategy(req.user_id, hotword)
@@ -180,7 +183,7 @@ async def _handle_command(req: ChatRequest) -> ChatResponse:
             "user_id": req.user_id,
             "hotword": hotword,
             "strategy_text": sanitized,
-            "description": _build_summary(extracted, req.symbol, _strike_for(extracted, req.strike_ce, req.strike_pe)),
+            "description": _build_summary(extracted, req.symbol, _strike_for(extracted, req.strike_ce, req.strike_pe), funds_ratios),
             "created_at": now,
             "last_used_at": now,
             "use_count": 0,
@@ -191,7 +194,7 @@ async def _handle_command(req: ChatRequest) -> ChatResponse:
         req.strike_ce, req.strike_pe, extracted, sanitized,
     )
     strike = _strike_for(extracted, req.strike_ce, req.strike_pe)
-    summary = _build_summary(extracted, req.symbol, strike)
+    summary = _build_summary(extracted, req.symbol, strike, funds_ratios)
 
     return ChatResponse(
         status="watching",
@@ -230,8 +233,9 @@ async def _handle_hotword(req: ChatRequest) -> ChatResponse:
     )
     strategies_store.increment_use_count(req.user_id, hotword, datetime.now(timezone.utc).isoformat())
 
+    funds_ratios = await backend_client.get_user_funds_ratios(req.user_id)
     strike = _strike_for(extracted, req.strike_ce, req.strike_pe)
-    summary = f"Recalled '{hotword}': {_build_summary(extracted, req.symbol, strike)}"
+    summary = f"Recalled '{hotword}': {_build_summary(extracted, req.symbol, strike, funds_ratios)}"
 
     return ChatResponse(
         status="watching",
