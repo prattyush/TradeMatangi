@@ -46,27 +46,25 @@ async def _complete(
     if json_mode:
         kwargs["response_format"] = {"type": "json_object"}
 
+    # Link LiteLLM generations to the active @observe trace so they appear
+    # nested instead of landing in orphaned separate traces.
+    if langfuse_context is not None:
+        try:
+            trace_id = langfuse_context.get_current_trace_id()
+            obs_id = langfuse_context.get_current_observation_id()
+            if trace_id:
+                kwargs["metadata"] = {
+                    "existing_trace_id": trace_id,
+                    "parent_observation_id": obs_id,
+                }
+        except Exception:
+            pass
+
     for attempt_model in (model, MODEL_FALLBACK):
         try:
             kwargs["model"] = attempt_model
             resp = await litellm.acompletion(**kwargs)
             content = resp.choices[0].message.content
-
-            # Propagate model/cost onto the calling @observe span so the parent
-            # trace shows the info without waiting to expand into the generation.
-            if langfuse_context is not None:
-                try:
-                    cost = litellm.completion_cost(completion_response=resp)
-                    langfuse_context.update_current_observation(
-                        metadata={
-                            "model": resp.model,
-                            "cost_usd": cost,
-                            "prompt_tokens": resp.usage.prompt_tokens,
-                            "completion_tokens": resp.usage.completion_tokens,
-                        }
-                    )
-                except Exception:
-                    pass  # tracing must never break inference
 
             if json_mode:
                 return json.loads(content)
