@@ -116,7 +116,7 @@ class TestGetWeeklyExpiryPreCutoff:
         from unittest.mock import patch
         # Fake that 2025-05-08 (Thursday) is a holiday
         fake_holidays = NSE_HOLIDAYS | {datetime.date(2025, 5, 8)}
-        with patch("app.services.options_service.NSE_HOLIDAYS", fake_holidays):
+        with patch("app.utils.NSE_HOLIDAYS", fake_holidays):
             result = get_weekly_expiry("2025-05-06")
         # Should shift to Wednesday 2025-05-07
         assert result == "2025-05-07"

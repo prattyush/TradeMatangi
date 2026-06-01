@@ -260,6 +260,44 @@ async def _handle_analysis(req: ChatRequest) -> ChatResponse:
     )
 
 
+async def _handle_cancel(req: ChatRequest) -> ChatResponse:
+    active_cmds = commands_store.get_active_commands_for_session(req.session_id)
+    if not active_cmds:
+        return ChatResponse(status="answer", message="No active commands to cancel.")
+
+    params = await llm_service.extract_cancel_params(req.message)
+    right = (params.get("right") or "").upper() or None
+    index = params.get("index")  # 1-based, or None
+
+    to_cancel = active_cmds
+    if right:
+        to_cancel = [c for c in active_cmds if (c.get("right") or "").upper() == right]
+    if index is not None:
+        if 1 <= index <= len(to_cancel):
+            to_cancel = [to_cancel[index - 1]]
+        else:
+            total = len(to_cancel)
+            label = f"{right} " if right else ""
+            return ChatResponse(
+                status="error",
+                message=f"Command {index} not found — you have {total} active {label}command{'s' if total != 1 else ''}.",
+            )
+
+    cancelled = 0
+    for cmd in to_cancel:
+        try:
+            commands_store.cancel_command(cmd["user_id"], cmd["command_id"], reason="user_cancelled_via_chat")
+            cancelled += 1
+        except Exception:
+            logger.exception("Failed to cancel command %s", cmd.get("command_id"))
+
+    label = f"{right} " if right else ""
+    return ChatResponse(
+        status="cancelled",
+        message=f"Cancelled {cancelled} {label}command{'s' if cancelled != 1 else ''}.",
+    )
+
+
 async def _handle_list_commands(req: ChatRequest) -> ChatResponse:
     active_cmds = commands_store.list_active_commands_for_session(req.session_id)
     saved = strategies_store.list_strategies(req.user_id)
@@ -308,6 +346,8 @@ async def chat(req: ChatRequest) -> ChatResponse:
         return await _handle_hotword(req)
     if intent == "list_commands":
         return await _handle_list_commands(req)
+    if intent == "cancel_commands":
+        return await _handle_cancel(req)
     if intent == "analysis":
         return await _handle_analysis(req)
 

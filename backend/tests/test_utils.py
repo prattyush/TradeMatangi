@@ -9,9 +9,16 @@ class TestPriorTradingDays:
         assert result == ["2026-05-04", "2026-05-05"]
 
     def test_skips_weekend_monday(self):
-        # 2026-05-04 is Monday; prior 2 trading days = Thu 04-30, Fri 05-01
+        # 2026-05-04 is Monday; 2026-05-01 is Maharashtra Day (holiday) so
+        # prior 2 trading days = Wed 04-29, Thu 04-30
         result = prior_trading_days("2026-05-04", n=2)
-        assert result == ["2026-04-30", "2026-05-01"]
+        assert result == ["2026-04-29", "2026-04-30"]
+
+    def test_skips_nse_holiday(self):
+        # 2026-06-01 is Monday; 2026-05-28 (Thu) is Eid ul-Adha, 05-30 (Sat) and 05-31 (Sun) are weekend
+        # prior 2 trading days = Wed 05-27, Fri 05-29
+        result = prior_trading_days("2026-06-01", n=2)
+        assert result == ["2026-05-27", "2026-05-29"]
 
     def test_skips_weekend_spans_week_boundary(self):
         # 2026-05-11 is Monday; prior 2 = Thu 05-07, Fri 05-08

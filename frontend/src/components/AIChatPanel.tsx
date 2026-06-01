@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useEffect } from 'react'
+import { useState, useRef, useCallback, useEffect, useMemo } from 'react'
 import api, { DecisionItem, DecisionAction, StrategyItem, CommandItem, AnalysisResult } from '../services/api'
 
 interface UserMessage {
@@ -101,8 +101,47 @@ export default function AIChatPanel({ sessionId, userId, symbol, strikeCe, strik
   const [commands, setCommands] = useState<CommandItem[]>([])
   const [commandsLoading, setCommandsLoading] = useState(false)
   const [cancellingCommand, setCancellingCommand] = useState<string | null>(null)
+  const [pos, setPos] = useState<{ x: number; y: number } | null>(null)
+  const isDragging = useRef(false)
+  const dragStart = useRef({ mouseX: 0, mouseY: 0, panelX: 0, panelY: 0 })
   const lastSeenTsRef = useRef<string | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
+
+  const effectivePos = useMemo(() => {
+    if (pos) return pos
+    const PANEL_W = 380, PANEL_H = 520, MARGIN = 24
+    return {
+      x: (typeof window !== 'undefined' ? window.innerWidth : 800) - PANEL_W - MARGIN,
+      y: (typeof window !== 'undefined' ? window.innerHeight : 600) - PANEL_H - MARGIN,
+    }
+  }, [pos])
+
+  useEffect(() => {
+    const onMouseMove = (e: MouseEvent) => {
+      if (!isDragging.current) return
+      setPos({
+        x: dragStart.current.panelX + e.clientX - dragStart.current.mouseX,
+        y: dragStart.current.panelY + e.clientY - dragStart.current.mouseY,
+      })
+    }
+    const onMouseUp = () => { isDragging.current = false }
+    document.addEventListener('mousemove', onMouseMove)
+    document.addEventListener('mouseup', onMouseUp)
+    return () => {
+      document.removeEventListener('mousemove', onMouseMove)
+      document.removeEventListener('mouseup', onMouseUp)
+    }
+  }, [])
+
+  const handleHeaderMouseDown = useCallback((e: React.MouseEvent) => {
+    if ((e.target as HTMLElement).closest('button')) return
+    isDragging.current = true
+    dragStart.current = {
+      mouseX: e.clientX, mouseY: e.clientY,
+      panelX: effectivePos.x, panelY: effectivePos.y,
+    }
+    e.preventDefault()
+  }, [effectivePos])
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -265,19 +304,23 @@ export default function AIChatPanel({ sessionId, userId, symbol, strikeCe, strik
 
   return (
     <div style={{
-      position: 'fixed', bottom: 24, right: 24,
+      position: 'fixed', left: effectivePos.x, top: effectivePos.y,
       width: 380, height: 520,
       background: '#0d1117', border: '1px solid #30363d',
       borderRadius: 12, display: 'flex', flexDirection: 'column',
       zIndex: 1000, boxShadow: '0 4px 24px rgba(0,0,0,0.6)',
       overflow: 'hidden',
     }}>
-      {/* Header */}
-      <div style={{
-        display: 'flex', alignItems: 'center', padding: '10px 14px',
-        borderBottom: '1px solid #21262d', background: '#161b22',
-        flexShrink: 0, gap: 8,
-      }}>
+      {/* Header — drag handle */}
+      <div
+        onMouseDown={handleHeaderMouseDown}
+        style={{
+          display: 'flex', alignItems: 'center', padding: '10px 14px',
+          borderBottom: '1px solid #21262d', background: '#161b22',
+          flexShrink: 0, gap: 8, cursor: 'grab',
+          userSelect: 'none',
+        }}
+      >
         <span style={{ color: '#56d364', fontWeight: 700, fontSize: 13 }}>AI Assistant</span>
         {!sessionId && tab === 'chat' && (
           <span style={{ fontSize: 11, color: '#484f58' }}>— start a session to use commands</span>
