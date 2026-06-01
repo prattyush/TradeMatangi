@@ -13,20 +13,15 @@ from config import (
     MODEL_INTENT_CLASSIFIER, MODEL_COMMAND_EVALUATOR,
     MODEL_ANALYSIS, MODEL_FALLBACK,
 )
-from observability.tracing import observe, tracing_enabled
+from observability.tracing import observe
 
 logger = logging.getLogger("aihelper.services.llm_service")
 
 # Suppress verbose litellm success/failure logging
 litellm.suppress_debug_info = True
 
-# LiteLLM → LangFuse: creates a litellm-acompletion generation nested under
-# the active @observe span so every LLM call is visible with model/cost/tokens.
-if tracing_enabled:
-    litellm.success_callback = ["langfuse"]
-    litellm.failure_callback = ["langfuse"]
 
-
+@observe(name="llm_complete", as_type="generation")
 async def _complete(
     model: str,
     messages: list[dict[str, str]],

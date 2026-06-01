@@ -1,9 +1,13 @@
 """
 LangFuse Cloud tracing — @observe decorator wrapper.
 Graceful no-op when LANGFUSE_SECRET_KEY / LANGFUSE_PUBLIC_KEY are absent.
+
+Targets langfuse>=4.0.0. Includes a one-liner shim so LiteLLM 1.86.2 can
+coexist: LiteLLM reads langfuse.version.__version__ which langfuse 4.x dropped.
 """
 import logging
 import os
+import types
 from functools import wraps
 
 logger = logging.getLogger("aihelper.observability.tracing")
@@ -11,12 +15,13 @@ logger = logging.getLogger("aihelper.observability.tracing")
 _enabled = bool(os.environ.get("LANGFUSE_SECRET_KEY") and os.environ.get("LANGFUSE_PUBLIC_KEY"))
 tracing_enabled = _enabled  # exported for conditional callback wiring
 
-langfuse_context = None  # exported; real object when tracing is on
-
 if _enabled:
     try:
-        from langfuse.decorators import observe as _langfuse_observe
-        from langfuse.decorators import langfuse_context  # noqa: F401 — re-exported
+        import langfuse as _langfuse_pkg
+        # LiteLLM 1.86.2 compat: reads langfuse.version.__version__ at callback init
+        if not hasattr(_langfuse_pkg, "version"):
+            _langfuse_pkg.version = types.SimpleNamespace(__version__=_langfuse_pkg.__version__)
+        from langfuse import observe as _langfuse_observe
         logger.info("LangFuse tracing enabled (host: %s)", os.environ.get("LANGFUSE_HOST"))
     except ImportError:
         _langfuse_observe = None

@@ -23,7 +23,6 @@ _stub_modules = [
     "db.dynamo",
     "db.decision_log_store",
     "db.strategies_store",
-    "langfuse", "langfuse.decorators",
     "litellm",
 ]
 for _mod in _stub_modules:

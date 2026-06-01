@@ -27,7 +27,6 @@ _STUB_MODULES = [
     "db.commands_store",
     "db.strategies_store",
     "db.decision_log_store",
-    "langfuse", "langfuse.decorators",
     "litellm",
 ]
 for _mod in _STUB_MODULES:
