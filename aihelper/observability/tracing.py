@@ -13,7 +13,7 @@ tracing_enabled = _enabled  # exported for conditional callback wiring
 
 if _enabled:
     try:
-        from langfuse import observe as _langfuse_observe
+        from langfuse.decorators import observe as _langfuse_observe
         logger.info("LangFuse tracing enabled (host: %s)", os.environ.get("LANGFUSE_HOST"))
     except ImportError:
         _langfuse_observe = None
