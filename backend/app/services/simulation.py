@@ -1477,26 +1477,44 @@ def _backfill_bar_history(
     been set from session start. Called once per (session, right) on first tick.
     Returns up to _AI_MAX_BARS completed candles, oldest-first, in the same
     ISO-string time format used by the live closed_bar entries.
+
+    For paper/real sessions: fetches from Kite 1-min API (up to current IST
+    time) so bars that arrived via live streaming after session start are
+    included. For simulation: reads the local Breeze parquet file.
+
     Non-fatal — returns [] on any error so the trading path is never blocked.
     """
     try:
         import pandas as pd
-        from app.services.data_loader import load_dataframe, resample_to_candles, candles_to_records
+        from app.services.data_loader import resample_to_candles, candles_to_records
 
         interval_minutes: int = getattr(session, "strategy_interval_secs", 180) // 60
+        is_live = session.session_type in ("paper", "real")
 
         market_open = pd.Timestamp(f"{session.date} 09:15:00", tz="UTC")
         slot_dt = datetime.fromtimestamp(current_slot_ts, tz=timezone.utc)
         slot_boundary = pd.Timestamp(slot_dt)
 
         if right is None:
-            df = load_dataframe(session.symbol, session.date)
+            if is_live:
+                from app.services.kite_service import fetch_kite_1min
+                df = fetch_kite_1min(session.symbol, session.date)
+            else:
+                from app.services.data_loader import load_dataframe
+                df = load_dataframe(session.symbol, session.date)
         else:
-            from app.services.options_service import load_options_dataframe
             strike = session.strike_ce if right == "CE" else session.strike_pe
             if not strike or not session.expiry:
                 return []
-            df = load_options_dataframe(session.symbol, session.date, strike, session.expiry, right)
+            if is_live:
+                from app.services.kite_service import fetch_kite_1min_options
+                df = fetch_kite_1min_options(session.symbol, session.date, strike, session.expiry, right)
+            else:
+                from app.services.options_service import load_options_dataframe
+                df = load_options_dataframe(session.symbol, session.date, strike, session.expiry, right)
+
+        if df.index.tzinfo is None:
+            df.index = df.index.tz_localize("UTC")
 
         window = df[(df.index >= market_open) & (df.index < slot_boundary)]
         if window.empty:

@@ -170,3 +170,66 @@ class TestBackfillBarHistory:
             result = sim._backfill_bar_history(session, None, slot_ts)
 
         assert result == []
+
+    def test_paper_equity_uses_kite_1min(self):
+        """Paper session equity backfill calls fetch_kite_1min, not load_dataframe."""
+        date = "2026-05-06"
+        df = self._make_df(date, 360)
+        slot_ts = int(pd.Timestamp(f"{date} 09:21:00", tz="UTC").timestamp())
+
+        session = sim.create_session("NIFTY", date, "09:15:00", 1.0, session_type="paper")
+
+        with patch("app.services.kite_service.fetch_kite_1min", return_value=df) as mock_kite, \
+             patch("app.services.data_loader.load_dataframe") as mock_breeze:
+            result = sim._backfill_bar_history(session, None, slot_ts)
+
+        mock_kite.assert_called_once_with("NIFTY", date)
+        mock_breeze.assert_not_called()
+        assert len(result) == 2
+
+    def test_real_options_uses_kite_1min_options(self):
+        """Real session options backfill calls fetch_kite_1min_options, not load_options_dataframe."""
+        date = "2026-05-06"
+        df = self._make_df(date, 360)
+        slot_ts = int(pd.Timestamp(f"{date} 09:21:00", tz="UTC").timestamp())
+
+        session = sim.create_session(
+            "NIFTY", date, "09:15:00", 1.0,
+            session_type="real",
+            instrument_type="options",
+            strike=24400, expiry="2026-05-08",
+            right=None, strike_ce=24400, strike_pe=24350,
+        )
+
+        captured = {}
+
+        def fake_kite_options(symbol, date_, strike, expiry, right):
+            captured.update({"strike": strike, "right": right})
+            return df
+
+        with patch("app.services.kite_service.fetch_kite_1min_options", fake_kite_options), \
+             patch("app.services.options_service.load_options_dataframe") as mock_breeze:
+            result = sim._backfill_bar_history(session, "PE", slot_ts)
+
+        assert captured["strike"] == 24350  # PE strike
+        assert captured["right"] == "PE"
+        mock_breeze.assert_not_called()
+        assert len(result) == 2
+
+    def test_paper_backfill_includes_live_bars_up_to_slot(self):
+        """Paper backfill with data beyond session start time returns bars up to slot."""
+        date = "2026-05-06"
+        # 55 minutes of 1-second data: 09:15 to 10:10 — simulates Kite returning live data
+        df = self._make_df(date, 55 * 60)
+        # User registers command at 10:07; first bar close at 10:09 (slot = 10:06)
+        slot_ts = int(pd.Timestamp(f"{date} 10:06:00", tz="UTC").timestamp())
+
+        session = sim.create_session("NIFTY", date, "09:15:00", 1.0, session_type="paper")
+
+        with patch("app.services.kite_service.fetch_kite_1min", return_value=df):
+            result = sim._backfill_bar_history(session, None, slot_ts)
+
+        # 09:15–10:06 = 51 min = 17 completed 3-min candles; capped at _AI_MAX_BARS (15)
+        assert len(result) == 15
+        # Last bar should end at 10:03 (slot 10:03–10:06 not included — it's still open)
+        assert result[-1]["time"].startswith(f"{date}T10:03:00")
