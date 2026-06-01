@@ -127,3 +127,31 @@ An initial design had four `useState` variables (`grBlockBars`, `grCooldownLosse
 **PR #104 — Time picker scroll throttle** (`fix/time-picker-scroll-throttle`)
 - Native `<input type="time">` fires dozens of wheel events per scroll gesture; start time was jumping uncontrollably.
 - Fix: non-passive `wheel` listener (`passive: false` required so `preventDefault()` suppresses browser's built-in increment) with a 180ms throttle ref. Each physical scroll notch = exactly ±1 minute. File: `frontend/src/components/SessionControls.tsx`.
+**PR #107 — Settings: Change Password → Profile tab; TargetProfit chart price-pick (⊕) button** (`feature/profile-tab-settings`)
+- Change Password moved out of General tab into a new Profile tab.
+- TargetProfit strategy gained a ⊕ button next to the price input that snaps to current LTP on click.
+- `data/` added to `.gitignore`.
+
+**PR #110 — Settings modal fixed width + scrollable tab content** (`fix/settings-modal-fixed-width`)
+- Modal fixed at 440px width so 5-tab label row (General / Strategies / GuardRails / Profile / Admin) doesn't crowd.
+- Tab content area made `overflow-y: auto` + `max-height` so long settings lists scroll instead of expanding the modal.
+
+**PR #111 — TargetProfit/BreakEven: emit `order_cancelled` SSE on strategy stoploss cancel** (`fix/targetprofit-stoploss-cancel-event`)
+- When a TargetProfit or BreakEven strategy cancels its own stoploss order, a `order_cancelled` SSE event is now emitted so the UI removes it from the Open Orders panel.
+
+**PR #113 — Strategy completed UI + SELL marker strike fix** (`fix/strategy-completed-sell-marker`)
+- Backend emits `strategy_completed` SSE event when a strategy finishes; frontend removes it from the active strategies list.
+- Strategy LIMIT/stoploss orders now carry per-right strike so SELL markers land on the correct options chart.
+
+**PR #116 — AutoStop guardrail bypass fix + button color** (`fix/autostop-guardrail-button-color`)
+- `check_guardrails()` was missing from the AutoStop bar-close path, allowing AutoStop to fire even when trading was blocked. Fixed.
+- AutoStop button styled: `#56d364` text, `#1f4d2e` background, green border for better visibility. 495 tests.
+
+**PR #119 — Avg entry FIFO fix** (`fix/position-avg-entry-fifo`)
+- `get_position()` now uses FIFO lot matching: `avg_entry_price` reflects only the open lots, not the full session history. 3 new tests; 498 tests.
+
+**PR #120 — Pos P&L commission fix** (`fix/pnl-commission-and-fifo-avg-entry`)
+- `entry_commission` added to Position (FIFO-apportioned). Pos P&L = gross unrealized − entry_commission. Session P&L unchanged (already correct). 498 tests.
+
+**PR #121 — Pos P&L full round-trip commission** (`fix/pos-pnl-full-roundtrip-commission`)
+- Estimated exit commission (mirrored backend formula) subtracted on every tick. `brokeragePerOrder` added to `SimulationState`. Works for all modes + equity + options.
