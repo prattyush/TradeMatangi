@@ -9,6 +9,7 @@ from functools import wraps
 logger = logging.getLogger("aihelper.observability.tracing")
 
 _enabled = bool(os.environ.get("LANGFUSE_SECRET_KEY") and os.environ.get("LANGFUSE_PUBLIC_KEY"))
+tracing_enabled = _enabled  # exported for conditional callback wiring
 
 if _enabled:
     try:

@@ -15,7 +15,6 @@ _stub_modules = [
     "routers.hook", "routers.decisions", "routers.strategies",
     "processors.bounded_queue", "processors.drop_if_busy",
     "processors.background_tasks",
-    "observability.tracing",
     "db.dynamo",
     "db.commands_store",
     "db.strategies_store",
@@ -26,6 +25,23 @@ _stub_modules = [
 for _mod in _stub_modules:
     if _mod not in sys.modules:
         sys.modules[_mod] = MagicMock()
+
+# observability.tracing.observe must be a no-op pass-through decorator so that
+# @observe(name=...) decorators in chat.py / llm_service.py don't wrap async
+# functions in a MagicMock (which breaks 'await _chat_observed(req)').
+def _noop_observe(name=None):
+    def _decorator(fn):
+        return fn
+    return _decorator
+
+_obs_stub = MagicMock()
+_obs_stub.observe = _noop_observe
+_obs_stub.tracing_enabled = False
+sys.modules["observability.tracing"] = _obs_stub
+
+# Force-evict modules that use @observe so they re-import fresh with the no-op decorator.
+for _m in ("routers.chat", "services.llm_service", "services.intent_classifier"):
+    sys.modules.pop(_m, None)
 
 import config as _cfg  # noqa: E402
 _cfg.LOG_DIR = MagicMock()
