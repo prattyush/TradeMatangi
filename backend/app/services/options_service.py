@@ -219,6 +219,7 @@ def _validate_options_gaps(df: pd.DataFrame, date: str, partial: bool = False) -
 
 
 _OPTIONS_TODAY_CACHE_TTL = 600  # 10 min — re-fetch today's partial options data
+_MIN_OPTIONS_DAY_ROWS = 20000  # complete day ≈ 22,500 rows; below → partial session file
 
 
 def fetch_options_historical(
@@ -259,8 +260,17 @@ def fetch_options_historical(
                         pq.name, age_secs,
                     )
                 else:
-                    logger.info("Options parquet cache hit: %s", pq.name)
-                    return pq
+                    if len(cached_df) >= _MIN_OPTIONS_DAY_ROWS:
+                        logger.info(
+                            "Options parquet cache hit: %s (%d rows)", pq.name, len(cached_df)
+                        )
+                        return pq
+                    logger.warning(
+                        "Cached options parquet %s has only %d rows (< %d) — "
+                        "partial session file, deleting and re-fetching",
+                        pq.name, len(cached_df), _MIN_OPTIONS_DAY_ROWS,
+                    )
+                    pq.unlink()
             else:
                 pq.unlink()
         except Exception as e:
