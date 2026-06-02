@@ -171,8 +171,9 @@ async def evaluate_command(
         + (f" {quantity_value}" if quantity_value is not None else "") + "\n\n"
         "Rules:\n"
         "- Respond with JSON only.\n"
-        '- Schema: {"should_trade": true|false, "side": "BUY"|"SELL", '
-        '"reason": "<1-2 sentences>", "computed_price": <number|null>}\n'
+        '- Schema: {"side": "BUY"|"SELL", "computed_price": <number|null>, '
+        '"reason": "<full step-by-step arithmetic>", "should_trade": true|false}\n'
+        "- IMPORTANT: write `reason` first with your complete arithmetic before setting `should_trade`.\n"
         "- side: infer BUY or SELL from the command text; entry → BUY, exit → SELL.\n"
         "- computed_price: required (non-null) when should_trade is true and order_type != market.\n"
         "- Price expression evaluation:\n"
@@ -400,8 +401,9 @@ async def evaluate_exit_command(
         f"  Price expr   : {exit_price_expr or 'N/A (exit_position needs no price)'}\n\n"
         "Rules:\n"
         "- Respond with JSON only.\n"
-        '- Schema: {"should_exit": true|false, "exit_action": "<exit_action value>", '
-        '"computed_price": <number|null>, "reason": "<1-2 sentences>"}\n'
+        '- Schema: {"exit_action": "<exit_action value>", "computed_price": <number|null>, '
+        '"reason": "<full step-by-step arithmetic>", "should_exit": true|false}\n'
+        "- IMPORTANT: write `reason` first with your complete arithmetic before setting `should_exit`.\n"
         "- should_exit: true only if the trigger condition is fully met by the CURRENT bar.\n"
         "- exit_action: echo the exit_action value from the condition above.\n"
         "- computed_price:\n"
