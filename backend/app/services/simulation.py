@@ -46,6 +46,8 @@ class SimulationSession:
     session_type: str = "sim"           # "sim", "paper", or "real"
     # Real trading: maps our order_id → Kotak order ID for Kotak-placed orders
     kotak_order_map: dict[str, str] = field(default_factory=dict)
+    # Kotak order IDs reconciled from external/manual broker orders (not in our system)
+    external_reconciled_kotak_ids: set = field(default_factory=set)
     queue: asyncio.Queue = field(default_factory=lambda: asyncio.Queue(maxsize=3000))
     # paper_tick_queue: receives raw tick dicts from KiteBroadcaster / BreezeStreamManager / KotakBroadcaster
     paper_tick_queue: asyncio.Queue = field(default_factory=lambda: asyncio.Queue(maxsize=1000))

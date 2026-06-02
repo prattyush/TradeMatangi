@@ -53,6 +53,10 @@ DEFAULT_FUNDS_RATIOS: dict[str, float] = {"l": 3.0, "m": 6.0, "h": 12.0}
 # A SELL limit is placed at LTP × (1 − KOTAK_SLIPPAGE_PCT).
 KOTAK_SLIPPAGE_PCT: float = 0.005  # 0.5%
 
+# NSE equity MIS (intraday) margin requirement: broker extends 5× leverage,
+# so only 20% of trade value is deducted from the wallet.
+EQUITY_MIS_MARGIN_RATE: float = 0.20
+
 SUPPORTED_SYMBOLS: dict[str, dict] = {
     "NIFTY": {
         "display_name": "NIFTY 50",
