@@ -170,6 +170,9 @@ async def place_order(req: PlaceOrderRequest):
                     o = get_order(sess.session_id, ord_id)
                     if o is None:
                         return
+                    if o.kotak_fill_confirmed:
+                        return  # already recorded by a prior callback or reconcile call
+                    o.kotak_fill_confirmed = True
                     o.status = order_service.OrderStatus.FILLED
                     o.filled_price = fill_price
                     o.filled_at = int(sess.current_time) if sess.current_time else 0

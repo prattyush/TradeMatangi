@@ -177,6 +177,7 @@ class Order(BaseModel):
     right: str | None = None       # "CE" or "PE" for options orders; None for equity
     strike: int | None = None      # options strike price; None for equity
     kotak_order_id: str | None = None  # set for real-session orders placed on Kotak
+    kotak_fill_confirmed: bool = False  # True once Kotak WebSocket or reconcile records the fill
 
 
 class PlaceOrderRequest(BaseModel):
