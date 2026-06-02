@@ -6,14 +6,24 @@ from fastapi.responses import JSONResponse
 from app.models.schemas import Trade, Position, TradeRequest, TradeSide
 from app.services import trading as trading_svc
 from app.services import simulation as sim_svc
-from app.services import wallet_service
+from app.services import wallet_service, order_service
 from app.services.wallet_service import InsufficientFundsError
-from app.config import LOT_SIZES, KOTAK_SLIPPAGE_PCT
+from app.config import LOT_SIZES, KOTAK_SLIPPAGE_PCT, EQUITY_MIS_MARGIN_RATE
 from app.dependencies import get_request_user_id
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/trades", tags=["trades"])
+
+
+def _emit_trade_event(session, trade: Trade) -> None:
+    """Push a new_trade SSE event so the frontend adds the trade without a page reload."""
+    try:
+        event = {"type": "new_trade"}
+        event.update(trade.model_dump(mode="json"))
+        session.queue.put_nowait(json.dumps(event))
+    except Exception:
+        logger.debug("Could not emit new_trade SSE event for trade %s", trade.trade_id)
 
 
 def _get_price_for_right(session, right: str | None) -> float:
@@ -67,13 +77,23 @@ def _place_kotak_direct(session, side: TradeSide, price: float, lot_size: int, r
 
     def _make_cb(sess, trade_side: TradeSide, qty: int, rt):
         def on_fill(k_id: str, fill_side: str, fill_qty: int, fill_price: float):
+            # Equity MIS real sessions: only 20% margin is tied up per trade.
+            margin_rate = EQUITY_MIS_MARGIN_RATE if sess.instrument_type == "equity" else 1.0
             if trade_side == TradeSide.BUY:
                 try:
-                    wallet_service.debit(sess.user_id, round(fill_price * fill_qty, 2), sess.date)
+                    wallet_service.debit(
+                        sess.user_id,
+                        round(fill_price * fill_qty * margin_rate, 2),
+                        sess.date,
+                    )
                 except Exception:
                     pass
             else:
-                wallet_service.credit(sess.user_id, round(fill_price * fill_qty, 2), sess.date)
+                wallet_service.credit(
+                    sess.user_id,
+                    round(fill_price * fill_qty * margin_rate, 2),
+                    sess.date,
+                )
 
             trading_svc.record_trade(
                 sess.session_id, trade_side,
@@ -153,12 +173,26 @@ async def buy(req: TradeRequest):
         raise HTTPException(status_code=400, detail="No valid price available yet")
 
     lot_size = LOT_SIZES.get(session.symbol, 1) if session.instrument_type == "options" else 1
+    if req.funds_ratio_pct is not None:
+        current_wallet = wallet_service.get_balance(session.user_id, session.date)
+        quantity = order_service.compute_funds_ratio_quantity(
+            symbol=session.symbol,
+            price=price,
+            session_capital=session.session_capital,
+            funds_ratio_pct=req.funds_ratio_pct,
+            current_wallet=current_wallet,
+            lot_size=lot_size,
+        )
+        if quantity <= 0:
+            raise HTTPException(status_code=400, detail="Computed quantity is zero — insufficient funds or ratio too small")
+    else:
+        quantity = lot_size
 
     if session.session_type == "real":
-        return _place_kotak_direct(session, TradeSide.BUY, price, lot_size, right)
+        return _place_kotak_direct(session, TradeSide.BUY, price, quantity, right)
 
     try:
-        wallet_service.debit(session.user_id, price * lot_size, session.date)
+        wallet_service.debit(session.user_id, price * quantity, session.date)
     except InsufficientFundsError as exc:
         raise HTTPException(status_code=402, detail=str(exc))
 
@@ -170,11 +204,12 @@ async def buy(req: TradeRequest):
         strike=_strike_for_right(session, right),
         expiry=session.expiry,
         right=right,
-        quantity=lot_size,
+        quantity=quantity,
         brokerage_per_order=session.brokerage_per_order,
         user_id=session.user_id,
         session_type=session.session_type,
     )
+    _emit_trade_event(session, trade)
     return trade
 
 
@@ -197,11 +232,25 @@ async def sell(req: TradeRequest):
         raise HTTPException(status_code=400, detail="No valid price available yet")
 
     lot_size = LOT_SIZES.get(session.symbol, 1) if session.instrument_type == "options" else 1
+    if req.funds_ratio_pct is not None:
+        current_wallet = wallet_service.get_balance(session.user_id, session.date)
+        quantity = order_service.compute_funds_ratio_quantity(
+            symbol=session.symbol,
+            price=price,
+            session_capital=session.session_capital,
+            funds_ratio_pct=req.funds_ratio_pct,
+            current_wallet=current_wallet,
+            lot_size=lot_size,
+        )
+        if quantity <= 0:
+            raise HTTPException(status_code=400, detail="Computed quantity is zero — insufficient funds or ratio too small")
+    else:
+        quantity = lot_size
 
     if session.session_type == "real":
-        return _place_kotak_direct(session, TradeSide.SELL, price, lot_size, right)
+        return _place_kotak_direct(session, TradeSide.SELL, price, quantity, right)
 
-    wallet_service.credit(session.user_id, price * lot_size, session.date)
+    wallet_service.credit(session.user_id, price * quantity, session.date)
 
     timestamp = int(session.current_time)
     trade = trading_svc.record_trade(
@@ -211,11 +260,12 @@ async def sell(req: TradeRequest):
         strike=_strike_for_right(session, right),
         expiry=session.expiry,
         right=right,
-        quantity=lot_size,
+        quantity=quantity,
         brokerage_per_order=session.brokerage_per_order,
         user_id=session.user_id,
         session_type=session.session_type,
     )
+    _emit_trade_event(session, trade)
     return trade
 
 

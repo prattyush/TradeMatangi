@@ -46,6 +46,8 @@ class SimulationSession:
     session_type: str = "sim"           # "sim", "paper", or "real"
     # Real trading: maps our order_id → Kotak order ID for Kotak-placed orders
     kotak_order_map: dict[str, str] = field(default_factory=dict)
+    # Kotak order IDs reconciled from external/manual broker orders (not in our system)
+    external_reconciled_kotak_ids: set = field(default_factory=set)
     queue: asyncio.Queue = field(default_factory=lambda: asyncio.Queue(maxsize=3000))
     # paper_tick_queue: receives raw tick dicts from KiteBroadcaster / BreezeStreamManager / KotakBroadcaster
     paper_tick_queue: asyncio.Queue = field(default_factory=lambda: asyncio.Queue(maxsize=1000))
@@ -55,6 +57,10 @@ class SimulationSession:
     # True when KotakBroadcaster is the active streaming source for this session.
     # Used by stop_session() to call the correct unregister() method.
     kotak_streaming: bool = False
+    # AI Helper (Phase XI)
+    ai_commands_active: bool = False
+    # Per-right bar state for AI bar-close hook: {right → {slot, open, high, low, close, history}}
+    _ai_bar_tracker: dict = field(default_factory=dict, init=False, repr=False)
     # GuardRails runtime state (snapshotted from UserSettings at create_session)
     guardrail_block_until_bar: int = 0        # Unix bar-slot ts; blocked while current_bar_slot <= this
     guardrail_ban_active: bool = False
@@ -240,6 +246,13 @@ def _emit_tick_and_check_orders(
                 fill_events.append({"type": "strategy_completed", "strategy_id": sid, "right": strat.right})
     except Exception as exc:
         logger.warning("strategy eval error for session %s: %s", session.session_id, exc)
+
+    # AI bar-close hook (Phase XI)
+    if session.ai_commands_active:
+        try:
+            _check_and_schedule_ai_hook(session, tick, tick_right, asyncio.get_running_loop())
+        except RuntimeError:
+            pass  # not in async context — shouldn't happen
 
     return fill_events
 
@@ -1443,7 +1456,214 @@ def _emit_tick_and_check_orders_real(
     except Exception as exc:
         logger.warning("strategy eval error for real session %s: %s", session.session_id, exc)
 
+    # AI bar-close hook (Phase XI)
+    if session.ai_commands_active:
+        try:
+            _check_and_schedule_ai_hook(session, tick, tick_right, asyncio.get_running_loop())
+        except RuntimeError:
+            pass
+
     return fill_events
+
+
+_AI_MAX_BARS = 15
+
+
+def _backfill_bar_history(
+    session: "SimulationSession",
+    right: Optional[str],
+    current_slot_ts: int,
+) -> list[dict]:
+    """
+    Build the bar history that would have accumulated if ai_commands_active had
+    been set from session start. Called once per (session, right) on first tick.
+    Returns up to _AI_MAX_BARS completed candles, oldest-first, in the same
+    ISO-string time format used by the live closed_bar entries.
+
+    For paper/real sessions: fetches from Kite 1-min API (up to current IST
+    time) so bars that arrived via live streaming after session start are
+    included. For simulation: reads the local Breeze parquet file.
+
+    Non-fatal — returns [] on any error so the trading path is never blocked.
+    """
+    try:
+        import pandas as pd
+        from app.services.data_loader import resample_to_candles, candles_to_records
+
+        interval_minutes: int = getattr(session, "strategy_interval_secs", 180) // 60
+        is_live = session.session_type in ("paper", "real")
+
+        market_open = pd.Timestamp(f"{session.date} 09:15:00", tz="UTC")
+        slot_dt = datetime.fromtimestamp(current_slot_ts, tz=timezone.utc)
+        slot_boundary = pd.Timestamp(slot_dt)
+
+        if right is None:
+            if is_live:
+                from app.services.kite_service import fetch_kite_1min
+                df = fetch_kite_1min(session.symbol, session.date)
+            else:
+                from app.services.data_loader import load_dataframe
+                df = load_dataframe(session.symbol, session.date)
+        else:
+            strike = session.strike_ce if right == "CE" else session.strike_pe
+            if not strike or not session.expiry:
+                return []
+            if is_live:
+                from app.services.kite_service import fetch_kite_1min_options
+                df = fetch_kite_1min_options(session.symbol, session.date, strike, session.expiry, right)
+            else:
+                from app.services.options_service import load_options_dataframe
+                df = load_options_dataframe(session.symbol, session.date, strike, session.expiry, right)
+
+        if df.index.tzinfo is None:
+            df.index = df.index.tz_localize("UTC")
+
+        window = df[(df.index >= market_open) & (df.index < slot_boundary)]
+        if window.empty:
+            return []
+
+        candles = resample_to_candles(window, interval_minutes)
+        records = candles_to_records(candles)
+
+        result = [
+            {
+                "time": datetime.fromtimestamp(r["time"], tz=timezone.utc).isoformat(),
+                "open": r["open"],
+                "high": r["high"],
+                "low": r["low"],
+                "close": r["close"],
+            }
+            for r in records
+        ]
+        return result[-_AI_MAX_BARS:]
+    except Exception as exc:
+        logger.warning(
+            "_backfill_bar_history failed for session %s right=%s: %s",
+            session.session_id, right, exc,
+        )
+        return []
+
+
+def _check_and_schedule_ai_hook(
+    session: SimulationSession,
+    tick: dict,
+    tick_right: Optional[str],
+    loop: asyncio.AbstractEventLoop,
+) -> None:
+    """
+    Track per-right bar OHLC state. When a bar closes, schedule a fire-and-forget
+    POST to aihelper /hook/bar-close. Called from both tick-emit functions.
+    """
+    ts: int = tick["time"]
+    interval: int = getattr(session, "strategy_interval_secs", 180)
+    slot: int = (ts // interval) * interval
+
+    tracker = session._ai_bar_tracker.get(tick_right)
+    if tracker is None:
+        session._ai_bar_tracker[tick_right] = {
+            "slot": slot,
+            "open": tick["open"],
+            "high": tick["high"],
+            "low": tick["low"],
+            "close": tick["close"],
+            "history": _backfill_bar_history(session, tick_right, slot),
+        }
+        return
+
+    if slot != tracker["slot"]:
+        # Previous bar just closed — record it
+        closed_bar = {
+            "time": datetime.fromtimestamp(tracker["slot"], tz=timezone.utc).isoformat(),
+            "open": tracker["open"],
+            "high": tracker["high"],
+            "low": tracker["low"],
+            "close": tracker["close"],
+        }
+        history: list = tracker["history"]
+        history.append(closed_bar)
+        if len(history) > _AI_MAX_BARS:
+            history.pop(0)
+
+        loop.create_task(
+            _fire_bar_close_hook(session, tick_right, list(history), slot)
+        )
+
+        # Reset for the new bar
+        tracker["slot"] = slot
+        tracker["open"] = tick["open"]
+        tracker["high"] = tick["high"]
+        tracker["low"] = tick["low"]
+        tracker["close"] = tick["close"]
+    else:
+        tracker["high"] = max(tracker["high"], tick["high"])
+        tracker["low"] = min(tracker["low"], tick["low"])
+        tracker["close"] = tick["close"]
+
+
+async def _fire_bar_close_hook(
+    session: SimulationSession,
+    right: Optional[str],
+    bars: list[dict],
+    slot_ts: int,
+) -> None:
+    """
+    Fire-and-forget POST to aihelper /hook/bar-close.
+    100 ms timeout — errors are swallowed so the trading path is never blocked.
+    """
+    from app.config import AI_HELPER_URL
+    import httpx
+
+    from app.services import user_settings_service
+    from app.services import trading as trading_svc
+    user_settings = user_settings_service.get_settings(session.user_id)
+
+    position_dict: dict | None = None
+    try:
+        pos = trading_svc.get_position(session.session_id, symbol=session.symbol, right=right)
+        if pos.side != "FLAT" and pos.quantity > 0:
+            last_close = bars[-1]["close"] if bars else 0.0
+            pnl_pct = 0.0
+            if pos.avg_entry_price > 0 and last_close > 0:
+                if pos.side == "LONG":
+                    pnl_pct = (last_close - pos.avg_entry_price) / pos.avg_entry_price * 100
+                else:
+                    pnl_pct = (pos.avg_entry_price - last_close) / pos.avg_entry_price * 100
+            position_dict = {
+                "side": pos.side,
+                "qty": pos.quantity,
+                "avg_entry": pos.avg_entry_price,
+                "unrealized_pnl_pct": round(pnl_pct, 2),
+            }
+    except Exception:
+        logger.debug(
+            "Failed to resolve position for bar-close hook: session=%s right=%s",
+            session.session_id, right,
+        )
+
+    payload = {
+        "user_id": session.user_id,
+        "session_id": session.session_id,
+        "symbol": session.symbol,
+        "right": right,
+        "bars": bars,
+        "position": position_dict,
+        "timestamp": datetime.fromtimestamp(slot_ts, tz=timezone.utc).isoformat(),
+        "session_type": session.session_type,
+        "funds_ratios": {
+            "ratio_l": user_settings["funds_ratio_l_pct"],
+            "ratio_m": user_settings["funds_ratio_m_pct"],
+            "ratio_h": user_settings["funds_ratio_h_pct"],
+        },
+    }
+    try:
+        async with httpx.AsyncClient(timeout=0.1) as client:
+            await client.post(f"{AI_HELPER_URL}/hook/bar-close", json=payload)
+        logger.debug(
+            "bar-close hook sent: session=%s right=%s bars=%d",
+            session.session_id, right, len(bars),
+        )
+    except Exception as exc:
+        logger.debug("bar-close hook failed (session %s): %s", session.session_id, exc)
 
 
 def start_session(session: SimulationSession) -> None:
@@ -1519,3 +1739,19 @@ def stop_session(session: SimulationSession) -> None:
         strategy_service.clear_session(session.session_id)
     except Exception as exc:
         logger.warning("Could not cancel strategies for session %s: %s", session.session_id, exc)
+
+    # Cancel AI commands in aihelper (synchronous — must complete before stop_session returns
+    # so a racing bar-close hook cannot fire after session is torn down).
+    # Failure must NOT block session stop — log and continue.
+    if session.ai_commands_active:
+        from app.config import AI_HELPER_URL
+        import httpx
+        try:
+            with httpx.Client(timeout=2.0) as client:
+                client.post(f"{AI_HELPER_URL}/hook/session/{session.session_id}/stop")
+            logger.info("aihelper session-stop hook sent for %s", session.session_id)
+        except Exception as exc:
+            logger.warning(
+                "aihelper session-stop hook failed for %s (continuing): %s",
+                session.session_id, exc,
+            )

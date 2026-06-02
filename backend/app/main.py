@@ -1,5 +1,6 @@
 import logging
 import logging.handlers
+import sys
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -9,6 +10,11 @@ from app.routers import data, simulation, trading, stream, orders, wallet, auth,
 
 
 def _configure_logging() -> None:
+    # pytest imports app.main to get the FastAPI app object; skip the file
+    # handler so test log output never pollutes backend.log.
+    if "pytest" in sys.modules:
+        return
+
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     log_file = LOG_DIR / "backend.log"
 

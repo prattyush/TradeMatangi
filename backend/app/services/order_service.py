@@ -118,6 +118,7 @@ def place_order(
     strike: int | None = None,
     target_deviation_pct: float = _TARGET_DEVIATION,
     user_id: str = FIXED_USER_ID,
+    margin_rate: float = 1.0,
 ) -> Order:
     _ensure_session(session_id)
 
@@ -137,10 +138,11 @@ def place_order(
         actual_trigger = limit_price   # stored for schema consistency
         actual_limit = limit_price
 
-    # SL orders never debit wallet; regular BUY orders reserve funds upfront
+    # SL orders never debit wallet; regular BUY orders reserve funds upfront.
+    # margin_rate < 1.0 for equity MIS real sessions (20% margin).
     reserved_amount = 0.0
     if side == TradeSide.BUY and not is_stoploss and order_type != OrderType.STOPLOSS:
-        reserved_amount = round(quantity * actual_limit, 2)
+        reserved_amount = round(quantity * actual_limit * margin_rate, 2)
         from app.services.wallet_service import debit
         debit(user_id, reserved_amount, trading_date)
 

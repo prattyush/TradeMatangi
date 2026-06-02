@@ -30,6 +30,8 @@ class BarCloseHook(BaseModel):
     bars: list[OHLCBar]            # last 15 bars, oldest → newest
     position: PositionInfo | None = None
     timestamp: str
+    session_type: str | None = None  # "sim" | "paper" | "real"; None treated as sim
+    funds_ratios: dict[str, float] = {"ratio_l": 0.03, "ratio_m": 0.06, "ratio_h": 0.12}
 
 
 class BarCloseProcessor(ABC):

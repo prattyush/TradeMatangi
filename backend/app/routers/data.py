@@ -100,23 +100,34 @@ async def get_historical(
 
     prior_dates = prior_trading_days(trading_date, n=historical_days)
     all_candles: list[OHLCCandle] = []
+    loaded_dates: list[str] = []
 
     for date in prior_dates:
-        _ensure_data(symbol, date)
         try:
+            _ensure_data(symbol, date)
             df = load_dataframe(symbol, date)
             candles = resample_to_candles(df, interval_minutes)
             records = candles_to_records(candles)
             all_candles.extend(OHLCCandle(**r) for r in records)
+            loaded_dates.append(date)
+        except HTTPException as e:
+            if e.status_code in (404, 503):
+                logger.warning("Skipping prior day %s for %s — %s", date, symbol, e.detail)
+                continue
+            raise
         except FileNotFoundError:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Data not found for {symbol} on {date}",
-            )
+            logger.warning("Skipping prior day %s for %s — file not found", date, symbol)
+            continue
+
+    if not all_candles:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No historical data found for {symbol} in the {historical_days} days before {trading_date}",
+        )
 
     return HistoricalDataResponse(
         symbol=symbol,
-        dates=prior_dates,
+        dates=loaded_dates,
         candles=all_candles,
     )
 
