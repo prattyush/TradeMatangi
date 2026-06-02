@@ -34,7 +34,7 @@ _models = _cfg["llm-models"] if _cfg.has_section("llm-models") else {}
 MODEL_GEMINI = _models.get("gemini", "gemini/gemini-2.5-flash")
 MODEL_INTENT_CLASSIFIER = _models.get("intent_classifier", "deepseek/deepseek-chat")
 MODEL_COMMAND_EVALUATOR = _models.get("command_evaluator", "deepseek/deepseek-chat")
-MODEL_ANALYSIS = _models.get("analysis", "openai/gpt-4o-mini")
+MODEL_ANALYSIS = _models.get("analysis", _models.get("deep_seek", "deepseek/deepseek-chat"))
 MODEL_FALLBACK = _models.get("fallback", "openrouter/meta-llama/llama-3.1-8b-instruct:free")
 
 # Processor type: bounded_queue | drop_if_busy | background_tasks
