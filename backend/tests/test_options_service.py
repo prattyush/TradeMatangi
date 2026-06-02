@@ -569,6 +569,61 @@ class TestFetchOptionsHistorical:
             # Should have re-fetched: new data has close=201.0, not old 50.0
             assert float(saved.iloc[0]["close"]) == pytest.approx(201.0)
 
+    def _make_partial_df(self, date: str, n_rows: int = 2700) -> pd.DataFrame:
+        """Simulate a session-start parquet: only 09:15 to ~09:59 (2,700 rows)."""
+        idx = pd.date_range(start=f"{date} 09:15:00", periods=n_rows, freq="1s")
+        return pd.DataFrame(
+            {"open": 100.0, "high": 102.0, "low": 98.0, "close": 101.0}, index=idx
+        )
+
+    def test_partial_past_parquet_triggers_refetch(self, tmp_path):
+        date = "2026-05-06"
+        partial_df = self._make_partial_df(date)
+        records = [
+            {"datetime": f"{date} 09:{15 + i // 60:02d}:{i % 60:02d}",
+             "open": 100.0, "high": 102.0, "low": 98.0, "close": 101.0}
+            for i in range(900)
+        ]
+        breeze_mock = MagicMock()
+        breeze_mock.get_historical_data_v2.return_value = {"Status": 200, "Success": records}
+        ohlcdata = tmp_path / "ohlcdata"
+        ohlcdata.mkdir(parents=True, exist_ok=True)
+        with patch("app.services.options_service.OHLCDATA_DIR", ohlcdata), \
+             patch("app.services.broker_service._get_breeze", return_value=breeze_mock):
+            from app.services.options_service import options_parquet_path as opq
+            pq = opq("NIFTY", date, 24000, "2026-05-19", "CE")
+            partial_df.to_parquet(pq)
+            fetch_options_historical("NIFTY", date, 24000, "2026-05-19", "CE")
+        breeze_mock.get_historical_data_v2.assert_called()
+
+    def test_partial_past_parquet_breeze_unavailable_raises(self, tmp_path):
+        date = "2026-05-06"
+        partial_df = self._make_partial_df(date)
+        ohlcdata = tmp_path / "ohlcdata"
+        ohlcdata.mkdir(parents=True, exist_ok=True)
+        with patch("app.services.options_service.OHLCDATA_DIR", ohlcdata), \
+             patch("app.services.broker_service._get_breeze", side_effect=RuntimeError("breeze down")):
+            from app.services.options_service import options_parquet_path as opq
+            pq = opq("NIFTY", date, 24000, "2026-05-19", "CE")
+            partial_df.to_parquet(pq)
+            with pytest.raises(RuntimeError):
+                fetch_options_historical("NIFTY", date, 24000, "2026-05-19", "CE")
+
+    def test_exactly_at_threshold_skips_refetch(self, tmp_path):
+        from app.services.options_service import _MIN_OPTIONS_DAY_ROWS
+        date = "2026-05-06"
+        idx = pd.date_range(start=f"{date} 09:15:00", periods=_MIN_OPTIONS_DAY_ROWS, freq="1s")
+        threshold_df = pd.DataFrame(
+            {"open": 100.0, "high": 102.0, "low": 98.0, "close": 101.0}, index=idx
+        )
+        with patch("app.services.options_service.OHLCDATA_DIR", tmp_path / "ohlcdata"):
+            from app.services.options_service import options_parquet_path as opq
+            pq = opq("NIFTY", date, 24000, "2026-05-19", "CE")
+            threshold_df.to_parquet(pq)
+            with patch("app.services.broker_service._get_breeze") as mock_breeze:
+                fetch_options_historical("NIFTY", date, 24000, "2026-05-19", "CE")
+            mock_breeze.assert_not_called()
+
 
 # ---------------------------------------------------------------------------
 # load_options_dataframe

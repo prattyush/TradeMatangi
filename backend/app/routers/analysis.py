@@ -1,8 +1,12 @@
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
 from app.services import analysis_service
 from app.dependencies import get_request_user_id
+
+logger = logging.getLogger(__name__)
 
 _BAR_SECONDS = 180  # 3-min candle width — must match frontend Math.floor(t/180)*180
 
@@ -153,8 +157,26 @@ async def get_ohlc_context(
     from app.services.data_loader import load_dataframe, resample_to_candles
     from app.services.options_service import load_options_dataframe
 
+    is_options = right is not None and strike is not None and expiry is not None
+
+    # Ensure data is present and complete before loading — handles both missing files
+    # and partially-written files (e.g. paper/real session only downloaded 09:15–10:00).
+    # fetch_historical / fetch_options_historical are no-ops when data is already complete.
+    if is_options:
+        try:
+            from app.services.options_service import fetch_options_historical
+            fetch_options_historical(symbol, date, int(strike), expiry, right)
+        except Exception as exc:
+            logger.warning("ohlc-context: options Breeze fetch failed %s %s %s %s %s: %s",
+                           symbol, date, right, strike, expiry, exc)
+    else:
+        try:
+            from app.services.broker_service import fetch_historical
+            fetch_historical(symbol, date)
+        except Exception as exc:
+            logger.warning("ohlc-context: equity Breeze fetch failed %s %s: %s", symbol, date, exc)
+
     try:
-        is_options = right is not None and strike is not None and expiry is not None
         if is_options:
             df = load_options_dataframe(symbol, date, int(strike), expiry, right)
         else:
