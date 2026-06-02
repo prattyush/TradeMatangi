@@ -105,6 +105,7 @@ export default function AIChatPanel({ sessionId, userId, symbol, strikeCe, strik
   const isDragging = useRef(false)
   const dragStart = useRef({ mouseX: 0, mouseY: 0, panelX: 0, panelY: 0 })
   const lastSeenTsRef = useRef<string | null>(null)
+  const commandsRef = useRef<CommandItem[]>([])
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
   const effectivePos = useMemo(() => {
@@ -147,11 +148,17 @@ export default function AIChatPanel({ sessionId, userId, symbol, strikeCe, strik
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
 
-  // Reset chat state when session changes
+  // Keep commandsRef in sync so polling interval can read it without stale closure
+  useEffect(() => { commandsRef.current = commands }, [commands])
+
+  // Reset chat state when session changes; also pre-fetch commands so polling knows the state
   useEffect(() => {
     setMessages([])
     setCommands([])
+    commandsRef.current = []
     lastSeenTsRef.current = null
+    if (sessionId) fetchCommands()
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId])
 
   const fetchAndAppendDecisions = useCallback(async (): Promise<void> => {
@@ -168,6 +175,17 @@ export default function AIChatPanel({ sessionId, userId, symbol, strikeCe, strik
       // silently ignore — aihelper may not be running
     }
   }, [sessionId])
+
+  // Poll for new AI decisions every 10 s; skip when all known commands are inactive
+  useEffect(() => {
+    if (!sessionId) return
+    const id = setInterval(() => {
+      const cmds = commandsRef.current
+      const hasActive = cmds.length === 0 || cmds.some(c => c.status === 'active')
+      if (hasActive) fetchAndAppendDecisions()
+    }, 10_000)
+    return () => clearInterval(id)
+  }, [sessionId, fetchAndAppendDecisions])
 
   const fetchCommands = useCallback(async () => {
     if (!sessionId) return
