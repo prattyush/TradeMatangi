@@ -893,9 +893,12 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
             sessionType={sim.sessionType}
             onRefresh={sim.sessionId ? async () => {
               const result = await api.reconcileKotakOrders(sim.sessionId!)
-              const trades = await api.getTrades(sim.sessionId!)
+              // Fetch trades and positions in parallel so P&L recalculates correctly.
+              const [trades] = await Promise.all([
+                api.getTrades(sim.sessionId!),
+                sim.fetchAndUpdatePosition(),  // also bumps walletRefreshKey
+              ])
               sim.setTrades(trades)
-              sim.incrementWalletRefreshKey()
               const openCount = result.open_orders?.length ?? 0
               if (result.reconciled > 0 || openCount > 0) {
                 const parts: string[] = []

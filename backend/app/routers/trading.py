@@ -8,7 +8,7 @@ from app.services import trading as trading_svc
 from app.services import simulation as sim_svc
 from app.services import wallet_service, order_service
 from app.services.wallet_service import InsufficientFundsError
-from app.config import LOT_SIZES, KOTAK_SLIPPAGE_PCT
+from app.config import LOT_SIZES, KOTAK_SLIPPAGE_PCT, EQUITY_MIS_MARGIN_RATE
 from app.dependencies import get_request_user_id
 
 logger = logging.getLogger(__name__)
@@ -77,13 +77,23 @@ def _place_kotak_direct(session, side: TradeSide, price: float, lot_size: int, r
 
     def _make_cb(sess, trade_side: TradeSide, qty: int, rt):
         def on_fill(k_id: str, fill_side: str, fill_qty: int, fill_price: float):
+            # Equity MIS real sessions: only 20% margin is tied up per trade.
+            margin_rate = EQUITY_MIS_MARGIN_RATE if sess.instrument_type == "equity" else 1.0
             if trade_side == TradeSide.BUY:
                 try:
-                    wallet_service.debit(sess.user_id, round(fill_price * fill_qty, 2), sess.date)
+                    wallet_service.debit(
+                        sess.user_id,
+                        round(fill_price * fill_qty * margin_rate, 2),
+                        sess.date,
+                    )
                 except Exception:
                     pass
             else:
-                wallet_service.credit(sess.user_id, round(fill_price * fill_qty, 2), sess.date)
+                wallet_service.credit(
+                    sess.user_id,
+                    round(fill_price * fill_qty * margin_rate, 2),
+                    sess.date,
+                )
 
             trading_svc.record_trade(
                 sess.session_id, trade_side,

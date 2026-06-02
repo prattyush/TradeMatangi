@@ -456,6 +456,22 @@ export function useSimulation() {
     setState(s => ({ ...s, trades }))
   }, [])
 
+  const fetchAndUpdatePosition = useCallback(async () => {
+    if (!state.sessionId) return
+    const [posEq, posCE, posPE] = await Promise.all([
+      api.getPosition(state.sessionId),
+      api.getPosition(state.sessionId, 'CE'),
+      api.getPosition(state.sessionId, 'PE'),
+    ])
+    setState(s => ({
+      ...s,
+      position: posEq,
+      positionCE: posCE,
+      positionPE: posPE,
+      walletRefreshKey: s.walletRefreshKey + 1,
+    }))
+  }, [state.sessionId])
+
   const addTradeFromSSE = useCallback(async (trade: Trade) => {
     // Deduplicate: UI-initiated trades are already in state from api.buy/sell response
     setState(s => {
@@ -510,5 +526,6 @@ export function useSimulation() {
     incrementWalletRefreshKey,
     setTrades,
     addTradeFromSSE,
+    fetchAndUpdatePosition,
   }
 }

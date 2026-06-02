@@ -3,7 +3,7 @@ from fastapi import APIRouter, HTTPException, Query
 from app.models.schemas import Order, OrderType, TradeSide, PlaceOrderRequest, UpdateOrderRequest
 from app.services import order_service, simulation as sim_svc
 from app.services.wallet_service import InsufficientFundsError, get_balance
-from app.config import LOT_SIZES
+from app.config import LOT_SIZES, EQUITY_MIS_MARGIN_RATE
 
 router = APIRouter(prefix="/api/orders", tags=["orders"])
 
@@ -97,6 +97,10 @@ async def place_order(req: PlaceOrderRequest):
             raise HTTPException(status_code=400, detail="quantity must be at least 1")
         quantity = req.quantity
 
+    # Real equity MIS: only 20% margin deducted from wallet for BUY orders.
+    is_real_equity = session.session_type == "real" and session.instrument_type == "equity"
+    order_margin_rate = EQUITY_MIS_MARGIN_RATE if is_real_equity else 1.0
+
     try:
         order = order_service.place_order(
             session_id=req.session_id,
@@ -113,6 +117,7 @@ async def place_order(req: PlaceOrderRequest):
             strike=order_strike,
             target_deviation_pct=req.target_deviation_pct,
             user_id=session.user_id,
+            margin_rate=order_margin_rate,
         )
     except InsufficientFundsError as exc:
         raise HTTPException(status_code=402, detail=str(exc))
