@@ -1320,16 +1320,26 @@ def _emit_tick_and_check_orders_real(
 
             def _make_fill_cb(ord_id: str, sess: SimulationSession):
                 def on_kotak_fill(kotak_id: str, fill_side: str, fill_qty: int, fill_price: float):
-                    from app.services.order_service import get_order
+                    from app.services.order_service import get_order, _write_order_to_db
                     from app.services import wallet_service
+                    from app.models.schemas import OrderStatus
                     o = get_order(sess.session_id, ord_id)
                     if o is None:
                         return
+                    if o.kotak_fill_confirmed:
+                        return  # already recorded by a prior callback or reconcile call
+                    o.kotak_fill_confirmed = True
+                    fill_ts = int(sess.current_time) if sess.current_time else 0
+                    if o.status != OrderStatus.FILLED:
+                        o.status = OrderStatus.FILLED
+                        o.filled_at = fill_ts
+                        o.filled_price = fill_price
+                    _write_order_to_db(o)
                     record_trade(
                         session_id=sess.session_id,
                         side=o.side,
                         price=fill_price,
-                        timestamp=int(sess.current_time) if sess.current_time else 0,
+                        timestamp=fill_ts,
                         quantity=fill_qty,
                         symbol=o.symbol,
                         instrument_type=sess.instrument_type,
@@ -1351,7 +1361,7 @@ def _emit_tick_and_check_orders_real(
                         "quantity": fill_qty,
                         "trigger_price": o.trigger_price,
                         "filled_price": fill_price,
-                        "filled_at": int(sess.current_time) if sess.current_time else 0,
+                        "filled_at": fill_ts,
                         "right": o.right,
                     }
                     try:

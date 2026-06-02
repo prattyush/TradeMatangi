@@ -118,8 +118,10 @@ async def kotak_reconcile(
             continue
 
         o = order_service.get_order(session_id, order_id)
-        if o is None or o.status != OrderStatus.PENDING:
-            continue  # already processed or unknown
+        if o is None or o.status == OrderStatus.CANCELLED:
+            continue  # cancelled orders need no fill reconciliation
+        if o.kotak_fill_confirmed:
+            continue  # fill already recorded by WebSocket callback
 
         avg_prc = ko.get("filled_price", 0.0)
         fill_qty = ko.get("filled_quantity") or ko.get("quantity", 0)
@@ -128,6 +130,7 @@ async def kotak_reconcile(
 
         fill_ts = int(session.current_time) if session.current_time else 0
 
+        o.kotak_fill_confirmed = True
         o.status = OrderStatus.FILLED
         o.filled_price = avg_prc
         o.filled_at = fill_ts
@@ -269,6 +272,30 @@ async def kotak_reconcile(
         )
     except KotakError as exc:
         logger.warning("Reconcile: wallet sync from Kotak failed: %s", exc)
+
+    # ── Pass 3: cancel local PENDING orders whose broker-side order was cancelled/rejected ──
+    # Covers the case where modify_sl_to_limit_order() caused Kotak to cancel the SL order
+    # (transitional state) so the local order never gets cleared without explicit reconcile.
+    for ko in kotak_orders:
+        k_id = ko.get("kotak_order_id", "")
+        if ko.get("status") not in ("cancelled", "rejected"):
+            continue
+        order_id = reverse_map.get(k_id)
+        if not order_id:
+            continue
+        o = order_service.get_order(session_id, order_id)
+        if o is None or o.status != OrderStatus.PENDING:
+            continue
+        order_service.cancel_order(session_id, order_id, session.date)
+        evt = {"type": "order_cancelled", "order_id": order_id}
+        try:
+            session.queue.put_nowait(_json.dumps(evt))
+        except Exception:
+            pass
+        logger.info(
+            "Reconcile: cancelled local order %s — broker order %s was %s",
+            order_id, k_id, ko.get("status"),
+        )
 
     # Collect currently open/pending Kotak orders for informational display
     open_kotak_orders = [
