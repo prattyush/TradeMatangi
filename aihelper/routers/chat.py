@@ -261,13 +261,18 @@ async def _handle_hotword(req: ChatRequest) -> ChatResponse:
 
 
 async def _handle_analysis(req: ChatRequest) -> ChatResponse:
-    from_date, to_date, period_desc = await analysis_service.parse_date_range(req.message)
+    from_date, to_date, period_desc, symbol, session_type = (
+        await analysis_service.parse_analysis_request(req.message)
+    )
     logger.info(
-        "Analysis: user=%s period=%s (%s → %s)",
-        req.user_id, period_desc, from_date, to_date,
+        "Analysis: user=%s period=%s (%s → %s) symbol=%s session_type=%s",
+        req.user_id, period_desc, from_date, to_date, symbol, session_type,
     )
     try:
-        result = await analysis_service.run_analysis(req.user_id, from_date, to_date, period_desc)
+        result = await analysis_service.run_analysis(
+            req.user_id, from_date, to_date, period_desc,
+            symbol=symbol, session_type=session_type,
+        )
     except Exception:
         logger.exception("Analysis failed")
         return ChatResponse(

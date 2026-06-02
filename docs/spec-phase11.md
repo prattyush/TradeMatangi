@@ -53,6 +53,19 @@ Examples:-
 9. Checks can be added to see if a position is already open in the provided symbol for accepting the command.
 ---
 
+
+ ##### TradeAnalysisFeatures
+ This section features of trade analysis.
+ 1. User can ask AIHelper to analyze trades provided a start date and end date and a symbol (optional) and simulation trading or papertrading or real trading (optional).
+ 2. The AI should be able to go through the trades and also the actual ohlc data of the entry exit bars + surrounding 6 bars around every entry/exit. Can be combined to have 6 bars before entry and all bars in between entry, exit and 3 after exit.
+ 3. It should check how far from bar open value is the actual entry. If all trades consistently show that the entry prices are above from open price consistently by x%.
+ 4. It should check if after exit, the trade still moves in the favor. Basically an early exit.
+ 5. It should check if the exit was at a loss, did within 1-2 bars the price reverses. This is scared exit. 
+ 6. If the user is entering too soon or time gap between trades is too quick. Or worst if same bar has entry, exit and then entry again. This is panic buying.
+ 7. It should how many times, after user enters trades, the price immediately reverses, like buying on  top or selling on bottom.
+ 8. Find the direction of the trade by finding whether sell or buy order is placed before. If sell then it is a sell trade, if buy then it is a buy trade.
+ 9. Use the best model, given the choice of models in accesskeys.init [llm-models]
+
 ## PR Log (feature/aihelper branch)
 
 | Item | PR | Status |
@@ -81,3 +94,7 @@ Examples:-
 | Evaluator JSON field order: DeepSeek committed to `should_exit`/`should_trade` before writing arithmetic; model proved itself wrong in `reason` but couldn't backtrack; fix reorders schema so `reason` is last (before the boolean) in both `evaluate_command` and `evaluate_exit_command` prompts; 136 aihelper tests | #146 (fix/evaluator-json-field-order) | ✅ merged to feature/aihelper |
 | AI decision auto-poll: `fetchAndAppendDecisions` was only called on user message send; AI-triggered decisions invisible until user typed; fix adds 10 s `setInterval` in `AIChatPanel`; skips polling when all known commands are `executed`/`cancelled`; `commandsRef` pre-fetched on session change so first tick has correct state; resumes automatically when new command registered via `handleSend` → `fetchCommands()` | #147 (fix/ai-decision-poll) | ✅ merged to feature/aihelper |
 | Real trading bug fixes: (1) pending fill buffer in `KotakNeoService` (`_pending_fills` dict) fixes race where fast fills on liquid stocks arrive before `register_fill_callback` is called; (2) `kotak_reconcile` Pass 2 detects external/manual broker orders (not in `kotak_order_map`) by scanning all complete Kotak orders, emits `order_filled` SSE, deduplicates via `external_reconciled_kotak_ids`; CE/PE right inferred from Kotak symbol suffix; (3) wallet synced from `kotak_svc.get_funds()` on every reconcile (`wallet_service.reset`) to correct drift from external trades; (4) `EQUITY_MIS_MARGIN_RATE=0.20` applied in `place_order` and `_place_kotak_direct` fill callback (equity MIS is 5× leveraged, only 20% capital deducted); (5) `onRefresh` calls `fetchAndUpdatePosition()` (all 3 legs in parallel) so position and stoploss button update after reconcile, fixing P&L recalculation; 513 backend tests; TypeScript clean | #148 (fix/real-trading-bugs) | ✅ merged to dev |
+| Merge `feature/aihelper` → `dev`: all Steps 1–19 (EntryFeatures, ExitFeatures, TradeAnalysis, guardrails, LangFuse tracing, quantity ratios, command stream filter, and all associated bug fixes) promoted to dev branch | #149 (feature/aihelper) | ✅ merged to dev |
+| TP exit trade sync + stale SL fix + EC2 aihelper scripts: (1) `kotak_fill_confirmed` flag in `Order` so reconcile Pass 1 skips already-confirmed fills — TP-triggered sell orders now appear in trade history; (2) reconcile Pass 3 cancels locally-PENDING orders whose Kotak counterpart shows `cancelled`/`rejected`, clearing stale SL entries; (3) `scripts/start-aihelper-ec2.sh` + `scripts/stop-aihelper-ec2.sh` for production EC2 aihelper management; 513 backend tests | #151 (fix/tp-exit-trade-sync) | ✅ merged to dev |
+| TradeAnalysisFeatures: (1) `GET /api/analysis/ohlc-context` returns labeled OHLC candles (pre/entry/trade/exit/post) for both equity and options; (2) `GET /api/analysis/trades` accepts optional `symbol` + `session_type` filters; adds `expiry` field; (3) `aihelper/services/pattern_detector.py` — 6 programmatic pattern checks (entry deviation, early exit, scared exit, panic buying, buying-on-top/selling-on-bottom, trade direction); (4) `run_analysis()` fetches OHLC per trade group, runs all 6 checks, passes pre-computed numbers to LLM for narrative; (5) `MODEL_ANALYSIS` defaults to `deepseek/deepseek-v4-pro`; (6) `parse_analysis_request()` extracts date range + symbol + session_type in one LLM call; 521 backend + 180 aihelper tests | #154 (feature/trade-analysis-patterns) | ✅ merged to dev |
+| Partial options parquet fix: `_MIN_OPTIONS_DAY_ROWS = 20000` row-count guard in `options_service.py` deletes and re-fetches partial parquets written at paper/real session start (mirrors existing equity guard); `analysis.py` `get_ohlc_context` calls `fetch_historical`/`fetch_options_historical` before loading so the full-day file is always present before 404 path; 528 backend tests | #155 (fix/partial-options-parquet) | ✅ merged to dev |

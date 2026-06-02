@@ -96,13 +96,54 @@ async def notify_ai_commands_active(session_id: str) -> None:
         logger.warning("Failed to notify backend of active commands: %s", exc)
 
 
-async def get_trades(user_id: str, from_date: str, to_date: str) -> list[dict]:
+async def get_trades(
+    user_id: str,
+    from_date: str,
+    to_date: str,
+    symbol: str | None = None,
+    session_type: str | None = None,
+) -> list[dict]:
     """GET /api/analysis/trades — fetch trade history for analysis."""
     client = get_client()
-    resp = await client.get(
-        "/api/analysis/trades",
-        params={"user_id": user_id, "from": from_date, "to": to_date},
-    )
+    params: dict = {"user_id": user_id, "from": from_date, "to": to_date}
+    if symbol:
+        params["symbol"] = symbol
+    if session_type:
+        params["session_type"] = session_type
+    resp = await client.get("/api/analysis/trades", params=params)
+    resp.raise_for_status()
+    return resp.json()
+
+
+async def get_ohlc_context(
+    symbol: str,
+    date: str,
+    entry_ts: int,
+    exit_ts: int | None = None,
+    right: str | None = None,
+    strike: int | None = None,
+    expiry: str | None = None,
+    pre_bars: int = 6,
+    post_bars: int = 3,
+) -> dict:
+    """GET /api/analysis/ohlc-context — labeled OHLC bars surrounding a trade."""
+    client = get_client()
+    params: dict = {
+        "symbol": symbol,
+        "date": date,
+        "entry_ts": entry_ts,
+        "pre_bars": pre_bars,
+        "post_bars": post_bars,
+    }
+    if exit_ts is not None:
+        params["exit_ts"] = exit_ts
+    if right is not None:
+        params["right"] = right
+    if strike is not None:
+        params["strike"] = strike
+    if expiry is not None:
+        params["expiry"] = expiry
+    resp = await client.get("/api/analysis/ohlc-context", params=params)
     resp.raise_for_status()
     return resp.json()
 
