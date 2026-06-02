@@ -53,6 +53,19 @@ Examples:-
 9. Checks can be added to see if a position is already open in the provided symbol for accepting the command.
 ---
 
+
+ ##### TradeAnalysisFeatures
+ This section features of trade analysis.
+ 1. User can ask AIHelper to analyze trades provided a start date and end date and a symbol (optional) and simulation trading or papertrading or real trading (optional).
+ 2. The AI should be able to go through the trades and also the actual ohlc data of the entry exit bars + surrounding 6 bars around every entry/exit. Can be combined to have 6 bars before entry and all bars in between entry, exit and 3 after exit.
+ 3. It should check how far from bar open value is the actual entry. If all trades consistently show that the entry prices are above from open price consistently by x%.
+ 4. It should check if after exit, the trade still moves in the favor. Basically an early exit.
+ 5. It should check if the exit was at a loss, did within 1-2 bars the price reverses. This is scared exit. 
+ 6. If the user is entering too soon or time gap between trades is too quick. Or worst if same bar has entry, exit and then entry again. This is panic buying.
+ 7. It should how many times, after user enters trades, the price immediately reverses, like buying on  top or selling on bottom.
+ 8. Find the direction of the trade by finding whether sell or buy order is placed before. If sell then it is a sell trade, if buy then it is a buy trade.
+ 9. Use the best model, given the choice of models in accesskeys.init [llm-models]
+
 ## PR Log (feature/aihelper branch)
 
 | Item | PR | Status |

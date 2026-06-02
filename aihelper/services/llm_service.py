@@ -306,6 +306,34 @@ async def extract_date_range(message: str, today: str) -> dict[str, Any]:
     )
 
 
+@observe(name="extract_analysis_params")
+async def extract_analysis_params(message: str, today: str) -> dict[str, Any]:
+    """
+    Parse all analysis request parameters from one LLM call.
+    Returns {from_date, to_date, period_description, symbol, session_type}
+    Falls back to last 7 days on parse error.
+    """
+    system = (
+        f"Today's date is {today}.\n"
+        "Extract trade analysis request parameters. Return JSON only:\n"
+        '{\n'
+        '  "from_date": "YYYY-MM-DD",\n'
+        '  "to_date": "YYYY-MM-DD",\n'
+        '  "period_description": "<short label>",\n'
+        '  "symbol": "<symbol name or null>",\n'
+        '  "session_type": "sim" | "paper" | "real" | null\n'
+        '}\n\n'
+        "Rules:\n"
+        '- Date range: "last 7 days" → today−7; "last month" → today−30; "today" → today; etc. Default: last 7 days\n'
+        '- symbol: extract if a specific instrument is mentioned (e.g. NIFTY, BSESEN, RELIND); null if not specified\n'
+        '- session_type: "sim" for simulation/historical, "paper" for paper trading, "real" for live/real trading; null if not specified'
+    )
+    return await _complete(
+        MODEL_INTENT_CLASSIFIER,
+        [{"role": "system", "content": system}, {"role": "user", "content": message}],
+    )
+
+
 @observe(name="extract_exit_command_fields")
 async def extract_exit_command_fields(message: str) -> dict[str, Any]:
     """
@@ -431,15 +459,34 @@ async def evaluate_exit_command(
 
 
 @observe(name="analyze_trades")
-async def analyze_trades(trades: list[dict], date_range: str) -> dict[str, Any]:
+async def analyze_trades(
+    trades: list[dict],
+    date_range: str,
+    pattern_findings: dict | None = None,
+) -> dict[str, Any]:
     """
     Analyze trade history and return structured insights.
+    When pattern_findings is provided (pre-computed programmatic results), the LLM
+    synthesizes the findings into narrative rather than redoing the calculations.
     """
+    findings_section = (
+        "\n\nPRE-COMPUTED PATTERN FINDINGS (programmatic analysis — use these numbers directly):\n"
+        + json.dumps(pattern_findings, indent=2)
+        if pattern_findings
+        else ""
+    )
     system = (
         "You are a trading performance coach analyzing trades from Indian equity/options markets.\n"
-        "You will receive a list of trades with entry/exit prices, P&L, timestamps, and session metadata.\n\n"
-        "Identify patterns — both positive and negative. Be specific and quantitative where possible.\n"
-        "Respond with JSON only:\n"
+        + (
+            "Programmatic pattern analysis has already been run. "
+            "Your role is to synthesize those findings into clear, actionable coaching insights.\n"
+            "Reference the pre-computed numbers directly — do NOT recalculate.\n"
+            if pattern_findings
+            else
+            "You will receive a list of trades with entry/exit prices, P&L, timestamps, and session metadata.\n"
+            "Identify patterns — both positive and negative. Be specific and quantitative where possible.\n"
+        )
+        + "\nRespond with JSON only:\n"
         "{\n"
         '  "summary": "<2–3 sentence overall assessment>",\n'
         '  "patterns": [\n'
@@ -459,8 +506,9 @@ async def analyze_trades(trades: list[dict], date_range: str) -> dict[str, Any]:
         '    "worst_time_of_day": "<e.g. \'13:00–14:00\'>"\n'
         '  }\n'
         "}\n\n"
-        f"Date range: {date_range}\n"
-        f"Trades data:\n{json.dumps(trades)}"
+        f"Date range: {date_range}"
+        f"{findings_section}\n\n"
+        f"TRADE SESSIONS DATA:\n{json.dumps(trades)}"
     )
     return await _complete(
         MODEL_ANALYSIS,

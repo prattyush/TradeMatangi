@@ -261,7 +261,139 @@ class TestGetTradesForAnalysis:
             )
         mock_fn.assert_called_once_with(
             FIXED_USER_ID, start_date="2026-05-10", end_date="2026-05-20",
+            symbol=None, session_type=None,
         )
+
+    def test_symbol_filter_forwarded(self):
+        with patch("app.services.analysis_service.get_sessions_for_user", return_value=[]) as mock_fn:
+            client.get(
+                f"/api/analysis/trades?user_id={FIXED_USER_ID}&from=2026-05-01&to=2026-05-31&symbol=NIFTY"
+            )
+        mock_fn.assert_called_once_with(
+            FIXED_USER_ID, start_date="2026-05-01", end_date="2026-05-31",
+            symbol="NIFTY", session_type=None,
+        )
+
+    def test_session_type_filter_forwarded(self):
+        with patch("app.services.analysis_service.get_sessions_for_user", return_value=[]) as mock_fn:
+            client.get(
+                f"/api/analysis/trades?user_id={FIXED_USER_ID}&from=2026-05-01&to=2026-05-31&session_type=paper"
+            )
+        mock_fn.assert_called_once_with(
+            FIXED_USER_ID, start_date="2026-05-01", end_date="2026-05-31",
+            symbol=None, session_type="paper",
+        )
+
+    def test_trades_include_expiry_field(self):
+        with patch("app.services.analysis_service.get_sessions_for_user", return_value=[SESSION_A]), \
+             patch("app.services.analysis_service.get_trades_for_session", return_value=TRADES_A):
+            resp = client.get(
+                f"/api/analysis/trades?user_id={FIXED_USER_ID}&from=2026-05-01&to=2026-05-31"
+            )
+        trade = resp.json()[0]["trades"][0]
+        assert "expiry" in trade  # field present (may be null for equity)
+
+
+# ── GET /api/analysis/ohlc-context ───────────────────────────────────────────
+
+class TestGetOhlcContext:
+    """Tests for the /api/analysis/ohlc-context endpoint."""
+
+    def _make_candle_df(self):
+        import pandas as pd
+        import numpy as np
+        # Build a simple 20-row second-level DataFrame starting at 09:15 IST-as-UTC
+        base = pd.Timestamp("2026-05-29 09:15:00", tz="UTC")
+        idx = pd.date_range(start=base, periods=20 * 180, freq="s")
+        df = pd.DataFrame(
+            {
+                "open": np.linspace(100.0, 119.0, len(idx)),
+                "high": np.linspace(101.0, 120.0, len(idx)),
+                "low": np.linspace(99.0, 118.0, len(idx)),
+                "close": np.linspace(100.5, 119.5, len(idx)),
+            },
+            index=idx,
+        )
+        return df
+
+    def test_equity_returns_labeled_bars(self):
+        df = self._make_candle_df()
+        base_ts = int(df.index[0].timestamp())  # 09:15 candle start
+        entry_ts = base_ts + 3 * 180  # 4th candle (index 3)
+        exit_ts = base_ts + 6 * 180   # 7th candle (index 6)
+
+        with patch("app.services.data_loader.load_dataframe", return_value=df):
+            resp = client.get(
+                f"/api/analysis/ohlc-context?symbol=NIFTY&date=2026-05-29"
+                f"&entry_ts={entry_ts}&exit_ts={exit_ts}"
+            )
+
+        assert resp.status_code == 200
+        bars = resp.json()["bars"]
+        labels = [b["label"] for b in bars]
+        assert "pre" in labels
+        assert "entry" in labels
+        assert "exit" in labels
+        assert "post" in labels
+
+    def test_entry_bar_labeled_correctly(self):
+        df = self._make_candle_df()
+        base_ts = int(df.index[0].timestamp())
+        entry_ts = base_ts + 3 * 180  # 4th candle
+
+        with patch("app.services.data_loader.load_dataframe", return_value=df):
+            resp = client.get(
+                f"/api/analysis/ohlc-context?symbol=NIFTY&date=2026-05-29&entry_ts={entry_ts}"
+            )
+
+        assert resp.status_code == 200
+        bars = resp.json()["bars"]
+        entry_bars = [b for b in bars if b["label"] == "entry"]
+        assert len(entry_bars) == 1
+        assert entry_bars[0]["time"] == (entry_ts // 180) * 180
+
+    def test_missing_data_returns_404(self):
+        with patch(
+            "app.services.data_loader.load_dataframe",
+            side_effect=FileNotFoundError("no data"),
+        ):
+            resp = client.get(
+                "/api/analysis/ohlc-context?symbol=NIFTY&date=2026-05-29&entry_ts=1748511300"
+            )
+        assert resp.status_code == 404
+
+    def test_pre_bars_count(self):
+        df = self._make_candle_df()
+        base_ts = int(df.index[0].timestamp())
+        entry_ts = base_ts + 6 * 180  # enough room for 6 pre bars
+
+        with patch("app.services.data_loader.load_dataframe", return_value=df):
+            resp = client.get(
+                f"/api/analysis/ohlc-context?symbol=NIFTY&date=2026-05-29"
+                f"&entry_ts={entry_ts}&pre_bars=6"
+            )
+
+        bars = resp.json()["bars"]
+        pre_count = sum(1 for b in bars if b["label"] == "pre")
+        assert pre_count == 6
+
+    def test_same_bar_entry_exit_labeled_entry_exit(self):
+        df = self._make_candle_df()
+        base_ts = int(df.index[0].timestamp())
+        bar_ts = base_ts + 3 * 180
+        # Entry and exit in the same 3-min candle
+        entry_ts = bar_ts + 30
+        exit_ts = bar_ts + 90
+
+        with patch("app.services.data_loader.load_dataframe", return_value=df):
+            resp = client.get(
+                f"/api/analysis/ohlc-context?symbol=NIFTY&date=2026-05-29"
+                f"&entry_ts={entry_ts}&exit_ts={exit_ts}"
+            )
+
+        bars = resp.json()["bars"]
+        labels = [b["label"] for b in bars]
+        assert "entry_exit" in labels
 
 
 # ── analysis_service unit tests ───────────────────────────────────────────────

@@ -172,34 +172,48 @@ class TestAnalysisServiceRunAnalysis:
         from services import analysis_service
         fake_trades = [{"session_id": "s1", "date": "2026-05-29", "trades": []}]
         with patch("services.analysis_service.backend_client.get_trades", new=AsyncMock(return_value=fake_trades)), \
-             patch("services.analysis_service._analyze", new=AsyncMock(return_value=_ANALYSIS_RESULT)) as mock_analyze:
+             patch("services.analysis_service._analyze", new=AsyncMock(return_value=_ANALYSIS_RESULT)) as mock_analyze, \
+             patch("services.analysis_service.backend_client.get_ohlc_context", new=AsyncMock(side_effect=Exception("no data"))):
             result = await analysis_service.run_analysis(_USER_ID, "2026-05-24", "2026-05-31", "last 7 days")
-        mock_analyze.assert_called_once_with(fake_trades, "last 7 days")
+        assert mock_analyze.called
         assert result["summary"] == _ANALYSIS_RESULT["summary"]
 
     @pytest.mark.asyncio
     async def test_date_range_passed_to_llm(self):
         from services import analysis_service
-        fake_trades = [{"session_id": "s1"}]
+        fake_trades = [{"session_id": "s1", "trades": []}]
         with patch("services.analysis_service.backend_client.get_trades", new=AsyncMock(return_value=fake_trades)), \
-             patch("services.analysis_service._analyze", new=AsyncMock(return_value=_ANALYSIS_RESULT)) as mock_analyze:
+             patch("services.analysis_service._analyze", new=AsyncMock(return_value=_ANALYSIS_RESULT)) as mock_analyze, \
+             patch("services.analysis_service.backend_client.get_ohlc_context", new=AsyncMock(side_effect=Exception("no data"))):
             await analysis_service.run_analysis(_USER_ID, "2026-05-01", "2026-05-31", "May 2026")
-        _, kwargs_date_range = mock_analyze.call_args.args if mock_analyze.call_args.args else (None, None)
-        # date_range is the second positional arg
         call_args = mock_analyze.call_args
         assert call_args[0][1] == "May 2026"
+
+    @pytest.mark.asyncio
+    async def test_symbol_and_session_type_forwarded(self):
+        from services import analysis_service
+        with patch("services.analysis_service.backend_client.get_trades", new=AsyncMock(return_value=[])) as mock_get, \
+             patch("services.analysis_service._analyze", new=AsyncMock(return_value=_ANALYSIS_RESULT)):
+            await analysis_service.run_analysis(
+                _USER_ID, "2026-05-01", "2026-05-31", "May 2026",
+                symbol="NIFTY", session_type="paper",
+            )
+        mock_get.assert_called_once_with(
+            _USER_ID, "2026-05-01", "2026-05-31",
+            symbol="NIFTY", session_type="paper",
+        )
 
 
 class TestAnalysisChatEndpoint:
     """End-to-end tests for /ai/chat with analysis intent."""
 
     def test_analysis_intent_returns_analysis_status(self):
-        parse_range = AsyncMock(return_value=("2026-05-24", "2026-05-31", "last 7 days"))
+        parse_req = AsyncMock(return_value=("2026-05-24", "2026-05-31", "last 7 days", None, None))
         run_analysis = AsyncMock(return_value=_ANALYSIS_RESULT)
         classify = AsyncMock(return_value=("analysis", 0.97))
 
         with patch("services.intent_classifier.classify", new=classify), \
-             patch("services.analysis_service.parse_date_range", new=parse_range), \
+             patch("services.analysis_service.parse_analysis_request", new=parse_req), \
              patch("services.analysis_service.run_analysis", new=run_analysis):
             resp = client.post("/ai/chat", json=_chat_body("analyze my trades from last 7 days"))
 
@@ -211,12 +225,12 @@ class TestAnalysisChatEndpoint:
         assert body["analysis"]["summary"] == _ANALYSIS_RESULT["summary"]
 
     def test_analysis_response_contains_all_fields(self):
-        parse_range = AsyncMock(return_value=("2026-05-24", "2026-05-31", "last 7 days"))
+        parse_req = AsyncMock(return_value=("2026-05-24", "2026-05-31", "last 7 days", None, None))
         run_analysis = AsyncMock(return_value=_ANALYSIS_RESULT)
         classify = AsyncMock(return_value=("analysis", 0.95))
 
         with patch("services.intent_classifier.classify", new=classify), \
-             patch("services.analysis_service.parse_date_range", new=parse_range), \
+             patch("services.analysis_service.parse_analysis_request", new=parse_req), \
              patch("services.analysis_service.run_analysis", new=run_analysis):
             resp = client.post("/ai/chat", json=_chat_body("analyze my trades"))
 
@@ -229,12 +243,12 @@ class TestAnalysisChatEndpoint:
         assert analysis["notable_stats"]["win_rate"] == "40%"
 
     def test_analysis_error_returns_error_status(self):
-        parse_range = AsyncMock(return_value=("2026-05-24", "2026-05-31", "last 7 days"))
+        parse_req = AsyncMock(return_value=("2026-05-24", "2026-05-31", "last 7 days", None, None))
         run_analysis = AsyncMock(side_effect=Exception("backend unreachable"))
         classify = AsyncMock(return_value=("analysis", 0.95))
 
         with patch("services.intent_classifier.classify", new=classify), \
-             patch("services.analysis_service.parse_date_range", new=parse_range), \
+             patch("services.analysis_service.parse_analysis_request", new=parse_req), \
              patch("services.analysis_service.run_analysis", new=run_analysis):
             resp = client.post("/ai/chat", json=_chat_body("analyze trades"))
 
@@ -250,12 +264,12 @@ class TestAnalysisChatEndpoint:
             "suggestions": ["Take some trades first to generate analysis."],
             "notable_stats": {},
         }
-        parse_range = AsyncMock(return_value=("2026-05-24", "2026-05-31", "last 7 days"))
+        parse_req = AsyncMock(return_value=("2026-05-24", "2026-05-31", "last 7 days", None, None))
         run_analysis = AsyncMock(return_value=empty_result)
         classify = AsyncMock(return_value=("analysis", 0.94))
 
         with patch("services.intent_classifier.classify", new=classify), \
-             patch("services.analysis_service.parse_date_range", new=parse_range), \
+             patch("services.analysis_service.parse_analysis_request", new=parse_req), \
              patch("services.analysis_service.run_analysis", new=run_analysis):
             resp = client.post("/ai/chat", json=_chat_body("show analysis"))
 
@@ -265,21 +279,36 @@ class TestAnalysisChatEndpoint:
         assert "No sessions found" in body["analysis"]["summary"]
 
     def test_analysis_response_message_contains_period(self):
-        parse_range = AsyncMock(return_value=("2026-05-01", "2026-05-31", "May 2026"))
+        parse_req = AsyncMock(return_value=("2026-05-01", "2026-05-31", "May 2026", None, None))
         run_analysis = AsyncMock(return_value=_ANALYSIS_RESULT)
         classify = AsyncMock(return_value=("analysis", 0.96))
 
         with patch("services.intent_classifier.classify", new=classify), \
-             patch("services.analysis_service.parse_date_range", new=parse_range), \
+             patch("services.analysis_service.parse_analysis_request", new=parse_req), \
              patch("services.analysis_service.run_analysis", new=run_analysis):
             resp = client.post("/ai/chat", json=_chat_body("analyze May 2026"))
 
         body = resp.json()
         assert "May 2026" in body["message"]
 
+    def test_symbol_and_session_type_forwarded_to_run_analysis(self):
+        parse_req = AsyncMock(return_value=("2026-05-01", "2026-05-31", "May 2026", "NIFTY", "paper"))
+        run_analysis = AsyncMock(return_value=_ANALYSIS_RESULT)
+        classify = AsyncMock(return_value=("analysis", 0.96))
+
+        with patch("services.intent_classifier.classify", new=classify), \
+             patch("services.analysis_service.parse_analysis_request", new=parse_req), \
+             patch("services.analysis_service.run_analysis", new=run_analysis) as mock_run:
+            client.post("/ai/chat", json=_chat_body("analyze my NIFTY paper trades from May 2026"))
+
+        mock_run.assert_called_once()
+        call_kwargs = mock_run.call_args[1]
+        assert call_kwargs.get("symbol") == "NIFTY"
+        assert call_kwargs.get("session_type") == "paper"
+
 
 class TestAnalysisBackendClient:
-    """Tests for backend_client.get_trades()."""
+    """Tests for backend_client.get_trades() and get_ohlc_context()."""
 
     @pytest.mark.asyncio
     async def test_get_trades_calls_correct_endpoint(self):
@@ -298,3 +327,36 @@ class TestAnalysisBackendClient:
             params={"user_id": "u1", "from": "2026-05-24", "to": "2026-05-31"},
         )
         assert result == [{"session_id": "s1"}]
+
+    @pytest.mark.asyncio
+    async def test_get_trades_forwards_optional_params(self):
+        from services import backend_client as bc
+        mock_resp = MagicMock()
+        mock_resp.raise_for_status = MagicMock()
+        mock_resp.json = MagicMock(return_value=[])
+        mock_client = MagicMock()
+        mock_client.get = AsyncMock(return_value=mock_resp)
+
+        with patch("services.backend_client.get_client", return_value=mock_client):
+            await bc.get_trades("u1", "2026-05-24", "2026-05-31", symbol="NIFTY", session_type="paper")
+
+        call_params = mock_client.get.call_args[1]["params"]
+        assert call_params["symbol"] == "NIFTY"
+        assert call_params["session_type"] == "paper"
+
+    @pytest.mark.asyncio
+    async def test_get_ohlc_context_calls_correct_endpoint(self):
+        from services import backend_client as bc
+        mock_resp = MagicMock()
+        mock_resp.raise_for_status = MagicMock()
+        mock_resp.json = MagicMock(return_value={"symbol": "NIFTY", "date": "2026-05-29", "bars": []})
+        mock_client = MagicMock()
+        mock_client.get = AsyncMock(return_value=mock_resp)
+
+        with patch("services.backend_client.get_client", return_value=mock_client):
+            result = await bc.get_ohlc_context("NIFTY", "2026-05-29", entry_ts=1748511300)
+
+        assert mock_client.get.called
+        call_url = mock_client.get.call_args[0][0]
+        assert call_url == "/api/analysis/ohlc-context"
+        assert result["symbol"] == "NIFTY"
