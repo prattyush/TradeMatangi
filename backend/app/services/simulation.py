@@ -1612,14 +1612,39 @@ async def _fire_bar_close_hook(
     import httpx
 
     from app.services import user_settings_service
+    from app.services import trading as trading_svc
     user_settings = user_settings_service.get_settings(session.user_id)
+
+    position_dict: dict | None = None
+    try:
+        pos = trading_svc.get_position(session.session_id, symbol=session.symbol, right=right)
+        if pos.side != "FLAT" and pos.quantity > 0:
+            last_close = bars[-1]["close"] if bars else 0.0
+            pnl_pct = 0.0
+            if pos.avg_entry_price > 0 and last_close > 0:
+                if pos.side == "LONG":
+                    pnl_pct = (last_close - pos.avg_entry_price) / pos.avg_entry_price * 100
+                else:
+                    pnl_pct = (pos.avg_entry_price - last_close) / pos.avg_entry_price * 100
+            position_dict = {
+                "side": pos.side,
+                "qty": pos.quantity,
+                "avg_entry": pos.avg_entry_price,
+                "unrealized_pnl_pct": round(pnl_pct, 2),
+            }
+    except Exception:
+        logger.debug(
+            "Failed to resolve position for bar-close hook: session=%s right=%s",
+            session.session_id, right,
+        )
+
     payload = {
         "user_id": session.user_id,
         "session_id": session.session_id,
         "symbol": session.symbol,
         "right": right,
         "bars": bars,
-        "position": None,   # populated in Step 4 (trade execution)
+        "position": position_dict,
         "timestamp": datetime.fromtimestamp(slot_ts, tz=timezone.utc).isoformat(),
         "session_type": session.session_type,
         "funds_ratios": {
