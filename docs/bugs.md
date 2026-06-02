@@ -63,6 +63,19 @@ Look at each of the bugs, fix them and then mark them resolved as well if approv
 
 ### Real Trading Bugs
 
+**[RESOLVED]** TP exit sell trade missing from history; stale SL showing in open orders after TP fires (PR #151, 2026-06-02).
+- **Symptom 1**: After TakeProfit strategy fired and exited the position on the broker, the sell trade did not appear in Trade History after page refresh.
+- **Symptom 2**: The SL Sell order remained visible in Open Orders even though the broker had already cancelled it.
+- **Root cause 1 (trade missing)**: `check_orders()` speculatively marks the replacement LIMIT order (placed after SL cancel) as `FILLED` before Kotak confirms. Reconcile's guard `o.status != PENDING` then skipped it. If the WebSocket fill callback also missed (e.g. transitional "cancelled" event on the SL's kotak_order_id removed the fill callback), the trade was permanently lost with no recovery path.
+- **Root cause 2 (stale SL)**: When `modify_sl_to_limit_order()` causes Kotak to send a transitional "cancelled" WebSocket event for the SL's order ID, the local SL order stays `PENDING` indefinitely — `check_orders()` skips it (kotak_order_id guard) and the old reconcile had no mechanism to sync cancelled broker orders to local state.
+- **Fix**:
+  - Added `kotak_fill_confirmed: bool = False` to `Order` model. Set to `True` in both the SL `on_fill` callback (`orders.py`) and the LIMIT/TARGET fill callback `_make_fill_cb` (`simulation.py`).
+  - `_make_fill_cb` now also updates `o.status`, `o.filled_at`, `o.filled_price`, and calls `_write_order_to_db()` (all were missing).
+  - Reconcile Pass 1 guard changed from `o.status != PENDING` to `o.status == CANCELLED or o.kotak_fill_confirmed` — FILLED-locally orders where the callback missed are now processed.
+  - New **Reconcile Pass 3**: iterates broker-cancelled/rejected orders in `kotak_order_map`, cancels the corresponding local PENDING order, and emits `order_cancelled` SSE.
+- **Files**: `backend/app/models/schemas.py`, `backend/app/services/simulation.py`, `backend/app/routers/orders.py`, `backend/app/routers/kotak.py`.
+- **Note**: Double wallet credit for SELL LIMIT orders in the cancel+replace path (`check_orders()` credits at local-fill time, `_make_fill_cb` credits again on Kotak confirmation) is a known out-of-scope issue — fix in a follow-up PR.
+
 **[RESOLVED]** Kotak Neo rejects equity orders with "symbol is wrong" for TATMOT (and potentially TATPOW/RELIND).
 - **Symptom**: Placing a BUY/SELL order in real trading for TATMOT fails — Kotak API returns an error indicating the trading symbol is invalid.
 - **Root cause**: Kotak Neo `nse_cm` (NSE cash market) requires the `-EQ` suffix for equity trading symbols (e.g. `TMCV-EQ`, not `TMCV`). The `_SYMBOL_MAP` in `kotak_service.py` was missing this suffix for all three equity symbols: `TATPOWER`, `TMCV`, `RELIANCE`.
