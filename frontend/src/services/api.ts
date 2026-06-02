@@ -1,4 +1,4 @@
-import { BACKEND_URL } from '../config'
+import { BACKEND_URL, AI_HELPER_URL } from '../config'
 
 function _authHeaders(): Record<string, string> {
   try {
@@ -77,6 +77,9 @@ export interface SimulationStartRequest {
 
 export interface UserSettingsResponse {
   historical_days: number
+  funds_ratio_l_pct?: number
+  funds_ratio_m_pct?: number
+  funds_ratio_h_pct?: number
 }
 
 // ── Strategy types ──────────────────────────────────────────────────────────
@@ -240,6 +243,96 @@ export interface GuardRailStatusResponse {
   cooldown_enabled: boolean
   consecutive_losses: number
   settings: GuardRailSettings
+}
+
+// ── AI Helper types ─────────────────────────────────────────────────────────
+
+export interface DecisionAction {
+  side?: string
+  quantity_type?: string
+  quantity_value?: number | null
+  price_type?: string
+  price_value?: number | null
+}
+
+export interface DecisionItem {
+  command_id: string
+  command_text: string
+  bar_time: string
+  reason: string
+  action: DecisionAction
+  action_result: string
+  timestamp: string
+}
+
+export interface AIChatRequest {
+  message: string
+  session_id: string
+  user_id: string
+  symbol?: string | null
+  strike_ce?: number | null
+  strike_pe?: number | null
+}
+
+export interface AnalysisPattern {
+  type: 'positive' | 'negative'
+  title: string
+  detail: string
+  frequency: string
+}
+
+export interface AnalysisNotableStats {
+  win_rate?: string
+  avg_profit_pct?: string
+  avg_loss_pct?: string
+  best_time_of_day?: string
+  worst_time_of_day?: string
+}
+
+export interface AnalysisResult {
+  summary: string
+  patterns: AnalysisPattern[]
+  suggestions: string[]
+  notable_stats: AnalysisNotableStats
+}
+
+export interface AIChatResponse {
+  status: string
+  message: string
+  command_id?: string | null
+  hotword?: string | null
+  commands?: unknown[] | null
+  analysis?: AnalysisResult | null
+}
+
+export interface StrategyItem {
+  hotword: string
+  strategy_text: string
+  description?: string
+  created_at: string
+  last_used_at?: string
+  use_count?: number
+}
+
+export interface CommandItem {
+  command_id: string
+  user_id: string
+  session_id: string
+  command_text: string
+  status: 'active' | 'executed' | 'cancelled'
+  order_type: string
+  quantity_type: string
+  quantity_value?: number | null
+  parsed_trigger: string
+  parsed_price_expr: string
+  symbol?: string | null
+  right?: string | null
+  strike?: number | null
+  hotword?: string | null
+  one_shot: boolean
+  created_at: string
+  fired_at?: string | null
+  cancel_reason?: string | null
 }
 
 const api = {
@@ -707,7 +800,7 @@ const api = {
     return res.json()
   },
 
-  async reconcileKotakOrders(sessionId: string): Promise<{ reconciled: number; open_orders: unknown[] }> {
+  async reconcileKotakOrders(sessionId: string): Promise<{ reconciled: number; open_orders: unknown[]; wallet_balance: number | null }> {
     const res = await fetch(
       `${BACKEND_URL}/api/kotak/reconcile?session_id=${sessionId}`,
       { method: 'POST', headers: _authHeaders() }
@@ -819,6 +912,55 @@ const api = {
       throw new Error(data.detail || `GuardRail settings update failed: ${res.status}`)
     }
     return res.json()
+  },
+
+  // ── AI Helper ──────────────────────────────────────────────────────────────
+
+  async aiChat(req: AIChatRequest): Promise<AIChatResponse> {
+    const res = await fetch(`${AI_HELPER_URL}/ai/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(req),
+    })
+    if (!res.ok) throw new Error(`AI chat failed: ${res.status}`)
+    return res.json()
+  },
+
+  async aiGetDecisions(sessionId: string, since?: string | null): Promise<DecisionItem[]> {
+    let url = `${AI_HELPER_URL}/ai/session/${encodeURIComponent(sessionId)}/decisions`
+    if (since) url += `?since=${encodeURIComponent(since)}`
+    const res = await fetch(url)
+    if (!res.ok) throw new Error(`AI decisions fetch failed: ${res.status}`)
+    return res.json()
+  },
+
+  async aiGetStrategies(userId: string): Promise<StrategyItem[]> {
+    const res = await fetch(`${AI_HELPER_URL}/ai/strategies?user_id=${encodeURIComponent(userId)}`)
+    if (!res.ok) throw new Error(`AI strategies fetch failed: ${res.status}`)
+    const data = await res.json()
+    return (data.strategies ?? []) as StrategyItem[]
+  },
+
+  async aiDeleteStrategy(userId: string, hotword: string): Promise<void> {
+    const res = await fetch(
+      `${AI_HELPER_URL}/ai/strategies/${encodeURIComponent(hotword)}?user_id=${encodeURIComponent(userId)}`,
+      { method: 'DELETE' },
+    )
+    if (!res.ok) throw new Error(`AI strategy delete failed: ${res.status}`)
+  },
+
+  async aiGetCommands(sessionId: string): Promise<CommandItem[]> {
+    const res = await fetch(`${AI_HELPER_URL}/ai/session/${encodeURIComponent(sessionId)}/commands`)
+    if (!res.ok) throw new Error(`AI commands fetch failed: ${res.status}`)
+    return res.json()
+  },
+
+  async aiCancelCommand(commandId: string, userId: string): Promise<void> {
+    const res = await fetch(
+      `${AI_HELPER_URL}/ai/commands/${encodeURIComponent(commandId)}?user_id=${encodeURIComponent(userId)}`,
+      { method: 'DELETE' },
+    )
+    if (!res.ok) throw new Error(`AI command cancel failed: ${res.status}`)
   },
 }
 

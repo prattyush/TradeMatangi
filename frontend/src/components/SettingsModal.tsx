@@ -241,6 +241,17 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
       api.getUserSettings().then(s => {
         setHistoricalDays(s.historical_days)
         localStorage.setItem(HISTORICAL_DAYS_KEY, String(s.historical_days))
+        // Sync ratio settings from backend (overrides localStorage if backend has values)
+        if (s.funds_ratio_l_pct != null && s.funds_ratio_m_pct != null && s.funds_ratio_h_pct != null) {
+          const synced = {
+            l: Math.round(s.funds_ratio_l_pct * 100 * 100) / 100,
+            m: Math.round(s.funds_ratio_m_pct * 100 * 100) / 100,
+            h: Math.round(s.funds_ratio_h_pct * 100 * 100) / 100,
+          }
+          setRatios(synced)
+          setRatioInputs({ l: String(synced.l), m: String(synced.m), h: String(synced.h) })
+          localStorage.setItem(FUNDS_RATIOS_KEY, JSON.stringify(synced))
+        }
       }).catch(() => {})
 
       api.getGuardRailSettings().then(s => {
@@ -302,6 +313,12 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
       return
     }
     setRatios({ l, m, h })
+    // Persist to backend so AI Helper can read the user-configured values
+    api.updateUserSettings({
+      funds_ratio_l_pct: l / 100,
+      funds_ratio_m_pct: m / 100,
+      funds_ratio_h_pct: h / 100,
+    }).catch(() => {})
     setStatus('Saved')
     setTimeout(() => setStatus(null), 2000)
   }

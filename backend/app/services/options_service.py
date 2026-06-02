@@ -13,6 +13,7 @@ from typing import Iterator
 import pandas as pd
 
 from app.config import DATA_DIR, OHLCDATA_DIR, MARKET_OPEN, MARKET_CLOSE, LOT_SIZES, SUPPORTED_SYMBOLS
+from app.utils import NSE_HOLIDAYS, is_trading_day as _is_trading_day
 
 logger = logging.getLogger(__name__)
 
@@ -26,74 +27,6 @@ STRIKE_INTERVALS: dict[str, int] = {
     "TATMOT": 5,
     "TATPOW": 5,
 }
-
-# NSE/BSE market holidays (2023–2026). Source: official NSE/BSE holiday calendar.
-# Update annually when the exchange publishes the next year's list.
-NSE_HOLIDAYS: frozenset[datetime.date] = frozenset({
-    # 2023
-    datetime.date(2023, 8, 15),   # Independence Day
-    datetime.date(2023, 9, 19),   # Ganesh Chaturthi
-    datetime.date(2023, 10, 2),   # Gandhi Jayanti
-    datetime.date(2023, 10, 24),  # Dussehra (Vijaya Dashami)
-    datetime.date(2023, 10, 27),  # Diwali Laxmi Puja
-    datetime.date(2023, 11, 14),  # Diwali Balipratipada
-    datetime.date(2023, 12, 25),  # Christmas
-    # 2024
-    datetime.date(2024, 1, 22),   # Ram Mandir Consecration (special)
-    datetime.date(2024, 1, 26),   # Republic Day
-    datetime.date(2024, 3, 8),    # Mahashivratri
-    datetime.date(2024, 3, 25),   # Holi
-    datetime.date(2024, 3, 29),   # Good Friday
-    datetime.date(2024, 4, 11),   # Eid ul-Fitr
-    datetime.date(2024, 4, 17),   # Ram Navami
-    datetime.date(2024, 5, 1),    # Maharashtra Day
-    datetime.date(2024, 5, 20),   # General election day (Mumbai)
-    datetime.date(2024, 6, 17),   # Eid ul-Adha
-    datetime.date(2024, 7, 17),   # Muharram
-    datetime.date(2024, 8, 15),   # Independence Day
-    datetime.date(2024, 10, 2),   # Gandhi Jayanti
-    datetime.date(2024, 11, 1),   # Diwali Laxmi Puja
-    datetime.date(2024, 11, 15),  # Gurunanak Jayanti
-    datetime.date(2024, 11, 20),  # Maharashtra assembly election day
-    datetime.date(2024, 12, 25),  # Christmas
-    # 2025
-    datetime.date(2025, 2, 26),   # Mahashivratri
-    datetime.date(2025, 3, 14),   # Holi
-    datetime.date(2025, 3, 31),   # Eid ul-Fitr
-    datetime.date(2025, 4, 10),   # Mahavir Jayanti
-    datetime.date(2025, 4, 14),   # Dr. Ambedkar Jayanti
-    datetime.date(2025, 4, 18),   # Good Friday
-    datetime.date(2025, 5, 1),    # Maharashtra Day
-    datetime.date(2025, 8, 6),    # Muharram
-    datetime.date(2025, 8, 15),   # Independence Day
-    datetime.date(2025, 8, 27),   # Ganesh Chaturthi
-    datetime.date(2025, 10, 2),   # Gandhi Jayanti
-    datetime.date(2025, 10, 21),  # Diwali Laxmi Puja
-    datetime.date(2025, 10, 22),  # Diwali Balipratipada
-    datetime.date(2025, 11, 5),   # Gurunanak Jayanti
-    datetime.date(2025, 12, 25),  # Christmas
-    # 2026
-    datetime.date(2026, 1, 15),   # Makar Sankranti
-    datetime.date(2026, 1, 26),   # Republic Day
-    datetime.date(2026, 3, 3),    # Mahashivratri
-    datetime.date(2026, 3, 26),   # Holi
-    datetime.date(2026, 3, 31),   # Eid ul-Fitr
-    datetime.date(2026, 4, 3),    # Good Friday
-    datetime.date(2026, 4, 14),   # Dr. Ambedkar Jayanti
-    datetime.date(2026, 5, 1),    # Maharashtra Day
-    datetime.date(2026, 5, 28),   # Eid ul-Adha
-    datetime.date(2026, 6, 26),   # Muharram
-    datetime.date(2026, 9, 14),   # Milad-un-Nabi
-    datetime.date(2026, 10, 2),   # Gandhi Jayanti
-    datetime.date(2026, 10, 20),  # Diwali Laxmi Puja
-    datetime.date(2026, 11, 10),  # Gurunanak Jayanti
-    datetime.date(2026, 11, 24),  # Market holiday
-    datetime.date(2026, 12, 25),  # Christmas
-})
-
-
-def _is_trading_day(d: datetime.date) -> bool:
-    return d.weekday() < 5 and d not in NSE_HOLIDAYS
 
 
 def _prev_trading_day(d: datetime.date) -> datetime.date:

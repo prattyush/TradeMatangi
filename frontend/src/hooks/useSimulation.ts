@@ -285,7 +285,9 @@ export function useSimulation() {
       })
       setState(s => ({
         ...s,
-        openOrders: [...s.openOrders, order],
+        openOrders: s.openOrders.some(o => o.order_id === order.order_id)
+          ? s.openOrders
+          : [...s.openOrders, order],
         walletRefreshKey: s.walletRefreshKey + 1,
         orderError: null,
       }))
@@ -299,7 +301,10 @@ export function useSimulation() {
   }, [state.sessionId])
 
   const addOpenOrder = useCallback((order: Order) => {
-    setState(s => ({ ...s, openOrders: [...s.openOrders, order] }))
+    setState(s => {
+      if (s.openOrders.some(o => o.order_id === order.order_id)) return s
+      return { ...s, openOrders: [...s.openOrders, order] }
+    })
   }, [])
 
   const cancelOrder = useCallback(async (orderId: string) => {
@@ -451,6 +456,45 @@ export function useSimulation() {
     setState(s => ({ ...s, trades }))
   }, [])
 
+  const fetchAndUpdatePosition = useCallback(async () => {
+    if (!state.sessionId) return
+    const [posEq, posCE, posPE] = await Promise.all([
+      api.getPosition(state.sessionId),
+      api.getPosition(state.sessionId, 'CE'),
+      api.getPosition(state.sessionId, 'PE'),
+    ])
+    setState(s => ({
+      ...s,
+      position: posEq,
+      positionCE: posCE,
+      positionPE: posPE,
+      walletRefreshKey: s.walletRefreshKey + 1,
+    }))
+  }, [state.sessionId])
+
+  const addTradeFromSSE = useCallback(async (trade: Trade) => {
+    // Deduplicate: UI-initiated trades are already in state from api.buy/sell response
+    setState(s => {
+      if (s.trades.some(t => t.trade_id === trade.trade_id)) return s
+      return { ...s, trades: [...s.trades, trade] }
+    })
+    // Refresh position so P&L reflects the AI-placed order
+    if (!state.sessionId) return
+    const right = trade.right as string | undefined
+    const [posCE, posPE, posEq] = await Promise.all([
+      right === 'CE' ? api.getPosition(state.sessionId, 'CE') : Promise.resolve(null),
+      right === 'PE' ? api.getPosition(state.sessionId, 'PE') : Promise.resolve(null),
+      (!right) ? api.getPosition(state.sessionId) : Promise.resolve(null),
+    ])
+    setState(s => ({
+      ...s,
+      walletRefreshKey: s.walletRefreshKey + 1,
+      ...(posCE ? { positionCE: posCE } : {}),
+      ...(posPE ? { positionPE: posPE } : {}),
+      ...(posEq ? { position: posEq } : {}),
+    }))
+  }, [state.sessionId])
+
   return {
     ...state,
     pnl,
@@ -481,5 +525,7 @@ export function useSimulation() {
     clearOrderError,
     incrementWalletRefreshKey,
     setTrades,
+    addTradeFromSSE,
+    fetchAndUpdatePosition,
   }
 }

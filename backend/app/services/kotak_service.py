@@ -366,6 +366,10 @@ class KotakNeoService:
         # kotak_order_id → (callback, asyncio_loop)
         self._fill_callbacks: dict[str, tuple[Callable, Any]] = {}
         self._reject_callbacks: dict[str, tuple[Callable, Any]] = {}
+        # Fills that arrived before register_fill_callback was called (race condition
+        # for very fast fills on liquid instruments).
+        # kotak_order_id → (side, qty, price)
+        self._pending_fills: dict[str, tuple[str, int, float]] = {}
         # KotakBroadcaster registers here to receive stock_feed messages
         self._market_data_callback: Callable | None = None
         # Called by _on_open so KotakBroadcaster can re-subscribe after reconnect
@@ -708,12 +712,25 @@ class KotakNeoService:
         loop: Any,
     ) -> None:
         """
-        Register a thread-safe callback to be called when `kotak_order_id` is
-        filled. The callback signature is: callback(kotak_order_id, side, qty, price).
-        It is scheduled on `loop` via call_soon_threadsafe.
+        Register a thread-safe callback for when `kotak_order_id` is filled.
+        Callback signature: callback(kotak_order_id, side, qty, price).
+
+        If the fill arrived before this registration (race condition on fast fills),
+        it is dispatched immediately via loop.call_soon_threadsafe.
         """
         with self._lock:
-            self._fill_callbacks[kotak_order_id] = (callback, loop)
+            pending = self._pending_fills.pop(kotak_order_id, None)
+            if pending is None:
+                self._fill_callbacks[kotak_order_id] = (callback, loop)
+
+        if pending is not None:
+            p_side, p_qty, p_price = pending
+            logger.info(
+                "KotakNeoService: dispatching buffered fill for %s "
+                "side=%s qty=%d price=%.2f",
+                kotak_order_id, p_side, p_qty, p_price,
+            )
+            loop.call_soon_threadsafe(callback, kotak_order_id, p_side, p_qty, p_price)
 
     def deregister_fill_callback(self, kotak_order_id: str) -> None:
         with self._lock:
@@ -874,25 +891,32 @@ class KotakNeoService:
                     qty_str = order_data.get("qty", "0") or "0"
                     side_code = order_data.get("trnsTp", "B")
 
-                    with self._lock:
-                        entry = self._fill_callbacks.get(order_id)
-                    if entry is None:
-                        continue
-
-                    callback, loop = entry
                     filled_price = float(avg_prc)
                     qty = int(qty_str)
                     side = "BUY" if side_code == "B" else "SELL"
 
+                    with self._lock:
+                        entry = self._fill_callbacks.pop(order_id, None)
+                        self._reject_callbacks.pop(order_id, None)
+
+                    if entry is None:
+                        # Fill arrived before register_fill_callback was called.
+                        # Buffer it so the callback can dispatch immediately on registration.
+                        with self._lock:
+                            self._pending_fills[order_id] = (side, qty, filled_price)
+                        logger.info(
+                            "Kotak order %s filled with no callback registered — buffered "
+                            "(side=%s qty=%d price=%.2f)",
+                            order_id, side, qty, filled_price,
+                        )
+                        continue
+
+                    callback, loop = entry
                     logger.info(
                         "Kotak order %s filled: side=%s qty=%d price=%.2f",
                         order_id, side, qty, filled_price,
                     )
                     loop.call_soon_threadsafe(callback, order_id, side, qty, filled_price)
-
-                    with self._lock:
-                        self._fill_callbacks.pop(order_id, None)
-                        self._reject_callbacks.pop(order_id, None)
 
                 elif order_status in ("rejected", "cancelled"):
                     reject_reason = (

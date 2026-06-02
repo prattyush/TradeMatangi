@@ -91,6 +91,7 @@ class Position(BaseModel):
 class TradeRequest(BaseModel):
     session_id: str
     right: str | None = None  # "CE" or "PE" for options sessions; None for equity
+    funds_ratio_pct: float | None = None  # 0.0–1.0; when provided, overrides default lot-size quantity
 
 
 class OHLCCandle(BaseModel):
@@ -240,10 +241,16 @@ class WalletResetRequest(BaseModel):
 
 class UserSettingsResponse(BaseModel):
     historical_days: int = 2
+    funds_ratio_l_pct: float = 0.03
+    funds_ratio_m_pct: float = 0.06
+    funds_ratio_h_pct: float = 0.12
 
 
 class UserSettingsUpdateRequest(BaseModel):
     historical_days: int = Field(default=2, ge=1, le=5)
+    funds_ratio_l_pct: float | None = Field(default=None, ge=0.001, le=1.0)
+    funds_ratio_m_pct: float | None = Field(default=None, ge=0.001, le=1.0)
+    funds_ratio_h_pct: float | None = Field(default=None, ge=0.001, le=1.0)
 
 
 # ── Strategies ────────────────────────────────────────────────────────────────

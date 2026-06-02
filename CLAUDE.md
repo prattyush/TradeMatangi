@@ -54,42 +54,6 @@ Look into frontend technical constraints doc when needed which is located at doc
 | Phase VIII — Launch | ✅ Complete | 391 | `docs/spec-phase8.md` |
 | Phase IX — RealTrading | ✅ Complete | 436 | `docs/spec-phase9.md` |
 | Phase X — GuardRails | ✅ Complete | 495 | `docs/spec-phase10.md` |
-| Phase XI — AI Helper | 🔨 In Progress (Step 1 done) | — | `docs/spec-phase11.md`, `docs/architecture.md` |
+| Phase XI — AI Helper | 🔨 In Progress (ExitFeatures done) | 513 backend / 136 aihelper | `docs/spec-phase11.md`, `docs/architecture.md` |
 
 Full status, bugs fixed, and lessons learned for each phase are in the respective phase spec docs.
-
-### Post-Phase IX features (merged to dev)
-
-| Feature | PR | Status |
-|---------|-----|--------|
-| Kotak Neo live streaming + Admin Settings tab | #73 (feature/kotak-streaming-admin-tab) | ✅ merged to dev + main |
-| Kotak Neo API corrections (scrip_master, token field, modify qty, isIndex) | #75 (fix/kotak-api-corrections) | ✅ merged to dev + main |
-| Kotak Neo streaming bugs (wrong index segments, no reconnect on WS drop) | #88 (fix/kotak-streaming-bugs) | ✅ merged to dev + main |
-| KiteBroadcaster race condition + Kotak WS auto-reconnect | #90 (fix/kite-broadcaster-race-condition-kotak-reconnect) | ✅ merged to dev + main |
-| ST P&L label + P&L % display mode + wallet lock during session | #92 (feature/st-pnl-label-pct-mode-wallet-lock) | ✅ merged to dev + main |
-| TargetProfit strategy + Breakeven overhaul + AggressiveStoploss 'only in profit' to Settings | #94 (feature/target-profit-breakeven-overhaul) | ✅ merged to dev + main |
-| LTP button in price inputs + global button click animation | #96 (feature/ltp-button-click-animation) | ✅ merged to dev + main |
-| Change Password in Settings General tab + remove admin credentials hint from login | #98 (feature/change-password-settings) | ✅ merged to dev + main |
-| Drawing tools dropdown (H-Line, Trend, Fib Retracement, Parallel Channel) + LIFO Clear + free crosshair | #100 (feature/drawing-tools-fib-channel) | ✅ merged to dev + main |
-
-### Phase XI — AI Helper (in progress)
-
-| Item | PR | Status |
-|------|-----|--------|
-| Architecture planning: `docs/architecture.md`, `docs/spec-phase11.md` | #123 (docs/phase11-architecture-planning) | ✅ merged to dev + main |
-| Step 1 Foundation: `aihelper/` server skeleton, DynamoDB stores, LiteLLM + LangFuse wiring, processor strategies, scripts | #125 (feature/phase11-step1-foundation) | ✅ merged to dev + main |
-
-### Post-Phase X fixes (merged to dev + main)
-
-| Fix | PR | Status |
-|-----|-----|--------|
-| GuardRail BLOCK reason: human-readable expiry time ("resumes after 09:35") + separate cooldown block bars (n) setting | #102 (feature/guardrails-phase10) | ✅ merged to dev + main |
-| Time picker scroll throttle: 1 step per 180ms, prevents runaway jumps on Start Time input | #104 (fix/time-picker-scroll-throttle) | ✅ merged to dev + main |
-| Settings: move Change Password to new Profile tab; TargetProfit chart price-pick (⊕) button; data/ added to .gitignore | #107 (feature/profile-tab-settings) | ✅ merged to dev + main |
-| Settings modal: fixed width 440px + tab font 11px so 5 tab labels don't crowd; tab content scrollable | #110 (fix/settings-modal-fixed-width) | ✅ merged to dev + main |
-| TargetProfit/BreakEven: emit order_cancelled SSE event when strategy cancels stoploss so UI removes it | #111 (fix/targetprofit-stoploss-cancel-event) | ✅ merged to dev + main |
-| Strategy completed UI + SELL marker strike fix: emit strategy_completed SSE event; pass per-right strike on strategy LIMIT orders | #113 (fix/strategy-completed-sell-marker) | ✅ merged to dev + main |
-| AutoStop guardrail bypass fix + button color: check_guardrails() added to AutoStop bar-close path; AutoStop button brighter green (#56d364 text, #1f4d2e bg, green border); 495 tests | #116 (fix/autostop-guardrail-button-color) | ✅ merged to dev + main |
-| Avg entry FIFO fix: get_position() now uses FIFO lot matching so avg_entry_price shows only open lots, not full session history; 3 new tests; 498 tests | #119 (fix/position-avg-entry-fifo) | ✅ merged to dev + main |
-| Pos P&L commission fix: entry_commission added to Position (FIFO-apportioned); Pos P&L = gross unrealized − entry_commission; Session P&L unchanged (already correct); 498 tests | #120 (fix/pnl-commission-and-fifo-avg-entry) | ✅ merged to dev + main |
-| Pos P&L full round-trip commission: estimated exit commission (mirrored backend formula) subtracted on every tick; brokeragePerOrder added to SimulationState; works for all modes + equity + options | #121 (fix/pos-pnl-full-roundtrip-commission) | ✅ merged to dev + main |

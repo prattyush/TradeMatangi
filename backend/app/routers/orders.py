@@ -1,8 +1,9 @@
+import json
 from fastapi import APIRouter, HTTPException, Query
 from app.models.schemas import Order, OrderType, TradeSide, PlaceOrderRequest, UpdateOrderRequest
 from app.services import order_service, simulation as sim_svc
 from app.services.wallet_service import InsufficientFundsError, get_balance
-from app.config import LOT_SIZES
+from app.config import LOT_SIZES, EQUITY_MIS_MARGIN_RATE
 
 router = APIRouter(prefix="/api/orders", tags=["orders"])
 
@@ -96,6 +97,10 @@ async def place_order(req: PlaceOrderRequest):
             raise HTTPException(status_code=400, detail="quantity must be at least 1")
         quantity = req.quantity
 
+    # Real equity MIS: only 20% margin deducted from wallet for BUY orders.
+    is_real_equity = session.session_type == "real" and session.instrument_type == "equity"
+    order_margin_rate = EQUITY_MIS_MARGIN_RATE if is_real_equity else 1.0
+
     try:
         order = order_service.place_order(
             session_id=req.session_id,
@@ -112,6 +117,7 @@ async def place_order(req: PlaceOrderRequest):
             strike=order_strike,
             target_deviation_pct=req.target_deviation_pct,
             user_id=session.user_id,
+            margin_rate=order_margin_rate,
         )
     except InsufficientFundsError as exc:
         raise HTTPException(status_code=402, detail=str(exc))
@@ -234,6 +240,28 @@ async def place_order(req: PlaceOrderRequest):
             order_service._write_order_to_db(order)
             raise HTTPException(status_code=502, detail=f"Kotak SL order failed: {exc}")
 
+    try:
+        session.queue.put_nowait(json.dumps({
+            "type": "order_placed",
+            "order_id": order.order_id,
+            "session_id": order.session_id,
+            "user_id": order.user_id,
+            "symbol": order.symbol,
+            "side": order.side.value,
+            "order_type": order.order_type.value,
+            "quantity": order.quantity,
+            "trigger_price": order.trigger_price,
+            "limit_price": order.limit_price,
+            "status": order.status.value,
+            "created_at": order.created_at,
+            "filled_at": order.filled_at,
+            "filled_price": order.filled_price,
+            "is_stoploss": order.is_stoploss,
+            "right": order.right,
+            "strike": order.strike,
+        }))
+    except Exception:
+        pass
     return order
 
 

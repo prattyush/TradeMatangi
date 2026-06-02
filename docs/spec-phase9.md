@@ -559,3 +559,19 @@ All four bugs came from assuming API shape from documentation or analogies rathe
 
 **Index subscriptions need a separate `client.subscribe()` call**
 The `isIndex` flag is not per-instrument — it applies to the entire batch passed to a single `subscribe()` call. When building a multi-instrument broadcaster, always separate index tokens from scrip tokens and subscribe them in distinct calls.
+
+---
+
+## Post-Phase IX Features (merged to dev + main)
+
+| Feature | PR | Status |
+|---------|-----|--------|
+| Kotak Neo live streaming + Admin Settings tab | #73 (feature/kotak-streaming-admin-tab) | ✅ merged to dev + main |
+| Kotak Neo API corrections (scrip_master, token field, modify qty, isIndex) | #75 (fix/kotak-api-corrections) | ✅ merged to dev + main |
+| Kotak Neo streaming bugs (wrong index segments, no reconnect on WS drop) | #88 (fix/kotak-streaming-bugs) | ✅ merged to dev + main |
+| KiteBroadcaster race condition + Kotak WS auto-reconnect | #90 (fix/kite-broadcaster-race-condition-kotak-reconnect) | ✅ merged to dev + main |
+| ST P&L label + P&L % display mode + wallet lock during session | #92 (feature/st-pnl-label-pct-mode-wallet-lock) | ✅ merged to dev + main |
+| TargetProfit strategy + Breakeven overhaul + AggressiveStoploss 'only in profit' to Settings | #94 (feature/target-profit-breakeven-overhaul) | ✅ merged to dev + main |
+| LTP button in price inputs + global button click animation | #96 (feature/ltp-button-click-animation) | ✅ merged to dev + main |
+| Change Password in Settings General tab + remove admin credentials hint from login | #98 (feature/change-password-settings) | ✅ merged to dev + main |
+| Drawing tools dropdown (H-Line, Trend, Fib Retracement, Parallel Channel) + LIFO Clear + free crosshair | #100 (feature/drawing-tools-fib-channel) | ✅ merged to dev + main |

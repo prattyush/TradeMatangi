@@ -19,6 +19,8 @@ LOG_LEVEL = os.getenv("LOG_LEVEL", "info")
 
 DEFAULT_SYMBOL = "NIFTY"
 
+AI_HELPER_URL = os.getenv("AI_HELPER_URL", "http://localhost:8701")
+
 MARKET_OPEN = "09:15:00"
 MARKET_CLOSE = "15:30:00"
 
@@ -50,6 +52,10 @@ DEFAULT_FUNDS_RATIOS: dict[str, float] = {"l": 3.0, "m": 6.0, "h": 12.0}
 # A BUY limit is placed at LTP × (1 + KOTAK_SLIPPAGE_PCT) to guarantee fill.
 # A SELL limit is placed at LTP × (1 − KOTAK_SLIPPAGE_PCT).
 KOTAK_SLIPPAGE_PCT: float = 0.005  # 0.5%
+
+# NSE equity MIS (intraday) margin requirement: broker extends 5× leverage,
+# so only 20% of trade value is deducted from the wallet.
+EQUITY_MIS_MARGIN_RATE: float = 0.20
 
 SUPPORTED_SYMBOLS: dict[str, dict] = {
     "NIFTY": {

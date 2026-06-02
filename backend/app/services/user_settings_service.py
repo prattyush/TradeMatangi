@@ -16,6 +16,9 @@ DEFAULT_SETTINGS: dict = {
     "guardrail_ban_loss_trade_pct": 60.0,
     "guardrail_ban_enabled": False,
     "guardrail_cooldown_enabled": False,
+    "funds_ratio_l_pct": 0.03,
+    "funds_ratio_m_pct": 0.06,
+    "funds_ratio_h_pct": 0.12,
 }
 
 
@@ -57,6 +60,9 @@ def get_settings(user_id: str) -> dict:
             "guardrail_ban_loss_trade_pct": float(item.get("guardrail_ban_loss_trade_pct", DEFAULT_SETTINGS["guardrail_ban_loss_trade_pct"])),
             "guardrail_ban_enabled": bool(item.get("guardrail_ban_enabled", DEFAULT_SETTINGS["guardrail_ban_enabled"])),
             "guardrail_cooldown_enabled": bool(item.get("guardrail_cooldown_enabled", DEFAULT_SETTINGS["guardrail_cooldown_enabled"])),
+            "funds_ratio_l_pct": float(item.get("funds_ratio_l_pct", DEFAULT_SETTINGS["funds_ratio_l_pct"])),
+            "funds_ratio_m_pct": float(item.get("funds_ratio_m_pct", DEFAULT_SETTINGS["funds_ratio_m_pct"])),
+            "funds_ratio_h_pct": float(item.get("funds_ratio_h_pct", DEFAULT_SETTINGS["funds_ratio_h_pct"])),
         }
     except Exception:
         logger.exception("Failed to get settings for user %s", user_id)

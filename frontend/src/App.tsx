@@ -10,6 +10,7 @@ import SettingsModal, { loadFundsRatioMode, loadFundsRatios, loadTargetDeviation
 import { StrategyResponse, StartStrategyRequest, Order } from './services/api'
 import LoginScreen from './components/LoginScreen'
 import TradeAnalysis from './components/TradeAnalysis'
+import AIChatPanel from './components/AIChatPanel'
 import { useSimulation, InstrumentConfig } from './hooks/useSimulation'
 import { useSSE } from './hooks/useSSE'
 import api from './services/api'
@@ -324,8 +325,10 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
       setRunningStrategies(prev => prev.filter(s => s.strategy_id !== (event.strategy_id as string)))
     } else if (event.type === 'broker_error') {
       setBrokerError(event.message as string)
+    } else if (event.type === 'new_trade') {
+      sim.addTradeFromSSE(event as unknown as import('./services/api').Trade)
     }
-  }, [sim.setLatestTick, sim.handleSessionEnded, sim.handleOrderFilled, sim.handleOrderCancelled, sim.addOpenOrder, setGuardrailPopup, setRunningStrategies])
+  }, [sim.setLatestTick, sim.handleSessionEnded, sim.handleOrderFilled, sim.handleOrderCancelled, sim.addOpenOrder, sim.addTradeFromSSE, setGuardrailPopup, setRunningStrategies])
 
   useSSE(sim.sseUrl, handleSSEMessage)
 
@@ -890,9 +893,12 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
             sessionType={sim.sessionType}
             onRefresh={sim.sessionId ? async () => {
               const result = await api.reconcileKotakOrders(sim.sessionId!)
-              const trades = await api.getTrades(sim.sessionId!)
+              // Fetch trades and positions in parallel so P&L recalculates correctly.
+              const [trades] = await Promise.all([
+                api.getTrades(sim.sessionId!),
+                sim.fetchAndUpdatePosition(),  // also bumps walletRefreshKey
+              ])
               sim.setTrades(trades)
-              sim.incrementWalletRefreshKey()
               const openCount = result.open_orders?.length ?? 0
               if (result.reconciled > 0 || openCount > 0) {
                 const parts: string[] = []
@@ -904,6 +910,14 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
           />
         </div>
       </div>
+
+      <AIChatPanel
+        sessionId={sim.sessionId}
+        userId={authUser.userId}
+        symbol={sim.symbol || null}
+        strikeCe={sim.sessionStrikeCE}
+        strikePe={sim.sessionStrikePE}
+      />
     </div>
   )
 }

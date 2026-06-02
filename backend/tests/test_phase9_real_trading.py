@@ -607,10 +607,14 @@ class TestReconcileOpenOrders:
         ]
         mock_kotak_svc = MagicMock()
         mock_kotak_svc.get_order_history.return_value = kotak_orders
+        mock_kotak_svc.get_funds.return_value = 50000.0
 
         mock_session = MagicMock()
         mock_session.session_type = "real"
+        mock_session.symbol = "NIFTY"          # needed for external order symbol check
+        mock_session.instrument_type = "equity"
         mock_session.kotak_order_map = {}
+        mock_session.external_reconciled_kotak_ids = set()  # needed for Pass 2
         mock_session.current_time = 1000
         mock_session.user_id = FIXED_USER_ID
         mock_session.date = "2026-05-26"
@@ -618,7 +622,8 @@ class TestReconcileOpenOrders:
         with patch("app.routers.kotak.get_service", return_value=mock_kotak_svc), \
              patch("app.services.real_trading_service.is_whitelisted_user", return_value=True), \
              patch("app.services.user_service.get_user_info", return_value={"is_admin": True}), \
-             patch("app.services.simulation.get_session", return_value=mock_session):
+             patch("app.services.simulation.get_session", return_value=mock_session), \
+             patch("app.services.wallet_service.reset"):
             resp = client.post(
                 "/api/kotak/reconcile?session_id=sess_test",
                 headers=ADMIN_HEADERS,
@@ -629,3 +634,4 @@ class TestReconcileOpenOrders:
         assert "open_orders" in data
         assert len(data["open_orders"]) == 1
         assert data["open_orders"][0]["status"] == "open"
+        assert "wallet_balance" in data  # new field from wallet sync
