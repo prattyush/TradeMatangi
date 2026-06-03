@@ -139,10 +139,12 @@ async def evaluate_command(
     bars: list[dict],
     position: dict | None,
     command_text: str = "",
+    underlying_bars: list[dict] | None = None,
 ) -> dict[str, Any]:
     """
     Evaluate whether the entry/exit condition is met for the current bar.
     Returns {"should_trade": bool, "side": "BUY"|"SELL", "reason": str, "computed_price": float|null}
+    underlying_bars: NIFTY bars for cross-symbol commands (trigger on underlying, act on CE/PE).
     """
     if not bars:
         return {"should_trade": False, "side": "BUY", "reason": "No bars available", "computed_price": None}
@@ -151,6 +153,22 @@ async def evaluate_command(
     prev = bars[-2] if len(bars) >= 2 else {}
     bar_color = "bear" if current.get("close", 0) < current.get("open", 0) else "bull"
     position_json = json.dumps(position) if position else "null"
+
+    # Build cross-symbol section when underlying bars are available
+    underlying_section = ""
+    if underlying_bars:
+        ul_current = underlying_bars[-1]
+        ul_prev = underlying_bars[-2] if len(underlying_bars) >= 2 else {}
+        underlying_section = (
+            f"\nUnderlying (NIFTY) bars — use for cross-symbol trigger conditions:\n"
+            f"  Current underlying bar (just closed):\n"
+            f"    open={ul_current.get('open')}  high={ul_current.get('high')}  "
+            f"low={ul_current.get('low')}  close={ul_current.get('close')}\n"
+            f"  Previous underlying bar:\n"
+            f"    open={ul_prev.get('open')}  high={ul_prev.get('high')}  "
+            f"low={ul_prev.get('low')}  close={ul_prev.get('close')}\n"
+            f"  All underlying bars (oldest → newest):\n{json.dumps(underlying_bars)}\n"
+        )
 
     system = (
         "You are a trading execution engine for Indian equity/options markets (NSE/NFO).\n"
@@ -166,7 +184,8 @@ async def evaluate_command(
         f"  open={prev.get('open')}  high={prev.get('high')}  "
         f"low={prev.get('low')}  close={prev.get('close')}\n\n"
         f"Current position (null if none):\n{position_json}\n\n"
-        f"All bars for additional context (oldest → newest):\n{json.dumps(bars)}\n\n"
+        f"All bars for additional context (oldest → newest):\n{json.dumps(bars)}\n"
+        + underlying_section + "\n"
         f"Command text (original natural language):\n{command_text}\n\n"
         f"Condition to evaluate:\n"
         f"  Trigger      : {parsed_trigger}\n"
@@ -187,6 +206,7 @@ async def evaluate_command(
         '    "close+0.5"        → computed_price = round(close+0.5 to nearest 0.05)\n'
         '    "<fixed number>"   → computed_price = that number rounded to nearest 0.05\n'
         "- All prices must be rounded to nearest ₹0.05 (NSE minimum tick size).\n"
+        "- If the trigger references underlying/NIFTY bars, evaluate against the underlying bars section above.\n"
         "- If the trigger cannot be evaluated from available data, set should_trade=false."
     )
     return await _complete(
@@ -229,11 +249,14 @@ async def extract_command_fields(message: str) -> dict[str, Any]:
         "- trigger_right: which bar stream should trigger evaluation:\n"
         "    set to 'CE' if the trigger condition is explicitly about CE bar behaviour\n"
         "    set to 'PE' if the trigger condition is explicitly about PE bar behaviour\n"
-        "    set to null if the trigger is about Nifty/underlying bars, or the stream is unspecified\n"
+        "    set to 'UNDERLYING' if the trigger is about Nifty/underlying bar behaviour "
+        "(e.g. 'when Nifty crosses 25000', 'when underlying closes below X')\n"
+        "    set to null if the stream is unspecified or the command is for an equity session\n"
         "  Examples:\n"
         "    'when CE bar closes bull' → trigger_right='CE'\n"
         "    'when PE bar low breaks previous low' → trigger_right='PE'\n"
-        "    'when Nifty crosses 25000' → trigger_right=null\n"
+        "    'when Nifty crosses 25000' → trigger_right='UNDERLYING'\n"
+        "    'when Nifty closes below 24200, exit PE' → trigger_right='UNDERLYING'\n"
         "    'when bar closes green' (no stream specified) → trigger_right=null\n"
         "- price_expr: for market order_type → always 'market'; "
         "for target/limit → extract from message; null if unclear\n"
@@ -371,10 +394,12 @@ async def extract_exit_command_fields(message: str) -> dict[str, Any]:
         "    null for exit_position; null if not determinable\n"
         "    Examples: 'prev_bar.low', 'close - 1', 'open of the current bar', '89.5'\n"
         "- right: the OPTIONS LEG affected — CE or PE if explicitly mentioned; null for equity\n"
-        "- trigger_right: which bar stream triggers evaluation (same rules as entry commands):\n"
+        "- trigger_right: which bar stream triggers evaluation:\n"
         "    'CE' if trigger condition is about CE bar behaviour\n"
         "    'PE' if trigger condition is about PE bar behaviour\n"
-        "    null if trigger is about Nifty/underlying bars or stream is unspecified\n"
+        "    'UNDERLYING' if trigger is about Nifty/underlying bars "
+        "(e.g. 'when Nifty closes below X', 'when underlying crosses Y')\n"
+        "    null if stream is unspecified or equity session\n"
         "- trigger: normalize to bar-param expressions; null if exit condition not stated\n"
         "- missing_fields: include 'exit_action' if not determinable, 'trigger' if absent,\n"
         "    'exit_price_expr' if required but not determinable\n"
@@ -394,10 +419,12 @@ async def evaluate_exit_command(
     bars: list[dict],
     position: dict | None,
     command_text: str = "",
+    underlying_bars: list[dict] | None = None,
 ) -> dict[str, Any]:
     """
     Evaluate whether the exit condition is met for the current bar.
     Returns {"should_exit": bool, "exit_action": str, "computed_price": float|null, "reason": str}
+    underlying_bars: NIFTY bars for cross-symbol exit commands (trigger on underlying, act on CE/PE).
     """
     if not bars:
         return {
@@ -411,6 +438,22 @@ async def evaluate_exit_command(
     prev = bars[-2] if len(bars) >= 2 else {}
     bar_color = "bear" if current.get("close", 0) < current.get("open", 0) else "bull"
     position_json = json.dumps(position) if position else "null"
+
+    # Build cross-symbol section when underlying bars are available
+    underlying_section = ""
+    if underlying_bars:
+        ul_current = underlying_bars[-1]
+        ul_prev = underlying_bars[-2] if len(underlying_bars) >= 2 else {}
+        underlying_section = (
+            f"\nUnderlying (NIFTY) bars — use for cross-symbol trigger conditions:\n"
+            f"  Current underlying bar (just closed):\n"
+            f"    open={ul_current.get('open')}  high={ul_current.get('high')}  "
+            f"low={ul_current.get('low')}  close={ul_current.get('close')}\n"
+            f"  Previous underlying bar:\n"
+            f"    open={ul_prev.get('open')}  high={ul_prev.get('high')}  "
+            f"low={ul_prev.get('low')}  close={ul_prev.get('close')}\n"
+            f"  All underlying bars (oldest → newest):\n{json.dumps(underlying_bars)}\n"
+        )
 
     system = (
         "You are a trading exit execution engine for Indian equity/options markets (NSE/NFO).\n"
@@ -426,7 +469,8 @@ async def evaluate_exit_command(
         f"  open={prev.get('open')}  high={prev.get('high')}  "
         f"low={prev.get('low')}  close={prev.get('close')}\n\n"
         f"Current position (null if none):\n{position_json}\n\n"
-        f"All bars for additional context (oldest → newest):\n{json.dumps(bars)}\n\n"
+        f"All bars for additional context (oldest → newest):\n{json.dumps(bars)}\n"
+        + underlying_section + "\n"
         f"Command text (original natural language):\n{command_text}\n\n"
         f"Exit condition to evaluate:\n"
         f"  Trigger      : {parsed_trigger}\n"
@@ -452,6 +496,7 @@ async def evaluate_exit_command(
         "- All computed prices must be rounded to nearest ₹0.05 (NSE minimum tick size).\n"
         "- If position is FLAT or null, set should_exit=false, "
         'reason="No open position to exit".\n'
+        "- If the trigger references underlying/NIFTY bars, evaluate against the underlying bars section above.\n"
         "- If the trigger cannot be evaluated from available data, set should_exit=false."
     )
     return await _complete(

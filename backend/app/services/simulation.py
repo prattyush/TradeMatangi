@@ -1650,12 +1650,20 @@ async def _fire_bar_close_hook(
             session.session_id, right,
         )
 
+    # Include NIFTY underlying bars for CE/PE hooks so cross-symbol commands can reference them
+    underlying_bars: list[dict] = []
+    if right in ("CE", "PE"):
+        nifty_tracker = session._ai_bar_tracker.get(None)
+        if nifty_tracker and nifty_tracker.get("history"):
+            underlying_bars = list(nifty_tracker["history"])
+
     payload = {
         "user_id": session.user_id,
         "session_id": session.session_id,
         "symbol": session.symbol,
         "right": right,
         "bars": bars,
+        "underlying_bars": underlying_bars,
         "position": position_dict,
         "timestamp": datetime.fromtimestamp(slot_ts, tz=timezone.utc).isoformat(),
         "session_type": session.session_type,
