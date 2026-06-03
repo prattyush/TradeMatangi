@@ -312,6 +312,9 @@ export interface StrategyItem {
   created_at: string
   last_used_at?: string
   use_count?: number
+  is_template?: boolean
+  template_text?: string
+  template_type?: string
 }
 
 export interface CommandItem {

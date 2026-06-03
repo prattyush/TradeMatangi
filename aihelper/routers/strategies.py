@@ -23,11 +23,19 @@ class StrategyItem(BaseModel):
     created_at: str
     last_used_at: Optional[str] = None
     use_count: Optional[int] = None
+    is_template: Optional[bool] = None
+    template_text: Optional[str] = None
+    template_type: Optional[str] = None
 
     @field_validator("use_count", mode="before")
     @classmethod
     def coerce_decimal(cls, v):
         return int(v) if v is not None else None
+
+    @field_validator("is_template", mode="before")
+    @classmethod
+    def coerce_bool(cls, v):
+        return bool(v) if v is not None else None
 
 
 @router.get("/ai/strategies", response_model=dict)

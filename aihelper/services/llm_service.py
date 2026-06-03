@@ -90,10 +90,15 @@ async def classify_intent(message: str) -> dict[str, Any]:
         'TakeProfit strategy when a bar condition is met\n'
         '- "analysis"         : a request to analyze past trades\n'
         '- "question"         : a general question about the platform or markets\n'
-        '- "hotword"          : a reference to a saved strategy by name (e.g. "use pullback entry")\n'
+        '- "hotword"          : a reference to a saved plain strategy by name (e.g. "use pullback entry")\n'
         '- "list_commands"    : a request to see currently active commands or saved hotwords\n'
         '- "cancel_commands"  : a request to cancel one or more active watching commands '
         '(e.g. "cancel all", "cancel 1", "cancel CE commands", "stop all PE orders")\n'
+        '- "save_template"    : saving a reusable command template with ${placeholder} variables and a hotword '
+        '(e.g. "entry template: Buy ${symbol} with ratio ${ratio} when bar closes above ${price}. Hotword: bbwp")\n'
+        '- "use_template"     : recalling a saved template by name and supplying values for placeholders '
+        '(e.g. "start template bbwp with values - CE,M,30")\n'
+        '- "list_templates"   : a request to see saved templates (e.g. "list my templates", "show templates")\n'
         'Respond with JSON only: {"intent": "<type>", "confidence": 0.0–1.0}'
     )
     return await _complete(
@@ -455,6 +460,63 @@ async def evaluate_exit_command(
             {"role": "system", "content": system},
             {"role": "user", "content": "Evaluate the exit condition for this bar close."},
         ],
+    )
+
+
+@observe(name="extract_template_fields")
+async def extract_template_fields(message: str) -> dict[str, Any]:
+    """
+    Extract template definition from a save_template message.
+    Returns: {hotword, template_type, template_text, missing_fields}
+    """
+    system = (
+        "You are extracting a trading command template from the user's message.\n"
+        "A template has ${placeholder} variables that will be filled with real values later.\n"
+        "Extract these fields and return JSON only:\n\n"
+        "{\n"
+        '  "hotword":        "<the name/keyword to recall this template, null if not provided>",\n'
+        '  "template_type":  "entry" | "exit" | null,\n'
+        '  "template_text":  "<the full template text containing ${...} placeholders>",\n'
+        '  "missing_fields": ["hotword" if not provided, "template_text" if no placeholders found]\n'
+        "}\n\n"
+        "Rules:\n"
+        "- template_text: extract the part of the message that describes the trading action with ${...} placeholders.\n"
+        "  It should contain at least one ${...} variable. Preserve the original phrasing.\n"
+        '- template_type: "entry" if the template describes buying/entering a position; "exit" if exiting/stoploss/TP.\n'
+        "- hotword: the name after 'use hotword', 'hotword:', 'save as', 'call it', 'name it', etc.\n"
+        "- missing_fields: list 'hotword' if absent, 'template_text' if no ${...} found.\n\n"
+        "Example input: 'entry template: Buy in ${symbol} with ratio ${ratio} when latest bar is bull "
+        "above ${price}. Hotword: bbwp'\n"
+        'Example output: {"hotword": "bbwp", "template_type": "entry", '
+        '"template_text": "Buy in ${symbol} with ratio ${ratio} when latest bar is bull above ${price}", '
+        '"missing_fields": []}'
+    )
+    return await _complete(
+        MODEL_INTENT_CLASSIFIER,
+        [{"role": "system", "content": system}, {"role": "user", "content": message}],
+    )
+
+
+@observe(name="extract_template_use")
+async def extract_template_use(message: str) -> dict[str, Any]:
+    """
+    Extract template hotword + values from a use_template message.
+    Returns: {hotword, values_csv}
+    """
+    system = (
+        "Extract the template hotword and parameter values from the user's message.\n"
+        'Return JSON only: {"hotword": "<hotword name or null>", "values_csv": "<comma-separated values or null>"}\n\n'
+        "Examples:\n"
+        '  "start template bbwp with values - CE,M,30"  → {"hotword": "bbwp", "values_csv": "CE,M,30"}\n'
+        '  "use template trend-entry CE,H,89.5"         → {"hotword": "trend-entry", "values_csv": "CE,H,89.5"}\n'
+        '  "activate my template bear-break"            → {"hotword": "bear-break", "values_csv": null}\n\n'
+        "Rules:\n"
+        "- hotword: the template name (word(s) after 'template' keyword before 'with values')\n"
+        "- values_csv: comma-separated values after 'with values', 'values -', or directly after the hotword; null if none given"
+    )
+    return await _complete(
+        MODEL_INTENT_CLASSIFIER,
+        [{"role": "system", "content": system}, {"role": "user", "content": message}],
     )
 
 

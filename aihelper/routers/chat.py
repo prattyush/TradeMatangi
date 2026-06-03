@@ -4,6 +4,7 @@ Classifies intent then dispatches to: command registration, hotword recall,
 list active commands, trade analysis (stub — Step 8), or general Q&A.
 """
 import logging
+import re
 import uuid
 from datetime import datetime, timezone
 from typing import Any
@@ -441,6 +442,174 @@ async def _handle_exit_command(req: ChatRequest) -> ChatResponse:
     return ChatResponse(status="watching", message=summary, command_id=command_id)
 
 
+_PH_RE = re.compile(r'\$\{([^}]+)\}')
+
+
+def _fill_template(template_text: str, values_csv: str | None) -> tuple[str, list[str]]:
+    """Fill ${placeholders} positionally from comma-separated values.
+    Returns (filled_text, list_of_remaining_placeholder_names).
+    """
+    placeholders = _PH_RE.findall(template_text)
+    values = [v.strip() for v in values_csv.split(',')] if values_csv else []
+    filled = template_text
+    for i, ph in enumerate(placeholders):
+        if i < len(values) and values[i]:
+            filled = filled.replace(f'${{{ph}}}', values[i], 1)
+    return filled, _PH_RE.findall(filled)
+
+
+async def _handle_save_template(req: ChatRequest) -> ChatResponse:
+    extracted = await llm_service.extract_template_fields(req.message)
+    missing = set(extracted.get("missing_fields") or [])
+
+    if not extracted.get("hotword"):
+        missing.add("hotword")
+    template_text = extracted.get("template_text", "")
+    if not template_text:
+        missing.add("template_text")
+    elif "${" not in template_text:
+        return ChatResponse(
+            status="validation_required",
+            message=(
+                "Template must contain at least one placeholder like ${symbol}, ${ratio}, ${price}.\n\n"
+                "Example: 'entry template: Buy in ${symbol} with ratio ${ratio} when bar closes "
+                "above ${price}. Use hotword bbwp'"
+            ),
+        )
+
+    if missing:
+        return ChatResponse(
+            status="validation_required",
+            message=(
+                "To save a template, please include:\n"
+                "1) A hotword to recall it (e.g. 'use hotword bbwp')\n"
+                "2) The template text with ${placeholder} variables\n\n"
+                "Example:\n"
+                "'entry template: Buy ${symbol} with ratio ${ratio} when bar closes above ${price}. "
+                "Use hotword bbwp'"
+            ),
+        )
+
+    hotword = extracted["hotword"]
+    template_type = extracted.get("template_type") or "entry"
+    existing = strategies_store.get_strategy(req.user_id, hotword)
+    if existing:
+        kind = "template" if existing.get("is_template") else "hotword"
+        return ChatResponse(
+            status="error",
+            message=f"'{hotword}' is already in use as a {kind}. Choose a different name.",
+        )
+
+    ph_names = _PH_RE.findall(template_text)
+    now = datetime.now(timezone.utc).isoformat()
+    strategies_store.put_strategy({
+        "user_id": req.user_id,
+        "hotword": hotword,
+        "strategy_text": template_text,
+        "template_text": template_text,
+        "template_type": template_type,
+        "is_template": True,
+        "description": f"{template_type.title()} template — placeholders: {', '.join(ph_names)}",
+        "created_at": now,
+        "last_used_at": now,
+        "use_count": 0,
+    })
+
+    ph_display = ", ".join(f"${{{p}}}" for p in ph_names)
+    return ChatResponse(
+        status="saved",
+        message=(
+            f"Template '{hotword}' saved ({template_type}).\n"
+            f"Placeholders (in order): {ph_display}\n\n"
+            f"To use it: 'start template {hotword} with values - value1,value2,...'"
+        ),
+        hotword=hotword,
+    )
+
+
+async def _handle_use_template(req: ChatRequest) -> ChatResponse:
+    extracted = await llm_service.extract_template_use(req.message)
+    hotword = extracted.get("hotword")
+    values_csv = extracted.get("values_csv")
+
+    if not hotword:
+        return ChatResponse(
+            status="error",
+            message="Could not identify the template name. Try: 'start template <name> with values - value1,value2'",
+        )
+
+    template = strategies_store.get_template_by_hotword(req.user_id, hotword)
+    if not template:
+        all_templates = strategies_store.list_templates(req.user_id)
+        names = [t["hotword"] for t in all_templates]
+        hint = f" Saved templates: {', '.join(names)}." if names else " You have no saved templates yet."
+        return ChatResponse(
+            status="error",
+            message=f"Template '{hotword}' not found.{hint}",
+        )
+
+    template_text = template["template_text"]
+    filled_text, remaining = _fill_template(template_text, values_csv)
+
+    if remaining:
+        ph_names = _PH_RE.findall(template_text)
+        return ChatResponse(
+            status="validation_required",
+            message=(
+                f"Template '{hotword}' needs {len(ph_names)} value(s): {', '.join(ph_names)}.\n"
+                f"Still unfilled: {', '.join(remaining)}.\n\n"
+                f"Try: 'start template {hotword} with values - value1,value2,...'"
+            ),
+        )
+
+    strategies_store.increment_use_count(req.user_id, hotword, datetime.now(timezone.utc).isoformat())
+
+    filled_req = ChatRequest(
+        message=filled_text,
+        session_id=req.session_id,
+        user_id=req.user_id,
+        symbol=req.symbol,
+        strike_ce=req.strike_ce,
+        strike_pe=req.strike_pe,
+    )
+
+    template_type = template.get("template_type", "entry")
+    if template_type == "exit":
+        result = await _handle_exit_command(filled_req)
+    else:
+        result = await _handle_command(filled_req)
+
+    expanded_prefix = f"Expanded '{hotword}':\n{filled_text}\n\n"
+    return ChatResponse(
+        status=result.status,
+        message=expanded_prefix + result.message,
+        command_id=result.command_id,
+        hotword=hotword,
+    )
+
+
+async def _handle_list_templates(req: ChatRequest) -> ChatResponse:
+    templates = strategies_store.list_templates(req.user_id)
+    if not templates:
+        return ChatResponse(
+            status="list",
+            message=(
+                "No saved templates yet.\n"
+                "Save one with: 'entry template: Buy ${symbol} with ratio ${ratio} "
+                "when bar closes above ${price}. Use hotword bbwp'"
+            ),
+        )
+
+    lines = [f"Saved templates ({len(templates)}):"]
+    for t in templates:
+        ph_names = _PH_RE.findall(t.get("template_text", ""))
+        ph_display = ", ".join(ph_names) if ph_names else "none"
+        t_type = t.get("template_type", "entry")
+        lines.append(f"  '{t['hotword']}' [{t_type}] — placeholders: {ph_display}")
+
+    return ChatResponse(status="list", message="\n".join(lines))
+
+
 async def _handle_list_commands(req: ChatRequest) -> ChatResponse:
     active_cmds = commands_store.list_active_commands_for_session(req.session_id)
     saved = strategies_store.list_strategies(req.user_id)
@@ -489,6 +658,12 @@ async def _chat_observed(req: ChatRequest) -> ChatResponse:
         return await _handle_list_commands(req)
     if intent == "cancel_commands":
         return await _handle_cancel(req)
+    if intent == "save_template":
+        return await _handle_save_template(req)
+    if intent == "use_template":
+        return await _handle_use_template(req)
+    if intent == "list_templates":
+        return await _handle_list_templates(req)
     if intent == "analysis":
         return await _handle_analysis(req)
 
