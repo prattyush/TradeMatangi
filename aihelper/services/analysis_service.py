@@ -2,6 +2,7 @@
 Trade analysis service — fetches sessions+trades from backend, runs programmatic
 pattern detection, then asks the LLM to synthesize the findings.
 """
+import asyncio
 import logging
 from datetime import date, timedelta
 from typing import Any
@@ -75,6 +76,7 @@ async def parse_analysis_request(
 
 async def _run_pattern_analysis(
     sessions: list[dict],
+    analysis_price_source: str = "options",
 ) -> dict[str, Any]:
     """
     For each session, group trades, fetch OHLC context, and run pattern checks.
@@ -104,8 +106,10 @@ async def _run_pattern_analysis(
             exit_ts = int(last_exit.get("timestamp", 0)) if last_exit else None
             pnl = pd_.compute_group_pnl(group)
 
-            # Options params from the trade records
-            right = group.get("right") if instrument_type == "options" else None
+            # Options params from the trade records.
+            # If user chose "underlying" as price source, force equity OHLC even for options sessions.
+            use_options_ohlc = instrument_type == "options" and analysis_price_source == "options"
+            right = group.get("right") if use_options_ohlc else None
             strike = group.get("strike")
             expiry = group.get("expiry")
 
@@ -177,9 +181,9 @@ async def run_analysis(
         "Analysis: user=%s %s→%s symbol=%s session_type=%s",
         user_id, from_date, to_date, symbol, session_type,
     )
-    trades = await backend_client.get_trades(
-        user_id, from_date, to_date,
-        symbol=symbol, session_type=session_type,
+    trades, user_settings = await asyncio.gather(
+        backend_client.get_trades(user_id, from_date, to_date, symbol=symbol, session_type=session_type),
+        backend_client.get_user_settings(user_id),
     )
     if not trades:
         return {
@@ -189,5 +193,6 @@ async def run_analysis(
             "notable_stats": {},
         }
 
-    pattern_findings = await _run_pattern_analysis(trades)
+    analysis_price_source = user_settings.get("analysis_price_source", "options")
+    pattern_findings = await _run_pattern_analysis(trades, analysis_price_source=analysis_price_source)
     return await _analyze(trades, date_range, pattern_findings=pattern_findings)

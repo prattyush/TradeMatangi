@@ -192,6 +192,9 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
   // Historical days
   const [historicalDays, setHistoricalDays] = useState(loadHistoricalDays)
 
+  // Trade analysis price source: "options" (CE/PE OHLC) or "underlying" (NIFTY OHLC)
+  const [analysisPriceSource, setAnalysisPriceSource] = useState<'options' | 'underlying'>('options')
+
   // Strategies settings
   const [breakevenMode, setBreakevenMode] = useState(loadBreakevenMode)
   const [targetProfitBufferTicks, setTargetProfitBufferTicks] = useState(loadTargetProfitBufferTicks)
@@ -258,6 +261,9 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
           setRatios(synced)
           setRatioInputs({ l: String(synced.l), m: String(synced.m), h: String(synced.h) })
           localStorage.setItem(FUNDS_RATIOS_KEY, JSON.stringify(synced))
+        }
+        if (s.analysis_price_source === 'underlying' || s.analysis_price_source === 'options') {
+          setAnalysisPriceSource(s.analysis_price_source)
         }
       }).catch(() => {})
 
@@ -795,6 +801,33 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
               </div>
               <div style={{ fontSize: 11, color: '#484f58', marginTop: 6 }}>
                 Prior trading days of chart context loaded at session start
+              </div>
+            </div>
+
+            {/* Trade Analysis Price Source */}
+            <div style={{ borderTop: '1px solid #21262d', paddingTop: 16 }}>
+              <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 10, fontWeight: 600 }}>TRADE ANALYSIS PRICE SOURCE</div>
+              <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+                {(['options', 'underlying'] as const).map(src => (
+                  <button
+                    key={src}
+                    onClick={() => {
+                      setAnalysisPriceSource(src)
+                      api.updateUserSettings({ analysis_price_source: src }).catch(() => {})
+                    }}
+                    style={{
+                      padding: '5px 14px',
+                      background: analysisPriceSource === src ? '#1f6feb' : '#21262d',
+                      border: `1px solid ${analysisPriceSource === src ? '#1f6feb' : '#30363d'}`,
+                      borderRadius: 6, color: '#e6edf3', cursor: 'pointer', fontSize: 12,
+                    }}
+                  >
+                    {src === 'options' ? 'Options (CE/PE)' : 'Underlying'}
+                  </button>
+                ))}
+              </div>
+              <div style={{ fontSize: 11, color: '#484f58' }}>
+                OHLC data used for Trade Analysis pattern detection in options sessions
               </div>
             </div>
 

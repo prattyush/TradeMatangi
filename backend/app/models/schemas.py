@@ -245,6 +245,7 @@ class UserSettingsResponse(BaseModel):
     funds_ratio_l_pct: float = 0.03
     funds_ratio_m_pct: float = 0.06
     funds_ratio_h_pct: float = 0.12
+    analysis_price_source: str = "options"
 
 
 class UserSettingsUpdateRequest(BaseModel):
@@ -252,6 +253,7 @@ class UserSettingsUpdateRequest(BaseModel):
     funds_ratio_l_pct: float | None = Field(default=None, ge=0.001, le=1.0)
     funds_ratio_m_pct: float | None = Field(default=None, ge=0.001, le=1.0)
     funds_ratio_h_pct: float | None = Field(default=None, ge=0.001, le=1.0)
+    analysis_price_source: str | None = None
 
 
 # ── Strategies ────────────────────────────────────────────────────────────────

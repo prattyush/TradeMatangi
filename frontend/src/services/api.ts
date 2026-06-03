@@ -80,6 +80,7 @@ export interface UserSettingsResponse {
   funds_ratio_l_pct?: number
   funds_ratio_m_pct?: number
   funds_ratio_h_pct?: number
+  analysis_price_source?: string
 }
 
 // ── Strategy types ──────────────────────────────────────────────────────────
@@ -201,6 +202,8 @@ export interface Trade {
   right?: string       // "CE" or "PE" for options trades
   strike?: number      // options strike
   commission: number   // exchange charges + brokerage, computed at record time
+  // Frontend-only: NIFTY price snapshotted when a CE/PE trade lands in local state
+  underlying_price?: number
 }
 
 export interface Position {

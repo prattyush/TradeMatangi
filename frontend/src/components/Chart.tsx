@@ -568,6 +568,22 @@ export default function Chart({
 
   // ── Trade markers — one transparent Line series per trade so each circle lands
   //    at its own exact execution price even when multiple trades share the same bar ──
+
+  // Returns color + text for a CE/PE trade shown on the underlying equity chart.
+  // CE Buy = bullish on underlying (Buy), CE Sell = bearish (Sell).
+  // PE Buy = bearish on underlying (Sell), PE Sell = bullish (Buy) — direction inverted.
+  function crossChartMarkerStyle(tradeRight: string, side: 'BUY' | 'SELL'): { color: string; text: string } {
+    if (tradeRight === 'CE') {
+      return side === 'BUY'
+        ? { color: '#26a641', text: 'CB' }   // CE Buy  → underlying Buy  (green)
+        : { color: '#cf6679', text: 'CS' }   // CE Sell → underlying Sell (pink-red)
+    }
+    // PE: direction inverted — buying puts = selling underlying
+    return side === 'BUY'
+      ? { color: '#9a6dd7', text: 'PS' }     // PE Buy  → underlying Sell (purple)
+      : { color: '#d4a72c', text: 'PB' }     // PE Sell → underlying Buy  (amber)
+  }
+
   useEffect(() => {
     const chart = chartRef.current
     if (!chart) return
@@ -578,25 +594,45 @@ export default function Chart({
     }
     tradeMarkerPool.current = []
 
-    const paneTrades = (trades ?? []).filter(t =>
-      paneType === 'equity' ? !t.right : t.right === right && t.strike === strike
-    )
+    const paneTrades = (trades ?? []).filter(t => {
+      if (paneType !== 'equity') return t.right === right && t.strike === strike
+      // Equity pane: own equity trades + CE/PE trades that have an underlying_price snapshot
+      return !t.right || t.underlying_price !== undefined
+    })
     if (paneTrades.length === 0) return
 
     for (const t of paneTrades) {
+      // Use underlying_price for cross-chart CE/PE markers; trade price for equity markers
+      const markerPrice = (paneType === 'equity' && t.right !== undefined && t.underlying_price !== undefined)
+        ? t.underlying_price
+        : t.price
       const slot = (Math.floor(t.timestamp / intervalSecs) * intervalSecs) as Time
       try {
         const s = chart.addLineSeries({
           lineVisible: false, crosshairMarkerVisible: false,
           lastValueVisible: false, priceLineVisible: false,
         })
-        s.setData([{ time: slot, value: t.price }])
+        s.setData([{ time: slot, value: markerPrice }])
+
+        let color: string
+        let text: string
+        if (paneType === 'equity' && t.right) {
+          // CE/PE trade mirrored onto the underlying chart
+          const style = crossChartMarkerStyle(t.right, t.side)
+          color = style.color
+          text = style.text
+        } else {
+          // Equity trade on its own chart (or options trade on its own options pane)
+          color = t.side === 'BUY' ? '#FFFFFF' : '#00AAFF'
+          text = t.side === 'BUY' ? 'B' : 'S'
+        }
+
         s.setMarkers([{
           time: slot,
           position: 'inBar' as const,
-          color: t.side === 'BUY' ? '#FFFFFF' : '#00AAFF',
+          color,
           shape: 'circle' as const,
-          text: t.side === 'BUY' ? 'B' : 'S',
+          text,
           size: 1,
         }])
         tradeMarkerPool.current.push(s)

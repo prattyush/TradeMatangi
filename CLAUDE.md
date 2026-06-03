@@ -54,6 +54,6 @@ Look into frontend technical constraints doc when needed which is located at doc
 | Phase VIII — Launch | ✅ Complete | 391 | `docs/spec-phase8.md` |
 | Phase IX — RealTrading | ✅ Complete | 436 | `docs/spec-phase9.md` |
 | Phase X — GuardRails | ✅ Complete | 495 | `docs/spec-phase10.md` |
-| Phase XI — AI Helper | 🔨 In Progress (Steps 1–19 done, ExitEntryTemplates PR #160 + CrossSymbolMonitoring PR #162 + BAN min-trades PR #163 merged; OtherFeatures items 1, 2, 4 pending) | 531 backend / 228 aihelper | `docs/spec-phase11.md`, `docs/architecture-aihelper.md` |
+| Phase XI — AI Helper | 🔨 PR #164 open (Sprint 3b: CE/PE markers on underlying chart, analysis price source setting, backend+frontend architecture docs; all OtherFeatures complete pending merge) | 534 backend / 227 aihelper | `docs/spec-phase11.md`, `docs/architecture-aihelper.md`, `docs/architecture-backend.md`, `docs/architecture-frontend.md` |
 
 Full status, bugs fixed, and lessons learned for each phase are in the respective phase spec docs.

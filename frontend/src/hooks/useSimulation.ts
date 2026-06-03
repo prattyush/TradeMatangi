@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useRef } from 'react'
 import api, { Trade, Position, Order, TickEvent, InsufficientFundsError } from '../services/api'
 
 export type SessionState = 'idle' | 'running' | 'paused' | 'ended'
@@ -54,6 +54,10 @@ export interface InstrumentConfig {
 }
 
 export function useSimulation() {
+  // Ref keeps the latest equity tick accessible synchronously inside buy/sell/addTradeFromSSE
+  // callbacks without adding latestEquityTick to their dependency arrays.
+  const latestEquityTickRef = useRef<TickEvent | null>(null)
+
   const [state, setState] = useState<SimulationState>({
     sessionId: null,
     sessionState: 'idle',
@@ -91,6 +95,7 @@ export function useSimulation() {
       if (!tick.right) {
         update.currentPrice = tick.close
         update.latestEquityTick = tick
+        latestEquityTickRef.current = tick
       } else if (tick.right === 'CE') {
         update.currentPriceCE = tick.close
         update.latestCETick = tick
@@ -219,6 +224,9 @@ export function useSimulation() {
     // For real sessions, backend returns {status:"broker_pending"} — trade arrives via SSE order_filled
     if ('status' in resp && resp.status === 'broker_pending') return
     const trade = resp as import('../services/api').Trade
+    if (trade.right && latestEquityTickRef.current) {
+      trade.underlying_price = latestEquityTickRef.current.close
+    }
     setState(s => ({ ...s, trades: [...s.trades, trade] }))
     if (right === 'CE' || right === 'PE') {
       const pos = await api.getPosition(state.sessionId, right)
@@ -238,6 +246,9 @@ export function useSimulation() {
     // For real sessions, backend returns {status:"broker_pending"} — trade arrives via SSE order_filled
     if ('status' in resp && resp.status === 'broker_pending') return
     const trade = resp as import('../services/api').Trade
+    if (trade.right && latestEquityTickRef.current) {
+      trade.underlying_price = latestEquityTickRef.current.close
+    }
     setState(s => ({ ...s, trades: [...s.trades, trade] }))
     if (right === 'CE' || right === 'PE') {
       const pos = await api.getPosition(state.sessionId, right)
@@ -473,6 +484,10 @@ export function useSimulation() {
   }, [state.sessionId])
 
   const addTradeFromSSE = useCallback(async (trade: Trade) => {
+    // Stamp underlying price for CE/PE trades that arrive via SSE (AI-placed orders)
+    if (trade.right && latestEquityTickRef.current && trade.underlying_price === undefined) {
+      trade.underlying_price = latestEquityTickRef.current.close
+    }
     // Deduplicate: UI-initiated trades are already in state from api.buy/sell response
     setState(s => {
       if (s.trades.some(t => t.trade_id === trade.trade_id)) return s

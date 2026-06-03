@@ -203,6 +203,60 @@ class TestAnalysisServiceRunAnalysis:
             symbol="NIFTY", session_type="paper",
         )
 
+    @pytest.mark.asyncio
+    async def test_analysis_price_source_options_uses_options_ohlc(self):
+        """When analysis_price_source='options', options sessions use CE/PE OHLC context."""
+        from services import analysis_service
+        _trade = {"trade_id": "t1", "side": "BUY", "price": 100.0, "quantity": 75,
+                  "timestamp": 1748490000, "right": "CE", "strike": 24400, "expiry": "2026-05-29"}
+        options_session = {
+            "session_id": "s1", "date": "2026-05-29",
+            "instrument_type": "options", "symbol": "NIFTY",
+            "trades": [_trade],
+        }
+        captured_ohlc_calls = []
+
+        async def mock_ohlc(**kwargs):
+            captured_ohlc_calls.append(kwargs)
+            raise Exception("no data")
+
+        with patch("services.analysis_service.backend_client.get_trades", new=AsyncMock(return_value=[options_session])), \
+             patch("services.analysis_service.backend_client.get_user_settings", new=AsyncMock(return_value={"analysis_price_source": "options"})), \
+             patch("services.analysis_service.backend_client.get_ohlc_context", new=mock_ohlc), \
+             patch("services.analysis_service._analyze", new=AsyncMock(return_value=_ANALYSIS_RESULT)):
+            await analysis_service.run_analysis(_USER_ID, "2026-05-29", "2026-05-29", "May 29")
+
+        # For options price source, OHLC call should include right (CE/PE chain OHLC)
+        assert len(captured_ohlc_calls) == 1
+        assert captured_ohlc_calls[0]["right"] == "CE"
+
+    @pytest.mark.asyncio
+    async def test_analysis_price_source_underlying_forces_equity_ohlc(self):
+        """When analysis_price_source='underlying', options sessions use NIFTY OHLC context."""
+        from services import analysis_service
+        _trade = {"trade_id": "t1", "side": "BUY", "price": 100.0, "quantity": 75,
+                  "timestamp": 1748490000, "right": "CE", "strike": 24400, "expiry": "2026-05-29"}
+        options_session = {
+            "session_id": "s1", "date": "2026-05-29",
+            "instrument_type": "options", "symbol": "NIFTY",
+            "trades": [_trade],
+        }
+        captured_ohlc_calls = []
+
+        async def mock_ohlc(**kwargs):
+            captured_ohlc_calls.append(kwargs)
+            raise Exception("no data")
+
+        with patch("services.analysis_service.backend_client.get_trades", new=AsyncMock(return_value=[options_session])), \
+             patch("services.analysis_service.backend_client.get_user_settings", new=AsyncMock(return_value={"analysis_price_source": "underlying"})), \
+             patch("services.analysis_service.backend_client.get_ohlc_context", new=mock_ohlc), \
+             patch("services.analysis_service._analyze", new=AsyncMock(return_value=_ANALYSIS_RESULT)):
+            await analysis_service.run_analysis(_USER_ID, "2026-05-29", "2026-05-29", "May 29")
+
+        # For underlying price source, right=None so equity OHLC is fetched (not options chain)
+        assert len(captured_ohlc_calls) == 1
+        assert captured_ohlc_calls[0].get("right") is None
+
 
 class TestAnalysisChatEndpoint:
     """End-to-end tests for /ai/chat with analysis intent."""
