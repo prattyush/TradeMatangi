@@ -223,6 +223,18 @@ async def _evaluate_exit(hook: BarCloseHook, command: dict[str, Any]) -> dict[st
             "reason": rejection_reason,
         }
 
+    # Atomically claim execution (active → executing) so concurrent bar-close hooks
+    # that arrive before the GSI update cannot double-fire the same exit.
+    try:
+        claimed = commands_store.claim_command_execution(command["user_id"], command_id)
+    except Exception:
+        logger.exception("Failed to claim command %s — skipping to avoid duplicate exit", command_id)
+        return {"outcome": "skipped_duplicate", "command_id": command_id}
+
+    if not claimed:
+        logger.info("_evaluate_exit: command %s already claimed by concurrent evaluation — skipping", command_id)
+        return {"outcome": "skipped_duplicate", "command_id": command_id}
+
     # Dispatch exit action to backend
     action_result = "backend_error"
     right = command.get("right")
@@ -232,6 +244,9 @@ async def _evaluate_exit(hook: BarCloseHook, command: dict[str, Any]) -> dict[st
                 session_id, right, float(computed_price), position_dict
             )
         elif exit_action == "exit_position":
+            # Cancel any open SL order BEFORE placing the market sell.
+            # Having both active simultaneously doubles the margin requirement on Kotak.
+            await backend_client.cancel_open_stoploss(session_id, right)
             await backend_client.exit_position_market(session_id, right)
         elif exit_action == "start_takeprofit":
             await backend_client.start_takeprofit_strategy(
@@ -247,6 +262,11 @@ async def _evaluate_exit(hook: BarCloseHook, command: dict[str, Any]) -> dict[st
     except Exception as exc:
         action_result = "backend_error"
         logger.warning("Backend exit failed for command=%s: %s", command_id, exc)
+        # Revert to active so the command retries on the next bar close
+        try:
+            commands_store.unclaim_command_execution(command["user_id"], command_id)
+        except Exception:
+            logger.exception("Failed to unclaim command %s after backend error", command_id)
 
     _log_decision(session_id, now, command, hook.timestamp, reason_text, action, action_result)
 

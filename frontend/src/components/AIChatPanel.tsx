@@ -171,10 +171,13 @@ export default function AIChatPanel({ sessionId, userId, symbol, strikeCe, strik
         id: nextId(), role: 'decision', decision: d,
       }))
       setMessages(prev => [...prev, ...decisionMsgs])
+      // Refresh command statuses so commandsRef stays current and polling stops
+      // once all commands are executed/cancelled.
+      fetchCommands()
     } catch {
       // silently ignore — aihelper may not be running
     }
-  }, [sessionId])
+  }, [sessionId, fetchCommands])
 
   // Poll for new AI decisions every 10 s; skip when all known commands are inactive
   useEffect(() => {

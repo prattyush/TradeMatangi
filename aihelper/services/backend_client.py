@@ -264,6 +264,27 @@ async def exit_position_market(session_id: str, right: str | None) -> dict:
     return resp.json()
 
 
+async def cancel_open_stoploss(session_id: str, right: str | None) -> None:
+    """Cancel any pending stoploss orders for this session/right after an AI-triggered exit."""
+    try:
+        orders = await get_open_orders(session_id)
+        sl_orders = [o for o in orders if o.get("is_stoploss") and o.get("right") == right]
+        client = get_client()
+        for o in sl_orders:
+            await client.delete(
+                f"/api/orders/{o['order_id']}",
+                params={"session_id": session_id},
+            )
+            logger.info(
+                "Cancelled SL order %s for session %s right=%s",
+                o["order_id"], session_id, right,
+            )
+    except Exception as exc:
+        logger.warning(
+            "cancel_open_stoploss failed (session=%s right=%s): %s", session_id, right, exc
+        )
+
+
 async def start_takeprofit_strategy(
     session_id: str,
     right: str | None,
