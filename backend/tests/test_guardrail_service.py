@@ -37,6 +37,7 @@ class MockSession:
     guardrail_cooldown_losses: int = 3
     guardrail_ban_capital_pct: float = 10.0
     guardrail_ban_loss_trade_pct: float = 60.0
+    guardrail_ban_min_trades: int = 5
     guardrail_ban_enabled: bool = False
     queue: object = field(default_factory=lambda: MagicMock())
 
@@ -260,6 +261,7 @@ class TestComputeBanCheck:
         sess = MockSession(session_capital=100_000.0)
         sess.guardrail_ban_capital_pct = 10.0
         sess.guardrail_ban_loss_trade_pct = 100.0  # disable loss-trade check for this test
+        sess.guardrail_ban_min_trades = 1  # allow check from first trade
         # Lose ₹5,000 = 5% of capital — below capital threshold
         trades = [
             _make_trade("BUY", 100.0, qty=50, ts=1000),
@@ -273,7 +275,8 @@ class TestComputeBanCheck:
     def test_loss_trade_pct_triggers_ban(self):
         sess = MockSession(session_capital=100_000.0)
         sess.guardrail_ban_loss_trade_pct = 60.0
-        # 3 loss trades, 1 win trade = 75% loss rate
+        sess.guardrail_ban_min_trades = 4  # 4 round-trips required before check applies
+        # 3 loss trades, 1 win trade = 75% loss rate (4 trades total — meets min_trades threshold)
         trades = [
             # win
             _make_trade("BUY", 100, ts=1000), _make_trade("SELL", 110, ts=2000),
@@ -297,6 +300,61 @@ class TestComputeBanCheck:
             banned, reason = gsvc._compute_ban_check(sess)
         assert not banned
 
+    def test_loss_trade_pct_skipped_below_min_trades(self):
+        """Loss-trade % check must not trigger until min_trades round-trips are done."""
+        sess = MockSession(session_capital=100_000.0)
+        sess.guardrail_ban_capital_pct = 50.0   # high capital threshold — won't trigger
+        sess.guardrail_ban_loss_trade_pct = 60.0
+        sess.guardrail_ban_min_trades = 5       # need 5 trades before check applies
+        # Only 3 round-trips completed (all losses = 100% loss rate) — below min_trades
+        trades = [
+            _make_trade("BUY", 100, ts=1000), _make_trade("SELL", 95, ts=2000),
+            _make_trade("BUY", 100, ts=3000), _make_trade("SELL", 95, ts=4000),
+            _make_trade("BUY", 100, ts=5000), _make_trade("SELL", 95, ts=6000),
+        ]
+        for t in trades:
+            t.commission = 0.0
+        with patch("app.services.trading.get_trades", return_value=trades):
+            banned, reason = gsvc._compute_ban_check(sess)
+        assert not banned  # loss-trade % not evaluated yet
+
+    def test_capital_loss_triggers_ban_regardless_of_min_trades(self):
+        """Capital loss % must fire on the very first trade — min_trades does not gate it."""
+        sess = MockSession(session_capital=100_000.0)
+        sess.guardrail_ban_capital_pct = 10.0
+        sess.guardrail_ban_loss_trade_pct = 60.0
+        sess.guardrail_ban_min_trades = 10  # high min_trades — loss-trade % would be skipped
+        # Single trade: BUY 150 @ 100, SELL 150 @ 0 → ₹15,000 loss = 15% of capital
+        trades = [
+            _make_trade("BUY", 100.0, qty=150, ts=1000),
+            _make_trade("SELL", 0.0, qty=150, ts=2000),
+        ]
+        for t in trades:
+            t.commission = 0.0
+        with patch("app.services.trading.get_trades", return_value=trades):
+            banned, reason = gsvc._compute_ban_check(sess)
+        assert banned
+        assert "capital loss" in reason  # capital check fired on trade 1
+
+    def test_loss_trade_pct_triggers_after_min_trades_reached(self):
+        """Loss-trade % check fires once min_trades is met."""
+        sess = MockSession(session_capital=100_000.0)
+        sess.guardrail_ban_capital_pct = 50.0   # high capital threshold — won't trigger
+        sess.guardrail_ban_loss_trade_pct = 60.0
+        sess.guardrail_ban_min_trades = 3       # need 3 trades before check applies
+        # 3 round-trips: 1 win, 2 losses = 67% loss rate → exceeds 60% threshold
+        trades = [
+            _make_trade("BUY", 100, ts=1000), _make_trade("SELL", 110, ts=2000),  # win
+            _make_trade("BUY", 100, ts=3000), _make_trade("SELL", 95, ts=4000),   # loss
+            _make_trade("BUY", 100, ts=5000), _make_trade("SELL", 95, ts=6000),   # loss
+        ]
+        for t in trades:
+            t.commission = 0.0
+        with patch("app.services.trading.get_trades", return_value=trades):
+            banned, reason = gsvc._compute_ban_check(sess)
+        assert banned
+        assert "BAN" in reason
+
 
 # ── initialize_guardrails ─────────────────────────────────────────────────────
 
@@ -308,6 +366,7 @@ class TestInitializeGuardrails:
             "guardrail_cooldown_losses": 4,
             "guardrail_ban_capital_pct": 15.0,
             "guardrail_ban_loss_trade_pct": 70.0,
+            "guardrail_ban_min_trades": 8,
             "guardrail_ban_enabled": True,
             "guardrail_cooldown_enabled": True,
         }
@@ -316,6 +375,7 @@ class TestInitializeGuardrails:
         assert sess.guardrail_block_bars == 5
         assert sess.guardrail_cooldown_losses == 4
         assert sess.guardrail_ban_capital_pct == 15.0
+        assert sess.guardrail_ban_min_trades == 8
         assert sess.guardrail_ban_enabled is True
         assert sess.guardrail_cooldown_enabled is True
 

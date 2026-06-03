@@ -66,6 +66,7 @@ def get_status(session_id: str):
             guardrail_cooldown_losses=session.guardrail_cooldown_losses,
             guardrail_ban_capital_pct=session.guardrail_ban_capital_pct,
             guardrail_ban_loss_trade_pct=session.guardrail_ban_loss_trade_pct,
+            guardrail_ban_min_trades=getattr(session, "guardrail_ban_min_trades", 5),
             guardrail_ban_enabled=session.guardrail_ban_enabled,
             guardrail_cooldown_enabled=session.guardrail_cooldown_enabled,
         ),
@@ -81,6 +82,7 @@ def get_settings(user_id: str = Depends(get_request_user_id)):
         guardrail_cooldown_losses=s.get("guardrail_cooldown_losses", 3),
         guardrail_ban_capital_pct=s.get("guardrail_ban_capital_pct", 10.0),
         guardrail_ban_loss_trade_pct=s.get("guardrail_ban_loss_trade_pct", 60.0),
+        guardrail_ban_min_trades=s.get("guardrail_ban_min_trades", 5),
         guardrail_ban_enabled=s.get("guardrail_ban_enabled", False),
         guardrail_cooldown_enabled=s.get("guardrail_cooldown_enabled", False),
     )
@@ -96,6 +98,7 @@ def update_settings(req: GuardRailSettingsUpdateRequest, user_id: str = Depends(
         guardrail_cooldown_losses=updated.get("guardrail_cooldown_losses", 3),
         guardrail_ban_capital_pct=updated.get("guardrail_ban_capital_pct", 10.0),
         guardrail_ban_loss_trade_pct=updated.get("guardrail_ban_loss_trade_pct", 60.0),
+        guardrail_ban_min_trades=updated.get("guardrail_ban_min_trades", 5),
         guardrail_ban_enabled=updated.get("guardrail_ban_enabled", False),
         guardrail_cooldown_enabled=updated.get("guardrail_cooldown_enabled", False),
     )

@@ -66,6 +66,7 @@ def initialize_guardrails(session: "SimulationSession", user_id: str) -> None:
     session.guardrail_cooldown_losses = int(settings.get("guardrail_cooldown_losses", 3))
     session.guardrail_ban_capital_pct = float(settings.get("guardrail_ban_capital_pct", 10.0))
     session.guardrail_ban_loss_trade_pct = float(settings.get("guardrail_ban_loss_trade_pct", 60.0))
+    session.guardrail_ban_min_trades = int(settings.get("guardrail_ban_min_trades", 5))
     session.guardrail_ban_enabled = bool(settings.get("guardrail_ban_enabled", False))
     session.guardrail_cooldown_enabled = bool(settings.get("guardrail_cooldown_enabled", False))
     session.guardrail_block_until_bar = 0
@@ -188,9 +189,10 @@ def _compute_ban_check(session: "SimulationSession") -> tuple[bool, str]:
                 f"{session.guardrail_ban_capital_pct:.1f}%"
             )
 
-    # Loss-trade % based on completed round-trips
+    # Loss-trade % based on completed round-trips — only evaluated once enough trades are done
     round_trips = _compute_round_trips(trades)
-    if round_trips:
+    min_trades = getattr(session, "guardrail_ban_min_trades", 5)
+    if round_trips and len(round_trips) >= min_trades:
         loss_trades = sum(1 for pnl in round_trips if pnl < 0)
         loss_trade_pct = loss_trades / len(round_trips) * 100
         if loss_trade_pct > session.guardrail_ban_loss_trade_pct:
