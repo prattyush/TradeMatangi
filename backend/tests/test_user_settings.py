@@ -134,3 +134,36 @@ class TestUserSettingsEndpoints:
         with patch("app.services.user_settings_service.update_settings", return_value={"historical_days": 2}):
             resp = client.put("/api/users/settings", json={"historical_days": 2})
         assert resp.status_code != 404
+
+    def test_analysis_price_source_default_in_response(self):
+        """GET /api/users/settings includes analysis_price_source with default 'options'."""
+        with patch("app.services.user_settings_service.get_settings", return_value={
+            "historical_days": 2,
+            "funds_ratio_l_pct": 0.03,
+            "funds_ratio_m_pct": 0.06,
+            "funds_ratio_h_pct": 0.12,
+            "analysis_price_source": "options",
+        }):
+            resp = client.get("/api/users/settings")
+        assert resp.status_code == 200
+        assert resp.json()["analysis_price_source"] == "options"
+
+    def test_put_analysis_price_source_underlying(self):
+        """PUT /api/users/settings accepts analysis_price_source='underlying'."""
+        updated = {
+            "historical_days": 2,
+            "funds_ratio_l_pct": 0.03,
+            "funds_ratio_m_pct": 0.06,
+            "funds_ratio_h_pct": 0.12,
+            "analysis_price_source": "underlying",
+        }
+        with patch("app.services.user_settings_service.update_settings", return_value=updated) as mock_fn:
+            resp = client.put("/api/users/settings", json={"analysis_price_source": "underlying"})
+        assert resp.status_code == 200
+        assert resp.json()["analysis_price_source"] == "underlying"
+        called_settings = mock_fn.call_args[0][1]
+        assert called_settings["analysis_price_source"] == "underlying"
+
+    def test_default_analysis_price_source_in_constant(self):
+        """DEFAULT_SETTINGS includes analysis_price_source='options'."""
+        assert svc.DEFAULT_SETTINGS["analysis_price_source"] == "options"

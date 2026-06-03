@@ -165,6 +165,18 @@ async def get_user_funds_ratios(user_id: str) -> dict[str, float]:
         return _DEFAULT_RATIO_PCT.copy()
 
 
+async def get_user_settings(user_id: str) -> dict:
+    """GET /api/users/settings — return all user-configurable settings."""
+    client = get_client()
+    try:
+        resp = await client.get("/api/users/settings", headers={"X-User-Id": user_id})
+        resp.raise_for_status()
+        return resp.json()
+    except Exception as exc:
+        logger.warning("Failed to fetch user settings for %s: %s", user_id, exc)
+        return {}
+
+
 async def get_position(session_id: str, right: str | None) -> dict:
     """GET /api/trades/position — return current open position for session/right."""
     client = get_client()
