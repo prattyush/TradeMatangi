@@ -85,7 +85,7 @@ Deployment steps:
 1. `cd frontend && npm run build` → produces `dist/`
 2. Copy `dist/` to nginx webroot (e.g. `/var/www/tradematangi/`)
 3. nginx config: serve static files + `location /api/ { proxy_pass http://localhost:8700; }` + SPA fallback (`try_files $uri /index.html`)
-4. Access at `http://52.66.185.106` (port 80)
+4. Access at `http://<ip>` (port 80). Ip is added in data/accesskeys.ini
 
 Note: the `VITE_API_BASE_URL` env var introduced in Sprint 3 means switching to a different deployment target later is a config-only change — no code rework.
 

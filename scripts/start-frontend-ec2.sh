@@ -2,9 +2,9 @@
 # EC2 / Amazon Linux 2023 variant.
 # The browser blocks requests from a public IP to localhost (Private Network
 # Access policy). This script resolves the EC2 public IP and passes it as
-# VITE_API_BASE_URL so the browser calls http://<ec2-ip>:8700 instead of
-# http://localhost:8700. Falls back to BACKEND_IP env var if metadata is
-# unreachable (useful for custom domains or private subnets).
+# VITE_API_BASE_URL (port 8700) and VITE_AI_HELPER_URL (port 8701) so the
+# browser calls the correct EC2 IP for both services. Falls back to BACKEND_IP
+# env var if metadata is unreachable (useful for custom domains or private subnets).
 set -e
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -39,7 +39,9 @@ else
 fi
 
 export VITE_API_BASE_URL="http://$PUBLIC_IP:8700"
-echo "Backend URL: $VITE_API_BASE_URL"
+export VITE_AI_HELPER_URL="http://$PUBLIC_IP:8701"
+echo "Backend URL:   $VITE_API_BASE_URL"
+echo "AI Helper URL: $VITE_AI_HELPER_URL"
 
 cd "$FRONTEND"
 
