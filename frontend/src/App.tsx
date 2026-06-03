@@ -6,6 +6,7 @@ import TradeHistory from './components/TradeHistory'
 import OrderPanel from './components/OrderPanel'
 import WalletWidget from './components/WalletWidget'
 import GuardRailPopup from './components/GuardRailPopup'
+import PatternAlertToast, { PatternAlert } from './components/PatternAlertToast'
 import SettingsModal, { loadFundsRatioMode, loadFundsRatios, loadTargetDeviationPct, loadBrokeragePerOrder, loadStrategyIntervalSecs, loadAutostopTriggerType, loadAutostopDeviationPct, loadHistoricalDays, loadPnlPctMode, loadBreakevenMode, loadTargetProfitBufferTicks, loadAggrSlOnlyInProfit, FundsRatios } from './components/SettingsModal'
 import { StrategyResponse, StartStrategyRequest, Order } from './services/api'
 import LoginScreen from './components/LoginScreen'
@@ -127,6 +128,7 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
   const [isRealTradingUser, setIsRealTradingUser] = useState(false)
   const [guardrailPopup, setGuardrailPopup] = useState<{ type: 'BLOCK' | 'COOLDOWN' | 'BAN'; reason: string } | null>(null)
   const [combinedPnlOpen, setCombinedPnlOpen] = useState(false)
+  const [patternAlerts, setPatternAlerts] = useState<PatternAlert[]>([])
 
   // ── Trade Analysis modal ────────────────────────────────────────────────────
   const [showAnalysis, setShowAnalysis] = useState(false)
@@ -327,6 +329,17 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
       setBrokerError(event.message as string)
     } else if (event.type === 'new_trade') {
       sim.addTradeFromSSE(event as unknown as import('./services/api').Trade)
+    } else if (event.type === 'pattern_alert') {
+      const alert: PatternAlert = {
+        id: Date.now() + Math.random(),
+        pattern: (event.pattern as string) ?? '',
+        category: (event.category as string) ?? 'info',
+        title: (event.title as string) ?? 'Pattern Detected',
+        severity: (event.severity as string) ?? 'info',
+        description: (event.description as string) ?? '',
+        trade_suggestion: (event.trade_suggestion as string | null) ?? null,
+      }
+      setPatternAlerts(prev => [...prev.slice(-2), alert])
     }
   }, [sim.setLatestTick, sim.handleSessionEnded, sim.handleOrderFilled, sim.handleOrderCancelled, sim.addOpenOrder, sim.addTradeFromSSE, setGuardrailPopup, setRunningStrategies])
 
@@ -917,6 +930,12 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
         symbol={sim.symbol || null}
         strikeCe={sim.sessionStrikeCE}
         strikePe={sim.sessionStrikePE}
+      />
+
+      {/* Pattern alert toasts (experimental feature) */}
+      <PatternAlertToast
+        alerts={patternAlerts}
+        onDismiss={id => setPatternAlerts(prev => prev.filter(a => a.id !== id))}
       />
     </div>
   )
