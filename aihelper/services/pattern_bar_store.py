@@ -51,6 +51,8 @@ class PatternBarStore:
         self._bar_counts: dict[tuple[str, str | None], int] = {}
         # (session_id, right, pattern) → bar_count at last fire
         self._cooldowns: dict[tuple[str, str | None, str], int] = {}
+        # (session_id, right) → deque of SL trigger prices per bar (None = no SL)
+        self._sl_history: dict[tuple[str, str | None], deque[float | None]] = {}
 
     def append_bars(self, session_id: str, right: str | None, new_bars: list[OHLCBar]) -> None:
         """Merge new_bars into the session buffer, skipping already-stored bars."""
@@ -103,6 +105,30 @@ class PatternBarStore:
         cd_key = (session_id, right, pattern)
         self._cooldowns[cd_key] = self._bar_counts.get(key, 0)
 
+    def record_sl_snapshot(
+        self, session_id: str, right: str | None, trigger_price: float | None
+    ) -> int:
+        """
+        Record the current SL trigger price for this bar. Returns the number of
+        distinct SL price changes observed across the last 6 snapshots (proxy for
+        'times the user moved the stoploss'). None-to-value or value-to-None
+        transitions (SL placed/cancelled) are not counted as changes.
+        """
+        key: tuple[str, str | None] = (session_id, right)
+        if key not in self._sl_history:
+            self._sl_history[key] = deque(maxlen=6)
+        hist = self._sl_history[key]
+        hist.append(trigger_price)
+        if len(hist) < 2:
+            return 0
+        prices = list(hist)
+        return sum(
+            1 for i in range(1, len(prices))
+            if prices[i - 1] is not None
+            and prices[i] is not None
+            and prices[i - 1] != prices[i]
+        )
+
     def clear_session(self, session_id: str) -> None:
         """Remove all state for a session (called on session-stop)."""
         keys_to_delete = [k for k in self._bars if k[0] == session_id]
@@ -114,3 +140,6 @@ class PatternBarStore:
         cd_keys = [k for k in self._cooldowns if k[0] == session_id]
         for k in cd_keys:
             del self._cooldowns[k]
+        sl_keys = [k for k in self._sl_history if k[0] == session_id]
+        for k in sl_keys:
+            del self._sl_history[k]

@@ -196,6 +196,14 @@ async def get_open_orders(session_id: str) -> list[dict]:
     return resp.json()
 
 
+async def get_session_trades(session_id: str) -> list[dict]:
+    """GET /api/trades?session_id={id} — fetch all trades for the session."""
+    client = get_client()
+    resp = await client.get("/api/trades", params={"session_id": session_id})
+    resp.raise_for_status()
+    return resp.json()
+
+
 async def update_stoploss_order(session_id: str, order_id: str, trigger_price: float) -> dict:
     """PATCH /api/orders/{order_id} — update stoploss trigger price."""
     client = get_client()

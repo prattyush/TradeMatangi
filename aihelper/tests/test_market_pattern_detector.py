@@ -19,7 +19,10 @@ from services.market_pattern_detector import (
     detect_support_zone,
     detect_resistance_zone,
     detect_panic_behavior,
+    detect_overtrading,
     detect_all_market_patterns,
+    count_trades_in_window,
+    count_round_trips_in_window,
 )
 from services.pattern_bar_store import PatternBarStore
 from processors.base import OHLCBar
@@ -374,3 +377,128 @@ def test_pattern_bar_store_separate_rights():
     store.append_bars("s1", "CE", bars_ce)
     assert store.bar_count("s1", None) == 5
     assert store.bar_count("s1", "CE") == 3
+
+
+# ── detect_overtrading ────────────────────────────────────────────────────────
+
+def test_overtrading_detected():
+    r = detect_overtrading(3)
+    assert r.detected
+    assert r.pattern == "overtrading"
+    assert r.category == "behavioral"
+    assert r.severity == "warning"
+
+
+def test_overtrading_not_triggered_at_boundary():
+    assert not detect_overtrading(2).detected
+
+
+def test_overtrading_zero():
+    assert not detect_overtrading(0).detected
+
+
+# ── count_trades_in_window ────────────────────────────────────────────────────
+
+_NOW_TS = 1_700_000_000
+
+
+def _trade(ts: int, side: str = "BUY") -> dict:
+    return {"timestamp": ts, "side": side}
+
+
+def test_count_trades_in_window_all_within():
+    trades = [_trade(_NOW_TS - 100), _trade(_NOW_TS - 300), _trade(_NOW_TS - 599)]
+    assert count_trades_in_window(trades, _NOW_TS, 600) == 3
+
+
+def test_count_trades_in_window_some_outside():
+    trades = [_trade(_NOW_TS - 100), _trade(_NOW_TS - 700)]
+    assert count_trades_in_window(trades, _NOW_TS, 600) == 1
+
+
+def test_count_trades_in_window_empty():
+    assert count_trades_in_window([], _NOW_TS, 600) == 0
+
+
+def test_count_trades_in_window_exact_boundary():
+    # timestamp == cutoff is included (>=)
+    trades = [_trade(_NOW_TS - 600)]
+    assert count_trades_in_window(trades, _NOW_TS, 600) == 1
+
+
+# ── count_round_trips_in_window ───────────────────────────────────────────────
+
+def test_count_round_trips_two_pairs():
+    trades = [
+        _trade(_NOW_TS - 100, "BUY"), _trade(_NOW_TS - 90, "SELL"),
+        _trade(_NOW_TS - 80, "BUY"),  _trade(_NOW_TS - 70, "SELL"),
+    ]
+    assert count_round_trips_in_window(trades, _NOW_TS, 900) == 2
+
+
+def test_count_round_trips_odd_count():
+    trades = [
+        _trade(_NOW_TS - 100, "BUY"), _trade(_NOW_TS - 90, "SELL"),
+        _trade(_NOW_TS - 80, "BUY"),
+    ]
+    assert count_round_trips_in_window(trades, _NOW_TS, 900) == 1
+
+
+def test_count_round_trips_empty():
+    assert count_round_trips_in_window([], _NOW_TS, 900) == 0
+
+
+def test_count_round_trips_outside_window():
+    trades = [
+        _trade(_NOW_TS - 1000, "BUY"), _trade(_NOW_TS - 950, "SELL"),
+    ]
+    assert count_round_trips_in_window(trades, _NOW_TS, 900) == 0
+
+
+# ── PatternBarStore SL snapshot tracking ─────────────────────────────────────
+
+def test_sl_snapshot_no_changes():
+    store = PatternBarStore()
+    for _ in range(5):
+        changes = store.record_sl_snapshot("s1", None, 24500.0)
+    assert changes == 0
+
+
+def test_sl_snapshot_counts_price_changes():
+    store = PatternBarStore()
+    store.record_sl_snapshot("s1", None, 24500.0)
+    store.record_sl_snapshot("s1", None, 24450.0)
+    store.record_sl_snapshot("s1", None, 24400.0)
+    changes = store.record_sl_snapshot("s1", None, 24350.0)
+    assert changes == 3
+
+
+def test_sl_snapshot_none_to_value_not_counted():
+    store = PatternBarStore()
+    store.record_sl_snapshot("s1", None, None)   # no SL
+    changes = store.record_sl_snapshot("s1", None, 24500.0)  # SL placed
+    assert changes == 0  # None→value is not a "moved SL" event
+
+
+def test_sl_snapshot_value_to_none_not_counted():
+    store = PatternBarStore()
+    store.record_sl_snapshot("s1", None, 24500.0)
+    changes = store.record_sl_snapshot("s1", None, None)  # SL cancelled
+    assert changes == 0  # value→None is not a "moved SL" event
+
+
+def test_sl_snapshot_cleared_on_session_clear():
+    store = PatternBarStore()
+    store.record_sl_snapshot("s1", None, 24500.0)
+    store.record_sl_snapshot("s1", None, 24450.0)
+    store.clear_session("s1")
+    changes = store.record_sl_snapshot("s1", None, 24400.0)
+    assert changes == 0  # fresh history after clear
+
+
+def test_sl_snapshot_separate_rights():
+    store = PatternBarStore()
+    store.record_sl_snapshot("s1", "CE", 100.0)
+    store.record_sl_snapshot("s1", "CE", 90.0)
+    changes_pe = store.record_sl_snapshot("s1", "PE", 200.0)
+    assert changes_pe == 0  # PE history is independent of CE

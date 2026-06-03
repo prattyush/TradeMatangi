@@ -403,6 +403,19 @@ def detect_overtrading(round_trips_last_window: int) -> PatternResult:
     return _no("overtrading", "Overtrading", "behavioral")
 
 
+def count_trades_in_window(trades: list[dict], now_ts: int, window_secs: int) -> int:
+    """Count trades with timestamp >= now_ts - window_secs."""
+    cutoff = now_ts - window_secs
+    return sum(1 for t in trades if int(t.get("timestamp", 0)) >= cutoff)
+
+
+def count_round_trips_in_window(trades: list[dict], now_ts: int, window_secs: int) -> int:
+    """Count complete round trips (entry+exit pairs) in the last window_secs."""
+    cutoff = now_ts - window_secs
+    recent = [t for t in trades if int(t.get("timestamp", 0)) >= cutoff]
+    return len(recent) // 2
+
+
 # ── Aggregate detector ────────────────────────────────────────────────────────
 
 def detect_all_market_patterns(bars: Sequence[dict]) -> list[PatternResult]:
