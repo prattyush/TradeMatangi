@@ -28,7 +28,7 @@ interface AnalysisMessage {
 }
 
 type ChatMessage = UserMessage | AssistantMessage | DecisionMessage | AnalysisMessage
-type PanelTab = 'chat' | 'commands' | 'hotwords'
+type PanelTab = 'chat' | 'commands' | 'hotwords' | 'templates'
 
 interface Props {
   sessionId: string | null
@@ -98,6 +98,8 @@ export default function AIChatPanel({ sessionId, userId, symbol, strikeCe, strik
   const [strategies, setStrategies] = useState<StrategyItem[]>([])
   const [strategiesLoading, setStrategiesLoading] = useState(false)
   const [deletingHotword, setDeletingHotword] = useState<string | null>(null)
+  const hotwords = strategies.filter(s => !s.is_template)
+  const templates = strategies.filter(s => s.is_template)
   const [commands, setCommands] = useState<CommandItem[]>([])
   const [commandsLoading, setCommandsLoading] = useState(false)
   const [cancellingCommand, setCancellingCommand] = useState<string | null>(null)
@@ -151,14 +153,17 @@ export default function AIChatPanel({ sessionId, userId, symbol, strikeCe, strik
   // Keep commandsRef in sync so polling interval can read it without stale closure
   useEffect(() => { commandsRef.current = commands }, [commands])
 
-  // Reset chat state when session changes; also pre-fetch commands so polling knows the state
-  useEffect(() => {
-    setMessages([])
-    setCommands([])
-    commandsRef.current = []
-    lastSeenTsRef.current = null
-    if (sessionId) fetchCommands()
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const fetchCommands = useCallback(async () => {
+    if (!sessionId) return
+    setCommandsLoading(true)
+    try {
+      const items = await api.aiGetCommands(sessionId)
+      setCommands(items)
+    } catch {
+      setCommands([])
+    } finally {
+      setCommandsLoading(false)
+    }
   }, [sessionId])
 
   const fetchAndAppendDecisions = useCallback(async (): Promise<void> => {
@@ -190,17 +195,14 @@ export default function AIChatPanel({ sessionId, userId, symbol, strikeCe, strik
     return () => clearInterval(id)
   }, [sessionId, fetchAndAppendDecisions])
 
-  const fetchCommands = useCallback(async () => {
-    if (!sessionId) return
-    setCommandsLoading(true)
-    try {
-      const items = await api.aiGetCommands(sessionId)
-      setCommands(items)
-    } catch {
-      setCommands([])
-    } finally {
-      setCommandsLoading(false)
-    }
+  // Reset chat state when session changes; also pre-fetch commands so polling knows the state
+  useEffect(() => {
+    setMessages([])
+    setCommands([])
+    commandsRef.current = []
+    lastSeenTsRef.current = null
+    if (sessionId) fetchCommands()
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId])
 
   const fetchStrategies = useCallback(async () => {
@@ -222,7 +224,7 @@ export default function AIChatPanel({ sessionId, userId, symbol, strikeCe, strik
 
   const handleTabChange = useCallback((t: PanelTab) => {
     setTab(t)
-    if (t === 'hotwords') fetchStrategies()
+    if (t === 'hotwords' || t === 'templates') fetchStrategies()
     if (t === 'commands') fetchCommands()
   }, [fetchStrategies, fetchCommands])
 
@@ -241,6 +243,12 @@ export default function AIChatPanel({ sessionId, userId, symbol, strikeCe, strik
   const handleUseHotword = useCallback((hotword: string) => {
     setTab('chat')
     setInputText(`use ${hotword}`)
+  }, [])
+
+  const handleUseTemplate = useCallback((hotword: string, phNames: string[]) => {
+    setTab('chat')
+    const hint = phNames.length > 0 ? phNames.join(',') : ''
+    setInputText(`start template ${hotword} with values - ${hint}`)
   }, [])
 
   const handleCancelCommand = useCallback(async (commandId: string) => {
@@ -349,7 +357,7 @@ export default function AIChatPanel({ sessionId, userId, symbol, strikeCe, strik
 
         {/* Tabs */}
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 4 }}>
-          {(['chat', 'commands', 'hotwords'] as PanelTab[]).map(t => (
+          {(['chat', 'commands', 'hotwords', 'templates'] as PanelTab[]).map(t => (
             <button
               key={t}
               onClick={() => handleTabChange(t)}
@@ -785,13 +793,13 @@ export default function AIChatPanel({ sessionId, userId, symbol, strikeCe, strik
             </button>
           </div>
 
-          {strategiesLoading && strategies.length === 0 && (
+          {strategiesLoading && hotwords.length === 0 && (
             <div style={{ color: '#484f58', fontSize: 13, textAlign: 'center', marginTop: 20 }}>
               Loading…
             </div>
           )}
 
-          {!strategiesLoading && strategies.length === 0 && (
+          {!strategiesLoading && hotwords.length === 0 && (
             <div style={{ color: '#484f58', fontSize: 13, textAlign: 'center', marginTop: 20 }}>
               No saved hotwords yet.{'\n'}
               <span style={{ fontSize: 11 }}>
@@ -800,7 +808,7 @@ export default function AIChatPanel({ sessionId, userId, symbol, strikeCe, strik
             </div>
           )}
 
-          {strategies.map(s => (
+          {hotwords.map(s => (
             <div key={s.hotword} style={{
               background: '#161b22', border: '1px solid #21262d',
               borderRadius: 8, padding: '9px 11px',
@@ -859,6 +867,125 @@ export default function AIChatPanel({ sessionId, userId, symbol, strikeCe, strik
               )}
             </div>
           ))}
+        </div>
+      )}
+
+      {/* Templates tab */}
+      {tab === 'templates' && (
+        <div style={{ flex: 1, overflowY: 'auto', padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+            <span style={{ color: '#8b949e', fontSize: 11 }}>
+              Reusable templates with ${'{'}placeholder{'}'} variables
+            </span>
+            <button
+              onClick={fetchStrategies}
+              disabled={strategiesLoading}
+              style={{
+                background: 'none', border: '1px solid #30363d',
+                color: '#8b949e', borderRadius: 6, padding: '2px 8px',
+                fontSize: 11, cursor: 'pointer',
+                opacity: strategiesLoading ? 0.5 : 1,
+              }}
+            >
+              {strategiesLoading ? '…' : '↻ Refresh'}
+            </button>
+          </div>
+
+          {strategiesLoading && templates.length === 0 && (
+            <div style={{ color: '#484f58', fontSize: 13, textAlign: 'center', marginTop: 20 }}>
+              Loading…
+            </div>
+          )}
+
+          {!strategiesLoading && templates.length === 0 && (
+            <div style={{ color: '#484f58', fontSize: 13, textAlign: 'center', marginTop: 20 }}>
+              No saved templates yet.{'\n'}
+              <span style={{ fontSize: 11 }}>
+                Save one with: 'entry template: Buy ${'{'}symbol{'}'} with ratio ${'{'}ratio{'}'} when bar closes above ${'{'}price{'}'}. Use hotword bbwp'
+              </span>
+            </div>
+          )}
+
+          {templates.map(t => {
+            const phNames = (t.template_text ?? '').match(/\$\{([^}]+)\}/g)?.map(m => m.slice(2, -1)) ?? []
+            const tType = t.template_type ?? 'entry'
+            return (
+              <div key={t.hotword} style={{
+                background: '#161b22', border: '1px solid #21262d',
+                borderRadius: 8, padding: '9px 11px',
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 5 }}>
+                  <span style={{
+                    color: '#58a6ff', fontWeight: 700, fontSize: 12,
+                    background: '#0d2340', border: '1px solid #1f6feb',
+                    borderRadius: 4, padding: '1px 7px',
+                  }}>
+                    {t.hotword}
+                  </span>
+                  <span style={{
+                    color: '#8b949e', fontSize: 10,
+                    background: '#21262d', borderRadius: 3, padding: '1px 5px',
+                  }}>
+                    {tType}
+                  </span>
+                  {t.use_count != null && t.use_count > 0 && (
+                    <span style={{ color: '#484f58', fontSize: 10 }}>
+                      used {t.use_count}×
+                    </span>
+                  )}
+                  <div style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
+                    <button
+                      onClick={() => handleUseTemplate(t.hotword, phNames)}
+                      disabled={!sessionId}
+                      title={sessionId ? `Fill and use template '${t.hotword}'` : 'Start a session first'}
+                      style={{
+                        background: '#0d2340', border: '1px solid #58a6ff',
+                        color: '#58a6ff', borderRadius: 5, padding: '2px 9px',
+                        fontSize: 11, cursor: sessionId ? 'pointer' : 'not-allowed',
+                        fontWeight: 600, opacity: sessionId ? 1 : 0.4,
+                      }}
+                    >
+                      Use
+                    </button>
+                    <button
+                      onClick={() => handleDelete(t.hotword)}
+                      disabled={deletingHotword === t.hotword}
+                      title="Delete this template"
+                      style={{
+                        background: 'none', border: '1px solid #f85149',
+                        color: '#f85149', borderRadius: 5, padding: '2px 8px',
+                        fontSize: 11, cursor: 'pointer',
+                        opacity: deletingHotword === t.hotword ? 0.5 : 1,
+                      }}
+                    >
+                      {deletingHotword === t.hotword ? '…' : '✕'}
+                    </button>
+                  </div>
+                </div>
+                {phNames.length > 0 && (
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 5 }}>
+                    {phNames.map((ph, i) => (
+                      <span key={i} style={{
+                        color: '#d29922', fontSize: 10,
+                        background: '#2a1f00', border: '1px solid #4a3500',
+                        borderRadius: 3, padding: '1px 5px', fontFamily: 'monospace',
+                      }}>
+                        {i + 1}. {`\${${ph}}`}
+                      </span>
+                    ))}
+                  </div>
+                )}
+                {t.template_text && (
+                  <div style={{
+                    color: '#8b949e', fontSize: 10, wordBreak: 'break-word',
+                    fontStyle: 'italic', lineHeight: 1.4,
+                  }}>
+                    {t.template_text}
+                  </div>
+                )}
+              </div>
+            )
+          })}
         </div>
       )}
     </div>
