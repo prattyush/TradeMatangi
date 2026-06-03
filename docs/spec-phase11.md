@@ -98,6 +98,21 @@ This section lists out some features which were left out from previous phases.
 4. Create architecture document for both frontend and backend as was created for AIhelpler. I have renamed docs/architecture.md to docs/architecture-aihelper.md. Create similar ones for backend and frontend with latest state, so that I can understand Code directly as well.
 
 
+##### ExperimentalFeature
+This feature is experimental and should have an option in setting to be switched off. Not sure where this code should lie in backend or aihelper. Laying out the high level idea here, feel free to implement as you seem fit. The lower level details are not ironed out, so feel free to implement or plan them as you seem fit. Create a new base branch from dev feature/experimental and then feature branches from it for PR with merging to the new branch feature/experimental. So, that testing and finalyzing can be done on the feature/experimental branch.
+The high level thinking is, in a running session, when the chart start executing, many patterns keep on emerging during the day, the idea is that the system should keep on checking if any of the patterns are forming based on Underlying in case of options or equity symbol itself. And when these patterns are detected it should show them as slight notification, like a flash message which comes and notifies the user or may be some other way to inform the user. The patterns would be detected in the time interval as is present in the settings  "Strategies / Strategy Candle Interval". Feel free to be as creative as possible. Basic Patterns listed here. You can also suggest trades and check is suffering panic behavior through too many Stoploss changes, too many trades in too short time. 
+Few patterns to detect.
+1. Strong Bull Trend.
+2. Strong Bear Trend.
+3. Trading Range.
+4. Strong Bull Trend Reversal.
+5. Strong Bear Trend Reversal.
+6. Trading Range Breakout.
+7. Opening Reversal -> After market open, price moves one side then reverses into trend in opposite side.
+8. When 9 EMA and 21 EMA cross over, possible new micro trend start.
+9. When price keeps going around a certain price area and returning signalling support and likewise resistance, the price area where price reverses has width around 5% of underlying actual price.
+
+For this feature, you can still use the hook in backend to get data at bar close and keep storing them if 15 is not enough, or increase backend bar length from start of the day.
 
 
 ## PR Log (feature/aihelper branch)
