@@ -34,7 +34,14 @@ async def _run_pattern_detection(hook: BarCloseHook) -> None:
     Always called via asyncio.create_task — never blocks the hook response or
     the command evaluation path.
     """
-    from services.market_pattern_detector import detect_all_market_patterns
+    from datetime import datetime, timezone as _tz
+    from services.market_pattern_detector import (
+        detect_all_market_patterns,
+        detect_panic_behavior,
+        detect_overtrading,
+        count_trades_in_window,
+        count_round_trips_in_window,
+    )
     from services import backend_client
 
     # Check setting first; skip work when disabled
@@ -66,6 +73,42 @@ async def _run_pattern_detection(hook: BarCloseHook) -> None:
             await backend_client.emit_pattern_alert(hook.session_id, result)
         except Exception as exc:
             logger.debug("Pattern alert emit failed for session %s: %s", hook.session_id, exc)
+
+    # ── Behavioral patterns (panic / overtrading) ──────────────────────────────
+    try:
+        # Derive current Unix timestamp from the latest bar (IST-as-UTC encoding)
+        current_ts = 0
+        if hook.bars:
+            try:
+                dt = datetime.fromisoformat(hook.bars[-1].time)
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=_tz.utc)
+                current_ts = int(dt.timestamp())
+            except Exception:
+                pass
+
+        # Track SL changes across bar closes
+        open_orders = await backend_client.get_open_orders(hook.session_id)
+        sl_order = next((o for o in open_orders if o.get("is_stoploss")), None)
+        sl_price = float(sl_order["trigger_price"]) if sl_order else None
+        sl_changes = store.record_sl_snapshot(hook.session_id, hook.right, sl_price)
+
+        # Fetch session trades for count-based checks
+        recent_trades = await backend_client.get_session_trades(hook.session_id)
+        rapid_count = count_trades_in_window(recent_trades, current_ts, window_secs=600)
+
+        panic = detect_panic_behavior(sl_changes, rapid_count)
+        if panic.detected and store.is_cooled_down(hook.session_id, hook.right, "panic_behavior"):
+            store.mark_fired(hook.session_id, hook.right, "panic_behavior")
+            await backend_client.emit_pattern_alert(hook.session_id, panic)
+
+        round_trips = count_round_trips_in_window(recent_trades, current_ts, window_secs=900)
+        over = detect_overtrading(round_trips)
+        if over.detected and store.is_cooled_down(hook.session_id, hook.right, "overtrading"):
+            store.mark_fired(hook.session_id, hook.right, "overtrading")
+            await backend_client.emit_pattern_alert(hook.session_id, over)
+    except Exception as exc:
+        logger.debug("Behavioral pattern detection failed for session %s: %s", hook.session_id, exc)
 
 
 @router.post("/hook/bar-close", status_code=200)
