@@ -244,8 +244,10 @@ async def _evaluate_exit(hook: BarCloseHook, command: dict[str, Any]) -> dict[st
                 session_id, right, float(computed_price), position_dict
             )
         elif exit_action == "exit_position":
-            await backend_client.exit_position_market(session_id, right)
+            # Cancel any open SL order BEFORE placing the market sell.
+            # Having both active simultaneously doubles the margin requirement on Kotak.
             await backend_client.cancel_open_stoploss(session_id, right)
+            await backend_client.exit_position_market(session_id, right)
         elif exit_action == "start_takeprofit":
             await backend_client.start_takeprofit_strategy(
                 session_id, right, float(computed_price)

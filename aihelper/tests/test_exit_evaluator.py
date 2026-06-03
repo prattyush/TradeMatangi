@@ -175,18 +175,24 @@ class TestExitPosition:
         mock_exit.assert_called_once_with("sess-exit-001", "CE")
 
     @pytest.mark.asyncio
-    async def test_cancel_open_stoploss_called_after_exit_position(self):
+    async def test_cancel_open_stoploss_called_before_exit_position(self):
+        """SL must be cancelled BEFORE placing the market sell to avoid double margin on Kotak."""
         llm_result = {"should_exit": True, "exit_action": "exit_position", "computed_price": None, "reason": "Bear bar."}
+        call_order = []
         with patch("services.llm_service.evaluate_exit_command", new=AsyncMock(return_value=llm_result)), \
              patch("guardrails.validator.validate_exit_action", return_value=(True, "")), \
              patch("db.commands_store.claim_command_execution", return_value=True), \
-             patch("services.backend_client.exit_position_market", new=AsyncMock(return_value={})), \
-             patch("services.backend_client.cancel_open_stoploss", new=AsyncMock()) as mock_sl, \
+             patch("services.backend_client.cancel_open_stoploss",
+                   new=AsyncMock(side_effect=lambda *_: call_order.append("cancel_sl"))) as mock_sl, \
+             patch("services.backend_client.exit_position_market",
+                   new=AsyncMock(side_effect=lambda *_: call_order.append("exit") or {})) as mock_exit, \
              patch("db.decision_log_store.write_decision"), \
              patch("db.commands_store.mark_command_executed"):
             from services import command_evaluator
             await command_evaluator.evaluate(_make_hook(), _EXIT_CMD)
         mock_sl.assert_called_once_with("sess-exit-001", "CE")
+        mock_exit.assert_called_once_with("sess-exit-001", "CE")
+        assert call_order == ["cancel_sl", "exit"], "SL cancel must happen before market sell"
 
     @pytest.mark.asyncio
     async def test_decision_logged_after_exit(self):
