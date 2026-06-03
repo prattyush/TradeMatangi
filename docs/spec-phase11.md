@@ -66,6 +66,40 @@ Examples:-
  8. Find the direction of the trade by finding whether sell or buy order is placed before. If sell then it is a sell trade, if buy then it is a buy trade.
  9. Use the best model, given the choice of models in accesskeys.init [llm-models]
 
+
+##### ExitEntryTemplates
+1. User can define templates for either entry or exit commands, the templates need to be specific on theses values :- a) Enty or Exit Command, b) Action - Entry (Buy, Place limit Order, place target order) or Exit (Immediate Exit(square off), Change Stoploss, Target Profit).
+2. The templates will have place holders in these parameters :- a) Symbol (CE or PE in options), otherwise for equity it is the selected symbol, b) Quantity for Entry, %Quantity for Exit, c) Price :- For both entry/exit, d) other variables like number of bars, percentage etc.
+3. Each template should have a hotword associated, or reject the template. User can be asked to provide hotword if missed.
+4. The placeholder can be provided with symbols like any string matcher or other template replacement works like - "{price}, {percentage}" or "${price}, ${percentage}".  The user is supposed to know the order of these placeholders, so when recalling a template and using it as command it can directly give vaues "," separated. Like
+```
+entry template for Entering a position:- "Buy in ${symbol} with quantity ratio ${ratio}, when the latest bar is a bull bar and its closing price is above ${closingprice}.". Use hotword bbwp for it.
+
+```
+How user invokes it:-
+```
+start template bbwp with values - CE,M,30
+```
+Once started a template with values, it becomes a command and then behaves as such.
+5. Once started a template, the AI chat should show the exact command it interpretted the template with values. If after filling values any placeholder remains like ${xx} with no value given, ask the user to enter one or invalidate it. 
+6. User can ask for all saved templates and it's hotword.
+
+
+##### CrossSymbolMonitoring
+1. For options, Can AIHelper commands monitor underlying and take action in CE/PE. Like when NIFTY closes below 24200, exit PE position immediately.
+2. Discuss on complication of having multiple symbol commands like:- If NIFTY closes abovve 24005 and the CE bar is a bull bar, then Buy CE with quantity ratio m immediately. And implement it if it doesn't disrupt.
+
+
+##### OtherFeatures
+This section lists out some features which were left out from previous phases.
+1. When a trade is executed a marker is placed on the chart. For CE and PE trades the marker comes only in the respective CE or PE chart. Can it be done, such that the marker also appears in the underlying chart, using the timestamp of the order and finding the price of the underlying at that timestamp, or put it with current price, as soon as the marker is placed on CE, place the marker on underlying as well with current tick value. We can discuss more on its complexity.
+2. For Trade Analysis, can we have a setting in General Tab, where user can select whether he wants the trade analysis to be done on Options prices (CE/PE) or underyling prices. Based on that the Trade Analysis will choose the respective ohlc data. The user can choose only one at a time.
+3. In BAN guardrail, we have 2 options, total % loss and % of losing trades. For % of losing trades, we cannot stop when first trade is lost, so atleast some number of trades should have been done. For that, can we include another settings, like applying checking of % lossing trades only after 10 trades are done or 5 etc. % Capital Loss makes sense directly, because saving capital is first priority, so if user in first trade loses 10% capital, let trading stop for the session.
+4. Create architecture document for both frontend and backend as was created for AIhelpler. I have renamed docs/architecture.md to docs/architecture-aihelper.md. Create similar ones for backend and frontend with latest state, so that I can understand Code directly as well.
+
+
+
+
 ## PR Log (feature/aihelper branch)
 
 | Item | PR | Status |
