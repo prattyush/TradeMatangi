@@ -155,6 +155,40 @@ class TestExitPositionMarket:
         assert result == expected
 
 
+class TestCancelOpenStoploss:
+    @pytest.mark.asyncio
+    async def test_deletes_sl_orders_for_right(self):
+        open_orders = [
+            {"order_id": "sl-001", "is_stoploss": True, "right": "CE"},
+            {"order_id": "limit-001", "is_stoploss": False, "right": "CE"},
+            {"order_id": "sl-002", "is_stoploss": True, "right": "PE"},
+        ]
+        mock_client = MagicMock()
+        mock_client.delete = AsyncMock(return_value=_mock_response({"ok": True}))
+        with patch.object(backend_client, "get_open_orders", new=AsyncMock(return_value=open_orders)), \
+             patch.object(backend_client, "get_client", return_value=mock_client):
+            await backend_client.cancel_open_stoploss("sess-001", "CE")
+        # Only the CE SL order should be deleted
+        assert mock_client.delete.call_count == 1
+        call_args = mock_client.delete.call_args
+        assert "sl-001" in call_args.args[0]
+
+    @pytest.mark.asyncio
+    async def test_no_delete_when_no_sl_for_right(self):
+        open_orders = [{"order_id": "sl-pe", "is_stoploss": True, "right": "PE"}]
+        mock_client = MagicMock()
+        mock_client.delete = AsyncMock(return_value=_mock_response({}))
+        with patch.object(backend_client, "get_open_orders", new=AsyncMock(return_value=open_orders)), \
+             patch.object(backend_client, "get_client", return_value=mock_client):
+            await backend_client.cancel_open_stoploss("sess-001", "CE")
+        mock_client.delete.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_swallows_exceptions(self):
+        with patch.object(backend_client, "get_open_orders", new=AsyncMock(side_effect=Exception("network error"))):
+            await backend_client.cancel_open_stoploss("sess-001", "CE")  # must not raise
+
+
 class TestStartTakeprofitStrategy:
     @pytest.mark.asyncio
     async def test_posts_target_profit_strategy(self):

@@ -164,7 +164,9 @@ class TestExitPosition:
         llm_result = {"should_exit": True, "exit_action": "exit_position", "computed_price": None, "reason": "Bear bar."}
         with patch("services.llm_service.evaluate_exit_command", new=AsyncMock(return_value=llm_result)), \
              patch("guardrails.validator.validate_exit_action", return_value=(True, "")), \
+             patch("db.commands_store.claim_command_execution", return_value=True), \
              patch("services.backend_client.exit_position_market", new=AsyncMock(return_value={"ok": True})) as mock_exit, \
+             patch("services.backend_client.cancel_open_stoploss", new=AsyncMock()), \
              patch("db.decision_log_store.write_decision"), \
              patch("db.commands_store.mark_command_executed"):
             from services import command_evaluator
@@ -173,12 +175,28 @@ class TestExitPosition:
         mock_exit.assert_called_once_with("sess-exit-001", "CE")
 
     @pytest.mark.asyncio
+    async def test_cancel_open_stoploss_called_after_exit_position(self):
+        llm_result = {"should_exit": True, "exit_action": "exit_position", "computed_price": None, "reason": "Bear bar."}
+        with patch("services.llm_service.evaluate_exit_command", new=AsyncMock(return_value=llm_result)), \
+             patch("guardrails.validator.validate_exit_action", return_value=(True, "")), \
+             patch("db.commands_store.claim_command_execution", return_value=True), \
+             patch("services.backend_client.exit_position_market", new=AsyncMock(return_value={})), \
+             patch("services.backend_client.cancel_open_stoploss", new=AsyncMock()) as mock_sl, \
+             patch("db.decision_log_store.write_decision"), \
+             patch("db.commands_store.mark_command_executed"):
+            from services import command_evaluator
+            await command_evaluator.evaluate(_make_hook(), _EXIT_CMD)
+        mock_sl.assert_called_once_with("sess-exit-001", "CE")
+
+    @pytest.mark.asyncio
     async def test_decision_logged_after_exit(self):
         llm_result = {"should_exit": True, "exit_action": "exit_position", "computed_price": None, "reason": "Bear bar."}
         written = []
         with patch("services.llm_service.evaluate_exit_command", new=AsyncMock(return_value=llm_result)), \
              patch("guardrails.validator.validate_exit_action", return_value=(True, "")), \
+             patch("db.commands_store.claim_command_execution", return_value=True), \
              patch("services.backend_client.exit_position_market", new=AsyncMock(return_value={})), \
+             patch("services.backend_client.cancel_open_stoploss", new=AsyncMock()), \
              patch("db.decision_log_store.write_decision", side_effect=written.append), \
              patch("db.commands_store.mark_command_executed"):
             from services import command_evaluator
@@ -192,7 +210,9 @@ class TestExitPosition:
         llm_result = {"should_exit": True, "exit_action": "exit_position", "computed_price": None, "reason": "Bear bar."}
         with patch("services.llm_service.evaluate_exit_command", new=AsyncMock(return_value=llm_result)), \
              patch("guardrails.validator.validate_exit_action", return_value=(True, "")), \
+             patch("db.commands_store.claim_command_execution", return_value=True), \
              patch("services.backend_client.exit_position_market", new=AsyncMock(return_value={})), \
+             patch("services.backend_client.cancel_open_stoploss", new=AsyncMock()), \
              patch("db.decision_log_store.write_decision"), \
              patch("db.commands_store.mark_command_executed") as mock_mark:
             from services import command_evaluator
@@ -204,12 +224,28 @@ class TestExitPosition:
         llm_result = {"should_exit": True, "exit_action": "exit_position", "computed_price": None, "reason": "Bear bar."}
         with patch("services.llm_service.evaluate_exit_command", new=AsyncMock(return_value=llm_result)), \
              patch("guardrails.validator.validate_exit_action", return_value=(True, "")), \
+             patch("db.commands_store.claim_command_execution", return_value=True), \
              patch("services.backend_client.exit_position_market", new=AsyncMock(return_value={})), \
+             patch("services.backend_client.cancel_open_stoploss", new=AsyncMock()), \
              patch("db.decision_log_store.write_decision"), \
              patch("db.commands_store.mark_command_executed") as mock_mark:
             from services import command_evaluator
             await command_evaluator.evaluate(_make_hook(), dict(_EXIT_CMD, one_shot=False))
         mock_mark.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_skipped_duplicate_when_claim_fails(self):
+        llm_result = {"should_exit": True, "exit_action": "exit_position", "computed_price": None, "reason": "Bear bar."}
+        with patch("services.llm_service.evaluate_exit_command", new=AsyncMock(return_value=llm_result)), \
+             patch("guardrails.validator.validate_exit_action", return_value=(True, "")), \
+             patch("db.commands_store.claim_command_execution", return_value=False), \
+             patch("services.backend_client.exit_position_market", new=AsyncMock()) as mock_exit, \
+             patch("services.backend_client.cancel_open_stoploss", new=AsyncMock()) as mock_sl:
+            from services import command_evaluator
+            result = await command_evaluator.evaluate(_make_hook(), _EXIT_CMD)
+        assert result["outcome"] == "skipped_duplicate"
+        mock_exit.assert_not_called()
+        mock_sl.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -224,6 +260,7 @@ class TestExitUpdateStoploss:
         llm_result = {"should_exit": True, "exit_action": "update_stoploss", "computed_price": 97.0, "reason": "Shift SL."}
         with patch("services.llm_service.evaluate_exit_command", new=AsyncMock(return_value=llm_result)), \
              patch("guardrails.validator.validate_exit_action", return_value=(True, "")), \
+             patch("db.commands_store.claim_command_execution", return_value=True), \
              patch("services.backend_client.update_or_create_stoploss", new=AsyncMock(return_value={"action": "updated"})) as mock_sl, \
              patch("db.decision_log_store.write_decision"), \
              patch("db.commands_store.mark_command_executed"):
@@ -235,6 +272,20 @@ class TestExitUpdateStoploss:
         assert call_args.args[0] == "sess-exit-001"  # session_id
         assert call_args.args[1] == "CE"             # right
         assert call_args.args[2] == 97.0             # trigger_price
+
+    @pytest.mark.asyncio
+    async def test_cancel_stoploss_not_called_for_update_stoploss(self):
+        llm_result = {"should_exit": True, "exit_action": "update_stoploss", "computed_price": 97.0, "reason": "Shift SL."}
+        with patch("services.llm_service.evaluate_exit_command", new=AsyncMock(return_value=llm_result)), \
+             patch("guardrails.validator.validate_exit_action", return_value=(True, "")), \
+             patch("db.commands_store.claim_command_execution", return_value=True), \
+             patch("services.backend_client.update_or_create_stoploss", new=AsyncMock(return_value={})), \
+             patch("services.backend_client.cancel_open_stoploss", new=AsyncMock()) as mock_cancel_sl, \
+             patch("db.decision_log_store.write_decision"), \
+             patch("db.commands_store.mark_command_executed"):
+            from services import command_evaluator
+            await command_evaluator.evaluate(_make_hook(), _SL_CMD)
+        mock_cancel_sl.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -249,6 +300,7 @@ class TestExitStartTakeprofit:
         llm_result = {"should_exit": True, "exit_action": "start_takeprofit", "computed_price": 103.0, "reason": "TP at prev high."}
         with patch("services.llm_service.evaluate_exit_command", new=AsyncMock(return_value=llm_result)), \
              patch("guardrails.validator.validate_exit_action", return_value=(True, "")), \
+             patch("db.commands_store.claim_command_execution", return_value=True), \
              patch("services.backend_client.start_takeprofit_strategy", new=AsyncMock(return_value={"strategy_id": "s1"})) as mock_tp, \
              patch("db.decision_log_store.write_decision"), \
              patch("db.commands_store.mark_command_executed"):
@@ -256,6 +308,20 @@ class TestExitStartTakeprofit:
             result = await command_evaluator.evaluate(_make_hook(), _TP_CMD)
         assert result["outcome"] == "exit_executed"
         mock_tp.assert_called_once_with("sess-exit-001", "CE", 103.0)
+
+    @pytest.mark.asyncio
+    async def test_cancel_stoploss_not_called_for_start_takeprofit(self):
+        llm_result = {"should_exit": True, "exit_action": "start_takeprofit", "computed_price": 103.0, "reason": "TP at prev high."}
+        with patch("services.llm_service.evaluate_exit_command", new=AsyncMock(return_value=llm_result)), \
+             patch("guardrails.validator.validate_exit_action", return_value=(True, "")), \
+             patch("db.commands_store.claim_command_execution", return_value=True), \
+             patch("services.backend_client.start_takeprofit_strategy", new=AsyncMock(return_value={})), \
+             patch("services.backend_client.cancel_open_stoploss", new=AsyncMock()) as mock_cancel_sl, \
+             patch("db.decision_log_store.write_decision"), \
+             patch("db.commands_store.mark_command_executed"):
+            from services import command_evaluator
+            await command_evaluator.evaluate(_make_hook(), _TP_CMD)
+        mock_cancel_sl.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -272,11 +338,13 @@ class TestExitGuardrailBlocked:
              patch("guardrails.validator.validate_exit_action", return_value=(False, "No open position")), \
              patch("services.backend_client.exit_position_market", new=AsyncMock()) as mock_exit, \
              patch("db.decision_log_store.write_decision"), \
-             patch("db.commands_store.mark_command_executed"):
+             patch("db.commands_store.mark_command_executed"), \
+             patch("db.commands_store.claim_command_execution") as mock_claim:
             from services import command_evaluator
             result = await command_evaluator.evaluate(_make_hook(), _EXIT_CMD)
         assert result["outcome"] == "rejected_guardrail"
         mock_exit.assert_not_called()
+        mock_claim.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -284,20 +352,36 @@ class TestExitGuardrailBlocked:
 # ---------------------------------------------------------------------------
 
 class TestExitBackendError:
-    """Backend raises exception → backend_error logged, command NOT marked executed."""
+    """Backend raises exception → backend_error logged, command unclaimed (not marked executed)."""
 
     @pytest.mark.asyncio
     async def test_backend_error_does_not_mark_executed(self):
         llm_result = {"should_exit": True, "exit_action": "exit_position", "computed_price": None, "reason": "Bear bar."}
         with patch("services.llm_service.evaluate_exit_command", new=AsyncMock(return_value=llm_result)), \
              patch("guardrails.validator.validate_exit_action", return_value=(True, "")), \
+             patch("db.commands_store.claim_command_execution", return_value=True), \
              patch("services.backend_client.exit_position_market", new=AsyncMock(side_effect=Exception("500"))), \
              patch("db.decision_log_store.write_decision"), \
+             patch("db.commands_store.unclaim_command_execution"), \
              patch("db.commands_store.mark_command_executed") as mock_mark:
             from services import command_evaluator
             result = await command_evaluator.evaluate(_make_hook(), _EXIT_CMD)
         assert result["outcome"] == "backend_error"
         mock_mark.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_backend_error_unclains_command_for_retry(self):
+        llm_result = {"should_exit": True, "exit_action": "exit_position", "computed_price": None, "reason": "Bear bar."}
+        with patch("services.llm_service.evaluate_exit_command", new=AsyncMock(return_value=llm_result)), \
+             patch("guardrails.validator.validate_exit_action", return_value=(True, "")), \
+             patch("db.commands_store.claim_command_execution", return_value=True), \
+             patch("services.backend_client.exit_position_market", new=AsyncMock(side_effect=Exception("500"))), \
+             patch("db.decision_log_store.write_decision"), \
+             patch("db.commands_store.unclaim_command_execution") as mock_unclaim, \
+             patch("db.commands_store.mark_command_executed"):
+            from services import command_evaluator
+            await command_evaluator.evaluate(_make_hook(), _EXIT_CMD)
+        mock_unclaim.assert_called_once_with("user-exit-001", "exit-cmd-001")
 
 
 # ---------------------------------------------------------------------------

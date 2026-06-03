@@ -10,6 +10,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 
+from botocore.exceptions import ClientError
 from db.dynamo import get_dynamodb_resource
 
 logger = logging.getLogger("aihelper.db.commands_store")
@@ -55,9 +56,53 @@ def mark_command_executed(user_id: str, command_id: str) -> None:
     )
 
 
+def claim_command_execution(user_id: str, command_id: str) -> bool:
+    """Atomically transition active → executing. Returns False if already claimed/done."""
+    try:
+        _table().update_item(
+            Key={"user_id": user_id, "command_id": command_id},
+            UpdateExpression="SET #s = :executing",
+            ConditionExpression="#s = :active",
+            ExpressionAttributeNames={"#s": "status"},
+            ExpressionAttributeValues={":active": "active", ":executing": "executing"},
+        )
+        return True
+    except ClientError as e:
+        if e.response["Error"]["Code"] == "ConditionalCheckFailedException":
+            return False
+        raise
+
+
+def unclaim_command_execution(user_id: str, command_id: str) -> None:
+    """Revert executing → active so the command retries on the next bar after a backend failure."""
+    try:
+        _table().update_item(
+            Key={"user_id": user_id, "command_id": command_id},
+            UpdateExpression="SET #s = :active",
+            ConditionExpression="#s = :executing",
+            ExpressionAttributeNames={"#s": "status"},
+            ExpressionAttributeValues={":active": "active", ":executing": "executing"},
+        )
+    except ClientError as e:
+        if e.response["Error"]["Code"] != "ConditionalCheckFailedException":
+            raise
+
+
+def _get_nonterminal_commands_for_session(session_id: str) -> list[dict]:
+    """Return active + executing commands for a session (both non-terminal states)."""
+    resp = _table().query(
+        IndexName="SessionCommandsIndex",
+        KeyConditionExpression="session_id = :sid",
+        FilterExpression="#s IN (:active, :executing)",
+        ExpressionAttributeNames={"#s": "status"},
+        ExpressionAttributeValues={":sid": session_id, ":active": "active", ":executing": "executing"},
+    )
+    return resp.get("Items", [])
+
+
 def cancel_commands_for_session(session_id: str, reason: str = "session_ended") -> int:
-    """Cancel all active commands for a session. Returns count of cancelled items."""
-    commands = get_active_commands_for_session(session_id)
+    """Cancel all active and executing commands for a session. Returns count cancelled."""
+    commands = _get_nonterminal_commands_for_session(session_id)
     table = _table()
     for cmd in commands:
         table.update_item(
