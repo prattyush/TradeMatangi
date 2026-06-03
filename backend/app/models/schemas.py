@@ -330,6 +330,7 @@ class GuardRailSettingsResponse(BaseModel):
     guardrail_cooldown_losses: int = 3
     guardrail_ban_capital_pct: float = 10.0
     guardrail_ban_loss_trade_pct: float = 60.0
+    guardrail_ban_min_trades: int = 5
     guardrail_ban_enabled: bool = False
     guardrail_cooldown_enabled: bool = False
 
@@ -340,6 +341,7 @@ class GuardRailSettingsUpdateRequest(BaseModel):
     guardrail_cooldown_losses: int | None = Field(default=None, ge=1, le=20)
     guardrail_ban_capital_pct: float | None = Field(default=None, ge=1.0, le=100.0)
     guardrail_ban_loss_trade_pct: float | None = Field(default=None, ge=1.0, le=100.0)
+    guardrail_ban_min_trades: int | None = Field(default=None, ge=1, le=100)
     guardrail_ban_enabled: bool | None = None
     guardrail_cooldown_enabled: bool | None = None
 

@@ -232,6 +232,7 @@ export interface GuardRailSettings {
   guardrail_cooldown_losses: number
   guardrail_ban_capital_pct: number
   guardrail_ban_loss_trade_pct: number
+  guardrail_ban_min_trades: number
   guardrail_ban_enabled: boolean
   guardrail_cooldown_enabled: boolean
 }
