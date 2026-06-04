@@ -557,6 +557,7 @@ export default function PatternLibrary() {
   const [addPaneStrike, setAddPaneStrike] = useState('')
   const [addingPane, setAddingPane] = useState(false)
   const [addPaneError, setAddPaneError] = useState<string | null>(null)
+  const [addPaneSuccess, setAddPaneSuccess] = useState<string | null>(null)
 
   // Pane ID counter
   const paneIdRef = useRef(1)
@@ -669,6 +670,7 @@ export default function PatternLibrary() {
     if (isNaN(strike) || strike <= 0) { setAddPaneError('Enter a valid strike price'); return }
     setAddingPane(true)
     setAddPaneError(null)
+    setAddPaneSuccess(null)
     try {
       const res = await api.patternOhlcOptions(symbol, date, strike, resolvedExpiry, addPaneRight, intervalMinutes, DAYS_BACK)
       const newPane: OptionPane = {
@@ -679,6 +681,8 @@ export default function PatternLibrary() {
         candles: res.candles,
       }
       setOptionPanes(prev => [...prev, newPane])
+      setAddPaneSuccess(`✓ ${addPaneRight} ${strike} pane added`)
+      setTimeout(() => setAddPaneSuccess(null), 2500)
     } catch (err) {
       setAddPaneError(err instanceof Error ? err.message : 'Failed to load options data')
     } finally {
@@ -890,6 +894,7 @@ export default function PatternLibrary() {
     const strikeNum = parseInt(addPaneStrike)
     const snapStrike = isNaN(strikeNum) ? null : Math.round(strikeNum / interval) * interval
     return (
+      <>
       <div style={{
         display: 'flex', alignItems: 'center', gap: 8, padding: '6px 12px',
         background: '#161b22', borderTop: '1px solid #30363d', flexShrink: 0, flexWrap: 'wrap',
@@ -919,8 +924,13 @@ export default function PatternLibrary() {
           onClick={handleAddPane}
           disabled={addingPane || !addPaneStrike}
         >{addingPane ? 'Loading…' : '+ Add Pane'}</button>
-        {addPaneError && <span style={{ fontSize: 11, color: '#f85149' }}>{addPaneError}</span>}
       </div>
+      {(addPaneError || addPaneSuccess) && (
+        <div style={{ padding: '4px 12px', fontSize: 12, fontWeight: 600, color: addPaneError ? '#f85149' : '#3fb950', background: '#161b22', borderTop: '1px solid #21262d' }}>
+          {addPaneError ?? addPaneSuccess}
+        </div>
+      )}
+      </>
     )
   }
 
