@@ -29,6 +29,14 @@ export interface TickEvent {
   right?: string   // "CE" or "PE" for options dual-stream; undefined for equity
 }
 
+export interface BarCandle {
+  time: number
+  open: number
+  high: number
+  low: number
+  close: number
+}
+
 export interface SymbolInfo {
   symbol: string
   display_name: string
@@ -72,7 +80,8 @@ export interface SimulationStartRequest {
   strike_pe?: number  // PE streaming strike (OTM direction: ATM - offset)
   brokerage_per_order?: number  // flat brokerage per order (default 1)
   strategy_interval_secs?: number  // candle interval for all strategies (180=3min, 300=5min)
-  session_type?: 'sim' | 'paper' | 'real'   // "paper" or "real" when date == today IST
+  session_type?: 'sim' | 'paper' | 'real' | 'stepwise'
+  stepwise?: boolean
 }
 
 export interface UserSettingsResponse {
@@ -123,12 +132,56 @@ export interface SimulationStartResponse {
   strike_ce: number | null
   strike_pe: number | null
   session_type: string
+  stepwise: boolean
+  total_bars: number | null
 }
 
 export interface WalletResponse {
   user_id: string
   date: string
   balance: number
+}
+
+// Pattern Library types
+export interface PatternAnnotation {
+  id: string
+  time: number
+  price: number
+  type: 'entry' | 'exit'
+  instrument: 'underlying' | 'CE' | 'PE'
+  strategy_name: string
+  text: string
+}
+
+export interface PatternChartMeta {
+  chart_id: string
+  user_id: string
+  symbol: string
+  date: string
+  instrument_type: string
+  right?: string
+  strike?: number
+  notes: string
+  created_at: string
+  updated_at: string
+  entry_count: number
+  exit_count: number
+  strategy_names: string[]
+}
+
+export interface PatternChart extends PatternChartMeta {
+  annotations: PatternAnnotation[]
+}
+
+export interface PatternOHLCResponse {
+  symbol: string
+  date: string
+  interval_minutes: number
+  candles: OHLCCandle[]
+  // options extras
+  strike?: number
+  expiry?: string
+  right?: string
 }
 
 export interface AuthResponse {
@@ -451,6 +504,15 @@ const api = {
       headers: { 'Content-Type': 'application/json', ..._authHeaders() },
       body: JSON.stringify({ session_id }),
     })
+  },
+
+  async nextBar(session_id: string): Promise<{ bar_index: number; total_bars: number }> {
+    const res = await fetch(`${BACKEND_URL}/api/simulation/${session_id}/next-bar`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ..._authHeaders() },
+    })
+    if (!res.ok) throw new Error(`Next bar failed: ${res.status}`)
+    return res.json()
   },
 
   async buy(session_id: string, right?: string): Promise<Trade | { status: string; kotak_order_id?: string }> {
@@ -968,6 +1030,88 @@ const api = {
       { method: 'DELETE' },
     )
     if (!res.ok) throw new Error(`AI command cancel failed: ${res.status}`)
+  },
+
+  // ── Pattern Library ────────────────────────────────────────────────────────
+
+  async patternListStrategies(): Promise<{ strategies: string[] }> {
+    const res = await fetch(`${BACKEND_URL}/api/pattern/strategies`, { headers: _authHeaders() })
+    if (!res.ok) throw new Error(`List strategies failed: ${res.status}`)
+    return res.json()
+  },
+
+  async patternListCharts(strategy?: string): Promise<{ charts: PatternChartMeta[] }> {
+    const q = strategy ? `?strategy=${encodeURIComponent(strategy)}` : ''
+    const res = await fetch(`${BACKEND_URL}/api/pattern/charts${q}`, { headers: _authHeaders() })
+    if (!res.ok) throw new Error(`List charts failed: ${res.status}`)
+    return res.json()
+  },
+
+  async patternGetChartByDate(symbol: string, date: string, instrumentType: string, right?: string): Promise<PatternChart | null> {
+    const params = new URLSearchParams({ symbol, date, instrument_type: instrumentType })
+    if (right) params.set('right', right)
+    const res = await fetch(`${BACKEND_URL}/api/pattern/chart/by-date?${params}`, { headers: _authHeaders() })
+    if (res.status === 404) return null
+    if (!res.ok) throw new Error(`Get chart by date failed: ${res.status}`)
+    return res.json()
+  },
+
+  async patternGetChart(chartId: string): Promise<PatternChart> {
+    const res = await fetch(`${BACKEND_URL}/api/pattern/chart/${chartId}`, { headers: _authHeaders() })
+    if (!res.ok) throw new Error(`Get chart failed: ${res.status}`)
+    return res.json()
+  },
+
+  async patternCreateChart(body: {
+    symbol: string; date: string; instrument_type: string;
+    annotations: PatternAnnotation[]; notes: string;
+    right?: string; strike?: number;
+  }): Promise<PatternChart> {
+    const res = await fetch(`${BACKEND_URL}/api/pattern/chart`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ..._authHeaders() },
+      body: JSON.stringify(body),
+    })
+    if (!res.ok) throw new Error(`Create chart failed: ${res.status}`)
+    return res.json()
+  },
+
+  async patternUpdateChart(chartId: string, annotations: PatternAnnotation[], notes: string): Promise<PatternChart> {
+    const res = await fetch(`${BACKEND_URL}/api/pattern/chart/${chartId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', ..._authHeaders() },
+      body: JSON.stringify({ annotations, notes }),
+    })
+    if (!res.ok) throw new Error(`Update chart failed: ${res.status}`)
+    return res.json()
+  },
+
+  async patternDeleteChart(chartId: string): Promise<void> {
+    const res = await fetch(`${BACKEND_URL}/api/pattern/chart/${chartId}`, {
+      method: 'DELETE',
+      headers: _authHeaders(),
+    })
+    if (!res.ok) throw new Error(`Delete chart failed: ${res.status}`)
+  },
+
+  async patternOhlcEquity(symbol: string, date: string, intervalMinutes = 3): Promise<PatternOHLCResponse> {
+    const res = await fetch(
+      `${BACKEND_URL}/api/pattern/ohlc/equity?symbol=${encodeURIComponent(symbol)}&date=${date}&interval_minutes=${intervalMinutes}`,
+      { headers: _authHeaders() },
+    )
+    if (!res.ok) throw new Error(`OHLC equity failed: ${res.status}`)
+    return res.json()
+  },
+
+  async patternOhlcOptions(
+    symbol: string, date: string, strike: number, expiry: string, right: string, intervalMinutes = 3,
+  ): Promise<PatternOHLCResponse> {
+    const params = new URLSearchParams({
+      symbol, date, strike: String(strike), expiry, right, interval_minutes: String(intervalMinutes),
+    })
+    const res = await fetch(`${BACKEND_URL}/api/pattern/ohlc/options?${params}`, { headers: _authHeaders() })
+    if (!res.ok) throw new Error(`OHLC options failed: ${res.status}`)
+    return res.json()
   },
 }
 

@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef } from 'react'
-import api, { Trade, Position, Order, TickEvent, InsufficientFundsError } from '../services/api'
+import api, { Trade, Position, Order, TickEvent, BarCandle, InsufficientFundsError } from '../services/api'
 
 export type SessionState = 'idle' | 'running' | 'paused' | 'ended'
 
@@ -38,8 +38,16 @@ export interface SimulationState {
   sessionStrikeCE: number | null   // CE streaming strike (may differ from PE when OTM offset != 0)
   sessionStrikePE: number | null   // PE streaming strike
   sessionExpiry: string | null
-  sessionType: string              // 'sim' | 'paper' | 'real'
+  sessionType: string              // 'sim' | 'paper' | 'real' | 'stepwise'
   brokeragePerOrder: number        // flat brokerage per trade (from user settings)
+  // Stepwise replayer state
+  stepwise: boolean
+  barPaused: boolean               // true when waiting for user to press Next Bar
+  barIndex: number                 // current bar index (1-based)
+  totalBars: number                // total bars in the day
+  lastCompletedBarEquity: BarCandle | null
+  lastCompletedBarCE: BarCandle | null
+  lastCompletedBarPE: BarCandle | null
 }
 
 export interface InstrumentConfig {
@@ -50,7 +58,7 @@ export interface InstrumentConfig {
   strike_pe?: number
   brokerage_per_order?: number
   strategy_interval_secs?: number
-  session_type?: 'sim' | 'paper' | 'real'
+  session_type?: 'sim' | 'paper' | 'real' | 'stepwise'
 }
 
 export function useSimulation() {
@@ -87,6 +95,13 @@ export function useSimulation() {
     sessionExpiry: null,
     sessionType: 'sim',
     brokeragePerOrder: 0,
+    stepwise: false,
+    barPaused: false,
+    barIndex: 0,
+    totalBars: 0,
+    lastCompletedBarEquity: null,
+    lastCompletedBarCE: null,
+    lastCompletedBarPE: null,
   })
 
   const setLatestTick = useCallback((tick: TickEvent) => {
@@ -145,6 +160,7 @@ export function useSimulation() {
     const sym = res.symbol
     const instrumentType = (res.instrument_type as 'equity' | 'options') || 'equity'
     const sessionType = instrumentConfig?.session_type ?? 'sim'
+    const isStepwise = res.stepwise === true
     setState(s => ({
       ...s,
       sessionId: res.session_id,
@@ -173,6 +189,13 @@ export function useSimulation() {
       sessionExpiry: res.expiry,
       sessionType,
       brokeragePerOrder: instrumentConfig?.brokerage_per_order ?? 0,
+      stepwise: isStepwise,
+      barPaused: false,
+      barIndex: 0,
+      totalBars: res.total_bars ?? 0,
+      lastCompletedBarEquity: null,
+      lastCompletedBarCE: null,
+      lastCompletedBarPE: null,
     }))
     // Fire-and-forget: load previous-session trades for same user+symbol+date+type
     const currentSessionId = res.session_id
@@ -463,6 +486,30 @@ export function useSimulation() {
     setState(s => ({ ...s, walletRefreshKey: s.walletRefreshKey + 1 }))
   }, [])
 
+  const handleBarPaused = useCallback((
+    barIndex: number,
+    totalBars: number,
+    equity: BarCandle | null,
+    ce: BarCandle | null,
+    pe: BarCandle | null,
+  ) => {
+    setState(s => ({
+      ...s,
+      barPaused: true,
+      barIndex,
+      totalBars,
+      lastCompletedBarEquity: equity ?? s.lastCompletedBarEquity,
+      lastCompletedBarCE: ce ?? s.lastCompletedBarCE,
+      lastCompletedBarPE: pe ?? s.lastCompletedBarPE,
+    }))
+  }, [])
+
+  const nextBar = useCallback(async () => {
+    if (!state.sessionId || !state.stepwise) return
+    setState(s => ({ ...s, barPaused: false }))
+    await api.nextBar(state.sessionId)
+  }, [state.sessionId, state.stepwise])
+
   const setTrades = useCallback((trades: Trade[]) => {
     setState(s => ({ ...s, trades }))
   }, [])
@@ -542,5 +589,7 @@ export function useSimulation() {
     setTrades,
     addTradeFromSSE,
     fetchAndUpdatePosition,
+    handleBarPaused,
+    nextBar,
   }
 }
