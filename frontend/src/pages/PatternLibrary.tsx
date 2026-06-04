@@ -786,9 +786,10 @@ export default function PatternLibrary() {
             api.patternOhlcOptions(chart.symbol, chart.date, chart.strike, expiry, 'CE', intervalMinutes, DAYS_BACK).catch(() => null),
             api.patternOhlcOptions(chart.symbol, chart.date, chart.strike, expiry, 'PE', intervalMinutes, DAYS_BACK).catch(() => null),
           ])
+          const annotatedRights = new Set(chart.annotations.map(a => a.instrument))
           const newPanes: OptionPane[] = []
-          if (ceRes) newPanes.push({ id: paneIdRef.current++, right: 'CE', strike: chart.strike, expiry, candles: ceRes.candles })
-          if (peRes) newPanes.push({ id: paneIdRef.current++, right: 'PE', strike: chart.strike, expiry, candles: peRes.candles })
+          if (ceRes && annotatedRights.has('CE')) newPanes.push({ id: paneIdRef.current++, right: 'CE', strike: chart.strike, expiry, candles: ceRes.candles })
+          if (peRes && annotatedRights.has('PE')) newPanes.push({ id: paneIdRef.current++, right: 'PE', strike: chart.strike, expiry, candles: peRes.candles })
           setOptionPanes(newPanes)
           setResolvedExpiry(expiry)
           setAddPaneStrike(String(chart.strike))
