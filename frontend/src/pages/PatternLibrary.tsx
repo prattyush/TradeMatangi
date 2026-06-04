@@ -1,20 +1,67 @@
 /**
  * Pattern Library — Trade Pattern Logger (Phase XII)
  *
- * Full-day historical chart viewer with click-to-annotate functionality.
- * Annotations are tagged per strategy; multiple strategies can co-exist on
- * one chart. Gallery shows all saved charts for the selected strategy.
+ * Create mode: annotate full-day charts (3-pane options, 1-pane equity) with
+ * EMA 9/21, drawing tools (hline, trendline, fib, channel), entry/exit markers.
+ * View mode: 2-column gallery with click-to-expand read-only chart view.
  */
 import { useState, useEffect, useRef, useCallback, CSSProperties } from 'react'
-import { createChart, IChartApi, ISeriesApi, CandlestickData, Time, SeriesMarker } from 'lightweight-charts'
-import api, {
-  PatternAnnotation,
-  PatternChart,
-  PatternChartMeta,
-  OHLCCandle,
-} from '../services/api'
+import {
+  createChart, IChartApi, ISeriesApi, CandlestickData, LineData, Time,
+  SeriesMarker, IPriceLine, LineStyle,
+} from 'lightweight-charts'
+import api, { PatternAnnotation, PatternChart, PatternChartMeta, OHLCCandle } from '../services/api'
 
-// ── Colour scheme ─────────────────────────────────────────────────────────────
+// ── EMA helpers ───────────────────────────────────────────────────────────────
+
+function nextEMA(prev: number, close: number, k: number): number {
+  return close * k + prev * (1 - k)
+}
+
+function computeEMA(closes: number[], period: number): (number | null)[] {
+  if (closes.length === 0) return []
+  const result: (number | null)[] = []
+  const k = 2 / (period + 1)
+  let ema: number | null = null
+  let warmup = 0
+  let sum = 0
+  for (let i = 0; i < closes.length; i++) {
+    sum += closes[i]
+    warmup++
+    if (warmup < period) {
+      result.push(null)
+    } else if (warmup === period) {
+      ema = sum / period
+      result.push(ema)
+    } else {
+      ema = nextEMA(ema!, closes[i], k)
+      result.push(ema)
+    }
+  }
+  return result
+}
+
+// ── Drawing types ─────────────────────────────────────────────────────────────
+
+type DrawMode = 'none' | 'hline' | 'trendline' | 'fibretracement' | 'channel'
+
+type Drawing =
+  | { type: 'hline'; ref: IPriceLine }
+  | { type: 'trendline' | 'fibretracement' | 'channel'; refs: ISeriesApi<'Line'>[] }
+
+const FIB_LEVELS = [
+  { ratio: 0,    color: '#e6edf3' },
+  { ratio: 0.25, color: '#34d399' },
+  { ratio: 0.5,  color: '#60a5fa' },
+  { ratio: 0.75, color: '#fbbf24' },
+  { ratio: 1.0,  color: '#e6edf3' },
+]
+
+const DRAW_LABEL: Partial<Record<DrawMode, string>> = {
+  hline: 'H-Line', trendline: 'Trend', fibretracement: 'Fib', channel: 'Channel',
+}
+
+// ── Annotation colours ────────────────────────────────────────────────────────
 
 const MARKER_COLORS: Record<string, { color: string; shape: 'arrowUp' | 'arrowDown' }> = {
   'entry-underlying': { color: '#3b82f6', shape: 'arrowUp' },
@@ -25,85 +72,9 @@ const MARKER_COLORS: Record<string, { color: string; shape: 'arrowUp' | 'arrowDo
   'exit-PE':          { color: '#7c3aed', shape: 'arrowDown' },
 }
 
-function markerKey(type: string, instrument: string) {
-  return `${type}-${instrument}`
-}
+function markerKey(type: string, instrument: string) { return `${type}-${instrument}` }
 
-// ── Styles ────────────────────────────────────────────────────────────────────
-
-const PAGE: CSSProperties = {
-  display: 'flex', flexDirection: 'column', height: '100vh',
-  background: '#0d1117', color: '#e6edf3', fontFamily: 'monospace',
-  overflow: 'hidden',
-}
-
-const HEADER: CSSProperties = {
-  display: 'flex', alignItems: 'center', gap: 12, padding: '10px 16px',
-  background: '#161b22', borderBottom: '1px solid #30363d', flexWrap: 'wrap',
-}
-
-const TOOLBAR: CSSProperties = {
-  display: 'flex', alignItems: 'center', gap: 6, padding: '8px 16px',
-  background: '#161b22', borderBottom: '1px solid #30363d', flexWrap: 'wrap',
-}
-
-const CHART_AREA: CSSProperties = {
-  flex: 1, overflow: 'auto', display: 'flex', flexDirection: 'column',
-  minHeight: 0,
-}
-
-const GALLERY: CSSProperties = {
-  borderTop: '1px solid #30363d', background: '#0d1117',
-  padding: '12px 16px', minHeight: 180,
-}
-
-const inputStyle: CSSProperties = {
-  background: '#161b22', border: '1px solid #30363d', color: '#e6edf3',
-  borderRadius: 6, padding: '5px 10px', fontSize: 12,
-}
-
-const selectStyle: CSSProperties = { ...inputStyle }
-
-function btn(color: string, disabled = false): CSSProperties {
-  return {
-    background: disabled ? '#21262d' : color,
-    color: disabled ? '#484f58' : '#fff',
-    border: 'none', borderRadius: 6, padding: '5px 12px', fontSize: 12,
-    cursor: disabled ? 'not-allowed' : 'pointer', fontWeight: 600,
-  }
-}
-
-function toolBtn(active: boolean): CSSProperties {
-  return {
-    background: active ? '#21262d' : 'transparent',
-    border: `1px solid ${active ? '#8b949e' : '#30363d'}`,
-    color: active ? '#e6edf3' : '#8b949e',
-    borderRadius: 6, padding: '4px 10px', fontSize: 11,
-    cursor: 'pointer', fontWeight: active ? 700 : 400,
-  }
-}
-
-function colorDot(key: string): string {
-  return MARKER_COLORS[key]?.color ?? '#8b949e'
-}
-
-// ── Annotation toolbar options ─────────────────────────────────────────────────
-
-const TOOL_OPTIONS: { key: string; label: string; type: 'entry' | 'exit'; instrument: 'underlying' | 'CE' | 'PE' }[] = [
-  { key: 'entry-underlying', label: '▲ Entry UL', type: 'entry', instrument: 'underlying' },
-  { key: 'exit-underlying',  label: '▼ Exit UL',  type: 'exit',  instrument: 'underlying' },
-  { key: 'entry-CE',         label: '▲ Entry CE', type: 'entry', instrument: 'CE' },
-  { key: 'exit-CE',          label: '▼ Exit CE',  type: 'exit',  instrument: 'CE' },
-  { key: 'entry-PE',         label: '▲ Entry PE', type: 'entry', instrument: 'PE' },
-  { key: 'exit-PE',          label: '▼ Exit PE',  type: 'exit',  instrument: 'PE' },
-]
-
-// ── LightweightCharts helpers ─────────────────────────────────────────────────
-
-function buildMarkers(
-  annotations: PatternAnnotation[],
-  activeStrategy: string | null,
-): SeriesMarker<Time>[] {
+function buildMarkers(annotations: PatternAnnotation[], activeStrategy: string | null): SeriesMarker<Time>[] {
   return annotations
     .slice()
     .sort((a, b) => a.time - b.time)
@@ -121,71 +92,246 @@ function buildMarkers(
     })
 }
 
-// ── Single chart pane ─────────────────────────────────────────────────────────
+// ── Shared styles ─────────────────────────────────────────────────────────────
+
+const PAGE: CSSProperties = {
+  display: 'flex', flexDirection: 'column', height: '100vh',
+  background: '#0d1117', color: '#e6edf3', fontFamily: 'monospace', overflow: 'hidden',
+}
+const HEADER: CSSProperties = {
+  display: 'flex', alignItems: 'center', gap: 12, padding: '10px 16px',
+  background: '#161b22', borderBottom: '1px solid #30363d', flexWrap: 'wrap', flexShrink: 0,
+}
+const TOOLBAR: CSSProperties = {
+  display: 'flex', alignItems: 'center', gap: 6, padding: '8px 16px',
+  background: '#161b22', borderBottom: '1px solid #30363d', flexWrap: 'wrap', flexShrink: 0,
+}
+const inputStyle: CSSProperties = {
+  background: '#161b22', border: '1px solid #30363d', color: '#e6edf3',
+  borderRadius: 6, padding: '5px 10px', fontSize: 12,
+}
+const selectStyle: CSSProperties = { ...inputStyle }
+
+function btn(color: string, disabled = false): CSSProperties {
+  return {
+    background: disabled ? '#21262d' : color,
+    color: disabled ? '#484f58' : '#fff',
+    border: 'none', borderRadius: 6, padding: '5px 12px', fontSize: 12,
+    cursor: disabled ? 'not-allowed' : 'pointer', fontWeight: 600,
+  }
+}
+function toolBtn(active: boolean): CSSProperties {
+  return {
+    background: active ? '#21262d' : 'transparent',
+    border: `1px solid ${active ? '#8b949e' : '#30363d'}`,
+    color: active ? '#e6edf3' : '#8b949e',
+    borderRadius: 6, padding: '4px 10px', fontSize: 11,
+    cursor: 'pointer', fontWeight: active ? 700 : 400,
+  }
+}
+function paneToolBtn(active: boolean): CSSProperties {
+  return {
+    padding: '3px 8px', fontSize: 11, borderRadius: 4,
+    border: `1px solid ${active ? '#f0883e' : '#30363d'}`,
+    background: active ? '#2a1a0a' : 'transparent',
+    color: active ? '#f0883e' : '#8b949e',
+    cursor: 'pointer',
+  }
+}
+function colorDot(key: string): string { return MARKER_COLORS[key]?.color ?? '#8b949e' }
+
+// ── Annotation tool definitions ───────────────────────────────────────────────
+
+const TOOL_OPTIONS = [
+  { key: 'entry-underlying', label: '▲ Entry UL', type: 'entry' as const, instrument: 'underlying' as const },
+  { key: 'exit-underlying',  label: '▼ Exit UL',  type: 'exit'  as const, instrument: 'underlying' as const },
+  { key: 'entry-CE',         label: '▲ Entry CE', type: 'entry' as const, instrument: 'CE'         as const },
+  { key: 'exit-CE',          label: '▼ Exit CE',  type: 'exit'  as const, instrument: 'CE'         as const },
+  { key: 'entry-PE',         label: '▲ Entry PE', type: 'entry' as const, instrument: 'PE'         as const },
+  { key: 'exit-PE',          label: '▼ Exit PE',  type: 'exit'  as const, instrument: 'PE'         as const },
+]
+
+// ── ChartPane — full-featured pane with EMA + drawing tools ──────────────────
 
 interface ChartPaneProps {
   candles: OHLCCandle[]
-  annotations: PatternAnnotation[]  // ALL annotations for this chart
+  annotations: PatternAnnotation[]
   activeStrategy: string | null
   label: string
   onBarClick: (time: number, price: number) => void
-  height?: number
+  readonly?: boolean
 }
 
-function ChartPane({ candles, annotations, activeStrategy, label, onBarClick, height = 320 }: ChartPaneProps) {
+function ChartPane({ candles, annotations, activeStrategy, label, onBarClick, readonly = false }: ChartPaneProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<IChartApi | null>(null)
   const seriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null)
+  const ema9Ref = useRef<ISeriesApi<'Line'> | null>(null)
+  const ema21Ref = useRef<ISeriesApi<'Line'> | null>(null)
+  const drawModeRef = useRef<DrawMode>('none')
+  const drawPtsRef = useRef<{ time: number; price: number }[]>([])
+  const drawingsRef = useRef<Drawing[]>([])
+  const ignoreNextClickRef = useRef(false)
+  const drawDropdownRef = useRef<HTMLDivElement>(null)
+  const onBarClickRef = useRef(onBarClick)
+  onBarClickRef.current = onBarClick
+
+  const [showEma, setShowEma] = useState(true)
+  const [drawMode, setDrawMode] = useState<DrawMode>('none')
+  const [drawStep, setDrawStep] = useState(0)
+  const [drawingCount, setDrawingCount] = useState(0)
+  const [drawDropdownOpen, setDrawDropdownOpen] = useState(false)
+
+  useEffect(() => { drawModeRef.current = drawMode }, [drawMode])
 
   useEffect(() => {
+    if (!drawDropdownOpen) return
+    const close = (e: MouseEvent) => {
+      if (drawDropdownRef.current && !drawDropdownRef.current.contains(e.target as Node))
+        setDrawDropdownOpen(false)
+    }
+    document.addEventListener('mousedown', close)
+    return () => document.removeEventListener('mousedown', close)
+  }, [drawDropdownOpen])
+
+  // Chart init — runs once on mount
+  useEffect(() => {
     if (!containerRef.current) return
+    const initW = containerRef.current.clientWidth || 800
+    const initH = containerRef.current.clientHeight || 300
     const chart = createChart(containerRef.current, {
-      width: containerRef.current.clientWidth,
-      height,
+      width: initW, height: initH,
       layout: { background: { color: '#0d1117' }, textColor: '#e6edf3' },
-      grid: { vertLines: { color: '#21262d' }, horzLines: { color: '#21262d' } },
-      crosshair: { mode: 1 },
+      grid: { vertLines: { color: '#1e2732' }, horzLines: { color: '#1e2732' } },
+      crosshair: { mode: 0 },
       rightPriceScale: { borderColor: '#30363d' },
       timeScale: { borderColor: '#30363d', timeVisible: true, secondsVisible: false },
     })
     const series = chart.addCandlestickSeries({
-      upColor: '#22c55e', downColor: '#ef4444',
-      borderUpColor: '#22c55e', borderDownColor: '#ef4444',
-      wickUpColor: '#22c55e', wickDownColor: '#ef4444',
+      upColor: '#26a641', downColor: '#f85149', borderVisible: false,
+      wickUpColor: '#26a641', wickDownColor: '#f85149',
     })
+    const e9 = chart.addLineSeries({ color: '#f0883e', lineWidth: 1, priceLineVisible: false, lastValueVisible: false })
+    const e21 = chart.addLineSeries({ color: '#79c0ff', lineWidth: 1, priceLineVisible: false, lastValueVisible: false })
     chartRef.current = chart
     seriesRef.current = series
+    ema9Ref.current = e9
+    ema21Ref.current = e21
 
-    const ro = new ResizeObserver(() => {
-      if (containerRef.current) chart.applyOptions({ width: containerRef.current.clientWidth })
+    chart.subscribeClick(param => {
+      if (!param.point || !seriesRef.current) return
+      if (ignoreNextClickRef.current) { ignoreNextClickRef.current = false; return }
+      const price = seriesRef.current.coordinateToPrice(param.point.y)
+      if (price === null || !param.time) return
+      const time = param.time as number
+      const mode = drawModeRef.current
+
+      if (!readonly && mode === 'hline') {
+        const line = seriesRef.current.createPriceLine({
+          price, color: '#e6edf3', lineWidth: 1, lineStyle: LineStyle.Dashed,
+          axisLabelVisible: true, title: price.toFixed(0),
+        })
+        drawingsRef.current.push({ type: 'hline', ref: line })
+        setDrawingCount(c => c + 1)
+        setDrawMode('none')
+      } else if (!readonly && mode === 'trendline') {
+        const pts = drawPtsRef.current
+        if (pts.length === 0) {
+          drawPtsRef.current = [{ time, price }]; setDrawStep(1)
+        } else {
+          const p1 = pts[0]
+          const s = chartRef.current!.addLineSeries({ color: '#ffa657', lineWidth: 1, priceLineVisible: false, lastValueVisible: false })
+          s.setData([
+            { time: Math.min(p1.time, time) as Time, value: p1.time <= time ? p1.price : price },
+            { time: Math.max(p1.time, time) as Time, value: p1.time <= time ? price : p1.price },
+          ])
+          drawingsRef.current.push({ type: 'trendline', refs: [s] })
+          setDrawingCount(c => c + 1)
+          drawPtsRef.current = []; setDrawStep(0); setDrawMode('none')
+        }
+      } else if (!readonly && mode === 'fibretracement') {
+        const pts = drawPtsRef.current
+        if (pts.length === 0) {
+          drawPtsRef.current = [{ time, price }]; setDrawStep(1)
+        } else {
+          const p1 = pts[0]
+          const tStart = Math.min(p1.time, time) as Time
+          const tEnd = Math.max(p1.time, time) as Time
+          const pLow = Math.min(p1.price, price)
+          const range = Math.max(p1.price, price) - pLow
+          const fibRefs: ISeriesApi<'Line'>[] = []
+          for (const lvl of FIB_LEVELS) {
+            const lvlPrice = pLow + range * lvl.ratio
+            const ls = chartRef.current!.addLineSeries({ color: lvl.color, lineWidth: 1, priceLineVisible: false, lastValueVisible: false })
+            ls.setData([{ time: tStart, value: lvlPrice }, { time: tEnd, value: lvlPrice }])
+            fibRefs.push(ls)
+          }
+          drawingsRef.current.push({ type: 'fibretracement', refs: fibRefs })
+          setDrawingCount(c => c + 1)
+          drawPtsRef.current = []; setDrawStep(0); setDrawMode('none')
+        }
+      } else if (!readonly && mode === 'channel') {
+        const pts = drawPtsRef.current
+        if (pts.length === 0) {
+          drawPtsRef.current = [{ time, price }]; setDrawStep(1)
+        } else if (pts.length === 1) {
+          drawPtsRef.current = [...pts, { time, price }]; setDrawStep(2)
+        } else {
+          const [p1, p2] = pts
+          const tStart = Math.min(p1.time, p2.time) as Time
+          const tEnd = Math.max(p1.time, p2.time) as Time
+          const baseStartPrice = p1.time <= p2.time ? p1.price : p2.price
+          const baseEndPrice = p1.time <= p2.time ? p2.price : p1.price
+          const timeDiff = (tEnd as number) - (tStart as number)
+          const slope = timeDiff !== 0 ? (baseEndPrice - baseStartPrice) / timeDiff : 0
+          const lineAt = (t: number) => baseStartPrice + slope * (t - (tStart as number))
+          const offset = price - lineAt(time)
+          const baseline = chartRef.current!.addLineSeries({ color: '#ffa657', lineWidth: 1, priceLineVisible: false, lastValueVisible: false })
+          baseline.setData([{ time: tStart, value: baseStartPrice }, { time: tEnd, value: baseEndPrice }])
+          const parallel = chartRef.current!.addLineSeries({ color: '#79c0ff', lineWidth: 1, priceLineVisible: false, lastValueVisible: false })
+          parallel.setData([{ time: tStart, value: baseStartPrice + offset }, { time: tEnd, value: baseEndPrice + offset }])
+          drawingsRef.current.push({ type: 'channel', refs: [baseline, parallel] })
+          setDrawingCount(c => c + 1)
+          drawPtsRef.current = []; setDrawStep(0); setDrawMode('none')
+        }
+      } else if (mode === 'none' && !readonly) {
+        onBarClickRef.current(time, price)
+      }
+    })
+
+    const ro = new ResizeObserver(entries => {
+      const { width, height } = entries[0].contentRect
+      if (width > 0 && height > 0) chart.applyOptions({ width, height })
     })
     ro.observe(containerRef.current)
 
-    // Click handler: find candle at clicked time
-    chart.subscribeClick(param => {
-      if (!param.time || !seriesRef.current) return
-      const time = param.time as number
-      const logicalIndex = chart.timeScale().coordinateToLogical(param.point?.x ?? 0) ?? 0
-      const bar = seriesRef.current.dataByIndex(Math.round(logicalIndex)) as (CandlestickData & { time: number }) | null
-      if (bar) onBarClick(time, bar.close)
-    })
-
-    return () => {
-      ro.disconnect()
-      chart.remove()
-      chartRef.current = null
-      seriesRef.current = null
-    }
+    return () => { ro.disconnect(); chart.remove(); chartRef.current = null; seriesRef.current = null }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Update candles
   useEffect(() => {
-    if (!seriesRef.current) return
+    ema9Ref.current?.applyOptions({ visible: showEma })
+    ema21Ref.current?.applyOptions({ visible: showEma })
+  }, [showEma])
+
+  // Load candles + compute EMA
+  useEffect(() => {
+    if (!seriesRef.current || !ema9Ref.current || !ema21Ref.current) return
     const data: CandlestickData[] = candles.map(c => ({
       time: c.time as Time, open: c.open, high: c.high, low: c.low, close: c.close,
     }))
     seriesRef.current.setData(data)
     chartRef.current?.timeScale().fitContent()
+
+    const closes = candles.map(c => c.close)
+    const ema9vals = computeEMA(closes, 9)
+    const ema21vals = computeEMA(closes, 21)
+    const e9data: LineData[] = [], e21data: LineData[] = []
+    for (let i = 0; i < candles.length; i++) {
+      if (ema9vals[i] !== null) e9data.push({ time: candles[i].time as Time, value: ema9vals[i]! })
+      if (ema21vals[i] !== null) e21data.push({ time: candles[i].time as Time, value: ema21vals[i]! })
+    }
+    ema9Ref.current.setData(e9data)
+    ema21Ref.current.setData(e21data)
   }, [candles])
 
   // Update markers
@@ -194,12 +340,95 @@ function ChartPane({ candles, annotations, activeStrategy, label, onBarClick, he
     seriesRef.current.setMarkers(buildMarkers(annotations, activeStrategy))
   }, [annotations, activeStrategy])
 
+  const enterDrawMode = useCallback((mode: DrawMode) => {
+    setDrawDropdownOpen(false)
+    setDrawMode(prev => prev === mode ? 'none' : mode)
+    drawPtsRef.current = []
+    setDrawStep(0)
+    ignoreNextClickRef.current = false
+  }, [])
+
+  const clearLastDrawing = useCallback(() => {
+    const drawing = drawingsRef.current.pop()
+    if (!drawing) return
+    if (drawing.type === 'hline') {
+      try { seriesRef.current?.removePriceLine(drawing.ref) } catch { /* disposed */ }
+    } else {
+      for (const s of drawing.refs) try { chartRef.current?.removeSeries(s) } catch { /* disposed */ }
+    }
+    setDrawingCount(c => c - 1)
+    setDrawMode('none')
+    drawPtsRef.current = []
+    setDrawStep(0)
+  }, [])
+
   return (
-    <div style={{ marginBottom: 8 }}>
-      <div style={{ fontSize: 11, color: '#8b949e', padding: '4px 8px', background: '#161b22' }}>
-        {label}
+    <div style={{
+      display: 'flex', flexDirection: 'column',
+      border: '1px solid #30363d', borderRadius: 6, overflow: 'hidden', flex: 1, minHeight: 0,
+    }}>
+      {/* Per-pane toolbar */}
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 6, padding: '4px 8px',
+        background: '#161b22', borderBottom: '1px solid #21262d', flexShrink: 0, flexWrap: 'wrap',
+      }}>
+        <span style={{ fontSize: 11, color: '#8b949e', marginRight: 4 }}>{label}</span>
+        <button onClick={() => setShowEma(v => !v)} style={paneToolBtn(showEma)}>EMA 9/21</button>
+        {!readonly && (
+          <>
+            <div style={{ position: 'relative' }} ref={drawDropdownRef}>
+              <button
+                onClick={() => setDrawDropdownOpen(v => !v)}
+                style={paneToolBtn(drawMode !== 'none')}
+              >{DRAW_LABEL[drawMode] ?? 'Draw'} ▾</button>
+              {drawDropdownOpen && (
+                <div style={{
+                  position: 'absolute', top: '100%', left: 0, zIndex: 200,
+                  background: '#161b22', border: '1px solid #30363d',
+                  borderRadius: 4, minWidth: 160, marginTop: 2,
+                }}>
+                  {([
+                    { mode: 'hline' as DrawMode,          label: '─ Horizontal Line' },
+                    { mode: 'trendline' as DrawMode,      label: '↗ Trend Line' },
+                    { mode: 'fibretracement' as DrawMode, label: '◫ Fib Retracement' },
+                    { mode: 'channel' as DrawMode,        label: '⊟ Parallel Channel' },
+                  ]).map(({ mode: m, label: l }) => (
+                    <div
+                      key={m}
+                      onMouseDown={() => { if (m !== drawModeRef.current) ignoreNextClickRef.current = true }}
+                      onClick={() => enterDrawMode(m)}
+                      style={{
+                        padding: '5px 10px', cursor: 'pointer', fontSize: 11,
+                        color: drawMode === m ? '#f0883e' : '#e6edf3',
+                        background: drawMode === m ? '#2a1a0a' : 'transparent',
+                      }}
+                    >{l}</div>
+                  ))}
+                </div>
+              )}
+            </div>
+            {drawingCount > 0 && (
+              <button onClick={clearLastDrawing} style={paneToolBtn(false)}>Clear</button>
+            )}
+            {drawMode !== 'none' && (
+              <span style={{ fontSize: 11, color: '#f0883e' }}>
+                {drawMode === 'hline' && 'Click to place'}
+                {drawMode === 'trendline' && (drawStep === 0 ? 'Click pt 1' : 'Click pt 2')}
+                {drawMode === 'fibretracement' && (drawStep === 0 ? 'Click start' : 'Click end')}
+                {drawMode === 'channel' && (drawStep === 0 ? 'Click start' : drawStep === 1 ? 'Click end' : 'Click offset')}
+              </span>
+            )}
+          </>
+        )}
+        {readonly && <span style={{ fontSize: 10, color: '#484f58', marginLeft: 4 }}>read-only</span>}
       </div>
-      <div ref={containerRef} style={{ width: '100%' }} />
+      <div
+        ref={containerRef}
+        style={{
+          flex: 1, minHeight: 0, width: '100%',
+          cursor: (!readonly && drawMode !== 'none') ? 'crosshair' : 'default',
+        }}
+      />
     </div>
   )
 }
@@ -211,23 +440,20 @@ interface GalleryCardProps {
   activeStrategy: string | null
   onLoad: (chartId: string) => void
   onDelete: (chartId: string) => void
+  viewMode: boolean
 }
 
-function GalleryCard({ chart, activeStrategy, onLoad, onDelete }: GalleryCardProps) {
+function GalleryCard({ chart, activeStrategy: _activeStrategy, onLoad, onDelete, viewMode }: GalleryCardProps) {
   const [confirming, setConfirming] = useState(false)
-  const entryCount = activeStrategy
-    ? chart.entry_count   // already filtered server-side
-    : chart.entry_count
-  const exitCount = activeStrategy ? chart.exit_count : chart.exit_count
-  const instrBadge = chart.instrument_type === 'options'
-    ? (chart.right ?? 'OPT')
-    : 'EQ'
-
+  const instrBadge = chart.instrument_type === 'options' ? (chart.right ?? 'OPT') : 'EQ'
   return (
-    <div style={{
-      background: '#161b22', border: '1px solid #30363d', borderRadius: 8,
-      padding: 12, minWidth: 190, maxWidth: 220,
-    }}>
+    <div
+      style={{
+        background: '#161b22', border: '1px solid #30363d', borderRadius: 8, padding: 12,
+        cursor: viewMode ? 'pointer' : 'default',
+      }}
+      onClick={viewMode ? () => onLoad(chart.chart_id) : undefined}
+    >
       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
         <span style={{ fontSize: 12, fontWeight: 700 }}>{chart.symbol}</span>
         <span style={{
@@ -237,30 +463,38 @@ function GalleryCard({ chart, activeStrategy, onLoad, onDelete }: GalleryCardPro
       </div>
       <div style={{ fontSize: 11, color: '#8b949e', marginBottom: 4 }}>{chart.date}</div>
       <div style={{ display: 'flex', gap: 8, fontSize: 11, marginBottom: 6 }}>
-        <span style={{ color: '#22c55e' }}>▲ {entryCount}</span>
-        <span style={{ color: '#ef4444' }}>▼ {exitCount}</span>
+        <span style={{ color: '#22c55e' }}>▲ {chart.entry_count}</span>
+        <span style={{ color: '#ef4444' }}>▼ {chart.exit_count}</span>
       </div>
-      <div style={{ fontSize: 10, color: '#484f58', marginBottom: 8, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+      <div style={{ fontSize: 10, color: '#484f58', marginBottom: viewMode ? 0 : 8, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
         {chart.strategy_names.join(' · ') || '—'}
       </div>
-      <div style={{ display: 'flex', gap: 6 }}>
-        <button style={btn('#1f6feb')} onClick={() => onLoad(chart.chart_id)}>Load</button>
-        {confirming
-          ? <button style={btn('#b62324')} onClick={() => { onDelete(chart.chart_id); setConfirming(false) }}>Sure?</button>
-          : <button style={btn('#484f58')} onClick={() => setConfirming(true)}>Del</button>
-        }
-      </div>
+      {!viewMode && (
+        <div style={{ display: 'flex', gap: 6 }}>
+          <button style={btn('#1f6feb')} onClick={() => onLoad(chart.chart_id)}>Load</button>
+          {confirming
+            ? <button style={btn('#b62324')} onClick={e => { e.stopPropagation(); onDelete(chart.chart_id); setConfirming(false) }}>Sure?</button>
+            : <button style={btn('#484f58')} onClick={e => { e.stopPropagation(); setConfirming(true) }}>Del</button>
+          }
+        </div>
+      )}
     </div>
   )
 }
 
-// ── Main PatternLibrary page ────────────────────────────────────────────────────
+// ── Constants ─────────────────────────────────────────────────────────────────
 
 const SUPPORTED_SYMBOLS = ['NIFTY', 'BSESEN', 'RELIND', 'TATMOT', 'TATPOW']
 const STRIKE_INTERVALS: Record<string, number> = { NIFTY: 50, BSESEN: 100, RELIND: 5, TATMOT: 5, TATPOW: 5 }
+const DAYS_BACK = 2
+const GALLERY_PAGE_SIZE = 6
+
+// ── Main component ────────────────────────────────────────────────────────────
 
 export default function PatternLibrary() {
-  // ── Form state ──────────────────────────────────────────────────────────────
+  const [mode, setMode] = useState<'create' | 'view'>('create')
+
+  // Form
   const [symbol, setSymbol] = useState('NIFTY')
   const [date, setDate] = useState(() => {
     const d = new Date()
@@ -274,44 +508,41 @@ export default function PatternLibrary() {
   const [loadError, setLoadError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
 
-  // ── Loaded chart data ───────────────────────────────────────────────────────
+  // Chart data
   const [equityCandles, setEquityCandles] = useState<OHLCCandle[]>([])
-  const [optionsCandles, setOptionsCandles] = useState<OHLCCandle[]>([])
-  const [optionsMeta, setOptionsMeta] = useState<{ strike: number; expiry: string; right: string } | null>(null)
+  const [ceCandles, setCeCandles] = useState<OHLCCandle[]>([])
+  const [peCandles, setPeCandles] = useState<OHLCCandle[]>([])
+  const [ceMeta, setCeMeta] = useState<{ strike: number; expiry: string } | null>(null)
+  const [peMeta, setPeMeta] = useState<{ strike: number; expiry: string } | null>(null)
   const [chartLoaded, setChartLoaded] = useState(false)
 
-  // ── Annotation state ────────────────────────────────────────────────────────
+  // Annotations
   const [annotations, setAnnotations] = useState<PatternAnnotation[]>([])
   const [activeToolKey, setActiveToolKey] = useState<string>('entry-CE')
 
-  // ── Strategy state ──────────────────────────────────────────────────────────
+  // Strategies
   const [strategies, setStrategies] = useState<string[]>([])
   const [activeStrategy, setActiveStrategy] = useState<string>('')
   const [newStrategyName, setNewStrategyName] = useState('')
   const [notes, setNotes] = useState('')
 
-  // ── Persistence ─────────────────────────────────────────────────────────────
+  // Persistence
   const [currentChartId, setCurrentChartId] = useState<string | null>(null)
   const [saveMsg, setSaveMsg] = useState<string | null>(null)
 
-  // ── Gallery ──────────────────────────────────────────────────────────────────
+  // Gallery
   const [galleryCharts, setGalleryCharts] = useState<PatternChartMeta[]>([])
   const [galleryStrategy, setGalleryStrategy] = useState<string>('')
   const [galleryPage, setGalleryPage] = useState(0)
-  const GALLERY_PAGE_SIZE = 6
+  const [viewExpandedId, setViewExpandedId] = useState<string | null>(null)
 
-  // ── Load strategies on mount ─────────────────────────────────────────────────
   useEffect(() => {
-    api.patternListStrategies()
-      .then(r => setStrategies(r.strategies))
-      .catch(() => {})
+    api.patternListStrategies().then(r => setStrategies(r.strategies)).catch(() => {})
   }, [])
 
-  // ── Reload gallery when gallery strategy changes ──────────────────────────────
   const refreshGallery = useCallback(async (strat?: string) => {
     try {
-      const s = strat ?? galleryStrategy
-      const res = await api.patternListCharts(s || undefined)
+      const res = await api.patternListCharts((strat ?? galleryStrategy) || undefined)
       setGalleryCharts(res.charts)
       setGalleryPage(0)
     } catch { /* non-fatal */ }
@@ -319,7 +550,8 @@ export default function PatternLibrary() {
 
   useEffect(() => { refreshGallery() }, [galleryStrategy]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ── Load chart (OHLC + existing annotations) ─────────────────────────────────
+  // ── Load chart ────────────────────────────────────────────────────────────
+
   const handleLoadChart = useCallback(async () => {
     setLoadError(null)
     setLoading(true)
@@ -327,39 +559,51 @@ export default function PatternLibrary() {
     setAnnotations([])
     setCurrentChartId(null)
     setEquityCandles([])
-    setOptionsCandles([])
-    setOptionsMeta(null)
+    setCeCandles([])
+    setPeCandles([])
+    setCeMeta(null)
+    setPeMeta(null)
 
     try {
-      // Always load equity candles
-      const eqRes = await api.patternOhlcEquity(symbol, date, intervalMinutes)
-      setEquityCandles(eqRes.candles)
+      const eqPromise = api.patternOhlcEquity(symbol, date, intervalMinutes, DAYS_BACK)
 
-      let resolvedRight: string | undefined
+      let cePromise: Promise<{ candles: OHLCCandle[] }> | null = null
+      let pePromise: Promise<{ candles: OHLCCandle[] }> | null = null
+      let resolvedCeMeta: { strike: number; expiry: string } | null = null
+      let resolvedPeMeta: { strike: number; expiry: string } | null = null
 
       if (instrumentType === 'options') {
-        // Resolve strike from price at market open
-        const priceRes = await api.getPriceAt(symbol, date, '09:15')
+        const [priceRes, expiryRes] = await Promise.all([
+          api.getPriceAt(symbol, date, '09:15'),
+          api.getExpiry(symbol, date),
+        ])
         const interval = STRIKE_INTERVALS[symbol] ?? 50
         const atm = Math.round(priceRes.price / interval) * interval
-        const strike = atm + otmOffset * interval
-        const expiryRes = await api.getExpiry(symbol, date)
-        // Show CE side when OTM ≥ 0, PE when OTM < 0 (default CE for 0)
-        const right = otmOffset < 0 ? 'PE' : 'CE'
-        const optRes = await api.patternOhlcOptions(symbol, date, strike, expiryRes.expiry, right, intervalMinutes)
-        setOptionsCandles(optRes.candles)
-        setOptionsMeta({ strike, expiry: expiryRes.expiry, right })
-        resolvedRight = right
+        // CE is OTM on the call side; PE is OTM on the put side (symmetric pair)
+        const ceStrike = atm + otmOffset * interval
+        const peStrike = atm - otmOffset * interval
+        resolvedCeMeta = { strike: ceStrike, expiry: expiryRes.expiry }
+        resolvedPeMeta = { strike: peStrike, expiry: expiryRes.expiry }
+        cePromise = api.patternOhlcOptions(symbol, date, ceStrike, expiryRes.expiry, 'CE', intervalMinutes, DAYS_BACK)
+        pePromise = api.patternOhlcOptions(symbol, date, peStrike, expiryRes.expiry, 'PE', intervalMinutes, DAYS_BACK)
       }
 
-      // Check if an existing chart record exists for this date/symbol
-      const existing = await api.patternGetChartByDate(symbol, date, instrumentType, resolvedRight)
+      const [eqRes, ceRes, peRes] = await Promise.all([
+        eqPromise,
+        cePromise ?? Promise.resolve(null),
+        pePromise ?? Promise.resolve(null),
+      ])
+
+      setEquityCandles(eqRes.candles)
+      if (ceRes) { setCeCandles(ceRes.candles); setCeMeta(resolvedCeMeta) }
+      if (peRes) { setPeCandles(peRes.candles); setPeMeta(resolvedPeMeta) }
+
+      const existing = await api.patternGetChartByDate(symbol, date, instrumentType, resolvedCeMeta ? 'CE' : undefined)
       if (existing) {
         setAnnotations(existing.annotations)
         setCurrentChartId(existing.chart_id)
         setNotes(existing.notes ?? '')
       }
-
       setChartLoaded(true)
     } catch (err) {
       setLoadError(err instanceof Error ? err.message : 'Failed to load chart')
@@ -368,43 +612,32 @@ export default function PatternLibrary() {
     }
   }, [symbol, date, instrumentType, otmOffset, intervalMinutes])
 
-  // ── Annotation: click on chart ────────────────────────────────────────────────
+  // ── Bar click ─────────────────────────────────────────────────────────────
+
   const handleBarClick = useCallback((time: number, price: number) => {
     if (!chartLoaded) return
     const strategy = activeStrategy || newStrategyName.trim()
-    if (!strategy) {
-      alert('Please select or type a strategy name before annotating.')
-      return
-    }
+    if (!strategy) { alert('Please select or type a strategy name before annotating.'); return }
     const tool = TOOL_OPTIONS.find(t => t.key === activeToolKey)
     if (!tool) return
-
     const id = crypto.randomUUID()
     const ann: PatternAnnotation = {
-      id,
-      time,
-      price,
-      type: tool.type,
-      instrument: tool.instrument,
+      id, time, price, type: tool.type, instrument: tool.instrument,
       strategy_name: strategy,
-      text: `${tool.type.charAt(0).toUpperCase() + tool.type.slice(1)} ${tool.instrument} — ${strategy}`,
+      text: `${tool.type} ${tool.instrument} — ${strategy}`,
     }
-
-    // Double-click (within 300ms of identical timestamp) removes instead
     setAnnotations(prev => {
-      const existing = prev.find(a => a.time === time && a.instrument === tool.instrument && a.strategy_name === strategy && a.type === tool.type)
-      if (existing) return prev.filter(a => a.id !== existing.id)
+      const dup = prev.find(a => a.time === time && a.instrument === tool.instrument && a.strategy_name === strategy && a.type === tool.type)
+      if (dup) return prev.filter(a => a.id !== dup.id)
       return [...prev, ann]
     })
   }, [chartLoaded, activeStrategy, newStrategyName, activeToolKey])
 
-  // ── Save annotations ──────────────────────────────────────────────────────────
+  // ── Save ──────────────────────────────────────────────────────────────────
+
   const handleSave = useCallback(async () => {
     const strategy = activeStrategy || newStrategyName.trim()
-    if (!strategy) {
-      alert('Please specify a strategy name before saving.')
-      return
-    }
+    if (!strategy) { alert('Please specify a strategy name before saving.'); return }
     setSaveMsg(null)
     try {
       let saved: PatternChart
@@ -412,19 +645,14 @@ export default function PatternLibrary() {
         saved = await api.patternUpdateChart(currentChartId, annotations, notes)
       } else {
         saved = await api.patternCreateChart({
-          symbol, date,
-          instrument_type: instrumentType,
-          annotations,
-          notes,
-          right: optionsMeta?.right,
-          strike: optionsMeta?.strike,
+          symbol, date, instrument_type: instrumentType, annotations, notes,
+          right: ceMeta ? 'CE' : undefined,
+          strike: ceMeta?.strike,
         })
         setCurrentChartId(saved.chart_id)
       }
       setSaveMsg('Saved!')
       setTimeout(() => setSaveMsg(null), 2000)
-
-      // Refresh strategy list and gallery
       const strats = await api.patternListStrategies()
       setStrategies(strats.strategies)
       if (!activeStrategy && newStrategyName.trim()) {
@@ -435,10 +663,12 @@ export default function PatternLibrary() {
     } catch (err) {
       setSaveMsg(err instanceof Error ? err.message : 'Save failed')
     }
-  }, [currentChartId, annotations, notes, symbol, date, instrumentType, optionsMeta, activeStrategy, newStrategyName, refreshGallery])
+  }, [currentChartId, annotations, notes, symbol, date, instrumentType, ceMeta, activeStrategy, newStrategyName, refreshGallery])
 
-  // ── Load chart from gallery ───────────────────────────────────────────────────
+  // ── Gallery load ──────────────────────────────────────────────────────────
+
   const handleGalleryLoad = useCallback(async (chartId: string) => {
+    setLoadError(null)
     try {
       const chart = await api.patternGetChart(chartId)
       setSymbol(chart.symbol)
@@ -447,208 +677,308 @@ export default function PatternLibrary() {
       setNotes(chart.notes ?? '')
       setCurrentChartId(chart.chart_id)
       setAnnotations(chart.annotations)
-      // Load the OHLC for this chart
-      const eqRes = await api.patternOhlcEquity(chart.symbol, chart.date, intervalMinutes)
+      setCeCandles([]); setPeCandles([]); setCeMeta(null); setPeMeta(null)
+
+      const eqRes = await api.patternOhlcEquity(chart.symbol, chart.date, intervalMinutes, DAYS_BACK)
       setEquityCandles(eqRes.candles)
-      if (chart.instrument_type === 'options' && chart.strike && chart.right) {
+
+      if (chart.instrument_type === 'options' && chart.strike) {
         try {
           const expiryRes = await api.getExpiry(chart.symbol, chart.date)
-          const optRes = await api.patternOhlcOptions(chart.symbol, chart.date, chart.strike, expiryRes.expiry, chart.right, intervalMinutes)
-          setOptionsCandles(optRes.candles)
-          setOptionsMeta({ strike: chart.strike, expiry: expiryRes.expiry, right: chart.right })
-        } catch { setOptionsCandles([]) }
-      } else {
-        setOptionsCandles([])
-        setOptionsMeta(null)
+          const [ceRes, peRes] = await Promise.all([
+            api.patternOhlcOptions(chart.symbol, chart.date, chart.strike, expiryRes.expiry, 'CE', intervalMinutes, DAYS_BACK).catch(() => null),
+            api.patternOhlcOptions(chart.symbol, chart.date, chart.strike, expiryRes.expiry, 'PE', intervalMinutes, DAYS_BACK).catch(() => null),
+          ])
+          if (ceRes) { setCeCandles(ceRes.candles); setCeMeta({ strike: chart.strike, expiry: expiryRes.expiry }) }
+          if (peRes) { setPeCandles(peRes.candles); setPeMeta({ strike: chart.strike, expiry: expiryRes.expiry }) }
+        } catch { /* non-fatal */ }
       }
       setChartLoaded(true)
+      if (mode === 'view') setViewExpandedId(chartId)
     } catch (err) {
-      setLoadError(err instanceof Error ? err.message : 'Failed to load chart from gallery')
+      setLoadError(err instanceof Error ? err.message : 'Failed to load chart')
     }
-  }, [intervalMinutes])
+  }, [intervalMinutes, mode])
 
-  // ── Delete from gallery ───────────────────────────────────────────────────────
+  // ── Gallery delete ────────────────────────────────────────────────────────
+
   const handleGalleryDelete = useCallback(async (chartId: string) => {
     try {
       await api.patternDeleteChart(chartId)
-      if (currentChartId === chartId) {
-        setCurrentChartId(null)
-        setAnnotations([])
-        setChartLoaded(false)
-      }
+      if (currentChartId === chartId) { setCurrentChartId(null); setAnnotations([]); setChartLoaded(false) }
+      if (viewExpandedId === chartId) setViewExpandedId(null)
       await refreshGallery()
       const strats = await api.patternListStrategies()
       setStrategies(strats.strategies)
     } catch { /* non-fatal */ }
-  }, [currentChartId, refreshGallery])
+  }, [currentChartId, viewExpandedId, refreshGallery])
 
-  // ── Resolved active strategy (dropdown or new text) ───────────────────────────
+  // ── Derived ───────────────────────────────────────────────────────────────
+
   const resolvedActiveStrategy = activeStrategy || null
-
-  // ── Gallery pagination ────────────────────────────────────────────────────────
+  const hasOptions = instrumentType === 'options' && ceCandles.length > 0
   const galleryTotal = Math.ceil(galleryCharts.length / GALLERY_PAGE_SIZE)
   const galleryPage_ = Math.min(galleryPage, Math.max(0, galleryTotal - 1))
   const gallerySlice = galleryCharts.slice(galleryPage_ * GALLERY_PAGE_SIZE, (galleryPage_ + 1) * GALLERY_PAGE_SIZE)
 
-  const hasOptions = instrumentType === 'options' && optionsCandles.length > 0
+  // ── Chart area (reused in both modes) ────────────────────────────────────
+
+  const renderCharts = (isReadonly: boolean) => {
+    if (!chartLoaded) {
+      return (
+        <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#484f58', fontSize: 13 }}>
+          {loading ? 'Loading…' : 'Select symbol, date and click Load Chart to begin.'}
+        </div>
+      )
+    }
+    return (
+      <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', gap: 4, padding: 8, overflow: 'hidden' }}>
+        <div style={{ flex: hasOptions ? 2 : 1, minHeight: 0, display: 'flex' }}>
+          <ChartPane
+            candles={equityCandles}
+            annotations={annotations.filter(a => a.instrument === 'underlying')}
+            activeStrategy={resolvedActiveStrategy}
+            label={`${symbol} — Underlying (${intervalMinutes}min)`}
+            onBarClick={handleBarClick}
+            readonly={isReadonly}
+          />
+        </div>
+        {hasOptions && (
+          <div style={{ flex: 3, minHeight: 0, display: 'flex', gap: 4 }}>
+            <div style={{ flex: 1, minHeight: 0, display: 'flex' }}>
+              <ChartPane
+                candles={ceCandles}
+                annotations={annotations.filter(a => a.instrument === 'CE')}
+                activeStrategy={resolvedActiveStrategy}
+                label={`${symbol} CE ${ceMeta?.strike ?? ''} (${intervalMinutes}min)`}
+                onBarClick={handleBarClick}
+                readonly={isReadonly}
+              />
+            </div>
+            <div style={{ flex: 1, minHeight: 0, display: 'flex' }}>
+              <ChartPane
+                candles={peCandles}
+                annotations={annotations.filter(a => a.instrument === 'PE')}
+                activeStrategy={resolvedActiveStrategy}
+                label={`${symbol} PE ${peMeta?.strike ?? ''} (${intervalMinutes}min)`}
+                onBarClick={handleBarClick}
+                readonly={isReadonly}
+              />
+            </div>
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  // ── Gallery section ───────────────────────────────────────────────────────
+
+  const renderGallery = (compact: boolean) => (
+    <div style={{
+      borderTop: compact ? '1px solid #30363d' : undefined,
+      background: '#0d1117',
+      padding: '12px 16px',
+      flexShrink: compact ? 1 : 0,
+      flex: compact ? '0 0 auto' : 1,
+      maxHeight: compact ? 220 : undefined,
+      overflow: 'auto',
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
+        <span style={{ fontSize: 12, fontWeight: 700 }}>Gallery</span>
+        <select value={galleryStrategy} onChange={e => setGalleryStrategy(e.target.value)} style={{ ...selectStyle, minWidth: 160 }}>
+          <option value="">All strategies</option>
+          {strategies.map(s => <option key={s} value={s}>{s}</option>)}
+        </select>
+        <span style={{ fontSize: 11, color: '#484f58' }}>{galleryCharts.length} chart{galleryCharts.length !== 1 ? 's' : ''}</span>
+      </div>
+      {galleryCharts.length === 0 ? (
+        <div style={{ fontSize: 12, color: '#484f58' }}>
+          {galleryStrategy ? `No charts for "${galleryStrategy}".` : 'No saved charts yet.'}
+        </div>
+      ) : (
+        <>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 10 }}>
+            {gallerySlice.map(chart => (
+              <GalleryCard
+                key={chart.chart_id}
+                chart={chart}
+                activeStrategy={galleryStrategy || null}
+                onLoad={handleGalleryLoad}
+                onDelete={handleGalleryDelete}
+                viewMode={mode === 'view'}
+              />
+            ))}
+          </div>
+          {galleryTotal > 1 && (
+            <div style={{ display: 'flex', gap: 8, marginTop: 10, alignItems: 'center' }}>
+              <button style={btn('#21262d', galleryPage_ === 0)} onClick={() => setGalleryPage(p => Math.max(0, p - 1))} disabled={galleryPage_ === 0}>←</button>
+              <span style={{ fontSize: 12, color: '#8b949e' }}>Page {galleryPage_ + 1} / {galleryTotal}</span>
+              <button style={btn('#21262d', galleryPage_ >= galleryTotal - 1)} onClick={() => setGalleryPage(p => Math.min(galleryTotal - 1, p + 1))} disabled={galleryPage_ >= galleryTotal - 1}>→</button>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  )
+
+  // ── Render ────────────────────────────────────────────────────────────────
 
   return (
     <div style={PAGE}>
-      {/* ── Header: load controls ── */}
+      {/* Header */}
       <div style={HEADER}>
-        <span style={{ fontSize: 14, fontWeight: 700, color: '#e6edf3', marginRight: 8 }}>Pattern Library</span>
+        <span style={{ fontSize: 14, fontWeight: 700, marginRight: 4 }}>Pattern Library</span>
 
-        <select value={symbol} onChange={e => setSymbol(e.target.value)} style={selectStyle} disabled={loading}>
-          {SUPPORTED_SYMBOLS.map(s => <option key={s} value={s}>{s}</option>)}
-        </select>
-
-        <input type="date" value={date} max={new Date().toISOString().slice(0, 10)}
-          onChange={e => setDate(e.target.value)} style={inputStyle} disabled={loading} />
-
-        <div style={{ display: 'flex', gap: 4 }}>
-          {(['equity', 'options'] as const).map(t => (
-            <button key={t}
-              style={{ ...btn(instrumentType === t ? '#1f6feb' : '#21262d'), border: '1px solid #30363d' }}
-              onClick={() => !loading && setInstrumentType(t)}>
-              {t.charAt(0).toUpperCase() + t.slice(1)}
-            </button>
-          ))}
-        </div>
-
-        {instrumentType === 'options' && (
-          <label style={{ fontSize: 12, color: '#8b949e' }}>
-            OTM&nbsp;
-            <input type="number" value={otmOffset} min={-10} max={10}
-              onChange={e => setOtmOffset(parseInt(e.target.value) || 0)}
-              style={{ ...inputStyle, width: 55 }} disabled={loading} />
-          </label>
-        )}
-
-        <button style={btn('#1f6feb', loading || !date)} onClick={handleLoadChart} disabled={loading || !date}>
-          {loading ? 'Loading…' : 'Load Chart'}
-        </button>
-
-        {loadError && <span style={{ color: '#f85149', fontSize: 12 }}>{loadError}</span>}
-      </div>
-
-      {/* ── Annotation toolbar ── */}
-      <div style={TOOLBAR}>
-        {/* Strategy selector */}
-        <span style={{ fontSize: 11, color: '#8b949e', marginRight: 4 }}>Strategy:</span>
-        <select value={activeStrategy} onChange={e => { setActiveStrategy(e.target.value); setNewStrategyName('') }}
-          style={{ ...selectStyle, minWidth: 160 }}>
-          <option value="">— select or type new —</option>
-          {strategies.map(s => <option key={s} value={s}>{s}</option>)}
-        </select>
-        {!activeStrategy && (
-          <input placeholder="New strategy name…" value={newStrategyName}
-            onChange={e => setNewStrategyName(e.target.value)}
-            style={{ ...inputStyle, width: 180 }} />
-        )}
-
-        <div style={{ width: 1, height: 16, background: '#30363d', margin: '0 4px' }} />
-
-        {/* Tool buttons */}
-        {TOOL_OPTIONS.map(t => (
-          <button key={t.key}
-            style={{ ...toolBtn(activeToolKey === t.key), borderLeft: `3px solid ${colorDot(t.key)}` }}
-            onClick={() => setActiveToolKey(t.key)}>
-            {t.label}
+        {(['create', 'view'] as const).map(m => (
+          <button key={m}
+            style={{ ...btn(mode === m ? '#1f6feb' : '#21262d'), border: '1px solid #30363d' }}
+            onClick={() => setMode(m)}>
+            {m === 'create' ? '✏ Create' : '👁 View'}
           </button>
         ))}
 
-        <button style={btn('#484f58', annotations.length === 0)} onClick={() => setAnnotations([])}
-          disabled={annotations.length === 0} title="Clear all annotations">
-          ✕ Clear All
-        </button>
-
-        <div style={{ width: 1, height: 16, background: '#30363d', margin: '0 4px' }} />
-
-        <input placeholder="Notes…" value={notes} onChange={e => setNotes(e.target.value)}
-          style={{ ...inputStyle, width: 180 }} />
-
-        <button style={btn('#238636', !chartLoaded)} onClick={handleSave} disabled={!chartLoaded}>
-          Save Annotations
-        </button>
-
-        {saveMsg && <span style={{ fontSize: 12, color: saveMsg === 'Saved!' ? '#3fb950' : '#f85149' }}>{saveMsg}</span>}
-
-        {currentChartId && (
-          <span style={{ fontSize: 11, color: '#484f58' }}>chart saved</span>
+        {mode === 'create' && (
+          <>
+            <select value={symbol} onChange={e => setSymbol(e.target.value)} style={selectStyle} disabled={loading}>
+              {SUPPORTED_SYMBOLS.map(s => <option key={s} value={s}>{s}</option>)}
+            </select>
+            <input type="date" value={date} max={new Date().toISOString().slice(0, 10)}
+              onChange={e => setDate(e.target.value)} style={inputStyle} disabled={loading} />
+            <div style={{ display: 'flex', gap: 4 }}>
+              {(['equity', 'options'] as const).map(t => (
+                <button key={t}
+                  style={{ ...btn(instrumentType === t ? '#1f6feb' : '#21262d'), border: '1px solid #30363d' }}
+                  onClick={() => !loading && setInstrumentType(t)}>
+                  {t === 'equity' ? 'Equity' : 'Options'}
+                </button>
+              ))}
+            </div>
+            {instrumentType === 'options' && (
+              <label style={{ fontSize: 12, color: '#8b949e' }}>
+                OTM&nbsp;
+                <input type="number" value={otmOffset} min={-10} max={10}
+                  onChange={e => setOtmOffset(parseInt(e.target.value) || 0)}
+                  style={{ ...inputStyle, width: 55 }} disabled={loading} />
+              </label>
+            )}
+            <button style={btn('#1f6feb', loading || !date)} onClick={handleLoadChart} disabled={loading || !date}>
+              {loading ? 'Loading…' : 'Load Chart'}
+            </button>
+            {loadError && <span style={{ color: '#f85149', fontSize: 12 }}>{loadError}</span>}
+          </>
+        )}
+        {mode === 'view' && loadError && (
+          <span style={{ color: '#f85149', fontSize: 12 }}>{loadError}</span>
         )}
       </div>
 
-      {/* ── Chart area ── */}
-      <div style={CHART_AREA}>
-        {!chartLoaded && !loading && (
-          <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#484f58', fontSize: 13 }}>
-            Select symbol, date and click Load Chart to begin annotating.
-          </div>
-        )}
-        {chartLoaded && (
-          <div style={{ flex: 1, overflow: 'auto', padding: '8px 0' }}>
-            <ChartPane
-              candles={equityCandles}
-              annotations={annotations.filter(a => a.instrument === 'underlying')}
-              activeStrategy={resolvedActiveStrategy}
-              label={`${symbol} — Underlying (3min)`}
-              onBarClick={handleBarClick}
-              height={hasOptions ? 240 : 380}
-            />
-            {hasOptions && optionsMeta && (
-              <ChartPane
-                candles={optionsCandles}
-                annotations={annotations.filter(a => a.instrument === optionsMeta.right)}
-                activeStrategy={resolvedActiveStrategy}
-                label={`${symbol} ${optionsMeta.right} ${optionsMeta.strike} — Options (3min)`}
-                onBarClick={handleBarClick}
-                height={240}
-              />
-            )}
-          </div>
-        )}
+      {/* Annotation toolbar — create mode only */}
+      {mode === 'create' && (
+        <div style={TOOLBAR}>
+          <span style={{ fontSize: 11, color: '#8b949e', marginRight: 4 }}>Strategy:</span>
+          <select value={activeStrategy} onChange={e => { setActiveStrategy(e.target.value); setNewStrategyName('') }}
+            style={{ ...selectStyle, minWidth: 160 }}>
+            <option value="">— select or type new —</option>
+            {strategies.map(s => <option key={s} value={s}>{s}</option>)}
+          </select>
+          {!activeStrategy && (
+            <input placeholder="New strategy name…" value={newStrategyName}
+              onChange={e => setNewStrategyName(e.target.value)}
+              style={{ ...inputStyle, width: 180 }} />
+          )}
+          <div style={{ width: 1, height: 16, background: '#30363d', margin: '0 4px' }} />
+          {TOOL_OPTIONS.map(t => (
+            <button key={t.key}
+              style={{ ...toolBtn(activeToolKey === t.key), borderLeft: `3px solid ${colorDot(t.key)}` }}
+              onClick={() => setActiveToolKey(t.key)}>
+              {t.label}
+            </button>
+          ))}
+          <button style={btn('#484f58', annotations.length === 0)} onClick={() => setAnnotations([])} disabled={annotations.length === 0}>
+            ✕ Clear All
+          </button>
+          <div style={{ width: 1, height: 16, background: '#30363d', margin: '0 4px' }} />
+          <input placeholder="Notes…" value={notes} onChange={e => setNotes(e.target.value)}
+            style={{ ...inputStyle, width: 180 }} />
+          <button style={btn('#238636', !chartLoaded)} onClick={handleSave} disabled={!chartLoaded}>
+            Save Annotations
+          </button>
+          {saveMsg && <span style={{ fontSize: 12, color: saveMsg === 'Saved!' ? '#3fb950' : '#f85149' }}>{saveMsg}</span>}
+          {currentChartId && <span style={{ fontSize: 11, color: '#484f58' }}>chart saved</span>}
+        </div>
+      )}
 
-        {/* ── Gallery ── */}
-        <div style={GALLERY}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
-            <span style={{ fontSize: 12, fontWeight: 700 }}>Gallery</span>
-            <select value={galleryStrategy} onChange={e => setGalleryStrategy(e.target.value)} style={{ ...selectStyle, minWidth: 160 }}>
-              <option value="">All strategies</option>
-              {strategies.map(s => <option key={s} value={s}>{s}</option>)}
-            </select>
-            <span style={{ fontSize: 11, color: '#484f58' }}>{galleryCharts.length} chart{galleryCharts.length !== 1 ? 's' : ''}</span>
+      {/* Body */}
+      {mode === 'create' ? (
+        <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+          <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+            {renderCharts(false)}
           </div>
-
-          {galleryCharts.length === 0 ? (
-            <div style={{ fontSize: 12, color: '#484f58' }}>
-              {galleryStrategy
-                ? `No charts annotated with "${galleryStrategy}" yet.`
-                : 'No saved charts yet. Load a chart and save annotations to begin.'}
-            </div>
-          ) : (
+          {renderGallery(true)}
+        </div>
+      ) : (
+        /* View mode */
+        <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+          {viewExpandedId && chartLoaded ? (
             <>
-              <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-                {gallerySlice.map(chart => (
-                  <GalleryCard
-                    key={chart.chart_id}
-                    chart={chart}
-                    activeStrategy={galleryStrategy || null}
-                    onLoad={handleGalleryLoad}
-                    onDelete={handleGalleryDelete}
-                  />
-                ))}
+              <div style={{
+                display: 'flex', alignItems: 'center', gap: 8, padding: '6px 12px',
+                background: '#161b22', borderBottom: '1px solid #30363d', flexShrink: 0,
+              }}>
+                <span style={{ fontSize: 12, color: '#8b949e' }}>
+                  {symbol} · {date} · {instrumentType}
+                  {ceMeta ? ` · CE ${ceMeta.strike} / PE ${peMeta?.strike ?? ''}` : ''}
+                </span>
+                <button style={btn('#484f58')} onClick={() => { setViewExpandedId(null); setChartLoaded(false) }}>
+                  ✕ Close
+                </button>
               </div>
-              {galleryTotal > 1 && (
-                <div style={{ display: 'flex', gap: 8, marginTop: 10, alignItems: 'center' }}>
-                  <button style={btn('#21262d', galleryPage_ === 0)} onClick={() => setGalleryPage(p => Math.max(0, p - 1))} disabled={galleryPage_ === 0}>←</button>
-                  <span style={{ fontSize: 12, color: '#8b949e' }}>Page {galleryPage_ + 1} of {galleryTotal}</span>
-                  <button style={btn('#21262d', galleryPage_ >= galleryTotal - 1)} onClick={() => setGalleryPage(p => Math.min(galleryTotal - 1, p + 1))} disabled={galleryPage_ >= galleryTotal - 1}>→</button>
-                </div>
-              )}
+              <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+                {renderCharts(true)}
+              </div>
+              <div style={{ flexShrink: 0, maxHeight: 240, overflow: 'auto', borderTop: '1px solid #30363d' }}>
+                {renderGallery(true)}
+              </div>
             </>
+          ) : (
+            <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: '12px 16px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
+                <span style={{ fontSize: 12, fontWeight: 700 }}>Gallery</span>
+                <select value={galleryStrategy} onChange={e => setGalleryStrategy(e.target.value)} style={{ ...selectStyle, minWidth: 160 }}>
+                  <option value="">All strategies</option>
+                  {strategies.map(s => <option key={s} value={s}>{s}</option>)}
+                </select>
+                <span style={{ fontSize: 11, color: '#484f58' }}>{galleryCharts.length} chart{galleryCharts.length !== 1 ? 's' : ''}</span>
+              </div>
+              {galleryCharts.length === 0 ? (
+                <div style={{ fontSize: 12, color: '#484f58' }}>No saved charts yet. Switch to Create mode to add charts.</div>
+              ) : (
+                <>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 12 }}>
+                    {gallerySlice.map(chart => (
+                      <GalleryCard
+                        key={chart.chart_id}
+                        chart={chart}
+                        activeStrategy={galleryStrategy || null}
+                        onLoad={handleGalleryLoad}
+                        onDelete={handleGalleryDelete}
+                        viewMode={true}
+                      />
+                    ))}
+                  </div>
+                  {galleryTotal > 1 && (
+                    <div style={{ display: 'flex', gap: 8, marginTop: 12, alignItems: 'center' }}>
+                      <button style={btn('#21262d', galleryPage_ === 0)} onClick={() => setGalleryPage(p => Math.max(0, p - 1))} disabled={galleryPage_ === 0}>←</button>
+                      <span style={{ fontSize: 12, color: '#8b949e' }}>Page {galleryPage_ + 1} / {galleryTotal}</span>
+                      <button style={btn('#21262d', galleryPage_ >= galleryTotal - 1)} onClick={() => setGalleryPage(p => Math.min(galleryTotal - 1, p + 1))} disabled={galleryPage_ >= galleryTotal - 1}>→</button>
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
           )}
         </div>
-      </div>
+      )}
     </div>
   )
 }

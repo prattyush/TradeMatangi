@@ -1094,21 +1094,21 @@ const api = {
     if (!res.ok) throw new Error(`Delete chart failed: ${res.status}`)
   },
 
-  async patternOhlcEquity(symbol: string, date: string, intervalMinutes = 3): Promise<PatternOHLCResponse> {
-    const res = await fetch(
-      `${BACKEND_URL}/api/pattern/ohlc/equity?symbol=${encodeURIComponent(symbol)}&date=${date}&interval_minutes=${intervalMinutes}`,
-      { headers: _authHeaders() },
-    )
+  async patternOhlcEquity(symbol: string, date: string, intervalMinutes = 3, daysBack?: number): Promise<PatternOHLCResponse> {
+    let url = `${BACKEND_URL}/api/pattern/ohlc/equity?symbol=${encodeURIComponent(symbol)}&date=${date}&interval_minutes=${intervalMinutes}`
+    if (daysBack) url += `&days_back=${daysBack}`
+    const res = await fetch(url, { headers: _authHeaders() })
     if (!res.ok) throw new Error(`OHLC equity failed: ${res.status}`)
     return res.json()
   },
 
   async patternOhlcOptions(
-    symbol: string, date: string, strike: number, expiry: string, right: string, intervalMinutes = 3,
+    symbol: string, date: string, strike: number, expiry: string, right: string, intervalMinutes = 3, daysBack?: number,
   ): Promise<PatternOHLCResponse> {
     const params = new URLSearchParams({
       symbol, date, strike: String(strike), expiry, right, interval_minutes: String(intervalMinutes),
     })
+    if (daysBack) params.set('days_back', String(daysBack))
     const res = await fetch(`${BACKEND_URL}/api/pattern/ohlc/options?${params}`, { headers: _authHeaders() })
     if (!res.ok) throw new Error(`OHLC options failed: ${res.status}`)
     return res.json()

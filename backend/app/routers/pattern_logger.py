@@ -175,15 +175,30 @@ async def ohlc_equity(
     symbol: str = Query(...),
     date: str = Query(...),
     interval_minutes: int = Query(3, ge=1, le=60),
+    days_back: int = Query(default=2, ge=1, le=5),
     _user_id: str = Depends(get_request_user_id),
 ):
-    """Return full-day OHLC candles for an equity symbol. Auto-fetches from Breeze if not cached."""
+    """Return OHLC candles for an equity symbol including up to days_back prior trading days."""
     try:
+        import pandas as pd
+        from app.utils import prior_trading_days
         from app.services.broker_service import fetch_historical
         from app.services.data_loader import load_dataframe, resample_to_candles, candles_to_records
+
+        prior_dates = prior_trading_days(date, n=days_back)
+        all_dfs = []
+        for d in prior_dates:
+            try:
+                fetch_historical(symbol, d)
+                all_dfs.append(load_dataframe(symbol, d))
+            except (FileNotFoundError, RuntimeError):
+                pass
         fetch_historical(symbol, date)
-        df = load_dataframe(symbol, date)
-        candles = resample_to_candles(df, interval_minutes)
+        all_dfs.append(load_dataframe(symbol, date))
+        if not all_dfs:
+            raise FileNotFoundError
+        combined = pd.concat(all_dfs).sort_index()
+        candles = resample_to_candles(combined, interval_minutes)
         records = candles_to_records(candles)
         return {"symbol": symbol, "date": date, "interval_minutes": interval_minutes, "candles": records}
     except FileNotFoundError:
@@ -203,17 +218,32 @@ async def ohlc_options(
     expiry: str = Query(...),
     right: str = Query(...),
     interval_minutes: int = Query(3, ge=1, le=60),
+    days_back: int = Query(default=2, ge=1, le=5),
     _user_id: str = Depends(get_request_user_id),
 ):
-    """Return full-day OHLC candles for an options contract (CE or PE). Auto-fetches from Breeze if not cached."""
+    """Return OHLC candles for an options contract including up to days_back prior trading days."""
     if right.upper() not in ("CE", "PE"):
         raise HTTPException(status_code=400, detail="right must be CE or PE")
     try:
+        import pandas as pd
+        from app.utils import prior_trading_days
         from app.services.options_service import fetch_options_historical, load_options_dataframe
         from app.services.data_loader import resample_to_candles, candles_to_records
+
+        prior_dates = prior_trading_days(date, n=days_back)
+        all_dfs = []
+        for d in prior_dates:
+            try:
+                fetch_options_historical(symbol, d, strike, expiry, right.upper())
+                all_dfs.append(load_options_dataframe(symbol, d, strike, expiry, right.upper()))
+            except (FileNotFoundError, RuntimeError):
+                pass
         fetch_options_historical(symbol, date, strike, expiry, right.upper())
-        df = load_options_dataframe(symbol, date, strike, expiry, right.upper())
-        candles = resample_to_candles(df, interval_minutes)
+        all_dfs.append(load_options_dataframe(symbol, date, strike, expiry, right.upper()))
+        if not all_dfs:
+            raise FileNotFoundError
+        combined = pd.concat(all_dfs).sort_index()
+        candles = resample_to_candles(combined, interval_minutes)
         records = candles_to_records(candles)
         return {
             "symbol": symbol, "date": date, "strike": strike,
