@@ -15,6 +15,28 @@ from observability.tracing import observe
 logger = logging.getLogger("aihelper.services.command_evaluator")
 
 
+def _stream_matches(hook_right: str | None, command: dict[str, Any]) -> bool:
+    """
+    Return True if the bar-close hook stream matches what this command listens to.
+
+    trigger_right values:
+      "CE" / "PE"    → fire only when hook_right equals that leg
+      "UNDERLYING"   → fire only when hook_right is None (NIFTY/equity bar close)
+      None           → fall back to command["right"] for backward compat
+                       (pre-trigger_right commands that only specify the action leg)
+    """
+    raw = command.get("trigger_right")
+    if raw == "UNDERLYING":
+        return hook_right is None
+    if raw in ("CE", "PE"):
+        return hook_right == raw
+    # Legacy fallback: no trigger_right stored — use action right as the trigger stream
+    effective = command.get("right")
+    if effective:
+        return hook_right == effective
+    return True  # equity command with no right — matches any equity hook
+
+
 @observe(name="evaluate_command")
 async def evaluate(hook: BarCloseHook, command: dict[str, Any]) -> dict[str, Any]:
     """
@@ -30,16 +52,15 @@ async def evaluate(hook: BarCloseHook, command: dict[str, Any]) -> dict[str, Any
     command_id = command.get("command_id", "")
     session_id = hook.session_id
 
-    # Skip if this hook's stream doesn't match the command's trigger stream.
-    # trigger_right = which bar-close stream should activate the command:
-    #   "CE"/"PE" → only fire on that options leg's bar close
-    #   None      → fire on any stream (Nifty or options), for commands triggered by the underlying
-    # Fall back to command["right"] for old commands that predate trigger_right.
-    trigger_right = command.get("trigger_right") or command.get("right")
-    if trigger_right and trigger_right != hook.right:
+    # Stream filter — determines which bar-close stream activates this command.
+    # trigger_right values:
+    #   "CE"/"PE"       → fire only on that options leg's bar close
+    #   "UNDERLYING"    → fire only on the NIFTY/equity bar close (cross-symbol monitoring)
+    #   None            → fall back to command["right"] (backward compat for pre-trigger_right commands)
+    if not _stream_matches(hook.right, command):
         logger.debug(
             "evaluate: skipping command=%s (trigger_right=%s) on hook right=%s",
-            command_id, trigger_right, hook.right,
+            command_id, command.get("trigger_right"), hook.right,
         )
         return {"outcome": "skipped_wrong_stream", "command_id": command_id}
 
@@ -47,6 +68,7 @@ async def evaluate(hook: BarCloseHook, command: dict[str, Any]) -> dict[str, Any
 
     # Convert Pydantic models to plain dicts for JSON serialisation
     bars_dicts = [b.model_dump() for b in hook.bars]
+    underlying_bars_dicts = [b.model_dump() for b in hook.underlying_bars]
     position_dict = hook.position.model_dump() if hook.position else None
 
     try:
@@ -57,6 +79,7 @@ async def evaluate(hook: BarCloseHook, command: dict[str, Any]) -> dict[str, Any
             quantity_type=command.get("quantity_type", "ratio_l"),
             quantity_value=command.get("quantity_value"),
             bars=bars_dicts,
+            underlying_bars=underlying_bars_dicts,
             position=position_dict,
             command_text=command.get("command_text", ""),
         )
@@ -154,11 +177,10 @@ async def _evaluate_exit(hook: BarCloseHook, command: dict[str, Any]) -> dict[st
     session_id = hook.session_id
 
     # Stream filter — same logic as entry commands
-    trigger_right = command.get("trigger_right") or command.get("right")
-    if trigger_right and trigger_right != hook.right:
+    if not _stream_matches(hook.right, command):
         logger.debug(
             "_evaluate_exit: skipping command=%s (trigger_right=%s) on hook right=%s",
-            command_id, trigger_right, hook.right,
+            command_id, command.get("trigger_right"), hook.right,
         )
         return {"outcome": "skipped_wrong_stream", "command_id": command_id}
 
@@ -176,6 +198,7 @@ async def _evaluate_exit(hook: BarCloseHook, command: dict[str, Any]) -> dict[st
         return {"outcome": "auto_cancelled_no_position", "command_id": command_id}
 
     bars_dicts = [b.model_dump() for b in hook.bars]
+    underlying_bars_dicts = [b.model_dump() for b in hook.underlying_bars]
 
     try:
         llm_result = await llm_service.evaluate_exit_command(
@@ -183,6 +206,7 @@ async def _evaluate_exit(hook: BarCloseHook, command: dict[str, Any]) -> dict[st
             exit_action=command.get("exit_action", "exit_position"),
             exit_price_expr=command.get("exit_price_expr") or command.get("parsed_price_expr"),
             bars=bars_dicts,
+            underlying_bars=underlying_bars_dicts,
             position=position_dict,
             command_text=command.get("command_text", ""),
         )
@@ -223,6 +247,18 @@ async def _evaluate_exit(hook: BarCloseHook, command: dict[str, Any]) -> dict[st
             "reason": rejection_reason,
         }
 
+    # Atomically claim execution (active → executing) so concurrent bar-close hooks
+    # that arrive before the GSI update cannot double-fire the same exit.
+    try:
+        claimed = commands_store.claim_command_execution(command["user_id"], command_id)
+    except Exception:
+        logger.exception("Failed to claim command %s — skipping to avoid duplicate exit", command_id)
+        return {"outcome": "skipped_duplicate", "command_id": command_id}
+
+    if not claimed:
+        logger.info("_evaluate_exit: command %s already claimed by concurrent evaluation — skipping", command_id)
+        return {"outcome": "skipped_duplicate", "command_id": command_id}
+
     # Dispatch exit action to backend
     action_result = "backend_error"
     right = command.get("right")
@@ -232,6 +268,9 @@ async def _evaluate_exit(hook: BarCloseHook, command: dict[str, Any]) -> dict[st
                 session_id, right, float(computed_price), position_dict
             )
         elif exit_action == "exit_position":
+            # Cancel any open SL order BEFORE placing the market sell.
+            # Having both active simultaneously doubles the margin requirement on Kotak.
+            await backend_client.cancel_open_stoploss(session_id, right)
             await backend_client.exit_position_market(session_id, right)
         elif exit_action == "start_takeprofit":
             await backend_client.start_takeprofit_strategy(
@@ -247,6 +286,11 @@ async def _evaluate_exit(hook: BarCloseHook, command: dict[str, Any]) -> dict[st
     except Exception as exc:
         action_result = "backend_error"
         logger.warning("Backend exit failed for command=%s: %s", command_id, exc)
+        # Revert to active so the command retries on the next bar close
+        try:
+            commands_store.unclaim_command_execution(command["user_id"], command_id)
+        except Exception:
+            logger.exception("Failed to unclaim command %s after backend error", command_id)
 
     _log_decision(session_id, now, command, hook.timestamp, reason_text, action, action_result)
 

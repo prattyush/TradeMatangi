@@ -66,6 +66,55 @@ Examples:-
  8. Find the direction of the trade by finding whether sell or buy order is placed before. If sell then it is a sell trade, if buy then it is a buy trade.
  9. Use the best model, given the choice of models in accesskeys.init [llm-models]
 
+
+##### ExitEntryTemplates
+1. User can define templates for either entry or exit commands, the templates need to be specific on theses values :- a) Enty or Exit Command, b) Action - Entry (Buy, Place limit Order, place target order) or Exit (Immediate Exit(square off), Change Stoploss, Target Profit).
+2. The templates will have place holders in these parameters :- a) Symbol (CE or PE in options), otherwise for equity it is the selected symbol, b) Quantity for Entry, %Quantity for Exit, c) Price :- For both entry/exit, d) other variables like number of bars, percentage etc.
+3. Each template should have a hotword associated, or reject the template. User can be asked to provide hotword if missed.
+4. The placeholder can be provided with symbols like any string matcher or other template replacement works like - "{price}, {percentage}" or "${price}, ${percentage}".  The user is supposed to know the order of these placeholders, so when recalling a template and using it as command it can directly give vaues "," separated. Like
+```
+entry template for Entering a position:- "Buy in ${symbol} with quantity ratio ${ratio}, when the latest bar is a bull bar and its closing price is above ${closingprice}.". Use hotword bbwp for it.
+
+```
+How user invokes it:-
+```
+start template bbwp with values - CE,M,30
+```
+Once started a template with values, it becomes a command and then behaves as such.
+5. Once started a template, the AI chat should show the exact command it interpretted the template with values. If after filling values any placeholder remains like ${xx} with no value given, ask the user to enter one or invalidate it. 
+6. User can ask for all saved templates and it's hotword.
+
+
+##### CrossSymbolMonitoring
+1. For options, Can AIHelper commands monitor underlying and take action in CE/PE. Like when NIFTY closes below 24200, exit PE position immediately.
+2. Discuss on complication of having multiple symbol commands like:- If NIFTY closes abovve 24005 and the CE bar is a bull bar, then Buy CE with quantity ratio m immediately. And implement it if it doesn't disrupt.
+
+
+##### OtherFeatures
+This section lists out some features which were left out from previous phases.
+1. When a trade is executed a marker is placed on the chart. For CE and PE trades the marker comes only in the respective CE or PE chart. Can it be done, such that the marker also appears in the underlying chart, using the timestamp of the order and finding the price of the underlying at that timestamp, or put it with current price, as soon as the marker is placed on CE, place the marker on underlying as well with current tick value. We can discuss more on its complexity.
+2. For Trade Analysis, can we have a setting in General Tab, where user can select whether he wants the trade analysis to be done on Options prices (CE/PE) or underyling prices. Based on that the Trade Analysis will choose the respective ohlc data. The user can choose only one at a time.
+3. ✅ **DONE (PR #163)** In BAN guardrail, we have 2 options, total % loss and % of losing trades. For % of losing trades, we cannot stop when first trade is lost, so atleast some number of trades should have been done. For that, can we include another settings, like applying checking of % lossing trades only after 10 trades are done or 5 etc. % Capital Loss makes sense directly, because saving capital is first priority, so if user in first trade loses 10% capital, let trading stop for the session.
+4. Create architecture document for both frontend and backend as was created for AIhelpler. I have renamed docs/architecture.md to docs/architecture-aihelper.md. Create similar ones for backend and frontend with latest state, so that I can understand Code directly as well.
+
+
+##### ExperimentalFeature
+This feature is experimental and should have an option in setting to be switched off. Not sure where this code should lie in backend or aihelper. Laying out the high level idea here, feel free to implement as you seem fit. The lower level details are not ironed out, so feel free to implement or plan them as you seem fit. Create a new base branch from dev feature/experimental and then feature branches from it for PR with merging to the new branch feature/experimental. So, that testing and finalyzing can be done on the feature/experimental branch.
+The high level thinking is, in a running session, when the chart start executing, many patterns keep on emerging during the day, the idea is that the system should keep on checking if any of the patterns are forming based on Underlying in case of options or equity symbol itself. And when these patterns are detected it should show them as slight notification, like a flash message which comes and notifies the user or may be some other way to inform the user. The patterns would be detected in the time interval as is present in the settings  "Strategies / Strategy Candle Interval". Feel free to be as creative as possible. Basic Patterns listed here. You can also suggest trades and check is suffering panic behavior through too many Stoploss changes, too many trades in too short time. 
+Few patterns to detect.
+1. Strong Bull Trend.
+2. Strong Bear Trend.
+3. Trading Range.
+4. Strong Bull Trend Reversal.
+5. Strong Bear Trend Reversal.
+6. Trading Range Breakout.
+7. Opening Reversal -> After market open, price moves one side then reverses into trend in opposite side.
+8. When 9 EMA and 21 EMA cross over, possible new micro trend start.
+9. When price keeps going around a certain price area and returning signalling support and likewise resistance, the price area where price reverses has width around 5% of underlying actual price.
+
+For this feature, you can still use the hook in backend to get data at bar close and keep storing them if 15 is not enough, or increase backend bar length from start of the day.
+
+
 ## PR Log (feature/aihelper branch)
 
 | Item | PR | Status |
@@ -98,3 +147,8 @@ Examples:-
 | TP exit trade sync + stale SL fix + EC2 aihelper scripts: (1) `kotak_fill_confirmed` flag in `Order` so reconcile Pass 1 skips already-confirmed fills — TP-triggered sell orders now appear in trade history; (2) reconcile Pass 3 cancels locally-PENDING orders whose Kotak counterpart shows `cancelled`/`rejected`, clearing stale SL entries; (3) `scripts/start-aihelper-ec2.sh` + `scripts/stop-aihelper-ec2.sh` for production EC2 aihelper management; 513 backend tests | #151 (fix/tp-exit-trade-sync) | ✅ merged to dev |
 | TradeAnalysisFeatures: (1) `GET /api/analysis/ohlc-context` returns labeled OHLC candles (pre/entry/trade/exit/post) for both equity and options; (2) `GET /api/analysis/trades` accepts optional `symbol` + `session_type` filters; adds `expiry` field; (3) `aihelper/services/pattern_detector.py` — 6 programmatic pattern checks (entry deviation, early exit, scared exit, panic buying, buying-on-top/selling-on-bottom, trade direction); (4) `run_analysis()` fetches OHLC per trade group, runs all 6 checks, passes pre-computed numbers to LLM for narrative; (5) `MODEL_ANALYSIS` defaults to `deepseek/deepseek-v4-pro`; (6) `parse_analysis_request()` extracts date range + symbol + session_type in one LLM call; 521 backend + 180 aihelper tests | #154 (feature/trade-analysis-patterns) | ✅ merged to dev |
 | Partial options parquet fix: `_MIN_OPTIONS_DAY_ROWS = 20000` row-count guard in `options_service.py` deletes and re-fetches partial parquets written at paper/real session start (mirrors existing equity guard); `analysis.py` `get_ohlc_context` calls `fetch_historical`/`fetch_options_historical` before loading so the full-day file is always present before 404 path; 528 backend tests | #155 (fix/partial-options-parquet) | ✅ merged to dev |
+| Duplicate AI exit + SL cancel fixes: (1) `claim_command_execution()` — atomic `active→executing` conditional write in `commands_store.py`; concurrent evaluators that lose the race return `skipped_duplicate` without calling backend; `unclaim_command_execution()` reverts to `active` on backend failure so the command retries next bar; (2) `cancel_open_stoploss()` added to `backend_client.py` — fetches open orders, DELETEs matching is_stoploss orders for the right; called in `_evaluate_exit` for `exit_position` only before the market sell; (3) SL cancel fires **before** `exit_position_market()` to prevent double margin reservation on Kotak (simultaneous pending SL sell + new market sell); (4) `cancel_commands_for_session` now cancels `executing` commands too; frontend `fetchCommands()` refreshes `commandsRef` after `fetchAndAppendDecisions` appends new decisions so 10 s polling stops when all commands reach terminal state; 528 backend tests | #158 (fix/aihelper-exit-duplicate-sl-cancel) | ✅ merged to dev |
+| ExitEntryTemplates: reusable entry/exit command templates with `${placeholder}` variables recalled by hotword; `save_template`/`use_template`/`list_templates` intents; templates stored in existing `AIStrategies` DynamoDB table (`is_template=True`, `template_text`, `template_type` fields); deterministic positional placeholder fill (`_fill_template()`); filled command echoed to user before registering as active entry or exit command; new Templates tab in AIChatPanel (blue badge, numbered placeholder chips, Use pre-fills chat input); Hotwords tab now filters to non-templates only; fix pre-existing `fetchCommands` forward-reference TS2448/TS2454; 16 new aihelper tests; 528 backend / 228 aihelper tests | #160 (feature/aihelper-templates) | ✅ merged to dev |
+| CrossSymbolMonitoring: `underlying_bars: list[OHLCBar]` added to `BarCloseHook` — NIFTY bar history injected into CE/PE hooks by backend; `trigger_right="UNDERLYING"` new value fires only on NIFTY bar close (cross-symbol commands like "when NIFTY < 24200, exit PE"); `_stream_matches()` helper centralises stream-filter logic with explicit UNDERLYING/CE/PE/legacy-fallback cases; `evaluate_command` + `evaluate_exit_command` accept `underlying_bars` — NIFTY section added to LLM prompt when non-empty enabling combined CE+NIFTY conditions; LLM extraction prompts updated to emit `"UNDERLYING"` for Nifty-triggered messages; 24 new tests (model field, 9 stream-match cases, cross-symbol entry/exit, order placed on CE from NIFTY hook, combined condition, backward compat); 528 backend / 228 aihelper tests | #162 (feature/aihelper-cross-symbol) | ✅ merged to dev |
+| BAN guardrail min-trades threshold: `guardrail_ban_min_trades` setting (default 5) — loss-trade-% BAN condition gated on `len(round_trips) >= min_trades`; capital-loss-% unchanged (evaluates from trade 1); new field on `GuardRailSettingsResponse` + `GuardRailSettingsUpdateRequest`; persisted to DynamoDB `UserSettings`; snapshotted onto session at `initialize_guardrails()`; "Min trades before y% check (z)" input added to Settings → GuardRails BAN section; 3 new tests (skip below threshold, capital fires on trade 1, fires after threshold); 531 backend tests | #163 (feature/ban-guardrail-min-trades) | ✅ merged to dev |
+| Sprint 3b OtherFeatures: (1) CE/PE trade markers mirrored on NIFTY underlying chart — `underlying_price` stamped via `latestEquityTickRef` in `useSimulation.ts`; Chart.tsx equity pane includes CE/PE trades at `underlying_price` with direction-aware colors (CB green, CS pink, PS purple, PB amber); (2) `analysis_price_source` setting ("options"/"underlying") in `UserSettings` DynamoDB, `GET/PUT /api/users/settings`, General tab two-button toggle (always visible, synced from backend on open); aihelper `backend_client.get_user_settings()` + `_run_pattern_analysis(analysis_price_source)` — when "underlying", force `right=None` for options sessions; (3) `docs/architecture-backend.md` + `docs/architecture-frontend.md` written; 3 backend + 2 aihelper new tests; 534 backend / 227 aihelper tests | #164 (feature/sprint3b-other-features) | ✅ merged to dev |

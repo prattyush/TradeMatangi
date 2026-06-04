@@ -156,3 +156,19 @@ Look at each of the bugs, fix them and then mark them resolved as well if approv
 
 ### Missed Feature Implementations
 
+## Phase-XI AI Helper
+
+### AI Helper Bugs
+
+**[RESOLVED]** Duplicate AI exit fires — same exit command evaluated and dispatched multiple times (PR #158, 2026-06-03).
+- **Symptom**: On bar-close, `exit_position` dispatched to the backend 2–3× in rapid succession. Position exited correctly but backend received redundant market-sell calls; trade history showed extra entries.
+- **Root cause**: Multiple concurrent `_evaluate_exit()` calls (one per bar-close fire) all passed the guardrail and dispatched to the backend before any of them could mark the command as executed in DynamoDB.
+- **Fix**: Added `claim_command_execution()` to `commands_store.py` — an atomic conditional write that transitions `active → executing`. Evaluators call this after the guardrail passes and before backend dispatch. Concurrent evaluators that lose the race receive `skipped_duplicate` and return without calling the backend. `unclaim_command_execution()` reverts to `active` on backend failure, allowing the command to retry on the next bar.
+- **Files**: `aihelper/db/commands_store.py`, `aihelper/services/command_evaluator.py`.
+
+**[RESOLVED]** Open SL order not cancelled after AI `exit_position`; double margin on Kotak (PR #158, 2026-06-03).
+- **Symptom**: After the AI helper fired `exit_position` and the position was market-sold, the SL sell order remained open on the broker and in the UI. On Kotak (options), a pending SL sell + new market sell active simultaneously doubled the margin requirement.
+- **Root cause**: `_evaluate_exit()` called `exit_position_market()` directly without first cancelling the open SL.
+- **Fix**: Added `cancel_open_stoploss(right)` to `backend_client.py` — fetches open orders and DELETEs any `is_stoploss` orders matching the instrument right. Called in `_evaluate_exit` for `exit_position` only (SL/TP commands keep the position open). The cancel fires **before** `exit_position_market()` to guarantee no overlap window on Kotak.
+- **Files**: `aihelper/services/backend_client.py`, `aihelper/services/command_evaluator.py`.
+

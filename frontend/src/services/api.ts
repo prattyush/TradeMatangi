@@ -80,6 +80,7 @@ export interface UserSettingsResponse {
   funds_ratio_l_pct?: number
   funds_ratio_m_pct?: number
   funds_ratio_h_pct?: number
+  analysis_price_source?: string
 }
 
 // ── Strategy types ──────────────────────────────────────────────────────────
@@ -201,6 +202,8 @@ export interface Trade {
   right?: string       // "CE" or "PE" for options trades
   strike?: number      // options strike
   commission: number   // exchange charges + brokerage, computed at record time
+  // Frontend-only: NIFTY price snapshotted when a CE/PE trade lands in local state
+  underlying_price?: number
 }
 
 export interface Position {
@@ -232,6 +235,7 @@ export interface GuardRailSettings {
   guardrail_cooldown_losses: number
   guardrail_ban_capital_pct: number
   guardrail_ban_loss_trade_pct: number
+  guardrail_ban_min_trades: number
   guardrail_ban_enabled: boolean
   guardrail_cooldown_enabled: boolean
 }
@@ -312,6 +316,9 @@ export interface StrategyItem {
   created_at: string
   last_used_at?: string
   use_count?: number
+  is_template?: boolean
+  template_text?: string
+  template_type?: string
 }
 
 export interface CommandItem {

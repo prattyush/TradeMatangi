@@ -8,7 +8,11 @@ from services.llm_service import classify_intent as _classify
 
 logger = logging.getLogger("aihelper.services.intent_classifier")
 
-VALID_INTENTS = {"command", "entry_command", "exit_command", "analysis", "question", "hotword", "list_commands", "cancel_commands"}
+VALID_INTENTS = {
+    "command", "entry_command", "exit_command", "analysis", "question",
+    "hotword", "list_commands", "cancel_commands",
+    "save_template", "use_template", "list_templates",
+}
 
 
 async def classify(message: str) -> tuple[str, float]:

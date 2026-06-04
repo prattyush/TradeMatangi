@@ -71,3 +71,14 @@ def increment_use_count(user_id: str, hotword: str, used_at: str) -> None:
         UpdateExpression="SET last_used_at = :ts ADD use_count :one",
         ExpressionAttributeValues={":ts": used_at, ":one": 1},
     )
+
+
+def list_templates(user_id: str) -> list[dict]:
+    """Return only template items (is_template=True) for the user."""
+    return [i for i in list_strategies(user_id) if i.get("is_template")]
+
+
+def get_template_by_hotword(user_id: str, hotword: str) -> dict | None:
+    """Return a saved template for the given hotword, or None if not found / not a template."""
+    item = get_strategy(user_id, hotword)
+    return item if (item and item.get("is_template")) else None

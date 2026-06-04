@@ -27,6 +27,7 @@ const GUARDRAIL_COOLDOWN_BLOCK_BARS_KEY = 'guardrailCooldownBlockBars'
 const GUARDRAIL_COOLDOWN_LOSSES_KEY = 'guardrailCooldownLosses'
 const GUARDRAIL_BAN_CAPITAL_PCT_KEY = 'guardrailBanCapitalPct'
 const GUARDRAIL_BAN_LOSS_TRADE_PCT_KEY = 'guardrailBanLossTradePct'
+const GUARDRAIL_BAN_MIN_TRADES_KEY = 'guardrailBanMinTrades'
 const GUARDRAIL_BAN_ENABLED_KEY = 'guardrailBanEnabled'
 const GUARDRAIL_COOLDOWN_ENABLED_KEY = 'guardrailCooldownEnabled'
 
@@ -49,6 +50,10 @@ export function loadGuardRailBanCapitalPct(): number {
 export function loadGuardRailBanLossTradePct(): number {
   const v = parseFloat(localStorage.getItem(GUARDRAIL_BAN_LOSS_TRADE_PCT_KEY) ?? '')
   return isNaN(v) || v < 1 || v > 100 ? 60.0 : v
+}
+export function loadGuardRailBanMinTrades(): number {
+  const v = parseInt(localStorage.getItem(GUARDRAIL_BAN_MIN_TRADES_KEY) ?? '')
+  return isNaN(v) || v < 1 || v > 100 ? 5 : v
 }
 export function loadGuardRailBanEnabled(): boolean {
   return localStorage.getItem(GUARDRAIL_BAN_ENABLED_KEY) === 'true'
@@ -132,6 +137,7 @@ export interface GuardRailSettingsLocal {
   cooldownLosses: number
   banCapitalPct: number
   banLossTradePct: number
+  banMinTrades: number
   banEnabled: boolean
   cooldownEnabled: boolean
 }
@@ -186,6 +192,9 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
   // Historical days
   const [historicalDays, setHistoricalDays] = useState(loadHistoricalDays)
 
+  // Trade analysis price source: "options" (CE/PE OHLC) or "underlying" (NIFTY OHLC)
+  const [analysisPriceSource, setAnalysisPriceSource] = useState<'options' | 'underlying'>('options')
+
   // Strategies settings
   const [breakevenMode, setBreakevenMode] = useState(loadBreakevenMode)
   const [targetProfitBufferTicks, setTargetProfitBufferTicks] = useState(loadTargetProfitBufferTicks)
@@ -202,6 +211,7 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
   const [grCooldownLossesInput, setGrCooldownLossesInput] = useState(() => String(loadGuardRailCooldownLosses()))
   const [grBanCapitalInput, setGrBanCapitalInput] = useState(() => String(loadGuardRailBanCapitalPct()))
   const [grBanLossTradeInput, setGrBanLossTradeInput] = useState(() => String(loadGuardRailBanLossTradePct()))
+  const [grBanMinTradesInput, setGrBanMinTradesInput] = useState(() => String(loadGuardRailBanMinTrades()))
 
   // Admin section — broker tokens
   const [iciciInput, setIciciInput] = useState('')
@@ -252,6 +262,9 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
           setRatioInputs({ l: String(synced.l), m: String(synced.m), h: String(synced.h) })
           localStorage.setItem(FUNDS_RATIOS_KEY, JSON.stringify(synced))
         }
+        if (s.analysis_price_source === 'underlying' || s.analysis_price_source === 'options') {
+          setAnalysisPriceSource(s.analysis_price_source)
+        }
       }).catch(() => {})
 
       api.getGuardRailSettings().then(s => {
@@ -260,6 +273,7 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
         setGrCooldownLossesInput(String(s.guardrail_cooldown_losses))
         setGrBanCapitalInput(String(s.guardrail_ban_capital_pct))
         setGrBanLossTradeInput(String(s.guardrail_ban_loss_trade_pct))
+        setGrBanMinTradesInput(String(s.guardrail_ban_min_trades ?? 5))
         setGrBanEnabled(s.guardrail_ban_enabled)
         setGrCooldownEnabled(s.guardrail_cooldown_enabled)
         localStorage.setItem(GUARDRAIL_BLOCK_BARS_KEY, String(s.guardrail_block_bars))
@@ -267,6 +281,7 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
         localStorage.setItem(GUARDRAIL_COOLDOWN_LOSSES_KEY, String(s.guardrail_cooldown_losses))
         localStorage.setItem(GUARDRAIL_BAN_CAPITAL_PCT_KEY, String(s.guardrail_ban_capital_pct))
         localStorage.setItem(GUARDRAIL_BAN_LOSS_TRADE_PCT_KEY, String(s.guardrail_ban_loss_trade_pct))
+        localStorage.setItem(GUARDRAIL_BAN_MIN_TRADES_KEY, String(s.guardrail_ban_min_trades ?? 5))
         localStorage.setItem(GUARDRAIL_BAN_ENABLED_KEY, String(s.guardrail_ban_enabled))
         localStorage.setItem(GUARDRAIL_COOLDOWN_ENABLED_KEY, String(s.guardrail_cooldown_enabled))
       }).catch(() => {})
@@ -380,11 +395,13 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
     const cooldownLosses = parseInt(grCooldownLossesInput)
     const banCapitalPct = parseFloat(grBanCapitalInput)
     const banLossTradePct = parseFloat(grBanLossTradeInput)
+    const banMinTrades = parseInt(grBanMinTradesInput)
     if (isNaN(blockBars) || blockBars < 1 || blockBars > 20) { setStatus('Block bars must be 1–20'); return }
     if (isNaN(cooldownBlockBars) || cooldownBlockBars < 1 || cooldownBlockBars > 20) { setStatus('Cooldown block bars must be 1–20'); return }
     if (isNaN(cooldownLosses) || cooldownLosses < 1 || cooldownLosses > 20) { setStatus('Cooldown losses must be 1–20'); return }
     if (isNaN(banCapitalPct) || banCapitalPct < 1 || banCapitalPct > 100) { setStatus('Capital % must be 1–100'); return }
     if (isNaN(banLossTradePct) || banLossTradePct < 1 || banLossTradePct > 100) { setStatus('Loss trade % must be 1–100'); return }
+    if (isNaN(banMinTrades) || banMinTrades < 1 || banMinTrades > 100) { setStatus('Min trades must be 1–100'); return }
     try {
       await api.updateGuardRailSettings({
         guardrail_block_bars: blockBars,
@@ -392,6 +409,7 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
         guardrail_cooldown_losses: cooldownLosses,
         guardrail_ban_capital_pct: banCapitalPct,
         guardrail_ban_loss_trade_pct: banLossTradePct,
+        guardrail_ban_min_trades: banMinTrades,
         guardrail_ban_enabled: grBanEnabled,
         guardrail_cooldown_enabled: grCooldownEnabled,
       })
@@ -400,9 +418,10 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
       localStorage.setItem(GUARDRAIL_COOLDOWN_LOSSES_KEY, String(cooldownLosses))
       localStorage.setItem(GUARDRAIL_BAN_CAPITAL_PCT_KEY, String(banCapitalPct))
       localStorage.setItem(GUARDRAIL_BAN_LOSS_TRADE_PCT_KEY, String(banLossTradePct))
+      localStorage.setItem(GUARDRAIL_BAN_MIN_TRADES_KEY, String(banMinTrades))
       localStorage.setItem(GUARDRAIL_BAN_ENABLED_KEY, String(grBanEnabled))
       localStorage.setItem(GUARDRAIL_COOLDOWN_ENABLED_KEY, String(grCooldownEnabled))
-      onGuardRailSettingsChange?.({ blockBars, cooldownBlockBars, cooldownLosses, banCapitalPct, banLossTradePct, banEnabled: grBanEnabled, cooldownEnabled: grCooldownEnabled })
+      onGuardRailSettingsChange?.({ blockBars, cooldownBlockBars, cooldownLosses, banCapitalPct, banLossTradePct, banMinTrades, banEnabled: grBanEnabled, cooldownEnabled: grCooldownEnabled })
       setStatus('GuardRail settings saved')
       setTimeout(() => setStatus(null), 2000)
     } catch {
@@ -785,6 +804,33 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
               </div>
             </div>
 
+            {/* Trade Analysis Price Source */}
+            <div style={{ borderTop: '1px solid #21262d', paddingTop: 16 }}>
+              <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 10, fontWeight: 600 }}>TRADE ANALYSIS PRICE SOURCE</div>
+              <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+                {(['options', 'underlying'] as const).map(src => (
+                  <button
+                    key={src}
+                    onClick={() => {
+                      setAnalysisPriceSource(src)
+                      api.updateUserSettings({ analysis_price_source: src }).catch(() => {})
+                    }}
+                    style={{
+                      padding: '5px 14px',
+                      background: analysisPriceSource === src ? '#1f6feb' : '#21262d',
+                      border: `1px solid ${analysisPriceSource === src ? '#1f6feb' : '#30363d'}`,
+                      borderRadius: 6, color: '#e6edf3', cursor: 'pointer', fontSize: 12,
+                    }}
+                  >
+                    {src === 'options' ? 'Options (CE/PE)' : 'Underlying'}
+                  </button>
+                ))}
+              </div>
+              <div style={{ fontSize: 11, color: '#484f58' }}>
+                OHLC data used for Trade Analysis pattern detection in options sessions
+              </div>
+            </div>
+
             {/* Wallet */}
             <div style={{ borderTop: '1px solid #21262d', paddingTop: 16 }}>
               <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 10, fontWeight: 600 }}>WALLET</div>
@@ -1110,11 +1156,11 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
                     </label>
                   </div>
                   <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 10 }}>
-                    Permanently stops trading when capital loss exceeds x% <em>or</em> y% of trades in the session are losses. No override.
+                    Permanently stops trading when capital loss exceeds x% <em>or</em> y% of trades in the session are losses (evaluated after z trades). No override.
                   </div>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                      <span style={{ fontSize: 12, color: '#8b949e', flex: 1 }}>Capital loss limit (x%)</span>
+                      <span style={{ fontSize: 12, color: '#8b949e', flex: 1 }}>Capital loss limit (x%) — from trade 1</span>
                       <input
                         type="number" min={1} max={100} step={0.5}
                         value={grBanCapitalInput}
@@ -1128,6 +1174,15 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
                         type="number" min={1} max={100} step={1}
                         value={grBanLossTradeInput}
                         onChange={e => setGrBanLossTradeInput(e.target.value)}
+                        style={{ width: 70, background: '#0d1117', border: '1px solid #30363d', borderRadius: 4, color: '#e6edf3', padding: '4px 8px', fontSize: 12 }}
+                      />
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <span style={{ fontSize: 12, color: '#8b949e', flex: 1 }}>Min trades before y% check (z)</span>
+                      <input
+                        type="number" min={1} max={100} step={1}
+                        value={grBanMinTradesInput}
+                        onChange={e => setGrBanMinTradesInput(e.target.value)}
                         style={{ width: 70, background: '#0d1117', border: '1px solid #30363d', borderRadius: 4, color: '#e6edf3', padding: '4px 8px', fontSize: 12 }}
                       />
                     </div>

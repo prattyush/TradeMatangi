@@ -245,6 +245,7 @@ class UserSettingsResponse(BaseModel):
     funds_ratio_l_pct: float = 0.03
     funds_ratio_m_pct: float = 0.06
     funds_ratio_h_pct: float = 0.12
+    analysis_price_source: str = "options"
 
 
 class UserSettingsUpdateRequest(BaseModel):
@@ -252,6 +253,7 @@ class UserSettingsUpdateRequest(BaseModel):
     funds_ratio_l_pct: float | None = Field(default=None, ge=0.001, le=1.0)
     funds_ratio_m_pct: float | None = Field(default=None, ge=0.001, le=1.0)
     funds_ratio_h_pct: float | None = Field(default=None, ge=0.001, le=1.0)
+    analysis_price_source: str | None = None
 
 
 # ── Strategies ────────────────────────────────────────────────────────────────
@@ -330,6 +332,7 @@ class GuardRailSettingsResponse(BaseModel):
     guardrail_cooldown_losses: int = 3
     guardrail_ban_capital_pct: float = 10.0
     guardrail_ban_loss_trade_pct: float = 60.0
+    guardrail_ban_min_trades: int = 5
     guardrail_ban_enabled: bool = False
     guardrail_cooldown_enabled: bool = False
 
@@ -340,6 +343,7 @@ class GuardRailSettingsUpdateRequest(BaseModel):
     guardrail_cooldown_losses: int | None = Field(default=None, ge=1, le=20)
     guardrail_ban_capital_pct: float | None = Field(default=None, ge=1.0, le=100.0)
     guardrail_ban_loss_trade_pct: float | None = Field(default=None, ge=1.0, le=100.0)
+    guardrail_ban_min_trades: int | None = Field(default=None, ge=1, le=100)
     guardrail_ban_enabled: bool | None = None
     guardrail_cooldown_enabled: bool | None = None
 
