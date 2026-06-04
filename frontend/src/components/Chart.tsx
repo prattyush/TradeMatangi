@@ -10,7 +10,7 @@ import {
   IPriceLine,
   LineStyle,
 } from 'lightweight-charts'
-import api, { OHLCCandle, TickEvent, Trade, Order, Position } from '../services/api'
+import api, { OHLCCandle, TickEvent, BarCandle, Trade, Order, Position } from '../services/api'
 
 export type PaneType = 'equity' | 'options'
 
@@ -20,6 +20,7 @@ interface Props {
   startTime: string | null
   intervalMinutes: number
   latestTick: TickEvent | null   // pre-filtered by caller: null if not for this pane
+  completedBar?: BarCandle | null  // stepwise: full OHLC for the just-completed bar
   onPriceUpdate?: (price: number) => void
   height?: number
   // Options pane config
@@ -109,7 +110,7 @@ function computeEMA(closes: number[], period: number): (number | null)[] {
 
 export default function Chart({
   symbol, tradingDate, startTime, intervalMinutes,
-  latestTick, onPriceUpdate, height = 380,
+  latestTick, completedBar, onPriceUpdate, height = 380,
   paneType = 'equity', strike, expiry, right,
   isActive = false, onActivate,
   trades = [],
@@ -556,6 +557,35 @@ export default function Chart({
       console.warn('Chart update skipped:', err)
     }
   }, [latestTick, intervalSecs, onPriceUpdate])
+
+  // ── Stepwise completed-bar: correct the chart after React-batched ticks ─────
+  // Declared AFTER latestTick effect so it runs last in the same render cycle.
+  // The backend sends the true aggregated OHLC in bar_paused; this overwrites
+  // the doji that latestTick (which only sees the last batched tick) produced.
+  // liveWindowRef is set to the correct bar so EMA computation works on the
+  // next bar's window transition.
+  useEffect(() => {
+    const series = seriesRef.current
+    if (!completedBar || !series) return
+    try {
+      series.update({
+        time: completedBar.time as Time,
+        open: completedBar.open,
+        high: completedBar.high,
+        low: completedBar.low,
+        close: completedBar.close,
+      })
+      liveWindowRef.current = {
+        start: completedBar.time,
+        open: completedBar.open,
+        high: completedBar.high,
+        low: completedBar.low,
+        close: completedBar.close,
+      }
+    } catch (err) {
+      console.warn('Completed bar update skipped:', err)
+    }
+  }, [completedBar])
 
   // ── Session ended: close the last open candle ──────────────────────────────
   const prevStartTimeRef = useRef<string | null>(null)

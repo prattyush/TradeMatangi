@@ -80,8 +80,12 @@ async def start_simulation(
     req: SimulationStartRequest,
     user_id: str = Depends(get_request_user_id),
 ):
+    is_stepwise = (req.session_type == "stepwise")
     is_paper = (req.session_type == "paper")
     is_real = (req.session_type == "real")
+
+    if is_stepwise and (is_paper or is_real):
+        raise HTTPException(status_code=400, detail="Stepwise mode is only supported for historical simulation (session_type='stepwise')")
 
     if is_real:
         # Real trading: whitelist + Kotak auth + fund sync
@@ -146,6 +150,8 @@ async def start_simulation(
     else:
         raise HTTPException(status_code=400, detail="instrument_type must be 'equity' or 'options'")
 
+    # Stepwise is stored internally as "sim" with stepwise=True flag
+    internal_session_type = "sim" if is_stepwise else req.session_type
     session = sim_svc.create_session(
         symbol=req.symbol,
         date=req.date,
@@ -160,7 +166,8 @@ async def start_simulation(
         strike_pe=req.strike_pe,
         brokerage_per_order=req.brokerage_per_order,
         strategy_interval_secs=req.strategy_interval_secs,
-        session_type=req.session_type,
+        session_type=internal_session_type,
+        stepwise=is_stepwise,
     )
     sim_svc.start_session(session)
     return SimulationStartResponse(
@@ -177,7 +184,9 @@ async def start_simulation(
         strike_ce=session.strike_ce,
         strike_pe=session.strike_pe,
         brokerage_per_order=session.brokerage_per_order,
-        session_type=session.session_type,
+        session_type="stepwise" if is_stepwise else session.session_type,
+        stepwise=session.stepwise,
+        total_bars=session.total_bars if session.stepwise else None,
     )
 
 
@@ -284,6 +293,24 @@ async def get_status(session_id: str):
 
 class AICommandsActiveRequest(BaseModel):
     session_id: str
+
+
+@router.post("/{session_id}/next-bar")
+async def next_bar(session_id: str):
+    """Advance a stepwise session by one bar. Sets the step_event to unpark the tick loop."""
+    session = sim_svc.get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if not session.stepwise:
+        raise HTTPException(status_code=400, detail="Session is not in stepwise mode")
+    if session.state == SimulationState.ENDED:
+        raise HTTPException(status_code=400, detail="Session has ended")
+    session.step_event.set()
+    return {
+        "session_id": session_id,
+        "bar_index": session.current_bar_index,
+        "total_bars": session.total_bars,
+    }
 
 
 @router.post("/ai-commands/active")

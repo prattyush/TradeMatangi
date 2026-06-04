@@ -30,7 +30,8 @@ class SimulationStartRequest(BaseModel):
     strike_pe: int | None = None       # PE streaming strike (defaults to strike when omitted)
     brokerage_per_order: float = 1.0   # flat brokerage deducted per trade (user-configurable)
     strategy_interval_secs: int = 180  # candle interval for all strategies (180=3min, 300=5min)
-    session_type: str = "sim"          # "sim" (historical replay), "paper" (live data), or "real" (Kotak live orders)
+    session_type: str = "sim"          # "sim" (historical replay), "paper" (live data), "real" (Kotak live orders), or "stepwise"
+    stepwise: bool = False             # stepwise mode: advance one bar per Next Bar press (only valid for session_type="stepwise")
 
 
 class SimulationStartResponse(BaseModel):
@@ -48,6 +49,8 @@ class SimulationStartResponse(BaseModel):
     strike_pe: int | None = None
     brokerage_per_order: float = 1.0
     session_type: str = "sim"
+    stepwise: bool = False
+    total_bars: int | None = None
 
 
 class SimulationControlRequest(BaseModel):

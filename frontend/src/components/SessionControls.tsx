@@ -17,6 +17,12 @@ interface Props {
   onOptionsReady: (cfg: OptionsReadyConfig | null) => void
   extraControls?: ReactNode
   isRealTradingUser?: boolean
+  // Stepwise replayer props
+  stepwise?: boolean
+  barPaused?: boolean
+  barIndex?: number
+  totalBars?: number
+  onNextBar?: () => Promise<void>
 }
 
 export interface OptionsReadyConfig {
@@ -87,6 +93,11 @@ export default function SessionControls({
   onOptionsReady,
   extraControls,
   isRealTradingUser = false,
+  stepwise = false,
+  barPaused = false,
+  barIndex = 0,
+  totalBars = 0,
+  onNextBar,
 }: Props) {
   const [symbols, setSymbols] = useState<SymbolInfo[]>([])
   const [startTime, setStartTime] = useState('09:15')
@@ -101,6 +112,7 @@ export default function SessionControls({
     OPTIONS_ONLY_SYMBOLS.has(currentSymbol) ? 'options' : 'equity'
   )
   const [optionsOffset, setOptionsOffset] = useState(0)
+  const [stepwiseMode, setStepwiseMode] = useState(false)
 
   // Throttle ref for time-picker scroll: one step per 180ms to prevent runaway scrolling
   const timeScrollThrottleRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -179,7 +191,7 @@ export default function SessionControls({
     setStartError(null)
     setLoading(true)
     try {
-      const sessionType = isRealMode ? 'real' : (isPaperMode ? 'paper' : 'sim')
+      const sessionType = isRealMode ? 'real' : (isPaperMode ? 'paper' : (stepwiseMode ? 'stepwise' : 'sim'))
       let config: InstrumentConfig = { instrument_type: 'equity' }
 
       if (instrumentType === 'options') {
@@ -339,15 +351,26 @@ export default function SessionControls({
             letterSpacing: 1,
           }}>● LIVE</span>
         ) : (
-          <label style={label}>
-            Speed&nbsp;
-            <input
-              type="number" min={0.05} max={100} step={0.5} value={speed}
-              onChange={e => setSpeed(parseFloat(e.target.value) || 1)}
-              style={{ ...inputStyle, width: 70 }} disabled={!idle}
-            />
-            <span style={{ marginLeft: 4 }}>x</span>
-          </label>
+          <>
+            {!stepwiseMode && (
+              <label style={label}>
+                Speed&nbsp;
+                <input
+                  type="number" min={0.05} max={100} step={0.5} value={speed}
+                  onChange={e => setSpeed(parseFloat(e.target.value) || 1)}
+                  style={{ ...inputStyle, width: 70 }} disabled={!idle}
+                />
+                <span style={{ marginLeft: 4 }}>x</span>
+              </label>
+            )}
+            <button
+              style={toggleBtn(stepwiseMode, !idle)}
+              onClick={() => idle && setStepwiseMode(p => !p)}
+              title="Stepwise mode: advance one bar at a time for mental practice"
+            >
+              Stepwise
+            </button>
+          </>
         )}
 
         {/* OTM offset — always visible; disabled when equity or session active */}
@@ -366,7 +389,7 @@ export default function SessionControls({
 
         {idle && (
           <button
-            style={btn(isRealMode ? '#b62324' : isPaperMode ? '#1a7f37' : '#1f6feb', !canStart)}
+            style={btn(isRealMode ? '#b62324' : isPaperMode ? '#1a7f37' : stepwiseMode ? '#6e40c9' : '#1f6feb', !canStart)}
             onClick={handleStart}
             disabled={!canStart}
           >
@@ -374,10 +397,21 @@ export default function SessionControls({
               ? (instrumentType === 'options' ? 'Fetching strike…' : 'Loading data…')
               : isRealMode ? 'Start Real Trading'
               : isPaperMode ? 'Start Paper Trading'
+              : stepwiseMode ? 'Start Stepwise'
               : 'Start Replay'}
           </button>
         )}
-        {running && (
+        {running && stepwise && (
+          <button
+            style={btn('#1f6feb', !barPaused)}
+            onClick={barPaused && onNextBar ? onNextBar : undefined}
+            disabled={!barPaused}
+            title={barPaused ? 'Advance to next bar' : 'Processing bar…'}
+          >
+            ▶ Next Bar{totalBars > 0 ? ` (${barIndex} of ${totalBars})` : ''}
+          </button>
+        )}
+        {running && !stepwise && (
           <button
             style={btn('#6e40c9', isToday)}
             onClick={isToday ? undefined : onPause}

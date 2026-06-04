@@ -43,7 +43,11 @@ class SimulationSession:
     strike_pe: Optional[int] = None    # PE streaming strike (equals strike when offset=0)
     brokerage_per_order: float = 1.0    # flat brokerage per trade (from session start config)
     strategy_interval_secs: int = 180   # candle interval for all strategies (180=3min, 300=5min)
-    session_type: str = "sim"           # "sim", "paper", or "real"
+    session_type: str = "sim"           # "sim", "paper", "real", or "stepwise"
+    stepwise: bool = False              # advance one bar per next-bar signal
+    step_event: asyncio.Event = field(default_factory=asyncio.Event)
+    current_bar_index: int = 0         # bars completed so far (stepwise)
+    total_bars: int = 0                # total bars in the day (stepwise)
     # Real trading: maps our order_id → Kotak order ID for Kotak-placed orders
     kotak_order_map: dict[str, str] = field(default_factory=dict)
     # Kotak order IDs reconciled from external/manual broker orders (not in our system)
@@ -76,6 +80,17 @@ class SimulationSession:
 
 # Registry of active sessions
 _sessions: dict[str, SimulationSession] = {}
+
+
+def _count_total_bars(symbol: str, date: str, start_time: str, interval_secs: int) -> int:
+    """Count distinct bar slots in the day's equity tick data (for stepwise bar counter)."""
+    slots: set[int] = set()
+    try:
+        for tick in iter_ticks(symbol, date, start_time):
+            slots.add((tick["time"] // interval_secs) * interval_secs)
+    except Exception as exc:
+        logger.warning("Could not count bars for %s %s: %s", symbol, date, exc)
+    return len(slots)
 
 
 def _upsert_session_to_db(session: SimulationSession) -> None:
@@ -122,6 +137,7 @@ def create_session(
     brokerage_per_order: float = 1.0,
     strategy_interval_secs: int = 180,
     session_type: str = "sim",
+    stepwise: bool = False,
 ) -> SimulationSession:
     from app.services import wallet_service
     session_id = str(uuid.uuid4())
@@ -143,8 +159,11 @@ def create_session(
         brokerage_per_order=brokerage_per_order,
         strategy_interval_secs=strategy_interval_secs,
         session_type=session_type,
+        stepwise=stepwise,
     )
     session.resume_event.set()  # not paused initially
+    if stepwise:
+        session.total_bars = _count_total_bars(symbol, date, start_time, strategy_interval_secs)
     _sessions[session_id] = session
     _upsert_session_to_db(session)
     from app.services.guardrail_service import initialize_guardrails
@@ -286,10 +305,44 @@ async def _run_session(session: SimulationSession) -> None:
             pe_by_time = _load_by_time(cur_pe_strike, "PE", session.start_time)
             eq_ticks = list(iter_ticks(session.symbol, session.date, session.start_time))
 
+            prev_bar_slot_ds: Optional[int] = None
+            bar_o_ds = bar_h_ds = bar_l_ds = bar_c_ds = None
+            bar_o_ce = bar_h_ce = bar_l_ce = bar_c_ce = None
+            bar_o_pe = bar_h_pe = bar_l_pe = bar_c_pe = None
             for eq_tick in eq_ticks:
                 await session.resume_event.wait()
                 if session.state == SimulationState.ENDED:
                     break
+
+                # Stepwise: pause at each bar boundary before processing the new bar
+                if session.stepwise:
+                    interval = session.strategy_interval_secs
+                    bar_slot = (eq_tick["time"] // interval) * interval
+                    if prev_bar_slot_ds is not None and bar_slot != prev_bar_slot_ds:
+                        session.current_bar_index += 1
+                        try:
+                            session.queue.put_nowait(json.dumps({
+                                "type": "bar_paused",
+                                "bar_index": session.current_bar_index,
+                                "total_bars": session.total_bars,
+                                "bar_time": prev_bar_slot_ds,
+                                "bar_open": bar_o_ds, "bar_high": bar_h_ds,
+                                "bar_low": bar_l_ds, "bar_close": bar_c_ds,
+                                "bar_open_ce": bar_o_ce, "bar_high_ce": bar_h_ce,
+                                "bar_low_ce": bar_l_ce, "bar_close_ce": bar_c_ce,
+                                "bar_open_pe": bar_o_pe, "bar_high_pe": bar_h_pe,
+                                "bar_low_pe": bar_l_pe, "bar_close_pe": bar_c_pe,
+                            }))
+                        except asyncio.QueueFull:
+                            pass
+                        bar_o_ds = bar_h_ds = bar_l_ds = bar_c_ds = None
+                        bar_o_ce = bar_h_ce = bar_l_ce = bar_c_ce = None
+                        bar_o_pe = bar_h_pe = bar_l_pe = bar_c_pe = None
+                        session.step_event.clear()
+                        await session.step_event.wait()
+                        if session.state == SimulationState.ENDED:
+                            break
+                    prev_bar_slot_ds = bar_slot
 
                 ts = eq_tick["time"]
                 ts_str = datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%H:%M:%S")
@@ -321,11 +374,27 @@ async def _run_session(session: SimulationSession) -> None:
                     ce_tick = {**ce_by_time[ts], "right": "CE"}
                     session.last_price_ce = ce_tick["close"]
                     fill_events += _emit_tick_and_check_orders(session, ce_tick, "CE")
+                    if session.stepwise:
+                        t = ce_by_time[ts]
+                        if bar_o_ce is None:
+                            bar_o_ce, bar_h_ce, bar_l_ce = t["open"], t["high"], t["low"]
+                        else:
+                            bar_h_ce = max(bar_h_ce, t["high"])
+                            bar_l_ce = min(bar_l_ce, t["low"])
+                        bar_c_ce = t["close"]
 
                 if ts in pe_by_time:
                     pe_tick = {**pe_by_time[ts], "right": "PE"}
                     session.last_price_pe = pe_tick["close"]
                     fill_events += _emit_tick_and_check_orders(session, pe_tick, "PE")
+                    if session.stepwise:
+                        t = pe_by_time[ts]
+                        if bar_o_pe is None:
+                            bar_o_pe, bar_h_pe, bar_l_pe = t["open"], t["high"], t["low"]
+                        else:
+                            bar_h_pe = max(bar_h_pe, t["high"])
+                            bar_l_pe = min(bar_l_pe, t["low"])
+                        bar_c_pe = t["close"]
 
                 for fe in fill_events:
                     try:
@@ -333,7 +402,15 @@ async def _run_session(session: SimulationSession) -> None:
                     except asyncio.QueueFull:
                         logger.warning("Queue full, dropping order_filled event for %s", fe.get("order_id"))
 
-                await asyncio.sleep(session.speed)
+                if session.stepwise:
+                    if bar_o_ds is None:
+                        bar_o_ds, bar_h_ds, bar_l_ds = eq_tick["open"], eq_tick["high"], eq_tick["low"]
+                    else:
+                        bar_h_ds = max(bar_h_ds, eq_tick["high"])
+                        bar_l_ds = min(bar_l_ds, eq_tick["low"])
+                    bar_c_ds = eq_tick["close"]
+                else:
+                    await asyncio.sleep(session.speed)
 
         # Single-contract options (right provided — Sprint 3 compat)
         elif session.instrument_type == "options" and session.strike and session.expiry and session.right:
@@ -342,10 +419,37 @@ async def _run_session(session: SimulationSession) -> None:
                 session.symbol, session.date, session.strike,
                 session.expiry, session.right, session.start_time,
             )
+            prev_bar_slot_so: Optional[int] = None
+            bar_o_so = bar_h_so = bar_l_so = bar_c_so = None
             for tick in tick_iter:
                 await session.resume_event.wait()
                 if session.state == SimulationState.ENDED:
                     break
+
+                # Stepwise: pause at each bar boundary before processing the new bar
+                if session.stepwise:
+                    interval = session.strategy_interval_secs
+                    bar_slot = (tick["time"] // interval) * interval
+                    if prev_bar_slot_so is not None and bar_slot != prev_bar_slot_so:
+                        session.current_bar_index += 1
+                        try:
+                            session.queue.put_nowait(json.dumps({
+                                "type": "bar_paused",
+                                "bar_index": session.current_bar_index,
+                                "total_bars": session.total_bars,
+                                "bar_time": prev_bar_slot_so,
+                                "bar_open": bar_o_so, "bar_high": bar_h_so,
+                                "bar_low": bar_l_so, "bar_close": bar_c_so,
+                            }))
+                        except asyncio.QueueFull:
+                            pass
+                        bar_o_so = bar_h_so = bar_l_so = bar_c_so = None
+                        session.step_event.clear()
+                        await session.step_event.wait()
+                        if session.state == SimulationState.ENDED:
+                            break
+                    prev_bar_slot_so = bar_slot
+
                 session.current_time = str(tick["time"])
                 session.last_price = tick["close"]
                 fill_events = _emit_tick_and_check_orders(session, tick, session.right)
@@ -354,14 +458,50 @@ async def _run_session(session: SimulationSession) -> None:
                         session.queue.put_nowait(json.dumps(fe))
                     except asyncio.QueueFull:
                         logger.warning("Queue full, dropping order_filled event for %s", fe["order_id"])
-                await asyncio.sleep(session.speed)
+
+                if session.stepwise:
+                    if bar_o_so is None:
+                        bar_o_so, bar_h_so, bar_l_so = tick["open"], tick["high"], tick["low"]
+                    else:
+                        bar_h_so = max(bar_h_so, tick["high"])
+                        bar_l_so = min(bar_l_so, tick["low"])
+                    bar_c_so = tick["close"]
+                else:
+                    await asyncio.sleep(session.speed)
 
         # Equity
         else:
+            prev_bar_slot_eq: Optional[int] = None
+            bar_o_eq = bar_h_eq = bar_l_eq = bar_c_eq = None
             for tick in iter_ticks(session.symbol, session.date, session.start_time):
                 await session.resume_event.wait()
                 if session.state == SimulationState.ENDED:
                     break
+
+                # Stepwise: pause at each bar boundary before processing the new bar
+                if session.stepwise:
+                    interval = session.strategy_interval_secs
+                    bar_slot = (tick["time"] // interval) * interval
+                    if prev_bar_slot_eq is not None and bar_slot != prev_bar_slot_eq:
+                        session.current_bar_index += 1
+                        try:
+                            session.queue.put_nowait(json.dumps({
+                                "type": "bar_paused",
+                                "bar_index": session.current_bar_index,
+                                "total_bars": session.total_bars,
+                                "bar_time": prev_bar_slot_eq,
+                                "bar_open": bar_o_eq, "bar_high": bar_h_eq,
+                                "bar_low": bar_l_eq, "bar_close": bar_c_eq,
+                            }))
+                        except asyncio.QueueFull:
+                            pass
+                        bar_o_eq = bar_h_eq = bar_l_eq = bar_c_eq = None
+                        session.step_event.clear()
+                        await session.step_event.wait()
+                        if session.state == SimulationState.ENDED:
+                            break
+                    prev_bar_slot_eq = bar_slot
+
                 session.current_time = str(tick["time"])
                 session.last_price = tick["close"]
                 fill_events = _emit_tick_and_check_orders(session, tick, None)
@@ -370,7 +510,16 @@ async def _run_session(session: SimulationSession) -> None:
                         session.queue.put_nowait(json.dumps(fe))
                     except asyncio.QueueFull:
                         logger.warning("Queue full, dropping order_filled event for %s", fe["order_id"])
-                await asyncio.sleep(session.speed)
+
+                if session.stepwise:
+                    if bar_o_eq is None:
+                        bar_o_eq, bar_h_eq, bar_l_eq = tick["open"], tick["high"], tick["low"]
+                    else:
+                        bar_h_eq = max(bar_h_eq, tick["high"])
+                        bar_l_eq = min(bar_l_eq, tick["low"])
+                    bar_c_eq = tick["close"]
+                else:
+                    await asyncio.sleep(session.speed)
 
     except asyncio.CancelledError:
         pass
@@ -1709,6 +1858,7 @@ def resume_session(session: SimulationSession) -> None:
 def stop_session(session: SimulationSession) -> None:
     session.state = SimulationState.ENDED
     session.resume_event.set()  # unblock if paused
+    session.step_event.set()    # unblock if waiting for next-bar (stepwise)
     if session.task and not session.task.done():
         session.task.cancel()
     _upsert_session_to_db(session)
