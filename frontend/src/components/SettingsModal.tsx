@@ -195,6 +195,9 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
   // Trade analysis price source: "options" (CE/PE OHLC) or "underlying" (NIFTY OHLC)
   const [analysisPriceSource, setAnalysisPriceSource] = useState<'options' | 'underlying'>('options')
 
+  // Experimental: live pattern detection
+  const [experimentalPatternsEnabled, setExperimentalPatternsEnabled] = useState(false)
+
   // Strategies settings
   const [breakevenMode, setBreakevenMode] = useState(loadBreakevenMode)
   const [targetProfitBufferTicks, setTargetProfitBufferTicks] = useState(loadTargetProfitBufferTicks)
@@ -264,6 +267,9 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
         }
         if (s.analysis_price_source === 'underlying' || s.analysis_price_source === 'options') {
           setAnalysisPriceSource(s.analysis_price_source)
+        }
+        if (s.experimental_patterns_enabled != null) {
+          setExperimentalPatternsEnabled(s.experimental_patterns_enabled)
         }
       }).catch(() => {})
 
@@ -914,6 +920,41 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
                 </div>
               </div>
             )}
+
+            {/* Experimental Features */}
+            <div style={{ borderTop: '1px solid #21262d', paddingTop: 16 }}>
+              <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 10, fontWeight: 600 }}>
+                EXPERIMENTAL FEATURES
+              </div>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' }}>
+                <div
+                  onClick={() => {
+                    const next = !experimentalPatternsEnabled
+                    setExperimentalPatternsEnabled(next)
+                    api.updateUserSettings({ experimental_patterns_enabled: next }).catch(() => {})
+                  }}
+                  style={{
+                    width: 36, height: 20, borderRadius: 10,
+                    background: experimentalPatternsEnabled ? '#1f6feb' : '#30363d',
+                    position: 'relative', cursor: 'pointer', transition: 'background 0.15s',
+                    flexShrink: 0,
+                  }}
+                >
+                  <div style={{
+                    position: 'absolute', top: 2,
+                    left: experimentalPatternsEnabled ? 18 : 2,
+                    width: 16, height: 16, borderRadius: '50%',
+                    background: '#e6edf3', transition: 'left 0.15s',
+                  }} />
+                </div>
+                <div>
+                  <div style={{ fontSize: 12, color: '#e6edf3' }}>Live pattern detection</div>
+                  <div style={{ fontSize: 11, color: '#484f58', marginTop: 2 }}>
+                    Detects chart patterns and behavioral signals in real-time during sessions
+                  </div>
+                </div>
+              </label>
+            </div>
 
             {status && (
               <div style={{ fontSize: 12, color: '#3fb950' }}>{status}</div>

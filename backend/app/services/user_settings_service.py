@@ -21,6 +21,7 @@ DEFAULT_SETTINGS: dict = {
     "funds_ratio_m_pct": 0.06,
     "funds_ratio_h_pct": 0.12,
     "analysis_price_source": "options",
+    "experimental_patterns_enabled": False,
 }
 
 
@@ -67,6 +68,7 @@ def get_settings(user_id: str) -> dict:
             "funds_ratio_m_pct": float(item.get("funds_ratio_m_pct", DEFAULT_SETTINGS["funds_ratio_m_pct"])),
             "funds_ratio_h_pct": float(item.get("funds_ratio_h_pct", DEFAULT_SETTINGS["funds_ratio_h_pct"])),
             "analysis_price_source": str(item.get("analysis_price_source", DEFAULT_SETTINGS["analysis_price_source"])),
+            "experimental_patterns_enabled": bool(item.get("experimental_patterns_enabled", DEFAULT_SETTINGS["experimental_patterns_enabled"])),
         }
     except Exception:
         logger.exception("Failed to get settings for user %s", user_id)
