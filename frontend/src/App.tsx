@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import PatternLibrary from './pages/PatternLibrary'
 import Chart, { PaneType } from './components/Chart'
 import SessionControls, { OptionsReadyConfig } from './components/SessionControls'
 import TradePanel from './components/TradePanel'
@@ -130,6 +131,9 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
 
   // ── Trade Analysis modal ────────────────────────────────────────────────────
   const [showAnalysis, setShowAnalysis] = useState(false)
+
+  // ── Pattern Library page ─────────────────────────────────────────────────────
+  const [showPatternLibrary, setShowPatternLibrary] = useState(false)
 
   // ── Price-pick state ────────────────────────────────────────────────────────
   const [pricePickOrderId, setPricePickOrderId] = useState<string | null>(null)
@@ -301,6 +305,13 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
     return null
   }, [sim.latestEquityTick, sim.latestCETick, sim.latestPETick, sim.sessionStrikeCE, sim.sessionStrikePE])
 
+  const getCompletedBarForPane = useCallback((pane: PaneConfig) => {
+    if (pane.type === 'equity') return sim.lastCompletedBarEquity
+    if (pane.right === 'CE') return sim.lastCompletedBarCE ?? sim.lastCompletedBarEquity
+    if (pane.right === 'PE') return sim.lastCompletedBarPE ?? sim.lastCompletedBarEquity
+    return null
+  }, [sim.lastCompletedBarEquity, sim.lastCompletedBarCE, sim.lastCompletedBarPE])
+
   // ── SSE at app level ─────────────────────────────────────────────────────────
   const handleSSEMessage = useCallback((event: Record<string, unknown>) => {
     if (event.type === 'tick') {
@@ -327,8 +338,17 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
       setBrokerError(event.message as string)
     } else if (event.type === 'new_trade') {
       sim.addTradeFromSSE(event as unknown as import('./services/api').Trade)
+    } else if (event.type === 'bar_paused') {
+      const mkCandle = (o: unknown, h: unknown, l: unknown, c: unknown, t: unknown) =>
+        (o != null && h != null && l != null && c != null && t != null)
+          ? { time: t as number, open: o as number, high: h as number, low: l as number, close: c as number }
+          : null
+      const eqBar = mkCandle(event.bar_open, event.bar_high, event.bar_low, event.bar_close, event.bar_time)
+      const ceBar = mkCandle(event.bar_open_ce, event.bar_high_ce, event.bar_low_ce, event.bar_close_ce, event.bar_time)
+      const peBar = mkCandle(event.bar_open_pe, event.bar_high_pe, event.bar_low_pe, event.bar_close_pe, event.bar_time)
+      sim.handleBarPaused(event.bar_index as number, event.total_bars as number, eqBar, ceBar, peBar)
     }
-  }, [sim.setLatestTick, sim.handleSessionEnded, sim.handleOrderFilled, sim.handleOrderCancelled, sim.addOpenOrder, sim.addTradeFromSSE, setGuardrailPopup, setRunningStrategies])
+  }, [sim.setLatestTick, sim.handleSessionEnded, sim.handleOrderFilled, sim.handleOrderCancelled, sim.addOpenOrder, sim.addTradeFromSSE, sim.handleBarPaused, setGuardrailPopup, setRunningStrategies])
 
   useSSE(sim.sseUrl, handleSSEMessage)
 
@@ -440,6 +460,7 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
           startTime={sim.startTime}
           intervalMinutes={pane.intervalMinutes}
           latestTick={getTickForPane(pane)}
+          completedBar={getCompletedBarForPane(pane)}
           height={height}
           paneType={pane.type}
           strike={pane.strike}
@@ -553,6 +574,39 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
 
   const idle = sim.sessionState === 'idle' || sim.sessionState === 'ended'
 
+  if (showPatternLibrary) {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden' }}>
+        {/* Minimal header for Pattern Library */}
+        <div style={{
+          padding: '8px 16px', background: '#161b22', borderBottom: '1px solid #30363d',
+          display: 'flex', alignItems: 'center', gap: 12,
+        }}>
+          <span style={{ fontSize: 16, fontWeight: 700, color: '#58a6ff' }}>TradeMatangi</span>
+          <button
+            onClick={() => setShowPatternLibrary(false)}
+            style={{
+              background: '#21262d', border: '1px solid #30363d',
+              color: '#8b949e', borderRadius: 6, padding: '4px 10px',
+              fontSize: 12, cursor: 'pointer',
+            }}
+          >
+            ← Back to Trading
+          </button>
+          <div style={{ flex: 1 }} />
+          <span style={{ fontSize: 12, color: '#484f58' }}>{authUser.email}</span>
+          <button onClick={onLogout}
+            style={{ background: 'none', border: '1px solid #30363d', color: '#8b949e', borderRadius: 6, padding: '3px 8px', fontSize: 11, cursor: 'pointer' }}>
+            Sign out
+          </button>
+        </div>
+        <div style={{ flex: 1, overflow: 'hidden' }}>
+          <PatternLibrary />
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden' }}>
       {/* Header */}
@@ -614,6 +668,18 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
           }}
         >
           📊 Analysis
+        </button>
+        <button
+          onClick={() => setShowPatternLibrary(p => !p)}
+          title="Pattern Library — annotate and study trade setups"
+          style={{
+            background: showPatternLibrary ? '#1f6feb' : '#161b22',
+            border: `1px solid ${showPatternLibrary ? '#1f6feb' : '#30363d'}`,
+            color: showPatternLibrary ? '#fff' : '#8b949e',
+            borderRadius: 6, padding: '4px 10px', fontSize: 12, cursor: 'pointer',
+          }}
+        >
+          📚 Patterns
         </button>
         <SettingsModal
           date={sim.date}
@@ -679,6 +745,11 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
         onResume={sim.resumeSession}
         onOptionsReady={handleOptionsReady}
         isRealTradingUser={isRealTradingUser || authUser.isAdmin}
+        stepwise={sim.stepwise}
+        barPaused={sim.barPaused}
+        barIndex={sim.barIndex}
+        totalBars={sim.totalBars}
+        onNextBar={sim.nextBar}
         extraControls={<>
           <div style={{ width: 1, height: 16, background: '#30363d', margin: '0 4px' }} />
 
