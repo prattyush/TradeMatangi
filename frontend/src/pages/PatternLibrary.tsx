@@ -865,7 +865,7 @@ export default function PatternLibrary() {
             {optionPanes.map(pane => (
               <div key={pane.id} style={{
                 display: (maximizedPaneId === null || maximizedPaneId === pane.id) ? 'flex' : 'none',
-                flex: 1, minHeight: 0,
+                flex: 1, minWidth: 0, minHeight: 0,
               }}>
                 <ChartPane
                   candles={pane.candles}
