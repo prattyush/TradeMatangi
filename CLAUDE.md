@@ -54,7 +54,7 @@ Look into frontend technical constraints doc when needed which is located at doc
 | Phase VIII — Launch | ✅ Complete | 391 | `docs/spec-phase8.md` |
 | Phase IX — RealTrading | ✅ Complete | 436 | `docs/spec-phase9.md` |
 | Phase X — GuardRails | ✅ Complete | 495 | `docs/spec-phase10.md` |
-| Phase XI — AI Helper | ✅ Complete (all OtherFeatures done; PR #164 merged) | 534 backend / 227 aihelper | `docs/spec-phase11.md`, `docs/architecture-aihelper.md`, `docs/architecture-backend.md`, `docs/architecture-frontend.md` |
+| Phase XI — AI Helper | ✅ Complete (ExperimentalFeature PR #171 merged to dev) | 577 backend / 285 aihelper | `docs/spec-phase11.md`, `docs/architecture-aihelper.md`, `docs/architecture-backend.md`, `docs/architecture-frontend.md` |
 | Phase XII — Trade Practice Tools | ✅ Complete (Stepwise Replayer + Pattern Library) | 571 backend | `docs/spec-phase12.md` |
 
 Full status, bugs fixed, and lessons learned for each phase are in the respective phase spec docs.
