@@ -61,9 +61,12 @@ def _create_processor():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     state.processor = _create_processor()
+    from services.pattern_bar_store import PatternBarStore
+    state.pattern_bar_store = PatternBarStore()
     logger.info("aihelper starting up on port %s", config.AI_HELPER_PORT)
     yield
     state.processor = None
+    state.pattern_bar_store = None
     logger.info("aihelper shutting down")
 
 

@@ -90,6 +90,7 @@ export interface UserSettingsResponse {
   funds_ratio_m_pct?: number
   funds_ratio_h_pct?: number
   analysis_price_source?: string
+  experimental_patterns_enabled?: boolean
 }
 
 // ── Strategy types ──────────────────────────────────────────────────────────

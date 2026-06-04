@@ -196,6 +196,14 @@ async def get_open_orders(session_id: str) -> list[dict]:
     return resp.json()
 
 
+async def get_session_trades(session_id: str) -> list[dict]:
+    """GET /api/trades?session_id={id} — fetch all trades for the session."""
+    client = get_client()
+    resp = await client.get("/api/trades", params={"session_id": session_id})
+    resp.raise_for_status()
+    return resp.json()
+
+
 async def update_stoploss_order(session_id: str, order_id: str, trigger_price: float) -> dict:
     """PATCH /api/orders/{order_id} — update stoploss trigger price."""
     client = get_client()
@@ -316,6 +324,47 @@ async def start_takeprofit_strategy(
     resp = await client.post("/api/strategies/start", json=body)
     resp.raise_for_status()
     return resp.json()
+
+
+# ── Settings cache (60 s TTL) ─────────────────────────────────────────────────
+
+import time as _time
+_settings_cache: dict[str, tuple[dict, float]] = {}
+_SETTINGS_TTL = 60.0
+
+
+async def get_user_settings_cached(user_id: str) -> dict:
+    """Return user settings, refreshing at most once per minute."""
+    entry = _settings_cache.get(user_id)
+    if entry and entry[1] > _time.monotonic():
+        return entry[0]
+    settings = await get_user_settings(user_id)
+    _settings_cache[user_id] = (settings, _time.monotonic() + _SETTINGS_TTL)
+    return settings
+
+
+# ── Pattern alert emission ─────────────────────────────────────────────────────
+
+async def emit_pattern_alert(session_id: str, result: Any) -> None:
+    """
+    POST /api/internal/emit-event/{session_id} — inject a pattern_alert SSE event.
+    result must be a PatternResult (or any object with .pattern, .category, etc.).
+    """
+    payload = {
+        "type": "pattern_alert",
+        "pattern": result.pattern,
+        "category": result.category,
+        "title": result.title,
+        "severity": result.severity,
+        "description": result.description,
+        "trade_suggestion": result.trade_suggestion,
+    }
+    client = get_client()
+    try:
+        resp = await client.post(f"/api/internal/emit-event/{session_id}", json=payload)
+        resp.raise_for_status()
+    except Exception as exc:
+        logger.debug("emit_pattern_alert failed (session=%s): %s", session_id, exc)
 
 
 async def close() -> None:
