@@ -140,3 +140,21 @@ All changes are on `feature/phase12-bugfixes`, open PR targeting `dev`.
 
 *Gallery:*
 - Reorganised to CSS `grid, gridTemplateColumns: repeat(2, 1fr)` in both modes
+
+**PR #167 merged to dev.**
+
+---
+
+### Bug Fix — PR #168 (feature/pattern-view-annotated-panes-only)
+
+**Fix:** Pattern Library View mode — only show option panes for instruments that have annotations.
+
+Previously, when loading a chart in View mode, both CE and PE panes were rendered whenever a strike was present (i.e. OHLC data could be fetched), even if no annotations existed for one side. A user who only marked Underlying + PE would still see an empty CE pane.
+
+**Root cause:** `handleGalleryLoad` added a pane for every `right` whose OHLC fetch succeeded, without checking whether any annotation referenced that instrument.
+
+**Fix:** Compute `annotatedRights = new Set(chart.annotations.map(a => a.instrument))` after loading chart data; gate each option pane on `annotatedRights.has('CE')` / `annotatedRights.has('PE')`. Change is one additional `Set` + two extra `&&` guards in `handleGalleryLoad` (`PatternLibrary.tsx`).
+
+Applies in both View and Create modes (correct for both — panes without annotations shouldn't auto-appear; use "Add Pane" strip to add new ones).
+
+**PR #168 merged to dev.**
