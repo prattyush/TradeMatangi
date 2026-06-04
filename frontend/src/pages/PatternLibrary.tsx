@@ -2,8 +2,9 @@
  * Pattern Library — Trade Pattern Logger (Phase XII)
  *
  * Create mode: annotate full-day charts (3-pane options, 1-pane equity) with
- * EMA 9/21, drawing tools (hline, trendline, fib, channel), entry/exit markers.
- * View mode: 2-column gallery with click-to-expand read-only chart view.
+ * EMA 9/21, drawing tools, entry/exit markers. Panes can be maximized, removed,
+ * or replaced with a different strike. View mode: 2-column gallery with
+ * click-to-expand read-only chart view.
  */
 import { useState, useEffect, useRef, useCallback, CSSProperties } from 'react'
 import {
@@ -151,6 +152,16 @@ const TOOL_OPTIONS = [
   { key: 'exit-PE',          label: '▼ Exit PE',  type: 'exit'  as const, instrument: 'PE'         as const },
 ]
 
+// ── Option pane data model ────────────────────────────────────────────────────
+
+interface OptionPane {
+  id: number
+  right: 'CE' | 'PE'
+  strike: number
+  expiry: string
+  candles: OHLCCandle[]
+}
+
 // ── ChartPane — full-featured pane with EMA + drawing tools ──────────────────
 
 interface ChartPaneProps {
@@ -160,9 +171,15 @@ interface ChartPaneProps {
   label: string
   onBarClick: (time: number, price: number) => void
   readonly?: boolean
+  onMaximize?: () => void
+  isMaximized?: boolean
+  onRemove?: () => void
 }
 
-function ChartPane({ candles, annotations, activeStrategy, label, onBarClick, readonly = false }: ChartPaneProps) {
+function ChartPane({
+  candles, annotations, activeStrategy, label, onBarClick,
+  readonly = false, onMaximize, isMaximized = false, onRemove,
+}: ChartPaneProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<IChartApi | null>(null)
   const seriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null)
@@ -313,7 +330,6 @@ function ChartPane({ candles, annotations, activeStrategy, label, onBarClick, re
     ema21Ref.current?.applyOptions({ visible: showEma })
   }, [showEma])
 
-  // Load candles + compute EMA
   useEffect(() => {
     if (!seriesRef.current || !ema9Ref.current || !ema21Ref.current) return
     const data: CandlestickData[] = candles.map(c => ({
@@ -334,7 +350,6 @@ function ChartPane({ candles, annotations, activeStrategy, label, onBarClick, re
     ema21Ref.current.setData(e21data)
   }, [candles])
 
-  // Update markers
   useEffect(() => {
     if (!seriesRef.current) return
     seriesRef.current.setMarkers(buildMarkers(annotations, activeStrategy))
@@ -371,6 +386,7 @@ function ChartPane({ candles, annotations, activeStrategy, label, onBarClick, re
       <div style={{
         display: 'flex', alignItems: 'center', gap: 6, padding: '4px 8px',
         background: '#161b22', borderBottom: '1px solid #21262d', flexShrink: 0, flexWrap: 'wrap',
+        position: 'relative',
       }}>
         <span style={{ fontSize: 11, color: '#8b949e', marginRight: 4 }}>{label}</span>
         <button onClick={() => setShowEma(v => !v)} style={paneToolBtn(showEma)}>EMA 9/21</button>
@@ -421,6 +437,24 @@ function ChartPane({ candles, annotations, activeStrategy, label, onBarClick, re
           </>
         )}
         {readonly && <span style={{ fontSize: 10, color: '#484f58', marginLeft: 4 }}>read-only</span>}
+
+        {/* Maximize + remove buttons — right-aligned */}
+        <div style={{ marginLeft: 'auto', display: 'flex', gap: 4 }}>
+          {onMaximize && (
+            <button
+              onClick={e => { e.stopPropagation(); onMaximize() }}
+              title={isMaximized ? 'Restore pane layout' : 'Maximize this pane'}
+              style={{ ...paneToolBtn(isMaximized), padding: '2px 7px', fontSize: 13 }}
+            >{isMaximized ? '⤡' : '⤢'}</button>
+          )}
+          {onRemove && (
+            <button
+              onClick={e => { e.stopPropagation(); onRemove() }}
+              title="Remove this pane"
+              style={{ padding: '2px 7px', fontSize: 13, borderRadius: 4, border: '1px solid #30363d', background: 'transparent', color: '#8b949e', cursor: 'pointer' }}
+            >✕</button>
+          )}
+        </div>
       </div>
       <div
         ref={containerRef}
@@ -508,13 +542,24 @@ export default function PatternLibrary() {
   const [loadError, setLoadError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
 
-  // Chart data
+  // Chart data — underlying + dynamic option panes
   const [equityCandles, setEquityCandles] = useState<OHLCCandle[]>([])
-  const [ceCandles, setCeCandles] = useState<OHLCCandle[]>([])
-  const [peCandles, setPeCandles] = useState<OHLCCandle[]>([])
-  const [ceMeta, setCeMeta] = useState<{ strike: number; expiry: string } | null>(null)
-  const [peMeta, setPeMeta] = useState<{ strike: number; expiry: string } | null>(null)
+  const [optionPanes, setOptionPanes] = useState<OptionPane[]>([])
+  const [resolvedExpiry, setResolvedExpiry] = useState<string | null>(null)
+  const [resolvedAtm, setResolvedAtm] = useState<number | null>(null)
   const [chartLoaded, setChartLoaded] = useState(false)
+
+  // Maximize — 'underlying' | pane numeric id | null
+  const [maximizedPaneId, setMaximizedPaneId] = useState<'underlying' | number | null>(null)
+
+  // Add-pane controls
+  const [addPaneRight, setAddPaneRight] = useState<'CE' | 'PE'>('CE')
+  const [addPaneStrike, setAddPaneStrike] = useState('')
+  const [addingPane, setAddingPane] = useState(false)
+  const [addPaneError, setAddPaneError] = useState<string | null>(null)
+
+  // Pane ID counter
+  const paneIdRef = useRef(1)
 
   // Annotations
   const [annotations, setAnnotations] = useState<PatternAnnotation[]>([])
@@ -559,46 +604,50 @@ export default function PatternLibrary() {
     setAnnotations([])
     setCurrentChartId(null)
     setEquityCandles([])
-    setCeCandles([])
-    setPeCandles([])
-    setCeMeta(null)
-    setPeMeta(null)
+    setOptionPanes([])
+    setResolvedExpiry(null)
+    setResolvedAtm(null)
+    setMaximizedPaneId(null)
+    setAddPaneError(null)
+    paneIdRef.current = 1
 
     try {
       const eqPromise = api.patternOhlcEquity(symbol, date, intervalMinutes, DAYS_BACK)
 
-      let cePromise: Promise<{ candles: OHLCCandle[] }> | null = null
-      let pePromise: Promise<{ candles: OHLCCandle[] }> | null = null
-      let resolvedCeMeta: { strike: number; expiry: string } | null = null
-      let resolvedPeMeta: { strike: number; expiry: string } | null = null
+      let newPanes: OptionPane[] = []
+      let expiry: string | null = null
+      let atm: number | null = null
 
       if (instrumentType === 'options') {
         const [priceRes, expiryRes] = await Promise.all([
           api.getPriceAt(symbol, date, '09:15'),
           api.getExpiry(symbol, date),
         ])
+        expiry = expiryRes.expiry
         const interval = STRIKE_INTERVALS[symbol] ?? 50
-        const atm = Math.round(priceRes.price / interval) * interval
-        // CE is OTM on the call side; PE is OTM on the put side (symmetric pair)
+        atm = Math.round(priceRes.price / interval) * interval
         const ceStrike = atm + otmOffset * interval
         const peStrike = atm - otmOffset * interval
-        resolvedCeMeta = { strike: ceStrike, expiry: expiryRes.expiry }
-        resolvedPeMeta = { strike: peStrike, expiry: expiryRes.expiry }
-        cePromise = api.patternOhlcOptions(symbol, date, ceStrike, expiryRes.expiry, 'CE', intervalMinutes, DAYS_BACK)
-        pePromise = api.patternOhlcOptions(symbol, date, peStrike, expiryRes.expiry, 'PE', intervalMinutes, DAYS_BACK)
+
+        const [ceRes, peRes] = await Promise.all([
+          api.patternOhlcOptions(symbol, date, ceStrike, expiry, 'CE', intervalMinutes, DAYS_BACK),
+          api.patternOhlcOptions(symbol, date, peStrike, expiry, 'PE', intervalMinutes, DAYS_BACK),
+        ])
+        newPanes = [
+          { id: paneIdRef.current++, right: 'CE', strike: ceStrike, expiry, candles: ceRes.candles },
+          { id: paneIdRef.current++, right: 'PE', strike: peStrike, expiry, candles: peRes.candles },
+        ]
+        setAddPaneStrike(String(atm))
       }
 
-      const [eqRes, ceRes, peRes] = await Promise.all([
-        eqPromise,
-        cePromise ?? Promise.resolve(null),
-        pePromise ?? Promise.resolve(null),
-      ])
-
+      const eqRes = await eqPromise
       setEquityCandles(eqRes.candles)
-      if (ceRes) { setCeCandles(ceRes.candles); setCeMeta(resolvedCeMeta) }
-      if (peRes) { setPeCandles(peRes.candles); setPeMeta(resolvedPeMeta) }
+      setOptionPanes(newPanes)
+      setResolvedExpiry(expiry)
+      setResolvedAtm(atm)
 
-      const existing = await api.patternGetChartByDate(symbol, date, instrumentType, resolvedCeMeta ? 'CE' : undefined)
+      const firstCe = newPanes.find(p => p.right === 'CE')
+      const existing = await api.patternGetChartByDate(symbol, date, instrumentType, firstCe ? 'CE' : undefined)
       if (existing) {
         setAnnotations(existing.annotations)
         setCurrentChartId(existing.chart_id)
@@ -611,6 +660,44 @@ export default function PatternLibrary() {
       setLoading(false)
     }
   }, [symbol, date, instrumentType, otmOffset, intervalMinutes])
+
+  // ── Add option pane ───────────────────────────────────────────────────────
+
+  const handleAddPane = useCallback(async () => {
+    if (!resolvedExpiry) return
+    const strike = parseInt(addPaneStrike)
+    if (isNaN(strike) || strike <= 0) { setAddPaneError('Enter a valid strike price'); return }
+    setAddingPane(true)
+    setAddPaneError(null)
+    try {
+      const res = await api.patternOhlcOptions(symbol, date, strike, resolvedExpiry, addPaneRight, intervalMinutes, DAYS_BACK)
+      const newPane: OptionPane = {
+        id: paneIdRef.current++,
+        right: addPaneRight,
+        strike,
+        expiry: resolvedExpiry,
+        candles: res.candles,
+      }
+      setOptionPanes(prev => [...prev, newPane])
+    } catch (err) {
+      setAddPaneError(err instanceof Error ? err.message : 'Failed to load options data')
+    } finally {
+      setAddingPane(false)
+    }
+  }, [resolvedExpiry, addPaneStrike, addPaneRight, symbol, date, intervalMinutes])
+
+  // ── Remove option pane ────────────────────────────────────────────────────
+
+  const handleRemovePane = useCallback((id: number) => {
+    setOptionPanes(prev => prev.filter(p => p.id !== id))
+    setMaximizedPaneId(prev => prev === id ? null : prev)
+  }, [])
+
+  // ── Maximize ──────────────────────────────────────────────────────────────
+
+  const handleMaximize = useCallback((id: 'underlying' | number) => {
+    setMaximizedPaneId(prev => prev === id ? null : id)
+  }, [])
 
   // ── Bar click ─────────────────────────────────────────────────────────────
 
@@ -639,6 +726,7 @@ export default function PatternLibrary() {
     const strategy = activeStrategy || newStrategyName.trim()
     if (!strategy) { alert('Please specify a strategy name before saving.'); return }
     setSaveMsg(null)
+    const firstCe = optionPanes.find(p => p.right === 'CE')
     try {
       let saved: PatternChart
       if (currentChartId) {
@@ -646,8 +734,8 @@ export default function PatternLibrary() {
       } else {
         saved = await api.patternCreateChart({
           symbol, date, instrument_type: instrumentType, annotations, notes,
-          right: ceMeta ? 'CE' : undefined,
-          strike: ceMeta?.strike,
+          right: firstCe ? 'CE' : undefined,
+          strike: firstCe?.strike,
         })
         setCurrentChartId(saved.chart_id)
       }
@@ -663,7 +751,7 @@ export default function PatternLibrary() {
     } catch (err) {
       setSaveMsg(err instanceof Error ? err.message : 'Save failed')
     }
-  }, [currentChartId, annotations, notes, symbol, date, instrumentType, ceMeta, activeStrategy, newStrategyName, refreshGallery])
+  }, [currentChartId, annotations, notes, symbol, date, instrumentType, optionPanes, activeStrategy, newStrategyName, refreshGallery])
 
   // ── Gallery load ──────────────────────────────────────────────────────────
 
@@ -677,7 +765,11 @@ export default function PatternLibrary() {
       setNotes(chart.notes ?? '')
       setCurrentChartId(chart.chart_id)
       setAnnotations(chart.annotations)
-      setCeCandles([]); setPeCandles([]); setCeMeta(null); setPeMeta(null)
+      setOptionPanes([])
+      setResolvedExpiry(null)
+      setResolvedAtm(null)
+      setMaximizedPaneId(null)
+      paneIdRef.current = 1
 
       const eqRes = await api.patternOhlcEquity(chart.symbol, chart.date, intervalMinutes, DAYS_BACK)
       setEquityCandles(eqRes.candles)
@@ -685,12 +777,17 @@ export default function PatternLibrary() {
       if (chart.instrument_type === 'options' && chart.strike) {
         try {
           const expiryRes = await api.getExpiry(chart.symbol, chart.date)
+          const expiry = expiryRes.expiry
           const [ceRes, peRes] = await Promise.all([
-            api.patternOhlcOptions(chart.symbol, chart.date, chart.strike, expiryRes.expiry, 'CE', intervalMinutes, DAYS_BACK).catch(() => null),
-            api.patternOhlcOptions(chart.symbol, chart.date, chart.strike, expiryRes.expiry, 'PE', intervalMinutes, DAYS_BACK).catch(() => null),
+            api.patternOhlcOptions(chart.symbol, chart.date, chart.strike, expiry, 'CE', intervalMinutes, DAYS_BACK).catch(() => null),
+            api.patternOhlcOptions(chart.symbol, chart.date, chart.strike, expiry, 'PE', intervalMinutes, DAYS_BACK).catch(() => null),
           ])
-          if (ceRes) { setCeCandles(ceRes.candles); setCeMeta({ strike: chart.strike, expiry: expiryRes.expiry }) }
-          if (peRes) { setPeCandles(peRes.candles); setPeMeta({ strike: chart.strike, expiry: expiryRes.expiry }) }
+          const newPanes: OptionPane[] = []
+          if (ceRes) newPanes.push({ id: paneIdRef.current++, right: 'CE', strike: chart.strike, expiry, candles: ceRes.candles })
+          if (peRes) newPanes.push({ id: paneIdRef.current++, right: 'PE', strike: chart.strike, expiry, candles: peRes.candles })
+          setOptionPanes(newPanes)
+          setResolvedExpiry(expiry)
+          setAddPaneStrike(String(chart.strike))
         } catch { /* non-fatal */ }
       }
       setChartLoaded(true)
@@ -716,12 +813,12 @@ export default function PatternLibrary() {
   // ── Derived ───────────────────────────────────────────────────────────────
 
   const resolvedActiveStrategy = activeStrategy || null
-  const hasOptions = instrumentType === 'options' && ceCandles.length > 0
+  const hasOptions = optionPanes.length > 0
   const galleryTotal = Math.ceil(galleryCharts.length / GALLERY_PAGE_SIZE)
   const galleryPage_ = Math.min(galleryPage, Math.max(0, galleryTotal - 1))
   const gallerySlice = galleryCharts.slice(galleryPage_ * GALLERY_PAGE_SIZE, (galleryPage_ + 1) * GALLERY_PAGE_SIZE)
 
-  // ── Chart area (reused in both modes) ────────────────────────────────────
+  // ── Chart area renderer ───────────────────────────────────────────────────
 
   const renderCharts = (isReadonly: boolean) => {
     if (!chartLoaded) {
@@ -731,9 +828,18 @@ export default function PatternLibrary() {
         </div>
       )
     }
+
+    // Visibility rules based on maximized pane
+    const showUnderlying = maximizedPaneId === null || maximizedPaneId === 'underlying'
+    const showOptionsRow = maximizedPaneId === null || typeof maximizedPaneId === 'number'
+
     return (
       <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', gap: 4, padding: 8, overflow: 'hidden' }}>
-        <div style={{ flex: hasOptions ? 2 : 1, minHeight: 0, display: 'flex' }}>
+        {/* Underlying pane */}
+        <div style={{
+          display: showUnderlying ? 'flex' : 'none',
+          flex: hasOptions ? 2 : 1, minHeight: 0,
+        }}>
           <ChartPane
             candles={equityCandles}
             annotations={annotations.filter(a => a.instrument === 'underlying')}
@@ -741,32 +847,79 @@ export default function PatternLibrary() {
             label={`${symbol} — Underlying (${intervalMinutes}min)`}
             onBarClick={handleBarClick}
             readonly={isReadonly}
+            onMaximize={!isReadonly ? () => handleMaximize('underlying') : undefined}
+            isMaximized={maximizedPaneId === 'underlying'}
           />
         </div>
+
+        {/* Options panes row */}
         {hasOptions && (
-          <div style={{ flex: 3, minHeight: 0, display: 'flex', gap: 4 }}>
-            <div style={{ flex: 1, minHeight: 0, display: 'flex' }}>
-              <ChartPane
-                candles={ceCandles}
-                annotations={annotations.filter(a => a.instrument === 'CE')}
-                activeStrategy={resolvedActiveStrategy}
-                label={`${symbol} CE ${ceMeta?.strike ?? ''} (${intervalMinutes}min)`}
-                onBarClick={handleBarClick}
-                readonly={isReadonly}
-              />
-            </div>
-            <div style={{ flex: 1, minHeight: 0, display: 'flex' }}>
-              <ChartPane
-                candles={peCandles}
-                annotations={annotations.filter(a => a.instrument === 'PE')}
-                activeStrategy={resolvedActiveStrategy}
-                label={`${symbol} PE ${peMeta?.strike ?? ''} (${intervalMinutes}min)`}
-                onBarClick={handleBarClick}
-                readonly={isReadonly}
-              />
-            </div>
+          <div style={{
+            display: showOptionsRow ? 'flex' : 'none',
+            flex: 3, minHeight: 0, gap: 4,
+          }}>
+            {optionPanes.map(pane => (
+              <div key={pane.id} style={{
+                display: (maximizedPaneId === null || maximizedPaneId === pane.id) ? 'flex' : 'none',
+                flex: 1, minHeight: 0,
+              }}>
+                <ChartPane
+                  candles={pane.candles}
+                  annotations={annotations.filter(a => a.instrument === pane.right)}
+                  activeStrategy={resolvedActiveStrategy}
+                  label={`${symbol} ${pane.right} ${pane.strike} (${intervalMinutes}min)`}
+                  onBarClick={handleBarClick}
+                  readonly={isReadonly}
+                  onMaximize={!isReadonly ? () => handleMaximize(pane.id) : undefined}
+                  isMaximized={maximizedPaneId === pane.id}
+                  onRemove={!isReadonly ? () => handleRemovePane(pane.id) : undefined}
+                />
+              </div>
+            ))}
           </div>
         )}
+      </div>
+    )
+  }
+
+  // ── Add-pane strip (create mode only) ─────────────────────────────────────
+
+  const renderAddPaneStrip = () => {
+    if (!chartLoaded || instrumentType !== 'options' || !resolvedExpiry) return null
+    const interval = STRIKE_INTERVALS[symbol] ?? 50
+    const strikeNum = parseInt(addPaneStrike)
+    const snapStrike = isNaN(strikeNum) ? null : Math.round(strikeNum / interval) * interval
+    return (
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 8, padding: '6px 12px',
+        background: '#161b22', borderTop: '1px solid #30363d', flexShrink: 0, flexWrap: 'wrap',
+      }}>
+        <span style={{ fontSize: 11, color: '#8b949e' }}>Add pane:</span>
+        {(['CE', 'PE'] as const).map(r => (
+          <button key={r}
+            style={{ ...btn(addPaneRight === r ? (r === 'CE' ? '#1a472a' : '#2d1b69') : '#21262d'), border: `1px solid ${r === 'CE' ? '#238636' : '#6e40c9'}`, fontSize: 11, padding: '3px 10px' }}
+            onClick={() => setAddPaneRight(r)}>{r}</button>
+        ))}
+        <input
+          type="number"
+          value={addPaneStrike}
+          onChange={e => setAddPaneStrike(e.target.value)}
+          placeholder="Strike"
+          style={{ ...inputStyle, width: 90 }}
+          step={interval}
+        />
+        {snapStrike !== null && snapStrike !== strikeNum && (
+          <span style={{ fontSize: 11, color: '#484f58' }}>→ {snapStrike}</span>
+        )}
+        {resolvedAtm !== null && (
+          <span style={{ fontSize: 11, color: '#484f58' }}>ATM: {resolvedAtm}</span>
+        )}
+        <button
+          style={btn('#1f6feb', addingPane || !addPaneStrike)}
+          onClick={handleAddPane}
+          disabled={addingPane || !addPaneStrike}
+        >{addingPane ? 'Loading…' : '+ Add Pane'}</button>
+        {addPaneError && <span style={{ fontSize: 11, color: '#f85149' }}>{addPaneError}</span>}
       </div>
     )
   }
@@ -776,9 +929,7 @@ export default function PatternLibrary() {
   const renderGallery = (compact: boolean) => (
     <div style={{
       borderTop: compact ? '1px solid #30363d' : undefined,
-      background: '#0d1117',
-      padding: '12px 16px',
-      flexShrink: compact ? 1 : 0,
+      background: '#0d1117', padding: '12px 16px',
       flex: compact ? '0 0 auto' : 1,
       maxHeight: compact ? 220 : undefined,
       overflow: 'auto',
@@ -911,9 +1062,10 @@ export default function PatternLibrary() {
       {/* Body */}
       {mode === 'create' ? (
         <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-          <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+          <div style={{ flex: 1, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
             {renderCharts(false)}
           </div>
+          {renderAddPaneStrip()}
           {renderGallery(true)}
         </div>
       ) : (
@@ -927,7 +1079,7 @@ export default function PatternLibrary() {
               }}>
                 <span style={{ fontSize: 12, color: '#8b949e' }}>
                   {symbol} · {date} · {instrumentType}
-                  {ceMeta ? ` · CE ${ceMeta.strike} / PE ${peMeta?.strike ?? ''}` : ''}
+                  {optionPanes.length > 0 ? ` · ${optionPanes.map(p => `${p.right} ${p.strike}`).join(' / ')}` : ''}
                 </span>
                 <button style={btn('#484f58')} onClick={() => { setViewExpandedId(null); setChartLoaded(false) }}>
                   ✕ Close
