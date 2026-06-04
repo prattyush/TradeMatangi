@@ -110,7 +110,7 @@ Few patterns to detect.
 6. Trading Range Breakout.
 7. Opening Reversal -> After market open, price moves one side then reverses into trend in opposite side.
 8. When 9 EMA and 21 EMA cross over, possible new micro trend start.
-9. When price keeps going around a certain price area and returning signalling support and likewise resistance, the price area where price reverses has width around 5% of underlying actual price.
+9. When price keeps going around a certain price area and returning signalling support and likewise resistance, the price area where price reverses has width around 0.5% of underlying actual price. (Implemented as 0.4% tolerance in `_find_zone_level` — confirmed correct.)
 
 For this feature, you can still use the hook in backend to get data at bar close and keep storing them if 15 is not enough, or increase backend bar length from start of the day.
 
