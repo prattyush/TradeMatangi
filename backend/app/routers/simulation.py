@@ -152,6 +152,81 @@ async def start_simulation(
 
     # Stepwise is stored internally as "sim" with stepwise=True flag
     internal_session_type = "sim" if is_stepwise else req.session_type
+
+    # Paper and real trading: enforce one session per (user, symbol, date, type) per day.
+    # If a session already exists for today, resume it so positions and trades remain visible
+    # under the same session_id — this lets the user close existing positions after a reconnect.
+    if is_paper or is_real:
+        existing_record = sim_svc.find_session_by_context(
+            user_id, req.symbol, req.date, internal_session_type
+        )
+        if existing_record:
+            existing_session_id = existing_record["session_id"]
+            # Already running in memory — return it (idempotent start)
+            active = sim_svc.get_session(existing_session_id)
+            if active:
+                logger.info("start_simulation: returning already-active session %s", existing_session_id)
+                return SimulationStartResponse(
+                    session_id=active.session_id,
+                    symbol=active.symbol,
+                    date=active.date,
+                    start_time=active.start_time,
+                    speed=active.speed,
+                    session_capital=active.session_capital,
+                    instrument_type=active.instrument_type,
+                    strike=active.strike,
+                    expiry=active.expiry,
+                    right=active.right,
+                    strike_ce=active.strike_ce,
+                    strike_pe=active.strike_pe,
+                    brokerage_per_order=active.brokerage_per_order,
+                    session_type=active.session_type,
+                    stepwise=active.stepwise,
+                    total_bars=None,
+                )
+            # Session exists in DB but not in memory — rebuild and resume
+            logger.info("start_simulation: resuming session %s from DB", existing_session_id)
+            session = sim_svc.rebuild_session_from_db(
+                existing_record,
+                user_id=user_id,
+                brokerage_per_order=req.brokerage_per_order,
+                strategy_interval_secs=req.strategy_interval_secs,
+            )
+            # For real trading: re-sync wallet from broker so balance reflects any trades
+            # that happened at the broker while the session was down.
+            if is_real:
+                try:
+                    from app.services.kotak_service import get_service as get_kotak, KotakError
+                    funds = get_kotak().get_funds()
+                    from app.services import wallet_service
+                    wallet_service.reset(user_id, req.date, funds)
+                    session.session_capital = funds
+                    logger.info(
+                        "start_simulation: real session resume — wallet synced from Kotak: %.2f",
+                        funds,
+                    )
+                except Exception as exc:
+                    logger.warning("start_simulation: Kotak wallet sync on resume failed: %s", exc)
+            sim_svc.start_session(session)
+            return SimulationStartResponse(
+                session_id=session.session_id,
+                symbol=session.symbol,
+                date=session.date,
+                start_time=session.start_time,
+                speed=session.speed,
+                session_capital=session.session_capital,
+                instrument_type=session.instrument_type,
+                strike=session.strike,
+                expiry=session.expiry,
+                right=session.right,
+                strike_ce=session.strike_ce,
+                strike_pe=session.strike_pe,
+                brokerage_per_order=session.brokerage_per_order,
+                session_type=session.session_type,
+                stepwise=session.stepwise,
+                total_bars=None,
+            )
+
     session = sim_svc.create_session(
         symbol=req.symbol,
         date=req.date,
