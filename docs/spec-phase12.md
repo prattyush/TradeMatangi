@@ -163,14 +163,29 @@ b) Option in stoploss to increase quantity. Open to discussion.
 - `backend/tests/test_max_contracts.py` — 15 tests: `get_max_contracts()` and `split_quantity()` coverage
 - 23 new tests added to `test_strategy_service.py`: multi-SL AggressiveStoploss/BreakEven, LockProfit (long/short trigger, no re-trigger, multi-SL, re-arm, cancel)
 
+---
+
+### Sprint 6 — LargeOrders Sprint 2: AIHelper Multi-SL ✅ COMPLETE
+
+**Problem addressed:** The AIHelper's `update_or_create_stoploss()` used `next()` to find and update only ONE SL order. With pyramiding and max-contracts auto-split, a position can have multiple SL orders (e.g. 3 SL orders for 5400 NIFTY contracts split across 3 chunks). The old code silently left the other chunks at the original SL price.
+
+**AIHelper changes (`aihelper/services/backend_client.py`):**
+- New `bulk_update_stoploss(session_id, right, trigger_price)` — calls `PATCH /api/orders/bulk-update-sl` to update ALL pending SL orders in one request; rounds trigger price
+- `update_or_create_stoploss()` rewritten: collects ALL SL orders matching `right` → if any exist, calls `bulk_update_stoploss`; if none, creates a new SL order; falls back to create when `get_open_orders` fails
+
+**Tests (`aihelper/tests/test_backend_client_exit.py`):**
+- New `TestBulkUpdateStoploss` class (3 tests): correct endpoint, equity right omitted, price rounding
+- `TestUpdateOrCreateStoploss` expanded to 6 tests: single-SL bulk-update, multi-SL bulk-update, cross-right isolation (PE SLs don't block CE update), create-when-none, short-position BUY side, create-on-get-open-orders-failure
+
 ## Test Counts
 
-| Phase | Backend Tests | Notes |
-|-------|--------------|-------|
-| Before Phase XII | 534 | |
-| After Sprint 1 | 550 | +16 stepwise tests |
-| After Sprint 2 | 571 | +21 pattern logger tests |
-| After Sprint 5 (LargeOrders) | 601 | +30 multi-SL/LockProfit/max-contracts tests |
+| Phase | Backend Tests | AIHelper Tests | Notes |
+|-------|--------------|----------------|-------|
+| Before Phase XII | 534 | 279 | |
+| After Sprint 1 | 550 | 279 | +16 stepwise tests |
+| After Sprint 2 | 571 | 279 | +21 pattern logger tests |
+| After Sprint 5 (LargeOrders) | 601 | 285 | +30 multi-SL/LockProfit/max-contracts tests |
+| After Sprint 6 (AIHelper Multi-SL) | 601 | 291 | +6 aihelper bulk-SL tests |
 
 ## PR Log
 
@@ -179,6 +194,7 @@ b) Option in stoploss to increase quantity. Open to discussion.
 | Sprint 1 — Stepwise Replayer | feature/phase12-stepwise | Ready for PR |
 | Sprints 2-4 — Pattern Library | feature/phase12-pattern-library | Ready for PR |
 | Sprint 5 — LargeOrders | feature/phase12-large-orders | PR #173 merged to dev |
+| Sprint 6 — AIHelper Multi-SL | feature/phase12-large-orders-sprint2 | Ready for PR |
 
 ---
 

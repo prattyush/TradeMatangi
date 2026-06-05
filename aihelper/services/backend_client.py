@@ -240,6 +240,20 @@ async def create_stoploss_order(
     return resp.json()
 
 
+async def bulk_update_stoploss(session_id: str, right: str | None, trigger_price: float) -> dict:
+    """PATCH /api/orders/bulk-update-sl — update ALL pending SL orders for session/right at once."""
+    client = get_client()
+    body: dict[str, Any] = {
+        "session_id": session_id,
+        "trigger_price": round(trigger_price, 2),
+    }
+    if right is not None:
+        body["right"] = right
+    resp = await client.patch("/api/orders/bulk-update-sl", json=body)
+    resp.raise_for_status()
+    return resp.json()
+
+
 async def update_or_create_stoploss(
     session_id: str,
     right: str | None,
@@ -247,9 +261,10 @@ async def update_or_create_stoploss(
     position: dict,
 ) -> dict:
     """
-    Find an existing STOPLOSS order for the right and update it, or create a new one.
+    Update ALL existing STOPLOSS orders for the right via bulk-update-sl, or create a new one.
+    Handles multiple SL orders that arise from pyramiding and max-contracts auto-split.
     Position dict is used to determine the order side (SELL for LONG, BUY for SHORT)
-    and the quantity.
+    and the quantity when creating a new order.
     """
     qty = int(position.get("qty", 0))
     pos_side = (position.get("side") or "LONG").upper()
@@ -257,17 +272,15 @@ async def update_or_create_stoploss(
 
     try:
         orders = await get_open_orders(session_id)
-        sl_order = next(
-            (o for o in orders if o.get("is_stoploss") and o.get("right") == right),
-            None,
-        )
+        sl_orders = [o for o in orders if o.get("is_stoploss") and o.get("right") == right]
     except Exception as exc:
         logger.warning("get_open_orders failed (%s), will attempt to create new SL", exc)
-        sl_order = None
+        sl_orders = []
 
-    if sl_order:
-        result = await update_stoploss_order(session_id, sl_order["order_id"], trigger_price)
-        return {"action": "updated", "order": result}
+    if sl_orders:
+        # One or more SL orders exist — update ALL of them in one call
+        result = await bulk_update_stoploss(session_id, right, trigger_price)
+        return {"action": "bulk_updated", "updated": result.get("updated", len(sl_orders))}
     else:
         result = await create_stoploss_order(session_id, right, trigger_price, qty, side=order_side)
         return {"action": "created", "order": result}
