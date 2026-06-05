@@ -51,7 +51,7 @@ Examples:
 
 class ChatRequest(BaseModel):
     message: str
-    session_id: str
+    session_id: str | None = None
     user_id: str
     symbol: str | None = None
     strike_ce: int | None = None   # current CE strike from session state (null for equity)
@@ -642,11 +642,23 @@ async def _handle_list_commands(req: ChatRequest) -> ChatResponse:
 # Main endpoint
 # ---------------------------------------------------------------------------
 
+_SESSION_REQUIRED_INTENTS = frozenset({
+    "entry_command", "exit_command", "hotword",
+    "cancel_commands", "list_commands", "use_template",
+})
+
+
 @observe(name="chat")
 async def _chat_observed(req: ChatRequest) -> ChatResponse:
     """Business logic — wrapped with LangFuse tracing. Called by the route handler."""
     intent, confidence = await intent_classifier.classify(req.message)
     logger.debug("Intent: %s (confidence=%.2f)", intent, confidence)
+
+    if intent in _SESSION_REQUIRED_INTENTS and not req.session_id:
+        return ChatResponse(
+            status="error",
+            message="This command requires an active trading session. Start a session first.",
+        )
 
     if intent == "entry_command":
         return await _handle_command(req)

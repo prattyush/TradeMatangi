@@ -25,6 +25,19 @@ Look at each of the bugs, fix them and then mark them resolved as well if approv
 
 ### Data Bugs
 
+### Stepwise Replayer Bugs
+
+**[RESOLVED]** Add CE/PE chart of different strike price not working in stepwise options sessions (PR #181, 2026-06-05).
+- **Symptom 1**: During a running stepwise options session, the "Add:" section in the toolbar showed only the equity interval selector and not the CE/PE type dropdown, so there was no way to add a new CE or PE pane with a different strike.
+- **Symptom 2**: Even when the dropdown was visible, newly added CE/PE panes showed an empty chart (no historical candles).
+- **Root cause 1**: The CE/PE type selector only rendered when App.tsx's local `instrumentType === 'options'`. Under certain state conditions (e.g., after a session-type switch) this could be `'equity'` even with an active options session, hiding the CE/PE options entirely.
+- **Root cause 2**: `addPane` added the pane immediately, causing the Chart to mount and call `api.getOptionsHistorical` for the new strike before `api.updatePaneStrike` had finished caching that strike's parquet data on the backend. With no data cached, `getOptionsHistorical` returned empty candles and there was no retry mechanism.
+- **Fix**:
+  - CE/PE dropdown now also renders when `sim.sessionInstrumentType === 'options'` (comes directly from the session API response, always reliable).
+  - Added `reloadKey?: number` to `PaneConfig`. After `api.updatePaneStrike` resolves (data cached), `reloadKey` is incremented, triggering the Chart's historical data `useEffect` to re-fetch with the data now available.
+  - `addPane` falls back to `sim.sessionExpiry` when `optionsReady` is null, keeping +Add enabled for a running options session regardless of client-side options state.
+- **Files**: `frontend/src/App.tsx` only.
+
 ### Missed Feature Implementations
 
 **[RESOLVED]** Trade History does not show trades from previous sessions on the same date for the same symbol + instrument type.

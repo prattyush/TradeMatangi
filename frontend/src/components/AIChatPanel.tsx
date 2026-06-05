@@ -267,7 +267,7 @@ export default function AIChatPanel({ sessionId, userId, symbol, strikeCe, strik
 
   const handleSend = useCallback(async () => {
     const text = inputText.trim()
-    if (!text || !sessionId || loading) return
+    if (!text || loading) return
     setInputText('')
     setLoading(true)
 
@@ -279,7 +279,7 @@ export default function AIChatPanel({ sessionId, userId, symbol, strikeCe, strik
     try {
       const data = await api.aiChat({
         message: text,
-        session_id: sessionId,
+        session_id: sessionId ?? null,
         user_id: userId,
         symbol,
         strike_ce: strikeCe,
@@ -395,7 +395,7 @@ export default function AIChatPanel({ sessionId, userId, symbol, strikeCe, strik
               <div style={{ color: '#484f58', fontSize: 13, textAlign: 'center', marginTop: 20 }}>
                 {sessionId
                   ? 'AI decisions appear here when commands fire. Type a command below.'
-                  : 'Start a trading session to use AI commands.'}
+                  : 'No active session. You can analyze past trades — try "analyze last 7 days".'}
               </div>
             )}
 
@@ -595,25 +595,25 @@ export default function AIChatPanel({ sessionId, userId, symbol, strikeCe, strik
                   handleSend()
                 }
               }}
-              disabled={!sessionId || loading}
-              placeholder={sessionId ? 'Type a command or question… (Enter to send)' : 'No active session'}
+              disabled={loading}
+              placeholder={sessionId ? 'Type a command or question… (Enter to send)' : 'Analyze trades… e.g. "analyze last 7 days" (Enter to send)'}
               rows={2}
               style={{
                 flex: 1, resize: 'none', background: '#0d1117',
                 border: '1px solid #30363d', color: '#e6edf3',
                 borderRadius: 8, padding: '7px 10px', fontSize: 14,
                 fontFamily: 'inherit', outline: 'none',
-                opacity: !sessionId ? 0.5 : 1,
+                opacity: 1,
               }}
             />
             <button
               onClick={handleSend}
-              disabled={!sessionId || loading || !inputText.trim()}
+              disabled={loading || !inputText.trim()}
               style={{
                 background: '#1f4d2e', border: '1px solid #56d364',
                 color: '#56d364', borderRadius: 8, padding: '7px 16px',
                 fontSize: 14, cursor: 'pointer', fontWeight: 600,
-                opacity: (!sessionId || loading || !inputText.trim()) ? 0.4 : 1,
+                opacity: (loading || !inputText.trim()) ? 0.4 : 1,
                 flexShrink: 0, alignSelf: 'stretch',
               }}
             >
