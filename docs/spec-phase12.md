@@ -184,6 +184,7 @@ b) Option in stoploss to increase quantity. Open to discussion.
 | After Sprint 2 | 571 | 285 | +21 pattern logger tests (backend); frontend no new tests |
 | After Sprint 3 (LargeOrders) | 601 | 285 | +30 multi-SL/LockProfit/max-contracts tests |
 | After Sprint 4 (AIHelper Multi-SL) | 601 | 291 | +6 aihelper bulk-SL tests |
+| After PR #185 (AI Analysis drill-down) | 624 | 305 | +14 aihelper pattern instance tests |
 
 ## PR Log
 
@@ -193,6 +194,7 @@ b) Option in stoploss to increase quantity. Open to discussion.
 | Sprint 2 — Pattern Library | feature/phase12-pattern-library | Merged to dev |
 | Sprint 3 — LargeOrders | feature/phase12-large-orders | PR #173 merged to dev |
 | Sprint 4 — AIHelper Multi-SL | feature/phase12-large-orders-sprint2 | PR #174 merged to dev |
+| AI Analysis: pattern drill-down + panel resize/font | feature/pattern-drill-down | PR #185 merged to dev |
 
 ---
 
@@ -247,3 +249,33 @@ Previously, when loading a chart in View mode, both CE and PE panes were rendere
 Applies in both View and Create modes (correct for both — panes without annotations shouldn't auto-appear; use "Add Pane" strip to add new ones).
 
 **PR #168 merged to dev.**
+
+---
+
+### AI Analysis Enhancements — PR #185 (feature/pattern-drill-down)
+
+Two features shipped together:
+
+#### 1. Per-Pattern Flagged Trade Drill-Down
+
+**Problem:** The AI analysis card showed pattern summaries (e.g. "✗ Scared Exits on Losers — 6 of 8 losing trades") but gave no way to see *which* specific trades were flagged.
+
+**Backend changes:**
+- `aihelper/services/pattern_detector.py` — `aggregate_findings()` now produces an `instances[]` list for all 5 pattern types (`scared_exits`, `early_exits`, `entry_deviation`, `buying_on_top`, `panic_entries`). Each instance: `{group_id, direction, pnl, entry_time, exit_time, symbol, detected, detail}` where `detail` is a one-line human-readable metric (e.g. "₹245 loss, price reversed", "+2.1% from bar open"). Capped at 10 per pattern.
+- `aihelper/services/analysis_service.py` — `_run_pattern_analysis()` now includes `entry_time`, `exit_time`, `symbol` in every group finding. New `_extract_pattern_instances()` helper filters to `detected=True` only. `run_analysis()` merges a `pattern_instances` dict into the returned result.
+
+**Frontend changes (`frontend/src/services/api.ts`):** Added `PatternInstance`, `PatternInstances` interfaces; `AnalysisResult` gains `pattern_instances?: PatternInstances`.
+
+**Frontend changes (`frontend/src/components/AIChatPanel.tsx`):** Analysis card gets a collapsible **FLAGGED TRADES** section at the bottom. Clicking the toggle reveals per-pattern sub-tables (Scared Exits / Early Exits / Chasing Entries / Buying on Top / Panic Entries) with entry time (HH:MM), direction (colored LONG/SHORT), P&L (colored), and the key metric detail.
+
+**Tests:** 14 new aihelper tests across `test_pattern_detector.py` (instances cap, per-pattern instance assertions) and `test_analysis.py` (`TestExtractPatternInstances`, `TestRunAnalysisIncludesPatternInstances`).
+
+#### 2. Resizable Panel Width + Font Size Toggle
+
+**Problem:** The AI chat panel had a fixed 480px width and small fixed font sizes, making analysis cards hard to read.
+
+**Changes (AIChatPanel.tsx only):**
+- **Left-edge drag handle** — 6px transparent strip on the left edge of the panel (cursor `ew-resize`, blue tint on hover). Dragging left widens the panel (max 900px); dragging right narrows it (min 360px). The panel's right edge stays anchored and the left edge shifts.
+- **Font size toggle (`A` / `A+` / `A++`)** — Small button in the header that cycles through three font scales (1×, 1.2×, 1.45×). Scales message text and all analysis card text (summary, patterns, suggestions, stats, flagged-trades table). Header chrome and input box are unaffected.
+
+**PR #185 merged to dev.**
