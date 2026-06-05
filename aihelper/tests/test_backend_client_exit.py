@@ -6,7 +6,8 @@ Covers:
   - get_open_orders: returns list from backend
   - update_stoploss_order: PATCHes the correct endpoint with trigger_price
   - create_stoploss_order: POSTs to /api/orders with is_stoploss=True
-  - update_or_create_stoploss: updates existing SL when found; creates new when none
+  - bulk_update_stoploss: PATCHes /api/orders/bulk-update-sl with all SLs
+  - update_or_create_stoploss: bulk-updates all SLs when any exist; creates new when none
   - exit_position_market: POSTs to /api/trades/sell
   - start_takeprofit_strategy: POSTs to /api/strategies/start with TargetProfit
 """
@@ -105,28 +106,94 @@ class TestCreateStoplossOrder:
         assert body["side"] == "SELL"
 
 
+class TestBulkUpdateStoploss:
+    @pytest.mark.asyncio
+    async def test_patches_bulk_update_sl_endpoint(self):
+        expected = {"updated": 3}
+        mock_client = MagicMock()
+        mock_client.patch = AsyncMock(return_value=_mock_response(expected))
+        with patch.object(backend_client, "get_client", return_value=mock_client):
+            result = await backend_client.bulk_update_stoploss("sess-001", "CE", 97.0)
+        mock_client.patch.assert_called_once_with(
+            "/api/orders/bulk-update-sl",
+            json={"session_id": "sess-001", "trigger_price": 97.0, "right": "CE"},
+        )
+        assert result == expected
+
+    @pytest.mark.asyncio
+    async def test_omits_right_for_equity(self):
+        mock_client = MagicMock()
+        mock_client.patch = AsyncMock(return_value=_mock_response({"updated": 1}))
+        with patch.object(backend_client, "get_client", return_value=mock_client):
+            await backend_client.bulk_update_stoploss("sess-001", None, 97.0)
+        body = mock_client.patch.call_args.kwargs["json"]
+        assert "right" not in body
+
+    @pytest.mark.asyncio
+    async def test_rounds_trigger_price(self):
+        mock_client = MagicMock()
+        mock_client.patch = AsyncMock(return_value=_mock_response({"updated": 1}))
+        with patch.object(backend_client, "get_client", return_value=mock_client):
+            await backend_client.bulk_update_stoploss("sess-001", "CE", 97.123456)
+        body = mock_client.patch.call_args.kwargs["json"]
+        assert body["trigger_price"] == 97.12
+
+
 class TestUpdateOrCreateStoploss:
     @pytest.mark.asyncio
-    async def test_updates_existing_stoploss_when_found(self):
+    async def test_bulk_updates_when_single_sl_exists(self):
+        """Single SL order found → bulk_update_stoploss called, not single update."""
         open_orders = [{"order_id": "existing-sl", "is_stoploss": True, "right": "CE"}]
         position = {"side": "LONG", "qty": 50}
         with patch.object(backend_client, "get_open_orders", new=AsyncMock(return_value=open_orders)), \
-             patch.object(backend_client, "update_stoploss_order", new=AsyncMock(return_value={"ok": True})) as mock_update, \
+             patch.object(backend_client, "bulk_update_stoploss", new=AsyncMock(return_value={"updated": 1})) as mock_bulk, \
              patch.object(backend_client, "create_stoploss_order", new=AsyncMock()) as mock_create:
             result = await backend_client.update_or_create_stoploss("sess-001", "CE", 97.0, position)
-        mock_update.assert_called_once_with("sess-001", "existing-sl", 97.0)
+        mock_bulk.assert_called_once_with("sess-001", "CE", 97.0)
         mock_create.assert_not_called()
-        assert result["action"] == "updated"
+        assert result["action"] == "bulk_updated"
+        assert result["updated"] == 1
+
+    @pytest.mark.asyncio
+    async def test_bulk_updates_all_when_multiple_sl_exist(self):
+        """Multiple SL orders (pyramiding / auto-split) → single bulk_update_stoploss call."""
+        open_orders = [
+            {"order_id": "sl-001", "is_stoploss": True, "right": "CE"},
+            {"order_id": "sl-002", "is_stoploss": True, "right": "CE"},
+            {"order_id": "sl-003", "is_stoploss": True, "right": "CE"},
+        ]
+        position = {"side": "LONG", "qty": 5400}
+        with patch.object(backend_client, "get_open_orders", new=AsyncMock(return_value=open_orders)), \
+             patch.object(backend_client, "bulk_update_stoploss", new=AsyncMock(return_value={"updated": 3})) as mock_bulk, \
+             patch.object(backend_client, "create_stoploss_order", new=AsyncMock()) as mock_create:
+            result = await backend_client.update_or_create_stoploss("sess-001", "CE", 97.0, position)
+        mock_bulk.assert_called_once_with("sess-001", "CE", 97.0)
+        mock_create.assert_not_called()
+        assert result["action"] == "bulk_updated"
+        assert result["updated"] == 3
+
+    @pytest.mark.asyncio
+    async def test_ignores_sl_orders_for_different_right(self):
+        """PE SL orders do not count when updating CE — should create a new CE SL."""
+        open_orders = [{"order_id": "sl-pe", "is_stoploss": True, "right": "PE"}]
+        position = {"side": "LONG", "qty": 50}
+        with patch.object(backend_client, "get_open_orders", new=AsyncMock(return_value=open_orders)), \
+             patch.object(backend_client, "bulk_update_stoploss", new=AsyncMock()) as mock_bulk, \
+             patch.object(backend_client, "create_stoploss_order", new=AsyncMock(return_value={"ok": True})) as mock_create:
+            result = await backend_client.update_or_create_stoploss("sess-001", "CE", 97.0, position)
+        mock_bulk.assert_not_called()
+        mock_create.assert_called_once_with("sess-001", "CE", 97.0, 50, side="SELL")
+        assert result["action"] == "created"
 
     @pytest.mark.asyncio
     async def test_creates_new_stoploss_when_none_found(self):
         open_orders = [{"order_id": "limit-order", "is_stoploss": False, "right": "CE"}]
         position = {"side": "LONG", "qty": 50}
         with patch.object(backend_client, "get_open_orders", new=AsyncMock(return_value=open_orders)), \
-             patch.object(backend_client, "update_stoploss_order", new=AsyncMock()) as mock_update, \
+             patch.object(backend_client, "bulk_update_stoploss", new=AsyncMock()) as mock_bulk, \
              patch.object(backend_client, "create_stoploss_order", new=AsyncMock(return_value={"ok": True})) as mock_create:
             result = await backend_client.update_or_create_stoploss("sess-001", "CE", 97.0, position)
-        mock_update.assert_not_called()
+        mock_bulk.assert_not_called()
         mock_create.assert_called_once_with("sess-001", "CE", 97.0, 50, side="SELL")
         assert result["action"] == "created"
 
@@ -139,6 +206,18 @@ class TestUpdateOrCreateStoploss:
             await backend_client.update_or_create_stoploss("sess-001", "PE", 103.0, position)
         call_kwargs = mock_create.call_args
         assert call_kwargs.kwargs["side"] == "BUY"
+
+    @pytest.mark.asyncio
+    async def test_creates_when_get_open_orders_fails(self):
+        """get_open_orders failure → fall back to creating a new SL rather than crashing."""
+        position = {"side": "LONG", "qty": 50}
+        with patch.object(backend_client, "get_open_orders", new=AsyncMock(side_effect=Exception("timeout"))), \
+             patch.object(backend_client, "bulk_update_stoploss", new=AsyncMock()) as mock_bulk, \
+             patch.object(backend_client, "create_stoploss_order", new=AsyncMock(return_value={"ok": True})) as mock_create:
+            result = await backend_client.update_or_create_stoploss("sess-001", "CE", 97.0, position)
+        mock_bulk.assert_not_called()
+        mock_create.assert_called_once()
+        assert result["action"] == "created"
 
 
 class TestExitPositionMarket:
