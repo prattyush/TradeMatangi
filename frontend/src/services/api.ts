@@ -328,7 +328,7 @@ export interface DecisionItem {
 
 export interface AIChatRequest {
   message: string
-  session_id: string
+  session_id: string | null
   user_id: string
   symbol?: string | null
   strike_ce?: number | null
