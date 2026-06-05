@@ -178,7 +178,7 @@ b) Option in stoploss to increase quantity. Open to discussion.
 |--------|--------|--------|
 | Sprint 1 — Stepwise Replayer | feature/phase12-stepwise | Ready for PR |
 | Sprints 2-4 — Pattern Library | feature/phase12-pattern-library | Ready for PR |
-| Sprint 5 — LargeOrders | feature/phase12-large-orders | Ready for PR |
+| Sprint 5 — LargeOrders | feature/phase12-large-orders | PR #173 merged to dev |
 
 ---
 
