@@ -268,6 +268,7 @@ class StrategyType(str, Enum):
     BREAK_EVEN = "BreakEven"
     AGGRESSIVE_STOPLOSS = "AggressiveStoploss"
     TARGET_PROFIT = "TargetProfit"
+    LOCK_PROFIT = "LockProfit"
 
 
 class StartStrategyRequest(BaseModel):
@@ -290,6 +291,20 @@ class StartStrategyRequest(BaseModel):
     target_profit_buffer_ticks: int = 3        # ticks past target to trigger (1–5)
     # Breakeven mode
     breakeven_mode: str = "shift_sl"           # "shift_sl" | "limit_order"
+    # LockProfit settings
+    lock_profit_value: float | None = None     # absolute price or % of session capital
+    lock_profit_is_pct: bool = False           # True = % of session capital; False = absolute price
+
+
+class UpdateStrategyPriceRequest(BaseModel):
+    session_id: str
+    price: float
+
+
+class BulkUpdateSLRequest(BaseModel):
+    session_id: str
+    trigger_price: float
+    right: str | None = None   # "CE" | "PE" | None (equity)
 
 
 class StrategyResponse(BaseModel):
@@ -298,6 +313,7 @@ class StrategyResponse(BaseModel):
     symbol: str
     right: str | None
     status: str
+    triggered: bool = False    # True once LockProfit (or TargetProfit) has fired
 
 
 class CancelAllStrategiesRequest(BaseModel):

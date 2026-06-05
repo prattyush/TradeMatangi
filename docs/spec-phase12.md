@@ -14,6 +14,19 @@ You can ask questions if required.
 
 ---
 
+##### LargeOrders
+1. Go over scenario and suggest the best approach. The scenario is I enter a position at 100.0 with quantity 20, and setup stoploss at 60.0 with quantity 20. Now, after 6 minutes market went down, so I added another 20, Now, I have 2 options, either create another stoploss order, or cancel the previous one and create one order for 40. First problem is that if I want to create new SL Order, when I click on SL, full 40 quantity comes, instead of 20 as 20 already has a stoploss. 2nd, I ccan't modify open order stoploss quantity.
+Now, if I have 2 orders of stoploss, another problem comes is that if market suddenly movves or bounches to 130 (happens on expiiry days with options), I want to quickly increase stoploss. With 1 order pressing LTP does great, but with 2 or more orders, I have to do that with every order.
+Possible solutions are:- 
+a) new strategy "Lock Profit" -> This strategy take a price and instead of exiting position at a given price, it setups up stoploss similar to Aggresive SL and Breakeven strategy. This strategy take input of price either through chart click or LTP. Also, it can get percentage like Take Profit. It monitors every tick like Breakeven strategy and set stoploss as Breakeven or Aggresive SL does. Now, this strategy should update stoploss values for all open stoploss orders for that symbol. Quantity may be 2,3, ... or 1.
+b) Option in stoploss to increase quantity. Open to discussion.
+
+2. Supporting max contracts per options (index or equity). Now, for index options, NIFTY and SENSEX there is a max limit of contracts per order, NIFTY (1800), SENSEX (1000). So, I buy at market for CE with % of 20 for a wallet funds of 20L at CE price 50. So, I will be buying with 4L money for 50 rupees price which is 8000 contracts. So, this would be  5 orders for NIFTY and 8 orders for SENSEX. Then we would automatically need 5 SL orders for NIFTY and 8 SL orders for SENSEX. So, now back to saame problem of updating soo many orders, then a lock profit strategy makes sense, in which I can also change the price after it is triggered. Also, when creating stoploss orders, it should show remaining buy quantity which doesn't have a stoploss order maxed to the max contracts per order. Or maybe take the entire order size in this case, ilke 8000 when I create on SL it automatically creates 5 orders for NIFTY and 8 orders for SENSEX for stoploss.
+
+3. Supporting of change targets of Take Profit and Lock Profit (to be implemented) strategies prices after it is triggered. Otherwise it would require cancel them and re-create them. Also, cancellation of individual strategies if required.
+
+4. Support multi stoploss order support for all strategies, like breakeven, aggresive  SL, Take Profit and also AIHelper commands etc. Make a cross swipe across all features if anything needs to handle multiple stoplosss orders.
+
 ## Implementation Status
 
 ### Sprint 1 — Trade Stepwise Replayer ✅ COMPLETE
@@ -39,7 +52,7 @@ You can ask questions if required.
 
 ---
 
-### Sprint 2 — Pattern Library: Backend ✅ COMPLETE
+### Sprint 2 — Pattern Library ✅ COMPLETE
 
 **New files:**
 - `backend/app/services/pattern_logger_service.py`: DynamoDB CRUD for `PatternAnnotations` table
@@ -68,7 +81,7 @@ You can ask questions if required.
 
 ---
 
-### Sprints 3+4 — Pattern Library: Frontend ✅ COMPLETE
+#### Frontend
 
 **New file:** `frontend/src/pages/PatternLibrary.tsx`
 
@@ -90,20 +103,96 @@ You can ask questions if required.
 
 ---
 
+### Sprint 3 — LargeOrders ✅ COMPLETE
+
+**Sprints 1-3 (Multi-SL, LockProfit, MaxContracts) implemented together.**
+
+**Problem addressed:** Pyramiding into large index-options positions creates multiple SL orders that strategies and the SL form couldn't handle. New SEBI-mandated per-order contract limits (NIFTY 1800, SENSEX 1000) require auto-splitting large orders.
+
+**Backend changes:**
+
+*Multi-SL Foundation (`strategy_service.py`):*
+- Removed `quantity` filter from `_find_open_exit_orders()` — now returns ALL pending exit orders matching side + right (not just qty-matched ones)
+- `AggressiveStoploss`, `BreakEven`, `TargetProfit` — all updated to iterate over all returned SL orders
+
+*Lock Profit strategy (`strategy_service.py`, `schemas.py`, `routers/strategies.py`):*
+- New `StrategyType.LOCK_PROFIT = "LockProfit"` enum value
+- `StartStrategyRequest` fields: `lock_profit_value`, `lock_profit_is_pct`
+- `_on_tick_lock_profit()`: fires once when price crosses lock_price, moves ALL open SL orders to `lock_price - buffer` (LONG) or `+ buffer` (SHORT), sets `triggered=True` in metadata
+- Strategy stays RUNNING after trigger so price can be re-armed
+- `cancel_strategy()`: individual strategy cancellation
+- `update_strategy_price()`: updates `lock_profit_price` or `target_profit_value`, resets `triggered=False` for re-arming
+- New endpoints: `POST /api/strategies/{id}/cancel`, `PATCH /api/strategies/{id}/price`
+- `StrategyResponse.triggered: bool` added
+
+*Batch Update SL (`routers/orders.py`):*
+- `PATCH /api/orders/bulk-update-sl` — updates ALL pending SL orders for a session/right to the same trigger price
+- Route registered BEFORE `/{order_id}` to avoid FastAPI parameterized-route match
+- Real trading: calls Kotak `modify_sl_order` for each order with `kotak_order_id`
+
+*Max Contracts Auto-Split (`config.py`, `order_service.py`, `routers/orders.py`):*
+- `MAX_CONTRACTS_PER_ORDER` dict: NIFTY=1800, SENSEX=1000, BANKEX/BANKNIFTY=900, FINNIFTY=1800, MIDCPNIFTY=2800
+- `get_max_contracts(symbol)` and `split_quantity(symbol, qty)` helpers in `order_service.py`
+- `POST /api/orders` auto-splits large SL options orders; each chunk placed as separate order; extra chunks pushed via SSE `order_placed` events
+- Real trading: each split chunk registered with Kotak via `_register_kotak_sl_for_order()`
+
+**Frontend changes:**
+
+*Smart SL default qty (`OrderPanel.tsx`):*
+- When SL tab selected, defaults qty to `position.quantity - coveredQty` (uncovered portion only)
+- `coveredQty` = sum of all pending SL orders for the same side+right
+
+*Lock Profit UI (`OrderPanel.tsx`):*
+- New section under Exit Strategies: price input + LTP + chart-pick + % checkbox + "▶ Start Lock Profit" button (purple theme)
+- Running strategies list: `(triggered)` badge, individual ✕ cancel, inline price edit for LockProfit/TargetProfit
+
+*Batch Update SL UI (`OrderPanel.tsx`):*
+- Shown when 2+ pending SL orders exist for active right
+- Price input + LTP + "Update All [CE/PE/equity] SLs" button (orange theme)
+
+*Max contracts hint (`OrderPanel.tsx`):*
+- Below SL qty input: "Will create N orders (max M/order)" when qty exceeds limit
+
+*API (`api.ts`):*
+- `cancelStrategy()`, `updateStrategyPrice()`, `bulkUpdateSL()` methods
+- `StrategyResponse.triggered: boolean`, `StartStrategyRequest` lock profit fields
+
+**New test files:**
+- `backend/tests/test_max_contracts.py` — 15 tests: `get_max_contracts()` and `split_quantity()` coverage
+- 23 new tests added to `test_strategy_service.py`: multi-SL AggressiveStoploss/BreakEven, LockProfit (long/short trigger, no re-trigger, multi-SL, re-arm, cancel)
+
+---
+
+### Sprint 4 — AIHelper Multi-SL ✅ COMPLETE
+
+**Problem addressed:** The AIHelper's `update_or_create_stoploss()` used `next()` to find and update only ONE SL order. With pyramiding and max-contracts auto-split, a position can have multiple SL orders (e.g. 3 SL orders for 5400 NIFTY contracts split across 3 chunks). The old code silently left the other chunks at the original SL price.
+
+**AIHelper changes (`aihelper/services/backend_client.py`):**
+- New `bulk_update_stoploss(session_id, right, trigger_price)` — calls `PATCH /api/orders/bulk-update-sl` to update ALL pending SL orders in one request; rounds trigger price
+- `update_or_create_stoploss()` rewritten: collects ALL SL orders matching `right` → if any exist, calls `bulk_update_stoploss`; if none, creates a new SL order; falls back to create when `get_open_orders` fails
+
+**Tests (`aihelper/tests/test_backend_client_exit.py`):**
+- New `TestBulkUpdateStoploss` class (3 tests): correct endpoint, equity right omitted, price rounding
+- `TestUpdateOrCreateStoploss` expanded to 6 tests: single-SL bulk-update, multi-SL bulk-update, cross-right isolation (PE SLs don't block CE update), create-when-none, short-position BUY side, create-on-get-open-orders-failure
+
 ## Test Counts
 
-| Phase | Backend Tests | Notes |
-|-------|--------------|-------|
-| Before Phase XII | 534 | |
-| After Sprint 1 | 550 | +16 stepwise tests |
-| After Sprint 2 | 571 | +21 pattern logger tests |
+| Phase | Backend Tests | AIHelper Tests | Notes |
+|-------|--------------|----------------|-------|
+| Before Phase XII | 534 | 279 | |
+| After Sprint 1 | 550 | 279 | +16 stepwise tests |
+| After Sprint 2 | 571 | 285 | +21 pattern logger tests (backend); frontend no new tests |
+| After Sprint 3 (LargeOrders) | 601 | 285 | +30 multi-SL/LockProfit/max-contracts tests |
+| After Sprint 4 (AIHelper Multi-SL) | 601 | 291 | +6 aihelper bulk-SL tests |
 
 ## PR Log
 
 | Sprint | Branch | Status |
 |--------|--------|--------|
-| Sprint 1 — Stepwise Replayer | feature/phase12-stepwise | Ready for PR |
-| Sprints 2-4 — Pattern Library | feature/phase12-pattern-library | Ready for PR |
+| Sprint 1 — Stepwise Replayer | feature/phase12-stepwise | Merged to dev |
+| Sprint 2 — Pattern Library | feature/phase12-pattern-library | Merged to dev |
+| Sprint 3 — LargeOrders | feature/phase12-large-orders | PR #173 merged to dev |
+| Sprint 4 — AIHelper Multi-SL | feature/phase12-large-orders-sprint2 | PR #174 merged to dev |
 
 ---
 

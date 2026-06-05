@@ -156,6 +156,18 @@ Look at each of the bugs, fix them and then mark them resolved as well if approv
 
 ### Missed Feature Implementations
 
+## Phase-X GuardRails
+
+### Settings Bugs
+
+**[RESOLVED]** All user settings (guardrail bars, funds ratios, etc.) never persisted to DynamoDB (PR #175, 2026-06-05).
+- **Symptom**: Changing any setting in the Settings modal (guardrail block bars, cooldown bars, ban capital %, funds ratio %) and saving appeared to succeed, but reopening the modal always showed the original defaults. Paper/real trading sessions always initialised guardrails with 3 bars regardless of configured value.
+- **Root cause**: `user_settings_service.update_settings()` passed Python `float` values (e.g. `guardrail_ban_capital_pct: 10.0`, `funds_ratio_l_pct: 0.03`) directly to `table.put_item()`. boto3's DynamoDB resource API rejects `float` with `TypeError: Float types are not supported. Use Decimal types instead.` The exception was caught and swallowed by the bare `except Exception` block, so the function returned the updated in-memory dict (appearing successful) but nothing was ever written to DynamoDB. Every subsequent `get_settings` read found no record and returned `DEFAULT_SETTINGS`.
+- **Secondary bug**: `guardrail_cooldown_block_bars` was missing from the explicit `GuardRailSettingsResponse(...)` construction in both `GET` and `POST /api/guardrails/settings` handlers — Pydantic's default of 3 was always returned regardless of what was saved.
+- **Fix**: Convert `float → Decimal(str(v))` before `put_item` in `user_settings_service.py`, matching every other DynamoDB-writing service (`trading.py`, `wallet_service.py`, `simulation.py`, etc.). Add `guardrail_cooldown_block_bars` to both guardrail settings responses.
+- **Files**: `backend/app/services/user_settings_service.py`, `backend/app/routers/guardrails.py`.
+- **Note**: Because writes had been failing from the project start, no `UserSettings` records exist in DynamoDB. The first save after this fix creates the record correctly.
+
 ## Phase-XI AI Helper
 
 ### AI Helper Bugs

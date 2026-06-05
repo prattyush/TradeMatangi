@@ -612,6 +612,103 @@ class TestAggressiveStoploss:
         assert len(orders) == 1
         assert orders[0].trigger_price == pytest.approx(110.0 * 0.99)
 
+    def test_updates_all_multiple_sl_orders(self):
+        """AggressiveStoploss must update ALL open SL orders regardless of their quantity."""
+        session = _session()
+        self._add_long_position()  # qty=10
+
+        # Two SL orders with different quantities (e.g. position was built up in 2 lots)
+        sl1 = order_service.place_order(
+            session_id=SESSION, symbol=SYMBOL, side=TradeSide.SELL,
+            order_type=OrderType.STOPLOSS, quantity=4, created_at=T0,
+            trading_date=DATE, trigger_price=80.0, is_stoploss=True, user_id=USER_ID,
+        )
+        sl2 = order_service.place_order(
+            session_id=SESSION, symbol=SYMBOL, side=TradeSide.SELL,
+            order_type=OrderType.STOPLOSS, quantity=6, created_at=T0,
+            trading_date=DATE, trigger_price=80.0, is_stoploss=True, user_id=USER_ID,
+        )
+
+        svc.start_strategy(session, "AggressiveStoploss", None, {})
+
+        svc.on_tick(session, _tick(T0, c=110.0), None)
+        svc.on_tick(session, _tick(T1, c=112.0), None)  # bar closes at c=110.0
+
+        orders = order_service.get_open_orders(SESSION)
+        assert len(orders) == 2
+        ids = {o.order_id for o in orders}
+        assert sl1.order_id in ids
+        assert sl2.order_id in ids
+        for o in orders:
+            assert o.trigger_price == pytest.approx(110.0 * 0.99)
+
+
+class TestBreakEvenMultiSL:
+    """BreakEven strategy updates ALL open SL orders when multiple exist."""
+
+    def _add_long_position(self):
+        from app.services.trading import record_trade
+        record_trade(
+            session_id=SESSION, side=TradeSide.BUY, price=100.0,
+            timestamp=T0, quantity=10, symbol=SYMBOL, user_id=USER_ID,
+        )
+
+    def test_shift_sl_updates_all_multiple_sl_orders(self):
+        """shift_sl mode moves ALL open SL orders to breakeven price."""
+        session = _session()
+        self._add_long_position()  # qty=10
+
+        sl1 = order_service.place_order(
+            session_id=SESSION, symbol=SYMBOL, side=TradeSide.SELL,
+            order_type=OrderType.STOPLOSS, quantity=4, created_at=T0,
+            trading_date=DATE, trigger_price=80.0, is_stoploss=True, user_id=USER_ID,
+        )
+        sl2 = order_service.place_order(
+            session_id=SESSION, symbol=SYMBOL, side=TradeSide.SELL,
+            order_type=OrderType.STOPLOSS, quantity=6, created_at=T0,
+            trading_date=DATE, trigger_price=80.0, is_stoploss=True, user_id=USER_ID,
+        )
+
+        svc.start_strategy(session, "BreakEven", None, {"breakeven_mode": "shift_sl"})
+
+        # Trigger: price >= new_sl_price(100.25) + trigger_buffer(0.30) = 100.55
+        svc.on_tick(session, _tick(T0 + 1, c=100.6), None)
+
+        orders = order_service.get_open_orders(SESSION)
+        assert len(orders) == 2
+        ids = {o.order_id for o in orders}
+        assert sl1.order_id in ids
+        assert sl2.order_id in ids
+        for o in orders:
+            assert o.trigger_price == pytest.approx(100.25)
+
+    def test_limit_order_mode_cancels_all_sl_orders(self):
+        """limit_order mode cancels ALL open SL orders before placing exit LIMIT."""
+        session = _session()
+        self._add_long_position()  # qty=10
+
+        sl1 = order_service.place_order(
+            session_id=SESSION, symbol=SYMBOL, side=TradeSide.SELL,
+            order_type=OrderType.STOPLOSS, quantity=4, created_at=T0,
+            trading_date=DATE, trigger_price=80.0, is_stoploss=True, user_id=USER_ID,
+        )
+        sl2 = order_service.place_order(
+            session_id=SESSION, symbol=SYMBOL, side=TradeSide.SELL,
+            order_type=OrderType.STOPLOSS, quantity=6, created_at=T0,
+            trading_date=DATE, trigger_price=80.0, is_stoploss=True, user_id=USER_ID,
+        )
+
+        svc.start_strategy(session, "BreakEven", None, {"breakeven_mode": "limit_order"})
+
+        # Trigger: price >= new_sl_price in limit_order mode
+        svc.on_tick(session, _tick(T0 + 1, c=100.25), None)
+
+        open_orders = order_service.get_open_orders(SESSION)
+        # The 2 SL orders should be cancelled; one LIMIT order remains
+        assert len(open_orders) == 1
+        assert open_orders[0].order_type == OrderType.LIMIT
+        assert open_orders[0].limit_price == pytest.approx(100.25)
+
 
 # ── Cancel All ────────────────────────────────────────────────────────────────
 
@@ -658,3 +755,157 @@ class TestCancelAll:
             assert mock_write.called
             call_args = mock_write.call_args[0][0]
             assert call_args.status == StrategyStatus.CANCELLED
+
+
+# ── LockProfit ────────────────────────────────────────────────────────────────
+
+class TestLockProfit:
+    def _add_long_position(self, qty=10):
+        from app.services.trading import record_trade
+        record_trade(
+            session_id=SESSION, side=TradeSide.BUY, price=100.0,
+            timestamp=T0, quantity=qty, symbol=SYMBOL, user_id=USER_ID,
+        )
+
+    def _add_short_position(self, qty=10):
+        from app.services.trading import record_trade
+        record_trade(
+            session_id=SESSION, side=TradeSide.SELL, price=100.0,
+            timestamp=T0, quantity=qty, symbol=SYMBOL, user_id=USER_ID,
+        )
+
+    def test_long_triggers_at_lock_price_and_moves_sl(self):
+        session = _session()
+        self._add_long_position()
+
+        sl = order_service.place_order(
+            session_id=SESSION, symbol=SYMBOL, side=TradeSide.SELL,
+            order_type=OrderType.STOPLOSS, quantity=10, created_at=T0,
+            trading_date=DATE, trigger_price=80.0, is_stoploss=True, user_id=USER_ID,
+        )
+
+        svc.start_strategy(session, "LockProfit", None, {
+            "lock_profit_price": 130.0, "triggered": False,
+        })
+
+        svc.on_tick(session, _tick(T0, c=129.0), None)  # below lock — no change
+        assert order_service.get_open_orders(SESSION)[0].trigger_price == pytest.approx(80.0)
+
+        svc.on_tick(session, _tick(T0 + 1, c=130.0), None)  # hits lock price
+        orders = order_service.get_open_orders(SESSION)
+        assert len(orders) == 1
+        # New SL price = 130.0 - buffer; buffer = ceil(max(0.15, 0.325)) = 0.35
+        assert orders[0].trigger_price == pytest.approx(130.0 - 0.35)
+
+    def test_short_triggers_at_lock_price_and_moves_sl(self):
+        session = _session()
+        self._add_short_position()
+
+        sl = order_service.place_order(
+            session_id=SESSION, symbol=SYMBOL, side=TradeSide.BUY,
+            order_type=OrderType.STOPLOSS, quantity=10, created_at=T0,
+            trading_date=DATE, trigger_price=120.0, is_stoploss=True, user_id=USER_ID,
+        )
+
+        svc.start_strategy(session, "LockProfit", None, {
+            "lock_profit_price": 70.0, "triggered": False,
+        })
+
+        svc.on_tick(session, _tick(T0, c=71.0), None)  # above lock — no change
+        assert order_service.get_open_orders(SESSION)[0].trigger_price == pytest.approx(120.0)
+
+        svc.on_tick(session, _tick(T0 + 1, c=70.0), None)  # hits lock price
+        orders = order_service.get_open_orders(SESSION)
+        assert len(orders) == 1
+        # New SL price = 70.0 + buffer; buffer = ceil(max(0.15, 0.175)) = 0.20
+        assert orders[0].trigger_price == pytest.approx(70.0 + 0.20)
+
+    def test_does_not_re_trigger_after_first_fire(self):
+        session = _session()
+        self._add_long_position()
+
+        order_service.place_order(
+            session_id=SESSION, symbol=SYMBOL, side=TradeSide.SELL,
+            order_type=OrderType.STOPLOSS, quantity=10, created_at=T0,
+            trading_date=DATE, trigger_price=80.0, is_stoploss=True, user_id=USER_ID,
+        )
+
+        svc.start_strategy(session, "LockProfit", None, {
+            "lock_profit_price": 110.0, "triggered": False,
+        })
+
+        svc.on_tick(session, _tick(T0, c=115.0), None)  # triggers
+        price_after_first = order_service.get_open_orders(SESSION)[0].trigger_price
+
+        # Manually update the SL back (as if price moved)
+        sl = order_service.get_open_orders(SESSION)[0]
+        order_service.update_order(SESSION, sl.order_id, DATE, trigger_price=95.0)
+
+        svc.on_tick(session, _tick(T0 + 1, c=120.0), None)  # should NOT re-trigger
+        assert order_service.get_open_orders(SESSION)[0].trigger_price == pytest.approx(95.0)
+
+    def test_updates_all_multiple_sl_orders(self):
+        """LockProfit must update ALL open SL orders regardless of their quantity."""
+        session = _session()
+        self._add_long_position(qty=20)
+
+        sl1 = order_service.place_order(
+            session_id=SESSION, symbol=SYMBOL, side=TradeSide.SELL,
+            order_type=OrderType.STOPLOSS, quantity=10, created_at=T0,
+            trading_date=DATE, trigger_price=80.0, is_stoploss=True, user_id=USER_ID,
+        )
+        sl2 = order_service.place_order(
+            session_id=SESSION, symbol=SYMBOL, side=TradeSide.SELL,
+            order_type=OrderType.STOPLOSS, quantity=10, created_at=T0,
+            trading_date=DATE, trigger_price=80.0, is_stoploss=True, user_id=USER_ID,
+        )
+
+        svc.start_strategy(session, "LockProfit", None, {
+            "lock_profit_price": 130.0, "triggered": False,
+        })
+
+        svc.on_tick(session, _tick(T0, c=130.0), None)  # triggers
+
+        orders = order_service.get_open_orders(SESSION)
+        assert len(orders) == 2
+        for o in orders:
+            assert o.trigger_price == pytest.approx(130.0 - 0.35)
+
+    def test_update_strategy_price_rearms(self):
+        session = _session()
+        self._add_long_position()
+
+        order_service.place_order(
+            session_id=SESSION, symbol=SYMBOL, side=TradeSide.SELL,
+            order_type=OrderType.STOPLOSS, quantity=10, created_at=T0,
+            trading_date=DATE, trigger_price=80.0, is_stoploss=True, user_id=USER_ID,
+        )
+
+        instance = svc.start_strategy(session, "LockProfit", None, {
+            "lock_profit_price": 110.0, "triggered": False,
+        })
+
+        svc.on_tick(session, _tick(T0, c=115.0), None)  # triggers
+        assert instance.metadata.get("triggered") is True
+
+        # Re-arm with new price
+        svc.update_strategy_price(SESSION, instance.strategy_id, 140.0)
+        assert instance.metadata.get("triggered") is False
+        assert float(instance.metadata.get("lock_profit_price")) == pytest.approx(140.0)
+
+    def test_cancel_individual_strategy(self):
+        session = _session()
+        self._add_long_position()
+
+        inst = svc.start_strategy(session, "LockProfit", None, {
+            "lock_profit_price": 110.0, "triggered": False,
+        })
+        svc.start_strategy(session, "AggressiveStoploss", None, {})
+
+        assert len(svc.list_running(SESSION)) == 2
+
+        found = svc.cancel_strategy(SESSION, inst.strategy_id)
+        assert found is True
+        running = svc.list_running(SESSION)
+        assert len(running) == 1
+        assert running[0].strategy_type == "AggressiveStoploss"

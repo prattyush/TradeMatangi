@@ -4,6 +4,7 @@ User settings service — persists per-user preferences to DynamoDB.
 from __future__ import annotations
 
 import logging
+from decimal import Decimal
 
 logger = logging.getLogger(__name__)
 
@@ -83,7 +84,10 @@ def update_settings(user_id: str, settings: dict) -> dict:
     try:
         from app.services.db import get_dynamodb_resource
         table = get_dynamodb_resource().Table("UserSettings")
-        table.put_item(Item={"user_id": user_id, **current})
+        dynamo_item = {"user_id": user_id}
+        for k, v in current.items():
+            dynamo_item[k] = Decimal(str(v)) if isinstance(v, float) else v
+        table.put_item(Item=dynamo_item)
     except Exception:
         logger.exception("Failed to update settings for user %s", user_id)
     return current

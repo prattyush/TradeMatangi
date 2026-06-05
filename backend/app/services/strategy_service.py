@@ -1,11 +1,11 @@
 """
 Strategy service: automated trading strategies that run alongside the simulation.
 
-Three strategy types:
+Strategy types:
   AutoStop           - Entry: places TARGET order at bar high/low (or % from close) on each bar close.
-  BreakEven          - Exit: exits 100% of position on every tick as soon as price >= avg entry (LONG)
-                       or price <= avg entry (SHORT).
-  AggressiveStoploss - TradeManagement: shifts the SL to 1% from bar close on each bar close.
+  BreakEven          - Exit: shifts / converts all open SL orders to breakeven on every tick.
+  AggressiveStoploss - TradeManagement: shifts ALL open SL orders to 1% from bar close on each bar close.
+  LockProfit         - TradeManagement: one-time move of ALL open SL orders to the lock price when triggered.
 
 Lifecycle:
   - start_strategy()  adds an instance to the in-memory registry and writes to DynamoDB.
@@ -150,6 +150,38 @@ def cancel_all(session_id: str) -> int:
     return count
 
 
+def cancel_strategy(session_id: str, strategy_id: str) -> bool:
+    """Cancel a single strategy by ID. Returns True if found and cancelled."""
+    for s in _registry.get(session_id, []):
+        if s.strategy_id == strategy_id and s.status == StrategyStatus.RUNNING:
+            s.status = StrategyStatus.CANCELLED
+            _write_strategy_to_db(s)
+            _registry[session_id] = [x for x in _registry[session_id] if x.strategy_id != strategy_id]
+            return True
+    return False
+
+
+def update_strategy_price(session_id: str, strategy_id: str, price: float) -> bool:
+    """
+    Update the trigger price for a LockProfit or TargetProfit strategy, re-arming it.
+    Returns True if found and updated, False otherwise.
+    """
+    for s in _registry.get(session_id, []):
+        if s.strategy_id == strategy_id and s.status == StrategyStatus.RUNNING:
+            if s.strategy_type == "LockProfit":
+                s.metadata["lock_profit_price"] = price
+                s.metadata["triggered"] = False
+                _write_strategy_to_db(s)
+                return True
+            elif s.strategy_type == "TargetProfit":
+                s.metadata["target_profit_value"] = price
+                s.metadata["target_profit_is_pct"] = False
+                s.metadata["triggered"] = False
+                _write_strategy_to_db(s)
+                return True
+    return False
+
+
 def list_running(session_id: str) -> list[StrategyInstance]:
     return [s for s in _registry.get(session_id, []) if s.status == StrategyStatus.RUNNING]
 
@@ -215,11 +247,13 @@ def on_tick(session, tick: dict, tick_right: str | None, loop=None) -> None:
             strategy._bar_low = min(strategy._bar_low, tick["low"])
             strategy._bar_close = tick["close"]
 
-        # ── Per-tick evaluation (BreakEven + TargetProfit) ───────────────
+        # ── Per-tick evaluation (BreakEven + TargetProfit + LockProfit) ──
         if strategy.strategy_type == "BreakEven" and strategy.status == StrategyStatus.RUNNING:
             _on_tick_breakeven(strategy, session, current_price, tick_right, ts, loop)
         elif strategy.strategy_type == "TargetProfit" and strategy.status == StrategyStatus.RUNNING:
             _on_tick_target_profit(strategy, session, current_price, tick_right, ts, loop)
+        elif strategy.strategy_type == "LockProfit" and strategy.status == StrategyStatus.RUNNING:
+            _on_tick_lock_profit(strategy, session, current_price, tick_right, loop)
 
     # Prune completed/cancelled entries
     _registry[session.session_id] = [
@@ -330,12 +364,12 @@ def _on_bar_close_autostop(
     _write_strategy_to_db(strategy)
 
 
-def _find_open_exit_orders(session_id: str, exit_side, tick_right: str | None, quantity: int) -> list:
-    """Return pending orders that would close a position: matching side, right, and quantity."""
+def _find_open_exit_orders(session_id: str, exit_side, tick_right: str | None) -> list:
+    """Return all pending orders that could close a position: matching side and right."""
     from app.services.order_service import get_open_orders
     return [
         o for o in get_open_orders(session_id)
-        if o.side == exit_side and o.right == tick_right and o.quantity == quantity
+        if o.side == exit_side and o.right == tick_right
     ]
 
 
@@ -404,8 +438,8 @@ def _on_bar_close_aggressive_sl(
         sl_price = round(close_price * 1.01, 2)
         sl_side = TradeSide.BUY
 
-    # Find open exit orders matching side, right, and position quantity
-    exit_orders = _find_open_exit_orders(session.session_id, sl_side, tick_right, position.quantity)
+    # Find all open exit orders matching side and right (handles multiple SL orders)
+    exit_orders = _find_open_exit_orders(session.session_id, sl_side, tick_right)
 
     if exit_orders:
         for order in exit_orders:
@@ -602,7 +636,7 @@ def _on_tick_breakeven(
         return
 
     exit_side = TradeSide.SELL if position.side == "LONG" else TradeSide.BUY
-    exit_orders = _find_open_exit_orders(session.session_id, exit_side, tick_right, position.quantity)
+    exit_orders = _find_open_exit_orders(session.session_id, exit_side, tick_right)
 
     if breakeven_mode == "limit_order":
         # Cancel existing SL orders and place an immediate LIMIT order at new_sl_price
@@ -712,7 +746,7 @@ def _on_tick_target_profit(
         return
 
     exit_side = TradeSide.SELL if position.side == "LONG" else TradeSide.BUY
-    exit_orders = _find_open_exit_orders(session.session_id, exit_side, tick_right, position.quantity)
+    exit_orders = _find_open_exit_orders(session.session_id, exit_side, tick_right)
 
     if exit_orders:
         _cancel_exit_and_place_limit(
@@ -750,3 +784,58 @@ def _on_tick_target_profit(
         "TargetProfit %s completed: target=%.2f trigger=%.2f for %s right=%s",
         strategy.strategy_id, target_price, current_price, session.symbol, tick_right,
     )
+
+
+def _on_tick_lock_profit(
+    strategy: StrategyInstance,
+    session,
+    current_price: float,
+    tick_right: str | None,
+    loop=None,
+) -> None:
+    """
+    One-time move: when current_price reaches the lock price, shift ALL open SL orders
+    for this symbol/right to (lock_price - buffer) for LONG or (lock_price + buffer) for SHORT.
+    Strategy stays RUNNING so the price can be updated via update_strategy_price() to re-arm.
+    """
+    if strategy.metadata.get("triggered", False):
+        return
+
+    from app.services.trading import get_position
+    from app.models.schemas import TradeSide
+
+    position = get_position(session.session_id, session.symbol, tick_right)
+    if position.side == "FLAT":
+        return
+
+    lock_price = float(strategy.metadata.get("lock_profit_price", 0))
+    if lock_price <= 0:
+        return
+
+    if position.side == "LONG":
+        if current_price < lock_price:
+            return
+        new_sl_price = _ceil_tick(lock_price - _main_buffer(lock_price))
+        exit_side = TradeSide.SELL
+    else:  # SHORT
+        if current_price > lock_price:
+            return
+        new_sl_price = _ceil_tick(lock_price + _main_buffer(lock_price))
+        exit_side = TradeSide.BUY
+
+    exit_orders = _find_open_exit_orders(session.session_id, exit_side, tick_right)
+    if not exit_orders:
+        logger.info(
+            "LockProfit %s: triggered at %.2f but no open SL orders found for %s right=%s",
+            strategy.strategy_id, current_price, session.symbol, tick_right,
+        )
+    else:
+        for order in exit_orders:
+            _update_exit_order_price(session, order, new_sl_price)
+        logger.info(
+            "LockProfit %s: moved %d SL order(s) to %.2f (lock=%.2f) for %s right=%s",
+            strategy.strategy_id, len(exit_orders), new_sl_price, lock_price, session.symbol, tick_right,
+        )
+
+    strategy.metadata["triggered"] = True
+    _write_strategy_to_db(strategy)
