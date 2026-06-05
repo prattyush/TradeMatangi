@@ -325,5 +325,13 @@ def check_orders(
     return filled
 
 
+def cancel_all_pending_orders(session_id: str, trading_date: str) -> int:
+    """Cancel all PENDING orders for a session, crediting back reserved BUY amounts."""
+    pending = [o for o in _orders.get(session_id, {}).values() if o.status == OrderStatus.PENDING]
+    for order in pending:
+        cancel_order(session_id, order.order_id, trading_date)
+    return len(pending)
+
+
 def clear_session(session_id: str) -> None:
     _orders.pop(session_id, None)
