@@ -235,3 +235,55 @@ class TestSLWalletCredit:
              patch("app.services.order_service._write_order_to_db"):
             svc.check_orders(SESSION, 23900.0, 100, trading_date=DATE)
         mock_credit.assert_called_once()
+
+
+class TestCancelAllPendingOrders:
+    """Verify cancel_all_pending_orders refunds wallet on session stop (phantom order bug fix)."""
+
+    def test_cancels_all_pending_returns_count(self):
+        _buy_target(24300.0)
+        _sell_target(24100.0)
+        n = svc.cancel_all_pending_orders(SESSION, DATE)
+        assert n == 2
+
+    def test_all_orders_marked_cancelled(self):
+        _buy_target(24300.0)
+        _buy_limit(24000.0)
+        svc.cancel_all_pending_orders(SESSION, DATE)
+        for order in svc.get_all_orders(SESSION):
+            assert order.status == OrderStatus.CANCELLED
+
+    def test_buy_orders_credit_back_reserved_amount(self):
+        _buy_target(24000.0, qty=10)  # reserved = 10 * 24000 * 1.01
+        with patch("app.services.wallet_service.credit") as mock_credit, \
+             patch("app.services.order_service._write_order_to_db"):
+            svc.cancel_all_pending_orders(SESSION, DATE)
+        mock_credit.assert_called_once()
+        credited = mock_credit.call_args[0][1]
+        assert credited == pytest.approx(10 * 24000.0 * 1.01, rel=1e-3)
+
+    def test_sell_orders_do_not_credit(self):
+        # SELL orders have reserved_amount=0, so no credit should be issued
+        _sell_target(24000.0, qty=10)
+        with patch("app.services.wallet_service.credit") as mock_credit, \
+             patch("app.services.order_service._write_order_to_db"):
+            svc.cancel_all_pending_orders(SESSION, DATE)
+        mock_credit.assert_not_called()
+
+    def test_already_filled_orders_not_re_cancelled(self):
+        order = _buy_target(24000.0)
+        svc.check_orders(SESSION, 24000.0, 10)  # fills it
+        n = svc.cancel_all_pending_orders(SESSION, DATE)
+        assert n == 0
+        # filled order remains FILLED
+        assert svc.get_order(SESSION, order.order_id).status == OrderStatus.FILLED
+
+    def test_empty_session_returns_zero(self):
+        assert svc.cancel_all_pending_orders("no-such-session", DATE) == 0
+
+    def test_mixed_pending_and_filled(self):
+        _buy_target(24000.0)  # will fill
+        svc.check_orders(SESSION, 24000.0, 10)
+        _buy_target(25000.0)  # still pending
+        n = svc.cancel_all_pending_orders(SESSION, DATE)
+        assert n == 1  # only the pending one
