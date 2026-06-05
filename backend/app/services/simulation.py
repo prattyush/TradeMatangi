@@ -1908,6 +1908,20 @@ def stop_session(session: SimulationSession) -> None:
     except Exception as exc:
         logger.warning("Could not cancel strategies for session %s: %s", session.session_id, exc)
 
+    # Cancel pending orders and refund reserved wallet amounts (prevents phantom wallet deductions
+    # when session is restarted with a new session_id and old pending orders become invisible).
+    try:
+        from app.services import order_service
+        cancelled = order_service.cancel_all_pending_orders(session.session_id, session.date)
+        order_service.clear_session(session.session_id)
+        if cancelled:
+            logger.info(
+                "stop_session %s: cancelled %d pending orders, wallet refunded",
+                session.session_id, cancelled,
+            )
+    except Exception as exc:
+        logger.warning("Could not cancel orders for session %s: %s", session.session_id, exc)
+
     # Cancel AI commands in aihelper (synchronous — must complete before stop_session returns
     # so a racing bar-close hook cannot fire after session is torn down).
     # Failure must NOT block session stop — log and continue.

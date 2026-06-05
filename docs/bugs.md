@@ -172,6 +172,12 @@ Look at each of the bugs, fix them and then mark them resolved as well if approv
 
 ### AI Helper Bugs
 
+**[RESOLVED]** Phantom open target order drains wallet permanently after session close (PR #177, 2026-06-05).
+- **Symptom**: Creating a BUY TARGET order in a paper trading session and then stopping the session caused the wallet to remain debited by the order's reserved amount. On session restart (new `session_id`), the phantom order was invisible — impossible to cancel — but the wallet shortfall persisted forever.
+- **Root cause**: `stop_session()` cancelled running strategies but never called `order_service.cancel_all_pending_orders()`. A BUY TARGET order debits the wallet at placement (`debit(reserved_amount)`) and only credits it back on explicit cancellation or fill. With no cleanup on teardown, the deduction was permanent.
+- **Fix**: Added `cancel_all_pending_orders(session_id, trading_date)` to `order_service.py`. It iterates all PENDING orders for the session, calls `cancel_order()` on each (which already handles the credit-back for BUY orders), and returns a count. `stop_session()` now calls this before `clear_session()` — all BUY reservations are refunded atomically when any session ends. 7 new unit tests added.
+- **Files**: `backend/app/services/order_service.py`, `backend/app/services/simulation.py`, `backend/tests/test_order_service.py`.
+
 **[RESOLVED]** Duplicate AI exit fires — same exit command evaluated and dispatched multiple times (PR #158, 2026-06-03).
 - **Symptom**: On bar-close, `exit_position` dispatched to the backend 2–3× in rapid succession. Position exited correctly but backend received redundant market-sell calls; trade history showed extra entries.
 - **Root cause**: Multiple concurrent `_evaluate_exit()` calls (one per bar-close fire) all passed the guardrail and dispatched to the backend before any of them could mark the command as executed in DynamoDB.
