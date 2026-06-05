@@ -101,11 +101,12 @@ export interface StrategyResponse {
   symbol: string
   right: string | null
   status: string
+  triggered: boolean
 }
 
 export interface StartStrategyRequest {
   session_id: string
-  strategy_type: 'AutoStop' | 'BreakEven' | 'AggressiveStoploss' | 'TargetProfit'
+  strategy_type: 'AutoStop' | 'BreakEven' | 'AggressiveStoploss' | 'TargetProfit' | 'LockProfit'
   right?: 'CE' | 'PE' | null
   quantity?: number
   funds_ratio_pct?: number
@@ -117,6 +118,8 @@ export interface StartStrategyRequest {
   target_profit_is_pct?: boolean
   target_profit_buffer_ticks?: number
   breakeven_mode?: 'shift_sl' | 'limit_order'
+  lock_profit_value?: number
+  lock_profit_is_pct?: boolean
 }
 
 export interface SimulationStartResponse {
@@ -809,6 +812,37 @@ const api = {
       headers: _authHeaders(),
     })
     if (!res.ok) throw new Error(`List strategies failed: ${res.status}`)
+    return res.json()
+  },
+
+  async cancelStrategy(strategy_id: string, session_id: string): Promise<void> {
+    const res = await fetch(`${BACKEND_URL}/api/strategies/${strategy_id}/cancel`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ..._authHeaders() },
+      body: JSON.stringify({ session_id }),
+    })
+    if (!res.ok) throw new Error(`Cancel strategy failed: ${res.status}`)
+  },
+
+  async updateStrategyPrice(strategy_id: string, session_id: string, price: number): Promise<void> {
+    const res = await fetch(`${BACKEND_URL}/api/strategies/${strategy_id}/price`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', ..._authHeaders() },
+      body: JSON.stringify({ session_id, price }),
+    })
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}))
+      throw new Error(data.detail || `Update strategy price failed: ${res.status}`)
+    }
+  },
+
+  async bulkUpdateSL(session_id: string, trigger_price: number, right: string | null): Promise<{ updated: number }> {
+    const res = await fetch(`${BACKEND_URL}/api/orders/bulk-update-sl`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', ..._authHeaders() },
+      body: JSON.stringify({ session_id, trigger_price, right }),
+    })
+    if (!res.ok) throw new Error(`Bulk SL update failed: ${res.status}`)
     return res.json()
   },
 
