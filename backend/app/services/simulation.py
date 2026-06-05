@@ -65,6 +65,8 @@ class SimulationSession:
     ai_commands_active: bool = False
     # Per-right bar state for AI bar-close hook: {right → {slot, open, high, low, close, history}}
     _ai_bar_tracker: dict = field(default_factory=dict, init=False, repr=False)
+    # Unix epoch ms of initial session creation; preserved across DB writes for resume lookup
+    created_at: int = 0
     # GuardRails runtime state (snapshotted from UserSettings at create_session)
     guardrail_block_until_bar: int = 0        # Unix bar-slot ts; blocked while current_bar_slot <= this
     guardrail_ban_active: bool = False
@@ -109,6 +111,8 @@ def _upsert_session_to_db(session: SimulationSession) -> None:
             "instrument_type": session.instrument_type,
             "session_type": session.session_type,
         }
+        if session.created_at:
+            item["created_at"] = session.created_at
         if session.instrument_type == "options":
             item["strike"] = session.strike
             item["expiry"] = session.expiry
@@ -162,12 +166,111 @@ def create_session(
         stepwise=stepwise,
     )
     session.resume_event.set()  # not paused initially
+    session.created_at = int(datetime.now(timezone.utc).timestamp() * 1000)
     if stepwise:
         session.total_bars = _count_total_bars(symbol, date, start_time, strategy_interval_secs)
     _sessions[session_id] = session
     _upsert_session_to_db(session)
     from app.services.guardrail_service import initialize_guardrails
     initialize_guardrails(session, user_id)
+    return session
+
+
+def find_session_by_context(
+    user_id: str,
+    symbol: str,
+    date: str,
+    session_type: str,
+) -> Optional[dict]:
+    """Return the most recent DynamoDB Sessions record for (user, symbol, date, session_type).
+
+    Returns None for simulation sessions — those always create fresh.
+    Failures are swallowed so a DB error never blocks a fresh session start.
+    """
+    if session_type == "sim":
+        return None
+    try:
+        from app.services.db import get_dynamodb_resource
+        from boto3.dynamodb.conditions import Key
+        table = get_dynamodb_resource().Table("Sessions")
+        resp = table.query(
+            IndexName="UserIdIndex",
+            KeyConditionExpression=Key("user_id").eq(user_id),
+        )
+        matches = [
+            it for it in resp.get("Items", [])
+            if it.get("symbol") == symbol
+            and it.get("date") == date
+            and it.get("session_type") == session_type
+        ]
+        if not matches:
+            return None
+        return max(matches, key=lambda it: int(it.get("created_at", 0)))
+    except Exception:
+        logger.exception(
+            "find_session_by_context failed for user=%s symbol=%s date=%s type=%s",
+            user_id, symbol, date, session_type,
+        )
+        return None
+
+
+def rebuild_session_from_db(
+    db_record: dict,
+    user_id: str,
+    brokerage_per_order: float = 1.0,
+    strategy_interval_secs: int = 180,
+) -> SimulationSession:
+    """Re-create a SimulationSession in memory from a DynamoDB record, reusing the same session_id.
+
+    Called when a paper or real session is resumed after a stop/disconnect.
+    All prior trades remain visible under this session_id, so position tracking
+    and margin checks work without any cross-session logic.
+    """
+    from app.services import wallet_service
+    session_id = db_record["session_id"]
+    symbol = db_record["symbol"]
+    date = db_record["date"]
+    start_time = db_record.get("start_time", "09:15:00")
+    speed = float(db_record.get("speed", 1.0))
+    session_type = db_record["session_type"]
+    instrument_type = db_record.get("instrument_type", "equity")
+    strike_raw = db_record.get("strike")
+    strike = int(strike_raw) if strike_raw is not None else None
+    expiry = db_record.get("expiry")
+    right = db_record.get("right")
+    created_at = int(db_record.get("created_at", 0))
+
+    session_capital = wallet_service.get_balance(user_id, date)
+
+    session = SimulationSession(
+        session_id=session_id,
+        symbol=symbol,
+        date=date,
+        start_time=start_time,
+        speed=speed,
+        user_id=user_id,
+        session_capital=session_capital,
+        instrument_type=instrument_type,
+        strike=strike,
+        expiry=expiry,
+        right=right,
+        strike_ce=strike,
+        strike_pe=strike,
+        brokerage_per_order=brokerage_per_order,
+        strategy_interval_secs=strategy_interval_secs,
+        session_type=session_type,
+        stepwise=False,
+        created_at=created_at,
+    )
+    session.resume_event.set()
+    _sessions[session_id] = session
+    _upsert_session_to_db(session)
+    from app.services.guardrail_service import initialize_guardrails
+    initialize_guardrails(session, user_id)
+    logger.info(
+        "rebuild_session_from_db: resumed session %s for user=%s symbol=%s date=%s type=%s",
+        session_id, user_id, symbol, date, session_type,
+    )
     return session
 
 
