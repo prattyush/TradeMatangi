@@ -40,6 +40,7 @@ interface PaneConfig {
   expiry?: string
   right?: 'CE' | 'PE'
   liveFromTs?: number
+  reloadKey?: number
 }
 
 type LayoutPreset = 1 | 2 | 3 | 4
@@ -205,21 +206,31 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
 
   // ── Add pane ────────────────────────────────────────────────────────────────
   const addPane = useCallback(() => {
-    if (instrumentType === 'options' && addPaneType !== 'equity' && optionsReady) {
+    // Allow adding CE/PE panes when optionsReady is set OR when a running options session provides the expiry
+    const effectiveExpiry = optionsReady?.expiry ?? sim.sessionExpiry
+    const isOptionsAdd = (instrumentType === 'options' || sim.sessionInstrumentType === 'options')
+                         && addPaneType !== 'equity'
+                         && !!effectiveExpiry
+    if (isOptionsAdd && effectiveExpiry) {
       const interval = { NIFTY: 50, BSESEN: 100, RELIND: 5, TATMOT: 5, TATPOW: 5 }[sim.symbol] ?? 50
-      const basePrice = sim.currentPrice > 0 ? sim.currentPrice : optionsReady.underlyingPrice
+      const basePrice = sim.currentPrice > 0 ? sim.currentPrice : (optionsReady?.underlyingPrice ?? 0)
       const currentAtm = Math.round(basePrice / interval) * interval
       // OTM direction: positive offset = higher strikes for CE, lower for PE
       const directedOffset = addPaneType === 'PE' ? -addOffset : addOffset
       const strike = currentAtm + directedOffset * interval
       const right = addPaneType as 'CE' | 'PE'
       const liveFromTs = sim.latestEquityTick?.time ?? undefined
-      const newPane = { ...makeOptionsPane(right, strike, optionsReady.expiry), liveFromTs }
+      const newPane = { ...makeOptionsPane(right, strike, effectiveExpiry), liveFromTs }
       setPanes(p => [...p, newPane])
 
       if (sim.sessionId && (sim.sessionState === 'running' || sim.sessionState === 'paused')) {
         api.updatePaneStrike(sim.sessionId, right, strike)
-          .then(() => sim.updateSessionStrike(right, strike))
+          .then(() => {
+            sim.updateSessionStrike(right, strike)
+            // Increment pane's reloadKey now that the backend has cached the data,
+            // so the Chart re-fetches historical candles for the new strike.
+            setPanes(p => p.map(x => x.id === newPane.id ? { ...x, reloadKey: (x.reloadKey ?? 0) + 1 } : x))
+          })
           .catch((err: unknown) => console.error('Failed to update streaming strike:', err))
       }
     } else {
@@ -227,7 +238,7 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
     }
   }, [instrumentType, addPaneType, addInterval, addOffset, optionsReady, sim.symbol,
       sim.currentPrice, sim.latestEquityTick, sim.sessionId, sim.sessionState,
-      sim.updateSessionStrike])
+      sim.sessionInstrumentType, sim.sessionExpiry, sim.updateSessionStrike])
 
   const removePane = useCallback((id: number) => {
     setPanes(p => {
@@ -508,6 +519,7 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
           expiry={pane.expiry}
           right={pane.right as 'CE' | 'PE' | undefined}
           liveFromTs={pane.liveFromTs}
+          reloadKey={pane.reloadKey ?? 0}
           currentSimTime={sim.latestEquityTick?.time ?? null}
           isActive={pane.id === activePaneId}
           onActivate={() => {
@@ -812,7 +824,7 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
 
           <span style={{ fontSize: 12, color: '#484f58' }}>Add:</span>
 
-          {instrumentType === 'options' && (
+          {(instrumentType === 'options' || sim.sessionInstrumentType === 'options') && (
             <>
               <select
                 value={addPaneType}
@@ -845,7 +857,7 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
             </>
           )}
 
-          {instrumentType === 'equity' && (
+          {instrumentType === 'equity' && sim.sessionInstrumentType !== 'options' && (
             <select
               value={addInterval}
               onChange={e => setAddInterval(Number(e.target.value))}
@@ -857,11 +869,11 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
 
           <button
             onClick={addPane}
-            disabled={instrumentType === 'options' && addPaneType !== 'equity' && !optionsReady}
+            disabled={(instrumentType === 'options' || sim.sessionInstrumentType === 'options') && addPaneType !== 'equity' && !optionsReady && !sim.sessionExpiry}
             style={{ background: '#21262d', border: '1px solid #30363d', color: '#8b949e', borderRadius: 6, padding: '3px 10px', fontSize: 12, cursor: 'pointer' }}
           >+ Add</button>
 
-          {instrumentType === 'options' && (
+          {(instrumentType === 'options' || sim.sessionInstrumentType === 'options') && (
             <span style={{ fontSize: 11, color: '#484f58' }}>
               {activeRight ? `Active: ${activeRight}` : 'Click a CE/PE pane to trade'}
             </span>
