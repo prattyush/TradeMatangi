@@ -105,30 +105,49 @@ export default function AIChatPanel({ sessionId, userId, symbol, strikeCe, strik
   const [cancellingCommand, setCancellingCommand] = useState<string | null>(null)
   const [pos, setPos] = useState<{ x: number; y: number } | null>(null)
   const [expandedInstances, setExpandedInstances] = useState<Set<string>>(new Set())
+  const [panelWidth, setPanelWidth] = useState(480)
+  const [chatFontSize, setChatFontSize] = useState(0)
   const isDragging = useRef(false)
   const dragStart = useRef({ mouseX: 0, mouseY: 0, panelX: 0, panelY: 0 })
+  const isResizing = useRef(false)
+  const resizeStart = useRef({ mouseX: 0, startWidth: 480, startX: 0, startY: 0 })
   const lastSeenTsRef = useRef<string | null>(null)
   const commandsRef = useRef<CommandItem[]>([])
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
+  const FONT_SCALES = [1, 1.2, 1.45]
+  const fs = (base: number) => Math.round(base * FONT_SCALES[chatFontSize])
+
   const effectivePos = useMemo(() => {
     if (pos) return pos
-    const PANEL_W = 480, PANEL_H = 640, MARGIN = 24
+    const PANEL_H = 640, MARGIN = 24
     return {
-      x: (typeof window !== 'undefined' ? window.innerWidth : 800) - PANEL_W - MARGIN,
+      x: (typeof window !== 'undefined' ? window.innerWidth : 800) - panelWidth - MARGIN,
       y: (typeof window !== 'undefined' ? window.innerHeight : 600) - PANEL_H - MARGIN,
     }
-  }, [pos])
+  }, [pos, panelWidth])
 
   useEffect(() => {
     const onMouseMove = (e: MouseEvent) => {
-      if (!isDragging.current) return
-      setPos({
-        x: dragStart.current.panelX + e.clientX - dragStart.current.mouseX,
-        y: dragStart.current.panelY + e.clientY - dragStart.current.mouseY,
-      })
+      if (isDragging.current) {
+        setPos({
+          x: dragStart.current.panelX + e.clientX - dragStart.current.mouseX,
+          y: dragStart.current.panelY + e.clientY - dragStart.current.mouseY,
+        })
+      } else if (isResizing.current) {
+        const delta = resizeStart.current.mouseX - e.clientX
+        const newWidth = Math.min(900, Math.max(360, resizeStart.current.startWidth + delta))
+        setPanelWidth(newWidth)
+        setPos({
+          x: resizeStart.current.startX - (newWidth - resizeStart.current.startWidth),
+          y: resizeStart.current.startY,
+        })
+      }
     }
-    const onMouseUp = () => { isDragging.current = false }
+    const onMouseUp = () => {
+      isDragging.current = false
+      isResizing.current = false
+    }
     document.addEventListener('mousemove', onMouseMove)
     document.addEventListener('mouseup', onMouseUp)
     return () => {
@@ -335,12 +354,26 @@ export default function AIChatPanel({ sessionId, userId, symbol, strikeCe, strik
   return (
     <div style={{
       position: 'fixed', left: effectivePos.x, top: effectivePos.y,
-      width: 480, height: 640,
+      width: panelWidth, height: 640,
       background: '#0d1117', border: '1px solid #30363d',
       borderRadius: 12, display: 'flex', flexDirection: 'column',
       zIndex: 1000, boxShadow: '0 4px 24px rgba(0,0,0,0.6)',
       overflow: 'hidden',
     }}>
+      {/* Left-edge resize handle */}
+      <div
+        onMouseDown={e => {
+          isResizing.current = true
+          resizeStart.current = { mouseX: e.clientX, startWidth: panelWidth, startX: effectivePos.x, startY: effectivePos.y }
+          e.preventDefault()
+        }}
+        onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = 'rgba(88,166,255,0.18)' }}
+        onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'transparent' }}
+        style={{
+          position: 'absolute', left: 0, top: 0, bottom: 0, width: 6,
+          cursor: 'ew-resize', zIndex: 10, background: 'transparent',
+        }}
+      />
       {/* Header — drag handle */}
       <div
         onMouseDown={handleHeaderMouseDown}
@@ -377,6 +410,18 @@ export default function AIChatPanel({ sessionId, userId, symbol, strikeCe, strik
         </div>
 
         <button
+          onClick={() => setChatFontSize(s => (s + 1) % 3)}
+          title="Cycle font size"
+          style={{
+            background: 'none', border: '1px solid #30363d',
+            color: '#8b949e', cursor: 'pointer',
+            borderRadius: 4, padding: '2px 6px', fontSize: 11,
+          }}
+        >
+          {['A', 'A+', 'A++'][chatFontSize]}
+        </button>
+
+        <button
           onClick={() => setOpen(false)}
           style={{
             background: 'none', border: 'none',
@@ -407,7 +452,7 @@ export default function AIChatPanel({ sessionId, userId, symbol, strikeCe, strik
                     <div style={{
                       background: '#1f4d2e', border: '1px solid #2d6a3f',
                       borderRadius: '12px 12px 2px 12px',
-                      padding: '8px 12px', fontSize: 14, color: '#e6edf3',
+                      padding: '8px 12px', fontSize: fs(14), color: '#e6edf3',
                       whiteSpace: 'pre-wrap', wordBreak: 'break-word',
                     }}>
                       {msg.text}
@@ -426,7 +471,7 @@ export default function AIChatPanel({ sessionId, userId, symbol, strikeCe, strik
                       background: '#161b22',
                       border: `1px solid ${isError ? '#f85149' : isWatching ? '#56d364' : '#30363d'}`,
                       borderRadius: '2px 12px 12px 12px',
-                      padding: '8px 12px', fontSize: 14, color: '#e6edf3',
+                      padding: '8px 12px', fontSize: fs(14), color: '#e6edf3',
                       whiteSpace: 'pre-wrap', wordBreak: 'break-word',
                     }}>
                       {m.text}
@@ -444,9 +489,9 @@ export default function AIChatPanel({ sessionId, userId, symbol, strikeCe, strik
                   <div key={msg.id} style={{ alignSelf: 'flex-start', width: '95%' }}>
                     <div style={{
                       background: '#0d1117', border: '1px solid #1f6feb',
-                      borderRadius: 10, padding: '10px 12px', fontSize: 11,
+                      borderRadius: 10, padding: '10px 12px', fontSize: fs(11),
                     }}>
-                      <div style={{ color: '#58a6ff', fontWeight: 700, marginBottom: 6, fontSize: 12 }}>
+                      <div style={{ color: '#58a6ff', fontWeight: 700, marginBottom: 6, fontSize: fs(12) }}>
                         📊 Trade Analysis — {am.periodLabel}
                       </div>
 
@@ -461,27 +506,27 @@ export default function AIChatPanel({ sessionId, userId, symbol, strikeCe, strik
                           display: 'flex', flexWrap: 'wrap', gap: 5, marginBottom: 8,
                         }}>
                           {stats.win_rate && (
-                            <span style={{ background: '#161b22', border: '1px solid #30363d', borderRadius: 4, padding: '2px 7px', color: '#8b949e', fontSize: 10 }}>
+                            <span style={{ background: '#161b22', border: '1px solid #30363d', borderRadius: 4, padding: '2px 7px', color: '#8b949e', fontSize: fs(10) }}>
                               Win rate: <strong style={{ color: '#e6edf3' }}>{stats.win_rate}</strong>
                             </span>
                           )}
                           {stats.avg_profit_pct && (
-                            <span style={{ background: '#161b22', border: '1px solid #30363d', borderRadius: 4, padding: '2px 7px', color: '#8b949e', fontSize: 10 }}>
+                            <span style={{ background: '#161b22', border: '1px solid #30363d', borderRadius: 4, padding: '2px 7px', color: '#8b949e', fontSize: fs(10) }}>
                               Avg profit: <strong style={{ color: '#56d364' }}>{stats.avg_profit_pct}</strong>
                             </span>
                           )}
                           {stats.avg_loss_pct && (
-                            <span style={{ background: '#161b22', border: '1px solid #30363d', borderRadius: 4, padding: '2px 7px', color: '#8b949e', fontSize: 10 }}>
+                            <span style={{ background: '#161b22', border: '1px solid #30363d', borderRadius: 4, padding: '2px 7px', color: '#8b949e', fontSize: fs(10) }}>
                               Avg loss: <strong style={{ color: '#f85149' }}>{stats.avg_loss_pct}</strong>
                             </span>
                           )}
                           {stats.best_time_of_day && (
-                            <span style={{ background: '#161b22', border: '1px solid #30363d', borderRadius: 4, padding: '2px 7px', color: '#8b949e', fontSize: 10 }}>
+                            <span style={{ background: '#161b22', border: '1px solid #30363d', borderRadius: 4, padding: '2px 7px', color: '#8b949e', fontSize: fs(10) }}>
                               Best time: <strong style={{ color: '#e6edf3' }}>{stats.best_time_of_day}</strong>
                             </span>
                           )}
                           {stats.worst_time_of_day && (
-                            <span style={{ background: '#161b22', border: '1px solid #30363d', borderRadius: 4, padding: '2px 7px', color: '#8b949e', fontSize: 10 }}>
+                            <span style={{ background: '#161b22', border: '1px solid #30363d', borderRadius: 4, padding: '2px 7px', color: '#8b949e', fontSize: fs(10) }}>
                               Worst time: <strong style={{ color: '#e6edf3' }}>{stats.worst_time_of_day}</strong>
                             </span>
                           )}
@@ -491,7 +536,7 @@ export default function AIChatPanel({ sessionId, userId, symbol, strikeCe, strik
                       {/* Patterns */}
                       {a.patterns && a.patterns.length > 0 && (
                         <div style={{ marginBottom: 8 }}>
-                          <div style={{ color: '#484f58', fontSize: 10, marginBottom: 4 }}>PATTERNS</div>
+                          <div style={{ color: '#484f58', fontSize: fs(10), marginBottom: 4 }}>PATTERNS</div>
                           {a.patterns.map((p, i) => (
                             <div key={i} style={{
                               background: '#161b22',
@@ -499,17 +544,17 @@ export default function AIChatPanel({ sessionId, userId, symbol, strikeCe, strik
                               borderRadius: 6, padding: '5px 8px', marginBottom: 4,
                             }}>
                               <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginBottom: 2 }}>
-                                <span style={{ fontSize: 10 }}>{p.type === 'positive' ? '✓' : '✗'}</span>
-                                <span style={{ color: p.type === 'positive' ? '#56d364' : '#f85149', fontWeight: 600, fontSize: 11 }}>
+                                <span style={{ fontSize: fs(10) }}>{p.type === 'positive' ? '✓' : '✗'}</span>
+                                <span style={{ color: p.type === 'positive' ? '#56d364' : '#f85149', fontWeight: 600, fontSize: fs(11) }}>
                                   {p.title}
                                 </span>
                                 {p.frequency && (
-                                  <span style={{ color: '#484f58', fontSize: 10, marginLeft: 'auto', flexShrink: 0 }}>
+                                  <span style={{ color: '#484f58', fontSize: fs(10), marginLeft: 'auto', flexShrink: 0 }}>
                                     {p.frequency}
                                   </span>
                                 )}
                               </div>
-                              <div style={{ color: '#8b949e', fontSize: 10, lineHeight: 1.4, wordBreak: 'break-word' }}>
+                              <div style={{ color: '#8b949e', fontSize: fs(10), lineHeight: 1.4, wordBreak: 'break-word' }}>
                                 {p.detail}
                               </div>
                             </div>
@@ -520,10 +565,10 @@ export default function AIChatPanel({ sessionId, userId, symbol, strikeCe, strik
                       {/* Suggestions */}
                       {a.suggestions && a.suggestions.length > 0 && (
                         <div>
-                          <div style={{ color: '#484f58', fontSize: 10, marginBottom: 4 }}>SUGGESTIONS</div>
+                          <div style={{ color: '#484f58', fontSize: fs(10), marginBottom: 4 }}>SUGGESTIONS</div>
                           {a.suggestions.map((s, i) => (
                             <div key={i} style={{
-                              color: '#8b949e', fontSize: 11, marginBottom: 3,
+                              color: '#8b949e', fontSize: fs(11), marginBottom: 3,
                               paddingLeft: 8, borderLeft: '2px solid #1f6feb',
                               wordBreak: 'break-word', lineHeight: 1.4,
                             }}>
@@ -562,9 +607,9 @@ export default function AIChatPanel({ sessionId, userId, symbol, strikeCe, strik
                                 borderTop: '1px solid #21262d',
                               }}
                             >
-                              <span style={{ color: '#484f58', fontSize: 10 }}>FLAGGED TRADES</span>
-                              <span style={{ color: '#484f58', fontSize: 10 }}>({totalCount})</span>
-                              <span style={{ color: '#484f58', fontSize: 10, marginLeft: 'auto' }}>{isOpen ? '▼' : '▶'}</span>
+                              <span style={{ color: '#484f58', fontSize: fs(10) }}>FLAGGED TRADES</span>
+                              <span style={{ color: '#484f58', fontSize: fs(10) }}>({totalCount})</span>
+                              <span style={{ color: '#484f58', fontSize: fs(10), marginLeft: 'auto' }}>{isOpen ? '▼' : '▶'}</span>
                             </div>
                             {isOpen && (
                               <div style={{ marginTop: 4 }}>
@@ -572,11 +617,11 @@ export default function AIChatPanel({ sessionId, userId, symbol, strikeCe, strik
                                   const instances = (pi as Record<string, PatternInstance[]>)[key]!
                                   return (
                                     <div key={key} style={{ marginBottom: 8 }}>
-                                      <div style={{ color: '#58a6ff', fontSize: 10, fontWeight: 600, marginBottom: 4 }}>
+                                      <div style={{ color: '#58a6ff', fontSize: fs(10), fontWeight: 600, marginBottom: 4 }}>
                                         {LABELS[key]} ({instances.length})
                                       </div>
                                       <div style={{ overflowX: 'auto' }}>
-                                        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 10 }}>
+                                        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: fs(10) }}>
                                           <thead>
                                             <tr>
                                               {['Time', 'Dir', 'P&L', 'Detail'].map(h => (
@@ -626,9 +671,9 @@ export default function AIChatPanel({ sessionId, userId, symbol, strikeCe, strik
                   <div style={{
                     background: '#0d1117',
                     border: `1px solid ${isSuccess ? '#238636' : '#f0883e'}`,
-                    borderRadius: 8, padding: '8px 10px', fontSize: 11,
+                    borderRadius: 8, padding: '8px 10px', fontSize: fs(11),
                   }}>
-                    <div style={{ color: '#56d364', fontWeight: 600, marginBottom: 4, fontSize: 10 }}>
+                    <div style={{ color: '#56d364', fontWeight: 600, marginBottom: 4, fontSize: fs(10) }}>
                       🤖 {formatBarTime(d.bar_time)} IST — command triggered
                     </div>
                     <div style={{ color: '#8b949e', marginBottom: 4, fontStyle: 'italic', wordBreak: 'break-word' }}>
