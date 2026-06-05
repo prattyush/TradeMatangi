@@ -1,14 +1,17 @@
 """
 Strategies router: start, cancel, and list automated trading strategies.
 
-POST /api/strategies/start       — register a new strategy for a running session
-POST /api/strategies/cancel-all  — cancel all running strategies for a session
-GET  /api/strategies             — list running strategies for a session
+POST /api/strategies/start            — register a new strategy for a running session
+POST /api/strategies/cancel-all       — cancel all running strategies for a session
+POST /api/strategies/{id}/cancel      — cancel a single strategy
+PATCH /api/strategies/{id}/price      — update lock price for LockProfit / TargetProfit
+GET  /api/strategies                  — list running strategies for a session
 """
 from fastapi import APIRouter, Depends, HTTPException
 
 from app.models.schemas import (
     StartStrategyRequest,
+    UpdateStrategyPriceRequest,
     StrategyResponse,
     CancelAllStrategiesRequest,
     StrategyType,
@@ -43,6 +46,7 @@ def start_strategy(req: StartStrategyRequest, user_id: str = Depends(get_request
         StrategyType.BREAK_EVEN,
         StrategyType.AGGRESSIVE_STOPLOSS,
         StrategyType.TARGET_PROFIT,
+        StrategyType.LOCK_PROFIT,
     ):
         position = get_position(session.session_id, session.symbol, right)
         if position.side == "FLAT":
@@ -72,6 +76,19 @@ def start_strategy(req: StartStrategyRequest, user_id: str = Depends(get_request
                 detail="target_profit_value must be positive",
             )
 
+    # LockProfit requires a lock price value
+    if req.strategy_type == StrategyType.LOCK_PROFIT:
+        if req.lock_profit_value is None:
+            raise HTTPException(
+                status_code=400,
+                detail="LockProfit requires lock_profit_value",
+            )
+        if req.lock_profit_value <= 0:
+            raise HTTPException(
+                status_code=400,
+                detail="lock_profit_value must be positive",
+            )
+
     # For options sessions AutoStop is always BUY
     direction = req.direction.upper()
     if session.instrument_type == "options" and req.strategy_type == StrategyType.AUTO_STOP:
@@ -87,11 +104,27 @@ def start_strategy(req: StartStrategyRequest, user_id: str = Depends(get_request
         "target_profit_value": req.target_profit_value,
         "target_profit_is_pct": req.target_profit_is_pct,
         "target_profit_buffer_ticks": max(1, min(5, req.target_profit_buffer_ticks)),
+        "triggered": False,
     }
     if req.quantity is not None:
         metadata["quantity"] = req.quantity
     if req.funds_ratio_pct is not None:
         metadata["funds_ratio_pct"] = req.funds_ratio_pct
+
+    # LockProfit: resolve pct → absolute price at start time
+    if req.strategy_type == StrategyType.LOCK_PROFIT:
+        lock_value = req.lock_profit_value  # validated non-None above
+        if req.lock_profit_is_pct:
+            session_capital = float(getattr(session, "session_capital", 0))
+            position = get_position(session.session_id, session.symbol, right)
+            if position.side != "FLAT" and position.quantity > 0 and session_capital > 0:
+                target_pnl = (lock_value / 100.0) * session_capital
+                from app.services.strategy_service import _ceil_tick
+                if position.side == "LONG":
+                    lock_value = _ceil_tick(position.avg_entry_price + target_pnl / position.quantity)
+                else:
+                    lock_value = _ceil_tick(position.avg_entry_price - target_pnl / position.quantity)
+        metadata["lock_profit_price"] = lock_value
 
     instance = strategy_service.start_strategy(
         session=session,
@@ -105,6 +138,7 @@ def start_strategy(req: StartStrategyRequest, user_id: str = Depends(get_request
         symbol=instance.symbol,
         right=instance.right,
         status=instance.status.value,
+        triggered=bool(instance.metadata.get("triggered", False)),
     )
 
 
@@ -118,6 +152,34 @@ def cancel_all_strategies(
     return {"cancelled": count}
 
 
+@router.post("/{strategy_id}/cancel")
+def cancel_strategy(
+    strategy_id: str,
+    req: CancelAllStrategiesRequest,
+    user_id: str = Depends(get_request_user_id),
+):
+    _session_or_404(req.session_id)
+    found = strategy_service.cancel_strategy(req.session_id, strategy_id)
+    if not found:
+        raise HTTPException(status_code=404, detail="Strategy not found or not running")
+    return {"cancelled": strategy_id}
+
+
+@router.patch("/{strategy_id}/price")
+def update_strategy_price(
+    strategy_id: str,
+    req: UpdateStrategyPriceRequest,
+    user_id: str = Depends(get_request_user_id),
+):
+    _session_or_404(req.session_id)
+    if req.price <= 0:
+        raise HTTPException(status_code=400, detail="price must be positive")
+    found = strategy_service.update_strategy_price(req.session_id, strategy_id, req.price)
+    if not found:
+        raise HTTPException(status_code=404, detail="Strategy not found, not running, or not price-updatable")
+    return {"updated": strategy_id, "price": req.price}
+
+
 @router.get("", response_model=list[StrategyResponse])
 def list_strategies(session_id: str, user_id: str = Depends(get_request_user_id)):
     _session_or_404(session_id)
@@ -129,6 +191,7 @@ def list_strategies(session_id: str, user_id: str = Depends(get_request_user_id)
             symbol=s.symbol,
             right=s.right,
             status=s.status.value,
+            triggered=bool(s.metadata.get("triggered", False)),
         )
         for s in running
     ]

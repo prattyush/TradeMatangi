@@ -1,9 +1,12 @@
 import json
+import logging
 from fastapi import APIRouter, HTTPException, Query
-from app.models.schemas import Order, OrderType, TradeSide, PlaceOrderRequest, UpdateOrderRequest
+from app.models.schemas import Order, OrderType, TradeSide, PlaceOrderRequest, UpdateOrderRequest, BulkUpdateSLRequest
 from app.services import order_service, simulation as sim_svc
 from app.services.wallet_service import InsufficientFundsError, get_balance
 from app.config import LOT_SIZES, EQUITY_MIS_MARGIN_RATE
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/orders", tags=["orders"])
 
@@ -100,6 +103,15 @@ async def place_order(req: PlaceOrderRequest):
     # Real equity MIS: only 20% margin deducted from wallet for BUY orders.
     is_real_equity = session.session_type == "real" and session.instrument_type == "equity"
     order_margin_rate = EQUITY_MIS_MARGIN_RATE if is_real_equity else 1.0
+
+    # Auto-split large options orders that exceed per-symbol max contracts limit.
+    # qty_chunks[0] goes through the existing full code path below.
+    # Any additional chunks are created afterwards using the same parameters.
+    if session.instrument_type == "options" and req.is_stoploss:
+        qty_chunks = order_service.split_quantity(session.symbol, quantity)
+        quantity = qty_chunks[0]  # first chunk processed by existing code
+    else:
+        qty_chunks = [quantity]
 
     try:
         order = order_service.place_order(
@@ -265,6 +277,56 @@ async def place_order(req: PlaceOrderRequest):
         }))
     except Exception:
         pass
+
+    # Place additional split orders (chunks 2..N) for large options SL orders
+    if len(qty_chunks) > 1:
+        import asyncio as _asyncio
+        _loop = _asyncio.get_event_loop()
+        for extra_qty in qty_chunks[1:]:
+            try:
+                extra_order = order_service.place_order(
+                    session_id=req.session_id,
+                    symbol=session.symbol,
+                    side=req.side,
+                    order_type=req.order_type,
+                    quantity=extra_qty,
+                    created_at=int(session.current_time),
+                    trading_date=session.date,
+                    trigger_price=req.trigger_price,
+                    is_stoploss=req.is_stoploss,
+                    right=order_right,
+                    strike=order_strike,
+                    user_id=session.user_id,
+                    margin_rate=order_margin_rate,
+                )
+                if session.session_type == "real" and req.order_type == OrderType.STOPLOSS:
+                    from app.services.simulation import _register_kotak_sl_for_order
+                    _register_kotak_sl_for_order(session, extra_order, _loop)
+                try:
+                    session.queue.put_nowait(json.dumps({
+                        "type": "order_placed",
+                        "order_id": extra_order.order_id,
+                        "session_id": extra_order.session_id,
+                        "user_id": extra_order.user_id,
+                        "symbol": extra_order.symbol,
+                        "side": extra_order.side.value,
+                        "order_type": extra_order.order_type.value,
+                        "quantity": extra_order.quantity,
+                        "trigger_price": extra_order.trigger_price,
+                        "limit_price": extra_order.limit_price,
+                        "status": extra_order.status.value,
+                        "created_at": extra_order.created_at,
+                        "filled_at": extra_order.filled_at,
+                        "filled_price": extra_order.filled_price,
+                        "is_stoploss": extra_order.is_stoploss,
+                        "right": extra_order.right,
+                        "strike": extra_order.strike,
+                    }))
+                except Exception:
+                    pass
+            except Exception as exc:
+                logger.warning("Auto-split SL order (qty=%d) failed: %s", extra_qty, exc)
+
     return order
 
 
@@ -291,6 +353,54 @@ async def cancel_order(order_id: str, session_id: str = Query(...)):
         except Exception:
             pass  # best-effort; local cancel already recorded
     return order
+
+
+@router.patch("/bulk-update-sl")
+async def bulk_update_sl_route(req: BulkUpdateSLRequest):
+    """
+    Set all pending SL orders for a session's symbol/right to the same trigger price.
+    Handles Kotak real-trading orders too.
+    """
+    session = sim_svc.get_session(req.session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if req.trigger_price <= 0:
+        raise HTTPException(status_code=400, detail="trigger_price must be positive")
+
+    right = req.right.upper() if req.right else None
+    open_orders = order_service.get_open_orders(req.session_id)
+    sl_orders = [o for o in open_orders if o.is_stoploss and (o.right or None) == right]
+
+    if not sl_orders:
+        return {"updated": 0}
+
+    updated = 0
+    for order in sl_orders:
+        order_service.update_order(
+            session_id=req.session_id,
+            order_id=order.order_id,
+            trading_date=session.date,
+            trigger_price=req.trigger_price,
+        )
+        updated += 1
+
+        # Forward to Kotak for real sessions
+        if session.session_type == "real" and getattr(order, "kotak_order_id", None):
+            try:
+                from app.services.kotak_service import get_service as get_kotak
+                from app.config import KOTAK_SLIPPAGE_PCT
+                if order.side == TradeSide.BUY:
+                    kotak_limit = round(req.trigger_price * (1 + KOTAK_SLIPPAGE_PCT), 2)
+                else:
+                    kotak_limit = round(req.trigger_price * (1 - KOTAK_SLIPPAGE_PCT), 2)
+                get_kotak().modify_sl_order(order.kotak_order_id, req.trigger_price, kotak_limit, order.quantity)
+            except Exception as exc:
+                logger.warning(
+                    "bulk_update_sl: failed to update Kotak SL %s: %s",
+                    order.kotak_order_id, exc,
+                )
+
+    return {"updated": updated}
 
 
 @router.patch("/{order_id}", response_model=Order)
@@ -330,7 +440,7 @@ async def update_order(order_id: str, req: UpdateOrderRequest, session_id: str =
                 kotak_limit = round(new_trigger * (1 - KOTAK_SLIPPAGE_PCT), 2)
             get_kotak().modify_sl_order(order.kotak_order_id, new_trigger, kotak_limit, order.quantity)
         except Exception as exc:
-            _log.getLogger(__name__).warning(
+            logger.warning(
                 "Failed to forward SL price change to Kotak (order %s kotak_id %s): %s",
                 order_id, order.kotak_order_id, exc,
             )

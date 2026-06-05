@@ -142,6 +142,8 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
   const [injectedEditPrice, setInjectedEditPrice] = useState<{ orderId: string; price: number } | null>(null)
   const [tpPickActive, setTpPickActive] = useState(false)
   const [injectedTpPrice, setInjectedTpPrice] = useState<number | null>(null)
+  const [lpPickActive, setLpPickActive] = useState(false)
+  const [injectedLpPrice, setInjectedLpPrice] = useState<number | null>(null)
 
   useEffect(() => {
     if (!localStorage.getItem('user')) {
@@ -379,11 +381,14 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
     if (tpPickActive) {
       setInjectedTpPrice(price)
       setTpPickActive(false)
+    } else if (lpPickActive) {
+      setInjectedLpPrice(price)
+      setLpPickActive(false)
     } else if (pricePickOrderId) {
       setInjectedEditPrice({ orderId: pricePickOrderId, price })
       setPricePickOrderId(null)
     }
-  }, [pricePickOrderId, tpPickActive])
+  }, [pricePickOrderId, tpPickActive, lpPickActive])
 
   // ── Strategy callbacks ────────────────────────────────────────────────────────
   const handleStartStrategy = useCallback(async (
@@ -396,6 +401,8 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
       onlyInProfit?: boolean
       targetProfitValue?: number
       targetProfitIsPct?: boolean
+      lockProfitValue?: number
+      lockProfitIsPct?: boolean
     },
   ) => {
     if (!sim.sessionId) return
@@ -413,6 +420,8 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
       target_profit_value: opts.targetProfitValue,
       target_profit_is_pct: opts.targetProfitIsPct ?? false,
       target_profit_buffer_ticks: targetProfitBufferTicks,
+      lock_profit_value: opts.lockProfitValue,
+      lock_profit_is_pct: opts.lockProfitIsPct ?? false,
     })
     setRunningStrategies(prev => [...prev, resp])
   }, [sim.sessionId, autostopTriggerType, autostopDeviationPct, breakevenMode, targetProfitBufferTicks, aggrSlOnlyInProfit])
@@ -421,6 +430,25 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
     if (!sim.sessionId) return
     await api.cancelAllStrategies(sim.sessionId)
     setRunningStrategies([])
+  }, [sim.sessionId])
+
+  const handleCancelStrategy = useCallback(async (strategyId: string) => {
+    if (!sim.sessionId) return
+    await api.cancelStrategy(strategyId, sim.sessionId)
+    setRunningStrategies(prev => prev.filter(s => s.strategy_id !== strategyId))
+  }, [sim.sessionId])
+
+  const handleUpdateStrategyPrice = useCallback(async (strategyId: string, price: number) => {
+    if (!sim.sessionId) return
+    await api.updateStrategyPrice(strategyId, sim.sessionId, price)
+    setRunningStrategies(prev => prev.map(s =>
+      s.strategy_id === strategyId ? { ...s, triggered: false } : s
+    ))
+  }, [sim.sessionId])
+
+  const handleBulkUpdateSL = useCallback(async (triggerPrice: number, right: string | null) => {
+    if (!sim.sessionId) return { updated: 0 }
+    return api.bulkUpdateSL(sim.sessionId, triggerPrice, right)
   }, [sim.sessionId])
 
   // Net session P&L = gross dayPnl minus per-trade commissions (computed by backend)
@@ -484,14 +512,14 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
           isActive={pane.id === activePaneId}
           onActivate={() => {
             setActivePaneId(pane.id)
-            if ((pricePickOrderId || tpPickActive) && pane.id !== activePaneId) {
+            if ((pricePickOrderId || tpPickActive || lpPickActive) && pane.id !== activePaneId) {
               setPricePickOrderId(null)
               setTpPickActive(false)
             }
           }}
           trades={getTradesForPane(pane)}
           openOrders={getOrdersForPane(pane)}
-          onPriceSelect={(pricePickOrderId || tpPickActive) && pane.id === activePaneId ? handleChartPriceSelect : null}
+          onPriceSelect={(pricePickOrderId || tpPickActive || lpPickActive) && pane.id === activePaneId ? handleChartPriceSelect : null}
           historicalDays={historicalDays}
           onMaximize={() => setMaximizedPaneId(isMaximized ? null : pane.id)}
           isMaximized={isMaximized}
@@ -966,8 +994,13 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
               injectedEditPrice={injectedEditPrice}
               onRequestTpPick={() => { setTpPickActive(true); setInjectedTpPrice(null) }}
               injectedTpPrice={injectedTpPrice}
+              onRequestLpPick={() => { setLpPickActive(true); setInjectedLpPrice(null) }}
+              injectedLpPrice={injectedLpPrice}
               onStartStrategy={handleStartStrategy}
               onCancelAllStrategies={handleCancelAllStrategies}
+              onCancelStrategy={handleCancelStrategy}
+              onUpdateStrategyPrice={handleUpdateStrategyPrice}
+              onBulkUpdateSL={handleBulkUpdateSL}
               onGuardRailBlocked={(type, reason) => setGuardrailPopup({ type, reason })}
             />
           </div>

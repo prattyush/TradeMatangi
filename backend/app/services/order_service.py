@@ -15,7 +15,7 @@ import math
 from decimal import Decimal
 
 from app.models.schemas import Order, OrderStatus, OrderType, TradeSide
-from app.config import FIXED_USER_ID, LOT_SIZES
+from app.config import FIXED_USER_ID, LOT_SIZES, MAX_CONTRACTS_PER_ORDER
 from app.services.wallet_service import InsufficientFundsError
 
 logger = logging.getLogger(__name__)
@@ -24,6 +24,28 @@ logger = logging.getLogger(__name__)
 _orders: dict[str, dict[str, Order]] = {}
 
 _TARGET_DEVIATION = 0.01  # 1% buffer for stop-limit orders
+
+
+def get_max_contracts(symbol: str) -> int:
+    """Return max contracts per order for the given symbol; unlimited for others."""
+    for prefix, limit in MAX_CONTRACTS_PER_ORDER.items():
+        if symbol.upper().startswith(prefix):
+            return limit
+    return 10_000_000  # effectively unlimited
+
+
+def split_quantity(symbol: str, qty: int) -> list[int]:
+    """Split qty into chunks each <= max contracts for the symbol."""
+    max_lot = get_max_contracts(symbol)
+    if qty <= max_lot:
+        return [qty]
+    chunks = []
+    remaining = qty
+    while remaining > 0:
+        chunk = min(remaining, max_lot)
+        chunks.append(chunk)
+        remaining -= chunk
+    return chunks
 
 
 def _ensure_session(session_id: str) -> None:

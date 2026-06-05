@@ -39,7 +39,7 @@ interface Props {
   targetProfitBufferTicks?: number
   aggrSlOnlyInProfit?: boolean
   onStartStrategy?: (
-    strategyType: 'AutoStop' | 'BreakEven' | 'AggressiveStoploss' | 'TargetProfit',
+    strategyType: 'AutoStop' | 'BreakEven' | 'AggressiveStoploss' | 'TargetProfit' | 'LockProfit',
     right: 'CE' | 'PE' | null,
     opts: {
       quantity?: number
@@ -48,9 +48,16 @@ interface Props {
       onlyInProfit?: boolean
       targetProfitValue?: number
       targetProfitIsPct?: boolean
+      lockProfitValue?: number
+      lockProfitIsPct?: boolean
     }
   ) => Promise<void>
   onCancelAllStrategies?: () => Promise<void>
+  onCancelStrategy?: (strategyId: string) => Promise<void>
+  onUpdateStrategyPrice?: (strategyId: string, price: number) => Promise<void>
+  onBulkUpdateSL?: (triggerPrice: number, right: string | null) => Promise<{ updated: number }>
+  onRequestLpPick?: () => void
+  injectedLpPrice?: number | null
   onGuardRailBlocked?: (type: 'BLOCK' | 'COOLDOWN' | 'BAN', reason: string) => void
 }
 
@@ -77,6 +84,11 @@ export default function OrderPanel({
   aggrSlOnlyInProfit = false,
   onStartStrategy,
   onCancelAllStrategies,
+  onCancelStrategy,
+  onUpdateStrategyPrice,
+  onBulkUpdateSL,
+  onRequestLpPick,
+  injectedLpPrice,
   onGuardRailBlocked,
 }: Props) {
   const [orderType, setOrderType] = useState<OrderTypeFull>('TARGET')
@@ -98,6 +110,18 @@ export default function OrderPanel({
   const [cancellingAll, setCancellingAll] = useState(false)
   const [tpValue, setTpValue] = useState('')
   const [tpIsPct, setTpIsPct] = useState(false)
+  const [lpValue, setLpValue] = useState('')
+  const [lpIsPct, setLpIsPct] = useState(false)
+
+  // Batch update SL state
+  const [bulkSLPrice, setBulkSLPrice] = useState('')
+  const [bulkUpdating, setBulkUpdating] = useState(false)
+
+  // Per-strategy cancel/edit state
+  const [cancellingStrategyId, setCancellingStrategyId] = useState<string | null>(null)
+  const [editingStrategyId, setEditingStrategyId] = useState<string | null>(null)
+  const [stratEditPrice, setStratEditPrice] = useState('')
+  const [stratEditUpdating, setStratEditUpdating] = useState(false)
 
   // Inline edit state
   const [editingOrderId, setEditingOrderId] = useState<string | null>(null)
@@ -110,14 +134,18 @@ export default function OrderPanel({
   const parsedPrice = parseFloat(price)
   const deviation = targetDeviationPct  // fraction
 
-  // When SL tab selected, lock side to opposite of position
+  // When SL tab selected, lock side to opposite of position; default qty = uncovered portion
   useEffect(() => {
     if (orderType === 'STOPLOSS') {
+      const exitSide = position.side === 'LONG' ? 'SELL' : 'BUY'
       if (position.side === 'LONG') setSide('SELL')
       else if (position.side === 'SHORT') setSide('BUY')
-      setSlQty(position.quantity)
+      const coveredQty = openOrders
+        .filter(o => o.is_stoploss && o.side === exitSide && (o.right ?? null) === activeRight && o.status === 'PENDING')
+        .reduce((sum, o) => sum + o.quantity, 0)
+      setSlQty(Math.max(1, position.quantity - coveredQty))
     }
-  }, [orderType, position.side, position.quantity])
+  }, [orderType, position.side, position.quantity, openOrders, activeRight])
 
   useEffect(() => {
     if (orderType === 'STOPLOSS' && !hasPosition) setOrderType('TARGET')
@@ -141,6 +169,11 @@ export default function OrderPanel({
   useEffect(() => {
     if (injectedTpPrice != null) setTpValue(injectedTpPrice.toFixed(2))
   }, [injectedTpPrice])
+
+  // Inject chart-picked price into LP field
+  useEffect(() => {
+    if (injectedLpPrice != null) setLpValue(injectedLpPrice.toFixed(2))
+  }, [injectedLpPrice])
 
   const autoLimit = orderType === 'TARGET' && !isNaN(parsedPrice)
     ? side === 'BUY'
@@ -247,7 +280,7 @@ export default function OrderPanel({
   const stratHasPosition = stratPosition.side !== 'FLAT'
 
   const handleStartStrategy = async (
-    strategyType: 'AutoStop' | 'BreakEven' | 'AggressiveStoploss' | 'TargetProfit',
+    strategyType: 'AutoStop' | 'BreakEven' | 'AggressiveStoploss' | 'TargetProfit' | 'LockProfit',
   ) => {
     if (!onStartStrategy) return
     setStratError(null)
@@ -267,12 +300,64 @@ export default function OrderPanel({
           return
         }
         extraOpts = { targetProfitValue: v, targetProfitIsPct: tpIsPct }
+      } else if (strategyType === 'LockProfit') {
+        const v = parseFloat(lpValue)
+        if (isNaN(v) || v <= 0) {
+          setStratError('Enter a valid lock price')
+          setStratLoading(null)
+          return
+        }
+        extraOpts = { lockProfitValue: v, lockProfitIsPct: lpIsPct }
       }
       await onStartStrategy(strategyType, right, { ...opts, ...extraOpts })
     } catch (e) {
       setStratError(e instanceof Error ? e.message : 'Failed to start strategy')
     } finally {
       setStratLoading(null)
+    }
+  }
+
+  const handleCancelStrategy = async (strategyId: string) => {
+    if (!onCancelStrategy) return
+    setCancellingStrategyId(strategyId)
+    try {
+      await onCancelStrategy(strategyId)
+    } catch (e) {
+      setStratError(e instanceof Error ? e.message : 'Failed to cancel strategy')
+    } finally {
+      setCancellingStrategyId(null)
+    }
+  }
+
+  const handleSaveStrategyPrice = async (strategyId: string) => {
+    if (!onUpdateStrategyPrice) return
+    const p = parseFloat(stratEditPrice)
+    if (isNaN(p) || p <= 0) return
+    setStratEditUpdating(true)
+    try {
+      await onUpdateStrategyPrice(strategyId, p)
+      setEditingStrategyId(null)
+      setStratEditPrice('')
+    } catch (e) {
+      setStratError(e instanceof Error ? e.message : 'Failed to update price')
+    } finally {
+      setStratEditUpdating(false)
+    }
+  }
+
+  const handleBulkUpdateSL = async () => {
+    if (!onBulkUpdateSL) return
+    const p = parseFloat(bulkSLPrice)
+    if (isNaN(p) || p <= 0) return
+    setBulkUpdating(true)
+    try {
+      const right = instrumentType === 'options' ? activeRight : null
+      await onBulkUpdateSL(p, right ?? null)
+      setBulkSLPrice('')
+    } catch (e) {
+      setStratError(e instanceof Error ? e.message : 'Failed to bulk update SL')
+    } finally {
+      setBulkUpdating(false)
     }
   }
 
@@ -523,6 +608,76 @@ export default function OrderPanel({
                 {stratLoading === 'TargetProfit' ? 'Starting…' : '▶ Start TargetProfit'}
               </button>
             </div>
+
+            {/* LockProfit */}
+            <div style={{ marginBottom: 2 }}>
+              <div style={{ fontSize: 11, color: '#e6edf3', fontWeight: 600, marginBottom: 4 }}>Lock Profit</div>
+              <div style={{ fontSize: 9, color: '#484f58', marginBottom: 4 }}>
+                When price hits lock level, moves ALL SL orders to that price (one-time)
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                <input
+                  type="number"
+                  value={lpValue}
+                  onChange={e => setLpValue(e.target.value)}
+                  placeholder={lpIsPct ? '% of capital' : 'price'}
+                  min={0}
+                  step={lpIsPct ? 0.1 : 0.05}
+                  style={{
+                    flex: 1, padding: '4px 6px', background: '#0d1117',
+                    border: '1px solid #30363d', borderRadius: 4,
+                    color: '#e6edf3', fontSize: 12,
+                  }}
+                />
+                {!lpIsPct && onRequestLpPick && (
+                  <button
+                    onClick={onRequestLpPick}
+                    title="Pick price from chart"
+                    style={{
+                      padding: '4px 7px', background: '#21262d',
+                      border: '1px solid #30363d', borderRadius: 4,
+                      color: '#8b949e', cursor: 'pointer', fontSize: 11,
+                    }}
+                  >⊕</button>
+                )}
+                {!lpIsPct && (
+                  <button
+                    onClick={() => currentPrice > 0 && setLpValue(currentPrice.toFixed(2))}
+                    disabled={currentPrice <= 0}
+                    title="Use last traded price"
+                    style={{
+                      padding: '4px 6px', background: '#21262d',
+                      border: '1px solid #30363d', borderRadius: 4,
+                      color: currentPrice > 0 ? '#8b949e' : '#484f58',
+                      cursor: currentPrice > 0 ? 'pointer' : 'not-allowed',
+                      fontSize: 10,
+                    }}
+                  >LTP</button>
+                )}
+                <label style={{ fontSize: 10, color: '#8b949e', display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                  <input
+                    type="checkbox"
+                    checked={lpIsPct}
+                    onChange={e => setLpIsPct(e.target.checked)}
+                    style={{ accentColor: '#79c0ff' }}
+                  />
+                  %
+                </label>
+              </div>
+              <button
+                onClick={() => handleStartStrategy('LockProfit')}
+                disabled={!stratHasPosition || stratLoading === 'LockProfit'}
+                style={{
+                  width: '100%', padding: '5px 0', fontSize: 11, fontWeight: 600,
+                  border: 'none', borderRadius: 4,
+                  cursor: stratHasPosition && stratLoading !== 'LockProfit' ? 'pointer' : 'not-allowed',
+                  background: stratHasPosition ? '#2a1f4a' : '#161b22',
+                  color: stratHasPosition ? '#b392f0' : '#484f58',
+                }}
+              >
+                {stratLoading === 'LockProfit' ? 'Starting…' : '▶ Start Lock Profit'}
+              </button>
+            </div>
           </div>
 
           {/* ── Trade Management ── */}
@@ -557,14 +712,69 @@ export default function OrderPanel({
               <div style={{ fontSize: 10, color: '#8b949e', fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 5 }}>
                 Running ({runningStrategies.length})
               </div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 3, marginBottom: 6 }}>
-                {runningStrategies.map(s => (
-                  <div key={s.strategy_id} style={{ fontSize: 10, color: '#3fb950', display: 'flex', gap: 4 }}>
-                    <span>•</span>
-                    <span>{s.strategy_type}</span>
-                    {s.right && <span style={{ color: '#58a6ff' }}>{s.right}</span>}
-                  </div>
-                ))}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginBottom: 6 }}>
+                {runningStrategies.map(s => {
+                  const isEditing = editingStrategyId === s.strategy_id
+                  const canEditPrice = s.strategy_type === 'LockProfit' || s.strategy_type === 'TargetProfit'
+                  return (
+                    <div key={s.strategy_id} style={{ background: '#0d1117', borderRadius: 5, border: '1px solid #21262d', overflow: 'hidden' }}>
+                      <div style={{ fontSize: 10, color: '#3fb950', display: 'flex', alignItems: 'center', gap: 4, padding: '4px 6px' }}>
+                        <span>•</span>
+                        <span style={{ flex: 1 }}>{s.strategy_type}</span>
+                        {s.right && <span style={{ color: '#58a6ff' }}>{s.right}</span>}
+                        {s.triggered && (
+                          <span style={{ color: '#8b949e', fontSize: 9, background: '#21262d', padding: '1px 4px', borderRadius: 3 }}>triggered</span>
+                        )}
+                        {canEditPrice && onUpdateStrategyPrice && !isEditing && (
+                          <button
+                            onClick={() => { setEditingStrategyId(s.strategy_id); setStratEditPrice('') }}
+                            title="Update price"
+                            style={{ background: 'none', border: 'none', color: '#8b949e', cursor: 'pointer', fontSize: 11, padding: '0 2px' }}
+                          >✎</button>
+                        )}
+                        {onCancelStrategy && (
+                          <button
+                            onClick={() => handleCancelStrategy(s.strategy_id)}
+                            disabled={cancellingStrategyId === s.strategy_id}
+                            title="Cancel this strategy"
+                            style={{ background: 'none', border: 'none', color: '#8b949e', cursor: 'pointer', fontSize: 12, padding: '0 2px' }}
+                          >✕</button>
+                        )}
+                      </div>
+                      {isEditing && (
+                        <div style={{ padding: '5px 6px', borderTop: '1px solid #21262d', display: 'flex', gap: 4 }}>
+                          <input
+                            type="number"
+                            value={stratEditPrice}
+                            onChange={e => setStratEditPrice(e.target.value)}
+                            placeholder="new price"
+                            autoFocus
+                            step={0.05}
+                            style={{
+                              flex: 1, minWidth: 0, padding: '3px 5px', background: '#161b22',
+                              border: '1px solid #388bfd', borderRadius: 4,
+                              color: '#e6edf3', fontSize: 11,
+                            }}
+                          />
+                          <button
+                            onClick={() => currentPrice > 0 && setStratEditPrice(currentPrice.toFixed(2))}
+                            disabled={currentPrice <= 0}
+                            style={{ padding: '3px 5px', background: '#21262d', border: '1px solid #30363d', borderRadius: 4, color: '#8b949e', cursor: 'pointer', fontSize: 10 }}
+                          >LTP</button>
+                          <button
+                            onClick={() => handleSaveStrategyPrice(s.strategy_id)}
+                            disabled={stratEditUpdating}
+                            style={{ padding: '3px 6px', background: '#1f6feb', border: 'none', borderRadius: 4, color: '#fff', cursor: 'pointer', fontSize: 10, fontWeight: 600 }}
+                          >{stratEditUpdating ? '…' : 'Set'}</button>
+                          <button
+                            onClick={() => setEditingStrategyId(null)}
+                            style={{ padding: '3px 5px', background: '#21262d', border: '1px solid #30363d', borderRadius: 4, color: '#8b949e', cursor: 'pointer', fontSize: 10 }}
+                          >✕</button>
+                        </div>
+                      )}
+                    </div>
+                  )
+                })}
               </div>
               <button
                 onClick={handleCancelAll}
@@ -698,6 +908,18 @@ export default function OrderPanel({
               color: '#e6edf3', fontSize: 13, boxSizing: 'border-box',
             }}
           />
+          {/* Split hint for large index options SL orders */}
+          {instrumentType === 'options' && (() => {
+            const sym = position.symbol?.toUpperCase() ?? ''
+            const maxPerOrder = sym.startsWith('NIFTY') ? 1800 : sym.startsWith('SENSEX') ? 1000 : sym.startsWith('BANKNIFTY') ? 900 : null
+            if (!maxPerOrder || slQty <= maxPerOrder) return null
+            const n = Math.ceil(slQty / maxPerOrder)
+            return (
+              <div style={{ fontSize: 9, color: '#8b949e', marginTop: 3 }}>
+                Will create {n} orders (max {maxPerOrder}/order)
+              </div>
+            )
+          })()}
         </div>
       ) : fundsRatioMode ? (
         <div>
@@ -760,6 +982,52 @@ export default function OrderPanel({
           <div style={{ fontSize: 11, color: '#8b949e', marginBottom: 4, textTransform: 'uppercase', letterSpacing: 0.5 }}>
             Open Orders ({openOrders.length})
           </div>
+
+          {/* Batch Update SL — shown when 2+ SL orders exist */}
+          {(() => {
+            const slOrders = openOrders.filter(o => o.is_stoploss && o.status === 'PENDING')
+            if (slOrders.length < 2 || !onBulkUpdateSL) return null
+            const rightLabel = activeRight ? ` ${activeRight}` : ''
+            return (
+              <div style={{ marginBottom: 6, padding: '6px 8px', background: '#0d1117', borderRadius: 5, border: '1px solid #4a2000' }}>
+                <div style={{ fontSize: 9, color: '#f0883e', marginBottom: 4, fontWeight: 600 }}>
+                  Update All{rightLabel} SLs ({slOrders.length} orders)
+                </div>
+                <div style={{ display: 'flex', gap: 4 }}>
+                  <input
+                    type="number"
+                    value={bulkSLPrice}
+                    onChange={e => setBulkSLPrice(e.target.value)}
+                    placeholder="price"
+                    step={0.05}
+                    style={{
+                      flex: 1, minWidth: 0, padding: '3px 6px', background: '#161b22',
+                      border: '1px solid #4a2000', borderRadius: 4,
+                      color: '#e6edf3', fontSize: 11,
+                    }}
+                  />
+                  <button
+                    onClick={() => currentPrice > 0 && setBulkSLPrice(currentPrice.toFixed(2))}
+                    disabled={currentPrice <= 0}
+                    title="Use last traded price"
+                    style={{ padding: '3px 6px', background: '#21262d', border: '1px solid #30363d', borderRadius: 4, color: currentPrice > 0 ? '#8b949e' : '#484f58', cursor: currentPrice > 0 ? 'pointer' : 'not-allowed', fontSize: 10 }}
+                  >LTP</button>
+                  <button
+                    onClick={handleBulkUpdateSL}
+                    disabled={bulkUpdating || !bulkSLPrice}
+                    style={{
+                      padding: '3px 8px', background: bulkSLPrice ? '#3a2000' : '#161b22',
+                      border: '1px solid #4a2000', borderRadius: 4,
+                      color: bulkSLPrice ? '#f0883e' : '#484f58',
+                      cursor: bulkSLPrice && !bulkUpdating ? 'pointer' : 'not-allowed',
+                      fontSize: 10, fontWeight: 600, whiteSpace: 'nowrap',
+                    }}
+                  >{bulkUpdating ? '…' : 'Update All'}</button>
+                </div>
+              </div>
+            )
+          })()}
+
           <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
             {openOrders.map(order => {
               const isEditing = editingOrderId === order.order_id

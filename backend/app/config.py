@@ -53,6 +53,16 @@ DEFAULT_FUNDS_RATIOS: dict[str, float] = {"l": 3.0, "m": 6.0, "h": 12.0}
 # A SELL limit is placed at LTP × (1 − KOTAK_SLIPPAGE_PCT).
 KOTAK_SLIPPAGE_PCT: float = 0.005  # 0.5%
 
+# NSE/BSE max contracts per order for index options (SEBI circular)
+MAX_CONTRACTS_PER_ORDER: dict[str, int] = {
+    "NIFTY": 1800,
+    "SENSEX": 1000,
+    "BANKEX": 900,
+    "FINNIFTY": 1800,
+    "MIDCPNIFTY": 2800,
+    "BANKNIFTY": 900,
+}
+
 # NSE equity MIS (intraday) margin requirement: broker extends 5× leverage,
 # so only 20% of trade value is deducted from the wallet.
 EQUITY_MIS_MARGIN_RATE: float = 0.20
