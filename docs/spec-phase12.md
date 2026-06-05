@@ -195,6 +195,7 @@ b) Option in stoploss to increase quantity. Open to discussion.
 | Sprint 3 — LargeOrders | feature/phase12-large-orders | PR #173 merged to dev |
 | Sprint 4 — AIHelper Multi-SL | feature/phase12-large-orders-sprint2 | PR #174 merged to dev |
 | AI Analysis: pattern drill-down + panel resize/font | feature/pattern-drill-down | PR #185 merged to dev |
+| AI Analysis: show date+time in flagged trade rows | feature/ai-analysis-show-date | PR #187 merged to dev |
 
 ---
 
@@ -279,3 +280,17 @@ Two features shipped together:
 - **Font size toggle (`A` / `A+` / `A++`)** — Small button in the header that cycles through three font scales (1×, 1.2×, 1.45×). Scales message text and all analysis card text (summary, patterns, suggestions, stats, flagged-trades table). Header chrome and input box are unaffected.
 
 **PR #185 merged to dev.**
+
+---
+
+### AI Analysis Date+Time Fix — PR #187 (feature/ai-analysis-show-date)
+
+**Problem:** Flagged trade rows in AI analysis drill-down showed only HH:MM. When analyzing trades across multiple days, users could not tell which day each trade belonged to.
+
+**Changes (`AIChatPanel.tsx` only):**
+- Column header renamed "Time" → "Date/Time"
+- Time cell now formats as `DD/MM HH:MM` (e.g. `29/05 10:06`) — date derived from `entry_time` Unix timestamp which already encodes IST wall-clock date via the IST-as-UTC trick.
+
+No backend or API changes needed.
+
+**PR #187 merged to dev.**
