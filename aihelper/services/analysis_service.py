@@ -158,11 +158,25 @@ async def _run_pattern_analysis(
                 "pnl": round(pnl, 2),
                 "has_ohlc": has_ohlc,
                 "has_exit": last_exit is not None,
+                "entry_time": entry_ts,
+                "exit_time": exit_ts,
+                "symbol": symbol,
                 "patterns": patterns,
             })
             groups_checked += 1
 
     return pd_.aggregate_findings(group_findings)
+
+
+def _extract_pattern_instances(pf: dict) -> dict:
+    """Return only detected=True instances per pattern key for frontend drill-down."""
+    result: dict[str, list[dict]] = {}
+    for key in ("scared_exits", "early_exits", "entry_deviation", "buying_on_top", "panic_entries"):
+        instances = pf.get(key, {}).get("instances", [])
+        detected = [i for i in instances if i.get("detected", True)]
+        if detected:
+            result[key] = detected
+    return result
 
 
 async def run_analysis(
@@ -195,4 +209,5 @@ async def run_analysis(
 
     analysis_price_source = user_settings.get("analysis_price_source", "options")
     pattern_findings = await _run_pattern_analysis(trades, analysis_price_source=analysis_price_source)
-    return await _analyze(trades, date_range, pattern_findings=pattern_findings)
+    llm_result = await _analyze(trades, date_range, pattern_findings=pattern_findings)
+    return {**llm_result, "pattern_instances": _extract_pattern_instances(pattern_findings)}

@@ -350,11 +350,32 @@ export interface AnalysisNotableStats {
   worst_time_of_day?: string
 }
 
+export interface PatternInstance {
+  group_id: string
+  direction: 'LONG' | 'SHORT'
+  pnl: number
+  entry_time: number
+  exit_time?: number | null
+  symbol: string
+  detected: boolean
+  detail: string
+  pct?: number
+}
+
+export interface PatternInstances {
+  scared_exits?: PatternInstance[]
+  early_exits?: PatternInstance[]
+  entry_deviation?: PatternInstance[]
+  buying_on_top?: PatternInstance[]
+  panic_entries?: PatternInstance[]
+}
+
 export interface AnalysisResult {
   summary: string
   patterns: AnalysisPattern[]
   suggestions: string[]
   notable_stats: AnalysisNotableStats
+  pattern_instances?: PatternInstances
 }
 
 export interface AIChatResponse {
