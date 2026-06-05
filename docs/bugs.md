@@ -172,6 +172,12 @@ Look at each of the bugs, fix them and then mark them resolved as well if approv
 
 ### AI Helper Bugs
 
+**[RESOLVED]** SELL blocked after reconnect — paper/real session loses position visibility on restart (PR #179, 2026-06-05).
+- **Symptom**: After a paper or real trading session stopped unexpectedly (network failure, page refresh), the user could not place a SELL order to close an existing options position. The error was 402 Insufficient Funds — the naked-short margin check required the full option margin even though a LONG position already existed.
+- **Root cause**: On restart a new `session_id` was generated. `get_position(new_session_id)` returned FLAT because the original BUY trades were recorded under the old session_id. The naked-short margin check in `orders.py` saw no LONG and demanded full margin that the wallet (already deducted for the original BUY) could not satisfy. Same bug existed in real trading — the broker would have allowed the closing SELL, but the TradeMatangi UI blocked it.
+- **Fix**: Enforce one session per (user, symbol, date, session_type) for paper and real trading. `find_session_by_context()` queries DynamoDB UserIdIndex for an existing session for today on Start. `rebuild_session_from_db()` re-creates the in-memory session with the **same `session_id`** — all prior trades remain visible, position checks work correctly, and SELL orders proceed. For real trading resume, the wallet is re-synced from `Kotak.get_funds()`. Simulation sessions always create fresh (unchanged). Added `created_at` epoch-ms to Sessions DynamoDB writes for most-recent-session selection.
+- **Files**: `backend/app/services/simulation.py`, `backend/app/routers/simulation.py`, `backend/tests/test_session_resume.py` (16 new tests).
+
 **[RESOLVED]** Phantom open target order drains wallet permanently after session close (PR #177, 2026-06-05).
 - **Symptom**: Creating a BUY TARGET order in a paper trading session and then stopping the session caused the wallet to remain debited by the order's reserved amount. On session restart (new `session_id`), the phantom order was invisible — impossible to cancel — but the wallet shortfall persisted forever.
 - **Root cause**: `stop_session()` cancelled running strategies but never called `order_service.cancel_all_pending_orders()`. A BUY TARGET order debits the wallet at placement (`debit(reserved_amount)`) and only credits it back on explicit cancellation or fill. With no cleanup on teardown, the deduction was permanent.
