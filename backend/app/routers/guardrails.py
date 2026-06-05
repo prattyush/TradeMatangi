@@ -79,6 +79,7 @@ def get_settings(user_id: str = Depends(get_request_user_id)):
     s = settings_svc.get_settings(user_id)
     return GuardRailSettingsResponse(
         guardrail_block_bars=s.get("guardrail_block_bars", 3),
+        guardrail_cooldown_block_bars=s.get("guardrail_cooldown_block_bars", 3),
         guardrail_cooldown_losses=s.get("guardrail_cooldown_losses", 3),
         guardrail_ban_capital_pct=s.get("guardrail_ban_capital_pct", 10.0),
         guardrail_ban_loss_trade_pct=s.get("guardrail_ban_loss_trade_pct", 60.0),
@@ -95,6 +96,7 @@ def update_settings(req: GuardRailSettingsUpdateRequest, user_id: str = Depends(
     updated = settings_svc.update_settings(user_id, updates)
     return GuardRailSettingsResponse(
         guardrail_block_bars=updated.get("guardrail_block_bars", 3),
+        guardrail_cooldown_block_bars=updated.get("guardrail_cooldown_block_bars", 3),
         guardrail_cooldown_losses=updated.get("guardrail_cooldown_losses", 3),
         guardrail_ban_capital_pct=updated.get("guardrail_ban_capital_pct", 10.0),
         guardrail_ban_loss_trade_pct=updated.get("guardrail_ban_loss_trade_pct", 60.0),
