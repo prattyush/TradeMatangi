@@ -624,7 +624,7 @@ export default function AIChatPanel({ sessionId, userId, symbol, strikeCe, strik
                                         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: fs(10) }}>
                                           <thead>
                                             <tr>
-                                              {['Time', 'Dir', 'P&L', 'Detail'].map(h => (
+                                              {['Date/Time', 'Dir', 'P&L', 'Detail'].map(h => (
                                                 <th key={h} style={{ color: '#484f58', fontWeight: 400, textAlign: 'left', paddingBottom: 2, paddingRight: 8, whiteSpace: 'nowrap' }}>{h}</th>
                                               ))}
                                             </tr>
@@ -633,7 +633,7 @@ export default function AIChatPanel({ sessionId, userId, symbol, strikeCe, strik
                                             {instances.map((inst, i) => (
                                               <tr key={i}>
                                                 <td style={{ color: '#8b949e', paddingRight: 8, paddingBottom: 2, whiteSpace: 'nowrap' }}>
-                                                  {new Date(inst.entry_time * 1000).toISOString().slice(11, 16)}
+                                                  {(() => { const iso = new Date(inst.entry_time * 1000).toISOString(); return `${iso.slice(8, 10)}/${iso.slice(5, 7)} ${iso.slice(11, 16)}` })()}
                                                 </td>
                                                 <td style={{ paddingRight: 8, paddingBottom: 2, whiteSpace: 'nowrap', color: inst.direction === 'LONG' ? '#56d364' : '#f85149' }}>
                                                   {inst.direction}
