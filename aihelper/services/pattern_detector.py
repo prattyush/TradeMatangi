@@ -297,6 +297,16 @@ def aggregate_findings(group_findings: list[dict]) -> dict:
     losses = [g for g in group_findings if g.get("pnl", 0) < 0]
     wins = [g for g in group_findings if g.get("pnl", 0) > 0]
 
+    def _base_instance(g: dict) -> dict:
+        return {
+            "group_id": g.get("group_id"),
+            "direction": g.get("direction"),
+            "pnl": g.get("pnl", 0),
+            "entry_time": g.get("entry_time"),
+            "exit_time": g.get("exit_time"),
+            "symbol": g.get("symbol", ""),
+        }
+
     return {
         "total_trade_groups": total,
         "groups_with_ohlc_data": with_ohlc,
@@ -308,22 +318,43 @@ def aggregate_findings(group_findings: list[dict]) -> dict:
             "avg_deviation_pct": _avg("entry_deviation", "deviation_pct"),
             "instances": [
                 {
-                    "group_id": g.get("group_id"),
-                    "direction": g.get("direction"),
+                    **_base_instance(g),
                     "pct": g["patterns"]["entry_deviation"].get("deviation_pct", 0),
+                    "detected": g["patterns"]["entry_deviation"].get("detected", False),
+                    "detail": f"+{abs(g['patterns']['entry_deviation'].get('deviation_pct', 0)):.1f}% from bar open",
                 }
                 for g in group_findings
                 if g.get("has_ohlc") and "entry_deviation" in g.get("patterns", {})
-            ][:10],  # cap at 10 instances to keep payload manageable
+            ][:10],
         },
         "early_exits": {
             "count": _count("early_exit"),
             "total_with_exits": sum(1 for g in group_findings if g.get("has_exit")),
             "avg_missed_move_pct": _avg("early_exit", "move_pct"),
+            "instances": [
+                {
+                    **_base_instance(g),
+                    "detected": True,
+                    "detail": f"+{g['patterns']['early_exit'].get('move_pct', 0):.1f}% missed after exit",
+                }
+                for g in group_findings
+                if g.get("has_ohlc") and g.get("has_exit")
+                and g["patterns"].get("early_exit", {}).get("detected")
+            ][:10],
         },
         "scared_exits": {
             "count": _count("scared_exit"),
             "total_losses": len(losses),
+            "instances": [
+                {
+                    **_base_instance(g),
+                    "detected": True,
+                    "detail": f"₹{abs(g.get('pnl', 0)):.0f} loss, price reversed",
+                }
+                for g in group_findings
+                if g.get("has_ohlc")
+                and g["patterns"].get("scared_exit", {}).get("detected")
+            ][:10],
         },
         "panic_entries": {
             "groups_detected": _count("panic_buying"),
@@ -335,10 +366,31 @@ def aggregate_findings(group_findings: list[dict]) -> dict:
                 g["patterns"].get("panic_buying", {}).get("same_bar_reversals", 0)
                 for g in group_findings
             ),
+            "instances": [
+                {
+                    **_base_instance(g),
+                    "detected": True,
+                    "detail": (
+                        lambda qe: f"{qe} quick re-entr{'ies' if qe != 1 else 'y'}"
+                    )(g["patterns"]["panic_buying"].get("quick_entries", 0)),
+                }
+                for g in group_findings
+                if g["patterns"].get("panic_buying", {}).get("detected")
+            ][:10],
         },
         "buying_on_top": {
             "count": _count("buying_on_top"),
             "total_entries": with_ohlc,
             "avg_adverse_pct": _avg("buying_on_top", "move_pct"),
+            "instances": [
+                {
+                    **_base_instance(g),
+                    "detected": True,
+                    "detail": f"-{g['patterns']['buying_on_top'].get('move_pct', 0):.1f}% adverse next bar",
+                }
+                for g in group_findings
+                if g.get("has_ohlc")
+                and g["patterns"].get("buying_on_top", {}).get("detected")
+            ][:10],
         },
     }

@@ -298,9 +298,18 @@ class TestFindTradeDirection:
 # ---------------------------------------------------------------------------
 
 class TestAggregateFindings:
-    def _make_group(self, detected_map: dict, pnl: float = 10.0, has_ohlc: bool = True) -> dict:
+    def _make_group(
+        self,
+        detected_map: dict,
+        pnl: float = 10.0,
+        has_ohlc: bool = True,
+        group_id: str = "g1",
+        entry_time: int = 1700100000,
+        exit_time: int = 1700101800,
+        symbol: str = "NIFTY",
+    ) -> dict:
         patterns: dict = {
-            "panic_buying": {"detected": False, "quick_entries": 0, "same_bar_reversals": 0},
+            "panic_buying": {"detected": detected_map.get("panic_buying", False), "quick_entries": detected_map.get("quick_entries", 0), "same_bar_reversals": 0},
         }
         if has_ohlc:
             patterns.update({
@@ -310,11 +319,14 @@ class TestAggregateFindings:
                 "buying_on_top": {"detected": detected_map.get("buying_on_top", False), "move_pct": 0.8},
             })
         return {
-            "group_id": "g1",
+            "group_id": group_id,
             "direction": "LONG",
             "pnl": pnl,
             "has_ohlc": has_ohlc,
             "has_exit": True,
+            "entry_time": entry_time,
+            "exit_time": exit_time,
+            "symbol": symbol,
             "patterns": patterns,
         }
 
@@ -343,3 +355,56 @@ class TestAggregateFindings:
         result = aggregate_findings([])
         assert result["total_trade_groups"] == 0
         assert result["win_count"] == 0
+
+    def test_scared_exits_instances(self):
+        g1 = self._make_group({"scared_exit": True}, pnl=-100.0, group_id="s1")
+        g2 = self._make_group({"scared_exit": True}, pnl=-50.0, group_id="s2")
+        g3 = self._make_group({"scared_exit": False}, pnl=-20.0, group_id="s3")
+        result = aggregate_findings([g1, g2, g3])
+        instances = result["scared_exits"]["instances"]
+        assert len(instances) == 2
+        assert all(i["detected"] is True for i in instances)
+        assert all("entry_time" in i and "exit_time" in i and "symbol" in i for i in instances)
+        assert all("detail" in i for i in instances)
+        assert {i["group_id"] for i in instances} == {"s1", "s2"}
+
+    def test_early_exits_instances(self):
+        g1 = self._make_group({"early_exit": True}, pnl=30.0, group_id="e1")
+        g2 = self._make_group({"early_exit": False}, pnl=20.0, group_id="e2")
+        result = aggregate_findings([g1, g2])
+        instances = result["early_exits"]["instances"]
+        assert len(instances) == 1
+        assert instances[0]["group_id"] == "e1"
+        assert "missed after exit" in instances[0]["detail"]
+
+    def test_buying_on_top_instances(self):
+        g1 = self._make_group({"buying_on_top": True}, group_id="b1")
+        result = aggregate_findings([g1])
+        instances = result["buying_on_top"]["instances"]
+        assert len(instances) == 1
+        assert "adverse next bar" in instances[0]["detail"]
+
+    def test_panic_entries_instances(self):
+        g1 = self._make_group({"panic_buying": True, "quick_entries": 2}, group_id="p1")
+        result = aggregate_findings([g1])
+        instances = result["panic_entries"]["instances"]
+        assert len(instances) == 1
+        assert "quick re-entr" in instances[0]["detail"]
+
+    def test_instances_cap_at_10(self):
+        groups = [
+            self._make_group({"scared_exit": True}, pnl=-10.0, group_id=f"g{i}")
+            for i in range(15)
+        ]
+        result = aggregate_findings(groups)
+        assert len(result["scared_exits"]["instances"]) == 10
+
+    def test_entry_deviation_instances_include_new_fields(self):
+        g = self._make_group({"entry_deviation": True}, group_id="d1", symbol="BANKNIFTY")
+        result = aggregate_findings([g])
+        inst = result["entry_deviation"]["instances"][0]
+        assert inst["symbol"] == "BANKNIFTY"
+        assert "entry_time" in inst
+        assert "exit_time" in inst
+        assert "detail" in inst
+        assert "pct" in inst
