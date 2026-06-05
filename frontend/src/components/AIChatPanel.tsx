@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback, useEffect, useMemo } from 'react'
-import api, { DecisionItem, DecisionAction, StrategyItem, CommandItem, AnalysisResult } from '../services/api'
+import api, { DecisionItem, DecisionAction, StrategyItem, CommandItem, AnalysisResult, PatternInstance } from '../services/api'
 
 interface UserMessage {
   id: string
@@ -104,6 +104,7 @@ export default function AIChatPanel({ sessionId, userId, symbol, strikeCe, strik
   const [commandsLoading, setCommandsLoading] = useState(false)
   const [cancellingCommand, setCancellingCommand] = useState<string | null>(null)
   const [pos, setPos] = useState<{ x: number; y: number } | null>(null)
+  const [expandedInstances, setExpandedInstances] = useState<Set<string>>(new Set())
   const isDragging = useRef(false)
   const dragStart = useRef({ mouseX: 0, mouseY: 0, panelX: 0, panelY: 0 })
   const lastSeenTsRef = useRef<string | null>(null)
@@ -531,6 +532,84 @@ export default function AIChatPanel({ sessionId, userId, symbol, strikeCe, strik
                           ))}
                         </div>
                       )}
+
+                      {/* Flagged Trades drill-down */}
+                      {(() => {
+                        const pi = a.pattern_instances
+                        if (!pi) return null
+                        const LABELS: Record<string, string> = {
+                          scared_exits: 'Scared Exits',
+                          early_exits: 'Early Exits',
+                          entry_deviation: 'Chasing Entries',
+                          buying_on_top: 'Buying on Top',
+                          panic_entries: 'Panic Entries',
+                        }
+                        const keys = Object.keys(LABELS).filter(k => (pi as Record<string, PatternInstance[]>)[k]?.length)
+                        if (!keys.length) return null
+                        const isOpen = expandedInstances.has(am.id)
+                        const totalCount = keys.reduce((s, k) => s + ((pi as Record<string, PatternInstance[]>)[k]?.length ?? 0), 0)
+                        return (
+                          <div style={{ marginTop: 8 }}>
+                            <div
+                              onClick={() => setExpandedInstances(prev => {
+                                const next = new Set(prev)
+                                isOpen ? next.delete(am.id) : next.add(am.id)
+                                return next
+                              })}
+                              style={{
+                                display: 'flex', alignItems: 'center', gap: 6,
+                                cursor: 'pointer', padding: '4px 0',
+                                borderTop: '1px solid #21262d',
+                              }}
+                            >
+                              <span style={{ color: '#484f58', fontSize: 10 }}>FLAGGED TRADES</span>
+                              <span style={{ color: '#484f58', fontSize: 10 }}>({totalCount})</span>
+                              <span style={{ color: '#484f58', fontSize: 10, marginLeft: 'auto' }}>{isOpen ? '▼' : '▶'}</span>
+                            </div>
+                            {isOpen && (
+                              <div style={{ marginTop: 4 }}>
+                                {keys.map(key => {
+                                  const instances = (pi as Record<string, PatternInstance[]>)[key]!
+                                  return (
+                                    <div key={key} style={{ marginBottom: 8 }}>
+                                      <div style={{ color: '#58a6ff', fontSize: 10, fontWeight: 600, marginBottom: 4 }}>
+                                        {LABELS[key]} ({instances.length})
+                                      </div>
+                                      <div style={{ overflowX: 'auto' }}>
+                                        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 10 }}>
+                                          <thead>
+                                            <tr>
+                                              {['Time', 'Dir', 'P&L', 'Detail'].map(h => (
+                                                <th key={h} style={{ color: '#484f58', fontWeight: 400, textAlign: 'left', paddingBottom: 2, paddingRight: 8, whiteSpace: 'nowrap' }}>{h}</th>
+                                              ))}
+                                            </tr>
+                                          </thead>
+                                          <tbody>
+                                            {instances.map((inst, i) => (
+                                              <tr key={i}>
+                                                <td style={{ color: '#8b949e', paddingRight: 8, paddingBottom: 2, whiteSpace: 'nowrap' }}>
+                                                  {new Date(inst.entry_time * 1000).toISOString().slice(11, 16)}
+                                                </td>
+                                                <td style={{ paddingRight: 8, paddingBottom: 2, whiteSpace: 'nowrap', color: inst.direction === 'LONG' ? '#56d364' : '#f85149' }}>
+                                                  {inst.direction}
+                                                </td>
+                                                <td style={{ paddingRight: 8, paddingBottom: 2, whiteSpace: 'nowrap', color: inst.pnl >= 0 ? '#56d364' : '#f85149' }}>
+                                                  {inst.pnl >= 0 ? '+' : ''}₹{Math.abs(inst.pnl).toFixed(0)}
+                                                </td>
+                                                <td style={{ color: '#8b949e', paddingBottom: 2 }}>{inst.detail}</td>
+                                              </tr>
+                                            ))}
+                                          </tbody>
+                                        </table>
+                                      </div>
+                                    </div>
+                                  )
+                                })}
+                              </div>
+                            )}
+                          </div>
+                        )
+                      })()}
                     </div>
                   </div>
                 )

@@ -414,3 +414,97 @@ class TestAnalysisBackendClient:
         call_url = mock_client.get.call_args[0][0]
         assert call_url == "/api/analysis/ohlc-context"
         assert result["symbol"] == "NIFTY"
+
+
+class TestExtractPatternInstances:
+    """Tests for analysis_service._extract_pattern_instances()."""
+
+    def test_returns_detected_only(self):
+        from services.analysis_service import _extract_pattern_instances
+        pf = {
+            "scared_exits": {
+                "instances": [
+                    {"group_id": "g1", "detected": True, "detail": "loss"},
+                    {"group_id": "g2", "detected": False, "detail": "not scared"},
+                ]
+            },
+            "early_exits": {"instances": []},
+        }
+        result = _extract_pattern_instances(pf)
+        assert "scared_exits" in result
+        assert len(result["scared_exits"]) == 1
+        assert result["scared_exits"][0]["group_id"] == "g1"
+
+    def test_omits_keys_with_no_detected_instances(self):
+        from services.analysis_service import _extract_pattern_instances
+        pf = {
+            "scared_exits": {"instances": [{"detected": False}]},
+            "buying_on_top": {"instances": []},
+        }
+        result = _extract_pattern_instances(pf)
+        assert "scared_exits" not in result
+        assert "buying_on_top" not in result
+
+    def test_returns_empty_dict_when_no_instances(self):
+        from services.analysis_service import _extract_pattern_instances
+        result = _extract_pattern_instances({})
+        assert result == {}
+
+    def test_defaults_missing_detected_field_to_included(self):
+        from services.analysis_service import _extract_pattern_instances
+        pf = {
+            "entry_deviation": {
+                "instances": [
+                    {"group_id": "g1", "detail": "+1.5% from bar open"},  # no "detected" key
+                ]
+            }
+        }
+        result = _extract_pattern_instances(pf)
+        assert "entry_deviation" in result
+        assert len(result["entry_deviation"]) == 1
+
+
+class TestRunAnalysisIncludesPatternInstances:
+    """run_analysis() must include pattern_instances in its result."""
+
+    _mock_settings = AsyncMock(return_value={"analysis_price_source": "options"})
+
+    @pytest.mark.asyncio
+    async def test_result_includes_pattern_instances_key(self):
+        from services import analysis_service
+        fake_trades = [{"session_id": "s1", "date": "2026-05-29", "trades": []}]
+        mock_findings = {
+            "total_trade_groups": 0, "groups_with_ohlc_data": 0, "win_count": 0, "loss_count": 0,
+            "scared_exits": {"count": 0, "total_losses": 0, "instances": []},
+            "early_exits": {"count": 0, "total_with_exits": 0, "avg_missed_move_pct": 0.0, "instances": []},
+            "entry_deviation": {"chasing_count": 0, "total_checked": 0, "avg_deviation_pct": 0.0, "instances": []},
+            "buying_on_top": {"count": 0, "total_entries": 0, "avg_adverse_pct": 0.0, "instances": []},
+            "panic_entries": {"groups_detected": 0, "total_quick_entries": 0, "total_same_bar_reversals": 0, "instances": []},
+        }
+        with patch("services.analysis_service.backend_client.get_trades", new=AsyncMock(return_value=fake_trades)), \
+             patch("services.analysis_service.backend_client.get_user_settings", new=self._mock_settings), \
+             patch("services.analysis_service._analyze", new=AsyncMock(return_value=_ANALYSIS_RESULT)), \
+             patch("services.analysis_service._run_pattern_analysis", new=AsyncMock(return_value=mock_findings)):
+            result = await analysis_service.run_analysis(_USER_ID, "2026-05-24", "2026-05-31", "last 7 days")
+        assert "pattern_instances" in result
+
+    @pytest.mark.asyncio
+    async def test_pattern_instances_contains_detected_trades(self):
+        from services import analysis_service
+        fake_trades = [{"session_id": "s1", "date": "2026-05-29", "trades": []}]
+        inst = {"group_id": "g1", "detected": True, "detail": "₹100 loss, price reversed",
+                "direction": "LONG", "pnl": -100.0, "entry_time": 1700100000, "exit_time": 1700101800, "symbol": "NIFTY"}
+        mock_findings = {
+            "total_trade_groups": 1, "groups_with_ohlc_data": 1, "win_count": 0, "loss_count": 1,
+            "scared_exits": {"count": 1, "total_losses": 1, "instances": [inst]},
+            "early_exits": {"count": 0, "total_with_exits": 0, "avg_missed_move_pct": 0.0, "instances": []},
+            "entry_deviation": {"chasing_count": 0, "total_checked": 0, "avg_deviation_pct": 0.0, "instances": []},
+            "buying_on_top": {"count": 0, "total_entries": 0, "avg_adverse_pct": 0.0, "instances": []},
+            "panic_entries": {"groups_detected": 0, "total_quick_entries": 0, "total_same_bar_reversals": 0, "instances": []},
+        }
+        with patch("services.analysis_service.backend_client.get_trades", new=AsyncMock(return_value=fake_trades)), \
+             patch("services.analysis_service.backend_client.get_user_settings", new=self._mock_settings), \
+             patch("services.analysis_service._analyze", new=AsyncMock(return_value=_ANALYSIS_RESULT)), \
+             patch("services.analysis_service._run_pattern_analysis", new=AsyncMock(return_value=mock_findings)):
+            result = await analysis_service.run_analysis(_USER_ID, "2026-05-24", "2026-05-31", "last 7 days")
+        assert result["pattern_instances"]["scared_exits"][0]["group_id"] == "g1"
