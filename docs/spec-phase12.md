@@ -52,7 +52,7 @@ b) Option in stoploss to increase quantity. Open to discussion.
 
 ---
 
-### Sprint 2 — Pattern Library: Backend ✅ COMPLETE
+### Sprint 2 — Pattern Library ✅ COMPLETE
 
 **New files:**
 - `backend/app/services/pattern_logger_service.py`: DynamoDB CRUD for `PatternAnnotations` table
@@ -81,7 +81,7 @@ b) Option in stoploss to increase quantity. Open to discussion.
 
 ---
 
-### Sprints 3+4 — Pattern Library: Frontend ✅ COMPLETE
+#### Frontend
 
 **New file:** `frontend/src/pages/PatternLibrary.tsx`
 
@@ -103,9 +103,7 @@ b) Option in stoploss to increase quantity. Open to discussion.
 
 ---
 
----
-
-### Sprint 5 — LargeOrders ✅ COMPLETE
+### Sprint 3 — LargeOrders ✅ COMPLETE
 
 **Sprints 1-3 (Multi-SL, LockProfit, MaxContracts) implemented together.**
 
@@ -165,7 +163,7 @@ b) Option in stoploss to increase quantity. Open to discussion.
 
 ---
 
-### Sprint 6 — LargeOrders Sprint 2: AIHelper Multi-SL ✅ COMPLETE
+### Sprint 4 — AIHelper Multi-SL ✅ COMPLETE
 
 **Problem addressed:** The AIHelper's `update_or_create_stoploss()` used `next()` to find and update only ONE SL order. With pyramiding and max-contracts auto-split, a position can have multiple SL orders (e.g. 3 SL orders for 5400 NIFTY contracts split across 3 chunks). The old code silently left the other chunks at the original SL price.
 
@@ -183,18 +181,18 @@ b) Option in stoploss to increase quantity. Open to discussion.
 |-------|--------------|----------------|-------|
 | Before Phase XII | 534 | 279 | |
 | After Sprint 1 | 550 | 279 | +16 stepwise tests |
-| After Sprint 2 | 571 | 279 | +21 pattern logger tests |
-| After Sprint 5 (LargeOrders) | 601 | 285 | +30 multi-SL/LockProfit/max-contracts tests |
-| After Sprint 6 (AIHelper Multi-SL) | 601 | 291 | +6 aihelper bulk-SL tests |
+| After Sprint 2 | 571 | 285 | +21 pattern logger tests (backend); frontend no new tests |
+| After Sprint 3 (LargeOrders) | 601 | 285 | +30 multi-SL/LockProfit/max-contracts tests |
+| After Sprint 4 (AIHelper Multi-SL) | 601 | 291 | +6 aihelper bulk-SL tests |
 
 ## PR Log
 
 | Sprint | Branch | Status |
 |--------|--------|--------|
-| Sprint 1 — Stepwise Replayer | feature/phase12-stepwise | Ready for PR |
-| Sprints 2-4 — Pattern Library | feature/phase12-pattern-library | Ready for PR |
-| Sprint 5 — LargeOrders | feature/phase12-large-orders | PR #173 merged to dev |
-| Sprint 6 — AIHelper Multi-SL | feature/phase12-large-orders-sprint2 | Ready for PR |
+| Sprint 1 — Stepwise Replayer | feature/phase12-stepwise | Merged to dev |
+| Sprint 2 — Pattern Library | feature/phase12-pattern-library | Merged to dev |
+| Sprint 3 — LargeOrders | feature/phase12-large-orders | PR #173 merged to dev |
+| Sprint 4 — AIHelper Multi-SL | feature/phase12-large-orders-sprint2 | PR #174 merged to dev |
 
 ---
 
