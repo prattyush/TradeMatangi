@@ -158,7 +158,7 @@ function AnalysisChart({
   useEffect(() => {
     if (!containerRef.current) return
     const w = containerRef.current.clientWidth
-    const h = Math.max(300, Math.floor(w * 0.45))
+    const h = Math.max(300, Math.floor(w * 0.6))
     const chart = createChart(containerRef.current, {
       width: w,
       height: h,
@@ -195,7 +195,7 @@ function AnalysisChart({
 
     const ro = new ResizeObserver(entries => {
       const width = entries[0].contentRect.width
-      const height = Math.max(300, Math.floor(width * 0.45))
+      const height = Math.max(300, Math.floor(width * 0.6))
       chart.applyOptions({ width, height })
     })
     ro.observe(containerRef.current)
@@ -340,7 +340,7 @@ function OptionsChart({
   useEffect(() => {
     if (!containerRef.current) return
     const w = containerRef.current.clientWidth
-    const h = Math.max(300, Math.floor(w * 0.45))
+    const h = Math.max(300, Math.floor(w * 0.6))
     const chart = createChart(containerRef.current, {
       width: w,
       height: h,
@@ -377,7 +377,7 @@ function OptionsChart({
 
     const ro = new ResizeObserver(entries => {
       const width = entries[0].contentRect.width
-      const height = Math.max(300, Math.floor(width * 0.45))
+      const height = Math.max(300, Math.floor(width * 0.6))
       chart.applyOptions({ width, height })
     })
     ro.observe(containerRef.current)
