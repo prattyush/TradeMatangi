@@ -185,6 +185,7 @@ b) Option in stoploss to increase quantity. Open to discussion.
 | After Sprint 3 (LargeOrders) | 601 | 285 | +30 multi-SL/LockProfit/max-contracts tests |
 | After Sprint 4 (AIHelper Multi-SL) | 601 | 291 | +6 aihelper bulk-SL tests |
 | After PR #185 (AI Analysis drill-down) | 624 | 305 | +14 aihelper pattern instance tests |
+| After PR #190 (date range fix + chart enhancements) | 624 | 305 | No new tests (prompt + frontend-only changes) |
 
 ## PR Log
 
@@ -196,6 +197,7 @@ b) Option in stoploss to increase quantity. Open to discussion.
 | Sprint 4 — AIHelper Multi-SL | feature/phase12-large-orders-sprint2 | PR #174 merged to dev |
 | AI Analysis: pattern drill-down + panel resize/font | feature/pattern-drill-down | PR #185 merged to dev |
 | AI Analysis: show date+time in flagged trade rows | feature/ai-analysis-show-date | PR #187 merged to dev |
+| AI analysis date range fix + Trade Analysis chart enhancements (EMA 9/21, split options layout, maximize, historicalDays) | fix/ai-analysis-date-range | PR #190 merged to dev |
 
 ---
 
@@ -294,3 +296,48 @@ Two features shipped together:
 No backend or API changes needed.
 
 **PR #187 merged to dev.**
+
+---
+
+### AI Analysis Date Range Fix + Trade Analysis Chart Enhancements — PR #190 (fix/ai-analysis-date-range)
+
+Two fixes shipped together:
+
+#### 1. AI Helper Trade Analysis Date Range Bug
+
+**Problem:** When asking the AI Helper to analyze trades over a multi-day range (e.g. "analyze my trades for this week, starting and including 2026-06-01"), only today's data was returned.
+
+**Root cause:** The LLM system prompt in `extract_analysis_params` (`aihelper/services/llm_service.py`) had a single vague date rule that only hinted at `from_date` calculation and never specified `to_date`. Compare with `extract_date_range` (same file) which had complete `from=X, to=Y` rules.
+
+**Fix (`aihelper/services/llm_service.py` only):** Replaced the vague one-liner with explicit `from = ..., to = ...` rules for every pattern — matching the working format in `extract_date_range` — and added new patterns: "this week" (→ most recent Monday to today) and "starting from/since YYYY-MM-DD" (→ that date to today).
+
+No backend, frontend, or test changes.
+
+#### 2. Trade Analysis Chart Enhancements
+
+**Problem:** The Trade Analysis window's single underlying chart lacked EMA lines, had no way to view individual option strikes, and had no maximize option.
+
+**Changes (`frontend/src/components/TradeAnalysis.tsx`, `frontend/src/App.tsx`):**
+
+*EMA 9 & 21 on underlying chart:*
+- `computeEMA` / `nextEMA` helpers copied from `Chart.tsx`
+- Two line series added to `AnalysisChart`: EMA 9 (#f0883e orange), EMA 21 (#79c0ff blue), both `lineWidth: 1`, no price line / last-value label
+- Computed and set after candle data loads
+
+*Side-by-side split layout for options sessions:*
+- New `OptionsChart` component: loads options OHLC via `api.getOptionsHistorical()`, shows trade markers at option trade price (green BUY / red SELL)
+- New `AnalysisChartPanel` component: derives unique option tabs from `allTrades` (keyed by `right-strike-expiry`, sorted CE first then by strike). For equity sessions: single underlying chart unchanged. For options sessions: `display: flex` split — underlying (left 50%) + tab bar + active option chart (right 50%)
+- Tab bar: pill buttons with `#58a6ff` active highlight; switching tabs remounts the `OptionsChart` for that strike
+- New `ChartToolbar` sub-component: title label + ⤢/⤡ maximize button
+
+*Per-chart maximize (fullscreen overlay):*
+- `AnalysisChartPanel` tracks `maximizedChart: 'underlying' | string | null` state
+- When set, renders a `position: fixed; inset: 0; z-index: 2000` overlay with a header bar (title + ⤡ Restore button) and the maximized chart filling the remaining height
+- Escape key also dismisses the overlay
+
+*`historicalDays` wired through:*
+- `TradeAnalysis` now accepts `historicalDays?: number` prop; `App.tsx` passes the existing `historicalDays` state
+- Flows down: `TradeAnalysis` → `GroupCard` → `AnalysisChartPanel` → `AnalysisChart` + `OptionsChart`
+- Both chart data fetches use `historicalDays` so paper/real sessions correctly trigger the backend's stale-data re-fetch from the broker API
+
+**PR #190 merged to dev.**
