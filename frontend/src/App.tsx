@@ -768,7 +768,7 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
 
       {/* Trade Analysis modal */}
       {showAnalysis && (
-        <TradeAnalysis onClose={() => setShowAnalysis(false)} />
+        <TradeAnalysis onClose={() => setShowAnalysis(false)} historicalDays={historicalDays} />
       )}
 
       {/* Error banner */}
