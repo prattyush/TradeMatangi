@@ -187,6 +187,7 @@ b) Option in stoploss to increase quantity. Open to discussion.
 | After PR #185 (AI Analysis drill-down) | 624 | 305 | +14 aihelper pattern instance tests |
 | After PR #190 (date range fix + chart enhancements) | 624 | 305 | No new tests (prompt + frontend-only changes) |
 | After PR #192 (CE/PE marker colors + stale marker fix + marker size) | 624 | 305 | No new tests (frontend-only changes) |
+| After PR #195 (EMA 9/21 on CE/PE charts + marker size 0.6) | 624 | 305 | No new tests (frontend-only changes) |
 
 ## PR Log
 
@@ -200,6 +201,7 @@ b) Option in stoploss to increase quantity. Open to discussion.
 | AI Analysis: show date+time in flagged trade rows | feature/ai-analysis-show-date | PR #187 merged to dev |
 | AI analysis date range fix + Trade Analysis chart enhancements (EMA 9/21, split options layout, maximize, historicalDays) | fix/ai-analysis-date-range | PR #190 merged to dev |
 | CE/PE marker colors (white/cyan), stale marker fix (key prop), marker size 0.5 | fix/trade-analysis-marker-colors-and-stale | PR #192 merged to dev |
+| EMA 9/21 on CE/PE OptionsChart + marker size bumped to 0.6 | fix/options-chart-ema | PR #195 merged to dev |
 
 ---
 
@@ -359,3 +361,13 @@ No backend, frontend, or test changes.
 **Additional:** Reduced marker size from `1` to `0.5` in all charts (`Chart.tsx`, `AnalysisChart`, `OptionsChart`) for less visual clutter.
 
 **PR #192 merged to dev.**
+
+---
+
+### EMA 9/21 on CE/PE OptionsChart + Marker Size 0.6 — PR #195 (fix/options-chart-ema)
+
+**EMA overlays:** Added EMA 9 (orange `#f0883e`) and EMA 21 (blue `#79c0ff`) to `OptionsChart` in Trade Analysis, mirroring the identical pattern already on `AnalysisChart` (underlying). Uses the same `computeEMA()` function; EMAs computed from candle closes after each data load; refs nulled on unmount.
+
+**Marker size:** Bumped from `0.5` to `0.6` across all charts (`Chart.tsx`, `AnalysisChart`, `OptionsChart`).
+
+**PR #195 merged to dev.**
