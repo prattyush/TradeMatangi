@@ -352,7 +352,15 @@ async def extract_analysis_params(message: str, today: str) -> dict[str, Any]:
         '  "session_type": "sim" | "paper" | "real" | null\n'
         '}\n\n'
         "Rules:\n"
-        '- Date range: "last 7 days" → today−7; "last month" → today−30; "today" → today; etc. Default: last 7 days\n'
+        '- "last 7 days" / "past week" → from = today − 7 days, to = today\n'
+        '- "last month" / "past month" / "last 30 days" → from = today − 30 days, to = today\n'
+        '- "last 3 days" → from = today − 3 days, to = today\n'
+        '- "today" → from = today, to = today\n'
+        '- "yesterday" → from = today − 1 day, to = today − 1 day\n'
+        '- "this week" → from = most recent Monday, to = today\n'
+        '- "from YYYY-MM-DD to YYYY-MM-DD" → use those dates literally\n'
+        '- "starting from YYYY-MM-DD" / "starting and including YYYY-MM-DD" / "since YYYY-MM-DD" → from = that date, to = today\n'
+        '- If no date range mentioned → default: last 7 days (from = today − 7, to = today)\n'
         '- symbol: extract if a specific instrument is mentioned (e.g. NIFTY, BSESEN, RELIND); null if not specified\n'
         '- session_type: "sim" for simulation/historical, "paper" for paper trading, "real" for live/real trading; null if not specified'
     )
