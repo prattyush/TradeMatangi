@@ -294,7 +294,7 @@ function AnalysisChart({
         color: effectiveSide === 'BUY' ? '#FFFFFF' : '#00AAFF',
         shape: 'circle' as const,
         text,
-        size: 0.5,
+        size: 0.6,
       })
     }
 
@@ -452,7 +452,7 @@ function OptionsChart({
         color: t.side === 'BUY' ? '#FFFFFF' : '#00AAFF',
         shape: 'circle' as const,
         text: t.side === 'BUY' ? 'B' : 'S',
-        size: 0.5,
+        size: 0.6,
       })
     }
 
