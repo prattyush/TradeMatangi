@@ -188,6 +188,7 @@ b) Option in stoploss to increase quantity. Open to discussion.
 | After PR #190 (date range fix + chart enhancements) | 624 | 305 | No new tests (prompt + frontend-only changes) |
 | After PR #192 (CE/PE marker colors + stale marker fix + marker size) | 624 | 305 | No new tests (frontend-only changes) |
 | After PR #195 (EMA 9/21 on CE/PE charts + marker size 0.6) | 624 | 305 | No new tests (frontend-only changes) |
+| After PR #197 (Trade Analysis chart height ratio 0.6) | 624 | 305 | No new tests (frontend-only changes) |
 
 ## PR Log
 
@@ -202,6 +203,7 @@ b) Option in stoploss to increase quantity. Open to discussion.
 | AI analysis date range fix + Trade Analysis chart enhancements (EMA 9/21, split options layout, maximize, historicalDays) | fix/ai-analysis-date-range | PR #190 merged to dev |
 | CE/PE marker colors (white/cyan), stale marker fix (key prop), marker size 0.5 | fix/trade-analysis-marker-colors-and-stale | PR #192 merged to dev |
 | EMA 9/21 on CE/PE OptionsChart + marker size bumped to 0.6 | fix/options-chart-ema | PR #195 merged to dev |
+| Trade Analysis chart height ratio increased from 0.45 to 0.6 | fix/trade-analysis-chart-height | PR #197 merged to dev |
 
 ---
 
@@ -371,3 +373,11 @@ No backend, frontend, or test changes.
 **Marker size:** Bumped from `0.5` to `0.6` across all charts (`Chart.tsx`, `AnalysisChart`, `OptionsChart`).
 
 **PR #195 merged to dev.**
+
+---
+
+### Trade Analysis Chart Height Ratio 0.6 — PR #197 (fix/trade-analysis-chart-height)
+
+**Change:** Increased chart height multiplier from `width * 0.45` to `width * 0.6` in both `AnalysisChart` (Underlying) and `OptionsChart` (CE/PE). Applied to both initial mount height and ResizeObserver dynamic resize (4 occurrences). Fullscreen view unaffected.
+
+**PR #197 merged to dev.**
