@@ -663,7 +663,7 @@ export default function Chart({
           color,
           shape: 'circle' as const,
           text,
-          size: 1,
+          size: 0.5,
         }])
         tradeMarkerPool.current.push(s)
       } catch { /* chart disposed mid-loop */ }

@@ -294,7 +294,7 @@ function AnalysisChart({
         color: effectiveSide === 'BUY' ? '#FFFFFF' : '#00AAFF',
         shape: 'circle' as const,
         text,
-        size: 1,
+        size: 0.5,
       })
     }
 
@@ -420,10 +420,10 @@ function OptionsChart({
       markers.push({
         time: slot as Time,
         position: 'inBar' as const,
-        color: t.side === 'BUY' ? '#26a641' : '#f85149',
+        color: t.side === 'BUY' ? '#FFFFFF' : '#00AAFF',
         shape: 'circle' as const,
         text: t.side === 'BUY' ? 'B' : 'S',
-        size: 1,
+        size: 0.5,
       })
     }
 
@@ -594,6 +594,7 @@ function AnalysisChartPanel({
         </div>
         {activeTabData && (
           <OptionsChart
+            key={activeTab}
             symbol={symbol} date={date}
             strike={activeTabData.strike} expiry={activeTabData.expiry} right={activeTabData.right}
             trades={activeTabData.trades} historicalDays={historicalDays}
