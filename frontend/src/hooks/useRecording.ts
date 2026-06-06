@@ -47,6 +47,13 @@ export function useRecording() {
 
   const startRecording = useCallback(async (filename: string) => {
     setRecordingError(null)
+
+    // getDisplayMedia requires a secure context (HTTPS or localhost)
+    if (!window.isSecureContext || !navigator.mediaDevices?.getDisplayMedia) {
+      setRecordingError('Screen recording requires HTTPS or localhost')
+      return
+    }
+
     setRecordingState('requesting')
     filenameRef.current = filename
 
@@ -56,9 +63,12 @@ export function useRecording() {
         video: { frameRate: { ideal: 30 } } as MediaTrackConstraints,
         audio: true,
       })
-    } catch {
-      // User cancelled or permission denied
+    } catch (err) {
       setRecordingState('idle')
+      // NotAllowedError = user dismissed the picker — show nothing
+      if (err instanceof Error && err.name !== 'NotAllowedError') {
+        setRecordingError(err.message || 'Screen capture failed')
+      }
       return
     }
 
