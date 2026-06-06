@@ -186,6 +186,7 @@ b) Option in stoploss to increase quantity. Open to discussion.
 | After Sprint 4 (AIHelper Multi-SL) | 601 | 291 | +6 aihelper bulk-SL tests |
 | After PR #185 (AI Analysis drill-down) | 624 | 305 | +14 aihelper pattern instance tests |
 | After PR #190 (date range fix + chart enhancements) | 624 | 305 | No new tests (prompt + frontend-only changes) |
+| After PR #192 (CE/PE marker colors + stale marker fix + marker size) | 624 | 305 | No new tests (frontend-only changes) |
 
 ## PR Log
 
@@ -198,6 +199,7 @@ b) Option in stoploss to increase quantity. Open to discussion.
 | AI Analysis: pattern drill-down + panel resize/font | feature/pattern-drill-down | PR #185 merged to dev |
 | AI Analysis: show date+time in flagged trade rows | feature/ai-analysis-show-date | PR #187 merged to dev |
 | AI analysis date range fix + Trade Analysis chart enhancements (EMA 9/21, split options layout, maximize, historicalDays) | fix/ai-analysis-date-range | PR #190 merged to dev |
+| CE/PE marker colors (white/cyan), stale marker fix (key prop), marker size 0.5 | fix/trade-analysis-marker-colors-and-stale | PR #192 merged to dev |
 
 ---
 
@@ -341,3 +343,19 @@ No backend, frontend, or test changes.
 - Both chart data fetches use `historicalDays` so paper/real sessions correctly trigger the backend's stale-data re-fetch from the broker API
 
 **PR #190 merged to dev.**
+
+---
+
+### CE/PE Marker Colors + Stale Marker Fix + Marker Size — PR #192 (fix/trade-analysis-marker-colors-and-stale)
+
+**Problem 1:** `OptionsChart` in Trade Analysis used green/red markers for BUY/SELL, inconsistent with simulation/paper/real trading options panes which use white/cyan.
+
+**Fix:** Changed `OptionsChart` marker colors to `#FFFFFF` (BUY) / `#00AAFF` (SELL), matching `AnalysisChart` (underlying) and `Chart.tsx` options-pane conventions.
+
+**Problem 2:** Switching between CE/PE strike tabs left markers from the previous strike visible on the new chart (stale state due to chart instance reuse).
+
+**Fix:** Added `key={activeTab}` to `OptionsChart` in `AnalysisChartPanel`, forcing a fresh chart mount on every tab switch.
+
+**Additional:** Reduced marker size from `1` to `0.5` in all charts (`Chart.tsx`, `AnalysisChart`, `OptionsChart`) for less visual clutter.
+
+**PR #192 merged to dev.**
