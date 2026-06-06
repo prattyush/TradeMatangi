@@ -27,6 +27,12 @@ b) Option in stoploss to increase quantity. Open to discussion.
 
 4. Support multi stoploss order support for all strategies, like breakeven, aggresive  SL, Take Profit and also AIHelper commands etc. Make a cross swipe across all features if anything needs to handle multiple stoplosss orders.
 
+##### Recording
+1. This requirement is for providing a feature in which users can record their trading sessions, screen recording. Only applicable for simulations, real and paper trading. User can pause and resume recording, stop and start recording. Recording would take browser permissions, and I think when it is finished it would ask where to store in the computer.
+ 
+
+
+
 ## Implementation Status
 
 ### Sprint 1 — Trade Stepwise Replayer ✅ COMPLETE
@@ -175,6 +181,42 @@ b) Option in stoploss to increase quantity. Open to discussion.
 - New `TestBulkUpdateStoploss` class (3 tests): correct endpoint, equity right omitted, price rounding
 - `TestUpdateOrCreateStoploss` expanded to 6 tests: single-SL bulk-update, multi-SL bulk-update, cross-right isolation (PE SLs don't block CE update), create-when-none, short-position BUY side, create-on-get-open-orders-failure
 
+---
+
+### Sprint 5 — Recording ✅ COMPLETE
+
+**Problem addressed:** Users wanted to record their trading sessions for review, study, and upload to YouTube.
+
+**Approach:** Pure browser-side screen recording using `navigator.mediaDevices.getDisplayMedia()` + `MediaRecorder` API. No backend changes required.
+
+**Format:** WebM with VP9+Opus (`video/webm;codecs=vp9,opus`), falling back to VP8+Opus then plain WebM. WebM is directly accepted by YouTube. The browser's screen-share dialog also offers an optional system/tab audio checkbox (Chrome).
+
+**New file: `frontend/src/hooks/useRecording.ts`**
+- `RecordingState` type: `'idle' | 'requesting' | 'recording' | 'paused'`
+- MIME priority: `vp9,opus` → `vp8,opus` → `video/webm` (via `MediaRecorder.isTypeSupported`)
+- `startRecording(filename)`: calls `getDisplayMedia`, creates `MediaRecorder`, collects 1-second chunks
+- `stopRecording()`: stops recorder; `onstop` handler creates `Blob`, triggers browser "Save As" download via hidden `<a>` click
+- `pauseRecording()` / `resumeRecording()`: delegates to `mediaRecorder.pause()` / `.resume()`
+- Video-track `ended` listener: auto-stops recording when user clicks browser "Stop sharing" button
+- Cleanup on unmount: stops any active recorder
+
+**Modified files:**
+- `frontend/src/hooks/useRecording.ts` — new file (see above)
+- `frontend/src/App.tsx` — imports `useRecording`; calls hook in `AppInner`; adds recording controls to header bar between Patterns button and SettingsModal
+- `frontend/src/index.css` — adds `@keyframes recBlink` for the animated ● recording indicator
+
+**Header UI:**
+- Hidden when `sessionState === 'idle'` (no active session)
+- `● REC` button (dark red) when idle but session active
+- `Requesting…` (disabled) while browser permission dialog is open
+- `● Pause ⏹ Stop` row when recording (● blinks red at 1 Hz)
+- `⏸ Resume ⏹ Stop` row when paused (⏸ shown in yellow)
+- Filename: `TradeMatangi_<symbol>_<date>_<sessionType>.webm`
+
+**No backend changes. No new tests** (browser API only — not unit-testable without mocking `getDisplayMedia`).
+
+---
+
 ## Test Counts
 
 | Phase | Backend Tests | AIHelper Tests | Notes |
@@ -190,6 +232,7 @@ b) Option in stoploss to increase quantity. Open to discussion.
 | After PR #195 (EMA 9/21 on CE/PE charts + marker size 0.6) | 624 | 305 | No new tests (frontend-only changes) |
 | After PR #197 (Trade Analysis chart height ratio 0.6) | 624 | 305 | No new tests (frontend-only changes) |
 | After PR #199 (Underlying chart CE/PE marker filter) | 624 | 305 | No new tests (frontend-only changes) |
+| After Sprint 5 (Recording) | 624 | 305 | No new tests (browser API, frontend-only) |
 
 ## PR Log
 
@@ -206,6 +249,7 @@ b) Option in stoploss to increase quantity. Open to discussion.
 | EMA 9/21 on CE/PE OptionsChart + marker size bumped to 0.6 | fix/options-chart-ema | PR #195 merged to dev |
 | Trade Analysis chart height ratio increased from 0.45 to 0.6 | fix/trade-analysis-chart-height | PR #197 merged to dev |
 | CE/PE marker filter toggle [All/CE/PE] on Underlying chart | fix/underlying-chart-marker-filter | PR #199 merged to dev |
+| Sprint 5 — Recording (screen record sessions as WebM/YouTube-compatible) | feature/phase12-recording | Open |
 
 ---
 
