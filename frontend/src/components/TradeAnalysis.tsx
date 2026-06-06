@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   createChart,
   IChartApi,
@@ -12,6 +12,7 @@ import api, { SessionSummary, SessionDetail, AnalysisTrade, OHLCCandle } from '.
 
 interface Props {
   onClose: () => void
+  historicalDays?: number
 }
 
 const SYMBOLS = ['NIFTY', 'BSESEN', 'TATPOW', 'TATMOT', 'RELIND']
@@ -73,13 +74,85 @@ function groupSessions(sessions: SessionSummary[]): SessionGroup[] {
   })
 }
 
-// ── Mini Analysis Chart ───────────────────────────────────────────────────────
+// ── EMA helpers (mirrored from Chart.tsx) ────────────────────────────────────
 
-function AnalysisChart({ symbol, date, trades }: { symbol: string; date: string; trades: AnalysisTrade[] }) {
+function nextEMA(prev: number, close: number, k: number): number {
+  return close * k + prev * (1 - k)
+}
+
+function computeEMA(closes: number[], period: number): (number | null)[] {
+  if (closes.length === 0) return []
+  const result: (number | null)[] = []
+  const k = 2 / (period + 1)
+  let ema: number | null = null
+  let warmup = 0
+  let sum = 0
+  for (let i = 0; i < closes.length; i++) {
+    sum += closes[i]
+    warmup++
+    if (warmup < period) {
+      result.push(null)
+    } else if (warmup === period) {
+      ema = sum / period
+      result.push(ema)
+    } else {
+      ema = nextEMA(ema!, closes[i], k)
+      result.push(ema)
+    }
+  }
+  return result
+}
+
+// ── Chart toolbar ─────────────────────────────────────────────────────────────
+
+function ChartToolbar({ title, isMaximized = false, onMaximize }: {
+  title: string
+  isMaximized?: boolean
+  onMaximize?: () => void
+}) {
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+      padding: '3px 8px', background: '#161b22',
+      borderBottom: '1px solid #21262d',
+    }}>
+      <span style={{ fontSize: 11, color: '#8b949e', fontWeight: 600 }}>{title}</span>
+      {onMaximize && (
+        <button
+          onClick={onMaximize}
+          title={isMaximized ? 'Restore' : 'Maximize'}
+          style={{
+            background: 'none', border: 'none', color: '#484f58',
+            cursor: 'pointer', fontSize: 14, padding: '0 2px', lineHeight: 1,
+          }}
+        >
+          {isMaximized ? '⤡' : '⤢'}
+        </button>
+      )}
+    </div>
+  )
+}
+
+// ── Underlying Chart ──────────────────────────────────────────────────────────
+
+function AnalysisChart({
+  symbol, date, trades, historicalDays = 2, title = 'Underlying',
+  isMaximized = false, onMaximize,
+}: {
+  symbol: string
+  date: string
+  trades: AnalysisTrade[]
+  historicalDays?: number
+  title?: string
+  isMaximized?: boolean
+  onMaximize?: () => void
+}) {
   const containerRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<IChartApi | null>(null)
   const seriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null)
   const tradeMarkerSeriesRef = useRef<ISeriesApi<'Line'> | null>(null)
+  const ema9Ref = useRef<ISeriesApi<'Line'> | null>(null)
+  const ema21Ref = useRef<ISeriesApi<'Line'> | null>(null)
   const [candles, setCandles] = useState<CandlestickData[]>([])
 
   useEffect(() => {
@@ -99,6 +172,16 @@ function AnalysisChart({ symbol, date, trades }: { symbol: string; date: string;
       borderVisible: false,
       wickUpColor: '#26a641', wickDownColor: '#f85149',
     })
+    const ema9 = chart.addLineSeries({
+      color: '#f0883e', lineWidth: 1,
+      lastValueVisible: false, priceLineVisible: false,
+      crosshairMarkerVisible: false,
+    })
+    const ema21 = chart.addLineSeries({
+      color: '#79c0ff', lineWidth: 1,
+      lastValueVisible: false, priceLineVisible: false,
+      crosshairMarkerVisible: false,
+    })
     const markerSeries = chart.addLineSeries({
       lineVisible: false, crosshairMarkerVisible: false,
       lastValueVisible: false, priceLineVisible: false,
@@ -106,6 +189,8 @@ function AnalysisChart({ symbol, date, trades }: { symbol: string; date: string;
 
     chartRef.current = chart
     seriesRef.current = series
+    ema9Ref.current = ema9
+    ema21Ref.current = ema21
     tradeMarkerSeriesRef.current = markerSeries
 
     const ro = new ResizeObserver(entries => {
@@ -115,7 +200,13 @@ function AnalysisChart({ symbol, date, trades }: { symbol: string; date: string;
     })
     ro.observe(containerRef.current)
 
-    return () => { ro.disconnect(); tradeMarkerSeriesRef.current = null; chart.remove() }
+    return () => {
+      ro.disconnect()
+      tradeMarkerSeriesRef.current = null
+      ema9Ref.current = null
+      ema21Ref.current = null
+      chart.remove()
+    }
   }, [])
 
   useEffect(() => {
@@ -128,7 +219,7 @@ function AnalysisChart({ symbol, date, trades }: { symbol: string; date: string;
           open: c.open, high: c.high, low: c.low, close: c.close,
         })
         const [histResp, tradingDayCandles] = await Promise.all([
-          api.getHistorical(symbol, date, 3),
+          api.getHistorical(symbol, date, 3, historicalDays),
           api.getPreSession(symbol, date, '15:30:00', 3),
         ])
         if (cancelled || !seriesRef.current) return
@@ -144,13 +235,26 @@ function AnalysisChart({ symbol, date, trades }: { symbol: string; date: string;
         )
         if (sorted.length > 0) {
           seriesRef.current.setData(sorted)
+
+          const closes = sorted.map(c => c.close)
+          const ema9Vals = computeEMA(closes, 9)
+          const ema21Vals = computeEMA(closes, 21)
+          const ema9Data = sorted
+            .map((c, i) => ({ time: c.time, value: ema9Vals[i] }))
+            .filter((d): d is LineData => d.value !== null)
+          const ema21Data = sorted
+            .map((c, i) => ({ time: c.time, value: ema21Vals[i] }))
+            .filter((d): d is LineData => d.value !== null)
+          ema9Ref.current?.setData(ema9Data)
+          ema21Ref.current?.setData(ema21Data)
+
           setCandles(sorted)
           chartRef.current?.timeScale().fitContent()
         }
       } catch { /* ignore */ }
     })()
     return () => { cancelled = true }
-  }, [symbol, date])
+  }, [symbol, date, historicalDays])
 
   useEffect(() => {
     const ms = tradeMarkerSeriesRef.current
@@ -203,10 +307,301 @@ function AnalysisChart({ symbol, date, trades }: { symbol: string; date: string;
   }, [trades, candles])
 
   return (
-    <div
-      ref={containerRef}
-      style={{ width: '100%', borderRadius: 6, overflow: 'hidden', marginTop: 8 }}
-    />
+    <div style={{ width: '100%', borderRadius: 6, overflow: 'hidden' }}>
+      <ChartToolbar title={title} isMaximized={isMaximized} onMaximize={onMaximize} />
+      <div ref={containerRef} style={{ width: '100%' }} />
+    </div>
+  )
+}
+
+// ── Options Chart ─────────────────────────────────────────────────────────────
+
+function OptionsChart({
+  symbol, date, strike, expiry, right, trades, historicalDays = 2,
+  isMaximized = false, onMaximize,
+}: {
+  symbol: string
+  date: string
+  strike: number
+  expiry: string
+  right: string
+  trades: AnalysisTrade[]
+  historicalDays?: number
+  isMaximized?: boolean
+  onMaximize?: () => void
+}) {
+  const containerRef = useRef<HTMLDivElement>(null)
+  const chartRef = useRef<IChartApi | null>(null)
+  const seriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null)
+  const tradeMarkerSeriesRef = useRef<ISeriesApi<'Line'> | null>(null)
+
+  useEffect(() => {
+    if (!containerRef.current) return
+    const w = containerRef.current.clientWidth
+    const h = Math.max(300, Math.floor(w * 0.45))
+    const chart = createChart(containerRef.current, {
+      width: w,
+      height: h,
+      layout: { background: { color: '#0d1117' }, textColor: '#e6edf3' },
+      grid: { vertLines: { color: '#1e2732' }, horzLines: { color: '#1e2732' } },
+      timeScale: { timeVisible: true, secondsVisible: false, borderColor: '#30363d' },
+      crosshair: { mode: 0 },
+    })
+    const series = chart.addCandlestickSeries({
+      upColor: '#26a641', downColor: '#f85149',
+      borderVisible: false,
+      wickUpColor: '#26a641', wickDownColor: '#f85149',
+    })
+    const markerSeries = chart.addLineSeries({
+      lineVisible: false, crosshairMarkerVisible: false,
+      lastValueVisible: false, priceLineVisible: false,
+    })
+
+    chartRef.current = chart
+    seriesRef.current = series
+    tradeMarkerSeriesRef.current = markerSeries
+
+    const ro = new ResizeObserver(entries => {
+      const width = entries[0].contentRect.width
+      const height = Math.max(300, Math.floor(width * 0.45))
+      chart.applyOptions({ width, height })
+    })
+    ro.observe(containerRef.current)
+
+    return () => {
+      ro.disconnect()
+      tradeMarkerSeriesRef.current = null
+      chart.remove()
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!seriesRef.current || !symbol || !date || !strike || !expiry || !right) return
+    let cancelled = false
+    ;(async () => {
+      try {
+        const toCandle = (c: OHLCCandle): CandlestickData => ({
+          time: c.time as Time,
+          open: c.open, high: c.high, low: c.low, close: c.close,
+        })
+        const histResp = await api.getOptionsHistorical(symbol, date, strike, expiry, right, 3, historicalDays)
+        if (cancelled || !seriesRef.current) return
+
+        const byTime = new Map<number, CandlestickData>()
+        histResp.candles.map(toCandle).forEach(c => byTime.set(c.time as number, c))
+        const sorted = Array.from(byTime.values()).sort(
+          (a, b) => (a.time as number) - (b.time as number)
+        )
+        if (sorted.length > 0) {
+          seriesRef.current.setData(sorted)
+          chartRef.current?.timeScale().fitContent()
+        }
+      } catch { /* ignore */ }
+    })()
+    return () => { cancelled = true }
+  }, [symbol, date, strike, expiry, right, historicalDays])
+
+  useEffect(() => {
+    const ms = tradeMarkerSeriesRef.current
+    if (!ms) return
+
+    if (trades.length === 0) {
+      try { ms.setData([]); ms.setMarkers([]) } catch { /* disposed */ }
+      return
+    }
+
+    const intervalSecs = 3 * 60
+    const priceBySlot = new Map<number, number>()
+    const markers: SeriesMarker<Time>[] = []
+
+    for (const t of trades) {
+      const slot = Math.floor(t.timestamp / intervalSecs) * intervalSecs
+      priceBySlot.set(slot, t.price)
+      markers.push({
+        time: slot as Time,
+        position: 'inBar' as const,
+        color: t.side === 'BUY' ? '#26a641' : '#f85149',
+        shape: 'circle' as const,
+        text: t.side === 'BUY' ? 'B' : 'S',
+        size: 1,
+      })
+    }
+
+    const lineData: LineData[] = Array.from(priceBySlot.entries())
+      .sort(([a], [b]) => a - b)
+      .map(([time, value]) => ({ time: time as Time, value }))
+    markers.sort((a, b) => (a.time as number) - (b.time as number))
+
+    try { ms.setData(lineData); ms.setMarkers(markers) } catch { /* disposed */ }
+  }, [trades])
+
+  return (
+    <div style={{ width: '100%', borderRadius: 6, overflow: 'hidden' }}>
+      <ChartToolbar
+        title={`${right} ${strike}`}
+        isMaximized={isMaximized}
+        onMaximize={onMaximize}
+      />
+      <div ref={containerRef} style={{ width: '100%' }} />
+    </div>
+  )
+}
+
+// ── Chart Panel (split layout + maximize) ────────────────────────────────────
+
+interface OptionTab {
+  key: string
+  label: string
+  right: string
+  strike: number
+  expiry: string
+  trades: AnalysisTrade[]
+}
+
+function AnalysisChartPanel({
+  symbol, date, allTrades, isOptions, historicalDays = 2,
+}: {
+  symbol: string
+  date: string
+  allTrades: AnalysisTrade[]
+  isOptions: boolean
+  historicalDays?: number
+}) {
+  const optionTabs = useMemo<OptionTab[]>(() => {
+    if (!isOptions) return []
+    const tabMap = new Map<string, OptionTab>()
+    for (const t of allTrades) {
+      if (!t.right || t.strike == null || !t.expiry) continue
+      const key = `${t.right}-${t.strike}-${t.expiry}`
+      if (!tabMap.has(key)) {
+        tabMap.set(key, { key, label: `${t.right} ${t.strike}`, right: t.right, strike: t.strike, expiry: t.expiry, trades: [] })
+      }
+      tabMap.get(key)!.trades.push(t)
+    }
+    return Array.from(tabMap.values()).sort((a, b) => {
+      if (a.right !== b.right) return a.right === 'CE' ? -1 : 1
+      return a.strike - b.strike
+    })
+  }, [allTrades, isOptions])
+
+  const [activeTab, setActiveTab] = useState<string>('')
+  const [maximizedChart, setMaximizedChart] = useState<'underlying' | string | null>(null)
+
+  useEffect(() => {
+    if (optionTabs.length > 0 && !optionTabs.find(t => t.key === activeTab)) {
+      setActiveTab(optionTabs[0].key)
+    }
+  }, [optionTabs, activeTab])
+
+  useEffect(() => {
+    if (!maximizedChart) return
+    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') setMaximizedChart(null) }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [maximizedChart])
+
+  const activeTabData = optionTabs.find(t => t.key === activeTab) ?? null
+
+  // ── Fullscreen overlay ────────────────────────────────────────────────────
+  if (maximizedChart) {
+    const isUnderlying = maximizedChart === 'underlying'
+    const optTab = isUnderlying ? null : optionTabs.find(t => t.key === maximizedChart) ?? null
+    const overlayTitle = isUnderlying ? 'Underlying' : (optTab?.label ?? '')
+
+    return (
+      <div style={{ position: 'fixed', inset: 0, zIndex: 2000, background: '#0d1117', display: 'flex', flexDirection: 'column' }}>
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 12,
+          padding: '8px 16px', background: '#161b22', borderBottom: '1px solid #30363d',
+          flexShrink: 0,
+        }}>
+          <span style={{ fontSize: 13, fontWeight: 700, color: '#e6edf3' }}>{overlayTitle}</span>
+          <span style={{ fontSize: 12, color: '#484f58' }}>{symbol} · {date}</span>
+          <div style={{ flex: 1 }} />
+          <button
+            onClick={() => setMaximizedChart(null)}
+            title="Restore"
+            style={{
+              background: 'none', border: '1px solid #30363d', color: '#8b949e',
+              borderRadius: 6, padding: '4px 10px', cursor: 'pointer', fontSize: 12,
+            }}
+          >
+            ⤡ Restore
+          </button>
+        </div>
+        <div style={{ flex: 1, padding: 8, overflow: 'hidden' }}>
+          {isUnderlying ? (
+            <AnalysisChart
+              symbol={symbol} date={date} trades={allTrades}
+              historicalDays={historicalDays} title="Underlying"
+              isMaximized onMaximize={() => setMaximizedChart(null)}
+            />
+          ) : optTab ? (
+            <OptionsChart
+              symbol={symbol} date={date}
+              strike={optTab.strike} expiry={optTab.expiry} right={optTab.right}
+              trades={optTab.trades} historicalDays={historicalDays}
+              isMaximized onMaximize={() => setMaximizedChart(null)}
+            />
+          ) : null}
+        </div>
+      </div>
+    )
+  }
+
+  // ── Equity: single chart ──────────────────────────────────────────────────
+  if (!isOptions || optionTabs.length === 0) {
+    return (
+      <div style={{ marginTop: 8 }}>
+        <AnalysisChart
+          symbol={symbol} date={date} trades={allTrades}
+          historicalDays={historicalDays} title="Underlying"
+          onMaximize={() => setMaximizedChart('underlying')}
+        />
+      </div>
+    )
+  }
+
+  // ── Options: side-by-side ─────────────────────────────────────────────────
+  return (
+    <div style={{ marginTop: 8, display: 'flex', gap: 8 }}>
+      {/* Underlying — left */}
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <AnalysisChart
+          symbol={symbol} date={date} trades={allTrades}
+          historicalDays={historicalDays} title="Underlying"
+          onMaximize={() => setMaximizedChart('underlying')}
+        />
+      </div>
+
+      {/* Options — right */}
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ display: 'flex', gap: 4, marginBottom: 4, flexWrap: 'wrap' }}>
+          {optionTabs.map(tab => (
+            <button
+              key={tab.key}
+              onClick={() => setActiveTab(tab.key)}
+              style={{
+                padding: '3px 10px', borderRadius: 12, fontSize: 11, fontWeight: 600,
+                cursor: 'pointer', border: 'none',
+                background: tab.key === activeTab ? '#58a6ff' : '#21262d',
+                color: tab.key === activeTab ? '#0d1117' : '#8b949e',
+              }}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+        {activeTabData && (
+          <OptionsChart
+            symbol={symbol} date={date}
+            strike={activeTabData.strike} expiry={activeTabData.expiry} right={activeTabData.right}
+            trades={activeTabData.trades} historicalDays={historicalDays}
+            onMaximize={() => setMaximizedChart(activeTab)}
+          />
+        )}
+      </div>
+    </div>
   )
 }
 
@@ -255,7 +650,7 @@ function TradeTable({ trades }: { trades: AnalysisTrade[] }) {
 
 // ── Group card ────────────────────────────────────────────────────────────────
 
-function GroupCard({ group }: { group: SessionGroup }) {
+function GroupCard({ group, historicalDays = 2 }: { group: SessionGroup; historicalDays?: number }) {
   const [expanded, setExpanded] = useState(false)
   const [details, setDetails] = useState<Map<string, SessionDetail>>(new Map())
   const [loading, setLoading] = useState(false)
@@ -357,7 +752,6 @@ function GroupCard({ group }: { group: SessionGroup }) {
             if (!d || d.trades.length === 0) return null
             return (
               <div key={s.session_id}>
-                {/* Dashed separator + session header between sessions */}
                 {idx > 0 && (
                   <div style={{
                     margin: '14px 0 8px',
@@ -370,7 +764,6 @@ function GroupCard({ group }: { group: SessionGroup }) {
                     <div style={{ flex: 1, borderTop: '1px dashed #30363d' }} />
                   </div>
                 )}
-                {/* Label for first session too when multi-session */}
                 {idx === 0 && multiSession && (
                   <div style={{ fontSize: 11, color: '#484f58', marginTop: 10, marginBottom: 4 }}>
                     Session 1 · {s.start_time?.slice(0, 5) ?? s.session_id.slice(0, 8)}
@@ -383,10 +776,12 @@ function GroupCard({ group }: { group: SessionGroup }) {
             )
           })}
 
-          <AnalysisChart
+          <AnalysisChartPanel
             symbol={group.symbol}
             date={group.date}
-            trades={allTrades}
+            allTrades={allTrades}
+            isOptions={group.instrument_type === 'options'}
+            historicalDays={historicalDays}
           />
         </div>
       )}
@@ -396,7 +791,7 @@ function GroupCard({ group }: { group: SessionGroup }) {
 
 // ── Main TradeAnalysis component ─────────────────────────────────────────────
 
-export default function TradeAnalysis({ onClose }: Props) {
+export default function TradeAnalysis({ onClose, historicalDays = 2 }: Props) {
   const today = new Date().toISOString().slice(0, 10)
   const thirtyDaysAgo = new Date(Date.now() - 30 * 86400 * 1000).toISOString().slice(0, 10)
 
@@ -574,7 +969,7 @@ export default function TradeAnalysis({ onClose }: Props) {
           )}
 
           {groups.map(g => (
-            <GroupCard key={g.key} group={g} />
+            <GroupCard key={g.key} group={g} historicalDays={historicalDays} />
           ))}
         </div>
       </div>
