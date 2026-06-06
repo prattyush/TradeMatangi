@@ -15,6 +15,7 @@ import TradeAnalysis from './components/TradeAnalysis'
 import AIChatPanel from './components/AIChatPanel'
 import { useSimulation, InstrumentConfig } from './hooks/useSimulation'
 import { useSSE } from './hooks/useSSE'
+import { useRecording } from './hooks/useRecording'
 import api from './services/api'
 
 const FIXED_USER = { userId: 'abc12300-0000-0000-0000-000000000001', username: 'abc123' }
@@ -113,6 +114,7 @@ export default function App() {
 
 function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: string; isAdmin: boolean }; onLogout: () => void }) {
   const sim = useSimulation()
+  const { recordingState, recordingError, startRecording, pauseRecording, resumeRecording, stopRecording } = useRecording()
   const [fundsRatioMode, setFundsRatioMode] = useState(loadFundsRatioMode)
   const [fundsRatios, setFundsRatios] = useState<FundsRatios>(loadFundsRatios)
   const [targetDeviationPct, setTargetDeviationPct] = useState(loadTargetDeviationPct)
@@ -734,6 +736,89 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
         >
           📚 Patterns
         </button>
+        {/* Recording controls — only shown when a session is active */}
+        {(sim.sessionState === 'running' || sim.sessionState === 'paused') && sim.sessionId && (() => {
+          const filename = `TradeMatangi_${sim.symbol}_${sim.date}_${sim.sessionType}.webm`
+          return (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+              {recordingState === 'idle' && (
+                <button
+                  onClick={() => startRecording(filename)}
+                  title="Start screen recording (WebM, YouTube-compatible)"
+                  style={{
+                    background: '#3d1010', border: '1px solid #8b1a1a',
+                    color: '#f85149', borderRadius: 6, padding: '4px 10px',
+                    fontSize: 12, cursor: 'pointer', fontWeight: 600,
+                  }}
+                >
+                  ● REC
+                </button>
+              )}
+              {recordingState === 'requesting' && (
+                <button
+                  disabled
+                  style={{
+                    background: '#21262d', border: '1px solid #30363d',
+                    color: '#484f58', borderRadius: 6, padding: '4px 10px',
+                    fontSize: 12, cursor: 'not-allowed',
+                  }}
+                >
+                  Requesting…
+                </button>
+              )}
+              {(recordingState === 'recording' || recordingState === 'paused') && (
+                <>
+                  <span style={{
+                    fontSize: 14,
+                    color: recordingState === 'recording' ? '#f85149' : '#d29922',
+                    animation: recordingState === 'recording' ? 'recBlink 1s step-start infinite' : 'none',
+                  }}>
+                    {recordingState === 'recording' ? '●' : '⏸'}
+                  </span>
+                  {recordingState === 'recording' ? (
+                    <button
+                      onClick={pauseRecording}
+                      title="Pause recording"
+                      style={{
+                        background: '#21262d', border: '1px solid #30363d',
+                        color: '#c9d1d9', borderRadius: 6, padding: '4px 8px',
+                        fontSize: 12, cursor: 'pointer',
+                      }}
+                    >
+                      ⏸ Pause
+                    </button>
+                  ) : (
+                    <button
+                      onClick={resumeRecording}
+                      title="Resume recording"
+                      style={{
+                        background: '#21262d', border: '1px solid #30363d',
+                        color: '#c9d1d9', borderRadius: 6, padding: '4px 8px',
+                        fontSize: 12, cursor: 'pointer',
+                      }}
+                    >
+                      ▶ Resume
+                    </button>
+                  )}
+                  <button
+                    onClick={stopRecording}
+                    title="Stop recording and save file"
+                    style={{
+                      background: '#3d1010', border: '1px solid #8b1a1a',
+                      color: '#f85149', borderRadius: 6, padding: '4px 8px',
+                      fontSize: 12, cursor: 'pointer',
+                    }}
+                  >
+                    ⏹ Stop
+                  </button>
+                </>
+              )}
+              {recordingError && (
+                <span style={{ fontSize: 11, color: '#f85149' }}>{recordingError}</span>
+              )}
+            </div>
+          )
+        })()}
         <SettingsModal
           date={sim.date}
           isAdmin={authUser.isAdmin}

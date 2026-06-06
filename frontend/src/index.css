@@ -5,3 +5,7 @@ button:active {
   transform: scale(0.94);
   filter: brightness(0.78);
 }
+@keyframes recBlink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
