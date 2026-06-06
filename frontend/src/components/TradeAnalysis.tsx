@@ -154,6 +154,7 @@ function AnalysisChart({
   const ema9Ref = useRef<ISeriesApi<'Line'> | null>(null)
   const ema21Ref = useRef<ISeriesApi<'Line'> | null>(null)
   const [candles, setCandles] = useState<CandlestickData[]>([])
+  const [markerFilter, setMarkerFilter] = useState<'all' | 'CE' | 'PE'>('all')
 
   useEffect(() => {
     if (!containerRef.current) return
@@ -256,11 +257,17 @@ function AnalysisChart({
     return () => { cancelled = true }
   }, [symbol, date, historicalDays])
 
+  const hasOptions = trades.some(t => t.right)
+
   useEffect(() => {
     const ms = tradeMarkerSeriesRef.current
     if (!ms) return
 
-    if (trades.length === 0) {
+    const displayTrades = markerFilter === 'all'
+      ? trades
+      : trades.filter(t => !t.right || t.right === markerFilter)
+
+    if (displayTrades.length === 0) {
       try { ms.setData([]); ms.setMarkers([]) } catch { /* disposed */ }
       return
     }
@@ -269,7 +276,7 @@ function AnalysisChart({
     const priceBySlot = new Map<number, number>()
     const markers: SeriesMarker<Time>[] = []
 
-    for (const t of trades) {
+    for (const t of displayTrades) {
       const slot = Math.floor(t.timestamp / intervalSecs) * intervalSecs
 
       let yPrice: number
@@ -304,11 +311,33 @@ function AnalysisChart({
     markers.sort((a, b) => (a.time as number) - (b.time as number))
 
     try { ms.setData(lineData); ms.setMarkers(markers) } catch { /* disposed */ }
-  }, [trades, candles])
+  }, [trades, candles, markerFilter])
 
   return (
     <div style={{ width: '100%', borderRadius: 6, overflow: 'hidden' }}>
       <ChartToolbar title={title} isMaximized={isMaximized} onMaximize={onMaximize} />
+      {hasOptions && (
+        <div style={{ display: 'flex', gap: 4, padding: '4px 8px', background: '#161b22' }}>
+          {(['all', 'CE', 'PE'] as const).map(f => (
+            <button
+              key={f}
+              onClick={() => setMarkerFilter(f)}
+              style={{
+                padding: '2px 10px',
+                borderRadius: 4,
+                border: `1px solid ${markerFilter === f ? '#388bfd' : '#30363d'}`,
+                background: markerFilter === f ? '#1f3a6e' : 'transparent',
+                color: markerFilter === f ? '#79c0ff' : '#8b949e',
+                cursor: 'pointer',
+                fontSize: 11,
+                fontWeight: markerFilter === f ? 600 : 400,
+              }}
+            >
+              {f === 'all' ? 'All' : f}
+            </button>
+          ))}
+        </div>
+      )}
       <div ref={containerRef} style={{ width: '100%' }} />
     </div>
   )
