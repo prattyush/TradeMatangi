@@ -215,6 +215,8 @@ b) Option in stoploss to increase quantity. Open to discussion.
 
 **No backend changes. No new tests** (browser API only — not unit-testable without mocking `getDisplayMedia`).
 
+**Follow-up fix (direct commit to dev + main):** `getDisplayMedia` errors were previously swallowed silently — clicking `● REC` appeared to do nothing. Fixed by checking `window.isSecureContext && navigator.mediaDevices?.getDisplayMedia` upfront (shows "Screen recording requires HTTPS or localhost" on plain HTTP) and surfacing non-cancellation errors in `recordingError`. `NotAllowedError` (user dismissed picker) still shows nothing. Note: EC2 can be unlocked via `chrome://flags` → "Insecure origins treated as secure".
+
 ---
 
 ## Test Counts
@@ -249,7 +251,8 @@ b) Option in stoploss to increase quantity. Open to discussion.
 | EMA 9/21 on CE/PE OptionsChart + marker size bumped to 0.6 | fix/options-chart-ema | PR #195 merged to dev |
 | Trade Analysis chart height ratio increased from 0.45 to 0.6 | fix/trade-analysis-chart-height | PR #197 merged to dev |
 | CE/PE marker filter toggle [All/CE/PE] on Underlying chart | fix/underlying-chart-marker-filter | PR #199 merged to dev |
-| Sprint 5 — Recording (screen record sessions as WebM/YouTube-compatible) | feature/phase12-recording | Open |
+| Sprint 5 — Recording (screen record sessions as WebM/YouTube-compatible) | feature/phase12-recording | PR #201 merged to dev + main |
+| Recording fix — surface getDisplayMedia errors; guard on isSecureContext | dev (direct commit) | Merged to dev + main |
 
 ---
 
