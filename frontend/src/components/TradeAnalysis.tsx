@@ -294,7 +294,7 @@ function AnalysisChart({
         color: effectiveSide === 'BUY' ? '#FFFFFF' : '#00AAFF',
         shape: 'circle' as const,
         text,
-        size: 0.5,
+        size: 0.6,
       })
     }
 
@@ -334,6 +334,8 @@ function OptionsChart({
   const chartRef = useRef<IChartApi | null>(null)
   const seriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null)
   const tradeMarkerSeriesRef = useRef<ISeriesApi<'Line'> | null>(null)
+  const ema9Ref = useRef<ISeriesApi<'Line'> | null>(null)
+  const ema21Ref = useRef<ISeriesApi<'Line'> | null>(null)
 
   useEffect(() => {
     if (!containerRef.current) return
@@ -352,6 +354,16 @@ function OptionsChart({
       borderVisible: false,
       wickUpColor: '#26a641', wickDownColor: '#f85149',
     })
+    const ema9 = chart.addLineSeries({
+      color: '#f0883e', lineWidth: 1,
+      lastValueVisible: false, priceLineVisible: false,
+      crosshairMarkerVisible: false,
+    })
+    const ema21 = chart.addLineSeries({
+      color: '#79c0ff', lineWidth: 1,
+      lastValueVisible: false, priceLineVisible: false,
+      crosshairMarkerVisible: false,
+    })
     const markerSeries = chart.addLineSeries({
       lineVisible: false, crosshairMarkerVisible: false,
       lastValueVisible: false, priceLineVisible: false,
@@ -359,6 +371,8 @@ function OptionsChart({
 
     chartRef.current = chart
     seriesRef.current = series
+    ema9Ref.current = ema9
+    ema21Ref.current = ema21
     tradeMarkerSeriesRef.current = markerSeries
 
     const ro = new ResizeObserver(entries => {
@@ -371,6 +385,8 @@ function OptionsChart({
     return () => {
       ro.disconnect()
       tradeMarkerSeriesRef.current = null
+      ema9Ref.current = null
+      ema21Ref.current = null
       chart.remove()
     }
   }, [])
@@ -394,6 +410,19 @@ function OptionsChart({
         )
         if (sorted.length > 0) {
           seriesRef.current.setData(sorted)
+
+          const closes = sorted.map(c => c.close)
+          const ema9Vals = computeEMA(closes, 9)
+          const ema21Vals = computeEMA(closes, 21)
+          const ema9Data = sorted
+            .map((c, i) => ({ time: c.time, value: ema9Vals[i] }))
+            .filter((d): d is LineData => d.value !== null)
+          const ema21Data = sorted
+            .map((c, i) => ({ time: c.time, value: ema21Vals[i] }))
+            .filter((d): d is LineData => d.value !== null)
+          ema9Ref.current?.setData(ema9Data)
+          ema21Ref.current?.setData(ema21Data)
+
           chartRef.current?.timeScale().fitContent()
         }
       } catch { /* ignore */ }
@@ -423,7 +452,7 @@ function OptionsChart({
         color: t.side === 'BUY' ? '#FFFFFF' : '#00AAFF',
         shape: 'circle' as const,
         text: t.side === 'BUY' ? 'B' : 'S',
-        size: 0.5,
+        size: 0.6,
       })
     }
 
