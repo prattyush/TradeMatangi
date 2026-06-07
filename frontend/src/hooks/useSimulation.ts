@@ -378,15 +378,15 @@ export function useSimulation() {
       api.getTrades(state.sessionId),
     ])
     setState(s => {
-      // Stamp underlying_price only on trades that are new (not already in state)
-      const oldTradeIds = new Set(s.trades.map(t => t.trade_id))
-      const stamped = equityTickAtFill
-        ? trades.map(t =>
-            (t.right && t.underlying_price === undefined && !oldTradeIds.has(t.trade_id))
-              ? { ...t, underlying_price: equityTickAtFill.close }
-              : t
-          )
-        : trades
+      // Build a lookup of previously-stamped underlying_price values so they survive
+      // the backend round-trip (backend never stores underlying_price)
+      const prevById = new Map(s.trades.map(t => [t.trade_id, t]))
+      const stamped = trades.map(t => {
+        const prev = prevById.get(t.trade_id)
+        if (prev?.underlying_price !== undefined) return { ...t, underlying_price: prev.underlying_price }
+        if (t.right && equityTickAtFill) return { ...t, underlying_price: equityTickAtFill.close }
+        return t
+      })
       return {
         ...s,
         ...(posCE ? { positionCE: posCE } : {}),
@@ -528,14 +528,13 @@ export function useSimulation() {
   const setTrades = useCallback((trades: Trade[]) => {
     const equityTick = latestEquityTickRef.current
     setState(s => {
-      const oldTradeIds = new Set(s.trades.map(t => t.trade_id))
-      const stamped = equityTick
-        ? trades.map(t =>
-            (t.right && t.underlying_price === undefined && !oldTradeIds.has(t.trade_id))
-              ? { ...t, underlying_price: equityTick.close }
-              : t
-          )
-        : trades
+      const prevById = new Map(s.trades.map(t => [t.trade_id, t]))
+      const stamped = trades.map(t => {
+        const prev = prevById.get(t.trade_id)
+        if (prev?.underlying_price !== undefined) return { ...t, underlying_price: prev.underlying_price }
+        if (t.right && equityTick) return { ...t, underlying_price: equityTick.close }
+        return t
+      })
       return { ...s, trades: stamped }
     })
   }, [])
