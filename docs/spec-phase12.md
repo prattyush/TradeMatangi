@@ -215,6 +215,8 @@ b) Option in stoploss to increase quantity. Open to discussion.
 
 **No backend changes. No new tests** (browser API only — not unit-testable without mocking `getDisplayMedia`).
 
+**Follow-up fix (direct commit to dev + main):** `getDisplayMedia` errors were previously swallowed silently — clicking `● REC` appeared to do nothing. Fixed by checking `window.isSecureContext && navigator.mediaDevices?.getDisplayMedia` upfront (shows "Screen recording requires HTTPS or localhost" on plain HTTP) and surfacing non-cancellation errors in `recordingError`. `NotAllowedError` (user dismissed picker) still shows nothing. Note: EC2 can be unlocked via `chrome://flags` → "Insecure origins treated as secure".
+
 ---
 
 ## Test Counts
@@ -249,7 +251,8 @@ b) Option in stoploss to increase quantity. Open to discussion.
 | EMA 9/21 on CE/PE OptionsChart + marker size bumped to 0.6 | fix/options-chart-ema | PR #195 merged to dev |
 | Trade Analysis chart height ratio increased from 0.45 to 0.6 | fix/trade-analysis-chart-height | PR #197 merged to dev |
 | CE/PE marker filter toggle [All/CE/PE] on Underlying chart | fix/underlying-chart-marker-filter | PR #199 merged to dev |
-| Sprint 5 — Recording (screen record sessions as WebM/YouTube-compatible) | feature/phase12-recording | Open |
+| Sprint 5 — Recording (screen record sessions as WebM/YouTube-compatible) | feature/phase12-recording | PR #201 merged to dev + main |
+| Recording fix — surface getDisplayMedia errors; guard on isSecureContext | dev (direct commit) | Merged to dev + main |
 
 ---
 
@@ -435,3 +438,24 @@ No backend, frontend, or test changes.
 **Change:** Added `[All] [CE] [PE]` toggle buttons to `AnalysisChart` (Underlying) in Trade Analysis. Buttons appear only when the session contains options trades. Default is `All` (unchanged behaviour). `CE` hides PE markers; `PE` hides CE markers. Equity trades (no `right` field) always pass the filter. State is self-contained inside `AnalysisChart`; works in both normal and fullscreen view.
 
 **PR #199 merged to dev.**
+
+---
+
+### CE/PE Markers on Underlying Chart in Live Trading Views — PR #204 (fix/ce-pe-markers-on-underlying-live)
+
+**Problem:** In Simulation, Real, Paper, and Stepwise trading views, Buy/Sell markers from CE/PE options orders appeared on the CE/PE charts but not on the underlying (NIFTY/BANKNIFTY) chart.
+
+**Root cause:** `getTradesForPane` in `App.tsx` filtered equity panes to `!t.right` only, preventing CE/PE trades from reaching the Chart component. `Chart.tsx` already had `crossChartMarkerStyle()` and the full rendering logic; `useSimulation.ts` already captured `underlying_price` at trade time — only the filter needed fixing.
+
+**Fix:** Changed equity-pane filter in `App.tsx` to `!t.right || t.underlying_price !== undefined`, passing CE/PE trades with an underlying price snapshot through to the underlying chart.
+
+**Color alignment:** Updated `crossChartMarkerStyle()` to use the same white/blue palette as the CE/PE chart itself, so colors are consistent across charts:
+
+| Order | Label | Color |
+|-------|-------|-------|
+| CE Buy | CB | White `#FFFFFF` — matches CE chart Buy |
+| CE Sell | CS | Blue `#00AAFF` — matches CE chart Sell |
+| PE Sell | PB | White `#FFFFFF` — bullish direction, same as CE Buy |
+| PE Buy | PS | Blue `#00AAFF` — bearish direction, same as CE Sell |
+
+**PR #204 merged to dev.**
