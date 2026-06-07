@@ -605,13 +605,13 @@ export default function Chart({
   function crossChartMarkerStyle(tradeRight: string, side: 'BUY' | 'SELL'): { color: string; text: string } {
     if (tradeRight === 'CE') {
       return side === 'BUY'
-        ? { color: '#26a641', text: 'CB' }   // CE Buy  → underlying Buy  (green)
-        : { color: '#cf6679', text: 'CS' }   // CE Sell → underlying Sell (pink-red)
+        ? { color: '#FFFFFF', text: 'CB' }   // CE Buy  → underlying Buy  (white, matches CE chart Buy)
+        : { color: '#00AAFF', text: 'CS' }   // CE Sell → underlying Sell (blue, matches CE chart Sell)
     }
     // PE: direction inverted — buying puts = selling underlying
     return side === 'BUY'
-      ? { color: '#9a6dd7', text: 'PS' }     // PE Buy  → underlying Sell (purple)
-      : { color: '#d4a72c', text: 'PB' }     // PE Sell → underlying Buy  (amber)
+      ? { color: '#00AAFF', text: 'PS' }     // PE Buy  → underlying Sell (blue, same direction as CE Sell)
+      : { color: '#FFFFFF', text: 'PB' }     // PE Sell → underlying Buy  (white, same direction as CE Buy)
   }
 
   useEffect(() => {
