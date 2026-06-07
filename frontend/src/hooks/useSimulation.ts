@@ -105,12 +105,13 @@ export function useSimulation() {
   })
 
   const setLatestTick = useCallback((tick: TickEvent) => {
+    // Update ref synchronously so any concurrent buy/sell/handleOrderFilled reads the latest price
+    if (!tick.right) latestEquityTickRef.current = tick
     setState(s => {
       const update: Partial<SimulationState> = {}
       if (!tick.right) {
         update.currentPrice = tick.close
         update.latestEquityTick = tick
-        latestEquityTickRef.current = tick
       } else if (tick.right === 'CE') {
         update.currentPriceCE = tick.close
         update.latestCETick = tick
@@ -366,6 +367,9 @@ export function useSimulation() {
       walletRefreshKey: s.walletRefreshKey + 1,
     }))
     if (!state.sessionId) return
+    // Capture equity price synchronously before the async fetch so we can stamp
+    // underlying_price on newly-filled CE/PE trades (backend never sets this field)
+    const equityTickAtFill = latestEquityTickRef.current
     // Use right from the event payload — order may not be in openOrders if placed by a strategy
     const [posCE, posPE, posEq, trades] = await Promise.all([
       right === 'CE' ? api.getPosition(state.sessionId, 'CE') : Promise.resolve(null),
@@ -373,13 +377,24 @@ export function useSimulation() {
       (!right) ? api.getPosition(state.sessionId) : Promise.resolve(null),
       api.getTrades(state.sessionId),
     ])
-    setState(s => ({
-      ...s,
-      ...(posCE ? { positionCE: posCE } : {}),
-      ...(posPE ? { positionPE: posPE } : {}),
-      ...(posEq ? { position: posEq } : {}),
-      trades,
-    }))
+    setState(s => {
+      // Stamp underlying_price only on trades that are new (not already in state)
+      const oldTradeIds = new Set(s.trades.map(t => t.trade_id))
+      const stamped = equityTickAtFill
+        ? trades.map(t =>
+            (t.right && t.underlying_price === undefined && !oldTradeIds.has(t.trade_id))
+              ? { ...t, underlying_price: equityTickAtFill.close }
+              : t
+          )
+        : trades
+      return {
+        ...s,
+        ...(posCE ? { positionCE: posCE } : {}),
+        ...(posPE ? { positionPE: posPE } : {}),
+        ...(posEq ? { position: posEq } : {}),
+        trades: stamped,
+      }
+    })
   }, [state.sessionId])
 
   // Day P&L: realized (closed trades) + unrealized (open position), equity
@@ -511,7 +526,18 @@ export function useSimulation() {
   }, [state.sessionId, state.stepwise])
 
   const setTrades = useCallback((trades: Trade[]) => {
-    setState(s => ({ ...s, trades }))
+    const equityTick = latestEquityTickRef.current
+    setState(s => {
+      const oldTradeIds = new Set(s.trades.map(t => t.trade_id))
+      const stamped = equityTick
+        ? trades.map(t =>
+            (t.right && t.underlying_price === undefined && !oldTradeIds.has(t.trade_id))
+              ? { ...t, underlying_price: equityTick.close }
+              : t
+          )
+        : trades
+      return { ...s, trades: stamped }
+    })
   }, [])
 
   const fetchAndUpdatePosition = useCallback(async () => {
