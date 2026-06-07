@@ -438,3 +438,24 @@ No backend, frontend, or test changes.
 **Change:** Added `[All] [CE] [PE]` toggle buttons to `AnalysisChart` (Underlying) in Trade Analysis. Buttons appear only when the session contains options trades. Default is `All` (unchanged behaviour). `CE` hides PE markers; `PE` hides CE markers. Equity trades (no `right` field) always pass the filter. State is self-contained inside `AnalysisChart`; works in both normal and fullscreen view.
 
 **PR #199 merged to dev.**
+
+---
+
+### CE/PE Markers on Underlying Chart in Live Trading Views — PR #204 (fix/ce-pe-markers-on-underlying-live)
+
+**Problem:** In Simulation, Real, Paper, and Stepwise trading views, Buy/Sell markers from CE/PE options orders appeared on the CE/PE charts but not on the underlying (NIFTY/BANKNIFTY) chart.
+
+**Root cause:** `getTradesForPane` in `App.tsx` filtered equity panes to `!t.right` only, preventing CE/PE trades from reaching the Chart component. `Chart.tsx` already had `crossChartMarkerStyle()` and the full rendering logic; `useSimulation.ts` already captured `underlying_price` at trade time — only the filter needed fixing.
+
+**Fix:** Changed equity-pane filter in `App.tsx` to `!t.right || t.underlying_price !== undefined`, passing CE/PE trades with an underlying price snapshot through to the underlying chart.
+
+**Color alignment:** Updated `crossChartMarkerStyle()` to use the same white/blue palette as the CE/PE chart itself, so colors are consistent across charts:
+
+| Order | Label | Color |
+|-------|-------|-------|
+| CE Buy | CB | White `#FFFFFF` — matches CE chart Buy |
+| CE Sell | CS | Blue `#00AAFF` — matches CE chart Sell |
+| PE Sell | PB | White `#FFFFFF` — bullish direction, same as CE Buy |
+| PE Buy | PS | Blue `#00AAFF` — bearish direction, same as CE Sell |
+
+**PR #204 merged to dev.**
