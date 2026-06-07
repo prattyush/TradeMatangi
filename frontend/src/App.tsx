@@ -471,7 +471,7 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
 
   // ── Trades filtered per pane for markers ─────────────────────────────────────
   const getTradesForPane = useCallback((pane: PaneConfig) => {
-    if (pane.type === 'equity') return sim.trades.filter(t => !t.right)
+    if (pane.type === 'equity') return sim.trades.filter(t => !t.right || t.underlying_price !== undefined)
     return sim.trades.filter(t => t.right === pane.right && t.strike === pane.strike)
   }, [sim.trades])
 
