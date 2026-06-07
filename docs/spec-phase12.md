@@ -486,3 +486,17 @@ No backend, frontend, or test changes.
 | AI-placed orders | `new_trade` SSE → `addTradeFromSSE` | Already correct |
 
 **PR #206 merged to dev.**
+
+---
+
+### CE/PE Underlying Markers — Preserve Price Across Refreshes — PR #208 (fix/underlying-marker-preserve-price)
+
+**Problem:** After PR #206, placing a second CE/PE order caused the first order's marker to disappear from the underlying chart.
+
+**Root cause:** `handleOrderFilled` and `setTrades` replace the entire `trades` array with a fresh backend fetch. Backend-returned trades never carry `underlying_price` (frontend-only field). The PR #206 stamping logic only stamped trades whose `trade_id` was **not** already in state — so previously stamped values were silently dropped when old trades came back from the backend without them.
+
+**Fix:** Build a `Map<trade_id, trade>` from existing state before applying the backend result. For each trade: (1) if already in state with `underlying_price` → restore it; (2) if new CE/PE trade → stamp with current equity price; (3) otherwise → use as-is. Applied to both `handleOrderFilled` and `setTrades`.
+
+Covers all modes: Simulation, Paper, Real, Stepwise.
+
+**PR #208 merged to dev.**
