@@ -459,3 +459,30 @@ No backend, frontend, or test changes.
 | PE Buy | PS | Blue `#00AAFF` — bearish direction, same as CE Sell |
 
 **PR #204 merged to dev.**
+
+---
+
+### CE/PE Underlying Markers — Order-Fill Stamping Fix — PR #206 (fix/underlying-marker-order-fill)
+
+**Problem:** Even after PR #204, markers still didn't appear on the underlying chart because `underlying_price` was never actually being set on trades in the normal UI flow.
+
+**Root cause:** The UI places orders via `placeOrder()` (limit/target/stoploss), not `buy()`/`sell()`. Trades enter state only when the order fills via the `order_filled` SSE event. `handleOrderFilled` fetches trades fresh from the backend, which never sets `underlying_price` (frontend-only field). So the filter `t.underlying_price !== undefined` always failed silently.
+
+**Three fixes in `useSimulation.ts`:**
+
+1. **`setLatestTick`** — moved `latestEquityTickRef.current = tick` outside the `setState` updater so it is set synchronously the moment each equity tick arrives (React 18 batching could delay it when inside an updater).
+
+2. **`handleOrderFilled`** — captures equity price before the async `api.getTrades()` fetch, then stamps `underlying_price` on newly-seen CE/PE trade IDs after the fetch.
+
+3. **`setTrades`** — same stamp logic for the Kotak reconciliation refresh path (real-trading only): missed stoploss fills that surface when the user clicks Refresh in TradeHistory get `underlying_price` stamped with the current live price.
+
+**Coverage:**
+
+| Mode | Fill path | Fixed by |
+|------|-----------|----------|
+| Simulation / Stepwise | `order_filled` SSE → `handleOrderFilled` | Fix 2 |
+| Paper / Real trading | `order_filled` SSE → `handleOrderFilled` | Fix 2 |
+| Real trading (missed fills) | Manual Refresh → `setTrades` | Fix 3 |
+| AI-placed orders | `new_trade` SSE → `addTradeFromSSE` | Already correct |
+
+**PR #206 merged to dev.**
