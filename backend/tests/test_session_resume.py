@@ -193,6 +193,48 @@ class TestRebuildSessionFromDb:
         assert session.brokerage_per_order == 20.0
         assert session.strategy_interval_secs == 300
 
+    def test_restores_strike_ce_pe_from_db(self):
+        """strike_ce and strike_pe saved in DB are restored on resume."""
+        record = self._make_record(instrument_type="options")
+        record["strike"] = 24500
+        record["strike_ce"] = 24600
+        record["strike_pe"] = 24400
+        record["expiry"] = "2026-06-26"
+        record["right"] = None
+        with patch("app.services.guardrail_service.initialize_guardrails"):
+            session = sim.rebuild_session_from_db(record, "user1")
+        assert session.strike_ce == 24600
+        assert session.strike_pe == 24400
+
+    def test_override_strikes_take_priority_over_db(self):
+        """Caller-provided strikes override DB values — user changed OTM on restart."""
+        record = self._make_record(instrument_type="options")
+        record["strike"] = 24500
+        record["strike_ce"] = 24600  # DB has old OTM=2
+        record["strike_pe"] = 24400
+        record["expiry"] = "2026-06-26"
+        record["right"] = None
+        with patch("app.services.guardrail_service.initialize_guardrails"):
+            session = sim.rebuild_session_from_db(
+                record, "user1",
+                strike_ce=24750,  # new OTM=5
+                strike_pe=24250,
+            )
+        assert session.strike_ce == 24750
+        assert session.strike_pe == 24250
+
+    def test_falls_back_to_strike_when_ce_pe_absent(self):
+        """Old sessions without strike_ce/pe in DB default both to ATM."""
+        record = self._make_record(instrument_type="options")
+        record["strike"] = 24500
+        record["expiry"] = "2026-06-26"
+        record["right"] = None
+        # No strike_ce or strike_pe in record
+        with patch("app.services.guardrail_service.initialize_guardrails"):
+            session = sim.rebuild_session_from_db(record, "user1")
+        assert session.strike_ce == 24500
+        assert session.strike_pe == 24500
+
 
 # ── created_at written at session creation ─────────────────────────────────
 

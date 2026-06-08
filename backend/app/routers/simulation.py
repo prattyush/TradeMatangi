@@ -184,11 +184,16 @@ async def start_simulation(
                     stepwise=active.stepwise,
                     total_bars=None,
                 )
-            # Session exists in DB but not in memory — rebuild and resume
+            # Session exists in DB but not in memory — rebuild and resume.
+            # Forward the request's CE/PE strikes so the user can change OTM on each restart.
             logger.info("start_simulation: resuming session %s from DB", existing_session_id)
+            req_ce = req.strike_ce if req.strike_ce is not None else req.strike
+            req_pe = req.strike_pe if req.strike_pe is not None else req.strike
             session = sim_svc.rebuild_session_from_db(
                 existing_record,
                 user_id=user_id,
+                strike_ce=req_ce,
+                strike_pe=req_pe,
                 brokerage_per_order=req.brokerage_per_order,
                 strategy_interval_secs=req.strategy_interval_secs,
             )
