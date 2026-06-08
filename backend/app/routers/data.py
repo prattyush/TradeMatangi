@@ -257,14 +257,14 @@ async def get_price_at(
         raise HTTPException(status_code=404, detail=f"Data not found for {symbol} on {date}")
 
     target_ts = pd.Timestamp(f"{date} {time}", tz="UTC")
-    rows = df[df.index >= target_ts]
+    rows = df[df.index <= target_ts]
     if rows.empty:
         raise HTTPException(
             status_code=404,
-            detail=f"No data at or after {time} for {symbol} on {date}",
+            detail=f"No data at or before {time} for {symbol} on {date}",
         )
 
-    price = round(float(rows.iloc[0]["close"]), 2)
+    price = round(float(rows.iloc[-1]["close"]), 2)
     return PriceAtResponse(symbol=symbol, date=date, time=time, price=price)
 
 
