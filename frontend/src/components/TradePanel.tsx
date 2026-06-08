@@ -70,9 +70,13 @@ export default function TradePanel({
             {positionSizeMode === 'quantity' && (
               <span>Qty: <span style={{ color: '#e6edf3' }}>{position.quantity}</span></span>
             )}
-            {positionSizeMode === 'wallet_pct' && sessionCapital != null && sessionCapital > 0 && (
+            {positionSizeMode === 'wallet_pct' && (
               <span>
-                <span style={{ color: '#e6edf3' }}>{((position.quantity * position.avg_entry_price / sessionCapital) * 100).toFixed(1)}</span>
+                <span style={{ color: '#e6edf3' }}>
+                  {sessionCapital && sessionCapital > 0
+                    ? ((position.quantity * position.avg_entry_price / sessionCapital) * 100).toFixed(1)
+                    : '—'}
+                </span>
                 <span style={{ color: '#484f58' }}>% wallet</span>
               </span>
             )}
