@@ -21,6 +21,7 @@ const PNL_PCT_MODE_KEY = 'pnlPctMode'
 const BREAKEVEN_MODE_KEY = 'breakevenMode'
 const TARGET_PROFIT_BUFFER_TICKS_KEY = 'targetProfitBufferTicks'
 const AGGR_SL_ONLY_IN_PROFIT_KEY = 'aggrSlOnlyInProfit'
+const POSITION_SIZE_MODE_KEY = 'positionSizeMode'
 
 const GUARDRAIL_BLOCK_BARS_KEY = 'guardrailBlockBars'
 const GUARDRAIL_COOLDOWN_BLOCK_BARS_KEY = 'guardrailCooldownBlockBars'
@@ -131,6 +132,11 @@ export function loadAggrSlOnlyInProfit(): boolean {
   return localStorage.getItem(AGGR_SL_ONLY_IN_PROFIT_KEY) === 'true'
 }
 
+export function loadPositionSizeMode(): 'quantity' | 'wallet_pct' {
+  const v = localStorage.getItem(POSITION_SIZE_MODE_KEY)
+  return v === 'wallet_pct' ? 'wallet_pct' : 'quantity'
+}
+
 export interface GuardRailSettingsLocal {
   blockBars: number
   cooldownBlockBars: number
@@ -154,15 +160,17 @@ interface Props {
   onStrategySettingsChange: (intervalSecs: number, triggerType: 'bar' | 'deviation', deviationPct: number, breakevenMode: 'shift_sl' | 'limit_order', bufferTicks: number, aggrSlOnlyInProfit: boolean) => void
   onHistoricalDaysChange?: (days: number) => void
   onPnlPctModeChange?: (enabled: boolean) => void
+  onPositionSizeModeChange?: (mode: 'quantity' | 'wallet_pct') => void
   onGuardRailSettingsChange?: (settings: GuardRailSettingsLocal) => void
 }
 
-export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessionActive, onWalletReset, onFundsRatioChange, onTargetDeviationChange, onBrokerageChange, onStrategySettingsChange, onHistoricalDaysChange, onPnlPctModeChange, onGuardRailSettingsChange }: Props) {
+export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessionActive, onWalletReset, onFundsRatioChange, onTargetDeviationChange, onBrokerageChange, onStrategySettingsChange, onHistoricalDaysChange, onPnlPctModeChange, onPositionSizeModeChange, onGuardRailSettingsChange }: Props) {
   const [open, setOpen] = useState(false)
   const [customAmount, setCustomAmount] = useState('')
   const [status, setStatus] = useState<string | null>(null)
 
   const [pnlPctMode, setPnlPctMode] = useState(loadPnlPctMode)
+  const [positionSizeMode, setPositionSizeMode] = useState(loadPositionSizeMode)
   const [fundsRatioMode, setFundsRatioMode] = useState(loadFundsRatioMode)
   const [ratios, setRatios] = useState<FundsRatios>(loadFundsRatios)
   const [ratioInputs, setRatioInputs] = useState<{ l: string; m: string; h: string }>(() => {
@@ -323,6 +331,12 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
     setPnlPctMode(next)
     localStorage.setItem(PNL_PCT_MODE_KEY, String(next))
     onPnlPctModeChange?.(next)
+  }
+
+  const togglePositionSizeMode = (next: 'quantity' | 'wallet_pct') => {
+    setPositionSizeMode(next)
+    localStorage.setItem(POSITION_SIZE_MODE_KEY, next)
+    onPositionSizeModeChange?.(next)
   }
 
   const saveRatios = () => {
@@ -764,6 +778,28 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
               </div>
               <div style={{ fontSize: 11, color: '#484f58', marginTop: 6 }}>
                 Pos P&L and Session P&L show % of session capital when enabled
+              </div>
+            </div>
+
+            {/* Position Size Display */}
+            <div style={{ borderTop: '1px solid #21262d', paddingTop: 16 }}>
+              <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 10, fontWeight: 600 }}>POSITION SIZE DISPLAY</div>
+              <div style={{ display: 'flex', gap: 0, borderRadius: 6, overflow: 'hidden', border: '1px solid #30363d', width: 'fit-content' }}>
+                {([{ label: 'Quantity', value: 'quantity' as const }, { label: '% of Wallet', value: 'wallet_pct' as const }]).map(opt => (
+                  <button
+                    key={opt.value}
+                    onClick={() => { if (positionSizeMode !== opt.value) togglePositionSizeMode(opt.value) }}
+                    style={{
+                      padding: '5px 16px', fontSize: 12, fontWeight: 600,
+                      border: 'none', cursor: 'pointer',
+                      background: positionSizeMode === opt.value ? '#1f3a5f' : '#161b22',
+                      color: positionSizeMode === opt.value ? '#79c0ff' : '#484f58',
+                    }}
+                  >{opt.label}</button>
+                ))}
+              </div>
+              <div style={{ fontSize: 11, color: '#484f58', marginTop: 6 }}>
+                Show open qty or position value as % of session capital beside avg entry
               </div>
             </div>
 
