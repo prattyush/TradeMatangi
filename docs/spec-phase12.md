@@ -500,3 +500,19 @@ No backend, frontend, or test changes.
 Covers all modes: Simulation, Paper, Real, Stepwise.
 
 **PR #208 merged to dev.**
+
+---
+
+### Position Size Display Beside Avg Entry — PR #210 (feature/position-size-display)
+
+**Feature:** In the right panel (TradePanel), the avg entry row now shows position size info inline on the same line (flex `space-between`).
+
+**New setting** — "POSITION SIZE DISPLAY" pill in Settings → General tab (after P&L Display Mode):
+- **Quantity** (default): shows `Qty: N` on the right of the avg entry line
+- **% of Wallet**: shows `X.X% wallet` — `(quantity × avg_entry_price / sessionCapital) × 100`
+
+Display only appears when a position is open (side ≠ FLAT). Persisted in localStorage. No backend changes.
+
+Files changed: `frontend/src/components/TradePanel.tsx`, `frontend/src/components/SettingsModal.tsx`, `frontend/src/App.tsx`.
+
+**PR #210 merged to dev.**
