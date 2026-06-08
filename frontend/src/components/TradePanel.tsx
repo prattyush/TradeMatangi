@@ -13,14 +13,14 @@ interface Props {
   // P&L display mode
   pnlPctMode?: boolean
   sessionCapital?: number
-  positionSizeMode?: 'quantity' | 'wallet_pct'
+  fundsRatioMode?: boolean
 }
 
 function fmt(n: number) { return n.toFixed(2) }
 
 export default function TradePanel({
   sessionState, currentPrice, position, pnl, sessionPnl,
-  activeRight = null, activeLabel, pnlPctMode, sessionCapital, positionSizeMode,
+  activeRight = null, activeLabel, pnlPctMode, sessionCapital, fundsRatioMode,
 }: Props) {
   const pnlColor = pnl > 0 ? '#26a641' : pnl < 0 ? '#f85149' : '#8b949e'
   const sessionPnlColor = (sessionPnl ?? 0) > 0 ? '#26a641' : (sessionPnl ?? 0) < 0 ? '#f85149' : '#8b949e'
@@ -67,10 +67,10 @@ export default function TradePanel({
         {position.side !== 'FLAT' && (
           <div style={{ fontSize: 12, color: '#8b949e', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <span>Avg entry: <span style={{ color: '#e6edf3' }}>{fmt(position.avg_entry_price)}</span></span>
-            {positionSizeMode === 'quantity' && (
+            {!fundsRatioMode && (
               <span>Qty: <span style={{ color: '#e6edf3' }}>{position.quantity}</span></span>
             )}
-            {positionSizeMode === 'wallet_pct' && (
+            {fundsRatioMode && (
               <span>
                 <span style={{ color: '#e6edf3' }}>
                   {sessionCapital && sessionCapital > 0
