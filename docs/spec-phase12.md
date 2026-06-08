@@ -516,3 +516,72 @@ Display only appears when a position is open (side ≠ FLAT). Persisted in local
 Files changed: `frontend/src/components/TradePanel.tsx`, `frontend/src/components/SettingsModal.tsx`, `frontend/src/App.tsx`.
 
 **PR #210 merged to dev.**
+
+---
+
+### Position Size Display — Tie to fundsRatioMode — PR #215 (fix/position-size-use-funds-ratio)
+
+**Bug:** The separate "POSITION SIZE DISPLAY" toggle added in PR #210 didn't match user intent. The user expected the existing **% ratio mode** (fundsRatioMode / order sizing mode) to automatically control the display.
+
+**Fix:** Removed `positionSizeMode` / `POSITION_SIZE_MODE_KEY` / "POSITION SIZE DISPLAY" UI section entirely. `TradePanel` now uses `fundsRatioMode` (bool passed from App.tsx):
+- `false` → `Qty: N` beside avg entry
+- `true` → `X.X% wallet` beside avg entry — formula: `(qty × avg_entry_price / sessionCapital) × 100`
+
+Files changed: `TradePanel.tsx`, `SettingsModal.tsx`, `App.tsx`. No backend changes.
+
+**PR #215 merged to dev.**
+
+---
+
+### Session Resume — Restore Trade History and Day P&L — PR #214 (fix/session-resume-reload-trades)
+
+**Bug:** When paper/real trading sessions were restarted multiple times in the same day (after closing all positions), the trade history and Day P&L were lost on each restart.
+
+**Root causes:**
+- Backend: `rebuild_session_from_db()` recreated the in-memory session but never repopulated `_trades[session_id]` from DynamoDB → `GET /trades/{session_id}` returned `[]`
+- Frontend: `startSession()` always reset `trades: []`; the `getTradesByContext` call explicitly excluded the current session_id from `historicalTrades`
+
+**Fix:**
+- New `reload_trades_from_db(session_id)` function in `trading.py` — queries DynamoDB and repopulates `_trades[session_id]`
+- Called at end of `rebuild_session_from_db()` in `simulation.py`
+- Frontend: after paper/real session start, fires `api.getTrades(currentSessionId)` and merges into `state.trades`
+- 5 new tests in `TestReloadTradesFromDb` — all passing
+
+**PR #214 merged to dev.**
+
+---
+
+### ATM Price Lookup — Use Session Start Time Not Hardcoded 09:15 — PR #217 (fix/atm-price-use-session-start-time)
+
+**Bug:** When starting an options session, the frontend called `api.getPriceAt(symbol, date, '09:15')` hardcoded for ALL session types. If a paper/real session was started at 10:12, the ATM strike was computed from the 09:15 price, not the current market level.
+
+**Fix:**
+- Backend `price-at` endpoint: changed from "first candle ≥ time" to "last candle ≤ time" so a query at 10:12 with data only up to 10:09 returns the 10:09 close instead of 404.
+- Frontend `SessionControls.tsx`: replaced hardcoded `'09:15'` with `priceQueryTime`:
+  - Paper/Real: `getCurrentIstTime()` — current IST wall-clock time when Start is clicked
+  - Sim/Stepwise: `startTime` — the user-configured start time from the UI time picker
+- Updated `test_time_past_market_close` (after-market now returns last available price instead of 404); added `test_time_before_market_open` (before 09:15 → 404).
+
+**PR #217 merged to dev.**
+
+---
+
+### Paper/Real Options Session — Strike Persistence and Phase 1 OHLC Fix — PR #219 (fix/paper-real-options-strike-resume)
+
+**Bugs:**
+1. **LTP from wrong strike after restart** — Kite streaming subscribed to the ATM token instead of the selected OTM token on session resume. Workaround was to remove/re-add the CE/PE chart panel.
+2. **New OTM value entered at restart was ignored** — strikes from the FIRST session of the day were always reused regardless of the new OTM value entered.
+3. **CE/PE charts showed no OHLC for today** — Phase 1 of `_run_paper_session` called `options_iter_ticks()` without first ensuring today's parquet was available. Fails silently → empty dicts → no candles.
+
+**Root cause:** `_upsert_session_to_db()` saved only `session.strike` (ATM), not `strike_ce`/`strike_pe`. `rebuild_session_from_db()` set both to ATM.
+
+**Fixes:**
+- `_upsert_session_to_db`: save `strike_ce` and `strike_pe` when set
+- `rebuild_session_from_db`: add `strike_ce`/`strike_pe` params (priority: caller override → DB-saved → ATM fallback)
+- Router resume path: forward `req.strike_ce`/`req.strike_pe` so new OTM value is applied on each restart
+- Phase 1 of `_run_paper_session`: call `fetch_options_historical()` before `options_iter_ticks()` (defensive prefetch)
+- 3 new tests in `TestRebuildSessionFromDb`
+
+Applies to both paper and real trading. 24 session resume tests — all passing.
+
+**PR #219 merged to dev.**
