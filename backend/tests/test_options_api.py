@@ -72,6 +72,7 @@ class TestPriceAtEndpoint:
         assert resp.status_code == 422
 
     def test_time_past_market_close(self):
+        # After market close, returns the last available candle price (not 404)
         date = "2026-05-06"
         df = _make_equity_df(date)
         tz_df = df.copy()
@@ -79,6 +80,18 @@ class TestPriceAtEndpoint:
         with patch("app.routers.data.fetch_historical"), \
              patch("app.routers.data.load_dataframe", return_value=tz_df):
             resp = client.get(f"/api/data/price-at?symbol=NIFTY&date={date}&time=16:00:00")
+        assert resp.status_code == 200
+        assert resp.json()["price"] == pytest.approx(24000.0, abs=1.0)
+
+    def test_time_before_market_open(self):
+        # Before first candle (09:15), no data available → 404
+        date = "2026-05-06"
+        df = _make_equity_df(date)
+        tz_df = df.copy()
+        tz_df.index = tz_df.index.tz_localize("UTC")
+        with patch("app.routers.data.fetch_historical"), \
+             patch("app.routers.data.load_dataframe", return_value=tz_df):
+            resp = client.get(f"/api/data/price-at?symbol=NIFTY&date={date}&time=09:00:00")
         assert resp.status_code == 404
 
 
