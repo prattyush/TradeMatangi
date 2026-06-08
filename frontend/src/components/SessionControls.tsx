@@ -186,6 +186,12 @@ export default function SessionControls({
     if (OPTIONS_ONLY_SYMBOLS.has(sym)) setInstrumentType('options')
   }
 
+  const getCurrentIstTime = () => {
+    const now = new Date()
+    const istMins = (now.getUTCHours() * 60 + now.getUTCMinutes() + 5 * 60 + 30) % (24 * 60)
+    return `${String(Math.floor(istMins / 60)).padStart(2, '0')}:${String(istMins % 60).padStart(2, '0')}`
+  }
+
   const _doStart = async () => {
     if (!currentDate || dateError) return
     setStartError(null)
@@ -196,8 +202,11 @@ export default function SessionControls({
 
       if (instrumentType === 'options') {
         try {
+          // Live sessions use current IST time for ATM; sim/stepwise use the configured start time
+          const isLiveSession = sessionType === 'paper' || sessionType === 'real'
+          const priceQueryTime = isLiveSession ? getCurrentIstTime() : startTime
           const [priceRes, expiryRes] = await Promise.all([
-            api.getPriceAt(currentSymbol, currentDate, '09:15'),
+            api.getPriceAt(currentSymbol, currentDate, priceQueryTime),
             api.getExpiry(currentSymbol, currentDate),
           ])
           const interval = STRIKE_INTERVALS[currentSymbol] ?? 50
