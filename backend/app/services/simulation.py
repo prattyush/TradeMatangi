@@ -117,6 +117,10 @@ def _upsert_session_to_db(session: SimulationSession) -> None:
             item["strike"] = session.strike
             item["expiry"] = session.expiry
             item["right"] = session.right
+            if session.strike_ce is not None:
+                item["strike_ce"] = session.strike_ce
+            if session.strike_pe is not None:
+                item["strike_pe"] = session.strike_pe
         table.put_item(Item=item)
     except Exception:
         logger.exception("DynamoDB write failed for session %s", session.session_id)
@@ -217,6 +221,8 @@ def find_session_by_context(
 def rebuild_session_from_db(
     db_record: dict,
     user_id: str,
+    strike_ce: Optional[int] = None,
+    strike_pe: Optional[int] = None,
     brokerage_per_order: float = 1.0,
     strategy_interval_secs: int = 180,
 ) -> SimulationSession:
@@ -225,6 +231,10 @@ def rebuild_session_from_db(
     Called when a paper or real session is resumed after a stop/disconnect.
     All prior trades remain visible under this session_id, so position tracking
     and margin checks work without any cross-session logic.
+
+    strike_ce / strike_pe: new request values take priority over DB-saved values.
+    This lets the user change their OTM offset on each restart.
+    Priority order: caller override → DB-saved → ATM strike fallback.
     """
     from app.services import wallet_service
     session_id = db_record["session_id"]
@@ -240,6 +250,12 @@ def rebuild_session_from_db(
     right = db_record.get("right")
     created_at = int(db_record.get("created_at", 0))
 
+    # Resolve effective CE/PE strikes: caller override > DB-saved > ATM fallback
+    db_ce_raw = db_record.get("strike_ce")
+    db_pe_raw = db_record.get("strike_pe")
+    effective_ce = strike_ce if strike_ce is not None else (int(db_ce_raw) if db_ce_raw is not None else strike)
+    effective_pe = strike_pe if strike_pe is not None else (int(db_pe_raw) if db_pe_raw is not None else strike)
+
     session_capital = wallet_service.get_balance(user_id, date)
 
     session = SimulationSession(
@@ -254,8 +270,8 @@ def rebuild_session_from_db(
         strike=strike,
         expiry=expiry,
         right=right,
-        strike_ce=strike,
-        strike_pe=strike,
+        strike_ce=effective_ce,
+        strike_pe=effective_pe,
         brokerage_per_order=brokerage_per_order,
         strategy_interval_secs=strategy_interval_secs,
         session_type=session_type,
@@ -871,11 +887,18 @@ async def _run_paper_session(session: SimulationSession) -> None:
 
         # Dual-stream options pre-replay
         if session.instrument_type == "options" and session.strike and session.expiry and session.right is None:
-            from app.services.options_service import options_iter_ticks
+            from app.services.options_service import fetch_options_historical, options_iter_ticks
             ce_strike = session.strike_ce or session.strike
             pe_strike = session.strike_pe or session.strike
             logger.info("Paper session %s: Phase 1 — loading CE/PE tick dicts (strike CE=%s PE=%s expiry=%s)",
                         session.session_id, ce_strike, pe_strike, session.expiry)
+            # Ensure today's parquet is available before loading ticks (defensive — soft_ensure
+            # in the router already runs but may have been swallowed or used a different strike)
+            try:
+                fetch_options_historical(session.symbol, session.date, ce_strike, session.expiry, "CE")
+                fetch_options_historical(session.symbol, session.date, pe_strike, session.expiry, "PE")
+            except Exception as exc:
+                logger.warning("Paper session %s: Phase 1 options pre-fetch failed: %s", session.session_id, exc)
             try:
                 ce_by_time = {t["time"]: t for t in options_iter_ticks(
                     session.symbol, session.date, ce_strike, session.expiry, "CE", session.start_time
