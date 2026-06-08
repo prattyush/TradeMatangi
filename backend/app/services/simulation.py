@@ -267,9 +267,12 @@ def rebuild_session_from_db(
     _upsert_session_to_db(session)
     from app.services.guardrail_service import initialize_guardrails
     initialize_guardrails(session, user_id)
+    from app.services import trading as trading_svc
+    trading_svc.reload_trades_from_db(session_id)
     logger.info(
-        "rebuild_session_from_db: resumed session %s for user=%s symbol=%s date=%s type=%s",
+        "rebuild_session_from_db: resumed session %s for user=%s symbol=%s date=%s type=%s (%d trades restored)",
         session_id, user_id, symbol, date, session_type,
+        len(trading_svc.get_trades(session_id)),
     )
     return session
 
