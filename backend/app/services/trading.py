@@ -187,3 +187,40 @@ def get_position(session_id: str, symbol: str | None = None, right: str | None =
 
 def clear_session(session_id: str) -> None:
     _trades.pop(session_id, None)
+
+
+def reload_trades_from_db(session_id: str) -> None:
+    """Repopulate in-memory _trades from DynamoDB when a paper/real session is resumed.
+
+    Called by rebuild_session_from_db so that position checks, trade history,
+    and Day P&L all reflect trades taken in earlier restarts of the same session.
+    """
+    try:
+        from app.services.analysis_service import get_trades_for_session
+        raw = get_trades_for_session(session_id)
+        trades: list[Trade] = []
+        for item in raw:
+            try:
+                trades.append(Trade(
+                    trade_id=str(item["trade_id"]),
+                    user_id=str(item["user_id"]),
+                    symbol=str(item["symbol"]),
+                    side=TradeSide(item["side"]),
+                    quantity=int(item["quantity"]),
+                    price=float(item["price"]),
+                    timestamp=int(item["timestamp"]),
+                    session_id=str(item["session_id"]),
+                    instrument_type=str(item.get("instrument_type", "equity")),
+                    strike=int(item["strike"]) if item.get("strike") is not None else None,
+                    expiry=item.get("expiry"),
+                    right=item.get("right"),
+                    commission=float(item.get("commission", 0)),
+                    session_type=str(item.get("session_type", "paper")),
+                ))
+            except Exception:
+                logger.warning("Skipping malformed trade during reload for session %s: %s", session_id, item)
+        _trades[session_id] = trades
+        logger.info("reload_trades_from_db: loaded %d trades for session %s", len(trades), session_id)
+    except Exception:
+        logger.exception("reload_trades_from_db failed for session %s", session_id)
+        _trades[session_id] = []

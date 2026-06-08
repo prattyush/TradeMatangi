@@ -9,6 +9,7 @@ import pytest
 from unittest.mock import patch, MagicMock
 
 from app.services import simulation as sim
+from app.services import trading as trading_svc
 from app.models.schemas import SimulationState
 
 
@@ -210,3 +211,73 @@ class TestCreatedAtField:
         s2 = sim.create_session("NIFTY", "2026-06-05", "09:15:00", 1.0)
         # Both have created_at set; s2 >= s1 (monotonic, usually strictly greater)
         assert s2.created_at >= s1.created_at
+
+
+# ── reload_trades_from_db ──────────────────────────────────────────────────
+
+
+class TestReloadTradesFromDb:
+    """Verify that reload_trades_from_db repopulates _trades from DynamoDB on resume."""
+
+    def _raw_trade(self, session_id="sess-1", right=None):
+        item = {
+            "trade_id": "t1",
+            "user_id": "user1",
+            "symbol": "NIFTY",
+            "side": "BUY",
+            "quantity": 50,
+            "price": "180.00",
+            "timestamp": 1000000,
+            "session_id": session_id,
+            "instrument_type": "options" if right else "equity",
+            "commission": "1.5",
+            "session_type": "paper",
+        }
+        if right:
+            item["right"] = right
+            item["strike"] = 24000
+            item["expiry"] = "2026-06-26"
+        return item
+
+    def test_loads_trades_into_memory(self):
+        raw = [self._raw_trade()]
+        with patch("app.services.analysis_service.get_trades_for_session", return_value=raw):
+            trading_svc.reload_trades_from_db("sess-1")
+        trades = trading_svc.get_trades("sess-1")
+        assert len(trades) == 1
+        assert trades[0].quantity == 50
+        assert trades[0].side.value == "BUY"
+
+    def test_loads_options_trades_with_right(self):
+        raw = [self._raw_trade(right="CE")]
+        with patch("app.services.analysis_service.get_trades_for_session", return_value=raw):
+            trading_svc.reload_trades_from_db("sess-1")
+        trades = trading_svc.get_trades("sess-1")
+        assert trades[0].right == "CE"
+        assert trades[0].strike == 24000
+
+    def test_empty_when_no_db_trades(self):
+        with patch("app.services.analysis_service.get_trades_for_session", return_value=[]):
+            trading_svc.reload_trades_from_db("sess-empty")
+        assert trading_svc.get_trades("sess-empty") == []
+
+    def test_survives_db_error(self):
+        with patch("app.services.analysis_service.get_trades_for_session", side_effect=Exception("DB down")):
+            trading_svc.reload_trades_from_db("sess-err")
+        assert trading_svc.get_trades("sess-err") == []
+
+    def test_rebuild_session_restores_trades(self):
+        """rebuild_session_from_db must call reload_trades_from_db."""
+        record = {
+            "session_id": "rsess-1", "user_id": "user1", "symbol": "NIFTY",
+            "date": "2026-06-05", "start_time": "09:15:00", "speed": "1.0",
+            "session_capital": "100000", "state": "ended",
+            "session_type": "paper", "instrument_type": "equity", "created_at": 1000,
+        }
+        raw = [self._raw_trade(session_id="rsess-1")]
+        with patch("app.services.guardrail_service.initialize_guardrails"), \
+             patch("app.services.analysis_service.get_trades_for_session", return_value=raw):
+            sim.rebuild_session_from_db(record, "user1")
+        trades = trading_svc.get_trades("rsess-1")
+        assert len(trades) == 1
+        assert trades[0].session_id == "rsess-1"
