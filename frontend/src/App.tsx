@@ -8,7 +8,7 @@ import OrderPanel from './components/OrderPanel'
 import WalletWidget from './components/WalletWidget'
 import GuardRailPopup from './components/GuardRailPopup'
 import PatternAlertToast, { PatternAlert } from './components/PatternAlertToast'
-import SettingsModal, { loadFundsRatioMode, loadFundsRatios, loadTargetDeviationPct, loadBrokeragePerOrder, loadStrategyIntervalSecs, loadAutostopTriggerType, loadAutostopDeviationPct, loadHistoricalDays, loadPnlPctMode, loadBreakevenMode, loadTargetProfitBufferTicks, loadAggrSlOnlyInProfit, FundsRatios } from './components/SettingsModal'
+import SettingsModal, { loadFundsRatioMode, loadFundsRatios, loadTargetDeviationPct, loadBrokeragePerOrder, loadStrategyIntervalSecs, loadAutostopTriggerType, loadAutostopDeviationPct, loadHistoricalDays, loadPnlPctMode, loadBreakevenMode, loadTargetProfitBufferTicks, loadAggrSlOnlyInProfit, loadPositionSizeMode, FundsRatios } from './components/SettingsModal'
 import { StrategyResponse, StartStrategyRequest, Order } from './services/api'
 import LoginScreen from './components/LoginScreen'
 import TradeAnalysis from './components/TradeAnalysis'
@@ -127,6 +127,7 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
   const [aggrSlOnlyInProfit, setAggrSlOnlyInProfit] = useState(loadAggrSlOnlyInProfit)
   const [historicalDays, setHistoricalDays] = useState(loadHistoricalDays)
   const [pnlPctMode, setPnlPctMode] = useState(loadPnlPctMode)
+  const [positionSizeMode, setPositionSizeMode] = useState<'quantity' | 'wallet_pct'>(loadPositionSizeMode)
   const [runningStrategies, setRunningStrategies] = useState<StrategyResponse[]>([])
   const [brokerError, setBrokerError] = useState<string | null>(null)
   const [isRealTradingUser, setIsRealTradingUser] = useState(false)
@@ -838,6 +839,7 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
           }}
           onHistoricalDaysChange={setHistoricalDays}
           onPnlPctModeChange={setPnlPctMode}
+          onPositionSizeModeChange={setPositionSizeMode}
           onGuardRailSettingsChange={() => {}}
         />
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: '#484f58' }}>
@@ -1014,6 +1016,7 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
             activeLabel={activeLabel}
             pnlPctMode={pnlPctMode}
             sessionCapital={sim.sessionCapital}
+            positionSizeMode={positionSizeMode}
           />
 
           {/* Combined P&L for options (both CE + PE) — collapsible */}
