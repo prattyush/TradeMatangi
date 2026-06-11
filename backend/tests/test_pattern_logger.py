@@ -75,7 +75,7 @@ def mock_dynamo():
         yield table
 
 
-def _sample_annotation(strategy: str = "Double Top", typ: str = "entry", instrument: str = "CE") -> dict:
+def _sample_annotation(strategy: str = "Double Top", typ: str = "entry", instrument: str = "CE", category: str = "") -> dict:
     return {
         "id": "ann-1",
         "time": 1746518100,
@@ -83,8 +83,10 @@ def _sample_annotation(strategy: str = "Double Top", typ: str = "entry", instrum
         "type": typ,
         "instrument": instrument,
         "strategy_name": strategy,
+        "category": category,
         "text": f"{typ.capitalize()} {instrument} — {strategy}",
     }
+
 
 
 # ── Service unit tests ────────────────────────────────────────────────────────
@@ -134,12 +136,30 @@ class TestPatternLoggerService:
         assert "Strategy A" in names
         assert "Strategy B" in names
 
+    def test_list_category_names_returns_unique_names(self, mock_dynamo):
+        anns = [
+            _sample_annotation("Strategy A", category="Category A"),
+            _sample_annotation("Strategy B", category="Category B"),
+        ]
+        svc.create_chart(USER, "NIFTY", "2026-05-06", "options", anns)
+        names = svc.list_category_names(USER)
+        assert "Category A" in names
+        assert "Category B" in names
+
     def test_list_charts_filters_by_strategy(self, mock_dynamo):
         svc.create_chart(USER, "NIFTY", "2026-05-06", "equity", [_sample_annotation("Alpha")])
         svc.create_chart(USER, "NIFTY", "2026-05-07", "equity", [_sample_annotation("Beta")])
         charts = svc.list_charts_for_user(USER, strategy="Alpha")
         assert len(charts) == 1
         assert charts[0]["date"] == "2026-05-06"
+
+    def test_list_charts_filters_by_category(self, mock_dynamo):
+        svc.create_chart(USER, "NIFTY", "2026-05-06", "equity", [_sample_annotation("Alpha", category="CatX")])
+        svc.create_chart(USER, "NIFTY", "2026-05-07", "equity", [_sample_annotation("Beta", category="CatY")])
+        charts = svc.list_charts_for_user(USER, category="CatX")
+        assert len(charts) == 1
+        assert charts[0]["date"] == "2026-05-06"
+
 
     def test_find_chart_by_date(self, mock_dynamo):
         svc.create_chart(USER, "NIFTY", "2026-05-06", "equity", [])
@@ -250,6 +270,30 @@ class TestPatternLoggerAPI:
                 resp = await client.get("/api/pattern/charts", params={"strategy": "TestStrat"})
         assert resp.status_code == 200
         assert len(resp.json()["charts"]) == 1
+
+    async def test_list_categories_empty(self):
+        table = _mock_table()
+        with patch("app.services.pattern_logger_service._table", return_value=table):
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+                resp = await client.get("/api/pattern/categories")
+        assert resp.status_code == 200
+        assert resp.json()["categories"] == []
+
+    async def test_list_charts_by_category(self):
+        table = _mock_table()
+        with patch("app.services.pattern_logger_service._table", return_value=table):
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+                # Create chart with one category
+                await client.post("/api/pattern/chart", json={
+                    "symbol": "NIFTY",
+                    "date": "2026-05-06",
+                    "instrument_type": "equity",
+                    "annotations": [_sample_annotation("TestStrat", category="TestCat")],
+                })
+                resp = await client.get("/api/pattern/charts", params={"category": "TestCat"})
+        assert resp.status_code == 200
+        assert len(resp.json()["charts"]) == 1
+
 
     async def test_by_date_not_found(self):
         table = _mock_table()
