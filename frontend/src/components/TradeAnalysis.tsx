@@ -290,6 +290,9 @@ function AnalysisChart({
         ? candles.find(c => (c.time as number) === slot)?.close
         : t.price
       if (markerPrice === undefined) continue
+      const position = t.right
+        ? (effectiveSide === 'BUY' ? 'aboveBar' : 'belowBar')
+        : 'inBar'
 
       try {
         const markerSeries = chart.addLineSeries({
@@ -301,7 +304,7 @@ function AnalysisChart({
         markerSeries.setData([{ time: slot as Time, value: markerPrice }])
         markerSeries.setMarkers([{
           time: slot as Time,
-          position: 'inBar' as const,
+          position,
           color: effectiveSide === 'BUY' ? '#FFFFFF' : '#00AAFF',
           shape: 'circle' as const,
           text,
