@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from app.models.schemas import UserSettingsResponse, UserSettingsUpdateRequest
 from app.services import user_settings_service
 from app.dependencies import get_request_user_id
@@ -17,5 +17,8 @@ async def update_user_settings(
     req: UserSettingsUpdateRequest,
     user_id: str = Depends(get_request_user_id),
 ):
-    updated = user_settings_service.update_settings(user_id, req.model_dump(exclude_none=True))
-    return UserSettingsResponse(**updated)
+    try:
+        updated = user_settings_service.update_settings(user_id, req.model_dump(exclude_none=True))
+        return UserSettingsResponse(**updated)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))

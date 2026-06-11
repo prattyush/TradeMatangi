@@ -12,6 +12,7 @@ import pandas as pd
 import numpy as np
 from unittest.mock import patch, MagicMock
 from httpx import AsyncClient, ASGITransport
+from boto3.dynamodb.conditions import Key
 
 from app.main import app
 from app.services import pattern_logger_service as svc
@@ -28,26 +29,67 @@ def no_auth():
         yield
 
 
+@pytest.fixture(autouse=True)
+def no_seed_user():
+    with patch("app.services.user_service.seed_user", return_value=None):
+        yield
+
+
+@pytest.fixture(autouse=True)
+def no_share_setup():
+    with patch("app.services.pattern_logger_service._ensure_share_table", return_value=None):
+        yield
+
+
+@pytest.fixture(autouse=True)
+def empty_share_table():
+    with patch("app.services.pattern_logger_service._share_table", return_value=_mock_table()):
+        yield
+
+
 def _mock_table(items: list[dict] | None = None):
     """Return a MagicMock that mimics a DynamoDB Table object."""
     table = MagicMock()
     _store: dict[str, dict] = {}
 
+    def _key_for(item_or_key: dict) -> str:
+        if "chart_id" in item_or_key:
+            return item_or_key["chart_id"]
+        if "owner_user_id" in item_or_key and "shared_user_id" in item_or_key:
+            return f'{item_or_key["owner_user_id"]}|{item_or_key["shared_user_id"]}'
+        if "user_id" in item_or_key and "date" in item_or_key and "symbol" in item_or_key:
+            return f'{item_or_key["user_id"]}|{item_or_key["symbol"]}|{item_or_key["date"]}'
+        return str(sorted(item_or_key.items()))
+
     if items:
         for item in items:
-            _store[item["chart_id"]] = item
+            _store[_key_for(item)] = item
 
     def put_item(Item):
-        _store[Item["chart_id"]] = Item
+        _store[_key_for(Item)] = Item
 
     def get_item(Key):
-        item = _store.get(Key["chart_id"])
+        item = _store.get(_key_for(Key))
         return {"Item": item} if item else {}
 
     def delete_item(Key):
-        _store.pop(Key["chart_id"], None)
+        _store.pop(_key_for(Key), None)
 
     def scan(FilterExpression=None):
+        return {"Items": list(_store.values())}
+
+    def query(IndexName=None, KeyConditionExpression=None):
+        field = None
+        value = None
+        try:
+            if KeyConditionExpression is not None and hasattr(KeyConditionExpression, "_values"):
+                field_obj, value = KeyConditionExpression._values
+                field = getattr(field_obj, "name", None)
+        except Exception:
+            field = None
+            value = None
+        if field:
+            return {"Items": [item for item in _store.values() if item.get(field) == value]}
         return {"Items": list(_store.values())}
 
     def update_item(Key, UpdateExpression, ExpressionAttributeValues, ReturnValues):
@@ -64,6 +106,7 @@ def _mock_table(items: list[dict] | None = None):
     table.get_item = get_item
     table.delete_item = delete_item
     table.scan = scan
+    table.query = query
     table.update_item = update_item
     return table
 
@@ -180,6 +223,30 @@ class TestPatternLoggerService:
         charts = svc.list_charts_for_user(USER, strategy="S1")
         assert charts[0]["entry_count"] == 2
         assert charts[0]["exit_count"] == 1
+
+    def test_list_charts_includes_shared_owner(self, mock_dynamo):
+        owner = "00000000-0000-0000-0000-000000000002"
+        shared = _mock_table([
+            {"owner_user_id": owner, "shared_user_id": USER, "owner_email": "owner@example.com", "shared_email": "user@example.com", "created_at": "2026-01-01", "updated_at": "2026-01-01"},
+        ])
+        with patch("app.services.pattern_logger_service._share_table", return_value=shared):
+            svc.create_chart(owner, "NIFTY", "2026-05-06", "equity", [_sample_annotation("SharedStrat")])
+            charts = svc.list_charts_for_user(USER)
+        assert len(charts) == 1
+        assert charts[0]["user_id"] == owner
+        assert charts[0]["can_delete"] is False
+
+    def test_sync_pattern_shares_replaces_existing(self, mock_dynamo):
+        share_table = _mock_table([
+            {"owner_user_id": USER, "shared_user_id": "old-user", "owner_email": "user@example.com", "shared_email": "old@example.com", "created_at": "2026-01-01", "updated_at": "2026-01-01"},
+        ])
+        with patch("app.services.pattern_logger_service._share_table", return_value=share_table), \
+             patch("app.services.user_service.get_user_info", return_value={"user_id": USER, "email": "user@example.com"}), \
+             patch("app.services.user_service.get_user_by_email", side_effect=lambda email: {"user_id": f"{email}-id", "email": email}):
+            targets = svc.sync_pattern_shares(USER, "A@example.com, b@example.com")
+        assert [t["email"] for t in targets] == ["a@example.com", "b@example.com"]
+        items = share_table.query(KeyConditionExpression=Key("owner_user_id").eq(USER))["Items"]
+        assert {item["shared_email"] for item in items} == {"a@example.com", "b@example.com"}
 
 
 # ── API endpoint tests ────────────────────────────────────────────────────────

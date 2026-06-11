@@ -91,6 +91,7 @@ export interface UserSettingsResponse {
   funds_ratio_h_pct?: number
   analysis_price_source?: string
   experimental_patterns_enabled?: boolean
+  pattern_share_emails?: string
 }
 
 // ── Strategy types ──────────────────────────────────────────────────────────
@@ -173,6 +174,7 @@ export interface PatternChartMeta {
   exit_count: number
   strategy_names: string[]
   categories: string[]
+  can_delete?: boolean
 }
 
 export interface PatternChart extends PatternChartMeta {
@@ -885,8 +887,9 @@ const api = {
       headers: { 'Content-Type': 'application/json', ..._authHeaders() },
       body: JSON.stringify(settings),
     })
-    if (!res.ok) throw new Error(`Update user settings failed: ${res.status}`)
-    return res.json()
+    const data = await res.json().catch(() => null)
+    if (!res.ok) throw new Error(data?.detail || `Update user settings failed: ${res.status}`)
+    return data
   },
 
   // ── Kotak Neo ──────────────────────────────────────────────────────────────

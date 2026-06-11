@@ -492,6 +492,7 @@ interface GalleryCardProps {
 function GalleryCard({ chart, activeStrategy: _activeStrategy, onLoad, onDelete, viewMode }: GalleryCardProps) {
   const [confirming, setConfirming] = useState(false)
   const instrBadge = chart.instrument_type === 'options' ? (chart.right ?? 'OPT') : 'EQ'
+  const canDelete = chart.can_delete !== false
   return (
     <div
       style={{
@@ -502,10 +503,18 @@ function GalleryCard({ chart, activeStrategy: _activeStrategy, onLoad, onDelete,
     >
       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
         <span style={{ fontSize: 12, fontWeight: 700 }}>{chart.symbol}</span>
-        <span style={{
-          fontSize: 10, background: '#21262d', borderRadius: 4, padding: '2px 6px',
-          color: instrBadge === 'EQ' ? '#3b82f6' : instrBadge === 'CE' ? '#22c55e' : '#7c3aed',
-        }}>{instrBadge}</span>
+        <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+          {!canDelete && (
+            <span style={{
+              fontSize: 10, background: '#21262d', borderRadius: 4, padding: '2px 6px',
+              color: '#8b949e',
+            }}>Shared</span>
+          )}
+          <span style={{
+            fontSize: 10, background: '#21262d', borderRadius: 4, padding: '2px 6px',
+            color: instrBadge === 'EQ' ? '#3b82f6' : instrBadge === 'CE' ? '#22c55e' : '#7c3aed',
+          }}>{instrBadge}</span>
+        </div>
       </div>
       <div style={{ fontSize: 11, color: '#8b949e', marginBottom: 4 }}>{chart.date}</div>
       <div style={{ display: 'flex', gap: 8, fontSize: 11, marginBottom: 6 }}>
@@ -518,15 +527,22 @@ function GalleryCard({ chart, activeStrategy: _activeStrategy, onLoad, onDelete,
       <div style={{ fontSize: 10, color: '#484f58', marginBottom: viewMode ? 0 : 8, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
         Strat: {chart.strategy_names.join(' · ') || '—'}
       </div>
-      {!viewMode && (
-        <div style={{ display: 'flex', gap: 6 }}>
-          <button style={btn('#1f6feb')} onClick={() => onLoad(chart.chart_id)}>Load</button>
-          {confirming
-            ? <button style={btn('#b62324')} onClick={e => { e.stopPropagation(); onDelete(chart.chart_id); setConfirming(false) }}>Sure?</button>
-            : <button style={btn('#484f58')} onClick={e => { e.stopPropagation(); setConfirming(true) }}>Del</button>
-          }
-        </div>
-      )}
+      <div style={{ display: 'flex', gap: 6 }}>
+        <button
+          style={btn('#1f6feb')}
+          onClick={e => { e.stopPropagation(); onLoad(chart.chart_id) }}
+        >Load</button>
+        {canDelete && (confirming
+          ? <button
+              style={btn('#b62324')}
+              onClick={e => { e.stopPropagation(); onDelete(chart.chart_id); setConfirming(false) }}
+            >Sure?</button>
+          : <button
+              style={btn('#484f58')}
+              onClick={e => { e.stopPropagation(); setConfirming(true) }}
+            >Del</button>
+        )}
+      </div>
     </div>
   )
 }
@@ -536,13 +552,13 @@ function GalleryCard({ chart, activeStrategy: _activeStrategy, onLoad, onDelete,
 const SUPPORTED_SYMBOLS = ['NIFTY', 'BSESEN', 'RELIND', 'TATMOT', 'TATPOW']
 const STRIKE_INTERVALS: Record<string, number> = { NIFTY: 50, BSESEN: 100, RELIND: 5, TATMOT: 5, TATPOW: 5 }
 const DAYS_BACK = 2
-const GALLERY_PAGE_SIZE = 6
+const GALLERY_MAX_COLUMNS = 6
 const GALLERY_CARD_MIN_WIDTH = 220
 
-function galleryGridStyle(): CSSProperties {
+function galleryGridStyle(columns: number): CSSProperties {
   return {
     display: 'grid',
-    gridTemplateColumns: `repeat(auto-fit, minmax(${GALLERY_CARD_MIN_WIDTH}px, 1fr))`,
+    gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`,
     gap: 10,
   }
 }
@@ -607,8 +623,9 @@ export default function PatternLibrary() {
   const [galleryCharts, setGalleryCharts] = useState<PatternChartMeta[]>([])
   const [galleryStrategy, setGalleryStrategy] = useState<string>('')
   const [galleryCategory, setGalleryCategory] = useState<string>('')
-  const [galleryPage, setGalleryPage] = useState(0)
   const [viewExpandedId, setViewExpandedId] = useState<string | null>(null)
+  const [galleryColumns, setGalleryColumns] = useState(1)
+  const galleryResizeObserverRef = useRef<ResizeObserver | null>(null)
 
   useEffect(() => {
     api.patternListStrategies().then(r => setStrategies(r.strategies)).catch(() => {})
@@ -621,11 +638,35 @@ export default function PatternLibrary() {
       const c = cat !== undefined ? cat : galleryCategory
       const res = await api.patternListCharts(s || undefined, c || undefined)
       setGalleryCharts(res.charts)
-      setGalleryPage(0)
     } catch { /* non-fatal */ }
   }, [galleryStrategy, galleryCategory])
 
   useEffect(() => { refreshGallery() }, [galleryStrategy, galleryCategory])
+
+  const attachGalleryRef = useCallback((node: HTMLDivElement | null) => {
+    galleryResizeObserverRef.current?.disconnect()
+    galleryResizeObserverRef.current = null
+
+    if (!node) return
+
+    const updateColumns = () => {
+      const width = node.clientWidth || 0
+      const columns = width > 0
+        ? Math.max(1, Math.min(GALLERY_MAX_COLUMNS, Math.floor((width + 10) / (GALLERY_CARD_MIN_WIDTH + 10))))
+        : 1
+      setGalleryColumns(columns)
+    }
+
+    updateColumns()
+    const observer = new ResizeObserver(updateColumns)
+    observer.observe(node)
+    galleryResizeObserverRef.current = observer
+  }, [])
+
+  useEffect(() => () => {
+    galleryResizeObserverRef.current?.disconnect()
+    galleryResizeObserverRef.current = null
+  }, [])
 
   // ── Load chart ────────────────────────────────────────────────────────────
 
@@ -879,9 +920,6 @@ export default function PatternLibrary() {
   const resolvedActiveStrategy = activeStrategy || null
   const resolvedActiveCategory = activeCategory || null
   const hasOptions = optionPanes.length > 0
-  const galleryTotal = Math.ceil(galleryCharts.length / GALLERY_PAGE_SIZE)
-  const galleryPage_ = Math.min(galleryPage, Math.max(0, galleryTotal - 1))
-  const gallerySlice = galleryCharts.slice(galleryPage_ * GALLERY_PAGE_SIZE, (galleryPage_ + 1) * GALLERY_PAGE_SIZE)
 
   // ── Chart area renderer ───────────────────────────────────────────────────
 
@@ -1000,13 +1038,16 @@ export default function PatternLibrary() {
   // ── Gallery section ───────────────────────────────────────────────────────
 
   const renderGallery = (compact: boolean) => (
-    <div style={{
+    <div
+      ref={attachGalleryRef}
+      style={{
       borderTop: compact ? '1px solid #30363d' : undefined,
       background: '#0d1117', padding: '12px 16px',
       flex: compact ? '0 0 auto' : 1,
       maxHeight: compact ? 220 : undefined,
       overflow: 'auto',
-    }}>
+    }}
+    >
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
         <span style={{ fontSize: 12, fontWeight: 700 }}>Gallery</span>
         <select value={galleryCategory} onChange={e => setGalleryCategory(e.target.value)} style={{ ...selectStyle, minWidth: 160 }}>
@@ -1025,8 +1066,8 @@ export default function PatternLibrary() {
         </div>
       ) : (
         <>
-          <div style={galleryGridStyle()}>
-            {gallerySlice.map(chart => (
+          <div style={galleryGridStyle(galleryColumns)}>
+            {galleryCharts.map(chart => (
               <GalleryCard
                 key={chart.chart_id}
                 chart={chart}
@@ -1037,13 +1078,6 @@ export default function PatternLibrary() {
               />
             ))}
           </div>
-          {galleryTotal > 1 && (
-            <div style={{ display: 'flex', gap: 8, marginTop: 10, alignItems: 'center' }}>
-              <button style={btn('#21262d', galleryPage_ === 0)} onClick={() => setGalleryPage(p => Math.max(0, p - 1))} disabled={galleryPage_ === 0}>←</button>
-              <span style={{ fontSize: 12, color: '#8b949e' }}>Page {galleryPage_ + 1} / {galleryTotal}</span>
-              <button style={btn('#21262d', galleryPage_ >= galleryTotal - 1)} onClick={() => setGalleryPage(p => Math.min(galleryTotal - 1, p + 1))} disabled={galleryPage_ >= galleryTotal - 1}>→</button>
-            </div>
-          )}
         </>
       )}
     </div>
@@ -1198,8 +1232,8 @@ export default function PatternLibrary() {
                 <div style={{ fontSize: 12, color: '#484f58' }}>No saved charts yet. Switch to Create mode to add charts.</div>
               ) : (
                 <>
-                  <div style={galleryGridStyle()}>
-                    {gallerySlice.map(chart => (
+                  <div style={galleryGridStyle(galleryColumns)}>
+                    {galleryCharts.map(chart => (
                       <GalleryCard
                         key={chart.chart_id}
                         chart={chart}
@@ -1210,13 +1244,6 @@ export default function PatternLibrary() {
                       />
                     ))}
                   </div>
-                  {galleryTotal > 1 && (
-                    <div style={{ display: 'flex', gap: 8, marginTop: 12, alignItems: 'center' }}>
-                      <button style={btn('#21262d', galleryPage_ === 0)} onClick={() => setGalleryPage(p => Math.max(0, p - 1))} disabled={galleryPage_ === 0}>←</button>
-                      <span style={{ fontSize: 12, color: '#8b949e' }}>Page {galleryPage_ + 1} / {galleryTotal}</span>
-                      <button style={btn('#21262d', galleryPage_ >= galleryTotal - 1)} onClick={() => setGalleryPage(p => Math.min(galleryTotal - 1, p + 1))} disabled={galleryPage_ >= galleryTotal - 1}>→</button>
-                    </div>
-                  )}
                 </>
               )}
             </div>
