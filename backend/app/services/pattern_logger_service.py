@@ -96,11 +96,15 @@ def get_chart(chart_id: str) -> Optional[dict]:
     return item
 
 
-def list_charts_for_user(user_id: str, strategy: Optional[str] = None) -> list[dict]:
+def list_charts_for_user(
+    user_id: str,
+    strategy: Optional[str] = None,
+    category: Optional[str] = None,
+) -> list[dict]:
     """
     Return metadata (no annotation payload) for all charts belonging to user_id.
     Optionally filter to charts that contain at least one annotation with the
-    given strategy_name.
+    given strategy_name and/or category.
     """
     from boto3.dynamodb.conditions import Attr
     fe = Attr("user_id").eq(user_id)
@@ -113,10 +117,24 @@ def list_charts_for_user(user_id: str, strategy: Optional[str] = None) -> list[d
         if strategy:
             if not any(a.get("strategy_name") == strategy for a in raw):
                 continue
-        # Build metadata summary (entry/exit counts for this strategy)
-        entry_count = sum(1 for a in raw if a.get("type") == "entry" and (not strategy or a.get("strategy_name") == strategy))
-        exit_count = sum(1 for a in raw if a.get("type") == "exit" and (not strategy or a.get("strategy_name") == strategy))
+        if category:
+            if not any(a.get("category") == category for a in raw):
+                continue
+        # Build metadata summary (entry/exit counts for this strategy/category match)
+        entry_count = sum(
+            1 for a in raw
+            if a.get("type") == "entry"
+            and (not strategy or a.get("strategy_name") == strategy)
+            and (not category or a.get("category") == category)
+        )
+        exit_count = sum(
+            1 for a in raw
+            if a.get("type") == "exit"
+            and (not strategy or a.get("strategy_name") == strategy)
+            and (not category or a.get("category") == category)
+        )
         strategy_names = list({a.get("strategy_name", "") for a in raw if a.get("strategy_name")})
+        categories = list({a.get("category", "") for a in raw if a.get("category")})
         result.append({
             "chart_id": item["chart_id"],
             "user_id": item["user_id"],
@@ -131,6 +149,7 @@ def list_charts_for_user(user_id: str, strategy: Optional[str] = None) -> list[d
             "entry_count": entry_count,
             "exit_count": exit_count,
             "strategy_names": strategy_names,
+            "categories": categories,
         })
 
     result.sort(key=lambda x: x.get("date", ""), reverse=True)
@@ -174,3 +193,17 @@ def list_strategy_names(user_id: str) -> list[str]:
             if s:
                 names.add(s)
     return sorted(names)
+
+
+def list_category_names(user_id: str) -> list[str]:
+    """Return all unique category names across all charts for a user."""
+    from boto3.dynamodb.conditions import Attr
+    resp = _table().scan(FilterExpression=Attr("user_id").eq(user_id))
+    names: set[str] = set()
+    for item in resp.get("Items", []):
+        for ann in json.loads(item.get("annotations", "[]")):
+            c = ann.get("category", "")
+            if c:
+                names.add(c)
+    return sorted(names)
+

@@ -27,6 +27,7 @@ class AnnotationItem(BaseModel):
     type: str                      # "entry" | "exit"
     instrument: str                # "underlying" | "CE" | "PE"
     strategy_name: str
+    category: str = ""
     text: str
 
 
@@ -45,7 +46,7 @@ class UpdateChartRequest(BaseModel):
     notes: str = ""
 
 
-# ── Strategy names ────────────────────────────────────────────────────────────
+# ── Strategy / Category names ──────────────────────────────────────────────────
 
 @router.get("/strategies")
 async def list_strategies(user_id: str = Depends(get_request_user_id)):
@@ -58,20 +59,33 @@ async def list_strategies(user_id: str = Depends(get_request_user_id)):
         raise HTTPException(status_code=500, detail="Failed to list strategies")
 
 
+@router.get("/categories")
+async def list_categories(user_id: str = Depends(get_request_user_id)):
+    """Return all unique category names across user's saved charts."""
+    try:
+        names = svc.list_category_names(user_id)
+        return {"categories": names}
+    except Exception as exc:
+        logger.error("list_categories error: %s", exc)
+        raise HTTPException(status_code=500, detail="Failed to list categories")
+
+
 # ── Chart CRUD ────────────────────────────────────────────────────────────────
 
 @router.get("/charts")
 async def list_charts(
     strategy: Optional[str] = Query(None, description="Filter by strategy name"),
+    category: Optional[str] = Query(None, description="Filter by category name"),
     user_id: str = Depends(get_request_user_id),
 ):
-    """Return chart metadata list (no annotation payload). Optionally filtered by strategy."""
+    """Return chart metadata list (no annotation payload). Optionally filtered by strategy and/or category."""
     try:
-        charts = svc.list_charts_for_user(user_id, strategy=strategy)
+        charts = svc.list_charts_for_user(user_id, strategy=strategy, category=category)
         return {"charts": charts}
     except Exception as exc:
         logger.error("list_charts error: %s", exc)
         raise HTTPException(status_code=500, detail="Failed to list charts")
+
 
 
 @router.get("/chart/by-date")

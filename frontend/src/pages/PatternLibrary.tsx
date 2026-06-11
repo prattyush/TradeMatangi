@@ -75,19 +75,30 @@ const MARKER_COLORS: Record<string, { color: string; shape: 'arrowUp' | 'arrowDo
 
 function markerKey(type: string, instrument: string) { return `${type}-${instrument}` }
 
-function buildMarkers(annotations: PatternAnnotation[], activeStrategy: string | null): SeriesMarker<Time>[] {
+function buildMarkers(
+  annotations: PatternAnnotation[],
+  activeStrategy: string | null,
+  activeCategory: string | null,
+): SeriesMarker<Time>[] {
   return annotations
     .slice()
     .sort((a, b) => a.time - b.time)
     .map(ann => {
       const cfg = MARKER_COLORS[markerKey(ann.type, ann.instrument)] ?? { color: '#8b949e', shape: 'arrowUp' as const }
-      const dimmed = activeStrategy !== null && ann.strategy_name !== activeStrategy
+      const matchedStrategy = activeStrategy === null || ann.strategy_name === activeStrategy
+      const matchedCategory = activeCategory === null || ann.category === activeCategory
+      const dimmed = !matchedStrategy || !matchedCategory
+      
+      const displayText = dimmed
+        ? ''
+        : `${ann.category ? ann.category.slice(0, 5) + '/' : ''}${ann.strategy_name.slice(0, 10)}`
+
       return {
         time: ann.time as Time,
         position: ann.type === 'entry' ? 'belowBar' : 'aboveBar',
         color: dimmed ? '#3d4450' : cfg.color,
         shape: cfg.shape,
-        text: dimmed ? '' : ann.strategy_name.slice(0, 10),
+        text: displayText,
         size: dimmed ? 1 : 2,
       } as SeriesMarker<Time>
     })
@@ -168,6 +179,7 @@ interface ChartPaneProps {
   candles: OHLCCandle[]
   annotations: PatternAnnotation[]
   activeStrategy: string | null
+  activeCategory: string | null
   label: string
   onBarClick: (time: number, price: number) => void
   readonly?: boolean
@@ -177,7 +189,7 @@ interface ChartPaneProps {
 }
 
 function ChartPane({
-  candles, annotations, activeStrategy, label, onBarClick,
+  candles, annotations, activeStrategy, activeCategory, label, onBarClick,
   readonly = false, onMaximize, isMaximized = false, onRemove,
 }: ChartPaneProps) {
   const containerRef = useRef<HTMLDivElement>(null)
@@ -352,8 +364,8 @@ function ChartPane({
 
   useEffect(() => {
     if (!seriesRef.current) return
-    seriesRef.current.setMarkers(buildMarkers(annotations, activeStrategy))
-  }, [annotations, activeStrategy])
+    seriesRef.current.setMarkers(buildMarkers(annotations, activeStrategy, activeCategory))
+  }, [annotations, activeStrategy, activeCategory])
 
   const enterDrawMode = useCallback((mode: DrawMode) => {
     setDrawDropdownOpen(false)
@@ -500,8 +512,11 @@ function GalleryCard({ chart, activeStrategy: _activeStrategy, onLoad, onDelete,
         <span style={{ color: '#22c55e' }}>▲ {chart.entry_count}</span>
         <span style={{ color: '#ef4444' }}>▼ {chart.exit_count}</span>
       </div>
+      <div style={{ fontSize: 10, color: '#8b949e', marginBottom: 4, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        Cat: {chart.categories?.join(' · ') || '—'}
+      </div>
       <div style={{ fontSize: 10, color: '#484f58', marginBottom: viewMode ? 0 : 8, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-        {chart.strategy_names.join(' · ') || '—'}
+        Strat: {chart.strategy_names.join(' · ') || '—'}
       </div>
       {!viewMode && (
         <div style={{ display: 'flex', gap: 6 }}>
@@ -566,10 +581,13 @@ export default function PatternLibrary() {
   const [annotations, setAnnotations] = useState<PatternAnnotation[]>([])
   const [activeToolKey, setActiveToolKey] = useState<string>('entry-CE')
 
-  // Strategies
+  // Strategies / Categories
   const [strategies, setStrategies] = useState<string[]>([])
   const [activeStrategy, setActiveStrategy] = useState<string>('')
   const [newStrategyName, setNewStrategyName] = useState('')
+  const [categories, setCategories] = useState<string[]>([])
+  const [activeCategory, setActiveCategory] = useState<string>('')
+  const [newCategoryName, setNewCategoryName] = useState('')
   const [notes, setNotes] = useState('')
 
   // Persistence
@@ -579,22 +597,26 @@ export default function PatternLibrary() {
   // Gallery
   const [galleryCharts, setGalleryCharts] = useState<PatternChartMeta[]>([])
   const [galleryStrategy, setGalleryStrategy] = useState<string>('')
+  const [galleryCategory, setGalleryCategory] = useState<string>('')
   const [galleryPage, setGalleryPage] = useState(0)
   const [viewExpandedId, setViewExpandedId] = useState<string | null>(null)
 
   useEffect(() => {
     api.patternListStrategies().then(r => setStrategies(r.strategies)).catch(() => {})
+    api.patternListCategories().then(r => setCategories(r.categories)).catch(() => {})
   }, [])
 
-  const refreshGallery = useCallback(async (strat?: string) => {
+  const refreshGallery = useCallback(async (strat?: string, cat?: string) => {
     try {
-      const res = await api.patternListCharts((strat ?? galleryStrategy) || undefined)
+      const s = strat !== undefined ? strat : galleryStrategy
+      const c = cat !== undefined ? cat : galleryCategory
+      const res = await api.patternListCharts(s || undefined, c || undefined)
       setGalleryCharts(res.charts)
       setGalleryPage(0)
     } catch { /* non-fatal */ }
-  }, [galleryStrategy])
+  }, [galleryStrategy, galleryCategory])
 
-  useEffect(() => { refreshGallery() }, [galleryStrategy]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { refreshGallery() }, [galleryStrategy, galleryCategory])
 
   // ── Load chart ────────────────────────────────────────────────────────────
 
@@ -653,6 +675,11 @@ export default function PatternLibrary() {
         setAnnotations(existing.annotations)
         setCurrentChartId(existing.chart_id)
         setNotes(existing.notes ?? '')
+        if (existing.annotations.length > 0) {
+          const firstAnn = existing.annotations[0]
+          setActiveStrategy(firstAnn.strategy_name)
+          setActiveCategory(firstAnn.category || '')
+        }
       }
       setChartLoaded(true)
     } catch (err) {
@@ -708,6 +735,8 @@ export default function PatternLibrary() {
   const handleBarClick = useCallback((time: number, price: number) => {
     if (!chartLoaded) return
     const strategy = activeStrategy || newStrategyName.trim()
+    const category = activeCategory || newCategoryName.trim()
+    if (!category) { alert('Please select or type a category name before annotating.'); return }
     if (!strategy) { alert('Please select or type a strategy name before annotating.'); return }
     const tool = TOOL_OPTIONS.find(t => t.key === activeToolKey)
     if (!tool) return
@@ -715,19 +744,22 @@ export default function PatternLibrary() {
     const ann: PatternAnnotation = {
       id, time, price, type: tool.type, instrument: tool.instrument,
       strategy_name: strategy,
-      text: `${tool.type} ${tool.instrument} — ${strategy}`,
+      category,
+      text: `${category} — ${strategy} (${tool.type} ${tool.instrument})`,
     }
     setAnnotations(prev => {
-      const dup = prev.find(a => a.time === time && a.instrument === tool.instrument && a.strategy_name === strategy && a.type === tool.type)
+      const dup = prev.find(a => a.time === time && a.instrument === tool.instrument && a.strategy_name === strategy && a.category === category && a.type === tool.type)
       if (dup) return prev.filter(a => a.id !== dup.id)
       return [...prev, ann]
     })
-  }, [chartLoaded, activeStrategy, newStrategyName, activeToolKey])
+  }, [chartLoaded, activeStrategy, newStrategyName, activeCategory, newCategoryName, activeToolKey])
 
   // ── Save ──────────────────────────────────────────────────────────────────
 
   const handleSave = useCallback(async () => {
     const strategy = activeStrategy || newStrategyName.trim()
+    const category = activeCategory || newCategoryName.trim()
+    if (!category) { alert('Please specify a category before saving.'); return }
     if (!strategy) { alert('Please specify a strategy name before saving.'); return }
     setSaveMsg(null)
     const firstCe = optionPanes.find(p => p.right === 'CE')
@@ -745,17 +777,25 @@ export default function PatternLibrary() {
       }
       setSaveMsg('Saved!')
       setTimeout(() => setSaveMsg(null), 2000)
-      const strats = await api.patternListStrategies()
+      const [strats, cats] = await Promise.all([
+        api.patternListStrategies(),
+        api.patternListCategories(),
+      ])
       setStrategies(strats.strategies)
+      setCategories(cats.categories)
       if (!activeStrategy && newStrategyName.trim()) {
         setActiveStrategy(newStrategyName.trim())
         setNewStrategyName('')
+      }
+      if (!activeCategory && newCategoryName.trim()) {
+        setActiveCategory(newCategoryName.trim())
+        setNewCategoryName('')
       }
       await refreshGallery()
     } catch (err) {
       setSaveMsg(err instanceof Error ? err.message : 'Save failed')
     }
-  }, [currentChartId, annotations, notes, symbol, date, instrumentType, optionPanes, activeStrategy, newStrategyName, refreshGallery])
+  }, [currentChartId, annotations, notes, symbol, date, instrumentType, optionPanes, activeStrategy, newStrategyName, activeCategory, newCategoryName, refreshGallery])
 
   // ── Gallery load ──────────────────────────────────────────────────────────
 
@@ -774,6 +814,12 @@ export default function PatternLibrary() {
       setResolvedAtm(null)
       setMaximizedPaneId(null)
       paneIdRef.current = 1
+
+      if (chart.annotations.length > 0) {
+        const firstAnn = chart.annotations[0]
+        setActiveStrategy(firstAnn.strategy_name)
+        setActiveCategory(firstAnn.category || '')
+      }
 
       const eqRes = await api.patternOhlcEquity(chart.symbol, chart.date, intervalMinutes, DAYS_BACK)
       setEquityCandles(eqRes.candles)
@@ -810,14 +856,19 @@ export default function PatternLibrary() {
       if (currentChartId === chartId) { setCurrentChartId(null); setAnnotations([]); setChartLoaded(false) }
       if (viewExpandedId === chartId) setViewExpandedId(null)
       await refreshGallery()
-      const strats = await api.patternListStrategies()
+      const [strats, cats] = await Promise.all([
+        api.patternListStrategies(),
+        api.patternListCategories(),
+      ])
       setStrategies(strats.strategies)
+      setCategories(cats.categories)
     } catch { /* non-fatal */ }
   }, [currentChartId, viewExpandedId, refreshGallery])
 
   // ── Derived ───────────────────────────────────────────────────────────────
 
   const resolvedActiveStrategy = activeStrategy || null
+  const resolvedActiveCategory = activeCategory || null
   const hasOptions = optionPanes.length > 0
   const galleryTotal = Math.ceil(galleryCharts.length / GALLERY_PAGE_SIZE)
   const galleryPage_ = Math.min(galleryPage, Math.max(0, galleryTotal - 1))
@@ -849,10 +900,11 @@ export default function PatternLibrary() {
             candles={equityCandles}
             annotations={annotations.filter(a => a.instrument === 'underlying')}
             activeStrategy={resolvedActiveStrategy}
+            activeCategory={resolvedActiveCategory}
             label={`${symbol} — Underlying (${intervalMinutes}min)`}
             onBarClick={handleBarClick}
             readonly={isReadonly}
-            onMaximize={!isReadonly ? () => handleMaximize('underlying') : undefined}
+            onMaximize={() => handleMaximize('underlying')}
             isMaximized={maximizedPaneId === 'underlying'}
           />
         </div>
@@ -872,10 +924,11 @@ export default function PatternLibrary() {
                   candles={pane.candles}
                   annotations={annotations.filter(a => a.instrument === pane.right)}
                   activeStrategy={resolvedActiveStrategy}
+                  activeCategory={resolvedActiveCategory}
                   label={`${symbol} ${pane.right} ${pane.strike} (${intervalMinutes}min)`}
                   onBarClick={handleBarClick}
                   readonly={isReadonly}
-                  onMaximize={!isReadonly ? () => handleMaximize(pane.id) : undefined}
+                  onMaximize={() => handleMaximize(pane.id)}
                   isMaximized={maximizedPaneId === pane.id}
                   onRemove={!isReadonly ? () => handleRemovePane(pane.id) : undefined}
                 />
@@ -947,6 +1000,10 @@ export default function PatternLibrary() {
     }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
         <span style={{ fontSize: 12, fontWeight: 700 }}>Gallery</span>
+        <select value={galleryCategory} onChange={e => setGalleryCategory(e.target.value)} style={{ ...selectStyle, minWidth: 160 }}>
+          <option value="">All categories</option>
+          {categories.map(c => <option key={c} value={c}>{c}</option>)}
+        </select>
         <select value={galleryStrategy} onChange={e => setGalleryStrategy(e.target.value)} style={{ ...selectStyle, minWidth: 160 }}>
           <option value="">All strategies</option>
           {strategies.map(s => <option key={s} value={s}>{s}</option>)}
@@ -1037,6 +1094,18 @@ export default function PatternLibrary() {
       {/* Annotation toolbar — create mode only */}
       {mode === 'create' && (
         <div style={TOOLBAR}>
+          <span style={{ fontSize: 11, color: '#8b949e', marginRight: 4 }}>Category:</span>
+          <select value={activeCategory} onChange={e => { setActiveCategory(e.target.value); setNewCategoryName('') }}
+            style={{ ...selectStyle, minWidth: 160 }}>
+            <option value="">— select or type new —</option>
+            {categories.map(c => <option key={c} value={c}>{c}</option>)}
+          </select>
+          {!activeCategory && (
+            <input placeholder="New category name…" value={newCategoryName}
+              onChange={e => setNewCategoryName(e.target.value)}
+              style={{ ...inputStyle, width: 180 }} />
+          )}
+          <div style={{ width: 1, height: 16, background: '#30363d', margin: '0 4px' }} />
           <span style={{ fontSize: 11, color: '#8b949e', marginRight: 4 }}>Strategy:</span>
           <select value={activeStrategy} onChange={e => { setActiveStrategy(e.target.value); setNewStrategyName('') }}
             style={{ ...selectStyle, minWidth: 160 }}>
@@ -1107,6 +1176,10 @@ export default function PatternLibrary() {
             <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: '12px 16px' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
                 <span style={{ fontSize: 12, fontWeight: 700 }}>Gallery</span>
+                <select value={galleryCategory} onChange={e => setGalleryCategory(e.target.value)} style={{ ...selectStyle, minWidth: 160 }}>
+                  <option value="">All categories</option>
+                  {categories.map(c => <option key={c} value={c}>{c}</option>)}
+                </select>
                 <select value={galleryStrategy} onChange={e => setGalleryStrategy(e.target.value)} style={{ ...selectStyle, minWidth: 160 }}>
                   <option value="">All strategies</option>
                   {strategies.map(s => <option key={s} value={s}>{s}</option>)}

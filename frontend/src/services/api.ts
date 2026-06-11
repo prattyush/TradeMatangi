@@ -154,6 +154,7 @@ export interface PatternAnnotation {
   type: 'entry' | 'exit'
   instrument: 'underlying' | 'CE' | 'PE'
   strategy_name: string
+  category?: string
   text: string
 }
 
@@ -171,6 +172,7 @@ export interface PatternChartMeta {
   entry_count: number
   exit_count: number
   strategy_names: string[]
+  categories: string[]
 }
 
 export interface PatternChart extends PatternChartMeta {
@@ -1096,8 +1098,17 @@ const api = {
     return res.json()
   },
 
-  async patternListCharts(strategy?: string): Promise<{ charts: PatternChartMeta[] }> {
-    const q = strategy ? `?strategy=${encodeURIComponent(strategy)}` : ''
+  async patternListCategories(): Promise<{ categories: string[] }> {
+    const res = await fetch(`${BACKEND_URL}/api/pattern/categories`, { headers: _authHeaders() })
+    if (!res.ok) throw new Error(`List categories failed: ${res.status}`)
+    return res.json()
+  },
+
+  async patternListCharts(strategy?: string, category?: string): Promise<{ charts: PatternChartMeta[] }> {
+    const params = new URLSearchParams()
+    if (strategy) params.set('strategy', strategy)
+    if (category) params.set('category', category)
+    const q = params.toString() ? `?${params.toString()}` : ''
     const res = await fetch(`${BACKEND_URL}/api/pattern/charts${q}`, { headers: _authHeaders() })
     if (!res.ok) throw new Error(`List charts failed: ${res.status}`)
     return res.json()
