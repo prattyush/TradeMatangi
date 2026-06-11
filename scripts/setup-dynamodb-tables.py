@@ -192,6 +192,26 @@ TABLES = [
         ],
         "ProvisionedThroughput": {"ReadCapacityUnits": 5, "WriteCapacityUnits": 5},
     },
+    {
+        "TableName": "PatternShares",
+        "KeySchema": [
+            {"AttributeName": "owner_user_id", "KeyType": "HASH"},
+            {"AttributeName": "shared_user_id", "KeyType": "RANGE"},
+        ],
+        "AttributeDefinitions": [
+            {"AttributeName": "owner_user_id", "AttributeType": "S"},
+            {"AttributeName": "shared_user_id", "AttributeType": "S"},
+        ],
+        "GlobalSecondaryIndexes": [
+            {
+                "IndexName": "SharedUserIdIndex",
+                "KeySchema": [{"AttributeName": "shared_user_id", "KeyType": "HASH"}],
+                "Projection": {"ProjectionType": "ALL"},
+                "ProvisionedThroughput": {"ReadCapacityUnits": 5, "WriteCapacityUnits": 5},
+            }
+        ],
+        "ProvisionedThroughput": {"ReadCapacityUnits": 5, "WriteCapacityUnits": 5},
+    },
 ]
 
 

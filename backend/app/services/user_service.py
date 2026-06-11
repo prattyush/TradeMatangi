@@ -52,18 +52,26 @@ def seed_user() -> None:
         logger.exception("Failed to seed user — DynamoDB may not be available yet")
 
 
-def _find_by_email(email: str) -> dict | None:
-    """Scan Users table to find a user by email. Returns None if not found."""
+def get_user_by_email(email: str) -> dict | None:
+    """Lookup a user by email using the Users.EmailIndex GSI."""
     try:
         from app.services.db import get_dynamodb_resource
-        from boto3.dynamodb.conditions import Attr
+        from boto3.dynamodb.conditions import Key
         table = get_dynamodb_resource().Table("Users")
-        resp = table.scan(FilterExpression=Attr("email").eq(email))
+        resp = table.query(
+            IndexName="EmailIndex",
+            KeyConditionExpression=Key("email").eq(email.strip().lower()),
+        )
         items = resp.get("Items", [])
         return items[0] if items else None
     except Exception:
-        logger.exception("DynamoDB scan for email failed")
+        logger.exception("DynamoDB email lookup failed")
         return None
+
+
+def _find_by_email(email: str) -> dict | None:
+    """Backward-compatible wrapper around the indexed email lookup."""
+    return get_user_by_email(email)
 
 
 def register_user(email: str, password: str) -> dict:
@@ -71,6 +79,7 @@ def register_user(email: str, password: str) -> dict:
     Create a new user. Raises ValueError if email already exists.
     Returns {user_id, email}.
     """
+    email = email.strip().lower()
     existing = _find_by_email(email)
     if existing:
         raise ValueError("Email already registered")
@@ -106,7 +115,7 @@ def login_user(email: str, password: str) -> dict | None:
     """
     Validate email/password. Returns {user_id, email, is_admin} on success, None on failure.
     """
-    user = _find_by_email(email)
+    user = _find_by_email(email.strip().lower())
     if not user:
         return None
     if not _check_password(password, user.get("password_hash", "")):

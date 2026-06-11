@@ -79,8 +79,18 @@ class TestUpdateSettings:
             result = svc.update_settings("user-123", {"historical_days": 4})
         assert result["historical_days"] == 4
 
+    def test_share_emails_syncs_pattern_shares(self):
+        mock_resource, mock_table = _mock_db({"user_id": "user-123", "historical_days": 2})
+        with patch("app.services.db.get_dynamodb_resource", return_value=mock_resource), \
+             patch("app.services.pattern_logger_service.sync_pattern_shares") as mock_sync:
+            result = svc.update_settings("user-123", {"pattern_share_emails": "A@example.com, b@example.com"})
+        assert result["pattern_share_emails"] == "a@example.com, b@example.com"
+        mock_sync.assert_called_once_with("user-123", "a@example.com, b@example.com")
+        mock_table.put_item.assert_called_once()
+
     def test_default_settings_constant(self):
         assert svc.DEFAULT_SETTINGS["historical_days"] == 2
+        assert svc.DEFAULT_SETTINGS["pattern_share_emails"] == ""
 
 
 # ── API endpoint tests ────────────────────────────────────────────────────────
@@ -124,6 +134,23 @@ class TestUserSettingsEndpoints:
             resp = client.put("/api/users/settings", json={"historical_days": 5})
         assert resp.status_code == 200
         assert resp.json()["historical_days"] == 5
+
+    def test_put_pattern_share_emails(self):
+        updated = {
+            "historical_days": 2,
+            "funds_ratio_l_pct": 0.03,
+            "funds_ratio_m_pct": 0.06,
+            "funds_ratio_h_pct": 0.12,
+            "analysis_price_source": "options",
+            "experimental_patterns_enabled": False,
+            "pattern_share_emails": "a@example.com, b@example.com",
+        }
+        with patch("app.services.user_settings_service.update_settings", return_value=updated) as mock_fn:
+            resp = client.put("/api/users/settings", json={"pattern_share_emails": "a@example.com, b@example.com"})
+        assert resp.status_code == 200
+        assert resp.json()["pattern_share_emails"] == "a@example.com, b@example.com"
+        called = mock_fn.call_args[0][1]
+        assert called["pattern_share_emails"] == "a@example.com, b@example.com"
 
     def test_get_route_exists(self):
         with patch("app.services.user_settings_service.get_settings", return_value={"historical_days": 2}):

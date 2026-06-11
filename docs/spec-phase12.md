@@ -101,11 +101,19 @@ b) Option in stoploss to increase quantity. Open to discussion.
 - Multi-strategy per chart: each annotation carries its own `strategy_name`; active strategy's markers are full opacity, others dimmed
 - Options mode: stacked underlying pane (top) + options CE/PE pane (bottom); each pane only shows annotations for its instrument type
 - Save/update: saves to backend, refreshes strategy list
-- Gallery: scrollable grid of saved charts filtered by strategy dropdown; 6 per page with pagination; cards show date, symbol, instrument badge, entry/exit counts, all strategy names on chart
+- Gallery: scrollable grid of saved charts filtered by strategy/category dropdowns; cards show date, symbol, instrument badge, entry/exit counts, all strategy names on chart; responsive layout caps at 6 columns and wraps into additional rows instead of paginating
 - Load from gallery: loads full chart + annotations, pre-selects strategy
 - Delete from gallery: with one-click confirmation
 
 **api.ts additions:** `patternListStrategies()`, `patternListCharts()`, `patternGetChartByDate()`, `patternGetChart()`, `patternCreateChart()`, `patternUpdateChart()`, `patternDeleteChart()`, `patternOhlcEquity()`, `patternOhlcOptions()` + `PatternAnnotation`, `PatternChartMeta`, `PatternChart`, `PatternOHLCResponse` types
+
+**Pattern sharing:**
+- `UserSettings` General tab now includes a comma-separated share list for pattern access control
+- Backend resolves share emails through `Users.EmailIndex` and persists grants in a new `PatternShares` table
+- Gallery lists both owned charts and charts shared to the current user; shared cards remain loadable but hide delete/update actions
+- Date-based create-mode lookup remains owner-only so shared charts stay view-only unless explicitly opened from the gallery
+- Sharing is cyclic by design: user A can share to B and B can share back to A independently
+- Status: implemented and synced to `origin/dev`; currently under EC2 verification before the manual merge to `origin/main`
 
 ---
 
@@ -284,11 +292,11 @@ All changes are on `feature/phase12-bugfixes`, open PR targeting `dev`.
 
 *Create vs View modes:*
 - Mode toggle button in header (✏ Create / 👁 View)
-- **Create mode**: load controls + annotation toolbar + charts + "Add Pane" strip + compact gallery strip
-- **View mode**: 2-column gallery grid (click card to expand read-only chart above gallery; all panes shown with `readonly=true`; annotation toolbar and drawing tools hidden); "✕ Close" returns to full gallery
+- **Create mode**: load controls + annotation toolbar + charts + "Add Pane" strip; gallery is hidden to preserve chart space
+- **View mode**: responsive gallery grid (click card to expand read-only chart above the gallery; all panes shown with `readonly=true`; annotation toolbar and drawing tools hidden; Load/Delete actions remain visible on each card); "✕ Close" returns to full gallery
 
 *Gallery:*
-- Reorganised to CSS `grid, gridTemplateColumns: repeat(2, 1fr)` in both modes
+- Reorganised to a measured CSS grid that uses up to 6 columns based on available width; when there are more charts than fit in one row, the grid grows additional rows and the container scrolls instead of paging
 
 **PR #167 merged to dev.**
 

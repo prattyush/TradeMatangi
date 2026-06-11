@@ -23,6 +23,7 @@ DEFAULT_SETTINGS: dict = {
     "funds_ratio_h_pct": 0.12,
     "analysis_price_source": "options",
     "experimental_patterns_enabled": False,
+    "pattern_share_emails": "",
 }
 
 
@@ -70,10 +71,27 @@ def get_settings(user_id: str) -> dict:
             "funds_ratio_h_pct": float(item.get("funds_ratio_h_pct", DEFAULT_SETTINGS["funds_ratio_h_pct"])),
             "analysis_price_source": str(item.get("analysis_price_source", DEFAULT_SETTINGS["analysis_price_source"])),
             "experimental_patterns_enabled": bool(item.get("experimental_patterns_enabled", DEFAULT_SETTINGS["experimental_patterns_enabled"])),
+            "pattern_share_emails": _normalize_share_emails_value(item.get("pattern_share_emails", DEFAULT_SETTINGS["pattern_share_emails"])),
         }
     except Exception:
         logger.exception("Failed to get settings for user %s", user_id)
         return dict(DEFAULT_SETTINGS)
+
+
+def _normalize_share_emails_value(value) -> str:
+    if isinstance(value, list):
+        raw = ",".join(str(v) for v in value)
+    else:
+        raw = str(value or "")
+    emails: list[str] = []
+    seen: set[str] = set()
+    for part in raw.split(","):
+        email = part.strip().lower()
+        if not email or email in seen:
+            continue
+        seen.add(email)
+        emails.append(email)
+    return ", ".join(emails)
 
 
 def update_settings(user_id: str, settings: dict) -> dict:
@@ -81,13 +99,21 @@ def update_settings(user_id: str, settings: dict) -> dict:
     _ensure_table()
     current = get_settings(user_id)
     current.update({k: v for k, v in settings.items() if v is not None})
+    shares_updated = "pattern_share_emails" in settings
+    if shares_updated:
+        current["pattern_share_emails"] = _normalize_share_emails_value(current.get("pattern_share_emails", ""))
     try:
+        if shares_updated:
+            from app.services import pattern_logger_service
+            pattern_logger_service.sync_pattern_shares(user_id, current.get("pattern_share_emails", ""))
         from app.services.db import get_dynamodb_resource
         table = get_dynamodb_resource().Table("UserSettings")
         dynamo_item = {"user_id": user_id}
         for k, v in current.items():
             dynamo_item[k] = Decimal(str(v)) if isinstance(v, float) else v
         table.put_item(Item=dynamo_item)
+    except ValueError:
+        raise
     except Exception:
         logger.exception("Failed to update settings for user %s", user_id)
     return current

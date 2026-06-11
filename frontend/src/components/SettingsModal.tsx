@@ -198,6 +198,7 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
 
   // Experimental: live pattern detection
   const [experimentalPatternsEnabled, setExperimentalPatternsEnabled] = useState(false)
+  const [patternShareEmails, setPatternShareEmails] = useState('')
 
   // Strategies settings
   const [breakevenMode, setBreakevenMode] = useState(loadBreakevenMode)
@@ -271,6 +272,9 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
         }
         if (s.experimental_patterns_enabled != null) {
           setExperimentalPatternsEnabled(s.experimental_patterns_enabled)
+        }
+        if (s.pattern_share_emails != null) {
+          setPatternShareEmails(s.pattern_share_emails)
         }
       }).catch(() => {})
 
@@ -957,8 +961,55 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
               </label>
             </div>
 
+            {/* Pattern Sharing */}
+            <div style={{ borderTop: '1px solid #21262d', paddingTop: 16 }}>
+              <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 10, fontWeight: 600 }}>
+                PATTERN SHARING
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                <textarea
+                  value={patternShareEmails}
+                  onChange={e => setPatternShareEmails(e.target.value)}
+                  placeholder="Comma-separated email addresses"
+                  rows={3}
+                  style={{
+                    width: '100%', resize: 'vertical', minHeight: 72,
+                    padding: '8px 10px', background: '#0d1117',
+                    border: '1px solid #30363d', borderRadius: 6,
+                    color: '#e6edf3', fontSize: 13, lineHeight: 1.4,
+                  }}
+                />
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                  <button
+                    onClick={() => {
+                      api.updateUserSettings({ pattern_share_emails: patternShareEmails }).then(() => {
+                        setStatus('Pattern sharing saved')
+                        setTimeout(() => setStatus(null), 2000)
+                      }).catch((e: unknown) => {
+                        setStatus(e instanceof Error ? e.message : 'Failed to save pattern sharing')
+                        setTimeout(() => setStatus(null), 2500)
+                      })
+                    }}
+                    style={{
+                      padding: '5px 14px', background: '#1f6feb',
+                      border: 'none', borderRadius: 6, color: '#fff',
+                      cursor: 'pointer', fontSize: 12,
+                    }}
+                  >
+                    Save
+                  </button>
+                  <span style={{ fontSize: 11, color: '#484f58' }}>
+                    Shared users must already have a TradeMatangi account.
+                  </span>
+                </div>
+              </div>
+            </div>
+
             {status && (
-              <div style={{ fontSize: 12, color: '#3fb950' }}>{status}</div>
+              <div style={{
+                fontSize: 12,
+                color: /fail|invalid|must|error|not match/i.test(status) ? '#f85149' : '#3fb950',
+              }}>{status}</div>
             )}
 
             </> /* end General tab */}
