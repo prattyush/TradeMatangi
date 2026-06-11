@@ -3,7 +3,7 @@
  *
  * Create mode: annotate full-day charts (3-pane options, 1-pane equity) with
  * EMA 9/21, drawing tools, entry/exit markers. Panes can be maximized, removed,
- * or replaced with a different strike. View mode: 2-column gallery with
+ * or replaced with a different strike. View mode: responsive gallery with
  * click-to-expand read-only chart view.
  */
 import { useState, useEffect, useRef, useCallback, CSSProperties } from 'react'
@@ -537,6 +537,15 @@ const SUPPORTED_SYMBOLS = ['NIFTY', 'BSESEN', 'RELIND', 'TATMOT', 'TATPOW']
 const STRIKE_INTERVALS: Record<string, number> = { NIFTY: 50, BSESEN: 100, RELIND: 5, TATMOT: 5, TATPOW: 5 }
 const DAYS_BACK = 2
 const GALLERY_PAGE_SIZE = 6
+const GALLERY_CARD_MIN_WIDTH = 220
+
+function galleryGridStyle(): CSSProperties {
+  return {
+    display: 'grid',
+    gridTemplateColumns: `repeat(auto-fit, minmax(${GALLERY_CARD_MIN_WIDTH}px, 1fr))`,
+    gap: 10,
+  }
+}
 
 // ── Main component ────────────────────────────────────────────────────────────
 
@@ -1016,7 +1025,7 @@ export default function PatternLibrary() {
         </div>
       ) : (
         <>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 10 }}>
+          <div style={galleryGridStyle()}>
             {gallerySlice.map(chart => (
               <GalleryCard
                 key={chart.chart_id}
@@ -1141,14 +1150,13 @@ export default function PatternLibrary() {
 
       {/* Body */}
       {mode === 'create' ? (
-        <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-          <div style={{ flex: 1, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-            {renderCharts(false)}
-          </div>
-          {renderAddPaneStrip()}
-          {renderGallery(true)}
+      <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+        <div style={{ flex: 1, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+          {renderCharts(false)}
         </div>
-      ) : (
+        {renderAddPaneStrip()}
+      </div>
+    ) : (
         /* View mode */
         <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
           {viewExpandedId && chartLoaded ? (
@@ -1190,7 +1198,7 @@ export default function PatternLibrary() {
                 <div style={{ fontSize: 12, color: '#484f58' }}>No saved charts yet. Switch to Create mode to add charts.</div>
               ) : (
                 <>
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 12 }}>
+                  <div style={galleryGridStyle()}>
                     {gallerySlice.map(chart => (
                       <GalleryCard
                         key={chart.chart_id}
