@@ -113,11 +113,9 @@ async def get_chart_by_date(
 async def get_chart(chart_id: str, user_id: str = Depends(get_request_user_id)):
     """Return full chart record including all annotations."""
     try:
-        chart = svc.get_chart(chart_id)
+        chart = svc.get_chart_for_user(user_id, chart_id)
         if not chart:
             raise HTTPException(status_code=404, detail="Chart not found")
-        if chart.get("user_id") != user_id:
-            raise HTTPException(status_code=403, detail="Not your chart")
         return chart
     except HTTPException:
         raise
@@ -149,10 +147,10 @@ async def create_chart(req: CreateChartRequest, user_id: str = Depends(get_reque
 @router.put("/chart/{chart_id}")
 async def update_chart(chart_id: str, req: UpdateChartRequest, user_id: str = Depends(get_request_user_id)):
     """Update annotations and notes for an existing chart."""
-    existing = svc.get_chart(chart_id)
+    existing = svc.get_chart_for_user(user_id, chart_id)
     if not existing:
         raise HTTPException(status_code=404, detail="Chart not found")
-    if existing.get("user_id") != user_id:
+    if not existing.get("can_delete"):
         raise HTTPException(status_code=403, detail="Not your chart")
     try:
         updated = svc.update_chart(chart_id, [a.model_dump() for a in req.annotations], req.notes)
@@ -169,10 +167,10 @@ async def update_chart(chart_id: str, req: UpdateChartRequest, user_id: str = De
 @router.delete("/chart/{chart_id}")
 async def delete_chart(chart_id: str, user_id: str = Depends(get_request_user_id)):
     """Delete a chart record."""
-    existing = svc.get_chart(chart_id)
+    existing = svc.get_chart_for_user(user_id, chart_id)
     if not existing:
         raise HTTPException(status_code=404, detail="Chart not found")
-    if existing.get("user_id") != user_id:
+    if not existing.get("can_delete"):
         raise HTTPException(status_code=403, detail="Not your chart")
     try:
         svc.delete_chart(chart_id)
