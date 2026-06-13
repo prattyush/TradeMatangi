@@ -281,18 +281,15 @@ function AnalysisChart({
     const intervalSecs = 3 * 60
 
     for (const t of displayTrades) {
-      const slot = Math.floor(t.timestamp / intervalSecs) * intervalSecs
+      const slot = t.right ? t.timestamp : Math.floor(t.timestamp / intervalSecs) * intervalSecs
       const effectiveSide = effectiveSideForChart(t)
       const text = t.right
         ? `${t.right} ${t.side === 'BUY' ? 'B' : 'S'}`
         : (t.side === 'BUY' ? 'B' : 'S')
       const markerPrice = t.right
-        ? candles.find(c => (c.time as number) === slot)?.close
+        ? (t.underlying_price ?? candles.find(c => (c.time as number) === Math.floor(t.timestamp / intervalSecs) * intervalSecs)?.close)
         : t.price
       if (markerPrice === undefined) continue
-      const position = t.right
-        ? (effectiveSide === 'BUY' ? 'aboveBar' : 'belowBar')
-        : 'inBar'
 
       try {
         const markerSeries = chart.addLineSeries({
@@ -304,7 +301,7 @@ function AnalysisChart({
         markerSeries.setData([{ time: slot as Time, value: markerPrice }])
         markerSeries.setMarkers([{
           time: slot as Time,
-          position,
+          position: 'inBar' as const,
           color: effectiveSide === 'BUY' ? '#FFFFFF' : '#00AAFF',
           shape: 'circle' as const,
           text,

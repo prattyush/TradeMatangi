@@ -46,6 +46,7 @@ class TradeSummary(BaseModel):
     strike: int | None = None
     expiry: str | None = None
     commission: float = 0.0
+    underlying_price: float | None = None
 
 
 class SessionDetail(SessionSummary):
@@ -105,17 +106,7 @@ async def get_trades_for_analysis(
         trades = analysis_service.get_trades_for_session(s["session_id"])
         summary = analysis_service.compute_session_summary(s, trades)
         trade_list = [
-            {
-                "trade_id": t.get("trade_id", ""),
-                "side": t.get("side", ""),
-                "price": float(t.get("price", 0)),
-                "quantity": int(t.get("quantity", 0)),
-                "timestamp": int(t.get("timestamp", 0)),
-                "right": t.get("right"),
-                "strike": t.get("strike"),
-                "expiry": t.get("expiry"),
-                "commission": float(t.get("commission", 0)),
-            }
+            analysis_service._serialize_trade(t, s)
             for t in trades
         ]
         result.append({

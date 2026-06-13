@@ -127,15 +127,15 @@ def get_session_summary_with_trades(session_id: str) -> dict | None:
             return None
         trades = get_trades_for_session(session_id)
         summary = compute_session_summary(session, trades)
-        summary["trades"] = [_serialize_trade(t) for t in trades]
+        summary["trades"] = [_serialize_trade(t, session) for t in trades]
         return summary
     except Exception:
         logger.exception("Failed to get session summary for %s", session_id)
         return None
 
 
-def _serialize_trade(t: dict) -> dict:
-    return {
+def _serialize_trade(t: dict, session: dict | None = None) -> dict:
+    trade = {
         "trade_id": t.get("trade_id", ""),
         "session_id": t.get("session_id", ""),
         "user_id": t.get("user_id", ""),
@@ -150,3 +150,16 @@ def _serialize_trade(t: dict) -> dict:
         "expiry": t.get("expiry"),
         "commission": _safe_float(t.get("commission", 0)),
     }
+    if session and t.get("right") and session.get("symbol") and session.get("date"):
+        try:
+            from app.services.options_service import get_underlying_price_at
+            underlying_price = get_underlying_price_at(
+                str(session["symbol"]),
+                str(session["date"]),
+                int(t.get("timestamp", 0)),
+            )
+            if underlying_price is not None:
+                trade["underlying_price"] = underlying_price
+        except Exception:
+            logger.debug("Could not enrich trade %s with underlying price", t.get("trade_id", ""))
+    return trade
