@@ -521,10 +521,10 @@ function GalleryCard({ chart, activeStrategy: _activeStrategy, onLoad, onDelete,
         <span style={{ color: '#22c55e' }}>▲ {chart.entry_count}</span>
         <span style={{ color: '#ef4444' }}>▼ {chart.exit_count}</span>
       </div>
-      <div style={{ fontSize: 10, color: '#8b949e', marginBottom: 4, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+      <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 4, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
         Cat: {chart.categories?.join(' · ') || '—'}
       </div>
-      <div style={{ fontSize: 10, color: '#484f58', marginBottom: viewMode ? 0 : 8, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+      <div style={{ fontSize: 12, color: '#484f58', marginBottom: viewMode ? 0 : 8, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
         Strat: {chart.strategy_names.join(' · ') || '—'}
       </div>
       <div style={{ display: 'flex', gap: 6 }}>
