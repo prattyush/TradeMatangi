@@ -9,24 +9,34 @@ import uuid
 import sys
 import os
 import argparse
+import configparser
 from datetime import datetime
 import boto3
 from decimal import Decimal
 from boto3.dynamodb.conditions import Key
 
-# DynamoDB Configuration
-# Use environment variables or defaults for local development
-ENDPOINT_URL = os.getenv("DYNAMODB_URL", "http://localhost:8000")
-REGION = os.getenv("DYNAMODB_REGION", "us-east-1")
+# Add backend to sys.path to import app services
+PROJECT_ROOT = os.path.join(os.path.dirname(__file__), "..")
+sys.path.append(os.path.join(PROJECT_ROOT, "backend"))
+
+# Set DATA_DIR environment variable so backend config reads correct accesskeys.ini
+os.environ["DATA_DIR"] = os.path.join(PROJECT_ROOT, "data")
 
 def get_dynamodb():
-    """Return a boto3 DynamoDB resource."""
+    """Return a boto3 DynamoDB resource using credentials from accesskeys.ini."""
+    cfg = configparser.ConfigParser()
+    cfg.read(os.path.join(PROJECT_ROOT, "data", "accesskeys.ini"))
+    
+    if not cfg.has_section("aws"):
+        raise ValueError("Missing [aws] section in data/accesskeys.ini")
+    
+    aws = cfg["aws"]
     return boto3.resource(
         "dynamodb",
-        endpoint_url=ENDPOINT_URL,
-        region_name=REGION,
-        aws_access_key_id="fakeKey",
-        aws_secret_access_key="fakeSecret",
+        endpoint_url=aws.get("url"),
+        region_name=aws.get("region", "us-east-1"),
+        aws_access_key_id=aws.get("access_key"),
+        aws_secret_access_key=aws.get("secret_access_key"),
     )
 
 def float_to_decimal(f):
@@ -118,6 +128,7 @@ def import_orders(email, orders_json, session_id=None):
         "instrument_type": instrument_type,
         "session_type": "real",
         "session_capital": session_capital,
+        "state": "ended",
     }
     
     # Optional options fields for session
@@ -126,7 +137,7 @@ def import_orders(email, orders_json, session_id=None):
         session_item["expiry"] = parse_expiry_date(first_order.get("expiry_date"))
 
     sessions_table.put_item(Item=session_item)
-    print(f"Created session {session_id} for {symbol} on {session_date}")
+    print(f"Created session {session_id} for {symbol} on {session_date} (state: ended)")
 
     # 3. Update Wallet for that user and date
     wallet_table = db.Table("Wallet")
@@ -154,6 +165,7 @@ def import_orders(email, orders_json, session_id=None):
         side = o.get("action", "Buy").upper()
         quantity = int(o.get("quantity", 0))
         
+        # Use broker's order_id directly
         order_id = o.get("order_id") or str(uuid.uuid4())
         
         # 4. Create Order entry
@@ -173,15 +185,21 @@ def import_orders(email, orders_json, session_id=None):
             "filled_price": float_to_decimal(o.get("average_price")),
             "right": right,
             "strike": int(float(o["strike_price"])) if o.get("strike_price") else None,
-            "kotak_order_id": o.get("order_id"),
-            "kotak_fill_confirmed": True if o.get("status") == "Executed" else False,
-            "session_type": "real", # Ensure order also has session_type
+            "is_stoploss": True if side == "SELL" else False,
         }
         orders_table.put_item(Item=order_item)
         orders_count += 1
 
         # 5. Create Trade entry if Executed
         if o.get("status") == "Executed":
+            # Lookup underlying price at execution time
+            underlying_price = None
+            try:
+                from app.services.options_service import get_underlying_price_at
+                underlying_price = get_underlying_price_at(symbol, session_date, timestamp)
+            except Exception as e:
+                print(f"Warning: Could not lookup underlying price for trade at {dt}: {e}")
+
             trade_id = str(uuid.uuid4())
             trade_item = {
                 "trade_id": trade_id,
@@ -198,6 +216,7 @@ def import_orders(email, orders_json, session_id=None):
                 "right": right,
                 "commission": Decimal("20.0"), # Dummy fixed commission
                 "session_type": "real",
+                "underlying_price": float_to_decimal(underlying_price),
             }
             trades_table.put_item(Item=trade_item)
             trades_count += 1

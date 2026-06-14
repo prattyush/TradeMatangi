@@ -158,7 +158,7 @@ function AnalysisChart({
   useEffect(() => {
     if (!containerRef.current) return
     const w = containerRef.current.clientWidth
-    const h = Math.max(300, Math.floor(w * 0.6))
+    const h = isMaximized ? (containerRef.current.clientHeight || 500) : Math.max(300, Math.floor(w * 0.6))
     const chart = createChart(containerRef.current, {
       width: w,
       height: h,
@@ -194,9 +194,9 @@ function AnalysisChart({
     tradeMarkerPoolRef.current = [markerSeries]
 
     const ro = new ResizeObserver(entries => {
-      const width = entries[0].contentRect.width
-      const height = Math.max(300, Math.floor(width * 0.6))
-      chart.applyOptions({ width, height })
+      const { width, height } = entries[0].contentRect
+      const newHeight = isMaximized ? height : Math.max(300, Math.floor(width * 0.6))
+      chart.applyOptions({ width, height: newHeight })
     })
     ro.observe(containerRef.current)
 
@@ -210,7 +210,7 @@ function AnalysisChart({
       ema21Ref.current = null
       chart.remove()
     }
-  }, [])
+  }, [isMaximized])
 
   useEffect(() => {
     if (!seriesRef.current || !symbol || !date) return
@@ -286,13 +286,18 @@ function AnalysisChart({
       const text = t.right
         ? `${t.right} ${t.side === 'BUY' ? 'B' : 'S'}`
         : (t.side === 'BUY' ? 'B' : 'S')
-      const markerPrice = t.right
-        ? candles.find(c => (c.time as number) === slot)?.close
-        : t.price
+      
+      let markerPrice: number | undefined
+      if (t.right) {
+        // Options trade mirrored on underlying
+        markerPrice = t.underlying_price ?? candles.find(c => (c.time as number) === slot)?.close
+      } else {
+        // Equity trade
+        markerPrice = t.price
+      }
+
       if (markerPrice === undefined) continue
-      const position = t.right
-        ? (effectiveSide === 'BUY' ? 'aboveBar' : 'belowBar')
-        : 'inBar'
+      const position = 'inBar'
 
       try {
         const markerSeries = chart.addLineSeries({
@@ -316,10 +321,17 @@ function AnalysisChart({
   }, [trades, candles, markerFilter])
 
   return (
-    <div style={{ width: '100%', borderRadius: 6, overflow: 'hidden' }}>
+    <div style={{
+      width: '100%',
+      height: isMaximized ? '100%' : 'auto',
+      display: 'flex',
+      flexDirection: 'column',
+      borderRadius: 6,
+      overflow: 'hidden'
+    }}>
       <ChartToolbar title={title} isMaximized={isMaximized} onMaximize={onMaximize} />
       {hasOptions && (
-        <div style={{ display: 'flex', gap: 4, padding: '4px 8px', background: '#161b22' }}>
+        <div style={{ display: 'flex', gap: 4, padding: '4px 8px', background: '#161b22', flexShrink: 0 }}>
           {(['all', 'CE', 'PE'] as const).map(f => (
             <button
               key={f}
@@ -340,7 +352,7 @@ function AnalysisChart({
           ))}
         </div>
       )}
-      <div ref={containerRef} style={{ width: '100%' }} />
+      <div ref={containerRef} style={{ width: '100%', flex: 1 }} />
     </div>
   )
 }
@@ -371,7 +383,7 @@ function OptionsChart({
   useEffect(() => {
     if (!containerRef.current) return
     const w = containerRef.current.clientWidth
-    const h = Math.max(300, Math.floor(w * 0.6))
+    const h = isMaximized ? (containerRef.current.clientHeight || 500) : Math.max(300, Math.floor(w * 0.6))
     const chart = createChart(containerRef.current, {
       width: w,
       height: h,
@@ -407,9 +419,9 @@ function OptionsChart({
     tradeMarkerPoolRef.current = [markerSeries]
 
     const ro = new ResizeObserver(entries => {
-      const width = entries[0].contentRect.width
-      const height = Math.max(300, Math.floor(width * 0.6))
-      chart.applyOptions({ width, height })
+      const { width, height } = entries[0].contentRect
+      const newHeight = isMaximized ? height : Math.max(300, Math.floor(width * 0.6))
+      chart.applyOptions({ width, height: newHeight })
     })
     ro.observe(containerRef.current)
 
@@ -423,7 +435,7 @@ function OptionsChart({
       ema21Ref.current = null
       chart.remove()
     }
-  }, [])
+  }, [isMaximized])
 
   useEffect(() => {
     if (!seriesRef.current || !symbol || !date || !strike || !expiry || !right) return
@@ -503,13 +515,20 @@ function OptionsChart({
   }, [trades])
 
   return (
-    <div style={{ width: '100%', borderRadius: 6, overflow: 'hidden' }}>
+    <div style={{
+      width: '100%',
+      height: isMaximized ? '100%' : 'auto',
+      display: 'flex',
+      flexDirection: 'column',
+      borderRadius: 6,
+      overflow: 'hidden'
+    }}>
       <ChartToolbar
         title={`${right} ${strike}`}
         isMaximized={isMaximized}
         onMaximize={onMaximize}
       />
-      <div ref={containerRef} style={{ width: '100%' }} />
+      <div ref={containerRef} style={{ width: '100%', flex: 1 }} />
     </div>
   )
 }
@@ -747,7 +766,7 @@ function GroupCard({ group, historicalDays = 2 }: { group: SessionGroup; histori
   const pnlSign = group.totalPnl >= 0 ? '+' : ''
   const pnlPct = group.sessionCapital > 0 ? (group.totalPnl / group.sessionCapital) * 100 : 0
   const typeLabel = group.instrument_type === 'options' ? 'Options' : 'Equity'
-  const sessionTypeLabel = group.session_type === 'paper' ? 'Paper' : 'Sim'
+  const sessionTypeLabel = group.session_type === 'paper' ? 'Paper' : group.session_type === 'real' ? 'Real' : 'Sim'
 
   return (
     <div style={{
@@ -962,6 +981,7 @@ export default function TradeAnalysis({ onClose, historicalDays = 2 }: Props) {
               <option value="">All</option>
               <option value="sim">Simulated</option>
               <option value="paper">Paper</option>
+              <option value="real">Real</option>
             </select>
           </label>
 

@@ -46,6 +46,7 @@ class TradeSummary(BaseModel):
     strike: int | None = None
     expiry: str | None = None
     commission: float = 0.0
+    underlying_price: float | None = None
 
 
 class SessionDetail(SessionSummary):
@@ -80,6 +81,7 @@ async def get_session_detail(session_id: str):
     detail = analysis_service.get_session_summary_with_trades(session_id)
     if not detail:
         raise HTTPException(status_code=404, detail="Session not found")
+    
     return detail
 
 

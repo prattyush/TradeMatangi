@@ -54,6 +54,9 @@ def _write_trade_to_db(trade: Trade) -> None:
             "instrument_type": trade.instrument_type,
             "commission": Decimal(str(trade.commission)),
         }
+        if trade.underlying_price is not None:
+            item["underlying_price"] = Decimal(str(trade.underlying_price))
+
         if trade.instrument_type == "options":
             if trade.strike is not None:
                 item["strike"] = trade.strike
@@ -83,6 +86,30 @@ def record_trade(
     session_type: str = "sim",
 ) -> Trade:
     ensure_session(session_id)
+
+    # Automatically lookup underlying price if it is an options trade
+    underlying_price = None
+    if instrument_type == "options":
+        # 1. Try to get it from an active in-memory session (Paper/Real/Live Sim)
+        try:
+            from app.services import simulation as sim_svc
+            session = sim_svc.get_session(session_id)
+            if session and session.last_price > 0:
+                underlying_price = session.last_price
+        except Exception:
+            pass
+
+        # 2. Fallback to parquet lookup (Historical Sim / Import / Offline)
+        if underlying_price is None:
+            try:
+                from app.services.options_service import get_underlying_price_at
+                from datetime import datetime
+                dt = datetime.fromtimestamp(timestamp)
+                date_str = dt.strftime("%Y-%m-%d")
+                underlying_price = get_underlying_price_at(symbol, date_str, timestamp)
+            except Exception:
+                logger.debug("Automatic underlying price lookup failed for %s at %s", symbol, timestamp)
+
     trade = Trade(
         user_id=user_id,
         symbol=symbol,
@@ -97,6 +124,7 @@ def record_trade(
         right=right,
         commission=compute_commission(side, price, quantity, brokerage_per_order),
         session_type=session_type,
+        underlying_price=underlying_price,
     )
     _trades[session_id].append(trade)
     _write_trade_to_db(trade)
@@ -216,6 +244,7 @@ def reload_trades_from_db(session_id: str) -> None:
                     right=item.get("right"),
                     commission=float(item.get("commission", 0)),
                     session_type=str(item.get("session_type", "paper")),
+                    underlying_price=float(item.get("underlying_price")) if item.get("underlying_price") is not None else None,
                 ))
             except Exception:
                 logger.warning("Skipping malformed trade during reload for session %s: %s", session_id, item)
