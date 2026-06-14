@@ -142,9 +142,9 @@ export interface SimulationStartResponse {
 }
 
 export interface WalletResponse {
-  user_id: string
-  date: string
-  balance: number
+  user_id: str
+  date: str
+  current_balance: number
 }
 
 // Pattern Library types
@@ -238,6 +238,7 @@ export interface AnalysisTrade {
   strike: number | null
   expiry: string | null
   commission: number
+  underlying_price?: number
 }
 
 export interface SessionDetail extends SessionSummary {

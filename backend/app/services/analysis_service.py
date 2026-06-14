@@ -128,6 +128,7 @@ def get_session_summary_with_trades(session_id: str) -> dict | None:
         trades = get_trades_for_session(session_id)
         summary = compute_session_summary(session, trades)
         summary["trades"] = [_serialize_trade(t) for t in trades]
+        
         return summary
     except Exception:
         logger.exception("Failed to get session summary for %s", session_id)
@@ -135,6 +136,7 @@ def get_session_summary_with_trades(session_id: str) -> dict | None:
 
 
 def _serialize_trade(t: dict) -> dict:
+    print("***** Serializing trade: \n\n\n " + str(t) + "****** \n\n\n")
     return {
         "trade_id": t.get("trade_id", ""),
         "session_id": t.get("session_id", ""),
@@ -149,4 +151,5 @@ def _serialize_trade(t: dict) -> dict:
         "strike": int(t.get("strike")) if t.get("strike") is not None else None,
         "expiry": t.get("expiry"),
         "commission": _safe_float(t.get("commission", 0)),
+        "underlying_price": _safe_float(t.get("underlying_price")) if t.get("underlying_price") is not None else None,
     }

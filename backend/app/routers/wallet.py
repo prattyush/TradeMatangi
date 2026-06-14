@@ -12,7 +12,7 @@ async def get_wallet(
     user_id: str = Depends(get_request_user_id),
 ):
     balance = wallet_service.get_balance(user_id, date)
-    return WalletResponse(user_id=user_id, date=date, balance=balance)
+    return WalletResponse(user_id=user_id, date=date, current_balance=balance)
 
 
 @router.post("/reset", response_model=WalletResponse)
@@ -22,4 +22,4 @@ async def reset_wallet(
     user_id: str = Depends(get_request_user_id),
 ):
     balance = wallet_service.reset(user_id, date, req.amount)
-    return WalletResponse(user_id=user_id, date=date, balance=balance)
+    return WalletResponse(user_id=user_id, date=date, current_balance=balance)
