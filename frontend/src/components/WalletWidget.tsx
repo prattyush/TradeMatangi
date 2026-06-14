@@ -19,7 +19,7 @@ export default function WalletWidget({ date, refreshKey }: Props) {
     let cancelled = false
     setLoading(true)
     api.getWallet(date)
-      .then(w => { if (!cancelled) setBalance(w.current_balance) })
+      .then(w => { if (!cancelled) setBalance(w.balance) })
       .catch(() => {/* backend may not be running */})
       .finally(() => { if (!cancelled) setLoading(false) })
     return () => { cancelled = true }

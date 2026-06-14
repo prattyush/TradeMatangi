@@ -50,7 +50,7 @@ async def kotak_funds(
     """Return the available funds (Net balance) from Kotak."""
     try:
         balance = get_service().get_funds()
-        return KotakFundsResponse(current_balance=balance)
+        return KotakFundsResponse(balance=balance)
     except Exception as e:
 
         raise HTTPException(status_code=502, detail=str(exc))

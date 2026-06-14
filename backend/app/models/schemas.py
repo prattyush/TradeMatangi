@@ -235,7 +235,7 @@ class ExpiryResponse(BaseModel):
 class WalletResponse(BaseModel):
     user_id: str
     date: str
-    current_balance: float
+    balance: float
 
 
 class WalletResetRequest(BaseModel):
@@ -335,7 +335,7 @@ class KotakStatusResponse(BaseModel):
 
 
 class KotakFundsResponse(BaseModel):
-    current_balance: float
+    balance: float
 
 
 class WhitelistAddRequest(BaseModel):

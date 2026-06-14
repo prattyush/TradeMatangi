@@ -136,7 +136,6 @@ def get_session_summary_with_trades(session_id: str) -> dict | None:
 
 
 def _serialize_trade(t: dict) -> dict:
-    print("***** Serializing trade: \n\n\n " + str(t) + "****** \n\n\n")
     return {
         "trade_id": t.get("trade_id", ""),
         "session_id": t.get("session_id", ""),

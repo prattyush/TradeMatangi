@@ -142,9 +142,9 @@ export interface SimulationStartResponse {
 }
 
 export interface WalletResponse {
-  user_id: str
-  date: str
-  current_balance: number
+  user_id: string
+  date: string
+  balance: number
 }
 
 // Pattern Library types
