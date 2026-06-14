@@ -238,6 +238,7 @@ export interface AnalysisTrade {
   strike: number | null
   expiry: string | null
   commission: number
+  underlying_price?: number
 }
 
 export interface SessionDetail extends SessionSummary {

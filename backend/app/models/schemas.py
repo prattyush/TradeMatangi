@@ -81,6 +81,7 @@ class Trade(BaseModel):
     right: str | None = None
     commission: float = 0.0  # computed at record time: exchange charges + brokerage
     session_type: str = "sim"  # "sim" or "paper" — inherited from parent session
+    underlying_price: float | None = None  # snapshotted underlying price at fill time
 
 
 class Position(BaseModel):
