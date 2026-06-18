@@ -109,7 +109,7 @@ class TestCreateStoplossOrder:
 class TestBulkUpdateStoploss:
     @pytest.mark.asyncio
     async def test_patches_bulk_update_sl_endpoint(self):
-        expected = {"updated": 3}
+        expected = {"updated": 3, "orders": []}
         mock_client = MagicMock()
         mock_client.patch = AsyncMock(return_value=_mock_response(expected))
         with patch.object(backend_client, "get_client", return_value=mock_client):
@@ -123,7 +123,7 @@ class TestBulkUpdateStoploss:
     @pytest.mark.asyncio
     async def test_omits_right_for_equity(self):
         mock_client = MagicMock()
-        mock_client.patch = AsyncMock(return_value=_mock_response({"updated": 1}))
+        mock_client.patch = AsyncMock(return_value=_mock_response({"updated": 1, "orders": []}))
         with patch.object(backend_client, "get_client", return_value=mock_client):
             await backend_client.bulk_update_stoploss("sess-001", None, 97.0)
         body = mock_client.patch.call_args.kwargs["json"]
@@ -132,11 +132,12 @@ class TestBulkUpdateStoploss:
     @pytest.mark.asyncio
     async def test_rounds_trigger_price(self):
         mock_client = MagicMock()
-        mock_client.patch = AsyncMock(return_value=_mock_response({"updated": 1}))
+        mock_client.patch = AsyncMock(return_value=_mock_response({"updated": 1, "orders": []}))
         with patch.object(backend_client, "get_client", return_value=mock_client):
-            await backend_client.bulk_update_stoploss("sess-001", "CE", 97.123456)
+            await backend_client.bulk_update_stoploss("sess-001", "PE", 97.33333333)
         body = mock_client.patch.call_args.kwargs["json"]
-        assert body["trigger_price"] == 97.12
+        assert body["trigger_price"] == 97.33
+
 
 
 class TestUpdateOrCreateStoploss:

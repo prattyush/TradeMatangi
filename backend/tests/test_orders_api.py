@@ -225,3 +225,59 @@ class TestCancelOrderEndpoint:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             resp = await client.delete(f"/api/orders/no-such-id?session_id={SESSION}")
         assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+class TestBulkUpdateSLEndpoint:
+    async def test_bulk_update_sl_updates_multiple_orders(self):
+        session = _make_session()
+        with patch("app.routers.orders.sim_svc.get_session", return_value=session):
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+                # Place two SL orders
+                await client.post("/api/orders", json={
+                    "session_id": SESSION, "side": "SELL", "order_type": "STOPLOSS",
+                    "trigger_price": 95.0, "quantity": 1, "is_stoploss": True,
+                })
+                await client.post("/api/orders", json={
+                    "session_id": SESSION, "side": "SELL", "order_type": "STOPLOSS",
+                    "trigger_price": 96.0, "quantity": 1, "is_stoploss": True,
+                })
+
+                # Bulk update to 97.0
+                resp = await client.patch("/api/orders/bulk-update-sl", json={
+                    "session_id": SESSION, "trigger_price": 97.0,
+                })
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["updated"] == 2
+        assert len(data["orders"]) == 2
+        assert data["orders"][0]["trigger_price"] == 97.0
+        assert data["orders"][1]["trigger_price"] == 97.0
+
+    async def test_bulk_update_sl_filters_by_right(self):
+        session = _make_session()
+        session.instrument_type = "options"
+        with patch("app.routers.orders.sim_svc.get_session", return_value=session):
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+                # Place one CE SL and one PE SL
+                await client.post("/api/orders", json={
+                    "session_id": SESSION, "side": "SELL", "order_type": "STOPLOSS",
+                    "trigger_price": 95.0, "quantity": 1, "is_stoploss": True, "right": "CE",
+                })
+                await client.post("/api/orders", json={
+                    "session_id": SESSION, "side": "SELL", "order_type": "STOPLOSS",
+                    "trigger_price": 96.0, "quantity": 1, "is_stoploss": True, "right": "PE",
+                })
+
+                # Bulk update only CE to 98.0
+                resp = await client.patch("/api/orders/bulk-update-sl", json={
+                    "session_id": SESSION, "trigger_price": 98.0, "right": "CE",
+                })
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["updated"] == 1
+        assert len(data["orders"]) == 1
+        assert data["orders"][0]["right"] == "CE"
+        assert data["orders"][0]["trigger_price"] == 98.0
