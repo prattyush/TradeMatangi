@@ -261,8 +261,39 @@ b) Option in stoploss to increase quantity. Open to discussion.
 | CE/PE marker filter toggle [All/CE/PE] on Underlying chart | fix/underlying-chart-marker-filter | PR #199 merged to dev |
 | Sprint 5 — Recording (screen record sessions as WebM/YouTube-compatible) | feature/phase12-recording | PR #201 merged to dev + main |
 | Recording fix — surface getDisplayMedia errors; guard on isSecureContext | dev (direct commit) | Merged to dev + main |
+| Sprint 6 — Stoploss Bulk Update Fix & Real-time Chart P&L | fix/stoploss-bulk-update-pnl-label | PR #221 merged to dev |
 
 ---
+
+### Sprint 6 — Stoploss Bulk Update Fix & Real-time Chart P&L ✅ COMPLETE
+
+**Problems addressed:**
+1. **Stoploss Sync:** Clicking "Update All" in the stoploss panel failed to update individual order values in the UI, leading to stale data display despite backend changes.
+2. **Real-time Feedback:** Traders had to look at the side panel for position P&L, which is distracting during fast market moves.
+
+**Backend changes (`routers/orders.py`):**
+- Updated `PATCH /api/orders/bulk-update-sl` to return `{"updated": count, "orders": Order[]}`.
+- Included the full list of updated order objects so the frontend can synchronize its local state in a single round-trip.
+
+**Frontend changes:**
+
+*Bulk Update Sync (`useSimulation.ts`, `App.tsx`):*
+- New `bulkUpdateOrders(updatedOrders)` helper in `useSimulation` hook to batch-update the local `openOrders` state.
+- `handleBulkUpdateSL` in `App.tsx` now pipes the backend's returned orders into the local state immediately after a successful update.
+
+*Real-time P&L Chart Label (`Chart.tsx`, `App.tsx`, `useSimulation.ts`):*
+- **Granular P&L:** Refactored `useSimulation` to expose individual leg unrealized P&L (`pnlCE`, `pnlPE`) and total `pnlEquity`.
+- **Floating Label:** New overlay in `Chart.tsx` that displays the P&L value (formatted as % or absolute based on `fundsRatioMode`) directly above the current candle.
+- **Dynamic Positioning:** Label uses `priceToCoordinate` and `timeToCoordinate` to follow the latest bar in real-time.
+- **Pane Filtering:** Logic in `App.tsx` ensures P&L only shows on the relevant chart (e.g. CE P&L on CE chart; Equity P&L only on the first equity pane to minimize clutter).
+
+*Consistency Fixes:*
+- **Tab-Specific Bulk Update:** Refined `OrderPanel.tsx` logic to ensure the "Update All" box only counts and updates orders matching the current active tab (CE/PE/Equity).
+- **Centralized Formatting:** Both the chart label and the side panel now use the same commission-inclusive net P&L calculations.
+
+**Tests:**
+- New `TestBulkUpdateSLEndpoint` in `backend/tests/test_orders_api.py` (2 tests: multi-update verification and CE/PE right filtering).
+- Synchronized `aihelper/tests/test_backend_client_exit.py` mocks with the new API response format.
 
 ### Pattern Library Enhancements — PR #167 (feature/phase12-bugfixes)
 

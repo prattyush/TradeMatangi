@@ -983,9 +983,13 @@ export default function OrderPanel({
             Open Orders ({openOrders.length})
           </div>
 
-          {/* Batch Update SL — shown when 2+ SL orders exist */}
+          {/* Batch Update SL — shown when 2+ SL orders exist for active tab */}
           {(() => {
-            const slOrders = openOrders.filter(o => o.is_stoploss && o.status === 'PENDING')
+            const slOrders = openOrders.filter(o =>
+              o.is_stoploss &&
+              o.status === 'PENDING' &&
+              (o.right ?? null) === (activeRight ?? null)
+            )
             if (slOrders.length < 2 || !onBulkUpdateSL) return null
             const rightLabel = activeRight ? ` ${activeRight}` : ''
             return (

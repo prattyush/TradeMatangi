@@ -372,17 +372,18 @@ async def bulk_update_sl_route(req: BulkUpdateSLRequest):
     sl_orders = [o for o in open_orders if o.is_stoploss and (o.right or None) == right]
 
     if not sl_orders:
-        return {"updated": 0}
+        return {"updated": 0, "orders": []}
 
-    updated = 0
+    updated_orders = []
     for order in sl_orders:
-        order_service.update_order(
+        updated_order = order_service.update_order(
             session_id=req.session_id,
             order_id=order.order_id,
             trading_date=session.date,
             trigger_price=req.trigger_price,
         )
-        updated += 1
+        if updated_order:
+            updated_orders.append(updated_order)
 
         # Forward to Kotak for real sessions
         if session.session_type == "real" and getattr(order, "kotak_order_id", None):
@@ -400,7 +401,7 @@ async def bulk_update_sl_route(req: BulkUpdateSLRequest):
                     order.kotak_order_id, exc,
                 )
 
-    return {"updated": updated}
+    return {"updated": len(updated_orders), "orders": updated_orders}
 
 
 @router.patch("/{order_id}", response_model=Order)
