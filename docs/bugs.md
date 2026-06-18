@@ -27,6 +27,12 @@ Look at each of the bugs, fix them and then mark them resolved as well if approv
 
 ### Stepwise Replayer Bugs
 
+**[RESOLVED]** Stoploss "Update All" failed to sync frontend state (Sprint 6, 2026-06-18).
+- **Symptom**: Clicking "Update All" in the stoploss panel updated the orders on the backend, but individual stoploss values in the UI remained unchanged until a manual refresh or new order fill.
+- **Root cause**: Backend returned only a count of updated orders; frontend had no mechanism to patch multiple orders in local state from the response.
+- **Fix**: Updated backend to return the full list of updated `Order` objects; added `bulkUpdateOrders` helper to `useSimulation` hook; refined `OrderPanel` filtering to match active tab (CE/PE/Equity).
+- **Files**: `backend/app/routers/orders.py`, `frontend/src/hooks/useSimulation.ts`, `frontend/src/App.tsx`, `frontend/src/components/OrderPanel.tsx`.
+
 **[RESOLVED]** Add CE/PE chart of different strike price not working in stepwise options sessions (PR #181, 2026-06-05).
 - **Symptom 1**: During a running stepwise options session, the "Add:" section in the toolbar showed only the equity interval selector and not the CE/PE type dropdown, so there was no way to add a new CE or PE pane with a different strike.
 - **Symptom 2**: Even when the dropdown was visible, newly added CE/PE panes showed an empty chart (no historical candles).

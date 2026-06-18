@@ -468,28 +468,29 @@ export function useSimulation() {
       - estimateExitCommission(exitSide, currentPrice, position.quantity)
   })()
 
-  // P&L for options sessions (CE + PE combined, each net of both commissions)
-  const pnlOptions = (() => {
-    const ce = (() => {
-      const { positionCE, currentPriceCE } = state
-      if (positionCE.side === 'FLAT' || currentPriceCE === 0) return 0
-      const dir = positionCE.side === 'LONG' ? 1 : -1
-      const exitSide = positionCE.side === 'LONG' ? 'SELL' : 'BUY'
-      return dir * positionCE.quantity * (currentPriceCE - positionCE.avg_entry_price)
-        - positionCE.entry_commission
-        - estimateExitCommission(exitSide, currentPriceCE, positionCE.quantity)
-    })()
-    const pe = (() => {
-      const { positionPE, currentPricePE } = state
-      if (positionPE.side === 'FLAT' || currentPricePE === 0) return 0
-      const dir = positionPE.side === 'LONG' ? 1 : -1
-      const exitSide = positionPE.side === 'LONG' ? 'SELL' : 'BUY'
-      return dir * positionPE.quantity * (currentPricePE - positionPE.avg_entry_price)
-        - positionPE.entry_commission
-        - estimateExitCommission(exitSide, currentPricePE, positionPE.quantity)
-    })()
-    return ce + pe
+  // Unrealized P&L for CE leg
+  const pnlCE = (() => {
+    const { positionCE, currentPriceCE } = state
+    if (positionCE.side === 'FLAT' || currentPriceCE === 0) return 0
+    const dir = positionCE.side === 'LONG' ? 1 : -1
+    const exitSide = positionCE.side === 'LONG' ? 'SELL' : 'BUY'
+    return dir * positionCE.quantity * (currentPriceCE - positionCE.avg_entry_price)
+      - positionCE.entry_commission
+      - estimateExitCommission(exitSide, currentPriceCE, positionCE.quantity)
   })()
+
+  // Unrealized P&L for PE leg
+  const pnlPE = (() => {
+    const { positionPE, currentPricePE } = state
+    if (positionPE.side === 'FLAT' || currentPricePE === 0) return 0
+    const dir = positionPE.side === 'LONG' ? 1 : -1
+    const exitSide = positionPE.side === 'LONG' ? 'SELL' : 'BUY'
+    return dir * positionPE.quantity * (currentPricePE - positionPE.avg_entry_price)
+      - positionPE.entry_commission
+      - estimateExitCommission(exitSide, currentPricePE, positionPE.quantity)
+  })()
+
+  const pnlOptions = pnlCE + pnlPE
 
   const pnl = state.sessionInstrumentType === 'options' ? pnlOptions : pnlEquity
 
@@ -588,10 +589,22 @@ export function useSimulation() {
     }))
   }, [state.sessionId])
 
+  const bulkUpdateOrders = useCallback((updatedOrders: Order[]) => {
+    if (updatedOrders.length === 0) return
+    const updatedMap = new Map(updatedOrders.map(o => [o.order_id, o]))
+    setState(s => ({
+      ...s,
+      openOrders: s.openOrders.map(o => updatedMap.get(o.order_id) || o),
+      walletRefreshKey: s.walletRefreshKey + 1,
+    }))
+  }, [])
+
   return {
     ...state,
     pnl,
     pnlEquity,
+    pnlCE,
+    pnlPE,
     pnlOptions,
     dayPnl,
     dayPnlEquity,
@@ -611,6 +624,7 @@ export function useSimulation() {
     handleSessionEnded,
     placeOrder,
     updateOrder,
+    bulkUpdateOrders,
     cancelOrder,
     handleOrderFilled,
     handleOrderCancelled,

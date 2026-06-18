@@ -52,6 +52,7 @@ interface Props {
   position?: Position
   pnlPctMode?: boolean
   sessionCapital?: number
+  pnl?: number
 }
 
 type DrawMode = 'none' | 'hline' | 'trendline' | 'fibretracement' | 'channel'
@@ -125,6 +126,7 @@ export default function Chart({
   position,
   pnlPctMode,
   sessionCapital,
+  pnl = 0,
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<IChartApi | null>(null)
@@ -757,6 +759,45 @@ export default function Chart({
     candleTimesRef.current = []
   }, [])
 
+  const [pnlCoord, setPnlCoord] = useState<{ x: number; y: number } | null>(null)
+
+  const hasPosition = position && position.side !== 'FLAT'
+  const pnlColor = pnl > 0 ? '#26a641' : pnl < 0 ? '#f85149' : '#8b949e'
+  const fmtPnlValue = () => {
+    if (pnlPctMode && sessionCapital && sessionCapital > 0) {
+      const pct = (pnl / sessionCapital) * 100
+      return `${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%`
+    }
+    return `${pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}`
+  }
+
+  const updatePnlCoord = useCallback(() => {
+    const chart = chartRef.current
+    const series = seriesRef.current
+    if (!chart || !series || !hasPosition || !liveWindowRef.current) {
+      setPnlCoord(null)
+      return
+    }
+    const x = chart.timeScale().timeToCoordinate(liveWindowRef.current.start as Time)
+    const y = series.priceToCoordinate(liveWindowRef.current.high)
+    if (x !== null && y !== null) {
+      setPnlCoord({ x, y })
+    } else {
+      setPnlCoord(null)
+    }
+  }, [hasPosition])
+
+  useEffect(() => {
+    updatePnlCoord()
+  }, [pnl, updatePnlCoord])
+
+  useEffect(() => {
+    const chart = chartRef.current
+    if (!chart) return
+    chart.timeScale().subscribeVisibleLogicalRangeChange(updatePnlCoord)
+    return () => chart.timeScale().unsubscribeVisibleLogicalRangeChange(updatePnlCoord)
+  }, [updatePnlCoord])
+
   // ── Bar close countdown ────────────────────────────────────────────────────
   const barCountdown = (() => {
     if (!latestTick) return null
@@ -886,6 +927,27 @@ export default function Chart({
         ref={containerRef}
         style={{ width: '100%', cursor: (drawMode !== 'none' || onPriceSelect) ? 'crosshair' : 'default' }}
       />
+
+      {hasPosition && pnlCoord && (
+        <div style={{
+          position: 'absolute',
+          left: pnlCoord.x,
+          top: pnlCoord.y + (containerRef.current?.offsetTop ?? 0) - 20,
+          transform: 'translateX(-50%)',
+          pointerEvents: 'none',
+          zIndex: 5,
+          fontSize: 10,
+          fontWeight: 700,
+          color: pnlColor,
+          background: 'rgba(13,17,23,0.85)',
+          padding: '1px 4px',
+          borderRadius: 4,
+          whiteSpace: 'nowrap',
+          border: `1px solid ${pnlColor}44`,
+        }}>
+          {fmtPnlValue()}
+        </div>
+      )}
     </div>
   )
 }

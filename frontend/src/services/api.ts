@@ -862,7 +862,7 @@ const api = {
     }
   },
 
-  async bulkUpdateSL(session_id: string, trigger_price: number, right: string | null): Promise<{ updated: number }> {
+  async bulkUpdateSL(session_id: string, trigger_price: number, right: string | null): Promise<{ updated: number; orders: Order[] }> {
     const res = await fetch(`${BACKEND_URL}/api/orders/bulk-update-sl`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json', ..._authHeaders() },

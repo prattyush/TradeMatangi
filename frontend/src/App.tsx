@@ -288,19 +288,11 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
   // TradePanel P&L = active contract only (options) or total (equity)
   const tradePanelPnl = (() => {
     if (instrumentType === 'options') {
-      if (activeRight === 'CE') {
-        const { positionCE: pos, currentPriceCE: price } = sim
-        if (pos.side === 'FLAT' || price === 0) return 0
-        return (pos.side === 'LONG' ? 1 : -1) * pos.quantity * (price - pos.avg_entry_price)
-      }
-      if (activeRight === 'PE') {
-        const { positionPE: pos, currentPricePE: price } = sim
-        if (pos.side === 'FLAT' || price === 0) return 0
-        return (pos.side === 'LONG' ? 1 : -1) * pos.quantity * (price - pos.avg_entry_price)
-      }
-      return sim.pnl  // total when no specific pane active
+      if (activeRight === 'CE') return sim.pnlCE
+      if (activeRight === 'PE') return sim.pnlPE
+      return sim.pnlOptions
     }
-    return sim.pnl
+    return sim.pnlEquity
   })()
 
   // ── Per-pane tick routing ────────────────────────────────────────────────────
@@ -460,9 +452,13 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
   }, [sim.sessionId])
 
   const handleBulkUpdateSL = useCallback(async (triggerPrice: number, right: string | null) => {
-    if (!sim.sessionId) return { updated: 0 }
-    return api.bulkUpdateSL(sim.sessionId, triggerPrice, right)
-  }, [sim.sessionId])
+    if (!sim.sessionId) return { updated: 0, orders: [] }
+    const res = await api.bulkUpdateSL(sim.sessionId, triggerPrice, right)
+    if (res.orders.length > 0) {
+      sim.bulkUpdateOrders(res.orders)
+    }
+    return res
+  }, [sim.sessionId, sim.bulkUpdateOrders])
 
   // Net session P&L = gross dayPnl minus per-trade commissions (computed by backend)
   const netDayPnl = sim.dayPnl - sim.trades.reduce((s, t) => s + (t.commission ?? 0), 0)
@@ -488,6 +484,17 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
     if (pane.right === 'PE') return sim.positionPE
     return sim.position
   }, [sim.position, sim.positionCE, sim.positionPE])
+
+  const getPnlForPane = useCallback((pane: PaneConfig) => {
+    if (pane.type === 'equity') {
+      // Show equity P&L only on the first equity pane
+      const firstEq = panes.find(p => p.type === 'equity')
+      return pane.id === firstEq?.id ? sim.pnlEquity : 0
+    }
+    if (pane.right === 'CE') return sim.pnlCE
+    if (pane.right === 'PE') return sim.pnlPE
+    return 0
+  }, [sim.pnlEquity, sim.pnlCE, sim.pnlPE, panes])
 
   // ── Layout rendering helpers ──────────────────────────────────────────────────
   const rowHeight = Math.max(160, Math.floor((columnHeight - 52) / 2))
@@ -538,6 +545,7 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
           onMaximize={() => setMaximizedPaneId(isMaximized ? null : pane.id)}
           isMaximized={isMaximized}
           position={getPositionForPane(pane)}
+          pnl={getPnlForPane(pane)}
           pnlPctMode={pnlPctMode}
           sessionCapital={sim.sessionCapital}
         />
