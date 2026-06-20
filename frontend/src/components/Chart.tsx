@@ -180,7 +180,7 @@ export default function Chart({
     const chart = createChart(containerRef.current, {
       width: containerRef.current.clientWidth,
       height,
-      layout: { background: { color: '#0d1117' }, textColor: '#e6edf3' },
+      layout: { background: { color: '#0d1117' }, textColor: '#e6edf3', fontSize: 16, fontFamily: 'Arial, sans-serif'},
       grid: { vertLines: { color: '#1e2732' }, horzLines: { color: '#1e2732' } },
       timeScale: { timeVisible: true, secondsVisible: false, borderColor: '#30363d' },
       crosshair: { mode: 0 },
