@@ -38,8 +38,8 @@ else
     echo "Detected public IP: $PUBLIC_IP"
 fi
 
-export VITE_API_BASE_URL="http://$PUBLIC_IP:8700"
-export VITE_AI_HELPER_URL="http://$PUBLIC_IP:8701"
+export VITE_API_BASE_URL="https://tradematangi.co.in"
+export VITE_AI_HELPER_URL="https://tradematangi.co.in"
 echo "Backend URL:   $VITE_API_BASE_URL"
 echo "AI Helper URL: $VITE_AI_HELPER_URL"
 
