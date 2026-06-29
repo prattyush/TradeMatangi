@@ -624,3 +624,52 @@ Files changed: `TradePanel.tsx`, `SettingsModal.tsx`, `App.tsx`. No backend chan
 Applies to both paper and real trading. 24 session resume tests — all passing.
 
 **PR #219 merged to dev.**
+
+---
+
+### ICICI Breeze as First-Class Live Streaming Source — PR #241 (feature/icici-breeze-streaming)
+
+Adds **ICICI Breeze** as a selectable live streaming source for paper and real trading sessions, alongside the existing Kite (Zerodha) and Kotak Neo options.
+
+**Architecture:**
+
+- Admin selects streaming source in Settings → Admin tab: `[Kite] [Kotak Neo] [ICICI Breeze]`
+- Choice stored as `live_stream_source` in DynamoDB `BrokerTokens` table
+- All new paper/real sessions read this value and use the selected broker's WebSocket for Phase 2 live streaming
+- Falls back to Kite if the selected source is unavailable
+
+**Backend changes:**
+
+- **NEW** `backend/app/services/breeze_service.py` — `BreezeStreamManager` extracted from `kite_service.py` into its own module. Per-session WebSocket streaming via ICICI Direct BreezeConnect. Aggregates LTP ticks into 1-second OHLC candles and pushes to `session.paper_tick_queue`.
+- **NEW** `backend/app/routers/breeze.py` — `GET /api/breeze/status` endpoint for credential validation
+- `backend/app/services/kite_service.py` — Removed `BreezeStreamManager` class
+- `backend/app/services/simulation.py`:
+  - Added `breeze_streaming: bool = False` to `SimulationSession`
+  - Added Breeze primary streaming path in `_run_paper_session` Phase 2 and `_run_real_session` Phase 2
+  - Added logging to `_build_breeze_instruments()` showing session fields used for feed subscriptions
+  - Updated `stop_session()` comment for Breeze cleanup
+- `backend/app/routers/admin.py` — Stream source validation accepts `"kite"`, `"kotak"`, `"breeze"`
+- `backend/app/main.py` — Registered `breeze.router`
+
+**Frontend changes:**
+
+- `frontend/src/services/api.ts` — Stream source types updated to `'kite' | 'kotak' | 'breeze'`; added `breezeStatus()` method
+- `frontend/src/components/SettingsModal.tsx` — Added "ICICI Breeze" toggle button, Breeze connection status indicator (validates session token via `/api/breeze/status`), updated info text
+
+**Breeze WebSocket tick handling:**
+
+- Breeze SDK calls `breeze.on_ticks(data)` — expects a single callable, NOT a list. Fixed from `.append()` to `=` assignment.
+- SDK passes data in varied formats: JSON string, single dict, or list. Handler normalizes all formats at input.
+- Breeze tick fields differ from expected names: uses `stock_name` (e.g. "NIFTY 50") not `stock_code`, `last` for LTP. Handler falls back through `stock_name` → `stock_code` → `symbol`.
+- Right mapping: Breeze uses `"call"`/`"put"`, system uses `"CE"`/`"PE"`. Normalized in handler.
+- Expiry date format: upstream uses Kite format (`"2026-06-30T06:00:00.000Z"`), converted to Breeze format (`"30-Jun-2026"`) only at the `subscribe_feeds` call site.
+- Timestamps: `int(time.time()) + 19800` (IST-as-UTC convention) so Lightweight Charts displays 09:15 not 03:45.
+- Zero-price ticks and non-dict items silently skipped.
+
+**Known limitations:**
+
+- Breeze WebSocket maps multiple subscriptions with the same `stock_code` to a single feed. Options subscriptions (CE/PE) return the same underlying equity ticks — Breeze does not deliver per-option tick data through its WebSocket.
+
+**Tests:** 18 new tests in `tests/test_breeze_service.py` covering `_OHLCAccumulator`, `BreezeStreamManager` init/start/stop/`_on_ticks`, format normalization, and edge cases.
+
+**PR #241 merged to main.**
