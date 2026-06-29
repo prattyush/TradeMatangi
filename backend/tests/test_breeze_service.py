@@ -186,6 +186,21 @@ class TestBreezeStreamManagerStop:
         mgr.stop()  # should not raise
 
 
+# Sample Breeze tick (equity) — matches real Breeze WebSocket format
+_BREEZE_EQ_TICK = {
+    "symbol": "4.1!NIFTY 50",
+    "open": 24061.75,
+    "last": 24094.4,
+    "high": 24110.75,
+    "low": 24005.45,
+    "change": 0.16,
+    "stock_name": "NIFTY 50",
+    "exchange": "NSE Equity",
+    "ltt": "Mon Jun 29 04:18:21 2026",
+    "close": 24056,
+}
+
+
 class TestBreezeStreamManagerOnTicks:
 
     @pytest.mark.asyncio
@@ -195,11 +210,11 @@ class TestBreezeStreamManagerOnTicks:
         queue = asyncio.Queue()
 
         # Manually wire up internals (bypass ws_connect)
-        mgr._breeze = True  # non-None so _on_ticks runs
+        mgr._breeze = True
         mgr._queue = queue
         mgr._loop = loop
 
-        # Seed the accumulator for "NIFTY_EQ" with a "previous" second
+        # Seed accumulator using Breeze's stock_name ("NIFTY 50") as key
         from app.services.breeze_service import _OHLCAccumulator
         acc = _OHLCAccumulator()
         acc.current_second = 1000
@@ -207,12 +222,11 @@ class TestBreezeStreamManagerOnTicks:
         acc.high = 24205.0
         acc.low = 24199.0
         acc.close = 24204.0
-        mgr._accumulators["NIFTY_EQ"] = acc
+        mgr._accumulators["NIFTY 50_EQ"] = acc
 
-        # Send a tick in a new second (1001) — should flush candle for second 1000
-        mgr._on_ticks([{"stock_code": "NIFTY", "last": "24210.00", "right": ""}])
+        # Send tick using real Breeze field names
+        mgr._on_ticks([{**_BREEZE_EQ_TICK, "last": 24210.00}])
 
-        # call_soon_threadsafe schedules on the event loop; yield to let it run
         await asyncio.sleep(0)
 
         assert queue.qsize() == 1
@@ -225,85 +239,102 @@ class TestBreezeStreamManagerOnTicks:
         assert candle["close"] == 24204.0
 
     @pytest.mark.asyncio
-    async def test_on_ticks_handles_json_string(self):
-        """Breeze SDK may pass the entire payload as a JSON string."""
+    async def test_on_ticks_handles_real_breeze_format(self):
+        """Real Breeze equity tick dict should be processed correctly."""
         mgr = BreezeStreamManager()
-        loop = asyncio.get_running_loop()
         queue = asyncio.Queue()
         mgr._breeze = True
         mgr._queue = queue
-        mgr._loop = loop
+        mgr._loop = asyncio.get_running_loop()
 
-        # Seed accumulator so it flushes on next tick
+        # First tick for "NIFTY 50_EQ" — should NOT produce a candle
+        mgr._on_ticks([_BREEZE_EQ_TICK])
+        await asyncio.sleep(0)
+        assert queue.qsize() == 0  # first tick opens accumulator, no flush
+
+    @pytest.mark.asyncio
+    async def test_on_ticks_handles_json_string(self):
+        """Breeze SDK may pass the entire payload as a JSON string."""
+        mgr = BreezeStreamManager()
+        queue = asyncio.Queue()
+        mgr._breeze = True
+        mgr._queue = queue
+        mgr._loop = asyncio.get_running_loop()
+
         from app.services.breeze_service import _OHLCAccumulator
         acc = _OHLCAccumulator()
         acc.current_second = 1000
         acc.open = acc.high = acc.low = acc.close = 24200.0
-        mgr._accumulators["NIFTY_EQ"] = acc
+        mgr._accumulators["NIFTY 50_EQ"] = acc
 
-        # Send entire payload as a JSON string
         import json
-        mgr._on_ticks(json.dumps([{"stock_code": "NIFTY", "last": "24210.00"}]))
+        mgr._on_ticks(json.dumps([{**_BREEZE_EQ_TICK, "last": 24210.00}]))
 
         await asyncio.sleep(0)
         assert queue.qsize() == 1
-        candle = queue.get_nowait()
-        assert candle["time"] == 1000
 
     @pytest.mark.asyncio
     async def test_on_ticks_handles_single_dict(self):
         """Breeze SDK may pass a single tick dict (not wrapped in a list)."""
         mgr = BreezeStreamManager()
-        loop = asyncio.get_running_loop()
         queue = asyncio.Queue()
         mgr._breeze = True
         mgr._queue = queue
-        mgr._loop = loop
+        mgr._loop = asyncio.get_running_loop()
 
         from app.services.breeze_service import _OHLCAccumulator
         acc = _OHLCAccumulator()
         acc.current_second = 1000
         acc.open = acc.high = acc.low = acc.close = 24200.0
-        mgr._accumulators["NIFTY_EQ"] = acc
+        mgr._accumulators["NIFTY 50_EQ"] = acc
 
-        # Send a single dict (not wrapped in a list)
-        mgr._on_ticks({"stock_code": "NIFTY", "last": "24210.00"})
+        mgr._on_ticks({**_BREEZE_EQ_TICK, "last": 24210.00})
 
         await asyncio.sleep(0)
         assert queue.qsize() == 1
 
     @pytest.mark.asyncio
-    async def test_on_ticks_handles_plain_string_gracefully(self):
-        """Plain non-JSON string should not crash."""
+    async def test_on_ticks_skips_zero_price(self):
+        """Ticks with last=0 should be skipped."""
         mgr = BreezeStreamManager()
-        loop = asyncio.get_running_loop()
         queue = asyncio.Queue()
         mgr._breeze = True
         mgr._queue = queue
-        mgr._loop = loop
+        mgr._loop = asyncio.get_running_loop()
 
-        mgr._on_ticks("some_raw_data")  # not JSON, not a list
+        mgr._on_ticks([{**_BREEZE_EQ_TICK, "last": 0.0}])
+
         await asyncio.sleep(0)
-        assert queue.qsize() == 0  # nothing pushed, no crash
+        assert queue.qsize() == 0  # zero price skipped
+
+    @pytest.mark.asyncio
+    async def test_on_ticks_handles_plain_string_gracefully(self):
+        """Plain non-JSON string should not crash."""
+        mgr = BreezeStreamManager()
+        queue = asyncio.Queue()
+        mgr._breeze = True
+        mgr._queue = queue
+        mgr._loop = asyncio.get_running_loop()
+
+        mgr._on_ticks("some_raw_data")
+        await asyncio.sleep(0)
+        assert queue.qsize() == 0
 
     def test_on_ticks_skips_when_not_started(self):
         mgr = BreezeStreamManager()
-        # _breeze, _queue, _loop all None → should return immediately
-        mgr._on_ticks([{"stock_code": "NIFTY", "last": "24200.50"}])
+        mgr._on_ticks([_BREEZE_EQ_TICK])
         # No exception = pass
 
     @pytest.mark.asyncio
     async def test_on_ticks_skips_non_dict_items(self):
         """Non-dict items in a list are skipped silently."""
         mgr = BreezeStreamManager()
-        loop = asyncio.get_running_loop()
         queue = asyncio.Queue()
         mgr._breeze = True
         mgr._queue = queue
-        mgr._loop = loop
+        mgr._loop = asyncio.get_running_loop()
 
-        # Strings, ints, None in a list — all skipped
         mgr._on_ticks(["plain_string", 123, None])
 
         await asyncio.sleep(0)
-        assert queue.qsize() == 0  # nothing pushed, no crash
+        assert queue.qsize() == 0

@@ -145,7 +145,6 @@ class BreezeStreamManager:
         if not self._queue or not self._loop:
             return
         # Breeze SDK passes data in varied formats: string, dict, or list
-        print(ticks)
         if isinstance(ticks, str):
             import json as _json
             try:
@@ -162,10 +161,15 @@ class BreezeStreamManager:
                     continue
                 if not isinstance(tick, dict):
                     continue
+                # Breeze tick fields: last, stock_name, symbol, exchange, right
                 price = float(tick.get("last", tick.get("ltp", 0.0)))
+                if price == 0.0:
+                    continue
                 right_raw = tick.get("right", "")
                 right = right_raw.upper() if right_raw and right_raw.upper() in ("CE", "PE") else None
-                key = f"{tick.get('stock_code', '')}_{right or 'EQ'}"
+                # Use stock_name from tick (e.g. "NIFTY 50") as the key base
+                name = tick.get("stock_name", tick.get("stock_code", tick.get("symbol", "")))
+                key = f"{name}_{right or 'EQ'}"
                 ts_second = int(_time.time())
 
                 candle = self._accumulators[key].update(price, ts_second)
