@@ -110,17 +110,28 @@ class BreezeStreamManager:
 
         logger.info("BreezeStreamManager subscribing to %d instruments:", len(instruments))
         for inst in instruments:
+            # Convert expiry from Kite format ("2026-06-30T06:00:00.000Z") to
+            # Breeze format ("30-Jun-2026") at the API call only.
+            expiry_raw = inst.get("expiry_date", "")
+            if expiry_raw:
+                from datetime import datetime as _dt
+                try:
+                    expiry_raw = _dt.strptime(
+                        expiry_raw.split("T")[0], "%Y-%m-%d"
+                    ).strftime("%d-%b-%Y")
+                except ValueError:
+                    pass
             logger.info(
                 "  Breeze feed: exchange=%s stock=%s product=%s expiry=%s strike=%s right=%s",
                 inst.get("exchange_code"), inst.get("stock_code"),
-                inst.get("product_type", "cash"), inst.get("expiry_date", ""),
+                inst.get("product_type", "cash"), expiry_raw,
                 inst.get("strike_price", ""), inst.get("right", ""),
             )
             breeze.subscribe_feeds(
                 exchange_code=inst["exchange_code"],
                 stock_code=inst["stock_code"],
                 product_type=inst.get("product_type", "cash"),
-                expiry_date=inst.get("expiry_date", ""),
+                expiry_date=expiry_raw,
                 strike_price=inst.get("strike_price", ""),
                 right=inst.get("right", ""),
                 get_exchange_quotes=True,
