@@ -190,7 +190,7 @@ class BreezeStreamManager:
                 # Use stock_name from tick (e.g. "NIFTY 50") as the key base
                 name = tick.get("stock_name", tick.get("stock_code", tick.get("symbol", "")))
                 key = f"{name}_{right or 'EQ'}"
-                ts_second = int(_time.time())
+                ts_second = int(_time.time()) + 19800  # +5:30 IST-as-UTC
 
                 candle = self._accumulators[key].update(price, ts_second)
                 if candle is None:
