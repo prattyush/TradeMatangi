@@ -980,7 +980,7 @@ const api = {
 
   // ── Live streaming source (admin) ──────────────────────────────────────────
 
-  async getStreamSource(): Promise<{ source: 'kite' | 'kotak' }> {
+  async getStreamSource(): Promise<{ source: 'kite' | 'kotak' | 'breeze' }> {
     const res = await fetch(`${BACKEND_URL}/api/admin/stream-source`, {
       headers: _authHeaders(),
     })
@@ -988,7 +988,7 @@ const api = {
     return res.json()
   },
 
-  async setStreamSource(source: 'kite' | 'kotak'): Promise<{ source: string }> {
+  async setStreamSource(source: 'kite' | 'kotak' | 'breeze'): Promise<{ source: string }> {
     const res = await fetch(`${BACKEND_URL}/api/admin/stream-source`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json', ..._authHeaders() },
@@ -998,6 +998,16 @@ const api = {
       const data = await res.json().catch(() => ({}))
       throw new Error(data.detail || `Set stream source failed: ${res.status}`)
     }
+    return res.json()
+  },
+
+  // ── Breeze (ICICI Direct) ─────────────────────────────────────────────────
+
+  async breezeStatus(): Promise<{ authenticated: boolean; broker: string }> {
+    const res = await fetch(`${BACKEND_URL}/api/breeze/status`, {
+      headers: _authHeaders(),
+    })
+    if (!res.ok) return { authenticated: false, broker: 'ICICIDirect' }
     return res.json()
   },
 

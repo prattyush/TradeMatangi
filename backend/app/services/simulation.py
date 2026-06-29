@@ -61,6 +61,9 @@ class SimulationSession:
     # True when KotakBroadcaster is the active streaming source for this session.
     # Used by stop_session() to call the correct unregister() method.
     kotak_streaming: bool = False
+    # True when BreezeStreamManager is the active streaming source for this session.
+    # Used for clarity in cleanup; stream_manager.stop() handles actual teardown.
+    breeze_streaming: bool = False
     # AI Helper (Phase XI)
     ai_commands_active: bool = False
     # Per-right bar state for AI bar-close hook: {right → {slot, open, high, low, close, history}}
@@ -658,8 +661,15 @@ async def _run_session(session: SimulationSession) -> None:
 
 def _build_breeze_instruments(session: SimulationSession) -> list[dict]:
     """Build a list of Breeze feed subscription dicts for a paper session."""
+    import logging
+    _log = logging.getLogger(__name__)
     from app.config import SUPPORTED_SYMBOLS
     sym_info = SUPPORTED_SYMBOLS.get(session.symbol, {})
+    _log.info(
+        "build_breeze_instruments: symbol=%s instrument_type=%s strike=%s strike_ce=%s strike_pe=%s expiry=%s right=%s",
+        session.symbol, session.instrument_type, session.strike,
+        session.strike_ce, session.strike_pe, session.expiry, session.right,
+    )
     instruments = [{
         "exchange_code": sym_info.get("exchange_code", "NSE"),
         "stock_code": sym_info.get("breeze_stock_code", session.symbol),
@@ -1053,6 +1063,37 @@ async def _run_paper_session(session: SimulationSession) -> None:
             session.session_id, stream_source,
         )
 
+        # ── Breeze streaming path ──────────────────────────────────────────────
+        if stream_source == "breeze":
+            logger.info(
+                "Paper session %s: attempting ICICI Breeze live streaming …",
+                session.session_id,
+            )
+            try:
+                from app.services.breeze_service import BreezeStreamManager
+                instruments = _build_breeze_instruments(session)
+                manager = BreezeStreamManager()
+                manager.start(session.paper_tick_queue, loop, instruments)
+                session.stream_manager = manager
+                session.breeze_streaming = True
+                logger.info(
+                    "Paper session %s: Breeze live streaming active",
+                    session.session_id,
+                )
+            except Exception as breeze_exc:
+                warn_msg = (
+                    f"ICICI Breeze streaming failed ({breeze_exc}). "
+                    f"Falling back to Kite for live data."
+                )
+                logger.warning("Paper session %s: %s", session.session_id, warn_msg)
+                try:
+                    session.queue.put_nowait(json.dumps({
+                        "type": "broker_error", "message": warn_msg,
+                    }))
+                except asyncio.QueueFull:
+                    pass
+                stream_source = "kite"  # fall through to Kite
+
         # ── Kotak streaming path ──────────────────────────────────────────────
         if stream_source == "kotak":
             logger.info(
@@ -1143,7 +1184,7 @@ async def _run_paper_session(session: SimulationSession) -> None:
                     pass
 
                 try:
-                    from app.services.kite_service import BreezeStreamManager
+                    from app.services.breeze_service import BreezeStreamManager
                     instruments = _build_breeze_instruments(session)
                     manager = BreezeStreamManager()
                     manager.start(session.paper_tick_queue, loop, instruments)
@@ -1306,6 +1347,37 @@ async def _run_real_session(session: SimulationSession) -> None:
             "Real session %s: Phase 2 — live streaming source=%s",
             session.session_id, real_stream_source,
         )
+
+        # Breeze streaming path for real sessions
+        if real_stream_source == "breeze":
+            logger.info(
+                "Real session %s: attempting ICICI Breeze live streaming …",
+                session.session_id,
+            )
+            try:
+                from app.services.breeze_service import BreezeStreamManager
+                instruments = _build_breeze_instruments(session)
+                manager = BreezeStreamManager()
+                manager.start(session.paper_tick_queue, loop, instruments)
+                session.stream_manager = manager
+                session.breeze_streaming = True
+                logger.info(
+                    "Real session %s: Breeze live streaming active",
+                    session.session_id,
+                )
+            except Exception as breeze_exc:
+                warn_msg = (
+                    f"ICICI Breeze streaming failed ({breeze_exc}). "
+                    f"Falling back to Kite for live data."
+                )
+                logger.warning("Real session %s: %s", session.session_id, warn_msg)
+                try:
+                    session.queue.put_nowait(json.dumps({
+                        "type": "broker_error", "message": warn_msg,
+                    }))
+                except asyncio.QueueFull:
+                    pass
+                real_stream_source = "kite"  # fall through to Kite
 
         # Kotak streaming path for real sessions
         if real_stream_source == "kotak":
@@ -1995,7 +2067,7 @@ def stop_session(session: SimulationSession) -> None:
     # Stop live streaming for paper and real sessions
     if session.session_type in ("paper", "real"):
         if session.stream_manager is not None:
-            # BreezeStreamManager fallback
+            # BreezeStreamManager (primary or fallback)
             logger.info(
                 "stop_session %s: stopping BreezeStreamManager", session.session_id,
             )

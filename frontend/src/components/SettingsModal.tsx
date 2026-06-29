@@ -226,7 +226,7 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
   const adminLoadedRef = useRef(false)
 
   // Admin section — live streaming source
-  const [streamSource, setStreamSource] = useState<'kite' | 'kotak'>('kite')
+  const [streamSource, setStreamSource] = useState<'kite' | 'kotak' | 'breeze'>('kite')
 
   // Real trading whitelist (admin)
   const [whitelistOpen, setWhitelistOpen] = useState(false)
@@ -236,6 +236,7 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
 
   // Broker connection (real trading users)
   const [kotakAuthenticated, setKotakAuthenticated] = useState<boolean | null>(null)
+  const [breezeAuthenticated, setBreezeAuthenticated] = useState<boolean | null>(null)
   const [showKotakTOTP, setShowKotakTOTP] = useState(false)
 
   // Change password
@@ -310,6 +311,7 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
       // Load Kotak status for real trading users
       if (isRealTradingUser || isAdmin) {
         api.kotakStatus().then(s => setKotakAuthenticated(s.authenticated)).catch(() => setKotakAuthenticated(false))
+        api.breezeStatus().then(s => setBreezeAuthenticated(s.authenticated)).catch(() => setBreezeAuthenticated(false))
       }
     }
   }, [open])
@@ -473,11 +475,12 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
     }
   }
 
-  const saveStreamSource = async (src: 'kite' | 'kotak') => {
+  const saveStreamSource = async (src: 'kite' | 'kotak' | 'breeze') => {
     try {
       await api.setStreamSource(src)
       setStreamSource(src)
-      setStatus(`Streaming source set to: ${src === 'kite' ? 'Kite' : 'Kotak Neo'}`)
+      const label = src === 'kite' ? 'Kite' : src === 'kotak' ? 'Kotak Neo' : 'ICICI Breeze'
+      setStatus(`Streaming source set to: ${label}`)
       setTimeout(() => setStatus(null), 2500)
     } catch {
       setStatus('Failed to save streaming source')
@@ -1376,6 +1379,7 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
                     {([
                       { key: 'kite' as const, label: 'Kite' },
                       { key: 'kotak' as const, label: 'Kotak Neo' },
+                      { key: 'breeze' as const, label: 'ICICI Breeze' },
                     ]).map(({ key, label }) => (
                       <button
                         key={key}
@@ -1397,7 +1401,8 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
                   </div>
                   <div style={{ fontSize: 11, color: '#484f58', marginTop: 6 }}>
                     Applies to all new paper and real sessions.
-                    Kotak Neo requires TOTP login; falls back to Kite if not authenticated.
+                    Kotak Neo requires TOTP login. Breeze requires a valid ICICI Direct session token.
+                    Falls back to Kite if selected source is unavailable.
                   </div>
 
                   {/* Show Kotak connection status inline when Kotak is selected */}
@@ -1428,6 +1433,28 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
                             }}
                           >Connect</button>
                         </>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Show Breeze connection status inline when Breeze is selected */}
+                  {streamSource === 'breeze' && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 10 }}>
+                      <span style={{ fontSize: 12, color: '#8b949e' }}>Breeze status:</span>
+                      {breezeAuthenticated === null ? (
+                        <span style={{ fontSize: 12, color: '#484f58' }}>checking…</span>
+                      ) : breezeAuthenticated ? (
+                        <span style={{
+                          fontSize: 12, color: '#3fb950',
+                          background: 'rgba(63,185,80,0.1)', border: '1px solid rgba(63,185,80,0.3)',
+                          borderRadius: 4, padding: '2px 8px',
+                        }}>Connected</span>
+                      ) : (
+                        <span style={{
+                          fontSize: 12, color: '#f85149',
+                          background: 'rgba(248,81,73,0.1)', border: '1px solid rgba(248,81,73,0.3)',
+                          borderRadius: 4, padding: '2px 8px',
+                        }}>Not connected (check session token)</span>
                       )}
                     </div>
                   )}
