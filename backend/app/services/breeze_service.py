@@ -107,9 +107,15 @@ class BreezeStreamManager:
         breeze = _get_breeze()
         breeze.on_ticks = self._on_ticks
         breeze.ws_connect()
-        print(instruments);
 
+        logger.info("BreezeStreamManager subscribing to %d instruments:", len(instruments))
         for inst in instruments:
+            logger.info(
+                "  Breeze feed: exchange=%s stock=%s product=%s expiry=%s strike=%s right=%s",
+                inst.get("exchange_code"), inst.get("stock_code"),
+                inst.get("product_type", "cash"), inst.get("expiry_date", ""),
+                inst.get("strike_price", ""), inst.get("right", ""),
+            )
             breeze.subscribe_feeds(
                 exchange_code=inst["exchange_code"],
                 stock_code=inst["stock_code"],

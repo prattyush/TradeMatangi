@@ -661,8 +661,15 @@ async def _run_session(session: SimulationSession) -> None:
 
 def _build_breeze_instruments(session: SimulationSession) -> list[dict]:
     """Build a list of Breeze feed subscription dicts for a paper session."""
+    import logging
+    _log = logging.getLogger(__name__)
     from app.config import SUPPORTED_SYMBOLS
     sym_info = SUPPORTED_SYMBOLS.get(session.symbol, {})
+    _log.info(
+        "build_breeze_instruments: symbol=%s instrument_type=%s strike=%s strike_ce=%s strike_pe=%s expiry=%s right=%s",
+        session.symbol, session.instrument_type, session.strike,
+        session.strike_ce, session.strike_pe, session.expiry, session.right,
+    )
     instruments = [{
         "exchange_code": sym_info.get("exchange_code", "NSE"),
         "stock_code": sym_info.get("breeze_stock_code", session.symbol),
