@@ -97,7 +97,7 @@ async def remove_real_trading_whitelist(
 # ── Live streaming source ──────────────────────────────────────────────────────
 
 class StreamSourceRequest(BaseModel):
-    source: str  # "kite" | "kotak"
+    source: str  # "kite" | "kotak" | "breeze"
 
 
 class StreamSourceResponse(BaseModel):
@@ -117,12 +117,12 @@ async def get_stream_source(user_id: str = Depends(_require_admin)):
 async def set_stream_source(req: StreamSourceRequest, user_id: str = Depends(_require_admin)):
     """
     Set the live streaming source for all future paper/real sessions.
-    Allowed values: "kite", "kotak".
+    Allowed values: "kite", "kotak", "breeze".
     The new value takes effect immediately for newly started sessions;
     active sessions are unaffected.
     """
-    if req.source not in ("kite", "kotak"):
-        raise HTTPException(status_code=400, detail="source must be 'kite' or 'kotak'")
+    if req.source not in ("kite", "kotak", "breeze"):
+        raise HTTPException(status_code=400, detail="source must be 'kite', 'kotak', or 'breeze'")
     from app.services import token_service
     token_service.set_token("live_stream_source", req.source)
     logger.info("Admin %s: SET stream-source → %s", user_id, req.source)
