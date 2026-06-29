@@ -146,6 +146,12 @@ class BreezeStreamManager:
             return
         for tick in ticks:
             try:
+                # Breeze SDK may pass ticks as JSON strings or pre-parsed dicts
+                if isinstance(tick, str):
+                    import json as _json
+                    tick = _json.loads(tick)
+                if not isinstance(tick, dict):
+                    continue
                 price = float(tick.get("last", tick.get("ltp", 0.0)))
                 right_raw = tick.get("right", "")
                 right = right_raw.upper() if right_raw and right_raw.upper() in ("CE", "PE") else None
