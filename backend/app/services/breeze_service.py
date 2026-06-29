@@ -183,8 +183,10 @@ class BreezeStreamManager:
                 price = float(tick.get("last", tick.get("ltp", 0.0)))
                 if price == 0.0:
                     continue
-                right_raw = tick.get("right", "")
-                right = right_raw.upper() if right_raw and right_raw.upper() in ("CE", "PE") else None
+                right_raw = tick.get("right", "").upper()
+                # Breeze uses "call"/"put", system uses "CE"/"PE" — normalize
+                _right_map = {"CALL": "CE", "PUT": "PE", "CE": "CE", "PE": "PE"}
+                right = _right_map.get(right_raw) if right_raw else None
                 # Use stock_name from tick (e.g. "NIFTY 50") as the key base
                 name = tick.get("stock_name", tick.get("stock_code", tick.get("symbol", "")))
                 key = f"{name}_{right or 'EQ'}"
