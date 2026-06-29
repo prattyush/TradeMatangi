@@ -105,6 +105,8 @@ class BreezeStreamManager:
         self._instruments = instruments
 
         breeze = _get_breeze()
+        if breeze.on_ticks is None:
+            breeze.on_ticks = []
         breeze.on_ticks.append(self._on_ticks)
         breeze.ws_connect()
 
