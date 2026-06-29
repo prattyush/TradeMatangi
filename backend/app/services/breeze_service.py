@@ -107,6 +107,7 @@ class BreezeStreamManager:
         breeze = _get_breeze()
         breeze.on_ticks = self._on_ticks
         breeze.ws_connect()
+        print(instruments);
 
         for inst in instruments:
             breeze.subscribe_feeds(
