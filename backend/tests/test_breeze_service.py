@@ -225,8 +225,8 @@ class TestBreezeStreamManagerOnTicks:
         assert candle["close"] == 24204.0
 
     @pytest.mark.asyncio
-    async def test_on_ticks_handles_json_strings(self):
-        """Breeze SDK may pass ticks as JSON strings instead of dicts."""
+    async def test_on_ticks_handles_json_string(self):
+        """Breeze SDK may pass the entire payload as a JSON string."""
         mgr = BreezeStreamManager()
         loop = asyncio.get_running_loop()
         queue = asyncio.Queue()
@@ -241,14 +241,50 @@ class TestBreezeStreamManagerOnTicks:
         acc.open = acc.high = acc.low = acc.close = 24200.0
         mgr._accumulators["NIFTY_EQ"] = acc
 
-        # Send tick as JSON string
+        # Send entire payload as a JSON string
         import json
-        mgr._on_ticks([json.dumps({"stock_code": "NIFTY", "last": "24210.00"})])
+        mgr._on_ticks(json.dumps([{"stock_code": "NIFTY", "last": "24210.00"}]))
 
         await asyncio.sleep(0)
         assert queue.qsize() == 1
         candle = queue.get_nowait()
         assert candle["time"] == 1000
+
+    @pytest.mark.asyncio
+    async def test_on_ticks_handles_single_dict(self):
+        """Breeze SDK may pass a single tick dict (not wrapped in a list)."""
+        mgr = BreezeStreamManager()
+        loop = asyncio.get_running_loop()
+        queue = asyncio.Queue()
+        mgr._breeze = True
+        mgr._queue = queue
+        mgr._loop = loop
+
+        from app.services.breeze_service import _OHLCAccumulator
+        acc = _OHLCAccumulator()
+        acc.current_second = 1000
+        acc.open = acc.high = acc.low = acc.close = 24200.0
+        mgr._accumulators["NIFTY_EQ"] = acc
+
+        # Send a single dict (not wrapped in a list)
+        mgr._on_ticks({"stock_code": "NIFTY", "last": "24210.00"})
+
+        await asyncio.sleep(0)
+        assert queue.qsize() == 1
+
+    @pytest.mark.asyncio
+    async def test_on_ticks_handles_plain_string_gracefully(self):
+        """Plain non-JSON string should not crash."""
+        mgr = BreezeStreamManager()
+        loop = asyncio.get_running_loop()
+        queue = asyncio.Queue()
+        mgr._breeze = True
+        mgr._queue = queue
+        mgr._loop = loop
+
+        mgr._on_ticks("some_raw_data")  # not JSON, not a list
+        await asyncio.sleep(0)
+        assert queue.qsize() == 0  # nothing pushed, no crash
 
     def test_on_ticks_skips_when_not_started(self):
         mgr = BreezeStreamManager()
@@ -258,7 +294,7 @@ class TestBreezeStreamManagerOnTicks:
 
     @pytest.mark.asyncio
     async def test_on_ticks_skips_non_dict_items(self):
-        """Non-dict items (e.g. malformed strings) are skipped silently."""
+        """Non-dict items in a list are skipped silently."""
         mgr = BreezeStreamManager()
         loop = asyncio.get_running_loop()
         queue = asyncio.Queue()
@@ -266,9 +302,8 @@ class TestBreezeStreamManagerOnTicks:
         mgr._queue = queue
         mgr._loop = loop
 
-        # Non-JSON string and int — should not crash
-        mgr._on_ticks(["not_json", 123, None])
+        # Strings, ints, None in a list — all skipped
+        mgr._on_ticks(["plain_string", 123, None])
 
         await asyncio.sleep(0)
-        # Nothing pushed — all non-dict items skipped
-        assert queue.qsize() == 0
+        assert queue.qsize() == 0  # nothing pushed, no crash

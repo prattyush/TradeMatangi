@@ -144,12 +144,22 @@ class BreezeStreamManager:
     def _on_ticks(self, ticks) -> None:
         if not self._queue or not self._loop:
             return
+        # Breeze SDK passes data in varied formats: string, dict, or list
+        print(ticks)
+        if isinstance(ticks, str):
+            import json as _json
+            try:
+                ticks = _json.loads(ticks)
+            except Exception:
+                return
+        if isinstance(ticks, dict):
+            ticks = [ticks]
+        if not isinstance(ticks, list):
+            return
         for tick in ticks:
             try:
-                # Breeze SDK may pass ticks as JSON strings or pre-parsed dicts
                 if isinstance(tick, str):
-                    import json as _json
-                    tick = _json.loads(tick)
+                    continue
                 if not isinstance(tick, dict):
                     continue
                 price = float(tick.get("last", tick.get("ltp", 0.0)))
