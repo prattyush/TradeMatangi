@@ -87,6 +87,10 @@ class BreezeStreamManager:
         self._queue: asyncio.Queue | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
         self._instruments: list[dict] = []
+        self._tick_count: int = 0
+        self._key_tick_counts: dict[str, int] = defaultdict(int)
+        self._logged_raw_ticks: int = 0
+        self._logged_candles: int = 0
 
     def start(
         self,
@@ -179,6 +183,7 @@ class BreezeStreamManager:
                     continue
                 if not isinstance(tick, dict):
                     continue
+                self._tick_count += 1
                 # Breeze tick fields: last, stock_name, symbol, exchange, right
                 price = float(tick.get("last", tick.get("ltp", 0.0)))
                 if price == 0.0:
@@ -189,12 +194,47 @@ class BreezeStreamManager:
                 right = _right_map.get(right_raw) if right_raw else None
                 # Use stock_name from tick (e.g. "NIFTY 50") as the key base
                 name = tick.get("stock_name", tick.get("stock_code", tick.get("symbol", "")))
+                exchange = tick.get("exchange", "")
                 key = f"{name}_{right or 'EQ'}"
+
+                # ── Diagnostic logging: raw tick fields (first 15 ticks, then summary every 60) ──
+                if self._logged_raw_ticks < 15:
+                    self._logged_raw_ticks += 1
+                    logger.info(
+                        "BREEZE-DIAG raw_tick #%d: stock_name=%r exchange=%r right_raw=%r "
+                        "right_mapped=%r price=%.2f → key=%r",
+                        self._tick_count, name, exchange, right_raw, right, price, key,
+                    )
+                elif self._tick_count % 60 == 0:
+                    logger.info(
+                        "BREEZE-DIAG summary: %d ticks, keys=%s",
+                        self._tick_count,
+                        sorted(self._key_tick_counts.keys()),
+                    )
+
+                # Per-key tick count — log first 3 ticks for each new key
+                self._key_tick_counts[key] += 1
+                if self._key_tick_counts[key] <= 3:
+                    logger.info(
+                        "BREEZE-DIAG key_tick key=%r tick#=%d price=%.2f right_raw=%r exchange=%r",
+                        key, self._key_tick_counts[key], price, right_raw, exchange,
+                    )
+
                 ts_second = int(_time.time()) + 19800  # +5:30 IST-as-UTC
 
                 candle = self._accumulators[key].update(price, ts_second)
                 if candle is None:
                     continue
+
+                # ── Diagnostic logging: completed candles (first 10 candles) ──
+                if self._logged_candles < 10:
+                    self._logged_candles += 1
+                    logger.info(
+                        "BREEZE-DIAG candle key=%r O=%.2f H=%.2f L=%.2f C=%.2f "
+                        "time=%d right=%r",
+                        key, candle["open"], candle["high"], candle["low"],
+                        candle["close"], candle["time"], right,
+                    )
 
                 payload = {**candle}
                 if right:

@@ -497,7 +497,7 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
   }, [sim.pnlEquity, sim.pnlCE, sim.pnlPE, panes])
 
   // ── Layout rendering helpers ──────────────────────────────────────────────────
-  const rowHeight = Math.max(160, Math.floor((columnHeight - 52) / 2))
+  const rowHeight = Math.max(160, Math.floor((columnHeight - 44) / 2))
 
   const renderPane = (pane: PaneConfig, height: number, style?: React.CSSProperties) => {
     const isMaximized = maximizedPaneId === pane.id
@@ -554,8 +554,8 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
   }
 
   const renderLayout = () => {
-    const gap = 12
-    const maxH = Math.max(160, columnHeight - 52)
+    const gap = 8
+    const maxH = Math.max(160, columnHeight - 44)
 
     // Maximize is handled inline per-layout rather than with a separate top-level
     // branch. Keeping the same flex container structure means the pane wrapper div's
@@ -563,12 +563,12 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
     // Non-maximized panes get display:none — still mounted, liveWindowRef preserved.
 
     if (layoutPreset === 1) {
-      const h = columnHeight - 52
+      const h = columnHeight - 44
       return panes[0] ? renderPane(panes[0], Math.max(160, h)) : null
     }
 
     if (layoutPreset === 2) {
-      const h = Math.max(160, Math.floor((columnHeight - 52 - gap) / 2))
+      const h = Math.max(160, Math.floor((columnHeight - 44 - gap) / 2))
       return (
         <div style={{ display: 'flex', flexDirection: 'column', gap }}>
           {panes.slice(0, 2).map(p => {
@@ -1002,7 +1002,7 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
         {/* Chart column */}
         <div
           ref={chartColumnRef}
-          style={{ flex: 1, overflow: 'auto', padding: 12 }}
+          style={{ flex: 1, overflow: 'auto', padding: '8px 12px' }}
         >
           {renderLayout()}
         </div>
