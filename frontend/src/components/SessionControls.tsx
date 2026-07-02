@@ -365,7 +365,7 @@ export default function SessionControls({
               <label style={label}>
                 Speed&nbsp;
                 <input
-                  type="number" min={0.05} max={100} step={0.5} value={speed}
+                  type="number" min={0.05} max={100} step={0.05} value={speed}
                   onChange={e => setSpeed(parseFloat(e.target.value) || 1)}
                   style={{ ...inputStyle, width: 70 }} disabled={!idle}
                 />
