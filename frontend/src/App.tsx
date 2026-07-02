@@ -554,7 +554,7 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
   }
 
   const renderLayout = () => {
-    const gap = 8
+    const gap = 4
     const maxH = Math.max(160, columnHeight - 44)
 
     // Maximize is handled inline per-layout rather than with a separate top-level
