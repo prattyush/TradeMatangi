@@ -251,6 +251,16 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
     setMaximizedPaneId(m => m === id ? null : m)
   }, [])
 
+  const swapPanes = useCallback((indexA: number, indexB: number) => {
+    setPanes(p => {
+      if (indexA < 0 || indexA >= p.length || indexB < 0 || indexB >= p.length) return p
+      if (indexA === indexB) return p
+      const next = [...p]
+      ;[next[indexA], next[indexB]] = [next[indexB], next[indexA]]
+      return next
+    })
+  }, [])
+
   // ── Active pane derivations ─────────────────────────────────────────────────
   const activePane = panes.find(p => p.id === activePaneId) ?? null
   const activeRight: 'CE' | 'PE' | null = activePane?.type === 'options' ? (activePane.right ?? null) : null
@@ -497,23 +507,59 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
   }, [sim.pnlEquity, sim.pnlCE, sim.pnlPE, panes])
 
   // ── Layout rendering helpers ──────────────────────────────────────────────────
-  const rowHeight = Math.max(160, Math.floor((columnHeight - 44) / 2))
+  const rowHeight = Math.max(160, Math.floor((columnHeight - 36) / 2))
 
   const renderPane = (pane: PaneConfig, height: number, style?: React.CSSProperties) => {
     const isMaximized = maximizedPaneId === pane.id
+    const paneIndex = panes.findIndex(p => p.id === pane.id)
+
+    // Compute valid swap targets based on layout and position
+    const swapTargets: { dir: string; target: number }[] = []
+    if (panes.length > 1 && paneIndex >= 0) {
+      if (layoutPreset === 4) {
+        // 2×2: panes[0]=TL, panes[1]=TR, panes[2]=BL, panes[3]=BR
+        if (paneIndex === 0) { swapTargets.push({ dir: '→', target: 1 }, { dir: '↓', target: 2 }) }
+        else if (paneIndex === 1) { swapTargets.push({ dir: '←', target: 0 }, { dir: '↓', target: 3 }) }
+        else if (paneIndex === 2) { swapTargets.push({ dir: '→', target: 3 }, { dir: '↑', target: 0 }) }
+        else if (paneIndex === 3) { swapTargets.push({ dir: '←', target: 2 }, { dir: '↑', target: 1 }) }
+      } else if (layoutPreset === 3) {
+        // Top full-width + 2 bottom: panes[0]=Top, panes[1]=BL, panes[2]=BR
+        if (paneIndex === 0) { swapTargets.push({ dir: '↓', target: 1 }) }
+        else if (paneIndex === 1) { swapTargets.push({ dir: '→', target: 2 }, { dir: '↑', target: 0 }) }
+        else if (paneIndex === 2) { swapTargets.push({ dir: '←', target: 1 }, { dir: '↑', target: 0 }) }
+      } else if (layoutPreset === 2) {
+        // Vertical stack: panes[0]=Top, panes[1]=Bottom
+        if (paneIndex === 0) { swapTargets.push({ dir: '↓', target: 1 }) }
+        else if (paneIndex === 1) { swapTargets.push({ dir: '↑', target: 0 }) }
+      }
+    }
+
     return (
       <div key={pane.id} style={{ position: 'relative', minHeight: height, minWidth: 0, ...style }}>
         {panes.length > 1 && !isMaximized && (
-          <button
-            onClick={e => { e.stopPropagation(); removePane(pane.id) }}
-            title="Remove pane"
-            style={{
-              position: 'absolute', top: 8, right: 8, zIndex: 10,
-              background: 'rgba(13,17,23,0.8)', border: 'none',
-              color: '#484f58', cursor: 'pointer', fontSize: 13, lineHeight: 1, borderRadius: 4,
-              padding: '1px 5px',
-            }}
-          >✕</button>
+          <div style={{ position: 'absolute', top: 8, right: 8, zIndex: 10, display: 'flex', gap: 3 }}>
+            {swapTargets.map(({ dir, target }) => (
+              <button
+                key={dir}
+                onClick={e => { e.stopPropagation(); swapPanes(paneIndex, target) }}
+                title={`Swap ${dir}`}
+                style={{
+                  background: 'rgba(13,17,23,0.8)', border: 'none',
+                  color: '#484f58', cursor: 'pointer', fontSize: 10, lineHeight: 1,
+                  borderRadius: 4, padding: '1px 3px',
+                }}
+              >{dir}</button>
+            ))}
+            <button
+              onClick={e => { e.stopPropagation(); removePane(pane.id) }}
+              title="Remove pane"
+              style={{
+                background: 'rgba(13,17,23,0.8)', border: 'none',
+                color: '#484f58', cursor: 'pointer', fontSize: 13, lineHeight: 1, borderRadius: 4,
+                padding: '1px 5px',
+              }}
+            >✕</button>
+          </div>
         )}
         <Chart
           symbol={sim.symbol}
@@ -555,7 +601,7 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
 
   const renderLayout = () => {
     const gap = 4
-    const maxH = Math.max(160, columnHeight - 44)
+    const maxH = Math.max(160, columnHeight - 36)
 
     // Maximize is handled inline per-layout rather than with a separate top-level
     // branch. Keeping the same flex container structure means the pane wrapper div's
@@ -563,12 +609,12 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
     // Non-maximized panes get display:none — still mounted, liveWindowRef preserved.
 
     if (layoutPreset === 1) {
-      const h = columnHeight - 44
+      const h = columnHeight - 36
       return panes[0] ? renderPane(panes[0], Math.max(160, h)) : null
     }
 
     if (layoutPreset === 2) {
-      const h = Math.max(160, Math.floor((columnHeight - 44 - gap) / 2))
+      const h = Math.max(160, Math.floor((columnHeight - 36 - gap) / 2))
       return (
         <div style={{ display: 'flex', flexDirection: 'column', gap }}>
           {panes.slice(0, 2).map(p => {
@@ -1002,7 +1048,7 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
         {/* Chart column */}
         <div
           ref={chartColumnRef}
-          style={{ flex: 1, overflow: 'auto', padding: '8px 12px' }}
+          style={{ flex: 1, overflow: 'auto', padding: '4px 12px' }}
         >
           {renderLayout()}
         </div>
