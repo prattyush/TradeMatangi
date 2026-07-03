@@ -40,6 +40,8 @@ interface Props {
   // Maximize / restore this pane
   onMaximize?: () => void
   isMaximized?: boolean
+  // Pane reordering: arrow buttons next to maximize
+  swapTargets?: { dir: string; onClick: () => void }[]
   // For mid-session panes: timestamp from which live ticks begin (candles before this are history)
   liveFromTs?: number
   // Increment to trigger a manual data reload (fixes phantom candle after strike change)
@@ -119,6 +121,7 @@ export default function Chart({
   onPriceSelect = null,
   onMaximize,
   isMaximized = false,
+  swapTargets,
   liveFromTs,
   reloadKey = 0,
   historicalDays,
@@ -890,6 +893,16 @@ export default function Chart({
         >
           ↻
         </button>
+        {swapTargets && swapTargets.map(({ dir, onClick }) => (
+          <button
+            key={dir}
+            onClick={e => { e.stopPropagation(); onClick() }}
+            title={`Swap ${dir}`}
+            style={{ ...toolbarBtnStyle(false), fontSize: 11, padding: '2px 5px' }}
+          >
+            {dir}
+          </button>
+        ))}
         {onMaximize && (
           <button
             onClick={e => { e.stopPropagation(); onMaximize() }}

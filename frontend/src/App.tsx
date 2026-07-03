@@ -514,52 +514,42 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
     const paneIndex = panes.findIndex(p => p.id === pane.id)
 
     // Compute valid swap targets based on layout and position
-    const swapTargets: { dir: string; target: number }[] = []
+    const swapTargets: { dir: string; onClick: () => void }[] = []
     if (panes.length > 1 && paneIndex >= 0) {
+      const add = (dir: string, target: number) => {
+        swapTargets.push({ dir, onClick: () => swapPanes(paneIndex, target) })
+      }
       if (layoutPreset === 4) {
         // 2×2: panes[0]=TL, panes[1]=TR, panes[2]=BL, panes[3]=BR
-        if (paneIndex === 0) { swapTargets.push({ dir: '→', target: 1 }, { dir: '↓', target: 2 }) }
-        else if (paneIndex === 1) { swapTargets.push({ dir: '←', target: 0 }, { dir: '↓', target: 3 }) }
-        else if (paneIndex === 2) { swapTargets.push({ dir: '→', target: 3 }, { dir: '↑', target: 0 }) }
-        else if (paneIndex === 3) { swapTargets.push({ dir: '←', target: 2 }, { dir: '↑', target: 1 }) }
+        if (paneIndex === 0) { add('→', 1); add('↓', 2) }
+        else if (paneIndex === 1) { add('←', 0); add('↓', 3) }
+        else if (paneIndex === 2) { add('→', 3); add('↑', 0) }
+        else if (paneIndex === 3) { add('←', 2); add('↑', 1) }
       } else if (layoutPreset === 3) {
         // Top full-width + 2 bottom: panes[0]=Top, panes[1]=BL, panes[2]=BR
-        if (paneIndex === 0) { swapTargets.push({ dir: '↓', target: 1 }) }
-        else if (paneIndex === 1) { swapTargets.push({ dir: '→', target: 2 }, { dir: '↑', target: 0 }) }
-        else if (paneIndex === 2) { swapTargets.push({ dir: '←', target: 1 }, { dir: '↑', target: 0 }) }
+        if (paneIndex === 0) { add('↓', 1) }
+        else if (paneIndex === 1) { add('→', 2); add('↑', 0) }
+        else if (paneIndex === 2) { add('←', 1); add('↑', 0) }
       } else if (layoutPreset === 2) {
         // Vertical stack: panes[0]=Top, panes[1]=Bottom
-        if (paneIndex === 0) { swapTargets.push({ dir: '↓', target: 1 }) }
-        else if (paneIndex === 1) { swapTargets.push({ dir: '↑', target: 0 }) }
+        if (paneIndex === 0) { add('↓', 1) }
+        else if (paneIndex === 1) { add('↑', 0) }
       }
     }
 
     return (
       <div key={pane.id} style={{ position: 'relative', minHeight: height, minWidth: 0, ...style }}>
         {panes.length > 1 && !isMaximized && (
-          <div style={{ position: 'absolute', top: 8, right: 8, zIndex: 10, display: 'flex', gap: 3 }}>
-            {swapTargets.map(({ dir, target }) => (
-              <button
-                key={dir}
-                onClick={e => { e.stopPropagation(); swapPanes(paneIndex, target) }}
-                title={`Swap ${dir}`}
-                style={{
-                  background: 'rgba(13,17,23,0.8)', border: 'none',
-                  color: '#484f58', cursor: 'pointer', fontSize: 10, lineHeight: 1,
-                  borderRadius: 4, padding: '1px 3px',
-                }}
-              >{dir}</button>
-            ))}
-            <button
-              onClick={e => { e.stopPropagation(); removePane(pane.id) }}
-              title="Remove pane"
-              style={{
-                background: 'rgba(13,17,23,0.8)', border: 'none',
-                color: '#484f58', cursor: 'pointer', fontSize: 13, lineHeight: 1, borderRadius: 4,
-                padding: '1px 5px',
-              }}
-            >✕</button>
-          </div>
+          <button
+            onClick={e => { e.stopPropagation(); removePane(pane.id) }}
+            title="Remove pane"
+            style={{
+              position: 'absolute', top: 8, right: 8, zIndex: 10,
+              background: 'rgba(13,17,23,0.8)', border: 'none',
+              color: '#484f58', cursor: 'pointer', fontSize: 13, lineHeight: 1, borderRadius: 4,
+              padding: '1px 5px',
+            }}
+          >✕</button>
         )}
         <Chart
           symbol={sim.symbol}
@@ -590,6 +580,7 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
           historicalDays={historicalDays}
           onMaximize={() => setMaximizedPaneId(isMaximized ? null : pane.id)}
           isMaximized={isMaximized}
+          swapTargets={swapTargets.length > 0 ? swapTargets : undefined}
           position={getPositionForPane(pane)}
           pnl={getPnlForPane(pane)}
           pnlPctMode={pnlPctMode}
