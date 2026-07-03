@@ -75,6 +75,7 @@ class SimulationSession:
     guardrail_ban_active: bool = False
     guardrail_cooldown_enabled: bool = False
     guardrail_consecutive_losses: int = 0
+    guardrail_cooldown_trips_seen: int = 0    # round-trips already consumed by prior cooldown triggers
     guardrail_block_bars: int = 3             # n bars for manual BLOCK
     guardrail_cooldown_block_bars: int = 3    # n bars for COOLDOWN block (separate from manual BLOCK)
     guardrail_cooldown_losses: int = 3        # p consecutive losses for COOLDOWN trigger
