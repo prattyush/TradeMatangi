@@ -673,3 +673,81 @@ Adds **ICICI Breeze** as a selectable live streaming source for paper and real t
 **Tests:** 18 new tests in `tests/test_breeze_service.py` covering `_OHLCAccumulator`, `BreezeStreamManager` init/start/stop/`_on_ticks`, format normalization, and edge cases.
 
 **PR #241 merged to main.**
+
+---
+
+### Layout & UX Improvements — PR #244 + Earlier Commits
+
+Multiple UI improvements across the frontend and backend:
+
+**Pane Layout:**
+- `frontend/src/App.tsx`: reduced inter-pane gap from 12px → 4px, chart column padding from 12px → 4px top/bottom, height offset from -52 → -36. Eliminates slight page scroll.
+- Added pane reordering: arrow buttons (← → ↑ ↓) on each Chart pane that swap the pane with its neighbor. Only valid directions show based on layout preset (1/2/3/4 panes). Buttons rendered in the Chart toolbar next to the maximize button.
+- Added `swapPanes()` callback in App.tsx.
+
+**Speed Input:**
+- `frontend/src/components/SessionControls.tsx`: speed step changed from 0.5 → 0.05 for finer control.
+
+**LTP Display Fix:**
+- `frontend/src/App.tsx` (`tradePanelPrice`): when Underlying pane is selected during options trading, now shows `sim.currentPrice` (index LTP) instead of 0.
+
+**SSE Resilience:**
+- `frontend/src/hooks/useSSE.ts`: added Page Visibility API listener — when the tab becomes visible again, immediately closes stale EventSource, resets backoff to 1s, and reconnects. Eliminates multi-minute reconnection delays after tab idle.
+- `backend/app/services/simulation.py`: replaced `asyncio.Queue(maxsize=3000)` with `RingQueue` class (deque-based, drops *oldest* events when full instead of newest). Ensures latest ticks are preserved for reconnecting clients. Added `empty()`, `qsize()`, `put()`, `get_nowait()` for API compatibility.
+- `backend/app/routers/stream.py`: handles `queue.get()` returning `None` after queue close.
+
+**Breeze Diagnostic Logging:**
+- `backend/app/services/breeze_service.py`: added `BREEZE-DIAG` prefixed logging for first 15 raw ticks, first 3 ticks per accumulator key, first 10 completed candles, and periodic summaries every 60 ticks.
+
+**GuardRails Cooldown Fix:**
+- `backend/app/services/guardrail_service.py`: `_check_cooldown()` now skips round-trips already consumed by prior cooldown triggers (`guardrail_cooldown_trips_seen`). Previously old losing trades were re-counted from trade history on every call, causing immediate re-trigger after block expiry.
+- `backend/app/services/simulation.py`: added `guardrail_cooldown_trips_seen: int = 0` field to `SimulationSession`.
+
+---
+
+### UnderlyingTargetProfit Strategy + Strategy Fixes — PR #242 (feature/underlying-target-profit)
+
+**New Strategy: UnderlyingTargetProfit**
+- Options-only strategy that monitors the **underlying/index price** (`session.last_price`) instead of the option price.
+- When underlying reaches target, shifts existing SL orders to `option_LTP ± buffer_ticks` (LockProfit-style shift using `_update_exit_order_price`).
+- If no SL orders exist, creates new STOPLOSS orders (unlike LockProfit's old behavior of just logging).
+- Trigger direction depends on position side + option right:
+  - LONG CE: underlying ≥ target (bullish)
+  - LONG PE: underlying ≤ target (bearish)
+  - SHORT CE: underlying ≤ target (bearish)
+  - SHORT PE: underlying ≥ target (bullish)
+- One-shot execution, marks COMPLETED after first trigger.
+- Re-armable via `PATCH /api/strategies/{id}/price`.
+
+**Backend changes:**
+- `backend/app/models/schemas.py`: added `UNDERLYING_TARGET_PROFIT = "UnderlyingTargetProfit"` to `StrategyType` enum.
+- `backend/app/services/strategy_service.py`:
+  - Added `_on_tick_underlying_target_profit()` function (~120 lines) — per-tick evaluator.
+  - Wired into `on_tick()` per-tick dispatch and `update_strategy_price()` for re-arming.
+- `backend/app/routers/strategies.py`:
+  - Added to position-required check and target_profit_value validation.
+  - Options-only enforcement: `right` must be `"CE"` or `"PE"`.
+
+**LockProfit Enhancement:**
+- `_on_tick_lock_profit()`: now creates STOPLOSS orders when no exit orders exist (previously just logged). Uses STOPLOSS for all session types (sim, paper, real). Works for all instrument types.
+- Added `current_ts` parameter to `_on_tick_lock_profit` for order creation timestamps.
+
+**AggressiveStoploss Fixes:**
+- Always uses **STOPLOSS** order type (previously TARGET for sim/paper, STOPLOSS for real).
+- **One-shot**: marks COMPLETED after first bar-close execution.
+- Auto-completes when position goes FLAT.
+
+**order_service.py:**
+- Auto-sets `is_stoploss=True` when `order_type=STOPLOSS` in `place_order()`.
+
+**Frontend changes:**
+- `frontend/src/services/api.ts`: added `'UnderlyingTargetProfit'` to all strategy type unions.
+- `frontend/src/components/OrderPanel.tsx`:
+  - Added UnderlyingTargetProfit UI section (visible only for options) with underlying price input and chart picker.
+  - Added to `canEditPrice` check for inline re-arming.
+  - Strategy descriptions moved to ⓘ tooltips for BreakEven, TargetProfit, UnderlyingTarget, LockProfit, AggressiveSL — saves vertical space.
+  - All strategy input widths reduced from `flex: 1` to `width: 95px`.
+
+**Tests:**
+- Updated `test_creates_target_sl_order_when_none_exists` for STOPLOSS order type.
+- All 38 strategy tests passing. 627 total backend tests passing.
