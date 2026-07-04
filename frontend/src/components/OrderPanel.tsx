@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect } from 'react'
 import { Order, Position, StrategyResponse } from '../services/api'
 import { SessionState } from '../hooks/useSimulation'
 import { FundsRatios } from './SettingsModal'
@@ -27,6 +27,8 @@ interface Props {
   injectedEditPrice: { orderId: string; price: number } | null
   onRequestTpPick?: () => void
   injectedTpPrice?: number | null
+  onRequestUtpPick?: () => void
+  injectedUtpPrice?: number | null
   // Strategy props
   instrumentType?: 'equity' | 'options'
   activeRight?: 'CE' | 'PE' | null
@@ -72,6 +74,8 @@ export default function OrderPanel({
   onRequestPricePick, injectedEditPrice,
   onRequestTpPick,
   injectedTpPrice,
+  onRequestUtpPick,
+  injectedUtpPrice,
   instrumentType = 'equity',
   activeRight = null,
   positionCE,
@@ -111,9 +115,6 @@ export default function OrderPanel({
   const [tpIsPct, setTpIsPct] = useState(false)
   const [utpValue, setUtpValue] = useState('')
   const [lpValue, setLpValue] = useState('')
-  // Track which strategy's picker button was last clicked so chart-picked
-  // price is injected into the correct input field.
-  const tpPickTarget = useRef<'tp' | 'utp'>('tp')
   const [lpIsPct, setLpIsPct] = useState(false)
 
   // Batch update SL state
@@ -168,16 +169,15 @@ export default function OrderPanel({
     }
   }, [injectedEditPrice])
 
-  // Inject chart-picked price into the correct strategy input
+  // Inject chart-picked price into TP field
   useEffect(() => {
-    if (injectedTpPrice != null) {
-      if (tpPickTarget.current === 'utp') {
-        setUtpValue(injectedTpPrice.toFixed(2))
-      } else {
-        setTpValue(injectedTpPrice.toFixed(2))
-      }
-    }
+    if (injectedTpPrice != null) setTpValue(injectedTpPrice.toFixed(2))
   }, [injectedTpPrice])
+
+  // Inject chart-picked price into UTP field
+  useEffect(() => {
+    if (injectedUtpPrice != null) setUtpValue(injectedUtpPrice.toFixed(2))
+  }, [injectedUtpPrice])
 
   // Inject chart-picked price into LP field
   useEffect(() => {
@@ -594,7 +594,7 @@ export default function OrderPanel({
                 />
                 {!tpIsPct && onRequestTpPick && (
                   <button
-                    onClick={() => { tpPickTarget.current = 'tp'; onRequestTpPick() }}
+                    onClick={onRequestTpPick}
                     title="Pick price from chart"
                     style={{
                       padding: '4px 7px', background: '#21262d',
@@ -650,9 +650,9 @@ export default function OrderPanel({
                     color: '#e6edf3', fontSize: 12,
                   }}
                 />
-                {onRequestTpPick && (
+                {onRequestUtpPick && (
                   <button
-                    onClick={() => { tpPickTarget.current = 'utp'; onRequestTpPick() }}
+                    onClick={onRequestUtpPick}
                     title="Pick price from chart"
                     style={{
                       padding: '4px 7px', background: '#21262d',
