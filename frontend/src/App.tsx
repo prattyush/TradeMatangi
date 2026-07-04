@@ -251,6 +251,16 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
     setMaximizedPaneId(m => m === id ? null : m)
   }, [])
 
+  const swapPanes = useCallback((indexA: number, indexB: number) => {
+    setPanes(p => {
+      if (indexA < 0 || indexA >= p.length || indexB < 0 || indexB >= p.length) return p
+      if (indexA === indexB) return p
+      const next = [...p]
+      ;[next[indexA], next[indexB]] = [next[indexB], next[indexA]]
+      return next
+    })
+  }, [])
+
   // ── Active pane derivations ─────────────────────────────────────────────────
   const activePane = panes.find(p => p.id === activePaneId) ?? null
   const activeRight: 'CE' | 'PE' | null = activePane?.type === 'options' ? (activePane.right ?? null) : null
@@ -497,10 +507,36 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
   }, [sim.pnlEquity, sim.pnlCE, sim.pnlPE, panes])
 
   // ── Layout rendering helpers ──────────────────────────────────────────────────
-  const rowHeight = Math.max(160, Math.floor((columnHeight - 52) / 2))
+  const rowHeight = Math.max(160, Math.floor((columnHeight - 36) / 2))
 
   const renderPane = (pane: PaneConfig, height: number, style?: React.CSSProperties) => {
     const isMaximized = maximizedPaneId === pane.id
+    const paneIndex = panes.findIndex(p => p.id === pane.id)
+
+    // Compute valid swap targets based on layout and position
+    const swapTargets: { dir: string; onClick: () => void }[] = []
+    if (panes.length > 1 && paneIndex >= 0) {
+      const add = (dir: string, target: number) => {
+        swapTargets.push({ dir, onClick: () => swapPanes(paneIndex, target) })
+      }
+      if (layoutPreset === 4) {
+        // 2×2: panes[0]=TL, panes[1]=TR, panes[2]=BL, panes[3]=BR
+        if (paneIndex === 0) { add('→', 1); add('↓', 2) }
+        else if (paneIndex === 1) { add('←', 0); add('↓', 3) }
+        else if (paneIndex === 2) { add('→', 3); add('↑', 0) }
+        else if (paneIndex === 3) { add('←', 2); add('↑', 1) }
+      } else if (layoutPreset === 3) {
+        // Top full-width + 2 bottom: panes[0]=Top, panes[1]=BL, panes[2]=BR
+        if (paneIndex === 0) { add('↓', 1) }
+        else if (paneIndex === 1) { add('→', 2); add('↑', 0) }
+        else if (paneIndex === 2) { add('←', 1); add('↑', 0) }
+      } else if (layoutPreset === 2) {
+        // Vertical stack: panes[0]=Top, panes[1]=Bottom
+        if (paneIndex === 0) { add('↓', 1) }
+        else if (paneIndex === 1) { add('↑', 0) }
+      }
+    }
+
     return (
       <div key={pane.id} style={{ position: 'relative', minHeight: height, minWidth: 0, ...style }}>
         {panes.length > 1 && !isMaximized && (
@@ -544,6 +580,7 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
           historicalDays={historicalDays}
           onMaximize={() => setMaximizedPaneId(isMaximized ? null : pane.id)}
           isMaximized={isMaximized}
+          swapTargets={swapTargets.length > 0 ? swapTargets : undefined}
           position={getPositionForPane(pane)}
           pnl={getPnlForPane(pane)}
           pnlPctMode={pnlPctMode}
@@ -554,8 +591,8 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
   }
 
   const renderLayout = () => {
-    const gap = 12
-    const maxH = Math.max(160, columnHeight - 52)
+    const gap = 4
+    const maxH = Math.max(160, columnHeight - 36)
 
     // Maximize is handled inline per-layout rather than with a separate top-level
     // branch. Keeping the same flex container structure means the pane wrapper div's
@@ -563,12 +600,12 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
     // Non-maximized panes get display:none — still mounted, liveWindowRef preserved.
 
     if (layoutPreset === 1) {
-      const h = columnHeight - 52
+      const h = columnHeight - 36
       return panes[0] ? renderPane(panes[0], Math.max(160, h)) : null
     }
 
     if (layoutPreset === 2) {
-      const h = Math.max(160, Math.floor((columnHeight - 52 - gap) / 2))
+      const h = Math.max(160, Math.floor((columnHeight - 36 - gap) / 2))
       return (
         <div style={{ display: 'flex', flexDirection: 'column', gap }}>
           {panes.slice(0, 2).map(p => {
@@ -1002,7 +1039,7 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
         {/* Chart column */}
         <div
           ref={chartColumnRef}
-          style={{ flex: 1, overflow: 'auto', padding: 12 }}
+          style={{ flex: 1, overflow: 'auto', padding: '4px 12px' }}
         >
           {renderLayout()}
         </div>

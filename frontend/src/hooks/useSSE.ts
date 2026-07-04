@@ -6,9 +6,18 @@ export function useSSE(url: string | null, onMessage: SSECallback) {
   const esRef = useRef<EventSource | null>(null)
   const retryTimeout = useRef<ReturnType<typeof setTimeout> | null>(null)
   const retryDelay = useRef(1000)
+  const connectRef = useRef<() => void>(() => {})
 
   const connect = useCallback(() => {
     if (!url) return
+
+    // Close any existing connection first
+    esRef.current?.close()
+    esRef.current = null
+    if (retryTimeout.current) {
+      clearTimeout(retryTimeout.current)
+      retryTimeout.current = null
+    }
 
     const es = new EventSource(url)
     esRef.current = es
@@ -28,10 +37,25 @@ export function useSSE(url: string | null, onMessage: SSECallback) {
       esRef.current = null
       retryTimeout.current = setTimeout(() => {
         retryDelay.current = Math.min(retryDelay.current * 2, 30000)
-        connect()
+        connectRef.current()
       }, retryDelay.current)
     }
   }, [url, onMessage])
+
+  // Keep connectRef in sync so the visibility handler always calls the latest
+  connectRef.current = connect
+
+  // ── Page Visibility: reconnect instantly when the tab becomes visible ──────
+  useEffect(() => {
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible' && url) {
+        retryDelay.current = 1000  // reset backoff
+        connectRef.current()       // immediate reconnect
+      }
+    }
+    document.addEventListener('visibilitychange', onVisibilityChange)
+    return () => document.removeEventListener('visibilitychange', onVisibilityChange)
+  }, [url])
 
   useEffect(() => {
     connect()

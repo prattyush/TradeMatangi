@@ -272,6 +272,7 @@ class StrategyType(str, Enum):
     AGGRESSIVE_STOPLOSS = "AggressiveStoploss"
     TARGET_PROFIT = "TargetProfit"
     LOCK_PROFIT = "LockProfit"
+    UNDERLYING_TARGET_PROFIT = "UnderlyingTargetProfit"
 
 
 class StartStrategyRequest(BaseModel):

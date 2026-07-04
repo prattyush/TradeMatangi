@@ -535,8 +535,8 @@ class TestAggressiveStoploss:
         orders = order_service.get_open_orders(SESSION)
         assert len(orders) == 1
         sl = orders[0]
-        assert sl.order_type == OrderType.TARGET
-        assert sl.is_stoploss is False
+        assert sl.order_type == OrderType.STOPLOSS
+        assert sl.is_stoploss is True
         assert sl.side == TradeSide.SELL  # exit LONG
         assert sl.trigger_price == pytest.approx(110.0 * 0.99)
 

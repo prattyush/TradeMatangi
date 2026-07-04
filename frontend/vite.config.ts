@@ -9,7 +9,7 @@ export default defineConfig({
     ],
     hmr: {
       protocol: 'wss',
-      host: 'tradematangi.co.in/ws',
+      host: 'tradematangi.co.in',
       clientPort: 443
     },
     host: true,

@@ -154,6 +154,7 @@ def place_order(
             raise ValueError("trigger_price is required for STOPLOSS orders")
         actual_trigger = trigger_price
         actual_limit = trigger_price  # fill at market (no deviation for SL)
+        is_stoploss = True
     else:  # LIMIT
         if limit_price is None:
             raise ValueError("limit_price is required for LIMIT orders")

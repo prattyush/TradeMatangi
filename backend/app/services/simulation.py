@@ -1,6 +1,6 @@
 """
 Simulation engine: replays second-level OHLC data asynchronously.
-One asyncio Task per session; ticks flow through an asyncio.Queue.
+One asyncio Task per session; ticks flow through a ring-buffer queue.
 Supports pause/resume via asyncio.Event and speed multiplier.
 """
 from __future__ import annotations
@@ -9,6 +9,7 @@ import asyncio
 import json
 import logging
 import uuid
+from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -17,6 +18,77 @@ from typing import Any, Optional
 from app.models.schemas import SimulationState
 from app.services.data_loader import iter_ticks
 from app.config import FIXED_USER_ID
+
+logger = logging.getLogger(__name__)
+
+
+# ── Ring-buffer async queue ───────────────────────────────────────────────────
+
+class RingQueue:
+    """
+    Async ring buffer that drops the *oldest* event when full (unlike
+    asyncio.Queue which drops the *newest*).  This keeps the most recent
+    ticks available for an SSE client that reconnects after being idle.
+    """
+
+    def __init__(self, maxsize: int = 3000) -> None:
+        self._dq: deque = deque(maxlen=maxsize)
+        self._event = asyncio.Event()
+        self._closed = False
+        self._dropped: int = 0
+        self._maxsize = maxsize
+
+    def put_nowait(self, item: str) -> None:
+        """Push an item; oldest is silently dropped when the buffer is full."""
+        if self._closed:
+            return
+        was_empty = len(self._dq) == 0
+        if len(self._dq) == self._maxsize:
+            self._dropped += 1
+            if self._dropped % 100 == 1:
+                logger.warning(
+                    "RingQueue dropped %d events (maxsize=%d)",
+                    self._dropped, self._maxsize,
+                )
+        self._dq.append(item)
+        if was_empty:
+            self._event.set()
+
+    async def put(self, item: str) -> None:
+        """Async-compatible put (same as put_nowait — ring buffer never blocks)."""
+        self.put_nowait(item)
+        await asyncio.sleep(0)  # yield to event loop for compatibility
+
+    def get_nowait(self) -> str:
+        """Return the oldest item without blocking. Raises IndexError if empty."""
+        if len(self._dq) == 0:
+            raise IndexError("RingQueue is empty")
+        return self._dq.popleft()
+
+    async def get(self) -> str | None:
+        """Wait for the next item (or return None after close)."""
+        while len(self._dq) == 0:
+            if self._closed:
+                return None
+            self._event.clear()
+            await self._event.wait()
+            if self._closed:
+                return None
+        return self._dq.popleft()
+
+    def close(self) -> None:
+        """Wake any waiting coroutines and prevent further writes."""
+        self._closed = True
+        self._event.set()
+
+    def empty(self) -> bool:
+        return len(self._dq) == 0
+
+    def qsize(self) -> int:
+        return len(self._dq)
+
+    def __len__(self) -> int:
+        return len(self._dq)
 
 logger = logging.getLogger(__name__)
 
@@ -52,9 +124,9 @@ class SimulationSession:
     kotak_order_map: dict[str, str] = field(default_factory=dict)
     # Kotak order IDs reconciled from external/manual broker orders (not in our system)
     external_reconciled_kotak_ids: set = field(default_factory=set)
-    queue: asyncio.Queue = field(default_factory=lambda: asyncio.Queue(maxsize=3000))
+    queue: RingQueue = field(default_factory=lambda: RingQueue(3000))
     # paper_tick_queue: receives raw tick dicts from KiteBroadcaster / BreezeStreamManager / KotakBroadcaster
-    paper_tick_queue: asyncio.Queue = field(default_factory=lambda: asyncio.Queue(maxsize=1000))
+    paper_tick_queue: RingQueue = field(default_factory=lambda: RingQueue(1000))
     resume_event: asyncio.Event = field(default_factory=asyncio.Event)
     task: Optional[asyncio.Task] = None
     stream_manager: Any = field(default=None, repr=False, compare=False)
@@ -75,6 +147,7 @@ class SimulationSession:
     guardrail_ban_active: bool = False
     guardrail_cooldown_enabled: bool = False
     guardrail_consecutive_losses: int = 0
+    guardrail_cooldown_trips_seen: int = 0    # round-trips already consumed by prior cooldown triggers
     guardrail_block_bars: int = 3             # n bars for manual BLOCK
     guardrail_cooldown_block_bars: int = 3    # n bars for COOLDOWN block (separate from manual BLOCK)
     guardrail_cooldown_losses: int = 3        # p consecutive losses for COOLDOWN trigger
@@ -305,10 +378,7 @@ def _emit_tick_and_check_orders(
     from app.services.order_service import check_orders
     from app.services.trading import record_trade
 
-    try:
-        session.queue.put_nowait(json.dumps(tick))
-    except asyncio.QueueFull:
-        logger.warning("Queue full, dropping tick for session %s at t=%s", session.session_id, tick.get("time"))
+    session.queue.put_nowait(json.dumps(tick))
 
     current_time = tick["time"]
     current_price = tick["close"]
@@ -1225,6 +1295,9 @@ async def _run_paper_session(session: SimulationSession) -> None:
                 logger.debug("Paper session %s: Phase 3 — 30s timeout waiting for tick (market may be closed)", session.session_id)
                 continue  # normal during market close / weekend — no data, keep waiting
 
+            if payload is None:  # queue closed — session stopping
+                break
+
             _phase3_tick_count += 1
             if _phase3_tick_count <= 3 or _phase3_tick_count % 60 == 0:
                 logger.info("Paper session %s: Phase 3 tick #%d received: time=%s close=%s right=%s",
@@ -1458,6 +1531,9 @@ async def _run_real_session(session: SimulationSession) -> None:
                 payload = await asyncio.wait_for(session.paper_tick_queue.get(), timeout=30.0)
             except asyncio.TimeoutError:
                 continue
+
+            if payload is None:  # queue closed — session stopping
+                break
 
             tick_type = payload.get("type", "tick")
             if tick_type == "broker_error":
@@ -2060,6 +2136,8 @@ def stop_session(session: SimulationSession) -> None:
     session.state = SimulationState.ENDED
     session.resume_event.set()  # unblock if paused
     session.step_event.set()    # unblock if waiting for next-bar (stepwise)
+    session.queue.close()       # unblock any waiting SSE get() consumers
+    session.paper_tick_queue.close()
     if session.task and not session.task.done():
         session.task.cancel()
     _upsert_session_to_db(session)

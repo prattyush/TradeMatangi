@@ -107,7 +107,7 @@ export interface StrategyResponse {
 
 export interface StartStrategyRequest {
   session_id: string
-  strategy_type: 'AutoStop' | 'BreakEven' | 'AggressiveStoploss' | 'TargetProfit' | 'LockProfit'
+  strategy_type: 'AutoStop' | 'BreakEven' | 'AggressiveStoploss' | 'TargetProfit' | 'LockProfit' | 'UnderlyingTargetProfit'
   right?: 'CE' | 'PE' | null
   quantity?: number
   funds_ratio_pct?: number

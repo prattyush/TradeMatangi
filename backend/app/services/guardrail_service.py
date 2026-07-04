@@ -72,6 +72,7 @@ def initialize_guardrails(session: "SimulationSession", user_id: str) -> None:
     session.guardrail_block_until_bar = 0
     session.guardrail_ban_active = False
     session.guardrail_consecutive_losses = 0
+    session.guardrail_cooldown_trips_seen = 0
 
 
 # ── Check (called on every buy/sell attempt) ──────────────────────────────────
@@ -137,7 +138,25 @@ def on_trade_record(session_id: str) -> None:
 
 def _check_cooldown(session: "SimulationSession") -> None:
     """Update consecutive loss count; trigger a bar-block if threshold is reached."""
-    losses = _count_consecutive_losses(session.session_id)
+    from app.services.trading import get_trades
+    trades = get_trades(session.session_id)
+    if not trades:
+        return
+
+    # Compute all completed round-trips, then skip those already consumed
+    # by a previous cooldown trigger so old losses don't re-trigger the block.
+    all_trips = _compute_round_trips(trades)
+    seen = session.guardrail_cooldown_trips_seen
+    new_trips = all_trips[seen:]  # only round-trips completed since last cooldown
+
+    # Count consecutive losses from the most recent new round-trips
+    losses = 0
+    for pnl in reversed(new_trips):
+        if pnl < 0:
+            losses += 1
+        else:
+            break
+
     session.guardrail_consecutive_losses = losses
     p = session.guardrail_cooldown_losses
     if losses >= p:
@@ -146,11 +165,13 @@ def _check_cooldown(session: "SimulationSession") -> None:
         n = session.guardrail_cooldown_block_bars
         until_bar = current_slot + n * interval
         session.guardrail_block_until_bar = until_bar
-        session.guardrail_consecutive_losses = 0  # reset after triggering
+        session.guardrail_consecutive_losses = 0
+        session.guardrail_cooldown_trips_seen = len(all_trips)  # mark these trips as consumed
         expiry_time = datetime.fromtimestamp(until_bar, tz=timezone.utc).strftime("%H:%M")
         reason = f"COOLDOWN: {p} consecutive losses — trading paused for {n} bars (resumes after {expiry_time})"
         _emit_guardrail_event(session, "COOLDOWN", reason, until_bar)
-        logger.info("COOLDOWN triggered on session %s until bar %s", session.session_id, until_bar)
+        logger.info("COOLDOWN triggered on session %s until bar %s (trips_seen=%d)",
+                    session.session_id, until_bar, len(all_trips))
 
 
 def _check_ban(session: "SimulationSession") -> None:
