@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { Order, Position, StrategyResponse } from '../services/api'
 import { SessionState } from '../hooks/useSimulation'
 import { FundsRatios } from './SettingsModal'
@@ -111,6 +111,9 @@ export default function OrderPanel({
   const [tpIsPct, setTpIsPct] = useState(false)
   const [utpValue, setUtpValue] = useState('')
   const [lpValue, setLpValue] = useState('')
+  // Track which strategy's picker button was last clicked so chart-picked
+  // price is injected into the correct input field.
+  const tpPickTarget = useRef<'tp' | 'utp'>('tp')
   const [lpIsPct, setLpIsPct] = useState(false)
 
   // Batch update SL state
@@ -165,9 +168,15 @@ export default function OrderPanel({
     }
   }, [injectedEditPrice])
 
-  // Inject chart-picked price into TP field
+  // Inject chart-picked price into the correct strategy input
   useEffect(() => {
-    if (injectedTpPrice != null) setTpValue(injectedTpPrice.toFixed(2))
+    if (injectedTpPrice != null) {
+      if (tpPickTarget.current === 'utp') {
+        setUtpValue(injectedTpPrice.toFixed(2))
+      } else {
+        setTpValue(injectedTpPrice.toFixed(2))
+      }
+    }
   }, [injectedTpPrice])
 
   // Inject chart-picked price into LP field
@@ -585,7 +594,7 @@ export default function OrderPanel({
                 />
                 {!tpIsPct && onRequestTpPick && (
                   <button
-                    onClick={onRequestTpPick}
+                    onClick={() => { tpPickTarget.current = 'tp'; onRequestTpPick() }}
                     title="Pick price from chart"
                     style={{
                       padding: '4px 7px', background: '#21262d',
@@ -643,7 +652,7 @@ export default function OrderPanel({
                 />
                 {onRequestTpPick && (
                   <button
-                    onClick={onRequestTpPick}
+                    onClick={() => { tpPickTarget.current = 'utp'; onRequestTpPick() }}
                     title="Pick price from chart"
                     style={{
                       padding: '4px 7px', background: '#21262d',
