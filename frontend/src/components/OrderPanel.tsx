@@ -109,6 +109,7 @@ export default function OrderPanel({
   const [cancellingAll, setCancellingAll] = useState(false)
   const [tpValue, setTpValue] = useState('')
   const [tpIsPct, setTpIsPct] = useState(false)
+  const [utpValue, setUtpValue] = useState('')
   const [lpValue, setLpValue] = useState('')
   const [lpIsPct, setLpIsPct] = useState(false)
 
@@ -300,7 +301,7 @@ export default function OrderPanel({
         }
         extraOpts = { targetProfitValue: v, targetProfitIsPct: tpIsPct }
       } else if (strategyType === 'UnderlyingTargetProfit') {
-        const v = parseFloat(tpValue)
+        const v = parseFloat(utpValue)
         if (isNaN(v) || v <= 0) {
           setStratError('Enter a valid underlying target price')
           setStratLoading(null)
@@ -629,8 +630,8 @@ export default function OrderPanel({
               <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
                 <input
                   type="number"
-                  value={tpValue}
-                  onChange={e => setTpValue(e.target.value)}
+                  value={utpValue}
+                  onChange={e => setUtpValue(e.target.value)}
                   placeholder="underlying price"
                   min={0}
                   step={0.05}
