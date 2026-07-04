@@ -145,6 +145,8 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
   const [injectedEditPrice, setInjectedEditPrice] = useState<{ orderId: string; price: number } | null>(null)
   const [tpPickActive, setTpPickActive] = useState(false)
   const [injectedTpPrice, setInjectedTpPrice] = useState<number | null>(null)
+  const [utpPickActive, setUtpPickActive] = useState(false)
+  const [injectedUtpPrice, setInjectedUtpPrice] = useState<number | null>(null)
   const [lpPickActive, setLpPickActive] = useState(false)
   const [injectedLpPrice, setInjectedLpPrice] = useState<number | null>(null)
 
@@ -396,6 +398,9 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
     if (tpPickActive) {
       setInjectedTpPrice(price)
       setTpPickActive(false)
+    } else if (utpPickActive) {
+      setInjectedUtpPrice(price)
+      setUtpPickActive(false)
     } else if (lpPickActive) {
       setInjectedLpPrice(price)
       setLpPickActive(false)
@@ -403,7 +408,7 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
       setInjectedEditPrice({ orderId: pricePickOrderId, price })
       setPricePickOrderId(null)
     }
-  }, [pricePickOrderId, tpPickActive, lpPickActive])
+  }, [pricePickOrderId, tpPickActive, utpPickActive, lpPickActive])
 
   // ── Strategy callbacks ────────────────────────────────────────────────────────
   const handleStartStrategy = useCallback(async (
@@ -569,14 +574,14 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
           isActive={pane.id === activePaneId}
           onActivate={() => {
             setActivePaneId(pane.id)
-            if ((pricePickOrderId || tpPickActive || lpPickActive) && pane.id !== activePaneId) {
+            if ((pricePickOrderId || tpPickActive || utpPickActive || lpPickActive) && pane.id !== activePaneId) {
               setPricePickOrderId(null)
               setTpPickActive(false)
             }
           }}
           trades={getTradesForPane(pane)}
           openOrders={getOrdersForPane(pane)}
-          onPriceSelect={(pricePickOrderId || tpPickActive || lpPickActive) && pane.id === activePaneId ? handleChartPriceSelect : null}
+          onPriceSelect={(pricePickOrderId || tpPickActive || utpPickActive || lpPickActive) && pane.id === activePaneId ? handleChartPriceSelect : null}
           historicalDays={historicalDays}
           onMaximize={() => setMaximizedPaneId(isMaximized ? null : pane.id)}
           isMaximized={isMaximized}
@@ -1137,6 +1142,8 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
               injectedEditPrice={injectedEditPrice}
               onRequestTpPick={() => { setTpPickActive(true); setInjectedTpPrice(null) }}
               injectedTpPrice={injectedTpPrice}
+              onRequestUtpPick={() => { setUtpPickActive(true); setInjectedUtpPrice(null) }}
+              injectedUtpPrice={injectedUtpPrice}
               onRequestLpPick={() => { setLpPickActive(true); setInjectedLpPrice(null) }}
               injectedLpPrice={injectedLpPrice}
               onStartStrategy={handleStartStrategy}
