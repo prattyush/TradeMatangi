@@ -577,7 +577,7 @@ export default function OrderPanel({
                   min={0}
                   step={tpIsPct ? 0.1 : 0.05}
                   style={{
-                    flex: 1, padding: '4px 6px', background: '#0d1117',
+                    width: 95, padding: '4px 6px', background: '#0d1117',
                     border: '1px solid #30363d', borderRadius: 4,
                     color: '#e6edf3', fontSize: 12,
                   }}
@@ -635,7 +635,7 @@ export default function OrderPanel({
                   min={0}
                   step={0.05}
                   style={{
-                    flex: 1, padding: '4px 6px', background: '#0d1117',
+                    width: 95, padding: '4px 6px', background: '#0d1117',
                     border: '1px solid #30363d', borderRadius: 4,
                     color: '#e6edf3', fontSize: 12,
                   }}
@@ -684,7 +684,7 @@ export default function OrderPanel({
                   min={0}
                   step={lpIsPct ? 0.1 : 0.05}
                   style={{
-                    flex: 1, padding: '4px 6px', background: '#0d1117',
+                    width: 95, padding: '4px 6px', background: '#0d1117',
                     border: '1px solid #30363d', borderRadius: 4,
                     color: '#e6edf3', fontSize: 12,
                   }}
@@ -812,7 +812,7 @@ export default function OrderPanel({
                             autoFocus
                             step={0.05}
                             style={{
-                              flex: 1, minWidth: 0, padding: '3px 5px', background: '#161b22',
+                              width: 95, padding: '3px 5px', background: '#161b22',
                               border: '1px solid #388bfd', borderRadius: 4,
                               color: '#e6edf3', fontSize: 11,
                             }}
@@ -1066,7 +1066,7 @@ export default function OrderPanel({
                     placeholder="price"
                     step={0.05}
                     style={{
-                      flex: 1, minWidth: 0, padding: '3px 6px', background: '#161b22',
+                      width: 95, padding: '3px 6px', background: '#161b22',
                       border: '1px solid #4a2000', borderRadius: 4,
                       color: '#e6edf3', fontSize: 11,
                     }}
@@ -1161,7 +1161,7 @@ export default function OrderPanel({
                           onChange={e => setEditPrice(e.target.value)}
                           autoFocus
                           style={{
-                            flex: 1, minWidth: 0, padding: '4px 6px', background: '#0d1117',
+                            width: 95, padding: '4px 6px', background: '#0d1117',
                             border: '1px solid #388bfd', borderRadius: 4,
                             color: '#e6edf3', fontSize: 12,
                           }}
