@@ -280,7 +280,7 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
     if (instrumentType === 'options') {
       if (activeRight === 'CE') return sim.currentPriceCE
       if (activeRight === 'PE') return sim.currentPricePE
-      return 0
+      return sim.currentPrice  // underlying pane selected — show index price
     }
     return sim.currentPrice
   })()
