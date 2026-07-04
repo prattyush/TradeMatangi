@@ -19,6 +19,8 @@ async def _event_generator(session_id: str):
         try:
             # Wait for next event with timeout for heartbeat
             event = await asyncio.wait_for(session.queue.get(), timeout=HEARTBEAT_INTERVAL)
+            if event is None:  # queue closed — session stopped
+                break
             yield f"data: {event}\n\n"
 
             # Stop streaming once the session has ended and queue is drained
