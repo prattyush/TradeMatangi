@@ -39,7 +39,7 @@ interface Props {
   targetProfitBufferTicks?: number
   aggrSlOnlyInProfit?: boolean
   onStartStrategy?: (
-    strategyType: 'AutoStop' | 'BreakEven' | 'AggressiveStoploss' | 'TargetProfit' | 'LockProfit',
+    strategyType: 'AutoStop' | 'BreakEven' | 'AggressiveStoploss' | 'TargetProfit' | 'LockProfit' | 'UnderlyingTargetProfit',
     right: 'CE' | 'PE' | null,
     opts: {
       quantity?: number
@@ -80,7 +80,6 @@ export default function OrderPanel({
   autostopTriggerType = 'bar',
   autostopDeviationPct = 1.0,
   breakevenMode = 'shift_sl',
-  targetProfitBufferTicks = 3,
   aggrSlOnlyInProfit = false,
   onStartStrategy,
   onCancelAllStrategies,
@@ -280,7 +279,7 @@ export default function OrderPanel({
   const stratHasPosition = stratPosition.side !== 'FLAT'
 
   const handleStartStrategy = async (
-    strategyType: 'AutoStop' | 'BreakEven' | 'AggressiveStoploss' | 'TargetProfit' | 'LockProfit',
+    strategyType: 'AutoStop' | 'BreakEven' | 'AggressiveStoploss' | 'TargetProfit' | 'LockProfit' | 'UnderlyingTargetProfit',
   ) => {
     if (!onStartStrategy) return
     setStratError(null)
@@ -300,6 +299,14 @@ export default function OrderPanel({
           return
         }
         extraOpts = { targetProfitValue: v, targetProfitIsPct: tpIsPct }
+      } else if (strategyType === 'UnderlyingTargetProfit') {
+        const v = parseFloat(tpValue)
+        if (isNaN(v) || v <= 0) {
+          setStratError('Enter a valid underlying target price')
+          setStratLoading(null)
+          return
+        }
+        extraOpts = { targetProfitValue: v, targetProfitIsPct: false }
       } else if (strategyType === 'LockProfit') {
         const v = parseFloat(lpValue)
         if (isNaN(v) || v <= 0) {
@@ -532,11 +539,12 @@ export default function OrderPanel({
               Exit Strategies {!stratHasPosition && <span style={{ fontWeight: 400, fontSize: 9 }}>(need position)</span>}
             </div>
             <div style={{ marginBottom: 8 }}>
-              <div style={{ fontSize: 11, color: '#e6edf3', fontWeight: 600, marginBottom: 4 }}>BreakEven</div>
-              <div style={{ fontSize: 9, color: '#484f58', marginBottom: 4 }}>
-                {breakevenMode === 'limit_order'
+              <div style={{ fontSize: 11, color: '#e6edf3', fontWeight: 600, marginBottom: 4 }}>
+                BreakEven{' '}
+                <span title={breakevenMode === 'limit_order'
                   ? 'Places limit order at breakeven + buffer when reached'
                   : 'Shifts SL to breakeven + buffer when price hits threshold'}
+                  style={{ cursor: 'help', fontSize: 10 }}>ⓘ</span>
               </div>
               <button
                 onClick={() => handleStartStrategy('BreakEven')}
@@ -555,7 +563,11 @@ export default function OrderPanel({
 
             {/* TargetProfit */}
             <div style={{ marginBottom: 2 }}>
-              <div style={{ fontSize: 11, color: '#e6edf3', fontWeight: 600, marginBottom: 4 }}>Target Profit</div>
+              <div style={{ fontSize: 11, color: '#e6edf3', fontWeight: 600, marginBottom: 4 }}>
+                Target Profit{' '}
+                <span title="When option price reaches target, places a LIMIT order to exit. Buffer ticks ensure trigger is past the target."
+                  style={{ cursor: 'help', fontSize: 10 }}>ⓘ</span>
+              </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
                 <input
                   type="number"
@@ -591,9 +603,6 @@ export default function OrderPanel({
                   % of Capital
                 </label>
               </div>
-              <div style={{ fontSize: 9, color: '#484f58', marginBottom: 4 }}>
-                Buffer: {targetProfitBufferTicks} tick{targetProfitBufferTicks > 1 ? 's' : ''} — configure in Settings → Strategies
-              </div>
               <button
                 onClick={() => handleStartStrategy('TargetProfit')}
                 disabled={!stratHasPosition || stratLoading === 'TargetProfit'}
@@ -609,11 +618,62 @@ export default function OrderPanel({
               </button>
             </div>
 
+            {/* UnderlyingTargetProfit — options only */}
+            {instrumentType === 'options' && (
+            <div style={{ marginBottom: 2 }}>
+              <div style={{ fontSize: 11, color: '#e6edf3', fontWeight: 600, marginBottom: 4 }}>
+                Underlying Target{' '}
+                <span title="Monitors underlying price. When reached, shifts SL to option LTP ± buffer ticks. Creates SL if none exist."
+                  style={{ cursor: 'help', fontSize: 10 }}>ⓘ</span>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                <input
+                  type="number"
+                  value={tpValue}
+                  onChange={e => setTpValue(e.target.value)}
+                  placeholder="underlying price"
+                  min={0}
+                  step={0.05}
+                  style={{
+                    flex: 1, padding: '4px 6px', background: '#0d1117',
+                    border: '1px solid #30363d', borderRadius: 4,
+                    color: '#e6edf3', fontSize: 12,
+                  }}
+                />
+                {onRequestTpPick && (
+                  <button
+                    onClick={onRequestTpPick}
+                    title="Pick price from chart"
+                    style={{
+                      padding: '4px 7px', background: '#21262d',
+                      border: '1px solid #30363d', borderRadius: 4,
+                      color: '#8b949e', cursor: 'pointer', fontSize: 11,
+                    }}
+                  >⊕</button>
+                )}
+              </div>
+              <button
+                onClick={() => handleStartStrategy('UnderlyingTargetProfit')}
+                disabled={!stratHasPosition || stratLoading === 'UnderlyingTargetProfit'}
+                style={{
+                  width: '100%', padding: '5px 0', fontSize: 11, fontWeight: 600,
+                  border: 'none', borderRadius: 4,
+                  cursor: stratHasPosition && stratLoading !== 'UnderlyingTargetProfit' ? 'pointer' : 'not-allowed',
+                  background: stratHasPosition ? '#1a2a3a' : '#161b22',
+                  color: stratHasPosition ? '#58a6ff' : '#484f58',
+                }}
+              >
+                {stratLoading === 'UnderlyingTargetProfit' ? 'Starting…' : '▶ Start Underlying Target'}
+              </button>
+            </div>
+            )}
+
             {/* LockProfit */}
             <div style={{ marginBottom: 2 }}>
-              <div style={{ fontSize: 11, color: '#e6edf3', fontWeight: 600, marginBottom: 4 }}>Lock Profit</div>
-              <div style={{ fontSize: 9, color: '#484f58', marginBottom: 4 }}>
-                When price hits lock level, moves ALL SL orders to that price (one-time)
+              <div style={{ fontSize: 11, color: '#e6edf3', fontWeight: 600, marginBottom: 4 }}>
+                Lock Profit{' '}
+                <span title="When price hits lock level, shifts ALL SL orders to that price (one-time). Creates SL if none exist."
+                  style={{ cursor: 'help', fontSize: 10 }}>ⓘ</span>
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
                 <input
@@ -686,9 +746,10 @@ export default function OrderPanel({
               Trade Management {!stratHasPosition && <span style={{ fontWeight: 400, fontSize: 9 }}>(need position)</span>}
             </div>
             <div>
-              <div style={{ fontSize: 11, color: '#e6edf3', fontWeight: 600, marginBottom: 4 }}>Aggressive SL</div>
-              <div style={{ fontSize: 9, color: '#484f58', marginBottom: 4 }}>
-                Shift SL to 1% from bar close each bar{aggrSlOnlyInProfit ? ' · only in profit' : ''}
+              <div style={{ fontSize: 11, color: '#e6edf3', fontWeight: 600, marginBottom: 4 }}>
+                Aggressive SL{' '}
+                <span title={`One-shot: places a STOPLOSS at 1% from bar close to lock in profit.${aggrSlOnlyInProfit ? ' Only triggers when bar closes in profit.' : ''}`}
+                  style={{ cursor: 'help', fontSize: 10 }}>ⓘ</span>
               </div>
               <button
                 onClick={() => handleStartStrategy('AggressiveStoploss')}
@@ -715,7 +776,7 @@ export default function OrderPanel({
               <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginBottom: 6 }}>
                 {runningStrategies.map(s => {
                   const isEditing = editingStrategyId === s.strategy_id
-                  const canEditPrice = s.strategy_type === 'LockProfit' || s.strategy_type === 'TargetProfit'
+                  const canEditPrice = s.strategy_type === 'LockProfit' || s.strategy_type === 'TargetProfit' || s.strategy_type === 'UnderlyingTargetProfit'
                   return (
                     <div key={s.strategy_id} style={{ background: '#0d1117', borderRadius: 5, border: '1px solid #21262d', overflow: 'hidden' }}>
                       <div style={{ fontSize: 10, color: '#3fb950', display: 'flex', alignItems: 'center', gap: 4, padding: '4px 6px' }}>

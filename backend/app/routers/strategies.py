@@ -47,6 +47,7 @@ def start_strategy(req: StartStrategyRequest, user_id: str = Depends(get_request
         StrategyType.AGGRESSIVE_STOPLOSS,
         StrategyType.TARGET_PROFIT,
         StrategyType.LOCK_PROFIT,
+        StrategyType.UNDERLYING_TARGET_PROFIT,
     ):
         position = get_position(session.session_id, session.symbol, right)
         if position.side == "FLAT":
@@ -63,17 +64,25 @@ def start_strategy(req: StartStrategyRequest, user_id: str = Depends(get_request
                 detail="AutoStop requires quantity or funds_ratio_pct",
             )
 
-    # TargetProfit requires a target value
-    if req.strategy_type == StrategyType.TARGET_PROFIT:
+    # TargetProfit and UnderlyingTargetProfit require a target value
+    if req.strategy_type in (StrategyType.TARGET_PROFIT, StrategyType.UNDERLYING_TARGET_PROFIT):
         if req.target_profit_value is None:
             raise HTTPException(
                 status_code=400,
-                detail="TargetProfit requires target_profit_value",
+                detail=f"{req.strategy_type.value} requires target_profit_value",
             )
         if req.target_profit_value <= 0:
             raise HTTPException(
                 status_code=400,
                 detail="target_profit_value must be positive",
+            )
+
+    # UnderlyingTargetProfit is options-only — right must be CE or PE
+    if req.strategy_type == StrategyType.UNDERLYING_TARGET_PROFIT:
+        if right not in ("CE", "PE"):
+            raise HTTPException(
+                status_code=400,
+                detail="UnderlyingTargetProfit requires right='CE' or 'PE' (options only)",
             )
 
     # LockProfit requires a lock price value
