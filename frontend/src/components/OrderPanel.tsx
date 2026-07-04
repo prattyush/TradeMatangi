@@ -27,6 +27,8 @@ interface Props {
   injectedEditPrice: { orderId: string; price: number } | null
   onRequestTpPick?: () => void
   injectedTpPrice?: number | null
+  onRequestUtpPick?: () => void
+  injectedUtpPrice?: number | null
   // Strategy props
   instrumentType?: 'equity' | 'options'
   activeRight?: 'CE' | 'PE' | null
@@ -72,6 +74,8 @@ export default function OrderPanel({
   onRequestPricePick, injectedEditPrice,
   onRequestTpPick,
   injectedTpPrice,
+  onRequestUtpPick,
+  injectedUtpPrice,
   instrumentType = 'equity',
   activeRight = null,
   positionCE,
@@ -169,6 +173,11 @@ export default function OrderPanel({
   useEffect(() => {
     if (injectedTpPrice != null) setTpValue(injectedTpPrice.toFixed(2))
   }, [injectedTpPrice])
+
+  // Inject chart-picked price into UTP field
+  useEffect(() => {
+    if (injectedUtpPrice != null) setUtpValue(injectedUtpPrice.toFixed(2))
+  }, [injectedUtpPrice])
 
   // Inject chart-picked price into LP field
   useEffect(() => {
@@ -641,9 +650,9 @@ export default function OrderPanel({
                     color: '#e6edf3', fontSize: 12,
                   }}
                 />
-                {onRequestTpPick && (
+                {onRequestUtpPick && (
                   <button
-                    onClick={onRequestTpPick}
+                    onClick={onRequestUtpPick}
                     title="Pick price from chart"
                     style={{
                       padding: '4px 7px', background: '#21262d',
