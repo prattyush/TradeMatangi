@@ -366,6 +366,23 @@ export function useSimulation() {
     }))
   }, [])
 
+  const handleOrderConverted = useCallback((
+    orderId: string,
+    newOrderType: string,
+    triggerPrice: number,
+    limitPrice: number,
+    isStoploss: boolean,
+  ) => {
+    setState(s => ({
+      ...s,
+      openOrders: s.openOrders.map(o =>
+        o.order_id === orderId
+          ? { ...o, order_type: newOrderType as Order['order_type'], trigger_price: triggerPrice, limit_price: limitPrice, is_stoploss: isStoploss }
+          : o
+      ),
+    }))
+  }, [])
+
   const handleOrderFilled = useCallback(async (orderId: string, right: string | null | undefined) => {
     setState(s => ({
       ...s,
@@ -628,6 +645,7 @@ export function useSimulation() {
     cancelOrder,
     handleOrderFilled,
     handleOrderCancelled,
+    handleOrderConverted,
     addOpenOrder,
     clearOrderError,
     incrementWalletRefreshKey,

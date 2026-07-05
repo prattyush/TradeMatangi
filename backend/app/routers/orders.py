@@ -1,7 +1,7 @@
 import json
 import logging
 from fastapi import APIRouter, HTTPException, Query
-from app.models.schemas import Order, OrderType, TradeSide, PlaceOrderRequest, UpdateOrderRequest, BulkUpdateSLRequest
+from app.models.schemas import Order, OrderType, TradeSide, PlaceOrderRequest, UpdateOrderRequest, BulkUpdateSLRequest, ConvertOrderRequest
 from app.services import order_service, simulation as sim_svc
 from app.services.wallet_service import InsufficientFundsError, get_balance
 from app.config import LOT_SIZES, EQUITY_MIS_MARGIN_RATE
@@ -402,6 +402,62 @@ async def bulk_update_sl_route(req: BulkUpdateSLRequest):
                 )
 
     return {"updated": len(updated_orders), "orders": updated_orders}
+
+
+@router.post("/{order_id}/convert", response_model=Order)
+async def convert_order(order_id: str, req: ConvertOrderRequest):
+    """Convert a PENDING order to a different type (TARGET↔LIMIT, STOPLOSS→LIMIT)."""
+    session = sim_svc.get_session(req.session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    order = order_service.convert_order(
+        session_id=req.session_id,
+        order_id=order_id,
+        new_order_type=req.new_order_type,
+        trading_date=session.date,
+    )
+    if order is None:
+        raise HTTPException(status_code=404, detail="Order not found or not pending")
+
+    # ── Kotak real-trading integration ──────────────────────────────────────
+    if session.session_type == "real" and order.kotak_order_id:
+        if req.new_order_type == OrderType.LIMIT and order.order_type == OrderType.LIMIT:
+            # Was a STOPLOSS → now LIMIT: convert broker-side SL to LIMIT
+            try:
+                from app.services.kotak_service import get_service as get_kotak
+                get_kotak().modify_sl_to_limit_order(
+                    order.kotak_order_id, order.limit_price, order.quantity,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "convert_order %s: Kotak SL→LIMIT failed: %s", order_id, exc,
+                )
+        elif req.new_order_type == OrderType.STOPLOSS:
+            # Converted to STOPLOSS — cancel on Kotak (was a local order)
+            try:
+                from app.services.kotak_service import get_service as get_kotak
+                get_kotak().cancel_order(order.kotak_order_id)
+                get_kotak().deregister_fill_callback(order.kotak_order_id)
+            except Exception:
+                pass
+            order.kotak_order_id = None
+
+    # Emit SSE event so the frontend updates the order in-place
+    try:
+        import json as _json
+        session.queue.put_nowait(_json.dumps({
+            "type": "order_converted",
+            "order_id": order.order_id,
+            "new_order_type": order.order_type.value,
+            "trigger_price": order.trigger_price,
+            "limit_price": order.limit_price,
+            "is_stoploss": order.is_stoploss,
+        }))
+    except Exception:
+        pass
+
+    return order
 
 
 @router.patch("/{order_id}", response_model=Order)

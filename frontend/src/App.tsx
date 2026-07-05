@@ -353,6 +353,8 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
     } else if (event.type === 'order_cancelled') {
       // Kotak rejected a forwarded order — remove it from open orders and credit wallet back
       sim.handleOrderCancelled(event.order_id as string)
+    } else if (event.type === 'order_converted') {
+      sim.handleOrderConverted(event.order_id as string, event.new_order_type as string, event.trigger_price as number, event.limit_price as number, event.is_stoploss as boolean)
     } else if (event.type === 'strategy_completed') {
       setRunningStrategies(prev => prev.filter(s => s.strategy_id !== (event.strategy_id as string)))
     } else if (event.type === 'broker_error') {
@@ -1132,6 +1134,10 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
                 })
               }
               onCancelOrder={sim.cancelOrder}
+              onConvertOrder={async (orderId, newOrderType) => {
+                const updated = await api.convertOrder(sim.sessionId!, orderId, newOrderType)
+                sim.handleOrderConverted(updated.order_id, updated.order_type, updated.trigger_price, updated.limit_price, updated.is_stoploss)
+              }}
               onUpdateOrder={(orderId, triggerPrice, limitPrice) =>
                 sim.updateOrder(orderId, triggerPrice, limitPrice, targetDeviationPct)
               }
