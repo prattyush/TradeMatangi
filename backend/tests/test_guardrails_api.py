@@ -175,13 +175,15 @@ class TestUpdateSettingsEndpoint:
         assert resp.status_code == 200
         assert resp.json()["guardrail_block_bars"] == 5
 
-    def test_rejects_block_bars_zero(self):
+    def test_allows_block_bars_zero(self):
+        """block_bars=0 blocks only for the remainder of the current bar interval."""
         resp = client.post(
             "/api/guardrails/settings",
             json={"guardrail_block_bars": 0},
             headers=HEADERS,
         )
-        assert resp.status_code == 422
+        assert resp.status_code == 200
+        assert resp.json()["guardrail_block_bars"] == 0
 
     def test_rejects_block_bars_too_large(self):
         resp = client.post(

@@ -409,7 +409,7 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
     const banCapitalPct = parseFloat(grBanCapitalInput)
     const banLossTradePct = parseFloat(grBanLossTradeInput)
     const banMinTrades = parseInt(grBanMinTradesInput)
-    if (isNaN(blockBars) || blockBars < 1 || blockBars > 20) { setStatus('Block bars must be 1–20'); return }
+    if (isNaN(blockBars) || blockBars < 0 || blockBars > 20) { setStatus('Block bars must be 0–20'); return }
     if (isNaN(cooldownBlockBars) || cooldownBlockBars < 1 || cooldownBlockBars > 20) { setStatus('Cooldown block bars must be 1–20'); return }
     if (isNaN(cooldownLosses) || cooldownLosses < 1 || cooldownLosses > 20) { setStatus('Cooldown losses must be 1–20'); return }
     if (isNaN(banCapitalPct) || banCapitalPct < 1 || banCapitalPct > 100) { setStatus('Capital % must be 1–100'); return }
@@ -1190,7 +1190,7 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                     <span style={{ fontSize: 12, color: '#8b949e', flex: 1 }}>Block bars (n)</span>
                     <input
-                      type="number" min={1} max={20}
+                      type="number" min={0} max={20}
                       value={grBlockBarsInput}
                       onChange={e => setGrBlockBarsInput(e.target.value)}
                       style={{ width: 60, background: '#0d1117', border: '1px solid #30363d', borderRadius: 4, color: '#e6edf3', padding: '4px 8px', fontSize: 12 }}
