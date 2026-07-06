@@ -1162,18 +1162,6 @@ export default function OrderPanel({
                     {isActive && !isEditing && (
                       <span style={{ color: '#484f58', fontSize: 10, marginRight: 2 }} title="Edit">✎</span>
                     )}
-                    {onConvertOrder && isActive && !isEditing && (
-                      <button
-                        onClick={e => { e.stopPropagation(); onConvertOrder(order.order_id, getConvertTarget(order)) }}
-                        style={{
-                          background: 'none', border: 'none', color: '#484f58',
-                          cursor: 'pointer', fontSize: 11, padding: '0 3px', lineHeight: 1,
-                        }}
-                        title={`Convert to ${getConvertTarget(order)}`}
-                      >
-                        ↔
-                      </button>
-                    )}
                     <button
                       onClick={e => { e.stopPropagation(); onCancelOrder(order.order_id) }}
                       style={{
@@ -1228,6 +1216,19 @@ export default function OrderPanel({
                             fontSize: 10, whiteSpace: 'nowrap',
                           }}
                         >LTP</button>
+                        {onConvertOrder && (
+                          <button
+                            onClick={() => { onConvertOrder(order.order_id, getConvertTarget(order)); setEditingOrderId(null) }}
+                            title={`Convert to ${getConvertTarget(order)}`}
+                            style={{
+                              padding: '4px 7px', background: '#21262d',
+                              border: '1px solid #30363d', borderRadius: 4,
+                              color: '#8b949e', cursor: 'pointer', fontSize: 10, whiteSpace: 'nowrap',
+                            }}
+                          >
+                            ↻ {getConvertTarget(order)}
+                          </button>
+                        )}
                       </div>
                       {order.order_type === 'TARGET' && editPrice && !isNaN(parseFloat(editPrice)) && (
                         <div style={{ fontSize: 10, color: '#484f58' }}>
