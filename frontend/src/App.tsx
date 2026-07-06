@@ -1134,8 +1134,8 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
                 })
               }
               onCancelOrder={sim.cancelOrder}
-              onConvertOrder={async (orderId, newOrderType) => {
-                const updated = await api.convertOrder(sim.sessionId!, orderId, newOrderType)
+              onConvertOrder={async (orderId, newOrderType, price) => {
+                const updated = await api.convertOrder(sim.sessionId!, orderId, newOrderType, price)
                 sim.handleOrderConverted(updated.order_id, updated.order_type, updated.trigger_price, updated.limit_price, updated.is_stoploss)
               }}
               onUpdateOrder={(orderId, triggerPrice, limitPrice) =>
