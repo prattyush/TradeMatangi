@@ -268,6 +268,89 @@ def update_order(
     return order
 
 
+def convert_order(
+    session_id: str,
+    order_id: str,
+    new_order_type: "OrderType",
+    trading_date: str,
+) -> "Order | None":
+    """
+    Convert a PENDING order to a different type in-place.  Uses the order's
+    existing price as the basis for the new type.
+    """
+    order = _orders.get(session_id, {}).get(order_id)
+    if order is None or order.status != OrderStatus.PENDING:
+        return None
+    if new_order_type == order.order_type:
+        return order  # no-op
+
+    old_type = order.order_type
+    side = order.side
+    qty = order.quantity
+    user_id = order.user_id
+
+    # ── Resolve prices for the new type ──────────────────────────────────────
+    if new_order_type == OrderType.LIMIT:
+        # TARGET or STOPLOSS → LIMIT: use trigger_price as the limit_price
+        new_limit = order.trigger_price
+        new_trigger = new_limit  # schema consistency
+        new_is_sl = False
+    elif new_order_type == OrderType.TARGET:
+        # LIMIT → TARGET: use limit_price as trigger, auto-compute limit
+        new_trigger = order.limit_price
+        new_limit = _target_limit_price(side, new_trigger)
+        new_is_sl = False
+    elif new_order_type == OrderType.STOPLOSS:
+        # LIMIT → STOPLOSS: use limit_price as trigger, limit = trigger
+        new_trigger = order.limit_price
+        new_limit = new_trigger
+        new_is_sl = True
+    else:
+        return None
+
+    # ── Wallet reservation ──────────────────────────────────────────────────
+    # STOPLOSS orders have no reservation.  When converting to/from STOPLOSS,
+    # we skip wallet changes because these are exit orders for existing positions.
+    was_sl = (old_type == OrderType.STOPLOSS) or order.is_stoploss
+    is_sl = (new_order_type == OrderType.STOPLOSS) or new_is_sl
+
+    if side == TradeSide.BUY:
+        if was_sl and not is_sl:
+            # SL → non-SL BUY: no reservation (exit order for existing position)
+            pass
+        elif not was_sl and is_sl:
+            # non-SL → SL BUY: release existing reservation
+            from app.services.wallet_service import credit
+            if order.reserved_amount > 0:
+                credit(user_id, order.reserved_amount, trading_date)
+            order.reserved_amount = 0.0
+        elif not was_sl and not is_sl:
+            # TARGET ↔ LIMIT: adjust reservation to new limit price
+            new_reserved = round(qty * new_limit, 2)
+            diff = new_reserved - order.reserved_amount
+            if diff != 0:
+                from app.services.wallet_service import credit, debit
+                if diff > 0:
+                    debit(user_id, diff, trading_date)
+                elif diff < 0:
+                    credit(user_id, -diff, trading_date)
+            order.reserved_amount = new_reserved
+
+    # ── Apply the conversion ────────────────────────────────────────────────
+    order.order_type = new_order_type
+    order.trigger_price = new_trigger
+    order.limit_price = new_limit
+    order.is_stoploss = new_is_sl
+
+    _write_order_to_db(order)
+    logger.info(
+        "convert_order %s: %s → %s trigger=%.2f limit=%.2f",
+        order_id, old_type.value, new_order_type.value,
+        new_trigger, new_limit,
+    )
+    return order
+
+
 def check_orders(
     session_id: str,
     current_price: float,

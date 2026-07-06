@@ -21,6 +21,7 @@ interface Props {
     opts: { is_stoploss?: boolean; funds_ratio_pct?: number; target_deviation_pct?: number },
   ) => Promise<void>
   onCancelOrder: (orderId: string) => Promise<void>
+  onConvertOrder?: (orderId: string, newOrderType: 'TARGET' | 'LIMIT' | 'STOPLOSS') => Promise<void>
   onUpdateOrder: (orderId: string, triggerPrice?: number, limitPrice?: number) => Promise<void>
   // Price-pick from chart
   onRequestPricePick: (orderId: string) => void
@@ -70,7 +71,7 @@ type RatioKey = 'l' | 'm' | 'h'
 export default function OrderPanel({
   sessionState, currentPrice, openOrders, position,
   fundsRatioMode, fundsRatios, targetDeviationPct,
-  onPlaceOrder, onCancelOrder, onUpdateOrder,
+  onPlaceOrder, onCancelOrder, onConvertOrder, onUpdateOrder,
   onRequestPricePick, injectedEditPrice,
   onRequestTpPick,
   injectedTpPrice,
@@ -332,6 +333,22 @@ export default function OrderPanel({
     } finally {
       setStratLoading(null)
     }
+  }
+
+  // Determine what type to convert an order to based on current type + position context
+  const getConvertTarget = (order: Order): 'TARGET' | 'LIMIT' | 'STOPLOSS' => {
+    // TARGET / STOPLOSS → always convert to LIMIT
+    if (order.order_type === 'TARGET' || order.order_type === 'STOPLOSS') {
+      return 'LIMIT'
+    }
+    // LIMIT → TARGET, unless it's an exit order for an existing position → STOPLOSS
+    if (order.order_type === 'LIMIT') {
+      const isExitOrder =
+        (position.side === 'LONG' && order.side === 'SELL') ||
+        (position.side === 'SHORT' && order.side === 'BUY')
+      return isExitOrder ? 'STOPLOSS' : 'TARGET'
+    }
+    return 'LIMIT' // fallback
   }
 
   const handleCancelStrategy = async (strategyId: string) => {
@@ -1144,6 +1161,18 @@ export default function OrderPanel({
                     </span>
                     {isActive && !isEditing && (
                       <span style={{ color: '#484f58', fontSize: 10, marginRight: 2 }} title="Edit">✎</span>
+                    )}
+                    {onConvertOrder && isActive && !isEditing && (
+                      <button
+                        onClick={e => { e.stopPropagation(); onConvertOrder(order.order_id, getConvertTarget(order)) }}
+                        style={{
+                          background: 'none', border: 'none', color: '#484f58',
+                          cursor: 'pointer', fontSize: 11, padding: '0 3px', lineHeight: 1,
+                        }}
+                        title={`Convert to ${getConvertTarget(order)}`}
+                      >
+                        ↔
+                      </button>
                     )}
                     <button
                       onClick={e => { e.stopPropagation(); onCancelOrder(order.order_id) }}

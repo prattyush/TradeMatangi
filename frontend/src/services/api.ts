@@ -663,6 +663,16 @@ const api = {
     return res.json()
   },
 
+  async convertOrder(sessionId: string, orderId: string, newOrderType: 'TARGET' | 'LIMIT' | 'STOPLOSS'): Promise<Order> {
+    const res = await fetch(`${BACKEND_URL}/api/orders/${orderId}/convert`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ..._authHeaders() },
+      body: JSON.stringify({ session_id: sessionId, new_order_type: newOrderType }),
+    })
+    if (!res.ok) throw new Error(`Convert order failed: ${res.status}`)
+    return res.json()
+  },
+
   async getWallet(date: string): Promise<WalletResponse> {
     const res = await fetch(`${BACKEND_URL}/api/wallet?date=${encodeURIComponent(date)}`, {
       headers: _authHeaders(),
