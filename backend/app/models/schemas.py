@@ -207,6 +207,7 @@ class UpdateOrderRequest(BaseModel):
 class ConvertOrderRequest(BaseModel):
     session_id: str
     new_order_type: OrderType            # TARGET, LIMIT, or STOPLOSS
+    price: float | None = None          # optional: use this price instead of existing order price
 
 
 class UpdatePaneStrikeRequest(BaseModel):

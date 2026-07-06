@@ -663,11 +663,13 @@ const api = {
     return res.json()
   },
 
-  async convertOrder(sessionId: string, orderId: string, newOrderType: 'TARGET' | 'LIMIT' | 'STOPLOSS'): Promise<Order> {
+  async convertOrder(sessionId: string, orderId: string, newOrderType: 'TARGET' | 'LIMIT' | 'STOPLOSS', price?: number): Promise<Order> {
+    const body: Record<string, unknown> = { session_id: sessionId, new_order_type: newOrderType }
+    if (price !== undefined) body.price = price
     const res = await fetch(`${BACKEND_URL}/api/orders/${orderId}/convert`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ..._authHeaders() },
-      body: JSON.stringify({ session_id: sessionId, new_order_type: newOrderType }),
+      body: JSON.stringify(body),
     })
     if (!res.ok) throw new Error(`Convert order failed: ${res.status}`)
     return res.json()

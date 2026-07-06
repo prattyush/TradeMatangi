@@ -416,6 +416,7 @@ async def convert_order(order_id: str, req: ConvertOrderRequest):
         order_id=order_id,
         new_order_type=req.new_order_type,
         trading_date=session.date,
+        price=req.price,
     )
     if order is None:
         raise HTTPException(status_code=404, detail="Order not found or not pending")
