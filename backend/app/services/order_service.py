@@ -273,10 +273,11 @@ def convert_order(
     order_id: str,
     new_order_type: "OrderType",
     trading_date: str,
+    price: float | None = None,
 ) -> "Order | None":
     """
-    Convert a PENDING order to a different type in-place.  Uses the order's
-    existing price as the basis for the new type.
+    Convert a PENDING order to a different type in-place.  Uses the provided
+    price if given, otherwise falls back to the order's existing trigger/limit price.
     """
     order = _orders.get(session_id, {}).get(order_id)
     if order is None or order.status != OrderStatus.PENDING:
@@ -291,18 +292,18 @@ def convert_order(
 
     # ── Resolve prices for the new type ──────────────────────────────────────
     if new_order_type == OrderType.LIMIT:
-        # TARGET or STOPLOSS → LIMIT: use trigger_price as the limit_price
-        new_limit = order.trigger_price
+        # TARGET or STOPLOSS → LIMIT: use provided price or trigger_price as limit_price
+        new_limit = price if price is not None else order.trigger_price
         new_trigger = new_limit  # schema consistency
         new_is_sl = False
     elif new_order_type == OrderType.TARGET:
-        # LIMIT → TARGET: use limit_price as trigger, auto-compute limit
-        new_trigger = order.limit_price
+        # LIMIT → TARGET: use provided price or limit_price as trigger
+        new_trigger = price if price is not None else order.limit_price
         new_limit = _target_limit_price(side, new_trigger)
         new_is_sl = False
     elif new_order_type == OrderType.STOPLOSS:
-        # LIMIT → STOPLOSS: use limit_price as trigger, limit = trigger
-        new_trigger = order.limit_price
+        # LIMIT → STOPLOSS: use provided price or limit_price as trigger
+        new_trigger = price if price is not None else order.limit_price
         new_limit = new_trigger
         new_is_sl = True
     else:

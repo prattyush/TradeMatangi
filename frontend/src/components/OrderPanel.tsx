@@ -21,7 +21,7 @@ interface Props {
     opts: { is_stoploss?: boolean; funds_ratio_pct?: number; target_deviation_pct?: number },
   ) => Promise<void>
   onCancelOrder: (orderId: string) => Promise<void>
-  onConvertOrder?: (orderId: string, newOrderType: 'TARGET' | 'LIMIT' | 'STOPLOSS') => Promise<void>
+  onConvertOrder?: (orderId: string, newOrderType: 'TARGET' | 'LIMIT' | 'STOPLOSS', price?: number) => Promise<void>
   onUpdateOrder: (orderId: string, triggerPrice?: number, limitPrice?: number) => Promise<void>
   // Price-pick from chart
   onRequestPricePick: (orderId: string) => void
@@ -130,6 +130,7 @@ export default function OrderPanel({
 
   // Inline edit state
   const [editingOrderId, setEditingOrderId] = useState<string | null>(null)
+  const [pendingConversion, setPendingConversion] = useState<'TARGET' | 'LIMIT' | 'STOPLOSS' | null>(null)
   const [editPrice, setEditPrice] = useState('')
   const [updating, setUpdating] = useState(false)
   const [editError, setEditError] = useState<string | null>(null)
@@ -258,6 +259,7 @@ export default function OrderPanel({
     setEditingOrderId(null)
     setEditPrice('')
     setEditError(null)
+    setPendingConversion(null)
   }
 
   const saveEdit = async (order: Order) => {
@@ -269,13 +271,16 @@ export default function OrderPanel({
     setUpdating(true)
     setEditError(null)
     try {
-      if (order.order_type === 'LIMIT') {
+      if (pendingConversion && onConvertOrder) {
+        await onConvertOrder(order.order_id, pendingConversion, p)
+      } else if (order.order_type === 'LIMIT') {
         await onUpdateOrder(order.order_id, undefined, p)
       } else {
         await onUpdateOrder(order.order_id, p, undefined)
       }
       setEditingOrderId(null)
       setEditPrice('')
+      setPendingConversion(null)
     } catch (e) {
       setEditError(e instanceof Error ? e.message : 'Update failed')
     } finally {
@@ -1218,12 +1223,16 @@ export default function OrderPanel({
                         >LTP</button>
                         {onConvertOrder && (
                           <button
-                            onClick={() => { onConvertOrder(order.order_id, getConvertTarget(order)); setEditingOrderId(null) }}
+                            onClick={() => setPendingConversion(
+                              pendingConversion === getConvertTarget(order) ? null : getConvertTarget(order)
+                            )}
                             title={`Convert to ${getConvertTarget(order)}`}
                             style={{
-                              padding: '4px 7px', background: '#21262d',
-                              border: '1px solid #30363d', borderRadius: 4,
-                              color: '#8b949e', cursor: 'pointer', fontSize: 10, whiteSpace: 'nowrap',
+                              padding: '4px 7px', background: pendingConversion === getConvertTarget(order) ? '#1f6feb' : '#21262d',
+                              border: `1px solid ${pendingConversion === getConvertTarget(order) ? '#58a6ff' : '#30363d'}`,
+                              borderRadius: 4,
+                              color: pendingConversion === getConvertTarget(order) ? '#fff' : '#8b949e',
+                              cursor: 'pointer', fontSize: 10, whiteSpace: 'nowrap',
                             }}
                           >
                             ↻ {getConvertTarget(order)}
@@ -1250,7 +1259,7 @@ export default function OrderPanel({
                             cursor: updating ? 'not-allowed' : 'pointer', fontSize: 11, fontWeight: 600,
                           }}
                         >
-                          {updating ? '…' : 'Save'}
+                          {updating ? '…' : pendingConversion ? `Save as ${pendingConversion}` : 'Save'}
                         </button>
                         <button
                           onClick={cancelEdit}
