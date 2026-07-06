@@ -204,6 +204,11 @@ class UpdateOrderRequest(BaseModel):
     target_deviation_pct: float = 0.01   # deviation for recomputing TARGET limit from new trigger
 
 
+class ConvertOrderRequest(BaseModel):
+    session_id: str
+    new_order_type: OrderType            # TARGET, LIMIT, or STOPLOSS
+
+
 class UpdatePaneStrikeRequest(BaseModel):
     right: str   # "CE" or "PE"
     strike: int
