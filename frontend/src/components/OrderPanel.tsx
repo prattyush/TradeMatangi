@@ -62,6 +62,7 @@ interface Props {
   onRequestLpPick?: () => void
   injectedLpPrice?: number | null
   onGuardRailBlocked?: (type: 'BLOCK' | 'COOLDOWN' | 'BAN', reason: string) => void
+  onSnapshotEvent?: (event: { type: string; description: string; details: Record<string, unknown> }) => void
 }
 
 const QUANTITY_OPTIONS = [1, 2, 3, 5, 10]
@@ -94,6 +95,7 @@ export default function OrderPanel({
   onRequestLpPick,
   injectedLpPrice,
   onGuardRailBlocked,
+  onSnapshotEvent,
 }: Props) {
   const [orderType, setOrderType] = useState<OrderTypeFull>('TARGET')
   const [side, setSide] = useState<'BUY' | 'SELL'>('BUY')
@@ -234,6 +236,17 @@ export default function OrderPanel({
         await onPlaceOrder(side, orderType, parsedPrice, quantity, { target_deviation_pct: deviation })
       }
       setPrice('')
+      onSnapshotEvent?.({
+        type: 'order_placed',
+        description: `${side} ${orderType === 'MARKET' ? 'LIMIT(Mkt)' : orderType} @ ${orderType === 'MARKET' ? (side === 'BUY' ? currentPrice * 1.01 : currentPrice * 0.99).toFixed(2) : parsedPrice.toFixed(2)}`,
+        details: {
+          side,
+          orderType: orderType === 'MARKET' ? 'LIMIT' : orderType,
+          price: orderType === 'MARKET' ? (side === 'BUY' ? currentPrice * 1.01 : currentPrice * 0.99) : parsedPrice,
+          quantity: orderType === 'STOPLOSS' ? slQty : quantity,
+          fundsRatioPct: fundsRatioMode ? ratioPct : undefined,
+        },
+      })
     } catch (e) {
       const msg = e instanceof Error ? e.message : 'Failed to place order'
       if (msg.startsWith('GUARDRAIL:') && onGuardRailBlocked) {
@@ -278,6 +291,13 @@ export default function OrderPanel({
       } else {
         await onUpdateOrder(order.order_id, p, undefined)
       }
+      onSnapshotEvent?.({
+        type: pendingConversion ? 'order_converted' : 'order_edited',
+        description: pendingConversion
+          ? `${order.order_type}→${pendingConversion} @ ${p}`
+          : `${order.order_type} edited to ${p}`,
+        details: { orderId: order.order_id, newPrice: p, conversion: pendingConversion ?? null, oldType: order.order_type },
+      })
       setEditingOrderId(null)
       setEditPrice('')
       setPendingConversion(null)
