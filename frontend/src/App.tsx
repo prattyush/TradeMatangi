@@ -8,7 +8,7 @@ import OrderPanel from './components/OrderPanel'
 import WalletWidget from './components/WalletWidget'
 import GuardRailPopup from './components/GuardRailPopup'
 import PatternAlertToast, { PatternAlert } from './components/PatternAlertToast'
-import SettingsModal, { loadFundsRatioMode, loadFundsRatios, loadTargetDeviationPct, loadBrokeragePerOrder, loadStrategyIntervalSecs, loadAutostopTriggerType, loadAutostopDeviationPct, loadHistoricalDays, loadPnlPctMode, loadBreakevenMode, loadTargetProfitBufferTicks, loadAggrSlOnlyInProfit, FundsRatios } from './components/SettingsModal'
+import SettingsModal, { loadFundsRatioMode, loadFundsRatios, loadTargetDeviationPct, loadBrokeragePerOrder, loadStrategyIntervalSecs, loadAutostopTriggerType, loadAutostopDeviationPct, loadHistoricalDays, loadPnlPctMode, loadBreakevenMode, loadTargetProfitBufferTicks, loadAggrSlOnlyInProfit, loadAutoStartEventSnapshots, FundsRatios } from './components/SettingsModal'
 import { StrategyResponse, StartStrategyRequest, Order } from './services/api'
 import LoginScreen from './components/LoginScreen'
 import TradeAnalysis from './components/TradeAnalysis'
@@ -138,6 +138,7 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
   const [isRealTradingUser, setIsRealTradingUser] = useState(false)
   const [guardrailPopup, setGuardrailPopup] = useState<{ type: 'BLOCK' | 'COOLDOWN' | 'BAN'; reason: string } | null>(null)
   const [combinedPnlOpen, setCombinedPnlOpen] = useState(false)
+  const [autoStartSnapshots, setAutoStartSnapshots] = useState(loadAutoStartEventSnapshots)
   const [patternAlerts, setPatternAlerts] = useState<PatternAlert[]>([])
 
   // ── Trade Analysis modal ────────────────────────────────────────────────────
@@ -352,6 +353,17 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
       setGuardrailPopup({ type: grType, reason: grReason })
     } else if (event.type === 'order_filled') {
       sim.handleOrderFilled(event.order_id as string, event.right as string | null | undefined)
+      captureSnapshot({
+        type: 'order_filled',
+        description: `${event.side} FILLED @ ${event.filled_price}`,
+        details: {
+          side: event.side,
+          filled_price: event.filled_price,
+          trigger_price: event.trigger_price,
+          quantity: event.quantity,
+          right: event.right,
+        },
+      })
     } else if (event.type === 'order_placed') {
       // Strategy-placed orders (e.g. AutoStop TARGET) surfaced so the UI shows them
       // in the open orders panel and the SL tab can be used after they fill.
@@ -388,7 +400,7 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
       const peBar = mkCandle(event.bar_open_pe, event.bar_high_pe, event.bar_low_pe, event.bar_close_pe, event.bar_time)
       sim.handleBarPaused(event.bar_index as number, event.total_bars as number, eqBar, ceBar, peBar)
     }
-  }, [sim.setLatestTick, sim.handleSessionEnded, sim.handleOrderFilled, sim.handleOrderCancelled, sim.addOpenOrder, sim.addTradeFromSSE, sim.handleBarPaused, setGuardrailPopup, setRunningStrategies])
+  }, [sim.setLatestTick, sim.handleSessionEnded, sim.handleOrderFilled, sim.handleOrderCancelled, sim.addOpenOrder, sim.addTradeFromSSE, sim.handleBarPaused, setGuardrailPopup, setRunningStrategies, captureSnapshot])
 
   useSSE(sim.sseUrl, handleSSEMessage)
 
@@ -399,7 +411,8 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
       brokerage_per_order: brokeragePerOrder,
       strategy_interval_secs: stratIntervalSecs,
     })
-  }, [sim.startSession, brokeragePerOrder, stratIntervalSecs])
+    if (autoStartSnapshots) startSnapshots()
+  }, [sim.startSession, brokeragePerOrder, stratIntervalSecs, autoStartSnapshots, startSnapshots])
 
   // ── Price pick: chart clicked in pick mode ───────────────────────────────────
   const handleChartPriceSelect = useCallback((price: number) => {
@@ -930,6 +943,7 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
           onHistoricalDaysChange={setHistoricalDays}
           onPnlPctModeChange={setPnlPctMode}
           onGuardRailSettingsChange={() => {}}
+          onAutoStartSnapshotsChange={setAutoStartSnapshots}
         />
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: '#484f58' }}>
           <span>{authUser.email}</span>

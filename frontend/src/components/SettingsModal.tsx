@@ -21,6 +21,7 @@ const PNL_PCT_MODE_KEY = 'pnlPctMode'
 const BREAKEVEN_MODE_KEY = 'breakevenMode'
 const TARGET_PROFIT_BUFFER_TICKS_KEY = 'targetProfitBufferTicks'
 const AGGR_SL_ONLY_IN_PROFIT_KEY = 'aggrSlOnlyInProfit'
+const AUTO_START_SNAPSHOTS_KEY = 'autoStartEventSnapshots'
 
 const GUARDRAIL_BLOCK_BARS_KEY = 'guardrailBlockBars'
 const GUARDRAIL_COOLDOWN_BLOCK_BARS_KEY = 'guardrailCooldownBlockBars'
@@ -131,6 +132,9 @@ export function loadAggrSlOnlyInProfit(): boolean {
   return localStorage.getItem(AGGR_SL_ONLY_IN_PROFIT_KEY) === 'true'
 }
 
+export function loadAutoStartEventSnapshots(): boolean {
+  return localStorage.getItem(AUTO_START_SNAPSHOTS_KEY) === 'true'
+}
 
 export interface GuardRailSettingsLocal {
   blockBars: number
@@ -156,9 +160,10 @@ interface Props {
   onHistoricalDaysChange?: (days: number) => void
   onPnlPctModeChange?: (enabled: boolean) => void
   onGuardRailSettingsChange?: (settings: GuardRailSettingsLocal) => void
+  onAutoStartSnapshotsChange?: (enabled: boolean) => void
 }
 
-export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessionActive, onWalletReset, onFundsRatioChange, onTargetDeviationChange, onBrokerageChange, onStrategySettingsChange, onHistoricalDaysChange, onPnlPctModeChange, onGuardRailSettingsChange }: Props) {
+export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessionActive, onWalletReset, onFundsRatioChange, onTargetDeviationChange, onBrokerageChange, onStrategySettingsChange, onHistoricalDaysChange, onPnlPctModeChange, onGuardRailSettingsChange, onAutoStartSnapshotsChange }: Props) {
   const [open, setOpen] = useState(false)
   const [customAmount, setCustomAmount] = useState('')
   const [status, setStatus] = useState<string | null>(null)
@@ -211,6 +216,7 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
   // GuardRails settings state
   const [grBanEnabled, setGrBanEnabled] = useState(loadGuardRailBanEnabled)
   const [grCooldownEnabled, setGrCooldownEnabled] = useState(loadGuardRailCooldownEnabled)
+  const [autoStartSnapshots, setAutoStartSnapshots] = useState(loadAutoStartEventSnapshots)
   const [grBlockBarsInput, setGrBlockBarsInput] = useState(() => String(loadGuardRailBlockBars()))
   const [grCooldownBlockBarsInput, setGrCooldownBlockBarsInput] = useState(() => String(loadGuardRailCooldownBlockBars()))
   const [grCooldownLossesInput, setGrCooldownLossesInput] = useState(() => String(loadGuardRailCooldownLosses()))
@@ -815,6 +821,28 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
               </div>
               <div style={{ fontSize: 11, color: '#484f58', marginTop: 6 }}>
                 Prior trading days of chart context loaded at session start
+              </div>
+            </div>
+
+            {/* Auto-Start Event Snapshots */}
+            <div style={{ borderTop: '1px solid #21262d', paddingTop: 16 }}>
+              <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 10, fontWeight: 600 }}>EVENT SNAPSHOTS</div>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 13, color: '#c9d1d9' }}>
+                <input
+                  type="checkbox"
+                  checked={autoStartSnapshots}
+                  onChange={e => {
+                    const val = e.target.checked
+                    setAutoStartSnapshots(val)
+                    localStorage.setItem(AUTO_START_SNAPSHOTS_KEY, String(val))
+                    onAutoStartSnapshotsChange?.(val)
+                  }}
+                  style={{ width: 16, height: 16, accentColor: '#1f6feb' }}
+                />
+                Auto-start event capture on session start
+              </label>
+              <div style={{ fontSize: 11, color: '#484f58', marginTop: 6 }}>
+                When enabled, event snapshots automatically begin when you start any session (sim, paper, or real)
               </div>
             </div>
 
