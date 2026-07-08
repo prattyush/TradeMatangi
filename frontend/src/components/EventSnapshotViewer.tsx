@@ -20,9 +20,11 @@ interface Props {
 }
 
 export default function EventSnapshotViewer({ session, snapshots, onClose, onDeleteAll }: Props) {
+  // Sort by timestamp ascending for chronological event list
+  const sorted = snapshots.length > 0 ? [...snapshots].sort((a, b) => a.timestamp - b.timestamp) : snapshots
   const [selectedIdx, setSelectedIdx] = useState(0)
   const [deleting, setDeleting] = useState(false)
-  const snap = snapshots[selectedIdx] ?? null
+  const snap = sorted[selectedIdx] ?? null
 
   const handleDeleteAll = async () => {
     if (!confirm(`Delete all ${snapshots.length} event snapshots for ${session.date}?`)) return
@@ -39,7 +41,7 @@ export default function EventSnapshotViewer({ session, snapshots, onClose, onDel
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.key === 'ArrowUp') setSelectedIdx(i => Math.max(0, i - 1))
-      if (e.key === 'ArrowDown') setSelectedIdx(i => Math.min(snapshots.length - 1, i + 1))
+      if (e.key === 'ArrowDown') setSelectedIdx(i => Math.min(sorted.length - 1, i + 1))
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
@@ -87,7 +89,7 @@ export default function EventSnapshotViewer({ session, snapshots, onClose, onDel
             Events (↑↓ to navigate)
           </div>
           <div style={{ flex: 1, overflowY: 'auto' }}>
-            {snapshots.map((s, i) => (
+            {sorted.map((s, i) => (
               <div key={s.event_id} onClick={() => setSelectedIdx(i)}
                 style={{
                   padding: '8px 12px', cursor: 'pointer',
@@ -236,9 +238,9 @@ function SnapshotChart({
           e9?.setData(e9d)
           e21?.setData(e21d)
 
-          // Ensure the most recent bars (including snapshot) are visible
+          // Show enough bars for context: last ~90 min (30 bars at 3-min)
           const lastTime = sorted[sorted.length - 1].time as number
-          const firstTime = Math.max(sorted[0].time as number, lastTime - 3600) // last hour
+          const firstTime = Math.max(sorted[0].time as number, lastTime - 5400)
           try {
             chartRef.current?.timeScale().setVisibleRange({
               from: firstTime as Time,
@@ -475,7 +477,7 @@ function SnapshotOptionsChart({
           seriesRef.current.setData(sorted)
 
           const lastTime = sorted[sorted.length - 1].time as number
-          const firstTime = Math.max(sorted[0].time as number, lastTime - 3600)
+          const firstTime = Math.max(sorted[0].time as number, lastTime - 5400)
           try {
             chartRef.current?.timeScale().setVisibleRange({
               from: firstTime as Time,
