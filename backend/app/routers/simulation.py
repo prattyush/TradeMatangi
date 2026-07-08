@@ -154,16 +154,32 @@ async def start_simulation(
     internal_session_type = "sim" if is_stepwise else req.session_type
 
     # Enforce one session per (user, symbol, date, type) per day.
-    # If a session already exists for today, resume it so positions and trades remain visible
-    # under the same session_id — this lets the user close existing positions after a reconnect.
+    # For paper/real: resume the existing session so positions and trades remain visible
+    # under the same session_id after a reconnect.
+    # For sim: if the user restarts with new params (start_time, speed, OTM), stop the
+    # old session and create a fresh one — the user wants a new practice run, not a resume.
     existing_record = sim_svc.find_session_by_context(
         user_id, req.symbol, req.date, internal_session_type
     )
     if existing_record:
         existing_session_id = existing_record["session_id"]
-        # Already running in memory — return it (idempotent start)
         active = sim_svc.get_session(existing_session_id)
-        if active:
+        # For sim sessions: stop the old one and create fresh with new params
+        if internal_session_type == "sim":
+            if active:
+                logger.info("start_simulation: stopping existing sim session %s for restart", existing_session_id)
+                sim_svc.stop_session(active)
+            else:
+                logger.info("start_simulation: removing stale DB record for sim session %s", existing_session_id)
+                try:
+                    from app.services.db import get_dynamodb_resource
+                    table = get_dynamodb_resource().Table("Sessions")
+                    table.delete_item(Key={"session_id": existing_session_id})
+                except Exception:
+                    logger.exception("Failed to remove stale session record %s", existing_session_id)
+            # Fall through to create_session below
+        elif active:
+            # Paper/real: already running in memory — return it (idempotent start)
             logger.info("start_simulation: returning already-active session %s", existing_session_id)
             return SimulationStartResponse(
                 session_id=active.session_id,
@@ -183,53 +199,54 @@ async def start_simulation(
                 stepwise=active.stepwise,
                 total_bars=None,
             )
-        # Session exists in DB but not in memory — rebuild and resume.
-        # Forward the request's CE/PE strikes so the user can change OTM on each restart.
-        logger.info("start_simulation: resuming session %s from DB", existing_session_id)
-        req_ce = req.strike_ce if req.strike_ce is not None else req.strike
-        req_pe = req.strike_pe if req.strike_pe is not None else req.strike
-        session = sim_svc.rebuild_session_from_db(
-            existing_record,
-            user_id=user_id,
-            strike_ce=req_ce,
-            strike_pe=req_pe,
-            brokerage_per_order=req.brokerage_per_order,
-            strategy_interval_secs=req.strategy_interval_secs,
-        )
-        # For real trading: re-sync wallet from broker so balance reflects any trades
-        # that happened at the broker while the session was down.
-        if is_real:
-            try:
-                from app.services.kotak_service import get_service as get_kotak, KotakError
-                funds = get_kotak().get_funds()
-                from app.services import wallet_service
-                wallet_service.reset(user_id, req.date, funds)
-                session.session_capital = funds
-                logger.info(
-                    "start_simulation: real session resume — wallet synced from Kotak: %.2f",
-                    funds,
-                )
-            except Exception as exc:
-                logger.warning("start_simulation: Kotak wallet sync on resume failed: %s", exc)
-        sim_svc.start_session(session)
-        return SimulationStartResponse(
-            session_id=session.session_id,
-            symbol=session.symbol,
-            date=session.date,
-            start_time=session.start_time,
-            speed=session.speed,
-            session_capital=session.session_capital,
-            instrument_type=session.instrument_type,
-            strike=session.strike,
-            expiry=session.expiry,
-            right=session.right,
-            strike_ce=session.strike_ce,
-            strike_pe=session.strike_pe,
-            brokerage_per_order=session.brokerage_per_order,
-            session_type=session.session_type,
-            stepwise=session.stepwise,
-            total_bars=None,
-        )
+        else:
+            # Paper/real: session exists in DB but not in memory — rebuild and resume.
+            # Forward the request's CE/PE strikes so the user can change OTM on each restart.
+            logger.info("start_simulation: resuming session %s from DB", existing_session_id)
+            req_ce = req.strike_ce if req.strike_ce is not None else req.strike
+            req_pe = req.strike_pe if req.strike_pe is not None else req.strike
+            session = sim_svc.rebuild_session_from_db(
+                existing_record,
+                user_id=user_id,
+                strike_ce=req_ce,
+                strike_pe=req_pe,
+                brokerage_per_order=req.brokerage_per_order,
+                strategy_interval_secs=req.strategy_interval_secs,
+            )
+            # For real trading: re-sync wallet from broker so balance reflects any trades
+            # that happened at the broker while the session was down.
+            if is_real:
+                try:
+                    from app.services.kotak_service import get_service as get_kotak, KotakError
+                    funds = get_kotak().get_funds()
+                    from app.services import wallet_service
+                    wallet_service.reset(user_id, req.date, funds)
+                    session.session_capital = funds
+                    logger.info(
+                        "start_simulation: real session resume — wallet synced from Kotak: %.2f",
+                        funds,
+                    )
+                except Exception as exc:
+                    logger.warning("start_simulation: Kotak wallet sync on resume failed: %s", exc)
+            sim_svc.start_session(session)
+            return SimulationStartResponse(
+                session_id=session.session_id,
+                symbol=session.symbol,
+                date=session.date,
+                start_time=session.start_time,
+                speed=session.speed,
+                session_capital=session.session_capital,
+                instrument_type=session.instrument_type,
+                strike=session.strike,
+                expiry=session.expiry,
+                right=session.right,
+                strike_ce=session.strike_ce,
+                strike_pe=session.strike_pe,
+                brokerage_per_order=session.brokerage_per_order,
+                session_type=session.session_type,
+                stepwise=session.stepwise,
+                total_bars=None,
+            )
 
     session = sim_svc.create_session(
         symbol=req.symbol,
