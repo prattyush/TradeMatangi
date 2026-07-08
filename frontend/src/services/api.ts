@@ -270,13 +270,22 @@ export interface SnapshotData {
   position: SnapshotPosition
   position_ce: SnapshotPosition
   position_pe: SnapshotPosition
+  // Combined P&L across all positions
+  combined_pnl: number
+  combined_pnl_pct: number
   wallet_balance: number
   session_capital: number
   wallet_used_pct: number
+  // How many distinct positions are open (equity + CE + PE)
+  active_positions: number
   open_orders: Order[]
   strike_ce: number | null
   strike_pe: number | null
   expiry: string | null
+  // Snapshot metadata: exact event timestamp (not just bar start)
+  event_timestamp: number
+  // Quantity mode: "quantity" or "funds_ratio"
+  quantity_mode: string
 }
 
 export interface EventSnapshot {

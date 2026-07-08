@@ -554,17 +554,17 @@ function SnapshotDetail({ snapshot }: { snapshot: EventSnapshot }) {
   const timestamp = snapshot.timestamp
   const [optionTab, setOptionTab] = useState<'underlying' | 'CE' | 'PE'>('underlying')
 
-  // Compute overall session P&L%: how much of capital is gained/lost vs starting capital
-  const sessionPnl = snap.wallet_balance - snap.session_capital
-  const sessionPnlPct = snap.session_capital > 0 ? (sessionPnl / snap.session_capital) * 100 : 0
-  const sessionPnlColor = sessionPnl >= 0 ? '#3fb950' : '#f85149'
-
-  // Count active positions
-  const activePositions = [
+  // Use new combined_pnl fields or fall back to computed values
+  const combinedPnl = snap.combined_pnl ?? (snap.wallet_balance - snap.session_capital)
+  const combinedPnlPct = snap.combined_pnl_pct ?? (snap.session_capital > 0 ? (combinedPnl / snap.session_capital) * 100 : 0)
+  const pnlColor = combinedPnl >= 0 ? '#3fb950' : '#f85149'
+  // Fallback: compute active positions from snap data
+  const activePosCount = [
     snap.position.side !== 'FLAT' ? 1 : 0,
     isOptions && snap.position_ce.side !== 'FLAT' ? 1 : 0,
     isOptions && snap.position_pe.side !== 'FLAT' ? 1 : 0,
   ].reduce((a, b) => a + b, 0)
+  const activePos = snap.active_positions ?? activePosCount
 
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
@@ -575,13 +575,13 @@ function SnapshotDetail({ snapshot }: { snapshot: EventSnapshot }) {
       }}>
         <span>💰 Wallet: <span style={{ color: '#e6edf3' }}>₹{snap.wallet_balance.toLocaleString('en-IN')}</span> / ₹{snap.session_capital.toLocaleString('en-IN')}</span>
         <span>📊 Used: <span style={{ color: '#e6edf3' }}>{snap.wallet_used_pct}%</span></span>
-        <span>📈 Session P&L: <span style={{ color: sessionPnlColor, fontWeight: 600 }}>
-          {sessionPnl >= 0 ? '+' : ''}₹{Math.abs(sessionPnl).toFixed(2)} ({sessionPnlPct >= 0 ? '+' : ''}{sessionPnlPct.toFixed(2)}%)
+        <span>📈 P&L: <span style={{ color: pnlColor, fontWeight: 600 }}>
+          {combinedPnl >= 0 ? '+' : ''}₹{Math.abs(combinedPnl).toFixed(2)} ({combinedPnlPct >= 0 ? '+' : ''}{combinedPnlPct.toFixed(2)}%)
         </span></span>
-        {activePositions > 0 && (
-          <span>🎯 {activePositions} active position{activePositions > 1 ? 's' : ''}</span>
+        {activePos > 0 && (
+          <span>🎯 {activePos} position{activePos > 1 ? 's' : ''}</span>
         )}
-        <span>📋 {snap.open_orders.length} open order{snap.open_orders.length !== 1 ? 's' : ''}</span>
+        <span>📋 {snap.open_orders.length} order{snap.open_orders.length !== 1 ? 's' : ''}</span>
       </div>
 
       {/* Open orders strip with event description */}
@@ -597,8 +597,7 @@ function SnapshotDetail({ snapshot }: { snapshot: EventSnapshot }) {
               background: o.is_stoploss ? '#3d1010' : '#161b22', borderRadius: 4, padding: '2px 8px',
               border: `1px solid ${o.is_stoploss ? '#8b1a1a' : '#21262d'}`, fontSize: 10, color: '#c9d1d9',
             }}>
-              {o.side} {o.order_type}{o.is_stoploss ? ' SL' : ''} @{o.trigger_price || o.limit_price} · Qty:{o.quantity}{o.right ? ` ${o.right}` : ''}
-              {(event.details as any)?.fundsRatioPct != null && <span style={{ color: '#8b949e', marginLeft: 4 }}>{(event.details as any).fundsRatioPct * 100}%</span>}
+              {o.side} {o.order_type}{o.is_stoploss ? ' SL' : ''} @{o.trigger_price || o.limit_price} · {snap.quantity_mode === 'funds_ratio' && (event.details as any)?._fundsRatioPct != null ? `${((event.details as any)._fundsRatioPct * 100)}%` : `Qty:${o.quantity}`}{snap.quantity_mode !== 'funds_ratio' ? `Qty:${o.quantity}` : ``}{o.right ? ` ${o.right}` : ''}
             </span>
           ))}
         </div>
