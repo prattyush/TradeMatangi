@@ -4,6 +4,7 @@ import {
   IChartApi,
   ISeriesApi,
   CandlestickData,
+  IPriceLine,
   LineData,
   Time,
   LineStyle,
@@ -245,10 +246,13 @@ function SnapshotChart({
     return () => { cancelled = true }
   }, [symbol, date])
 
-  // Draw snapshot overlays
+  // Draw snapshot overlays — cleaned up when snapshot changes
   useEffect(() => {
     const chart = chartRef.current
     if (!chart || !barTime) return
+
+    const overlaySeries: ISeriesApi<'Line'>[] = []
+    const priceLines: IPriceLine[] = []
 
     // Vertical bar marker
     try {
@@ -256,6 +260,7 @@ function SnapshotChart({
         lineVisible: false, crosshairMarkerVisible: false,
         lastValueVisible: false, priceLineVisible: false,
       })
+      overlaySeries.push(vLine)
       const markerPrice = barOhlc?.high ?? currentPrice ?? 0
       vLine.setData([{ time: barTime as Time, value: markerPrice }])
       vLine.setMarkers([{
@@ -267,7 +272,7 @@ function SnapshotChart({
         size: 2,
       }])
       // Also draw a vertical dashed price line at the bar
-      seriesRef.current?.createPriceLine({
+      const pl = seriesRef.current?.createPriceLine({
         price: markerPrice,
         color: '#d29922',
         lineWidth: 1,
@@ -275,12 +280,13 @@ function SnapshotChart({
         axisLabelVisible: false,
         title: '',
       })
+      if (pl) priceLines.push(pl)
     } catch { /* ignore */ }
 
     // Current price horizontal line
     if (currentPrice > 0) {
       try {
-        seriesRef.current?.createPriceLine({
+        const pl = seriesRef.current?.createPriceLine({
           price: currentPrice,
           color: '#388bfd',
           lineWidth: 1,
@@ -288,6 +294,7 @@ function SnapshotChart({
           axisLabelVisible: true,
           title: 'LTP',
         })
+        if (pl) priceLines.push(pl)
       } catch { /* ignore */ }
     }
 
@@ -297,7 +304,7 @@ function SnapshotChart({
         const price = o.order_type === 'LIMIT' ? o.limit_price : o.trigger_price
         if (!price || price <= 0) continue
         const label = `${o.side[0]}${o.order_type[0]}${o.is_stoploss ? ' SL' : ''}${o.right ? ' ' + o.right : ''}`
-        seriesRef.current?.createPriceLine({
+        const pl = seriesRef.current?.createPriceLine({
           price,
           color: o.is_stoploss ? '#f85149' : o.side === 'BUY' ? '#3fb950' : '#a371f7',
           lineWidth: 1,
@@ -305,17 +312,18 @@ function SnapshotChart({
           axisLabelVisible: true,
           title: label,
         })
+        if (pl) priceLines.push(pl)
       } catch { /* ignore */ }
     }
 
     // Position entry marker
     if (position && position.side !== 'FLAT' && position.avg_entry_price > 0) {
       try {
-        chipPositionPnlRef.current = position
         const posLine = chart.addLineSeries({
           lineVisible: false, crosshairMarkerVisible: false,
           lastValueVisible: false, priceLineVisible: false,
         })
+        overlaySeries.push(posLine)
         posLine.setData([{ time: barTime as Time, value: position.avg_entry_price }])
         posLine.setMarkers([{
           time: barTime as Time,
@@ -325,7 +333,20 @@ function SnapshotChart({
           text: position.side === 'LONG' ? 'B' : 'S',
           size: 0.8,
         }])
+        chipPositionPnlRef.current = position
       } catch { /* ignore */ }
+    } else {
+      chipPositionPnlRef.current = null
+    }
+
+    return () => {
+      for (const s of overlaySeries) {
+        try { chart.removeSeries(s) } catch { /* removed */ }
+      }
+      for (const pl of priceLines) {
+        try { seriesRef.current?.removePriceLine(pl) } catch { /* removed */ }
+      }
+      setPnlCoord(null)
     }
   }, [barTime, barOhlc, currentPrice, openOrders, position])
 
@@ -453,20 +474,27 @@ function SnapshotOptionsChart({
     return () => { cancelled = true }
   }, [symbol, date, strike, expiry, right])
 
-  // Snapshot overlays
+  // Snapshot overlays — cleaned up when snapshot changes
   useEffect(() => {
     const chart = chartRef.current
     if (!chart || !barTime) return
 
+    const overlaySeries: ISeriesApi<'Line'>[] = []
+    const priceLines: IPriceLine[] = []
+
     try { // bar marker
       const vLine = chart.addLineSeries({ lineVisible: false, crosshairMarkerVisible: false, lastValueVisible: false, priceLineVisible: false })
+      overlaySeries.push(vLine)
       const mp = barOhlc?.high ?? currentPrice ?? 0
       vLine.setData([{ time: barTime as Time, value: mp }])
       vLine.setMarkers([{ time: barTime as Time, position: 'aboveBar' as const, color: '#d29922', shape: 'arrowDown' as const, text: '📍', size: 2 }])
     } catch {}
 
     if (currentPrice > 0) {
-      try { seriesRef.current?.createPriceLine({ price: currentPrice, color: '#388bfd', lineWidth: 1, lineStyle: LineStyle.Solid, axisLabelVisible: true, title: 'LTP' }) } catch {}
+      try {
+        const pl = seriesRef.current?.createPriceLine({ price: currentPrice, color: '#388bfd', lineWidth: 1, lineStyle: LineStyle.Solid, axisLabelVisible: true, title: 'LTP' })
+        if (pl) priceLines.push(pl)
+      } catch {}
     }
 
     // Only show orders matching this chart's right
@@ -475,12 +503,22 @@ function SnapshotOptionsChart({
       try {
         const price = o.order_type === 'LIMIT' ? o.limit_price : o.trigger_price
         if (!price || price <= 0) continue
-        seriesRef.current?.createPriceLine({
+        const pl = seriesRef.current?.createPriceLine({
           price, color: o.is_stoploss ? '#f85149' : o.side === 'BUY' ? '#3fb950' : '#a371f7',
           lineWidth: 1, lineStyle: LineStyle.Dashed, axisLabelVisible: true,
           title: `${o.side[0]}${o.order_type[0]}${o.is_stoploss ? 'SL' : ''}`,
         })
+        if (pl) priceLines.push(pl)
       } catch {}
+    }
+
+    return () => {
+      for (const s of overlaySeries) {
+        try { chart.removeSeries(s) } catch { /* removed */ }
+      }
+      for (const pl of priceLines) {
+        try { seriesRef.current?.removePriceLine(pl) } catch { /* removed */ }
+      }
     }
   }, [barTime, barOhlc, currentPrice, openOrders, right])
 
