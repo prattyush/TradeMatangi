@@ -831,28 +831,26 @@ function GroupCard({ group, historicalDays = 2 }: { group: SessionGroup; histori
         </div>
 
         <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
-          {/* Snapshots button */}
-          {group.sessions.length === 1 && (
-            <button
-              onClick={async (e) => {
-                e.stopPropagation()
-                setSnapshotLoading(true)
-                try {
-                  const snaps = await api.getSnapshots(group.sessions[0].session_id)
-                  if (snaps.length > 0) setViewingSnapshots(snaps)
-                } catch { /* ignore */ }
-                finally { setSnapshotLoading(false) }
-              }}
-              title="View event snapshots"
-              style={{
-                background: '#21262d', border: '1px solid #30363d',
-                color: '#d29922', borderRadius: 6, padding: '3px 10px',
-                fontSize: 11, cursor: 'pointer', fontWeight: 600,
-              }}
-            >
-              {snapshotLoading ? '...' : '📸 Snapshots'}
-            </button>
-          )}
+          {/* Snapshots button — queries first session in the group */}
+          <button
+            onClick={async (e) => {
+              e.stopPropagation()
+              setSnapshotLoading(true)
+              try {
+                const snaps = await api.getSnapshots(group.sessions[0].session_id)
+                if (snaps.length > 0) setViewingSnapshots(snaps)
+              } catch { /* ignore */ }
+              finally { setSnapshotLoading(false) }
+            }}
+            title="View event snapshots"
+            style={{
+              background: '#21262d', border: '1px solid #30363d',
+              color: '#d29922', borderRadius: 6, padding: '3px 10px',
+              fontSize: 11, cursor: 'pointer', fontWeight: 600,
+            }}
+          >
+            {snapshotLoading ? '...' : '📸 Snapshots'}
+          </button>
           <span style={{ fontSize: 16, color: '#484f58' }}>
             {loading ? '⟳' : expanded ? '▲' : '▼'}
           </span>
