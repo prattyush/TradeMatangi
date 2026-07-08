@@ -56,6 +56,7 @@ export default function EventSnapshotViewer({ session, snapshots, onClose, onDel
     if (type === 'order_placed') return '🆕'
     if (type === 'order_edited') return '✏️'
     if (type === 'order_converted') return '🔄'
+    if (type === 'order_filled') return '✅'
     return '📌'
   }
 
@@ -101,9 +102,13 @@ export default function EventSnapshotViewer({ session, snapshots, onClose, onDel
                 <div style={{ fontSize: 12, color: '#c9d1d9', marginTop: 2 }}>{eventIcon(s.event.type)} {s.event.description}</div>
                 <div style={{ fontSize: 11, color: '#8b949e', marginTop: 1 }}>
                   {s.event.type.replace('_', ' ')}
-                  {s.snapshot.position.side !== 'FLAT' && (
+                  {s.snapshot.session_pnl_pct != null ? (
+                    <span style={{ marginLeft: 8, color: s.snapshot.session_pnl >= 0 ? '#3fb950' : '#f85149' }}>
+                      S: {(s.snapshot.session_pnl_pct ?? 0) >= 0 ? '+' : ''}{s.snapshot.session_pnl_pct?.toFixed(1)}%
+                    </span>
+                  ) : s.snapshot.position.side !== 'FLAT' && (
                     <span style={{ marginLeft: 8, color: s.snapshot.position.pnl >= 0 ? '#3fb950' : '#f85149' }}>
-                      P&L: {s.snapshot.position.pnl_pct > 0 ? '+' : ''}{s.snapshot.position.pnl_pct}%
+                      P: {s.snapshot.position.pnl_pct > 0 ? '+' : ''}{s.snapshot.position.pnl_pct}%
                     </span>
                   )}
                 </div>
@@ -580,6 +585,11 @@ function SnapshotDetail({ snapshot }: { snapshot: EventSnapshot }) {
         <span>📈 P&L: <span style={{ color: pnlColor, fontWeight: 600 }}>
           {combinedPnl >= 0 ? '+' : ''}₹{Math.abs(combinedPnl).toFixed(2)} ({combinedPnlPct >= 0 ? '+' : ''}{combinedPnlPct.toFixed(2)}%)
         </span></span>
+        {snap.session_pnl != null && (
+          <span>💼 Sess: <span style={{ color: snap.session_pnl >= 0 ? '#3fb950' : '#f85149', fontWeight: 600 }}>
+            {snap.session_pnl >= 0 ? '+' : ''}₹{Math.abs(snap.session_pnl).toFixed(2)} ({(snap.session_pnl_pct ?? 0) >= 0 ? '+' : ''}{(snap.session_pnl_pct ?? 0).toFixed(2)}%)
+          </span></span>
+        )}
         {activePos > 0 && (
           <span>🎯 {activePos} position{activePos > 1 ? 's' : ''}</span>
         )}

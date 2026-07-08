@@ -243,6 +243,7 @@ b) Option in stoploss to increase quantity. Open to discussion.
 | After PR #197 (Trade Analysis chart height ratio 0.6) | 624 | 305 | No new tests (frontend-only changes) |
 | After PR #199 (Underlying chart CE/PE marker filter) | 624 | 305 | No new tests (frontend-only changes) |
 | After Sprint 5 (Recording) | 624 | 305 | No new tests (browser API, frontend-only) |
+| After Sprint 7 (Event Snapshots) | 624 | 305 | No new tests (frontend-only changes) |
 
 ## PR Log
 
@@ -262,6 +263,38 @@ b) Option in stoploss to increase quantity. Open to discussion.
 | Sprint 5 — Recording (screen record sessions as WebM/YouTube-compatible) | feature/phase12-recording | PR #201 merged to dev + main |
 | Recording fix — surface getDisplayMedia errors; guard on isSecureContext | dev (direct commit) | Merged to dev + main |
 | Sprint 6 — Stoploss Bulk Update Fix & Real-time Chart P&L | fix/stoploss-bulk-update-pnl-label | PR #221 merged to dev |
+| Sprint 7 — Event Snapshots on order_filled + Session P&L + Auto-start | feature/event-snapshot-order-filled | PR #248 merged to dev |
+
+---
+
+### Sprint 7 — Event Snapshots on order_filled + Session P&L + Auto-start ✅ COMPLETE
+
+**Problems addressed:**
+1. **No snapshots on order fills:** The snapshot system only captured events on manual `order_placed` and `order_edited` actions, missing stoploss/target/limit order fills.
+2. **No session-level P&L in snapshots:** Snapshots tracked combined P&L across all positions but did not capture the separate session-level P&L (realized + unrealized - commissions) shown in the live TradePanel.
+3. **Manual snapshot toggle:** Users had to remember to enable the 📸 toggle from the REC dropdown before each session.
+
+**Frontend changes:**
+
+*Order Fill Snapshot Capture (`App.tsx`):*
+- Added `captureSnapshot()` call inside the `order_filled` SSE handler in `handleSSEMessage`
+- Uses the same `snapshotActive` toggle — no-ops silently when the 📸 toggle is off
+- Snapshot event carries description `"SELL FILLED @ price"` or `"BUY FILLED @ price"` with side, filled_price, trigger_price, quantity, and right in details
+
+*Session P&L in Snapshots (`useSnapshot.ts`, `api.ts`, `EventSnapshotViewer.tsx`):*
+- `SnapshotData` interface gains `session_pnl: number` and `session_pnl_pct: number` fields
+- `captureSnapshot` computes session P&L inline from `trades` and position state: `dayPnl - sum(commissions)`, `sessionPnl / sessionCapital × 100`
+- Detail panel shows `💼 Sess: ₹sessionPnl (sessionPnlPct%)` alongside the existing combined P&L
+- Left sidebar event list shows `S: +X.X%` for new snapshots, falls back to `P: +X.X%` (position P&L) for older snapshots without session P&L data
+- `order_filled` events get a ✅ icon in the event list
+
+*Auto-Start Event Snapshots (`SettingsModal.tsx`, `App.tsx`):*
+- New `autoStartEventSnapshots` checkbox in Settings → General tab under EVENT SNAPSHOTS section
+- Persisted to localStorage (`autoStartEventSnapshots`)
+- `handleStart` automatically calls `startSnapshots()` on session start (sim, paper, or real) when the checkbox is enabled
+- User can still manually toggle via the REC dropdown at any time
+
+**No backend changes. No new tests** (frontend-only changes).
 
 ---
 

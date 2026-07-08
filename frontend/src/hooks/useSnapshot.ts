@@ -92,6 +92,36 @@ export function useSnapshot(simRef: React.RefObject<SimulationState>) {
       const combinedPnlPct = totalInvested > 0 ? Math.round((combinedPnl / totalInvested) * 10000) / 100 : 0
 
       const walletBalance = sim.sessionCapital + combinedPnl
+      // Session P&L = dayPnl (realized + unrealized) minus all per-trade commissions
+      // Compute dayPnl inline to avoid depending on useSimulation's derived spread
+      const computeDayPnl = () => {
+        let net = 0
+        for (const t of sim.trades) {
+          if (t.right) continue // options trades handled separately below
+          net += t.side === 'SELL' ? t.quantity * t.price : -t.quantity * t.price
+        }
+        if (sim.position.side !== 'FLAT' && sim.currentPrice > 0) {
+          net += (sim.position.side === 'LONG' ? 1 : -1) * sim.position.quantity * sim.currentPrice
+        }
+        if (isOptions) {
+          let ceNet = 0, peNet = 0
+          for (const t of sim.trades) {
+            if (t.right === 'CE') ceNet += t.side === 'SELL' ? t.quantity * t.price : -t.quantity * t.price
+            if (t.right === 'PE') peNet += t.side === 'SELL' ? t.quantity * t.price : -t.quantity * t.price
+          }
+          if (sim.positionCE.side !== 'FLAT' && sim.currentPriceCE > 0) {
+            ceNet += (sim.positionCE.side === 'LONG' ? 1 : -1) * sim.positionCE.quantity * sim.currentPriceCE
+          }
+          if (sim.positionPE.side !== 'FLAT' && sim.currentPricePE > 0) {
+            peNet += (sim.positionPE.side === 'LONG' ? 1 : -1) * sim.positionPE.quantity * sim.currentPricePE
+          }
+          return ceNet + peNet
+        }
+        return net
+      }
+      const dayPnlValue = computeDayPnl()
+      const sessionPnl = dayPnlValue - sim.trades.reduce((s: number, t: {commission?: number}) => s + (t.commission ?? 0), 0)
+      const sessionPnlPct = sim.sessionCapital > 0 ? Math.round((sessionPnl / sim.sessionCapital) * 10000) / 100 : 0
       const walletUsedPct = sim.sessionCapital > 0
         ? Math.round((totalInvested / sim.sessionCapital) * 10000) / 100
         : 0
@@ -123,6 +153,8 @@ export function useSnapshot(simRef: React.RefObject<SimulationState>) {
           _walletBalance: Math.round(walletBalance * 100) / 100,
           _combinedPnl: Math.round(combinedPnl * 100) / 100,
           _combinedPnlPct: combinedPnlPct,
+          _sessionPnl: Math.round(sessionPnl * 100) / 100,
+          _sessionPnlPct: sessionPnlPct,
           _activePositions: activePositions,
           _openOrderCount: (sim.openOrders || []).filter(o => o.status === 'PENDING').length,
           _positionEquity: `${sim.position.side} ${sim.position.quantity}`,
@@ -151,6 +183,8 @@ export function useSnapshot(simRef: React.RefObject<SimulationState>) {
           position_pe: pePos ?? { side: 'FLAT', quantity: 0, avg_entry_price: 0, pnl: 0, pnl_pct: 0 },
           combined_pnl: Math.round(combinedPnl * 100) / 100,
           combined_pnl_pct: combinedPnlPct,
+          session_pnl: Math.round(sessionPnl * 100) / 100,
+          session_pnl_pct: sessionPnlPct,
           wallet_balance: Math.round(walletBalance * 100) / 100,
           session_capital: sim.sessionCapital,
           wallet_used_pct: walletUsedPct,
