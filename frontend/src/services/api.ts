@@ -245,6 +245,66 @@ export interface SessionDetail extends SessionSummary {
   trades: AnalysisTrade[]
 }
 
+// ── Event Snapshot types ────────────────────────────────────────────────────
+
+export interface SnapshotPosition {
+  side: string
+  quantity: number
+  avg_entry_price: number
+  pnl: number
+  pnl_pct: number
+}
+
+export interface SnapshotEventDetail {
+  type: string
+  description: string
+  details: Record<string, unknown>
+}
+
+export interface SnapshotData {
+  current_price: number
+  current_price_ce: number
+  current_price_pe: number
+  bar_time: number
+  bar_ohlc: { open: number; high: number; low: number; close: number } | null
+  position: SnapshotPosition
+  position_ce: SnapshotPosition
+  position_pe: SnapshotPosition
+  wallet_balance: number
+  session_capital: number
+  wallet_used_pct: number
+  open_orders: Order[]
+  strike_ce: number | null
+  strike_pe: number | null
+  expiry: string | null
+}
+
+export interface EventSnapshot {
+  event_id: string
+  session_id: string
+  user_id: string
+  symbol: string
+  date: string
+  instrument_type: string
+  session_type: string
+  timestamp: number
+  event: SnapshotEventDetail
+  snapshot: SnapshotData
+}
+
+export interface SnapshotPayload {
+  event_id: string
+  session_id: string
+  user_id: string
+  symbol: string
+  date: string
+  instrument_type: string
+  session_type: string
+  timestamp: number
+  event: SnapshotEventDetail
+  snapshot: SnapshotData
+}
+
 export class InsufficientFundsError extends Error {
   constructor(message: string) {
     super(message)
@@ -1205,6 +1265,43 @@ const api = {
     const res = await fetch(`${BACKEND_URL}/api/pattern/ohlc/options?${params}`, { headers: _authHeaders() })
     if (!res.ok) throw new Error(`OHLC options failed: ${res.status}`)
     return res.json()
+  },
+
+  // ── Event Snapshots ────────────────────────────────────────────────────────
+
+  async saveSnapshot(data: SnapshotPayload): Promise<{ event_id: string }> {
+    const res = await fetch(`${BACKEND_URL}/api/snapshots`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ..._authHeaders() },
+      body: JSON.stringify(data),
+    })
+    if (!res.ok) throw new Error(`Save snapshot failed: ${res.status}`)
+    return res.json()
+  },
+
+  async getSnapshots(sessionId: string): Promise<EventSnapshot[]> {
+    const res = await fetch(`${BACKEND_URL}/api/snapshots?session_id=${encodeURIComponent(sessionId)}`, {
+      headers: _authHeaders(),
+    })
+    if (!res.ok) throw new Error(`Get snapshots failed: ${res.status}`)
+    return res.json()
+  },
+
+  async getSnapshot(eventId: string, sessionId: string): Promise<EventSnapshot> {
+    const res = await fetch(
+      `${BACKEND_URL}/api/snapshots/${encodeURIComponent(eventId)}?session_id=${encodeURIComponent(sessionId)}`,
+      { headers: _authHeaders() },
+    )
+    if (!res.ok) throw new Error(`Get snapshot failed: ${res.status}`)
+    return res.json()
+  },
+
+  async deleteSnapshots(sessionId: string): Promise<void> {
+    const res = await fetch(`${BACKEND_URL}/api/snapshots?session_id=${encodeURIComponent(sessionId)}`, {
+      method: 'DELETE',
+      headers: _authHeaders(),
+    })
+    if (!res.ok) throw new Error(`Delete snapshots failed: ${res.status}`)
   },
 }
 

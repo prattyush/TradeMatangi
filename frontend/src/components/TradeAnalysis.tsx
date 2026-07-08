@@ -8,6 +8,8 @@ import {
   Time,
 } from 'lightweight-charts'
 import api, { SessionSummary, SessionDetail, AnalysisTrade, OHLCCandle } from '../services/api'
+import EventSnapshotViewer from './EventSnapshotViewer'
+import { EventSnapshot } from '../services/api'
 
 interface Props {
   onClose: () => void
@@ -741,6 +743,8 @@ function GroupCard({ group, historicalDays = 2 }: { group: SessionGroup; histori
   const [expanded, setExpanded] = useState(false)
   const [details, setDetails] = useState<Map<string, SessionDetail>>(new Map())
   const [loading, setLoading] = useState(false)
+  const [viewingSnapshots, setViewingSnapshots] = useState<EventSnapshot[] | null>(null)
+  const [snapshotLoading, setSnapshotLoading] = useState(false)
 
   const handleExpand = async () => {
     if (!expanded && details.size === 0) {
@@ -826,10 +830,47 @@ function GroupCard({ group, historicalDays = 2 }: { group: SessionGroup; histori
           </div>
         </div>
 
-        <div style={{ marginLeft: 'auto', fontSize: 16, color: '#484f58' }}>
-          {loading ? '⟳' : expanded ? '▲' : '▼'}
+        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
+          {/* Snapshots button */}
+          {group.sessions.length === 1 && (
+            <button
+              onClick={async (e) => {
+                e.stopPropagation()
+                setSnapshotLoading(true)
+                try {
+                  const snaps = await api.getSnapshots(group.sessions[0].session_id)
+                  if (snaps.length > 0) setViewingSnapshots(snaps)
+                } catch { /* ignore */ }
+                finally { setSnapshotLoading(false) }
+              }}
+              title="View event snapshots"
+              style={{
+                background: '#21262d', border: '1px solid #30363d',
+                color: '#d29922', borderRadius: 6, padding: '3px 10px',
+                fontSize: 11, cursor: 'pointer', fontWeight: 600,
+              }}
+            >
+              {snapshotLoading ? '...' : '📸 Snapshots'}
+            </button>
+          )}
+          <span style={{ fontSize: 16, color: '#484f58' }}>
+            {loading ? '⟳' : expanded ? '▲' : '▼'}
+          </span>
         </div>
       </div>
+
+      {/* Event snapshot viewer modal */}
+      {viewingSnapshots && (
+        <EventSnapshotViewer
+          session={group.sessions[0]}
+          snapshots={viewingSnapshots}
+          onClose={() => setViewingSnapshots(null)}
+          onDeleteAll={async () => {
+            await api.deleteSnapshots(group.sessions[0].session_id)
+            setViewingSnapshots(null)
+          }}
+        />
+      )}
 
       {/* Expanded detail */}
       {expanded && details.size > 0 && (
