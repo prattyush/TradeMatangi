@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useRef, useEffect } from 'react'
 import api, { SnapshotPayload, SnapshotPosition } from '../services/api'
 import { SimulationState } from './useSimulation'
 
@@ -35,12 +35,15 @@ export interface SnapshotEventInput {
 
 export function useSnapshot(simRef: React.RefObject<SimulationState>) {
   const [snapshotActive, setSnapshotActive] = useState(false)
+  const snapshotActiveRef = useRef(snapshotActive)
+  useEffect(() => { snapshotActiveRef.current = snapshotActive }, [snapshotActive])
 
   const startSnapshots = useCallback(() => setSnapshotActive(true), [])
   const stopSnapshots = useCallback(() => setSnapshotActive(false), [])
 
   const captureSnapshot = useCallback(
     (event: SnapshotEventInput) => {
+      if (!snapshotActiveRef.current) return
       const sim = simRef.current
       if (!sim || !sim.sessionId) return
 
@@ -128,7 +131,9 @@ export function useSnapshot(simRef: React.RefObject<SimulationState>) {
         },
       }
 
-      api.saveSnapshot(payload).catch(() => {})
+      api.saveSnapshot(payload).catch((err) => {
+        console.warn('Snapshot save failed:', err)
+      })
     },
     [simRef],
   )

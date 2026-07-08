@@ -13,8 +13,47 @@ logger = logging.getLogger(__name__)
 
 TABLE_NAME = "EventSnapshots"
 
+_ENSURED = False
+
+
+def _ensure_table() -> None:
+    """Auto-create the EventSnapshots table if it doesn't exist."""
+    global _ENSURED
+    if _ENSURED:
+        return
+    try:
+        from app.services.db import get_dynamodb_resource, get_dynamodb_client
+        existing = set(get_dynamodb_resource().meta.client.list_tables()["TableNames"])
+        if TABLE_NAME in existing:
+            _ENSURED = True
+            return
+        get_dynamodb_client().create_table(
+            TableName=TABLE_NAME,
+            KeySchema=[
+                {"AttributeName": "session_id", "KeyType": "HASH"},
+                {"AttributeName": "event_id", "KeyType": "RANGE"},
+            ],
+            AttributeDefinitions=[
+                {"AttributeName": "session_id", "AttributeType": "S"},
+                {"AttributeName": "event_id", "AttributeType": "S"},
+            ],
+            BillingMode="PAY_PER_REQUEST",
+        )
+        _ENSURED = True
+        logger.info("Created %s table", TABLE_NAME)
+    except Exception:
+        logger.exception("Failed to ensure %s table", TABLE_NAME)
+
+
+class _DecimalEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, Decimal):
+            return float(obj)
+        return super().default(obj)
+
 
 def _table():
+    _ensure_table()
     from app.services.db import get_dynamodb_resource
     return get_dynamodb_resource().Table(TABLE_NAME)
 
@@ -35,29 +74,28 @@ def _decimalize(obj: Any) -> Any:
 def save_snapshot(session_id: str, data: dict) -> str:
     """Persist a snapshot event. Returns the event_id."""
     event_id = data.get("event_id", "")
-    item = {
-        "session_id": session_id,
-        "event_id": event_id,
-    }
-    # Flatten top-level scalar fields
-    for field in ("user_id", "symbol", "date", "instrument_type", "session_type"):
-        if field in data and data[field] is not None:
-            item[field] = str(data[field])
-
-    if "timestamp" in data and data["timestamp"] is not None:
-        item["timestamp"] = int(data["timestamp"])
-
-    # Store nested dicts as JSON strings (event and snapshot)
-    if "event" in data and data["event"] is not None:
-        item["event_json"] = json.dumps(data["event"])
-    if "snapshot" in data and data["snapshot"] is not None:
-        item["snapshot_json"] = json.dumps(_decimalize(data["snapshot"]))
-
     try:
+        item = {
+            "session_id": session_id,
+            "event_id": event_id,
+        }
+        for field in ("user_id", "symbol", "date", "instrument_type", "session_type"):
+            if field in data and data[field] is not None:
+                item[field] = str(data[field])
+
+        if "timestamp" in data and data["timestamp"] is not None:
+            item["timestamp"] = int(data["timestamp"])
+
+        if "event" in data and data["event"] is not None:
+            item["event_json"] = json.dumps(data["event"])
+        if "snapshot" in data and data["snapshot"] is not None:
+            item["snapshot_json"] = json.dumps(data["snapshot"], cls=_DecimalEncoder)
+
         _table().put_item(Item=item)
-        logger.debug("Saved snapshot %s for session %s", event_id, session_id)
+        logger.info("Saved snapshot %s for session %s (%s)", event_id, session_id,
+                     data.get("event", {}).get("description", ""))
     except Exception:
-        logger.exception("Failed to save snapshot %s", event_id)
+        logger.exception("Failed to save snapshot %s for session %s", event_id, session_id)
     return event_id
 
 
