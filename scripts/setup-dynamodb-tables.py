@@ -172,6 +172,19 @@ TABLES = [
         ],
         "ProvisionedThroughput": {"ReadCapacityUnits": 5, "WriteCapacityUnits": 5},
     },
+    # ── Event Snapshots ───────────────────────────────────────────────────────
+    {
+        "TableName": "EventSnapshots",
+        "KeySchema": [
+            {"AttributeName": "session_id", "KeyType": "HASH"},
+            {"AttributeName": "event_id", "KeyType": "RANGE"},
+        ],
+        "AttributeDefinitions": [
+            {"AttributeName": "session_id", "AttributeType": "S"},
+            {"AttributeName": "event_id", "AttributeType": "S"},
+        ],
+        "ProvisionedThroughput": {"ReadCapacityUnits": 5, "WriteCapacityUnits": 5},
+    },
     # ── Phase XII Pattern Library ─────────────────────────────────────────────
     {
         "TableName": "PatternAnnotations",
