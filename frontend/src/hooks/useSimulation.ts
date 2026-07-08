@@ -203,12 +203,10 @@ export function useSimulation() {
     api.getTradesByContext(sym, state.date, instrumentType, sessionType).then(({ trades }) => {
       setState(s => ({ ...s, historicalTrades: trades.filter(t => t.session_id !== currentSessionId) }))
     }).catch(() => {})
-    // For paper/real: reload this session's own trades from backend (populated from DB on resume)
-    if (sessionType === 'paper' || sessionType === 'real') {
-      api.getTrades(currentSessionId).then(trades => {
-        if (trades.length > 0) setState(s => ({ ...s, trades }))
-      }).catch(() => {})
-    }
+    // Reload this session's own trades from backend (populated from DB on resume)
+    api.getTrades(currentSessionId).then(trades => {
+      if (trades.length > 0) setState(s => ({ ...s, trades }))
+    }).catch(() => {})
     return res.session_id
   }, [state.symbol, state.date])
 
