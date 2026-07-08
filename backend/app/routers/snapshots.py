@@ -27,9 +27,15 @@ class SnapshotPayload(BaseModel):
 @router.post("")
 async def store_snapshot(data: SnapshotPayload):
     """Store an event snapshot captured during a trading session."""
-    d = data.model_dump()
-    snapshot_service.save_snapshot(data.session_id, d)
-    return {"event_id": data.event_id, "status": "stored"}
+    try:
+        logger.info("Storing snapshot %s for session %s (event: %s)",
+                     data.event_id, data.session_id, data.event.get("description", ""))
+        d = data.model_dump()
+        snapshot_service.save_snapshot(data.session_id, d)
+        return {"event_id": data.event_id, "status": "stored"}
+    except Exception:
+        logger.exception("Snapshot store failed for %s", data.event_id)
+        raise HTTPException(status_code=500, detail="Failed to store snapshot")
 
 
 @router.get("")
