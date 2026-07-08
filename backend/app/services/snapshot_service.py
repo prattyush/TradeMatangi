@@ -147,24 +147,19 @@ def delete_snapshots(session_id: str) -> int:
     if not items:
         return 0
 
-    from app.services.db import get_dynamodb_resource
-    ddb = get_dynamodb_resource()
+    from app.services.db import get_dynamodb_client
+    client = get_dynamodb_client()
 
-    with ddb.meta.client as client:
-        # DDB batch_write_item can only handle 25 at a time
-        batch = client.batch_write_item
-        for i in range(0, len(items), 25):
-            chunk = items[i:i + 25]
-            delete_requests = [
-                {"DeleteRequest": {"Key": {"session_id": sid, "event_id": eid}}}
-                for sid, eid in ((it["session_id"], it["event_id"]) for it in chunk)
-            ]
-            try:
-                client.batch_write_item(
-                    RequestItems={TABLE_NAME: delete_requests}
-                )
-            except Exception:
-                logger.exception("Failed to batch-delete snapshots for session %s", session_id)
+    for i in range(0, len(items), 25):
+        chunk = items[i:i + 25]
+        delete_requests = [
+            {"DeleteRequest": {"Key": {"session_id": {"S": it["session_id"]}, "event_id": {"S": it["event_id"]}}}}
+            for it in chunk
+        ]
+        try:
+            client.batch_write_item(RequestItems={TABLE_NAME: delete_requests})
+        except Exception:
+            logger.exception("Failed to batch-delete snapshots for session %s", session_id)
 
     logger.debug("Deleted %d snapshots for session %s", len(items), session_id)
     return len(items)

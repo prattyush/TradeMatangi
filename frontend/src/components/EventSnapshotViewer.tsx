@@ -204,21 +204,18 @@ function SnapshotChart({
         all.forEach(c => byTime.set(c.time as number, c))
         let sorted = Array.from(byTime.values()).sort((a, b) => (a.time as number) - (b.time as number))
 
-        // Truncate at the snapshot bar time — only show candles up to
-        // (not including) the bar that was in-progress when the snapshot happened.
+        // Truncate at snapshot bar — show bars up to + including the snapshot moment.
+        // Replace the completed bar with the in-progress OHLC the user actually saw.
         if (barTime > 0 && sorted.length > 0) {
-          sorted = sorted.filter(c => (c.time as number) < barTime)
-
-          // Append the snapshot bar with its in-progress OHLC (not the completed
-          // bar from the data file). This shows exactly what the user saw.
+          sorted = sorted.filter(c => (c.time as number) <= barTime)
           if (barOhlc) {
-            sorted.push({
+            sorted[sorted.length - 1] = {
               time: barTime as Time,
               open: barOhlc.open,
               high: barOhlc.high,
               low: barOhlc.low,
               close: barOhlc.close,
-            })
+            }
           }
         }
 
@@ -239,12 +236,22 @@ function SnapshotChart({
           e9?.setData(e9d)
           e21?.setData(e21d)
 
-          chartRef.current?.timeScale().fitContent()
+          // Ensure the most recent bars (including snapshot) are visible
+          const lastTime = sorted[sorted.length - 1].time as number
+          const firstTime = Math.max(sorted[0].time as number, lastTime - 3600) // last hour
+          try {
+            chartRef.current?.timeScale().setVisibleRange({
+              from: firstTime as Time,
+              to: lastTime as Time,
+            })
+          } catch {
+            chartRef.current?.timeScale().fitContent()
+          }
         }
       } catch { /* ignore */ }
     })()
     return () => { cancelled = true }
-  }, [symbol, date])
+  }, [symbol, date, barTime, barOhlc])
 
   // Draw snapshot overlays — cleaned up when snapshot changes
   useEffect(() => {
@@ -450,24 +457,33 @@ function SnapshotOptionsChart({
         histResp.candles.map(toCandle).forEach(c => byTime.set(c.time as number, c))
         let sorted = Array.from(byTime.values()).sort((a, b) => (a.time as number) - (b.time as number))
 
-        // Truncate at snapshot bar time — only show bars up to (not including)
-        // the bar in progress, then append the snapshot's in-progress bar_ohlc.
+        // Truncate at snapshot bar + replace with in-progress OHLC
         if (barTime > 0 && sorted.length > 0) {
-          sorted = sorted.filter(c => (c.time as number) < barTime)
-          if (barOhlc) {
-            sorted.push({
+          sorted = sorted.filter(c => (c.time as number) <= barTime)
+          if (barOhlc && sorted.length > 0) {
+            sorted[sorted.length - 1] = {
               time: barTime as Time,
               open: barOhlc.open,
               high: barOhlc.high,
               low: barOhlc.low,
               close: barOhlc.close,
-            })
+            }
           }
         }
 
         if (sorted.length > 0) {
           seriesRef.current.setData(sorted)
-          chartRef.current?.timeScale().fitContent()
+
+          const lastTime = sorted[sorted.length - 1].time as number
+          const firstTime = Math.max(sorted[0].time as number, lastTime - 3600)
+          try {
+            chartRef.current?.timeScale().setVisibleRange({
+              from: firstTime as Time,
+              to: lastTime as Time,
+            })
+          } catch {
+            chartRef.current?.timeScale().fitContent()
+          }
         }
       } catch { /* ignore */ }
     })()
@@ -538,6 +554,18 @@ function SnapshotDetail({ snapshot }: { snapshot: EventSnapshot }) {
   const timestamp = snapshot.timestamp
   const [optionTab, setOptionTab] = useState<'underlying' | 'CE' | 'PE'>('underlying')
 
+  // Use new combined_pnl fields or fall back to computed values
+  const combinedPnl = snap.combined_pnl ?? (snap.wallet_balance - snap.session_capital)
+  const combinedPnlPct = snap.combined_pnl_pct ?? (snap.session_capital > 0 ? (combinedPnl / snap.session_capital) * 100 : 0)
+  const pnlColor = combinedPnl >= 0 ? '#3fb950' : '#f85149'
+  // Fallback: compute active positions from snap data
+  const activePosCount = [
+    snap.position.side !== 'FLAT' ? 1 : 0,
+    isOptions && snap.position_ce.side !== 'FLAT' ? 1 : 0,
+    isOptions && snap.position_pe.side !== 'FLAT' ? 1 : 0,
+  ].reduce((a, b) => a + b, 0)
+  const activePos = snap.active_positions ?? activePosCount
+
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
       {/* Summary bar */}
@@ -545,27 +573,35 @@ function SnapshotDetail({ snapshot }: { snapshot: EventSnapshot }) {
         padding: '6px 16px', background: '#0d1117', borderBottom: '1px solid #21262d',
         display: 'flex', gap: 16, flexWrap: 'wrap', fontSize: 12, color: '#8b949e', flexShrink: 0,
       }}>
-        <span>💰 <span style={{ color: '#e6edf3' }}>₹{snap.wallet_balance.toLocaleString('en-IN')}</span> / ₹{snap.session_capital.toLocaleString('en-IN')}</span>
+        <span>💰 Wallet: <span style={{ color: '#e6edf3' }}>₹{snap.wallet_balance.toLocaleString('en-IN')}</span> / ₹{snap.session_capital.toLocaleString('en-IN')}</span>
         <span>📊 Used: <span style={{ color: '#e6edf3' }}>{snap.wallet_used_pct}%</span></span>
-        <span style={{ color: '#d29922', fontWeight: 600 }}>📍 {event.description}</span>
-        <span style={{ color: '#484f58' }}>at {formatTimestamp(timestamp)}</span>
-        <span style={{ color: '#484f58' }}>{formatBarTime(snap.bar_time)}</span>
+        <span>📈 P&L: <span style={{ color: pnlColor, fontWeight: 600 }}>
+          {combinedPnl >= 0 ? '+' : ''}₹{Math.abs(combinedPnl).toFixed(2)} ({combinedPnlPct >= 0 ? '+' : ''}{combinedPnlPct.toFixed(2)}%)
+        </span></span>
+        {activePos > 0 && (
+          <span>🎯 {activePos} position{activePos > 1 ? 's' : ''}</span>
+        )}
+        <span>📋 {snap.open_orders.length} order{snap.open_orders.length !== 1 ? 's' : ''}</span>
       </div>
 
-      {/* Open orders strip */}
-      {snap.open_orders.length > 0 && (
-        <div style={{ padding: '6px 16px', borderBottom: '1px solid #21262d', flexShrink: 0, display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-          <span style={{ fontSize: 11, color: '#484f58' }}>Orders:</span>
+      {/* Open orders strip with event description */}
+      <div style={{ padding: '6px 16px', borderBottom: '1px solid #21262d', flexShrink: 0 }}>
+        <div style={{ fontSize: 11, color: '#d29922', fontWeight: 600, marginBottom: 4 }}>
+          📍 {event.description} — {formatTimestamp(timestamp)} ({formatBarTime(snap.bar_time)})
+        </div>
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+          <span style={{ fontSize: 10, color: '#484f58' }}>Open orders:</span>
+          {snap.open_orders.length === 0 && <span style={{ fontSize: 10, color: '#484f58' }}>none</span>}
           {snap.open_orders.map(o => (
             <span key={o.order_id} style={{
               background: o.is_stoploss ? '#3d1010' : '#161b22', borderRadius: 4, padding: '2px 8px',
-              border: `1px solid ${o.is_stoploss ? '#8b1a1a' : '#21262d'}`, fontSize: 11, color: '#c9d1d9',
+              border: `1px solid ${o.is_stoploss ? '#8b1a1a' : '#21262d'}`, fontSize: 10, color: '#c9d1d9',
             }}>
-              {o.side} {o.order_type}{o.is_stoploss ? ' SL' : ''} {o.trigger_price || o.limit_price} Qty:{o.quantity}{o.right ? ` ${o.right}` : ''}
+              {o.side} {o.order_type}{o.is_stoploss ? ' SL' : ''} @{o.trigger_price || o.limit_price} · {snap.quantity_mode === 'funds_ratio' && (event.details as any)?._fundsRatioPct != null ? `${((event.details as any)._fundsRatioPct * 100)}%` : `Qty:${o.quantity}`}{snap.quantity_mode !== 'funds_ratio' ? `Qty:${o.quantity}` : ``}{o.right ? ` ${o.right}` : ''}
             </span>
           ))}
         </div>
-      )}
+      </div>
 
       {/* Charts area */}
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', padding: 8, gap: 8 }}>
