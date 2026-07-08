@@ -166,7 +166,6 @@ function SnapshotChart({
       grid: { vertLines: { color: '#1e2732' }, horzLines: { color: '#1e2732' } },
       timeScale: { timeVisible: true, secondsVisible: false, borderColor: '#30363d' },
       crosshair: { mode: 0 },
-      handleScroll: false, handleScale: false,
     })
     const series = chart.addCandlestickSeries({
       upColor: '#26a641', downColor: '#f85149', borderVisible: false,
@@ -202,7 +201,26 @@ function SnapshotChart({
         const all = [...histResp.candles.map(toCandle), ...tradingDayCandles.map(toCandle)]
         const byTime = new Map<number, CandlestickData>()
         all.forEach(c => byTime.set(c.time as number, c))
-        const sorted = Array.from(byTime.values()).sort((a, b) => (a.time as number) - (b.time as number))
+        let sorted = Array.from(byTime.values()).sort((a, b) => (a.time as number) - (b.time as number))
+
+        // Truncate at the snapshot bar time — only show candles up to
+        // (not including) the bar that was in-progress when the snapshot happened.
+        if (barTime > 0 && sorted.length > 0) {
+          sorted = sorted.filter(c => (c.time as number) < barTime)
+
+          // Append the snapshot bar with its in-progress OHLC (not the completed
+          // bar from the data file). This shows exactly what the user saw.
+          if (barOhlc) {
+            sorted.push({
+              time: barTime as Time,
+              open: barOhlc.open,
+              high: barOhlc.high,
+              low: barOhlc.low,
+              close: barOhlc.close,
+            })
+          }
+        }
+
         if (sorted.length > 0) {
           seriesRef.current.setData(sorted)
 
@@ -382,7 +400,6 @@ function SnapshotOptionsChart({
       grid: { vertLines: { color: '#1e2732' }, horzLines: { color: '#1e2732' } },
       timeScale: { timeVisible: true, secondsVisible: false, borderColor: '#30363d' },
       crosshair: { mode: 0 },
-      handleScroll: false, handleScale: false,
     })
     const series = chart.addCandlestickSeries({
       upColor: '#26a641', downColor: '#f85149', borderVisible: false,
@@ -410,7 +427,23 @@ function SnapshotOptionsChart({
         if (cancelled || !seriesRef.current) return
         const byTime = new Map<number, CandlestickData>()
         histResp.candles.map(toCandle).forEach(c => byTime.set(c.time as number, c))
-        const sorted = Array.from(byTime.values()).sort((a, b) => (a.time as number) - (b.time as number))
+        let sorted = Array.from(byTime.values()).sort((a, b) => (a.time as number) - (b.time as number))
+
+        // Truncate at snapshot bar time — only show bars up to (not including)
+        // the bar in progress, then append the snapshot's in-progress bar_ohlc.
+        if (barTime > 0 && sorted.length > 0) {
+          sorted = sorted.filter(c => (c.time as number) < barTime)
+          if (barOhlc) {
+            sorted.push({
+              time: barTime as Time,
+              open: barOhlc.open,
+              high: barOhlc.high,
+              low: barOhlc.low,
+              close: barOhlc.close,
+            })
+          }
+        }
+
         if (sorted.length > 0) {
           seriesRef.current.setData(sorted)
           chartRef.current?.timeScale().fitContent()
