@@ -1,8 +1,15 @@
-import { useState, useEffect } from 'react'
-import { EventSnapshot, SessionSummary } from '../services/api'
-
-// This component opens as a full-screen modal to view event snapshots for a session.
-// Left panel: event list   Right panel: snapshot chart detail
+import { useState, useEffect, useRef, useCallback } from 'react'
+import {
+  createChart,
+  IChartApi,
+  ISeriesApi,
+  CandlestickData,
+  LineData,
+  Time,
+  LineStyle,
+} from 'lightweight-charts'
+import { EventSnapshot, SessionSummary, OHLCCandle } from '../services/api'
+import api from '../services/api'
 
 interface Props {
   session: SessionSummary
@@ -19,11 +26,7 @@ export default function EventSnapshotViewer({ session, snapshots, onClose, onDel
   const handleDeleteAll = async () => {
     if (!confirm(`Delete all ${snapshots.length} event snapshots for ${session.date}?`)) return
     setDeleting(true)
-    try {
-      await onDeleteAll()
-    } finally {
-      setDeleting(false)
-    }
+    try { await onDeleteAll() } finally { setDeleting(false) }
   }
 
   useEffect(() => {
@@ -32,7 +35,6 @@ export default function EventSnapshotViewer({ session, snapshots, onClose, onDel
     return () => window.removeEventListener('keydown', handler)
   }, [onClose])
 
-  // Arrow key navigation
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.key === 'ArrowUp') setSelectedIdx(i => Math.max(0, i - 1))
@@ -60,7 +62,6 @@ export default function EventSnapshotViewer({ session, snapshots, onClose, onDel
       background: '#0d1117', display: 'flex', flexDirection: 'column',
       fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
     }}>
-      {/* Header */}
       <div style={{
         display: 'flex', alignItems: 'center', gap: 12,
         padding: '10px 16px', background: '#161b22',
@@ -69,76 +70,36 @@ export default function EventSnapshotViewer({ session, snapshots, onClose, onDel
         <span style={{ fontSize: 14, fontWeight: 700, color: '#e6edf3' }}>
           Event Snapshots — {session.date} {session.symbol}
         </span>
-        <span style={{ fontSize: 12, color: '#484f58' }}>
-          {snapshots.length} event(s)
-        </span>
+        <span style={{ fontSize: 12, color: '#484f58' }}>{snapshots.length} event(s)</span>
         <div style={{ flex: 1 }} />
-        <button
-          onClick={handleDeleteAll}
-          disabled={deleting}
-          title="Delete all snapshots for this session"
-          style={{
-            background: '#3d1010', border: '1px solid #8b1a1a',
-            color: '#f85149', borderRadius: 6, padding: '4px 10px',
-            fontSize: 12, cursor: 'pointer',
-          }}
-        >
-          {deleting ? 'Deleting...' : '🗑 Delete All'}
-        </button>
-        <button
-          onClick={onClose}
-          style={{
-            background: 'none', border: '1px solid #30363d',
-            color: '#8b949e', borderRadius: 6, padding: '4px 10px',
-            fontSize: 12, cursor: 'pointer',
-          }}
-        >
-          ✕ Close
-        </button>
+        <button onClick={handleDeleteAll} disabled={deleting}
+          style={{ background: '#3d1010', border: '1px solid #8b1a1a', color: '#f85149', borderRadius: 6, padding: '4px 10px', fontSize: 12, cursor: 'pointer' }}
+        >{deleting ? 'Deleting...' : '🗑 Delete All'}</button>
+        <button onClick={onClose}
+          style={{ background: 'none', border: '1px solid #30363d', color: '#8b949e', borderRadius: 6, padding: '4px 10px', fontSize: 12, cursor: 'pointer' }}
+        >✕ Close</button>
       </div>
 
-      {/* Body */}
       <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
-        {/* Left panel — Event list */}
-        <div style={{
-          width: 280, minWidth: 280,
-          borderRight: '1px solid #21262d',
-          display: 'flex', flexDirection: 'column',
-          overflow: 'hidden',
-        }}>
-          <div style={{
-            padding: '8px 12px', background: '#0d1117',
-            borderBottom: '1px solid #21262d',
-            fontSize: 11, color: '#484f58', fontWeight: 600,
-          }}>
+        <div style={{ width: 280, minWidth: 280, borderRight: '1px solid #21262d', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+          <div style={{ padding: '8px 12px', background: '#0d1117', borderBottom: '1px solid #21262d', fontSize: 11, color: '#484f58', fontWeight: 600 }}>
             Events (↑↓ to navigate)
           </div>
           <div style={{ flex: 1, overflowY: 'auto' }}>
             {snapshots.map((s, i) => (
-              <div
-                key={s.event_id}
-                onClick={() => setSelectedIdx(i)}
+              <div key={s.event_id} onClick={() => setSelectedIdx(i)}
                 style={{
-                  padding: '8px 12px',
-                  cursor: 'pointer',
+                  padding: '8px 12px', cursor: 'pointer',
                   background: i === selectedIdx ? '#1f6feb22' : 'transparent',
                   borderLeft: i === selectedIdx ? '3px solid #1f6feb' : '3px solid transparent',
                   borderBottom: '1px solid #21262d',
-                }}
-              >
-                <div style={{ fontSize: 11, color: '#484f58' }}>
-                  {formatTime(s.timestamp)}
-                </div>
-                <div style={{ fontSize: 12, color: '#c9d1d9', marginTop: 2 }}>
-                  {eventIcon(s.event.type)} {s.event.description}
-                </div>
+                }}>
+                <div style={{ fontSize: 11, color: '#484f58' }}>{formatTime(s.timestamp)}</div>
+                <div style={{ fontSize: 12, color: '#c9d1d9', marginTop: 2 }}>{eventIcon(s.event.type)} {s.event.description}</div>
                 <div style={{ fontSize: 11, color: '#8b949e', marginTop: 1 }}>
                   {s.event.type.replace('_', ' ')}
                   {s.snapshot.position.side !== 'FLAT' && (
-                    <span style={{
-                      marginLeft: 8,
-                      color: s.snapshot.position.pnl >= 0 ? '#3fb950' : '#f85149',
-                    }}>
+                    <span style={{ marginLeft: 8, color: s.snapshot.position.pnl >= 0 ? '#3fb950' : '#f85149' }}>
                       P&L: {s.snapshot.position.pnl_pct > 0 ? '+' : ''}{s.snapshot.position.pnl_pct}%
                     </span>
                   )}
@@ -148,20 +109,351 @@ export default function EventSnapshotViewer({ session, snapshots, onClose, onDel
           </div>
         </div>
 
-        {/* Right panel — Snapshot Detail */}
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-          {snap ? (
-            <SnapshotDetail snapshot={snap} />
-          ) : (
-            <div style={{
-              flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center',
-              color: '#484f58', fontSize: 14,
-            }}>
+          {snap ? <SnapshotDetail snapshot={snap} /> : (
+            <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#484f58', fontSize: 14 }}>
               No snapshot selected
             </div>
           )}
         </div>
       </div>
+    </div>
+  )
+}
+
+// ── EMA helpers ──────────────────────────────────────────────────────────────
+
+function nextEMA(prev: number, close: number, k: number): number { return close * k + prev * (1 - k) }
+
+function computeEMA(closes: number[], period: number): (number | null)[] {
+  if (closes.length === 0) return []
+  const result: (number | null)[] = []
+  const k = 2 / (period + 1)
+  let ema: number | null = null
+  let warmup = 0, sum = 0
+  for (let i = 0; i < closes.length; i++) {
+    sum += closes[i]; warmup++
+    if (warmup < period) result.push(null)
+    else if (warmup === period) { ema = sum / period; result.push(ema) }
+    else { ema = nextEMA(ema!, closes[i], k); result.push(ema) }
+  }
+  return result
+}
+
+// ── Snapshot Chart ─────────────────────────────────────────────────────────
+
+function SnapshotChart({
+  symbol, date, barTime, barOhlc, currentPrice, openOrders, position,
+}: {
+  symbol: string; date: string
+  barTime: number
+  barOhlc: { open: number; high: number; low: number; close: number } | null
+  currentPrice: number
+  openOrders: { side: string; order_type: string; trigger_price: number; limit_price: number; is_stoploss: boolean; right?: string; quantity: number }[]
+  position: { side: string; quantity: number; avg_entry_price: number; pnl: number; pnl_pct: number } | null
+}) {
+  const containerRef = useRef<HTMLDivElement>(null)
+  const chartRef = useRef<IChartApi | null>(null)
+  const seriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null)
+
+  useEffect(() => {
+    if (!containerRef.current) return
+    const w = containerRef.current.clientWidth
+    const h = Math.max(250, containerRef.current.clientHeight || 350)
+    const chart = createChart(containerRef.current, {
+      width: w, height: h,
+      layout: { background: { color: '#0d1117' }, textColor: '#e6edf3' },
+      grid: { vertLines: { color: '#1e2732' }, horzLines: { color: '#1e2732' } },
+      timeScale: { timeVisible: true, secondsVisible: false, borderColor: '#30363d' },
+      crosshair: { mode: 0 },
+      handleScroll: false, handleScale: false,
+    })
+    const series = chart.addCandlestickSeries({
+      upColor: '#26a641', downColor: '#f85149', borderVisible: false,
+      wickUpColor: '#26a641', wickDownColor: '#f85149',
+    })
+
+    chartRef.current = chart
+    seriesRef.current = series
+
+    const ro = new ResizeObserver(entries => {
+      const { width: cw, height: ch } = entries[0].contentRect
+      chart.applyOptions({ width: cw, height: Math.max(250, ch) })
+    })
+    ro.observe(containerRef.current)
+
+    return () => { ro.disconnect(); chart.remove(); chartRef.current = null; seriesRef.current = null }
+  }, [])
+
+  // Load OHLC data
+  useEffect(() => {
+    if (!seriesRef.current || !symbol || !date) return
+    let cancelled = false
+    ;(async () => {
+      try {
+        const toCandle = (c: OHLCCandle): CandlestickData => ({
+          time: c.time as Time, open: c.open, high: c.high, low: c.low, close: c.close,
+        })
+        const [histResp, tradingDayCandles] = await Promise.all([
+          api.getHistorical(symbol, date, 3, 2),
+          api.getPreSession(symbol, date, '15:30:00', 3),
+        ])
+        if (cancelled || !seriesRef.current) return
+        const all = [...histResp.candles.map(toCandle), ...tradingDayCandles.map(toCandle)]
+        const byTime = new Map<number, CandlestickData>()
+        all.forEach(c => byTime.set(c.time as number, c))
+        const sorted = Array.from(byTime.values()).sort((a, b) => (a.time as number) - (b.time as number))
+        if (sorted.length > 0) {
+          seriesRef.current.setData(sorted)
+
+          const closes = sorted.map(c => c.close)
+          const ema9Vals = computeEMA(closes, 9)
+          const ema21Vals = computeEMA(closes, 21)
+          const e9 = chartRef.current?.addLineSeries({
+            color: '#f0883e', lineWidth: 1, lastValueVisible: false, priceLineVisible: false, crosshairMarkerVisible: false,
+          })
+          const e21 = chartRef.current?.addLineSeries({
+            color: '#79c0ff', lineWidth: 1, lastValueVisible: false, priceLineVisible: false, crosshairMarkerVisible: false,
+          })
+          const e9d = sorted.map((c, i) => ({ time: c.time, value: ema9Vals[i] })).filter((d): d is LineData => d.value !== null)
+          const e21d = sorted.map((c, i) => ({ time: c.time, value: ema21Vals[i] })).filter((d): d is LineData => d.value !== null)
+          e9?.setData(e9d)
+          e21?.setData(e21d)
+
+          chartRef.current?.timeScale().fitContent()
+        }
+      } catch { /* ignore */ }
+    })()
+    return () => { cancelled = true }
+  }, [symbol, date])
+
+  // Draw snapshot overlays
+  useEffect(() => {
+    const chart = chartRef.current
+    if (!chart || !barTime) return
+
+    // Vertical bar marker
+    try {
+      const vLine = chart.addLineSeries({
+        lineVisible: false, crosshairMarkerVisible: false,
+        lastValueVisible: false, priceLineVisible: false,
+      })
+      const markerPrice = barOhlc?.high ?? currentPrice ?? 0
+      vLine.setData([{ time: barTime as Time, value: markerPrice }])
+      vLine.setMarkers([{
+        time: barTime as Time,
+        position: 'aboveBar' as const,
+        color: '#d29922',
+        shape: 'arrowDown' as const,
+        text: '📍',
+        size: 2,
+      }])
+      // Also draw a vertical dashed price line at the bar
+      seriesRef.current?.createPriceLine({
+        price: markerPrice,
+        color: '#d29922',
+        lineWidth: 1,
+        lineStyle: LineStyle.Dashed,
+        axisLabelVisible: false,
+        title: '',
+      })
+    } catch { /* ignore */ }
+
+    // Current price horizontal line
+    if (currentPrice > 0) {
+      try {
+        seriesRef.current?.createPriceLine({
+          price: currentPrice,
+          color: '#388bfd',
+          lineWidth: 1,
+          lineStyle: LineStyle.Solid,
+          axisLabelVisible: true,
+          title: 'LTP',
+        })
+      } catch { /* ignore */ }
+    }
+
+    // Open order lines
+    for (const o of openOrders) {
+      try {
+        const price = o.order_type === 'LIMIT' ? o.limit_price : o.trigger_price
+        if (!price || price <= 0) continue
+        const label = `${o.side[0]}${o.order_type[0]}${o.is_stoploss ? ' SL' : ''}${o.right ? ' ' + o.right : ''}`
+        seriesRef.current?.createPriceLine({
+          price,
+          color: o.is_stoploss ? '#f85149' : o.side === 'BUY' ? '#3fb950' : '#a371f7',
+          lineWidth: 1,
+          lineStyle: LineStyle.Dashed,
+          axisLabelVisible: true,
+          title: label,
+        })
+      } catch { /* ignore */ }
+    }
+
+    // Position entry marker
+    if (position && position.side !== 'FLAT' && position.avg_entry_price > 0) {
+      try {
+        chipPositionPnlRef.current = position
+        const posLine = chart.addLineSeries({
+          lineVisible: false, crosshairMarkerVisible: false,
+          lastValueVisible: false, priceLineVisible: false,
+        })
+        posLine.setData([{ time: barTime as Time, value: position.avg_entry_price }])
+        posLine.setMarkers([{
+          time: barTime as Time,
+          position: 'inBar' as const,
+          color: position.side === 'LONG' ? '#FFFFFF' : '#00AAFF',
+          shape: 'circle' as const,
+          text: position.side === 'LONG' ? 'B' : 'S',
+          size: 0.8,
+        }])
+      } catch { /* ignore */ }
+    }
+  }, [barTime, barOhlc, currentPrice, openOrders, position])
+
+  const chipPositionPnlRef = useRef<{ side: string; quantity: number; avg_entry_price: number; pnl: number; pnl_pct: number } | null>(null)
+  const [pnlCoord, setPnlCoord] = useState<{ x: number; y: number } | null>(null)
+
+  // Update P&L overlay position
+  const updatePnlOverlay = useCallback(() => {
+    const chart = chartRef.current
+    const pos = chipPositionPnlRef.current
+    if (!chart || !barTime || !pos || pos.side === 'FLAT') { setPnlCoord(null); return }
+    const x = chart.timeScale().timeToCoordinate(barTime as Time)
+    const y = chartRef.current ? seriesRef.current?.priceToCoordinate(barOhlc?.high ?? currentPrice) : null
+    if (x != null && y != null) setPnlCoord({ x: x - 30, y: y - 14 })
+  }, [barTime, barOhlc, currentPrice])
+
+  useEffect(() => {
+    updatePnlOverlay()
+    const chart = chartRef.current
+    if (!chart) return
+    const handler = () => updatePnlOverlay()
+    chart.timeScale().subscribeVisibleLogicalRangeChange(handler)
+    return () => { try { chart.timeScale().unsubscribeVisibleLogicalRangeChange(handler as any) } catch {} }
+  }, [updatePnlOverlay])
+
+  const pos = chipPositionPnlRef.current
+  const pnlColor = pos ? (pos.pnl >= 0 ? '#3fb950' : '#f85149') : '#8b949e'
+
+  return (
+    <div style={{ position: 'relative', width: '100%', height: '100%', overflow: 'hidden' }}>
+      <div ref={containerRef} style={{ width: '100%', height: '100%' }} />
+      {pos && pos.side !== 'FLAT' && pnlCoord && (
+        <div style={{
+          position: 'absolute', left: Math.max(0, pnlCoord.x), top: Math.max(0, pnlCoord.y),
+          transform: 'translateX(-50%)',
+          background: 'rgba(13,17,23,0.9)', border: '1px solid #30363d',
+          borderRadius: 4, padding: '2px 8px',
+          fontSize: 11, fontWeight: 600, color: pnlColor,
+          whiteSpace: 'nowrap', pointerEvents: 'none', zIndex: 10,
+        }}>
+          {pos.pnl >= 0 ? '+' : ''}{pos.pnl.toFixed(2)} ({pos.pnl_pct > 0 ? '+' : ''}{pos.pnl_pct}%)
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── Options variant of SnapshotChart ─────────────────────────────────────────
+
+function SnapshotOptionsChart({
+  symbol, date, barTime, barOhlc, currentPrice, openOrders,
+  strike, expiry, right,
+}: {
+  symbol: string; date: string
+  barTime: number
+  barOhlc: { open: number; high: number; low: number; close: number } | null
+  currentPrice: number
+  openOrders: { side: string; order_type: string; trigger_price: number; limit_price: number; is_stoploss: boolean; right?: string; quantity: number }[]
+  strike: number; expiry: string; right: string
+}) {
+  const containerRef = useRef<HTMLDivElement>(null)
+  const chartRef = useRef<IChartApi | null>(null)
+  const seriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null)
+
+  useEffect(() => {
+    if (!containerRef.current) return
+    const w = containerRef.current.clientWidth
+    const h = Math.max(200, containerRef.current.clientHeight || 250)
+    const chart = createChart(containerRef.current, {
+      width: w, height: h,
+      layout: { background: { color: '#0d1117' }, textColor: '#e6edf3' },
+      grid: { vertLines: { color: '#1e2732' }, horzLines: { color: '#1e2732' } },
+      timeScale: { timeVisible: true, secondsVisible: false, borderColor: '#30363d' },
+      crosshair: { mode: 0 },
+      handleScroll: false, handleScale: false,
+    })
+    const series = chart.addCandlestickSeries({
+      upColor: '#26a641', downColor: '#f85149', borderVisible: false,
+      wickUpColor: '#26a641', wickDownColor: '#f85149',
+    })
+    chartRef.current = chart; seriesRef.current = series
+
+    const ro = new ResizeObserver(entries => {
+      const { width: cw, height: ch } = entries[0].contentRect
+      chart.applyOptions({ width: cw, height: Math.max(200, ch) })
+    })
+    ro.observe(containerRef.current)
+    return () => { ro.disconnect(); chart.remove(); chartRef.current = null; seriesRef.current = null }
+  }, [])
+
+  useEffect(() => {
+    if (!seriesRef.current || !symbol || !date || !strike || !expiry || !right) return
+    let cancelled = false
+    ;(async () => {
+      try {
+        const toCandle = (c: OHLCCandle): CandlestickData => ({
+          time: c.time as Time, open: c.open, high: c.high, low: c.low, close: c.close,
+        })
+        const histResp = await api.getOptionsHistorical(symbol, date, strike, expiry, right, 3, 2)
+        if (cancelled || !seriesRef.current) return
+        const byTime = new Map<number, CandlestickData>()
+        histResp.candles.map(toCandle).forEach(c => byTime.set(c.time as number, c))
+        const sorted = Array.from(byTime.values()).sort((a, b) => (a.time as number) - (b.time as number))
+        if (sorted.length > 0) {
+          seriesRef.current.setData(sorted)
+          chartRef.current?.timeScale().fitContent()
+        }
+      } catch { /* ignore */ }
+    })()
+    return () => { cancelled = true }
+  }, [symbol, date, strike, expiry, right])
+
+  // Snapshot overlays
+  useEffect(() => {
+    const chart = chartRef.current
+    if (!chart || !barTime) return
+
+    try { // bar marker
+      const vLine = chart.addLineSeries({ lineVisible: false, crosshairMarkerVisible: false, lastValueVisible: false, priceLineVisible: false })
+      const mp = barOhlc?.high ?? currentPrice ?? 0
+      vLine.setData([{ time: barTime as Time, value: mp }])
+      vLine.setMarkers([{ time: barTime as Time, position: 'aboveBar' as const, color: '#d29922', shape: 'arrowDown' as const, text: '📍', size: 2 }])
+    } catch {}
+
+    if (currentPrice > 0) {
+      try { seriesRef.current?.createPriceLine({ price: currentPrice, color: '#388bfd', lineWidth: 1, lineStyle: LineStyle.Solid, axisLabelVisible: true, title: 'LTP' }) } catch {}
+    }
+
+    // Only show orders matching this chart's right
+    const paneOrders = openOrders.filter(o => !o.right || o.right === right)
+    for (const o of paneOrders) {
+      try {
+        const price = o.order_type === 'LIMIT' ? o.limit_price : o.trigger_price
+        if (!price || price <= 0) continue
+        seriesRef.current?.createPriceLine({
+          price, color: o.is_stoploss ? '#f85149' : o.side === 'BUY' ? '#3fb950' : '#a371f7',
+          lineWidth: 1, lineStyle: LineStyle.Dashed, axisLabelVisible: true,
+          title: `${o.side[0]}${o.order_type[0]}${o.is_stoploss ? 'SL' : ''}`,
+        })
+      } catch {}
+    }
+  }, [barTime, barOhlc, currentPrice, openOrders, right])
+
+  return (
+    <div style={{ position: 'relative', width: '100%', height: '100%', overflow: 'hidden' }}>
+      <div ref={containerRef} style={{ width: '100%', height: '100%' }} />
     </div>
   )
 }
@@ -173,157 +465,144 @@ function SnapshotDetail({ snapshot }: { snapshot: EventSnapshot }) {
   const snap = snapshot.snapshot
   const event = snapshot.event
   const timestamp = snapshot.timestamp
-
-  const formatPnl = (pnl: number) => {
-    return (pnl >= 0 ? '+' : '') + pnl.toFixed(2)
-  }
+  const [optionTab, setOptionTab] = useState<'underlying' | 'CE' | 'PE'>('underlying')
 
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-      {/* State summary bar */}
+      {/* Summary bar */}
       <div style={{
-        padding: '8px 16px', background: '#0d1117',
-        borderBottom: '1px solid #21262d',
-        display: 'flex', gap: 16, flexWrap: 'wrap',
-        fontSize: 12, color: '#8b949e', flexShrink: 0,
+        padding: '6px 16px', background: '#0d1117', borderBottom: '1px solid #21262d',
+        display: 'flex', gap: 16, flexWrap: 'wrap', fontSize: 12, color: '#8b949e', flexShrink: 0,
       }}>
         <span>💰 <span style={{ color: '#e6edf3' }}>₹{snap.wallet_balance.toLocaleString('en-IN')}</span> / ₹{snap.session_capital.toLocaleString('en-IN')}</span>
         <span>📊 Used: <span style={{ color: '#e6edf3' }}>{snap.wallet_used_pct}%</span></span>
-        <span>📉 Price: <span style={{ color: '#e6edf3' }}>{snap.current_price?.toFixed(2)}</span></span>
-        {isOptions && (
-          <>
-            <span>CE: <span style={{ color: '#e6edf3' }}>{snap.current_price_ce?.toFixed(2)}</span></span>
-            <span>PE: <span style={{ color: '#e6edf3' }}>{snap.current_price_pe?.toFixed(2)}</span></span>
-          </>
-        )}
+        <span style={{ color: '#d29922', fontWeight: 600 }}>📍 {event.description}</span>
+        <span style={{ color: '#484f58' }}>at {formatTimestamp(timestamp)}</span>
+        <span style={{ color: '#484f58' }}>{formatBarTime(snap.bar_time)}</span>
       </div>
 
-      {/* Position info */}
-      <div style={{
-        padding: '8px 16px',
-        borderBottom: '1px solid #21262d',
-        display: 'flex', gap: 20, flexWrap: 'wrap',
-        fontSize: 12, flexShrink: 0,
-      }}>
-        {/* Equity / Underlying position */}
-        <div style={{
-          background: '#161b22', borderRadius: 6, padding: '8px 12px',
-          border: '1px solid #21262d',
-        }}>
-          <div style={{ color: '#484f58', fontSize: 11 }}>Position {isOptions ? '(Underlying)' : ''}</div>
-          <div style={{ color: '#e6edf3', fontWeight: 600 }}>
-            {snap.position.side === 'FLAT' ? 'Flat' : `${snap.position.side} ${snap.position.quantity}`}
-          </div>
-          {snap.position.side !== 'FLAT' && (
-            <>
-              <div style={{ color: '#8b949e' }}>Avg: {snap.position.avg_entry_price.toFixed(2)}</div>
-              <div style={{ color: snap.position.pnl >= 0 ? '#3fb950' : '#f85149', fontWeight: 600 }}>
-                P&L: {formatPnl(snap.position.pnl)} ({snap.position.pnl_pct > 0 ? '+' : ''}{snap.position.pnl_pct}%)
-              </div>
-            </>
-          )}
-        </div>
-        {/* CE position */}
-        {isOptions && (
-          <div style={{
-            background: '#161b22', borderRadius: 6, padding: '8px 12px',
-            border: '1px solid #21262d',
-          }}>
-            <div style={{ color: '#484f58', fontSize: 11 }}>CE {snap.strike_ce}</div>
-            <div style={{ color: '#e6edf3', fontWeight: 600 }}>
-              {snap.position_ce.side === 'FLAT' ? 'Flat' : `${snap.position_ce.side} ${snap.position_ce.quantity}`}
-            </div>
-            {snap.position_ce.side !== 'FLAT' && (
-              <div style={{ color: snap.position_ce.pnl >= 0 ? '#3fb950' : '#f85149', fontWeight: 600 }}>
-                P&L: {formatPnl(snap.position_ce.pnl)} ({snap.position_ce.pnl_pct > 0 ? '+' : ''}{snap.position_ce.pnl_pct}%)
-              </div>
-            )}
-          </div>
-        )}
-        {/* PE position */}
-        {isOptions && (
-          <div style={{
-            background: '#161b22', borderRadius: 6, padding: '8px 12px',
-            border: '1px solid #21262d',
-          }}>
-            <div style={{ color: '#484f58', fontSize: 11 }}>PE {snap.strike_pe}</div>
-            <div style={{ color: '#e6edf3', fontWeight: 600 }}>
-              {snap.position_pe.side === 'FLAT' ? 'Flat' : `${snap.position_pe.side} ${snap.position_pe.quantity}`}
-            </div>
-            {snap.position_pe.side !== 'FLAT' && (
-              <div style={{ color: snap.position_pe.pnl >= 0 ? '#3fb950' : '#f85149', fontWeight: 600 }}>
-                P&L: {formatPnl(snap.position_pe.pnl)} ({snap.position_pe.pnl_pct > 0 ? '+' : ''}{snap.position_pe.pnl_pct}%)
-              </div>
-            )}
-          </div>
-        )}
-      </div>
-
-      {/* Open orders */}
+      {/* Open orders strip */}
       {snap.open_orders.length > 0 && (
-        <div style={{
-          padding: '8px 16px',
-          borderBottom: '1px solid #21262d',
-          flexShrink: 0,
-        }}>
-          <div style={{ fontSize: 11, color: '#484f58', marginBottom: 4 }}>Open Orders</div>
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            {snap.open_orders.map(o => (
-              <div key={o.order_id} style={{
-                background: '#161b22', borderRadius: 4, padding: '4px 8px',
-                border: '1px solid #21262d', fontSize: 11, color: '#c9d1d9',
-              }}>
-                {o.side} {o.order_type} {o.trigger_price || o.limit_price}
-                {o.is_stoploss ? ' SL' : ''} Qty: {o.quantity}
-                {o.right ? ` ${o.right}` : ''}
-              </div>
-            ))}
-          </div>
+        <div style={{ padding: '6px 16px', borderBottom: '1px solid #21262d', flexShrink: 0, display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+          <span style={{ fontSize: 11, color: '#484f58' }}>Orders:</span>
+          {snap.open_orders.map(o => (
+            <span key={o.order_id} style={{
+              background: o.is_stoploss ? '#3d1010' : '#161b22', borderRadius: 4, padding: '2px 8px',
+              border: `1px solid ${o.is_stoploss ? '#8b1a1a' : '#21262d'}`, fontSize: 11, color: '#c9d1d9',
+            }}>
+              {o.side} {o.order_type}{o.is_stoploss ? ' SL' : ''} {o.trigger_price || o.limit_price} Qty:{o.quantity}{o.right ? ` ${o.right}` : ''}
+            </span>
+          ))}
         </div>
       )}
 
-      {/* Chart area placeholder — shows bar info */}
-      <div style={{
-        flex: 1, overflow: 'hidden',
-        display: 'flex', flexDirection: 'column',
-        alignItems: 'center', justifyContent: 'center',
-      }}>
-        {snap.bar_ohlc ? (
-          <div style={{
-            padding: 24, background: '#161b22', borderRadius: 8,
-            border: '1px solid #21262d', textAlign: 'center',
-          }}>
-            <div style={{ fontSize: 12, color: '#484f58', marginBottom: 8 }}>
-              Bar at {formatBarTime(snap.bar_time)}
+      {/* Charts area */}
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', padding: 8, gap: 8 }}>
+        {isOptions ? (
+          <>
+            {/* Tab bar */}
+            <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
+              {(['underlying', 'CE', 'PE'] as const).map(tab => (
+                <button key={tab} onClick={() => setOptionTab(tab)}
+                  style={{
+                    padding: '4px 14px', borderRadius: 6, cursor: 'pointer', fontSize: 12, fontWeight: 600,
+                    background: optionTab === tab ? '#1f6feb' : '#21262d',
+                    border: optionTab === tab ? '1px solid #388bfd' : '1px solid #30363d',
+                    color: optionTab === tab ? '#fff' : '#8b949e',
+                  }}
+                >{tab === 'underlying' ? `Underlying` : tab + (tab === 'CE' ? (snap.strike_ce ? ` ${snap.strike_ce}` : '') : (snap.strike_pe ? ` ${snap.strike_pe}` : ''))}</button>
+              ))}
             </div>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 80px)', gap: 12 }}>
-              <div><div style={{ color: '#484f58', fontSize: 10 }}>Open</div><div style={{ color: '#e6edf3', fontSize: 16, fontWeight: 600 }}>{snap.bar_ohlc.open.toFixed(2)}</div></div>
-              <div><div style={{ color: '#484f58', fontSize: 10 }}>High</div><div style={{ color: '#3fb950', fontSize: 16, fontWeight: 600 }}>{snap.bar_ohlc.high.toFixed(2)}</div></div>
-              <div><div style={{ color: '#484f58', fontSize: 10 }}>Low</div><div style={{ color: '#f85149', fontSize: 16, fontWeight: 600 }}>{snap.bar_ohlc.low.toFixed(2)}</div></div>
-              <div><div style={{ color: '#484f58', fontSize: 10 }}>Close</div><div style={{ color: '#58a6ff', fontSize: 16, fontWeight: 600 }}>{snap.bar_ohlc.close.toFixed(2)}</div></div>
+
+            {/* Chart panes */}
+            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', gap: 0 }}>
+              {optionTab === 'underlying' && (
+                <div style={{ flex: 1 }}>
+                  <SnapshotChart
+                    symbol={snapshot.symbol} date={snapshot.date}
+                    barTime={snap.bar_time} barOhlc={snap.bar_ohlc}
+                    currentPrice={snap.current_price}
+                    openOrders={snap.open_orders}
+                    position={snap.position}
+                  />
+                </div>
+              )}
+              {optionTab === 'CE' && snap.strike_ce && snap.expiry && (
+                <div style={{ flex: 1 }}>
+                  <SnapshotOptionsChart
+                    symbol={snapshot.symbol} date={snapshot.date}
+                    barTime={snap.bar_time} barOhlc={null}
+                    currentPrice={snap.current_price_ce}
+                    openOrders={snap.open_orders.filter(o => !o.right || o.right === 'CE')}
+                    strike={snap.strike_ce} expiry={snap.expiry} right="CE"
+                  />
+                </div>
+              )}
+              {optionTab === 'PE' && snap.strike_pe && snap.expiry && (
+                <div style={{ flex: 1 }}>
+                  <SnapshotOptionsChart
+                    symbol={snapshot.symbol} date={snapshot.date}
+                    barTime={snap.bar_time} barOhlc={null}
+                    currentPrice={snap.current_price_pe}
+                    openOrders={snap.open_orders.filter(o => !o.right || o.right === 'PE')}
+                    strike={snap.strike_pe} expiry={snap.expiry} right="PE"
+                  />
+                </div>
+              )}
+              {optionTab === 'CE' && (!snap.strike_ce || !snap.expiry) && (
+                <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#484f58' }}>No CE strike/expiry data</div>
+              )}
+              {optionTab === 'PE' && (!snap.strike_pe || !snap.expiry) && (
+                <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#484f58' }}>No PE strike/expiry data</div>
+              )}
             </div>
-            <div style={{ marginTop: 16, fontSize: 14, color: '#d29922', fontWeight: 600 }}>
-              📍 {event.description}
-            </div>
-            <div style={{ marginTop: 8, fontSize: 11, color: '#8b949e' }}>
-              Event: {event.type.replace('_', ' ')} at {formatTimestamp(timestamp)}
-            </div>
-            <div style={{ marginTop: 12, fontSize: 11, color: '#484f58', fontStyle: 'italic' }}>
-              Full chart rendering with OHLC + order overlay coming in Phase XIII.
-              Current state data is shown above and can be used to analyze decision-making context.
-            </div>
-          </div>
+          </>
         ) : (
-          <div style={{ color: '#484f58', fontSize: 14 }}>
-            No bar data available at snapshot time
+          /* Equity: single chart */
+          <div style={{ flex: 1 }}>
+            <SnapshotChart
+              symbol={snapshot.symbol} date={snapshot.date}
+              barTime={snap.bar_time} barOhlc={snap.bar_ohlc}
+              currentPrice={snap.current_price}
+              openOrders={snap.open_orders}
+              position={snap.position}
+            />
           </div>
         )}
+
+        {/* Position cards */}
+        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', flexShrink: 0, paddingTop: 4 }}>
+          {renderPositionCard(snap.position, isOptions ? 'Underlying' : 'Position', snap.current_price)}
+          {isOptions && snap.strike_ce && renderPositionCard(snap.position_ce, `CE ${snap.strike_ce}`, snap.current_price_ce)}
+          {isOptions && snap.strike_pe && renderPositionCard(snap.position_pe, `PE ${snap.strike_pe}`, snap.current_price_pe)}
+        </div>
       </div>
     </div>
   )
 }
 
+function renderPositionCard(pos: { side: string; quantity: number; avg_entry_price: number; pnl: number; pnl_pct: number }, label: string, ltp: number) {
+  const formatPnl = (pnl: number) => (pnl >= 0 ? '+' : '') + pnl.toFixed(2)
+  return (
+    <div key={label} style={{ background: '#161b22', borderRadius: 6, padding: '6px 12px', border: '1px solid #21262d', fontSize: 12 }}>
+      <span style={{ color: '#484f58', fontSize: 11 }}>{label}: </span>
+      <span style={{ color: '#e6edf3', fontWeight: 600 }}>
+        {pos.side === 'FLAT' ? 'Flat' : `${pos.side} ${pos.quantity} @${pos.avg_entry_price.toFixed(2)}`}
+      </span>
+      {(pos.side !== 'FLAT' && ltp > 0) && (
+        <span style={{ marginLeft: 8, fontSize: 11, color: '#8b949e' }}>
+          LTP: {ltp.toFixed(2)}
+          <span style={{ marginLeft: 6, color: pos.pnl >= 0 ? '#3fb950' : '#f85149', fontWeight: 600 }}>
+            P&L: {formatPnl(pos.pnl)} ({pos.pnl_pct > 0 ? '+' : ''}{pos.pnl_pct}%)
+          </span>
+        </span>
+      )}
+    </div>
+  )
+}
+
 function formatBarTime(ts: number): string {
+  if (!ts) return ''
   const d = new Date(ts * 1000)
   return d.toLocaleTimeString('en-IN', { hour12: false, hour: '2-digit', minute: '2-digit' })
 }
