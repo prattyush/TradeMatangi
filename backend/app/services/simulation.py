@@ -264,11 +264,8 @@ def find_session_by_context(
 ) -> Optional[dict]:
     """Return the most recent DynamoDB Sessions record for (user, symbol, date, session_type).
 
-    Returns None for simulation sessions — those always create fresh.
     Failures are swallowed so a DB error never blocks a fresh session start.
     """
-    if session_type == "sim":
-        return None
     try:
         from app.services.db import get_dynamodb_resource
         from boto3.dynamodb.conditions import Key
