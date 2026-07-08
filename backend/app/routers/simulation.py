@@ -170,13 +170,7 @@ async def start_simulation(
                 logger.info("start_simulation: stopping existing sim session %s for restart", existing_session_id)
                 sim_svc.stop_session(active)
             else:
-                logger.info("start_simulation: removing stale DB record for sim session %s", existing_session_id)
-                try:
-                    from app.services.db import get_dynamodb_resource
-                    table = get_dynamodb_resource().Table("Sessions")
-                    table.delete_item(Key={"session_id": existing_session_id})
-                except Exception:
-                    logger.exception("Failed to remove stale session record %s", existing_session_id)
+                logger.info("start_simulation: reusing stale sim session record %s (preserved for trade history)", existing_session_id)
             # Fall through to create_session below
         elif active:
             # Paper/real: already running in memory — return it (idempotent start)
