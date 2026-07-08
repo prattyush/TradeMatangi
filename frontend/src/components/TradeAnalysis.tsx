@@ -743,7 +743,7 @@ function GroupCard({ group, historicalDays = 2 }: { group: SessionGroup; histori
   const [expanded, setExpanded] = useState(false)
   const [details, setDetails] = useState<Map<string, SessionDetail>>(new Map())
   const [loading, setLoading] = useState(false)
-  const [viewingSnapshots, setViewingSnapshots] = useState<EventSnapshot[] | null>(null)
+  const [viewingSnapshots, setViewingSnapshots] = useState<{ session: SessionSummary; snapshots: EventSnapshot[] } | null>(null)
   const [snapshotLoading, setSnapshotLoading] = useState(false)
 
   const handleExpand = async () => {
@@ -831,14 +831,20 @@ function GroupCard({ group, historicalDays = 2 }: { group: SessionGroup; histori
         </div>
 
         <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
-          {/* Snapshots button — queries first session in the group */}
+          {/* Snapshots button — queries all sessions in the group */}
           <button
             onClick={async (e) => {
               e.stopPropagation()
               setSnapshotLoading(true)
               try {
-                const snaps = await api.getSnapshots(group.sessions[0].session_id)
-                if (snaps.length > 0) setViewingSnapshots(snaps)
+                // Query all sessions in this group for snapshots
+                for (const s of group.sessions) {
+                  const snaps = await api.getSnapshots(s.session_id)
+                  if (snaps.length > 0) {
+                    setViewingSnapshots({ session: s, snapshots: snaps })
+                    return
+                  }
+                }
               } catch { /* ignore */ }
               finally { setSnapshotLoading(false) }
             }}
@@ -860,11 +866,11 @@ function GroupCard({ group, historicalDays = 2 }: { group: SessionGroup; histori
       {/* Event snapshot viewer modal */}
       {viewingSnapshots && (
         <EventSnapshotViewer
-          session={group.sessions[0]}
-          snapshots={viewingSnapshots}
+          session={viewingSnapshots.session}
+          snapshots={viewingSnapshots.snapshots}
           onClose={() => setViewingSnapshots(null)}
           onDeleteAll={async () => {
-            await api.deleteSnapshots(group.sessions[0].session_id)
+            await api.deleteSnapshots(viewingSnapshots.session.session_id)
             setViewingSnapshots(null)
           }}
         />
