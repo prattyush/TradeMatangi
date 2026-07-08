@@ -273,6 +273,9 @@ export interface SnapshotData {
   // Combined P&L across all positions
   combined_pnl: number
   combined_pnl_pct: number
+  // Session-level P&L (realized + unrealized, net of all commissions)
+  session_pnl: number
+  session_pnl_pct: number
   wallet_balance: number
   session_capital: number
   wallet_used_pct: number
