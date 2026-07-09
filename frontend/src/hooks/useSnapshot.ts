@@ -170,7 +170,7 @@ export function useSnapshot(simRef: React.RefObject<SimulationState>) {
         date: sim.date,
         instrument_type: sim.sessionInstrumentType,
         session_type: sim.sessionType,
-        timestamp: Date.now() / 1000,
+        timestamp: sim.latestEquityTick?.time ?? Date.now() / 1000,
         event: enrichedEvent,
         snapshot: {
           current_price: eqPrice,
@@ -195,6 +195,16 @@ export function useSnapshot(simRef: React.RefObject<SimulationState>) {
           expiry: sim.sessionExpiry,
           event_timestamp: Math.floor(Date.now() / 1000),
           quantity_mode: qtyMode,
+          filled_trades: (sim.trades || []).map(t => ({
+            trade_id: t.trade_id,
+            side: t.side,
+            price: t.price,
+            timestamp: t.timestamp,
+            right: t.right,
+            strike: t.strike,
+            underlying_price: t.underlying_price,
+            quantity: t.quantity,
+          })),
         },
       }
 

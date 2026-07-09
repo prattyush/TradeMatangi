@@ -247,6 +247,17 @@ export interface SessionDetail extends SessionSummary {
 
 // ── Event Snapshot types ────────────────────────────────────────────────────
 
+export interface SnapshotFilledTrade {
+  trade_id: string
+  side: 'BUY' | 'SELL'
+  price: number
+  timestamp: number
+  right?: string
+  strike?: number
+  underlying_price?: number
+  quantity: number
+}
+
 export interface SnapshotPosition {
   side: string
   quantity: number
@@ -289,6 +300,8 @@ export interface SnapshotData {
   event_timestamp: number
   // Quantity mode: "quantity" or "funds_ratio"
   quantity_mode: string
+  // Filled trades up to this event time (for chart markers)
+  filled_trades: SnapshotFilledTrade[]
 }
 
 export interface EventSnapshot {
