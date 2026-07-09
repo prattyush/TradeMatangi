@@ -7,9 +7,8 @@ import {
   LineData,
   Time,
 } from 'lightweight-charts'
-import api, { SessionSummary, SessionDetail, AnalysisTrade, OHLCCandle } from '../services/api'
+import api, { SessionSummary, SessionDetail, AnalysisTrade, OHLCCandle, EventSnapshot } from '../services/api'
 import EventSnapshotViewer from './EventSnapshotViewer'
-import { EventSnapshot } from '../services/api'
 
 interface Props {
   onClose: () => void
@@ -743,7 +742,7 @@ function GroupCard({ group, historicalDays = 2 }: { group: SessionGroup; histori
   const [expanded, setExpanded] = useState(false)
   const [details, setDetails] = useState<Map<string, SessionDetail>>(new Map())
   const [loading, setLoading] = useState(false)
-  const [viewingSnapshots, setViewingSnapshots] = useState<{ session: SessionSummary; snapshots: EventSnapshot[] } | null>(null)
+  const [viewingSnapshots, setViewingSnapshots] = useState<{ session: SessionSummary; snapshots: EventSnapshot[]; sessionIds: string[] } | null>(null)
   const [snapshotLoading, setSnapshotLoading] = useState(false)
 
   const handleExpand = async () => {
@@ -837,13 +836,18 @@ function GroupCard({ group, historicalDays = 2 }: { group: SessionGroup; histori
               e.stopPropagation()
               setSnapshotLoading(true)
               try {
-                // Query all sessions in this group for snapshots
+                // Aggregate snapshots from all sessions in this group
+                const allSnapshots: EventSnapshot[] = []
+                const sessionIds: string[] = []
+                let firstSession: SessionSummary | null = null
                 for (const s of group.sessions) {
+                  if (!firstSession) firstSession = s
+                  sessionIds.push(s.session_id)
                   const snaps = await api.getSnapshots(s.session_id)
-                  if (snaps.length > 0) {
-                    setViewingSnapshots({ session: s, snapshots: snaps })
-                    return
-                  }
+                  allSnapshots.push(...snaps)
+                }
+                if (allSnapshots.length > 0 && firstSession) {
+                  setViewingSnapshots({ session: firstSession, snapshots: allSnapshots, sessionIds })
                 }
               } catch { /* ignore */ }
               finally { setSnapshotLoading(false) }
@@ -870,7 +874,9 @@ function GroupCard({ group, historicalDays = 2 }: { group: SessionGroup; histori
           snapshots={viewingSnapshots.snapshots}
           onClose={() => setViewingSnapshots(null)}
           onDeleteAll={async () => {
-            await api.deleteSnapshots(viewingSnapshots.session.session_id)
+            for (const sid of viewingSnapshots.sessionIds) {
+              await api.deleteSnapshots(sid)
+            }
             setViewingSnapshots(null)
           }}
         />
