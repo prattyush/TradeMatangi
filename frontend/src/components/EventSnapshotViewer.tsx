@@ -24,7 +24,26 @@ export default function EventSnapshotViewer({ session, snapshots, onClose, onDel
   const sorted = snapshots.length > 0 ? [...snapshots].sort((a, b) => a.timestamp - b.timestamp) : snapshots
   const [selectedIdx, setSelectedIdx] = useState(0)
   const [deleting, setDeleting] = useState(false)
-  const snap = sorted[selectedIdx] ?? null
+  const [searchQuery, setSearchQuery] = useState('')
+
+  // Filter sorted snapshots by search query (case-insensitive, * = wildcard)
+  const filtered = !searchQuery.trim()
+    ? sorted
+    : sorted.filter(s => {
+        const target = `${s.event.description} ${s.event.type}`.toLowerCase()
+        const q = searchQuery.trim().toLowerCase()
+        const regexStr = q
+          .split('*')
+          .map(p => p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+          .join('.*')
+        try { return new RegExp(regexStr).test(target) }
+        catch { return target.includes(q) }
+      })
+
+  // Reset selection when filter changes
+  useEffect(() => { setSelectedIdx(0) }, [searchQuery])
+
+  const snap = filtered[selectedIdx] ?? null
 
   const handleDeleteAll = async () => {
     if (!confirm(`Delete all ${snapshots.length} event snapshots for ${session.date}?`)) return
@@ -41,11 +60,11 @@ export default function EventSnapshotViewer({ session, snapshots, onClose, onDel
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.key === 'ArrowUp') setSelectedIdx(i => Math.max(0, i - 1))
-      if (e.key === 'ArrowDown') setSelectedIdx(i => Math.min(sorted.length - 1, i + 1))
+      if (e.key === 'ArrowDown') setSelectedIdx(i => Math.min(filtered.length - 1, i + 1))
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [snapshots.length])
+  }, [filtered.length])
 
   const formatTime = (ts: number) => {
     const d = new Date(ts * 1000)
@@ -89,8 +108,31 @@ export default function EventSnapshotViewer({ session, snapshots, onClose, onDel
           <div style={{ padding: '8px 12px', background: '#0d1117', borderBottom: '1px solid #21262d', fontSize: 11, color: '#484f58', fontWeight: 600 }}>
             Events (↑↓ to navigate)
           </div>
+          <div style={{
+            padding: '6px 12px', borderBottom: '1px solid #21262d',
+            background: '#0d1117',
+          }}>
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={e => setSearchQuery(e.target.value)}
+              placeholder="Search... (* = wildcard)"
+              style={{
+                width: '100%', boxSizing: 'border-box',
+                background: '#161b22', border: '1px solid #30363d',
+                borderRadius: 4, padding: '4px 8px',
+                fontSize: 11, color: '#c9d1d9',
+                outline: 'none',
+              }}
+            />
+          </div>
           <div style={{ flex: 1, overflowY: 'auto' }}>
-            {sorted.map((s, i) => (
+            {filtered.length === 0 ? (
+              <div style={{ padding: '12px', fontSize: 11, color: '#484f58', textAlign: 'center' }}>
+                {searchQuery.trim() ? 'No matching events' : 'No snapshots yet'}
+              </div>
+            ) : (
+              filtered.map((s, i) => (
               <div key={s.event_id} onClick={() => setSelectedIdx(i)}
                 style={{
                   padding: '8px 12px', cursor: 'pointer',
@@ -113,7 +155,7 @@ export default function EventSnapshotViewer({ session, snapshots, onClose, onDel
                   )}
                 </div>
               </div>
-            ))}
+              )))}
           </div>
         </div>
 
