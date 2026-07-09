@@ -787,7 +787,7 @@ Multiple UI improvements across the frontend and backend:
 
 ---
 
-### Event Snapshots — Chart Time Fix + Filled Trade Markers — PR #???
+### Event Snapshots — Chart Time Fix + Filled Trade Markers — PR #274
 
 **Fix — Chart time instead of wall-clock:**
 - `frontend/src/hooks/useSnapshot.ts`: `timestamp` now captures `sim.latestEquityTick?.time` (chart epoch) instead of `Date.now() / 1000`, so snapshots use the trading session's chart time, not the computer's local clock. Falls back to wall-clock only when no tick is available.
