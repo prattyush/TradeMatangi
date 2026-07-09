@@ -784,3 +784,24 @@ Multiple UI improvements across the frontend and backend:
 **Tests:**
 - Updated `test_creates_target_sl_order_when_none_exists` for STOPLOSS order type.
 - All 38 strategy tests passing. 627 total backend tests passing.
+
+---
+
+### Event Snapshots — Chart Time Fix + Filled Trade Markers — PR #???
+
+**Fix — Chart time instead of wall-clock:**
+- `frontend/src/hooks/useSnapshot.ts`: `timestamp` now captures `sim.latestEquityTick?.time` (chart epoch) instead of `Date.now() / 1000`, so snapshots use the trading session's chart time, not the computer's local clock. Falls back to wall-clock only when no tick is available.
+- `frontend/src/components/EventSnapshotViewer.tsx`: all timestamp formatters (`formatTime`, `formatBarTime`, `formatTimestamp`) use `timeZone: 'UTC'` rendering. Since the project uses IST-as-UTC epoch encoding (09:32:30 IST → epoch with UTC label 09:32:30), UTC formatting displays the correct chart wall-clock time.
+
+**Feature — Filled trade B/S markers on snapshot charts:**
+- `frontend/src/services/api.ts`: added `SnapshotFilledTrade` type (trade_id, side, price, timestamp, right, strike, underlying_price, quantity) and `filled_trades` field to `SnapshotData` interface.
+- `frontend/src/hooks/useSnapshot.ts`: captures `sim.trades` as `filled_trades` in the snapshot payload during each event capture.
+- `frontend/src/components/EventSnapshotViewer.tsx`:
+  - Added `crossChartMarkerStyle()` helper matching `Chart.tsx` convention (CB/CS/PS/PB for CE/PE trades on underlying chart)
+  - `SnapshotChart` (equity/underlying pane): one transparent `LineSeries` per trade with `setMarkers(circle, inBar, size:0.6)`. Equity trades show B/S; CE/PE trades with `underlying_price` show CB/CS/PS/PB using `crossChartMarkerStyle`.
+  - `SnapshotOptionsChart` (CE/PE panes): filters `filledTrades` by `right === paneRight && strike === paneStrike`, shows B/S markers at trade price.
+
+**How it works:**
+- `filled_trades` is captured from `sim.trades` (in-memory) at event snapshot generation time
+- Old snapshots don't have `filled_trades` — existing data gracefully degrades to no markers
+- Same marker convention as live trading charts — BUY = white circle, SELL = blue circle
