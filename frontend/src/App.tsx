@@ -355,7 +355,7 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
       sim.handleOrderFilled(event.order_id as string, event.right as string | null | undefined)
       captureSnapshot({
         type: 'order_filled',
-        description: `${event.side} FILLED @ ${event.filled_price}`,
+        description: `${event.side} FILLED @ ${event.filled_price}${event.right ? ` ${event.right}` : ''}`,
         details: {
           side: event.side,
           filled_price: event.filled_price,

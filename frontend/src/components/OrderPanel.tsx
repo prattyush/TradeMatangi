@@ -236,9 +236,10 @@ export default function OrderPanel({
         await onPlaceOrder(side, orderType, parsedPrice, quantity, { target_deviation_pct: deviation })
       }
       setPrice('')
+      const rightTag = instrumentType === 'options' && activeRight ? ` ${activeRight}` : ''
       onSnapshotEvent?.({
         type: 'order_placed',
-        description: `${side} ${orderType === 'MARKET' ? 'LIMIT(Mkt)' : orderType} @ ${orderType === 'MARKET' ? (side === 'BUY' ? currentPrice * 1.01 : currentPrice * 0.99).toFixed(2) : parsedPrice.toFixed(2)}`,
+        description: `${side} ${orderType === 'MARKET' ? 'LIMIT(Mkt)' : orderType} @ ${orderType === 'MARKET' ? (side === 'BUY' ? currentPrice * 1.01 : currentPrice * 0.99).toFixed(2) : parsedPrice.toFixed(2)}${rightTag}`,
         details: {
           side,
           orderType: orderType === 'MARKET' ? 'LIMIT' : orderType,
@@ -294,8 +295,8 @@ export default function OrderPanel({
       onSnapshotEvent?.({
         type: pendingConversion ? 'order_converted' : 'order_edited',
         description: pendingConversion
-          ? `${order.order_type}→${pendingConversion} @ ${p}`
-          : `${order.order_type} edited to ${p}`,
+          ? `${order.order_type}→${pendingConversion} @ ${p}${order.right ? ` ${order.right}` : ''}`
+          : `${order.order_type}${order.right ? ` ${order.right}` : ''} edited to ${p}`,
         details: { orderId: order.order_id, newPrice: p, conversion: pendingConversion ?? null, oldType: order.order_type },
       })
       setEditingOrderId(null)
