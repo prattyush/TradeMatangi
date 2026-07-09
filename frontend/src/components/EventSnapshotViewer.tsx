@@ -49,7 +49,7 @@ export default function EventSnapshotViewer({ session, snapshots, onClose, onDel
 
   const formatTime = (ts: number) => {
     const d = new Date(ts * 1000)
-    return d.toLocaleTimeString('en-IN', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })
+    return d.toLocaleTimeString('en-IN', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit', timeZone: 'UTC' })
   }
 
   const eventIcon = (type: string) => {
@@ -148,10 +148,22 @@ function computeEMA(closes: number[], period: number): (number | null)[] {
   return result
 }
 
+// ── Trade marker style helper (matches Chart.tsx convention) ──────────────
+function crossChartMarkerStyle(tradeRight: string, side: 'BUY' | 'SELL'): { color: string; text: string } {
+  if (tradeRight === 'CE') {
+    return side === 'BUY'
+      ? { color: '#FFFFFF', text: 'CB' }
+      : { color: '#00AAFF', text: 'CS' }
+  }
+  return side === 'BUY'
+    ? { color: '#00AAFF', text: 'PS' }
+    : { color: '#FFFFFF', text: 'PB' }
+}
+
 // ── Snapshot Chart ─────────────────────────────────────────────────────────
 
 function SnapshotChart({
-  symbol, date, barTime, barOhlc, currentPrice, openOrders, position,
+  symbol, date, barTime, barOhlc, currentPrice, openOrders, position, filledTrades,
 }: {
   symbol: string; date: string
   barTime: number
@@ -159,6 +171,7 @@ function SnapshotChart({
   currentPrice: number
   openOrders: { side: string; order_type: string; trigger_price: number; limit_price: number; is_stoploss: boolean; right?: string; quantity: number }[]
   position: { side: string; quantity: number; avg_entry_price: number; pnl: number; pnl_pct: number } | null
+  filledTrades: { trade_id: string; side: 'BUY' | 'SELL'; price: number; timestamp: number; right?: string; strike?: number; underlying_price?: number; quantity: number }[]
 }) {
   const containerRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<IChartApi | null>(null)
@@ -353,6 +366,44 @@ function SnapshotChart({
       chipPositionPnlRef.current = null
     }
 
+    // Trade markers — B/S circles for filled trades up to this event time
+    const intervalSecs = 3 * 60
+    const paneTrades = (filledTrades ?? []).filter(t => !t.right || t.underlying_price !== undefined)
+    for (const t of paneTrades) {
+      try {
+        const markerPrice = (t.right !== undefined && t.underlying_price !== undefined)
+          ? t.underlying_price
+          : t.price
+        const slot = (Math.floor(t.timestamp / intervalSecs) * intervalSecs) as Time
+        const tradeSeries = chart.addLineSeries({
+          lineVisible: false, crosshairMarkerVisible: false,
+          lastValueVisible: false, priceLineVisible: false,
+        })
+        overlaySeries.push(tradeSeries)
+        tradeSeries.setData([{ time: slot, value: markerPrice }])
+
+        let color: string
+        let text: string
+        if (t.right) {
+          const style = crossChartMarkerStyle(t.right, t.side)
+          color = style.color
+          text = style.text
+        } else {
+          color = t.side === 'BUY' ? '#FFFFFF' : '#00AAFF'
+          text = t.side === 'BUY' ? 'B' : 'S'
+        }
+
+        tradeSeries.setMarkers([{
+          time: slot,
+          position: 'inBar' as const,
+          color,
+          shape: 'circle' as const,
+          text,
+          size: 0.6,
+        }])
+      } catch { /* chart disposed mid-loop */ }
+    }
+
     return () => {
       for (const s of overlaySeries) {
         try { chart.removeSeries(s) } catch { /* removed */ }
@@ -362,7 +413,7 @@ function SnapshotChart({
       }
       setPnlCoord(null)
     }
-  }, [barTime, barOhlc, currentPrice, openOrders, position])
+  }, [barTime, barOhlc, currentPrice, openOrders, position, filledTrades])
 
   const chipPositionPnlRef = useRef<{ side: string; quantity: number; avg_entry_price: number; pnl: number; pnl_pct: number } | null>(null)
   const [pnlCoord, setPnlCoord] = useState<{ x: number; y: number } | null>(null)
@@ -412,7 +463,7 @@ function SnapshotChart({
 
 function SnapshotOptionsChart({
   symbol, date, barTime, barOhlc, currentPrice, openOrders,
-  strike, expiry, right,
+  strike, expiry, right, filledTrades,
 }: {
   symbol: string; date: string
   barTime: number
@@ -420,6 +471,7 @@ function SnapshotOptionsChart({
   currentPrice: number
   openOrders: { side: string; order_type: string; trigger_price: number; limit_price: number; is_stoploss: boolean; right?: string; quantity: number }[]
   strike: number; expiry: string; right: string
+  filledTrades: { trade_id: string; side: 'BUY' | 'SELL'; price: number; timestamp: number; right?: string; strike?: number; underlying_price?: number; quantity: number }[]
 }) {
   const containerRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<IChartApi | null>(null)
@@ -535,6 +587,29 @@ function SnapshotOptionsChart({
       } catch {}
     }
 
+    // Trade markers — B/S circles for filled trades matching this pane's right+strike
+    const intervalSecs = 3 * 60
+    const paneTrades = (filledTrades ?? []).filter(t => t.right === right && t.strike === strike)
+    for (const t of paneTrades) {
+      try {
+        const slot = (Math.floor(t.timestamp / intervalSecs) * intervalSecs) as Time
+        const tradeSeries = chart.addLineSeries({
+          lineVisible: false, crosshairMarkerVisible: false,
+          lastValueVisible: false, priceLineVisible: false,
+        })
+        overlaySeries.push(tradeSeries)
+        tradeSeries.setData([{ time: slot, value: t.price }])
+        tradeSeries.setMarkers([{
+          time: slot,
+          position: 'inBar' as const,
+          color: t.side === 'BUY' ? '#FFFFFF' : '#00AAFF',
+          shape: 'circle' as const,
+          text: t.side === 'BUY' ? 'B' : 'S',
+          size: 0.6,
+        }])
+      } catch { /* disposed */ }
+    }
+
     return () => {
       for (const s of overlaySeries) {
         try { chart.removeSeries(s) } catch { /* removed */ }
@@ -543,7 +618,7 @@ function SnapshotOptionsChart({
         try { seriesRef.current?.removePriceLine(pl) } catch { /* removed */ }
       }
     }
-  }, [barTime, barOhlc, currentPrice, openOrders, right])
+  }, [barTime, barOhlc, currentPrice, openOrders, right, filledTrades])
 
   return (
     <div style={{ position: 'relative', width: '100%', height: '100%', overflow: 'hidden' }}>
@@ -643,6 +718,7 @@ function SnapshotDetail({ snapshot }: { snapshot: EventSnapshot }) {
                     currentPrice={snap.current_price}
                     openOrders={snap.open_orders}
                     position={snap.position}
+                    filledTrades={snap.filled_trades || []}
                   />
                 </div>
               )}
@@ -654,6 +730,7 @@ function SnapshotDetail({ snapshot }: { snapshot: EventSnapshot }) {
                     currentPrice={snap.current_price_ce}
                     openOrders={snap.open_orders.filter(o => !o.right || o.right === 'CE')}
                     strike={snap.strike_ce} expiry={snap.expiry} right="CE"
+                    filledTrades={snap.filled_trades || []}
                   />
                 </div>
               )}
@@ -665,6 +742,7 @@ function SnapshotDetail({ snapshot }: { snapshot: EventSnapshot }) {
                     currentPrice={snap.current_price_pe}
                     openOrders={snap.open_orders.filter(o => !o.right || o.right === 'PE')}
                     strike={snap.strike_pe} expiry={snap.expiry} right="PE"
+                    filledTrades={snap.filled_trades || []}
                   />
                 </div>
               )}
@@ -685,6 +763,7 @@ function SnapshotDetail({ snapshot }: { snapshot: EventSnapshot }) {
               currentPrice={snap.current_price}
               openOrders={snap.open_orders}
               position={snap.position}
+              filledTrades={snap.filled_trades || []}
             />
           </div>
         )}
@@ -723,10 +802,10 @@ function renderPositionCard(pos: { side: string; quantity: number; avg_entry_pri
 function formatBarTime(ts: number): string {
   if (!ts) return ''
   const d = new Date(ts * 1000)
-  return d.toLocaleTimeString('en-IN', { hour12: false, hour: '2-digit', minute: '2-digit' })
+  return d.toLocaleTimeString('en-IN', { hour12: false, hour: '2-digit', minute: '2-digit', timeZone: 'UTC' })
 }
 
 function formatTimestamp(ts: number): string {
   const d = new Date(ts * 1000)
-  return d.toLocaleTimeString('en-IN', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })
+  return d.toLocaleTimeString('en-IN', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit', timeZone: 'UTC' })
 }
