@@ -70,7 +70,7 @@ def set_token(sk: str, value: str) -> None:
 def get_tokens_masked() -> dict[str, str | None]:
     """Return token values masked to last 4 chars for safe display."""
     result: dict[str, str | None] = {}
-    for sk in ("icici_session", "kite_access"):
+    for sk in ("icici_session", "kite_access", "fyers_access", "fyers_refresh"):
         val = get_token(sk)
         if val:
             result[sk] = ("*" * max(0, len(val) - 4)) + val[-4:]

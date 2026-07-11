@@ -136,6 +136,9 @@ class SimulationSession:
     # True when BreezeStreamManager is the active streaming source for this session.
     # Used for clarity in cleanup; stream_manager.stop() handles actual teardown.
     breeze_streaming: bool = False
+    # True when FyersBroadcaster is the active streaming source for this session.
+    # Used by stop_session() to call the correct unregister() method.
+    fyers_streaming: bool = False
     # AI Helper (Phase XI)
     ai_commands_active: bool = False
     # Per-right bar state for AI bar-close hook: {right → {slot, open, high, low, close, history}}
@@ -1130,6 +1133,41 @@ async def _run_paper_session(session: SimulationSession) -> None:
             session.session_id, stream_source,
         )
 
+        # ── Fyers streaming path ───────────────────────────────────────────────
+        if stream_source == "fyers":
+            logger.info(
+                "Paper session %s: attempting Fyers live streaming …",
+                session.session_id,
+            )
+            try:
+                from app.services.fyers_service import (
+                    get_fyers_broadcaster,
+                    resolve_fyers_symbols,
+                )
+                symbols, rights = resolve_fyers_symbols(session)
+                get_fyers_broadcaster().register(
+                    session.session_id, symbols, rights,
+                    session.paper_tick_queue, loop,
+                )
+                session.fyers_streaming = True
+                logger.info(
+                    "Paper session %s: Fyers live streaming active (%d symbols)",
+                    session.session_id, len(symbols),
+                )
+            except Exception as fyers_exc:
+                warn_msg = (
+                    f"Fyers streaming failed ({fyers_exc}). "
+                    f"Falling back to Breeze for live data."
+                )
+                logger.warning("Paper session %s: %s", session.session_id, warn_msg)
+                try:
+                    session.queue.put_nowait(json.dumps({
+                        "type": "broker_error", "message": warn_msg,
+                    }))
+                except asyncio.QueueFull:
+                    pass
+                stream_source = "breeze"  # fall through to Breeze
+
         # ── Breeze streaming path ──────────────────────────────────────────────
         if stream_source == "breeze":
             logger.info(
@@ -1417,6 +1455,41 @@ async def _run_real_session(session: SimulationSession) -> None:
             "Real session %s: Phase 2 — live streaming source=%s",
             session.session_id, real_stream_source,
         )
+
+        # Fyers streaming path for real sessions
+        if real_stream_source == "fyers":
+            logger.info(
+                "Real session %s: attempting Fyers live streaming …",
+                session.session_id,
+            )
+            try:
+                from app.services.fyers_service import (
+                    get_fyers_broadcaster,
+                    resolve_fyers_symbols,
+                )
+                symbols, rights = resolve_fyers_symbols(session)
+                get_fyers_broadcaster().register(
+                    session.session_id, symbols, rights,
+                    session.paper_tick_queue, loop,
+                )
+                session.fyers_streaming = True
+                logger.info(
+                    "Real session %s: Fyers live streaming active (%d symbols)",
+                    session.session_id, len(symbols),
+                )
+            except Exception as fyers_exc:
+                warn_msg = (
+                    f"Fyers streaming failed ({fyers_exc}). "
+                    f"Falling back to Breeze for live data."
+                )
+                logger.warning("Real session %s: %s", session.session_id, warn_msg)
+                try:
+                    session.queue.put_nowait(json.dumps({
+                        "type": "broker_error", "message": warn_msg,
+                    }))
+                except asyncio.QueueFull:
+                    pass
+                real_stream_source = "breeze"  # fall through to Breeze
 
         # Breeze streaming path for real sessions
         if real_stream_source == "breeze":
@@ -2151,6 +2224,18 @@ def stop_session(session: SimulationSession) -> None:
             except Exception as exc:
                 logger.warning(
                     "BreezeStreamManager stop error for %s: %s", session.session_id, exc,
+                )
+        elif session.fyers_streaming:
+            # FyersBroadcaster — unregister this session
+            logger.info(
+                "stop_session %s: unregistering from FyersBroadcaster", session.session_id,
+            )
+            try:
+                from app.services.fyers_service import get_fyers_broadcaster
+                get_fyers_broadcaster().unregister(session.session_id)
+            except Exception as exc:
+                logger.warning(
+                    "FyersBroadcaster unregister error for %s: %s", session.session_id, exc,
                 )
         elif session.kotak_streaming:
             # KotakBroadcaster — unregister this session
