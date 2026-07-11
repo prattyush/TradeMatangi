@@ -201,6 +201,8 @@ export interface AuthResponse {
 export interface AdminTokensResponse {
   icici_session: string | null
   kite_access: string | null
+  fyers_access: string | null
+  fyers_refresh: string | null
 }
 
 // ── Analysis types ──────────────────────────────────────────────────────────
@@ -866,7 +868,7 @@ const api = {
     return res.json()
   },
 
-  async setAdminTokens(tokens: { icici_session?: string; kite_access?: string }): Promise<AdminTokensResponse> {
+  async setAdminTokens(tokens: { icici_session?: string; kite_access?: string; fyers_access?: string; fyers_refresh?: string }): Promise<AdminTokensResponse> {
     const res = await fetch(`${BACKEND_URL}/api/admin/tokens`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json', ..._authHeaders() },
@@ -1077,7 +1079,7 @@ const api = {
 
   // ── Live streaming source (admin) ──────────────────────────────────────────
 
-  async getStreamSource(): Promise<{ source: 'kite' | 'kotak' | 'breeze' }> {
+  async getStreamSource(): Promise<{ source: 'fyers' | 'kite' | 'kotak' | 'breeze' }> {
     const res = await fetch(`${BACKEND_URL}/api/admin/stream-source`, {
       headers: _authHeaders(),
     })
@@ -1085,7 +1087,7 @@ const api = {
     return res.json()
   },
 
-  async setStreamSource(source: 'kite' | 'kotak' | 'breeze'): Promise<{ source: string }> {
+  async setStreamSource(source: 'fyers' | 'kite' | 'kotak' | 'breeze'): Promise<{ source: string }> {
     const res = await fetch(`${BACKEND_URL}/api/admin/stream-source`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json', ..._authHeaders() },

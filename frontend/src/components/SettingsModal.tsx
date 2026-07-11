@@ -227,12 +227,16 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
   // Admin section — broker tokens
   const [iciciInput, setIciciInput] = useState('')
   const [kiteInput, setKiteInput] = useState('')
+  const [fyersInput, setFyersInput] = useState('')
+  const [fyersRefreshInput, setFyersRefreshInput] = useState('')
   const [iciciMasked, setIciciMasked] = useState<string | null>(null)
   const [kiteMasked, setKiteMasked] = useState<string | null>(null)
+  const [fyersAccessMasked, setFyersAccessMasked] = useState<string | null>(null)
+  const [fyersRefreshMasked, setFyersRefreshMasked] = useState<string | null>(null)
   const adminLoadedRef = useRef(false)
 
   // Admin section — live streaming source
-  const [streamSource, setStreamSource] = useState<'kite' | 'kotak' | 'breeze'>('kite')
+  const [streamSource, setStreamSource] = useState<'fyers' | 'kite' | 'kotak' | 'breeze'>('kite')
 
   // Real trading whitelist (admin)
   const [whitelistOpen, setWhitelistOpen] = useState(false)
@@ -310,6 +314,8 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
         api.getAdminTokens().then(t => {
           setIciciMasked(t.icici_session)
           setKiteMasked(t.kite_access)
+          setFyersAccessMasked(t.fyers_access)
+          setFyersRefreshMasked(t.fyers_refresh)
         }).catch(() => {})
         api.getStreamSource().then(r => setStreamSource(r.source)).catch(() => {})
       }
@@ -461,10 +467,12 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
   }
 
   const saveAdminTokens = async () => {
-    const tokens: { icici_session?: string; kite_access?: string } = {}
+    const tokens: { icici_session?: string; kite_access?: string; fyers_access?: string; fyers_refresh?: string } = {}
     if (iciciInput.trim()) tokens.icici_session = iciciInput.trim()
     if (kiteInput.trim()) tokens.kite_access = kiteInput.trim()
-    if (!tokens.icici_session && !tokens.kite_access) {
+    if (fyersInput.trim()) tokens.fyers_access = fyersInput.trim()
+    if (fyersRefreshInput.trim()) tokens.fyers_refresh = fyersRefreshInput.trim()
+    if (!tokens.icici_session && !tokens.kite_access && !tokens.fyers_access && !tokens.fyers_refresh) {
       setStatus('Enter at least one token')
       return
     }
@@ -472,8 +480,12 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
       const result = await api.setAdminTokens(tokens)
       setIciciMasked(result.icici_session)
       setKiteMasked(result.kite_access)
+      setFyersAccessMasked(result.fyers_access)
+      setFyersRefreshMasked(result.fyers_refresh)
       setIciciInput('')
       setKiteInput('')
+      setFyersInput('')
+      setFyersRefreshInput('')
       setStatus('Tokens saved')
       setTimeout(() => setStatus(null), 2000)
     } catch {
@@ -481,11 +493,11 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
     }
   }
 
-  const saveStreamSource = async (src: 'kite' | 'kotak' | 'breeze') => {
+  const saveStreamSource = async (src: 'fyers' | 'kite' | 'kotak' | 'breeze') => {
     try {
       await api.setStreamSource(src)
       setStreamSource(src)
-      const label = src === 'kite' ? 'Kite' : src === 'kotak' ? 'Kotak Neo' : 'ICICI Breeze'
+      const label = src === 'fyers' ? 'Fyers' : src === 'kite' ? 'Kite' : src === 'kotak' ? 'Kotak Neo' : 'ICICI Breeze'
       setStatus(`Streaming source set to: ${label}`)
       setTimeout(() => setStatus(null), 2500)
     } catch {
@@ -1379,6 +1391,44 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
                         }}
                       />
                     </div>
+                    <div>
+                      <div style={{ fontSize: 11, color: '#8b949e', marginBottom: 4 }}>
+                        Fyers Access Token
+                        {fyersAccessMasked && (
+                          <span style={{ color: '#484f58', marginLeft: 6 }}>current: {fyersAccessMasked}</span>
+                        )}
+                      </div>
+                      <input
+                        type="password"
+                        value={fyersInput}
+                        onChange={e => setFyersInput(e.target.value)}
+                        placeholder="Paste new token…"
+                        style={{
+                          width: '100%', padding: '6px 8px', background: '#0d1117',
+                          border: '1px solid #30363d', borderRadius: 6,
+                          color: '#e6edf3', fontSize: 12, boxSizing: 'border-box',
+                        }}
+                      />
+                    </div>
+                    <div>
+                      <div style={{ fontSize: 11, color: '#8b949e', marginBottom: 4 }}>
+                        Fyers Refresh Token
+                        {fyersRefreshMasked && (
+                          <span style={{ color: '#484f58', marginLeft: 6 }}>current: {fyersRefreshMasked}</span>
+                        )}
+                      </div>
+                      <input
+                        type="password"
+                        value={fyersRefreshInput}
+                        onChange={e => setFyersRefreshInput(e.target.value)}
+                        placeholder="Paste new token…"
+                        style={{
+                          width: '100%', padding: '6px 8px', background: '#0d1117',
+                          border: '1px solid #30363d', borderRadius: 6,
+                          color: '#e6edf3', fontSize: 12, boxSizing: 'border-box',
+                        }}
+                      />
+                    </div>
                     <button
                       onClick={saveAdminTokens}
                       style={{
@@ -1405,6 +1455,7 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
                     border: '1px solid #30363d', width: 'fit-content',
                   }}>
                     {([
+                      { key: 'fyers' as const, label: 'Fyers' },
                       { key: 'kite' as const, label: 'Kite' },
                       { key: 'kotak' as const, label: 'Kotak Neo' },
                       { key: 'breeze' as const, label: 'ICICI Breeze' },
@@ -1429,8 +1480,8 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
                   </div>
                   <div style={{ fontSize: 11, color: '#484f58', marginTop: 6 }}>
                     Applies to all new paper and real sessions.
-                    Kotak Neo requires TOTP login. Breeze requires a valid ICICI Direct session token.
-                    Falls back to Kite if selected source is unavailable.
+                    Fyers supports NSE/BSE equities, indices, and F&O. Kotak Neo requires TOTP login. Breeze requires a valid ICICI Direct session token.
+                    Falls back to the next available source if the selected one is unavailable.
                   </div>
 
                   {/* Show Kotak connection status inline when Kotak is selected */}
@@ -1461,6 +1512,26 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
                             }}
                           >Connect</button>
                         </>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Show Fyers connection status inline when Fyers is selected */}
+                  {streamSource === 'fyers' && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 10 }}>
+                      <span style={{ fontSize: 12, color: '#8b949e' }}>Fyers status:</span>
+                      {fyersAccessMasked ? (
+                        <span style={{
+                          fontSize: 12, color: '#3fb950',
+                          background: 'rgba(63,185,80,0.1)', border: '1px solid rgba(63,185,80,0.3)',
+                          borderRadius: 4, padding: '2px 8px',
+                        }}>Token configured</span>
+                      ) : (
+                        <span style={{
+                          fontSize: 12, color: '#f85149',
+                          background: 'rgba(248,81,73,0.1)', border: '1px solid rgba(248,81,73,0.3)',
+                          borderRadius: 4, padding: '2px 8px',
+                        }}>No token set</span>
                       )}
                     </div>
                   )}
