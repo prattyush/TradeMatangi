@@ -106,6 +106,11 @@ def update_settings(user_id: str, settings: dict) -> dict:
         if shares_updated:
             from app.services import pattern_logger_service
             pattern_logger_service.sync_pattern_shares(user_id, current.get("pattern_share_emails", ""))
+            try:
+                from app.services import chart_structure_service
+                chart_structure_service.sync_structure_shares(user_id, current.get("pattern_share_emails", ""))
+            except Exception:
+                logger.exception("Failed to sync chart structure shares, continuing")
         from app.services.db import get_dynamodb_resource
         table = get_dynamodb_resource().Table("UserSettings")
         dynamo_item = {"user_id": user_id}

@@ -82,7 +82,8 @@ class TestUpdateSettings:
     def test_share_emails_syncs_pattern_shares(self):
         mock_resource, mock_table = _mock_db({"user_id": "user-123", "historical_days": 2})
         with patch("app.services.db.get_dynamodb_resource", return_value=mock_resource), \
-             patch("app.services.pattern_logger_service.sync_pattern_shares") as mock_sync:
+             patch("app.services.pattern_logger_service.sync_pattern_shares") as mock_sync, \
+             patch("app.services.chart_structure_service.sync_structure_shares"):
             result = svc.update_settings("user-123", {"pattern_share_emails": "A@example.com, b@example.com"})
         assert result["pattern_share_emails"] == "a@example.com, b@example.com"
         mock_sync.assert_called_once_with("user-123", "a@example.com, b@example.com")

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import PatternLibrary from './pages/PatternLibrary'
+import ChartStructures from './pages/ChartStructures'
 import Chart, { PaneType } from './components/Chart'
 import SessionControls, { OptionsReadyConfig } from './components/SessionControls'
 import TradePanel from './components/TradePanel'
@@ -146,6 +147,7 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
 
   // ── Pattern Library page ─────────────────────────────────────────────────────
   const [showPatternLibrary, setShowPatternLibrary] = useState(false)
+  const [showChartStructures, setShowChartStructures] = useState(false)
 
   // ── Price-pick state ────────────────────────────────────────────────────────
   const [pricePickOrderId, setPricePickOrderId] = useState<string | null>(null)
@@ -616,6 +618,10 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
     )
   }
 
+  if (showChartStructures) {
+    return <ChartStructures onClose={() => setShowChartStructures(false)} />
+  }
+
   const renderLayout = () => {
     const gap = 4
     const maxH = Math.max(160, columnHeight - 36)
@@ -806,6 +812,18 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
           }}
         >
           📚 Patterns
+        </button>
+        <button
+          onClick={() => setShowChartStructures(p => !p)}
+          title="Chart Structures — browse daily market structure classifications"
+          style={{
+            background: showChartStructures ? '#1f6feb' : '#161b22',
+            border: `1px solid ${showChartStructures ? '#1f6feb' : '#30363d'}`,
+            color: showChartStructures ? '#fff' : '#8b949e',
+            borderRadius: 6, padding: '4px 10px', fontSize: 12, cursor: 'pointer',
+          }}
+        >
+          📊 Structures
         </button>
         {/* Recording + Snapshot controls — only shown when a session is active */}
         {(sim.sessionState === 'running' || sim.sessionState === 'paused') && sim.sessionId && (
