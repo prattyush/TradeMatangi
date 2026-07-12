@@ -62,9 +62,28 @@ def _already_classified(table, symbol: str, date_str: str) -> bool:
         KeyConditionExpression="symbol = :s AND #d = :d",
         ExpressionAttributeNames={"#d": "date"},
         ExpressionAttributeValues={":s": symbol, ":d": date_str},
-        Limit=1,
+        Limit=10,
     )
-    return len(resp.get("Items", [])) > 0
+    for item in resp.get("Items", []):
+        if item.get("is_predefined", False) or item.get("user_id") == "__SYSTEM__":
+            return True
+    return False
+
+
+def _delete_existing_predefined(table, symbol: str, date_str: str) -> int:
+    """Delete all predefined/system records for symbol+date (not user records)."""
+    deleted = 0
+    resp = table.query(
+        IndexName="SymbolDateIndex",
+        KeyConditionExpression="symbol = :s AND #d = :d",
+        ExpressionAttributeNames={"#d": "date"},
+        ExpressionAttributeValues={":s": symbol, ":d": date_str},
+    )
+    for item in resp.get("Items", []):
+        if item.get("is_predefined", True) or item.get("user_id") == "__SYSTEM__":
+            table.delete_item(Key={"chart_structure_id": item["chart_structure_id"]})
+            deleted += 1
+    return deleted
 
 
 def _load_or_fetch(symbol: str, date_str: str):
@@ -103,9 +122,13 @@ def _classify_opening(
     gap_band_low = y_low - 2 * y_range
     gap_band_high = y_high + 2 * y_range
     if gap_band_low <= today_open <= gap_band_high:
-        return "gap_up_down"
+        if today_open > y_high:
+            return "gap_up"
+        return "gap_down"
 
-    return "big_gap_up_down"
+    if today_open > y_high:
+        return "big_gap_up"
+    return "big_gap_down"
 
 
 def _classify_midday(df: pd.DataFrame, date_str: str) -> str:
@@ -198,7 +221,7 @@ def classify_symbol(table, symbol: str, start_date: str, end_date: str):
 
     current = start
     count = 0
-    skipped = 0
+    deleted = 0
 
     while current <= end:
         date_str = current.isoformat()
@@ -207,9 +230,7 @@ def classify_symbol(table, symbol: str, start_date: str, end_date: str):
         if not is_trading_day(current - timedelta(days=1)):
             continue
 
-        if _already_classified(table, symbol, date_str):
-            skipped += 1
-            continue
+        deleted += _delete_existing_predefined(table, symbol, date_str)
 
         try:
             y_date, dby_date = prior_trading_days(date_str, n=2)
@@ -255,9 +276,9 @@ def classify_symbol(table, symbol: str, start_date: str, end_date: str):
         count += 1
 
         if count % 50 == 0:
-            logger.info("  %s: classified %d days so far (skipped %d)", symbol, count, skipped)
+            logger.info("  %s: classified %d days so far (deleted %d old records)", symbol, count, deleted)
 
-    logger.info("%s: done — %d classified, %d skipped", symbol, count, skipped)
+    logger.info("%s: done — %d classified, %d old records deleted", symbol, count, deleted)
 
 
 def main():

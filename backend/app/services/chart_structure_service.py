@@ -25,8 +25,10 @@ SHARE_TABLE = "ChartStructureShares"
 OPENING_TYPES = [
     {"value": "within_yesterdays_range", "label": "Within Yesterday's Range"},
     {"value": "within_day_before_yesterdays_range", "label": "Within Day Before Yesterday's Range"},
-    {"value": "gap_up_down", "label": "Gap Up/Down"},
-    {"value": "big_gap_up_down", "label": "Big Gap Up/Down"},
+    {"value": "gap_up", "label": "Gap Up"},
+    {"value": "gap_down", "label": "Gap Down"},
+    {"value": "big_gap_up", "label": "Big Gap Up"},
+    {"value": "big_gap_down", "label": "Big Gap Down"},
     {"value": "undefined", "label": "Undefined"},
 ]
 
