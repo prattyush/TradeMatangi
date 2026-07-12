@@ -11,5 +11,7 @@ if [ ! -d "node_modules" ]; then
   npm install --no-bin-links
 fi
 
+export VITE_DISABLE_HMR="true"
+
 echo "Starting frontend on http://localhost:5173 ..."
 node node_modules/vite/bin/vite.js --host
