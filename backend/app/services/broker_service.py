@@ -77,10 +77,16 @@ def _get_breeze():
 
     creds = _read_breeze_credentials()
     breeze = BreezeConnect(api_key=creds["api_key"])
-    result = breeze.generate_session(
-        api_secret=creds["api_secret"],
-        session_token=creds["session_token"],
-    )
+    try:
+        result = breeze.generate_session(
+            api_secret=creds["api_secret"],
+            session_token=creds["session_token"],
+        )
+    except Exception as exc:
+        raise BreezeTokenError(
+            f"Breeze session generation failed: {exc}. "
+            "Please refresh your session_token via the ICICI Breeze admin panel."
+        ) from exc
     if result and (
         result.get("Status") not in (200, None)
         or result.get("Error")
