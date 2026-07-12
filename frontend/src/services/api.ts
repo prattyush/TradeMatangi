@@ -19,6 +19,20 @@ export interface OHLCCandle {
   close: number
 }
 
+export interface ChartStructureItem {
+  chart_structure_id: string
+  symbol: string
+  date: string
+  opening_type: string
+  midday_type: string
+  closing_type: string
+  is_predefined: boolean
+  user_id: string
+  created_at: string
+  updated_at: string
+  can_delete: boolean
+}
+
 export interface TickEvent {
   type: 'tick'
   time: number
@@ -1292,6 +1306,92 @@ const api = {
     const res = await fetch(`${BACKEND_URL}/api/pattern/ohlc/options?${params}`, { headers: _authHeaders() })
     if (!res.ok) throw new Error(`OHLC options failed: ${res.status}`)
     return res.json()
+  },
+
+  // ── Chart Structures (Phase XIII) ──────────────────────────────────────────
+
+  async chartStructureGetTypes(): Promise<{
+    opening_types: { value: string; label: string }[]
+    midday_types: { value: string; label: string }[]
+    closing_types: { value: string; label: string }[]
+  }> {
+    const res = await fetch(`${BACKEND_URL}/api/chart-structures/types`, { headers: _authHeaders() })
+    if (!res.ok) throw new Error(`Get structure types failed: ${res.status}`)
+    return res.json()
+  },
+
+  async chartStructureList(opts: {
+    opening_types?: string
+    midday_types?: string
+    closing_types?: string
+    symbol?: string
+    start_date?: string
+    end_date?: string
+  } = {}): Promise<{ structures: ChartStructureItem[] }> {
+    const params = new URLSearchParams()
+    if (opts.opening_types) params.set('opening_types', opts.opening_types)
+    if (opts.midday_types) params.set('midday_types', opts.midday_types)
+    if (opts.closing_types) params.set('closing_types', opts.closing_types)
+    if (opts.symbol) params.set('symbol', opts.symbol)
+    if (opts.start_date) params.set('start_date', opts.start_date)
+    if (opts.end_date) params.set('end_date', opts.end_date)
+    const res = await fetch(`${BACKEND_URL}/api/chart-structures/structures?${params}`, {
+      headers: _authHeaders(),
+    })
+    if (!res.ok) throw new Error(`List structures failed: ${res.status}`)
+    return res.json()
+  },
+
+  async chartStructureGet(structureId: string): Promise<ChartStructureItem> {
+    const res = await fetch(`${BACKEND_URL}/api/chart-structures/structure/${structureId}`, {
+      headers: _authHeaders(),
+    })
+    if (!res.ok) throw new Error(`Get structure failed: ${res.status}`)
+    return res.json()
+  },
+
+  async chartStructureGetOHLC(symbol: string, date: string, intervalMinutes = 3): Promise<{
+    symbol: string; date: string; interval_minutes: number
+    candles: OHLCCandle[]; structure: ChartStructureItem | null
+  }> {
+    const res = await fetch(
+      `${BACKEND_URL}/api/chart-structures/ohlc/${encodeURIComponent(symbol)}/${date}?interval_minutes=${intervalMinutes}`,
+      { headers: _authHeaders() },
+    )
+    if (!res.ok) throw new Error(`Structure OHLC failed: ${res.status}`)
+    return res.json()
+  },
+
+  async chartStructureCreate(data: {
+    symbol: string; date: string; opening_type: string; midday_type: string; closing_type: string
+  }): Promise<ChartStructureItem> {
+    const res = await fetch(`${BACKEND_URL}/api/chart-structures/structure`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ..._authHeaders() },
+      body: JSON.stringify(data),
+    })
+    if (!res.ok) throw new Error(`Create structure failed: ${res.status}`)
+    return res.json()
+  },
+
+  async chartStructureUpdate(structureId: string, data: {
+    opening_type: string; midday_type: string; closing_type: string
+  }): Promise<ChartStructureItem> {
+    const res = await fetch(`${BACKEND_URL}/api/chart-structures/structure/${structureId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', ..._authHeaders() },
+      body: JSON.stringify(data),
+    })
+    if (!res.ok) throw new Error(`Update structure failed: ${res.status}`)
+    return res.json()
+  },
+
+  async chartStructureDelete(structureId: string): Promise<void> {
+    const res = await fetch(`${BACKEND_URL}/api/chart-structures/structure/${structureId}`, {
+      method: 'DELETE',
+      headers: _authHeaders(),
+    })
+    if (!res.ok) throw new Error(`Delete structure failed: ${res.status}`)
   },
 
   // ── Event Snapshots ────────────────────────────────────────────────────────

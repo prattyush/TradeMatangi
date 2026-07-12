@@ -225,6 +225,57 @@ TABLES = [
         ],
         "ProvisionedThroughput": {"ReadCapacityUnits": 5, "WriteCapacityUnits": 5},
     },
+    # ── Phase XIII Chart Structures ──────────────────────────────────────────
+    {
+        "TableName": "ChartStructures",
+        "KeySchema": [
+            {"AttributeName": "chart_structure_id", "KeyType": "HASH"},
+        ],
+        "AttributeDefinitions": [
+            {"AttributeName": "chart_structure_id", "AttributeType": "S"},
+            {"AttributeName": "user_id", "AttributeType": "S"},
+            {"AttributeName": "symbol", "AttributeType": "S"},
+            {"AttributeName": "date", "AttributeType": "S"},
+        ],
+        "GlobalSecondaryIndexes": [
+            {
+                "IndexName": "UserIdIndex",
+                "KeySchema": [{"AttributeName": "user_id", "KeyType": "HASH"}],
+                "Projection": {"ProjectionType": "ALL"},
+                "ProvisionedThroughput": {"ReadCapacityUnits": 5, "WriteCapacityUnits": 5},
+            },
+            {
+                "IndexName": "SymbolDateIndex",
+                "KeySchema": [
+                    {"AttributeName": "symbol", "KeyType": "HASH"},
+                    {"AttributeName": "date", "KeyType": "RANGE"},
+                ],
+                "Projection": {"ProjectionType": "ALL"},
+                "ProvisionedThroughput": {"ReadCapacityUnits": 5, "WriteCapacityUnits": 5},
+            },
+        ],
+        "ProvisionedThroughput": {"ReadCapacityUnits": 5, "WriteCapacityUnits": 5},
+    },
+    {
+        "TableName": "ChartStructureShares",
+        "KeySchema": [
+            {"AttributeName": "owner_user_id", "KeyType": "HASH"},
+            {"AttributeName": "shared_user_id", "KeyType": "RANGE"},
+        ],
+        "AttributeDefinitions": [
+            {"AttributeName": "owner_user_id", "AttributeType": "S"},
+            {"AttributeName": "shared_user_id", "AttributeType": "S"},
+        ],
+        "GlobalSecondaryIndexes": [
+            {
+                "IndexName": "SharedUserIdIndex",
+                "KeySchema": [{"AttributeName": "shared_user_id", "KeyType": "HASH"}],
+                "Projection": {"ProjectionType": "ALL"},
+                "ProvisionedThroughput": {"ReadCapacityUnits": 5, "WriteCapacityUnits": 5},
+            }
+        ],
+        "ProvisionedThroughput": {"ReadCapacityUnits": 5, "WriteCapacityUnits": 5},
+    },
 ]
 
 
