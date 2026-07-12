@@ -28,11 +28,15 @@ def _require_admin(user_id: str = Depends(get_request_user_id)) -> str:
 class TokensResponse(BaseModel):
     icici_session: str | None = None
     kite_access: str | None = None
+    fyers_access: str | None = None
+    fyers_refresh: str | None = None
 
 
 class SetTokensRequest(BaseModel):
     icici_session: str | None = None
     kite_access: str | None = None
+    fyers_access: str | None = None
+    fyers_refresh: str | None = None
 
 
 @router.get("/tokens", response_model=TokensResponse)
@@ -42,6 +46,8 @@ async def get_tokens(user_id: str = Depends(_require_admin)):
     return TokensResponse(
         icici_session=masked.get("icici_session"),
         kite_access=masked.get("kite_access"),
+        fyers_access=masked.get("fyers_access"),
+        fyers_refresh=masked.get("fyers_refresh"),
     )
 
 
@@ -52,10 +58,16 @@ async def set_tokens(req: SetTokensRequest, user_id: str = Depends(_require_admi
         token_service.set_token("icici_session", req.icici_session)
     if req.kite_access is not None:
         token_service.set_token("kite_access", req.kite_access)
+    if req.fyers_access is not None:
+        token_service.set_token("fyers_access", req.fyers_access)
+    if req.fyers_refresh is not None:
+        token_service.set_token("fyers_refresh", req.fyers_refresh)
     masked = token_service.get_tokens_masked()
     return TokensResponse(
         icici_session=masked.get("icici_session"),
         kite_access=masked.get("kite_access"),
+        fyers_access=masked.get("fyers_access"),
+        fyers_refresh=masked.get("fyers_refresh"),
     )
 
 
@@ -117,12 +129,12 @@ async def get_stream_source(user_id: str = Depends(_require_admin)):
 async def set_stream_source(req: StreamSourceRequest, user_id: str = Depends(_require_admin)):
     """
     Set the live streaming source for all future paper/real sessions.
-    Allowed values: "kite", "kotak", "breeze".
+    Allowed values: "fyers", "kite", "kotak", "breeze".
     The new value takes effect immediately for newly started sessions;
     active sessions are unaffected.
     """
-    if req.source not in ("kite", "kotak", "breeze"):
-        raise HTTPException(status_code=400, detail="source must be 'kite', 'kotak', or 'breeze'")
+    if req.source not in ("kite", "kotak", "breeze", "fyers"):
+        raise HTTPException(status_code=400, detail="source must be 'fyers', 'kite', 'kotak', or 'breeze'")
     from app.services import token_service
     token_service.set_token("live_stream_source", req.source)
     logger.info("Admin %s: SET stream-source → %s", user_id, req.source)
