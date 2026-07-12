@@ -7,9 +7,37 @@
  */
 import { useState, useEffect, useRef, useCallback } from 'react'
 import {
-  createChart, IChartApi, Time,
+  createChart, IChartApi, ISeriesApi, LineData, Time,
 } from 'lightweight-charts'
 import api, { ChartStructureItem, OHLCCandle } from '../services/api'
+
+// ── EMA helpers ───────────────────────────────────────────────────────────────
+
+function nextEMA(prev: number, close: number, k: number): number {
+  return close * k + prev * (1 - k)
+}
+
+function computeEMA(closes: number[], period: number): (number | null)[] {
+  if (closes.length === 0) return []
+  const result: (number | null)[] = []
+  const k = 2 / (period + 1)
+  let ema: number | null = null
+  let warmup = 0, sum = 0
+  for (let i = 0; i < closes.length; i++) {
+    sum += closes[i]
+    warmup++
+    if (warmup < period) {
+      result.push(null)
+    } else if (warmup === period) {
+      ema = sum / period
+      result.push(ema)
+    } else {
+      ema = nextEMA(ema!, closes[i], k)
+      result.push(ema)
+    }
+  }
+  return result
+}
 
 type TypeDef = { value: string; label: string }
 
@@ -146,7 +174,10 @@ function ChartModal({
 }) {
   const chartRef = useRef<HTMLDivElement>(null)
   const chartApi = useRef<IChartApi | null>(null)
+  const ema9Ref = useRef<ISeriesApi<'Line'> | null>(null)
+  const ema21Ref = useRef<ISeriesApi<'Line'> | null>(null)
   const [candles, setCandles] = useState<OHLCCandle[]>([])
+  const [showEma, setShowEma] = useState(true)
   const [loading, setLoading] = useState(true)
   const [editOpen, setEditOpen] = useState<string>('')
   const [editMid, setEditMid] = useState<string>('')
@@ -194,6 +225,10 @@ function ChartModal({
       upColor: '#22c55e', downColor: '#ef4444', borderUpColor: '#22c55e',
       borderDownColor: '#ef4444', wickUpColor: '#22c55e', wickDownColor: '#ef4444',
     })
+    const e9 = chart.addLineSeries({ color: '#f0883e', lineWidth: 1, priceLineVisible: false, lastValueVisible: false })
+    const e21 = chart.addLineSeries({ color: '#79c0ff', lineWidth: 1, priceLineVisible: false, lastValueVisible: false })
+    ema9Ref.current = e9
+    ema21Ref.current = e21
     series.setData(candles.map(c => ({
       time: c.time as Time, open: c.open, high: c.high, low: c.low, close: c.close,
     })))
@@ -204,7 +239,29 @@ function ChartModal({
     return () => {
       window.removeEventListener('resize', onResize)
       chart.remove()
+      ema9Ref.current = null
+      ema21Ref.current = null
     }
+  }, [candles])
+
+  // EMA compute + visibility
+  useEffect(() => {
+    ema9Ref.current?.applyOptions({ visible: showEma })
+    ema21Ref.current?.applyOptions({ visible: showEma })
+  }, [showEma])
+
+  useEffect(() => {
+    if (!ema9Ref.current || !ema21Ref.current || candles.length === 0) return
+    const closes = candles.map(c => c.close)
+    const ema9vals = computeEMA(closes, 9)
+    const ema21vals = computeEMA(closes, 21)
+    const e9data: LineData[] = [], e21data: LineData[] = []
+    for (let i = 0; i < candles.length; i++) {
+      if (ema9vals[i] !== null) e9data.push({ time: candles[i].time as Time, value: ema9vals[i]! })
+      if (ema21vals[i] !== null) e21data.push({ time: candles[i].time as Time, value: ema21vals[i]! })
+    }
+    ema9Ref.current.setData(e9data)
+    ema21Ref.current.setData(e21data)
   }, [candles])
 
   const save = async () => {
@@ -252,6 +309,15 @@ function ChartModal({
           {!structure.is_predefined && !structure.can_delete && (
             <span style={{ fontSize: 11, color: '#8b949e', marginLeft: 8 }}>Shared</span>
           )}
+        </div>
+
+        <div style={{ display: 'flex', gap: 8, marginBottom: 8, alignItems: 'center' }}>
+          <button onClick={() => setShowEma(v => !v)} style={{
+            padding: '3px 10px', fontSize: 11, fontWeight: 600, cursor: 'pointer',
+            border: `1px solid ${showEma ? '#f0883e' : '#30363d'}`,
+            borderRadius: 6, background: showEma ? '#1f3a5f' : '#161b22',
+            color: showEma ? '#f0883e' : '#484f58',
+          }}>EMA 9/21</button>
         </div>
 
         {loading ? (
