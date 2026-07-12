@@ -40,8 +40,10 @@ fi
 
 export VITE_API_BASE_URL="https://tradematangi.co.in"
 export VITE_AI_HELPER_URL="https://tradematangi.co.in"
+export VITE_DISABLE_HMR="true"
 echo "Backend URL:   $VITE_API_BASE_URL"
 echo "AI Helper URL: $VITE_AI_HELPER_URL"
+echo "HMR:           disabled (VITE_DISABLE_HMR=true)"
 
 cd "$FRONTEND"
 

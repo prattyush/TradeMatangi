@@ -1,13 +1,15 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
+const disableHmr = process.env.VITE_DISABLE_HMR === 'true'
+
 export default defineConfig({
   plugins: [react()],
   server: {
     allowedHosts: [
       'tradematangi.co.in'
     ],
-    hmr: {
+    hmr: disableHmr ? false : {
       protocol: 'wss',
       host: 'tradematangi.co.in',
       clientPort: 443
