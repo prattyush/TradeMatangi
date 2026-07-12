@@ -232,8 +232,10 @@ def classify_symbol(table, symbol: str, start_date: str, end_date: str):
 
         deleted += _delete_existing_predefined(table, symbol, date_str)
 
+        # prior_trading_days returns [oldest, ..., newest]; last entry is yesterday
         try:
-            y_date, dby_date = prior_trading_days(date_str, n=2)
+            prior = prior_trading_days(date_str, n=2)
+            dby_date, y_date = prior[0], prior[1]
         except Exception:
             logger.warning("Could not resolve prior trading days for %s", date_str)
             continue
