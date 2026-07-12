@@ -48,10 +48,10 @@ def _get_db_table():
     aws = cfg["aws"]
     resource = boto3.resource(
         "dynamodb",
-        endpoint_url=aws.get("url", "http://localhost:8000"),
+        endpoint_url=aws.get("url"),
         region_name=aws.get("region", "us-east-1"),
-        aws_access_key_id=aws.get("access_key", "fakekey"),
-        aws_secret_access_key=aws.get("secret_access_key", "fakesecret"),
+        aws_access_key_id=aws.get("access_key"),
+        aws_secret_access_key=aws.get("secret_access_key"),
     )
     return resource.Table("ChartStructures")
 
@@ -65,6 +65,17 @@ def _already_classified(table, symbol: str, date_str: str) -> bool:
         Limit=1,
     )
     return len(resp.get("Items", [])) > 0
+
+
+def _load_or_fetch(symbol: str, date_str: str):
+    """
+    Load OHLC data for a symbol+date. Tries parquet cache first,
+    then fetches from Breeze API if cache is missing or incomplete.
+    Raises FileNotFoundError / RuntimeError on failure.
+    """
+    from app.services.broker_service import fetch_historical
+    fetch_historical(symbol, date_str)
+    return load_dataframe(symbol, date_str)
 
 
 def _now_iso() -> str:
@@ -207,11 +218,11 @@ def classify_symbol(table, symbol: str, start_date: str, end_date: str):
             continue
 
         try:
-            today_df = load_dataframe(symbol, date_str)
-            y_df = load_dataframe(symbol, y_date)
-            dby_df = load_dataframe(symbol, dby_date)
-        except FileNotFoundError:
-            logger.warning("Missing data for %s on %s or prior days", symbol, date_str)
+            today_df = _load_or_fetch(symbol, date_str)
+            y_df = _load_or_fetch(symbol, y_date)
+            dby_df = _load_or_fetch(symbol, dby_date)
+        except Exception as exc:
+            logger.warning("Missing data for %s on %s or prior days: %s", symbol, date_str, exc)
             continue
 
         try:
