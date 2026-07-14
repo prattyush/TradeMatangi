@@ -80,3 +80,20 @@ Sharing reuses `pattern_share_emails` — when pattern shares are synced, chart 
 | `frontend/src/pages/ChartStructures.tsx` | **New** — full structures browser with filters, gallery, chart modal, EMA |
 | `frontend/src/App.tsx` | "📊 Structures" nav button + conditional render |
 | `docs/chart-structure-feature.md` | Planning doc |
+
+
+##### Advanced Analysis
+This feature need to extend the current Analysis to include new features. When we click on Analysis button we enter into a space where we can look through past trades with markets on chart to understand the trades. The analysis also has snapshot information for better understanding pshychy during trading. This Trade Analysis can to be extended to include, 2 more features, labelling of trades and metrics of trades without and with labels.
+
+A single trade is defined as when a user enter a position with date, symbol, (CE, PE for options for respective underlying) and exits the position entirely. The position can be either side buy or sell. Trades are considered at daily level now, overflowing trades acrosss days are not considered. So, from day's start if user performs 2 buys of 65 quantity each and then exits the position with one sell of quantity 130, then trade is finished. If user buys 65  in CE, theen buys 130 in PE and then exits CE 65 position after 6 minnutes, but contines with PE position, then the CE trade is finished, PE is continuing till the user exits position in PE as well.
+
+1. Trades Labelling:- The feature is to have an option in analysis, for a date, symbol (underlying for options), type of trading (paper, real and simulation), that allows users to label these trades, so a UI which has the ohlc chart with markers similar to what we have in anallysis, with on the left or right the grouping of traddes, with each trade shwoing the enter and the exit and having 4 dropdowns to label the trade. 
+a) Expected Pattern of the Trade:- This dropddown will have all the patterns that the user has in the drop down in 2 dropdowns in pattern window, so user can specify with which pattern in mind the user took the trade. So this dropddown is actually 2 dropdowns which has same value as pattern window.
+b) Actual Pattern of the Trade:- This is similar dropdown to a) with same values but it signifies what was the actual pattern.
+c) Entry Tag:- This will have an option to create new or select old ones which are already added, similar to patterns. This signifies the users comments on how was the entry like Panic Entry, Perfect Entry, Late Entry, FOMO Entry etc.
+d) Exit Tag:- This is similar to entry tag, except here user can define a different set of tags, like scared exit, greedy exit, target reached exit etc. Users can type their own and what they have already declared is added to the dropddown similar to pattern.
+
+User if misses actual pattern fill it same as expected. And if Entry and Exit are not entered, enter default value: - "AS_PER_PATTERN"
+
+2. Stats :- This features shows status, total trades, winning percentage of trades, avg % profit made in trades (PnL % calculated against avg entry price and total profit made), 95 percentile P/L % each of these calculated per pattern combination (expected). Calculate within a start date and end date. Some stats are to be inclueded as well like expected v/s actual mismatch %, % of trades in profit based on mis-match. Which expected pattern has most mismatch. which actual pattern is most mismatcch too. Also PnL% against exit and entry  tags. Feel free to include more trading related stats if required.
+
