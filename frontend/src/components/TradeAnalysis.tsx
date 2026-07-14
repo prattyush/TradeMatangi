@@ -9,6 +9,8 @@ import {
 } from 'lightweight-charts'
 import api, { SessionSummary, SessionDetail, AnalysisTrade, OHLCCandle, EventSnapshot } from '../services/api'
 import EventSnapshotViewer from './EventSnapshotViewer'
+import TradeLabeling from './TradeLabeling'
+import StatsModal from './StatsModal'
 
 interface Props {
   onClose: () => void
@@ -135,7 +137,7 @@ function ChartToolbar({ title, isMaximized = false, onMaximize }: {
 
 // ── Underlying Chart ──────────────────────────────────────────────────────────
 
-function AnalysisChart({
+export function AnalysisChart({
   symbol, date, trades, historicalDays = 2, title = 'Underlying',
   isMaximized = false, onMaximize,
 }: {
@@ -744,6 +746,7 @@ function GroupCard({ group, historicalDays = 2 }: { group: SessionGroup; histori
   const [loading, setLoading] = useState(false)
   const [viewingSnapshots, setViewingSnapshots] = useState<{ session: SessionSummary; snapshots: EventSnapshot[]; sessionIds: string[] } | null>(null)
   const [snapshotLoading, setSnapshotLoading] = useState(false)
+  const [activeTab, setActiveTab] = useState<'trades' | 'labels'>('trades')
 
   const handleExpand = async () => {
     if (!expanded && details.size === 0) {
@@ -885,42 +888,82 @@ function GroupCard({ group, historicalDays = 2 }: { group: SessionGroup; histori
       {/* Expanded detail */}
       {expanded && details.size > 0 && (
         <div style={{ padding: '0 16px 16px', borderTop: '1px solid #21262d' }}>
-          {group.sessions.map((s, idx) => {
-            const d = details.get(s.session_id)
-            if (!d || d.trades.length === 0) return null
-            return (
-              <div key={s.session_id}>
-                {idx > 0 && (
-                  <div style={{
-                    margin: '14px 0 8px',
-                    display: 'flex', alignItems: 'center', gap: 8,
-                  }}>
-                    <div style={{ flex: 1, borderTop: '1px dashed #30363d' }} />
-                    <span style={{ fontSize: 11, color: '#484f58', whiteSpace: 'nowrap' }}>
-                      Session {idx + 1} · {s.start_time?.slice(0, 5) ?? s.session_id.slice(0, 8)}
-                    </span>
-                    <div style={{ flex: 1, borderTop: '1px dashed #30363d' }} />
-                  </div>
-                )}
-                {idx === 0 && multiSession && (
-                  <div style={{ fontSize: 11, color: '#484f58', marginTop: 10, marginBottom: 4 }}>
-                    Session 1 · {s.start_time?.slice(0, 5) ?? s.session_id.slice(0, 8)}
-                  </div>
-                )}
-                <div style={{ marginTop: idx === 0 && !multiSession ? 12 : 4 }}>
-                  <TradeTable trades={d.trades} />
-                </div>
-              </div>
-            )
-          })}
+          {/* Tab bar */}
+          <div style={{ display: 'flex', gap: 0, marginTop: 12, marginBottom: 12 }}>
+            <button
+              onClick={() => setActiveTab('trades')}
+              style={{
+                padding: '6px 16px', border: 'none',
+                borderBottom: activeTab === 'trades' ? '2px solid #58a6ff' : '2px solid transparent',
+                background: activeTab === 'trades' ? '#1c2333' : 'transparent',
+                color: activeTab === 'trades' ? '#58a6ff' : '#8b949e',
+                cursor: 'pointer', fontSize: 13,
+                fontWeight: activeTab === 'trades' ? 600 : 400,
+                borderRadius: '4px 4px 0 0',
+              }}
+            >Trades</button>
+            <button
+              onClick={() => setActiveTab('labels')}
+              style={{
+                padding: '6px 16px', border: 'none',
+                borderBottom: activeTab === 'labels' ? '2px solid #58a6ff' : '2px solid transparent',
+                background: activeTab === 'labels' ? '#1c2333' : 'transparent',
+                color: activeTab === 'labels' ? '#58a6ff' : '#8b949e',
+                cursor: 'pointer', fontSize: 13,
+                fontWeight: activeTab === 'labels' ? 600 : 400,
+                borderRadius: '4px 4px 0 0',
+              }}
+            >Label Trades</button>
+          </div>
 
-          <AnalysisChartPanel
-            symbol={group.symbol}
-            date={group.date}
-            allTrades={allTrades}
-            isOptions={group.instrument_type === 'options'}
-            historicalDays={historicalDays}
-          />
+          {activeTab === 'trades' ? (
+            <>
+              {group.sessions.map((s, idx) => {
+                const d = details.get(s.session_id)
+                if (!d || d.trades.length === 0) return null
+                return (
+                  <div key={s.session_id}>
+                    {idx > 0 && (
+                      <div style={{
+                        margin: '14px 0 8px',
+                        display: 'flex', alignItems: 'center', gap: 8,
+                      }}>
+                        <div style={{ flex: 1, borderTop: '1px dashed #30363d' }} />
+                        <span style={{ fontSize: 11, color: '#484f58', whiteSpace: 'nowrap' }}>
+                          Session {idx + 1} · {s.start_time?.slice(0, 5) ?? s.session_id.slice(0, 8)}
+                        </span>
+                        <div style={{ flex: 1, borderTop: '1px dashed #30363d' }} />
+                      </div>
+                    )}
+                    {idx === 0 && multiSession && (
+                      <div style={{ fontSize: 11, color: '#484f58', marginTop: 10, marginBottom: 4 }}>
+                        Session 1 · {s.start_time?.slice(0, 5) ?? s.session_id.slice(0, 8)}
+                      </div>
+                    )}
+                    <div style={{ marginTop: idx === 0 && !multiSession ? 12 : 4 }}>
+                      <TradeTable trades={d.trades} />
+                    </div>
+                  </div>
+                )
+              })}
+
+              <AnalysisChartPanel
+                symbol={group.symbol}
+                date={group.date}
+                allTrades={allTrades}
+                isOptions={group.instrument_type === 'options'}
+                historicalDays={historicalDays}
+              />
+            </>
+          ) : (
+            <TradeLabeling
+              symbol={group.symbol}
+              date={group.date}
+              sessionIds={group.sessions.map(s => s.session_id)}
+              allTrades={allTrades}
+              historicalDays={historicalDays}
+            />
+          )}
         </div>
       )}
     </div>
@@ -943,6 +986,7 @@ export default function TradeAnalysis({ onClose, historicalDays = 2 }: Props) {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [hasSearched, setHasSearched] = useState(false)
+  const [statsOpen, setStatsOpen] = useState(false)
 
   const handleSearch = useCallback(async () => {
     setLoading(true)
@@ -1059,6 +1103,18 @@ export default function TradeAnalysis({ onClose, historicalDays = 2 }: Props) {
             {loading ? 'Loading…' : 'Search'}
           </button>
 
+          <button
+            onClick={() => setStatsOpen(true)}
+            style={{
+              background: '#21262d', border: '1px solid #30363d',
+              color: '#d29922', borderRadius: 6,
+              padding: '5px 16px', fontSize: 13,
+              cursor: 'pointer', fontWeight: 600,
+            }}
+          >
+            📊 Stats
+          </button>
+
           {hasSearched && groups.length > 0 && (
             <div style={{ marginLeft: 'auto', display: 'flex', gap: 20 }}>
               <div style={{ textAlign: 'right' }}>
@@ -1112,6 +1168,17 @@ export default function TradeAnalysis({ onClose, historicalDays = 2 }: Props) {
           ))}
         </div>
       </div>
+
+      {statsOpen && (
+        <StatsModal
+          onClose={() => setStatsOpen(false)}
+          defaultSymbol={symbol}
+          defaultStartDate={startDate}
+          defaultEndDate={endDate}
+          defaultInstrumentType={instrumentType}
+          defaultSessionType={sessionType}
+        />
+      )}
     </div>
   )
 }

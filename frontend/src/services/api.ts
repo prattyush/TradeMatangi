@@ -261,6 +261,76 @@ export interface SessionDetail extends SessionSummary {
   trades: AnalysisTrade[]
 }
 
+// ── Trade Labels & Round Trips types ─────────────────────────────────────────
+
+export interface RoundTripTrade {
+  trade_id: string
+  side: 'BUY' | 'SELL'
+  quantity: number
+  price: number
+  timestamp: number
+  right?: string | null
+  strike?: number | null
+}
+
+export interface RoundTrip {
+  index: number
+  right: string | null
+  entry_trades: RoundTripTrade[]
+  exit_trades: RoundTripTrade[]
+  pnl: number
+}
+
+export interface TradeLabel {
+  session_id: string
+  round_trip_index: number
+  expected_category: string
+  expected_strategy: string
+  actual_category: string
+  actual_strategy: string
+  entry_tag: string
+  exit_tag: string
+  round_trip_pnl?: number
+  round_trip_pnl_pct?: number
+  created_at?: string
+  updated_at?: string
+}
+
+// ── Stats types ──────────────────────────────────────────────────────────────
+
+export interface StatsByPattern {
+  category: string
+  strategy: string
+  count: number
+  win_pct: number
+  avg_pnl_pct: number
+}
+
+export interface StatsByTag {
+  tag: string
+  count: number
+  avg_pnl_pct: number
+}
+
+export interface MismatchSummary {
+  mismatch_pct: number
+  profit_pct_matched: number
+  profit_pct_mismatched: number
+  most_mismatched_expected: StatsByPattern | null
+  most_mismatched_actual: StatsByPattern | null
+}
+
+export interface AnalysisStats {
+  total_trades: number
+  win_pct: number
+  avg_pnl_pct: number
+  pnl_95th_percentile: number
+  per_pattern: StatsByPattern[]
+  mismatch: MismatchSummary
+  by_entry_tag: StatsByTag[]
+  by_exit_tag: StatsByTag[]
+}
+
 // ── Event Snapshot types ────────────────────────────────────────────────────
 
 export interface SnapshotFilledTrade {
@@ -919,6 +989,69 @@ const api = {
       headers: _authHeaders(),
     })
     if (!res.ok) throw new Error(`Session detail fetch failed: ${res.status}`)
+    return res.json()
+  },
+
+  // ── Trade Labels & Round Trips ─────────────────────────────────────────────
+
+  async getRoundTrips(sessionId: string): Promise<RoundTrip[]> {
+    const res = await fetch(`${BACKEND_URL}/api/analysis/round-trips?session_id=${encodeURIComponent(sessionId)}`, {
+      headers: _authHeaders(),
+    })
+    if (!res.ok) throw new Error(`Round trips fetch failed: ${res.status}`)
+    return res.json()
+  },
+
+  async getLabels(sessionId: string): Promise<TradeLabel[]> {
+    const res = await fetch(`${BACKEND_URL}/api/analysis/labels?session_id=${encodeURIComponent(sessionId)}`, {
+      headers: _authHeaders(),
+    })
+    if (!res.ok) throw new Error(`Labels fetch failed: ${res.status}`)
+    return res.json()
+  },
+
+  async saveLabels(labels: TradeLabel[]): Promise<TradeLabel[]> {
+    const res = await fetch(`${BACKEND_URL}/api/analysis/labels`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ..._authHeaders() },
+      body: JSON.stringify({ labels }),
+    })
+    if (!res.ok) throw new Error(`Save labels failed: ${res.status}`)
+    return res.json()
+  },
+
+  async getEntryTags(): Promise<string[]> {
+    const res = await fetch(`${BACKEND_URL}/api/analysis/entry-tags`, {
+      headers: _authHeaders(),
+    })
+    if (!res.ok) throw new Error(`Entry tags fetch failed: ${res.status}`)
+    const data = await res.json()
+    return data.tags
+  },
+
+  async getExitTags(): Promise<string[]> {
+    const res = await fetch(`${BACKEND_URL}/api/analysis/exit-tags`, {
+      headers: _authHeaders(),
+    })
+    if (!res.ok) throw new Error(`Exit tags fetch failed: ${res.status}`)
+    const data = await res.json()
+    return data.tags
+  },
+
+  async getAnalysisStats(opts: {
+    symbol?: string; start_date?: string; end_date?: string;
+    instrument_type?: string; session_type?: string;
+  }): Promise<AnalysisStats> {
+    const params = new URLSearchParams()
+    if (opts.symbol) params.set('symbol', opts.symbol)
+    if (opts.start_date) params.set('start_date', opts.start_date)
+    if (opts.end_date) params.set('end_date', opts.end_date)
+    if (opts.instrument_type) params.set('instrument_type', opts.instrument_type)
+    if (opts.session_type) params.set('session_type', opts.session_type)
+    const res = await fetch(`${BACKEND_URL}/api/analysis/stats?${params}`, {
+      headers: _authHeaders(),
+    })
+    if (!res.ok) throw new Error(`Stats fetch failed: ${res.status}`)
     return res.json()
   },
 

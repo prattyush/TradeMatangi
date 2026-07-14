@@ -276,6 +276,31 @@ TABLES = [
         ],
         "ProvisionedThroughput": {"ReadCapacityUnits": 5, "WriteCapacityUnits": 5},
     },
+    {
+        "TableName": "TradeLabels",
+        "KeySchema": [
+            {"AttributeName": "session_id", "KeyType": "HASH"},
+            {"AttributeName": "round_trip_index", "KeyType": "RANGE"},
+        ],
+        "AttributeDefinitions": [
+            {"AttributeName": "session_id", "AttributeType": "S"},
+            {"AttributeName": "round_trip_index", "AttributeType": "N"},
+            {"AttributeName": "user_id", "AttributeType": "S"},
+            {"AttributeName": "date", "AttributeType": "S"},
+        ],
+        "GlobalSecondaryIndexes": [
+            {
+                "IndexName": "UserIdDateIndex",
+                "KeySchema": [
+                    {"AttributeName": "user_id", "KeyType": "HASH"},
+                    {"AttributeName": "date", "KeyType": "RANGE"},
+                ],
+                "Projection": {"ProjectionType": "ALL"},
+                "ProvisionedThroughput": {"ReadCapacityUnits": 5, "WriteCapacityUnits": 5},
+            }
+        ],
+        "BillingMode": "PAY_PER_REQUEST",
+    },
 ]
 
 
