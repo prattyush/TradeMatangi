@@ -1168,6 +1168,9 @@ export default function PatternLibrary() {
               {t.label}
             </button>
           ))}
+          <button style={btn('#484f58', annotations.length === 0)} onClick={() => setAnnotations(prev => prev.slice(0, -1))} disabled={annotations.length === 0}>
+            ↩ Undo Last
+          </button>
           <button style={btn('#484f58', annotations.length === 0)} onClick={() => setAnnotations([])} disabled={annotations.length === 0}>
             ✕ Clear All
           </button>
