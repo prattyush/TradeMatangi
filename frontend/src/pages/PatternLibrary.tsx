@@ -866,9 +866,14 @@ export default function PatternLibrary() {
       paneIdRef.current = 1
 
       if (chart.annotations.length > 0) {
-        const firstAnn = chart.annotations[0]
-        setActiveStrategy(firstAnn.strategy_name)
-        setActiveCategory(firstAnn.category || '')
+        if (mode === 'view') {
+          setActiveStrategy('')
+          setActiveCategory('')
+        } else {
+          const firstAnn = chart.annotations[0]
+          setActiveStrategy(firstAnn.strategy_name)
+          setActiveCategory(firstAnn.category || '')
+        }
       }
 
       const eqRes = await api.patternOhlcEquity(chart.symbol, chart.date, intervalMinutes, DAYS_BACK)
@@ -1206,6 +1211,19 @@ export default function PatternLibrary() {
                   {symbol} · {date} · {instrumentType}
                   {optionPanes.length > 0 ? ` · ${optionPanes.map(p => `${p.right} ${p.strike}`).join(' / ')}` : ''}
                 </span>
+                <div style={{ width: 1, height: 16, background: '#30363d', margin: '0 4px' }} />
+                <span style={{ fontSize: 11, color: '#8b949e' }}>Filter:</span>
+                <select value={activeCategory} onChange={e => setActiveCategory(e.target.value)}
+                  style={{ ...selectStyle, minWidth: 140 }}>
+                  <option value="">All categories</option>
+                  {categories.map(c => <option key={c} value={c}>{c}</option>)}
+                </select>
+                <select value={activeStrategy} onChange={e => setActiveStrategy(e.target.value)}
+                  style={{ ...selectStyle, minWidth: 140 }}>
+                  <option value="">All strategies</option>
+                  {strategies.map(s => <option key={s} value={s}>{s}</option>)}
+                </select>
+                <div style={{ flex: 1 }} />
                 <button style={btn('#484f58')} onClick={() => { setViewExpandedId(null); setChartLoaded(false) }}>
                   ✕ Close
                 </button>
