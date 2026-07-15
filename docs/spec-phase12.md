@@ -243,7 +243,8 @@ b) Option in stoploss to increase quantity. Open to discussion.
 | After PR #197 (Trade Analysis chart height ratio 0.6) | 624 | 305 | No new tests (frontend-only changes) |
 | After PR #199 (Underlying chart CE/PE marker filter) | 624 | 305 | No new tests (frontend-only changes) |
 | After Sprint 5 (Recording) | 624 | 305 | No new tests (browser API, frontend-only) |
-| After Sprint 7 (Event Snapshots) | 624 | 305 | No new tests (frontend-only changes) |
+| After Sprint 7 (Event Snapshots) | 627 | 305 | No new tests (frontend-only changes) |
+| After PR #298 (Stepwise session_type persist) | 627 | 305 | No new tests (backend refactor, all pass) |
 
 ## PR Log
 
@@ -264,6 +265,7 @@ b) Option in stoploss to increase quantity. Open to discussion.
 | Recording fix — surface getDisplayMedia errors; guard on isSecureContext | dev (direct commit) | Merged to dev + main |
 | Sprint 6 — Stoploss Bulk Update Fix & Real-time Chart P&L | fix/stoploss-bulk-update-pnl-label | PR #221 merged to dev |
 | Sprint 7 — Event Snapshots on order_filled + Session P&L + Auto-start | feature/event-snapshot-order-filled | PR #248 merged to dev |
+| Stepwise — persist "stepwise" as distinct session_type in DB (not "sim") | feat/stepwise-trade-type | PR #298 merged to dev |
 
 ---
 

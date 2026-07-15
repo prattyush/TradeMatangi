@@ -82,18 +82,91 @@ Sharing reuses `pattern_share_emails` — when pattern shares are synced, chart 
 | `docs/chart-structure-feature.md` | Planning doc |
 
 
-##### Advanced Analysis
-This feature need to extend the current Analysis to include new features. When we click on Analysis button we enter into a space where we can look through past trades with markets on chart to understand the trades. The analysis also has snapshot information for better understanding pshychy during trading. This Trade Analysis can to be extended to include, 2 more features, labelling of trades and metrics of trades without and with labels.
+##### Advanced Analysis ✅ Complete (PR #296 merged to dev)
 
-A single trade is defined as when a user enter a position with date, symbol, (CE, PE for options for respective underlying) and exits the position entirely. The position can be either side buy or sell. Trades are considered at daily level now, overflowing trades acrosss days are not considered. So, from day's start if user performs 2 buys of 65 quantity each and then exits the position with one sell of quantity 130, then trade is finished. If user buys 65  in CE, theen buys 130 in PE and then exits CE 65 position after 6 minnutes, but contines with PE position, then the CE trade is finished, PE is continuing till the user exits position in PE as well.
+Two features: **Trade Labelling** and **Stats Dashboard** — extending the Analysis UI with round-trip annotations and aggregated metrics.
 
-1. Trades Labelling:- The feature is to have an option in analysis, for a date, symbol (underlying for options), type of trading (paper, real and simulation), that allows users to label these trades, so a UI which has the ohlc chart with markers similar to what we have in anallysis, with on the left or right the grouping of traddes, with each trade shwoing the enter and the exit and having 4 dropdowns to label the trade. 
-a) Expected Pattern of the Trade:- This dropddown will have all the patterns that the user has in the drop down in 2 dropdowns in pattern window, so user can specify with which pattern in mind the user took the trade. So this dropddown is actually 2 dropdowns which has same value as pattern window.
-b) Actual Pattern of the Trade:- This is similar dropdown to a) with same values but it signifies what was the actual pattern.
-c) Entry Tag:- This will have an option to create new or select old ones which are already added, similar to patterns. This signifies the users comments on how was the entry like Panic Entry, Perfect Entry, Late Entry, FOMO Entry etc.
-d) Exit Tag:- This is similar to entry tag, except here user can define a different set of tags, like scared exit, greedy exit, target reached exit etc. Users can type their own and what they have already declared is added to the dropddown similar to pattern.
+**Implementation (by implementation plan in `docs/spec-phase13-implementation-plan.md`):**
 
-User if misses actual pattern fill it same as expected. And if Entry and Exit are not entered, enter default value: - "AS_PER_PATTERN"
+**Database:**
+- `TradeLabels` table: PK=`session_id`, SK=`round_trip_index`, GSI `UserIdDateIndex` on (`user_id`, `date`) for stats queries
+- Denormalized fields: `symbol`, `date`, `session_type`, `round_trip_pnl`, `round_trip_pnl_pct`
 
-2. Stats :- This features shows status, total trades, winning percentage of trades, avg % profit made in trades (PnL % calculated against avg entry price and total profit made), 95 percentile P/L % each of these calculated per pattern combination (expected). Calculate within a start date and end date. Some stats are to be inclueded as well like expected v/s actual mismatch %, % of trades in profit based on mis-match. Which expected pattern has most mismatch. which actual pattern is most mismatcch too. Also PnL% against exit and entry  tags. Feel free to include more trading related stats if required.
+**Backend (`backend/app/services/trade_label_service.py`, `backend/app/routers/labels.py`):**
+- FIFO round-trip matching per session, per right (CE/PE/underlying tracked independently), closing at net_qty=0
+- `GET /api/analysis/round-trips?session_id=` — compute FIFO round-trips
+- `POST /api/analysis/labels` — batch upsert labels (auto-defaults: actual_pattern=expected, entry/exit_tag="AS_PER_PATTERN")
+- `GET /api/analysis/labels?session_id=` — fetch all labels for a session
+- `GET /api/analysis/entry-tags` / `exit-tags` — distinct tag listing per user
+- `GET /api/analysis/stats` — aggregated stats with per-pattern breakdown, mismatch analysis, by-tag tables
+
+**Stats endpoints compute:**
+| Metric | Description |
+|--------|-------------|
+| Total trades | Count of labeled round-trips |
+| Win % | Percentage with positive PnL |
+| Avg PnL% | Mean `round_trip_pnl_pct` |
+| P95 PnL% | 95th percentile PnL% |
+| Per-pattern | Count, win%, avg PnL% grouped by (expected_category, expected_strategy) |
+| Mismatch | Rate, profit% when matched vs mismatched, most mismatched expected/actual |
+| By entry/exit tag | Count, avg PnL% per tag |
+
+**Frontend:**
+
+*Trade Labeling (`TradeLabeling.tsx`):*
+- "Label Trades" tab inside expanded GroupCard in Trade Analysis
+- Split view: OHLC chart (left) with round-trip-numbered markers, label forms (right) in a scrollable column
+- Per round-trip: expected pattern (category + strategy dropdowns from Pattern Library), actual pattern (same), entry tag (creatable datalist), exit tag (creatable datalist)
+- Auto-save on any field change (debounced, per-field upsert)
+- Labels persist across sessions (keyed by `session_id + round_trip_index`)
+
+*Stats Dashboard (`StatsModal.tsx`):*
+- "📊 Stats" button in Analysis filter bar opens full-screen overlay
+- Same filters as Analysis: symbol, instrument type, session type, date range
+- Summary cards (Total Trades, Win %, Avg PnL%, P95 PnL%)
+- By Expected Pattern table (sortable by count/win%/avg PnL%)
+- Mismatch Summary card (mismatch rate, profit comparison, most mismatched)
+- Entry Tag and Exit Tag tables side by side
+- Auto-refreshes on filter change
+
+**Files changed:**
+
+| File | Change |
+|------|--------|
+| `scripts/setup-dynamodb-tables.py` | +TradeLabels table with UserIdDateIndex GSI |
+| `backend/app/services/trade_label_service.py` | **New** — CRUD, FIFO round-trips, stats aggregation |
+| `backend/app/routers/labels.py` | **New** — REST API (7 endpoints) |
+| `backend/app/main.py` | Register labels router |
+| `frontend/src/services/api.ts` | +7 types + 7 API methods (round-trips, labels, tags, stats) |
+| `frontend/src/components/TradeLabeling.tsx` | **New** — Label Trades tab with chart + forms |
+| `frontend/src/components/StatsModal.tsx` | **New** — Stats dashboard |
+| `frontend/src/components/TradeAnalysis.tsx` | Tab bar [Trades | Label Trades], "📊 Stats" button, imports |
+
+**Tests:** 627 backend tests + 305 aihelper tests — all passing.
+
+
+## Phase 13 — Implementation Status
+
+| Feature | PR | Status |
+|---------|-----|--------|
+| Fyers Live Streaming | PR #279 | ✅ Merged to dev |
+| Chart Structures | PRs #282, #284, #286, #288, #290 | ✅ Merged to dev |
+| Vite HMR disable | PR #292 | ✅ Merged to dev |
+| Advanced Analysis — Trade Labelling + Stats | PR #296 | ✅ Merged to dev |
+| Stepwise session_type persist fix | PR #298 | ✅ Merged to dev |
+
+## PR Log — Phase 13
+
+| Sprint | Branch | Status |
+|--------|--------|--------|
+| Fyers as live streaming source | feature/fyers-streaming | PR #279 merged to dev |
+| Chart Structures — daily classification browser | feat/chart-structures | PR #282 merged to dev |
+| Chart Structures — classify script fix | fix/chart-structures-script | PR #284 merged to dev |
+| Chart Structures — OHLC 2 prior days + gap direction split | fix/chart-structures-ohcl-days | PR #286 merged to dev |
+| Chart Structures — EMA 9/21 toggle | feat/chart-structures-ema | PR #288 merged to dev |
+| Chart Structures — yesterday/DBY date fix | fix/chart-structures-yesterday-order | PR #290 merged to dev |
+| Disable Vite HMR on all deployments | fix/disable-vite-hmr | PR #292 merged to dev |
+| Advanced Analysis — Trade Labelling + Stats | feature/phase13-advanced-analysis | PR #296 merged to dev |
+| Stepwise session_type persist — distinct "stepwise" in DB + Analysis UI filter | feat/stepwise-trade-type | PR #298 merged to dev |
+
 
