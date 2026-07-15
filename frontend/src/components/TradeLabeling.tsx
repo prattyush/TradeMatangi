@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useState } from 'react'
-import { AnalysisChart } from './TradeAnalysis'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { AnalysisChart, OptionsChart } from './TradeAnalysis'
 import api, { AnalysisTrade, RoundTrip, TradeLabel } from '../services/api'
 
 interface TradeLabelingProps {
@@ -11,6 +11,21 @@ interface TradeLabelingProps {
 }
 
 const RT_COLORS = ['#58a6ff', '#3fb950', '#d29922', '#f0883e', '#bc8cff', '#f85149', '#79c0ff', '#a371f7', '#f778ba', '#7ee787']
+
+function fmtHHMM(ts: number) {
+  return new Date(ts * 1000).toLocaleTimeString('en-IN', {
+    timeZone: 'UTC', hour: '2-digit', minute: '2-digit',
+  })
+}
+
+interface OptionTab {
+  key: string
+  label: string
+  right: string
+  strike: number
+  expiry: string
+  trades: AnalysisTrade[]
+}
 
 export default function TradeLabeling({ symbol, date, sessionIds, allTrades, historicalDays }: TradeLabelingProps) {
   const [roundTrips, setRoundTrips] = useState<(RoundTrip & { session_id: string })[]>([])
@@ -115,17 +130,78 @@ export default function TradeLabeling({ symbol, date, sessionIds, allTrades, his
     borderRadius: 4, padding: '3px 6px', fontSize: 11, maxWidth: 140,
   }
 
+  // Option tabs: derived from allTrades, same as AnalysisChartPanel
+  const optionTabs = useMemo<OptionTab[]>(() => {
+    const tabMap = new Map<string, OptionTab>()
+    for (const t of allTrades) {
+      if (!t.right || t.strike == null || !t.expiry) continue
+      const key = `${t.right}-${t.strike}-${t.expiry}`
+      if (!tabMap.has(key)) {
+        tabMap.set(key, { key, label: `${t.right} ${t.strike}`, right: t.right, strike: t.strike, expiry: t.expiry, trades: [] })
+      }
+      tabMap.get(key)!.trades.push(t)
+    }
+    return Array.from(tabMap.values()).sort((a, b) => {
+      if (a.right !== b.right) return a.right === 'CE' ? -1 : 1
+      return a.strike - b.strike
+    })
+  }, [allTrades])
+
+  const [chartView, setChartView] = useState<'underlying' | string>('underlying')
+  const activeOptionTab = optionTabs.find(t => t.key === chartView) ?? null
+
   return (
     <div style={{ display: 'flex', gap: 12, minHeight: 400 }}>
       {/* Chart */}
       <div style={{ flex: 1, minWidth: 0 }}>
-        <AnalysisChart
-          symbol={symbol}
-          date={date}
-          trades={allTrades}
-          historicalDays={historicalDays}
-          title={symbol}
-        />
+        {chartView === 'underlying' ? (
+          <AnalysisChart
+            symbol={symbol}
+            date={date}
+            trades={allTrades}
+            historicalDays={historicalDays}
+            title={symbol}
+          />
+        ) : activeOptionTab ? (
+          <OptionsChart
+            symbol={symbol}
+            date={date}
+            strike={activeOptionTab.strike}
+            expiry={activeOptionTab.expiry}
+            right={activeOptionTab.right}
+            trades={activeOptionTab.trades}
+            historicalDays={historicalDays}
+          />
+        ) : null}
+        {optionTabs.length > 0 && (
+          <div style={{ display: 'flex', gap: 4, marginTop: 4, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+            <button
+              onClick={() => setChartView('underlying')}
+              style={{
+                padding: '2px 8px', borderRadius: 10, fontSize: 10, fontWeight: 600,
+                cursor: 'pointer', border: 'none',
+                background: chartView === 'underlying' ? '#58a6ff' : '#21262d',
+                color: chartView === 'underlying' ? '#0d1117' : '#8b949e',
+              }}
+            >
+              Underlying
+            </button>
+            {optionTabs.map(tab => (
+              <button
+                key={tab.key}
+                onClick={() => setChartView(tab.key)}
+                style={{
+                  padding: '2px 8px', borderRadius: 10, fontSize: 10, fontWeight: 600,
+                  cursor: 'pointer', border: 'none',
+                  background: tab.key === chartView ? '#58a6ff' : '#21262d',
+                  color: tab.key === chartView ? '#0d1117' : '#8b949e',
+                }}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Round-trip forms */}
@@ -193,11 +269,11 @@ export default function TradeLabeling({ symbol, date, sessionIds, allTrades, his
                   {/* Entry/Exit summary */}
                   <div style={{ fontSize: 11, color: '#8b949e', marginBottom: 8, lineHeight: 1.5 }}>
                     <span style={{ color: '#e6edf3' }}>
-                      {rt.entry_trades.map(t => `B ${t.quantity}@${t.price.toFixed(2)}`).join(', ')}
+                      {rt.entry_trades.map(t => `B ${t.quantity}@${t.price.toFixed(2)} ${fmtHHMM(t.timestamp)}`).join(', ')}
                     </span>
                     {' → '}
                     <span style={{ color: '#e6edf3' }}>
-                      {rt.exit_trades.map(t => `S ${t.quantity}@${t.price.toFixed(2)}`).join(', ')}
+                      {rt.exit_trades.map(t => `S ${t.quantity}@${t.price.toFixed(2)} ${fmtHHMM(t.timestamp)}`).join(', ')}
                     </span>
                   </div>
 

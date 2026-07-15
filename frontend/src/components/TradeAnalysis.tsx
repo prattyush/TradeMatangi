@@ -362,7 +362,7 @@ export function AnalysisChart({
 
 // ── Options Chart ─────────────────────────────────────────────────────────────
 
-function OptionsChart({
+export function OptionsChart({
   symbol, date, strike, expiry, right, trades, historicalDays = 2,
   isMaximized = false, onMaximize,
 }: {
