@@ -772,7 +772,7 @@ function GroupCard({ group, historicalDays = 2 }: { group: SessionGroup; histori
   const pnlSign = group.totalPnl >= 0 ? '+' : ''
   const pnlPct = group.sessionCapital > 0 ? (group.totalPnl / group.sessionCapital) * 100 : 0
   const typeLabel = group.instrument_type === 'options' ? 'Options' : 'Equity'
-  const sessionTypeLabel = group.session_type === 'paper' ? 'Paper' : group.session_type === 'real' ? 'Real' : 'Sim'
+  const sessionTypeLabel = group.session_type === 'paper' ? 'Paper' : group.session_type === 'real' ? 'Real' : group.session_type === 'stepwise' ? 'Stepwise' : 'Sim'
 
   return (
     <div style={{
@@ -1075,6 +1075,7 @@ export default function TradeAnalysis({ onClose, historicalDays = 2 }: Props) {
             <select value={sessionType} onChange={e => setSessionType(e.target.value)} style={inputStyle}>
               <option value="">All</option>
               <option value="sim">Simulated</option>
+              <option value="stepwise">Stepwise</option>
               <option value="paper">Paper</option>
               <option value="real">Real</option>
             </select>
