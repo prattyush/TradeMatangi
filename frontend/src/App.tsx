@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import React from 'react'
 import PatternLibrary from './pages/PatternLibrary'
 import ChartStructures from './pages/ChartStructures'
 import Chart, { PaneType } from './components/Chart'
@@ -22,7 +23,7 @@ import api from './services/api'
 
 const FIXED_USER = { userId: 'abc12300-0000-0000-0000-000000000001', username: 'abc123' }
 
-function loadAuthUser(): { userId: string; email: string; isAdmin: boolean } | null {
+function loadAuthUser(): { userId: string; email: string; isAdmin: boolean; accountName?: string } | null {
   try {
     const raw = localStorage.getItem('auth_user')
     if (!raw) return null
@@ -80,8 +81,8 @@ export default function App() {
   // ── Auth state ──────────────────────────────────────────────────────────────
   const [authUser, setAuthUser] = useState(loadAuthUser)
 
-  const handleLogin = useCallback((userId: string, email: string, isAdmin = false) => {
-    const user = { userId, email, isAdmin }
+  const handleLogin = useCallback((userId: string, email: string, isAdmin = false, accountName?: string) => {
+    const user = { userId, email, isAdmin, accountName }
     localStorage.setItem('auth_user', JSON.stringify(user))
     localStorage.setItem('user', JSON.stringify({ userId, username: email }))
     setAuthUser(user)
@@ -92,16 +93,16 @@ export default function App() {
     setAuthUser(null)
   }, [])
 
-  // Refresh isAdmin from server on mount (handles stale localStorage on role change)
+  // Refresh isAdmin and account_name from server on mount (handles stale localStorage on role change)
   useEffect(() => {
     if (!authUser) return
     api.getMe().then(me => {
-      setAuthUser(prev => prev ? { ...prev, isAdmin: me.is_admin } : prev)
+      setAuthUser(prev => prev ? { ...prev, isAdmin: me.is_admin, accountName: me.account_name ?? undefined } : prev)
       const stored = localStorage.getItem('auth_user')
       if (stored) {
         try {
           const parsed = JSON.parse(stored)
-          localStorage.setItem('auth_user', JSON.stringify({ ...parsed, isAdmin: me.is_admin }))
+          localStorage.setItem('auth_user', JSON.stringify({ ...parsed, isAdmin: me.is_admin, accountName: me.account_name }))
         } catch { /* ignore */ }
       }
     }).catch(() => {})
@@ -111,10 +112,10 @@ export default function App() {
     return <LoginScreen onLogin={handleLogin} />
   }
 
-  return <AppInner authUser={authUser} onLogout={handleLogout} />
+  return <AppInner authUser={authUser} onLogout={handleLogout} setAuthUser={setAuthUser} />
 }
 
-function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: string; isAdmin: boolean }; onLogout: () => void }) {
+function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: string; email: string; isAdmin: boolean; accountName?: string }; onLogout: () => void; setAuthUser: React.Dispatch<React.SetStateAction<{ userId: string; email: string; isAdmin: boolean; accountName?: string } | null>> }) {
   const sim = useSimulation()
   const { recordingState, recordingError, startRecording, pauseRecording, resumeRecording, stopRecording } = useRecording()
   const simRef = useRef(sim)
@@ -144,6 +145,25 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
 
   // ── Trade Analysis modal ────────────────────────────────────────────────────
   const [showAnalysis, setShowAnalysis] = useState(false)
+
+  // ── Account name backfill popup for old accounts ─────────────────────────────
+  const [showAccountNamePopup, setShowAccountNamePopup] = useState(!authUser.accountName)
+  const [backfillAccountName, setBackfillAccountName] = useState('')
+  const [backfillSubmitting, setBackfillSubmitting] = useState(false)
+  const handleBackfillSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!backfillAccountName.trim()) return
+    setBackfillSubmitting(true)
+    try {
+      const me = await api.setAccountName(backfillAccountName.trim())
+      setAuthUser(prev => prev ? { ...prev, accountName: me.account_name ?? undefined } : prev)
+      setShowAccountNamePopup(false)
+    } catch {
+      // ignore
+    } finally {
+      setBackfillSubmitting(false)
+    }
+  }
 
   // ── Pattern Library page ─────────────────────────────────────────────────────
   const [showPatternLibrary, setShowPatternLibrary] = useState(false)
@@ -726,7 +746,7 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
             ← Back to Trading
           </button>
           <div style={{ flex: 1 }} />
-          <span style={{ fontSize: 12, color: '#484f58' }}>{authUser.email}</span>
+          <span style={{ fontSize: 12, color: '#484f58' }}>{authUser.accountName || authUser.email}</span>
           <button onClick={onLogout}
             style={{ background: 'none', border: '1px solid #30363d', color: '#8b949e', borderRadius: 6, padding: '3px 8px', fontSize: 11, cursor: 'pointer' }}>
             Sign out
@@ -964,7 +984,7 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
           onAutoStartSnapshotsChange={setAutoStartSnapshots}
         />
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: '#484f58' }}>
-          <span>{authUser.email}</span>
+          <span>{authUser.accountName || authUser.email}</span>
           <button
             onClick={onLogout}
             style={{ background: 'none', border: '1px solid #30363d', color: '#8b949e', borderRadius: 6, padding: '3px 8px', fontSize: 11, cursor: 'pointer' }}
@@ -1096,6 +1116,55 @@ function AppInner({ authUser, onLogout }: { authUser: { userId: string; email: s
           reason={guardrailPopup.reason}
           onClose={guardrailPopup.type !== 'BAN' ? () => setGuardrailPopup(null) : undefined}
         />
+      )}
+
+      {/* Account name backfill popup for old accounts */}
+      {showAccountNamePopup && (
+        <div style={{
+          position: 'fixed', inset: 0, zIndex: 9999,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          background: 'rgba(0,0,0,0.6)',
+        }}>
+          <div style={{
+            width: 380, padding: 28,
+            background: '#161b22', border: '1px solid #30363d',
+            borderRadius: 12,
+          }}>
+            <div style={{ fontSize: 18, fontWeight: 700, color: '#58a6ff', marginBottom: 6 }}>Set Account Name</div>
+            <div style={{ fontSize: 13, color: '#8b949e', marginBottom: 18 }}>
+              Your account ({authUser.email}) needs a display name. This will be shown in the app instead of your email.
+            </div>
+            <form onSubmit={handleBackfillSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+              <input
+                type="text"
+                value={backfillAccountName}
+                onChange={e => setBackfillAccountName(e.target.value)}
+                placeholder="Your display name"
+                required
+                autoFocus
+                style={{
+                  width: '100%', padding: '10px 12px',
+                  background: '#0d1117', border: '1px solid #30363d',
+                  borderRadius: 8, color: '#e6edf3', fontSize: 14,
+                  outline: 'none', boxSizing: 'border-box',
+                }}
+              />
+              <button
+                type="submit"
+                disabled={backfillSubmitting}
+                style={{
+                  width: '100%', padding: '10px', background: '#238636',
+                  border: 'none', borderRadius: 8, color: '#ffffff',
+                  fontSize: 14, fontWeight: 600,
+                  cursor: backfillSubmitting ? 'not-allowed' : 'pointer',
+                  opacity: backfillSubmitting ? 0.7 : 1,
+                }}
+              >
+                {backfillSubmitting ? 'Saving…' : 'Save'}
+              </button>
+            </form>
+          </div>
+        </div>
       )}
 
       {/* Broker error banner (paper trading) */}
