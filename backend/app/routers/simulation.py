@@ -150,8 +150,8 @@ async def start_simulation(
     else:
         raise HTTPException(status_code=400, detail="instrument_type must be 'equity' or 'options'")
 
-    # Stepwise is stored internally as "sim" with stepwise=True flag
-    internal_session_type = "sim" if is_stepwise else req.session_type
+    # Stepwise is its own session_type (stored in DB and used for analysis filtering)
+    internal_session_type = req.session_type
 
     # Enforce one session per (user, symbol, date, type) per day.
     # For paper/real: resume the existing session so positions and trades remain visible
@@ -164,8 +164,8 @@ async def start_simulation(
     if existing_record:
         existing_session_id = existing_record["session_id"]
         active = sim_svc.get_session(existing_session_id)
-        # For sim sessions: stop the old one and create fresh with new params
-        if internal_session_type == "sim":
+        # For sim and stepwise sessions: stop the old one and create fresh with new params
+        if internal_session_type in ("sim", "stepwise"):
             if active:
                 logger.info("start_simulation: stopping existing sim session %s for restart", existing_session_id)
                 sim_svc.stop_session(active)

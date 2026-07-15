@@ -243,7 +243,7 @@ def reload_trades_from_db(session_id: str) -> None:
                     expiry=item.get("expiry"),
                     right=item.get("right"),
                     commission=float(item.get("commission", 0)),
-                    session_type=str(item.get("session_type", "paper")),
+                    session_type=str(item.get("session_type", "sim")),
                     underlying_price=float(item.get("underlying_price")) if item.get("underlying_price") is not None else None,
                 ))
             except Exception:

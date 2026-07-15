@@ -31,7 +31,7 @@ class BarCloseHook(BaseModel):
     underlying_bars: list[OHLCBar] = []  # last 15 NIFTY bars when right=CE/PE; empty otherwise
     position: PositionInfo | None = None
     timestamp: str
-    session_type: str | None = None   # "sim" | "paper" | "real"; None treated as sim
+    session_type: str | None = None   # "sim" | "stepwise" | "paper" | "real"; None treated as sim
     funds_ratios: dict[str, float] = {"ratio_l": 0.03, "ratio_m": 0.06, "ratio_h": 0.12}
 
 

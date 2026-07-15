@@ -59,7 +59,7 @@ async def get_sessions(
     start_date: str | None = Query(default=None, description="YYYY-MM-DD"),
     end_date: str | None = Query(default=None, description="YYYY-MM-DD"),
     instrument_type: str | None = Query(default=None),
-    session_type: str | None = Query(default=None, description="sim or paper"),
+    session_type: str | None = Query(default=None, description="sim, paper, real, or stepwise"),
     user_id: str = Depends(get_request_user_id),
 ):
     sessions = analysis_service.get_sessions_for_user(
@@ -91,7 +91,7 @@ async def get_trades_for_analysis(
     from_date: str = Query(..., alias="from", description="YYYY-MM-DD"),
     to_date: str = Query(..., alias="to", description="YYYY-MM-DD"),
     symbol: str | None = Query(default=None),
-    session_type: str | None = Query(default=None, description="sim, paper, or real"),
+    session_type: str | None = Query(default=None, description="sim, paper, real, or stepwise"),
 ) -> list[dict]:
     """
     Fetch sessions + trades for a user in a date range.
