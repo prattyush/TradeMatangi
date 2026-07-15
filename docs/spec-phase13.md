@@ -145,6 +145,37 @@ Two features: **Trade Labelling** and **Stats Dashboard** — extending the Anal
 **Tests:** 627 backend tests + 305 aihelper tests — all passing.
 
 
+##### Google Sign-In ✅ Complete (direct commit to dev)
+
+Users can sign in with Google in addition to email/password. Account name replaces
+email in the header display for all user types.
+
+**Implementation:**
+- Uses Google Identity Services (GIS) one-tap sign-in via the client-side library (`accounts.google.com/gsi/client`)
+- Backend verifies Google ID token server-side via `https://oauth2.googleapis.com/tokeninfo`
+- Email from Google token is matched against existing Users table → same account, dual sign-in path
+- New Google-only users get a popup to set their account name before account creation
+- Existing users without an account name get a one-time backfill popup on next login
+
+**Backend:**
+- `user_service.py`: `google_auth()` — verifies token, matches by email (existing → login; new → create with account_name); `set_account_name()` for backfill; auto-backfills `google_sub` and account_name from Google profile on first Google login for existing users
+- `auth.py`: `AuthRequest` gains `account_name` field for email/password registration; new `POST /api/auth/google` and `POST /api/auth/account-name` endpoints; `login`/`register`/`me` responses return `account_name`
+- `seed_user`: includes `account_name="Admin"`; backfills on existing admin records
+
+**Frontend:**
+- `index.html`: loads GIS script
+- `LoginScreen.tsx`: "Continue with Google" button with Google logo SVG; account name input during email/password registration; account name popup for first-time Google users
+- `App.tsx`: `authUser` gains `accountName`; header displays name instead of email; backfill popup for old accounts missing name; refreshes from `/me` on mount
+
+**Behavior:**
+| Sign-In Method | Existing Email+Password User | New User | Old Account (no account_name) |
+|---|---|---|---|
+| Email + Password | Login (unchanged) | Register with account_name | Login, backfill popup shown |
+| Google | Login (matched by email) | Popup for account_name, then create | Login, backfill popup shown |
+
+**Client ID:** `249337992826-jm174i5bqdhr4bfqpmip44gnnp4eo2eh.apps.googleusercontent.com` (from `data/accesskeys.ini` `[googlesignin]` section)
+
+
 ## Phase 13 — Implementation Status
 
 | Feature | PR | Status |
@@ -154,6 +185,7 @@ Two features: **Trade Labelling** and **Stats Dashboard** — extending the Anal
 | Vite HMR disable | PR #292 | ✅ Merged to dev |
 | Advanced Analysis — Trade Labelling + Stats | PR #296 | ✅ Merged to dev |
 | Stepwise session_type persist fix | PR #298 | ✅ Merged to dev |
+| Google Sign-In + Account Name | direct commit | ✅ Merged to dev |
 
 ## PR Log — Phase 13
 
@@ -168,5 +200,6 @@ Two features: **Trade Labelling** and **Stats Dashboard** — extending the Anal
 | Disable Vite HMR on all deployments | fix/disable-vite-hmr | PR #292 merged to dev |
 | Advanced Analysis — Trade Labelling + Stats | feature/phase13-advanced-analysis | PR #296 merged to dev |
 | Stepwise session_type persist — distinct "stepwise" in DB + Analysis UI filter | feat/stepwise-trade-type | PR #298 merged to dev |
+| Google Sign-In + Account Name | dev (direct commit) | Merged to dev |
 
 
