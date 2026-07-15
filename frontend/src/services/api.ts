@@ -210,6 +210,7 @@ export interface AuthResponse {
   user_id: string
   email: string
   is_admin: boolean
+  account_name?: string | null
 }
 
 export interface AdminTokensResponse {
@@ -911,11 +912,11 @@ const api = {
     return res.json()
   },
 
-  async register(email: string, password: string): Promise<AuthResponse> {
+  async register(email: string, password: string, accountName?: string): Promise<AuthResponse> {
     const res = await fetch(`${BACKEND_URL}/api/auth/register`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password }),
+      body: JSON.stringify({ email, password, account_name: accountName || null }),
     })
     if (!res.ok) {
       const data = await res.json().catch(() => ({}))
@@ -941,6 +942,32 @@ const api = {
       headers: _authHeaders(),
     })
     if (!res.ok) throw new Error(`Get me failed: ${res.status}`)
+    return res.json()
+  },
+
+  async googleAuth(idToken: string, accountName?: string): Promise<AuthResponse> {
+    const res = await fetch(`${BACKEND_URL}/api/auth/google`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id_token: idToken, account_name: accountName || null }),
+    })
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}))
+      throw new Error(data.detail || `Google auth failed: ${res.status}`)
+    }
+    return res.json()
+  },
+
+  async setAccountName(accountName: string): Promise<AuthResponse> {
+    const res = await fetch(`${BACKEND_URL}/api/auth/account-name`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ..._authHeaders() },
+      body: JSON.stringify({ account_name: accountName }),
+    })
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}))
+      throw new Error(data.detail || `Set account name failed: ${res.status}`)
+    }
     return res.json()
   },
 

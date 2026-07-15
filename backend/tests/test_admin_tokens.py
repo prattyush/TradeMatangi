@@ -241,13 +241,13 @@ class TestSeedUserIsAdmin:
             user_service.seed_user()
         mock_table.update_item.assert_called_once()
         call_kwargs = mock_table.update_item.call_args[1]
-        assert call_kwargs["ExpressionAttributeValues"][":v"] is True
+        assert call_kwargs["ExpressionAttributeValues"][":adm"] is True
 
     def test_existing_user_with_is_admin_not_updated(self):
         from app.services import user_service
         mock_table = MagicMock()
         mock_table.get_item.return_value = {"Item": {
-            "user_id": FIXED_USER_ID, "email": "admin@tradematangi.com", "is_admin": True
+            "user_id": FIXED_USER_ID, "email": "admin@tradematangi.com", "is_admin": True, "account_name": "Admin"
         }}
         mock_resource = MagicMock()
         mock_resource.Table.return_value = mock_table
