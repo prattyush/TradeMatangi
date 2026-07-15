@@ -349,7 +349,7 @@ async def extract_analysis_params(message: str, today: str) -> dict[str, Any]:
         '  "to_date": "YYYY-MM-DD",\n'
         '  "period_description": "<short label>",\n'
         '  "symbol": "<symbol name or null>",\n'
-        '  "session_type": "sim" | "paper" | "real" | null\n'
+        '  "session_type": "sim" | "stepwise" | "paper" | "real" | null\n'
         '}\n\n'
         "Rules:\n"
         '- "last 7 days" / "past week" → from = today − 7 days, to = today\n'
@@ -362,7 +362,7 @@ async def extract_analysis_params(message: str, today: str) -> dict[str, Any]:
         '- "starting from YYYY-MM-DD" / "starting and including YYYY-MM-DD" / "since YYYY-MM-DD" → from = that date, to = today\n'
         '- If no date range mentioned → default: last 7 days (from = today − 7, to = today)\n'
         '- symbol: extract if a specific instrument is mentioned (e.g. NIFTY, BSESEN, RELIND); null if not specified\n'
-        '- session_type: "sim" for simulation/historical, "paper" for paper trading, "real" for live/real trading; null if not specified'
+        '- session_type: "sim" for simulation/historical, "stepwise" for stepwise historical practice, "paper" for paper trading, "real" for live/real trading; null if not specified'
     )
     return await _complete(
         MODEL_INTENT_CLASSIFIER,

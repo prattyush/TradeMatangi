@@ -351,7 +351,7 @@ def rebuild_session_from_db(
         brokerage_per_order=brokerage_per_order,
         strategy_interval_secs=strategy_interval_secs,
         session_type=session_type,
-        stepwise=False,
+        stepwise=(session_type == "stepwise"),
         created_at=created_at,
     )
     session.resume_event.set()
