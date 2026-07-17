@@ -69,6 +69,10 @@ def initialize_guardrails(session: "SimulationSession", user_id: str) -> None:
     session.guardrail_ban_min_trades = int(settings.get("guardrail_ban_min_trades", 5))
     session.guardrail_ban_enabled = bool(settings.get("guardrail_ban_enabled", False))
     session.guardrail_cooldown_enabled = bool(settings.get("guardrail_cooldown_enabled", False))
+    session.guardrail_maxsize_enabled = bool(settings.get("guardrail_maxsize_enabled", False))
+    session.guardrail_maxsize_mode = str(settings.get("guardrail_maxsize_mode", "percentage"))
+    session.guardrail_maxsize_pct = float(settings.get("guardrail_maxsize_pct", 20.0))
+    session.guardrail_maxsize_value = float(settings.get("guardrail_maxsize_value", 0.0))
     session.guardrail_block_until_bar = 0
     session.guardrail_ban_active = False
     session.guardrail_consecutive_losses = 0
@@ -306,3 +310,100 @@ def _fifo_pnl(buy_queue: "deque", sell_queue: "deque") -> float:
     # LONG: profit = sell proceeds - buy cost
     # SHORT: profit = sell proceeds - buy cost (same formula, buy_cost > sell_proceeds when loss)
     return total_sell - total_buy
+
+
+# ── MaxSize Guardrail ────────────────────────────────────────────────────────
+
+def _get_capital_in_use(session: "SimulationSession") -> float:
+    """Sum avg_entry_price × quantity across all open positions in this session."""
+    from app.services.trading import get_position
+
+    if session.instrument_type == "options":
+        if session.right is None:
+            # dual-stream: CE and PE tracked independently
+            rights: list[str | None] = ["CE", "PE"]
+        else:
+            rights = [session.right]
+    else:
+        rights = [None]
+
+    total = 0.0
+    for right in rights:
+        pos = get_position(session.session_id, symbol=session.symbol, right=right)
+        if pos.side != "FLAT" and pos.quantity > 0:
+            total += pos.avg_entry_price * pos.quantity
+    return total
+
+
+def _simulate_post_trade_capital(
+    session: "SimulationSession", price: float, quantity: int, side: str
+) -> float:
+    """
+    Estimate what total capital-in-use would be after executing this trade.
+    side is "BUY" or "SELL".
+    """
+    from app.services.trading import get_position
+
+    # Resolve which right this trade targets
+    if session.instrument_type == "options":
+        right = session.right or "CE"
+    else:
+        right = None
+
+    position = get_position(session.session_id, symbol=session.symbol, right=right)
+    current_capital = _get_capital_in_use(session)
+    net_qty = position.quantity if position.side == "LONG" else -position.quantity
+
+    if side == "BUY":
+        if net_qty < 0:
+            # Currently SHORT — buy covers short first
+            if quantity <= abs(net_qty):
+                # Partially or fully covering short: capital decreases proportionally
+                post_capital = current_capital * (1 - quantity / abs(net_qty))
+            else:
+                # Reversing from SHORT to LONG: excess becomes new long
+                excess_qty = quantity - abs(net_qty)
+                post_capital = excess_qty * price
+        else:
+            # FLAT or adding to LONG
+            post_capital = current_capital + (price * quantity)
+    else:  # SELL
+        if net_qty > 0:
+            # Currently LONG — sell closes long first
+            if quantity <= net_qty:
+                # Partially closing long: capital decreases proportionally
+                post_capital = current_capital * (1 - quantity / net_qty)
+            else:
+                # Reversing from LONG to SHORT: excess becomes new short
+                excess_qty = quantity - net_qty
+                post_capital = excess_qty * price
+        else:
+            # FLAT or adding to SHORT
+            post_capital = current_capital + (price * quantity)
+
+    return post_capital
+
+
+def check_maxsize(
+    session: "SimulationSession", price: float, quantity: int, side: str
+) -> tuple[bool, str]:
+    """
+    Check whether executing this trade would exceed the MaxSize limit.
+    Returns (blocked, reason).
+    """
+    if not session.guardrail_maxsize_enabled:
+        return False, ""
+
+    post_capital = _simulate_post_trade_capital(session, price, quantity, side)
+
+    if session.guardrail_maxsize_mode == "percentage":
+        limit = (session.guardrail_maxsize_pct / 100.0) * session.session_capital
+    else:
+        limit = session.guardrail_maxsize_value
+
+    if post_capital > limit:
+        return True, (
+            f"MAXSIZE: trade would bring capital-in-use to ₹{post_capital:,.2f} "
+            f"exceeding limit of ₹{limit:,.2f}"
+        )
+    return False, ""

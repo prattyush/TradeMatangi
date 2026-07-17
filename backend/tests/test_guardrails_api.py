@@ -45,6 +45,10 @@ def _make_mock_session(
     sess.guardrail_ban_capital_pct = ban_capital_pct
     sess.guardrail_ban_loss_trade_pct = ban_loss_trade_pct
     sess.guardrail_ban_enabled = ban_enabled
+    sess.guardrail_maxsize_enabled = False
+    sess.guardrail_maxsize_mode = "percentage"
+    sess.guardrail_maxsize_pct = 20.0
+    sess.guardrail_maxsize_value = 0.0
     sess.queue = MagicMock()
     return sess
 

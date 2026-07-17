@@ -472,6 +472,10 @@ export interface GuardRailSettings {
   guardrail_ban_min_trades: number
   guardrail_ban_enabled: boolean
   guardrail_cooldown_enabled: boolean
+  guardrail_maxsize_enabled: boolean
+  guardrail_maxsize_mode: "percentage" | "value"
+  guardrail_maxsize_pct: number
+  guardrail_maxsize_value: number
 }
 
 export interface GuardRailStatusResponse {

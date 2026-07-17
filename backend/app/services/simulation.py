@@ -157,6 +157,10 @@ class SimulationSession:
     guardrail_ban_capital_pct: float = 10.0   # x% capital loss triggers BAN
     guardrail_ban_loss_trade_pct: float = 60.0 # y% of trades in loss triggers BAN
     guardrail_ban_enabled: bool = False
+    guardrail_maxsize_enabled: bool = False
+    guardrail_maxsize_mode: str = "percentage"
+    guardrail_maxsize_pct: float = 20.0
+    guardrail_maxsize_value: float = 0.0
 
 
 # Registry of active sessions

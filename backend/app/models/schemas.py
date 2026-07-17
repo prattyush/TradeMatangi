@@ -366,6 +366,10 @@ class GuardRailSettingsResponse(BaseModel):
     guardrail_ban_min_trades: int = 5
     guardrail_ban_enabled: bool = False
     guardrail_cooldown_enabled: bool = False
+    guardrail_maxsize_enabled: bool = False
+    guardrail_maxsize_mode: str = "percentage"
+    guardrail_maxsize_pct: float = 20.0
+    guardrail_maxsize_value: float = 0.0
 
 
 class GuardRailSettingsUpdateRequest(BaseModel):
@@ -377,6 +381,10 @@ class GuardRailSettingsUpdateRequest(BaseModel):
     guardrail_ban_min_trades: int | None = Field(default=None, ge=1, le=100)
     guardrail_ban_enabled: bool | None = None
     guardrail_cooldown_enabled: bool | None = None
+    guardrail_maxsize_enabled: bool | None = None
+    guardrail_maxsize_mode: str | None = None
+    guardrail_maxsize_pct: float | None = Field(default=None, ge=1.0, le=100.0)
+    guardrail_maxsize_value: float | None = Field(default=None, ge=0.0)
 
 
 class GuardRailStatusResponse(BaseModel):
