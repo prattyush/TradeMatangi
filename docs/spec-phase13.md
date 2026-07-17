@@ -203,3 +203,7 @@ email in the header display for all user types.
 | Google Sign-In + Account Name | dev (direct commit) | Merged to dev |
 
 
+
+##### GuardRails-MaxSize
+This is a new guardrail, which specifies how much maximum % of capital or exact capital by value, is allowed to be risked at any moment in the market or in other words the maximum capital that can be used for trading at any time. Whether it is % of capital or the exact capital value it can be a part of settings with a switch with a checkbox as we have for strategies. This value from settings for this guardrail will be stored. The settings will include also an enable button if this guardrail is enabled. Once done, everytime a new position it taken it is supposed to be checked whether the new position is going to be allowed, provided it doesn't increase the total % of capital or value of capital currently in use currently doesn't exceeed the threshold.
+

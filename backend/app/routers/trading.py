@@ -189,7 +189,16 @@ async def buy(req: TradeRequest):
         quantity = lot_size
 
     if session.session_type == "real":
+        from app.services.guardrail_service import check_maxsize
+        blocked, reason = check_maxsize(session, price, quantity, "BUY")
+        if blocked:
+            raise HTTPException(status_code=403, detail=reason)
         return _place_kotak_direct(session, TradeSide.BUY, price, quantity, right)
+
+    from app.services.guardrail_service import check_maxsize
+    blocked, reason = check_maxsize(session, price, quantity, "BUY")
+    if blocked:
+        raise HTTPException(status_code=403, detail=reason)
 
     try:
         wallet_service.debit(session.user_id, price * quantity, session.date)
@@ -248,7 +257,16 @@ async def sell(req: TradeRequest):
         quantity = lot_size
 
     if session.session_type == "real":
+        from app.services.guardrail_service import check_maxsize
+        blocked, reason = check_maxsize(session, price, quantity, "SELL")
+        if blocked:
+            raise HTTPException(status_code=403, detail=reason)
         return _place_kotak_direct(session, TradeSide.SELL, price, quantity, right)
+
+    from app.services.guardrail_service import check_maxsize
+    blocked, reason = check_maxsize(session, price, quantity, "SELL")
+    if blocked:
+        raise HTTPException(status_code=403, detail=reason)
 
     wallet_service.credit(session.user_id, price * quantity, session.date)
 
