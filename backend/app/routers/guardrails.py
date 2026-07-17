@@ -69,6 +69,10 @@ def get_status(session_id: str):
             guardrail_ban_min_trades=getattr(session, "guardrail_ban_min_trades", 5),
             guardrail_ban_enabled=session.guardrail_ban_enabled,
             guardrail_cooldown_enabled=session.guardrail_cooldown_enabled,
+            guardrail_maxsize_enabled=session.guardrail_maxsize_enabled,
+            guardrail_maxsize_mode=session.guardrail_maxsize_mode,
+            guardrail_maxsize_pct=session.guardrail_maxsize_pct,
+            guardrail_maxsize_value=session.guardrail_maxsize_value,
         ),
     )
 
@@ -86,6 +90,10 @@ def get_settings(user_id: str = Depends(get_request_user_id)):
         guardrail_ban_min_trades=s.get("guardrail_ban_min_trades", 5),
         guardrail_ban_enabled=s.get("guardrail_ban_enabled", False),
         guardrail_cooldown_enabled=s.get("guardrail_cooldown_enabled", False),
+        guardrail_maxsize_enabled=s.get("guardrail_maxsize_enabled", False),
+        guardrail_maxsize_mode=s.get("guardrail_maxsize_mode", "percentage"),
+        guardrail_maxsize_pct=s.get("guardrail_maxsize_pct", 20.0),
+        guardrail_maxsize_value=s.get("guardrail_maxsize_value", 0.0),
     )
 
 
@@ -103,4 +111,8 @@ def update_settings(req: GuardRailSettingsUpdateRequest, user_id: str = Depends(
         guardrail_ban_min_trades=updated.get("guardrail_ban_min_trades", 5),
         guardrail_ban_enabled=updated.get("guardrail_ban_enabled", False),
         guardrail_cooldown_enabled=updated.get("guardrail_cooldown_enabled", False),
+        guardrail_maxsize_enabled=updated.get("guardrail_maxsize_enabled", False),
+        guardrail_maxsize_mode=updated.get("guardrail_maxsize_mode", "percentage"),
+        guardrail_maxsize_pct=updated.get("guardrail_maxsize_pct", 20.0),
+        guardrail_maxsize_value=updated.get("guardrail_maxsize_value", 0.0),
     )

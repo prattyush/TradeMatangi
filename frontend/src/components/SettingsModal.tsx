@@ -31,6 +31,10 @@ const GUARDRAIL_BAN_LOSS_TRADE_PCT_KEY = 'guardrailBanLossTradePct'
 const GUARDRAIL_BAN_MIN_TRADES_KEY = 'guardrailBanMinTrades'
 const GUARDRAIL_BAN_ENABLED_KEY = 'guardrailBanEnabled'
 const GUARDRAIL_COOLDOWN_ENABLED_KEY = 'guardrailCooldownEnabled'
+const GUARDRAIL_MAXSIZE_ENABLED_KEY = 'guardrailMaxSizeEnabled'
+const GUARDRAIL_MAXSIZE_MODE_KEY = 'guardrailMaxSizeMode'
+const GUARDRAIL_MAXSIZE_PCT_KEY = 'guardrailMaxSizePct'
+const GUARDRAIL_MAXSIZE_VALUE_KEY = 'guardrailMaxSizeValue'
 
 export function loadGuardRailBlockBars(): number {
   const v = parseInt(localStorage.getItem(GUARDRAIL_BLOCK_BARS_KEY) ?? '')
@@ -61,6 +65,20 @@ export function loadGuardRailBanEnabled(): boolean {
 }
 export function loadGuardRailCooldownEnabled(): boolean {
   return localStorage.getItem(GUARDRAIL_COOLDOWN_ENABLED_KEY) === 'true'
+}
+export function loadGuardRailMaxSizeEnabled(): boolean {
+  return localStorage.getItem(GUARDRAIL_MAXSIZE_ENABLED_KEY) === 'true'
+}
+export function loadGuardRailMaxSizeMode(): string {
+  return localStorage.getItem(GUARDRAIL_MAXSIZE_MODE_KEY) ?? 'percentage'
+}
+export function loadGuardRailMaxSizePct(): number {
+  const v = parseFloat(localStorage.getItem(GUARDRAIL_MAXSIZE_PCT_KEY) ?? '')
+  return isNaN(v) || v <= 0 ? 20 : v
+}
+export function loadGuardRailMaxSizeValue(): number {
+  const v = parseFloat(localStorage.getItem(GUARDRAIL_MAXSIZE_VALUE_KEY) ?? '')
+  return isNaN(v) || v < 0 ? 0 : v
 }
 
 export function loadPnlPctMode(): boolean {
@@ -145,6 +163,10 @@ export interface GuardRailSettingsLocal {
   banMinTrades: number
   banEnabled: boolean
   cooldownEnabled: boolean
+  maxSizeEnabled: boolean
+  maxSizeMode: "percentage" | "value"
+  maxSizePct: number
+  maxSizeValue: number
 }
 
 interface Props {
@@ -223,6 +245,10 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
   const [grBanCapitalInput, setGrBanCapitalInput] = useState(() => String(loadGuardRailBanCapitalPct()))
   const [grBanLossTradeInput, setGrBanLossTradeInput] = useState(() => String(loadGuardRailBanLossTradePct()))
   const [grBanMinTradesInput, setGrBanMinTradesInput] = useState(() => String(loadGuardRailBanMinTrades()))
+  const [grMaxSizeEnabled, setGrMaxSizeEnabled] = useState(loadGuardRailMaxSizeEnabled)
+  const [grMaxSizeMode, setGrMaxSizeMode] = useState<"percentage" | "value">(loadGuardRailMaxSizeMode() as "percentage" | "value")
+  const [grMaxSizePctInput, setGrMaxSizePctInput] = useState(() => String(loadGuardRailMaxSizePct()))
+  const [grMaxSizeValueInput, setGrMaxSizeValueInput] = useState(() => String(loadGuardRailMaxSizeValue()))
 
   // Admin section — broker tokens
   const [iciciInput, setIciciInput] = useState('')
@@ -306,6 +332,14 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
         localStorage.setItem(GUARDRAIL_BAN_MIN_TRADES_KEY, String(s.guardrail_ban_min_trades ?? 5))
         localStorage.setItem(GUARDRAIL_BAN_ENABLED_KEY, String(s.guardrail_ban_enabled))
         localStorage.setItem(GUARDRAIL_COOLDOWN_ENABLED_KEY, String(s.guardrail_cooldown_enabled))
+      if (s.guardrail_maxsize_enabled !== undefined) setGrMaxSizeEnabled(s.guardrail_maxsize_enabled)
+      if (s.guardrail_maxsize_mode !== undefined) setGrMaxSizeMode(s.guardrail_maxsize_mode)
+      if (s.guardrail_maxsize_pct !== undefined) setGrMaxSizePctInput(String(s.guardrail_maxsize_pct))
+      if (s.guardrail_maxsize_value !== undefined) setGrMaxSizeValueInput(String(s.guardrail_maxsize_value))
+      localStorage.setItem(GUARDRAIL_MAXSIZE_ENABLED_KEY, String(s.guardrail_maxsize_enabled ?? ''))
+      localStorage.setItem(GUARDRAIL_MAXSIZE_MODE_KEY, s.guardrail_maxsize_mode ?? '')
+      localStorage.setItem(GUARDRAIL_MAXSIZE_PCT_KEY, String(s.guardrail_maxsize_pct ?? ''))
+      localStorage.setItem(GUARDRAIL_MAXSIZE_VALUE_KEY, String(s.guardrail_maxsize_value ?? ''))
       }).catch(() => {})
 
       // Load masked tokens and stream source on first open (admin only)
@@ -421,12 +455,16 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
     const banCapitalPct = parseFloat(grBanCapitalInput)
     const banLossTradePct = parseFloat(grBanLossTradeInput)
     const banMinTrades = parseInt(grBanMinTradesInput)
+    const maxSizePct = parseFloat(grMaxSizePctInput)
+    const maxSizeValue = parseFloat(grMaxSizeValueInput)
     if (isNaN(blockBars) || blockBars < 0 || blockBars > 20) { setStatus('Block bars must be 0–20'); return }
     if (isNaN(cooldownBlockBars) || cooldownBlockBars < 1 || cooldownBlockBars > 20) { setStatus('Cooldown block bars must be 1–20'); return }
     if (isNaN(cooldownLosses) || cooldownLosses < 1 || cooldownLosses > 20) { setStatus('Cooldown losses must be 1–20'); return }
     if (isNaN(banCapitalPct) || banCapitalPct < 1 || banCapitalPct > 100) { setStatus('Capital % must be 1–100'); return }
     if (isNaN(banLossTradePct) || banLossTradePct < 1 || banLossTradePct > 100) { setStatus('Loss trade % must be 1–100'); return }
     if (isNaN(banMinTrades) || banMinTrades < 1 || banMinTrades > 100) { setStatus('Min trades must be 1–100'); return }
+    if (grMaxSizeMode === 'percentage' && (isNaN(maxSizePct) || maxSizePct < 1 || maxSizePct > 100)) { setStatus('Max size % must be 1–100'); return }
+    if (grMaxSizeMode === 'value' && (isNaN(maxSizeValue) || maxSizeValue < 0)) { setStatus('Max size value must be ≥ 0'); return }
     try {
       await api.updateGuardRailSettings({
         guardrail_block_bars: blockBars,
@@ -437,6 +475,10 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
         guardrail_ban_min_trades: banMinTrades,
         guardrail_ban_enabled: grBanEnabled,
         guardrail_cooldown_enabled: grCooldownEnabled,
+        guardrail_maxsize_enabled: grMaxSizeEnabled,
+        guardrail_maxsize_mode: grMaxSizeMode,
+        guardrail_maxsize_pct: maxSizePct,
+        guardrail_maxsize_value: maxSizeValue,
       })
       localStorage.setItem(GUARDRAIL_BLOCK_BARS_KEY, String(blockBars))
       localStorage.setItem(GUARDRAIL_COOLDOWN_BLOCK_BARS_KEY, String(cooldownBlockBars))
@@ -446,7 +488,11 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
       localStorage.setItem(GUARDRAIL_BAN_MIN_TRADES_KEY, String(banMinTrades))
       localStorage.setItem(GUARDRAIL_BAN_ENABLED_KEY, String(grBanEnabled))
       localStorage.setItem(GUARDRAIL_COOLDOWN_ENABLED_KEY, String(grCooldownEnabled))
-      onGuardRailSettingsChange?.({ blockBars, cooldownBlockBars, cooldownLosses, banCapitalPct, banLossTradePct, banMinTrades, banEnabled: grBanEnabled, cooldownEnabled: grCooldownEnabled })
+      localStorage.setItem(GUARDRAIL_MAXSIZE_ENABLED_KEY, String(grMaxSizeEnabled))
+      localStorage.setItem(GUARDRAIL_MAXSIZE_MODE_KEY, grMaxSizeMode)
+      localStorage.setItem(GUARDRAIL_MAXSIZE_PCT_KEY, String(maxSizePct))
+      localStorage.setItem(GUARDRAIL_MAXSIZE_VALUE_KEY, String(maxSizeValue))
+      onGuardRailSettingsChange?.({ blockBars, cooldownBlockBars, cooldownLosses, banCapitalPct, banLossTradePct, banMinTrades, banEnabled: grBanEnabled, cooldownEnabled: grCooldownEnabled, maxSizeEnabled: grMaxSizeEnabled, maxSizeMode: grMaxSizeMode, maxSizePct, maxSizeValue })
       setStatus('GuardRail settings saved')
       setTimeout(() => setStatus(null), 2000)
     } catch {
@@ -1323,6 +1369,71 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
                       />
                     </div>
                   </div>
+                </div>
+
+                {/* MAXSIZE guardrail */}
+                <div style={{ borderTop: '1px solid #21262d', paddingTop: 12 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
+                    <div style={{ fontSize: 12, color: '#79c0ff', fontWeight: 600, flex: 1 }}>MAX SIZE</div>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+                      <input
+                        type="checkbox"
+                        checked={grMaxSizeEnabled}
+                        onChange={e => setGrMaxSizeEnabled(e.target.checked)}
+                        style={{ cursor: 'pointer' }}
+                      />
+                      <span style={{ fontSize: 11, color: '#8b949e' }}>Enabled</span>
+                    </label>
+                  </div>
+                  <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 10 }}>
+                    Limits total capital tied up in open positions to a % of session capital or an exact rupee value.
+                    A new trade is rejected if it would push capital-in-use above the limit.
+                  </div>
+                  <div style={{ display: 'flex', gap: 16, marginBottom: 10 }}>
+                    <label style={{ fontSize: 12, color: '#e6edf3', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4 }}>
+                      <input
+                        type="radio"
+                        name="maxsizeMode"
+                        checked={grMaxSizeMode === 'percentage'}
+                        onChange={() => setGrMaxSizeMode('percentage')}
+                        style={{ cursor: 'pointer' }}
+                      />
+                      Percentage of Capital
+                    </label>
+                    <label style={{ fontSize: 12, color: '#e6edf3', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4 }}>
+                      <input
+                        type="radio"
+                        name="maxsizeMode"
+                        checked={grMaxSizeMode === 'value'}
+                        onChange={() => setGrMaxSizeMode('value')}
+                        style={{ cursor: 'pointer' }}
+                      />
+                      Exact Value
+                    </label>
+                  </div>
+                  {grMaxSizeMode === 'percentage' ? (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <span style={{ fontSize: 12, color: '#8b949e', flex: 1 }}>Max capital usage</span>
+                      <input
+                        type="number" min={1} max={100} step={0.5}
+                        value={grMaxSizePctInput}
+                        onChange={e => setGrMaxSizePctInput(e.target.value)}
+                        style={{ width: 70, background: '#0d1117', border: '1px solid #30363d', borderRadius: 4, color: '#e6edf3', padding: '4px 8px', fontSize: 12 }}
+                      />
+                      <span style={{ fontSize: 12, color: '#8b949e' }}>%</span>
+                    </div>
+                  ) : (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <span style={{ fontSize: 12, color: '#8b949e', flex: 1 }}>Max capital usage</span>
+                      <input
+                        type="number" min={0} step={100}
+                        value={grMaxSizeValueInput}
+                        onChange={e => setGrMaxSizeValueInput(e.target.value)}
+                        style={{ width: 100, background: '#0d1117', border: '1px solid #30363d', borderRadius: 4, color: '#e6edf3', padding: '4px 8px', fontSize: 12 }}
+                      />
+                      <span style={{ fontSize: 12, color: '#8b949e' }}>₹</span>
+                    </div>
+                  )}
                 </div>
 
                 {/* Save */}
