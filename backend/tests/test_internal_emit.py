@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, patch
 from fastapi.testclient import TestClient
 
 from app.main import app
+from app.services.simulation import RingQueue
 
 client = TestClient(app)
 
@@ -16,9 +17,9 @@ SESSION_ID = "sess-internal-test-001"
 
 
 def _make_mock_session():
-    """Create a mock SimulationSession with an asyncio.Queue."""
+    """Create a mock SimulationSession with a RingQueue."""
     session = MagicMock()
-    session.queue = asyncio.Queue(maxsize=3000)
+    session.queue = RingQueue(maxsize=12000)
     return session
 
 
