@@ -197,6 +197,8 @@ def _chart_to_meta_filtered(
         and (not strategy or a.get("strategy_name") == strategy)
         and (not category or a.get("category") == category)
     )
+    tp_raw = item.get("top_patterns", "{}")
+    top_patterns = json.loads(tp_raw) if isinstance(tp_raw, str) else (tp_raw or {})
     return {
         "chart_id": item["chart_id"],
         "user_id": item["user_id"],
@@ -213,6 +215,8 @@ def _chart_to_meta_filtered(
         "strategy_names": strategy_names,
         "categories": categories,
         "can_delete": item.get("user_id") == user_id,
+        "top_patterns": top_patterns,
+        "has_top_patterns": bool(top_patterns),
     }
 
 
@@ -240,6 +244,7 @@ def create_chart(
     notes: str = "",
     right: Optional[str] = None,
     strike: Optional[int] = None,
+    top_patterns: Optional[dict] = None,
 ) -> dict:
     chart_id = str(uuid.uuid4())
     now = _now_iso()
@@ -258,25 +263,51 @@ def create_chart(
         item["right"] = right
     if strike is not None:
         item["strike"] = strike
+    if top_patterns:
+        item["top_patterns"] = json.dumps(top_patterns)
     _table().put_item(Item=item)
-    return {**item, "annotations": annotations}
+    result = {**item, "annotations": annotations}
+    if top_patterns:
+        result["top_patterns"] = top_patterns
+    return result
 
 
-def update_chart(chart_id: str, annotations: list[dict], notes: str) -> Optional[dict]:
+def _parse_top_patterns(item: dict) -> dict:
+    tp = item.get("top_patterns", {})
+    if isinstance(tp, str):
+        return json.loads(tp) if tp else {}
+    return tp or {}
+
+
+def update_chart(chart_id: str, annotations: list[dict], notes: str, top_patterns: Optional[dict] = None) -> Optional[dict]:
     now = _now_iso()
     try:
-        resp = _table().update_item(
-            Key={"chart_id": chart_id},
-            UpdateExpression="SET annotations = :a, notes = :n, updated_at = :u",
-            ExpressionAttributeValues={
-                ":a": json.dumps(annotations),
-                ":n": notes,
-                ":u": now,
-            },
-            ReturnValues="ALL_NEW",
-        )
+        if top_patterns is not None:
+            resp = _table().update_item(
+                Key={"chart_id": chart_id},
+                UpdateExpression="SET annotations = :a, notes = :n, top_patterns = :tp, updated_at = :u",
+                ExpressionAttributeValues={
+                    ":a": json.dumps(annotations),
+                    ":n": notes,
+                    ":tp": json.dumps(top_patterns),
+                    ":u": now,
+                },
+                ReturnValues="ALL_NEW",
+            )
+        else:
+            resp = _table().update_item(
+                Key={"chart_id": chart_id},
+                UpdateExpression="SET annotations = :a, notes = :n, updated_at = :u",
+                ExpressionAttributeValues={
+                    ":a": json.dumps(annotations),
+                    ":n": notes,
+                    ":u": now,
+                },
+                ReturnValues="ALL_NEW",
+            )
         item = resp.get("Attributes", {})
         item["annotations"] = json.loads(item.get("annotations", "[]"))
+        item["top_patterns"] = _parse_top_patterns(item)
         return item
     except Exception as exc:
         logger.error("update_chart failed for %s: %s", chart_id, exc)
@@ -295,6 +326,8 @@ def get_chart(chart_id: str) -> Optional[dict]:
     if not item:
         return None
     item["annotations"] = json.loads(item.get("annotations", "[]"))
+    tp_raw = item.get("top_patterns", "{}")
+    item["top_patterns"] = json.loads(tp_raw) if isinstance(tp_raw, str) else (tp_raw or {})
     return item
 
 
@@ -315,11 +348,12 @@ def list_charts_for_user(
     user_id: str,
     strategy: Optional[str] = None,
     category: Optional[str] = None,
+    top_only: bool = False,
 ) -> list[dict]:
     """
     Return metadata (no annotation payload) for all charts belonging to user_id.
     Optionally filter to charts that contain at least one annotation with the
-    given strategy_name and/or category.
+    given strategy_name and/or category, or only charts with top_patterns set.
     """
     result = []
     seen_chart_ids: set[str] = set()
@@ -333,6 +367,11 @@ def list_charts_for_user(
                 continue
             if category and not any(a.get("category") == category for a in raw):
                 continue
+            if top_only:
+                tp_raw = item.get("top_patterns", "{}")
+                tp = json.loads(tp_raw) if isinstance(tp_raw, str) else (tp_raw or {})
+                if not tp:
+                    continue
             meta = _chart_to_meta_filtered(item, user_id, strategy, category)
             result.append(meta)
 

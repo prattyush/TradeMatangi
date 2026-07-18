@@ -11,7 +11,7 @@ import {
   createChart, IChartApi, ISeriesApi, CandlestickData, LineData, Time,
   SeriesMarker, IPriceLine, LineStyle,
 } from 'lightweight-charts'
-import api, { PatternAnnotation, PatternChart, PatternChartMeta, OHLCCandle } from '../services/api'
+import api, { PatternAnnotation, PatternChart, PatternChartMeta, OHLCCandle, TopPatterns } from '../services/api'
 
 // ── EMA helpers ───────────────────────────────────────────────────────────────
 
@@ -75,10 +75,30 @@ const MARKER_COLORS: Record<string, { color: string; shape: 'arrowUp' | 'arrowDo
 
 function markerKey(type: string, instrument: string) { return `${type}-${instrument}` }
 
+function patternIdentity(ann: PatternAnnotation): string {
+  return `${ann.strategy_name}::${ann.category || ''}::${ann.instrument}`
+}
+
+function rankingForIdentity(topPatterns: TopPatterns | undefined, identity: string): 'top_1' | 'top_2' | 'bottom_1' | null {
+  if (!topPatterns) return null
+  for (const rank of ['top_1', 'top_2', 'bottom_1'] as const) {
+    const tp = topPatterns[rank]
+    if (tp && `${tp.strategy_name}::${tp.category}::${tp.instrument}` === identity) return rank
+  }
+  return null
+}
+
+const TOP_RANK_STYLE: Record<string, { color: string; badge: string }> = {
+  top_1: { color: '#FFD700', badge: '🥇' },
+  top_2: { color: '#C0C0C0', badge: '🥈' },
+  bottom_1: { color: '#ff4444', badge: '❌' },
+}
+
 function buildMarkers(
   annotations: PatternAnnotation[],
   activeStrategy: string | null,
   activeCategory: string | null,
+  topPatterns?: TopPatterns,
 ): SeriesMarker<Time>[] {
   return annotations
     .slice()
@@ -88,20 +108,39 @@ function buildMarkers(
       const matchedStrategy = activeStrategy === null || ann.strategy_name === activeStrategy
       const matchedCategory = activeCategory === null || ann.category === activeCategory
       const dimmed = !matchedStrategy || !matchedCategory
-      
+
+      const rank = rankingForIdentity(topPatterns, patternIdentity(ann))
+      const rankStyle = rank ? TOP_RANK_STYLE[rank] : null
+
       const displayText = dimmed
         ? ''
-        : `${ann.category ? ann.category.slice(0, 5) + '/' : ''}${ann.strategy_name.slice(0, 10)}`
+        : [
+            rankStyle ? rankStyle.badge : '',
+            ann.category ? ann.category.slice(0, 5) + '/' : '',
+            ann.strategy_name.slice(0, 10),
+          ].join('')
 
       return {
         time: ann.time as Time,
         position: ann.type === 'entry' ? 'belowBar' : 'aboveBar',
-        color: dimmed ? '#3d4450' : cfg.color,
+        color: dimmed ? '#3d4450' : rankStyle ? rankStyle.color : cfg.color,
         shape: cfg.shape,
         text: displayText,
-        size: dimmed ? 1 : 2,
+        size: rankStyle ? 3 : dimmed ? 1 : 2,
       } as SeriesMarker<Time>
     })
+}
+
+function getUniquePatterns(annotations: PatternAnnotation[]): { identity: string; strategy_name: string; category: string; instrument: string }[] {
+  const seen = new Set<string>()
+  const result: { identity: string; strategy_name: string; category: string; instrument: string }[] = []
+  for (const ann of annotations) {
+    const id = patternIdentity(ann)
+    if (seen.has(id)) continue
+    seen.add(id)
+    result.push({ identity: id, strategy_name: ann.strategy_name, category: ann.category || '', instrument: ann.instrument })
+  }
+  return result
 }
 
 // ── Shared styles ─────────────────────────────────────────────────────────────
@@ -186,11 +225,12 @@ interface ChartPaneProps {
   onMaximize?: () => void
   isMaximized?: boolean
   onRemove?: () => void
+  topPatterns?: TopPatterns
 }
 
 function ChartPane({
   candles, annotations, activeStrategy, activeCategory, label, onBarClick,
-  readonly = false, onMaximize, isMaximized = false, onRemove,
+  readonly = false, onMaximize, isMaximized = false, onRemove, topPatterns,
 }: ChartPaneProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<IChartApi | null>(null)
@@ -364,8 +404,8 @@ function ChartPane({
 
   useEffect(() => {
     if (!seriesRef.current) return
-    seriesRef.current.setMarkers(buildMarkers(annotations, activeStrategy, activeCategory))
-  }, [annotations, activeStrategy, activeCategory])
+    seriesRef.current.setMarkers(buildMarkers(annotations, activeStrategy, activeCategory, topPatterns))
+  }, [annotations, activeStrategy, activeCategory, topPatterns])
 
   const enterDrawMode = useCallback((mode: DrawMode) => {
     setDrawDropdownOpen(false)
@@ -493,6 +533,13 @@ function GalleryCard({ chart, activeStrategy: _activeStrategy, onLoad, onDelete,
   const [confirming, setConfirming] = useState(false)
   const instrBadge = chart.instrument_type === 'options' ? (chart.right ?? 'OPT') : 'EQ'
   const canDelete = chart.can_delete !== false
+
+  const rankBadges: { rank: string; label: string; color: string }[] = []
+  const tp = chart.top_patterns
+  if (tp?.top_1) rankBadges.push({ rank: 'top_1', label: '🥇 Top 1', color: '#FFD700' })
+  if (tp?.top_2) rankBadges.push({ rank: 'top_2', label: '🥈 Top 2', color: '#C0C0C0' })
+  if (tp?.bottom_1) rankBadges.push({ rank: 'bottom_1', label: '❌ Worst', color: '#ff4444' })
+
   return (
     <div
       style={{
@@ -521,6 +568,16 @@ function GalleryCard({ chart, activeStrategy: _activeStrategy, onLoad, onDelete,
         <span style={{ color: '#22c55e' }}>▲ {chart.entry_count}</span>
         <span style={{ color: '#ef4444' }}>▼ {chart.exit_count}</span>
       </div>
+      {rankBadges.length > 0 && (
+        <div style={{ display: 'flex', gap: 4, marginBottom: 6, flexWrap: 'wrap' }}>
+          {rankBadges.map(rb => (
+            <span key={rb.rank} style={{
+              fontSize: 10, background: '#0d1117', borderRadius: 4, padding: '2px 6px',
+              color: rb.color, border: `1px solid ${rb.color}40`,
+            }}>{rb.label}</span>
+          ))}
+        </div>
+      )}
       <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 4, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
         Cat: {chart.categories?.join(' · ') || '—'}
       </div>
@@ -606,6 +663,9 @@ export default function PatternLibrary() {
   const [annotations, setAnnotations] = useState<PatternAnnotation[]>([])
   const [activeToolKey, setActiveToolKey] = useState<string>('entry-CE')
 
+  // Top Patterns
+  const [topPatterns, setTopPatterns] = useState<TopPatterns>({})
+
   // Strategies / Categories
   const [strategies, setStrategies] = useState<string[]>([])
   const [activeStrategy, setActiveStrategy] = useState<string>('')
@@ -623,6 +683,7 @@ export default function PatternLibrary() {
   const [galleryCharts, setGalleryCharts] = useState<PatternChartMeta[]>([])
   const [galleryStrategy, setGalleryStrategy] = useState<string>('')
   const [galleryCategory, setGalleryCategory] = useState<string>('')
+  const [galleryTopOnly, setGalleryTopOnly] = useState(false)
   const [viewExpandedId, setViewExpandedId] = useState<string | null>(null)
   const [galleryColumns, setGalleryColumns] = useState(1)
   const galleryResizeObserverRef = useRef<ResizeObserver | null>(null)
@@ -632,16 +693,17 @@ export default function PatternLibrary() {
     api.patternListCategories().then(r => setCategories(r.categories)).catch(() => {})
   }, [])
 
-  const refreshGallery = useCallback(async (strat?: string, cat?: string) => {
+  const refreshGallery = useCallback(async (strat?: string, cat?: string, topOnly?: boolean) => {
     try {
       const s = strat !== undefined ? strat : galleryStrategy
       const c = cat !== undefined ? cat : galleryCategory
-      const res = await api.patternListCharts(s || undefined, c || undefined)
+      const t = topOnly !== undefined ? topOnly : galleryTopOnly
+      const res = await api.patternListCharts(s || undefined, c || undefined, t)
       setGalleryCharts(res.charts)
     } catch { /* non-fatal */ }
-  }, [galleryStrategy, galleryCategory])
+  }, [galleryStrategy, galleryCategory, galleryTopOnly])
 
-  useEffect(() => { refreshGallery() }, [galleryStrategy, galleryCategory])
+  useEffect(() => { refreshGallery() }, [galleryStrategy, galleryCategory, galleryTopOnly])
 
   const attachGalleryRef = useCallback((node: HTMLDivElement | null) => {
     galleryResizeObserverRef.current?.disconnect()
@@ -725,6 +787,7 @@ export default function PatternLibrary() {
         setAnnotations(existing.annotations)
         setCurrentChartId(existing.chart_id)
         setNotes(existing.notes ?? '')
+        setTopPatterns(existing.top_patterns || {})
         if (existing.annotations.length > 0) {
           const firstAnn = existing.annotations[0]
           setActiveStrategy(firstAnn.strategy_name)
@@ -815,13 +878,18 @@ export default function PatternLibrary() {
     const firstCe = optionPanes.find(p => p.right === 'CE')
     try {
       let saved: PatternChart
+      const cleanTopPatterns: TopPatterns = {}
+      if (topPatterns.top_1) cleanTopPatterns.top_1 = topPatterns.top_1
+      if (topPatterns.top_2) cleanTopPatterns.top_2 = topPatterns.top_2
+      if (topPatterns.bottom_1) cleanTopPatterns.bottom_1 = topPatterns.bottom_1
       if (currentChartId) {
-        saved = await api.patternUpdateChart(currentChartId, annotations, notes)
+        saved = await api.patternUpdateChart(currentChartId, annotations, notes, Object.keys(cleanTopPatterns).length ? cleanTopPatterns : undefined)
       } else {
         saved = await api.patternCreateChart({
           symbol, date, instrument_type: instrumentType, annotations, notes,
           right: firstCe ? 'CE' : undefined,
           strike: firstCe?.strike,
+          top_patterns: Object.keys(cleanTopPatterns).length ? cleanTopPatterns : undefined,
         })
         setCurrentChartId(saved.chart_id)
       }
@@ -845,7 +913,7 @@ export default function PatternLibrary() {
     } catch (err) {
       setSaveMsg(err instanceof Error ? err.message : 'Save failed')
     }
-  }, [currentChartId, annotations, notes, symbol, date, instrumentType, optionPanes, activeStrategy, newStrategyName, activeCategory, newCategoryName, refreshGallery])
+  }, [currentChartId, annotations, notes, symbol, date, instrumentType, optionPanes, activeStrategy, newStrategyName, activeCategory, newCategoryName, topPatterns, refreshGallery])
 
   // ── Gallery load ──────────────────────────────────────────────────────────
 
@@ -859,6 +927,7 @@ export default function PatternLibrary() {
       setNotes(chart.notes ?? '')
       setCurrentChartId(chart.chart_id)
       setAnnotations(chart.annotations)
+      setTopPatterns(chart.top_patterns || {})
       setOptionPanes([])
       setResolvedExpiry(null)
       setResolvedAtm(null)
@@ -958,6 +1027,7 @@ export default function PatternLibrary() {
             readonly={isReadonly}
             onMaximize={() => handleMaximize('underlying')}
             isMaximized={maximizedPaneId === 'underlying'}
+            topPatterns={topPatterns}
           />
         </div>
 
@@ -983,6 +1053,7 @@ export default function PatternLibrary() {
                   onMaximize={() => handleMaximize(pane.id)}
                   isMaximized={maximizedPaneId === pane.id}
                   onRemove={!isReadonly ? () => handleRemovePane(pane.id) : undefined}
+                  topPatterns={topPatterns}
                 />
               </div>
             ))}
@@ -1063,6 +1134,11 @@ export default function PatternLibrary() {
           <option value="">All strategies</option>
           {strategies.map(s => <option key={s} value={s}>{s}</option>)}
         </select>
+        <label style={{ fontSize: 11, color: '#8b949e', display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer' }}>
+          <input type="checkbox" checked={galleryTopOnly} onChange={e => setGalleryTopOnly(e.target.checked)}
+            style={{ accentColor: '#f0883e' }} />
+          Top Patterns Only
+        </label>
         <span style={{ fontSize: 11, color: '#484f58' }}>{galleryCharts.length} chart{galleryCharts.length !== 1 ? 's' : ''}</span>
       </div>
       {galleryCharts.length === 0 ? (
@@ -1190,6 +1266,53 @@ export default function PatternLibrary() {
         </div>
       )}
 
+      {/* Top Pattern ranking toolbar — create mode only */}
+      {mode === 'create' && chartLoaded && (
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 8, padding: '6px 12px',
+          background: '#0d1117', borderBottom: '1px solid #30363d', flexShrink: 0, flexWrap: 'wrap',
+        }}>
+          <span style={{ fontSize: 11, color: '#f0883e', fontWeight: 700, marginRight: 4 }}>🏆 Top Patterns</span>
+          {getUniquePatterns(annotations).length === 0 && (
+            <span style={{ fontSize: 11, color: '#484f58' }}>Add annotations to assign pattern rankings</span>
+          )}
+          {(['top_1', 'top_2', 'bottom_1'] as const).map(rank => {
+            const selected = topPatterns[rank]
+            const label = rank === 'top_1' ? '🥇 Top 1' : rank === 'top_2' ? '🥈 Top 2' : '❌ Bottom 1'
+            const options = getUniquePatterns(annotations)
+            return (
+              <div key={rank} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                <span style={{ fontSize: 11, color: '#8b949e' }}>{label}:</span>
+                <select
+                  value={selected ? patternIdentity({ strategy_name: selected.strategy_name, category: selected.category, instrument: selected.instrument } as PatternAnnotation) : ''}
+                  onChange={e => {
+                    const val = e.target.value
+                    setTopPatterns(prev => {
+                      const next = { ...prev }
+                      if (!val) {
+                        delete next[rank]
+                      } else {
+                        const parts = val.split('::')
+                        next[rank] = { strategy_name: parts[0], category: parts[1], instrument: parts[2] }
+                      }
+                      return next
+                    })
+                  }}
+                  style={{ ...selectStyle, minWidth: 200 }}
+                >
+                  <option value="">— none —</option>
+                  {options.map(opt => (
+                    <option key={opt.identity} value={opt.identity}>
+                      {opt.category}/{opt.strategy_name} ({opt.instrument})
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )
+          })}
+        </div>
+      )}
+
       {/* Body */}
       {mode === 'create' ? (
       <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
@@ -1247,6 +1370,11 @@ export default function PatternLibrary() {
                   <option value="">All strategies</option>
                   {strategies.map(s => <option key={s} value={s}>{s}</option>)}
                 </select>
+                <label style={{ fontSize: 11, color: '#8b949e', display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer' }}>
+                  <input type="checkbox" checked={galleryTopOnly} onChange={e => setGalleryTopOnly(e.target.checked)}
+                    style={{ accentColor: '#f0883e' }} />
+                  Top Patterns Only
+                </label>
                 <span style={{ fontSize: 11, color: '#484f58' }}>{galleryCharts.length} chart{galleryCharts.length !== 1 ? 's' : ''}</span>
               </div>
               {galleryCharts.length === 0 ? (

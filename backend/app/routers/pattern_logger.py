@@ -31,6 +31,18 @@ class AnnotationItem(BaseModel):
     text: str
 
 
+class TopPatternItem(BaseModel):
+    strategy_name: str
+    category: str
+    instrument: str                # "underlying" | "CE" | "PE"
+
+
+class TopPatternsPayload(BaseModel):
+    top_1: Optional[TopPatternItem] = None
+    top_2: Optional[TopPatternItem] = None
+    bottom_1: Optional[TopPatternItem] = None
+
+
 class CreateChartRequest(BaseModel):
     symbol: str
     date: str
@@ -39,11 +51,13 @@ class CreateChartRequest(BaseModel):
     notes: str = ""
     right: Optional[str] = None    # "CE" | "PE" (options only)
     strike: Optional[int] = None   # options reference strike
+    top_patterns: Optional[TopPatternsPayload] = None
 
 
 class UpdateChartRequest(BaseModel):
     annotations: list[AnnotationItem]
     notes: str = ""
+    top_patterns: Optional[TopPatternsPayload] = None
 
 
 # ── Strategy / Category names ──────────────────────────────────────────────────
@@ -76,11 +90,12 @@ async def list_categories(user_id: str = Depends(get_request_user_id)):
 async def list_charts(
     strategy: Optional[str] = Query(None, description="Filter by strategy name"),
     category: Optional[str] = Query(None, description="Filter by category name"),
+    top_only: bool = Query(False, description="Only show charts with top patterns"),
     user_id: str = Depends(get_request_user_id),
 ):
-    """Return chart metadata list (no annotation payload). Optionally filtered by strategy and/or category."""
+    """Return chart metadata list (no annotation payload). Optionally filtered by strategy, category, and/or top patterns."""
     try:
-        charts = svc.list_charts_for_user(user_id, strategy=strategy, category=category)
+        charts = svc.list_charts_for_user(user_id, strategy=strategy, category=category, top_only=top_only)
         return {"charts": charts}
     except Exception as exc:
         logger.error("list_charts error: %s", exc)
@@ -128,6 +143,7 @@ async def get_chart(chart_id: str, user_id: str = Depends(get_request_user_id)):
 async def create_chart(req: CreateChartRequest, user_id: str = Depends(get_request_user_id)):
     """Save a new annotated chart."""
     try:
+        top_patterns = req.top_patterns.model_dump(exclude_none=True) if req.top_patterns else None
         chart = svc.create_chart(
             user_id=user_id,
             symbol=req.symbol,
@@ -137,6 +153,7 @@ async def create_chart(req: CreateChartRequest, user_id: str = Depends(get_reque
             notes=req.notes,
             right=req.right,
             strike=req.strike,
+            top_patterns=top_patterns,
         )
         return chart
     except Exception as exc:
@@ -153,7 +170,13 @@ async def update_chart(chart_id: str, req: UpdateChartRequest, user_id: str = De
     if not existing.get("can_delete"):
         raise HTTPException(status_code=403, detail="Not your chart")
     try:
-        updated = svc.update_chart(chart_id, [a.model_dump() for a in req.annotations], req.notes)
+        top_patterns = req.top_patterns.model_dump(exclude_none=True) if req.top_patterns else None
+        updated = svc.update_chart(
+            chart_id,
+            [a.model_dump() for a in req.annotations],
+            req.notes,
+            top_patterns=top_patterns,
+        )
         if not updated:
             raise HTTPException(status_code=500, detail="Update failed")
         return updated
