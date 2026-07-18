@@ -31,7 +31,7 @@ class RingQueue:
     ticks available for an SSE client that reconnects after being idle.
     """
 
-    def __init__(self, maxsize: int = 3000) -> None:
+    def __init__(self, maxsize: int = 12000) -> None:
         self._dq: deque = deque(maxlen=maxsize)
         self._event = asyncio.Event()
         self._closed = False
@@ -124,7 +124,7 @@ class SimulationSession:
     kotak_order_map: dict[str, str] = field(default_factory=dict)
     # Kotak order IDs reconciled from external/manual broker orders (not in our system)
     external_reconciled_kotak_ids: set = field(default_factory=set)
-    queue: RingQueue = field(default_factory=lambda: RingQueue(3000))
+    queue: RingQueue = field(default_factory=lambda: RingQueue(12000))
     # paper_tick_queue: receives raw tick dicts from KiteBroadcaster / BreezeStreamManager / KotakBroadcaster
     paper_tick_queue: RingQueue = field(default_factory=lambda: RingQueue(1000))
     resume_event: asyncio.Event = field(default_factory=asyncio.Event)
