@@ -99,6 +99,8 @@ def _mock_table(items: list[dict] | None = None):
             "notes": ExpressionAttributeValues[":n"],
             "updated_at": ExpressionAttributeValues[":u"],
         })
+        if ":tp" in ExpressionAttributeValues:
+            item["top_patterns"] = ExpressionAttributeValues[":tp"]
         _store[Key["chart_id"]] = item
         return {"Attributes": item}
 

@@ -173,6 +173,18 @@ export interface PatternAnnotation {
   text: string
 }
 
+export interface TopPatternItem {
+  strategy_name: string
+  category: string
+  instrument: string
+}
+
+export interface TopPatterns {
+  top_1?: TopPatternItem | null
+  top_2?: TopPatternItem | null
+  bottom_1?: TopPatternItem | null
+}
+
 export interface PatternChartMeta {
   chart_id: string
   user_id: string
@@ -189,6 +201,8 @@ export interface PatternChartMeta {
   strategy_names: string[]
   categories: string[]
   can_delete?: boolean
+  top_patterns?: TopPatterns
+  has_top_patterns?: boolean
 }
 
 export interface PatternChart extends PatternChartMeta {
@@ -1395,10 +1409,11 @@ const api = {
     return res.json()
   },
 
-  async patternListCharts(strategy?: string, category?: string): Promise<{ charts: PatternChartMeta[] }> {
+  async patternListCharts(strategy?: string, category?: string, topOnly?: boolean): Promise<{ charts: PatternChartMeta[] }> {
     const params = new URLSearchParams()
     if (strategy) params.set('strategy', strategy)
     if (category) params.set('category', category)
+    if (topOnly) params.set('top_only', 'true')
     const q = params.toString() ? `?${params.toString()}` : ''
     const res = await fetch(`${BACKEND_URL}/api/pattern/charts${q}`, { headers: _authHeaders() })
     if (!res.ok) throw new Error(`List charts failed: ${res.status}`)
@@ -1424,6 +1439,7 @@ const api = {
     symbol: string; date: string; instrument_type: string;
     annotations: PatternAnnotation[]; notes: string;
     right?: string; strike?: number;
+    top_patterns?: TopPatterns;
   }): Promise<PatternChart> {
     const res = await fetch(`${BACKEND_URL}/api/pattern/chart`, {
       method: 'POST',
@@ -1434,11 +1450,11 @@ const api = {
     return res.json()
   },
 
-  async patternUpdateChart(chartId: string, annotations: PatternAnnotation[], notes: string): Promise<PatternChart> {
+  async patternUpdateChart(chartId: string, annotations: PatternAnnotation[], notes: string, topPatterns?: TopPatterns): Promise<PatternChart> {
     const res = await fetch(`${BACKEND_URL}/api/pattern/chart/${chartId}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json', ..._authHeaders() },
-      body: JSON.stringify({ annotations, notes }),
+      body: JSON.stringify({ annotations, notes, top_patterns: topPatterns }),
     })
     if (!res.ok) throw new Error(`Update chart failed: ${res.status}`)
     return res.json()
