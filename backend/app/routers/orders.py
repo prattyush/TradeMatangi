@@ -113,9 +113,9 @@ async def place_order(req: PlaceOrderRequest):
     else:
         qty_chunks = [quantity]
 
-    if req.order_type in (OrderType.TARGET, OrderType.LIMIT, OrderType.STOPLOSS):
+    if req.order_type in (OrderType.TARGET, OrderType.LIMIT) and not req.is_stoploss:
         from app.services.guardrail_service import check_maxsize
-        maxsize_price = req.trigger_price if req.order_type in (OrderType.TARGET, OrderType.STOPLOSS) else req.limit_price
+        maxsize_price = req.limit_price if req.order_type == OrderType.LIMIT else req.trigger_price
         if maxsize_price is not None and maxsize_price > 0:
             blocked, reason = check_maxsize(session, maxsize_price, quantity, req.side.value)
             if blocked:
