@@ -186,6 +186,9 @@ email in the header display for all user types.
 | Advanced Analysis — Trade Labelling + Stats | PR #296 | ✅ Merged to dev |
 | Stepwise session_type persist fix | PR #298 | ✅ Merged to dev |
 | Google Sign-In + Account Name | direct commit | ✅ Merged to dev |
+| RingQueue maxsize increase (3000→12000) | direct commit | ✅ Merged to dev |
+| GuardRails-MaxSize | PR #303, #306 | ✅ Merged to dev |
+| Top Pattern | pending | ✅ Complete |
 
 ## PR Log — Phase 13
 
@@ -201,9 +204,45 @@ email in the header display for all user types.
 | Advanced Analysis — Trade Labelling + Stats | feature/phase13-advanced-analysis | PR #296 merged to dev |
 | Stepwise session_type persist — distinct "stepwise" in DB + Analysis UI filter | feat/stepwise-trade-type | PR #298 merged to dev |
 | Google Sign-In + Account Name | dev (direct commit) | Merged to dev |
+| RingQueue maxsize increase (3000→12000) | dev (direct commit) | Merged to dev |
+| GuardRails-MaxSize — limit total capital in use | feature/guardrail-maxsize | PR #303, #306 merged to dev |
+| Top Pattern — rank patterns per chart | feature/top-pattern | pending |
 
 
 
 ##### GuardRails-MaxSize
 This is a new guardrail, which specifies how much maximum % of capital or exact capital by value, is allowed to be risked at any moment in the market or in other words the maximum capital that can be used for trading at any time. Whether it is % of capital or the exact capital value it can be a part of settings with a switch with a checkbox as we have for strategies. This value from settings for this guardrail will be stored. The settings will include also an enable button if this guardrail is enabled. Once done, everytime a new position it taken it is supposed to be checked whether the new position is going to be allowed, provided it doesn't increase the total % of capital or value of capital currently in use currently doesn't exceeed the threshold.
+
+
+##### Top Pattern ✅ Complete
+
+Users can designate top 1, top 2, and biggest fail (bottom 1) patterns per daily chart.
+These rankings are stored on the PatternAnnotations item as a `top_patterns` JSON field
+and displayed as distinct medal-styled markers in charts and gallery cards.
+
+**Data Model:**
+- No new DynamoDB table — `top_patterns` is a JSON string attribute on existing `PatternAnnotations` items
+- Structure: `{"top_1": {"strategy_name": "X", "category": "Y", "instrument": "CE"}, "top_2": {...}, "bottom_1": {...}}`
+- Identifies patterns by `(strategy_name, category, instrument)` tuple — the logical pattern identity
+
+**Backend:**
+- `pattern_logger_service.py`: `_parse_top_patterns()` handles str/dict parsing; `create_chart()`/`update_chart()` accept optional `top_patterns` dict; `list_charts_for_user()` gains `top_only` filter; `_chart_to_meta_filtered()` includes `top_patterns` and `has_top_patterns` boolean in metadata
+- `pattern_logger.py`: `TopPatternItem` and `TopPatternsPayload` Pydantic models; `CreateChartRequest`/`UpdateChartRequest` accept `top_patterns`; `GET /charts` gains `top_only` query param
+
+**Frontend (`PatternLibrary.tsx`):**
+- **Create mode**: Top Pattern ranking toolbar shown when chart is loaded — three dropdowns (🥇 Top 1, 🥈 Top 2, ❌ Bottom 1), each populated from unique pattern identities derived from annotations
+- **Marker styling**: `buildMarkers()` accepts `topPatterns`; ranked annotations get gold/silver/red colors, larger marker size, and medal emoji badges in text; non-ranked annotations show `{category}/{strategy_name}` as before
+- **Gallery cards**: Badge chips showing 🥇 Top 1 / 🥈 Top 2 / ❌ Worst when `has_top_patterns` is true
+- **Gallery filter**: "Top Patterns Only" checkbox alongside existing category/strategy dropdowns; calls `api.patternListCharts(strategy, category, topOnly)` with `top_only=true`
+- **Persistence**: Top patterns load with chart on Load Chart / gallery Load; save with chart on Save Annotations
+
+**Files changed:**
+
+| File | Change |
+|------|--------|
+| `backend/app/services/pattern_logger_service.py` | `_parse_top_patterns`, `top_patterns` in create/update/list/meta |
+| `backend/app/routers/pattern_logger.py` | `TopPatternItem`, `TopPatternsPayload` models; `top_patterns` in request models; `top_only` query param |
+| `backend/tests/test_pattern_logger.py` | Mock `update_item` handles `:tp` value |
+| `frontend/src/services/api.ts` | `TopPatternItem`, `TopPatterns` types; `top_patterns` in create/update body; `topOnly` param in listCharts |
+| `frontend/src/pages/PatternLibrary.tsx` | Top pattern state, toolbar UI, `buildMarkers` ranking, gallery badges + filter |
 
