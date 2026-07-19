@@ -183,20 +183,19 @@ def _chart_to_meta_filtered(
     category: Optional[str],
 ) -> dict:
     raw = json.loads(item.get("annotations", "[]"))
-    strategy_names = list({a.get("strategy_name", "") for a in raw if a.get("strategy_name")})
-    categories = list({a.get("category", "") for a in raw if a.get("category")})
-    entry_count = sum(
-        1 for a in raw
-        if a.get("type") == "entry"
-        and (not strategy or a.get("strategy_name") == strategy)
-        and (not category or a.get("category") == category)
-    )
-    exit_count = sum(
-        1 for a in raw
-        if a.get("type") == "exit"
-        and (not strategy or a.get("strategy_name") == strategy)
-        and (not category or a.get("category") == category)
-    )
+    # Determine which annotations match the filter so metadata reflects the filter
+    if strategy or category:
+        matched = [
+            a for a in raw
+            if (not strategy or a.get("strategy_name") == strategy)
+            and (not category or a.get("category") == category)
+        ]
+    else:
+        matched = raw
+    strategy_names = list({a.get("strategy_name", "") for a in matched if a.get("strategy_name")})
+    categories = list({a.get("category", "") for a in matched if a.get("category")})
+    entry_count = sum(1 for a in matched if a.get("type") == "entry")
+    exit_count = sum(1 for a in matched if a.get("type") == "exit")
     tp_raw = item.get("top_patterns", "{}")
     top_patterns = json.loads(tp_raw) if isinstance(tp_raw, str) else (tp_raw or {})
     return {
