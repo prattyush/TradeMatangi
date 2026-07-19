@@ -34,7 +34,6 @@ class AnnotationItem(BaseModel):
 class TopPatternItem(BaseModel):
     strategy_name: str
     category: str
-    instrument: str                # "underlying" | "CE" | "PE"
 
 
 class TopPatternsPayload(BaseModel):
