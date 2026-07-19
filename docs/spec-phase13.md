@@ -188,7 +188,8 @@ email in the header display for all user types.
 | Google Sign-In + Account Name | direct commit | ✅ Merged to dev |
 | RingQueue maxsize increase (3000→12000) | direct commit | ✅ Merged to dev |
 | GuardRails-MaxSize | PR #303, #306 | ✅ Merged to dev |
-| Top Pattern | pending | ✅ Complete |
+| Top Pattern | PR #309, #311 | ✅ Merged to dev |
+| Pattern Filter Fix | PR #313 | ✅ Merged to dev |
 
 ## PR Log — Phase 13
 
@@ -206,7 +207,9 @@ email in the header display for all user types.
 | Google Sign-In + Account Name | dev (direct commit) | Merged to dev |
 | RingQueue maxsize increase (3000→12000) | dev (direct commit) | Merged to dev |
 | GuardRails-MaxSize — limit total capital in use | feature/guardrail-maxsize | PR #303, #306 merged to dev |
-| Top Pattern — rank patterns per chart | feature/top-pattern | pending |
+| Top Pattern — rank patterns per chart | feature/top-pattern | PR #309 merged to dev |
+| Top Pattern — remove instrument from identity for options | fix/top-pattern-remove-instrument | PR #311 merged to dev |
+| Pattern filter fix — gallery respects category, preserve filter on load, fix card width | fix/pattern-gallery-filter-and-width | PR #313 merged to dev |
 
 
 
