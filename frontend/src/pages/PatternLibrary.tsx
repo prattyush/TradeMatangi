@@ -76,14 +76,14 @@ const MARKER_COLORS: Record<string, { color: string; shape: 'arrowUp' | 'arrowDo
 function markerKey(type: string, instrument: string) { return `${type}-${instrument}` }
 
 function patternIdentity(ann: PatternAnnotation): string {
-  return `${ann.strategy_name}::${ann.category || ''}::${ann.instrument}`
+  return `${ann.strategy_name}::${ann.category || ''}`
 }
 
 function rankingForIdentity(topPatterns: TopPatterns | undefined, identity: string): 'top_1' | 'top_2' | 'bottom_1' | null {
   if (!topPatterns) return null
   for (const rank of ['top_1', 'top_2', 'bottom_1'] as const) {
     const tp = topPatterns[rank]
-    if (tp && `${tp.strategy_name}::${tp.category}::${tp.instrument}` === identity) return rank
+    if (tp && `${tp.strategy_name}::${tp.category}` === identity) return rank
   }
   return null
 }
@@ -131,14 +131,23 @@ function buildMarkers(
     })
 }
 
-function getUniquePatterns(annotations: PatternAnnotation[]): { identity: string; strategy_name: string; category: string; instrument: string }[] {
+function cleanTopPatterns(tp: TopPatterns): TopPatterns {
+  const cleaned: TopPatterns = {}
+  for (const rank of ['top_1', 'top_2', 'bottom_1'] as const) {
+    const item = tp[rank]
+    if (item) cleaned[rank] = { strategy_name: item.strategy_name, category: item.category }
+  }
+  return cleaned
+}
+
+function getUniquePatterns(annotations: PatternAnnotation[]): { identity: string; strategy_name: string; category: string }[] {
   const seen = new Set<string>()
-  const result: { identity: string; strategy_name: string; category: string; instrument: string }[] = []
+  const result: { identity: string; strategy_name: string; category: string }[] = []
   for (const ann of annotations) {
     const id = patternIdentity(ann)
     if (seen.has(id)) continue
     seen.add(id)
-    result.push({ identity: id, strategy_name: ann.strategy_name, category: ann.category || '', instrument: ann.instrument })
+    result.push({ identity: id, strategy_name: ann.strategy_name, category: ann.category || '' })
   }
   return result
 }
@@ -787,7 +796,7 @@ export default function PatternLibrary() {
         setAnnotations(existing.annotations)
         setCurrentChartId(existing.chart_id)
         setNotes(existing.notes ?? '')
-        setTopPatterns(existing.top_patterns || {})
+        setTopPatterns(cleanTopPatterns(existing.top_patterns || {}))
         if (existing.annotations.length > 0) {
           const firstAnn = existing.annotations[0]
           setActiveStrategy(firstAnn.strategy_name)
@@ -927,7 +936,7 @@ export default function PatternLibrary() {
       setNotes(chart.notes ?? '')
       setCurrentChartId(chart.chart_id)
       setAnnotations(chart.annotations)
-      setTopPatterns(chart.top_patterns || {})
+      setTopPatterns(cleanTopPatterns(chart.top_patterns || {}))
       setOptionPanes([])
       setResolvedExpiry(null)
       setResolvedAtm(null)
@@ -1284,7 +1293,7 @@ export default function PatternLibrary() {
               <div key={rank} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
                 <span style={{ fontSize: 11, color: '#8b949e' }}>{label}:</span>
                 <select
-                  value={selected ? patternIdentity({ strategy_name: selected.strategy_name, category: selected.category, instrument: selected.instrument } as PatternAnnotation) : ''}
+                  value={selected ? patternIdentity({ strategy_name: selected.strategy_name, category: selected.category } as PatternAnnotation) : ''}
                   onChange={e => {
                     const val = e.target.value
                     setTopPatterns(prev => {
@@ -1293,7 +1302,7 @@ export default function PatternLibrary() {
                         delete next[rank]
                       } else {
                         const parts = val.split('::')
-                        next[rank] = { strategy_name: parts[0], category: parts[1], instrument: parts[2] }
+                        next[rank] = { strategy_name: parts[0], category: parts[1] }
                       }
                       return next
                     })
@@ -1303,7 +1312,7 @@ export default function PatternLibrary() {
                   <option value="">— none —</option>
                   {options.map(opt => (
                     <option key={opt.identity} value={opt.identity}>
-                      {opt.category}/{opt.strategy_name} ({opt.instrument})
+                      {opt.category}/{opt.strategy_name}
                     </option>
                   ))}
                 </select>

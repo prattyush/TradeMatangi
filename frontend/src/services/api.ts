@@ -176,7 +176,6 @@ export interface PatternAnnotation {
 export interface TopPatternItem {
   strategy_name: string
   category: string
-  instrument: string
 }
 
 export interface TopPatterns {
