@@ -958,7 +958,7 @@ export default function PatternLibrary() {
       const eqRes = await api.patternOhlcEquity(chart.symbol, chart.date, intervalMinutes, DAYS_BACK)
       setEquityCandles(eqRes.candles)
 
-      if (chart.instrument_type === 'options' && chart.strike) {
+      if (chart.instrument_type === 'options' && chart.strike && !galleryUnderlyingOnly) {
         try {
           const expiryRes = await api.getExpiry(chart.symbol, chart.date)
           const expiry = expiryRes.expiry
@@ -980,7 +980,7 @@ export default function PatternLibrary() {
     } catch (err) {
       setLoadError(err instanceof Error ? err.message : 'Failed to load chart')
     }
-  }, [intervalMinutes, mode, galleryStrategy, galleryCategory])
+  }, [intervalMinutes, mode, galleryStrategy, galleryCategory, galleryUnderlyingOnly])
 
   // ── Gallery delete ────────────────────────────────────────────────────────
 
@@ -1156,30 +1156,24 @@ export default function PatternLibrary() {
         </label>
         <span style={{ fontSize: 11, color: '#484f58' }}>{galleryCharts.length} chart{galleryCharts.length !== 1 ? 's' : ''}</span>
       </div>
-      {(() => {
-        const visibleCharts = galleryUnderlyingOnly ? galleryCharts.filter(c => c.instrument_type === 'equity') : galleryCharts
-        if (visibleCharts.length === 0) {
-          return (
-            <div style={{ fontSize: 12, color: '#484f58' }}>
-              {galleryStrategy ? `No charts for "${galleryStrategy}".` : 'No saved charts yet.'}
-            </div>
-          )
-        }
-        return (
-          <div style={galleryGridStyle(galleryColumns)}>
-            {visibleCharts.map(chart => (
-              <GalleryCard
-                key={chart.chart_id}
-                chart={chart}
-                activeStrategy={galleryStrategy || null}
-                onLoad={handleGalleryLoad}
-                onDelete={handleGalleryDelete}
-                viewMode={mode === 'view'}
-              />
-            ))}
-          </div>
-        )
-      })()}
+      {galleryCharts.length === 0 ? (
+        <div style={{ fontSize: 12, color: '#484f58' }}>
+          {galleryStrategy ? `No charts for "${galleryStrategy}".` : 'No saved charts yet.'}
+        </div>
+      ) : (
+        <div style={galleryGridStyle(galleryColumns)}>
+          {galleryCharts.map(chart => (
+            <GalleryCard
+              key={chart.chart_id}
+              chart={chart}
+              activeStrategy={galleryStrategy || null}
+              onLoad={handleGalleryLoad}
+              onDelete={handleGalleryDelete}
+              viewMode={mode === 'view'}
+            />
+          ))}
+        </div>
+      )}
     </div>
   )
 
@@ -1401,26 +1395,22 @@ export default function PatternLibrary() {
                 </label>
                 <span style={{ fontSize: 11, color: '#484f58' }}>{galleryCharts.length} chart{galleryCharts.length !== 1 ? 's' : ''}</span>
               </div>
-              {(() => {
-                const visibleCharts = galleryUnderlyingOnly ? galleryCharts.filter(c => c.instrument_type === 'equity') : galleryCharts
-                if (visibleCharts.length === 0) {
-                  return <div style={{ fontSize: 12, color: '#484f58' }}>No saved charts yet. Switch to Create mode to add charts.</div>
-                }
-                return (
-                  <div style={galleryGridStyle(galleryColumns)}>
-                    {visibleCharts.map(chart => (
-                      <GalleryCard
-                        key={chart.chart_id}
-                        chart={chart}
-                        activeStrategy={galleryStrategy || null}
-                        onLoad={handleGalleryLoad}
-                        onDelete={handleGalleryDelete}
-                        viewMode={true}
-                      />
-                    ))}
-                  </div>
-                )
-              })()}
+              {galleryCharts.length === 0 ? (
+                <div style={{ fontSize: 12, color: '#484f58' }}>No saved charts yet. Switch to Create mode to add charts.</div>
+              ) : (
+                <div style={galleryGridStyle(galleryColumns)}>
+                  {galleryCharts.map(chart => (
+                    <GalleryCard
+                      key={chart.chart_id}
+                      chart={chart}
+                      activeStrategy={galleryStrategy || null}
+                      onLoad={handleGalleryLoad}
+                      onDelete={handleGalleryDelete}
+                      viewMode={true}
+                    />
+                  ))}
+                </div>
+              )}
             </div>
           )}
         </div>
