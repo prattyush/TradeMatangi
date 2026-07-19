@@ -693,6 +693,7 @@ export default function PatternLibrary() {
   const [galleryStrategy, setGalleryStrategy] = useState<string>('')
   const [galleryCategory, setGalleryCategory] = useState<string>('')
   const [galleryTopOnly, setGalleryTopOnly] = useState(false)
+  const [galleryUnderlyingOnly, setGalleryUnderlyingOnly] = useState(false)
   const [viewExpandedId, setViewExpandedId] = useState<string | null>(null)
   const [galleryColumns, setGalleryColumns] = useState(1)
   const galleryResizeObserverRef = useRef<ResizeObserver | null>(null)
@@ -1148,16 +1149,25 @@ export default function PatternLibrary() {
             style={{ accentColor: '#f0883e' }} />
           Top Patterns Only
         </label>
+        <label style={{ fontSize: 11, color: '#8b949e', display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer' }}>
+          <input type="checkbox" checked={galleryUnderlyingOnly} onChange={e => setGalleryUnderlyingOnly(e.target.checked)}
+            style={{ accentColor: '#3b82f6' }} />
+          Underlying Only
+        </label>
         <span style={{ fontSize: 11, color: '#484f58' }}>{galleryCharts.length} chart{galleryCharts.length !== 1 ? 's' : ''}</span>
       </div>
-      {galleryCharts.length === 0 ? (
-        <div style={{ fontSize: 12, color: '#484f58' }}>
-          {galleryStrategy ? `No charts for "${galleryStrategy}".` : 'No saved charts yet.'}
-        </div>
-      ) : (
-        <>
+      {(() => {
+        const visibleCharts = galleryUnderlyingOnly ? galleryCharts.filter(c => c.instrument_type === 'equity') : galleryCharts
+        if (visibleCharts.length === 0) {
+          return (
+            <div style={{ fontSize: 12, color: '#484f58' }}>
+              {galleryStrategy ? `No charts for "${galleryStrategy}".` : 'No saved charts yet.'}
+            </div>
+          )
+        }
+        return (
           <div style={galleryGridStyle(galleryColumns)}>
-            {galleryCharts.map(chart => (
+            {visibleCharts.map(chart => (
               <GalleryCard
                 key={chart.chart_id}
                 chart={chart}
@@ -1168,8 +1178,8 @@ export default function PatternLibrary() {
               />
             ))}
           </div>
-        </>
-      )}
+        )
+      })()}
     </div>
   )
 
@@ -1384,14 +1394,21 @@ export default function PatternLibrary() {
                     style={{ accentColor: '#f0883e' }} />
                   Top Patterns Only
                 </label>
+                <label style={{ fontSize: 11, color: '#8b949e', display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer' }}>
+                  <input type="checkbox" checked={galleryUnderlyingOnly} onChange={e => setGalleryUnderlyingOnly(e.target.checked)}
+                    style={{ accentColor: '#3b82f6' }} />
+                  Underlying Only
+                </label>
                 <span style={{ fontSize: 11, color: '#484f58' }}>{galleryCharts.length} chart{galleryCharts.length !== 1 ? 's' : ''}</span>
               </div>
-              {galleryCharts.length === 0 ? (
-                <div style={{ fontSize: 12, color: '#484f58' }}>No saved charts yet. Switch to Create mode to add charts.</div>
-              ) : (
-                <>
+              {(() => {
+                const visibleCharts = galleryUnderlyingOnly ? galleryCharts.filter(c => c.instrument_type === 'equity') : galleryCharts
+                if (visibleCharts.length === 0) {
+                  return <div style={{ fontSize: 12, color: '#484f58' }}>No saved charts yet. Switch to Create mode to add charts.</div>
+                }
+                return (
                   <div style={galleryGridStyle(galleryColumns)}>
-                    {galleryCharts.map(chart => (
+                    {visibleCharts.map(chart => (
                       <GalleryCard
                         key={chart.chart_id}
                         chart={chart}
@@ -1402,8 +1419,8 @@ export default function PatternLibrary() {
                       />
                     ))}
                   </div>
-                </>
-              )}
+                )
+              })()}
             </div>
           )}
         </div>

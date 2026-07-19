@@ -168,9 +168,9 @@ function Sparkline({ candles }: { candles: OHLCCandle[] }) {
 // ── Full Chart Modal ──────────────────────────────────────────────────────────
 
 function ChartModal({
-  item, onClose,
+  item, structures, onClose, onNavigate,
 }: {
-  item: ChartStructureItem; onClose: () => void
+  item: ChartStructureItem; structures: ChartStructureItem[]; onClose: () => void; onNavigate: (item: ChartStructureItem) => void
 }) {
   const chartRef = useRef<HTMLDivElement>(null)
   const chartApi = useRef<IChartApi | null>(null)
@@ -212,7 +212,7 @@ function ChartModal({
 
     const chart = createChart(chartRef.current, {
       width: chartRef.current.clientWidth,
-      height: Math.max(300, window.innerHeight * 0.5),
+      height: Math.max(380, window.innerHeight * 0.62),
       layout: { background: { color: '#0d1117' }, textColor: '#8b949e' },
       grid: { vertLines: { color: '#21262d' }, horzLines: { color: '#21262d' } },
       timeScale: { timeVisible: true, secondsVisible: false },
@@ -282,21 +282,38 @@ function ChartModal({
     } catch { /* ignore */ }
   }
 
+  const curIdx = structures.indexOf(item)
+
   return (
     <div style={{
       position: 'fixed', inset: 0, zIndex: 100, background: 'rgba(0,0,0,0.85)',
       display: 'flex', flexDirection: 'column', alignItems: 'center', padding: 20,
       overflowY: 'auto',
     }}>
-      <div style={{ width: '100%', maxWidth: 1000 }}>
+      <div style={{ width: '100%', maxWidth: 1250 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 12 }}>
-          <div style={{ color: '#e6edf3', fontSize: 16, fontWeight: 600 }}>
-            {item.symbol} — {item.date}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <div style={{ color: '#e6edf3', fontSize: 16, fontWeight: 600 }}>
+              {item.symbol} — {item.date}
+            </div>
+            <span style={{ fontSize: 11, color: '#484f58' }}>{curIdx + 1} of {structures.length}</span>
           </div>
-          <button onClick={onClose} style={{
-            background: 'none', border: '1px solid #30363d', borderRadius: 6,
-            color: '#8b949e', fontSize: 14, cursor: 'pointer', padding: '4px 12px',
-          }}>✕ Close</button>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button onClick={() => onNavigate(structures[curIdx - 1])} disabled={curIdx <= 0} style={{
+              background: 'none', border: '1px solid #30363d', borderRadius: 6,
+              color: curIdx <= 0 ? '#21262d' : '#8b949e', fontSize: 14, cursor: curIdx <= 0 ? 'default' : 'pointer',
+              padding: '4px 12px',
+            }}>◀ Prev</button>
+            <button onClick={() => onNavigate(structures[curIdx + 1])} disabled={curIdx >= structures.length - 1} style={{
+              background: 'none', border: '1px solid #30363d', borderRadius: 6,
+              color: curIdx >= structures.length - 1 ? '#21262d' : '#8b949e', fontSize: 14, cursor: curIdx >= structures.length - 1 ? 'default' : 'pointer',
+              padding: '4px 12px',
+            }}>Next ▶</button>
+            <button onClick={onClose} style={{
+              background: 'none', border: '1px solid #30363d', borderRadius: 6,
+              color: '#8b949e', fontSize: 14, cursor: 'pointer', padding: '4px 12px',
+            }}>✕ Close</button>
+          </div>
         </div>
 
         <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap', alignItems: 'center' }}>
@@ -323,7 +340,7 @@ function ChartModal({
         {loading ? (
           <div style={{ color: '#484f58', textAlign: 'center', padding: 60 }}>Loading chart…</div>
         ) : (
-          <div ref={chartRef} style={{ width: '100%', height: Math.max(300, window.innerHeight * 0.5) }} />
+          <div ref={chartRef} style={{ width: '100%', height: Math.max(380, window.innerHeight * 0.62) }} />
         )}
 
         {/* Edit section */}
@@ -472,7 +489,7 @@ export default function ChartStructures({ onClose }: { onClose: () => void }) {
         {structures.length} chart{structures.length !== 1 ? 's' : ''} • Run <code>scripts/classify_chart_structures.py</code> to classify more dates
       </div>
 
-      {modal && <ChartModal item={modal} onClose={() => setModal(null)} />}
+      {modal && <ChartModal item={modal} structures={structures} onClose={() => setModal(null)} onNavigate={setModal} />}
     </div>
   )
 }
