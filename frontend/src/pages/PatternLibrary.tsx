@@ -945,8 +945,8 @@ export default function PatternLibrary() {
 
       if (chart.annotations.length > 0) {
         if (mode === 'view') {
-          setActiveStrategy('')
-          setActiveCategory('')
+          setActiveStrategy(galleryStrategy)
+          setActiveCategory(galleryCategory)
         } else {
           const firstAnn = chart.annotations[0]
           setActiveStrategy(firstAnn.strategy_name)
@@ -979,7 +979,7 @@ export default function PatternLibrary() {
     } catch (err) {
       setLoadError(err instanceof Error ? err.message : 'Failed to load chart')
     }
-  }, [intervalMinutes, mode])
+  }, [intervalMinutes, mode, galleryStrategy, galleryCategory])
 
   // ── Gallery delete ────────────────────────────────────────────────────────
 
@@ -1368,7 +1368,7 @@ export default function PatternLibrary() {
               </div>
             </>
           ) : (
-            <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: '12px 16px' }}>
+            <div ref={attachGalleryRef} style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: '12px 16px' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
                 <span style={{ fontSize: 12, fontWeight: 700 }}>Gallery</span>
                 <select value={galleryCategory} onChange={e => setGalleryCategory(e.target.value)} style={{ ...selectStyle, minWidth: 160 }}>
