@@ -168,6 +168,7 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
   // ── Pattern Library page ─────────────────────────────────────────────────────
   const [showPatternLibrary, setShowPatternLibrary] = useState(false)
   const [showChartStructures, setShowChartStructures] = useState(false)
+  const [sessionControlsVisible, setSessionControlsVisible] = useState(true)
 
   // ── Price-pick state ────────────────────────────────────────────────────────
   const [pricePickOrderId, setPricePickOrderId] = useState<string | null>(null)
@@ -186,6 +187,13 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
     // Check real trading access on mount
     api.checkRealTradingAccess().then(r => setIsRealTradingUser(r.has_access)).catch(() => {})
   }, [])
+
+  // Auto-show session controls when session ends/stops
+  useEffect(() => {
+    if (sim.sessionState === 'idle' || sim.sessionState === 'ended') {
+      setSessionControlsVisible(true)
+    }
+  }, [sim.sessionState])
 
   // ── Pane state ──────────────────────────────────────────────────────────────
   const [panes, setPanes] = useState<PaneConfig[]>(DEFAULT_EQUITY_PANES)
@@ -1014,6 +1022,7 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
       )}
 
       {/* Session Controls — layout/pane controls injected inline via extraControls */}
+      {sessionControlsVisible && (
       <SessionControls
         sessionState={sim.sessionState}
         currentSymbol={sim.symbol}
@@ -1108,6 +1117,60 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
           )}
         </>}
       />
+      )}
+
+      {/* Toggle button — show/hide session controls while session is active */}
+      {(sim.sessionState === 'running' || sim.sessionState === 'paused') && (
+        <div style={{
+          display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 8,
+          padding: '2px 16px', background: '#0d1117',
+        }}>
+          {!sessionControlsVisible && (
+            <>
+              {sim.sessionState === 'running' && !sim.stepwise && (
+                <button
+                  onClick={sim.pauseSession}
+                  style={{
+                    background: '#21262d', border: '1px solid #30363d',
+                    color: '#8b949e', borderRadius: 4,
+                    padding: '2px 10px', fontSize: 11, cursor: 'pointer',
+                  }}
+                >⏸ Pause</button>
+              )}
+              {sim.sessionState === 'paused' && (
+                <button
+                  onClick={sim.resumeSession}
+                  style={{
+                    background: '#21262d', border: '1px solid #30363d',
+                    color: '#8b949e', borderRadius: 4,
+                    padding: '2px 10px', fontSize: 11, cursor: 'pointer',
+                  }}
+                >▶ Resume</button>
+              )}
+              <button
+                onClick={sim.stopSession}
+                style={{
+                  background: '#3d1010', border: '1px solid #8b1a1a',
+                  color: '#f85149', borderRadius: 4,
+                  padding: '2px 10px', fontSize: 11, cursor: 'pointer',
+                }}
+              >■ Stop</button>
+            </>
+          )}
+          <button
+            onClick={() => setSessionControlsVisible(v => !v)}
+            title={sessionControlsVisible ? 'Hide session controls for more chart space' : 'Show session controls'}
+            style={{
+              background: 'none', border: '1px solid #30363d',
+              color: '#484f58', borderRadius: '0 0 6px 6px',
+              padding: '2px 16px', fontSize: 11, cursor: 'pointer',
+              lineHeight: '16px',
+            }}
+          >
+            {sessionControlsVisible ? '▲ Hide Controls' : '▼ Show Controls'}
+          </button>
+        </div>
+      )}
 
       {/* GuardRail popup */}
       {guardrailPopup && (
