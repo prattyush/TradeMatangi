@@ -57,11 +57,12 @@ interface Props {
   pnl?: number
 }
 
-type DrawMode = 'none' | 'hline' | 'trendline' | 'fibretracement' | 'channel'
+type DrawMode = 'none' | 'hline' | 'trendline' | 'fibretracement' | 'channel' | 'buymarker' | 'sellmarker'
 
 type Drawing =
   | { type: 'hline'; ref: IPriceLine }
   | { type: 'trendline' | 'fibretracement' | 'channel'; refs: ISeriesApi<'Line'>[] }
+  | { type: 'buymarker' | 'sellmarker'; ref: ISeriesApi<'Line'> }
 
 const FIB_LEVELS = [
   { ratio: 0,    color: '#e6edf3', label: '0' },
@@ -72,10 +73,9 @@ const FIB_LEVELS = [
 ]
 
 const DRAW_LABEL: Partial<Record<DrawMode, string>> = {
-  hline: 'H-Line',
-  trendline: 'Trend',
-  fibretracement: 'Fib',
-  channel: 'Channel',
+  hline: 'H-Line', trendline: 'Trend',
+  fibretracement: 'Fib', channel: 'Channel',
+  buymarker: 'Buy Mark', sellmarker: 'Sell Mark',
 }
 
 const CANDLE_INTERVAL_SECS = (m: number) => m * 60
@@ -318,6 +318,23 @@ export default function Chart({
           setDrawStep(0)
           setDrawMode('none')
         }
+      } else if (mode === 'buymarker' || mode === 'sellmarker') {
+        const isBuy = mode === 'buymarker'
+        const color = isBuy ? '#3b82f6' : '#f97316'
+        const text = isBuy ? 'Buy UL' : 'Sell UL'
+        const shape = isBuy ? ('arrowUp' as const) : ('arrowDown' as const)
+        const position = isBuy ? ('belowBar' as const) : ('aboveBar' as const)
+        try {
+          const s = chartRef.current!.addLineSeries({
+            lineVisible: false, crosshairMarkerVisible: false,
+            lastValueVisible: false, priceLineVisible: false,
+          })
+          s.setData([{ time: time as Time, value: price }])
+          s.setMarkers([{ time: time as Time, position, color, shape, text, size: 2 }])
+          drawingsRef.current.push({ type: mode, ref: s })
+          setDrawingCount(c => c + 1)
+        } catch { /* chart disposed */ }
+        setDrawMode('none')
       }
     })
 
@@ -731,12 +748,18 @@ export default function Chart({
   const clearLastDrawing = useCallback(() => {
     const drawing = drawingsRef.current.pop()
     if (!drawing) return
-    if (drawing.type === 'hline') {
-      try { seriesRef.current?.removePriceLine(drawing.ref) } catch { /* already removed */ }
-    } else {
-      for (const s of drawing.refs) {
-        try { chartRef.current?.removeSeries(s) } catch { /* already removed */ }
-      }
+    switch (drawing.type) {
+      case 'hline':
+        try { seriesRef.current?.removePriceLine(drawing.ref) } catch { /* already removed */ }
+        break
+      case 'buymarker':
+      case 'sellmarker':
+        try { chartRef.current?.removeSeries(drawing.ref) } catch { /* already removed */ }
+        break
+      default:
+        for (const s of drawing.refs) {
+          try { chartRef.current?.removeSeries(s) } catch { /* already removed */ }
+        }
     }
     setDrawingCount(c => c - 1)
     setDrawMode('none')
@@ -861,6 +884,8 @@ export default function Chart({
                 { mode: 'trendline',      label: '↗ Trend Line' },
                 { mode: 'fibretracement', label: '◫ Fib Retracement' },
                 { mode: 'channel',        label: '⊟ Parallel Channel' },
+                { mode: 'buymarker',      label: '▲ Buy Marker' },
+                { mode: 'sellmarker',     label: '▼ Sell Marker' },
               ] as { mode: DrawMode; label: string }[]).map(({ mode: m, label }) => (
                 <div
                   key={m}
@@ -918,6 +943,7 @@ export default function Chart({
             {drawMode === 'trendline' && (drawStep === 0 ? 'Click first point' : 'Click second point')}
             {drawMode === 'fibretracement' && (drawStep === 0 ? 'Click start point' : 'Click end point')}
             {drawMode === 'channel' && (drawStep === 0 ? 'Click baseline start' : drawStep === 1 ? 'Click baseline end' : 'Click channel offset point')}
+            {(drawMode === 'buymarker' || drawMode === 'sellmarker') && 'Click chart to place'}
           </span>
         )}
         {onPriceSelect && (
