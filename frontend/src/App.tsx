@@ -853,6 +853,42 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
         >
           📊 Structures
         </button>
+        {/* Show/hide session controls — only when session is active */}
+        {(sim.sessionState === 'running' || sim.sessionState === 'paused') && (
+          <>
+            {!sessionControlsVisible && (
+              <>
+                {sim.sessionState === 'running' && !sim.stepwise && (
+                  <button onClick={sim.pauseSession} style={{
+                    background: '#161b22', border: '1px solid #30363d', color: '#8b949e',
+                    borderRadius: 6, padding: '4px 10px', fontSize: 12, cursor: 'pointer',
+                  }}>⏸ Pause</button>
+                )}
+                {sim.sessionState === 'paused' && (
+                  <button onClick={sim.resumeSession} style={{
+                    background: '#161b22', border: '1px solid #30363d', color: '#8b949e',
+                    borderRadius: 6, padding: '4px 10px', fontSize: 12, cursor: 'pointer',
+                  }}>▶ Resume</button>
+                )}
+                <button onClick={sim.stopSession} style={{
+                  background: '#3d1010', border: '1px solid #8b1a1a', color: '#f85149',
+                  borderRadius: 6, padding: '4px 10px', fontSize: 12, cursor: 'pointer',
+                }}>■ Stop</button>
+              </>
+            )}
+            <button
+              onClick={() => setSessionControlsVisible(v => !v)}
+              title={sessionControlsVisible ? 'Hide session controls for more chart space' : 'Show session controls'}
+              style={{
+                background: '#161b22', border: '1px solid #30363d',
+                color: '#8b949e', borderRadius: 6, padding: '4px 10px',
+                fontSize: 12, cursor: 'pointer',
+              }}
+            >
+              {sessionControlsVisible ? '▲ Controls' : '▼ Controls'}
+            </button>
+          </>
+        )}
         {/* Recording + Snapshot controls — only shown when a session is active */}
         {(sim.sessionState === 'running' || sim.sessionState === 'paused') && sim.sessionId && (
           <div style={{ display: 'flex', alignItems: 'center', gap: 4, position: 'relative' }}>
@@ -1022,7 +1058,7 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
       )}
 
       {/* Session Controls — layout/pane controls injected inline via extraControls */}
-      {sessionControlsVisible && (
+      <div style={{ display: sessionControlsVisible ? 'block' : 'none' }}>
       <SessionControls
         sessionState={sim.sessionState}
         currentSymbol={sim.symbol}
@@ -1117,60 +1153,7 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
           )}
         </>}
       />
-      )}
-
-      {/* Toggle button — show/hide session controls while session is active */}
-      {(sim.sessionState === 'running' || sim.sessionState === 'paused') && (
-        <div style={{
-          display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 8,
-          padding: '2px 16px', background: '#0d1117',
-        }}>
-          {!sessionControlsVisible && (
-            <>
-              {sim.sessionState === 'running' && !sim.stepwise && (
-                <button
-                  onClick={sim.pauseSession}
-                  style={{
-                    background: '#21262d', border: '1px solid #30363d',
-                    color: '#8b949e', borderRadius: 4,
-                    padding: '2px 10px', fontSize: 11, cursor: 'pointer',
-                  }}
-                >⏸ Pause</button>
-              )}
-              {sim.sessionState === 'paused' && (
-                <button
-                  onClick={sim.resumeSession}
-                  style={{
-                    background: '#21262d', border: '1px solid #30363d',
-                    color: '#8b949e', borderRadius: 4,
-                    padding: '2px 10px', fontSize: 11, cursor: 'pointer',
-                  }}
-                >▶ Resume</button>
-              )}
-              <button
-                onClick={sim.stopSession}
-                style={{
-                  background: '#3d1010', border: '1px solid #8b1a1a',
-                  color: '#f85149', borderRadius: 4,
-                  padding: '2px 10px', fontSize: 11, cursor: 'pointer',
-                }}
-              >■ Stop</button>
-            </>
-          )}
-          <button
-            onClick={() => setSessionControlsVisible(v => !v)}
-            title={sessionControlsVisible ? 'Hide session controls for more chart space' : 'Show session controls'}
-            style={{
-              background: 'none', border: '1px solid #30363d',
-              color: '#484f58', borderRadius: '0 0 6px 6px',
-              padding: '2px 16px', fontSize: 11, cursor: 'pointer',
-              lineHeight: '16px',
-            }}
-          >
-            {sessionControlsVisible ? '▲ Hide Controls' : '▼ Show Controls'}
-          </button>
-        </div>
-      )}
+      </div>
 
       {/* GuardRail popup */}
       {guardrailPopup && (
