@@ -563,7 +563,7 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
   }, [sim.pnlEquity, sim.pnlCE, sim.pnlPE, panes])
 
   // ── Layout rendering helpers ──────────────────────────────────────────────────
-  const rowHeight = Math.max(160, Math.floor((columnHeight - 36) / 2 * 0.96))
+  const rowHeight = Math.max(160, Math.floor((columnHeight - 36) / 2 * 0.966))
 
   const renderPane = (pane: PaneConfig, height: number, style?: React.CSSProperties) => {
     const isMaximized = maximizedPaneId === pane.id
