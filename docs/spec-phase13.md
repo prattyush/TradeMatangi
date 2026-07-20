@@ -190,6 +190,8 @@ email in the header display for all user types.
 | GuardRails-MaxSize | PR #303, #306 | ✅ Merged to dev |
 | Top Pattern | PR #309, #311 | ✅ Merged to dev |
 | Pattern Filter Fix | PR #313 | ✅ Merged to dev |
+| Structures Next/Prev + Chart Size + Pattern Underlying Filter | PR #315 | ✅ Merged to dev |
+| Buy/Sell Marker Drawing Tools | WIP | ⏳ Pending |
 
 ## PR Log — Phase 13
 
@@ -210,6 +212,9 @@ email in the header display for all user types.
 | Top Pattern — rank patterns per chart | feature/top-pattern | PR #309 merged to dev |
 | Top Pattern — remove instrument from identity for options | fix/top-pattern-remove-instrument | PR #311 merged to dev |
 | Pattern filter fix — gallery respects category, preserve filter on load, fix card width | fix/pattern-gallery-filter-and-width | PR #313 merged to dev |
+| Structures Next/Prev nav + larger chart + Pattern underlying-only filter | feat/structures-nav-and-pattern-filter | PR #315 merged to dev |
+| Underlying Only checkbox fix — filter load panes, not gallery | feat/underlying-only-fix | PR #317 merged to dev |
+| Buy/Sell Marker Drawing Tools — markers in drawing toolbar | WIP | Pending |
 
 
 
@@ -248,4 +253,28 @@ and displayed as distinct medal-styled markers in charts and gallery cards.
 | `backend/tests/test_pattern_logger.py` | Mock `update_item` handles `:tp` value |
 | `frontend/src/services/api.ts` | `TopPatternItem`, `TopPatterns` types; `top_patterns` in create/update body; `topOnly` param in listCharts |
 | `frontend/src/pages/PatternLibrary.tsx` | Top pattern state, toolbar UI, `buildMarkers` ranking, gallery badges + filter |
+
+
+
+##### Buy/Sell Marker Drawing Tools ⏳ Pending
+
+Two new drawing tools — Buy Marker and Sell Marker — added to the drawing tool dropdown
+alongside existing H-Line, Trend, Fib, and Channel tools. These place single-click marker
+annotations (similar to Pattern Library's entry/exit markers) on any chart pane.
+
+**Marker style (matching Pattern Library entry/exit-underlying):**
+- **Buy Marker**: arrowUp shape, belowBar position, color `#3b82f6` (blue), text "Buy UL", size 2
+- **Sell Marker**: arrowDown shape, aboveBar position, color `#f97316` (orange), text "Sell UL", size 2
+
+**Behavior:**
+- Select Buy Marker or Sell Marker from the Draw ▾ dropdown
+- Click anywhere on the chart to place the marker (1-click operation)
+- Markers are stored in the drawings stack and can be cleared with the Clear button (LIFO)
+
+**Files changed:**
+
+| File | Change |
+|------|--------|
+| `frontend/src/components/Chart.tsx` | `DrawMode` type + `buymarker`/`sellmarker`; marker creation in `subscribeClick`; dropdown items; `clearLastDrawing` switch case; status text |
+| `frontend/src/pages/PatternLibrary.tsx` | Same changes in `ChartPane`: `DrawMode`, `Drawing` types, marker creation, dropdown items, clear logic, status text |
 
