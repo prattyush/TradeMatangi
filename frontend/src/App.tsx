@@ -563,7 +563,7 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
   }, [sim.pnlEquity, sim.pnlCE, sim.pnlPE, panes])
 
   // ── Layout rendering helpers ──────────────────────────────────────────────────
-  const rowHeight = Math.max(160, Math.floor((columnHeight - 36) / 2))
+  const rowHeight = Math.max(160, Math.floor((columnHeight - 36) / 2 * 0.9))
 
   const renderPane = (pane: PaneConfig, height: number, style?: React.CSSProperties) => {
     const isMaximized = maximizedPaneId === pane.id
@@ -665,7 +665,7 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
     }
 
     if (layoutPreset === 2) {
-      const h = Math.max(160, Math.floor((columnHeight - 36 - gap) / 2))
+      const h = Math.max(160, Math.floor((columnHeight - 36 - gap) / 2 * 0.9))
       return (
         <div style={{ display: 'flex', flexDirection: 'column', gap }}>
           {panes.slice(0, 2).map(p => {
