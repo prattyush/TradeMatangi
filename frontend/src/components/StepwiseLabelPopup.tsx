@@ -19,6 +19,18 @@ interface Props {
   onDone: () => void
 }
 
+const selectStyle: React.CSSProperties = {
+  flex: 1, padding: '5px 6px',
+  background: '#161b22', border: '1px solid #30363d',
+  borderRadius: 4, color: '#e6edf3', fontSize: 11,
+}
+const inputStyle: React.CSSProperties = {
+  width: '100%', padding: '5px 8px',
+  background: '#161b22', border: '1px solid #30363d',
+  borderRadius: 4, color: '#e6edf3', fontSize: 12,
+  boxSizing: 'border-box',
+}
+
 export default function StepwiseLabelPopup({ sid, date, symbol, roundTrips, onDone }: Props) {
   const [strategies, setStrategies] = useState<string[]>([])
   const [categories, setCategories] = useState<string[]>([])
@@ -75,7 +87,7 @@ export default function StepwiseLabelPopup({ sid, date, symbol, roundTrips, onDo
       background: 'rgba(0,0,0,0.6)',
     }}>
       <div style={{
-        width: 560, maxHeight: '90vh', overflow: 'auto',
+        width: 520, maxHeight: '90vh', overflow: 'auto',
         padding: 24, background: '#161b22',
         border: '1px solid #30363d', borderRadius: 12,
       }}>
@@ -97,17 +109,43 @@ export default function StepwiseLabelPopup({ sid, date, symbol, roundTrips, onDo
                 {rt.pnl >= 0 ? '+' : ''}{rt.pnl.toFixed(2)}
               </span>
             </div>
-            <div style={{ display: 'flex', gap: 12 }}>
-              <div style={{ flex: 1 }}><Field label="Exp. Category" options={categories} value={fields[i].expCat} onChange={v => updateField(i, 'expCat', v)} /></div>
-              <div style={{ flex: 1 }}><Field label="Exp. Strategy" options={strategies} value={fields[i].expStrat} onChange={v => updateField(i, 'expStrat', v)} /></div>
-            </div>
-            <div style={{ display: 'flex', gap: 12 }}>
-              <div style={{ flex: 1 }}><Field label="Actual Category" options={categories} value={fields[i].actCat} onChange={v => updateField(i, 'actCat', v)} /></div>
-              <div style={{ flex: 1 }}><Field label="Actual Strategy" options={strategies} value={fields[i].actStrat} onChange={v => updateField(i, 'actStrat', v)} /></div>
-            </div>
-            <div style={{ display: 'flex', gap: 12 }}>
-              <div style={{ flex: 1 }}><Field label="Entry Tag" options={entryTags} value={fields[i].entryTag} onChange={v => updateField(i, 'entryTag', v)} allowCreate /></div>
-              <div style={{ flex: 1 }}><Field label="Exit Tag" options={exitTags} value={fields[i].exitTag} onChange={v => updateField(i, 'exitTag', v)} allowCreate /></div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
+              <div>
+                <div style={{ fontSize: 10, color: '#484f58', marginBottom: 2 }}>Expected Pattern</div>
+                <div style={{ display: 'flex', gap: 4 }}>
+                  <select value={fields[i].expCat} onChange={e => updateField(i, 'expCat', e.target.value)} style={selectStyle}>
+                    <option value="">— Category —</option>
+                    {categories.map(c => <option key={c} value={c}>{c}</option>)}
+                  </select>
+                  <select value={fields[i].expStrat} onChange={e => updateField(i, 'expStrat', e.target.value)} style={selectStyle}>
+                    <option value="">— Strategy —</option>
+                    {strategies.map(s => <option key={s} value={s}>{s}</option>)}
+                  </select>
+                </div>
+              </div>
+              <div>
+                <div style={{ fontSize: 10, color: '#484f58', marginBottom: 2 }}>Actual Pattern</div>
+                <div style={{ display: 'flex', gap: 4 }}>
+                  <select value={fields[i].actCat} onChange={e => updateField(i, 'actCat', e.target.value)} style={selectStyle}>
+                    <option value="">— Category —</option>
+                    {categories.map(c => <option key={c} value={c}>{c}</option>)}
+                  </select>
+                  <select value={fields[i].actStrat} onChange={e => updateField(i, 'actStrat', e.target.value)} style={selectStyle}>
+                    <option value="">— Strategy —</option>
+                    {strategies.map(s => <option key={s} value={s}>{s}</option>)}
+                  </select>
+                </div>
+              </div>
+              <div>
+                <div style={{ fontSize: 10, color: '#484f58', marginBottom: 2 }}>Entry Tag</div>
+                <input list={`et-step-${i}`} value={fields[i].entryTag} onChange={e => updateField(i, 'entryTag', e.target.value)} placeholder="AS_PER_PATTERN" style={inputStyle} />
+                <datalist id={`et-step-${i}`}>{entryTags.map(t => <option key={t} value={t} />)}</datalist>
+              </div>
+              <div>
+                <div style={{ fontSize: 10, color: '#484f58', marginBottom: 2 }}>Exit Tag</div>
+                <input list={`xt-step-${i}`} value={fields[i].exitTag} onChange={e => updateField(i, 'exitTag', e.target.value)} placeholder="AS_PER_PATTERN" style={inputStyle} />
+                <datalist id={`xt-step-${i}`}>{exitTags.map(t => <option key={t} value={t} />)}</datalist>
+              </div>
             </div>
           </div>
         ))}
@@ -137,52 +175,4 @@ export default function StepwiseLabelPopup({ sid, date, symbol, roundTrips, onDo
       return next
     })
   }
-}
-
-function Field({
-  label, options, value, onChange, allowCreate,
-}: {
-  label: string; options: string[]; value: string; onChange: (v: string) => void; allowCreate?: boolean
-}) {
-  const [local, setLocal] = useState(value || '')
-  const existing = [...new Set(options)].sort()
-
-  const optionId = `field-${label.replace(/\s/g, '')}`
-
-  return (
-    <div style={{ marginBottom: 8 }}>
-      <div style={{ fontSize: 11, color: '#8b949e', marginBottom: 3 }}>{label}</div>
-      {allowCreate ? (
-        <div style={{ display: 'flex', gap: 4 }}>
-          <input
-            value={local}
-            onChange={e => { setLocal(e.target.value); onChange(e.target.value) }}
-            list={optionId}
-            placeholder={label}
-            style={{
-              flex: 1, padding: '5px 8px',
-              background: '#161b22', border: '1px solid #30363d',
-              borderRadius: 4, color: '#e6edf3', fontSize: 12,
-            }}
-          />
-          <datalist id={optionId}>
-            {existing.map(o => <option key={o} value={o} />)}
-          </datalist>
-        </div>
-      ) : (
-        <select
-          value={value || ''}
-          onChange={e => onChange(e.target.value)}
-          style={{
-            width: '100%', padding: '5px 8px',
-            background: '#161b22', border: '1px solid #30363d',
-            borderRadius: 4, color: '#e6edf3', fontSize: 12,
-          }}
-        >
-          <option value="">— select —</option>
-          {existing.map(o => <option key={o} value={o}>{o}</option>)}
-        </select>
-      )}
-    </div>
-  )
 }
