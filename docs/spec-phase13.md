@@ -193,7 +193,7 @@ email in the header display for all user types.
 | Structures Next/Prev + Chart Size + Pattern Underlying Filter | PR #315 | ✅ Merged to dev |
 | Underlying Only checkbox fix | PR #317 | ✅ Merged to dev |
 | Buy/Sell Marker Drawing Tools | PR #319 | ✅ Merged to dev |
-| Stepwise Trade Labeling + Snapshot Fix | WIP | ⏳ Pending |
+| Stepwise Trade Labeling + Snapshot OHLC Fix | PR #326 | ✅ Merged to dev |
 
 ## PR Log — Phase 13
 
@@ -217,7 +217,7 @@ email in the header display for all user types.
 | Structures Next/Prev nav + larger chart + Pattern underlying-only filter | feat/structures-nav-and-pattern-filter | PR #315 merged to dev |
 | Underlying Only checkbox fix — filter load panes, not gallery | feat/underlying-only-fix | PR #317 merged to dev |
 | Buy/Sell Marker Drawing Tools — markers in drawing toolbar | feat/buy-sell-marker-drawing-tools | PR #319 merged to dev |
-| Stepwise Trade Labeling + Snapshot OHLC Fix | WIP | Pending |
+| Stepwise Trade Labeling + Snapshot OHLC Fix | feat/stepwise-labeling-and-snapshot-fix | PR #326 merged to dev |
 
 
 
@@ -305,7 +305,7 @@ reveals markers and overlays against the full session chart.
 
 
 
-##### Stepwise Trade Labeling ⏳ Pending
+##### Stepwise Trade Labeling ✅ Complete
 
 When a round-trip completes during stepwise trading (position goes from >0 to zero,
 detected per-right: equity/CE/PE), show a labeling popup at the bar boundary
@@ -329,5 +329,6 @@ detected per-right: equity/CE/PE), show a labeling popup at the bar boundary
 | File | Change |
 |------|--------|
 | `frontend/src/components/StepwiseLabelPopup.tsx` | **New** — popup component with pattern/tag dropdowns, save via existing API |
-| `frontend/src/App.tsx` | Position tracking ref, bar_paused detection, wrapped nextBar, popup rendering |
+| `frontend/src/components/SettingsModal.tsx` | New toggle "Enable trade labeling popup in stepwise mode" in General tab |
+| `frontend/src/App.tsx` | Position tracking ref, bar_paused detection, wrapped nextBar, popup render, settings gate |
 
