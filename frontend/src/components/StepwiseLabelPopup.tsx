@@ -87,7 +87,7 @@ export default function StepwiseLabelPopup({ sid, date, symbol, roundTrips, onDo
       background: 'rgba(0,0,0,0.6)',
     }}>
       <div style={{
-        width: 520, maxHeight: '90vh', overflow: 'auto',
+        width: 560, maxHeight: '90vh', overflow: 'auto',
         padding: 24, background: '#161b22',
         border: '1px solid #30363d', borderRadius: 12,
       }}>
