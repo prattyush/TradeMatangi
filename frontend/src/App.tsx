@@ -171,12 +171,13 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
   const [showPatternLibrary, setShowPatternLibrary] = useState(false)
   const [showChartStructures, setShowChartStructures] = useState(false)
   const [sessionControlsVisible, setSessionControlsVisible] = useState(true)
-  // Stepwise trade labeling — pending round-trips to label before advancing bar
+  // Stepwise trade labeling: compute completed round-trips at bar boundary.
+  // Uses a ref to track net qty at the PREVIOUS bar end, so we detect the
+  // net-qty→zero transition that happened during the just-completed bar.
+  // All computation is in a SINGLE effect (bar_paused) — no timing gap
+  // between trades-update and bar_paused effects across React batches.
   const [stepwiseLabels, setStepwiseLabels] = useState<{ right: string; session_id: string }[] | null>(null)
-  // Track round-trip completion from trade net quantity (synchronous),
-  // not async position state. Prevents race condition where bar_paused
-  // fires before async position fetch from addTradeFromSSE completes.
-  const prevNetQtyRef = useRef({ eq: 0, ce: 0, pe: 0 })
+  const lastNetQtyRef = useRef({ eq: 0, ce: 0, pe: 0 })
 
   // ── Price-pick state ────────────────────────────────────────────────────────
   const [pricePickOrderId, setPricePickOrderId] = useState<string | null>(null)
@@ -204,47 +205,37 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
     }
   }, [sim.sessionState])
 
-  // ── Stepwise trade completion detection ────────────────────────────────────
-  // Track when a position (equity, CE, or PE) goes from >0 to zero during
-  // stepwise mode. Completed round-trips accumulate silently; the popup is
-  // triggered only at the bar boundary (bar_paused) so the user sees the
-  // completed bar before labeling.
-  const pendingStepwiseTradesRef = useRef<{ right: string }[]>([])
-
-  // Detect completed round-trips from trade-side net quantity (sync via trades array)
-  useEffect(() => {
-    if (!sim.stepwise || sim.sessionState !== 'running') return
-    const trades = sim.trades ?? []
-    const eqQty = trades.filter(t => !t.right).reduce((sum, t) => sum + (t.side === 'BUY' ? t.quantity : -t.quantity), 0)
-    const ceQty = trades.filter(t => t.right === 'CE').reduce((sum, t) => sum + (t.side === 'BUY' ? t.quantity : -t.quantity), 0)
-    const peQty = trades.filter(t => t.right === 'PE').reduce((sum, t) => sum + (t.side === 'BUY' ? t.quantity : -t.quantity), 0)
-    const prev = prevNetQtyRef.current
-
-    if (prev.eq > 0 && eqQty === 0) pendingStepwiseTradesRef.current.push({ right: '' })
-    if (prev.ce > 0 && ceQty === 0) pendingStepwiseTradesRef.current.push({ right: 'CE' })
-    if (prev.pe > 0 && peQty === 0) pendingStepwiseTradesRef.current.push({ right: 'PE' })
-
-    prevNetQtyRef.current = { eq: eqQty, ce: ceQty, pe: peQty }
-  }, [sim.trades, sim.stepwise, sim.sessionState])
-
-  // Reset on new session start
+  // Reset net qty tracking on new session start
   useEffect(() => {
     if (sim.sessionState === 'running' && sim.stepwise) {
-      prevNetQtyRef.current = { eq: 0, ce: 0, pe: 0 }
-      pendingStepwiseTradesRef.current = []
+      lastNetQtyRef.current = { eq: 0, ce: 0, pe: 0 }
       setStepwiseLabels(null)
     }
   }, [sim.sessionState, sim.stepwise])
 
-  // When bar_paused fires, surface pending round-trips as popup
+  // At each bar boundary, compute net qty per right from ALL trades and
+  // diff against previous bar end to find completed round-trips.
   useEffect(() => {
     if (!sim.stepwise || !sim.barPaused) return
-    const pending = pendingStepwiseTradesRef.current
-    if (pending.length > 0 && sim.sessionId) {
-      setStepwiseLabels(pending.map(p => ({ ...p, session_id: sim.sessionId! })))
-      pendingStepwiseTradesRef.current = []
+    if (!sim.sessionId) return
+
+    const trades = sim.trades ?? []
+    const eqQty = trades.filter(t => !t.right).reduce((sum, t) => sum + (t.side === 'BUY' ? t.quantity : -t.quantity), 0)
+    const ceQty = trades.filter(t => t.right === 'CE').reduce((sum, t) => sum + (t.side === 'BUY' ? t.quantity : -t.quantity), 0)
+    const peQty = trades.filter(t => t.right === 'PE').reduce((sum, t) => sum + (t.side === 'BUY' ? t.quantity : -t.quantity), 0)
+    const prev = lastNetQtyRef.current
+
+    const completed: { right: string; session_id: string }[] = []
+    if (prev.eq > 0 && eqQty === 0) completed.push({ right: '', session_id: sim.sessionId })
+    if (prev.ce > 0 && ceQty === 0) completed.push({ right: 'CE', session_id: sim.sessionId })
+    if (prev.pe > 0 && peQty === 0) completed.push({ right: 'PE', session_id: sim.sessionId })
+
+    lastNetQtyRef.current = { eq: eqQty, ce: ceQty, pe: peQty }
+
+    if (completed.length > 0) {
+      setStepwiseLabels(completed)
     }
-  }, [sim.barPaused, sim.stepwise, sim.sessionId])
+  }, [sim.barPaused, sim.stepwise, sim.sessionId, sim.trades])
 
   // ── Wrapped nextBar: show popup instead of advancing ───────────────────────
   const wrappedNextBar = useCallback(async () => {
