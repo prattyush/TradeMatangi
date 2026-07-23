@@ -247,7 +247,8 @@ function SnapshotChart({
     return () => { ro.disconnect(); chart.remove(); chartRef.current = null; seriesRef.current = null }
   }, [])
 
-  // Load OHLC data
+  // Load OHLC data — fetched once per symbol+date, not re-fetched on every event
+  const baseDataRef = useRef<CandlestickData[]>([])
   useEffect(() => {
     if (!seriesRef.current || !symbol || !date) return
     let cancelled = false
@@ -264,57 +265,54 @@ function SnapshotChart({
         const all = [...histResp.candles.map(toCandle), ...tradingDayCandles.map(toCandle)]
         const byTime = new Map<number, CandlestickData>()
         all.forEach(c => byTime.set(c.time as number, c))
-        let sorted = Array.from(byTime.values()).sort((a, b) => (a.time as number) - (b.time as number))
+        const sorted = Array.from(byTime.values()).sort((a, b) => (a.time as number) - (b.time as number))
+        baseDataRef.current = sorted
+        seriesRef.current.setData(sorted)
 
-        // Replace the bar at the snapshot moment with the in-progress OHLC
-        // the user actually saw. Keep all other bars (before and after) visible
-        // so navigating through events progressively reveals the full session.
-        if (barTime > 0 && sorted.length > 0 && barOhlc) {
-          const idx = sorted.findIndex(c => (c.time as number) === barTime)
-          if (idx >= 0) {
-            sorted[idx] = {
-              time: barTime as Time,
-              open: barOhlc.open,
-              high: barOhlc.high,
-              low: barOhlc.low,
-              close: barOhlc.close,
-            }
-          }
-        }
+        const closes = sorted.map(c => c.close)
+        const ema9Vals = computeEMA(closes, 9)
+        const ema21Vals = computeEMA(closes, 21)
+        const e9 = chartRef.current?.addLineSeries({
+          color: '#f0883e', lineWidth: 1, lastValueVisible: false, priceLineVisible: false, crosshairMarkerVisible: false,
+        })
+        const e21 = chartRef.current?.addLineSeries({
+          color: '#79c0ff', lineWidth: 1, lastValueVisible: false, priceLineVisible: false, crosshairMarkerVisible: false,
+        })
+        const e9d = sorted.map((c, i) => ({ time: c.time, value: ema9Vals[i] })).filter((d): d is LineData => d.value !== null)
+        const e21d = sorted.map((c, i) => ({ time: c.time, value: ema21Vals[i] })).filter((d): d is LineData => d.value !== null)
+        e9?.setData(e9d)
+        e21?.setData(e21d)
 
-        if (sorted.length > 0) {
-          seriesRef.current.setData(sorted)
-
-          const closes = sorted.map(c => c.close)
-          const ema9Vals = computeEMA(closes, 9)
-          const ema21Vals = computeEMA(closes, 21)
-          const e9 = chartRef.current?.addLineSeries({
-            color: '#f0883e', lineWidth: 1, lastValueVisible: false, priceLineVisible: false, crosshairMarkerVisible: false,
+        const lastTime = sorted[sorted.length - 1].time as number
+        const firstTime = Math.max(sorted[0].time as number, lastTime - 5400)
+        try {
+          chartRef.current?.timeScale().setVisibleRange({
+            from: firstTime as Time,
+            to: lastTime as Time,
           })
-          const e21 = chartRef.current?.addLineSeries({
-            color: '#79c0ff', lineWidth: 1, lastValueVisible: false, priceLineVisible: false, crosshairMarkerVisible: false,
-          })
-          const e9d = sorted.map((c, i) => ({ time: c.time, value: ema9Vals[i] })).filter((d): d is LineData => d.value !== null)
-          const e21d = sorted.map((c, i) => ({ time: c.time, value: ema21Vals[i] })).filter((d): d is LineData => d.value !== null)
-          e9?.setData(e9d)
-          e21?.setData(e21d)
-
-          // Show enough bars for context: last ~90 min (30 bars at 3-min)
-          const lastTime = sorted[sorted.length - 1].time as number
-          const firstTime = Math.max(sorted[0].time as number, lastTime - 5400)
-          try {
-            chartRef.current?.timeScale().setVisibleRange({
-              from: firstTime as Time,
-              to: lastTime as Time,
-            })
-          } catch {
-            chartRef.current?.timeScale().fitContent()
-          }
+        } catch {
+          chartRef.current?.timeScale().fitContent()
         }
       } catch { /* ignore */ }
     })()
     return () => { cancelled = true }
-  }, [symbol, date, barTime, barOhlc])
+  }, [symbol, date])
+
+  // Per-event: replace the bar at the snapshot moment with in-progress OHLC
+  // using series.update() so zoom/scroll is preserved across events
+  useEffect(() => {
+    const series = seriesRef.current
+    if (!series || barTime <= 0 || !barOhlc || baseDataRef.current.length === 0) return
+    try {
+      series.update({
+        time: barTime as Time,
+        open: barOhlc.open,
+        high: barOhlc.high,
+        low: barOhlc.low,
+        close: barOhlc.close,
+      })
+    } catch { /* ignore */ }
+  }, [barTime, barOhlc])
 
   // Draw snapshot overlays — cleaned up when snapshot changes
   useEffect(() => {
