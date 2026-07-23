@@ -173,7 +173,10 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
   const [sessionControlsVisible, setSessionControlsVisible] = useState(true)
   // Stepwise trade labeling — pending round-trips to label before advancing bar
   const [stepwiseLabels, setStepwiseLabels] = useState<{ right: string; session_id: string }[] | null>(null)
-  const prevPositionRef = useRef({ eq: 0, ce: 0, pe: 0 })
+  // Track round-trip completion from trade net quantity (synchronous),
+  // not async position state. Prevents race condition where bar_paused
+  // fires before async position fetch from addTradeFromSSE completes.
+  const prevNetQtyRef = useRef({ eq: 0, ce: 0, pe: 0 })
 
   // ── Price-pick state ────────────────────────────────────────────────────────
   const [pricePickOrderId, setPricePickOrderId] = useState<string | null>(null)
@@ -208,31 +211,32 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
   // completed bar before labeling.
   const pendingStepwiseTradesRef = useRef<{ right: string }[]>([])
 
+  // Detect completed round-trips from trade-side net quantity (sync via trades array)
   useEffect(() => {
     if (!sim.stepwise || sim.sessionState !== 'running') return
-    const eqQty = sim.position?.quantity ?? 0
-    const ceQty = sim.positionCE?.quantity ?? 0
-    const peQty = sim.positionPE?.quantity ?? 0
-    const prev = prevPositionRef.current
+    const trades = sim.trades ?? []
+    const eqQty = trades.filter(t => !t.right).reduce((sum, t) => sum + (t.side === 'BUY' ? t.quantity : -t.quantity), 0)
+    const ceQty = trades.filter(t => t.right === 'CE').reduce((sum, t) => sum + (t.side === 'BUY' ? t.quantity : -t.quantity), 0)
+    const peQty = trades.filter(t => t.right === 'PE').reduce((sum, t) => sum + (t.side === 'BUY' ? t.quantity : -t.quantity), 0)
+    const prev = prevNetQtyRef.current
 
     if (prev.eq > 0 && eqQty === 0) pendingStepwiseTradesRef.current.push({ right: '' })
     if (prev.ce > 0 && ceQty === 0) pendingStepwiseTradesRef.current.push({ right: 'CE' })
     if (prev.pe > 0 && peQty === 0) pendingStepwiseTradesRef.current.push({ right: 'PE' })
 
-    prevPositionRef.current = { eq: eqQty, ce: ceQty, pe: peQty }
-  }, [sim.position?.quantity, sim.positionCE?.quantity, sim.positionPE?.quantity, sim.stepwise, sim.sessionState])
+    prevNetQtyRef.current = { eq: eqQty, ce: ceQty, pe: peQty }
+  }, [sim.trades, sim.stepwise, sim.sessionState])
 
-  // Reset position tracking + pending on new session start
+  // Reset on new session start
   useEffect(() => {
     if (sim.sessionState === 'running' && sim.stepwise) {
-      prevPositionRef.current = { eq: 0, ce: 0, pe: 0 }
+      prevNetQtyRef.current = { eq: 0, ce: 0, pe: 0 }
       pendingStepwiseTradesRef.current = []
       setStepwiseLabels(null)
     }
   }, [sim.sessionState, sim.stepwise])
 
-  // When bar_paused fires in stepwise, check if any round-trips completed.
-  // Show the label popup if there are pending trades to label.
+  // When bar_paused fires, surface pending round-trips as popup
   useEffect(() => {
     if (!sim.stepwise || !sim.barPaused) return
     const pending = pendingStepwiseTradesRef.current
