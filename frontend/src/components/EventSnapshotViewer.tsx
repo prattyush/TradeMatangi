@@ -266,12 +266,13 @@ function SnapshotChart({
         all.forEach(c => byTime.set(c.time as number, c))
         let sorted = Array.from(byTime.values()).sort((a, b) => (a.time as number) - (b.time as number))
 
-        // Truncate at snapshot bar — show bars up to + including the snapshot moment.
-        // Replace the completed bar with the in-progress OHLC the user actually saw.
-        if (barTime > 0 && sorted.length > 0) {
-          sorted = sorted.filter(c => (c.time as number) <= barTime)
-          if (barOhlc) {
-            sorted[sorted.length - 1] = {
+        // Replace the bar at the snapshot moment with the in-progress OHLC
+        // the user actually saw. Keep all other bars (before and after) visible
+        // so navigating through events progressively reveals the full session.
+        if (barTime > 0 && sorted.length > 0 && barOhlc) {
+          const idx = sorted.findIndex(c => (c.time as number) === barTime)
+          if (idx >= 0) {
+            sorted[idx] = {
               time: barTime as Time,
               open: barOhlc.open,
               high: barOhlc.high,
@@ -558,11 +559,12 @@ function SnapshotOptionsChart({
         histResp.candles.map(toCandle).forEach(c => byTime.set(c.time as number, c))
         let sorted = Array.from(byTime.values()).sort((a, b) => (a.time as number) - (b.time as number))
 
-        // Truncate at snapshot bar + replace with in-progress OHLC
-        if (barTime > 0 && sorted.length > 0) {
-          sorted = sorted.filter(c => (c.time as number) <= barTime)
-          if (barOhlc && sorted.length > 0) {
-            sorted[sorted.length - 1] = {
+        // Replace the bar at the snapshot moment with the in-progress OHLC
+        // the user actually saw. Keep all other bars visible.
+        if (barTime > 0 && sorted.length > 0 && barOhlc) {
+          const idx = sorted.findIndex(c => (c.time as number) === barTime)
+          if (idx >= 0) {
+            sorted[idx] = {
               time: barTime as Time,
               open: barOhlc.open,
               high: barOhlc.high,

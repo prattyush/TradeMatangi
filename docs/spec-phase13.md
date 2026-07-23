@@ -191,7 +191,9 @@ email in the header display for all user types.
 | Top Pattern | PR #309, #311 | ✅ Merged to dev |
 | Pattern Filter Fix | PR #313 | ✅ Merged to dev |
 | Structures Next/Prev + Chart Size + Pattern Underlying Filter | PR #315 | ✅ Merged to dev |
-| Buy/Sell Marker Drawing Tools | WIP | ⏳ Pending |
+| Underlying Only checkbox fix | PR #317 | ✅ Merged to dev |
+| Buy/Sell Marker Drawing Tools | PR #319 | ✅ Merged to dev |
+| Stepwise Trade Labeling + Snapshot Fix | WIP | ⏳ Pending |
 
 ## PR Log — Phase 13
 
@@ -214,7 +216,8 @@ email in the header display for all user types.
 | Pattern filter fix — gallery respects category, preserve filter on load, fix card width | fix/pattern-gallery-filter-and-width | PR #313 merged to dev |
 | Structures Next/Prev nav + larger chart + Pattern underlying-only filter | feat/structures-nav-and-pattern-filter | PR #315 merged to dev |
 | Underlying Only checkbox fix — filter load panes, not gallery | feat/underlying-only-fix | PR #317 merged to dev |
-| Buy/Sell Marker Drawing Tools — markers in drawing toolbar | WIP | Pending |
+| Buy/Sell Marker Drawing Tools — markers in drawing toolbar | feat/buy-sell-marker-drawing-tools | PR #319 merged to dev |
+| Stepwise Trade Labeling + Snapshot OHLC Fix | WIP | Pending |
 
 
 
@@ -277,4 +280,54 @@ annotations (similar to Pattern Library's entry/exit markers) on any chart pane.
 |------|--------|
 | `frontend/src/components/Chart.tsx` | `DrawMode` type + `buymarker`/`sellmarker`; marker creation in `subscribeClick`; dropdown items; `clearLastDrawing` switch case; status text |
 | `frontend/src/pages/PatternLibrary.tsx` | Same changes in `ChartPane`: `DrawMode`, `Drawing` types, marker creation, dropdown items, clear logic, status text |
+
+
+
+##### Snapshot OHLC Full-Session Fix ⏳ Pending
+
+Previously, snapshot charts truncated all OHLC bars after the snapshot's timestamp
+when navigating through events. This meant successive events never showed bars beyond
+their own moment in time — you couldn't see the full session's price action.
+
+**Root cause:** Both `SnapshotChart` and `SnapshotOptionsChart` used
+`sorted.filter(c => c.time <= barTime)` to discard bars after each event's time.
+
+**Fix:** Remove the truncation filter entirely. Load all bars for the entire session
+and only replace the bar at the snapshot's exact moment with the in-progress OHLC.
+All bars before and after remain visible, so navigating through events progressively
+reveals markers and overlays against the full session chart.
+
+**Files changed:**
+
+| File | Change |
+|------|--------|
+| `frontend/src/components/EventSnapshotViewer.tsx` | Both chart components: remove `filter(<= barTime)`, replace only matching bar via `findIndex` |
+
+
+
+##### Stepwise Trade Labeling ⏳ Pending
+
+When a round-trip completes during stepwise trading (position goes from >0 to zero,
+detected per-right: equity/CE/PE), show a labeling popup at the bar boundary
+(before the user can advance to the next bar).
+
+**Flow:**
+1. Position-to-zero transitions are tracked in a ref during stepwise mode
+2. When `bar_paused` fires (bar boundary reached), any pending completed trades
+   trigger a popup
+3. The popup collects: Expected Pattern (category + strategy dropdowns),
+   Actual Pattern (category + strategy dropdowns), Entry Tag (datalist with
+   suggestions), Exit Tag (datalist with suggestions)
+4. Labels are persisted to the existing `TradeLabels` DynamoDB table
+   (reuses the `/api/analysis/labels` endpoint)
+5. User can "Skip" to continue without labeling, or "Save & Continue"
+6. The wrapped `nextBar` call blocks while the popup is visible
+7. Clearing/dismissing the popup allows the next bar to advance normally
+
+**Files changed:**
+
+| File | Change |
+|------|--------|
+| `frontend/src/components/StepwiseLabelPopup.tsx` | **New** — popup component with pattern/tag dropdowns, save via existing API |
+| `frontend/src/App.tsx` | Position tracking ref, bar_paused detection, wrapped nextBar, popup rendering |
 

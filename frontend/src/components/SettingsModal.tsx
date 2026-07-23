@@ -22,6 +22,7 @@ const BREAKEVEN_MODE_KEY = 'breakevenMode'
 const TARGET_PROFIT_BUFFER_TICKS_KEY = 'targetProfitBufferTicks'
 const AGGR_SL_ONLY_IN_PROFIT_KEY = 'aggrSlOnlyInProfit'
 const AUTO_START_SNAPSHOTS_KEY = 'autoStartEventSnapshots'
+const STEPWISE_LABELING_POPUP_KEY = 'stepwiseLabelingPopupEnabled'
 
 const GUARDRAIL_BLOCK_BARS_KEY = 'guardrailBlockBars'
 const GUARDRAIL_COOLDOWN_BLOCK_BARS_KEY = 'guardrailCooldownBlockBars'
@@ -154,6 +155,10 @@ export function loadAutoStartEventSnapshots(): boolean {
   return localStorage.getItem(AUTO_START_SNAPSHOTS_KEY) === 'true'
 }
 
+export function loadStepwiseLabelingPopupEnabled(): boolean {
+  return localStorage.getItem(STEPWISE_LABELING_POPUP_KEY) !== 'false'
+}
+
 export interface GuardRailSettingsLocal {
   blockBars: number
   cooldownBlockBars: number
@@ -183,9 +188,10 @@ interface Props {
   onPnlPctModeChange?: (enabled: boolean) => void
   onGuardRailSettingsChange?: (settings: GuardRailSettingsLocal) => void
   onAutoStartSnapshotsChange?: (enabled: boolean) => void
+  onStepwiseLabelingPopupChange?: (enabled: boolean) => void
 }
 
-export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessionActive, onWalletReset, onFundsRatioChange, onTargetDeviationChange, onBrokerageChange, onStrategySettingsChange, onHistoricalDaysChange, onPnlPctModeChange, onGuardRailSettingsChange, onAutoStartSnapshotsChange }: Props) {
+export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessionActive, onWalletReset, onFundsRatioChange, onTargetDeviationChange, onBrokerageChange, onStrategySettingsChange, onHistoricalDaysChange, onPnlPctModeChange, onGuardRailSettingsChange, onAutoStartSnapshotsChange, onStepwiseLabelingPopupChange }: Props) {
   const [open, setOpen] = useState(false)
   const [customAmount, setCustomAmount] = useState('')
   const [status, setStatus] = useState<string | null>(null)
@@ -239,6 +245,7 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
   const [grBanEnabled, setGrBanEnabled] = useState(loadGuardRailBanEnabled)
   const [grCooldownEnabled, setGrCooldownEnabled] = useState(loadGuardRailCooldownEnabled)
   const [autoStartSnapshots, setAutoStartSnapshots] = useState(loadAutoStartEventSnapshots)
+  const [stepwiseLabelingPopup, setStepwiseLabelingPopup] = useState(loadStepwiseLabelingPopupEnabled)
   const [grBlockBarsInput, setGrBlockBarsInput] = useState(() => String(loadGuardRailBlockBars()))
   const [grCooldownBlockBarsInput, setGrCooldownBlockBarsInput] = useState(() => String(loadGuardRailCooldownBlockBars()))
   const [grCooldownLossesInput, setGrCooldownLossesInput] = useState(() => String(loadGuardRailCooldownLosses()))
@@ -901,6 +908,28 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
               </label>
               <div style={{ fontSize: 11, color: '#484f58', marginTop: 6 }}>
                 When enabled, event snapshots automatically begin when you start any session (sim, paper, or real)
+              </div>
+            </div>
+
+            {/* Stepwise Labeling Popup */}
+            <div style={{ borderTop: '1px solid #21262d', paddingTop: 16 }}>
+              <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 10, fontWeight: 600 }}>STEPWISE TRADE LABELING</div>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 13, color: '#c9d1d9' }}>
+                <input
+                  type="checkbox"
+                  checked={stepwiseLabelingPopup}
+                  onChange={e => {
+                    const val = e.target.checked
+                    setStepwiseLabelingPopup(val)
+                    localStorage.setItem(STEPWISE_LABELING_POPUP_KEY, String(val))
+                    onStepwiseLabelingPopupChange?.(val)
+                  }}
+                  style={{ width: 16, height: 16, accentColor: '#1f6feb' }}
+                />
+                Enable trade labeling popup in stepwise mode
+              </label>
+              <div style={{ fontSize: 11, color: '#484f58', marginTop: 6 }}>
+                When enabled, a popup asks you to label completed trades (expected/actual pattern, entry/exit tags) after each round-trip completes in stepwise mode
               </div>
             </div>
 
