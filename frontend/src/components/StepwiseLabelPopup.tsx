@@ -75,7 +75,7 @@ export default function StepwiseLabelPopup({ sid, date, symbol, roundTrips, onDo
       background: 'rgba(0,0,0,0.6)',
     }}>
       <div style={{
-        width: 500, maxHeight: '90vh', overflow: 'auto',
+        width: 560, maxHeight: '90vh', overflow: 'auto',
         padding: 24, background: '#161b22',
         border: '1px solid #30363d', borderRadius: 12,
       }}>
@@ -97,12 +97,18 @@ export default function StepwiseLabelPopup({ sid, date, symbol, roundTrips, onDo
                 {rt.pnl >= 0 ? '+' : ''}{rt.pnl.toFixed(2)}
               </span>
             </div>
-            <Field label="Expected Category" options={categories} value={fields[i].expCat} onChange={v => updateField(i, 'expCat', v)} />
-            <Field label="Expected Strategy" options={strategies} value={fields[i].expStrat} onChange={v => updateField(i, 'expStrat', v)} />
-            <Field label="Actual Category" options={categories} value={fields[i].actCat} onChange={v => updateField(i, 'actCat', v)} />
-            <Field label="Actual Strategy" options={strategies} value={fields[i].actStrat} onChange={v => updateField(i, 'actStrat', v)} />
-            <Field label="Entry Tag" options={entryTags} value={fields[i].entryTag} onChange={v => updateField(i, 'entryTag', v)} allowCreate />
-            <Field label="Exit Tag" options={exitTags} value={fields[i].exitTag} onChange={v => updateField(i, 'exitTag', v)} allowCreate />
+            <div style={{ display: 'flex', gap: 12 }}>
+              <div style={{ flex: 1 }}><Field label="Exp. Category" options={categories} value={fields[i].expCat} onChange={v => updateField(i, 'expCat', v)} /></div>
+              <div style={{ flex: 1 }}><Field label="Exp. Strategy" options={strategies} value={fields[i].expStrat} onChange={v => updateField(i, 'expStrat', v)} /></div>
+            </div>
+            <div style={{ display: 'flex', gap: 12 }}>
+              <div style={{ flex: 1 }}><Field label="Actual Category" options={categories} value={fields[i].actCat} onChange={v => updateField(i, 'actCat', v)} /></div>
+              <div style={{ flex: 1 }}><Field label="Actual Strategy" options={strategies} value={fields[i].actStrat} onChange={v => updateField(i, 'actStrat', v)} /></div>
+            </div>
+            <div style={{ display: 'flex', gap: 12 }}>
+              <div style={{ flex: 1 }}><Field label="Entry Tag" options={entryTags} value={fields[i].entryTag} onChange={v => updateField(i, 'entryTag', v)} allowCreate /></div>
+              <div style={{ flex: 1 }}><Field label="Exit Tag" options={exitTags} value={fields[i].exitTag} onChange={v => updateField(i, 'exitTag', v)} allowCreate /></div>
+            </div>
           </div>
         ))}
 
