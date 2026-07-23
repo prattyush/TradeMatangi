@@ -246,7 +246,7 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
   const wrappedNextBar = useCallback(async () => {
     if (stepwiseLabels) return // popup already showing
     await sim.nextBar()
-  }, [sim, stepwiseLabels])
+  }, [sim.nextBar, stepwiseLabels])
 
   // ── Pane state ──────────────────────────────────────────────────────────────
   const [panes, setPanes] = useState<PaneConfig[]>(DEFAULT_EQUITY_PANES)
