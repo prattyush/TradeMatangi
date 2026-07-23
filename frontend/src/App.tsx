@@ -14,6 +14,7 @@ import SettingsModal, { loadFundsRatioMode, loadFundsRatios, loadTargetDeviation
 import { StrategyResponse, StartStrategyRequest, Order } from './services/api'
 import LoginScreen from './components/LoginScreen'
 import TradeAnalysis from './components/TradeAnalysis'
+import StepwiseLabelPopup from './components/StepwiseLabelPopup'
 import AIChatPanel from './components/AIChatPanel'
 import { useSimulation, InstrumentConfig } from './hooks/useSimulation'
 import { useSSE } from './hooks/useSSE'
@@ -169,6 +170,9 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
   const [showPatternLibrary, setShowPatternLibrary] = useState(false)
   const [showChartStructures, setShowChartStructures] = useState(false)
   const [sessionControlsVisible, setSessionControlsVisible] = useState(true)
+  // Stepwise trade labeling — pending round-trips to label before advancing bar
+  const [stepwiseLabels, setStepwiseLabels] = useState<{ right: string; session_id: string }[] | null>(null)
+  const prevPositionRef = useRef({ eq: 0, ce: 0, pe: 0 })
 
   // ── Price-pick state ────────────────────────────────────────────────────────
   const [pricePickOrderId, setPricePickOrderId] = useState<string | null>(null)
@@ -192,8 +196,56 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
   useEffect(() => {
     if (sim.sessionState === 'idle' || sim.sessionState === 'ended') {
       setSessionControlsVisible(true)
+      setStepwiseLabels(null)
     }
   }, [sim.sessionState])
+
+  // ── Stepwise trade completion detection ────────────────────────────────────
+  // Track when a position (equity, CE, or PE) goes from >0 to zero during
+  // stepwise mode. Completed round-trips accumulate silently; the popup is
+  // triggered only at the bar boundary (bar_paused) so the user sees the
+  // completed bar before labeling.
+  const pendingStepwiseTradesRef = useRef<{ right: string }[]>([])
+
+  useEffect(() => {
+    if (!sim.stepwise || sim.sessionState !== 'running') return
+    const eqQty = sim.position?.quantity ?? 0
+    const ceQty = sim.positionCE?.quantity ?? 0
+    const peQty = sim.positionPE?.quantity ?? 0
+    const prev = prevPositionRef.current
+
+    if (prev.eq > 0 && eqQty === 0) pendingStepwiseTradesRef.current.push({ right: '' })
+    if (prev.ce > 0 && ceQty === 0) pendingStepwiseTradesRef.current.push({ right: 'CE' })
+    if (prev.pe > 0 && peQty === 0) pendingStepwiseTradesRef.current.push({ right: 'PE' })
+
+    prevPositionRef.current = { eq: eqQty, ce: ceQty, pe: peQty }
+  }, [sim.position?.quantity, sim.positionCE?.quantity, sim.positionPE?.quantity, sim.stepwise, sim.sessionState])
+
+  // Reset position tracking + pending on new session start
+  useEffect(() => {
+    if (sim.sessionState === 'running' && sim.stepwise) {
+      prevPositionRef.current = { eq: 0, ce: 0, pe: 0 }
+      pendingStepwiseTradesRef.current = []
+      setStepwiseLabels(null)
+    }
+  }, [sim.sessionState, sim.stepwise])
+
+  // When bar_paused fires in stepwise, check if any round-trips completed.
+  // Show the label popup if there are pending trades to label.
+  useEffect(() => {
+    if (!sim.stepwise || !sim.barPaused) return
+    const pending = pendingStepwiseTradesRef.current
+    if (pending.length > 0 && sim.sessionId) {
+      setStepwiseLabels(pending.map(p => ({ ...p, session_id: sim.sessionId! })))
+      pendingStepwiseTradesRef.current = []
+    }
+  }, [sim.barPaused, sim.stepwise, sim.sessionId])
+
+  // ── Wrapped nextBar: show popup instead of advancing ───────────────────────
+  const wrappedNextBar = useCallback(async () => {
+    if (stepwiseLabels) return // popup already showing
+    await sim.nextBar()
+  }, [sim, stepwiseLabels])
 
   // ── Pane state ──────────────────────────────────────────────────────────────
   const [panes, setPanes] = useState<PaneConfig[]>(DEFAULT_EQUITY_PANES)
@@ -1043,6 +1095,17 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
         <TradeAnalysis onClose={() => setShowAnalysis(false)} historicalDays={historicalDays} />
       )}
 
+      {/* Stepwise Label Popup — shown at bar boundary when a round-trip completed */}
+      {stepwiseLabels && stepwiseLabels.length > 0 && sim.sessionId && (
+        <StepwiseLabelPopup
+          sid={sim.sessionId}
+          date={sim.date}
+          symbol={sim.symbol}
+          roundTrips={stepwiseLabels.map(l => ({ right: l.right, pnl: 0 }))}
+          onDone={() => setStepwiseLabels(null)}
+        />
+      )}
+
       {/* Error banner */}
       {sim.orderError && (
         <div style={{
@@ -1075,7 +1138,7 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
         barPaused={sim.barPaused}
         barIndex={sim.barIndex}
         totalBars={sim.totalBars}
-        onNextBar={sim.nextBar}
+        onNextBar={wrappedNextBar}
         extraControls={<>
           <div style={{ width: 1, height: 16, background: '#30363d', margin: '0 4px' }} />
 
