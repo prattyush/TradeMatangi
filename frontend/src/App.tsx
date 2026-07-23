@@ -10,7 +10,7 @@ import OrderPanel from './components/OrderPanel'
 import WalletWidget from './components/WalletWidget'
 import GuardRailPopup from './components/GuardRailPopup'
 import PatternAlertToast, { PatternAlert } from './components/PatternAlertToast'
-import SettingsModal, { loadFundsRatioMode, loadFundsRatios, loadTargetDeviationPct, loadBrokeragePerOrder, loadStrategyIntervalSecs, loadAutostopTriggerType, loadAutostopDeviationPct, loadHistoricalDays, loadPnlPctMode, loadBreakevenMode, loadTargetProfitBufferTicks, loadAggrSlOnlyInProfit, loadAutoStartEventSnapshots, FundsRatios } from './components/SettingsModal'
+import SettingsModal, { loadFundsRatioMode, loadFundsRatios, loadTargetDeviationPct, loadBrokeragePerOrder, loadStrategyIntervalSecs, loadAutostopTriggerType, loadAutostopDeviationPct, loadHistoricalDays, loadPnlPctMode, loadBreakevenMode, loadTargetProfitBufferTicks, loadAggrSlOnlyInProfit, loadAutoStartEventSnapshots, loadStepwiseLabelingPopupEnabled, FundsRatios } from './components/SettingsModal'
 import { StrategyResponse, StartStrategyRequest, Order } from './services/api'
 import LoginScreen from './components/LoginScreen'
 import TradeAnalysis from './components/TradeAnalysis'
@@ -142,6 +142,7 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
   const [guardrailPopup, setGuardrailPopup] = useState<{ type: 'BLOCK' | 'COOLDOWN' | 'BAN'; reason: string } | null>(null)
   const [combinedPnlOpen, setCombinedPnlOpen] = useState(false)
   const [autoStartSnapshots, setAutoStartSnapshots] = useState(loadAutoStartEventSnapshots)
+  const [stepwiseLabelingPopup, setStepwiseLabelingPopup] = useState(loadStepwiseLabelingPopupEnabled)
   const [patternAlerts, setPatternAlerts] = useState<PatternAlert[]>([])
 
   // ── Trade Analysis modal ────────────────────────────────────────────────────
@@ -1078,6 +1079,7 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
           onPnlPctModeChange={setPnlPctMode}
           onGuardRailSettingsChange={() => {}}
           onAutoStartSnapshotsChange={setAutoStartSnapshots}
+          onStepwiseLabelingPopupChange={setStepwiseLabelingPopup}
         />
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: '#484f58' }}>
           <span>{authUser.accountName || authUser.email}</span>
@@ -1096,7 +1098,7 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
       )}
 
       {/* Stepwise Label Popup — shown at bar boundary when a round-trip completed */}
-      {stepwiseLabels && stepwiseLabels.length > 0 && sim.sessionId && (
+      {stepwiseLabels && stepwiseLabels.length > 0 && sim.sessionId && stepwiseLabelingPopup && (
         <StepwiseLabelPopup
           sid={sim.sessionId}
           date={sim.date}
