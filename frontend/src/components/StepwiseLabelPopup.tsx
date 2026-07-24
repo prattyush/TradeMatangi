@@ -9,6 +9,7 @@ import api from '../services/api'
 interface PendingRoundTrip {
   right: string
   pnl: number
+  round_trip_index: number
 }
 
 interface Props {
@@ -61,14 +62,12 @@ export default function StepwiseLabelPopup({ sid, date, symbol, roundTrips, onDo
     setSaving(true)
     setError(null)
     try {
-      // Compute per-right indices matching backend FIFO: right=""=EQ, right="CE"/"PE"
-      const rightCounts: Record<string, number> = {}
       const labels: { session_id: string; round_trip_index: number; expected_category: string; expected_strategy: string; actual_category: string; actual_strategy: string; entry_tag: string; exit_tag: string }[] = []
       roundTrips.forEach((rt, i) => {
-        console.log(`[StepwiseLabelPopup] saving RT#${i}: right=${rt.right || 'EQ'}, index=${i}, expCat=${fields[i].expCat}, expStrat=${fields[i].expStrat}`)
+        console.log(`[StepwiseLabelPopup] saving RT#${rt.round_trip_index}: right=${rt.right || 'EQ'}, expCat=${fields[i].expCat}, expStrat=${fields[i].expStrat}`)
         labels.push({
           session_id: sid,
-          round_trip_index: i,
+          round_trip_index: rt.round_trip_index,
           expected_category: fields[i].expCat,
           expected_strategy: fields[i].expStrat,
           actual_category: fields[i].actCat || fields[i].expCat,

@@ -226,8 +226,9 @@ function PatternChartPanel({
   useEffect(() => {
     const el = containerRef.current
     if (!el) return
+    const h = Math.max(300, window.innerHeight * 0.55)
     const chart = createChart(el, {
-      width: el.clientWidth, height: Math.max(300, el.clientHeight || 350),
+      width: el.clientWidth || 500, height: h,
       layout: { background: { color: '#0d1117' }, textColor: '#8b949e' },
       grid: { vertLines: { color: '#21262d' }, horzLines: { color: '#21262d' } },
       timeScale: { timeVisible: true, secondsVisible: false },
@@ -240,8 +241,8 @@ function PatternChartPanel({
     chartRef.current = chart; seriesRef.current = series; ema9Ref.current = e9; ema21Ref.current = e21
 
     const ro = new ResizeObserver(entries => {
-      const { width, height } = entries[0].contentRect
-      if (width > 0 && height > 0) chart.applyOptions({ width, height })
+      const { width } = entries[0].contentRect
+      if (width > 0) chart.applyOptions({ width })
     })
     ro.observe(el)
     return () => { ro.disconnect(); chart.remove() }
