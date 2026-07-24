@@ -253,24 +253,31 @@ function PatternChartPanel({
     if (!series) return
     let cancelled = false
     ;(async () => {
+      console.log('[PatternChartPanel] loading OHLC:', { symbol, date, tab, instrumentType })
       let cl: OHLCCandle[] = []
       try {
         if (instrumentType === 'equity' || tab === 'underlying') {
           const r = await api.patternOhlcEquity(symbol, date, 3, historicalDays)
           cl = r.candles
+          console.log('[PatternChartPanel] equity OHLC candles:', cl.length)
         } else {
-          // For options CE/PE tab, try loading from first matching annotation's strike
           const ann = annotations.find(a => a.instrument === tab)
+          console.log('[PatternChartPanel] first CE/PE annotation:', ann)
           if (!ann) return
           const expiryRes = await api.getExpiry(symbol, date).catch(() => null)
+          console.log('[PatternChartPanel] expiry:', expiryRes)
           if (!expiryRes) return
           const strikeRes = await api.patternGetChartByDate(symbol, date, 'options').catch(() => null)
           const strike = strikeRes?.strike ?? (await api.getPriceAt(symbol, date, '09:15').then(r => Math.round(r.price / 50) * 50).catch(() => 0))
+          console.log('[PatternChartPanel] strike:', strike)
           if (!strike) return
           const r = await api.patternOhlcOptions(symbol, date, strike, expiryRes.expiry, tab, 3, historicalDays)
           cl = r.candles
+          console.log('[PatternChartPanel] options OHLC candles:', cl.length)
         }
-      } catch { return }
+      } catch (e) {
+        console.error('[PatternChartPanel] OHLC error:', e)
+      }
       if (cancelled) return
       const data: CandlestickData[] = cl.map(c => ({
         time: c.time as Time, open: c.open, high: c.high, low: c.low, close: c.close,
@@ -295,7 +302,7 @@ function PatternChartPanel({
 
   if (loading) return <div style={{ color: '#484f58', fontSize: 12, padding: 20 }}>Loading pattern data…</div>
 
-  return <div ref={containerRef} style={{ width: '100%', height: '100%' }} />
+  return <div ref={containerRef} style={{ width: '100%', height: '550px' }} />
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
