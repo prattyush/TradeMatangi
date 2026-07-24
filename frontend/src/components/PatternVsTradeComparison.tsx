@@ -44,12 +44,12 @@ function effectiveSideForChart(trade: AnalysisTrade): 'BUY' | 'SELL' {
 // ── Left Pane: Trades Chart ─────────────────────────────────────────────
 
 function TradesChart({
-  symbol, date, trades, tab, optionTabs, setTab, getMarkerText, historicalDays,
+  symbol, date, trades, tab, optionTabs, setTab, getMarkerText, historicalDays, showEma,
 }: {
   symbol: string; date: string; trades: AnalysisTrade[]; tab: string
   optionTabs: { right: string; strike: number; expiry: string }[]
   setTab: (t: string) => void; getMarkerText: (t: AnalysisTrade) => string
-  historicalDays: number
+  historicalDays: number; showEma: boolean
 }) {
   const containerRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<IChartApi | null>(null)
@@ -117,6 +117,12 @@ function TradesChart({
     return () => { cancelled = true }
   }, [symbol, date, historicalDays])
 
+  // EMA visibility
+  useEffect(() => {
+    ema9Ref.current?.applyOptions({ visible: showEma })
+    ema21Ref.current?.applyOptions({ visible: showEma })
+  }, [showEma])
+
   // Trade markers
   const intervalSecs = 3 * 60
   useEffect(() => {
@@ -162,12 +168,12 @@ function TradesChart({
 // ── Right Pane: Pattern Chart ───────────────────────────────────────────
 
 function PatternChartPanel({
-  symbol, date, annotations, topPatterns, activeStrategy, activeCategory, tab, instrumentType, historicalDays, onTabChange,
+  symbol, date, annotations, topPatterns, activeStrategy, activeCategory, tab, instrumentType, historicalDays, onTabChange, showEma,
 }: {
   symbol: string; date: string; annotations: PatternAnnotation[]; topPatterns: TopPatterns
   activeStrategy: string | null; activeCategory: string | null
   tab: string; instrumentType: string; historicalDays: number
-  onTabChange: (t: string) => void
+  onTabChange: (t: string) => void; showEma: boolean
 }) {
   const containerRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<IChartApi | null>(null)
@@ -253,6 +259,11 @@ function PatternChartPanel({
   }, [symbol, date, tab, instrumentType, historicalDays, annotations])
 
   useEffect(() => {
+    ema9Ref.current?.applyOptions({ visible: showEma })
+    ema21Ref.current?.applyOptions({ visible: showEma })
+  }, [showEma])
+
+  useEffect(() => {
     const series = seriesRef.current
     if (!series || candles.length === 0) return
     const markers: SeriesMarker<Time>[] = buildMarkers(filtered, activeStrategy, activeCategory, topPatterns)
@@ -285,6 +296,7 @@ export default function PatternVsTradeComparison({
   const [categories, setCategories] = useState<string[]>([])
   const [activeCategory, setActiveCategory] = useState('')
   const [activeStrategy, setActiveStrategy] = useState('')
+  const [showEma, setShowEma] = useState(true)
   const [tradeTab, setTradeTab] = useState('underlying')
   const [patternTab, setPatternTab] = useState('underlying')
 
@@ -364,6 +376,12 @@ export default function PatternVsTradeComparison({
           {strategies.map(s => <option key={s} value={s}>{s}</option>)}
         </select>
         <div style={{ flex: 1 }} />
+        <button onClick={() => setShowEma(v => !v)} style={{
+          padding: '4px 12px', fontSize: 11, fontWeight: 600, borderRadius: 4,
+          border: `1px solid ${showEma ? '#f0883e' : '#30363d'}`,
+          background: showEma ? '#1f3a5f' : '#161b22',
+          color: showEma ? '#f0883e' : '#484f58', cursor: 'pointer',
+        }}>EMA 9/21</button>
         <span style={{ fontSize: 11, color: '#484f58' }}>
           {patternAnnotations.length} annotations · {labelByTradeId.size} labeled trades
         </span>
@@ -377,7 +395,7 @@ export default function PatternVsTradeComparison({
           <TradesChart
             symbol={symbol} date={date} trades={allTrades}
             tab={tradeTab} optionTabs={optionTabs} setTab={setTradeTab}
-            getMarkerText={getMarkerText} historicalDays={historicalDays}
+            getMarkerText={getMarkerText} historicalDays={historicalDays} showEma={showEma}
           />
         </div>
         <div style={{ flex: 1, overflow: 'auto', padding: '12px 8px' }}>
@@ -387,7 +405,7 @@ export default function PatternVsTradeComparison({
             annotations={patternAnnotations} topPatterns={topPatterns}
             activeStrategy={activeStrategy || null} activeCategory={activeCategory || null}
             tab={patternTab} instrumentType={instrumentType} historicalDays={historicalDays}
-            onTabChange={setPatternTab}
+            onTabChange={setPatternTab} showEma={showEma}
           />
         </div>
       </div>
