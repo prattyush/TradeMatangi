@@ -69,12 +69,15 @@ export default function PatternVsTradeComparison({
         ])
         if (cancelled) return
 
-        const rts = rtResults.flat()
-        const labels = labelResults.flat()
         const map = new Map<string, TradeLabel>()
-        for (const l of labels) {
-          for (const rt of rts) {
-            if (rt.index === l.round_trip_index) {
+        // Match labels to round-trips per session (both use same session_id)
+        for (let si = 0; si < sessionIds.length; si++) {
+          const sessionRTs = rtResults[si] ?? []
+          const sessionLabels = labelResults[si] ?? []
+          const rtByIndex = new Map(sessionRTs.map(rt => [rt.index, rt]))
+          for (const l of sessionLabels) {
+            const rt = rtByIndex.get(l.round_trip_index)
+            if (rt) {
               for (const t of rt.entry_trades) map.set(t.trade_id, l)
               for (const t of rt.exit_trades) map.set(t.trade_id, l)
             }
@@ -217,7 +220,7 @@ function PatternChartPanel({
     const el = containerRef.current
     if (!el) return
     const chart = createChart(el, {
-      width: el.clientWidth, height: el.clientHeight,
+      width: el.clientWidth, height: Math.max(300, el.clientHeight || 350),
       layout: { background: { color: '#0d1117' }, textColor: '#8b949e' },
       grid: { vertLines: { color: '#21262d' }, horzLines: { color: '#21262d' } },
       timeScale: { timeVisible: true, secondsVisible: false },

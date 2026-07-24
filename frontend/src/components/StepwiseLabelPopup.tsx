@@ -61,16 +61,25 @@ export default function StepwiseLabelPopup({ sid, date, symbol, roundTrips, onDo
     setSaving(true)
     setError(null)
     try {
-      const labels = roundTrips.map((_rt, i) => ({
-        session_id: sid,
-        round_trip_index: i,
-        expected_category: fields[i].expCat,
-        expected_strategy: fields[i].expStrat,
-        actual_category: fields[i].actCat || fields[i].expCat,
-        actual_strategy: fields[i].actStrat || fields[i].expStrat,
-        entry_tag: fields[i].entryTag,
-        exit_tag: fields[i].exitTag,
-      }))
+      // Compute per-right indices matching backend FIFO: right=""=EQ, right="CE"/"PE"
+      const rightCounts: Record<string, number> = {}
+      const labels: { session_id: string; round_trip_index: number; expected_category: string; expected_strategy: string; actual_category: string; actual_strategy: string; entry_tag: string; exit_tag: string }[] = []
+      roundTrips.forEach((rt, i) => {
+        const r = rt.right || null
+        const key = r ?? 'EQ'
+        const idx = rightCounts[key] ?? 0
+        rightCounts[key] = idx + 1
+        labels.push({
+          session_id: sid,
+          round_trip_index: idx,
+          expected_category: fields[i].expCat,
+          expected_strategy: fields[i].expStrat,
+          actual_category: fields[i].actCat || fields[i].expCat,
+          actual_strategy: fields[i].actStrat || fields[i].expStrat,
+          entry_tag: fields[i].entryTag,
+          exit_tag: fields[i].exitTag,
+        })
+      })
       await api.saveLabels(labels)
       onDone()
     } catch (e) {
