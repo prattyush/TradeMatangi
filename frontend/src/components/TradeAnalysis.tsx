@@ -11,6 +11,7 @@ import api, { SessionSummary, SessionDetail, AnalysisTrade, OHLCCandle, EventSna
 import EventSnapshotViewer from './EventSnapshotViewer'
 import TradeLabeling from './TradeLabeling'
 import StatsModal from './StatsModal'
+import PatternVsTradeComparison from './PatternVsTradeComparison'
 
 interface Props {
   onClose: () => void
@@ -140,6 +141,7 @@ function ChartToolbar({ title, isMaximized = false, onMaximize }: {
 export function AnalysisChart({
   symbol, date, trades, historicalDays = 2, title = 'Underlying',
   isMaximized = false, onMaximize,
+  getMarkerText,
 }: {
   symbol: string
   date: string
@@ -148,6 +150,7 @@ export function AnalysisChart({
   title?: string
   isMaximized?: boolean
   onMaximize?: () => void
+  getMarkerText?: (trade: AnalysisTrade) => string
 }) {
   const containerRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<IChartApi | null>(null)
@@ -286,9 +289,10 @@ export function AnalysisChart({
     for (const t of displayTrades) {
       const slot = Math.floor(t.timestamp / intervalSecs) * intervalSecs
       const effectiveSide = effectiveSideForChart(t)
-      const text = t.right
+      const defaultText = t.right
         ? `${t.right} ${t.side === 'BUY' ? 'B' : 'S'}`
         : (t.side === 'BUY' ? 'B' : 'S')
+      const text = getMarkerText ? getMarkerText(t) : defaultText
       
       let markerPrice: number | undefined
       if (t.right) {
@@ -747,6 +751,8 @@ function GroupCard({ group, historicalDays = 2 }: { group: SessionGroup; histori
   const [viewingSnapshots, setViewingSnapshots] = useState<{ session: SessionSummary; snapshots: EventSnapshot[]; sessionIds: string[] } | null>(null)
   const [snapshotLoading, setSnapshotLoading] = useState(false)
   const [activeTab, setActiveTab] = useState<'trades' | 'labels'>('trades')
+  const [hasPattern, setHasPattern] = useState(false)
+  const [showComparison, setShowComparison] = useState(false)
 
   const handleExpand = async () => {
     if (!expanded && details.size === 0) {
@@ -758,6 +764,7 @@ function GroupCard({ group, historicalDays = 2 }: { group: SessionGroup; histori
         const m = new Map<string, SessionDetail>()
         fetched.forEach(d => m.set(d.session_id, d))
         setDetails(m)
+        api.patternGetChartByDate(group.symbol, group.date, group.instrument_type).then(c => setHasPattern(!!c)).catch(() => {})
       } catch { /* ignore */ } finally {
         setLoading(false)
       }
@@ -864,6 +871,19 @@ function GroupCard({ group, historicalDays = 2 }: { group: SessionGroup; histori
           >
             {snapshotLoading ? '...' : '📸 Snapshots'}
           </button>
+          {hasPattern && (
+            <button
+              onClick={(e) => { e.stopPropagation(); setShowComparison(true) }}
+              title="Compare trades vs pattern annotations"
+              style={{
+                background: '#21262d', border: '1px solid #30363d',
+                color: '#58a6ff', borderRadius: 6, padding: '3px 10px',
+                fontSize: 11, cursor: 'pointer', fontWeight: 600,
+              }}
+            >
+              📊 Compare
+            </button>
+          )}
           <span style={{ fontSize: 16, color: '#484f58' }}>
             {loading ? '⟳' : expanded ? '▲' : '▼'}
           </span>
@@ -882,6 +902,19 @@ function GroupCard({ group, historicalDays = 2 }: { group: SessionGroup; histori
             }
             setViewingSnapshots(null)
           }}
+        />
+      )}
+
+      {/* Pattern vs Trade comparison modal */}
+      {showComparison && (
+        <PatternVsTradeComparison
+          symbol={group.symbol}
+          date={group.date}
+          instrumentType={group.instrument_type}
+          sessionIds={group.sessions.map(s => s.session_id)}
+          allTrades={allTrades}
+          historicalDays={historicalDays}
+          onClose={() => setShowComparison(false)}
         />
       )}
 

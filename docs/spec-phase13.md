@@ -194,6 +194,7 @@ email in the header display for all user types.
 | Underlying Only checkbox fix | PR #317 | ✅ Merged to dev |
 | Buy/Sell Marker Drawing Tools | PR #319 | ✅ Merged to dev |
 | Stepwise Trade Labeling + Snapshot OHLC Fix | PR #326 | ✅ Merged to dev |
+| Pattern V/S Trading Comparison | WIP | ⏳ In Progress |
 
 ## PR Log — Phase 13
 
@@ -332,3 +333,25 @@ detected per-right: equity/CE/PE), show a labeling popup at the bar boundary
 | `frontend/src/components/SettingsModal.tsx` | New toggle "Enable trade labeling popup in stepwise mode" in General tab |
 | `frontend/src/App.tsx` | Position tracking ref, bar_paused detection, wrapped nextBar, popup render, settings gate |
 
+##### Pattern V/S Trading Comparison ⏳ In Progress
+
+See [implementation plan](./pattern-vs-trading-comparison-plan.md) for detailed design and file changes.
+
+In the analysis window, users can compare trades taken against pattern annotations saved for the same day. A "📊 Compare" button appears on each analysis group card (next to 📸 Snapshots) when a pattern chart exists for that date/symbol.
+
+**Layout**: Side-by-side full-screen modal
+- **Left**: Trades chart (AnalysisChart) with markers showing expected pattern labels
+- **Right**: Pattern chart with annotations, filtered by category/strategy dropdowns
+- For options: both sides have underlying + CE/PE tab pills (all strikes)
+- For equity: both sides show only underlying
+- Button hidden if no pattern chart exists for the date
+
+In the analysis window, we can analyze the trades taken, by users for all types. In the pattern section, during create mode, user can create different strategies with a cateory and strategy. THe feature is that during analysis, if a pattern or strategy is declared for that day, the user can compare the trades taken against the patterns declared for that day. Specially useful in day trading scenario. 
+We will have anoother button like snapshot, but which compares the trades taken against the patterns (category/strategy with markers) declared for that same day. Both will be displayed side by side. Similar to labell trades view one side can have the trades taken markers, 
+1) For options trading, similar to labell trades, view of underlying with choose to see all trades or only CE or PE trades, and then also to switch to individual CE and PE charts for which trades were taken.
+2) for equity trading, the whole chart will be same, as their is only one chart.
+
+The other view will have the patterns with markers similar to what we have with view patterns chart, but here user will see options to switcch between underlying, CE and PE for options trading otherwise all are same for equity.
+
+Finally, the trades taken day, if the trades are labelled, then it show markers with the labeled value just like we have with pattern library view options. If trade is buy is any bar, show a Buy marker with trade label value, othwerwise leave it blank.
+Do, ask any questions if you have.
