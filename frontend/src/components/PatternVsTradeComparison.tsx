@@ -1,6 +1,6 @@
 /**
- * PatternVsTradeComparison — side-by-side modal comparing actual trades
- * against saved pattern annotations for the same day/symbol.
+ * PatternVsTradeComparison — full-page side-by-side view comparing actual
+ * trades against saved pattern annotations for the same date/symbol.
  */
 import { useState, useEffect, useRef, useCallback } from 'react'
 import {
@@ -8,7 +8,6 @@ import {
 } from 'lightweight-charts'
 import api, { AnalysisTrade, TradeLabel, OHLCCandle, PatternAnnotation, TopPatterns } from '../services/api'
 import { buildMarkers } from '../services/patternMarkers'
-import { AnalysisChart, OptionsChart } from './TradeAnalysis'
 
 interface Props {
   symbol: string
@@ -37,178 +36,138 @@ function computeEMA(closes: number[], period: number): (number | null)[] {
   return result
 }
 
-export default function PatternVsTradeComparison({
-  symbol, date, instrumentType, sessionIds, allTrades, historicalDays, onClose,
-}: Props) {
-  const [labelByTradeId, setLabelByTradeId] = useState<Map<string, TradeLabel>>(new Map())
-  const [patternAnnotations, setPatternAnnotations] = useState<PatternAnnotation[]>([])
-  const [topPatterns, setTopPatterns] = useState<TopPatterns>({})
-  const [strategies, setStrategies] = useState<string[]>([])
-  const [categories, setCategories] = useState<string[]>([])
-  const [activeCategory, setActiveCategory] = useState('')
-  const [activeStrategy, setActiveStrategy] = useState('')
-  const [loading, setLoading] = useState(true)
-  const [tradeTab, setTradeTab] = useState<string>('underlying')
-  const [patternTab, setPatternTab] = useState<string>('underlying')
+function effectiveSideForChart(trade: AnalysisTrade): 'BUY' | 'SELL' {
+  if (trade.right === 'PE') return trade.side === 'BUY' ? 'SELL' : 'BUY'
+  return trade.side
+}
 
-  // Derive unique CE/PE strike combos for tab pills
-  const optionTabs = [...new Map(
-    allTrades.filter(t => t.right).map(t => [`${t.right}:${t.strike}:${t.expiry}`, { right: t.right!, strike: t.strike!, expiry: t.expiry! }])
-  ).values()]
+// ── Left Pane: Trades Chart ─────────────────────────────────────────────
+
+function TradesChart({
+  symbol, date, trades, tab, optionTabs, setTab, getMarkerText, historicalDays,
+}: {
+  symbol: string; date: string; trades: AnalysisTrade[]; tab: string
+  optionTabs: { right: string; strike: number; expiry: string }[]
+  setTab: (t: string) => void; getMarkerText: (t: AnalysisTrade) => string
+  historicalDays: number
+}) {
+  const containerRef = useRef<HTMLDivElement>(null)
+  const chartRef = useRef<IChartApi | null>(null)
+  const seriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null)
+  const markerPool = useRef<ISeriesApi<'Line'>[]>([])
+  const ema9Ref = useRef<ISeriesApi<'Line'> | null>(null)
+  const ema21Ref = useRef<ISeriesApi<'Line'> | null>(null)
+  const [candles, setCandles] = useState<CandlestickData[]>([])
 
   useEffect(() => {
+    const el = containerRef.current
+    if (!el) return
+    const w = el.clientWidth
+    const h = Math.max(400, window.innerHeight * 0.55)
+    const chart = createChart(el, {
+      width: w, height: h,
+      layout: { background: { color: '#0d1117' }, textColor: '#e6edf3' },
+      grid: { vertLines: { color: '#1e2732' }, horzLines: { color: '#1e2732' } },
+      timeScale: { timeVisible: true, secondsVisible: false, borderColor: '#30363d' },
+      crosshair: { mode: 0 },
+    })
+    const series = chart.addCandlestickSeries({
+      upColor: '#26a641', downColor: '#f85149', borderVisible: false,
+      wickUpColor: '#26a641', wickDownColor: '#f85149',
+    })
+    const e9 = chart.addLineSeries({ color: '#f0883e', lineWidth: 1, lastValueVisible: false, priceLineVisible: false })
+    const e21 = chart.addLineSeries({ color: '#79c0ff', lineWidth: 1, lastValueVisible: false, priceLineVisible: false })
+    chartRef.current = chart; seriesRef.current = series; ema9Ref.current = e9; ema21Ref.current = e21
+
+    const ro = new ResizeObserver(entries => {
+      chart.applyOptions({ width: entries[0].contentRect.width })
+    })
+    ro.observe(el)
+    return () => { ro.disconnect(); chart.remove() }
+  }, [])
+
+  // Load OHLC
+  useEffect(() => {
+    const series = seriesRef.current
+    if (!series || !symbol || !date) return
     let cancelled = false
     ;(async () => {
       try {
-        const [rtResults, labelResults, patternChart, cats, strats] = await Promise.all([
-          Promise.all(sessionIds.map(sid => api.getRoundTrips(sid).catch(() => []))),
-          Promise.all(sessionIds.map(sid => api.getLabels(sid).catch(() => []))),
-          api.patternGetChartByDate(symbol, date, instrumentType === 'options' ? 'options' : 'equity').catch(() => null),
-          api.patternListCategories().catch(() => ({ categories: [] })),
-          api.patternListStrategies().catch(() => ({ strategies: [] })),
+        const toCandle = (c: OHLCCandle): CandlestickData => ({
+          time: c.time as Time, open: c.open, high: c.high, low: c.low, close: c.close,
+        })
+        const [histResp, tradingDayCandles] = await Promise.all([
+          api.getHistorical(symbol, date, 3, historicalDays),
+          api.getPreSession(symbol, date, '15:30:00', 3),
         ])
-        if (cancelled) return
-
-        console.log('[Compare] sessionIds:', sessionIds)
-        console.log('[Compare] rtResults:', JSON.stringify(rtResults))
-        console.log('[Compare] labelResults:', JSON.stringify(labelResults))
-        console.log('[Compare] patternChart:', patternChart ? 'found (' + patternChart.annotations?.length + ' annotations)' : 'null')
-        console.log('[Compare] instrumentType:', instrumentType)
-
-        const map = new Map<string, TradeLabel>()
-        // Match labels to round-trips per session (both use same session_id)
-        for (let si = 0; si < sessionIds.length; si++) {
-          const sessionRTs = rtResults[si] ?? []
-          const sessionLabels = labelResults[si] ?? []
-          const rtByIndex = new Map(sessionRTs.map(rt => [rt.index, rt]))
-          for (const l of sessionLabels) {
-            const rt = rtByIndex.get(l.round_trip_index)
-            if (rt) {
-              for (const t of rt.entry_trades) map.set(t.trade_id, l)
-              for (const t of rt.exit_trades) map.set(t.trade_id, l)
-            }
-          }
-        }
-        setLabelByTradeId(map)
-        if (patternChart) {
-          setPatternAnnotations(patternChart.annotations)
-          setTopPatterns(patternChart.top_patterns || {})
-        }
-        setCategories(cats.categories)
-        setStrategies(strats.strategies)
-        console.log('[Compare] labelByTradeId size:', map.size)
+        if (cancelled || !seriesRef.current) return
+        const all = [...histResp.candles.map(toCandle), ...tradingDayCandles.map(toCandle)]
+        const byTime = new Map<number, CandlestickData>()
+        all.forEach(c => byTime.set(c.time as number, c))
+        const sorted = Array.from(byTime.values()).sort((a, b) => (a.time as number) - (b.time as number))
+        series.setData(sorted)
+        setCandles(sorted)
+        const closes = sorted.map(c => c.close)
+        const e9v = computeEMA(closes, 9); const e21v = computeEMA(closes, 21)
+        ema9Ref.current?.setData(sorted.map((c, i) => ({ time: c.time, value: e9v[i]! })).filter(d => d.value !== null))
+        ema21Ref.current?.setData(sorted.map((c, i) => ({ time: c.time, value: e21v[i]! })).filter(d => d.value !== null))
+        chartRef.current?.timeScale().fitContent()
       } catch { /* ignore */ }
-      setLoading(false)
     })()
     return () => { cancelled = true }
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [symbol, date, historicalDays])
 
-  const getMarkerText = useCallback((t: AnalysisTrade): string => {
-    const label = labelByTradeId.get(t.trade_id)
-    if (label?.expected_strategy) {
-      const cat = label.expected_category ? label.expected_category.slice(0, 5) + '/' : ''
-      return cat + label.expected_strategy.slice(0, 10)
+  // Trade markers
+  const intervalSecs = 3 * 60
+  useEffect(() => {
+    const chart = chartRef.current
+    if (!chart) return
+    for (const s of markerPool.current) { try { chart.removeSeries(s) } catch {} }
+    markerPool.current = []
+
+    if (trades.length === 0) return
+    for (const t of trades) {
+      const slot = Math.floor(t.timestamp / intervalSecs) * intervalSecs
+      const side = effectiveSideForChart(t)
+      const markerPrice = t.right ? (t.underlying_price ?? candles.find(c => (c.time as number) === slot)?.close) : t.price
+      if (markerPrice === undefined) continue
+      try {
+        const s = chart.addLineSeries({ lineVisible: false, crosshairMarkerVisible: false, lastValueVisible: false, priceLineVisible: false })
+        s.setData([{ time: slot as Time, value: markerPrice }])
+        s.setMarkers([{
+          time: slot as Time, position: 'inBar',
+          color: side === 'BUY' ? '#FFFFFF' : '#00AAFF',
+          shape: 'circle', text: getMarkerText(t), size: 0.6,
+        }])
+        markerPool.current.push(s)
+      } catch {}
     }
-    return t.side === 'BUY' ? 'B' : 'S'
-  }, [labelByTradeId])
-
-  const resolvedActiveStrategy = activeStrategy || null
-  const resolvedActiveCategory = activeCategory || null
+  }, [trades, candles, getMarkerText])
 
   return (
-    <div style={{
-      position: 'fixed', inset: 0, zIndex: 100, background: 'rgba(0,0,0,0.9)',
-      display: 'flex', flexDirection: 'column', padding: 12,
-    }}>
-      {/* Header */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8, flexShrink: 0 }}>
-        <span style={{ fontSize: 16, fontWeight: 700, color: '#e6edf3' }}>
-          📊 Pattern vs Trade: {symbol} · {date}
-        </span>
-        <div style={{ width: 1, height: 20, background: '#30363d' }} />
-        <span style={{ fontSize: 11, color: '#8b949e' }}>Filter:</span>
-        <select value={activeCategory} onChange={e => setActiveCategory(e.target.value)} style={selectStyle}>
-          <option value="">All categories</option>
-          {categories.map(c => <option key={c} value={c}>{c}</option>)}
-        </select>
-        <select value={activeStrategy} onChange={e => setActiveStrategy(e.target.value)} style={selectStyle}>
-          <option value="">All strategies</option>
-          {strategies.map(s => <option key={s} value={s}>{s}</option>)}
-        </select>
-        <div style={{ flex: 1 }} />
-        <span style={{ fontSize: 11, color: '#484f58' }}>
-          {patternAnnotations.length} pattern annotation{patternAnnotations.length !== 1 ? 's' : ''}
-          {labelByTradeId.size > 0 && ` · ${labelByTradeId.size} labeled trades`}
-        </span>
-        <button onClick={onClose} style={{
-          background: 'none', border: '1px solid #30363d', borderRadius: 6,
-          color: '#8b949e', fontSize: 14, cursor: 'pointer', padding: '4px 12px',
-        }}>✕ Close</button>
-      </div>
-
-      {/* Main content: side-by-side */}
-      <div style={{ flex: 1, display: 'flex', gap: 8, minHeight: 0 }}>
-        {/* Left: Trades */}
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
-          <div style={{ fontSize: 12, fontWeight: 600, color: '#58a6ff', marginBottom: 4 }}>TRADES</div>
-          {(instrumentType === 'options') && (
-            <div style={{ display: 'flex', gap: 4, marginBottom: 4 }}>
-              <TabPill label="Underlying" active={tradeTab === 'underlying'} onClick={() => setTradeTab('underlying')} />
-              {optionTabs.map(ot => (
-                <TabPill key={`${ot.right}:${ot.strike}`} label={`${ot.right} ${ot.strike}`} active={tradeTab === `${ot.right}:${ot.strike}`} onClick={() => setTradeTab(`${ot.right}:${ot.strike}`)} />
-              ))}
-            </div>
-          )}
-          <div style={{ flex: 1, minHeight: 0 }}>
-            {tradeTab === 'underlying' ? (
-              <AnalysisChart symbol={symbol} date={date} trades={allTrades} historicalDays={historicalDays} title="" getMarkerText={getMarkerText} />
-            ) : (() => {
-              const ot = optionTabs.find(o => `${o.right}:${o.strike}` === tradeTab)
-              if (!ot) return null
-              return (
-                <OptionsChart symbol={symbol} date={date} strike={ot.strike} expiry={ot.expiry} right={ot.right} trades={allTrades.filter(t => t.right === ot.right && t.strike === ot.strike)} historicalDays={historicalDays} />
-              )
-            })()}
-          </div>
+    <div>
+      {optionTabs.length > 0 && (
+        <div style={{ display: 'flex', gap: 4, marginBottom: 4 }}>
+          <TabPill label="Underlying" active={tab === 'underlying'} onClick={() => setTab('underlying')} />
+          {optionTabs.map(ot => (
+            <TabPill key={`${ot.right}:${ot.strike}`} label={`${ot.right} ${ot.strike}`} active={tab === `${ot.right}:${ot.strike}`} onClick={() => setTab(`${ot.right}:${ot.strike}`)} />
+          ))}
         </div>
-
-        {/* Right: Patterns */}
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
-          <div style={{ fontSize: 12, fontWeight: 600, color: '#f0883e', marginBottom: 4 }}>PATTERNS</div>
-          {(instrumentType === 'options') && (
-            <div style={{ display: 'flex', gap: 4, marginBottom: 4 }}>
-              <TabPill label="Underlying" active={patternTab === 'underlying'} onClick={() => setPatternTab('underlying')} />
-              <TabPill label="CE" active={patternTab === 'CE'} onClick={() => setPatternTab('CE')} />
-              <TabPill label="PE" active={patternTab === 'PE'} onClick={() => setPatternTab('PE')} />
-            </div>
-          )}
-          <div style={{ flex: 1, minHeight: 0 }}>
-            <PatternChartPanel
-              symbol={symbol} date={date}
-              annotations={patternAnnotations}
-              topPatterns={topPatterns}
-              activeStrategy={resolvedActiveStrategy}
-              activeCategory={resolvedActiveCategory}
-              tab={patternTab}
-              instrumentType={instrumentType}
-              historicalDays={historicalDays}
-              loading={loading}
-            />
-          </div>
-        </div>
-      </div>
+      )}
+      <div ref={containerRef} />
     </div>
   )
 }
 
-// ── Pattern Chart Panel (right side) ────────────────────────────────────────
+// ── Right Pane: Pattern Chart ───────────────────────────────────────────
 
 function PatternChartPanel({
-  symbol, date, annotations, topPatterns, activeStrategy, activeCategory, tab, instrumentType, historicalDays, loading,
+  symbol, date, annotations, topPatterns, activeStrategy, activeCategory, tab, instrumentType, historicalDays, onTabChange,
 }: {
   symbol: string; date: string; annotations: PatternAnnotation[]; topPatterns: TopPatterns
   activeStrategy: string | null; activeCategory: string | null
-  tab: string; instrumentType: string; historicalDays: number; loading: boolean
+  tab: string; instrumentType: string; historicalDays: number
+  onTabChange: (t: string) => void
 }) {
   const containerRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<IChartApi | null>(null)
@@ -226,23 +185,19 @@ function PatternChartPanel({
   useEffect(() => {
     const el = containerRef.current
     if (!el) return
-    const h = Math.max(300, window.innerHeight * 0.55)
     const chart = createChart(el, {
-      width: el.clientWidth || 500, height: h,
+      width: el.clientWidth || 500, height: Math.max(400, window.innerHeight * 0.55),
       layout: { background: { color: '#0d1117' }, textColor: '#8b949e' },
       grid: { vertLines: { color: '#21262d' }, horzLines: { color: '#21262d' } },
       timeScale: { timeVisible: true, secondsVisible: false },
-      crosshair: { mode: 0 },
-      handleScroll: { vertTouchDrag: false },
+      crosshair: { mode: 0 }, handleScroll: { vertTouchDrag: false },
     })
     const series = chart.addCandlestickSeries({ upColor: '#22c55e', downColor: '#ef4444', borderUpColor: '#22c55e', borderDownColor: '#ef4444', wickUpColor: '#22c55e', wickDownColor: '#ef4444' })
     const e9 = chart.addLineSeries({ color: '#f0883e', lineWidth: 1, priceLineVisible: false, lastValueVisible: false })
     const e21 = chart.addLineSeries({ color: '#79c0ff', lineWidth: 1, priceLineVisible: false, lastValueVisible: false })
     chartRef.current = chart; seriesRef.current = series; ema9Ref.current = e9; ema21Ref.current = e21
-
     const ro = new ResizeObserver(entries => {
-      const { width } = entries[0].contentRect
-      if (width > 0) chart.applyOptions({ width })
+      chart.applyOptions({ width: entries[0].contentRect.width })
     })
     ro.observe(el)
     return () => { ro.disconnect(); chart.remove() }
@@ -259,26 +214,30 @@ function PatternChartPanel({
         if (instrumentType === 'equity' || tab === 'underlying') {
           const r = await api.patternOhlcEquity(symbol, date, 3, historicalDays)
           cl = r.candles
-          console.log('[PatternChartPanel] equity OHLC candles:', cl.length)
+          console.log('[PatternChartPanel] equity candles:', cl.length)
         } else {
+          // Find first matching annotation to get strike
           const ann = annotations.find(a => a.instrument === tab)
-          console.log('[PatternChartPanel] first CE/PE annotation:', ann)
+          console.log('[PatternChartPanel] first ann for tab:', ann)
           if (!ann) return
-          const expiryRes = await api.getExpiry(symbol, date).catch(() => null)
-          console.log('[PatternChartPanel] expiry:', expiryRes)
-          if (!expiryRes) return
-          const strikeRes = await api.patternGetChartByDate(symbol, date, 'options').catch(() => null)
-          const strike = strikeRes?.strike ?? (await api.getPriceAt(symbol, date, '09:15').then(r => Math.round(r.price / 50) * 50).catch(() => 0))
-          console.log('[PatternChartPanel] strike:', strike)
+          const chart = await api.patternGetChartByDate(symbol, date, 'options').catch(() => null)
+          const strike = chart?.strike
+          console.log('[PatternChartPanel] chart strike:', strike)
           if (!strike) return
-          const r = await api.patternOhlcOptions(symbol, date, strike, expiryRes.expiry, tab, 3, historicalDays)
+          const expiryRes = await api.getExpiry(symbol, date).catch(() => null)
+          const exp = expiryRes?.expiry ?? ''
+          console.log('[PatternChartPanel] expiry:', exp)
+          if (!exp) return
+          const r = await api.patternOhlcOptions(symbol, date, strike, exp, tab, 3, historicalDays)
           cl = r.candles
-          console.log('[PatternChartPanel] options OHLC candles:', cl.length)
+          console.log('[PatternChartPanel] options candles:', cl.length)
         }
       } catch (e) {
         console.error('[PatternChartPanel] OHLC error:', e)
+        return
       }
-      if (cancelled) return
+      if (cancelled || !seriesRef.current) return
+      if (cl.length === 0) { console.log('[PatternChartPanel] no candles'); return }
       const data: CandlestickData[] = cl.map(c => ({
         time: c.time as Time, open: c.open, high: c.high, low: c.low, close: c.close,
       }))
@@ -300,9 +259,140 @@ function PatternChartPanel({
     series.setMarkers(markers)
   }, [candles, filtered, activeStrategy, activeCategory, topPatterns])
 
-  if (loading) return <div style={{ color: '#484f58', fontSize: 12, padding: 20 }}>Loading pattern data…</div>
+  return (
+    <div>
+      {instrumentType === 'options' && (
+        <div style={{ display: 'flex', gap: 4, marginBottom: 4 }}>
+          <TabPill label="Underlying" active={tab === 'underlying'} onClick={() => onTabChange('underlying')} />
+          <TabPill label="CE" active={tab === 'CE'} onClick={() => onTabChange('CE')} />
+          <TabPill label="PE" active={tab === 'PE'} onClick={() => onTabChange('PE')} />
+        </div>
+      )}
+      <div ref={containerRef} />
+    </div>
+  )
+}
 
-  return <div ref={containerRef} style={{ width: '100%', height: '550px' }} />
+// ── Main Page ────────────────────────────────────────────────────────────
+
+export default function PatternVsTradeComparison({
+  symbol, date, instrumentType, sessionIds, allTrades, historicalDays, onClose,
+}: Props) {
+  const [labelByTradeId, setLabelByTradeId] = useState<Map<string, TradeLabel>>(new Map())
+  const [patternAnnotations, setPatternAnnotations] = useState<PatternAnnotation[]>([])
+  const [topPatterns, setTopPatterns] = useState<TopPatterns>({})
+  const [strategies, setStrategies] = useState<string[]>([])
+  const [categories, setCategories] = useState<string[]>([])
+  const [activeCategory, setActiveCategory] = useState('')
+  const [activeStrategy, setActiveStrategy] = useState('')
+  const [tradeTab, setTradeTab] = useState('underlying')
+  const [patternTab, setPatternTab] = useState('underlying')
+
+  const optionTabs = [...new Map(
+    allTrades.filter(t => t.right).map(t => [`${t.right}:${t.strike}:${t.expiry}`, { right: t.right!, strike: t.strike!, expiry: t.expiry! }])
+  ).values()]
+
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      const [rtResults, labelResults, patternChart, cats, strats] = await Promise.all([
+        Promise.all(sessionIds.map(sid => api.getRoundTrips(sid).catch(() => []))),
+        Promise.all(sessionIds.map(sid => api.getLabels(sid).catch(() => []))),
+        api.patternGetChartByDate(symbol, date, instrumentType === 'options' ? 'options' : 'equity').catch(() => null),
+        api.patternListCategories().catch(() => ({ categories: [] })),
+        api.patternListStrategies().catch(() => ({ strategies: [] })),
+      ])
+      if (cancelled) return
+
+      console.log('[Compare] patternChart:', patternChart ? `found (${patternChart.annotations?.length} annotations)` : 'null')
+
+      const map = new Map<string, TradeLabel>()
+      for (let si = 0; si < sessionIds.length; si++) {
+        const sessionRTs = rtResults[si] ?? []
+        const sessionLabels = labelResults[si] ?? []
+        const rtByIndex = new Map(sessionRTs.map(rt => [rt.index, rt]))
+        for (const l of sessionLabels) {
+          const rt = rtByIndex.get(l.round_trip_index)
+          if (rt) {
+            for (const t of rt.entry_trades) map.set(t.trade_id, l)
+            for (const t of rt.exit_trades) map.set(t.trade_id, l)
+          }
+        }
+      }
+      console.log('[Compare] rtResults:', rtResults.flat().length, 'round-trips')
+      console.log('[Compare] labels:', labelResults.flat().length, 'labels')
+      console.log('[Compare] labelByTradeId size:', map.size)
+
+      setLabelByTradeId(map)
+      if (patternChart) {
+        setPatternAnnotations(patternChart.annotations)
+        setTopPatterns(patternChart.top_patterns || {})
+      }
+      setCategories(cats.categories)
+      setStrategies(strats.strategies)
+    })()
+    return () => { cancelled = true }
+  }, []) // eslint-disable-line
+
+  const getMarkerText = useCallback((t: AnalysisTrade): string => {
+    const label = labelByTradeId.get(t.trade_id)
+    if (label?.expected_strategy) {
+      const cat = label.expected_category ? label.expected_category.slice(0, 5) + '/' : ''
+      return cat + label.expected_strategy.slice(0, 10)
+    }
+    return t.side === 'BUY' ? 'B' : 'S'
+  }, [labelByTradeId])
+
+  return (
+    <div style={{ position: 'fixed', inset: 0, zIndex: 99, background: '#0d1117', display: 'flex', flexDirection: 'column' }}>
+      {/* Header */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 20px', borderBottom: '1px solid #21262d', flexShrink: 0 }}>
+        <div>
+          <div style={{ fontSize: 18, color: '#e6edf3', fontWeight: 600 }}>📊 Pattern vs Trade: {symbol} · {date}</div>
+          <div style={{ fontSize: 12, color: '#484f58', marginTop: 4 }}>
+            Compare actual trades against saved pattern annotations
+          </div>
+        </div>
+        <div style={{ width: 1, height: 24, background: '#30363d', margin: '0 8px' }} />
+        <span style={{ fontSize: 11, color: '#8b949e' }}>Filter:</span>
+        <select value={activeCategory} onChange={e => setActiveCategory(e.target.value)} style={selectStyle}>
+          <option value="">All categories</option>
+          {categories.map(c => <option key={c} value={c}>{c}</option>)}
+        </select>
+        <select value={activeStrategy} onChange={e => setActiveStrategy(e.target.value)} style={selectStyle}>
+          <option value="">All strategies</option>
+          {strategies.map(s => <option key={s} value={s}>{s}</option>)}
+        </select>
+        <div style={{ flex: 1 }} />
+        <span style={{ fontSize: 11, color: '#484f58' }}>
+          {patternAnnotations.length} annotations · {labelByTradeId.size} labeled trades
+        </span>
+        <button onClick={onClose} style={{ background: 'none', border: '1px solid #30363d', borderRadius: 6, color: '#8b949e', fontSize: 13, cursor: 'pointer', padding: '6px 16px' }}>✕ Close</button>
+      </div>
+
+      {/* Charts: side-by-side */}
+      <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
+        <div style={{ flex: 1, overflow: 'auto', padding: '12px 8px', borderRight: '1px solid #21262d' }}>
+          <div style={{ fontSize: 13, fontWeight: 600, color: '#58a6ff', marginBottom: 6 }}>TRADES</div>
+          <TradesChart
+            symbol={symbol} date={date} trades={allTrades}
+            tab={tradeTab} optionTabs={optionTabs} setTab={setTradeTab}
+            getMarkerText={getMarkerText} historicalDays={historicalDays}
+          />
+        </div>
+        <div style={{ flex: 1, overflow: 'auto', padding: '12px 8px' }}>
+          <div style={{ fontSize: 13, fontWeight: 600, color: '#f0883e', marginBottom: 6 }}>PATTERNS</div>
+          <PatternChartPanel
+            symbol={symbol} date={date}
+            annotations={patternAnnotations} topPatterns={topPatterns}
+            activeStrategy={activeStrategy || null} activeCategory={activeCategory || null}
+            tab={patternTab} instrumentType={instrumentType} historicalDays={historicalDays}
+            onTabChange={setPatternTab}
+          />
+        </div>
+      </div>
+    </div>
+  )
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
@@ -310,8 +400,8 @@ function PatternChartPanel({
 function TabPill({ label, active, onClick }: { label: string; active: boolean; onClick: () => void }) {
   return (
     <button onClick={onClick} style={{
-      padding: '2px 10px', fontSize: 11, fontWeight: 600,
-      borderRadius: 4, border: `1px solid ${active ? '#58a6ff' : '#30363d'}`,
+      padding: '4px 12px', fontSize: 11, fontWeight: 600, borderRadius: 4,
+      border: `1px solid ${active ? '#58a6ff' : '#30363d'}`,
       background: active ? '#1f3a5f' : '#161b22',
       color: active ? '#58a6ff' : '#8b949e', cursor: 'pointer',
     }}>{label}</button>
