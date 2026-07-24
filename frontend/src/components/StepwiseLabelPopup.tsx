@@ -65,13 +65,10 @@ export default function StepwiseLabelPopup({ sid, date, symbol, roundTrips, onDo
       const rightCounts: Record<string, number> = {}
       const labels: { session_id: string; round_trip_index: number; expected_category: string; expected_strategy: string; actual_category: string; actual_strategy: string; entry_tag: string; exit_tag: string }[] = []
       roundTrips.forEach((rt, i) => {
-        const r = rt.right || null
-        const key = r ?? 'EQ'
-        const idx = rightCounts[key] ?? 0
-        rightCounts[key] = idx + 1
+        console.log(`[StepwiseLabelPopup] saving RT#${i}: right=${rt.right || 'EQ'}, index=${i}, expCat=${fields[i].expCat}, expStrat=${fields[i].expStrat}`)
         labels.push({
           session_id: sid,
-          round_trip_index: idx,
+          round_trip_index: i,
           expected_category: fields[i].expCat,
           expected_strategy: fields[i].expStrat,
           actual_category: fields[i].actCat || fields[i].expCat,

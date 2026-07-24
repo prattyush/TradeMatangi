@@ -69,6 +69,12 @@ export default function PatternVsTradeComparison({
         ])
         if (cancelled) return
 
+        console.log('[Compare] sessionIds:', sessionIds)
+        console.log('[Compare] rtResults:', JSON.stringify(rtResults))
+        console.log('[Compare] labelResults:', JSON.stringify(labelResults))
+        console.log('[Compare] patternChart:', patternChart ? 'found (' + patternChart.annotations?.length + ' annotations)' : 'null')
+        console.log('[Compare] instrumentType:', instrumentType)
+
         const map = new Map<string, TradeLabel>()
         // Match labels to round-trips per session (both use same session_id)
         for (let si = 0; si < sessionIds.length; si++) {
@@ -90,6 +96,7 @@ export default function PatternVsTradeComparison({
         }
         setCategories(cats.categories)
         setStrategies(strats.strategies)
+        console.log('[Compare] labelByTradeId size:', map.size)
       } catch { /* ignore */ }
       setLoading(false)
     })()
