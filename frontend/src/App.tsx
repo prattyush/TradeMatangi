@@ -176,8 +176,9 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
   // net-qty→zero transition that happened during the just-completed bar.
   // All computation is in a SINGLE effect (bar_paused) — no timing gap
   // between trades-update and bar_paused effects across React batches.
-  const [stepwiseLabels, setStepwiseLabels] = useState<{ right: string; session_id: string }[] | null>(null)
+  const [stepwiseLabels, setStepwiseLabels] = useState<{ right: string; session_id: string; round_trip_index: number }[] | null>(null)
   const lastNetQtyRef = useRef({ eq: 0, ce: 0, pe: 0 })
+  const rtIndexCounterRef = useRef(0)
 
   // ── Price-pick state ────────────────────────────────────────────────────────
   const [pricePickOrderId, setPricePickOrderId] = useState<string | null>(null)
@@ -205,10 +206,11 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
     }
   }, [sim.sessionState])
 
-  // Reset net qty tracking on new session start
+  // Reset net qty tracking + round-trip index counter on new session start
   useEffect(() => {
     if (sim.sessionState === 'running' && sim.stepwise) {
       lastNetQtyRef.current = { eq: 0, ce: 0, pe: 0 }
+      rtIndexCounterRef.current = 0
       setStepwiseLabels(null)
     }
   }, [sim.sessionState, sim.stepwise])
@@ -225,10 +227,16 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
     const peQty = trades.filter(t => t.right === 'PE').reduce((sum, t) => sum + (t.side === 'BUY' ? t.quantity : -t.quantity), 0)
     const prev = lastNetQtyRef.current
 
-    const completed: { right: string; session_id: string }[] = []
-    if (prev.eq > 0 && eqQty === 0) completed.push({ right: '', session_id: sim.sessionId })
-    if (prev.ce > 0 && ceQty === 0) completed.push({ right: 'CE', session_id: sim.sessionId })
-    if (prev.pe > 0 && peQty === 0) completed.push({ right: 'PE', session_id: sim.sessionId })
+    const completed: { right: string; session_id: string; round_trip_index: number }[] = []
+    if (prev.eq > 0 && eqQty === 0) {
+      completed.push({ right: '', session_id: sim.sessionId, round_trip_index: rtIndexCounterRef.current++ })
+    }
+    if (prev.ce > 0 && ceQty === 0) {
+      completed.push({ right: 'CE', session_id: sim.sessionId, round_trip_index: rtIndexCounterRef.current++ })
+    }
+    if (prev.pe > 0 && peQty === 0) {
+      completed.push({ right: 'PE', session_id: sim.sessionId, round_trip_index: rtIndexCounterRef.current++ })
+    }
 
     lastNetQtyRef.current = { eq: eqQty, ce: ceQty, pe: peQty }
 
@@ -1098,7 +1106,7 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
           sid={sim.sessionId}
           date={sim.date}
           symbol={sim.symbol}
-          roundTrips={stepwiseLabels.map(l => ({ right: l.right, pnl: 0 }))}
+          roundTrips={stepwiseLabels.map(l => ({ right: l.right, pnl: 0, round_trip_index: l.round_trip_index }))}
           onDone={() => setStepwiseLabels(null)}
         />
       )}
