@@ -101,7 +101,7 @@ function PatternChart({symbol,date,annotations,topPatterns,activeStrategy,active
       {!activeTab&&isOpt&&(['underlying','CE','PE']as const).map(f=><Btn key={f} s onClick={()=>setInstFilter(f)} active={instFilter===f}>{f==='underlying'?'UL':f}</Btn>)}
       {!activeTab&&<div style={{width:1,height:16,background:'#30363d',margin:'0 4px'}}/>}
       <StrikeBtn active={!activeStrike} onClick={()=>setActiveStrike('')}>Underlying</StrikeBtn>
-      {patternTabs.map(s=><StrikeBtn key={s.key} active={activeStrike===s.right} onClick={()=>setActiveStrike(s.right)} right={s.right}>CE/PE</StrikeBtn>)}
+      {patternTabs.map(s=><StrikeBtn key={s.key} active={activeStrike===s.right} onClick={()=>setActiveStrike(s.right)} right={s.right}>{s.label}</StrikeBtn>)}
     </div>
     <div style={{display:'flex',alignItems:'center',gap:6,marginBottom:4}}><div style={{flex:1}}/>{onMax&&<Btn s onClick={onMax} title="Maximize">⤢</Btn>}</div>
     <div ref={cr} style={{flex:1}}/>
