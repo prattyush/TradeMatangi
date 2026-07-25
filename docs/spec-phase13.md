@@ -194,7 +194,7 @@ email in the header display for all user types.
 | Underlying Only checkbox fix | PR #317 | ✅ Merged to dev |
 | Buy/Sell Marker Drawing Tools | PR #319 | ✅ Merged to dev |
 | Stepwise Trade Labeling + Snapshot OHLC Fix | PR #326 | ✅ Merged to dev |
-| Pattern V/S Trading Comparison | WIP | ⏳ In Progress |
+| Pattern V/S Trading Comparison | WIP | ⏳ In Progress (PR pending) |
 
 ## PR Log — Phase 13
 
@@ -219,6 +219,8 @@ email in the header display for all user types.
 | Underlying Only checkbox fix — filter load panes, not gallery | feat/underlying-only-fix | PR #317 merged to dev |
 | Buy/Sell Marker Drawing Tools — markers in drawing toolbar | feat/buy-sell-marker-drawing-tools | PR #319 merged to dev |
 | Stepwise Trade Labeling + Snapshot OHLC Fix | feat/stepwise-labeling-and-snapshot-fix | PR #326 merged to dev |
+| Pattern V/S Trading Comparison — 2×2 grid side-by-side comparison | feat/pattern-vs-trading-comparison | PR #337 merged to dev |
+| Pattern V/S Trading Comparison — 2×2 grid + maximize + filters | feat/pattern-vs-trading-comparison (updates) | WIP |
 
 
 
@@ -339,19 +341,23 @@ See [implementation plan](./pattern-vs-trading-comparison-plan.md) for detailed 
 
 In the analysis window, users can compare trades taken against pattern annotations saved for the same day. A "📊 Compare" button appears on each analysis group card (next to 📸 Snapshots) when a pattern chart exists for that date/symbol.
 
-**Layout**: Side-by-side full-screen modal
-- **Left**: Trades chart (AnalysisChart) with markers showing expected pattern labels
-- **Right**: Pattern chart with annotations, filtered by category/strategy dropdowns
-- For options: both sides have underlying + CE/PE tab pills (all strikes)
-- For equity: both sides show only underlying
-- Button hidden if no pattern chart exists for the date
+**Layout**: Full-page 2×2 grid for options, single-row for equity
 
-In the analysis window, we can analyze the trades taken, by users for all types. In the pattern section, during create mode, user can create different strategies with a cateory and strategy. THe feature is that during analysis, if a pattern or strategy is declared for that day, the user can compare the trades taken against the patterns declared for that day. Specially useful in day trading scenario. 
-We will have anoother button like snapshot, but which compares the trades taken against the patterns (category/strategy with markers) declared for that same day. Both will be displayed side by side. Similar to labell trades view one side can have the trades taken markers, 
-1) For options trading, similar to labell trades, view of underlying with choose to see all trades or only CE or PE trades, and then also to switch to individual CE and PE charts for which trades were taken.
-2) for equity trading, the whole chart will be same, as their is only one chart.
+**Options mode (2×2 grid):**
+- **Top-left**: Trade markers on underlying with All/CE/PE filter buttons
+- **Top-right**: Pattern markers on underlying with UL/CE/PE instrument filter pills
+- **Bottom-left**: Collapsible CE/PE trade charts per strike with marker labels
+- **Bottom-right**: Collapsible CE/PE pattern charts per strike with annotations
+- All 4 panes have ⤢ maximize buttons
+- Category+strategy filter dropdowns apply to both underlying and option panes
 
-The other view will have the patterns with markers similar to what we have with view patterns chart, but here user will see options to switcch between underlying, CE and PE for options trading otherwise all are same for equity.
+**Equity mode:** Single row side-by-side (trades | patterns)
 
-Finally, the trades taken day, if the trades are labelled, then it show markers with the labeled value just like we have with pattern library view options. If trade is buy is any bar, show a Buy marker with trade label value, othwerwise leave it blank.
-Do, ask any questions if you have.
+**Files changed:**
+
+| File | Change |
+|------|--------|
+| `frontend/src/services/patternMarkers.ts` | **New** — shared marker utilities extracted from PatternLibrary |
+| `frontend/src/components/PatternVsTradeComparison.tsx` | **New** — full-page 2×2 comparison view |
+| `frontend/src/components/TradeAnalysis.tsx` | `getMarkerText` prop on AnalysisChart; Compare button + pattern check in GroupCard |
+| `frontend/src/pages/PatternLibrary.tsx` | Import from patternMarkers instead of local definitions |
