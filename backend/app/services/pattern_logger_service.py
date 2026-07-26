@@ -385,20 +385,22 @@ def find_chart_by_date(
     instrument_type: str,
     right: Optional[str] = None,
 ) -> Optional[dict]:
-    """Find the user's own chart record for a specific symbol/date/instrument/right."""
-    for item in _query_charts_for_owner(user_id):
-        if item.get("symbol") != symbol:
-            continue
-        if item.get("date") != date:
-            continue
-        if item.get("instrument_type") != instrument_type:
-            continue
-        if right and item.get("right") != right:
-            continue
-        chart = get_chart(item["chart_id"])
-        if chart:
-            chart["can_delete"] = chart.get("user_id") == user_id
-        return chart
+    """Find chart record (own or shared) for a specific symbol/date/instrument/right."""
+    for owner_id in get_accessible_owner_ids(user_id):
+        for item in _query_charts_for_owner(owner_id):
+            if item.get("symbol") != symbol:
+                continue
+            if item.get("date") != date:
+                continue
+            if item.get("instrument_type") != instrument_type:
+                continue
+            if right and item.get("right") != right:
+                continue
+            chart = get_chart(item["chart_id"])
+            if chart:
+                chart["can_delete"] = chart.get("user_id") == user_id
+            return chart
+    return None
     return None
 
 
