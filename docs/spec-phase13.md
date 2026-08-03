@@ -361,3 +361,19 @@ In the analysis window, users can compare trades taken against pattern annotatio
 | `frontend/src/components/PatternVsTradeComparison.tsx` | **New** — full-page 2×2 comparison view |
 | `frontend/src/components/TradeAnalysis.tsx` | `getMarkerText` prop on AnalysisChart; Compare button + pattern check in GroupCard |
 | `frontend/src/pages/PatternLibrary.tsx` | Import from patternMarkers instead of local definitions |
+##### Bug Fix: Breeze Paper Session Streaming (BUG-XIII-1) ✅ Complete
+
+Fixed a critical bug where paper trading sessions using Breeze (ICICI Direct) as the live streaming source never received ticks despite successful WebSocket connection and subscription.
+
+**Root cause:** Two independent bugs:
+1. `_get_breeze()` was called up to 3× per paper session (Phase-1 equity fetch, Phase-1 options fetch, Phase-2 WebSocket), each calling `generate_session()` which invalidated previous sessions on Breeze's server. The WebSocket subscribed successfully but silently received no ticks.
+2. `BreezeStreamManager._on_ticks` used `not self._queue` which evaluated to `True` for empty `RingQueue` objects (custom queue with `__len__` but no `__bool__`), silently discarding every tick.
+
+**Fix:**
+1. Cached `BreezeConnect` in `_get_breeze()` by credential key — single `generate_session()` per process
+2. Changed guard to `self._queue is None` (identity check instead of truthiness)
+3. Throttled diagnostic logging: first 6 candles, then every 60th up to 300 candles
+
+**Files:** `backend/app/services/broker_service.py`, `backend/app/services/breeze_service.py`
+
+**Test script:** `scripts/test_breeze_paper_flow.py` — standalone diagnostic replicating Phase 1+2 flow

@@ -66,8 +66,26 @@ def _read_breeze_credentials() -> dict[str, str]:
     }
 
 
+_cached_breeze = None
+_cached_breeze_creds: dict | None = None
+
+
 def _get_breeze():
-    """Create and authenticate a fresh BreezeConnect instance."""
+    """Create and authenticate a BreezeConnect instance.
+
+    Caches the instance by credential key so that multiple callers within the same
+    process (e.g. Phase-1 historical fetch + Phase-2 WebSocket streaming during a
+    paper session) share a single session.  Calling generate_session() more than once
+    invalidates earlier sessions on Breeze's server, which causes the WebSocket to
+    subscribe successfully but receive no ticks.
+    """
+    global _cached_breeze, _cached_breeze_creds
+    creds = _read_breeze_credentials()
+    creds_key = (creds["api_key"], creds["api_secret"], creds["session_token"])
+
+    if _cached_breeze is not None and _cached_breeze_creds == creds_key:
+        return _cached_breeze
+
     try:
         from breeze_connect import BreezeConnect
     except ImportError as e:
@@ -75,7 +93,6 @@ def _get_breeze():
             "breeze-connect is not installed. Run: pip install breeze-connect"
         ) from e
 
-    creds = _read_breeze_credentials()
     breeze = BreezeConnect(api_key=creds["api_key"])
     try:
         result = breeze.generate_session(
@@ -95,6 +112,8 @@ def _get_breeze():
             f"Breeze session generation failed: {result.get('Error', 'unknown error')}. "
             "Please refresh your session_token in data/accesskeys.ini."
         )
+    _cached_breeze = breeze
+    _cached_breeze_creds = creds_key
     return breeze
 
 
