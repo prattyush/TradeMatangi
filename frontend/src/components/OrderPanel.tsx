@@ -18,7 +18,7 @@ interface Props {
     orderType: 'TARGET' | 'LIMIT' | 'STOPLOSS',
     price: number,
     quantity: number | null,
-    opts: { is_stoploss?: boolean; funds_ratio_pct?: number; target_deviation_pct?: number },
+    opts: { is_stoploss?: boolean; funds_ratio_pct?: number; target_deviation_pct?: number; entry_sl_price?: number; group_id?: string },
   ) => Promise<void>
   onCancelOrder: (orderId: string) => Promise<void>
   onConvertOrder?: (orderId: string, newOrderType: 'TARGET' | 'LIMIT' | 'STOPLOSS', price?: number) => Promise<void>
@@ -106,6 +106,16 @@ export default function OrderPanel({
   const [placing, setPlacing] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
+  // Auto-stoploss on entry state
+  const [slOnEntry, setSlOnEntry] = useState(false)
+  const [entrySlPrice, setEntrySlPrice] = useState('')
+  const parsedEntrySl = parseFloat(entrySlPrice)
+
+  // AutoStop strategy SL-on-entry state (separate from trade-panel SL)
+  const [slOnEntryAuto, setSlOnEntryAuto] = useState(false)
+  const [entrySlPriceAuto, setEntrySlPriceAuto] = useState('')
+  const parsedEntrySlAuto = parseFloat(entrySlPriceAuto)
+
   // Strategy tab state
   const [stratDirection, setStratDirection] = useState<'BUY' | 'SELL'>('BUY')
   const [stratRight, setStratRight] = useState<'CE' | 'PE'>(activeRight ?? 'CE')
@@ -166,6 +176,20 @@ export default function OrderPanel({
     }
   }, [injectedEditPrice])
 
+  // Inject chart-picked price into SL-on-entry field
+  useEffect(() => {
+    if (injectedEditPrice && injectedEditPrice.orderId === '__sl__') {
+      setEntrySlPrice(injectedEditPrice.price.toFixed(2))
+    }
+  }, [injectedEditPrice])
+
+  // Inject chart-picked price into AutoStop SL-on-entry field
+  useEffect(() => {
+    if (injectedEditPrice && injectedEditPrice.orderId === '__sl_auto__') {
+      setEntrySlPriceAuto(injectedEditPrice.price.toFixed(2))
+    }
+  }, [injectedEditPrice])
+
   // Inject chart-picked price into the edit field
   useEffect(() => {
     if (injectedEditPrice && injectedEditPrice.orderId === editingOrderId) {
@@ -216,14 +240,17 @@ export default function OrderPanel({
     }
     setError(null)
     setPlacing(true)
+    // Build auto-stoploss opts for TARGET / LIMIT / MARKET orders
+    const entrySlOpts = (orderType === 'TARGET' || orderType === 'LIMIT' || (orderType === 'MARKET' && slOnEntry && !isNaN(parsedEntrySl) && parsedEntrySl > 0))
+      ? { entry_sl_price: slOnEntry && !isNaN(parsedEntrySl) && parsedEntrySl > 0 ? parsedEntrySl : undefined, group_id: crypto.randomUUID() }
+      : {}
     try {
       if (orderType === 'MARKET') {
-        // 1% deviation ensures immediate fill: BUY limit above market, SELL limit below
         const mktPrice = side === 'BUY' ? currentPrice * 1.01 : currentPrice * 0.99
         if (fundsRatioMode) {
-          await onPlaceOrder(side, 'LIMIT', mktPrice, null, { funds_ratio_pct: ratioPct })
+          await onPlaceOrder(side, 'LIMIT', mktPrice, null, { funds_ratio_pct: ratioPct, ...entrySlOpts })
         } else {
-          await onPlaceOrder(side, 'LIMIT', mktPrice, quantity, {})
+          await onPlaceOrder(side, 'LIMIT', mktPrice, quantity, { ...entrySlOpts })
         }
       } else if (orderType === 'STOPLOSS') {
         await onPlaceOrder(side, 'STOPLOSS', parsedPrice, slQty, { is_stoploss: true })
@@ -231,9 +258,10 @@ export default function OrderPanel({
         await onPlaceOrder(side, orderType, parsedPrice, null, {
           funds_ratio_pct: ratioPct,
           target_deviation_pct: deviation,
+          ...entrySlOpts,
         })
       } else {
-        await onPlaceOrder(side, orderType, parsedPrice, quantity, { target_deviation_pct: deviation })
+        await onPlaceOrder(side, orderType, parsedPrice, quantity, { target_deviation_pct: deviation, ...entrySlOpts })
       }
       setPrice('')
       const rightTag = instrumentType === 'options' && activeRight ? ` ${activeRight}` : ''
@@ -328,6 +356,9 @@ export default function OrderPanel({
         ? { fundsRatioPct: fundsRatios[stratRatio] / 100, direction }
         : { quantity: stratQty, direction }
       let extraOpts: Record<string, unknown> = {}
+      if (strategyType === 'AutoStop' && slOnEntryAuto && !isNaN(parsedEntrySlAuto) && parsedEntrySlAuto > 0) {
+        extraOpts.entry_sl_price = parsedEntrySlAuto
+      }
       if (strategyType === 'TargetProfit') {
         const v = parseFloat(tpValue)
         if (isNaN(v) || v <= 0) {
@@ -572,6 +603,42 @@ export default function OrderPanel({
                   ? `Trigger: ${stratDirection === 'BUY' || instrumentType === 'options' ? 'bar high' : 'bar low'}`
                   : `Trigger: close ± ${autostopDeviationPct}%`}
               </div>
+              {/* SL-on-entry expandable for AutoStop */}
+              <div
+                onClick={() => { setSlOnEntryAuto(v => !v); if (!slOnEntryAuto) { setEntrySlPriceAuto('') } }}
+                style={{ fontSize: 10, color: '#8b949e', cursor: 'pointer', userSelect: 'none', marginBottom: 4, display: 'flex', alignItems: 'center', gap: 4 }}
+              >
+                <span>{slOnEntryAuto ? '▼' : '▶'}</span>
+                <span>Stoploss on entry</span>
+                {slOnEntryAuto && parsedEntrySlAuto > 0 ? (
+                  <span style={{ color: '#f0883e', fontWeight: 600 }}>@ {parsedEntrySlAuto.toFixed(2)}</span>
+                ) : null}
+              </div>
+              {slOnEntryAuto && (
+                <div style={{ marginBottom: 4, padding: '4px 6px', background: '#0d1117', borderRadius: 4, border: '1px solid #21262d' }}>
+                  <div style={{ display: 'flex', gap: 3 }}>
+                    <input
+                      type="number"
+                      value={entrySlPriceAuto}
+                      onChange={e => setEntrySlPriceAuto(e.target.value)}
+                      placeholder="SL Price"
+                      style={{
+                        flex: 1, minWidth: 0, padding: '4px 6px', background: '#161b22',
+                        border: '1px solid #30363d', borderRadius: 4,
+                        color: '#e6edf3', fontSize: 11, boxSizing: 'border-box',
+                      }}
+                    />
+                    <button
+                      onClick={() => onRequestPricePick?.('__sl_auto__')}
+                      title="Pick SL price from chart"
+                      style={{
+                        padding: '3px 5px', background: '#21262d', border: '1px solid #30363d',
+                        borderRadius: 4, color: '#8b949e', cursor: 'pointer', fontSize: 10,
+                      }}
+                    >⊕</button>
+                  </div>
+                </div>
+              )}
               <button
                 onClick={() => handleStartStrategy('AutoStop')}
                 disabled={stratLoading === 'AutoStop'}
@@ -1065,6 +1132,64 @@ export default function OrderPanel({
       )}
 
       {error && <div style={{ fontSize: 11, color: '#f85149' }}>{error}</div>}
+
+      {/* Auto-Stoploss on Entry — expandable section for TARGET / LIMIT / MARKET */}
+      {isActive && (orderType === 'TARGET' || orderType === 'LIMIT' || orderType === 'MARKET') && (
+        <div style={{ marginTop: 4 }}>
+          <div
+            onClick={() => { setSlOnEntry(v => !v); if (!slOnEntry) { setEntrySlPrice('') } }}
+            style={{ fontSize: 11, color: '#8b949e', cursor: 'pointer', userSelect: 'none', display: 'flex', alignItems: 'center', gap: 4 }}
+          >
+            <span>{slOnEntry ? '▼' : '▶'}</span>
+            <span>Stoploss on entry</span>
+            {slOnEntry && parsedEntrySl > 0 ? (
+              <span style={{ color: '#f0883e', fontWeight: 600 }}>@ {parsedEntrySl.toFixed(2)}</span>
+            ) : null}
+          </div>
+          {slOnEntry && (
+            <div style={{ marginTop: 4, padding: '6px 8px', background: '#0d1117', borderRadius: 5, border: '1px solid #21262d' }}>
+              <div style={{ display: 'flex', gap: 4 }}>
+                <input
+                  type="number"
+                  value={entrySlPrice}
+                  onChange={e => setEntrySlPrice(e.target.value)}
+                  placeholder={currentPrice > 0 ? currentPrice.toFixed(2) : 'SL Price'}
+                  disabled={!isActive}
+                  style={{
+                    flex: 1, minWidth: 0, padding: '5px 8px', background: '#161b22',
+                    border: '1px solid #30363d', borderRadius: 6,
+                    color: '#e6edf3', fontSize: 12, boxSizing: 'border-box',
+                  }}
+                />
+                <button
+                  onClick={() => onRequestPricePick('__sl__')}
+                  disabled={!isActive}
+                  title="Pick SL price from chart"
+                  style={{
+                    padding: '4px 7px', background: '#21262d', border: '1px solid #30363d',
+                    borderRadius: 6, color: isActive ? '#8b949e' : '#484f58',
+                    cursor: isActive ? 'pointer' : 'not-allowed', fontSize: 11,
+                  }}
+                >⊕</button>
+                <button
+                  onClick={() => currentPrice > 0 && setEntrySlPrice(currentPrice.toFixed(2))}
+                  disabled={!isActive || currentPrice <= 0}
+                  title="Use LTP"
+                  style={{
+                    padding: '4px 7px', background: '#21262d', border: '1px solid #30363d',
+                    borderRadius: 6, color: isActive && currentPrice > 0 ? '#8b949e' : '#484f58',
+                    cursor: isActive && currentPrice > 0 ? 'pointer' : 'not-allowed', fontSize: 10,
+                  }}
+                >LTP</button>
+              </div>
+              <div style={{ fontSize: 10, color: '#484f58', marginTop: 3 }}>
+                Auto-places STOPLOSS when entry fills.
+                {orderType === 'MARKET' && ' Uses market limit price for SL trigger validation.'}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       <button
         disabled={!isActive || placing}
