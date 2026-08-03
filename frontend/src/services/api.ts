@@ -73,6 +73,8 @@ export interface Order {
   is_stoploss: boolean
   right?: string         // "CE" or "PE" for options orders
   strike?: number | null // options strike; null for equity or old orders (backward-compat)
+  entry_sl_price?: number | null  // auto-stoploss price set at entry time
+  group_id?: string | null        // links entry order with auto-SL order
 }
 
 export interface HistoricalDataResponse {
@@ -106,6 +108,8 @@ export interface UserSettingsResponse {
   analysis_price_source?: string
   experimental_patterns_enabled?: boolean
   pattern_share_emails?: string
+  entry_auto_sl_enabled?: boolean
+  entry_auto_sl_delay_sec?: number
 }
 
 // ── Strategy types ──────────────────────────────────────────────────────────
@@ -135,6 +139,7 @@ export interface StartStrategyRequest {
   breakeven_mode?: 'shift_sl' | 'limit_order'
   lock_profit_value?: number
   lock_profit_is_pct?: boolean
+  entry_sl_price?: number          // auto-stoploss price for AutoStop entry
 }
 
 export interface SimulationStartResponse {
@@ -798,9 +803,9 @@ const api = {
     order_type: 'TARGET' | 'LIMIT' | 'STOPLOSS',
     price: number,
     quantityOrRatio: number | null,
-    opts: { is_stoploss?: boolean; funds_ratio_pct?: number; right?: string; target_deviation_pct?: number } = {},
+    opts: { is_stoploss?: boolean; funds_ratio_pct?: number; right?: string; target_deviation_pct?: number; entry_sl_price?: number; group_id?: string } = {},
   ): Promise<Order> {
-    const { target_deviation_pct, ...restOpts } = opts
+    const { target_deviation_pct, entry_sl_price, group_id, ...restOpts } = opts
     const body: Record<string, unknown> = { session_id, side, order_type, ...restOpts }
     if (order_type === 'LIMIT') {
       body.limit_price = price
@@ -814,6 +819,12 @@ const api = {
     }
     if (target_deviation_pct != null) {
       body.target_deviation_pct = target_deviation_pct
+    }
+    if (entry_sl_price != null) {
+      body.entry_sl_price = entry_sl_price
+    }
+    if (group_id != null) {
+      (body as Record<string, unknown>).group_id = group_id
     }
     const res = await fetch(`${BACKEND_URL}/api/orders`, {
       method: 'POST',

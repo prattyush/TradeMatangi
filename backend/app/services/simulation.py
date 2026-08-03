@@ -427,6 +427,15 @@ def _emit_tick_and_check_orders(
         from app.services.order_service import get_open_orders, get_order, OrderStatus
         running_before = {s.strategy_id: s for s in strategy_service.list_running(session.session_id)}
         before_ids = {o.order_id for o in get_open_orders(session.session_id)}
+
+        # Auto-stoploss-on-entry: place SL orders for filled entries.
+        # Must run AFTER before_ids snapshot so the diff captures new SL orders,
+        # but BEFORE strategy_service.on_tick() so strategies like BreakEven
+        # can see and modify the newly placed SL.
+        for order in filled:
+            if order.entry_sl_price is not None:
+                from app.services.entry_sl_watcher import on_entry_filled
+                on_entry_filled(order, session)
         strategy_service.on_tick(session, tick, tick_right)
         after_open_orders = get_open_orders(session.session_id)
         after_ids = {o.order_id for o in after_open_orders}
@@ -456,6 +465,8 @@ def _emit_tick_and_check_orders(
                     "is_stoploss": new_order.is_stoploss,
                     "right": new_order.right,
                     "strike": new_order.strike,
+                    "entry_sl_price": new_order.entry_sl_price,
+                    "group_id": new_order.group_id,
                 })
         # Emit completion events for strategies that just finished
         running_after_ids = {s.strategy_id for s in strategy_service.list_running(session.session_id)}

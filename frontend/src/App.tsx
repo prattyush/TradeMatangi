@@ -521,34 +521,26 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
   const handleStartStrategy = useCallback(async (
     strategyType: StartStrategyRequest['strategy_type'],
     right: 'CE' | 'PE' | null,
-    opts: {
-      quantity?: number
-      fundsRatioPct?: number
-      direction?: 'BUY' | 'SELL'
-      onlyInProfit?: boolean
-      targetProfitValue?: number
-      targetProfitIsPct?: boolean
-      lockProfitValue?: number
-      lockProfitIsPct?: boolean
-    },
+    opts: Record<string, unknown>,
   ) => {
     if (!sim.sessionId) return
     const resp = await api.startStrategy({
       session_id: sim.sessionId,
       strategy_type: strategyType,
       right: right ?? undefined,
-      quantity: opts.quantity,
-      funds_ratio_pct: opts.fundsRatioPct,
-      direction: opts.direction,
+      quantity: opts.quantity as number | undefined,
+      funds_ratio_pct: opts.fundsRatioPct as number | undefined,
+      direction: opts.direction as 'BUY' | 'SELL' | undefined,
       autostop_trigger_type: autostopTriggerType,
       autostop_deviation_pct: autostopDeviationPct,
-      only_in_profit: opts.onlyInProfit ?? aggrSlOnlyInProfit,
+      only_in_profit: (opts.onlyInProfit as boolean) ?? aggrSlOnlyInProfit,
       breakeven_mode: breakevenMode,
-      target_profit_value: opts.targetProfitValue,
-      target_profit_is_pct: opts.targetProfitIsPct ?? false,
+      target_profit_value: opts.targetProfitValue as number | undefined,
+      target_profit_is_pct: (opts.targetProfitIsPct as boolean) ?? false,
       target_profit_buffer_ticks: targetProfitBufferTicks,
-      lock_profit_value: opts.lockProfitValue,
-      lock_profit_is_pct: opts.lockProfitIsPct ?? false,
+      lock_profit_value: opts.lockProfitValue as number | undefined,
+      lock_profit_is_pct: (opts.lockProfitIsPct as boolean) ?? false,
+      entry_sl_price: opts.entry_sl_price as number | undefined,
     })
     setRunningStrategies(prev => [...prev, resp])
   }, [sim.sessionId, autostopTriggerType, autostopDeviationPct, breakevenMode, targetProfitBufferTicks, aggrSlOnlyInProfit])

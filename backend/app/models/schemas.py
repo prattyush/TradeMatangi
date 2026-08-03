@@ -182,6 +182,8 @@ class Order(BaseModel):
     strike: int | None = None      # options strike price; None for equity
     kotak_order_id: str | None = None  # set for real-session orders placed on Kotak
     kotak_fill_confirmed: bool = False  # True once Kotak WebSocket or reconcile records the fill
+    entry_sl_price: float | None = None  # auto-stoploss price set at entry time
+    group_id: str | None = None          # links entry order with its auto-placed SL order
 
 
 class PlaceOrderRequest(BaseModel):
@@ -196,6 +198,8 @@ class PlaceOrderRequest(BaseModel):
     right: str | None = None             # "CE" or "PE" for options orders; None for equity
     strike: int | None = None            # options strike; populated server-side from session when omitted
     target_deviation_pct: float = 0.01   # deviation used to compute limit from trigger for TARGET orders
+    entry_sl_price: float | None = None  # optional auto-stoploss placed on entry fill
+    group_id: str | None = None          # shared UUID linking entry + auto-SL order
 
 
 class UpdateOrderRequest(BaseModel):
@@ -258,6 +262,8 @@ class UserSettingsResponse(BaseModel):
     analysis_price_source: str = "options"
     experimental_patterns_enabled: bool = False
     pattern_share_emails: str = ""
+    entry_auto_sl_enabled: bool = False
+    entry_auto_sl_delay_sec: int = 3
 
 
 class UserSettingsUpdateRequest(BaseModel):
@@ -268,6 +274,8 @@ class UserSettingsUpdateRequest(BaseModel):
     analysis_price_source: str | None = None
     experimental_patterns_enabled: bool | None = None
     pattern_share_emails: str | None = None
+    entry_auto_sl_enabled: bool | None = None
+    entry_auto_sl_delay_sec: int | None = Field(default=None, ge=1, le=30)
 
 
 # ── Strategies ────────────────────────────────────────────────────────────────
@@ -304,6 +312,8 @@ class StartStrategyRequest(BaseModel):
     # LockProfit settings
     lock_profit_value: float | None = None     # absolute price or % of session capital
     lock_profit_is_pct: bool = False           # True = % of session capital; False = absolute price
+    # Auto-stop loss on entry (for AutoStop strategy)
+    entry_sl_price: float | None = None        # if set, auto-places SL when AutoStop fills
 
 
 class UpdateStrategyPriceRequest(BaseModel):
