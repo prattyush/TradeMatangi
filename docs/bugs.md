@@ -215,3 +215,19 @@ Look at each of the bugs, fix them and then mark them resolved as well if approv
 - **Fix**: Added `cancel_open_stoploss(right)` to `backend_client.py` — fetches open orders and DELETEs any `is_stoploss` orders matching the instrument right. Called in `_evaluate_exit` for `exit_position` only (SL/TP commands keep the position open). The cancel fires **before** `exit_position_market()` to guarantee no overlap window on Kotak.
 - **Files**: `aihelper/services/backend_client.py`, `aihelper/services/command_evaluator.py`.
 
+
+## Phase-XIII Enhancements
+
+### Open Bugs
+
+**[RESOLVED]** Breeze paper session receives no streaming ticks — WebSocket subscribes successfully but Phase 3 "waiting for ticks" timeout (BUG-XIII-1).
+- **Symptom**: Starting a paper trading session with Breeze as the live streaming source showed "BreezeStreamManager started for 3 instruments" and "Stock NIFTY subscribed successfully" ×3, followed by "Phase 3 — waiting for live ticks" with 30s timeouts. No tick data reached the UI. The standalone `scripts/test_broker_streaming.py breeze` worked correctly — it received ticks from the same instruments.
+- **Root cause**: Two independent bugs.
+  1. **Duplicate `generate_session()` calls**: Phase 1 (historical data fetch via REST) called `_get_breeze()` which called `generate_session()`. Phase 2 (WebSocket streaming via `BreezeStreamManager.start()`) called `_get_breeze()` again, doing a second `generate_session()`. Breeze's server invalidates previous session tokens on re-authentication, so the WebSocket connected successfully but silently dropped all tick data because its auth session had been invalidated by the second call.
+  2. **Truthiness check on `RingQueue`**: `BreezeStreamManager._on_ticks` had `if not self._queue or not self._loop: return`. `self._queue` is a `RingQueue` (custom `asyncio.Queue` replacement with `__len__` but no `__bool__`). When the queue is empty (normal at startup), `bool(ring_queue)` returns `False` (Python delegates to `len() == 0`), causing every tick to be silently discarded immediately after arrival. Even after fixing the session caching, ticks were still blocked by this guard.
+- **Fix**:
+  1. **`broker_service.py`**: Cached the `BreezeConnect` instance in `_get_breeze()` keyed by credentials tuple `(api_key, api_secret, session_token)`. All callers within the same process now share a single session, so `generate_session()` is called exactly once per process.
+  2. **`breeze_service.py`**: Changed the guard from `not self._queue or not self._loop` to `self._queue is None or self._loop is None` — explicitly checking for `None` instead of relying on truthiness of an object with `__len__`.
+  3. **Throttled logging**: Reduced verbose `_on_ticks` diagnostic logging to first 6 completed candles, then every 60th up to 300 candles (~5 min), then silent — sufficient to confirm data flow without flooding logs for multi-hour sessions.
+- **Files**: `backend/app/services/broker_service.py`, `backend/app/services/breeze_service.py`.
+- **Test script**: `scripts/test_breeze_paper_flow.py` — reproduces the exact paper session Phase 1→Phase 2 flow in isolation to diagnose streaming issues.
