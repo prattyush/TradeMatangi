@@ -343,7 +343,12 @@ def _on_bar_close_autostop(
 
     from app.services.order_service import place_order
     from app.models.schemas import TradeSide, OrderType
+    import uuid as _uuid
     side = TradeSide.BUY if direction == "BUY" else TradeSide.SELL
+    entry_sl_price = meta.get("entry_sl_price")
+    group_id = None
+    if entry_sl_price is not None:
+        group_id = str(_uuid.uuid4())
     try:
         place_order(
             session_id=session.session_id,
@@ -357,10 +362,13 @@ def _on_bar_close_autostop(
             right=tick_right,
             strike=order_strike,
             user_id=session.user_id,
+            entry_sl_price=entry_sl_price,
+            group_id=group_id,
         )
         logger.info(
-            "AutoStop %s placed %s TARGET at %.2f for %s right=%s",
+            "AutoStop %s placed %s TARGET at %.2f for %s right=%s sl=%.2f",
             strategy.strategy_id, direction, trigger_price, session.symbol, tick_right,
+            entry_sl_price if entry_sl_price else 0,
         )
     except Exception as exc:
         logger.warning("AutoStop %s: place_order failed: %s", strategy.strategy_id, exc)

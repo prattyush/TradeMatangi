@@ -28,6 +28,8 @@ DEFAULT_SETTINGS: dict = {
     "analysis_price_source": "options",
     "experimental_patterns_enabled": False,
     "pattern_share_emails": "",
+    "entry_auto_sl_enabled": False,
+    "entry_auto_sl_delay_sec": 3,
 }
 
 
@@ -80,6 +82,8 @@ def get_settings(user_id: str) -> dict:
             "analysis_price_source": str(item.get("analysis_price_source", DEFAULT_SETTINGS["analysis_price_source"])),
             "experimental_patterns_enabled": bool(item.get("experimental_patterns_enabled", DEFAULT_SETTINGS["experimental_patterns_enabled"])),
             "pattern_share_emails": _normalize_share_emails_value(item.get("pattern_share_emails", DEFAULT_SETTINGS["pattern_share_emails"])),
+            "entry_auto_sl_enabled": bool(item.get("entry_auto_sl_enabled", DEFAULT_SETTINGS["entry_auto_sl_enabled"])),
+            "entry_auto_sl_delay_sec": int(item.get("entry_auto_sl_delay_sec", DEFAULT_SETTINGS["entry_auto_sl_delay_sec"])),
         }
     except Exception:
         logger.exception("Failed to get settings for user %s", user_id)

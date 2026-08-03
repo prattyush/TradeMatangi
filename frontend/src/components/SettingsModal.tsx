@@ -37,6 +37,9 @@ const GUARDRAIL_MAXSIZE_MODE_KEY = 'guardrailMaxSizeMode'
 const GUARDRAIL_MAXSIZE_PCT_KEY = 'guardrailMaxSizePct'
 const GUARDRAIL_MAXSIZE_VALUE_KEY = 'guardrailMaxSizeValue'
 
+const ENTRY_AUTO_SL_ENABLED_KEY = 'entryAutoSlEnabled'
+const ENTRY_AUTO_SL_DELAY_KEY = 'entryAutoSlDelay'
+
 export function loadGuardRailBlockBars(): number {
   const v = parseInt(localStorage.getItem(GUARDRAIL_BLOCK_BARS_KEY) ?? '')
   return isNaN(v) || v < 1 || v > 20 ? 3 : v
@@ -80,6 +83,15 @@ export function loadGuardRailMaxSizePct(): number {
 export function loadGuardRailMaxSizeValue(): number {
   const v = parseFloat(localStorage.getItem(GUARDRAIL_MAXSIZE_VALUE_KEY) ?? '')
   return isNaN(v) || v < 0 ? 0 : v
+}
+
+export function loadEntryAutoSlEnabled(): boolean {
+  return localStorage.getItem(ENTRY_AUTO_SL_ENABLED_KEY) === 'true'
+}
+
+export function loadEntryAutoSlDelay(): number {
+  const v = parseInt(localStorage.getItem(ENTRY_AUTO_SL_DELAY_KEY) ?? '')
+  return isNaN(v) || v < 2 || v > 30 ? 3 : v
 }
 
 export function loadPnlPctMode(): boolean {
@@ -246,6 +258,8 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
   const [grCooldownEnabled, setGrCooldownEnabled] = useState(loadGuardRailCooldownEnabled)
   const [autoStartSnapshots, setAutoStartSnapshots] = useState(loadAutoStartEventSnapshots)
   const [stepwiseLabelingPopup, setStepwiseLabelingPopup] = useState(loadStepwiseLabelingPopupEnabled)
+  const [entryAutoSlEnabled, setEntryAutoSlEnabled] = useState(loadEntryAutoSlEnabled)
+  const [entryAutoSlDelay, setEntryAutoSlDelay] = useState(loadEntryAutoSlDelay)
   const [grBlockBarsInput, setGrBlockBarsInput] = useState(() => String(loadGuardRailBlockBars()))
   const [grCooldownBlockBarsInput, setGrCooldownBlockBarsInput] = useState(() => String(loadGuardRailCooldownBlockBars()))
   const [grCooldownLossesInput, setGrCooldownLossesInput] = useState(() => String(loadGuardRailCooldownLosses()))
@@ -319,6 +333,15 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
         }
         if (s.pattern_share_emails != null) {
           setPatternShareEmails(s.pattern_share_emails)
+        }
+        // Sync entry auto-stoploss settings
+        if (s.entry_auto_sl_enabled != null) {
+          setEntryAutoSlEnabled(s.entry_auto_sl_enabled)
+          localStorage.setItem(ENTRY_AUTO_SL_ENABLED_KEY, String(s.entry_auto_sl_enabled))
+        }
+        if (s.entry_auto_sl_delay_sec != null) {
+          setEntryAutoSlDelay(s.entry_auto_sl_delay_sec)
+          localStorage.setItem(ENTRY_AUTO_SL_DELAY_KEY, String(s.entry_auto_sl_delay_sec))
         }
       }).catch(() => {})
 
@@ -1129,6 +1152,67 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
                 color: /fail|invalid|must|error|not match/i.test(status) ? '#f85149' : '#3fb950',
               }}>{status}</div>
             )}
+
+            {/* Entry Auto-Stoploss */}
+            <div style={{ borderTop: '1px solid #21262d', paddingTop: 16 }}>
+              <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 10, fontWeight: 600 }}>
+                ENTRY AUTO-STOPLOSS
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' }}>
+                  <div
+                    onClick={() => {
+                      const next = !entryAutoSlEnabled
+                      setEntryAutoSlEnabled(next)
+                      localStorage.setItem(ENTRY_AUTO_SL_ENABLED_KEY, String(next))
+                      api.updateUserSettings({ entry_auto_sl_enabled: next }).catch(() => {})
+                      if (!next) localStorage.removeItem(ENTRY_AUTO_SL_DELAY_KEY)
+                    }}
+                    style={{
+                      width: 36, height: 20, borderRadius: 10,
+                      background: entryAutoSlEnabled ? '#1f6feb' : '#30363d',
+                      position: 'relative', cursor: 'pointer', transition: 'background 0.15s',
+                      flexShrink: 0,
+                    }}
+                  >
+                    <div style={{
+                      position: 'absolute', top: 2,
+                      left: entryAutoSlEnabled ? 18 : 2,
+                      width: 16, height: 16, borderRadius: '50%',
+                      background: '#e6edf3', transition: 'left 0.15s',
+                    }} />
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 12, color: '#e6edf3' }}>Auto-Stoploss on Entry</div>
+                    <div style={{ fontSize: 11, color: '#484f58', marginTop: 2 }}>
+                      Automatically places a STOPLOSS order when any entry order (TARGET, LIMIT, MARKET, AutoStop) fills
+                    </div>
+                  </div>
+                </label>
+                {entryAutoSlEnabled && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginLeft: 46 }}>
+                    <span style={{ fontSize: 11, color: '#8b949e' }}>Real trading delay:</span>
+                    <input
+                      type="number"
+                      value={entryAutoSlDelay}
+                      min={1} max={30}
+                      onChange={e => {
+                        const v = Math.min(30, Math.max(1, parseInt(e.target.value) || 3))
+                        setEntryAutoSlDelay(v)
+                        localStorage.setItem(ENTRY_AUTO_SL_DELAY_KEY, String(v))
+                        api.updateUserSettings({ entry_auto_sl_delay_sec: v }).catch(() => {})
+                      }}
+                      style={{
+                        width: 48, padding: '3px 6px', background: '#0d1117',
+                        border: '1px solid #30363d', borderRadius: 4,
+                        color: '#e6edf3', fontSize: 12, textAlign: 'center',
+                      }}
+                    />
+                    <span style={{ fontSize: 11, color: '#484f58' }}>seconds</span>
+                  </div>
+                )}
+              </div>
+            </div>
 
             </> /* end General tab */}
 

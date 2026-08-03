@@ -138,6 +138,8 @@ async def place_order(req: PlaceOrderRequest):
             target_deviation_pct=req.target_deviation_pct,
             user_id=session.user_id,
             margin_rate=order_margin_rate,
+            entry_sl_price=req.entry_sl_price,
+            group_id=req.group_id,
         )
     except InsufficientFundsError as exc:
         raise HTTPException(status_code=402, detail=str(exc))

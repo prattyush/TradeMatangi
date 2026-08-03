@@ -119,6 +119,8 @@ def start_strategy(req: StartStrategyRequest, user_id: str = Depends(get_request
         metadata["quantity"] = req.quantity
     if req.funds_ratio_pct is not None:
         metadata["funds_ratio_pct"] = req.funds_ratio_pct
+    if req.entry_sl_price is not None:
+        metadata["entry_sl_price"] = req.entry_sl_price
 
     # LockProfit: resolve pct → absolute price at start time
     if req.strategy_type == StrategyType.LOCK_PROFIT:

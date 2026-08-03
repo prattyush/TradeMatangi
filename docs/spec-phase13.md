@@ -377,3 +377,51 @@ Fixed a critical bug where paper trading sessions using Breeze (ICICI Direct) as
 **Files:** `backend/app/services/broker_service.py`, `backend/app/services/breeze_service.py`
 
 **Test script:** `scripts/test_breeze_paper_flow.py` — standalone diagnostic replicating Phase 1+2 flow
+
+##### Auto-Stoploss on Entry ⏳ In Progress
+
+Users can optionally specify a stoploss price when placing any entry order (TARGET, LIMIT, MARKET, or AutoStop strategy). When the entry order fills, the system automatically places a matching STOPLOSS order for the filled quantity. Works across simulated, paper, real/Kotak, and stepwise trading sessions.
+
+**Architecture:**
+- `EntryStoplossWatcher` (`backend/app/services/entry_sl_watcher.py`) — passive observer that hooks into order-fill events
+- Triggers on `order_filled` events in `_emit_tick_and_check_orders()` (sim/paper/stepwise) and Kotak fill callbacks (real)
+- For real sessions: configurable delay timer (default 3 s) to handle partial fills from Kotak. Timer resets on additional fills in the same group
+- Uses `group_id` to link entry + auto-SL orders in the UI
+
+**Settings:**
+- `entry_auto_sl_enabled` (default `false`) — global toggle in Settings
+- `entry_auto_sl_delay_sec` (default `3`, range 1–30) — delay for real/Kotak sessions
+
+**Order model changes:**
+- `entry_sl_price: float | None` — stoploss price specified at entry time
+- `group_id: str | None` — shared UUID linking entry order with its auto-placed SL
+
+**UI (OrderPanel):**
+- Expandable "Stoploss on entry" section in TARGET, LIMIT, and Mkt tabs
+- Absolute price input with chart-click selection
+- Validation: SL < entry_price for BUY, SL > entry_price for SELL
+- Disabled when `entry_auto_sl_enabled` is off
+
+**AutoStop strategy support:**
+- `StartStrategyRequest.entry_sl_price` — optional, auto-places SL when AutoStop TARGET fills
+- Group ID generated server-side in `_on_bar_close_autostop()`
+
+**Stepwise mode:**
+- SL order placed in the same bar's tick loop
+- If price reverses to SL trigger within the same bar, both entry and exit trades execute
+
+**Files changed:**
+
+| File | Change |
+|------|--------|
+| `backend/app/models/schemas.py` | Added `entry_sl_price`, `group_id` to `Order` and `PlaceOrderRequest`; added `entry_auto_sl_enabled/delay` to user settings models; added `entry_sl_price` to `StartStrategyRequest` |
+| `backend/app/services/entry_sl_watcher.py` | **New** — `on_entry_filled()`, `_place_sl_immediately()`, `_schedule_delayed_sl()`, `cancel_pending_for_group()` |
+| `backend/app/services/order_service.py` | `place_order()` accepts `entry_sl_price` + `group_id`; `_write_order_to_db()` persists them |
+| `backend/app/services/simulation.py` | `_emit_tick_and_check_orders()` calls `on_entry_filled()` after fills |
+| `backend/app/services/strategy_service.py` | `_on_bar_close_autostop()` passes `entry_sl_price` + `group_id` when placing TARGET |
+| `backend/app/services/user_settings_service.py` | Added `entry_auto_sl_enabled` + `entry_auto_sl_delay_sec` defaults |
+| `backend/app/routers/orders.py` | Passes `entry_sl_price` from `PlaceOrderRequest` to `place_order()` |
+| `backend/app/routers/strategies.py` | Passes `entry_sl_price` from `StartStrategyRequest` to metadata |
+| `frontend/src/services/api.ts` | `Order` interface + `placeOrder` body include `entry_sl_price`, `group_id` |
+| `frontend/src/components/OrderPanel.tsx` | Expandable "Stoploss on entry" section in entry tabs |
+| `frontend/src/components/SettingsPopup.tsx` | Toggle + delay input for entry auto-SL |
