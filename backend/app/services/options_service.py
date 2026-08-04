@@ -347,6 +347,11 @@ def load_options_dataframe(
         df.index = df.index.tz_localize("UTC")
     else:
         df.index = df.index.tz_convert("UTC")
+    # Trim post-close data from stale cached parquets (SEBI 15:15 effective 03 Aug 2026)
+    from app.config import get_market_close
+    close = get_market_close(date)
+    cutoff = pd.Timestamp(f"{date} {close}", tz="UTC")
+    df = df[df.index < cutoff]
     return df
 
 
