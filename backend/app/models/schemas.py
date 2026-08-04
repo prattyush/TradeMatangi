@@ -264,6 +264,9 @@ class UserSettingsResponse(BaseModel):
     pattern_share_emails: str = ""
     entry_auto_sl_enabled: bool = False
     entry_auto_sl_delay_sec: int = 3
+    max_price_mode: str = "otm"          # "otm" | "threshold"
+    max_price_threshold_ce: float = 50.0
+    max_price_threshold_pe: float = 50.0
 
 
 class UserSettingsUpdateRequest(BaseModel):
@@ -276,6 +279,9 @@ class UserSettingsUpdateRequest(BaseModel):
     pattern_share_emails: str | None = None
     entry_auto_sl_enabled: bool | None = None
     entry_auto_sl_delay_sec: int | None = Field(default=None, ge=1, le=30)
+    max_price_mode: str | None = None
+    max_price_threshold_ce: float | None = None
+    max_price_threshold_pe: float | None = None
 
 
 # ── Strategies ────────────────────────────────────────────────────────────────

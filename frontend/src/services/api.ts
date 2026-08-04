@@ -110,6 +110,9 @@ export interface UserSettingsResponse {
   pattern_share_emails?: string
   entry_auto_sl_enabled?: boolean
   entry_auto_sl_delay_sec?: number
+  max_price_mode?: string
+  max_price_threshold_ce?: number
+  max_price_threshold_pe?: number
 }
 
 // ── Strategy types ──────────────────────────────────────────────────────────
@@ -689,6 +692,20 @@ const api = {
     const url = `${BACKEND_URL}/api/data/expiry?symbol=${encodeURIComponent(symbol)}&date=${date}`
     const res = await fetch(url)
     if (!res.ok) throw new Error(`Expiry fetch failed: ${res.status}`)
+    return res.json()
+  },
+
+  async findStrikeByPrice(
+    symbol: string, date: string, expiry: string, right: 'CE' | 'PE',
+    maxPrice: number, referenceTime: string,
+  ): Promise<{ strike: number; price: number; symbol: string; date: string; right: string }> {
+    const params = new URLSearchParams({ symbol, date, expiry, right, max_price: String(maxPrice), reference_time: referenceTime })
+    const url = `${BACKEND_URL}/api/data/options/find-strike-by-price?${params}`
+    const res = await fetch(url)
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}))
+      throw new Error(body?.detail || `Find strike failed: ${res.status}`)
+    }
     return res.json()
   },
 
