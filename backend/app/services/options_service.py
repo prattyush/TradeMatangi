@@ -347,6 +347,11 @@ def load_options_dataframe(
         df.index = df.index.tz_localize("UTC")
     else:
         df.index = df.index.tz_convert("UTC")
+    # Trim post-close data from stale cached parquets (SEBI 15:15 effective 03 Aug 2026)
+    from app.config import get_market_close
+    close = get_market_close(date)
+    cutoff = pd.Timestamp(f"{date} {close}", tz="UTC")
+    df = df[df.index < cutoff]
     return df
 
 
@@ -523,6 +528,26 @@ def _get_option_price_at(
                 if ltp > 0:
                     return ltp
         except Exception as exc:
+            msg = str(exc)
+            if "503" in msg or "Expecting value" in msg:
+                # Transient Breeze failure — retry once after 1s delay
+                import time
+                time.sleep(1)
+                try:
+                    resp = breeze.get_quotes(
+                        stock_code=stock_code, exchange_code=options_exchange,
+                        expiry_date=expiry_iso, product_type="options",
+                        right=right_str, strike_price=str(strike),
+                    )
+                    if resp and resp.get("Status") == 200 and resp.get("Success"):
+                        data = resp["Success"]
+                        if isinstance(data, list):
+                            data = data[0] if data else {}
+                        ltp = float(data.get("ltp", data.get("last_price", data.get("last", 0))))
+                        if ltp > 0:
+                            return ltp
+                except Exception:
+                    pass
             logger.debug("Breeze get_quotes failed for %s %s %s: %s",
                          symbol, right, strike, exc)
 
