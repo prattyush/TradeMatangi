@@ -425,3 +425,73 @@ Users can optionally specify a stoploss price when placing any entry order (TARG
 | `frontend/src/services/api.ts` | `Order` interface + `placeOrder` body include `entry_sl_price`, `group_id` |
 | `frontend/src/components/OrderPanel.tsx` | Expandable "Stoploss on entry" section in entry tabs |
 | `frontend/src/components/SettingsPopup.tsx` | Toggle + delay input for entry auto-SL |
+
+##### Max Price Threshold Strike Mode ⏳ In Progress
+
+Alternative to OTM offset for choosing option strikes: pick a max contract price
+threshold instead of a fixed number of strikes OTM. The system scans outward from
+ATM and picks the first strike whose option price ≤ the threshold.
+
+**Applicability:** Indices only (NIFTY, BSESEN). Stocks continue using OTM offset.
+
+**How it works:**
+- User picks a threshold (e.g. ₹50) from a dropdown
+- System starts at ATM strike, loads option price at reference time from cached
+  parquet data (sim/stepwise) or Breeze narrow-window fetch (paper/real)
+- Scans outward one strike interval at a time until price ≤ threshold
+- CE scans UP (higher strikes → lower premiums), PE scans DOWN
+
+**Threshold dropdown values:**
+- NIFTY (interval 50): 25, 50, 75, 100, 125, 150
+- SENSEX (interval 100): 50, 100, 150, 200, 250
+
+**Mid-session pane add:** Works identically — calls the same backend endpoint
+with the current bar time as reference_time. If API fails, falls back to OTM offset.
+
+**Settings:**
+- `max_price_mode: "otm" | "threshold"` (default `"otm"`)
+- `max_price_threshold_ce: float` — CE threshold
+- `max_price_threshold_pe: float` — PE threshold
+
+**Backend endpoint:**
+- `GET /api/data/options/find-strike-by-price?symbol=&date=&expiry=&right=&max_price=&reference_time=`
+  Returns `{ strike, price, symbol, date, right }`
+
+**Files changed:**
+
+| File | Change |
+|------|--------|
+| `backend/app/services/options_service.py` | `find_strike_by_max_price()` + `_get_option_price_at()` |
+| `backend/app/routers/data.py` | `GET /api/data/options/find-strike-by-price` endpoint |
+| `backend/app/services/user_settings_service.py` | `max_price_mode`, `max_price_threshold_ce`, `max_price_threshold_pe` defaults |
+| `backend/app/models/schemas.py` | New fields on UserSettingsResponse/UpdateRequest |
+| `frontend/src/components/SettingsModal.tsx` | "OPTION STRIKE MODE" section with OTM/Threshold toggle + threshold dropdowns |
+| `frontend/src/components/SessionControls.tsx` | Use threshold mode on session start for indices |
+| `frontend/src/services/api.ts` | `findStrikeByPrice()` API function + UserSettingsResponse fields |
+| `frontend/src/App.tsx` | Async addPane with threshold mode for mid-session CE/PE adds |
+
+##### SEBI Market Close Adjustment (15:15 effective 03 Aug 2026) ✅ Complete
+
+SEBI changed the closing price determination time from 15:30 to 15:15 effective
+03 August 2026. All data fetching, OHLC rendering, and live streaming respect this
+new cutoff for dates on or after the threshold.
+
+**Implementation:**
+- `config.get_market_close(date_str)` — date-aware function returning `"15:15:00"` for
+  dates >= `"2026-08-03"`, `"15:30:00"` otherwise
+- All callsites that use `MARKET_CLOSE` now use `get_market_close(date)`:
+  - `data_loader.validate_and_fill_gaps()` — reindex window end
+  - `broker_service._fetch_day_paginated()` — Breeze fetch upper bound
+  - `options_service._fetch_options_day_paginated()` — Breeze options fetch upper bound
+  - `options_service._validate_options_gaps()` — options reindex window end
+  - `kite_service.fetch_kite_1min()` / `fetch_kite_1min_options()` — historical date bound
+- **Live stream cutoff**: Phase 3 in both `_run_paper_session()` and `_run_real_session()`
+  drops ticks with `time >= market_close_ts` for post-cutoff dates — no 15:15–15:30
+  streaming data reaches the chart
+
+**Threshold constant:** `_NEW_CLOSE_CUTOFF = "2026-08-03"`, easy to adjust if SEBI
+revises further.
+
+**Files:** `backend/app/config.py`, `backend/app/services/data_loader.py`,
+`backend/app/services/broker_service.py`, `backend/app/services/options_service.py`,
+`backend/app/services/kite_service.py`, `backend/app/services/simulation.py`

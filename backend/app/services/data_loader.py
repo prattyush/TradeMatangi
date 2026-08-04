@@ -12,7 +12,7 @@ import pandas as pd
 from pathlib import Path
 from typing import Iterator
 
-from app.config import DATA_DIR, OHLCDATA_DIR, CANDLE_INTERVAL_MINUTES, MARKET_OPEN, MARKET_CLOSE
+from app.config import DATA_DIR, OHLCDATA_DIR, CANDLE_INTERVAL_MINUTES, MARKET_OPEN, MARKET_CLOSE, get_market_close
 
 _MAX_GAP_SECONDS = 900  # 15 minutes — gaps larger than this cannot be interpolated
 
@@ -80,7 +80,8 @@ def validate_and_fill_gaps(df: pd.DataFrame, date: str, partial: bool = False) -
     The DataFrame index must be tz-naive with IST wall-clock timestamps.
     """
     market_open = pd.Timestamp(f"{date} {MARKET_OPEN}")
-    market_close = pd.Timestamp(f"{date} {MARKET_CLOSE}") - pd.Timedelta(seconds=1)
+    market_close_raw = pd.Timestamp(f"{date} {get_market_close(date)}")
+    market_close = market_close_raw - pd.Timedelta(seconds=1)
 
     if df.empty:
         raise RuntimeError(f"No data for {date}.")

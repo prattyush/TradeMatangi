@@ -242,7 +242,7 @@ def fetch_kite_1min(symbol: str, date: str) -> "pd.DataFrame":
     import os
     import pandas as pd
     from datetime import date as _date
-    from app.config import OHLCDATA_DIR, MARKET_OPEN, MARKET_CLOSE
+    from app.config import OHLCDATA_DIR, MARKET_OPEN, MARKET_CLOSE, get_market_close, get_market_close
 
     is_today = date == _date.today().strftime("%Y-%m-%d")
     y, m, d = date.split("-")
@@ -269,7 +269,7 @@ def fetch_kite_1min(symbol: str, date: str) -> "pd.DataFrame":
     to_ts = (
         pd.Timestamp.utcnow() + pd.Timedelta(hours=5, minutes=30)  # current IST
         if is_today else
-        pd.Timestamp(f"{date} {MARKET_CLOSE}")
+        pd.Timestamp(f"{date} {get_market_close(date)}")
     )
 
     try:
@@ -338,7 +338,7 @@ def fetch_kite_1min_options(symbol: str, date: str, strike: int, expiry: str, ri
     to_ts = (
         pd.Timestamp.utcnow() + pd.Timedelta(hours=5, minutes=30)
         if is_today else
-        pd.Timestamp(f"{date} {MARKET_CLOSE}")
+        pd.Timestamp(f"{date} {get_market_close(date)}")
     )
 
     try:
