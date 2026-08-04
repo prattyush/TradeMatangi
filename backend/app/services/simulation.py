@@ -1356,6 +1356,13 @@ async def _run_paper_session(session: SimulationSession) -> None:
 
             tick_right: str | None = payload.get("right")
             tick_type = payload.get("type", "tick")
+            # Drop live ticks past market close (SEBI 15:15 effective 03 Aug 2026)
+            tick_time = payload.get("time")
+            if tick_time and tick_type == "tick":
+                from app.config import get_market_close
+                close_ts = int(pd.Timestamp(f"{session.date} {get_market_close(session.date)}").timestamp())
+                if tick_time >= close_ts:
+                    continue
             if tick_type == "broker_error":
                 # Forward connection-lost / reconnect-failed messages to the SSE stream.
                 error_event = {"type": "broker_error", "message": payload.get("message", "Kite connection lost")}
@@ -1621,6 +1628,13 @@ async def _run_real_session(session: SimulationSession) -> None:
                 break
 
             tick_type = payload.get("type", "tick")
+            # Drop live ticks past market close (SEBI 15:15 effective 03 Aug 2026)
+            tick_time = payload.get("time")
+            if tick_time and tick_type == "tick":
+                from app.config import get_market_close
+                close_ts = int(pd.Timestamp(f"{session.date} {get_market_close(session.date)}").timestamp())
+                if tick_time >= close_ts:
+                    continue
             if tick_type == "broker_error":
                 error_event = {"type": "broker_error", "message": payload.get("message", "")}
                 try:

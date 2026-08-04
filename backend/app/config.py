@@ -24,6 +24,16 @@ AI_HELPER_URL = os.getenv("AI_HELPER_URL", "http://localhost:8701")
 MARKET_OPEN = "09:15:00"
 MARKET_CLOSE = "15:30:00"
 
+# SEBI changed closing price to 15:15 effective 03 August 2026.
+_NEW_CLOSE_CUTOFF = "2026-08-03"
+_MARKET_CLOSE_NEW = "15:15:00"
+
+
+def get_market_close(date_str: str) -> str:
+    """Return the market close time for the given date (YYYY-MM-DD)."""
+    return _MARKET_CLOSE_NEW if date_str >= _NEW_CLOSE_CUTOFF else MARKET_CLOSE
+
+
 CANDLE_INTERVAL_MINUTES = 3
 
 FIXED_USER_ID = "abc12300-0000-0000-0000-000000000001"

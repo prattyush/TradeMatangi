@@ -302,7 +302,15 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
   }, [])
 
   // ── Add pane ────────────────────────────────────────────────────────────────
-  const addPane = useCallback(() => {
+  // Helper: get the current reference time string (HH:MM:SS in IST) for threshold
+  // strike queries during mid-session pane adds
+  const currentTimeForStrikeQuery = () => {
+    const now = new Date()
+    const istMins = (now.getUTCHours() * 60 + now.getUTCMinutes() + 5 * 60 + 30) % (24 * 60)
+    return `${String(Math.floor(istMins / 60)).padStart(2, '0')}:${String(istMins % 60).padStart(2, '0')}:00`
+  }
+
+  const addPane = useCallback(async () => {
     // Allow adding CE/PE panes when optionsReady is set OR when a running options session provides the expiry
     const effectiveExpiry = optionsReady?.expiry ?? sim.sessionExpiry
     const isOptionsAdd = (instrumentType === 'options' || sim.sessionInstrumentType === 'options')
@@ -312,9 +320,31 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
       const interval = { NIFTY: 50, BSESEN: 100, RELIND: 5, TATMOT: 5, TATPOW: 5 }[sim.symbol] ?? 50
       const basePrice = sim.currentPrice > 0 ? sim.currentPrice : (optionsReady?.underlyingPrice ?? 0)
       const currentAtm = Math.round(basePrice / interval) * interval
-      // OTM direction: positive offset = higher strikes for CE, lower for PE
-      const directedOffset = addPaneType === 'PE' ? -addOffset : addOffset
-      const strike = currentAtm + directedOffset * interval
+
+      // Check if threshold mode is active (indices only)
+      const strikeMode = localStorage.getItem('maxPriceMode') ?? 'otm'
+      const isIndex = sim.symbol === 'NIFTY' || sim.symbol === 'BSESEN'
+      let strike: number
+
+      if (isIndex && strikeMode === 'threshold') {
+        const thresholdCE = parseFloat(localStorage.getItem('maxPriceThresholdCE') ?? '50')
+        const thresholdPE = parseFloat(localStorage.getItem('maxPriceThresholdPE') ?? '50')
+        const threshold = addPaneType === 'CE' ? thresholdCE : thresholdPE
+        const refTime = currentTimeForStrikeQuery()
+        try {
+          const res = await api.findStrikeByPrice(
+            sim.symbol, sim.date, effectiveExpiry, addPaneType as 'CE' | 'PE', threshold, refTime)
+          strike = res.strike
+        } catch {
+          // fallback to OTM offset if API fails
+          const directedOffset = addPaneType === 'PE' ? -addOffset : addOffset
+          strike = currentAtm + directedOffset * interval
+        }
+      } else {
+        const directedOffset = addPaneType === 'PE' ? -addOffset : addOffset
+        strike = currentAtm + directedOffset * interval
+      }
+
       const right = addPaneType as 'CE' | 'PE'
       const liveFromTs = sim.latestEquityTick?.time ?? undefined
       const newPane = { ...makeOptionsPane(right, strike, effectiveExpiry), liveFromTs }
@@ -1169,14 +1199,29 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
                 <option value="PE">Put (PE)</option>
               </select>
               {addPaneType !== 'equity' && (
-                <label style={{ fontSize: 12, color: '#8b949e', display: 'flex', alignItems: 'center', gap: 4 }}>
-                  OTM:
-                  <input
-                    type="number" value={addOffset} min={-10} max={10}
-                    onChange={e => setAddOffset(parseInt(e.target.value) || 0)}
-                    style={{ background: '#161b22', border: '1px solid #30363d', color: '#e6edf3', borderRadius: 6, padding: '3px 6px', fontSize: 12, width: 52 }}
-                  />
-                </label>
+                <>
+                  {(() => {
+                    const isIndex = sim.symbol === 'NIFTY' || sim.symbol === 'BSESEN'
+                    const strikeMode = localStorage.getItem('maxPriceMode') ?? 'otm'
+                    if (isIndex && strikeMode === 'threshold') {
+                      return (
+                        <span style={{ fontSize: 11, color: '#484f58' }}>
+                          max ₹{(localStorage.getItem('maxPriceThresholdCE') ?? '50')}
+                        </span>
+                      )
+                    }
+                    return (
+                      <label style={{ fontSize: 12, color: '#8b949e', display: 'flex', alignItems: 'center', gap: 4 }}>
+                        OTM:
+                        <input
+                          type="number" value={addOffset} min={-10} max={10}
+                          onChange={e => setAddOffset(parseInt(e.target.value) || 0)}
+                          style={{ background: '#161b22', border: '1px solid #30363d', color: '#e6edf3', borderRadius: 6, padding: '3px 6px', fontSize: 12, width: 52 }}
+                        />
+                      </label>
+                    )
+                  })()}
+                </>
               )}
               {addPaneType === 'equity' && (
                 <select

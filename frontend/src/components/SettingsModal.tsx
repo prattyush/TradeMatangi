@@ -2,6 +2,25 @@ import { useState, useEffect, useRef } from 'react'
 import api from '../services/api'
 import KotakTOTPModal from './KotakTOTPModal'
 
+const THRESHOLD_VALUES = [25, 50, 75, 100, 125, 150]  // NIFTY (interval 50)
+
+function ThresholdSelect({ value, onChange }: { value: number; onChange: (v: number) => void }) {
+  return (
+    <select
+      value={value}
+      onChange={e => onChange(Number(e.target.value))}
+      style={{
+        padding: '4px 8px', background: '#0d1117', border: '1px solid #30363d',
+        borderRadius: 4, color: '#e6edf3', fontSize: 12,
+      }}
+    >
+      {THRESHOLD_VALUES.map(v => (
+        <option key={v} value={v}>₹{v}</option>
+      ))}
+    </select>
+  )
+}
+
 export interface FundsRatios {
   l: number  // percentage 0-100
   m: number
@@ -39,6 +58,10 @@ const GUARDRAIL_MAXSIZE_VALUE_KEY = 'guardrailMaxSizeValue'
 
 const ENTRY_AUTO_SL_ENABLED_KEY = 'entryAutoSlEnabled'
 const ENTRY_AUTO_SL_DELAY_KEY = 'entryAutoSlDelay'
+
+const MAX_PRICE_MODE_KEY = 'maxPriceMode'
+const MAX_PRICE_THRESHOLD_CE_KEY = 'maxPriceThresholdCE'
+const MAX_PRICE_THRESHOLD_PE_KEY = 'maxPriceThresholdPE'
 
 export function loadGuardRailBlockBars(): number {
   const v = parseInt(localStorage.getItem(GUARDRAIL_BLOCK_BARS_KEY) ?? '')
@@ -92,6 +115,20 @@ export function loadEntryAutoSlEnabled(): boolean {
 export function loadEntryAutoSlDelay(): number {
   const v = parseInt(localStorage.getItem(ENTRY_AUTO_SL_DELAY_KEY) ?? '')
   return isNaN(v) || v < 2 || v > 30 ? 3 : v
+}
+
+export function loadMaxPriceMode(): string {
+  return localStorage.getItem(MAX_PRICE_MODE_KEY) ?? 'otm'
+}
+
+export function loadMaxPriceThresholdCE(): number {
+  const v = parseFloat(localStorage.getItem(MAX_PRICE_THRESHOLD_CE_KEY) ?? '')
+  return isNaN(v) || v <= 0 ? 50 : v
+}
+
+export function loadMaxPriceThresholdPE(): number {
+  const v = parseFloat(localStorage.getItem(MAX_PRICE_THRESHOLD_PE_KEY) ?? '')
+  return isNaN(v) || v <= 0 ? 50 : v
 }
 
 export function loadPnlPctMode(): boolean {
@@ -260,6 +297,9 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
   const [stepwiseLabelingPopup, setStepwiseLabelingPopup] = useState(loadStepwiseLabelingPopupEnabled)
   const [entryAutoSlEnabled, setEntryAutoSlEnabled] = useState(loadEntryAutoSlEnabled)
   const [entryAutoSlDelay, setEntryAutoSlDelay] = useState(loadEntryAutoSlDelay)
+  const [maxPriceMode, setMaxPriceMode] = useState(loadMaxPriceMode)
+  const [maxPriceThresholdCE, setMaxPriceThresholdCE] = useState(loadMaxPriceThresholdCE)
+  const [maxPriceThresholdPE, setMaxPriceThresholdPE] = useState(loadMaxPriceThresholdPE)
   const [grBlockBarsInput, setGrBlockBarsInput] = useState(() => String(loadGuardRailBlockBars()))
   const [grCooldownBlockBarsInput, setGrCooldownBlockBarsInput] = useState(() => String(loadGuardRailCooldownBlockBars()))
   const [grCooldownLossesInput, setGrCooldownLossesInput] = useState(() => String(loadGuardRailCooldownLosses()))
@@ -342,6 +382,18 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
         if (s.entry_auto_sl_delay_sec != null) {
           setEntryAutoSlDelay(s.entry_auto_sl_delay_sec)
           localStorage.setItem(ENTRY_AUTO_SL_DELAY_KEY, String(s.entry_auto_sl_delay_sec))
+        }
+        if (s.max_price_mode != null) {
+          setMaxPriceMode(s.max_price_mode)
+          localStorage.setItem(MAX_PRICE_MODE_KEY, s.max_price_mode)
+        }
+        if (s.max_price_threshold_ce != null) {
+          setMaxPriceThresholdCE(s.max_price_threshold_ce)
+          localStorage.setItem(MAX_PRICE_THRESHOLD_CE_KEY, String(s.max_price_threshold_ce))
+        }
+        if (s.max_price_threshold_pe != null) {
+          setMaxPriceThresholdPE(s.max_price_threshold_pe)
+          localStorage.setItem(MAX_PRICE_THRESHOLD_PE_KEY, String(s.max_price_threshold_pe))
         }
       }).catch(() => {})
 
@@ -1209,6 +1261,56 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
                       }}
                     />
                     <span style={{ fontSize: 11, color: '#484f58' }}>seconds</span>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Option Strike Mode */}
+            <div style={{ borderTop: '1px solid #21262d', paddingTop: 16 }}>
+              <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 10, fontWeight: 600 }}>
+                OPTION STRIKE MODE (indices only)
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                <div style={{ display: 'flex', gap: 0, borderRadius: 6, overflow: 'hidden', border: '1px solid #30363d', width: 'fit-content' }}>
+                  {([{ label: 'OTM Offset', value: 'otm' }, { label: 'Max Price', value: 'threshold' }] as const).map(opt => (
+                    <button
+                      key={opt.value}
+                      onClick={() => {
+                        setMaxPriceMode(opt.value)
+                        localStorage.setItem(MAX_PRICE_MODE_KEY, opt.value)
+                        api.updateUserSettings({ max_price_mode: opt.value }).catch(() => {})
+                      }}
+                      style={{
+                        padding: '5px 16px', fontSize: 12, fontWeight: 600,
+                        border: 'none', cursor: 'pointer',
+                        background: maxPriceMode === opt.value ? '#1f6feb' : '#161b22',
+                        color: maxPriceMode === opt.value ? '#fff' : '#8b949e',
+                      }}
+                    >{opt.label}</button>
+                  ))}
+                </div>
+                {maxPriceMode === 'threshold' && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    <div style={{ fontSize: 11, color: '#484f58' }}>
+                      CE/PE strike with premium ≤ threshold (ATM scan outward)
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <span style={{ fontSize: 11, color: '#8b949e' }}>CE max price:</span>
+                      <ThresholdSelect value={maxPriceThresholdCE} onChange={v => {
+                        setMaxPriceThresholdCE(v)
+                        localStorage.setItem(MAX_PRICE_THRESHOLD_CE_KEY, String(v))
+                        api.updateUserSettings({ max_price_threshold_ce: v }).catch(() => {})
+                      }} />
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <span style={{ fontSize: 11, color: '#8b949e' }}>PE max price:</span>
+                      <ThresholdSelect value={maxPriceThresholdPE} onChange={v => {
+                        setMaxPriceThresholdPE(v)
+                        localStorage.setItem(MAX_PRICE_THRESHOLD_PE_KEY, String(v))
+                        api.updateUserSettings({ max_price_threshold_pe: v }).catch(() => {})
+                      }} />
+                    </div>
                   </div>
                 )}
               </div>

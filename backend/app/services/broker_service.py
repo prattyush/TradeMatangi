@@ -15,7 +15,7 @@ import os
 import pandas as pd
 from pathlib import Path
 
-from app.config import DATA_DIR, MARKET_OPEN, MARKET_CLOSE, SUPPORTED_SYMBOLS
+from app.config import DATA_DIR, MARKET_OPEN, MARKET_CLOSE, get_market_close, SUPPORTED_SYMBOLS
 from app.services.data_loader import parquet_path, pickle_path, validate_and_fill_gaps
 
 _CHUNK_MINUTES = 15   # 900-second windows stay safely under the ~1000-record Breeze API limit
@@ -151,7 +151,7 @@ def _fetch_day_paginated(breeze, sym_info: dict, date: str) -> list[dict]:
     The Breeze API caps responses at ~1000 records; chunking prevents truncation.
     """
     from_ts = pd.Timestamp(f"{date} {MARKET_OPEN}")
-    to_ts = pd.Timestamp(f"{date} {MARKET_CLOSE}")
+    to_ts = pd.Timestamp(f"{date} {get_market_close(date)}")
     chunk_delta = pd.Timedelta(minutes=_CHUNK_MINUTES)
 
     all_records: list[dict] = []

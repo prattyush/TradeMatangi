@@ -283,3 +283,32 @@ async def get_expiry(
     from app.services.options_service import get_expiry_date
     expiry = get_expiry_date(symbol, date)
     return ExpiryResponse(symbol=symbol, date=date, expiry=expiry)
+
+
+@router.get("/options/find-strike-by-price")
+async def find_strike_by_max_price(
+    symbol: str = Query(...),
+    date: str = Query(...),
+    expiry: str = Query(...),
+    right: str = Query(...),
+    max_price: float = Query(...),
+    reference_time: str = Query("09:15:00"),
+):
+    """
+    Return the strike whose option price at reference_time ≤ max_price,
+    scanning outward from ATM. Used for Max Price Threshold strike selection mode.
+    right: "CE" or "PE"
+    reference_time: "HH:MM:SS" in IST
+    """
+    if symbol not in SUPPORTED_SYMBOLS:
+        raise HTTPException(status_code=400, detail=f"Unsupported symbol: {symbol}")
+    if right.upper() not in ("CE", "PE"):
+        raise HTTPException(status_code=400, detail="right must be CE or PE")
+    if not re.match(r'^\d{2}:\d{2}(:\d{2})?$', reference_time):
+        raise HTTPException(status_code=422, detail="reference_time must be HH:MM or HH:MM:SS")
+    if len(reference_time) == 5:
+        reference_time = reference_time + ":00"
+
+    from app.services.options_service import find_strike_by_max_price, get_expiry_date
+    result = find_strike_by_max_price(symbol, date, expiry, right.upper(), max_price, reference_time)
+    return {**result, "symbol": symbol, "date": date, "right": right.upper()}

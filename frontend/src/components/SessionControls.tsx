@@ -4,6 +4,8 @@ import api, { SymbolInfo } from '../services/api'
 import { InstrumentConfig } from '../hooks/useSimulation'
 import KotakTOTPModal from './KotakTOTPModal'
 
+const THRESHOLD_VALUES = [25, 50, 75, 100, 125, 150]
+
 interface Props {
   sessionState: SessionState
   currentSymbol: string
@@ -114,6 +116,13 @@ export default function SessionControls({
   const [optionsOffset, setOptionsOffset] = useState(0)
   const [stepwiseMode, setStepwiseMode] = useState(false)
 
+  // Max price threshold
+  const [maxThreshold, setMaxThreshold] = useState(() => parseFloat(localStorage.getItem('maxPriceThresholdCE') ?? '50'))
+
+  // Max price threshold mode — read from localStorage, defaults to 'otm'
+  const strikeMode = (localStorage.getItem('maxPriceMode') ?? 'otm') as string
+  const isIndex = OPTIONS_ONLY_SYMBOLS.has(currentSymbol)
+
   // Throttle ref for time-picker scroll: one step per 180ms to prevent runaway scrolling
   const timeScrollThrottleRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const timeInputRef = useRef<HTMLInputElement | null>(null)
@@ -211,8 +220,25 @@ export default function SessionControls({
           ])
           const interval = STRIKE_INTERVALS[currentSymbol] ?? 50
           const atmStrike = Math.round(priceRes.price / interval) * interval
-          const ceStrike = atmStrike + optionsOffset * interval
-          const peStrike = atmStrike - optionsOffset * interval
+
+          // Check if max-price threshold mode is active (indices only)
+          const strikeMode = (localStorage.getItem('maxPriceMode') ?? 'otm')
+          const isIndex = currentSymbol === 'NIFTY' || currentSymbol === 'BSESEN'
+          let ceStrike: number, peStrike: number
+
+          if (isIndex && strikeMode === 'threshold') {
+            const threshold = parseFloat(localStorage.getItem('maxPriceThresholdCE') ?? '50')
+            const refTime = isLiveSession ? getCurrentIstTime() : startTime
+            const [ceRes, peRes] = await Promise.all([
+              api.findStrikeByPrice(currentSymbol, currentDate, expiryRes.expiry, 'CE', threshold, refTime),
+              api.findStrikeByPrice(currentSymbol, currentDate, expiryRes.expiry, 'PE', threshold, refTime),
+            ])
+            ceStrike = ceRes.strike
+            peStrike = peRes.strike
+          } else {
+            ceStrike = atmStrike + optionsOffset * interval
+            peStrike = atmStrike - optionsOffset * interval
+          }
           const cfg: OptionsReadyConfig = {
             strike: atmStrike,
             ceStrike,
@@ -382,19 +408,45 @@ export default function SessionControls({
           </>
         )}
 
-        {/* OTM offset — always visible; disabled when equity or session active */}
-        <label style={{ ...label, fontSize: 12, opacity: instrumentType === 'equity' ? 0.4 : 1 }}>
-          OTM&nbsp;
-          <input
-            type="number"
-            value={optionsOffset}
-            onChange={e => setOptionsOffset(parseInt(e.target.value) || 0)}
-            style={{ ...inputStyle, width: 55, fontSize: 12 }}
-            min={-10} max={10}
-            disabled={instrumentType === 'equity' || !idle}
-          />
-          <span style={{ marginLeft: 4, fontSize: 11, color: '#484f58' }}>(0=ATM)</span>
-        </label>
+        {/* OTM offset — hidden when threshold mode is active for indices */}
+        {(!isIndex || strikeMode !== 'threshold') && (
+          <label style={{ ...label, fontSize: 12, opacity: instrumentType === 'equity' ? 0.4 : 1 }}>
+            OTM&nbsp;
+            <input
+              type="number"
+              value={optionsOffset}
+              onChange={e => setOptionsOffset(parseInt(e.target.value) || 0)}
+              style={{ ...inputStyle, width: 55, fontSize: 12 }}
+              min={-10} max={10}
+              disabled={instrumentType === 'equity' || !idle}
+            />
+            <span style={{ marginLeft: 4, fontSize: 11, color: '#484f58' }}>(0=ATM)</span>
+          </label>
+        )}
+
+        {/* Max Price Threshold dropdown — replaces OTM when threshold mode is active */}
+        {isIndex && strikeMode === 'threshold' && instrumentType === 'options' && (
+          <label style={{ ...label, fontSize: 12 }}>
+            Max Price&nbsp;
+            <select
+              value={maxThreshold}
+              disabled={!idle}
+              style={{ ...inputStyle, width: 64, fontSize: 11 }}
+              onChange={e => {
+                const v = Number(e.target.value)
+                setMaxThreshold(v)
+                localStorage.setItem('maxPriceThresholdCE', String(v))
+                localStorage.setItem('maxPriceThresholdPE', String(v))
+                api.updateUserSettings({ max_price_threshold_ce: v, max_price_threshold_pe: v }).catch(() => {})
+              }}
+            >
+              {THRESHOLD_VALUES.map(v => (
+                <option key={v} value={v}>₹{v}</option>
+              ))}
+            </select>
+            <span style={{ marginLeft: 4, fontSize: 11, color: '#484f58' }}>(CE & PE)</span>
+          </label>
+        )}
 
         {idle && (
           <button

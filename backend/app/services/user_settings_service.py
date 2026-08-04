@@ -30,6 +30,9 @@ DEFAULT_SETTINGS: dict = {
     "pattern_share_emails": "",
     "entry_auto_sl_enabled": False,
     "entry_auto_sl_delay_sec": 3,
+    "max_price_mode": "otm",
+    "max_price_threshold_ce": 50.0,
+    "max_price_threshold_pe": 50.0,
 }
 
 
@@ -84,6 +87,9 @@ def get_settings(user_id: str) -> dict:
             "pattern_share_emails": _normalize_share_emails_value(item.get("pattern_share_emails", DEFAULT_SETTINGS["pattern_share_emails"])),
             "entry_auto_sl_enabled": bool(item.get("entry_auto_sl_enabled", DEFAULT_SETTINGS["entry_auto_sl_enabled"])),
             "entry_auto_sl_delay_sec": int(item.get("entry_auto_sl_delay_sec", DEFAULT_SETTINGS["entry_auto_sl_delay_sec"])),
+            "max_price_mode": str(item.get("max_price_mode", DEFAULT_SETTINGS["max_price_mode"])),
+            "max_price_threshold_ce": float(item.get("max_price_threshold_ce", DEFAULT_SETTINGS["max_price_threshold_ce"])),
+            "max_price_threshold_pe": float(item.get("max_price_threshold_pe", DEFAULT_SETTINGS["max_price_threshold_pe"])),
         }
     except Exception:
         logger.exception("Failed to get settings for user %s", user_id)

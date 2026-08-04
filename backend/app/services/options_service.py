@@ -12,7 +12,7 @@ from typing import Iterator
 
 import pandas as pd
 
-from app.config import DATA_DIR, OHLCDATA_DIR, MARKET_OPEN, MARKET_CLOSE, LOT_SIZES, SUPPORTED_SYMBOLS
+from app.config import DATA_DIR, OHLCDATA_DIR, MARKET_OPEN, MARKET_CLOSE, get_market_close, LOT_SIZES, SUPPORTED_SYMBOLS
 from app.utils import NSE_HOLIDAYS, is_trading_day as _is_trading_day
 
 logger = logging.getLogger(__name__)
@@ -145,7 +145,7 @@ def _fetch_options_day_paginated(
     from app.services.broker_service import BreezeTokenError
 
     from_ts = pd.Timestamp(f"{date} {MARKET_OPEN}")
-    to_ts = pd.Timestamp(f"{date} {MARKET_CLOSE}")
+    to_ts = pd.Timestamp(f"{date} {get_market_close(date)}")
     chunk_delta = pd.Timedelta(minutes=_CHUNK_MINUTES)
     right_str = "call" if right.upper() in ("CE", "CALL") else "put"
     expiry_iso = _breeze_expiry_format(expiry)
@@ -212,7 +212,7 @@ def _validate_options_gaps(df: pd.DataFrame, date: str, partial: bool = False) -
         # Stop at the last actual data row — no fake future bars for incomplete days.
         end_ts = df.index[-1]
     else:
-        end_ts = pd.Timestamp(f"{date} {MARKET_CLOSE}") - pd.Timedelta(seconds=1)
+        end_ts = pd.Timestamp(f"{date} {get_market_close(date)}") - pd.Timedelta(seconds=1)
     full_index = pd.date_range(start=market_open, end=end_ts, freq="1s")
     df = df.reindex(full_index).ffill().bfill()
     return df
@@ -397,3 +397,145 @@ def get_underlying_price_at(symbol: str, date: str, unix_ts: int) -> float | Non
         return round(float(rows.iloc[0]["close"]), 2)
     except Exception:
         return None
+
+
+_MAX_SCAN_INTERVALS = 20  # max strikes to scan outward from ATM
+
+
+def find_strike_by_max_price(
+    symbol: str,
+    date: str,
+    expiry: str,
+    right: str,
+    max_price: float,
+    reference_time: str,  # "HH:MM:SS" IST
+) -> dict:
+    """
+    Scan outward from ATM strike and return the first strike whose option price
+    at the given reference time is ≤ max_price. Used for "Max Price Threshold"
+    strike selection mode (indices only).
+
+    For sim/stepwise: reads from cached parquet.
+    For paper/real (today): uses Breeze narrow-window fetch for live prices.
+
+    CE scans upward (higher strikes → lower premiums).
+    PE scans downward (lower strikes → lower premiums).
+
+    Returns {"strike": int, "price": float}
+    Falls back to ATM strike if no strike ≤ max_price within scan range.
+    """
+    import time as _time
+    from app.config import MARKET_OPEN
+    from app.services.broker_service import _get_breeze, _breeze_to_dataframe
+
+    right_upper = right.upper()
+    is_ce = right_upper == "CE"
+
+    try:
+        ref_dt = pd.Timestamp(f"{date} {reference_time}")
+    except Exception:
+        ref_dt = pd.Timestamp(f"{date} {MARKET_OPEN}")
+
+    ref_ts = int(ref_dt.timestamp())  # IST-as-UTC: matches dataframe convention
+
+    underlying_price = get_underlying_price_at(symbol, date, ref_ts)
+    if underlying_price is None or underlying_price <= 0:
+        # Fallback: use the first available close in the equity parquet for this day
+        from app.services.data_loader import load_dataframe
+        try:
+            eq_df = load_dataframe(symbol, date)
+            if not eq_df.empty:
+                underlying_price = float(eq_df.iloc[0]["close"])
+        except Exception:
+            pass
+    if underlying_price is None or underlying_price <= 0:
+        return {"strike": 0, "price": 0}
+
+    atm_strike = get_atm_strike(symbol, underlying_price)
+
+    for step in range(_MAX_SCAN_INTERVALS):
+        strike = atm_strike + step * STRIKE_INTERVALS[symbol] if is_ce \
+            else atm_strike - step * STRIKE_INTERVALS[symbol]
+
+        try:
+            price = _get_option_price_at(symbol, date, strike, expiry, right_upper, ref_ts)
+        except Exception:
+            continue
+
+        if price is not None and 0 < price <= max_price:
+            return {"strike": strike, "price": round(price, 2)}
+
+    return {"strike": atm_strike, "price": 0}
+
+
+def _get_option_price_at(
+    symbol: str, date: str, strike: int, expiry: str, right: str, ref_ts: int
+) -> float | None:
+    """
+    Return the option contract close price at a specific Unix timestamp.
+
+    Fast-path for today (paper/real): fetches only a 15-second window around
+    the reference time from Breeze, avoiding a full-day paginated fetch.
+    For historical dates: falls back to full parquet cache (already cached).
+
+    Also handles the case where parquet exists for the full day.
+    """
+    is_today = date == datetime.date.today().strftime("%Y-%m-%d")
+    pq = options_parquet_path(symbol, date, strike, expiry, right)
+
+    # Parquet cache hit — fast
+    if pq.exists():
+        try:
+            df = pd.read_parquet(pq)
+            if not df.empty:
+                target = pd.Timestamp(ref_ts, unit="s", tz="UTC")
+                rows = df[df.index >= target]
+                if not rows.empty:
+                    return float(rows.iloc[0]["close"])
+        except Exception:
+            pass
+
+    # For today: use breeze.get_quotes for instant LTP (single API call)
+    if is_today:
+        try:
+            from app.services.broker_service import _get_breeze
+            from app.config import SUPPORTED_SYMBOLS
+            breeze = _get_breeze()
+            sym_info = SUPPORTED_SYMBOLS.get(symbol, {})
+            stock_code = sym_info.get("breeze_stock_code", symbol)
+            options_exchange = sym_info.get("options_exchange_code", "NFO")
+            right_str = "call" if right.upper() in ("CE", "CALL") else "put"
+            expiry_iso = _breeze_expiry_format(expiry)
+
+            resp = breeze.get_quotes(
+                stock_code=stock_code,
+                exchange_code=options_exchange,
+                expiry_date=expiry_iso,
+                product_type="options",
+                right=right_str,
+                strike_price=str(strike),
+            )
+            if resp and resp.get("Status") == 200 and resp.get("Success"):
+                data = resp["Success"]
+                if isinstance(data, list):
+                    data = data[0] if data else {}
+                ltp = float(data.get("ltp", data.get("last_price", data.get("last", 0))))
+                if ltp > 0:
+                    return ltp
+        except Exception as exc:
+            logger.debug("Breeze get_quotes failed for %s %s %s: %s",
+                         symbol, right, strike, exc)
+
+    # Fallback: full parquet fetch (historical dates that aren't cached)
+    try:
+        fetch_options_historical(symbol, date, strike, expiry, right)
+        df = load_options_dataframe(symbol, date, strike, expiry, right)
+        if df is not None and not df.empty:
+            target = pd.Timestamp(ref_ts, unit="s", tz="UTC")
+            rows = df[df.index >= target]
+            if not rows.empty:
+                return float(rows.iloc[0]["close"])
+    except Exception:
+        pass
+
+    return None
