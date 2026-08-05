@@ -305,6 +305,16 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
   // Helper: get the current reference time string (HH:MM:SS in IST) for threshold
   // strike queries during mid-session pane adds
   const currentTimeForStrikeQuery = () => {
+    // Use the simulation clock when available (sim/stepwise), otherwise
+    // real wall-clock time (paper/real).  The sim tick timestamps are
+    // IST-as-UTC Unix seconds — convert back to HH:MM:SS IST.
+    const tickTs = sim.latestEquityTick?.time
+    if (tickTs && sim.sessionState === 'running') {
+      const h = Math.floor((tickTs % 86400) / 3600)
+      const m = Math.floor((tickTs % 3600) / 60)
+      const s = tickTs % 60
+      return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
+    }
     const now = new Date()
     const istMins = (now.getUTCHours() * 60 + now.getUTCMinutes() + 5 * 60 + 30) % (24 * 60)
     return `${String(Math.floor(istMins / 60)).padStart(2, '0')}:${String(istMins % 60).padStart(2, '0')}:00`
