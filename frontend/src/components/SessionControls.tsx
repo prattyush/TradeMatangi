@@ -4,7 +4,12 @@ import api, { SymbolInfo } from '../services/api'
 import { InstrumentConfig } from '../hooks/useSimulation'
 import KotakTOTPModal from './KotakTOTPModal'
 
-const THRESHOLD_VALUES = [25, 50, 75, 100, 125, 150]
+const THRESHOLD_VALUES_NIFTY = [25, 50, 75, 100, 125, 150]
+const THRESHOLD_VALUES_SENSEX = [50, 100, 150, 200, 250]
+
+function thresholdValuesFor(symbol: string) {
+  return symbol === 'BSESEN' ? THRESHOLD_VALUES_SENSEX : THRESHOLD_VALUES_NIFTY
+}
 
 interface Props {
   sessionState: SessionState
@@ -440,7 +445,7 @@ export default function SessionControls({
                 api.updateUserSettings({ max_price_threshold_ce: v, max_price_threshold_pe: v }).catch(() => {})
               }}
             >
-              {THRESHOLD_VALUES.map(v => (
+              {thresholdValuesFor(currentSymbol).map(v => (
                 <option key={v} value={v}>₹{v}</option>
               ))}
             </select>
