@@ -2,9 +2,11 @@ import { useState, useEffect, useRef } from 'react'
 import api from '../services/api'
 import KotakTOTPModal from './KotakTOTPModal'
 
-const THRESHOLD_VALUES = [25, 50, 75, 100, 125, 150]  // NIFTY (interval 50)
+const THRESHOLD_VALUES_NIFTY = [25, 50, 75, 100, 125, 150]   // interval 50
+const THRESHOLD_VALUES_SENSEX = [50, 100, 150, 200, 250]       // interval 100
 
 function ThresholdSelect({ value, onChange }: { value: number; onChange: (v: number) => void }) {
+  const values = [...new Set([...THRESHOLD_VALUES_NIFTY, ...THRESHOLD_VALUES_SENSEX])].sort((a, b) => a - b)
   return (
     <select
       value={value}
@@ -14,7 +16,7 @@ function ThresholdSelect({ value, onChange }: { value: number; onChange: (v: num
         borderRadius: 4, color: '#e6edf3', fontSize: 12,
       }}
     >
-      {THRESHOLD_VALUES.map(v => (
+      {values.map(v => (
         <option key={v} value={v}>₹{v}</option>
       ))}
     </select>
