@@ -201,18 +201,28 @@ class BreezeStreamManager:
                 exchange = tick.get("exchange", "")
 
                 # Filter out equity ticks from non-target stocks. Breeze
-                # broadcasts market data for ALL NSE instruments; we only
-                # want equity ticks matching our session's subscribed symbol.
-                # stock_code in subscription is internal (e.g. "BSESEN"),
-                # stock_name from tick is human-readable (e.g. "BSE SENSEX").
-                # Match by checking if either contains the other, AND the
-                # exchange segment prefix matches (e.g. "BSE" in "BSE Equity").
+                # broadcasts market data for ALL instruments; we only want
+                # equity ticks matching our session's subscribed symbol.
+                # Combine exchange prefix + stock name matching to avoid
+                # picking up other stocks on the same exchange.
                 if not right and self._equity_stock_name:
-                    eq = self._equity_stock_name
                     tick_exch = tick.get("exchange", "")
-                    # Cross-exchange: NIFTY is on NSE, BSESEN on BSE
-                    if self._equity_exchange and tick_exch and self._equity_exchange not in tick_exch:
+                    # Must be on the right exchange segment
+                    if self._equity_exchange and tick_exch:
+                        if self._equity_exchange not in tick_exch:
+                            continue
+                    # Must match the subscribed equity — check both stock_code
+                    # and stock_name since Breeze sometimes omits stock_code.
+                    tick_stock = tick.get("stock_code", "")
+                    if tick_stock and tick_stock != self._equity_stock_name:
                         continue
+                    if not tick_stock:
+                        # Breeze sends empty stock_code for indices; match by
+                        # known index display names
+                        eq_lower = self._equity_stock_name.lower()
+                        name_lower = str(name).lower()
+                        if eq_lower not in name_lower and eq_lower.replace("bsesen", "sensex") not in name_lower:
+                            continue
 
                 key = f"{name}_{right or 'EQ'}"
 
