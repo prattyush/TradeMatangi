@@ -90,6 +90,7 @@ class BreezeStreamManager:
         self._tick_count: int = 0
         self._logged_ticks: int = 0
         self._equity_stock_name: str | None = None
+        self._equity_exchange: str | None = None
 
     def start(
         self,
@@ -119,6 +120,7 @@ class BreezeStreamManager:
             right_val = inst.get("right", "")
             if not right_val and self._equity_stock_name is None:
                 self._equity_stock_name = inst.get("stock_code", "")
+                self._equity_exchange = inst.get("exchange_code", "")
             # Convert expiry from Kite format ("2026-06-30T06:00:00.000Z") to
             # Breeze format ("30-Jun-2026") at the API call only.
             expiry_raw = inst.get("expiry_date", "")
@@ -201,9 +203,15 @@ class BreezeStreamManager:
                 # Filter out equity ticks from non-target stocks. Breeze
                 # broadcasts market data for ALL NSE instruments; we only
                 # want equity ticks matching our session's subscribed symbol.
+                # stock_code in subscription is internal (e.g. "BSESEN"),
+                # stock_name from tick is human-readable (e.g. "BSE SENSEX").
+                # Match by checking if either contains the other, AND the
+                # exchange segment prefix matches (e.g. "BSE" in "BSE Equity").
                 if not right and self._equity_stock_name:
                     eq = self._equity_stock_name
-                    if tick.get("stock_code", "") != eq and eq not in str(name):
+                    tick_exch = tick.get("exchange", "")
+                    # Cross-exchange: NIFTY is on NSE, BSESEN on BSE
+                    if self._equity_exchange and tick_exch and self._equity_exchange not in tick_exch:
                         continue
 
                 key = f"{name}_{right or 'EQ'}"
