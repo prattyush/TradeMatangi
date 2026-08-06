@@ -193,7 +193,7 @@ class BreezeStreamManager:
                 if price == 0.0:
                     continue
                 right_raw = tick.get("right", "").upper()
-                _right_map = {"CALL": "CE", "PUT": "PE", "CE": "CE", "PE": "PE"}
+                _right_map = {"CALL": "CE", "PUT": "PE", "CE": "CE", "PE": "PE", "C": "CE", "P": "PE"}
                 right = _right_map.get(right_raw) if right_raw else None
                 name = tick.get("stock_name", tick.get("stock_code", tick.get("symbol", "")))
                 exchange = tick.get("exchange", "")
