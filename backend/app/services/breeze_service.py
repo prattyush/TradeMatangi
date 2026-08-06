@@ -190,13 +190,11 @@ class BreezeStreamManager:
                     continue
                 self._tick_count += 1
 
-                # Diagnostic: log raw right/exchange for first 10 ticks
+                # Diagnostic: log ALL fields for first 10 ticks
                 if self._tick_count <= 10:
-                    logger.info("BREEZE-RAW #%d: right=%r exchange=%r stock_name=%r stock_code=%r symbol=%r",
+                    logger.info("BREEZE-RAW #%d: %s",
                                 self._tick_count,
-                                tick.get("right"), tick.get("exchange"),
-                                tick.get("stock_name"), tick.get("stock_code"),
-                                tick.get("symbol"))
+                                {k: v for k, v in tick.items() if not isinstance(v, (bytes, bytearray))})
 
                 price = float(tick.get("last", tick.get("ltp", 0.0)))
                 if price == 0.0:
