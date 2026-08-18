@@ -3,17 +3,20 @@
 Test broker streaming data — standalone script.
 
 Usage:
-  python scripts/test_broker_streaming.py [breeze|kite|kotak|fyers]
+  python scripts/test_broker_streaming.py [breeze|kite|kotak|fyers] [--symbol NIFTY|BSESEN]
 
   - breeze: ICICI Direct Breeze WebSocket
   - kite:   Zerodha Kite WebSocket
   - kotak:  Kotak Neo WebSocket (requires OTP)
   - fyers:  Fyers WebSocket
 
+  --symbol NIFTY   Subscribe to NIFTY 50 index + ATM NIFTY options (NSE/NFO)
+  --symbol BSESEN  Subscribe to SENSEX index + ATM SENSEX options (BSE/BFO)
+
 All logs go to <data/accesskeys.ini [paths].logs>/test_broker_streaming.log
 
-This script subscribes to NIFTY index + NIFTY options at ATM strike.
-The ATM strike is determined from the first NIFTY index tick received.
+This script subscribes to the chosen index + its ATM options.
+The ATM strike is determined from the first index tick received.
 """
 import argparse
 import configparser
@@ -91,6 +94,51 @@ def _get_ddb_token(sk: str) -> str | None:
 
 
 # ---------------------------------------------------------------------------
+# Per-symbol configuration — mirrors backend SUPPORTED_SYMBOLS
+# ---------------------------------------------------------------------------
+# Canonical key → broker-specific parameters.
+# NIFTY is NSE/NFO; BSESEN (SENSEX) is BSE/BFO.
+SYMBOL_INFO: dict[str, dict] = {
+    "NIFTY": {
+        "display_name": "NIFTY 50",
+        "index_token_kite": 256265,        # NIFTY 50 index on NSE
+        "index_exchange_kite": "NSE",
+        "index_exchange_breeze": "NSE",
+        "stock_code_breeze": "NIFTY",
+        "options_exchange_kite": "NFO",
+        "options_exchange_breeze": "NFO",
+        "options_exchange_kotak": "nse_fo",
+        "options_exchange_fyers": "NSE",
+        "base_name_kotak": "NIFTY",
+        "base_name_fyers": "NIFTY",
+        "strike_interval": 50,
+        "lot_size": 65,
+        # Breeze subscribe right values are LOWERCASE "call"/"put"
+        "breeze_rights": ("call", "put"),
+        # Kite/Kotak/Fyers option rights are UPPERCASE "CE"/"PE"
+        "upper_rights": ("CE", "PE"),
+    },
+    "BSESEN": {
+        "display_name": "SENSEX",
+        "index_token_kite": 265,            # SENSEX index on BSE
+        "index_exchange_kite": "BSE",
+        "index_exchange_breeze": "BSE",
+        "stock_code_breeze": "BSESEN",      # Breeze raw code is "BSESEN"
+        "options_exchange_kite": "BFO",
+        "options_exchange_breeze": "BFO",
+        "options_exchange_kotak": "bse_fo",
+        "options_exchange_fyers": "BSE",
+        "base_name_kotak": "SENSEX",
+        "base_name_fyers": "SENSEX",
+        "strike_interval": 100,
+        "lot_size": 20,
+        "breeze_rights": ("call", "put"),
+        "upper_rights": ("CE", "PE"),
+    },
+}
+
+
+# ---------------------------------------------------------------------------
 # Options helpers — replicate options_service logic for standalone use
 # ---------------------------------------------------------------------------
 
@@ -123,9 +171,14 @@ def _prev_trading_day(d: date) -> date:
     return d
 
 
-def get_weekly_expiry(trading_date_str: str) -> str:
+def get_weekly_expiry(trading_date_str: str, symbol: str = "NIFTY") -> str:
     d = date.fromisoformat(trading_date_str)
-    target_wd = 1 if d >= _CUTOFF_DATE else 3
+    # BSESEN (SENSEX) weekly expiry is always Thursday (weekday 3).
+    # NSE: Tuesday (1) from 2025-09-01, Thursday (3) before.
+    if symbol == "BSESEN":
+        target_wd = 3
+    else:
+        target_wd = 1 if d >= _CUTOFF_DATE else 3
     days_ahead = (target_wd - d.weekday()) % 7
     expiry = d + timedelta(days=days_ahead)
     if not _is_trading_day(expiry):
@@ -133,8 +186,8 @@ def get_weekly_expiry(trading_date_str: str) -> str:
     return expiry.isoformat()
 
 
-def get_atm_strike(price: float) -> int:
-    interval = 50  # NIFTY
+def get_atm_strike(price: float, symbol: str = "NIFTY") -> int:
+    interval = STRIKE_INTERVALS.get(symbol, 50)
     atm = round(price / interval) * interval
     return int(atm)
 
@@ -144,11 +197,13 @@ def get_atm_strike(price: float) -> int:
 # ---------------------------------------------------------------------------
 
 class BreezeStreamTester:
-    def __init__(self):
+    def __init__(self, symbol: str = "NIFTY"):
         self._breeze = None
         self._tick_count = 0
         self._subscribed_options = False
-        self._nifty_price = 0.0
+        self._index_price = 0.0
+        self.symbol = symbol
+        self.info = SYMBOL_INFO[symbol]
 
     def _get_breeze(self):
         from breeze_connect import BreezeConnect
@@ -191,30 +246,38 @@ class BreezeStreamTester:
                 self._tick_count, name, exchange, ltp, right_raw, strike,
             )
 
-            # Once we have the NIFTY index price, subscribe to options
-            if not self._subscribed_options and "NIFTY" in name.upper() and right_raw == "" and ltp > 0:
-                self._nifty_price = ltp
+            # Once we have the index price for the chosen symbol, subscribe to options.
+            # Breeze sends right="" for cash/index ticks.
+            stock_code = self.info["stock_code_breeze"]
+            if (
+                not self._subscribed_options
+                and stock_code in name.upper()
+                and right_raw == ""
+                and ltp > 0
+            ):
+                self._index_price = ltp
                 self._subscribe_options(ltp)
 
     def _subscribe_options(self, price: float):
-        atm = get_atm_strike(price)
-        expiry = get_weekly_expiry(date.today().isoformat())
+        atm = get_atm_strike(price, self.symbol)
+        expiry = get_weekly_expiry(date.today().isoformat(), self.symbol)
         expiry_breeze = datetime.strptime(expiry, "%Y-%m-%d").strftime("%d-%b-%Y")
 
         logger.info(
-            "BREEZE: NIFTY LTP=%.2f → ATM strike=%d expiry=%s — subscribing options",
-            price, atm, expiry,
+            "BREEZE: %s LTP=%.2f → ATM strike=%d expiry=%s — subscribing options",
+            self.info["display_name"], price, atm, expiry,
         )
 
-        for right in ("call", "put"):
+        for right in self.info["breeze_rights"]:
             logger.info(
-                "BREEZE: subscribing NIFTY %s %d %s %s",
-                right.upper(), atm, expiry_breeze, "NFO",
+                "BREEZE: subscribing %s %s %d %s %s",
+                self.info["stock_code_breeze"], right.upper(), atm, expiry_breeze,
+                self.info["options_exchange_breeze"],
             )
             try:
                 self._breeze.subscribe_feeds(
-                    exchange_code="NFO",
-                    stock_code="NIFTY",
+                    exchange_code=self.info["options_exchange_breeze"],
+                    stock_code=self.info["stock_code_breeze"],
                     product_type="options",
                     expiry_date=expiry_breeze,
                     strike_price=str(atm),
@@ -228,16 +291,22 @@ class BreezeStreamTester:
         self._subscribed_options = True
 
     def run(self):
-        logger.info("BREEZE: connecting to ICICI Direct WebSocket...")
+        logger.info(
+            "BREEZE: connecting to ICICI Direct WebSocket (symbol=%s)...",
+            self.info["display_name"],
+        )
         self._breeze = self._get_breeze()
         self._breeze.on_ticks = self._on_ticks
         self._breeze.ws_connect()
 
-        # Subscribe NIFTY index
-        logger.info("BREEZE: subscribing NIFTY index (NSE, cash)")
+        # Subscribe to the chosen index (cash product on its native exchange).
+        logger.info(
+            "BREEZE: subscribing %s index (%s, cash)",
+            self.info["display_name"], self.info["index_exchange_breeze"],
+        )
         self._breeze.subscribe_feeds(
-            exchange_code="NSE",
-            stock_code="NIFTY",
+            exchange_code=self.info["index_exchange_breeze"],
+            stock_code=self.info["stock_code_breeze"],
             product_type="cash",
             expiry_date="",
             strike_price="",
@@ -265,12 +334,15 @@ class BreezeStreamTester:
 # ---------------------------------------------------------------------------
 
 class KiteStreamTester:
-    def __init__(self):
+    def __init__(self, symbol: str = "NIFTY"):
         self._ticker = None
         self._tick_count = 0
         self._subscribed_options = False
-        self._nifty_price = 0.0
+        self._index_price = 0.0
         self._accumulators: dict[int, dict] = {}
+        self.symbol = symbol
+        self.info = SYMBOL_INFO[symbol]
+        self._index_token = self.info["index_token_kite"]
 
     def _read_kite_config(self):
         cfg = configparser.ConfigParser()
@@ -280,21 +352,14 @@ class KiteStreamTester:
         access_token = _get_ddb_token("kite_access") or section["access_token"].strip()
         return api_key, access_token
 
-    def _lookup_nifty_token(self):
-        import csv
-        from app.config import DATA_DIR
-        cache = DATA_DIR / "kite_instruments_NSE.csv"
-        with open(cache, newline="") as f:
-            for row in csv.DictReader(f):
-                if row.get("tradingsymbol") == "NIFTY 50" and row.get("exchange") == "NSE":
-                    return int(row["instrument_token"])
-        raise ValueError("NIFTY 50 token not found in kite_instruments_NSE.csv")
-
     def _lookup_options_token(self, strike: int, expiry: str, right: str):
         import csv
         from app.config import DATA_DIR
-        cache = DATA_DIR / "kite_instruments_NFO.csv"
+        exchange = self.info["options_exchange_kite"]
+        cache = DATA_DIR / f"kite_instruments_{exchange}.csv"
         expiry_dt = datetime.strptime(expiry, "%Y-%m-%d")
+        # Kite tradingsymbol name for options: NIFTY for NIFTY, SENSEX for BSESEN
+        base_name = self.info["base_name_kotak"]
         with open(cache, newline="") as f:
             for row in csv.DictReader(f):
                 try:
@@ -303,29 +368,34 @@ class KiteStreamTester:
                 except (ValueError, TypeError):
                     continue
                 if (
-                    row.get("name", "").upper() == "NIFTY"
+                    row.get("name", "").upper() == base_name.upper()
                     and row.get("instrument_type", "").upper() == right.upper()
                     and row_expiry == expiry_dt
                     and abs(row_strike - strike) < 0.5
                 ):
                     return int(row["instrument_token"])
-        raise ValueError(f"Options token not found: NIFTY {right} {strike} {expiry}")
+        raise ValueError(
+            f"Options token not found: {base_name} {right} {strike} {expiry} (cache={cache})"
+        )
 
     def _subscribe_options(self, price: float, ws):
-        atm = get_atm_strike(price)
-        expiry = get_weekly_expiry(date.today().isoformat())
+        atm = get_atm_strike(price, self.symbol)
+        expiry = get_weekly_expiry(date.today().isoformat(), self.symbol)
 
         logger.info(
-            "KITE: NIFTY LTP=%.2f → ATM strike=%d expiry=%s — subscribing options",
-            price, atm, expiry,
+            "KITE: %s LTP=%.2f → ATM strike=%d expiry=%s — subscribing options",
+            self.info["display_name"], price, atm, expiry,
         )
 
         tokens = []
-        for right in ("CE", "PE"):
+        for right in self.info["upper_rights"]:
             try:
                 tok = self._lookup_options_token(atm, expiry, right)
                 tokens.append(tok)
-                logger.info("KITE: resolved NIFTY %s %d expiry=%s → token=%d", right, atm, expiry, tok)
+                logger.info(
+                    "KITE: resolved %s %s %d expiry=%s → token=%d",
+                    self.info["display_name"], right, atm, expiry, tok,
+                )
             except ValueError as exc:
                 logger.error("KITE: %s", exc)
 
@@ -337,9 +407,12 @@ class KiteStreamTester:
 
     def _on_connect(self, ws, response):
         logger.info("KITE: WebSocket connected — response=%s", response)
-        ws.subscribe([256265])  # NIFTY index token
-        ws.set_mode(ws.MODE_LTP, [256265])
-        logger.info("KITE: subscribed NIFTY index token=256265 in LTP mode")
+        ws.subscribe([self._index_token])
+        ws.set_mode(ws.MODE_LTP, [self._index_token])
+        logger.info(
+            "KITE: subscribed %s index token=%d in LTP mode",
+            self.info["display_name"], self._index_token,
+        )
 
     def _on_ticks(self, ws, ticks):
         _IST_OFFSET = 19800
@@ -386,9 +459,9 @@ class KiteStreamTester:
                     acc["low"] = min(acc["low"], price)
                     acc["close"] = price
 
-            # On first NIFTY tick, subscribe options
-            if not self._subscribed_options and token == 256265 and price > 0:
-                self._nifty_price = price
+            # On first index tick, subscribe options
+            if not self._subscribed_options and token == self._index_token and price > 0:
+                self._index_price = price
                 self._subscribe_options(price, ws)
 
     def _on_error(self, ws, code, reason):
@@ -400,7 +473,11 @@ class KiteStreamTester:
     def run(self):
         from kiteconnect import KiteTicker
         api_key, access_token = self._read_kite_config()
-        logger.info("KITE: connecting with api_key=%s access_token=%s...", api_key, access_token[:8] + "..." if len(access_token) > 8 else access_token)
+        logger.info(
+            "KITE: connecting with api_key=%s access_token=%s... (symbol=%s)",
+            api_key, access_token[:8] + "..." if len(access_token) > 8 else access_token,
+            self.info["display_name"],
+        )
 
         ticker = KiteTicker(api_key, access_token)
         ticker.on_connect = self._on_connect
@@ -429,12 +506,16 @@ class KiteStreamTester:
 # ---------------------------------------------------------------------------
 
 class KotakStreamTester:
-    def __init__(self):
+    def __init__(self, symbol: str = "NIFTY"):
         self._client = None
         self._tick_count = 0
         self._subscribed_options = False
-        self._nifty_price = 0.0
+        self._index_price = 0.0
         self._accumulators: dict[str, dict] = {}
+        self.symbol = symbol
+        self.info = SYMBOL_INFO[symbol]
+        self._index_token: str | None = None
+        self._index_exchange: str | None = None
 
     def _read_kotak_config(self):
         cfg = configparser.ConfigParser()
@@ -452,30 +533,38 @@ class KotakStreamTester:
         with open(cache_path) as f:
             return json.load(f)
 
-    def _get_nifty_token(self, instruments):
+    def _get_index_token(self, instruments):
+        # NIFTY index lives in nse_cm; SENSEX index lives in bse_cm.
+        # Tradingsymbol on the index segment matches the canonical display name.
+        base_name = self.info["base_name_kotak"]
+        index_exchange = "bse_cm" if self.symbol == "BSESEN" else "nse_cm"
         for inst in instruments:
-            if inst["symbol"] == "NIFTY" and inst["exchange"] == "nse_cm":
+            if inst["symbol"] == base_name and inst["exchange"] == index_exchange:
                 return inst["instrument_token"], inst["exchange"]
-        raise ValueError("NIFTY token not found in kotak_instruments.json")
+        raise ValueError(
+            f"{base_name} index token not found in kotak_instruments.json (exchange={index_exchange})"
+        )
 
     def _build_options_symbol(self, expiry: str, strike: int, right: str) -> str:
         expiry_dt = datetime.strptime(expiry, "%Y-%m-%d").date()
         yy = expiry_dt.strftime("%y")
+        base = self.info["base_name_kotak"]
         if (expiry_dt + timedelta(days=7)).month != expiry_dt.month:
             month_part = expiry_dt.strftime("%b").upper()
         else:
             m = expiry_dt.month
             dd = expiry_dt.strftime("%d")
             month_part = f"{m}{dd}"
-        return f"NIFTY{yy}{month_part}{strike}{right}"
+        return f"{base}{yy}{month_part}{strike}{right}"
 
     def _lookup_options_token(self, instruments, expiry: str, strike: int, right: str):
         kotak_sym = self._build_options_symbol(expiry, strike, right)
         logger.info("KOTAK: looking up options symbol %s", kotak_sym)
+        opts_exchange = self.info["options_exchange_kotak"]
         for inst in instruments:
-            if inst["symbol"] == kotak_sym and inst["exchange"] == "nse_fo":
+            if inst["symbol"] == kotak_sym and inst["exchange"] == opts_exchange:
                 return inst["instrument_token"], inst["exchange"]
-        raise ValueError(f"Options token not found: {kotak_sym}")
+        raise ValueError(f"Options token not found: {kotak_sym} (exchange={opts_exchange})")
 
     def _on_message(self, message):
         try:
@@ -556,32 +645,29 @@ class KotakStreamTester:
                 acc["low"] = min(acc["low"], ltp)
                 acc["close"] = ltp
 
-        # On first NIFTY tick, subscribe options
-        if not self._subscribed_options and ltp > 0:
-            # Check if this is NIFTY index (token from nse_cm)
+        # On first index tick, subscribe options
+        if not self._subscribed_options and ltp > 0 and self._index_token and token == self._index_token:
+            self._index_price = ltp
             instruments = self._get_instruments()
-            nifty_token, _ = self._get_nifty_token(instruments)
-            if token == nifty_token:
-                self._nifty_price = ltp
-                self._subscribe_options(ltp, instruments)
+            self._subscribe_options(ltp, instruments)
 
     def _subscribe_options(self, price: float, instruments):
-        atm = get_atm_strike(price)
-        expiry = get_weekly_expiry(date.today().isoformat())
+        atm = get_atm_strike(price, self.symbol)
+        expiry = get_weekly_expiry(date.today().isoformat(), self.symbol)
 
         logger.info(
-            "KOTAK: NIFTY LTP=%.2f → ATM strike=%d expiry=%s — subscribing options",
-            price, atm, expiry,
+            "KOTAK: %s LTP=%.2f → ATM strike=%d expiry=%s — subscribing options",
+            self.info["display_name"], price, atm, expiry,
         )
 
         tokens = []
-        for right in ("CE", "PE"):
+        for right in self.info["upper_rights"]:
             try:
                 tok, exch = self._lookup_options_token(instruments, expiry, atm, right)
                 tokens.append({"instrument_token": tok, "exchange_segment": exch})
                 logger.info(
-                    "KOTAK: resolved NIFTY %s %d expiry=%s → token=%s exchange=%s",
-                    right, atm, expiry, tok, exch,
+                    "KOTAK: resolved %s %s %d expiry=%s → token=%s exchange=%s",
+                    self.info["display_name"], right, atm, expiry, tok, exch,
                 )
             except ValueError as exc:
                 logger.error("KOTAK: %s", exc)
@@ -638,20 +724,23 @@ class KotakStreamTester:
         client.on_open = lambda *a: logger.info("KOTAK: WebSocket opened")
         client.subscribe_to_orderfeed()
 
-        # Load instrument master to find NIFTY index token
+        # Load instrument master to find the index token for the chosen symbol.
         instruments = self._get_instruments()
-        nifty_token, nifty_exchange = self._get_nifty_token(instruments)
-        logger.info("KOTAK: NIFTY index token=%s exchange=%s", nifty_token, nifty_exchange)
+        self._index_token, self._index_exchange = self._get_index_token(instruments)
+        logger.info(
+            "KOTAK: %s index token=%s exchange=%s",
+            self.info["display_name"], self._index_token, self._index_exchange,
+        )
 
-        # Subscribe NIFTY index
+        # Subscribe index
         client.subscribe(
             instrument_tokens=[
-                {"instrument_token": nifty_token, "exchange_segment": nifty_exchange},
+                {"instrument_token": self._index_token, "exchange_segment": self._index_exchange},
             ],
             isIndex=True,
             isDepth=False,
         )
-        logger.info("KOTAK: subscribed NIFTY index (isIndex=True)")
+        logger.info("KOTAK: subscribed %s index (isIndex=True)", self.info["display_name"])
 
         logger.info("KOTAK: streaming started — waiting for ticks... (Ctrl+C to stop)")
 
@@ -667,13 +756,24 @@ class KotakStreamTester:
 # ---------------------------------------------------------------------------
 
 class FyersStreamTester:
-    def __init__(self):
+    _MONTH_ABBR = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN",
+                   "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"]
+
+    def __init__(self, symbol: str = "NIFTY"):
         self._fyers = None
         self._tick_count = 0
         self._subscribed_options = False
-        self._nifty_price = 0.0
+        self._index_price = 0.0
         self._accumulators: dict[str, dict] = {}
         self._connected = threading.Event()
+        self.symbol = symbol
+        self.info = SYMBOL_INFO[symbol]
+        # Fyers index symbol: "NSE:NIFTY50-INDEX" for NIFTY (special-cased)
+        # but "BSE:SENSEX-INDEX" for BSESEN.
+        if symbol == "NIFTY":
+            self._index_symbol = f"{self.info['options_exchange_fyers']}:NIFTY50-INDEX"
+        else:
+            self._index_symbol = f"{self.info['options_exchange_fyers']}:SENSEX-INDEX"
 
     def _read_fyers_config(self):
         cfg = configparser.ConfigParser()
@@ -687,9 +787,9 @@ class FyersStreamTester:
         logger.info("FYERS: WebSocket connected — response=%s", response)
         self._connected.set()
 
-        ws.subscribe(["NSE:NIFTY50-INDEX"])
+        ws.subscribe([self._index_symbol])
         ws.mode(ws.MODE_LTP)
-        logger.info("FYERS: subscribed NSE:NIFTY50-INDEX in LTP mode")
+        logger.info("FYERS: subscribed %s in LTP mode", self._index_symbol)
 
     def _on_message(self, ws, message):
         _IST_OFFSET = 19800
@@ -735,28 +835,28 @@ class FyersStreamTester:
                 acc["low"] = min(acc["low"], price)
                 acc["close"] = price
 
-        # On first NIFTY tick, subscribe options
-        if not self._subscribed_options and "NIFTY50-INDEX" in symbol and price > 0:
-            self._nifty_price = price
+        # On first index tick, subscribe options
+        if not self._subscribed_options and symbol == self._index_symbol and price > 0:
+            self._index_price = price
             self._subscribe_options(price, ws)
 
     def _subscribe_options(self, price: float, ws):
-        atm = get_atm_strike(price)
-        expiry = get_weekly_expiry(date.today().isoformat())
+        atm = get_atm_strike(price, self.symbol)
+        expiry = get_weekly_expiry(date.today().isoformat(), self.symbol)
         exp_dt = datetime.strptime(expiry, "%Y-%m-%d")
-        _MONTH_ABBR = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN",
-                       "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"]
         day = f"{exp_dt.day:02d}"
-        month = _MONTH_ABBR[exp_dt.month - 1]
+        month = self._MONTH_ABBR[exp_dt.month - 1]
+        base = self.info["base_name_fyers"]
+        exchange = self.info["options_exchange_fyers"]
 
         logger.info(
-            "FYERS: NIFTY LTP=%.2f → ATM strike=%d expiry=%s — subscribing options",
-            price, atm, expiry,
+            "FYERS: %s LTP=%.2f → ATM strike=%d expiry=%s — subscribing options",
+            self.info["display_name"], price, atm, expiry,
         )
 
         symbols = []
-        for right in ("CE", "PE"):
-            sym = f"NSE:NIFTY{day}{month}{atm}{right}"
+        for right in self.info["upper_rights"]:
+            sym = f"{exchange}:{base}{day}{month}{atm}{right}"
             symbols.append(sym)
             logger.info("FYERS: options symbol %s", sym)
 
@@ -778,7 +878,10 @@ class FyersStreamTester:
         app_id, access_token = self._read_fyers_config()
         access_token_str = f"{app_id}:{access_token}"
 
-        logger.info("FYERS: connecting with app_id=%s...", app_id)
+        logger.info(
+            "FYERS: connecting with app_id=%s... (symbol=%s)",
+            app_id, self.info["display_name"],
+        )
         fyers = data_ws.FyersDataSocket(
             access_token=access_token_str,
             log_path="",
@@ -813,14 +916,27 @@ class FyersStreamTester:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Test broker streaming data (NIFTY index + ATM options)"
+        description="Test broker streaming data (NIFTY or SENSEX index + ATM options)"
     )
     parser.add_argument(
         "broker",
         choices=["breeze", "kite", "kotak", "fyers"],
         help="Broker to test streaming from",
     )
+    parser.add_argument(
+        "--symbol",
+        choices=["NIFTY", "BSESEN"],
+        default="NIFTY",
+        help="Underlying index to stream: NIFTY (NSE/NFO) or BSESEN/SENSEX (BSE/BFO). Default: NIFTY",
+    )
     args = parser.parse_args()
+
+    sym_info = SYMBOL_INFO[args.symbol]
+    logger.info(
+        "Selected symbol=%s (%s) — strike interval=%d lot size=%d",
+        args.symbol, sym_info["display_name"],
+        sym_info["strike_interval"], sym_info["lot_size"],
+    )
 
     # Ensure DynamoDB Local is running for token lookups
     try:
@@ -837,7 +953,7 @@ def main():
         "fyers": FyersStreamTester,
     }
 
-    tester = testers[args.broker]()
+    tester = testers[args.broker](symbol=args.symbol)
     try:
         tester.run()
     except KeyboardInterrupt:
