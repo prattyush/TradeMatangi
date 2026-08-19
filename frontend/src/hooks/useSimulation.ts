@@ -289,12 +289,14 @@ export function useSimulation() {
         prevQty: number,
         curQty: number,
       ) => {
+        // Open: no-op for the counter — RT index is assigned at close time
+        // to match the backend's _fifo_match_trades which starts at 0.
         if (curQty !== 0 && prevQty === 0) {
-          rtIndexCounterRef.current++
           return
         }
         if (prevQty !== 0 && curQty === 0) {
           const rtIdx = rtIndexCounterRef.current
+          rtIndexCounterRef.current++
           const legTrades = updatedTrades.filter(t => (right === null ? !t.right : t.right === right))
           let pnl = 0
           for (const t of legTrades) {
@@ -486,9 +488,10 @@ export function useSimulation() {
       const prev = lastNetQtyRef.current
       let newPending = s.pendingExitLabels
       const check = (rtRight: string | null, prevQty: number, curQty: number) => {
-        if (curQty !== 0 && prevQty === 0) { rtIndexCounterRef.current++; return }
+        if (curQty !== 0 && prevQty === 0) { return }
         if (prevQty !== 0 && curQty === 0) {
           const rtIdx = rtIndexCounterRef.current
+          rtIndexCounterRef.current++
           const legTrades = stamped.filter(t => (rtRight === null ? !t.right : t.right === rtRight))
           let pnl = 0
           for (const t of legTrades) { if (t.side === 'SELL') pnl += t.price * t.quantity; else pnl -= t.price * t.quantity }
@@ -686,9 +689,10 @@ export function useSimulation() {
       const prev = lastNetQtyRef.current
       let newPending = s.pendingExitLabels
       const check = (right: string | null, prevQty: number, curQty: number) => {
-        if (curQty !== 0 && prevQty === 0) { rtIndexCounterRef.current++; return }
+        if (curQty !== 0 && prevQty === 0) { return }
         if (prevQty !== 0 && curQty === 0) {
           const rtIdx = rtIndexCounterRef.current
+          rtIndexCounterRef.current++
           const legTrades = updatedTrades.filter(t => (right === null ? !t.right : t.right === right))
           let pnl = 0
           for (const t of legTrades) { if (t.side === 'SELL') pnl += t.price * t.quantity; else pnl -= t.price * t.quantity }
