@@ -1,5 +1,6 @@
 import { Position } from '../services/api'
-import { SessionState } from '../hooks/useSimulation'
+import { SessionState, PendingExitRt } from '../hooks/useSimulation'
+import PendingLabelPanel from './PendingLabelPanel'
 
 interface Props {
   sessionState: SessionState
@@ -14,6 +15,21 @@ interface Props {
   pnlPctMode?: boolean
   sessionCapital?: number
   fundsRatioMode?: boolean
+  // In-session trade labeling
+  sessionId?: string | null
+  pendingExitLabels?: PendingExitRt[]
+  openLegs?: { right: string | null; rtIndex: number; label: string }[]
+  savedEntryRtKeys?: string[]
+  onSaveEntry?: (
+    rtIndex: number,
+    right: string | null,
+    fields: { expected_category: string; expected_strategy: string; entry_tag: string },
+  ) => Promise<void> | void
+  onSaveExit?: (
+    rtIndex: number,
+    right: string | null,
+    fields: { actual_category: string; actual_strategy: string; exit_tag: string },
+  ) => Promise<void> | void
 }
 
 function fmt(n: number) { return n.toFixed(2) }
@@ -21,6 +37,12 @@ function fmt(n: number) { return n.toFixed(2) }
 export default function TradePanel({
   sessionState, currentPrice, position, pnl, sessionPnl,
   activeRight = null, activeLabel, pnlPctMode, sessionCapital, fundsRatioMode,
+  sessionId,
+  pendingExitLabels = [],
+  openLegs = [],
+  savedEntryRtKeys = [],
+  onSaveEntry,
+  onSaveExit,
 }: Props) {
   const pnlColor = pnl > 0 ? '#26a641' : pnl < 0 ? '#f85149' : '#8b949e'
   const sessionPnlColor = (sessionPnl ?? 0) > 0 ? '#26a641' : (sessionPnl ?? 0) < 0 ? '#f85149' : '#8b949e'
@@ -34,6 +56,8 @@ export default function TradePanel({
   }
   const sideColor = position.side === 'LONG' ? '#26a641' : position.side === 'SHORT' ? '#f85149' : '#8b949e'
   const active = sessionState === 'running' || sessionState === 'paused'
+
+  const showLabels = active && sessionId && onSaveEntry && onSaveExit
 
   return (
     <div style={{
@@ -68,7 +92,8 @@ export default function TradePanel({
           <div style={{ fontSize: 12, color: '#8b949e', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <span>Avg entry: <span style={{ color: '#e6edf3' }}>{fmt(position.avg_entry_price)}</span></span>
             {!fundsRatioMode && (
-              <span>Qty: <span style={{ color: '#e6edf3' }}>{position.quantity}</span></span>
+              <span>Qty: <span style={{ color: '#e6edf3' }}>{position.quantity}</span>
+              </span>
             )}
             {fundsRatioMode && (
               <span>
@@ -97,6 +122,17 @@ export default function TradePanel({
           </div>
         )}
       </div>
+
+      {showLabels && (
+        <PendingLabelPanel
+          sessionId={sessionId!}
+          pendingExitLabels={pendingExitLabels}
+          openLegs={openLegs}
+          savedEntryRtKeys={savedEntryRtKeys}
+          onSaveEntry={onSaveEntry!}
+          onSaveExit={onSaveExit!}
+        />
+      )}
     </div>
   )
 }
