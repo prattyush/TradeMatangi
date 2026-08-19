@@ -280,24 +280,23 @@ export function useSimulation() {
       const updatedTrades = [...s.trades, trade]
       const { eq, ce, pe } = computeNetQty(updatedTrades)
       const prev = lastNetQtyRef.current
-      const counters = rtIndexCounterRef.current
-      console.log(`[LabelWatcher] addTradeAndDetect: trades=${updatedTrades.length} prev_eq=${prev.eq} cur_eq=${eq} ce=${prev.ce}->${ce} pe=${prev.pe}->${pe}`)
+      console.log(`[LabelWatcher] addTradeAndDetect: trades=${updatedTrades.length} prev_eq=${prev.eq} cur_eq=${eq} ce=${prev.ce}->${ce} pe=${prev.pe}->${pe} counter=${rtIndexCounterRef.current}`)
 
       let newPending = s.pendingExitLabels
 
       const check = (
-        legKey: 'eq' | 'ce' | 'pe',
         right: string | null,
         prevQty: number,
         curQty: number,
       ) => {
-        const idxKey = legKey === 'eq' ? 'eq' : legKey
+        // Open: no-op for the counter — RT index is assigned at close time
+        // to match the backend's _fifo_match_trades which starts at 0.
         if (curQty !== 0 && prevQty === 0) {
-          counters[idxKey]++
           return
         }
         if (prevQty !== 0 && curQty === 0) {
-          const rtIdx = counters[idxKey]
+          const rtIdx = rtIndexCounterRef.current
+          rtIndexCounterRef.current++
           const legTrades = updatedTrades.filter(t => (right === null ? !t.right : t.right === right))
           let pnl = 0
           for (const t of legTrades) {
@@ -306,7 +305,7 @@ export function useSimulation() {
           }
           const key = `${s.sessionId}#${rtIdx}#${right ?? 'EQ'}`
           if (!(s.savedExitRtKeys ?? []).includes(key)) {
-            console.log(`[LabelWatcher] CLOSE ${legKey} rtIdx=${rtIdx} pnl=${pnl} key=${key}`)
+            console.log(`[LabelWatcher] CLOSE right=${right} rtIdx=${rtIdx} pnl=${pnl} key=${key}`)
             newPending = [...newPending, {
               right,
               round_trip_index: rtIdx,
@@ -317,9 +316,9 @@ export function useSimulation() {
         }
       }
 
-      check('eq', null, prev.eq, eq)
-      check('ce', 'CE', prev.ce, ce)
-      check('pe', 'PE', prev.pe, pe)
+      check(null, prev.eq, eq)
+      check('CE', prev.ce, ce)
+      check('PE', prev.pe, pe)
 
       lastNetQtyRef.current = { eq, ce, pe }
 
@@ -485,16 +484,14 @@ export function useSimulation() {
         if (t.right && equityTickAtFill) return { ...t, underlying_price: equityTickAtFill.close }
         return t
       })
-      // Run RT open/close detection on the full refreshed trades array
       const { eq, ce, pe } = computeNetQty(stamped)
       const prev = lastNetQtyRef.current
-      const counters = rtIndexCounterRef.current
       let newPending = s.pendingExitLabels
-      const check = (legKey: 'eq' | 'ce' | 'pe', rtRight: string | null, prevQty: number, curQty: number) => {
-        const idxKey = legKey === 'eq' ? 'eq' : legKey
-        if (curQty !== 0 && prevQty === 0) { counters[idxKey]++; return }
+      const check = (rtRight: string | null, prevQty: number, curQty: number) => {
+        if (curQty !== 0 && prevQty === 0) { return }
         if (prevQty !== 0 && curQty === 0) {
-          const rtIdx = counters[idxKey]
+          const rtIdx = rtIndexCounterRef.current
+          rtIndexCounterRef.current++
           const legTrades = stamped.filter(t => (rtRight === null ? !t.right : t.right === rtRight))
           let pnl = 0
           for (const t of legTrades) { if (t.side === 'SELL') pnl += t.price * t.quantity; else pnl -= t.price * t.quantity }
@@ -504,7 +501,7 @@ export function useSimulation() {
           }
         }
       }
-      check('eq', null, prev.eq, eq); check('ce', 'CE', prev.ce, ce); check('pe', 'PE', prev.pe, pe)
+      check(null, prev.eq, eq); check('CE', prev.ce, ce); check('PE', prev.pe, pe)
       lastNetQtyRef.current = { eq, ce, pe }
       return {
         ...s,
@@ -690,13 +687,12 @@ export function useSimulation() {
       if (!s.sessionId) return { ...s, trades: updatedTrades }
       const { eq, ce, pe } = computeNetQty(updatedTrades)
       const prev = lastNetQtyRef.current
-      const counters = rtIndexCounterRef.current
       let newPending = s.pendingExitLabels
-      const check = (legKey: 'eq' | 'ce' | 'pe', right: string | null, prevQty: number, curQty: number) => {
-        const idxKey = legKey === 'eq' ? 'eq' : legKey
-        if (curQty !== 0 && prevQty === 0) { counters[idxKey]++; return }
+      const check = (right: string | null, prevQty: number, curQty: number) => {
+        if (curQty !== 0 && prevQty === 0) { return }
         if (prevQty !== 0 && curQty === 0) {
-          const rtIdx = counters[idxKey]
+          const rtIdx = rtIndexCounterRef.current
+          rtIndexCounterRef.current++
           const legTrades = updatedTrades.filter(t => (right === null ? !t.right : t.right === right))
           let pnl = 0
           for (const t of legTrades) { if (t.side === 'SELL') pnl += t.price * t.quantity; else pnl -= t.price * t.quantity }
@@ -706,7 +702,7 @@ export function useSimulation() {
           }
         }
       }
-      check('eq', null, prev.eq, eq); check('ce', 'CE', prev.ce, ce); check('pe', 'PE', prev.pe, pe)
+      check(null, prev.eq, eq); check('CE', prev.ce, ce); check('PE', prev.pe, pe)
       lastNetQtyRef.current = { eq, ce, pe }
       return { ...s, trades: updatedTrades, pendingExitLabels: newPending }
     })
@@ -742,12 +738,12 @@ export function useSimulation() {
   // Refs instead of state so the watcher can read them synchronously without
   // being in the dependency array of the effect that writes them.
   const lastNetQtyRef = useRef<{ eq: number; ce: number; pe: number }>({ eq: 0, ce: 0, pe: 0 })
-  const rtIndexCounterRef = useRef<{ eq: number; ce: number; pe: number }>({ eq: 0, ce: 0, pe: 0 })
+  const rtIndexCounterRef = useRef(0)  // single global counter, matches backend _fifo_match_trades
 
   // Reset label state when a new session starts or ends
   const resetLabelTracking = useCallback(() => {
     lastNetQtyRef.current = { eq: 0, ce: 0, pe: 0 }
-    rtIndexCounterRef.current = { eq: 0, ce: 0, pe: 0 }
+    rtIndexCounterRef.current = 0
     setState(s => ({
       ...s,
       pendingExitLabels: [],
@@ -756,9 +752,8 @@ export function useSimulation() {
     }))
   }, [])
 
-  const getOpenRtIndex = useCallback((right: string | null): number => {
-    const legKey = right === null ? 'eq' : right.toLowerCase() as 'ce' | 'pe'
-    return rtIndexCounterRef.current[legKey]
+  const getOpenRtIndex = useCallback((_right: string | null): number => {
+    return rtIndexCounterRef.current
   }, [])
 
   const recordSavedEntry = useCallback((sessionId: string, rtIndex: number, right: string | null) => {

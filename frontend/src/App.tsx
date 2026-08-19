@@ -269,14 +269,34 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
     fields: { actual_category: string; actual_strategy: string; exit_tag: string },
   ) => {
     if (!sim.sessionId) return
+    // Fetch existing label for this RT so we preserve expected_* and entry_tag
+    // values that were saved during entry — the backend upsert overwrites all
+    // fields, so we must re-send them.
+    let existingExpected: { expected_category: string; expected_strategy: string; entry_tag: string } = {
+      expected_category: '', expected_strategy: '', entry_tag: 'AS_PER_PATTERN',
+    }
+    try {
+      const labels = await api.getLabels(sim.sessionId)
+      const existing = labels.find(
+        (l: { round_trip_index: number }) => l.round_trip_index === rtIndex,
+      )
+      if (existing) {
+        existingExpected = {
+          expected_category: existing.expected_category ?? '',
+          expected_strategy: existing.expected_strategy ?? '',
+          entry_tag: existing.entry_tag ?? 'AS_PER_PATTERN',
+        }
+      }
+    } catch { /* ignore — proceed with empty defaults */ }
+
     await api.saveLabels([{
       session_id: sim.sessionId,
       round_trip_index: rtIndex,
-      expected_category: '',
-      expected_strategy: '',
+      expected_category: existingExpected.expected_category,
+      expected_strategy: existingExpected.expected_strategy,
       actual_category: fields.actual_category,
       actual_strategy: fields.actual_strategy,
-      entry_tag: 'AS_PER_PATTERN',
+      entry_tag: existingExpected.entry_tag,
       exit_tag: fields.exit_tag,
     }])
     sim.recordSavedExit(sim.sessionId, rtIndex, right)
