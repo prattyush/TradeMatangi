@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { Fragment, useState, useEffect, useRef } from 'react'
 import api from '../services/api'
 import KotakTOTPModal from './KotakTOTPModal'
 
@@ -44,6 +44,41 @@ const TARGET_PROFIT_BUFFER_TICKS_KEY = 'targetProfitBufferTicks'
 const AGGR_SL_ONLY_IN_PROFIT_KEY = 'aggrSlOnlyInProfit'
 const AUTO_START_SNAPSHOTS_KEY = 'autoStartEventSnapshots'
 const STEPWISE_LABELING_POPUP_KEY = 'stepwiseLabelingPopupEnabled'
+const TRADE_LABELING_MODE_KEY = 'tradeLabelingModeByType'
+
+export type LabelingMode = 'off' | 'popup' | 'button'
+export type LabelingModeByType = Record<'stepwise' | 'sim' | 'paper' | 'real', LabelingMode>
+
+const DEFAULT_LABELING_MODE_BY_TYPE: LabelingModeByType = {
+  stepwise: 'popup',
+  sim: 'button',
+  paper: 'button',
+  real: 'button',
+}
+
+export function loadLabelingModeByType(): LabelingModeByType {
+  // Migrate from old stepwise-only key on first load.
+  if (!localStorage.getItem(TRADE_LABELING_MODE_KEY)) {
+    const oldVal = localStorage.getItem(STEPWISE_LABELING_POPUP_KEY)
+    if (oldVal === 'false') {
+      const migrated = { ...DEFAULT_LABELING_MODE_BY_TYPE, stepwise: 'off' as LabelingMode }
+      localStorage.setItem(TRADE_LABELING_MODE_KEY, JSON.stringify(migrated))
+      return migrated
+    }
+    localStorage.setItem(TRADE_LABELING_MODE_KEY, JSON.stringify(DEFAULT_LABELING_MODE_BY_TYPE))
+    return DEFAULT_LABELING_MODE_BY_TYPE
+  }
+  try {
+    const parsed = JSON.parse(localStorage.getItem(TRADE_LABELING_MODE_KEY)!)
+    return { ...DEFAULT_LABELING_MODE_BY_TYPE, ...parsed }
+  } catch {
+    return DEFAULT_LABELING_MODE_BY_TYPE
+  }
+}
+
+export function saveLabelingModeByType(modes: LabelingModeByType): void {
+  localStorage.setItem(TRADE_LABELING_MODE_KEY, JSON.stringify(modes))
+}
 
 const GUARDRAIL_BLOCK_BARS_KEY = 'guardrailBlockBars'
 const GUARDRAIL_COOLDOWN_BLOCK_BARS_KEY = 'guardrailCooldownBlockBars'
@@ -240,9 +275,10 @@ interface Props {
   onGuardRailSettingsChange?: (settings: GuardRailSettingsLocal) => void
   onAutoStartSnapshotsChange?: (enabled: boolean) => void
   onStepwiseLabelingPopupChange?: (enabled: boolean) => void
+  onLabelingModeChange?: (modes: LabelingModeByType) => void
 }
 
-export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessionActive, onWalletReset, onFundsRatioChange, onTargetDeviationChange, onBrokerageChange, onStrategySettingsChange, onHistoricalDaysChange, onPnlPctModeChange, onGuardRailSettingsChange, onAutoStartSnapshotsChange, onStepwiseLabelingPopupChange }: Props) {
+export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessionActive, onWalletReset, onFundsRatioChange, onTargetDeviationChange, onBrokerageChange, onStrategySettingsChange, onHistoricalDaysChange, onPnlPctModeChange, onGuardRailSettingsChange, onAutoStartSnapshotsChange, onStepwiseLabelingPopupChange, onLabelingModeChange }: Props) {
   const [open, setOpen] = useState(false)
   const [customAmount, setCustomAmount] = useState('')
   const [status, setStatus] = useState<string | null>(null)
@@ -296,7 +332,8 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
   const [grBanEnabled, setGrBanEnabled] = useState(loadGuardRailBanEnabled)
   const [grCooldownEnabled, setGrCooldownEnabled] = useState(loadGuardRailCooldownEnabled)
   const [autoStartSnapshots, setAutoStartSnapshots] = useState(loadAutoStartEventSnapshots)
-  const [stepwiseLabelingPopup, setStepwiseLabelingPopup] = useState(loadStepwiseLabelingPopupEnabled)
+  const [, setStepwiseLabelingPopup] = useState(loadStepwiseLabelingPopupEnabled)
+  const [labelingModeByType, setLabelingModeByType] = useState<LabelingModeByType>(loadLabelingModeByType)
   const [entryAutoSlEnabled, setEntryAutoSlEnabled] = useState(loadEntryAutoSlEnabled)
   const [entryAutoSlDelay, setEntryAutoSlDelay] = useState(loadEntryAutoSlDelay)
   const [maxPriceMode, setMaxPriceMode] = useState(loadMaxPriceMode)
@@ -988,25 +1025,52 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
               </div>
             </div>
 
-            {/* Stepwise Labeling Popup */}
+            {/* Trade Labeling Mode (per session type) */}
             <div style={{ borderTop: '1px solid #21262d', paddingTop: 16 }}>
-              <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 10, fontWeight: 600 }}>STEPWISE TRADE LABELING</div>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 13, color: '#c9d1d9' }}>
-                <input
-                  type="checkbox"
-                  checked={stepwiseLabelingPopup}
-                  onChange={e => {
-                    const val = e.target.checked
-                    setStepwiseLabelingPopup(val)
-                    localStorage.setItem(STEPWISE_LABELING_POPUP_KEY, String(val))
-                    onStepwiseLabelingPopupChange?.(val)
-                  }}
-                  style={{ width: 16, height: 16, accentColor: '#1f6feb' }}
-                />
-                Enable trade labeling popup in stepwise mode
-              </label>
-              <div style={{ fontSize: 11, color: '#484f58', marginTop: 6 }}>
-                When enabled, a popup asks you to label completed trades (expected/actual pattern, entry/exit tags) after each round-trip completes in stepwise mode
+              <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 10, fontWeight: 600 }}>TRADE LABELING MODE</div>
+              <div style={{ fontSize: 11, color: '#484f58', marginBottom: 8 }}>
+                Choose how trade labels are captured per session type.
+                <br />• <b>Popup</b> — a modal asks you to label trades after each round-trip.
+                <br />• <b>Button</b> — a side panel lets you click Save while a trade is open, and queues exit labels for closed trades.
+                <br />• <b>Off</b> — no in-session capture (post-hoc labeling still works in Trade Analysis).
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '90px 1fr 1fr 1fr', gap: 6, fontSize: 12, alignItems: 'center' }}>
+                <div style={{ color: '#8b949e', fontWeight: 600 }}></div>
+                <div style={{ color: '#8b949e', textAlign: 'center' }}>Off</div>
+                <div style={{ color: '#8b949e', textAlign: 'center' }}>Popup</div>
+                <div style={{ color: '#8b949e', textAlign: 'center' }}>Button</div>
+
+                {(['stepwise', 'sim', 'paper', 'real'] as const).map(sessionType => (
+                  <Fragment key={sessionType}>
+                    <div style={{ color: '#c9d1d9' }}>{sessionType.charAt(0).toUpperCase() + sessionType.slice(1)}</div>
+                    {(['off', 'popup', 'button'] as LabelingMode[]).map(mode => {
+                      const checked = labelingModeByType[sessionType] === mode
+                      return (
+                        <label key={mode} style={{ display: 'flex', justifyContent: 'center', cursor: 'pointer' }}>
+                          <input
+                            type="radio"
+                            name={`label-mode-${sessionType}`}
+                            checked={checked}
+                            onChange={() => {
+                              const next: LabelingModeByType = { ...labelingModeByType, [sessionType]: mode }
+                              setLabelingModeByType(next)
+                              saveLabelingModeByType(next)
+                              onLabelingModeChange?.(next)
+                              // Backward-compat: keep old stepwise checkbox in sync
+                              if (sessionType === 'stepwise') {
+                                const enabled = mode !== 'off'
+                                setStepwiseLabelingPopup(enabled)
+                                localStorage.setItem(STEPWISE_LABELING_POPUP_KEY, String(enabled))
+                                onStepwiseLabelingPopupChange?.(enabled)
+                              }
+                            }}
+                            style={{ accentColor: '#1f6feb' }}
+                          />
+                        </label>
+                      )
+                    })}
+                  </Fragment>
+                ))}
               </div>
             </div>
 

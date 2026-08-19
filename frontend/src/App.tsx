@@ -10,7 +10,7 @@ import OrderPanel from './components/OrderPanel'
 import WalletWidget from './components/WalletWidget'
 import GuardRailPopup from './components/GuardRailPopup'
 import PatternAlertToast, { PatternAlert } from './components/PatternAlertToast'
-import SettingsModal, { loadFundsRatioMode, loadFundsRatios, loadTargetDeviationPct, loadBrokeragePerOrder, loadStrategyIntervalSecs, loadAutostopTriggerType, loadAutostopDeviationPct, loadHistoricalDays, loadPnlPctMode, loadBreakevenMode, loadTargetProfitBufferTicks, loadAggrSlOnlyInProfit, loadAutoStartEventSnapshots, loadStepwiseLabelingPopupEnabled, FundsRatios } from './components/SettingsModal'
+import SettingsModal, { loadFundsRatioMode, loadFundsRatios, loadTargetDeviationPct, loadBrokeragePerOrder, loadStrategyIntervalSecs, loadAutostopTriggerType, loadAutostopDeviationPct, loadHistoricalDays, loadPnlPctMode, loadBreakevenMode, loadTargetProfitBufferTicks, loadAggrSlOnlyInProfit, loadAutoStartEventSnapshots, loadStepwiseLabelingPopupEnabled, loadLabelingModeByType, FundsRatios } from './components/SettingsModal'
 import { StrategyResponse, StartStrategyRequest, Order } from './services/api'
 import LoginScreen from './components/LoginScreen'
 import TradeAnalysis from './components/TradeAnalysis'
@@ -172,13 +172,19 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
   const [showChartStructures, setShowChartStructures] = useState(false)
   const [sessionControlsVisible, setSessionControlsVisible] = useState(true)
   // Stepwise trade labeling: compute completed round-trips at bar boundary.
-  // Uses a ref to track net qty at the PREVIOUS bar end, so we detect the
-  // net-qty→zero transition that happened during the just-completed bar.
-  // All computation is in a SINGLE effect (bar_paused) — no timing gap
-  // between trades-update and bar_paused effects across React batches.
+  // Stepwise popup state (kept for backward compat — only populated when
+  // stepwise mode is on AND the user's setting is 'popup'; otherwise the
+  // PendingLabelPanel in TradePanel handles capture).
   const [stepwiseLabels, setStepwiseLabels] = useState<{ right: string; session_id: string; round_trip_index: number }[] | null>(null)
-  const lastNetQtyRef = useRef({ eq: 0, ce: 0, pe: 0 })
-  const rtIndexCounterRef = useRef(0)
+
+  // ── Trade labeling mode per session type ────────────────────────────────────
+  const [labelModeByType, setLabelModeByType] = useState(loadLabelingModeByType)
+  const currentLabelMode = useCallback((sessionType: string): 'popup' | 'button' | 'off' => {
+    if (sessionType === 'stepwise') return labelModeByType.stepwise
+    if (sessionType === 'paper') return labelModeByType.paper
+    if (sessionType === 'real') return labelModeByType.real
+    return labelModeByType.sim
+  }, [labelModeByType])
 
   // ── Price-pick state ────────────────────────────────────────────────────────
   const [pricePickOrderId, setPricePickOrderId] = useState<string | null>(null)
@@ -206,50 +212,80 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
     }
   }, [sim.sessionState])
 
-  // Reset net qty tracking + round-trip index counter on new session start
+  // Reset RT tracking on new session start (works for all session types)
   useEffect(() => {
-    if (sim.sessionState === 'running' && sim.stepwise) {
-      lastNetQtyRef.current = { eq: 0, ce: 0, pe: 0 }
-      rtIndexCounterRef.current = 0
+    if (sim.sessionState === 'running') {
+      sim.resetLabelTracking()
       setStepwiseLabels(null)
     }
-  }, [sim.sessionState, sim.stepwise])
+  }, [sim.sessionState, sim.sessionId, sim.resetLabelTracking])
 
-  // At each bar boundary, compute net qty per right from ALL trades and
-  // diff against previous bar end to find completed round-trips.
+  // Run the generalized RT completion watcher on every trade change. Works for
+  // sim/paper/real/stepwise — it tracks per-leg net-qty transitions and pushes
+  // completed RTs into `sim.pendingExitLabels` for the in-session panel.
+  useEffect(() => {
+    if (!sim.sessionId) return
+    sim.onTradesChanged()
+  }, [sim.trades, sim.sessionId])
+
+  // Stepwise-popup path: only fire when stepwise AND mode is 'popup'.
   useEffect(() => {
     if (!sim.stepwise || !sim.barPaused) return
     if (!sim.sessionId) return
-
-    const trades = sim.trades ?? []
-    const eqQty = trades.filter(t => !t.right).reduce((sum, t) => sum + (t.side === 'BUY' ? t.quantity : -t.quantity), 0)
-    const ceQty = trades.filter(t => t.right === 'CE').reduce((sum, t) => sum + (t.side === 'BUY' ? t.quantity : -t.quantity), 0)
-    const peQty = trades.filter(t => t.right === 'PE').reduce((sum, t) => sum + (t.side === 'BUY' ? t.quantity : -t.quantity), 0)
-    const prev = lastNetQtyRef.current
-
-    const completed: { right: string; session_id: string; round_trip_index: number }[] = []
-    if (prev.eq > 0 && eqQty === 0) {
-      completed.push({ right: '', session_id: sim.sessionId, round_trip_index: rtIndexCounterRef.current++ })
-    }
-    if (prev.ce > 0 && ceQty === 0) {
-      completed.push({ right: 'CE', session_id: sim.sessionId, round_trip_index: rtIndexCounterRef.current++ })
-    }
-    if (prev.pe > 0 && peQty === 0) {
-      completed.push({ right: 'PE', session_id: sim.sessionId, round_trip_index: rtIndexCounterRef.current++ })
-    }
-
-    lastNetQtyRef.current = { eq: eqQty, ce: ceQty, pe: peQty }
-
-    if (completed.length > 0) {
-      setStepwiseLabels(completed)
-    }
-  }, [sim.barPaused, sim.stepwise, sim.sessionId, sim.trades])
+    if (currentLabelMode('stepwise') !== 'popup') return
+    const justCompleted = sim.pendingExitLabels
+    if (!justCompleted || justCompleted.length === 0) return
+    setStepwiseLabels(justCompleted.map(p => ({
+      right: p.right ?? '',
+      session_id: sim.sessionId!,
+      round_trip_index: p.round_trip_index,
+    })))
+  }, [sim.barPaused, sim.stepwise, sim.sessionId, sim.pendingExitLabels, currentLabelMode])
 
   // ── Wrapped nextBar: show popup instead of advancing ───────────────────────
   const wrappedNextBar = useCallback(async () => {
     if (stepwiseLabels) return // popup already showing
     await sim.nextBar()
   }, [sim.nextBar, stepwiseLabels])
+
+  // ── In-session trade labeling handlers ─────────────────────────────────────
+  const handleSaveEntry = useCallback(async (
+    rtIndex: number,
+    right: string | null,
+    fields: { expected_category: string; expected_strategy: string; entry_tag: string },
+  ) => {
+    if (!sim.sessionId) return
+    await api.saveLabels([{
+      session_id: sim.sessionId,
+      round_trip_index: rtIndex,
+      expected_category: fields.expected_category,
+      expected_strategy: fields.expected_strategy,
+      actual_category: '',
+      actual_strategy: '',
+      entry_tag: fields.entry_tag,
+      exit_tag: 'AS_PER_PATTERN',
+    }])
+    sim.recordSavedEntry(sim.sessionId, rtIndex, right)
+  }, [sim.sessionId, sim.recordSavedEntry])
+
+  const handleSaveExit = useCallback(async (
+    rtIndex: number,
+    right: string | null,
+    fields: { actual_category: string; actual_strategy: string; exit_tag: string },
+  ) => {
+    if (!sim.sessionId) return
+    await api.saveLabels([{
+      session_id: sim.sessionId,
+      round_trip_index: rtIndex,
+      expected_category: '',
+      expected_strategy: '',
+      actual_category: fields.actual_category,
+      actual_strategy: fields.actual_strategy,
+      entry_tag: 'AS_PER_PATTERN',
+      exit_tag: fields.exit_tag,
+    }])
+    sim.recordSavedExit(sim.sessionId, rtIndex, right)
+  }, [sim.sessionId, sim.recordSavedExit])
 
   // ── Pane state ──────────────────────────────────────────────────────────────
   const [panes, setPanes] = useState<PaneConfig[]>(DEFAULT_EQUITY_PANES)
@@ -408,6 +444,15 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
     if (activePane.type === 'options' && activePane.right)
       return `${sim.symbol} ${activePane.right} ${activePane.strike} | ${activePane.expiry}`
     return undefined
+  })()
+
+  // Open-leg labels for the labeling panel — keyed by right-or-EQ for stable lookup.
+  const openLegLabels: Record<string, string> = (() => {
+    const m: Record<string, string> = {}
+    m['EQ'] = `${sim.symbol} (equity)`
+    if (sim.sessionStrikeCE) m['CE'] = `${sim.symbol} ${sim.sessionStrikeCE} CE`
+    if (sim.sessionStrikePE) m['PE'] = `${sim.symbol} ${sim.sessionStrikePE} PE`
+    return m
   })()
 
   // Price shown in TradePanel = active contract price (or equity)
@@ -1115,6 +1160,7 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
           onGuardRailSettingsChange={() => {}}
           onAutoStartSnapshotsChange={setAutoStartSnapshots}
           onStepwiseLabelingPopupChange={setStepwiseLabelingPopup}
+          onLabelingModeChange={setLabelModeByType}
         />
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: '#484f58' }}>
           <span>{authUser.accountName || authUser.email}</span>
@@ -1132,8 +1178,11 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
         <TradeAnalysis onClose={() => setShowAnalysis(false)} historicalDays={historicalDays} />
       )}
 
-      {/* Stepwise Label Popup — shown at bar boundary when a round-trip completed */}
-      {stepwiseLabels && stepwiseLabels.length > 0 && sim.sessionId && stepwiseLabelingPopup && (
+      {/* Stepwise Label Popup — shown at bar boundary when a round-trip completed.
+          Only renders when the user's labeling mode for stepwise is 'popup'. */}
+      {stepwiseLabels && stepwiseLabels.length > 0 && sim.sessionId
+        && stepwiseLabelingPopup
+        && currentLabelMode('stepwise') === 'popup' && (
         <StepwiseLabelPopup
           sid={sim.sessionId}
           date={sim.date}
@@ -1368,6 +1417,14 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
             pnlPctMode={pnlPctMode}
             sessionCapital={sim.sessionCapital}
             fundsRatioMode={fundsRatioMode}
+            sessionId={sim.sessionId}
+            symbol={sim.symbol}
+            pendingExitLabels={sim.pendingExitLabels}
+            currentOpenEntries={sim.currentOpenEntries}
+            openLegLabels={openLegLabels}
+            savedEntryRtKeys={sim.savedEntryRtKeys}
+            onSaveEntry={currentLabelMode(sim.sessionType) !== 'off' ? handleSaveEntry : undefined}
+            onSaveExit={currentLabelMode(sim.sessionType) !== 'off' ? handleSaveExit : undefined}
           />
 
           {/* Combined P&L for options (both CE + PE) — collapsible */}

@@ -3,6 +3,18 @@ import api, { Trade, Position, Order, TickEvent, BarCandle, InsufficientFundsErr
 
 export type SessionState = 'idle' | 'running' | 'paused' | 'ended'
 
+export interface PendingExitRt {
+  right: string | null          // null = equity, 'CE' | 'PE' for options
+  round_trip_index: number
+  pnl: number
+  closed_at: number             // unix ms timestamp when the leg went flat
+}
+
+export interface CurrentOpenEntry {
+  right: string | null
+  round_trip_index: number
+}
+
 const FLAT_POSITION = (symbol: string): Position => ({
   symbol, quantity: 0, avg_entry_price: 0, side: 'FLAT', entry_commission: 0,
 })
@@ -48,6 +60,11 @@ export interface SimulationState {
   lastCompletedBarEquity: BarCandle | null
   lastCompletedBarCE: BarCandle | null
   lastCompletedBarPE: BarCandle | null
+  // In-session trade labeling
+  pendingExitLabels: PendingExitRt[]
+  currentOpenEntries: CurrentOpenEntry[]
+  savedEntryRtKeys: string[]       // dedupe: "sessionId#rtIdx#right" for entries already saved
+  savedExitRtKeys: string[]        // dedupe: same for exits already saved
 }
 
 export interface InstrumentConfig {
@@ -102,6 +119,10 @@ export function useSimulation() {
     lastCompletedBarEquity: null,
     lastCompletedBarCE: null,
     lastCompletedBarPE: null,
+    pendingExitLabels: [],
+    currentOpenEntries: [],
+    savedEntryRtKeys: [],
+    savedExitRtKeys: [],
   })
 
   const setLatestTick = useCallback((tick: TickEvent) => {
@@ -614,6 +635,150 @@ export function useSimulation() {
     }))
   }, [])
 
+  // ── In-session trade labeling ───────────────────────────────────────────────
+  // Per-leg net-qty snapshot — detect non-zero → 0 transitions to identify
+  // completed round-trips. Works for ALL session types (sim/paper/real/stepwise).
+  // Refs instead of state so the watcher can read them synchronously without
+  // being in the dependency array of the effect that writes them.
+  const lastNetQtyRef = useRef<{ eq: number; ce: number; pe: number }>({ eq: 0, ce: 0, pe: 0 })
+  const rtIndexCounterRef = useRef<{ eq: number; ce: number; pe: number }>({ eq: 0, ce: 0, pe: 0 })
+
+  // Net qty per leg from `sim.trades`. Mirrors App.tsx stepwise detector.
+  const computeNetQty = useCallback((trades: Trade[]) => {
+    let eq = 0, ce = 0, pe = 0
+    for (const t of trades) {
+      const sign = t.side === 'BUY' ? 1 : -1
+      if (!t.right) eq += sign * t.quantity
+      else if (t.right === 'CE') ce += sign * t.quantity
+      else if (t.right === 'PE') pe += sign * t.quantity
+    }
+    return { eq, ce, pe }
+  }, [])
+
+  /**
+   * Watch trades for RT completion. Called by App.tsx on every `sim.trades`
+   * change. Detects per-leg non-zero → zero transitions, assigns a fresh
+   * round_trip_index per leg, and moves the entry from `currentOpenEntries`
+   * to `pendingExitLabels`.
+   */
+  const onTradesChanged = useCallback(() => {
+    setState(s => {
+      if (!s.sessionId) return s
+      const trades = s.trades ?? []
+      const { eq, ce, pe } = computeNetQty(trades)
+      const prev = lastNetQtyRef.current
+      const counters = rtIndexCounterRef.current
+
+      const newPending: PendingExitRt[] = [...s.pendingExitLabels]
+      const newCurrent: CurrentOpenEntry[] = []
+      const closedRtKeys: string[] = []
+
+      const check = (
+        legKey: 'eq' | 'ce' | 'pe',
+        right: string | null,
+        prevQty: number,
+        curQty: number,
+      ) => {
+        const idxKey = legKey === 'eq' ? 'eq' : legKey
+        // Open: was 0 (or absent), now positive → fresh open
+        if (curQty !== 0 && prevQty === 0) {
+          const rtIdx = counters[idxKey]++
+          newCurrent.push({ right, round_trip_index: rtIdx })
+          return
+        }
+        // Close: was positive, now 0 → completed
+        if (prevQty !== 0 && curQty === 0) {
+          // The RT index was assigned when this leg opened (counter was
+          // incremented at that time). Find the open entry to recover it.
+          // For simplicity, allocate a fresh counter value when closing —
+          // backends tolerate new rt indices for closes that didn't have an
+          // entry saved, but we keep the round_trip_index monotonically
+          // increasing per leg by reusing the counter from the open side.
+          // Use the highest saved open entry index for this leg as a fallback.
+          const openForLeg = newCurrent.find(c => c.right === right)
+          const rtIdx = openForLeg?.round_trip_index ?? counters[idxKey]++
+          // Compute leg P&L (rough — uses fills only)
+          const legTrades = trades.filter(t => (right === null ? !t.right : t.right === right))
+          let pnl = 0
+          for (const t of legTrades) {
+            if (t.side === 'SELL') pnl += t.price * t.quantity
+            else pnl -= t.price * t.quantity
+          }
+          const key = `${s.sessionId}#${rtIdx}#${right ?? 'EQ'}`
+          closedRtKeys.push(key)
+          // Only push to pending if no exit saved yet
+          if (!s.savedExitRtKeys.includes(key)) {
+            newPending.push({
+              right,
+              round_trip_index: rtIdx,
+              pnl: Math.round(pnl * 100) / 100,
+              closed_at: Date.now(),
+            })
+          }
+        }
+      }
+
+      check('eq', null, prev.eq, eq)
+      check('ce', 'CE', prev.ce, ce)
+      check('pe', 'PE', prev.pe, pe)
+
+      lastNetQtyRef.current = { eq, ce, pe }
+
+      // Drop the closing-leg entry from newCurrent (it just closed)
+      // Keep entries for legs still open.
+      const allOpen = [...s.currentOpenEntries]
+      // Replace newCurrent with: existing open legs that didn't close, plus
+      // any newly opened this tick.
+      const surviving = allOpen.filter(o => {
+        if (o.right === null && eq !== 0) return true
+        if (o.right === 'CE' && ce !== 0) return true
+        if (o.right === 'PE' && pe !== 0) return true
+        return false
+      })
+      const finalCurrent = [...surviving, ...newCurrent]
+
+      return {
+        ...s,
+        pendingExitLabels: newPending,
+        currentOpenEntries: finalCurrent,
+      }
+    })
+  }, [computeNetQty])
+
+  // Reset label state when a new session starts or ends
+  const resetLabelTracking = useCallback(() => {
+    lastNetQtyRef.current = { eq: 0, ce: 0, pe: 0 }
+    rtIndexCounterRef.current = { eq: 0, ce: 0, pe: 0 }
+    setState(s => ({
+      ...s,
+      pendingExitLabels: [],
+      currentOpenEntries: [],
+      savedEntryRtKeys: [],
+      savedExitRtKeys: [],
+    }))
+  }, [])
+
+  const recordSavedEntry = useCallback((sessionId: string, rtIndex: number, right: string | null) => {
+    const key = `${sessionId}#${rtIndex}#${right ?? 'EQ'}`
+    setState(s => {
+      if (s.savedEntryRtKeys.includes(key)) return s
+      return { ...s, savedEntryRtKeys: [...s.savedEntryRtKeys, key] }
+    })
+  }, [])
+
+  const recordSavedExit = useCallback((sessionId: string, rtIndex: number, right: string | null) => {
+    const key = `${sessionId}#${rtIndex}#${right ?? 'EQ'}`
+    setState(s => {
+      const filteredPending = s.pendingExitLabels.filter(
+        p => !(p.round_trip_index === rtIndex && (p.right ?? 'EQ') === (right ?? 'EQ')),
+      )
+      const nextExitKeys = s.savedExitRtKeys.includes(key)
+        ? s.savedExitRtKeys
+        : [...s.savedExitRtKeys, key]
+      return { ...s, pendingExitLabels: filteredPending, savedExitRtKeys: nextExitKeys }
+    })
+  }, [])
+
   return {
     ...state,
     pnl,
@@ -652,5 +817,9 @@ export function useSimulation() {
     fetchAndUpdatePosition,
     handleBarPaused,
     nextBar,
+    onTradesChanged,
+    resetLabelTracking,
+    recordSavedEntry,
+    recordSavedExit,
   }
 }
