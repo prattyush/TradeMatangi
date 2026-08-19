@@ -378,6 +378,26 @@ Fixed a critical bug where paper trading sessions using Breeze (ICICI Direct) as
 
 **Test script:** `scripts/test_breeze_paper_flow.py` — standalone diagnostic replicating Phase 1+2 flow
 
+##### Bug Fix: Breeze BFO Option Tick Identity (BUG-XIII-2) ✅ Complete
+
+Fixed Breeze paper and real trading sessions for BSE SENSEX (BSESEN) options — option ticks were arriving on the WebSocket but losing their `right` (CE/PE) and `strike_price` identity because Breeze's BFO WS payloads omit those fields and only carry the raw ScripCode in `symbol` (e.g. `8.1!855562`).
+
+**Root cause:** Three independent issues:
+1. `_on_ticks` read `tick["right"]` which is absent on BFO option ticks.
+2. `breeze.get_quotes()` is unreliable for BFO (returns empty/non-JSON), so it couldn't be used at subscribe time to discover the ScripCode→(right, strike) mapping.
+3. `quotes: "Quotes Data"` collides with Breeze index ticks — using it as an option discriminator in the test script misclassified the SENSEX index tick and prevented CE/PE subscription.
+
+**Fix:**
+- **`backend/app/services/breeze_master.py`** (new) — shared module that downloads the Breeze Security Master zip (`https://directlink.icicidirect.com/NewSecurityMaster/SecurityMaster.zip`) once per day (Breeze regenerates at 8 AM), caches under `<DATA_DIR>/ICICISecurityMaster/`, and exposes `load_breeze_security_master(stock_code, exchange_code, strike, right, expiry_breeze)` returning `{ScripCode: (strike, right)}`. Falls back to local `FOBSEScripMaster.txt` / `FONSEScripMaster.txt` if present.
+- **`backend/app/services/breeze_service.py`** — `BreezeStreamManager` now builds `_option_scrip_map` at subscribe time via the master loader. `_on_ticks` detects option ticks by `OI`/`CHNGOI` presence (option-only fields), and for BFO ticks lacking `right`, parses `tick["symbol"].rsplit("!", 1)[-1]` to look up the ScripCode in the map. Candle keys become `8.1!855562_CE` / `8.1!855562_PE` — distinct accumulators with correct `right` in the candle payload.
+- **`scripts/test_broker_streaming.py`** — uses the same `breeze_master` loader. Also added `--symbol NIFTY|BSESEN` flag (full per-broker config: exchange code NFO/BFO, base name NIFTY/SENSEX, strike interval 50/100, weekly expiry Thursday always for SENSEX). Dropped the noisy full-tick log dump.
+
+**Files:** `backend/app/services/breeze_master.py` (new), `backend/app/services/breeze_service.py`, `scripts/test_broker_streaming.py`, `backend/tests/test_breeze_master.py` (new), `backend/tests/test_breeze_service.py`.
+
+**Tests:** 29 pass — daily-refresh cutoff, cache freshness, download path, master filter by (strike, right, expiry), BFO tick resolution, equity fallback when ScripCode unknown.
+
+**Bug doc:** `docs/bugs.md` Phase-XIII BUG-XIII-2 entry.
+
 ##### Auto-Stoploss on Entry ⏳ In Progress
 
 Users can optionally specify a stoploss price when placing any entry order (TARGET, LIMIT, MARKET, or AutoStop strategy). When the entry order fills, the system automatically places a matching STOPLOSS order for the filled quantity. Works across simulated, paper, real/Kotak, and stepwise trading sessions.
