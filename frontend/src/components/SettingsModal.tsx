@@ -99,6 +99,11 @@ const ENTRY_AUTO_SL_DELAY_KEY = 'entryAutoSlDelay'
 const MAX_PRICE_MODE_KEY = 'maxPriceMode'
 const MAX_PRICE_THRESHOLD_CE_KEY = 'maxPriceThresholdCE'
 const MAX_PRICE_THRESHOLD_PE_KEY = 'maxPriceThresholdPE'
+const OVERRIDE_SESSION_ENABLED_KEY = 'overrideSessionEnabled'
+
+export function loadOverrideSessionEnabled(): boolean {
+  return localStorage.getItem(OVERRIDE_SESSION_ENABLED_KEY) === 'true'
+}
 
 export function loadGuardRailBlockBars(): number {
   const v = parseInt(localStorage.getItem(GUARDRAIL_BLOCK_BARS_KEY) ?? '')
@@ -326,7 +331,7 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
   const [aggrSlOnlyInProfit, setAggrSlOnlyInProfit] = useState(loadAggrSlOnlyInProfit)
 
   // Active tab
-  const [activeTab, setActiveTab] = useState<'general' | 'strategies' | 'guardrails' | 'admin' | 'profile'>('general')
+  const [activeTab, setActiveTab] = useState<'general' | 'analytics' | 'strategies' | 'guardrails' | 'admin' | 'profile'>('general')
 
   // GuardRails settings state
   const [grBanEnabled, setGrBanEnabled] = useState(loadGuardRailBanEnabled)
@@ -339,6 +344,7 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
   const [maxPriceMode, setMaxPriceMode] = useState(loadMaxPriceMode)
   const [maxPriceThresholdCE, setMaxPriceThresholdCE] = useState(loadMaxPriceThresholdCE)
   const [maxPriceThresholdPE, setMaxPriceThresholdPE] = useState(loadMaxPriceThresholdPE)
+  const [overrideSessionEnabled, setOverrideSessionEnabled] = useState(loadOverrideSessionEnabled)
   const [grBlockBarsInput, setGrBlockBarsInput] = useState(() => String(loadGuardRailBlockBars()))
   const [grCooldownBlockBarsInput, setGrCooldownBlockBarsInput] = useState(() => String(loadGuardRailCooldownBlockBars()))
   const [grCooldownLossesInput, setGrCooldownLossesInput] = useState(() => String(loadGuardRailCooldownLosses()))
@@ -433,6 +439,10 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
         if (s.max_price_threshold_pe != null) {
           setMaxPriceThresholdPE(s.max_price_threshold_pe)
           localStorage.setItem(MAX_PRICE_THRESHOLD_PE_KEY, String(s.max_price_threshold_pe))
+        }
+        if (s.override_session_enabled != null) {
+          setOverrideSessionEnabled(s.override_session_enabled)
+          localStorage.setItem(OVERRIDE_SESSION_ENABLED_KEY, String(s.override_session_enabled))
         }
       }).catch(() => {})
 
@@ -760,8 +770,8 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
               marginTop: -8,
             }}>
               {(isAdmin
-                ? ['general', 'strategies', 'guardrails', 'admin', 'profile'] as const
-                : ['general', 'strategies', 'guardrails', 'profile'] as const
+                ? ['general', 'analytics', 'strategies', 'guardrails', 'admin', 'profile'] as const
+                : ['general', 'analytics', 'strategies', 'guardrails', 'profile'] as const
               ).map(tab => (
                 <button
                   key={tab}
@@ -1003,102 +1013,40 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
               </div>
             </div>
 
-            {/* Auto-Start Event Snapshots */}
+            {/* Override Previous Sessions */}
             <div style={{ borderTop: '1px solid #21262d', paddingTop: 16 }}>
-              <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 10, fontWeight: 600 }}>EVENT SNAPSHOTS</div>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 13, color: '#c9d1d9' }}>
-                <input
-                  type="checkbox"
-                  checked={autoStartSnapshots}
-                  onChange={e => {
-                    const val = e.target.checked
-                    setAutoStartSnapshots(val)
-                    localStorage.setItem(AUTO_START_SNAPSHOTS_KEY, String(val))
-                    onAutoStartSnapshotsChange?.(val)
+              <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 10, fontWeight: 600 }}>
+                OVERRIDE PREVIOUS SESSIONS
+              </div>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' }}>
+                <div
+                  onClick={() => {
+                    const next = !overrideSessionEnabled
+                    setOverrideSessionEnabled(next)
+                    localStorage.setItem(OVERRIDE_SESSION_ENABLED_KEY, String(next))
+                    api.updateUserSettings({ override_session_enabled: next }).catch(() => {})
                   }}
-                  style={{ width: 16, height: 16, accentColor: '#1f6feb' }}
-                />
-                Auto-start event capture on session start
+                  style={{
+                    width: 36, height: 20, borderRadius: 10,
+                    background: overrideSessionEnabled ? '#1f6feb' : '#30363d',
+                    position: 'relative', cursor: 'pointer', transition: 'background 0.15s',
+                    flexShrink: 0,
+                  }}
+                >
+                  <div style={{
+                    position: 'absolute', top: 2,
+                    left: overrideSessionEnabled ? 18 : 2,
+                    width: 16, height: 16, borderRadius: '50%',
+                    background: '#e6edf3', transition: 'left 0.15s',
+                  }} />
+                </div>
+                <div>
+                  <div style={{ fontSize: 12, color: '#e6edf3' }}>Prompt to override on duplicate session</div>
+                  <div style={{ fontSize: 11, color: '#484f58', marginTop: 2 }}>
+                    When starting a sim/stepwise session, checks for a previous session with the same symbol, date, and type and asks to delete it
+                  </div>
+                </div>
               </label>
-              <div style={{ fontSize: 11, color: '#484f58', marginTop: 6 }}>
-                When enabled, event snapshots automatically begin when you start any session (sim, paper, or real)
-              </div>
-            </div>
-
-            {/* Trade Labeling Mode (per session type) */}
-            <div style={{ borderTop: '1px solid #21262d', paddingTop: 16 }}>
-              <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 10, fontWeight: 600 }}>TRADE LABELING MODE</div>
-              <div style={{ fontSize: 11, color: '#484f58', marginBottom: 8 }}>
-                Choose how trade labels are captured per session type.
-                <br />• <b>Popup</b> — a modal asks you to label trades after each round-trip.
-                <br />• <b>Button</b> — a side panel lets you click Save while a trade is open, and queues exit labels for closed trades.
-                <br />• <b>Off</b> — no in-session capture (post-hoc labeling still works in Trade Analysis).
-              </div>
-              <div style={{ display: 'grid', gridTemplateColumns: '90px 1fr 1fr 1fr', gap: 6, fontSize: 12, alignItems: 'center' }}>
-                <div style={{ color: '#8b949e', fontWeight: 600 }}></div>
-                <div style={{ color: '#8b949e', textAlign: 'center' }}>Off</div>
-                <div style={{ color: '#8b949e', textAlign: 'center' }}>Popup</div>
-                <div style={{ color: '#8b949e', textAlign: 'center' }}>Button</div>
-
-                {(['stepwise', 'sim', 'paper', 'real'] as const).map(sessionType => (
-                  <Fragment key={sessionType}>
-                    <div style={{ color: '#c9d1d9' }}>{sessionType.charAt(0).toUpperCase() + sessionType.slice(1)}</div>
-                    {(['off', 'popup', 'button'] as LabelingMode[]).map(mode => {
-                      const checked = labelingModeByType[sessionType] === mode
-                      return (
-                        <label key={mode} style={{ display: 'flex', justifyContent: 'center', cursor: 'pointer' }}>
-                          <input
-                            type="radio"
-                            name={`label-mode-${sessionType}`}
-                            checked={checked}
-                            onChange={() => {
-                              const next: LabelingModeByType = { ...labelingModeByType, [sessionType]: mode }
-                              setLabelingModeByType(next)
-                              saveLabelingModeByType(next)
-                              onLabelingModeChange?.(next)
-                              // Backward-compat: keep old stepwise checkbox in sync
-                              if (sessionType === 'stepwise') {
-                                const enabled = mode !== 'off'
-                                setStepwiseLabelingPopup(enabled)
-                                localStorage.setItem(STEPWISE_LABELING_POPUP_KEY, String(enabled))
-                                onStepwiseLabelingPopupChange?.(enabled)
-                              }
-                            }}
-                            style={{ accentColor: '#1f6feb' }}
-                          />
-                        </label>
-                      )
-                    })}
-                  </Fragment>
-                ))}
-              </div>
-            </div>
-
-            {/* Trade Analysis Price Source */}
-            <div style={{ borderTop: '1px solid #21262d', paddingTop: 16 }}>
-              <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 10, fontWeight: 600 }}>TRADE ANALYSIS PRICE SOURCE</div>
-              <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
-                {(['options', 'underlying'] as const).map(src => (
-                  <button
-                    key={src}
-                    onClick={() => {
-                      setAnalysisPriceSource(src)
-                      api.updateUserSettings({ analysis_price_source: src }).catch(() => {})
-                    }}
-                    style={{
-                      padding: '5px 14px',
-                      background: analysisPriceSource === src ? '#1f6feb' : '#21262d',
-                      border: `1px solid ${analysisPriceSource === src ? '#1f6feb' : '#30363d'}`,
-                      borderRadius: 6, color: '#e6edf3', cursor: 'pointer', fontSize: 12,
-                    }}
-                  >
-                    {src === 'options' ? 'Options (CE/PE)' : 'Underlying'}
-                  </button>
-                ))}
-              </div>
-              <div style={{ fontSize: 11, color: '#484f58' }}>
-                OHLC data used for Trade Analysis pattern detection in options sessions
-              </div>
             </div>
 
             {/* Wallet */}
@@ -1183,92 +1131,6 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
                   )}
                 </div>
               </div>
-            )}
-
-            {/* Experimental Features */}
-            <div style={{ borderTop: '1px solid #21262d', paddingTop: 16 }}>
-              <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 10, fontWeight: 600 }}>
-                EXPERIMENTAL FEATURES
-              </div>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' }}>
-                <div
-                  onClick={() => {
-                    const next = !experimentalPatternsEnabled
-                    setExperimentalPatternsEnabled(next)
-                    api.updateUserSettings({ experimental_patterns_enabled: next }).catch(() => {})
-                  }}
-                  style={{
-                    width: 36, height: 20, borderRadius: 10,
-                    background: experimentalPatternsEnabled ? '#1f6feb' : '#30363d',
-                    position: 'relative', cursor: 'pointer', transition: 'background 0.15s',
-                    flexShrink: 0,
-                  }}
-                >
-                  <div style={{
-                    position: 'absolute', top: 2,
-                    left: experimentalPatternsEnabled ? 18 : 2,
-                    width: 16, height: 16, borderRadius: '50%',
-                    background: '#e6edf3', transition: 'left 0.15s',
-                  }} />
-                </div>
-                <div>
-                  <div style={{ fontSize: 12, color: '#e6edf3' }}>Live pattern detection</div>
-                  <div style={{ fontSize: 11, color: '#484f58', marginTop: 2 }}>
-                    Detects chart patterns and behavioral signals in real-time during sessions
-                  </div>
-                </div>
-              </label>
-            </div>
-
-            {/* Pattern Sharing */}
-            <div style={{ borderTop: '1px solid #21262d', paddingTop: 16 }}>
-              <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 10, fontWeight: 600 }}>
-                PATTERN SHARING
-              </div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                <textarea
-                  value={patternShareEmails}
-                  onChange={e => setPatternShareEmails(e.target.value)}
-                  placeholder="Comma-separated email addresses"
-                  rows={3}
-                  style={{
-                    width: '100%', resize: 'vertical', minHeight: 72,
-                    padding: '8px 10px', background: '#0d1117',
-                    border: '1px solid #30363d', borderRadius: 6,
-                    color: '#e6edf3', fontSize: 13, lineHeight: 1.4,
-                  }}
-                />
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                  <button
-                    onClick={() => {
-                      api.updateUserSettings({ pattern_share_emails: patternShareEmails }).then(() => {
-                        setStatus('Pattern sharing saved')
-                        setTimeout(() => setStatus(null), 2000)
-                      }).catch((e: unknown) => {
-                        setStatus(e instanceof Error ? e.message : 'Failed to save pattern sharing')
-                        setTimeout(() => setStatus(null), 2500)
-                      })
-                    }}
-                    style={{
-                      padding: '5px 14px', background: '#1f6feb',
-                      border: 'none', borderRadius: 6, color: '#fff',
-                      cursor: 'pointer', fontSize: 12,
-                    }}
-                  >
-                    Save
-                  </button>
-                  <span style={{ fontSize: 11, color: '#484f58' }}>
-                    Shared users must already have a TradeMatangi account.
-                  </span>
-                </div>
-              </div>
-            </div>
-
-            {status && (
-              <div style={{
-                fontSize: 12,
-                color: /fail|invalid|must|error|not match/i.test(status) ? '#f85149' : '#3fb950',
-              }}>{status}</div>
             )}
 
             {/* Entry Auto-Stoploss */}
@@ -1383,6 +1245,195 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
             </div>
 
             </> /* end General tab */}
+
+            {/* ── Analytics tab content ── */}
+            {activeTab === 'analytics' && <>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
+
+                {/* Auto-Start Event Snapshots */}
+                <div style={{ borderTop: '1px solid #21262d', paddingTop: 16 }}>
+                  <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 10, fontWeight: 600 }}>EVENT SNAPSHOTS</div>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 13, color: '#c9d1d9' }}>
+                    <input
+                      type="checkbox"
+                      checked={autoStartSnapshots}
+                      onChange={e => {
+                        const val = e.target.checked
+                        setAutoStartSnapshots(val)
+                        localStorage.setItem(AUTO_START_SNAPSHOTS_KEY, String(val))
+                        onAutoStartSnapshotsChange?.(val)
+                      }}
+                      style={{ width: 16, height: 16, accentColor: '#1f6feb' }}
+                    />
+                    Auto-start event capture on session start
+                  </label>
+                  <div style={{ fontSize: 11, color: '#484f58', marginTop: 6 }}>
+                    When enabled, event snapshots automatically begin when you start any session (sim, paper, or real)
+                  </div>
+                </div>
+
+                {/* Trade Labeling Mode (per session type) */}
+                <div style={{ borderTop: '1px solid #21262d', paddingTop: 16 }}>
+                  <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 10, fontWeight: 600 }}>TRADE LABELING MODE</div>
+                  <div style={{ fontSize: 11, color: '#484f58', marginBottom: 8 }}>
+                    Choose how trade labels are captured per session type.
+                    <br />• <b>Popup</b> — a modal asks you to label trades after each round-trip.
+                    <br />• <b>Button</b> — a side panel lets you click Save while a trade is open, and queues exit labels for closed trades.
+                    <br />• <b>Off</b> — no in-session capture (post-hoc labeling still works in Trade Analysis).
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '90px 1fr 1fr 1fr', gap: 6, fontSize: 12, alignItems: 'center' }}>
+                    <div style={{ color: '#8b949e', fontWeight: 600 }}></div>
+                    <div style={{ color: '#8b949e', textAlign: 'center' }}>Off</div>
+                    <div style={{ color: '#8b949e', textAlign: 'center' }}>Popup</div>
+                    <div style={{ color: '#8b949e', textAlign: 'center' }}>Button</div>
+
+                    {(['stepwise', 'sim', 'paper', 'real'] as const).map(sessionType => (
+                      <Fragment key={sessionType}>
+                        <div style={{ color: '#c9d1d9' }}>{sessionType.charAt(0).toUpperCase() + sessionType.slice(1)}</div>
+                        {(['off', 'popup', 'button'] as LabelingMode[]).map(mode => {
+                          const checked = labelingModeByType[sessionType] === mode
+                          return (
+                            <label key={mode} style={{ display: 'flex', justifyContent: 'center', cursor: 'pointer' }}>
+                              <input
+                                type="radio"
+                                name={`label-mode-${sessionType}`}
+                                checked={checked}
+                                onChange={() => {
+                                  const next: LabelingModeByType = { ...labelingModeByType, [sessionType]: mode }
+                                  setLabelingModeByType(next)
+                                  saveLabelingModeByType(next)
+                                  onLabelingModeChange?.(next)
+                                  if (sessionType === 'stepwise') {
+                                    const enabled = mode !== 'off'
+                                    setStepwiseLabelingPopup(enabled)
+                                    localStorage.setItem(STEPWISE_LABELING_POPUP_KEY, String(enabled))
+                                    onStepwiseLabelingPopupChange?.(enabled)
+                                  }
+                                }}
+                                style={{ accentColor: '#1f6feb' }}
+                              />
+                            </label>
+                          )
+                        })}
+                      </Fragment>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Trade Analysis Price Source */}
+                <div style={{ borderTop: '1px solid #21262d', paddingTop: 16 }}>
+                  <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 10, fontWeight: 600 }}>TRADE ANALYSIS PRICE SOURCE</div>
+                  <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+                    {(['options', 'underlying'] as const).map(src => (
+                      <button
+                        key={src}
+                        onClick={() => {
+                          setAnalysisPriceSource(src)
+                          api.updateUserSettings({ analysis_price_source: src }).catch(() => {})
+                        }}
+                        style={{
+                          padding: '5px 14px',
+                          background: analysisPriceSource === src ? '#1f6feb' : '#21262d',
+                          border: `1px solid ${analysisPriceSource === src ? '#1f6feb' : '#30363d'}`,
+                          borderRadius: 6, color: '#e6edf3', cursor: 'pointer', fontSize: 12,
+                        }}
+                      >
+                        {src === 'options' ? 'Options (CE/PE)' : 'Underlying'}
+                      </button>
+                    ))}
+                  </div>
+                  <div style={{ fontSize: 11, color: '#484f58' }}>
+                    OHLC data used for Trade Analysis pattern detection in options sessions
+                  </div>
+                </div>
+
+                {/* Experimental Features */}
+                <div style={{ borderTop: '1px solid #21262d', paddingTop: 16 }}>
+                  <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 10, fontWeight: 600 }}>
+                    EXPERIMENTAL FEATURES
+                  </div>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' }}>
+                    <div
+                      onClick={() => {
+                        const next = !experimentalPatternsEnabled
+                        setExperimentalPatternsEnabled(next)
+                        api.updateUserSettings({ experimental_patterns_enabled: next }).catch(() => {})
+                      }}
+                      style={{
+                        width: 36, height: 20, borderRadius: 10,
+                        background: experimentalPatternsEnabled ? '#1f6feb' : '#30363d',
+                        position: 'relative', cursor: 'pointer', transition: 'background 0.15s',
+                        flexShrink: 0,
+                      }}
+                    >
+                      <div style={{
+                        position: 'absolute', top: 2,
+                        left: experimentalPatternsEnabled ? 18 : 2,
+                        width: 16, height: 16, borderRadius: '50%',
+                        background: '#e6edf3', transition: 'left 0.15s',
+                      }} />
+                    </div>
+                    <div>
+                      <div style={{ fontSize: 12, color: '#e6edf3' }}>Live pattern detection</div>
+                      <div style={{ fontSize: 11, color: '#484f58', marginTop: 2 }}>
+                        Detects chart patterns and behavioral signals in real-time during sessions
+                      </div>
+                    </div>
+                  </label>
+                </div>
+
+                {/* Pattern Sharing */}
+                <div style={{ borderTop: '1px solid #21262d', paddingTop: 16 }}>
+                  <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 10, fontWeight: 600 }}>
+                    PATTERN SHARING
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    <textarea
+                      value={patternShareEmails}
+                      onChange={e => setPatternShareEmails(e.target.value)}
+                      placeholder="Comma-separated email addresses"
+                      rows={3}
+                      style={{
+                        width: '100%', resize: 'vertical', minHeight: 72,
+                        padding: '8px 10px', background: '#0d1117',
+                        border: '1px solid #30363d', borderRadius: 6,
+                        color: '#e6edf3', fontSize: 13, lineHeight: 1.4,
+                      }}
+                    />
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                      <button
+                        onClick={() => {
+                          api.updateUserSettings({ pattern_share_emails: patternShareEmails }).then(() => {
+                            setStatus('Pattern sharing saved')
+                            setTimeout(() => setStatus(null), 2000)
+                          }).catch((e: unknown) => {
+                            setStatus(e instanceof Error ? e.message : 'Failed to save pattern sharing')
+                            setTimeout(() => setStatus(null), 2500)
+                          })
+                        }}
+                        style={{
+                          padding: '5px 14px', background: '#1f6feb',
+                          border: 'none', borderRadius: 6, color: '#fff',
+                          cursor: 'pointer', fontSize: 12,
+                        }}
+                      >
+                        Save
+                      </button>
+                      <span style={{ fontSize: 11, color: '#484f58' }}>
+                        Shared users must already have a TradeMatangi account.
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                {status && (
+                  <div style={{
+                    fontSize: 12,
+                    color: /fail|invalid|must|error|not match/i.test(status) ? '#f85149' : '#3fb950',
+                  }}>{status}</div>
+                )}
+              </div>
+            </> /* end Analytics tab */}
 
             {/* ── Strategies tab content ── */}
             {activeTab === 'strategies' && (

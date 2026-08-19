@@ -33,6 +33,7 @@ DEFAULT_SETTINGS: dict = {
     "max_price_mode": "otm",
     "max_price_threshold_ce": 50.0,
     "max_price_threshold_pe": 50.0,
+    "override_session_enabled": False,
 }
 
 

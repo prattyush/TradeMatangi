@@ -195,3 +195,30 @@ class TestUserSettingsEndpoints:
     def test_default_analysis_price_source_in_constant(self):
         """DEFAULT_SETTINGS includes analysis_price_source='options'."""
         assert svc.DEFAULT_SETTINGS["analysis_price_source"] == "options"
+
+    def test_override_session_enabled_default_in_constant(self):
+        """DEFAULT_SETTINGS includes override_session_enabled=False."""
+        assert svc.DEFAULT_SETTINGS["override_session_enabled"] is False
+
+    def test_get_settings_includes_override_session_enabled(self):
+        """GET /api/users/settings includes override_session_enabled with default False."""
+        with patch("app.services.user_settings_service.get_settings", return_value={
+            "historical_days": 2,
+            "override_session_enabled": False,
+        }):
+            resp = client.get("/api/users/settings")
+        assert resp.status_code == 200
+        assert resp.json()["override_session_enabled"] is False
+
+    def test_put_override_session_enabled(self):
+        """PUT /api/users/settings accepts override_session_enabled=true."""
+        updated = {
+            "historical_days": 2,
+            "override_session_enabled": True,
+        }
+        with patch("app.services.user_settings_service.update_settings", return_value=updated) as mock_fn:
+            resp = client.put("/api/users/settings", json={"override_session_enabled": True})
+        assert resp.status_code == 200
+        assert resp.json()["override_session_enabled"] is True
+        called_settings = mock_fn.call_args[0][1]
+        assert called_settings["override_session_enabled"] is True

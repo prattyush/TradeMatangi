@@ -32,6 +32,7 @@ class SimulationStartRequest(BaseModel):
     strategy_interval_secs: int = 180  # candle interval for all strategies (180=3min, 300=5min)
     session_type: str = "sim"          # "sim" (historical replay), "paper" (live data), "real" (Kotak live orders), or "stepwise"
     stepwise: bool = False             # stepwise mode: advance one bar per Next Bar press (only valid for session_type="stepwise")
+    override: bool = False             # if true, delete previous session data for same (symbol, date, type) before starting
 
 
 class SimulationStartResponse(BaseModel):
@@ -267,6 +268,7 @@ class UserSettingsResponse(BaseModel):
     max_price_mode: str = "otm"          # "otm" | "threshold"
     max_price_threshold_ce: float = 50.0
     max_price_threshold_pe: float = 50.0
+    override_session_enabled: bool = False
 
 
 class UserSettingsUpdateRequest(BaseModel):
@@ -282,6 +284,7 @@ class UserSettingsUpdateRequest(BaseModel):
     max_price_mode: str | None = None
     max_price_threshold_ce: float | None = None
     max_price_threshold_pe: float | None = None
+    override_session_enabled: bool | None = None
 
 
 # ── Strategies ────────────────────────────────────────────────────────────────
