@@ -416,19 +416,18 @@ Users can optionally specify a stoploss price when placing any entry order (TARG
 - `entry_sl_price: float | None` — stoploss price specified at entry time
 - `group_id: str | None` — shared UUID linking entry order with its auto-placed SL
 
-##### Feature: In-Session Trade Labeling (Button-Based) ⏳ In Progress
+##### Feature: In-Session Trade Labeling (Button-Based) ✅ Complete (PR #378 merged to dev)
 
-Replaces / extends the stepwise-only trade-labeling popup with a persistent
+Replaces the stepwise-only trade-labeling popup with a persistent
 **button-based labeling surface** that works in **all session types**
-(stepwise / sim / paper / real). Users click a button on the right-side
-position card to capture entry labels for the current open trade; when a
-trade closes, it moves into a "Pending exit labels" sub-section where the
-user can capture the actual outcome.
+(stepwise / sim / paper / real). Users click a compact button in the
+right-side TradePanel card, which opens a popup modal with the actual
+label fields (Expected/Actual pattern, Entry/Exit tag).
 
 **Field mapping (entry vs exit):**
 
-- **Entry label** (captured while position is open): `expected_category`, `expected_strategy`, `entry_tag`
-- **Exit label** (captured after position closes): `actual_category`, `actual_strategy`, `exit_tag`
+- **Entry label** (while position is open): `expected_category`, `expected_strategy`, `entry_tag`
+- **Exit label** (after position closes): `actual_category`, `actual_strategy`, `exit_tag`
 
 Both writes target the same DDB row keyed by `(session_id, round_trip_index)`.
 The backend upsert preserves whichever fields are already saved
@@ -440,55 +439,58 @@ or exit-only) is fully supported. No backend changes required.
 | Mode | Effect |
 |---|---|
 | `Popup` (default for stepwise) | Keeps existing `StepwiseLabelPopup` behavior — fires at bar close in stepwise mode. |
-| `Button` (default for sim/paper/real) | Renders `PendingLabelPanel` inside the right-side `TradePanel` card; users click to label. |
+| `Button` (default for sim/paper/real) | Renders compact buttons in TradePanel; click opens popup with label form. |
 | `Off` | No labeling surface at all for that session type. |
 
 Storage: single localStorage key
 `tradeLabelingModeByType: { stepwise, sim, paper, real }` with default
 `{ stepwise: 'popup', sim: 'button', paper: 'button', real: 'button' }`.
-Migrate the existing `stepwiseLabelingPopupEnabled` key into this structure
+Migrates the old `stepwiseLabelingPopupEnabled` key into this structure
 on first load (`'false'` → `'off'`, otherwise `'popup'`).
 
-**Panel layout (mounted at top of `TradePanel` card):**
+**UI — compact buttons in TradePanel:**
 
 ```
-┌─────────────────────────────────────────┐
-│ Pending exit labels                     │ ← only when ≥1 closed-and-unlabeled RT
-│ ┌─────────────────────────────────────� │
-│ │ NIFTY 24750 CE (closed)             │ │
-│ │ P&L +620.50  2 min ago              │ │
-│ │ Actual pattern: [Cat ▼] [Strat ▼]   │ │
-│ │ Exit tag: [AS_PER_PATTERN] [Save]   │ │
-│ └─────────────────────────────────────┘ │
-├─────────────────────────────────────────┤
-│ Label current open trade                │ ← only when a position is open AND user
-│ ┌─────────────────────────────────────� │   hasn't already saved entry for this RT
-│ │ NIFTY 24750 CE  Qty 50 LONG         │ │
-│ │ Expected: [Cat ▼] [Strat ▼]         │ │
-│ │ Entry tag: [AS_PER_PATTERN]          │ │
-│ │ [Save entry label]                   │ │
-│ └─────────────────────────────────────┘ │
-└─────────────────────────────────────────┘
+┌──────────────────────────────────────┐
+│ LTP 77035.96                        │
+│ Position LONG 50                    │
+│ Avg entry: 145.20  Qty: 50         │
+│ Pos P&L  +620.50                   │
+│ Session P&L  +1200.00              │
+├──────────────────────────────────────┤
+│ 📝 Pending exit (1)                │
+│ ┌──────────────────────────────────┐│
+│ │ PE  closed 2m ago      +145.50  ││  ← click opens exit popup
+│ └──────────────────────────────────┘│
+│ 🏷 Label open trade                │
+│ ┌──────────────────────────────────┐│
+│ │ NIFTY 24750 CE              🏷  ││  ← click opens entry popup
+│ └──────────────────────────────────┘│
+└──────────────────────────────────────┘
 ```
 
-If only one leg is open, only that leg's form shows. If both CE and PE
-positions are open, a single combined form with two leg rows.
+**Popup modal (opened on button click):**
+
+Entry popup shows Expected pattern (category + strategy selects from the
+user's pattern library) and Entry tag (datalist with autocomplete from
+previous labels). Exit popup shows Actual pattern and Exit tag. Both have
+Cancel and Save buttons. Popup closes on Cancel or after successful save.
+
+**Open-leg derivation:**
+
+Open legs are derived directly from live `position`/`positionCE`/`positionPE`
+state in `App.tsx` (always up-to-date, no effect timing issues). Each open
+leg's round-trip index is obtained from `sim.getOpenRtIndex(right)` — the
+hook's internal per-leg counter.
 
 **RT detection across all session types:**
 
-Generalize the existing stepwise-only detection in `App.tsx:220-246`.
-Instead of triggering on `sim.barPaused`, trigger on every `sim.trades`
-change and maintain a per-leg `lastNetQtyRef` snapshot. When any leg
-transitions non-zero → zero AND the user has saved entry labels for that RT,
-push the RT into the **pending exit labels** queue. When the RT index
-increments past the saved-entry index, also push to queue (in case the user
-skipped entry labeling).
-
-This is a small refactor: extract the body of the existing
-`useEffect(() => { if (!sim.stepwise || !sim.barPaused) return ... }, ...)`
-into a helper `useRoundTripCompletionWatcher()` that always runs but
-gates by `sim.sessionId && sim.trades`. Reuse `rtIndexCounterRef` and
-`lastNetQtyRef`.
+Generalized the existing stepwise-only detection. `onTradesChanged(trades: Trade[])`
+now accepts the trades array as a parameter (eliminating stale React state closure
+issues). Called from App.tsx on every `sim.trades` change via
+`useEffect(() => { sim.onTradesChanged(sim.trades ?? []) }, [sim.trades, sim.sessionId])`.
+The hook's `lastNetQtyRef` tracks per-leg net-qty and detects non-zero → zero
+transitions, pushing completed RTs into `pendingExitLabels`.
 
 **Save semantics:**
 
@@ -497,15 +499,14 @@ gates by `sim.sessionId && sim.trades`. Reuse `rtIndexCounterRef` and
   default to empty / `AS_PER_PATTERN`.
 - **Exit save**: writes `actual_category`, `actual_strategy`, `exit_tag`
   for the same `(session_id, round_trip_index)`. Backend upsert preserves
-  entry values, only updates the four fields the caller provides.
+  entry values, only updates the exit fields the caller provides.
 - **Both saves**: backend stamps `round_trip_pnl` and
   `round_trip_pnl_pct` automatically (`trade_label_service.py:196-199`).
 
 **Auto-clear trigger:** When a leg transitions non-zero → zero, that RT
-moves from "current open" sub-section into "pending exit labels"
-sub-section. When the user saves the exit label, it disappears from the
-pending list. When all legs are flat AND pending list is empty, the panel
-collapses.
+appears as a pending exit button. When the user saves the exit label,
+the button disappears. When all legs are flat AND no pending exits remain,
+the panel collapses (returns null).
 
 **Suggestion sources (reused from `TradeLabeling.tsx` / `StepwiseLabelPopup.tsx`):**
 - `api.patternListStrategies()` → expected/actual strategy selects
@@ -516,23 +517,25 @@ collapses.
 **Files:**
 | File | Change |
 |---|---|
-| `frontend/src/hooks/useSimulation.ts` | +`pendingExitLabels`, `currentOpenEntry`, save methods, `useRoundTripCompletionWatcher` |
-| `frontend/src/components/PendingLabelPanel.tsx` | **New** — entry + exit forms, suggestion loading |
-| `frontend/src/components/TradePanel.tsx` | +`pendingRts`, `currentOpenRt`, save-handler props, render panel |
-| `frontend/src/App.tsx` | wire new state, gate `StepwiseLabelPopup`, pass props to `TradePanel` |
-| `frontend/src/components/SettingsModal.tsx` | replace stepwise checkbox with per-type mode selector + migration |
-| `frontend/src/components/PendingLabelPanel.test.tsx` | **New** — Vitest + RTL tests |
-| `frontend/src/hooks/__tests__/useSimulation.test.ts` | **New or extend** — RT completion watcher tests |
+| `frontend/src/hooks/useSimulation.ts` | +`PendingExitRt` type, +`pendingExitLabels`, `savedEntryRtKeys`/`savedExitRtKeys`, `onTradesChanged` (generalized RT watcher, accepts trades param), `resetLabelTracking`, `getOpenRtIndex`, `recordSavedEntry`/`recordSavedExit` |
+| `frontend/src/components/PendingLabelPanel.tsx` | **New** — compact buttons + `LabelPopup` modal for entry/exit labeling |
+| `frontend/src/components/PendingLabelPanel.test.tsx` | **New** — 12 component tests (button visibility, popup open/close, save payload, cancel) |
+| `frontend/src/hooks/__tests__/useSimulation.labeling.test.ts` | **New** — 6 hook tests (RT detection, multi-leg, dedupe, reset) |
+| `frontend/src/components/TradePanel.tsx` | +`sessionId`, `pendingExitLabels`, `openLegs`, `savedEntryRtKeys`, `onSaveEntry`/`onSaveExit` props; renders `PendingLabelPanel` |
+| `frontend/src/App.tsx` | generalized `onTradesChanged` watcher effect, `handleSaveEntry`/`handleSaveExit` handlers, derived `openLegs` from live position state, gate `StepwiseLabelPopup` on `currentLabelMode` |
+| `frontend/src/components/SettingsModal.tsx` | new per-type mode selector (radio buttons for Off/Popup/Button per session type) with migration from old `stepwiseLabelingPopupEnabled` key |
+| `frontend/tsconfig.json` | exclude `*.test.ts(x)` and `__tests__/` from tsc (no vitest installed) |
+| `docs/spec-phase13.md` | this section |
 
-**Tests:** entry/exit save payload correctness, panel hidden when nothing pending, suggestion loading, RT completion across multi-leg sessions, session-restart reset.
+**Tests:** 18 tests written — entry/exit save payload correctness, popup open/close, button visibility, suggestion loading, RT detection across multi-leg sessions, session-restart reset, dedupe via `recordSavedExit`.
 
 **Verification:**
 1. Settings → Trade Labeling Mode → confirm stepwise defaults to "Popup" and others to "Button". Switch all to "Button", save, reload, confirm persistence.
-2. Sim session: Buy 50 equity → entry form appears → fill + Save → POST `/api/analysis/labels` fires, panel collapses for entry.
-3. Sell 50 equity → "Pending exit labels" appears with that RT → fill actual + exit tag → Save → entry values preserved, exit fields stamped.
+2. Sim session: Buy 50 equity → "Label open trade" button appears in TradePanel → click → popup opens → fill + Save → popup closes.
+3. Sell 50 equity → "Pending exit" button appears → click → popup opens → fill actual + exit tag → Save → popup closes.
 4. Trade Analysis modal confirms saved labels round-trip.
-5. Options session: Buy 50 CE → label entry → Sell → pending exit shows → label exit. Confirm CE and PE legs handled independently when both open.
-6. Stepwise with mode='Button': closed-position RTs appear in "Pending exit labels" instead of popup. Click Save, advance bar.
+5. Options session: Buy 50 CE → label entry → Sell → label exit. Multi-leg independent.
+6. Stepwise with mode='Button': closed-position RTs appear as pending exit buttons instead of popup. Click Save, advance bar.
 
 **Regression:** existing `StepwiseLabelPopup` still works when stepwise mode is `'popup'`. Existing `TradeLabeling.tsx` (analysis tab) post-hoc flow untouched.
 
