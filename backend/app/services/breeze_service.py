@@ -90,7 +90,6 @@ class BreezeStreamManager:
         self._tick_count: int = 0
         self._logged_ticks: int = 0
         self._equity_stock_name: str | None = None
-        self._equity_exchange: str | None = None
 
     def start(
         self,
@@ -120,7 +119,6 @@ class BreezeStreamManager:
             right_val = inst.get("right", "")
             if not right_val and self._equity_stock_name is None:
                 self._equity_stock_name = inst.get("stock_code", "")
-                self._equity_exchange = inst.get("exchange_code", "")
             # Convert expiry from Kite format ("2026-06-30T06:00:00.000Z") to
             # Breeze format ("30-Jun-2026") at the API call only.
             expiry_raw = inst.get("expiry_date", "")
@@ -191,6 +189,13 @@ class BreezeStreamManager:
                 if not isinstance(tick, dict):
                     continue
                 self._tick_count += 1
+
+                # Diagnostic: log ALL fields for first 10 ticks
+                if self._tick_count <= 10:
+                    logger.info("BREEZE-RAW #%d: %s",
+                                self._tick_count,
+                                {k: v for k, v in tick.items() if not isinstance(v, (bytes, bytearray))})
+
                 price = float(tick.get("last", tick.get("ltp", 0.0)))
                 if price == 0.0:
                     continue
@@ -201,28 +206,12 @@ class BreezeStreamManager:
                 exchange = tick.get("exchange", "")
 
                 # Filter out equity ticks from non-target stocks. Breeze
-                # broadcasts market data for ALL instruments; we only want
-                # equity ticks matching our session's subscribed symbol.
-                # Combine exchange prefix + stock name matching to avoid
-                # picking up other stocks on the same exchange.
+                # broadcasts market data for ALL NSE instruments; we only
+                # want equity ticks matching our session's subscribed symbol.
                 if not right and self._equity_stock_name:
-                    tick_exch = tick.get("exchange", "")
-                    # Must be on the right exchange segment
-                    if self._equity_exchange and tick_exch:
-                        if self._equity_exchange not in tick_exch:
-                            continue
-                    # Must match the subscribed equity — check both stock_code
-                    # and stock_name since Breeze sometimes omits stock_code.
-                    tick_stock = tick.get("stock_code", "")
-                    if tick_stock and tick_stock != self._equity_stock_name:
+                    eq = self._equity_stock_name
+                    if tick.get("stock_code", "") != eq and eq not in str(name):
                         continue
-                    if not tick_stock:
-                        # Breeze sends empty stock_code for indices; match by
-                        # known index display names
-                        eq_lower = self._equity_stock_name.lower()
-                        name_lower = str(name).lower()
-                        if eq_lower not in name_lower and eq_lower.replace("bsesen", "sensex") not in name_lower:
-                            continue
 
                 key = f"{name}_{right or 'EQ'}"
 
@@ -241,6 +230,14 @@ class BreezeStreamManager:
                         self._logged_ticks, key, price,
                         candle["open"], candle["high"], candle["low"], candle["close"],
                     )
+                if right_raw and right is None:
+                    logger.info(
+                        "Breeze tick #%d: UNMAPPED RIGHT raw=%r stock_name=%r exchange=%r stock_code=%r",
+                        self._tick_count, right_raw, tick.get("stock_name"),
+                        tick.get("exchange"), tick.get("stock_code"),
+                    )
+                continue
+            except Exception as exc:
 
                 payload = {**candle}
                 if right:
