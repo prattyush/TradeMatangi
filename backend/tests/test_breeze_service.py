@@ -338,3 +338,91 @@ class TestBreezeStreamManagerOnTicks:
 
         await asyncio.sleep(0)
         assert queue.qsize() == 0
+
+    @pytest.mark.asyncio
+    async def test_on_ticks_resolves_bfo_option_via_scrip_code(self):
+        """
+        BFO (SENSEX) option ticks omit right/strike_price in the raw payload
+        and use raw symbols like "8.1!855562". The tick handler must resolve
+        identity via the _option_scrip_map populated at subscribe time.
+        """
+        from app.services.breeze_service import _OHLCAccumulator
+        mgr = BreezeStreamManager()
+        queue = asyncio.Queue()
+        mgr._breeze = True
+        mgr._queue = queue
+        mgr._loop = asyncio.get_running_loop()
+
+        mgr._option_scrip_map["855562"] = (81200, "PE")
+
+        acc = _OHLCAccumulator()
+        acc.current_second = 1000
+        acc.open = acc.high = acc.low = acc.close = 100.0
+        mgr._accumulators["8.1!855562_PE"] = acc
+
+        bfo_pe_tick = {
+            "symbol": "8.1!855562",
+            "open": 100.0,
+            "last": 110.0,
+            "high": 120.0,
+            "low": 90.0,
+            "change": 0.0,
+            "bPrice": 110.0,
+            "bQty": 280,
+            "sPrice": 111.0,
+            "sQty": 220,
+            "ltq": 20,
+            "avgPrice": 105.0,
+            "quotes": "Quotes Data",
+            "OI": 2578540,
+            "CHNGOI": 2515300,
+            "ttq": 13891120,
+            "totalBuyQt": 329440,
+            "totalSellQ": 263260,
+            "ttv": "107425.96C",
+            "trend": "",
+            "lowerCktLm": 0.05,
+            "upperCktLm": 2019.7,
+            "ltt": "Wed Aug 19 04:36:59 2026",
+            "close": 105.0,
+        }
+
+        mgr._on_ticks([{**bfo_pe_tick, "last": 115.0}])
+
+        await asyncio.sleep(0)
+        assert queue.qsize() == 1
+        candle = queue.get_nowait()
+        assert candle["right"] == "PE"
+
+    @pytest.mark.asyncio
+    async def test_on_ticks_bfo_option_falls_back_to_eq_when_scrip_unknown(self):
+        """
+        If the ScripCode isn't in the map (e.g. get_quotes failed at subscribe
+        time), the tick should still flow through without crashing — right
+        will be None and the candle will be tagged under an EQ-like key.
+        """
+        from app.services.breeze_service import _OHLCAccumulator
+        mgr = BreezeStreamManager()
+        queue = asyncio.Queue()
+        mgr._breeze = True
+        mgr._queue = queue
+        mgr._loop = asyncio.get_running_loop()
+
+        acc = _OHLCAccumulator()
+        acc.current_second = 1000
+        acc.open = acc.high = acc.low = acc.close = 100.0
+        mgr._accumulators["8.1!999999_EQ"] = acc
+
+        bfo_unknown_tick = {
+            "symbol": "8.1!999999",
+            "last": 110.0,
+            "quotes": "Quotes Data",
+            "OI": 100,
+            "CHNGOI": 50,
+            "ttq": 1000,
+        }
+
+        mgr._on_ticks([{**bfo_unknown_tick, "last": 115.0}])
+
+        await asyncio.sleep(0)
+        assert queue.qsize() == 1

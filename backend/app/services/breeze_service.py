@@ -25,6 +25,7 @@ import logging
 import time as _time
 from collections import defaultdict
 from dataclasses import dataclass
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
@@ -91,6 +92,13 @@ class BreezeStreamManager:
         self._logged_ticks: int = 0
         self._equity_stock_name: str | None = None
         self._equity_exchange: str | None = None
+        # Map of Breeze ScripCode (raw token id from WS tick "symbol" field)
+        # → (strike_price, right_label). Populated at subscribe time by
+        # parsing the Breeze Security Master file because Breeze WS payloads
+        # omit right/strike_price on BFO option ticks (the production
+        # wrapper cannot rely on those fields being present). get_quotes()
+        # is unreliable for BFO so we fall back to the master file.
+        self._option_scrip_map: dict[str, tuple[int, str]] = {}
 
     def start(
         self,
@@ -148,8 +156,66 @@ class BreezeStreamManager:
                 get_exchange_quotes=True,
                 get_market_depth=False,
             )
+            # Resolve the ScripCode for option instruments. Breeze's WS
+            # payload uses raw symbols like "8.1!855562" where 855562 is the
+            # ScripCode; the tick does NOT carry right/strike_price on BFO
+            # option streams, so we build a ScripCode → (strike, right) map
+            # here for the tick handler to look up. We use the Breeze
+            # Security Master file (FOBSEScripMaster.txt / FONSEScripMaster.txt)
+            # rather than get_quotes() because get_quotes() is unreliable
+            # for BFO options (returns empty/non-JSON for BSE F&O).
+            if inst.get("product_type") == "options" and inst.get("right"):
+                try:
+                    right_label = (
+                        "CE" if inst["right"].lower() in ("call", "ce") else "PE"
+                    )
+                    scrip_map = self._build_scrip_map(
+                        inst["stock_code"],
+                        inst["exchange_code"],
+                        int(inst["strike_price"]),
+                        right_label,
+                        expiry_raw,
+                    )
+                    for scrip_code, (m_strike, m_right) in scrip_map.items():
+                        self._option_scrip_map[scrip_code] = (m_strike, m_right)
+                        logger.info(
+                            "BreezeStreamManager: mapped option ScripCode=%s → strike=%s right=%s",
+                            scrip_code, m_strike, m_right,
+                        )
+                except Exception as exc:
+                    logger.debug(
+                        "BreezeStreamManager: scrip-code lookup failed for %s %s %s: %s",
+                        inst.get("exchange_code"), inst.get("strike_price"),
+                        inst.get("right"), exc,
+                    )
         self._breeze = breeze
         logger.info("BreezeStreamManager started for %d instruments", len(instruments))
+
+    def _build_scrip_map(
+        self,
+        stock_code: str,
+        exchange_code: str,
+        strike: int,
+        right: str,
+        expiry_breeze: str,
+    ) -> dict[str, tuple[int, str]]:
+        """
+        Parse Breeze security master to map ScripCode → (strike, right) for
+        a single subscribed option. Uses load_breeze_security_master() to
+        fetch the master file (cached daily, downloaded from Breeze once per
+        day). Returns an empty dict on failure — caller continues without
+        ScripCode tagging.
+        """
+        from app.services.breeze_master import load_breeze_security_master
+
+        scrip_map = load_breeze_security_master(
+            stock_code=stock_code,
+            exchange_code=exchange_code,
+            strike=strike,
+            right=right,
+            expiry_breeze=expiry_breeze,
+        )
+        return scrip_map
 
     def stop(self) -> None:
         if not self._breeze:
@@ -197,6 +263,24 @@ class BreezeStreamManager:
                 right_raw = tick.get("right", "").upper()
                 _right_map = {"CALL": "CE", "PUT": "PE", "CE": "CE", "PE": "PE", "C": "CE", "P": "PE"}
                 right = _right_map.get(right_raw) if right_raw else None
+
+                # Breeze option ticks (especially BFO / SENSEX) omit
+                # right/strike_price; identify options by the presence of
+                # open-interest fields (OI/CHNGOI) and look up identity
+                # from the ScripCode (the part of "symbol" after "!").
+                # Note: Breeze index ticks ALSO carry quotes: "Quotes Data"
+                # but lack OI/CHNGOI — using OI/CHNGOI as the option
+                # discriminator avoids misclassifying the index tick.
+                is_option_tick = "OI" in tick or "CHNGOI" in tick
+                if is_option_tick and not right:
+                    raw_symbol = str(tick.get("symbol", ""))
+                    scrip_code = (
+                        raw_symbol.rsplit("!", 1)[-1].strip()
+                        if "!" in raw_symbol else raw_symbol
+                    )
+                    if scrip_code in self._option_scrip_map:
+                        _, right = self._option_scrip_map[scrip_code]
+
                 name = tick.get("stock_name", tick.get("stock_code", tick.get("symbol", "")))
                 exchange = tick.get("exchange", "")
 

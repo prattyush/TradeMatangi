@@ -202,6 +202,10 @@ class BreezeStreamTester:
         self._tick_count = 0
         self._subscribed_options = False
         self._index_price = 0.0
+        self._index_raw_symbol: str | None = None
+        # Map of ScripCode (raw token id from WS tick "symbol" field) →
+        # (strike_price, right_label, expiry_date) for option ticks.
+        self._option_scrip_map: dict[str, tuple[int, str, str]] = {}
         self.symbol = symbol
         self.info = SYMBOL_INFO[symbol]
 
@@ -240,22 +244,56 @@ class BreezeStreamTester:
             exchange = tick.get("exchange", "")
             right_raw = tick.get("right", "").upper()
             strike = tick.get("strike_price", "")
+            raw_symbol = str(tick.get("symbol", ""))
+
+            # Raw Breeze payload lacks right/strike_price on BFO option ticks
+            # (those fields are attached post-hoc by the production wrapper).
+            # Detect option ticks by the presence of OI (open interest). The
+            # SENSEX/NIFTY index tick ALSO carries quotes: "Quotes Data" but
+            # no OI/CHNGOI — those index markers must NOT be used as
+            # option-tick signals or we'd misclassify the index tick.
+            is_option_tick = "OI" in tick or "CHNGOI" in tick
+
+            # Resolve option identity from the ScripCode (the part of
+            # raw_symbol after "!") via the map populated at subscribe time.
+            resolved_right = right_raw
+            resolved_strike = strike
+            if is_option_tick and not right_raw:
+                scrip_code = raw_symbol.rsplit("!", 1)[-1].strip() if "!" in raw_symbol else raw_symbol
+                if scrip_code in self._option_scrip_map:
+                    mapped_strike, mapped_right, _mapped_expiry = self._option_scrip_map[scrip_code]
+                    resolved_right = mapped_right
+                    resolved_strike = str(mapped_strike)
 
             logger.info(
-                "BREEZE TICK #%d: name=%s exchange=%s ltp=%.2f right=%s strike=%s",
-                self._tick_count, name, exchange, ltp, right_raw, strike,
+                "BREEZE TICK #%d: raw_symbol=%s exchange=%s ltp=%.2f right=%s strike=%s option=%s",
+                self._tick_count,
+                raw_symbol, exchange, ltp,
+                resolved_right or ("?" if is_option_tick else "-"),
+                resolved_strike or "-",
+                is_option_tick,
             )
 
-            # Once we have the index price for the chosen symbol, subscribe to options.
-            # Breeze sends right="" for cash/index ticks.
-            stock_code = self.info["stock_code_breeze"]
+            # Once we have the index price, subscribe to options.
+            # Index ticks are identified by the ABSENCE of option markers
+            # (OI/CHNGOI/quotes). The raw symbol on Breeze WS for SENSEX
+            # index is something like "1.1!1" (BSE cash segment prefix)
+            # which contains neither "BSESEN" nor "SENSEX" as substrings,
+            # so we cannot rely on name matching — use structural detection.
+            # On the FIRST tick that lacks option markers, treat it as the
+            # index tick, capture its raw_symbol so we can filter later, and
+            # subscribe CE/PE.
             if (
                 not self._subscribed_options
-                and stock_code in name.upper()
-                and right_raw == ""
+                and not is_option_tick
                 and ltp > 0
             ):
                 self._index_price = ltp
+                self._index_raw_symbol = raw_symbol
+                logger.info(
+                    "BREEZE: detected %s index tick at LTP=%.2f (raw_symbol=%s) — subscribing CE/PE options",
+                    self.info["display_name"], ltp, raw_symbol,
+                )
                 self._subscribe_options(ltp)
 
     def _subscribe_options(self, price: float):
@@ -268,10 +306,25 @@ class BreezeStreamTester:
             self.info["display_name"], price, atm, expiry,
         )
 
+        scrip_map = self._build_scrip_map(atm, expiry_breeze)
+        if not scrip_map:
+            logger.warning(
+                "BREEZE: security master lookup failed — option ticks will arrive "
+                "without right/strike labels (raw ScripCode only)"
+            )
+        else:
+            for scrip_code, (m_strike, m_right, _m_expiry) in scrip_map.items():
+                self._option_scrip_map[scrip_code] = (m_strike, m_right, expiry)
+                logger.info(
+                    "BREEZE: mapped ScripCode=%s → strike=%d right=%s expiry=%s",
+                    scrip_code, m_strike, m_right, expiry,
+                )
+
         for right in self.info["breeze_rights"]:
+            right_label = "CE" if right == "call" else "PE"
             logger.info(
                 "BREEZE: subscribing %s %s %d %s %s",
-                self.info["stock_code_breeze"], right.upper(), atm, expiry_breeze,
+                self.info["stock_code_breeze"], right_label, atm, expiry_breeze,
                 self.info["options_exchange_breeze"],
             )
             try:
@@ -286,9 +339,36 @@ class BreezeStreamTester:
                     get_market_depth=False,
                 )
             except Exception as exc:
-                logger.error("BREEZE: options subscribe failed for %s %d: %s", right, atm, exc)
+                logger.error("BREEZE: options subscribe failed for %s %d: %s", right_label, atm, exc)
 
         self._subscribed_options = True
+
+    def _build_scrip_map(self, strike: int, expiry_breeze: str) -> dict[str, tuple[int, str, str]]:
+        """
+        Resolve ScripCode → (strike, right, expiry) for the subscribed
+        options via the shared backend.breeze_master loader (which caches
+        the security master daily under <DATA_DIR>/ICICISecurityMaster/).
+        """
+        from app.services.breeze_master import load_breeze_security_master
+
+        scrip_map: dict[str, tuple[int, str, str]] = {}
+        for right in self.info["upper_rights"]:
+            match = load_breeze_security_master(
+                stock_code=self.info["stock_code_breeze"],
+                exchange_code=self.info["options_exchange_breeze"],
+                strike=strike,
+                right=right,
+                expiry_breeze=expiry_breeze,
+            )
+            for scrip_code, (m_strike, m_right) in match.items():
+                scrip_map[scrip_code] = (m_strike, m_right, expiry_breeze)
+
+        if scrip_map:
+            logger.info(
+                "BREEZE: built ScripCode map with %d entries from security master",
+                len(scrip_map),
+            )
+        return scrip_map
 
     def run(self):
         logger.info(
