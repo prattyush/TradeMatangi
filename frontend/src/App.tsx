@@ -1434,7 +1434,6 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
             sessionCapital={sim.sessionCapital}
             fundsRatioMode={fundsRatioMode}
             sessionId={sim.sessionId}
-            symbol={sim.symbol}
             pendingExitLabels={sim.pendingExitLabels}
             openLegs={openLegs}
             savedEntryRtKeys={sim.savedEntryRtKeys}

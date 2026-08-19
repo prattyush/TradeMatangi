@@ -17,7 +17,6 @@ interface Props {
   fundsRatioMode?: boolean
   // In-session trade labeling
   sessionId?: string | null
-  symbol?: string
   pendingExitLabels?: PendingExitRt[]
   openLegs?: { right: string | null; rtIndex: number; label: string }[]
   savedEntryRtKeys?: string[]
@@ -38,7 +37,7 @@ function fmt(n: number) { return n.toFixed(2) }
 export default function TradePanel({
   sessionState, currentPrice, position, pnl, sessionPnl,
   activeRight = null, activeLabel, pnlPctMode, sessionCapital, fundsRatioMode,
-  sessionId, symbol,
+  sessionId,
   pendingExitLabels = [],
   openLegs = [],
   savedEntryRtKeys = [],
@@ -58,7 +57,7 @@ export default function TradePanel({
   const sideColor = position.side === 'LONG' ? '#26a641' : position.side === 'SHORT' ? '#f85149' : '#8b949e'
   const active = sessionState === 'running' || sessionState === 'paused'
 
-  const showLabels = active && sessionId && symbol && onSaveEntry && onSaveExit
+  const showLabels = active && sessionId && onSaveEntry && onSaveExit
 
   return (
     <div style={{
@@ -127,7 +126,6 @@ export default function TradePanel({
       {showLabels && (
         <PendingLabelPanel
           sessionId={sessionId!}
-          symbol={symbol!}
           pendingExitLabels={pendingExitLabels}
           openLegs={openLegs}
           savedEntryRtKeys={savedEntryRtKeys}
