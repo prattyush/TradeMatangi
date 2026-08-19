@@ -10,11 +10,6 @@ export interface PendingExitRt {
   closed_at: number             // unix ms timestamp when the leg went flat
 }
 
-export interface CurrentOpenEntry {
-  right: string | null
-  round_trip_index: number
-}
-
 const FLAT_POSITION = (symbol: string): Position => ({
   symbol, quantity: 0, avg_entry_price: 0, side: 'FLAT', entry_commission: 0,
 })
@@ -62,7 +57,6 @@ export interface SimulationState {
   lastCompletedBarPE: BarCandle | null
   // In-session trade labeling
   pendingExitLabels: PendingExitRt[]
-  currentOpenEntries: CurrentOpenEntry[]
   savedEntryRtKeys: string[]       // dedupe: "sessionId#rtIdx#right" for entries already saved
   savedExitRtKeys: string[]        // dedupe: same for exits already saved
 }
@@ -120,7 +114,6 @@ export function useSimulation() {
     lastCompletedBarCE: null,
     lastCompletedBarPE: null,
     pendingExitLabels: [],
-    currentOpenEntries: [],
     savedEntryRtKeys: [],
     savedExitRtKeys: [],
   })
@@ -661,17 +654,14 @@ export function useSimulation() {
    * round_trip_index per leg, and moves the entry from `currentOpenEntries`
    * to `pendingExitLabels`.
    */
-  const onTradesChanged = useCallback(() => {
+  const onTradesChanged = useCallback((trades: Trade[]) => {
     setState(s => {
       if (!s.sessionId) return s
-      const trades = s.trades ?? []
       const { eq, ce, pe } = computeNetQty(trades)
       const prev = lastNetQtyRef.current
       const counters = rtIndexCounterRef.current
 
       const newPending: PendingExitRt[] = [...s.pendingExitLabels]
-      const newCurrent: CurrentOpenEntry[] = []
-      const closedRtKeys: string[] = []
 
       const check = (
         legKey: 'eq' | 'ce' | 'pe',
@@ -680,24 +670,14 @@ export function useSimulation() {
         curQty: number,
       ) => {
         const idxKey = legKey === 'eq' ? 'eq' : legKey
-        // Open: was 0 (or absent), now positive → fresh open
+        // Open: was 0, now positive → allocate a new RT index
         if (curQty !== 0 && prevQty === 0) {
-          const rtIdx = counters[idxKey]++
-          newCurrent.push({ right, round_trip_index: rtIdx })
+          counters[idxKey]++
           return
         }
-        // Close: was positive, now 0 → completed
+        // Close: was positive, now 0 → move to pending exit
         if (prevQty !== 0 && curQty === 0) {
-          // The RT index was assigned when this leg opened (counter was
-          // incremented at that time). Find the open entry to recover it.
-          // For simplicity, allocate a fresh counter value when closing —
-          // backends tolerate new rt indices for closes that didn't have an
-          // entry saved, but we keep the round_trip_index monotonically
-          // increasing per leg by reusing the counter from the open side.
-          // Use the highest saved open entry index for this leg as a fallback.
-          const openForLeg = newCurrent.find(c => c.right === right)
-          const rtIdx = openForLeg?.round_trip_index ?? counters[idxKey]++
-          // Compute leg P&L (rough — uses fills only)
+          const rtIdx = counters[idxKey]  // RT index that was allocated at open
           const legTrades = trades.filter(t => (right === null ? !t.right : t.right === right))
           let pnl = 0
           for (const t of legTrades) {
@@ -705,8 +685,6 @@ export function useSimulation() {
             else pnl -= t.price * t.quantity
           }
           const key = `${s.sessionId}#${rtIdx}#${right ?? 'EQ'}`
-          closedRtKeys.push(key)
-          // Only push to pending if no exit saved yet
           if (!s.savedExitRtKeys.includes(key)) {
             newPending.push({
               right,
@@ -724,23 +702,9 @@ export function useSimulation() {
 
       lastNetQtyRef.current = { eq, ce, pe }
 
-      // Drop the closing-leg entry from newCurrent (it just closed)
-      // Keep entries for legs still open.
-      const allOpen = [...s.currentOpenEntries]
-      // Replace newCurrent with: existing open legs that didn't close, plus
-      // any newly opened this tick.
-      const surviving = allOpen.filter(o => {
-        if (o.right === null && eq !== 0) return true
-        if (o.right === 'CE' && ce !== 0) return true
-        if (o.right === 'PE' && pe !== 0) return true
-        return false
-      })
-      const finalCurrent = [...surviving, ...newCurrent]
-
       return {
         ...s,
         pendingExitLabels: newPending,
-        currentOpenEntries: finalCurrent,
       }
     })
   }, [computeNetQty])
@@ -752,10 +716,14 @@ export function useSimulation() {
     setState(s => ({
       ...s,
       pendingExitLabels: [],
-      currentOpenEntries: [],
       savedEntryRtKeys: [],
       savedExitRtKeys: [],
     }))
+  }, [])
+
+  const getOpenRtIndex = useCallback((right: string | null): number => {
+    const legKey = right === null ? 'eq' : right.toLowerCase() as 'ce' | 'pe'
+    return rtIndexCounterRef.current[legKey]
   }, [])
 
   const recordSavedEntry = useCallback((sessionId: string, rtIndex: number, right: string | null) => {
@@ -819,6 +787,7 @@ export function useSimulation() {
     nextBar,
     onTradesChanged,
     resetLabelTracking,
+    getOpenRtIndex,
     recordSavedEntry,
     recordSavedExit,
   }

@@ -225,7 +225,7 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
   // completed RTs into `sim.pendingExitLabels` for the in-session panel.
   useEffect(() => {
     if (!sim.sessionId) return
-    sim.onTradesChanged()
+    sim.onTradesChanged(sim.trades ?? [])
   }, [sim.trades, sim.sessionId])
 
   // Stepwise-popup path: only fire when stepwise AND mode is 'popup'.
@@ -453,6 +453,22 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
     if (sim.sessionStrikeCE) m['CE'] = `${sim.symbol} ${sim.sessionStrikeCE} CE`
     if (sim.sessionStrikePE) m['PE'] = `${sim.symbol} ${sim.sessionStrikePE} PE`
     return m
+  })()
+
+  // Derive open legs directly from live position state (always up-to-date).
+  // Each open leg becomes an entry form in PendingLabelPanel.
+  const openLegs = (() => {
+    const legs: { right: string | null; rtIndex: number; label: string }[] = []
+    if (sim.position.side !== 'FLAT' && sim.position.quantity > 0) {
+      legs.push({ right: null, rtIndex: sim.getOpenRtIndex(null), label: openLegLabels['EQ'] })
+    }
+    if (sim.positionCE.side !== 'FLAT' && sim.positionCE.quantity > 0) {
+      legs.push({ right: 'CE', rtIndex: sim.getOpenRtIndex('CE'), label: openLegLabels['CE'] ?? `${sim.symbol} CE` })
+    }
+    if (sim.positionPE.side !== 'FLAT' && sim.positionPE.quantity > 0) {
+      legs.push({ right: 'PE', rtIndex: sim.getOpenRtIndex('PE'), label: openLegLabels['PE'] ?? `${sim.symbol} PE` })
+    }
+    return legs
   })()
 
   // Price shown in TradePanel = active contract price (or equity)
@@ -1418,10 +1434,8 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
             sessionCapital={sim.sessionCapital}
             fundsRatioMode={fundsRatioMode}
             sessionId={sim.sessionId}
-            symbol={sim.symbol}
             pendingExitLabels={sim.pendingExitLabels}
-            currentOpenEntries={sim.currentOpenEntries}
-            openLegLabels={openLegLabels}
+            openLegs={openLegs}
             savedEntryRtKeys={sim.savedEntryRtKeys}
             onSaveEntry={currentLabelMode(sim.sessionType) !== 'off' ? handleSaveEntry : undefined}
             onSaveExit={currentLabelMode(sim.sessionType) !== 'off' ? handleSaveExit : undefined}
