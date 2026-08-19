@@ -91,6 +91,7 @@ def get_settings(user_id: str) -> dict:
             "max_price_mode": str(item.get("max_price_mode", DEFAULT_SETTINGS["max_price_mode"])),
             "max_price_threshold_ce": float(item.get("max_price_threshold_ce", DEFAULT_SETTINGS["max_price_threshold_ce"])),
             "max_price_threshold_pe": float(item.get("max_price_threshold_pe", DEFAULT_SETTINGS["max_price_threshold_pe"])),
+            "override_session_enabled": bool(item.get("override_session_enabled", DEFAULT_SETTINGS["override_session_enabled"])),
         }
     except Exception:
         logger.exception("Failed to get settings for user %s", user_id)

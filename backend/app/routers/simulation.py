@@ -167,10 +167,18 @@ async def start_simulation(
         # For sim and stepwise sessions: stop the old one and create fresh with new params
         if internal_session_type in ("sim", "stepwise"):
             if req.override:
-                # Cascade delete: wipe all data for the previous session
+                # Cascade delete: wipe ALL data for ALL previous sessions matching this context
                 from app.services.session_cleanup_service import delete_session_cascade
-                logger.info("start_simulation: override requested — cascade deleting session %s", existing_session_id)
-                delete_session_cascade(existing_session_id, user_id, req.date)
+                all_sessions = sim_svc.find_all_sessions_by_context(
+                    user_id, req.symbol, req.date, internal_session_type
+                )
+                logger.info("start_simulation: override requested — cascade deleting %d session(s)", len(all_sessions))
+                for s in all_sessions:
+                    sid = s["session_id"]
+                    try:
+                        delete_session_cascade(sid, user_id, req.date)
+                    except Exception:
+                        logger.exception("start_simulation: failed to cascade delete session %s", sid)
             elif active:
                 logger.info("start_simulation: stopping existing sim session %s for restart", existing_session_id)
                 sim_svc.stop_session(active)
