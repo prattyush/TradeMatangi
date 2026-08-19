@@ -220,13 +220,8 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
     }
   }, [sim.sessionState, sim.sessionId, sim.resetLabelTracking])
 
-  // Run the generalized RT completion watcher on every trade change. Works for
-  // sim/paper/real/stepwise — it tracks per-leg net-qty transitions and pushes
-  // completed RTs into `sim.pendingExitLabels` for the in-session panel.
-  useEffect(() => {
-    if (!sim.sessionId) return
-    sim.onTradesChanged(sim.trades ?? [])
-  }, [sim.trades, sim.sessionId])
+  // RT open/close detection is now handled inline in buy/sell/addTradeFromSSE
+  // (addTradeAndDetectLabels) — no effect needed here.
 
   // Stepwise-popup path: only fire when stepwise AND mode is 'popup'.
   useEffect(() => {

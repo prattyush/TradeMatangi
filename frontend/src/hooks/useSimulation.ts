@@ -260,16 +260,82 @@ export function useSimulation() {
     setState(s => ({ ...s, sessionState: 'running' }))
   }, [state.sessionId])
 
+  const computeNetQty = useCallback((trades: Trade[]) => {
+    let eq = 0, ce = 0, pe = 0
+    for (const t of trades) {
+      const sign = t.side === 'BUY' ? 1 : -1
+      if (!t.right) eq += sign * t.quantity
+      else if (t.right === 'CE') ce += sign * t.quantity
+      else if (t.right === 'PE') pe += sign * t.quantity
+    }
+    return { eq, ce, pe }
+  }, [])
+
+  // Add a trade and detect RT open/close in a single setState — no separate
+  // effect needed. This avoids the race where a subsequent position-update
+  // setState overwrites the pendingExitLabels update.
+  const addTradeAndDetectLabels = useCallback((trade: Trade) => {
+    setState(s => {
+      if (!s.sessionId) return { ...s, trades: [...s.trades, trade] }
+      const updatedTrades = [...s.trades, trade]
+      const { eq, ce, pe } = computeNetQty(updatedTrades)
+      const prev = lastNetQtyRef.current
+      const counters = rtIndexCounterRef.current
+      console.log(`[LabelWatcher] addTradeAndDetect: trades=${updatedTrades.length} prev_eq=${prev.eq} cur_eq=${eq} ce=${prev.ce}->${ce} pe=${prev.pe}->${pe}`)
+
+      let newPending = s.pendingExitLabels
+
+      const check = (
+        legKey: 'eq' | 'ce' | 'pe',
+        right: string | null,
+        prevQty: number,
+        curQty: number,
+      ) => {
+        const idxKey = legKey === 'eq' ? 'eq' : legKey
+        if (curQty !== 0 && prevQty === 0) {
+          counters[idxKey]++
+          return
+        }
+        if (prevQty !== 0 && curQty === 0) {
+          const rtIdx = counters[idxKey]
+          const legTrades = updatedTrades.filter(t => (right === null ? !t.right : t.right === right))
+          let pnl = 0
+          for (const t of legTrades) {
+            if (t.side === 'SELL') pnl += t.price * t.quantity
+            else pnl -= t.price * t.quantity
+          }
+          const key = `${s.sessionId}#${rtIdx}#${right ?? 'EQ'}`
+          if (!(s.savedExitRtKeys ?? []).includes(key)) {
+            console.log(`[LabelWatcher] CLOSE ${legKey} rtIdx=${rtIdx} pnl=${pnl} key=${key}`)
+            newPending = [...newPending, {
+              right,
+              round_trip_index: rtIdx,
+              pnl: Math.round(pnl * 100) / 100,
+              closed_at: Date.now(),
+            }]
+          }
+        }
+      }
+
+      check('eq', null, prev.eq, eq)
+      check('ce', 'CE', prev.ce, ce)
+      check('pe', 'PE', prev.pe, pe)
+
+      lastNetQtyRef.current = { eq, ce, pe }
+
+      return { ...s, trades: updatedTrades, pendingExitLabels: newPending }
+    })
+  }, [computeNetQty])
+
   const buy = useCallback(async (right?: string) => {
     if (!state.sessionId) return
     const resp = await api.buy(state.sessionId, right)
-    // For real sessions, backend returns {status:"broker_pending"} — trade arrives via SSE order_filled
     if ('status' in resp && resp.status === 'broker_pending') return
     const trade = resp as import('../services/api').Trade
     if (trade.right && latestEquityTickRef.current) {
       trade.underlying_price = latestEquityTickRef.current.close
     }
-    setState(s => ({ ...s, trades: [...s.trades, trade] }))
+    addTradeAndDetectLabels(trade)
     if (right === 'CE' || right === 'PE') {
       const pos = await api.getPosition(state.sessionId, right)
       setState(s => right === 'CE'
@@ -280,18 +346,17 @@ export function useSimulation() {
       const pos = await api.getPosition(state.sessionId)
       setState(s => ({ ...s, position: pos, walletRefreshKey: s.walletRefreshKey + 1 }))
     }
-  }, [state.sessionId])
+  }, [state.sessionId, addTradeAndDetectLabels])
 
   const sell = useCallback(async (right?: string) => {
     if (!state.sessionId) return
     const resp = await api.sell(state.sessionId, right)
-    // For real sessions, backend returns {status:"broker_pending"} — trade arrives via SSE order_filled
     if ('status' in resp && resp.status === 'broker_pending') return
     const trade = resp as import('../services/api').Trade
     if (trade.right && latestEquityTickRef.current) {
       trade.underlying_price = latestEquityTickRef.current.close
     }
-    setState(s => ({ ...s, trades: [...s.trades, trade] }))
+    addTradeAndDetectLabels(trade)
     if (right === 'CE' || right === 'PE') {
       const pos = await api.getPosition(state.sessionId, right)
       setState(s => right === 'CE'
@@ -302,7 +367,7 @@ export function useSimulation() {
       const pos = await api.getPosition(state.sessionId)
       setState(s => ({ ...s, position: pos, walletRefreshKey: s.walletRefreshKey + 1 }))
     }
-  }, [state.sessionId])
+  }, [state.sessionId, addTradeAndDetectLabels])
 
   const clearOrderError = useCallback(() => {
     setState(s => ({ ...s, orderError: null }))
@@ -413,8 +478,6 @@ export function useSimulation() {
       api.getTrades(state.sessionId),
     ])
     setState(s => {
-      // Build a lookup of previously-stamped underlying_price values so they survive
-      // the backend round-trip (backend never stores underlying_price)
       const prevById = new Map(s.trades.map(t => [t.trade_id, t]))
       const stamped = trades.map(t => {
         const prev = prevById.get(t.trade_id)
@@ -422,15 +485,37 @@ export function useSimulation() {
         if (t.right && equityTickAtFill) return { ...t, underlying_price: equityTickAtFill.close }
         return t
       })
+      // Run RT open/close detection on the full refreshed trades array
+      const { eq, ce, pe } = computeNetQty(stamped)
+      const prev = lastNetQtyRef.current
+      const counters = rtIndexCounterRef.current
+      let newPending = s.pendingExitLabels
+      const check = (legKey: 'eq' | 'ce' | 'pe', rtRight: string | null, prevQty: number, curQty: number) => {
+        const idxKey = legKey === 'eq' ? 'eq' : legKey
+        if (curQty !== 0 && prevQty === 0) { counters[idxKey]++; return }
+        if (prevQty !== 0 && curQty === 0) {
+          const rtIdx = counters[idxKey]
+          const legTrades = stamped.filter(t => (rtRight === null ? !t.right : t.right === rtRight))
+          let pnl = 0
+          for (const t of legTrades) { if (t.side === 'SELL') pnl += t.price * t.quantity; else pnl -= t.price * t.quantity }
+          const key = `${s.sessionId}#${rtIdx}#${rtRight ?? 'EQ'}`
+          if (!(s.savedExitRtKeys ?? []).includes(key)) {
+            newPending = [...newPending, { right: rtRight, round_trip_index: rtIdx, pnl: Math.round(pnl * 100) / 100, closed_at: Date.now() }]
+          }
+        }
+      }
+      check('eq', null, prev.eq, eq); check('ce', 'CE', prev.ce, ce); check('pe', 'PE', prev.pe, pe)
+      lastNetQtyRef.current = { eq, ce, pe }
       return {
         ...s,
         ...(posCE ? { positionCE: posCE } : {}),
         ...(posPE ? { positionPE: posPE } : {}),
         ...(posEq ? { position: posEq } : {}),
         trades: stamped,
+        pendingExitLabels: newPending,
       }
     })
-  }, [state.sessionId])
+  }, [state.sessionId, computeNetQty])
 
   // Day P&L: realized (closed trades) + unrealized (open position), equity
   const dayPnlEquity = (() => {
@@ -592,16 +677,39 @@ export function useSimulation() {
   }, [state.sessionId])
 
   const addTradeFromSSE = useCallback(async (trade: Trade) => {
-    // Stamp underlying price for CE/PE trades that arrive via SSE (AI-placed orders)
     if (trade.right && latestEquityTickRef.current && trade.underlying_price === undefined) {
       trade.underlying_price = latestEquityTickRef.current.close
     }
-    // Deduplicate: UI-initiated trades are already in state from api.buy/sell response
+    // Deduplicate: UI-initiated trades are already in state from api.buy/sell response.
+    // Use addTradeAndDetectLabels which handles both adding the trade AND running
+    // RT open/close detection in the same setState (avoids race with position update).
     setState(s => {
       if (s.trades.some(t => t.trade_id === trade.trade_id)) return s
-      return { ...s, trades: [...s.trades, trade] }
+      // Delegate to addTradeAndDetectLabels logic inline to keep it atomic
+      const updatedTrades = [...s.trades, trade]
+      if (!s.sessionId) return { ...s, trades: updatedTrades }
+      const { eq, ce, pe } = computeNetQty(updatedTrades)
+      const prev = lastNetQtyRef.current
+      const counters = rtIndexCounterRef.current
+      let newPending = s.pendingExitLabels
+      const check = (legKey: 'eq' | 'ce' | 'pe', right: string | null, prevQty: number, curQty: number) => {
+        const idxKey = legKey === 'eq' ? 'eq' : legKey
+        if (curQty !== 0 && prevQty === 0) { counters[idxKey]++; return }
+        if (prevQty !== 0 && curQty === 0) {
+          const rtIdx = counters[idxKey]
+          const legTrades = updatedTrades.filter(t => (right === null ? !t.right : t.right === right))
+          let pnl = 0
+          for (const t of legTrades) { if (t.side === 'SELL') pnl += t.price * t.quantity; else pnl -= t.price * t.quantity }
+          const key = `${s.sessionId}#${rtIdx}#${right ?? 'EQ'}`
+          if (!(s.savedExitRtKeys ?? []).includes(key)) {
+            newPending = [...newPending, { right, round_trip_index: rtIdx, pnl: Math.round(pnl * 100) / 100, closed_at: Date.now() }]
+          }
+        }
+      }
+      check('eq', null, prev.eq, eq); check('ce', 'CE', prev.ce, ce); check('pe', 'PE', prev.pe, pe)
+      lastNetQtyRef.current = { eq, ce, pe }
+      return { ...s, trades: updatedTrades, pendingExitLabels: newPending }
     })
-    // Refresh position so P&L reflects the AI-placed order
     if (!state.sessionId) return
     const right = trade.right as string | undefined
     const [posCE, posPE, posEq] = await Promise.all([
@@ -616,7 +724,7 @@ export function useSimulation() {
       ...(posPE ? { positionPE: posPE } : {}),
       ...(posEq ? { position: posEq } : {}),
     }))
-  }, [state.sessionId])
+  }, [state.sessionId, computeNetQty])
 
   const bulkUpdateOrders = useCallback((updatedOrders: Order[]) => {
     if (updatedOrders.length === 0) return
@@ -635,79 +743,6 @@ export function useSimulation() {
   // being in the dependency array of the effect that writes them.
   const lastNetQtyRef = useRef<{ eq: number; ce: number; pe: number }>({ eq: 0, ce: 0, pe: 0 })
   const rtIndexCounterRef = useRef<{ eq: number; ce: number; pe: number }>({ eq: 0, ce: 0, pe: 0 })
-
-  // Net qty per leg from `sim.trades`. Mirrors App.tsx stepwise detector.
-  const computeNetQty = useCallback((trades: Trade[]) => {
-    let eq = 0, ce = 0, pe = 0
-    for (const t of trades) {
-      const sign = t.side === 'BUY' ? 1 : -1
-      if (!t.right) eq += sign * t.quantity
-      else if (t.right === 'CE') ce += sign * t.quantity
-      else if (t.right === 'PE') pe += sign * t.quantity
-    }
-    return { eq, ce, pe }
-  }, [])
-
-  /**
-   * Watch trades for RT completion. Called by App.tsx on every `sim.trades`
-   * change. Detects per-leg non-zero → zero transitions, assigns a fresh
-   * round_trip_index per leg, and moves the entry from `currentOpenEntries`
-   * to `pendingExitLabels`.
-   */
-  const onTradesChanged = useCallback((trades: Trade[]) => {
-    setState(s => {
-      if (!s.sessionId) return s
-      const { eq, ce, pe } = computeNetQty(trades)
-      const prev = lastNetQtyRef.current
-      const counters = rtIndexCounterRef.current
-
-      const newPending: PendingExitRt[] = [...s.pendingExitLabels]
-
-      const check = (
-        legKey: 'eq' | 'ce' | 'pe',
-        right: string | null,
-        prevQty: number,
-        curQty: number,
-      ) => {
-        const idxKey = legKey === 'eq' ? 'eq' : legKey
-        // Open: was 0, now positive → allocate a new RT index
-        if (curQty !== 0 && prevQty === 0) {
-          counters[idxKey]++
-          return
-        }
-        // Close: was positive, now 0 → move to pending exit
-        if (prevQty !== 0 && curQty === 0) {
-          const rtIdx = counters[idxKey]  // RT index that was allocated at open
-          const legTrades = trades.filter(t => (right === null ? !t.right : t.right === right))
-          let pnl = 0
-          for (const t of legTrades) {
-            if (t.side === 'SELL') pnl += t.price * t.quantity
-            else pnl -= t.price * t.quantity
-          }
-          const key = `${s.sessionId}#${rtIdx}#${right ?? 'EQ'}`
-          if (!s.savedExitRtKeys.includes(key)) {
-            newPending.push({
-              right,
-              round_trip_index: rtIdx,
-              pnl: Math.round(pnl * 100) / 100,
-              closed_at: Date.now(),
-            })
-          }
-        }
-      }
-
-      check('eq', null, prev.eq, eq)
-      check('ce', 'CE', prev.ce, ce)
-      check('pe', 'PE', prev.pe, pe)
-
-      lastNetQtyRef.current = { eq, ce, pe }
-
-      return {
-        ...s,
-        pendingExitLabels: newPending,
-      }
-    })
-  }, [computeNetQty])
 
   // Reset label state when a new session starts or ends
   const resetLabelTracking = useCallback(() => {
@@ -785,7 +820,6 @@ export function useSimulation() {
     fetchAndUpdatePosition,
     handleBarPaused,
     nextBar,
-    onTradesChanged,
     resetLabelTracking,
     getOpenRtIndex,
     recordSavedEntry,
