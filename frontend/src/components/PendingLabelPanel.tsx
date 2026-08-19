@@ -14,14 +14,13 @@
  */
 import { useState, useEffect } from 'react'
 import api from '../services/api'
-import type { PendingExitRt, CurrentOpenEntry } from '../hooks/useSimulation'
+import type { PendingExitRt } from '../hooks/useSimulation'
 
 interface Props {
   sessionId: string
   symbol: string
   pendingExitLabels: PendingExitRt[]
-  openLegs: CurrentOpenEntry[]
-  openLegLabels: Record<string, string>     // key "right|null" → display label
+  openLegs: { right: string | null; rtIndex: number; label: string }[]
   savedEntryRtKeys: string[]
   onSaveEntry: (
     rtIndex: number,
@@ -77,7 +76,6 @@ export default function PendingLabelPanel({
   symbol,
   pendingExitLabels,
   openLegs,
-  openLegLabels,
   savedEntryRtKeys,
   onSaveEntry,
   onSaveExit,
@@ -105,7 +103,7 @@ export default function PendingLabelPanel({
 
   const hasPendingExits = pendingExitLabels.length > 0
   const openLegsNeedingLabel = openLegs.filter(o => {
-    const key = rtKey(sessionId, o.round_trip_index, o.right)
+    const key = rtKey(sessionId, o.rtIndex, o.right)
     return !savedEntryRtKeys.includes(key)
   })
   const hasOpenEntries = openLegsNeedingLabel.length > 0
@@ -191,22 +189,19 @@ export default function PendingLabelPanel({
           <div style={sectionHeaderStyle}>
             🏷 Label current open trade
           </div>
-          {openLegsNeedingLabel.map(o => {
-            const key = o.right ?? 'EQ'
-            return (
-              <EntryRow
-                key={rtKey(sessionId, o.round_trip_index, o.right)}
-                rtIndex={o.round_trip_index}
-                right={o.right}
-                label={openLegLabels[key] ?? symbol}
-                categories={categories}
-                strategies={strategies}
-                entryTags={entryTags}
-                saving={savingKey === rtKey(sessionId, o.round_trip_index, o.right)}
-                onSave={handleSaveEntry}
-              />
-            )
-          })}
+          {openLegsNeedingLabel.map(o => (
+            <EntryRow
+              key={rtKey(sessionId, o.rtIndex, o.right)}
+              rtIndex={o.rtIndex}
+              right={o.right}
+              label={o.label}
+              categories={categories}
+              strategies={strategies}
+              entryTags={entryTags}
+              saving={savingKey === rtKey(sessionId, o.rtIndex, o.right)}
+              onSave={handleSaveEntry}
+            />
+          ))}
         </div>
       )}
 

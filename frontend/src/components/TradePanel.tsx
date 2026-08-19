@@ -1,5 +1,5 @@
 import { Position } from '../services/api'
-import { SessionState, PendingExitRt, CurrentOpenEntry } from '../hooks/useSimulation'
+import { SessionState, PendingExitRt } from '../hooks/useSimulation'
 import PendingLabelPanel from './PendingLabelPanel'
 
 interface Props {
@@ -19,8 +19,7 @@ interface Props {
   sessionId?: string | null
   symbol?: string
   pendingExitLabels?: PendingExitRt[]
-  currentOpenEntries?: CurrentOpenEntry[]
-  openLegLabels?: Record<string, string>
+  openLegs?: { right: string | null; rtIndex: number; label: string }[]
   savedEntryRtKeys?: string[]
   onSaveEntry?: (
     rtIndex: number,
@@ -41,8 +40,7 @@ export default function TradePanel({
   activeRight = null, activeLabel, pnlPctMode, sessionCapital, fundsRatioMode,
   sessionId, symbol,
   pendingExitLabels = [],
-  currentOpenEntries = [],
-  openLegLabels = {},
+  openLegs = [],
   savedEntryRtKeys = [],
   onSaveEntry,
   onSaveExit,
@@ -131,8 +129,7 @@ export default function TradePanel({
           sessionId={sessionId!}
           symbol={symbol!}
           pendingExitLabels={pendingExitLabels}
-          openLegs={currentOpenEntries}
-          openLegLabels={openLegLabels}
+          openLegs={openLegs}
           savedEntryRtKeys={savedEntryRtKeys}
           onSaveEntry={onSaveEntry!}
           onSaveExit={onSaveExit!}
