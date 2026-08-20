@@ -189,6 +189,20 @@ def _check_ban(session: "SimulationSession") -> None:
 
 # ── Internal calculations ──────────────────────────────────────────────────────
 
+def _has_open_positions(trades: list) -> bool:
+    """Check whether any position group still has a non-zero net quantity."""
+    from collections import defaultdict
+
+    groups: dict = defaultdict(int)
+    for t in trades:
+        if t.side == TradeSide.BUY:
+            groups[t.right] += t.quantity
+        else:
+            groups[t.right] -= t.quantity
+
+    return any(qty != 0 for qty in groups.values())
+
+
 def _compute_ban_check(session: "SimulationSession") -> tuple[bool, str]:
     """Return (should_ban, reason) based on capital loss % and loss-trade %."""
     from app.services.trading import get_trades
@@ -200,19 +214,21 @@ def _compute_ban_check(session: "SimulationSession") -> tuple[bool, str]:
     if capital <= 0:
         return False, ""
 
-    # Net P&L across all trades
-    total_buy = sum(t.price * t.quantity for t in trades if t.side == TradeSide.BUY)
-    total_sell = sum(t.price * t.quantity for t in trades if t.side == TradeSide.SELL)
-    total_commission = sum(t.commission for t in trades)
-    net_pnl = total_sell - total_buy - total_commission
+    # Capital loss check — only evaluated when all positions are fully closed.
+    # Open positions would incorrectly appear as losses since there's no
+    # corresponding SELL to offset the BUY cost.
+    if not _has_open_positions(trades):
+        round_trips = _compute_round_trips(trades)
+        total_commission = sum(t.commission for t in trades)
+        realized_pnl = sum(round_trips) - total_commission
 
-    if net_pnl < 0:
-        loss_pct = abs(net_pnl) / capital * 100
-        if loss_pct > session.guardrail_ban_capital_pct:
-            return True, (
-                f"BAN: capital loss {loss_pct:.1f}% exceeds limit of "
-                f"{session.guardrail_ban_capital_pct:.1f}%"
-            )
+        if realized_pnl < 0:
+            loss_pct = abs(realized_pnl) / capital * 100
+            if loss_pct > session.guardrail_ban_capital_pct:
+                return True, (
+                    f"BAN: capital loss {loss_pct:.1f}% exceeds limit of "
+                    f"{session.guardrail_ban_capital_pct:.1f}%"
+                )
 
     # Loss-trade % based on completed round-trips — only evaluated once enough trades are done
     round_trips = _compute_round_trips(trades)

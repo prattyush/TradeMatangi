@@ -355,6 +355,18 @@ class TestComputeBanCheck:
         assert banned
         assert "BAN" in reason
 
+    def test_open_position_skips_capital_loss_check(self):
+        """Capital loss check must NOT trigger when there are open positions."""
+        sess = MockSession(session_capital=100_000.0)
+        sess.guardrail_ban_capital_pct = 10.0
+        # BUY 65 contracts @ ₹100 = ₹6,500 (6.5% of capital) — no SELL yet
+        # Without the fix, net_pnl = -6,500 which would trigger a ban
+        trades = [_make_trade("BUY", 100.0, qty=65, ts=1000)]
+        trades[0].commission = 0.0
+        with patch("app.services.trading.get_trades", return_value=trades):
+            banned, reason = gsvc._compute_ban_check(sess)
+        assert not banned  # should skip capital loss check due to open position
+
 
 # ── initialize_guardrails ─────────────────────────────────────────────────────
 
