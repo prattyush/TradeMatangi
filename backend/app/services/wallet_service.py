@@ -112,3 +112,16 @@ def reset(user_id: str, date: str, amount: float = DEFAULT_BALANCE) -> float:
     _wallets[(user_id, date)] = amount
     _write_wallet_to_db(user_id, date, amount)
     return amount
+
+
+def delete_entry(user_id: str, date: str) -> None:
+    """Delete the wallet record for (user_id, date) from DynamoDB and in-memory cache."""
+    _wallets.pop((user_id, date), None)
+    try:
+        from app.services.db import get_dynamodb_resource
+        get_dynamodb_resource().Table("Wallet").delete_item(
+            Key={"user_id": user_id, "date": date},
+        )
+        logger.info("Deleted wallet entry for user=%s date=%s", user_id, date)
+    except Exception:
+        logger.exception("DynamoDB wallet delete failed for user=%s date=%s", user_id, date)

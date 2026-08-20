@@ -98,6 +98,7 @@ export interface SimulationStartRequest {
   strategy_interval_secs?: number  // candle interval for all strategies (180=3min, 300=5min)
   session_type?: 'sim' | 'paper' | 'real' | 'stepwise'
   stepwise?: boolean
+  override?: boolean
 }
 
 export interface UserSettingsResponse {
@@ -113,6 +114,7 @@ export interface UserSettingsResponse {
   max_price_mode?: string
   max_price_threshold_ce?: number
   max_price_threshold_pe?: number
+  override_session_enabled?: boolean
 }
 
 // ── Strategy types ──────────────────────────────────────────────────────────
@@ -720,6 +722,20 @@ const api = {
       const body = await res.json().catch(() => ({}))
       throw new Error(body.detail || `Start simulation failed: ${res.status}`)
     }
+    return res.json()
+  },
+
+  async checkExistingSession(params: { symbol: string; date: string; session_type: string; instrument_type?: string }): Promise<{ exists: boolean; session: Record<string, unknown> | null }> {
+    const qs = new URLSearchParams({
+      symbol: params.symbol,
+      date: params.date,
+      session_type: params.session_type,
+      instrument_type: params.instrument_type ?? 'equity',
+    })
+    const res = await fetch(`${BACKEND_URL}/api/simulation/check-existing?${qs}`, {
+      headers: _authHeaders(),
+    })
+    if (!res.ok) return { exists: false, session: null }
     return res.json()
   },
 

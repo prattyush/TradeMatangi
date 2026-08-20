@@ -298,6 +298,38 @@ def find_session_by_context(
         return None
 
 
+def find_all_sessions_by_context(
+    user_id: str,
+    symbol: str,
+    date: str,
+    session_type: str,
+) -> list[dict]:
+    """Return ALL DynamoDB Sessions records matching (user, symbol, date, session_type).
+
+    Returns empty list on failure.
+    """
+    try:
+        from app.services.db import get_dynamodb_resource
+        from boto3.dynamodb.conditions import Key
+        table = get_dynamodb_resource().Table("Sessions")
+        resp = table.query(
+            IndexName="UserIdIndex",
+            KeyConditionExpression=Key("user_id").eq(user_id),
+        )
+        return [
+            it for it in resp.get("Items", [])
+            if it.get("symbol") == symbol
+            and it.get("date") == date
+            and it.get("session_type") == session_type
+        ]
+    except Exception:
+        logger.exception(
+            "find_all_sessions_by_context failed for user=%s symbol=%s date=%s type=%s",
+            user_id, symbol, date, session_type,
+        )
+        return []
+
+
 def rebuild_session_from_db(
     db_record: dict,
     user_id: str,
