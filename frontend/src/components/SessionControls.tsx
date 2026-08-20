@@ -3,6 +3,7 @@ import { SessionState } from '../hooks/useSimulation'
 import api, { SymbolInfo } from '../services/api'
 import { InstrumentConfig } from '../hooks/useSimulation'
 import KotakTOTPModal from './KotakTOTPModal'
+import ConfirmModal from './ConfirmModal'
 
 const THRESHOLD_VALUES_NIFTY = [25, 50, 75, 100, 125, 150]
 const THRESHOLD_VALUES_SENSEX = [50, 100, 150, 200, 250]
@@ -116,6 +117,7 @@ export default function SessionControls({
   const [startError, setStartError] = useState<string | null>(null)
   const [showTOTP, setShowTOTP] = useState(false)
   const [pendingStart, setPendingStart] = useState<(() => Promise<void>) | null>(null)
+  const [overrideConfirm, setOverrideConfirm] = useState<{ config: InstrumentConfig; message: string; startTime: string; speed: number } | null>(null)
 
   const [instrumentType, setInstrumentType] = useState<'equity' | 'options'>(
     OPTIONS_ONLY_SYMBOLS.has(currentSymbol) ? 'options' : 'equity'
@@ -283,14 +285,15 @@ export default function SessionControls({
             instrument_type: config.instrument_type,
           })
           if (existing.exists) {
-            const confirmed = window.confirm(
-              `A previous ${sessionType} session exists for ${currentSymbol} on ${currentDate}. Override it and delete all its data?`
-            )
-            if (!confirmed) {
-              setLoading(false)
-              return
-            }
-            config = { ...config, override: true }
+            const startTimeParam = isToday ? '09:15:00' : startTime + ':00'
+            const speedParam = isToday ? 1.0 : speed
+            setOverrideConfirm({
+              config,
+              message: `A previous ${sessionType} session exists for ${currentSymbol} on ${currentDate}. Override it and delete all its data?`,
+              startTime: startTimeParam,
+              speed: speedParam,
+            })
+            return
           }
         } catch {
           // If check fails, proceed without override (fail-open)
@@ -346,6 +349,32 @@ export default function SessionControls({
           setShowTOTP(false)
           setPendingStart(null)
           setLoading(false)
+        }}
+      />
+    )}
+    {overrideConfirm && (
+      <ConfirmModal
+        message={overrideConfirm.message}
+        onYes={async () => {
+          const finalConfig: InstrumentConfig = { ...overrideConfirm.config, override: true }
+          try {
+            await onStart(overrideConfirm.startTime, overrideConfirm.speed, finalConfig)
+          } catch {
+            // onStart error handling is in handleStartSession
+          } finally {
+            setLoading(false)
+            setOverrideConfirm(null)
+          }
+        }}
+        onNo={async () => {
+          try {
+            await onStart(overrideConfirm.startTime, overrideConfirm.speed, overrideConfirm.config)
+          } catch {
+            // onStart error handling is in handleStartSession
+          } finally {
+            setLoading(false)
+            setOverrideConfirm(null)
+          }
         }}
       />
     )}
