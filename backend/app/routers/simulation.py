@@ -166,7 +166,20 @@ async def start_simulation(
         active = sim_svc.get_session(existing_session_id)
         # For sim and stepwise sessions: stop the old one and create fresh with new params
         if internal_session_type in ("sim", "stepwise"):
-            if active:
+            if req.override:
+                # Cascade delete: wipe ALL data for ALL previous sessions matching this context
+                from app.services.session_cleanup_service import delete_session_cascade
+                all_sessions = sim_svc.find_all_sessions_by_context(
+                    user_id, req.symbol, req.date, internal_session_type
+                )
+                logger.info("start_simulation: override requested — cascade deleting %d session(s)", len(all_sessions))
+                for s in all_sessions:
+                    sid = s["session_id"]
+                    try:
+                        delete_session_cascade(sid, user_id, req.date)
+                    except Exception:
+                        logger.exception("start_simulation: failed to cascade delete session %s", sid)
+            elif active:
                 logger.info("start_simulation: stopping existing sim session %s for restart", existing_session_id)
                 sim_svc.stop_session(active)
             else:
@@ -278,6 +291,31 @@ async def start_simulation(
         stepwise=session.stepwise,
         total_bars=session.total_bars if session.stepwise else None,
     )
+
+
+@router.get("/check-existing")
+async def check_existing_session(
+    symbol: str,
+    date: str,
+    session_type: str,
+    instrument_type: str = "equity",
+    user_id: str = Depends(get_request_user_id),
+):
+    """Check if a previous session exists for the given combination. Returns the session record or null."""
+    existing = sim_svc.find_session_by_context(user_id, symbol, date, session_type)
+    if existing is None:
+        return {"exists": False, "session": None}
+    return {
+        "exists": True,
+        "session": {
+            "session_id": existing.get("session_id"),
+            "symbol": existing.get("symbol"),
+            "date": existing.get("date"),
+            "session_type": existing.get("session_type"),
+            "instrument_type": existing.get("instrument_type"),
+            "created_at": existing.get("created_at"),
+        },
+    }
 
 
 @router.post("/pause")

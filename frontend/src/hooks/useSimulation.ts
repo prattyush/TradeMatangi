@@ -70,6 +70,7 @@ export interface InstrumentConfig {
   brokerage_per_order?: number
   strategy_interval_secs?: number
   session_type?: 'sim' | 'paper' | 'real' | 'stepwise'
+  override?: boolean
 }
 
 export function useSimulation() {

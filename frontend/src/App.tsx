@@ -10,7 +10,7 @@ import OrderPanel from './components/OrderPanel'
 import WalletWidget from './components/WalletWidget'
 import GuardRailPopup from './components/GuardRailPopup'
 import PatternAlertToast, { PatternAlert } from './components/PatternAlertToast'
-import SettingsModal, { loadFundsRatioMode, loadFundsRatios, loadTargetDeviationPct, loadBrokeragePerOrder, loadStrategyIntervalSecs, loadAutostopTriggerType, loadAutostopDeviationPct, loadHistoricalDays, loadPnlPctMode, loadBreakevenMode, loadTargetProfitBufferTicks, loadAggrSlOnlyInProfit, loadAutoStartEventSnapshots, loadStepwiseLabelingPopupEnabled, loadLabelingModeByType, FundsRatios } from './components/SettingsModal'
+import SettingsModal, { loadFundsRatioMode, loadFundsRatios, loadTargetDeviationPct, loadBrokeragePerOrder, loadStrategyIntervalSecs, loadAutostopTriggerType, loadAutostopDeviationPct, loadHistoricalDays, loadPnlPctMode, loadBreakevenMode, loadTargetProfitBufferTicks, loadAggrSlOnlyInProfit, loadAutoStartEventSnapshots, loadStepwiseLabelingPopupEnabled, loadLabelingModeByType, loadOverrideSessionEnabled, FundsRatios } from './components/SettingsModal'
 import { StrategyResponse, StartStrategyRequest, Order } from './services/api'
 import LoginScreen from './components/LoginScreen'
 import TradeAnalysis from './components/TradeAnalysis'
@@ -142,6 +142,7 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
   const [guardrailPopup, setGuardrailPopup] = useState<{ type: 'BLOCK' | 'COOLDOWN' | 'BAN'; reason: string } | null>(null)
   const [combinedPnlOpen, setCombinedPnlOpen] = useState(false)
   const [autoStartSnapshots, setAutoStartSnapshots] = useState(loadAutoStartEventSnapshots)
+  const [overrideSessionEnabled] = useState(loadOverrideSessionEnabled)
   const [stepwiseLabelingPopup, setStepwiseLabelingPopup] = useState(loadStepwiseLabelingPopupEnabled)
   const [patternAlerts, setPatternAlerts] = useState<PatternAlert[]>([])
 
@@ -1251,6 +1252,7 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
         onResume={sim.resumeSession}
         onOptionsReady={handleOptionsReady}
         isRealTradingUser={isRealTradingUser || authUser.isAdmin}
+        overrideSessionEnabled={overrideSessionEnabled}
         stepwise={sim.stepwise}
         barPaused={sim.barPaused}
         barIndex={sim.barIndex}
