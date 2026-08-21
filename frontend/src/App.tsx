@@ -261,7 +261,10 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
       entry_tag: fields.entry_tag,
       exit_tag: 'AS_PER_PATTERN',
     }])
-    sim.recordSavedEntry(sim.sessionId, rtIndex, right)
+    sim.recordSavedEntry(sim.sessionId, rtIndex, right, {
+      expected_category: fields.expected_category,
+      expected_strategy: fields.expected_strategy,
+    })
   }, [sim.sessionId, sim.recordSavedEntry])
 
   const handleSaveExit = useCallback(async (
@@ -1454,6 +1457,7 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
             pendingExitLabels={sim.pendingExitLabels}
             openLegs={openLegs}
             savedEntryRtKeys={sim.savedEntryRtKeys}
+            activeEntryStrategies={sim.activeEntryStrategies}
             onSaveEntry={currentLabelMode(sim.sessionType) !== 'off' ? handleSaveEntry : undefined}
             onSaveExit={currentLabelMode(sim.sessionType) !== 'off' ? handleSaveExit : undefined}
           />
