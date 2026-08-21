@@ -1,5 +1,5 @@
 import { Position } from '../services/api'
-import { SessionState, PendingExitRt } from '../hooks/useSimulation'
+import { SessionState, PendingExitRt, ActiveEntryStrategy } from '../hooks/useSimulation'
 import PendingLabelPanel from './PendingLabelPanel'
 
 interface Props {
@@ -20,6 +20,7 @@ interface Props {
   pendingExitLabels?: PendingExitRt[]
   openLegs?: { right: string | null; rtIndex: number; label: string }[]
   savedEntryRtKeys?: string[]
+  activeEntryStrategies?: Record<string, ActiveEntryStrategy>
   onSaveEntry?: (
     rtIndex: number,
     right: string | null,
@@ -41,6 +42,7 @@ export default function TradePanel({
   pendingExitLabels = [],
   openLegs = [],
   savedEntryRtKeys = [],
+  activeEntryStrategies = {},
   onSaveEntry,
   onSaveExit,
 }: Props) {
@@ -74,6 +76,31 @@ export default function TradePanel({
           {currentPrice ? fmt(currentPrice) : '—'}
         </span>
       </div>
+
+      {Object.keys(activeEntryStrategies).length > 0 && (
+        <div style={{
+          display: 'flex', flexDirection: 'column', gap: 2,
+          background: '#1c2333', borderRadius: 4, padding: '5px 8px',
+        }}>
+          {Object.entries(activeEntryStrategies).map(([key, entry]) => (
+            <div key={key} style={{ fontSize: 11, color: '#8b949e', display: 'flex', alignItems: 'center', gap: 4 }}>
+              {entry.right && (
+                <span style={{
+                  fontSize: 9, fontWeight: 700, color: entry.right === 'CE' ? '#26a641' : '#f85149',
+                  background: entry.right === 'CE' ? '#1a2f1a' : '#2d1518',
+                  borderRadius: 3, padding: '1px 4px',
+                }}>
+                  {entry.right}
+                </span>
+              )}
+              <span style={{ color: '#58a6ff', fontWeight: 600 }}>{entry.strategy}</span>
+              {entry.category && (
+                <span style={{ color: '#484f58' }}>/ {entry.category}</span>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
 
       {activeRight === null && active && (
         <div style={{ fontSize: 12, color: '#484f58', textAlign: 'center', padding: '4px 0' }}>

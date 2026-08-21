@@ -10,6 +10,12 @@ export interface PendingExitRt {
   closed_at: number             // unix ms timestamp when the leg went flat
 }
 
+export interface ActiveEntryStrategy {
+  category: string
+  strategy: string
+  right: string | null
+}
+
 const FLAT_POSITION = (symbol: string): Position => ({
   symbol, quantity: 0, avg_entry_price: 0, side: 'FLAT', entry_commission: 0,
 })
@@ -59,6 +65,7 @@ export interface SimulationState {
   pendingExitLabels: PendingExitRt[]
   savedEntryRtKeys: string[]       // dedupe: "sessionId#rtIdx#right" for entries already saved
   savedExitRtKeys: string[]        // dedupe: same for exits already saved
+  activeEntryStrategies: Record<string, ActiveEntryStrategy>  // keyed by 'EQ'|'CE'|'PE'
 }
 
 export interface InstrumentConfig {
@@ -117,6 +124,7 @@ export function useSimulation() {
     pendingExitLabels: [],
     savedEntryRtKeys: [],
     savedExitRtKeys: [],
+    activeEntryStrategies: {},
   })
 
   const setLatestTick = useCallback((tick: TickEvent) => {
@@ -284,6 +292,7 @@ export function useSimulation() {
       console.log(`[LabelWatcher] addTradeAndDetect: trades=${updatedTrades.length} prev_eq=${prev.eq} cur_eq=${eq} ce=${prev.ce}->${ce} pe=${prev.pe}->${pe} counter=${rtIndexCounterRef.current}`)
 
       let newPending = s.pendingExitLabels
+      const strategiesToClear: string[] = []
 
       const check = (
         right: string | null,
@@ -296,6 +305,7 @@ export function useSimulation() {
           return
         }
         if (prevQty !== 0 && curQty === 0) {
+          strategiesToClear.push(right ?? 'EQ')
           const rtIdx = rtIndexCounterRef.current
           rtIndexCounterRef.current++
           const legTrades = updatedTrades.filter(t => (right === null ? !t.right : t.right === right))
@@ -323,7 +333,13 @@ export function useSimulation() {
 
       lastNetQtyRef.current = { eq, ce, pe }
 
-      return { ...s, trades: updatedTrades, pendingExitLabels: newPending }
+      let newStrategies = s.activeEntryStrategies
+      if (strategiesToClear.length > 0) {
+        newStrategies = { ...newStrategies }
+        for (const k of strategiesToClear) delete newStrategies[k]
+      }
+
+      return { ...s, trades: updatedTrades, pendingExitLabels: newPending, activeEntryStrategies: newStrategies }
     })
   }, [computeNetQty])
 
@@ -750,6 +766,7 @@ export function useSimulation() {
       pendingExitLabels: [],
       savedEntryRtKeys: [],
       savedExitRtKeys: [],
+      activeEntryStrategies: {},
     }))
   }, [])
 
@@ -757,11 +774,21 @@ export function useSimulation() {
     return rtIndexCounterRef.current
   }, [])
 
-  const recordSavedEntry = useCallback((sessionId: string, rtIndex: number, right: string | null) => {
+  const recordSavedEntry = useCallback((sessionId: string, rtIndex: number, right: string | null, fields?: { expected_category: string; expected_strategy: string }) => {
     const key = `${sessionId}#${rtIndex}#${right ?? 'EQ'}`
+    const strategyKey = right ?? 'EQ'
     setState(s => {
-      if (s.savedEntryRtKeys.includes(key)) return s
-      return { ...s, savedEntryRtKeys: [...s.savedEntryRtKeys, key] }
+      const updates: Partial<SimulationState> = {}
+      if (!s.savedEntryRtKeys.includes(key)) {
+        updates.savedEntryRtKeys = [...s.savedEntryRtKeys, key]
+      }
+      if (fields && fields.expected_strategy) {
+        updates.activeEntryStrategies = {
+          ...s.activeEntryStrategies,
+          [strategyKey]: { category: fields.expected_category, strategy: fields.expected_strategy, right },
+        }
+      }
+      return Object.keys(updates).length > 0 ? { ...s, ...updates } : s
     })
   }, [])
 
