@@ -341,7 +341,7 @@ export default function Chart({
           const rrRefs: ISeriesApi<'Line'>[] = []
           for (const lvl of levels) {
             const s = chartRef.current!.addLineSeries({
-              color: `rgb(${lvl.color.join(',')})`, lineWidth: 1,
+              color: `rgb(${lvl.color.join(',')})`, lineWidth: 3,
               priceLineVisible: false, lastValueVisible: false,
             })
             s.setData([{ time: tStart, value: lvl.price }, { time: tEnd, value: lvl.price }])

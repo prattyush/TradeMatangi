@@ -317,7 +317,7 @@ function ChartPane({
           ]
           const rrRefs: ISeriesApi<'Line'>[] = []
           for (const lvl of levels) {
-            const ls = chartRef.current!.addLineSeries({ color: `rgb(${lvl.color.join(',')})`, lineWidth: 1, priceLineVisible: false, lastValueVisible: false })
+            const ls = chartRef.current!.addLineSeries({ color: `rgb(${lvl.color.join(',')})`, lineWidth: 3, priceLineVisible: false, lastValueVisible: false })
             ls.setData([{ time: tStart, value: lvl.price }, { time: tEnd, value: lvl.price }])
             rrRefs.push(ls)
           }
