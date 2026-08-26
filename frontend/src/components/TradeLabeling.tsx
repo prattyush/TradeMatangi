@@ -148,12 +148,20 @@ export default function TradeLabeling({ symbol, date, sessionIds, allTrades, his
   }, [allTrades])
 
   const [chartView, setChartView] = useState<'underlying' | string>('underlying')
+  const [maximized, setMaximized] = useState(false)
   const activeOptionTab = optionTabs.find(t => t.key === chartView) ?? null
 
-  return (
-    <div style={{ display: 'flex', gap: 12, minHeight: 400 }}>
+  useEffect(() => {
+    if (!maximized) return
+    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') setMaximized(false) }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [maximized])
+
+  const content = (
+    <div style={{ display: 'flex', gap: 12, minHeight: maximized ? 0 : 400, flex: maximized ? 1 : undefined, overflow: maximized ? 'hidden' : undefined }}>
       {/* Chart */}
-      <div style={{ flex: 1, minWidth: 0 }}>
+      <div style={{ flex: 3, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
         {chartView === 'underlying' ? (
           <AnalysisChart
             symbol={symbol}
@@ -205,12 +213,23 @@ export default function TradeLabeling({ symbol, date, sessionIds, allTrades, his
       </div>
 
       {/* Round-trip forms */}
-      <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', maxHeight: 500, overflowY: 'auto', gap: 10 }}>
+      <div style={{ flex: 2, minWidth: 0, display: 'flex', flexDirection: 'column', maxHeight: maximized ? undefined : 500, overflowY: 'auto', gap: 10 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
           <span style={{ fontSize: 12, fontWeight: 700, color: '#8b949e' }}>
             {roundTrips.length} round trip{roundTrips.length !== 1 ? 's' : ''}
           </span>
           <div style={{ flex: 1 }} />
+          <button
+            onClick={() => setMaximized(!maximized)}
+            title={maximized ? 'Restore' : 'Maximize'}
+            style={{
+              background: '#21262d', border: 'none', color: '#8b949e',
+              borderRadius: 4, padding: '4px 8px', fontSize: 13,
+              cursor: 'pointer', fontWeight: 600,
+            }}
+          >
+            {maximized ? '⤡' : '⤢'}
+          </button>
           {saveMsg && (
             <span style={{ fontSize: 12, color: saveMsg.startsWith('Saved') ? '#3fb950' : '#f85149' }}>
               {saveMsg}
@@ -356,4 +375,14 @@ export default function TradeLabeling({ symbol, date, sessionIds, allTrades, his
       </div>
     </div>
   )
+
+  if (maximized) {
+    return (
+      <div style={{ position: 'fixed', inset: 0, zIndex: 2000, background: '#0d1117', display: 'flex', flexDirection: 'column', padding: 12 }}>
+        {content}
+      </div>
+    )
+  }
+
+  return content
 }
