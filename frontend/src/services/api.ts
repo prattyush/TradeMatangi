@@ -33,6 +33,41 @@ export interface ChartStructureItem {
   can_delete: boolean
 }
 
+export interface FineDefinition {
+  definition_id: string
+  name: string
+  sub_types: string[]
+  is_predefined: boolean
+  user_id: string
+  can_delete: boolean
+  created_at: string
+  updated_at: string
+}
+
+export interface FlowStep {
+  definition_id: string
+  name: string
+  type?: string
+  direction?: string
+  transition_bar_time?: number
+}
+
+export interface FineFlow {
+  flow_id: string
+  symbol: string
+  date: string
+  steps: FlowStep[]
+  user_id: string
+  can_delete: boolean
+  created_at: string
+  updated_at: string
+}
+
+export interface FineSearchResult {
+  flow: FineFlow
+  match_start_index: number
+}
+
 export interface TickEvent {
   type: 'tick'
   time: number
@@ -1652,6 +1687,121 @@ const api = {
       headers: _authHeaders(),
     })
     if (!res.ok) throw new Error(`Delete snapshots failed: ${res.status}`)
+  },
+
+  // ── Fine Chart Structures ──────────────────────────────────────────────────
+
+  async fineStructureListDefinitions(): Promise<FineDefinition[]> {
+    const res = await fetch(`${BACKEND_URL}/api/fine-structures/definitions`, {
+      headers: _authHeaders(),
+    })
+    if (!res.ok) throw new Error(`List fine definitions failed: ${res.status}`)
+    const data = await res.json()
+    return data.definitions
+  },
+
+  async fineStructureCreateDefinition(data: { name: string; sub_types: string[] }): Promise<FineDefinition> {
+    const res = await fetch(`${BACKEND_URL}/api/fine-structures/definition`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ..._authHeaders() },
+      body: JSON.stringify(data),
+    })
+    if (!res.ok) throw new Error(`Create fine definition failed: ${res.status}`)
+    return res.json()
+  },
+
+  async fineStructureUpdateDefinition(id: string, data: { name: string; sub_types: string[] }): Promise<FineDefinition> {
+    const res = await fetch(`${BACKEND_URL}/api/fine-structures/definition/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', ..._authHeaders() },
+      body: JSON.stringify(data),
+    })
+    if (!res.ok) throw new Error(`Update fine definition failed: ${res.status}`)
+    return res.json()
+  },
+
+  async fineStructureDeleteDefinition(id: string): Promise<void> {
+    const res = await fetch(`${BACKEND_URL}/api/fine-structures/definition/${id}`, {
+      method: 'DELETE',
+      headers: _authHeaders(),
+    })
+    if (!res.ok) throw new Error(`Delete fine definition failed: ${res.status}`)
+  },
+
+  async fineStructureListFlows(opts: { symbol?: string; start_date?: string; end_date?: string } = {}): Promise<FineFlow[]> {
+    const params = new URLSearchParams()
+    if (opts.symbol) params.set('symbol', opts.symbol)
+    if (opts.start_date) params.set('start_date', opts.start_date)
+    if (opts.end_date) params.set('end_date', opts.end_date)
+    const qs = params.toString()
+    const res = await fetch(`${BACKEND_URL}/api/fine-structures/flows${qs ? '?' + qs : ''}`, {
+      headers: _authHeaders(),
+    })
+    if (!res.ok) throw new Error(`List fine flows failed: ${res.status}`)
+    const data = await res.json()
+    return data.flows
+  },
+
+  async fineStructureGetFlow(flowId: string): Promise<FineFlow> {
+    const res = await fetch(`${BACKEND_URL}/api/fine-structures/flow/${flowId}`, {
+      headers: _authHeaders(),
+    })
+    if (!res.ok) throw new Error(`Get fine flow failed: ${res.status}`)
+    return res.json()
+  },
+
+  async fineStructureCreateFlow(data: { symbol: string; date: string; steps: FlowStep[] }): Promise<FineFlow> {
+    const res = await fetch(`${BACKEND_URL}/api/fine-structures/flow`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ..._authHeaders() },
+      body: JSON.stringify(data),
+    })
+    if (!res.ok) throw new Error(`Create fine flow failed: ${res.status}`)
+    return res.json()
+  },
+
+  async fineStructureUpdateFlow(flowId: string, steps: FlowStep[]): Promise<FineFlow> {
+    const res = await fetch(`${BACKEND_URL}/api/fine-structures/flow/${flowId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', ..._authHeaders() },
+      body: JSON.stringify({ steps }),
+    })
+    if (!res.ok) throw new Error(`Update fine flow failed: ${res.status}`)
+    return res.json()
+  },
+
+  async fineStructureDeleteFlow(flowId: string): Promise<void> {
+    const res = await fetch(`${BACKEND_URL}/api/fine-structures/flow/${flowId}`, {
+      method: 'DELETE',
+      headers: _authHeaders(),
+    })
+    if (!res.ok) throw new Error(`Delete fine flow failed: ${res.status}`)
+  },
+
+  async fineStructureSearch(data: {
+    query_steps: { name: string; type?: string; direction?: string }[]
+    symbol?: string; start_date?: string; end_date?: string
+  }): Promise<FineSearchResult[]> {
+    const res = await fetch(`${BACKEND_URL}/api/fine-structures/search`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ..._authHeaders() },
+      body: JSON.stringify(data),
+    })
+    if (!res.ok) throw new Error(`Search fine flows failed: ${res.status}`)
+    const json = await res.json()
+    return json.results
+  },
+
+  async fineStructureGetOHLC(symbol: string, date: string, intervalMinutes = 3): Promise<{
+    symbol: string; date: string; interval_minutes: number
+    candles: OHLCCandle[]; flow: FineFlow | null
+  }> {
+    const res = await fetch(
+      `${BACKEND_URL}/api/fine-structures/ohlc/${encodeURIComponent(symbol)}/${encodeURIComponent(date)}?interval_minutes=${intervalMinutes}`,
+      { headers: _authHeaders() },
+    )
+    if (!res.ok) throw new Error(`Get fine OHLC failed: ${res.status}`)
+    return res.json()
   },
 }
 
