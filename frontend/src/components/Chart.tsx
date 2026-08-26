@@ -57,11 +57,11 @@ interface Props {
   pnl?: number
 }
 
-type DrawMode = 'none' | 'hline' | 'trendline' | 'fibretracement' | 'channel' | 'buymarker' | 'sellmarker'
+type DrawMode = 'none' | 'hline' | 'trendline' | 'fibretracement' | 'channel' | 'buymarker' | 'sellmarker' | 'rrindicator'
 
 type Drawing =
   | { type: 'hline'; ref: IPriceLine }
-  | { type: 'trendline' | 'fibretracement' | 'channel'; refs: ISeriesApi<'Line'>[] }
+  | { type: 'trendline' | 'fibretracement' | 'channel' | 'rrindicator'; refs: ISeriesApi<'Line'>[] }
   | { type: 'buymarker' | 'sellmarker'; ref: ISeriesApi<'Line'> }
 
 const FIB_LEVELS = [
@@ -76,6 +76,7 @@ const DRAW_LABEL: Partial<Record<DrawMode, string>> = {
   hline: 'H-Line', trendline: 'Trend',
   fibretracement: 'Fib', channel: 'Channel',
   buymarker: 'Buy Mark', sellmarker: 'Sell Mark',
+  rrindicator: 'R:R',
 }
 
 const CANDLE_INTERVAL_SECS = (m: number) => m * 60
@@ -313,6 +314,40 @@ export default function Chart({
             { time: tEnd, value: baseEndPrice + offset },
           ])
           drawingsRef.current.push({ type: 'channel', refs: [baseline, parallel] })
+          setDrawingCount(c => c + 1)
+          drawPtsRef.current = []
+          setDrawStep(0)
+          setDrawMode('none')
+        }
+      } else if (mode === 'rrindicator') {
+        const pts = drawPtsRef.current
+        if (pts.length === 0) {
+          drawPtsRef.current = [{ time, price }]
+          setDrawStep(1)
+        } else {
+          const riskPrice = pts[0].price
+          const entryPrice = price
+          const isBuy = riskPrice < entryPrice
+          const diff = Math.abs(entryPrice - riskPrice)
+          const tStart = Math.min(pts[0].time, time) as Time
+          const tEnd = Math.max(pts[0].time, time) as Time
+          const levels: { price: number; color: number[]; label: string }[] = [
+            { price: riskPrice, color: [248, 81, 73], label: 'Risk' },
+            { price: entryPrice, color: [230, 237, 243], label: 'Entry' },
+            { price: isBuy ? entryPrice + diff : entryPrice - diff, color: [63, 185, 80], label: '1R' },
+            { price: isBuy ? entryPrice + diff * 1.5 : entryPrice - diff * 1.5, color: [88, 166, 255], label: '1.5R' },
+            { price: isBuy ? entryPrice + diff * 2 : entryPrice - diff * 2, color: [188, 140, 255], label: '2R' },
+          ]
+          const rrRefs: ISeriesApi<'Line'>[] = []
+          for (const lvl of levels) {
+            const s = chartRef.current!.addLineSeries({
+              color: `rgb(${lvl.color.join(',')})`, lineWidth: 1,
+              priceLineVisible: false, lastValueVisible: false,
+            })
+            s.setData([{ time: tStart, value: lvl.price }, { time: tEnd, value: lvl.price }])
+            rrRefs.push(s)
+          }
+          drawingsRef.current.push({ type: 'rrindicator', refs: rrRefs })
           setDrawingCount(c => c + 1)
           drawPtsRef.current = []
           setDrawStep(0)
@@ -886,6 +921,7 @@ export default function Chart({
                 { mode: 'channel',        label: '⊟ Parallel Channel' },
                 { mode: 'buymarker',      label: '▲ Buy Marker' },
                 { mode: 'sellmarker',     label: '▼ Sell Marker' },
+                { mode: 'rrindicator',    label: '⚡ Risk:Reward' },
               ] as { mode: DrawMode; label: string }[]).map(({ mode: m, label }) => (
                 <div
                   key={m}
@@ -943,6 +979,7 @@ export default function Chart({
             {drawMode === 'trendline' && (drawStep === 0 ? 'Click first point' : 'Click second point')}
             {drawMode === 'fibretracement' && (drawStep === 0 ? 'Click start point' : 'Click end point')}
             {drawMode === 'channel' && (drawStep === 0 ? 'Click baseline start' : drawStep === 1 ? 'Click baseline end' : 'Click channel offset point')}
+            {drawMode === 'rrindicator' && (drawStep === 0 ? 'Click risk price' : 'Click entry price')}
             {(drawMode === 'buymarker' || drawMode === 'sellmarker') && 'Click chart to place'}
           </span>
         )}

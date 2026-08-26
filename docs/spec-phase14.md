@@ -6,7 +6,10 @@ This idea is that for simulation and stepwise sessions, one can override the pre
 
 During this can you also update the settings UI to separate the sections EVENT SNAPSHOTS, TRADE LABELING MODE, TRADE ANALYSIS PRICE SOURCE, PATTERN SHARING into a new tab called as A&P or analsis & patterns or others (whichever makes more sense, or you can choose your own name). Just that the settings of General Tab is becoming too long.
 
-### UI Layout
+### Indicator
+
+#### RR Indicator
+Can you introduce a new risk ratio indicatoor, which is placed similar to the fibonacci indicators in the chart. The way indicator will work is user chooses the first price, then choose the 2nd price. Then the system should assume second price is the stock enter price, first price is the risk and then plot 1:1 reward, and 2:1 (2 part reward) and 1.5 as well. If the first price is lesser than the second price, then it is a buy trade and if the first price is greater than the 2nd price, then it is a sell trade. It shoudl also support clear and clear the last drawn lines. The reward line, the price line and the rissk line can be of different colors. Choose an appropriate name for the indicator.
 
 ---
 
