@@ -259,6 +259,8 @@ def on_tick(session, tick: dict, tick_right: str | None, loop=None) -> None:
             _on_tick_target_profit(strategy, session, current_price, tick_right, ts, loop)
         elif strategy.strategy_type == "UnderlyingTargetProfit" and strategy.status == StrategyStatus.RUNNING:
             _on_tick_underlying_target_profit(strategy, session, current_price, tick_right, ts, loop)
+        elif strategy.strategy_type == "UnderlyingStoploss" and strategy.status == StrategyStatus.RUNNING:
+            _on_tick_underlying_stoploss(strategy, session, current_price, tick_right, ts, loop)
         elif strategy.strategy_type == "LockProfit" and strategy.status == StrategyStatus.RUNNING:
             _on_tick_lock_profit(strategy, session, current_price, tick_right, loop, ts)
 
@@ -1021,5 +1023,127 @@ def _on_tick_underlying_target_profit(
         "UnderlyingTargetProfit %s completed: underlying=%.2f target=%.2f "
         "new_sl=%.2f right=%s",
         strategy.strategy_id, underlying_price, target_underlying_price,
+        new_sl, tick_right,
+    )
+
+
+def _on_tick_underlying_stoploss(
+    strategy: StrategyInstance,
+    session,
+    current_price: float,
+    tick_right: str | None,
+    current_ts: int,
+    loop=None,
+) -> None:
+    """
+    Options-only strategy: monitors the *underlying* price (session.last_price).
+    When the underlying moves against the position (hits stoploss), shifts
+    existing SL orders to option_LTP ± buffer_ticks.  If no SL orders exist,
+    creates new ones.
+
+    Trigger direction (inverse of target profit):
+      LONG CE  → underlying <= sl_price (bearish move against CE long)
+      LONG PE  → underlying >= sl_price (bullish move against PE long)
+      SHORT CE → underlying >= sl_price (bullish move against CE short)
+      SHORT PE → underlying <= sl_price (bearish move against PE short)
+    """
+    from app.services.trading import get_position
+    from app.models.schemas import TradeSide, OrderType
+    from app.services.order_service import place_order
+
+    position = get_position(session.session_id, session.symbol, tick_right)
+    if position.side == "FLAT":
+        strategy.status = StrategyStatus.COMPLETED
+        _write_strategy_to_db(strategy)
+        return
+
+    meta = strategy.metadata
+    sl_price = float(meta.get("underlying_sl_price", 0))
+    if sl_price <= 0:
+        return
+    buffer_ticks = int(meta.get("target_profit_buffer_ticks", 3))
+
+    underlying_price = getattr(session, "last_price", 0.0)
+    if underlying_price <= 0:
+        return
+
+    if position.side == "LONG":
+        if tick_right == "CE":
+            triggered = underlying_price <= sl_price
+        else:
+            triggered = underlying_price >= sl_price
+    else:
+        if tick_right == "CE":
+            triggered = underlying_price >= sl_price
+        else:
+            triggered = underlying_price <= sl_price
+
+    if not triggered:
+        return
+
+    tick_buffer = buffer_ticks * _TICK_SIZE
+    if position.side == "LONG":
+        new_sl = _ceil_tick(current_price - tick_buffer)
+        exit_side = TradeSide.SELL
+    else:
+        new_sl = _ceil_tick(current_price + tick_buffer)
+        exit_side = TradeSide.BUY
+
+    exit_orders = _find_open_exit_orders(session.session_id, exit_side, tick_right)
+
+    if exit_orders:
+        for order in exit_orders:
+            _update_exit_order_price(session, order, new_sl)
+        logger.info(
+            "UnderlyingStoploss %s: shifted %d exit order(s) to %.2f "
+            "(underlying=%.2f sl=%.2f right=%s)",
+            strategy.strategy_id, len(exit_orders), new_sl,
+            underlying_price, sl_price, tick_right,
+        )
+    else:
+        is_real = getattr(session, "session_type", "sim") == "real" and loop is not None
+        order_type = OrderType.STOPLOSS if is_real else OrderType.TARGET
+        try:
+            new_order = place_order(
+                session_id=session.session_id,
+                symbol=session.symbol,
+                side=exit_side,
+                order_type=order_type,
+                quantity=position.quantity,
+                created_at=current_ts,
+                trading_date=session.date,
+                trigger_price=new_sl,
+                right=tick_right,
+                strike=_session_strike(session, tick_right),
+                user_id=session.user_id,
+            )
+            if is_real:
+                try:
+                    from app.services.simulation import _register_kotak_sl_for_order
+                    _register_kotak_sl_for_order(session, new_order, loop)
+                except Exception as k_exc:
+                    logger.warning(
+                        "UnderlyingStoploss %s: Kotak SL registration failed: %s",
+                        strategy.strategy_id, k_exc,
+                    )
+            logger.info(
+                "UnderlyingStoploss %s: created %s at %.2f "
+                "(underlying=%.2f sl=%.2f right=%s)",
+                strategy.strategy_id, order_type.value, new_sl,
+                underlying_price, sl_price, tick_right,
+            )
+        except Exception as exc:
+            logger.warning(
+                "UnderlyingStoploss %s: place_order failed: %s",
+                strategy.strategy_id, exc,
+            )
+            return
+
+    strategy.status = StrategyStatus.COMPLETED
+    _write_strategy_to_db(strategy)
+    logger.info(
+        "UnderlyingStoploss %s completed: underlying=%.2f sl=%.2f "
+        "new_sl=%.2f right=%s",
+        strategy.strategy_id, underlying_price, sl_price,
         new_sl, tick_right,
     )

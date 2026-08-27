@@ -85,6 +85,19 @@ def start_strategy(req: StartStrategyRequest, user_id: str = Depends(get_request
                 detail="UnderlyingTargetProfit requires right='CE' or 'PE' (options only)",
             )
 
+    # UnderlyingStoploss is options-only and requires underlying_sl_price
+    if req.strategy_type == StrategyType.UNDERLYING_STOPLOSS:
+        if right not in ("CE", "PE"):
+            raise HTTPException(
+                status_code=400,
+                detail="UnderlyingStoploss requires right='CE' or 'PE' (options only)",
+            )
+        if req.underlying_sl_price is None or req.underlying_sl_price <= 0:
+            raise HTTPException(
+                status_code=400,
+                detail="UnderlyingStoploss requires underlying_sl_price > 0",
+            )
+
     # LockProfit requires a lock price value
     if req.strategy_type == StrategyType.LOCK_PROFIT:
         if req.lock_profit_value is None:
@@ -121,6 +134,8 @@ def start_strategy(req: StartStrategyRequest, user_id: str = Depends(get_request
         metadata["funds_ratio_pct"] = req.funds_ratio_pct
     if req.entry_sl_price is not None:
         metadata["entry_sl_price"] = req.entry_sl_price
+    if req.underlying_sl_price is not None:
+        metadata["underlying_sl_price"] = req.underlying_sl_price
 
     # LockProfit: resolve pct → absolute price at start time
     if req.strategy_type == StrategyType.LOCK_PROFIT:
