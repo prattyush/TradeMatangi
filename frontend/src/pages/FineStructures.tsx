@@ -680,22 +680,95 @@ function BuilderView({ definitions }: { definitions: FineDefinition[] }) {
   )
 }
 
+// ── Search Result Chart ──────────────────────────────────────────────────────
+
+function ResultChart({ candles, steps }: { candles: OHLCCandle[]; steps: FlowStep[] }) {
+  const containerRef = useRef<HTMLDivElement>(null)
+  const chartRef = useRef<IChartApi | null>(null)
+
+  useEffect(() => {
+    if (!containerRef.current || candles.length === 0) return
+
+    if (chartRef.current) {
+      chartRef.current.remove()
+      chartRef.current = null
+    }
+
+    const chart = createChart(containerRef.current, {
+      width: containerRef.current.clientWidth,
+      height: containerRef.current.clientHeight || 300,
+      layout: { background: { color: '#0d1117' }, textColor: '#8b949e' },
+      grid: { vertLines: { color: '#21262d' }, horzLines: { color: '#21262d' } },
+      timeScale: { timeVisible: true, secondsVisible: false },
+    })
+
+    const series = chart.addCandlestickSeries({
+      upColor: '#26a641', downColor: '#f85149',
+      borderUpColor: '#26a641', borderDownColor: '#f85149',
+      wickUpColor: '#26a641', wickDownColor: '#f85149',
+    })
+    series.setData(candles.map(c => ({ time: c.time as Time, open: c.open, high: c.high, low: c.low, close: c.close })))
+
+    const closes = candles.map(c => c.close)
+    const ema9Data = computeEMA(closes, 9)
+    const ema21Data = computeEMA(closes, 21)
+    const e9 = chart.addLineSeries({ color: '#f0883e', lineWidth: 1, priceLineVisible: false, lastValueVisible: false })
+    e9.setData(candles.map((c, i) => ({ time: c.time as Time, value: ema9Data[i] })).filter((d): d is { time: Time; value: number } => d.value !== null))
+    const e21 = chart.addLineSeries({ color: '#79c0ff', lineWidth: 1, priceLineVisible: false, lastValueVisible: false })
+    e21.setData(candles.map((c, i) => ({ time: c.time as Time, value: ema21Data[i] })).filter((d): d is { time: Time; value: number } => d.value !== null))
+
+    const markers: { time: Time; position: 'belowBar' | 'aboveBar'; color: string; shape: 'arrowUp' | 'arrowDown'; text: string; size: number }[] = []
+    for (const step of steps) {
+      if (!step.transition_bar_time) continue
+      const isBear = step.direction === 'Bear'
+      markers.push({
+        time: step.transition_bar_time as Time,
+        position: isBear ? 'aboveBar' : 'belowBar',
+        color: isBear ? '#f97316' : '#3b82f6',
+        shape: isBear ? 'arrowDown' : 'arrowUp',
+        text: step.name + (step.type ? `(${step.type})` : ''),
+        size: 2,
+      })
+    }
+    if (markers.length > 0) {
+      markers.sort((a, b) => (a.time as number) - (b.time as number))
+      series.setMarkers(markers)
+    }
+
+    chart.timeScale().fitContent()
+    chartRef.current = chart
+
+    const ro = new ResizeObserver(entries => {
+      const { width, height } = entries[0].contentRect
+      if (width > 0 && height > 0) chart.applyOptions({ width, height })
+    })
+    ro.observe(containerRef.current)
+
+    return () => { ro.disconnect(); chart.remove(); chartRef.current = null }
+  }, [candles, steps])
+
+  return <div ref={containerRef} style={{ flex: 1, minHeight: 0 }} />
+}
+
 // ── Search Sub-tab ───────────────────────────────────────────────────────────
 
-function SearchView({ definitions, onLoadInBuilder }: {
+function SearchView({ definitions }: {
   definitions: FineDefinition[]
-  onLoadInBuilder: (symbol: string, date: string) => void
 }) {
   const [querySteps, setQuerySteps] = useState<{ name: string; type?: string; direction?: string }[]>([])
   const [results, setResults] = useState<FineSearchResult[]>([])
   const [searching, setSearching] = useState(false)
+  const [selectedIdx, setSelectedIdx] = useState<number | null>(null)
+  const [resultCandles, setResultCandles] = useState<OHLCCandle[]>([])
+  const [loadingChart, setLoadingChart] = useState(false)
 
-  // Add query step form
   const [addDefId, setAddDefId] = useState('')
   const [addType, setAddType] = useState('')
   const [addDirection, setAddDirection] = useState('')
 
   const addDef = definitions.find(d => d.definition_id === addDefId)
+
+  const selected = selectedIdx !== null && selectedIdx < results.length ? results[selectedIdx] : null
 
   const addQueryStep = () => {
     if (!addDefId || !addDef) return
@@ -716,6 +789,8 @@ function SearchView({ definitions, onLoadInBuilder }: {
   const handleSearch = async () => {
     if (querySteps.length === 0) return
     setSearching(true)
+    setSelectedIdx(null)
+    setResultCandles([])
     try {
       const res = await api.fineStructureSearch({ query_steps: querySteps })
       setResults(res)
@@ -726,88 +801,166 @@ function SearchView({ definitions, onLoadInBuilder }: {
     }
   }
 
+  const selectResult = useCallback(async (idx: number) => {
+    setSelectedIdx(idx)
+    const r = results[idx]
+    if (!r) return
+    setLoadingChart(true)
+    try {
+      const res = await api.fineStructureGetOHLC(r.flow.symbol, r.flow.date)
+      setResultCandles(res.candles)
+    } catch {
+      setResultCandles([])
+    } finally {
+      setLoadingChart(false)
+    }
+  }, [results])
+
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden' }}>
-      {/* Query builder */}
-      <div style={{ padding: '12px 16px', borderBottom: '1px solid #21262d', flexShrink: 0 }}>
-        <div style={{ fontSize: 13, fontWeight: 700, color: '#e6edf3', marginBottom: 8 }}>Search by Sequence</div>
-        <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginBottom: 8 }}>
-          {querySteps.map((qs, idx) => (
-            <span key={idx} style={{
-              display: 'inline-flex', alignItems: 'center', gap: 4,
-              fontSize: 11, padding: '3px 8px', borderRadius: 12,
-              background: '#21262d', color: '#e6edf3',
-            }}>
-              {idx > 0 && <span style={{ color: '#484f58', marginRight: 2 }}>→</span>}
-              {qs.name}
-              {qs.type && <span style={{ color: '#8b949e' }}>({qs.type})</span>}
-              {qs.direction && <span style={{ color: qs.direction === 'Bull' ? '#3fb950' : '#f85149' }}>{qs.direction}</span>}
-              <button onClick={() => removeQueryStep(idx)} style={{ background: 'none', border: 'none', color: '#f85149', cursor: 'pointer', fontSize: 11, padding: 0 }}>✕</button>
-            </span>
-          ))}
-          {querySteps.length === 0 && <span style={{ fontSize: 11, color: '#484f58' }}>Add structures to search for</span>}
-        </div>
-        <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
-          <select value={addDefId} onChange={e => { setAddDefId(e.target.value); setAddType('') }} style={selectStyle}>
-            <option value="">— Structure —</option>
-            {definitions.map(d => <option key={d.definition_id} value={d.definition_id}>{d.name}</option>)}
-          </select>
-          {addDef && addDef.sub_types.length > 0 && (
-            <select value={addType} onChange={e => setAddType(e.target.value)} style={selectStyle}>
-              <option value="">— Type (optional) —</option>
-              {addDef.sub_types.map(st => <option key={st} value={st}>{st}</option>)}
+    <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
+      {/* Left panel: query + results */}
+      <div style={{ width: 340, flexShrink: 0, borderRight: '1px solid #21262d', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+        {/* Query builder */}
+        <div style={{ padding: '10px 12px', borderBottom: '1px solid #21262d', flexShrink: 0 }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: '#e6edf3', marginBottom: 6 }}>Search by Sequence</div>
+          <div style={{ display: 'flex', gap: 3, flexWrap: 'wrap', marginBottom: 6 }}>
+            {querySteps.map((qs, idx) => (
+              <span key={idx} style={{
+                display: 'inline-flex', alignItems: 'center', gap: 3,
+                fontSize: 10, padding: '2px 6px', borderRadius: 10,
+                background: '#21262d', color: '#e6edf3',
+              }}>
+                {idx > 0 && <span style={{ color: '#484f58', marginRight: 1 }}>→</span>}
+                {qs.name}
+                {qs.type && <span style={{ color: '#8b949e' }}>({qs.type})</span>}
+                {qs.direction && <span style={{ color: qs.direction === 'Bull' ? '#3fb950' : '#f85149' }}>{qs.direction}</span>}
+                <button onClick={() => removeQueryStep(idx)} style={{ background: 'none', border: 'none', color: '#f85149', cursor: 'pointer', fontSize: 10, padding: 0 }}>✕</button>
+              </span>
+            ))}
+            {querySteps.length === 0 && <span style={{ fontSize: 10, color: '#484f58' }}>Add structures to search</span>}
+          </div>
+          <div style={{ display: 'flex', gap: 3, alignItems: 'center' }}>
+            <select value={addDefId} onChange={e => { setAddDefId(e.target.value); setAddType('') }} style={{ ...selectStyle, maxWidth: 120, fontSize: 11, padding: '2px 4px' }}>
+              <option value="">— Structure —</option>
+              {definitions.map(d => <option key={d.definition_id} value={d.definition_id}>{d.name}</option>)}
             </select>
-          )}
-          <select value={addDirection} onChange={e => setAddDirection(e.target.value)} style={{ ...selectStyle, width: 80 }}>
-            <option value="">Dir</option>
-            <option value="Bull">Bull</option>
-            <option value="Bear">Bear</option>
-          </select>
-          <button onClick={addQueryStep} disabled={!addDefId} style={btnStyle()}>Add</button>
-          <button onClick={handleSearch} disabled={querySteps.length === 0 || searching} style={{ ...btnStyle(), background: '#238636', color: '#fff', border: 'none' }}>
+            {addDef && addDef.sub_types.length > 0 && (
+              <select value={addType} onChange={e => setAddType(e.target.value)} style={{ ...selectStyle, maxWidth: 100, fontSize: 11, padding: '2px 4px' }}>
+                <option value="">— Type —</option>
+                {addDef.sub_types.map(st => <option key={st} value={st}>{st}</option>)}
+              </select>
+            )}
+            <select value={addDirection} onChange={e => setAddDirection(e.target.value)} style={{ ...selectStyle, width: 60, fontSize: 11, padding: '2px 4px' }}>
+              <option value="">Dir</option>
+              <option value="Bull">Bull</option>
+              <option value="Bear">Bear</option>
+            </select>
+            <button onClick={addQueryStep} disabled={!addDefId} style={{ ...btnStyle(), padding: '2px 8px', fontSize: 11 }}>Add</button>
+          </div>
+          <button onClick={handleSearch} disabled={querySteps.length === 0 || searching} style={{ ...btnStyle(), background: '#238636', color: '#fff', border: 'none', width: '100%', marginTop: 6, fontSize: 11 }}>
             {searching ? 'Searching...' : 'Search'}
           </button>
         </div>
+
+        {/* Results tiles */}
+        <div style={{ flex: 1, overflow: 'auto', padding: 8 }}>
+          {results.length === 0 && !searching && (
+            <div style={{ fontSize: 11, color: '#484f58', textAlign: 'center', padding: 24 }}>
+              {querySteps.length === 0 ? 'Build a query above' : 'No results found'}
+            </div>
+          )}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
+            {results.map((r, idx) => (
+              <div
+                key={idx}
+                onClick={() => selectResult(idx)}
+                style={{
+                  background: selectedIdx === idx ? '#2a1a0a' : '#161b22',
+                  border: `1px solid ${selectedIdx === idx ? '#f0883e' : '#21262d'}`,
+                  borderRadius: 6, padding: 8, cursor: 'pointer',
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 4 }}>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: '#e6edf3' }}>{r.flow.symbol}</span>
+                  <span style={{ fontSize: 10, color: '#8b949e' }}>{r.flow.date}</span>
+                </div>
+                <div style={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
+                  {r.flow.steps.map((s, si) => (
+                    <span key={si} style={{
+                      fontSize: 9, padding: '1px 4px', borderRadius: 6,
+                      background: si >= r.match_start_index && si < r.match_start_index + querySteps.length
+                        ? '#2a1a0a' : '#21262d',
+                      color: si >= r.match_start_index && si < r.match_start_index + querySteps.length
+                        ? '#f0883e' : '#8b949e',
+                      fontWeight: si >= r.match_start_index && si < r.match_start_index + querySteps.length ? 600 : 400,
+                    }}>
+                      {si > 0 && '→'}{s.name}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
       </div>
 
-      {/* Results */}
-      <div style={{ flex: 1, overflow: 'auto', padding: 16 }}>
-        {results.length === 0 && !searching && (
-          <div style={{ fontSize: 12, color: '#484f58', textAlign: 'center', padding: 32 }}>
-            {querySteps.length === 0 ? 'Build a query above to search' : 'No results found'}
+      {/* Right panel: chart + flow steps */}
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+        {!selected ? (
+          <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <span style={{ fontSize: 13, color: '#484f58' }}>Select a result to view chart</span>
           </div>
-        )}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 10 }}>
-          {results.map((r, idx) => (
-            <div
-              key={idx}
-              onClick={() => onLoadInBuilder(r.flow.symbol, r.flow.date)}
-              style={{
-                background: '#161b22', border: '1px solid #21262d', borderRadius: 6,
-                padding: 12, cursor: 'pointer',
-              }}
-            >
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-                <span style={{ fontSize: 13, fontWeight: 700, color: '#e6edf3' }}>{r.flow.symbol}</span>
-                <span style={{ fontSize: 12, color: '#8b949e' }}>{r.flow.date}</span>
+        ) : (
+          <>
+            {/* Chart */}
+            <div style={{ flex: 3, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+              <div style={{ padding: '4px 12px', borderBottom: '1px solid #21262d', display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+                <span style={{ fontSize: 13, fontWeight: 700, color: '#e6edf3' }}>{selected.flow.symbol}</span>
+                <span style={{ fontSize: 12, color: '#8b949e' }}>{selected.flow.date}</span>
               </div>
-              <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-                {r.flow.steps.map((s, si) => (
-                  <span key={si} style={{
-                    fontSize: 10, padding: '1px 5px', borderRadius: 8,
-                    background: si >= r.match_start_index && si < r.match_start_index + querySteps.length
-                      ? '#2a1a0a' : '#21262d',
-                    color: si >= r.match_start_index && si < r.match_start_index + querySteps.length
-                      ? '#f0883e' : '#8b949e',
-                    fontWeight: si >= r.match_start_index && si < r.match_start_index + querySteps.length ? 600 : 400,
-                  }}>
-                    {si > 0 && '→ '}{s.name}{s.type ? `(${s.type})` : ''}
-                  </span>
-                ))}
-              </div>
+              {loadingChart ? (
+                <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <span style={{ fontSize: 12, color: '#484f58' }}>Loading chart...</span>
+                </div>
+              ) : (
+                <ResultChart candles={resultCandles} steps={selected.flow.steps} />
+              )}
             </div>
-          ))}
-        </div>
+
+            {/* Flow steps */}
+            <div style={{ flex: 2, minHeight: 0, borderTop: '1px solid #21262d', overflow: 'auto', padding: 8 }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: '#e6edf3', marginBottom: 6 }}>Flow Steps</div>
+              {selected.flow.steps.map((step, idx) => {
+                const isMatch = idx >= selected.match_start_index && idx < selected.match_start_index + querySteps.length
+                const isBear = step.direction === 'Bear'
+                return (
+                  <div key={idx} style={{
+                    background: isMatch ? '#2a1a0a' : '#0d1117',
+                    border: `1px solid ${isMatch ? '#f0883e' : '#21262d'}`,
+                    borderRadius: 6, padding: '5px 10px', marginBottom: 4,
+                    display: 'flex', alignItems: 'center', gap: 6,
+                  }}>
+                    <span style={{ fontSize: 10, color: '#484f58', width: 16 }}>{idx + 1}</span>
+                    <span style={{
+                      fontSize: 11, fontWeight: 600, color: isMatch ? '#f0883e' : '#e6edf3',
+                    }}>{step.name}</span>
+                    {step.type && (
+                      <span style={{ fontSize: 10, color: '#8b949e', padding: '1px 5px', borderRadius: 8, background: '#21262d' }}>{step.type}</span>
+                    )}
+                    {step.direction && (
+                      <span style={{ fontSize: 10, color: isBear ? '#f85149' : '#3fb950' }}>{step.direction}</span>
+                    )}
+                    {step.transition_bar_time && (
+                      <span style={{ fontSize: 10, color: '#58a6ff' }}>
+                        {new Date(step.transition_bar_time * 1000).toLocaleTimeString('en-IN', { timeZone: 'UTC', hour: '2-digit', minute: '2-digit' })}
+                      </span>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          </>
+        )}
       </div>
     </div>
   )
@@ -827,14 +980,6 @@ export default function FineStructures() {
   }, [])
 
   useEffect(() => { loadDefinitions() }, [loadDefinitions])
-
-  // For search → builder navigation
-  const [builderNav, setBuilderNav] = useState<{ symbol: string; date: string } | null>(null)
-
-  const handleLoadInBuilder = (symbol: string, date: string) => {
-    setBuilderNav({ symbol, date })
-    setActiveSubTab('builder')
-  }
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden' }}>
@@ -858,8 +1003,8 @@ export default function FineStructures() {
       </div>
 
       {activeSubTab === 'definitions' && <DefinitionsView definitions={definitions} onRefresh={loadDefinitions} />}
-      {activeSubTab === 'builder' && <BuilderView key={builderNav ? `${builderNav.symbol}-${builderNav.date}` : 'default'} definitions={definitions} />}
-      {activeSubTab === 'search' && <SearchView definitions={definitions} onLoadInBuilder={handleLoadInBuilder} />}
+      {activeSubTab === 'builder' && <BuilderView definitions={definitions} />}
+      {activeSubTab === 'search' && <SearchView definitions={definitions} />}
     </div>
   )
 }
