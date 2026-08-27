@@ -819,7 +819,7 @@ function SearchView({ definitions }: {
   return (
     <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
       {/* Left panel: query + results */}
-      <div style={{ width: 340, flexShrink: 0, borderRight: '1px solid #21262d', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+      <div style={{ width: 510, flexShrink: 0, borderRight: '1px solid #21262d', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
         {/* Query builder */}
         <div style={{ padding: '10px 12px', borderBottom: '1px solid #21262d', flexShrink: 0 }}>
           <div style={{ fontSize: 12, fontWeight: 700, color: '#e6edf3', marginBottom: 6 }}>Search by Sequence</div>
@@ -869,7 +869,7 @@ function SearchView({ definitions }: {
               {querySteps.length === 0 ? 'Build a query above' : 'No results found'}
             </div>
           )}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 6 }}>
             {results.map((r, idx) => (
               <div
                 key={idx}
