@@ -28,6 +28,7 @@ class SessionSummary(BaseModel):
     pnl_pct: float = 0.0
     total_commission: float = 0.0
     trade_count: int = 0
+    round_trip_count: int = 0
     buy_count: int = 0
     sell_count: int = 0
 
