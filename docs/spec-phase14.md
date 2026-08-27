@@ -198,7 +198,7 @@ On first access, each user gets their own editable copies of 8 predefined struct
    - **Results:** 3-column grid of result tiles showing symbol, date, and flow sequence with matched portion highlighted
    - **Right top:** OHLC chart with EMA and transition bar markers for the selected result
    - **Right bottom:** Flow steps list with matched steps highlighted in orange
-5. **Search Algorithm:** Finds flows where the query appears as a contiguous subsequence. Each query step matches if name matches AND (type is null OR matches) AND (direction is null OR matches).
+5. **Search Algorithm:** Finds flows where the query pattern matches the flow steps. Each query step matches if name matches AND (type is null OR matches) AND (direction is null OR matches). Supports **wildcard** (`✱ Any`) which matches 1 or more consecutive steps of any type — useful for patterns like "Opening(gap_up) → * → Channel(tight)" to find any flow with that structure regardless of what happens in between.
 
 #### Verification
 

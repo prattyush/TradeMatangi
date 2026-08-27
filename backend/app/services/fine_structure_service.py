@@ -340,23 +340,35 @@ def delete_flow(user_id: str, flow_id: str) -> bool:
 
 # ── Search ───────────────────────────────────────────────────────────────────
 
+def _match_recursive(flow: list[dict], fi: int, query: list[dict], qi: int) -> bool:
+    """Recursively match query[qi:] against flow[fi:]. Wildcard '*' matches 1+ steps."""
+    if qi == len(query):
+        return True
+    if fi == len(flow):
+        return False
+
+    qstep = query[qi]
+    if qstep.get("name") == "*":
+        for match_len in range(1, len(flow) - fi + 1):
+            if _match_recursive(flow, fi + match_len, query, qi + 1):
+                return True
+        return False
+
+    fstep = flow[fi]
+    if fstep.get("name") != qstep.get("name"):
+        return False
+    if qstep.get("type") and fstep.get("type") != qstep["type"]:
+        return False
+    if qstep.get("direction") and fstep.get("direction") != qstep["direction"]:
+        return False
+    return _match_recursive(flow, fi + 1, query, qi + 1)
+
+
 def _matches_subsequence(flow_steps: list[dict], query_steps: list[dict]) -> Optional[int]:
     if not query_steps or not flow_steps:
         return None
-    for i in range(len(flow_steps) - len(query_steps) + 1):
-        match = True
-        for j, qstep in enumerate(query_steps):
-            fstep = flow_steps[i + j]
-            if fstep.get("name") != qstep.get("name"):
-                match = False
-                break
-            if qstep.get("type") and fstep.get("type") != qstep["type"]:
-                match = False
-                break
-            if qstep.get("direction") and fstep.get("direction") != qstep["direction"]:
-                match = False
-                break
-        if match:
+    for i in range(len(flow_steps)):
+        if _match_recursive(flow_steps, i, query_steps, 0):
             return i
     return None
 

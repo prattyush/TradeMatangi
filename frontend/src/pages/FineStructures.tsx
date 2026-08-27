@@ -771,12 +771,17 @@ function SearchView({ definitions }: {
   const selected = selectedIdx !== null && selectedIdx < results.length ? results[selectedIdx] : null
 
   const addQueryStep = () => {
-    if (!addDefId || !addDef) return
-    setQuerySteps(prev => [...prev, {
-      name: addDef.name,
-      type: addType || undefined,
-      direction: addDirection || undefined,
-    }])
+    if (!addDefId) return
+    if (addDefId === '*') {
+      setQuerySteps(prev => [...prev, { name: '*' }])
+    } else {
+      if (!addDef) return
+      setQuerySteps(prev => [...prev, {
+        name: addDef.name,
+        type: addType || undefined,
+        direction: addDirection || undefined,
+      }])
+    }
     setAddDefId('')
     setAddType('')
     setAddDirection('')
@@ -831,7 +836,7 @@ function SearchView({ definitions }: {
                 background: '#21262d', color: '#e6edf3',
               }}>
                 {idx > 0 && <span style={{ color: '#484f58', marginRight: 1 }}>→</span>}
-                {qs.name}
+                {qs.name === '*' ? '✱ Any' : qs.name}
                 {qs.type && <span style={{ color: '#8b949e' }}>({qs.type})</span>}
                 {qs.direction && <span style={{ color: qs.direction === 'Bull' ? '#3fb950' : '#f85149' }}>{qs.direction}</span>}
                 <button onClick={() => removeQueryStep(idx)} style={{ background: 'none', border: 'none', color: '#f85149', cursor: 'pointer', fontSize: 10, padding: 0 }}>✕</button>
@@ -842,19 +847,22 @@ function SearchView({ definitions }: {
           <div style={{ display: 'flex', gap: 3, alignItems: 'center' }}>
             <select value={addDefId} onChange={e => { setAddDefId(e.target.value); setAddType('') }} style={{ ...selectStyle, maxWidth: 120, fontSize: 11, padding: '2px 4px' }}>
               <option value="">— Structure —</option>
+              <option value="*">✱ Any (Wildcard)</option>
               {definitions.map(d => <option key={d.definition_id} value={d.definition_id}>{d.name}</option>)}
             </select>
-            {addDef && addDef.sub_types.length > 0 && (
+            {addDefId !== '*' && addDef && addDef.sub_types.length > 0 && (
               <select value={addType} onChange={e => setAddType(e.target.value)} style={{ ...selectStyle, maxWidth: 100, fontSize: 11, padding: '2px 4px' }}>
                 <option value="">— Type —</option>
                 {addDef.sub_types.map(st => <option key={st} value={st}>{st}</option>)}
               </select>
             )}
-            <select value={addDirection} onChange={e => setAddDirection(e.target.value)} style={{ ...selectStyle, width: 60, fontSize: 11, padding: '2px 4px' }}>
-              <option value="">Dir</option>
-              <option value="Bull">Bull</option>
-              <option value="Bear">Bear</option>
-            </select>
+            {addDefId !== '*' && (
+              <select value={addDirection} onChange={e => setAddDirection(e.target.value)} style={{ ...selectStyle, width: 60, fontSize: 11, padding: '2px 4px' }}>
+                <option value="">Dir</option>
+                <option value="Bull">Bull</option>
+                <option value="Bear">Bear</option>
+              </select>
+            )}
             <button onClick={addQueryStep} disabled={!addDefId} style={{ ...btnStyle(), padding: '2px 8px', fontSize: 11 }}>Add</button>
           </div>
           <button onClick={handleSearch} disabled={querySteps.length === 0 || searching} style={{ ...btnStyle(), background: '#238636', color: '#fff', border: 'none', width: '100%', marginTop: 6, fontSize: 11 }}>

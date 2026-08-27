@@ -88,6 +88,34 @@ class TestMatchesSubsequence:
         query = [{"name": "TR"}]
         assert _matches_subsequence(flow, query) == 0
 
+    def test_wildcard_matches_one_step(self):
+        flow = [{"name": "Opening"}, {"name": "TR"}, {"name": "Channel"}]
+        query = [{"name": "Opening"}, {"name": "*"}, {"name": "Channel"}]
+        assert _matches_subsequence(flow, query) == 0
+
+    def test_wildcard_matches_multiple_steps(self):
+        flow = [{"name": "Opening"}, {"name": "TR"}, {"name": "Breakout"}, {"name": "Reversal"}, {"name": "Channel"}]
+        query = [{"name": "Opening"}, {"name": "*"}, {"name": "Channel"}]
+        assert _matches_subsequence(flow, query) == 0
+
+    def test_wildcard_requires_at_least_one_step(self):
+        flow = [{"name": "Opening"}, {"name": "Channel"}]
+        query = [{"name": "Opening"}, {"name": "*"}, {"name": "Channel"}]
+        assert _matches_subsequence(flow, query) is None
+
+    def test_wildcard_with_type_filter(self):
+        flow = [
+            {"name": "Opening", "type": "gap_up"},
+            {"name": "TR"}, {"name": "Breakout"},
+            {"name": "Channel", "type": "tight"},
+        ]
+        query = [
+            {"name": "Opening", "type": "gap_up"},
+            {"name": "*"},
+            {"name": "Channel", "type": "tight"},
+        ]
+        assert _matches_subsequence(flow, query) == 0
+
 
 # ── Definitions CRUD tests ────────────────────────────────────────────────────
 
