@@ -68,7 +68,7 @@ function groupSessions(sessions: SessionSummary[]): SessionGroup[] {
     const g = map.get(key)!
     g.sessions.push(s)
     g.totalPnl += s.net_pnl
-    g.totalTrades += s.trade_count
+    g.totalTrades += s.round_trip_count ?? s.trade_count
     g.totalCommission += s.total_commission
   }
   return Array.from(map.values()).sort((a, b) => {

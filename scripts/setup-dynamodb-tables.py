@@ -276,6 +276,56 @@ TABLES = [
         ],
         "ProvisionedThroughput": {"ReadCapacityUnits": 5, "WriteCapacityUnits": 5},
     },
+    # ── Phase XIV Fine Chart Structures ──────────────────────────────────────
+    {
+        "TableName": "FineStructureDefinitions",
+        "KeySchema": [
+            {"AttributeName": "definition_id", "KeyType": "HASH"},
+        ],
+        "AttributeDefinitions": [
+            {"AttributeName": "definition_id", "AttributeType": "S"},
+            {"AttributeName": "user_id", "AttributeType": "S"},
+        ],
+        "GlobalSecondaryIndexes": [
+            {
+                "IndexName": "UserIdIndex",
+                "KeySchema": [{"AttributeName": "user_id", "KeyType": "HASH"}],
+                "Projection": {"ProjectionType": "ALL"},
+                "ProvisionedThroughput": {"ReadCapacityUnits": 5, "WriteCapacityUnits": 5},
+            },
+        ],
+        "ProvisionedThroughput": {"ReadCapacityUnits": 5, "WriteCapacityUnits": 5},
+    },
+    {
+        "TableName": "FineStructureFlows",
+        "KeySchema": [
+            {"AttributeName": "flow_id", "KeyType": "HASH"},
+        ],
+        "AttributeDefinitions": [
+            {"AttributeName": "flow_id", "AttributeType": "S"},
+            {"AttributeName": "user_id", "AttributeType": "S"},
+            {"AttributeName": "symbol", "AttributeType": "S"},
+            {"AttributeName": "date", "AttributeType": "S"},
+        ],
+        "GlobalSecondaryIndexes": [
+            {
+                "IndexName": "UserIdIndex",
+                "KeySchema": [{"AttributeName": "user_id", "KeyType": "HASH"}],
+                "Projection": {"ProjectionType": "ALL"},
+                "ProvisionedThroughput": {"ReadCapacityUnits": 5, "WriteCapacityUnits": 5},
+            },
+            {
+                "IndexName": "SymbolDateIndex",
+                "KeySchema": [
+                    {"AttributeName": "symbol", "KeyType": "HASH"},
+                    {"AttributeName": "date", "KeyType": "RANGE"},
+                ],
+                "Projection": {"ProjectionType": "ALL"},
+                "ProvisionedThroughput": {"ReadCapacityUnits": 5, "WriteCapacityUnits": 5},
+            },
+        ],
+        "ProvisionedThroughput": {"ReadCapacityUnits": 5, "WriteCapacityUnits": 5},
+    },
     {
         "TableName": "TradeLabels",
         "KeySchema": [

@@ -296,6 +296,7 @@ class StrategyType(str, Enum):
     TARGET_PROFIT = "TargetProfit"
     LOCK_PROFIT = "LockProfit"
     UNDERLYING_TARGET_PROFIT = "UnderlyingTargetProfit"
+    UNDERLYING_STOPLOSS = "UnderlyingStoploss"
 
 
 class StartStrategyRequest(BaseModel):
@@ -323,6 +324,8 @@ class StartStrategyRequest(BaseModel):
     lock_profit_is_pct: bool = False           # True = % of session capital; False = absolute price
     # Auto-stop loss on entry (for AutoStop strategy)
     entry_sl_price: float | None = None        # if set, auto-places SL when AutoStop fills
+    # UnderlyingStoploss settings
+    underlying_sl_price: float | None = None   # underlying price at which to trigger option SL
 
 
 class UpdateStrategyPriceRequest(BaseModel):

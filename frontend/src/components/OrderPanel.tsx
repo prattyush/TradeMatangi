@@ -42,7 +42,7 @@ interface Props {
   targetProfitBufferTicks?: number
   aggrSlOnlyInProfit?: boolean
   onStartStrategy?: (
-    strategyType: 'AutoStop' | 'BreakEven' | 'AggressiveStoploss' | 'TargetProfit' | 'LockProfit' | 'UnderlyingTargetProfit',
+    strategyType: 'AutoStop' | 'BreakEven' | 'AggressiveStoploss' | 'TargetProfit' | 'LockProfit' | 'UnderlyingTargetProfit' | 'UnderlyingStoploss',
     right: 'CE' | 'PE' | null,
     opts: {
       quantity?: number
@@ -127,6 +127,7 @@ export default function OrderPanel({
   const [tpValue, setTpValue] = useState('')
   const [tpIsPct, setTpIsPct] = useState(false)
   const [utpValue, setUtpValue] = useState('')
+  const [uslValue, setUslValue] = useState('')
   const [lpValue, setLpValue] = useState('')
   const [lpIsPct, setLpIsPct] = useState(false)
 
@@ -344,7 +345,7 @@ export default function OrderPanel({
   const stratHasPosition = stratPosition.side !== 'FLAT'
 
   const handleStartStrategy = async (
-    strategyType: 'AutoStop' | 'BreakEven' | 'AggressiveStoploss' | 'TargetProfit' | 'LockProfit' | 'UnderlyingTargetProfit',
+    strategyType: 'AutoStop' | 'BreakEven' | 'AggressiveStoploss' | 'TargetProfit' | 'LockProfit' | 'UnderlyingTargetProfit' | 'UnderlyingStoploss',
   ) => {
     if (!onStartStrategy) return
     setStratError(null)
@@ -375,6 +376,14 @@ export default function OrderPanel({
           return
         }
         extraOpts = { targetProfitValue: v, targetProfitIsPct: false }
+      } else if (strategyType === 'UnderlyingStoploss') {
+        const v = parseFloat(uslValue)
+        if (isNaN(v) || v <= 0) {
+          setStratError('Enter a valid underlying stoploss price')
+          setStratLoading(null)
+          return
+        }
+        extraOpts = { underlyingSlPrice: v }
       } else if (strategyType === 'LockProfit') {
         const v = parseFloat(lpValue)
         if (isNaN(v) || v <= 0) {
@@ -788,6 +797,56 @@ export default function OrderPanel({
             </div>
             )}
 
+            {/* UnderlyingStoploss — options only */}
+            {instrumentType === 'options' && (
+            <div style={{ marginBottom: 2 }}>
+              <div style={{ fontSize: 11, color: '#e6edf3', fontWeight: 600, marginBottom: 4 }}>
+                Underlying SL{' '}
+                <span title="Monitors underlying price. When it moves against your position, shifts SL to option LTP ± buffer ticks. Creates SL if none exist."
+                  style={{ cursor: 'help', fontSize: 10 }}>ⓘ</span>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                <input
+                  type="number"
+                  value={uslValue}
+                  onChange={e => setUslValue(e.target.value)}
+                  placeholder="underlying SL price"
+                  min={0}
+                  step={0.05}
+                  style={{
+                    width: 95, padding: '4px 6px', background: '#0d1117',
+                    border: '1px solid #30363d', borderRadius: 4,
+                    color: '#e6edf3', fontSize: 12,
+                  }}
+                />
+                {onRequestUtpPick && (
+                  <button
+                    onClick={() => onRequestUtpPick()}
+                    title="Pick price from chart"
+                    style={{
+                      padding: '4px 7px', background: '#21262d',
+                      border: '1px solid #30363d', borderRadius: 4,
+                      color: '#8b949e', cursor: 'pointer', fontSize: 11,
+                    }}
+                  >⊕</button>
+                )}
+              </div>
+              <button
+                onClick={() => handleStartStrategy('UnderlyingStoploss')}
+                disabled={!stratHasPosition || stratLoading === 'UnderlyingStoploss'}
+                style={{
+                  width: '100%', padding: '5px 0', fontSize: 11, fontWeight: 600,
+                  border: 'none', borderRadius: 4,
+                  cursor: stratHasPosition && stratLoading !== 'UnderlyingStoploss' ? 'pointer' : 'not-allowed',
+                  background: stratHasPosition ? '#2a1a1a' : '#161b22',
+                  color: stratHasPosition ? '#f85149' : '#484f58',
+                }}
+              >
+                {stratLoading === 'UnderlyingStoploss' ? 'Starting…' : '▶ Start Underlying SL'}
+              </button>
+            </div>
+            )}
+
             {/* LockProfit */}
             <div style={{ marginBottom: 2 }}>
               <div style={{ fontSize: 11, color: '#e6edf3', fontWeight: 600, marginBottom: 4 }}>
@@ -896,7 +955,7 @@ export default function OrderPanel({
               <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginBottom: 6 }}>
                 {runningStrategies.map(s => {
                   const isEditing = editingStrategyId === s.strategy_id
-                  const canEditPrice = s.strategy_type === 'LockProfit' || s.strategy_type === 'TargetProfit' || s.strategy_type === 'UnderlyingTargetProfit'
+                  const canEditPrice = s.strategy_type === 'LockProfit' || s.strategy_type === 'TargetProfit' || s.strategy_type === 'UnderlyingTargetProfit' || s.strategy_type === 'UnderlyingStoploss'
                   return (
                     <div key={s.strategy_id} style={{ background: '#0d1117', borderRadius: 5, border: '1px solid #21262d', overflow: 'hidden' }}>
                       <div style={{ fontSize: 10, color: '#3fb950', display: 'flex', alignItems: 'center', gap: 4, padding: '4px 6px' }}>

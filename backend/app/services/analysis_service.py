@@ -96,6 +96,9 @@ def compute_session_summary(session: dict, trades: list[dict]) -> dict:
     buy_count = sum(1 for t in trades if t.get("side") == "BUY")
     sell_count = sum(1 for t in trades if t.get("side") == "SELL")
 
+    from app.services.trade_label_service import _fifo_match_trades
+    round_trips = _fifo_match_trades(trades)
+
     return {
         "session_id": session.get("session_id"),
         "user_id": session.get("user_id"),
@@ -111,6 +114,7 @@ def compute_session_summary(session: dict, trades: list[dict]) -> dict:
         "pnl_pct": round(pnl_pct, 4),
         "total_commission": round(total_commission, 4),
         "trade_count": len(trades),
+        "round_trip_count": len(round_trips),
         "buy_count": buy_count,
         "sell_count": sell_count,
     }

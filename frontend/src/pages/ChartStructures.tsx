@@ -10,6 +10,7 @@ import {
   createChart, IChartApi, ISeriesApi, LineData, Time,
 } from 'lightweight-charts'
 import api, { ChartStructureItem, OHLCCandle } from '../services/api'
+import FineStructures from './FineStructures'
 
 // ── EMA helpers ───────────────────────────────────────────────────────────────
 
@@ -399,6 +400,7 @@ function SelectField({
 // ── Main Page ─────────────────────────────────────────────────────────────────
 
 export default function ChartStructures({ onClose }: { onClose: () => void }) {
+  const [activeTab, setActiveTab] = useState<'broad' | 'fine'>('broad')
   const [types, setTypes] = useState<{ opening: TypeDef[]; midday: TypeDef[]; closing: TypeDef[] }>({
     opening: [], midday: [], closing: [],
   })
@@ -440,10 +442,26 @@ export default function ChartStructures({ onClose }: { onClose: () => void }) {
         display: 'flex', justifyContent: 'space-between', alignItems: 'center',
         padding: '12px 20px', borderBottom: '1px solid #21262d',
       }}>
-        <div>
-          <div style={{ fontSize: 18, color: '#e6edf3', fontWeight: 600 }}>📊 Chart Structures</div>
-          <div style={{ fontSize: 12, color: '#484f58', marginTop: 4 }}>
-            View daily charts by market structure classification
+        <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+          <div>
+            <div style={{ fontSize: 18, color: '#e6edf3', fontWeight: 600 }}>📊 Chart Structures</div>
+          </div>
+          <div style={{ display: 'flex', gap: 0 }}>
+            {(['broad', 'fine'] as const).map(tab => (
+              <button
+                key={tab}
+                onClick={() => setActiveTab(tab)}
+                style={{
+                  padding: '6px 16px', fontSize: 12, fontWeight: 600,
+                  background: 'transparent', border: 'none',
+                  borderBottom: activeTab === tab ? '2px solid #f0883e' : '2px solid transparent',
+                  color: activeTab === tab ? '#f0883e' : '#8b949e',
+                  cursor: 'pointer',
+                }}
+              >
+                {tab === 'broad' ? 'Broad' : 'Fine'}
+              </button>
+            ))}
           </div>
         </div>
         <button onClick={onClose} style={{
@@ -452,7 +470,11 @@ export default function ChartStructures({ onClose }: { onClose: () => void }) {
         }}>✕ Close</button>
       </div>
 
-      {/* Filters */}
+      {activeTab === 'fine' ? (
+        <FineStructures />
+      ) : (
+        <>
+          {/* Filters */}
       <div style={{
         display: 'flex', gap: 12, padding: '12px 20px',
         borderBottom: '1px solid #21262d', flexWrap: 'wrap',
@@ -490,6 +512,8 @@ export default function ChartStructures({ onClose }: { onClose: () => void }) {
       </div>
 
       {modal && <ChartModal item={modal} structures={structures} onClose={() => setModal(null)} onNavigate={setModal} />}
+        </>
+      )}
     </div>
   )
 }
