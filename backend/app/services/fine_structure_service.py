@@ -340,6 +340,16 @@ def delete_flow(user_id: str, flow_id: str) -> bool:
 
 # ── Search ───────────────────────────────────────────────────────────────────
 
+def _step_matches(fstep: dict, qstep: dict) -> bool:
+    if fstep.get("name") != qstep.get("name"):
+        return False
+    if qstep.get("type") and fstep.get("type") != qstep["type"]:
+        return False
+    if qstep.get("direction") and fstep.get("direction") != qstep["direction"]:
+        return False
+    return True
+
+
 def _match_recursive(flow: list[dict], fi: int, query: list[dict], qi: int) -> bool:
     """Recursively match query[qi:] against flow[fi:]. Wildcard '*' matches 1+ steps."""
     if qi == len(query):
@@ -354,12 +364,7 @@ def _match_recursive(flow: list[dict], fi: int, query: list[dict], qi: int) -> b
                 return True
         return False
 
-    fstep = flow[fi]
-    if fstep.get("name") != qstep.get("name"):
-        return False
-    if qstep.get("type") and fstep.get("type") != qstep["type"]:
-        return False
-    if qstep.get("direction") and fstep.get("direction") != qstep["direction"]:
+    if not _step_matches(flow[fi], qstep):
         return False
     return _match_recursive(flow, fi + 1, query, qi + 1)
 
@@ -367,8 +372,18 @@ def _match_recursive(flow: list[dict], fi: int, query: list[dict], qi: int) -> b
 def _matches_subsequence(flow_steps: list[dict], query_steps: list[dict]) -> Optional[int]:
     if not query_steps or not flow_steps:
         return None
-    for i in range(len(flow_steps)):
-        if _match_recursive(flow_steps, i, query_steps, 0):
+
+    has_wildcard = any(q.get("name") == "*" for q in query_steps)
+
+    if has_wildcard:
+        for i in range(len(flow_steps)):
+            if _match_recursive(flow_steps, i, query_steps, 0):
+                return i
+        return None
+
+    qlen = len(query_steps)
+    for i in range(len(flow_steps) - qlen + 1):
+        if all(_step_matches(flow_steps[i + j], query_steps[j]) for j in range(qlen)):
             return i
     return None
 
