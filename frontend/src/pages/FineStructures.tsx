@@ -7,6 +7,32 @@ const STEP_COLORS = [
   '#f85149', '#79c0ff', '#a371f7', '#f778ba', '#7ee787',
 ]
 
+function nextEMA(prev: number, close: number, k: number): number {
+  return close * k + prev * (1 - k)
+}
+
+function computeEMA(closes: number[], period: number): (number | null)[] {
+  if (closes.length === 0) return []
+  const result: (number | null)[] = []
+  const k = 2 / (period + 1)
+  let ema: number | null = null
+  let warmup = 0, sum = 0
+  for (let i = 0; i < closes.length; i++) {
+    sum += closes[i]
+    warmup++
+    if (warmup < period) {
+      result.push(null)
+    } else if (warmup === period) {
+      ema = sum / period
+      result.push(ema)
+    } else {
+      ema = nextEMA(ema!, closes[i], k)
+      result.push(ema)
+    }
+  }
+  return result
+}
+
 const btnStyle = (active = false): React.CSSProperties => ({
   padding: '4px 12px', fontSize: 12, borderRadius: 4,
   border: `1px solid ${active ? '#f0883e' : '#30363d'}`,
@@ -162,7 +188,10 @@ function BuilderView({ definitions }: { definitions: FineDefinition[] }) {
   const chartContainerRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<IChartApi | null>(null)
   const seriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null)
+  const ema9Ref = useRef<ISeriesApi<'Line'> | null>(null)
+  const ema21Ref = useRef<ISeriesApi<'Line'> | null>(null)
   const markerSeriesRefs = useRef<ISeriesApi<'Line'>[]>([])
+  const [showEma, setShowEma] = useState(true)
 
   const loadChart = useCallback(async () => {
     if (!symbol || !date) return
@@ -209,8 +238,19 @@ function BuilderView({ definitions }: { definitions: FineDefinition[] }) {
     })
     series.setData(candles.map(c => ({ time: c.time as Time, open: c.open, high: c.high, low: c.low, close: c.close })))
 
+    const closes = candles.map(c => c.close)
+    const ema9Data = computeEMA(closes, 9)
+    const ema21Data = computeEMA(closes, 21)
+
+    const e9 = chart.addLineSeries({ color: '#f0883e', lineWidth: 1, priceLineVisible: false, lastValueVisible: false })
+    e9.setData(candles.map((c, i) => ({ time: c.time as Time, value: ema9Data[i] })).filter((d): d is { time: Time; value: number } => d.value !== null))
+    const e21 = chart.addLineSeries({ color: '#79c0ff', lineWidth: 1, priceLineVisible: false, lastValueVisible: false })
+    e21.setData(candles.map((c, i) => ({ time: c.time as Time, value: ema21Data[i] })).filter((d): d is { time: Time; value: number } => d.value !== null))
+
     chartRef.current = chart
     seriesRef.current = series
+    ema9Ref.current = e9
+    ema21Ref.current = e21
 
     // Click handler for setting transition bars
     chart.subscribeClick(param => {
@@ -231,10 +271,15 @@ function BuilderView({ definitions }: { definitions: FineDefinition[] }) {
     return () => { ro.disconnect(); chart.remove(); chartRef.current = null }
   }, [candles]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  // EMA visibility toggle
+  useEffect(() => {
+    if (ema9Ref.current) ema9Ref.current.applyOptions({ visible: showEma })
+    if (ema21Ref.current) ema21Ref.current.applyOptions({ visible: showEma })
+  }, [showEma])
+
   // Update markers when steps change
   useEffect(() => {
     if (!chartRef.current || !seriesRef.current) return
-    // Remove old marker series
     for (const s of markerSeriesRefs.current) {
       try { chartRef.current.removeSeries(s) } catch { /* disposed */ }
     }
@@ -243,13 +288,14 @@ function BuilderView({ definitions }: { definitions: FineDefinition[] }) {
     const markers: { time: Time; position: 'belowBar' | 'aboveBar'; color: string; shape: 'arrowUp' | 'arrowDown'; text: string; size: number }[] = []
     for (const step of steps) {
       if (!step.transition_bar_time) continue
+      const isBear = step.direction === 'Bear'
       markers.push({
         time: step.transition_bar_time as Time,
-        position: 'belowBar',
-        color: step.color,
-        shape: 'arrowUp',
+        position: isBear ? 'aboveBar' : 'belowBar',
+        color: isBear ? '#f97316' : '#3b82f6',
+        shape: isBear ? 'arrowDown' : 'arrowUp',
         text: step.name + (step.type ? `(${step.type})` : ''),
-        size: 1,
+        size: 2,
       })
     }
     if (markers.length > 0) {
@@ -328,6 +374,9 @@ function BuilderView({ definitions }: { definitions: FineDefinition[] }) {
       <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
         {/* Chart - left 60% */}
         <div style={{ flex: 3, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 8px', background: '#161b22', borderBottom: '1px solid #21262d', flexShrink: 0 }}>
+            <button onClick={() => setShowEma(v => !v)} style={btnStyle(showEma)}>EMA 9/21</button>
+          </div>
           <div ref={chartContainerRef} style={{ flex: 1, minHeight: 0 }} />
           {activeStepIdx !== null && (
             <div style={{ padding: '4px 8px', fontSize: 11, color: '#f0883e', flexShrink: 0 }}>
