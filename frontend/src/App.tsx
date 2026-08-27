@@ -661,6 +661,7 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
       lock_profit_value: opts.lockProfitValue as number | undefined,
       lock_profit_is_pct: (opts.lockProfitIsPct as boolean) ?? false,
       entry_sl_price: opts.entry_sl_price as number | undefined,
+      underlying_sl_price: opts.underlyingSlPrice as number | undefined,
     })
     setRunningStrategies(prev => [...prev, resp])
   }, [sim.sessionId, autostopTriggerType, autostopDeviationPct, breakevenMode, targetProfitBufferTicks, aggrSlOnlyInProfit])

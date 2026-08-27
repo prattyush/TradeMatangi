@@ -213,7 +213,7 @@ On first access, each user gets their own editable copies of 8 predefined struct
 
 ### Underlying Stoploss
 
-**Status:** 🔲 Pending
+**Status:** ✅ Complete
 
 Add a new strategy for options trades where the stoploss is based on the underlying price rather than the option price.
 
@@ -226,11 +226,40 @@ Add a new strategy for options trades where the stoploss is based on the underly
 - When the underlying market reaches the stoploss price, create new options stoploss orders (or use existing ones)
 - Follow the existing strategy implementation mechanisms
 
+#### Files Changed
+
+| File | Change |
+|------|--------|
+| `backend/app/models/schemas.py` | Added `UNDERLYING_STOPLOSS = "UnderlyingStoploss"` to `StrategyType` enum; added `underlying_sl_price` field to `StartStrategyRequest` |
+| `backend/app/services/strategy_service.py` | Added `_on_tick_underlying_stoploss()` evaluator; wired into `on_tick()` dispatch |
+| `backend/app/routers/strategies.py` | Added validation: options-only, requires `underlying_sl_price > 0`; added to metadata |
+| `frontend/src/services/api.ts` | Added `'UnderlyingStoploss'` to strategy type union; added `underlying_sl_price` field |
+| `frontend/src/components/OrderPanel.tsx` | Added "Underlying SL" UI section with price input, pick button, and start button |
+| `frontend/src/App.tsx` | Added `underlying_sl_price` to strategy API call |
+
+#### Trigger Logic
+
+| Position | Stoploss triggers when |
+|---|---|
+| LONG CE | underlying price <= stoploss_price |
+| LONG PE | underlying price >= stoploss_price |
+| SHORT CE | underlying price >= stoploss_price |
+| SHORT PE | underlying price <= stoploss_price |
+
+#### How It Works
+
+1. User enters underlying stoploss price in OrderPanel → "Underlying SL" section (options only)
+2. Clicks "▶ Start Underlying SL" → creates strategy instance
+3. On every tick, `_on_tick_underlying_stoploss()` checks if underlying has moved against the position
+4. When triggered: shifts existing SL orders to option_LTP ± buffer_ticks, or creates new SL if none exist
+5. Strategy marked COMPLETED after execution
+6. Price can be edited while strategy is running (same as other strategies)
+
 ---
 
 ### Trade Calculation
 
-**Status:** 🔲 Pending
+**Status:** ✅ Complete
 
 Redefine how trades are counted in the Analysis section. Currently, each buy or sell order counts as a trade. Instead, define a trade as a complete round-trip: a position being opened and then fully exited.
 
@@ -241,3 +270,18 @@ Redefine how trades are counted in the Analysis section. Currently, each buy or 
 - Multiple buy orders that build up a position count as part of the same trade until the position is fully exited
 - Update trade count in Analysis section and stats to use this definition
 - This aligns trade counting with pattern/labeling actions (each pattern is attached to one complete trade)
+
+#### Files Changed
+
+| File | Change |
+|------|--------|
+| `backend/app/services/analysis_service.py` | Added `round_trip_count` to `compute_session_summary()` using existing `_fifo_match_trades()` from `trade_label_service` |
+| `frontend/src/services/api.ts` | Added `round_trip_count` to `SessionSummary` interface |
+| `frontend/src/components/TradeAnalysis.tsx` | Updated `groupSessions()` to use `round_trip_count` for trade totals |
+
+#### How It Works
+
+1. Backend `compute_session_summary()` now calls `_fifo_match_trades()` to detect round-trips (FIFO matching: net_qty returns to 0 = one complete trade)
+2. Returns both `trade_count` (raw executions) and `round_trip_count` (complete position cycles)
+3. Frontend `groupSessions()` uses `round_trip_count` for the "Total Trades" display (falls back to `trade_count` if unavailable)
+4. Round-trip detection groups trades by `right` (equity/CE/PE tracked independently) and matches BUY→SELL chronologically

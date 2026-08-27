@@ -165,7 +165,7 @@ export interface StrategyResponse {
 
 export interface StartStrategyRequest {
   session_id: string
-  strategy_type: 'AutoStop' | 'BreakEven' | 'AggressiveStoploss' | 'TargetProfit' | 'LockProfit' | 'UnderlyingTargetProfit'
+  strategy_type: 'AutoStop' | 'BreakEven' | 'AggressiveStoploss' | 'TargetProfit' | 'LockProfit' | 'UnderlyingTargetProfit' | 'UnderlyingStoploss'
   right?: 'CE' | 'PE' | null
   quantity?: number
   funds_ratio_pct?: number
@@ -180,6 +180,7 @@ export interface StartStrategyRequest {
   lock_profit_value?: number
   lock_profit_is_pct?: boolean
   entry_sl_price?: number          // auto-stoploss price for AutoStop entry
+  underlying_sl_price?: number     // underlying price for UnderlyingStoploss
 }
 
 export interface SimulationStartResponse {
@@ -295,6 +296,7 @@ export interface SessionSummary {
   pnl_pct: number
   total_commission: number
   trade_count: number
+  round_trip_count: number
   buy_count: number
   sell_count: number
 }
