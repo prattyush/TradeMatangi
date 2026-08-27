@@ -201,6 +201,7 @@ function BuilderView({ definitions }: { definitions: FineDefinition[] }) {
   const [steps, setSteps] = useState<(FlowStep & { color: string })[]>([])
   const [flowId, setFlowId] = useState<string | null>(null)
   const [activeStepIdx, setActiveStepIdx] = useState<number | null>(null)
+  const activeStepIdxRef = useRef<number | null>(null)
   const [loading, setLoading] = useState(false)
   const [saveMsg, setSaveMsg] = useState<string | null>(null)
 
@@ -230,6 +231,7 @@ function BuilderView({ definitions }: { definitions: FineDefinition[] }) {
   const [drawDropdownOpen, setDrawDropdownOpen] = useState(false)
 
   useEffect(() => { drawModeRef.current = drawMode }, [drawMode])
+  useEffect(() => { activeStepIdxRef.current = activeStepIdx }, [activeStepIdx])
 
   useEffect(() => {
     if (!drawDropdownOpen) return
@@ -406,10 +408,13 @@ function BuilderView({ definitions }: { definitions: FineDefinition[] }) {
           setDrawingCount(c => c + 1)
           drawPtsRef.current = []; setDrawStep(0); setDrawMode('none')
         }
-      } else if (activeStepIdx !== null) {
+      } else if (activeStepIdxRef.current !== null) {
+        const idx = activeStepIdxRef.current
         setSteps(prev => {
           const next = [...prev]
-          next[activeStepIdx] = { ...next[activeStepIdx], transition_bar_time: time }
+          if (idx < next.length) {
+            next[idx] = { ...next[idx], transition_bar_time: time }
+          }
           return next
         })
       }
