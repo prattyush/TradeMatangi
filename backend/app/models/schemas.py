@@ -339,6 +339,12 @@ class BulkUpdateSLRequest(BaseModel):
     right: str | None = None   # "CE" | "PE" | None (equity)
 
 
+class BulkConvertRequest(BaseModel):
+    session_id: str
+    new_order_type: OrderType   # TARGET, LIMIT, or STOPLOSS
+    right: str | None = None   # "CE" | "PE" | None (equity)
+
+
 class StrategyResponse(BaseModel):
     strategy_id: str
     strategy_type: str

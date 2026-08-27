@@ -59,6 +59,7 @@ interface Props {
   onCancelStrategy?: (strategyId: string) => Promise<void>
   onUpdateStrategyPrice?: (strategyId: string, price: number) => Promise<void>
   onBulkUpdateSL?: (triggerPrice: number, right: string | null) => Promise<{ updated: number }>
+  onBulkConvert?: (newOrderType: 'TARGET' | 'LIMIT' | 'STOPLOSS', right: string | null) => Promise<{ converted: number }>
   onRequestLpPick?: () => void
   injectedLpPrice?: number | null
   onGuardRailBlocked?: (type: 'BLOCK' | 'COOLDOWN' | 'BAN', reason: string) => void
@@ -92,6 +93,7 @@ export default function OrderPanel({
   onCancelStrategy,
   onUpdateStrategyPrice,
   onBulkUpdateSL,
+  onBulkConvert,
   onRequestLpPick,
   injectedLpPrice,
   onGuardRailBlocked,
@@ -160,7 +162,7 @@ export default function OrderPanel({
       if (position.side === 'LONG') setSide('SELL')
       else if (position.side === 'SHORT') setSide('BUY')
       const coveredQty = openOrders
-        .filter(o => o.is_stoploss && o.side === exitSide && (o.right ?? null) === activeRight && o.status === 'PENDING')
+        .filter(o => (o.is_stoploss || o.order_type === 'LIMIT') && o.side === exitSide && (o.right ?? null) === activeRight && o.status === 'PENDING')
         .reduce((sum, o) => sum + o.quantity, 0)
       setSlQty(Math.max(1, position.quantity - coveredQty))
     }
@@ -456,6 +458,19 @@ export default function OrderPanel({
       setBulkSLPrice('')
     } catch (e) {
       setStratError(e instanceof Error ? e.message : 'Failed to bulk update SL')
+    } finally {
+      setBulkUpdating(false)
+    }
+  }
+
+  const handleBulkConvert = async (newType: 'TARGET' | 'LIMIT' | 'STOPLOSS') => {
+    if (!onBulkConvert) return
+    setBulkUpdating(true)
+    try {
+      const right = instrumentType === 'options' ? activeRight : null
+      await onBulkConvert(newType, right ?? null)
+    } catch (e) {
+      setStratError(e instanceof Error ? e.message : 'Failed to bulk convert')
     } finally {
       setBulkUpdating(false)
     }
@@ -1325,6 +1340,32 @@ export default function OrderPanel({
                       fontSize: 10, fontWeight: 600, whiteSpace: 'nowrap',
                     }}
                   >{bulkUpdating ? '…' : 'Update All'}</button>
+                  {onBulkConvert && (
+                    <>
+                      <button
+                        onClick={() => handleBulkConvert('STOPLOSS')}
+                        disabled={bulkUpdating}
+                        title="Convert all to Stoploss"
+                        style={{
+                          padding: '3px 6px', background: '#2a1a1a',
+                          border: '1px solid #4a2000', borderRadius: 4,
+                          color: '#f85149', cursor: bulkUpdating ? 'not-allowed' : 'pointer',
+                          fontSize: 10, fontWeight: 600, whiteSpace: 'nowrap',
+                        }}
+                      >All SL</button>
+                      <button
+                        onClick={() => handleBulkConvert('LIMIT')}
+                        disabled={bulkUpdating}
+                        title="Convert all to Limit"
+                        style={{
+                          padding: '3px 6px', background: '#1a2a1a',
+                          border: '1px solid #204a20', borderRadius: 4,
+                          color: '#3fb950', cursor: bulkUpdating ? 'not-allowed' : 'pointer',
+                          fontSize: 10, fontWeight: 600, whiteSpace: 'nowrap',
+                        }}
+                      >All Lmt</button>
+                    </>
+                  )}
                 </div>
               </div>
             )

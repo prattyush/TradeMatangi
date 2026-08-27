@@ -1,7 +1,7 @@
 import json
 import logging
 from fastapi import APIRouter, HTTPException, Query
-from app.models.schemas import Order, OrderType, TradeSide, PlaceOrderRequest, UpdateOrderRequest, BulkUpdateSLRequest, ConvertOrderRequest
+from app.models.schemas import Order, OrderType, TradeSide, PlaceOrderRequest, UpdateOrderRequest, BulkUpdateSLRequest, ConvertOrderRequest, BulkConvertRequest
 from app.services import order_service, simulation as sim_svc
 from app.services.wallet_service import InsufficientFundsError, get_balance
 from app.config import LOT_SIZES, EQUITY_MIS_MARGIN_RATE
@@ -412,6 +412,34 @@ async def bulk_update_sl_route(req: BulkUpdateSLRequest):
                 )
 
     return {"updated": len(updated_orders), "orders": updated_orders}
+
+
+@router.patch("/bulk-convert")
+async def bulk_convert_route(req: BulkConvertRequest):
+    """Convert all pending orders for a session's right to a different type, keeping same price."""
+    session = sim_svc.get_session(req.session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    right = req.right.upper() if req.right else None
+    open_orders = order_service.get_open_orders(req.session_id)
+    target_orders = [o for o in open_orders if (o.right or None) == right and o.status == 'PENDING']
+
+    if not target_orders:
+        return {"converted": 0, "orders": []}
+
+    converted_orders = []
+    for order in target_orders:
+        converted = order_service.convert_order(
+            session_id=req.session_id,
+            order_id=order.order_id,
+            new_order_type=req.new_order_type,
+            trading_date=session.date,
+        )
+        if converted:
+            converted_orders.append(converted)
+
+    return {"converted": len(converted_orders), "orders": converted_orders}
 
 
 @router.post("/{order_id}/convert", response_model=Order)
