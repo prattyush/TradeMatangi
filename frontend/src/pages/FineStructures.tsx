@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { createChart, IChartApi, ISeriesApi, Time } from 'lightweight-charts'
+import { createChart, IChartApi, ISeriesApi, Time, LineStyle } from 'lightweight-charts'
 import api, { FineDefinition, FlowStep, FineSearchResult, OHLCCandle } from '../services/api'
 
 const STEP_COLORS = [
@@ -32,6 +32,32 @@ function computeEMA(closes: number[], period: number): (number | null)[] {
   }
   return result
 }
+
+type DrawMode = 'none' | 'hline' | 'trendline' | 'fibretracement' | 'channel' | 'rrindicator'
+
+type Drawing =
+  | { type: 'hline'; ref: import('lightweight-charts').IPriceLine }
+  | { type: 'trendline' | 'fibretracement' | 'channel' | 'rrindicator'; refs: ISeriesApi<'Line'>[] }
+
+const FIB_LEVELS = [
+  { ratio: 0, color: '#e6edf3' },
+  { ratio: 0.25, color: '#34d399' },
+  { ratio: 0.5, color: '#60a5fa' },
+  { ratio: 0.75, color: '#fbbf24' },
+  { ratio: 1.0, color: '#e6edf3' },
+]
+
+const DRAW_LABEL: Partial<Record<DrawMode, string>> = {
+  hline: 'H-Line', trendline: 'Trend', fibretracement: 'Fib', channel: 'Channel', rrindicator: 'R:R',
+}
+
+const DRAW_ITEMS: { mode: DrawMode; label: string }[] = [
+  { mode: 'hline', label: '─ Horizontal Line' },
+  { mode: 'trendline', label: '↗ Trend Line' },
+  { mode: 'fibretracement', label: '◫ Fib Retracement' },
+  { mode: 'channel', label: '⊟ Parallel Channel' },
+  { mode: 'rrindicator', label: '⚡ Risk:Reward' },
+]
 
 const btnStyle = (active = false): React.CSSProperties => ({
   padding: '4px 12px', fontSize: 12, borderRadius: 4,
@@ -193,6 +219,29 @@ function BuilderView({ definitions }: { definitions: FineDefinition[] }) {
   const markerSeriesRefs = useRef<ISeriesApi<'Line'>[]>([])
   const [showEma, setShowEma] = useState(true)
 
+  const drawModeRef = useRef<DrawMode>('none')
+  const drawPtsRef = useRef<{ time: number; price: number }[]>([])
+  const drawingsRef = useRef<Drawing[]>([])
+  const ignoreNextClickRef = useRef(false)
+  const drawDropdownRef = useRef<HTMLDivElement>(null)
+  const [drawMode, setDrawMode] = useState<DrawMode>('none')
+  const [drawStep, setDrawStep] = useState(0)
+  const [drawingCount, setDrawingCount] = useState(0)
+  const [drawDropdownOpen, setDrawDropdownOpen] = useState(false)
+
+  useEffect(() => { drawModeRef.current = drawMode }, [drawMode])
+
+  useEffect(() => {
+    if (!drawDropdownOpen) return
+    const handler = (e: MouseEvent) => {
+      if (drawDropdownRef.current && !drawDropdownRef.current.contains(e.target as Node)) {
+        setDrawDropdownOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [drawDropdownOpen])
+
   const loadChart = useCallback(async () => {
     if (!symbol || !date) return
     setLoading(true)
@@ -252,14 +301,118 @@ function BuilderView({ definitions }: { definitions: FineDefinition[] }) {
     ema9Ref.current = e9
     ema21Ref.current = e21
 
-    // Click handler for setting transition bars
+    // Click handler for draw modes and transition bars
     chart.subscribeClick(param => {
-      if (!param.time || activeStepIdx === null) return
-      setSteps(prev => {
-        const next = [...prev]
-        next[activeStepIdx] = { ...next[activeStepIdx], transition_bar_time: param.time as number }
-        return next
-      })
+      if (!param.point || !seriesRef.current) return
+      if (ignoreNextClickRef.current) { ignoreNextClickRef.current = false; return }
+      const price = seriesRef.current.coordinateToPrice(param.point.y)
+      if (price === null || !param.time) return
+      const time = param.time as number
+      const mode = drawModeRef.current
+
+      if (mode === 'hline') {
+        const line = seriesRef.current.createPriceLine({
+          price, color: '#e6edf3', lineWidth: 1, lineStyle: LineStyle.Dashed,
+          axisLabelVisible: true, title: price.toFixed(0),
+        })
+        drawingsRef.current.push({ type: 'hline', ref: line })
+        setDrawingCount(c => c + 1)
+        setDrawMode('none')
+      } else if (mode === 'trendline') {
+        const pts = drawPtsRef.current
+        if (pts.length === 0) {
+          drawPtsRef.current = [{ time, price }]; setDrawStep(1)
+        } else {
+          const p1 = pts[0]
+          const s = chartRef.current!.addLineSeries({ color: '#ffa657', lineWidth: 1, priceLineVisible: false, lastValueVisible: false })
+          s.setData([
+            { time: Math.min(p1.time, time) as Time, value: p1.time <= time ? p1.price : price },
+            { time: Math.max(p1.time, time) as Time, value: p1.time <= time ? price : p1.price },
+          ])
+          drawingsRef.current.push({ type: 'trendline', refs: [s] })
+          setDrawingCount(c => c + 1)
+          drawPtsRef.current = []; setDrawStep(0); setDrawMode('none')
+        }
+      } else if (mode === 'fibretracement') {
+        const pts = drawPtsRef.current
+        if (pts.length === 0) {
+          drawPtsRef.current = [{ time, price }]; setDrawStep(1)
+        } else {
+          const p1 = pts[0]
+          const tStart = Math.min(p1.time, time) as Time
+          const tEnd = Math.max(p1.time, time) as Time
+          const pLow = Math.min(p1.price, price)
+          const range = Math.max(p1.price, price) - pLow
+          const fibRefs: ISeriesApi<'Line'>[] = []
+          for (const lvl of FIB_LEVELS) {
+            const lvlPrice = pLow + range * lvl.ratio
+            const ls = chartRef.current!.addLineSeries({ color: lvl.color, lineWidth: 1, priceLineVisible: false, lastValueVisible: false })
+            ls.setData([{ time: tStart, value: lvlPrice }, { time: tEnd, value: lvlPrice }])
+            fibRefs.push(ls)
+          }
+          drawingsRef.current.push({ type: 'fibretracement', refs: fibRefs })
+          setDrawingCount(c => c + 1)
+          drawPtsRef.current = []; setDrawStep(0); setDrawMode('none')
+        }
+      } else if (mode === 'channel') {
+        const pts = drawPtsRef.current
+        if (pts.length === 0) {
+          drawPtsRef.current = [{ time, price }]; setDrawStep(1)
+        } else if (pts.length === 1) {
+          drawPtsRef.current = [...pts, { time, price }]; setDrawStep(2)
+        } else {
+          const [p1, p2] = pts
+          const tStart = Math.min(p1.time, p2.time) as Time
+          const tEnd = Math.max(p1.time, p2.time) as Time
+          const baseStartPrice = p1.time <= p2.time ? p1.price : p2.price
+          const baseEndPrice = p1.time <= p2.time ? p2.price : p1.price
+          const timeDiff = (tEnd as number) - (tStart as number)
+          const slope = timeDiff !== 0 ? (baseEndPrice - baseStartPrice) / timeDiff : 0
+          const lineAt = (t: number) => baseStartPrice + slope * (t - (tStart as number))
+          const offset = price - lineAt(time)
+          const baseline = chartRef.current!.addLineSeries({ color: '#ffa657', lineWidth: 1, priceLineVisible: false, lastValueVisible: false })
+          baseline.setData([{ time: tStart, value: baseStartPrice }, { time: tEnd, value: baseEndPrice }])
+          const parallel = chartRef.current!.addLineSeries({ color: '#79c0ff', lineWidth: 1, priceLineVisible: false, lastValueVisible: false })
+          parallel.setData([{ time: tStart, value: baseStartPrice + offset }, { time: tEnd, value: baseEndPrice + offset }])
+          drawingsRef.current.push({ type: 'channel', refs: [baseline, parallel] })
+          setDrawingCount(c => c + 1)
+          drawPtsRef.current = []; setDrawStep(0); setDrawMode('none')
+        }
+      } else if (mode === 'rrindicator') {
+        const pts = drawPtsRef.current
+        if (pts.length === 0) {
+          drawPtsRef.current = [{ time, price }]; setDrawStep(1)
+        } else {
+          const riskPrice = pts[0].price
+          const entryPrice = price
+          const isBuy = riskPrice < entryPrice
+          const diff = Math.abs(entryPrice - riskPrice)
+          const tStart = Math.min(pts[0].time, time) as Time
+          const tEnd = Math.max(pts[0].time, time) as Time
+          const levels: { price: number; color: number[] }[] = [
+            { price: riskPrice, color: [248, 81, 73] },
+            { price: entryPrice, color: [230, 237, 243] },
+            { price: isBuy ? entryPrice + diff : entryPrice - diff, color: [63, 185, 80] },
+            { price: isBuy ? entryPrice + diff * 1.5 : entryPrice - diff * 1.5, color: [88, 166, 255] },
+            { price: isBuy ? entryPrice + diff * 2 : entryPrice - diff * 2, color: [188, 140, 255] },
+          ]
+          const rrRefs: ISeriesApi<'Line'>[] = []
+          for (const lvl of levels) {
+            const ls = chartRef.current!.addLineSeries({ color: `rgb(${lvl.color.join(',')})`, lineWidth: 3, priceLineVisible: false, lastValueVisible: false })
+            ls.setData([{ time: tStart, value: lvl.price }, { time: tEnd, value: lvl.price }])
+            rrRefs.push(ls)
+          }
+          drawingsRef.current.push({ type: 'rrindicator', refs: rrRefs })
+          setDrawingCount(c => c + 1)
+          drawPtsRef.current = []; setDrawStep(0); setDrawMode('none')
+        }
+      } else if (activeStepIdx !== null) {
+        setSteps(prev => {
+          const next = [...prev]
+          next[activeStepIdx] = { ...next[activeStepIdx], transition_bar_time: time }
+          return next
+        })
+      }
     })
 
     const ro = new ResizeObserver(entries => {
@@ -270,6 +423,30 @@ function BuilderView({ definitions }: { definitions: FineDefinition[] }) {
 
     return () => { ro.disconnect(); chart.remove(); chartRef.current = null }
   }, [candles]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const enterDrawMode = useCallback((mode: DrawMode) => {
+    setDrawDropdownOpen(false)
+    setDrawMode(prev => prev === mode ? 'none' : mode)
+    drawPtsRef.current = []
+    setDrawStep(0)
+    ignoreNextClickRef.current = false
+  }, [])
+
+  const clearLastDrawing = useCallback(() => {
+    const drawing = drawingsRef.current.pop()
+    if (!drawing) return
+    switch (drawing.type) {
+      case 'hline':
+        try { seriesRef.current?.removePriceLine(drawing.ref) } catch { /* disposed */ }
+        break
+      default:
+        for (const s of drawing.refs) try { chartRef.current?.removeSeries(s) } catch { /* disposed */ }
+    }
+    setDrawingCount(c => c - 1)
+    setDrawMode('none')
+    drawPtsRef.current = []
+    setDrawStep(0)
+  }, [])
 
   // EMA visibility toggle
   useEffect(() => {
@@ -374,15 +551,53 @@ function BuilderView({ definitions }: { definitions: FineDefinition[] }) {
       <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
         {/* Chart - left 60% */}
         <div style={{ flex: 3, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 8px', background: '#161b22', borderBottom: '1px solid #21262d', flexShrink: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 8px', background: '#161b22', borderBottom: '1px solid #21262d', flexShrink: 0, flexWrap: 'wrap' }}>
             <button onClick={() => setShowEma(v => !v)} style={btnStyle(showEma)}>EMA 9/21</button>
-          </div>
-          <div ref={chartContainerRef} style={{ flex: 1, minHeight: 0 }} />
-          {activeStepIdx !== null && (
-            <div style={{ padding: '4px 8px', fontSize: 11, color: '#f0883e', flexShrink: 0 }}>
-              Click chart to set transition bar for: {steps[activeStepIdx]?.name}
+            <div style={{ position: 'relative' }} ref={drawDropdownRef}>
+              <button
+                onClick={() => setDrawDropdownOpen(v => !v)}
+                style={btnStyle(drawMode !== 'none')}
+              >{DRAW_LABEL[drawMode] ?? 'Draw'} ▾</button>
+              {drawDropdownOpen && (
+                <div style={{
+                  position: 'absolute', top: '100%', left: 0, zIndex: 200,
+                  background: '#161b22', border: '1px solid #30363d',
+                  borderRadius: 4, minWidth: 160, marginTop: 2,
+                }}>
+                  {DRAW_ITEMS.map(({ mode: m, label }) => (
+                    <div
+                      key={m}
+                      onMouseDown={() => { if (m !== drawModeRef.current) ignoreNextClickRef.current = true }}
+                      onClick={() => enterDrawMode(m)}
+                      style={{
+                        padding: '5px 10px', cursor: 'pointer', fontSize: 11,
+                        color: drawMode === m ? '#f0883e' : '#e6edf3',
+                        background: drawMode === m ? '#2a1a0a' : 'transparent',
+                      }}
+                    >{label}</div>
+                  ))}
+                </div>
+              )}
             </div>
-          )}
+            {drawingCount > 0 && (
+              <button onClick={clearLastDrawing} style={btnStyle(false)}>Clear</button>
+            )}
+            {drawMode !== 'none' && (
+              <span style={{ fontSize: 11, color: '#f0883e' }}>
+                {drawMode === 'hline' && 'Click to place'}
+                {drawMode === 'trendline' && (drawStep === 0 ? 'Click pt 1' : 'Click pt 2')}
+                {drawMode === 'fibretracement' && (drawStep === 0 ? 'Click start' : 'Click end')}
+                {drawMode === 'channel' && (drawStep === 0 ? 'Click start' : drawStep === 1 ? 'Click end' : 'Click offset')}
+                {drawMode === 'rrindicator' && (drawStep === 0 ? 'Click risk price' : 'Click entry price')}
+              </span>
+            )}
+            {activeStepIdx !== null && drawMode === 'none' && (
+              <span style={{ fontSize: 11, color: '#3fb950' }}>
+                ⊕ Click chart to set transition bar for: {steps[activeStepIdx]?.name}
+              </span>
+            )}
+          </div>
+          <div ref={chartContainerRef} style={{ flex: 1, minHeight: 0, cursor: (drawMode !== 'none' || activeStepIdx !== null) ? 'crosshair' : 'default' }} />
         </div>
 
         {/* Steps panel - right 40% */}
