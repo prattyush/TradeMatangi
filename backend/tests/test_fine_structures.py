@@ -107,19 +107,22 @@ class TestDefinitionsCRUD:
         mock_table.put_item.assert_called_once()
 
     @patch("app.services.fine_structure_service._defs_table")
-    def test_list_definitions_includes_predefined(self, mock_defs_table):
+    def test_list_definitions_copies_predefined_on_first_access(self, mock_defs_table):
         mock_table = MagicMock()
         mock_defs_table.return_value = mock_table
 
-        # Return predefined + user definitions from any query
-        mock_table.query.return_value = {"Items": [
-            {"definition_id": "sys-1", "user_id": SYSTEM_USER, "name": "Trading Range",
-             "sub_types": ["broad"], "is_predefined": True, "created_at": "", "updated_at": ""},
-            {"definition_id": "user-1", "user_id": FIXED_USER_ID, "name": "Custom",
-             "sub_types": [], "is_predefined": False, "created_at": "", "updated_at": ""},
-        ]}
+        # Call sequence: seed_predefined checks system (1), _seed_user checks user (2), list queries user (3)
+        mock_table.query.side_effect = [
+            {"Items": [{"definition_id": "sys-exists"}]},  # seed_predefined: system defs exist, skip
+            {"Items": []},  # _seed_user_definitions: user has none, triggers copy
+            {"Items": [    # list_definitions: returns the copied items
+                {"definition_id": "user-1", "user_id": FIXED_USER_ID, "name": "Trading Range",
+                 "sub_types": ["broad"], "is_predefined": False, "created_at": "", "updated_at": ""},
+                {"definition_id": "user-2", "user_id": FIXED_USER_ID, "name": "Custom",
+                 "sub_types": [], "is_predefined": False, "created_at": "", "updated_at": ""},
+            ]},
+        ]
 
-        # Reset _seeded to force seed check
         import app.services.fine_structure_service as svc
         svc._seeded = False
 
@@ -128,19 +131,22 @@ class TestDefinitionsCRUD:
         names = [d["name"] for d in result]
         assert "Trading Range" in names
         assert "Custom" in names
+        for d in result:
+            assert d["user_id"] == FIXED_USER_ID
+            assert d["can_delete"] is True
 
     @patch("app.services.fine_structure_service._defs_table")
-    def test_delete_predefined_rejected(self, mock_defs_table):
+    def test_delete_other_user_definition_rejected(self, mock_defs_table):
         mock_table = MagicMock()
         mock_defs_table.return_value = mock_table
         mock_table.get_item.return_value = {
             "Item": {
-                "definition_id": "sys-1", "user_id": SYSTEM_USER, "name": "Trading Range",
-                "sub_types": [], "is_predefined": True, "created_at": "", "updated_at": "",
+                "definition_id": "other-1", "user_id": "other-user", "name": "Trading Range",
+                "sub_types": [], "is_predefined": False, "created_at": "", "updated_at": "",
             }
         }
 
-        result = delete_definition(FIXED_USER_ID, "sys-1")
+        result = delete_definition(FIXED_USER_ID, "other-1")
         assert result is False
 
     @patch("app.services.fine_structure_service._defs_table")

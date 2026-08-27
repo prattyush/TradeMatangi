@@ -113,28 +113,68 @@ def _item_to_def(item: dict, user_id: str) -> dict:
     }
 
 
+def _seed_user_definitions(user_id: str) -> None:
+    """Copy predefined definitions to a user's own set on first access."""
+    try:
+        resp = _defs_table().query(
+            IndexName="UserIdIndex",
+            KeyConditionExpression=Key("user_id").eq(user_id),
+            Limit=1,
+        )
+        if resp.get("Items"):
+            return  # user already has definitions
+    except Exception:
+        logger.exception("Failed to check user definitions for %s", user_id)
+        return
+
+    now = _now_iso()
+    for defn in PREDEFINED_DEFINITIONS:
+        item = {
+            "definition_id": str(uuid.uuid4()),
+            "user_id": user_id,
+            "name": defn["name"],
+            "sub_types": defn["sub_types"],
+            "is_predefined": False,
+            "created_at": now,
+            "updated_at": now,
+        }
+        try:
+            _defs_table().put_item(Item=item)
+        except Exception:
+            logger.exception("Failed to copy predefined definition for %s: %s", user_id, defn["name"])
+    logger.info("Copied %d predefined definitions to user %s", len(PREDEFINED_DEFINITIONS), user_id)
+
+
+# ── Definitions CRUD ─────────────────────────────────────────────────────────
+
+def _item_to_def(item: dict, user_id: str) -> dict:
+    return {
+        "definition_id": item["definition_id"],
+        "name": item["name"],
+        "sub_types": item.get("sub_types", []),
+        "is_predefined": item.get("is_predefined", False),
+        "user_id": item["user_id"],
+        "can_delete": item["user_id"] == user_id,
+        "created_at": item.get("created_at", ""),
+        "updated_at": item.get("updated_at", ""),
+    }
+
+
 def list_definitions(user_id: str) -> list[dict]:
     seed_predefined_definitions()
-    items: list[dict] = []
-    for uid in {user_id, SYSTEM_USER}:
-        try:
-            resp = _defs_table().query(
-                IndexName="UserIdIndex",
-                KeyConditionExpression=Key("user_id").eq(uid),
-            )
-            items.extend(resp.get("Items", []))
-        except Exception:
-            logger.exception("Failed to query definitions for %s", uid)
+    _seed_user_definitions(user_id)
+    try:
+        resp = _defs_table().query(
+            IndexName="UserIdIndex",
+            KeyConditionExpression=Key("user_id").eq(user_id),
+        )
+        items = resp.get("Items", [])
+    except Exception:
+        logger.exception("Failed to query definitions for %s", user_id)
+        items = []
 
-    seen: set[str] = set()
-    result: list[dict] = []
-    for item in items:
-        did = item["definition_id"]
-        if did in seen:
-            continue
-        seen.add(did)
-        result.append(_item_to_def(item, user_id))
-    result.sort(key=lambda d: (d["is_predefined"], d["name"]))
+    result = [_item_to_def(item, user_id) for item in items]
+    result.sort(key=lambda d: d["name"])
     return result
 
 
@@ -167,9 +207,7 @@ def create_definition(user_id: str, name: str, sub_types: list[str]) -> dict:
 
 def update_definition(user_id: str, definition_id: str, name: str, sub_types: list[str]) -> Optional[dict]:
     existing = get_definition(user_id, definition_id)
-    if not existing:
-        return None
-    if existing["is_predefined"] or existing["user_id"] != user_id:
+    if not existing or existing["user_id"] != user_id:
         return None
     now = _now_iso()
     try:
@@ -188,9 +226,7 @@ def update_definition(user_id: str, definition_id: str, name: str, sub_types: li
 
 def delete_definition(user_id: str, definition_id: str) -> bool:
     existing = get_definition(user_id, definition_id)
-    if not existing:
-        return False
-    if existing["is_predefined"] or existing["user_id"] != user_id:
+    if not existing or existing["user_id"] != user_id:
         return False
     try:
         _defs_table().delete_item(Key={"definition_id": definition_id})
