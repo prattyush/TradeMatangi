@@ -364,7 +364,7 @@ function BuilderView({ definitions }: { definitions: FineDefinition[] }) {
                   <span style={{ fontSize: 10, color: '#8b949e', padding: '1px 5px', borderRadius: 8, background: '#21262d' }}>{step.type}</span>
                 )}
                 {step.direction && (
-                  <span style={{ fontSize: 10, color: step.direction === 'Buy' ? '#3fb950' : '#f85149' }}>{step.direction}</span>
+                  <span style={{ fontSize: 10, color: step.direction === 'Bull' ? '#3fb950' : '#f85149' }}>{step.direction}</span>
                 )}
                 {step.transition_bar_time && (
                   <span style={{ fontSize: 10, color: '#58a6ff' }}>
@@ -399,8 +399,8 @@ function BuilderView({ definitions }: { definitions: FineDefinition[] }) {
               )}
               <select value={addDirection} onChange={e => setAddDirection(e.target.value)} style={{ ...selectStyle, width: 80 }}>
                 <option value="">Dir</option>
-                <option value="Buy">Buy</option>
-                <option value="Sell">Sell</option>
+                <option value="Bull">Bull</option>
+                <option value="Bear">Bear</option>
               </select>
             </div>
             <button onClick={addStep} disabled={!addDefId} style={btnStyle()}>+ Add Step</button>
@@ -472,7 +472,7 @@ function SearchView({ definitions, onLoadInBuilder }: {
               {idx > 0 && <span style={{ color: '#484f58', marginRight: 2 }}>→</span>}
               {qs.name}
               {qs.type && <span style={{ color: '#8b949e' }}>({qs.type})</span>}
-              {qs.direction && <span style={{ color: qs.direction === 'Buy' ? '#3fb950' : '#f85149' }}>{qs.direction}</span>}
+              {qs.direction && <span style={{ color: qs.direction === 'Bull' ? '#3fb950' : '#f85149' }}>{qs.direction}</span>}
               <button onClick={() => removeQueryStep(idx)} style={{ background: 'none', border: 'none', color: '#f85149', cursor: 'pointer', fontSize: 11, padding: 0 }}>✕</button>
             </span>
           ))}
@@ -491,8 +491,8 @@ function SearchView({ definitions, onLoadInBuilder }: {
           )}
           <select value={addDirection} onChange={e => setAddDirection(e.target.value)} style={{ ...selectStyle, width: 80 }}>
             <option value="">Dir</option>
-            <option value="Buy">Buy</option>
-            <option value="Sell">Sell</option>
+            <option value="Bull">Bull</option>
+            <option value="Bear">Bear</option>
           </select>
           <button onClick={addQueryStep} disabled={!addDefId} style={btnStyle()}>Add</button>
           <button onClick={handleSearch} disabled={querySteps.length === 0 || searching} style={{ ...btnStyle(), background: '#238636', color: '#fff', border: 'none' }}>

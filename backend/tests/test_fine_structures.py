@@ -61,17 +61,17 @@ class TestMatchesSubsequence:
     def test_match_with_direction_filter(self):
         flow = [
             {"name": "Opening"},
-            {"name": "TR", "direction": "Buy"},
+            {"name": "TR", "direction": "Bull"},
             {"name": "Breakout"},
         ]
-        query = [{"name": "TR", "direction": "Buy"}]
+        query = [{"name": "TR", "direction": "Bull"}]
         assert _matches_subsequence(flow, query) == 1
 
     def test_no_match_wrong_direction(self):
         flow = [
-            {"name": "TR", "direction": "Sell"},
+            {"name": "TR", "direction": "Bear"},
         ]
-        query = [{"name": "TR", "direction": "Buy"}]
+        query = [{"name": "TR", "direction": "Bull"}]
         assert _matches_subsequence(flow, query) is None
 
     def test_empty_query(self):
