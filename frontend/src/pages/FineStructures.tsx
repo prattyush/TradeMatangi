@@ -914,39 +914,40 @@ function OptionsBuilderView({ definitions }: { definitions: FineDefinition[] }) 
         </button>
       </div>
 
-      {/* Charts: underlying top, CE/PE bottom */}
-      <div style={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden', gap: 2, padding: 4 }}>
-        {/* Underlying */}
-        <div style={{ flex: 1, minHeight: 0 }}>
-          {renderChart('underlying', underlyingCandles, underlyingSteps)}
+      {/* Main area: left charts, right flow steps */}
+      <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
+        {/* Left panel: charts */}
+        <div style={{ flex: 3, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 2, padding: 4 }}>
+          {/* Underlying */}
+          <div style={{ flex: 1, minHeight: 0 }}>
+            {renderChart('underlying', underlyingCandles, underlyingSteps)}
+          </div>
+          {/* CE + PE */}
+          <div style={{ flex: 1, minHeight: 0, display: 'flex', gap: 2 }}>
+            <div style={{ flex: 1, minWidth: 0 }}>{renderChart('CE', ceCandles, ceSteps, true)}</div>
+            <div style={{ flex: 1, minWidth: 0 }}>{renderChart('PE', peCandles, peSteps, true)}</div>
+          </div>
         </div>
-        {/* CE + PE */}
-        <div style={{ flex: 1, minHeight: 0, display: 'flex', gap: 2 }}>
-          <div style={{ flex: 1, minWidth: 0 }}>{renderChart('CE', ceCandles, ceSteps, true)}</div>
-          <div style={{ flex: 1, minWidth: 0 }}>{renderChart('PE', peCandles, peSteps, true)}</div>
-        </div>
-      </div>
 
-      {/* Flow steps panel */}
-      <div style={{ borderTop: '1px solid #21262d', display: 'flex', flexDirection: 'column', height: 200, flexShrink: 0 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '4px 12px', borderBottom: '1px solid #21262d', flexShrink: 0 }}>
-          {chartTabs.map(tab => (
-            <button
-              key={tab.key}
-              onClick={() => setActiveChart(tab.key)}
-              style={{
-                padding: '3px 10px', fontSize: 11, fontWeight: 600,
-                background: 'transparent', border: 'none',
-                borderBottom: activeChart === tab.key ? '2px solid #f0883e' : '2px solid transparent',
-                color: activeChart === tab.key ? '#f0883e' : '#8b949e',
-                cursor: 'pointer',
-              }}
-            >{tab.label}</button>
-          ))}
-          <div style={{ flex: 1 }} />
-          <span style={{ fontSize: 10, color: '#484f58' }}>{activeSteps.length} steps</span>
-        </div>
-        <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
+        {/* Right panel: flow steps */}
+        <div style={{ flex: 2, minWidth: 0, borderLeft: '1px solid #21262d', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '4px 12px', borderBottom: '1px solid #21262d', flexShrink: 0 }}>
+            {chartTabs.map(tab => (
+              <button
+                key={tab.key}
+                onClick={() => setActiveChart(tab.key)}
+                style={{
+                  padding: '3px 10px', fontSize: 11, fontWeight: 600,
+                  background: 'transparent', border: 'none',
+                  borderBottom: activeChart === tab.key ? '2px solid #f0883e' : '2px solid transparent',
+                  color: activeChart === tab.key ? '#f0883e' : '#8b949e',
+                  cursor: 'pointer',
+                }}
+              >{tab.label}</button>
+            ))}
+            <div style={{ flex: 1 }} />
+            <span style={{ fontSize: 10, color: '#484f58' }}>{activeSteps.length} steps</span>
+          </div>
           {/* Steps list */}
           <div style={{ flex: 1, overflow: 'auto', padding: 6 }}>
             {activeSteps.map((step, idx) => (
@@ -973,7 +974,7 @@ function OptionsBuilderView({ definitions }: { definitions: FineDefinition[] }) 
             {activeSteps.length === 0 && <div style={{ fontSize: 10, color: '#484f58', padding: 8, textAlign: 'center' }}>Add steps below</div>}
           </div>
           {/* Add step form */}
-          <div style={{ width: 250, borderLeft: '1px solid #21262d', padding: 6, display: 'flex', flexDirection: 'column', gap: 4, flexShrink: 0 }}>
+          <div style={{ padding: 6, borderTop: '1px solid #21262d', display: 'flex', flexDirection: 'column', gap: 4, flexShrink: 0 }}>
             <select value={addDefId} onChange={e => { setAddDefId(e.target.value); setAddType('') }} style={{ ...selectStyle, fontSize: 11, padding: '2px 4px' }}>
               <option value="">— Structure —</option>
               {definitions.map(d => <option key={d.definition_id} value={d.definition_id}>{d.name}</option>)}
