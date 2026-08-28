@@ -57,6 +57,8 @@ export interface FineFlow {
   symbol: string
   date: string
   steps: FlowStep[]
+  instrument_type: string
+  right?: string | null
   user_id: string
   can_delete: boolean
   created_at: string
@@ -144,6 +146,7 @@ export interface UserSettingsResponse {
   analysis_price_source?: string
   experimental_patterns_enabled?: boolean
   pattern_share_emails?: string
+  fine_structure_share_emails?: string
   entry_auto_sl_enabled?: boolean
   entry_auto_sl_delay_sec?: number
   max_price_mode?: string
@@ -1762,7 +1765,7 @@ const api = {
     return res.json()
   },
 
-  async fineStructureCreateFlow(data: { symbol: string; date: string; steps: FlowStep[] }): Promise<FineFlow> {
+  async fineStructureCreateFlow(data: { symbol: string; date: string; steps: FlowStep[]; instrument_type?: string; right?: string | null }): Promise<FineFlow> {
     const res = await fetch(`${BACKEND_URL}/api/fine-structures/flow`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ..._authHeaders() },
@@ -1792,7 +1795,7 @@ const api = {
 
   async fineStructureSearch(data: {
     query_steps: { name: string; type?: string; direction?: string }[]
-    symbol?: string; start_date?: string; end_date?: string
+    symbol?: string; start_date?: string; end_date?: string; instrument_type?: string
   }): Promise<FineSearchResult[]> {
     const res = await fetch(`${BACKEND_URL}/api/fine-structures/search`, {
       method: 'POST',
@@ -1813,6 +1816,22 @@ const api = {
       { headers: _authHeaders() },
     )
     if (!res.ok) throw new Error(`Get fine OHLC failed: ${res.status}`)
+    return res.json()
+  },
+
+  async fineStructureGetOptionsOHLC(symbol: string, date: string, strike: number, expiry: string | undefined, right: string, intervalMinutes = 3): Promise<{
+    symbol: string; date: string; interval_minutes: number
+    candles: OHLCCandle[]; flow: FineFlow | null
+  }> {
+    const params = new URLSearchParams({
+      strike: String(strike), right, interval_minutes: String(intervalMinutes),
+    })
+    if (expiry) params.set('expiry', expiry)
+    const res = await fetch(
+      `${BACKEND_URL}/api/fine-structures/ohlc-options/${encodeURIComponent(symbol)}/${encodeURIComponent(date)}?${params}`,
+      { headers: _authHeaders() },
+    )
+    if (!res.ok) throw new Error(`Get fine options OHLC failed: ${res.status}`)
     return res.json()
   },
 }

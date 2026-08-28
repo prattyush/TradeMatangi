@@ -55,6 +55,8 @@ class FlowItem(BaseModel):
     symbol: str
     date: str
     steps: list[FlowStepItem]
+    instrument_type: str = "equity"
+    right: Optional[str] = None
     user_id: str
     can_delete: bool
     created_at: str
@@ -65,6 +67,8 @@ class CreateFlowRequest(BaseModel):
     symbol: str
     date: str
     steps: list[FlowStepItem]
+    instrument_type: str = "equity"
+    right: Optional[str] = None
 
 
 class UpdateFlowRequest(BaseModel):
@@ -82,6 +86,7 @@ class SearchFlowsRequest(BaseModel):
     symbol: Optional[str] = None
     start_date: Optional[str] = None
     end_date: Optional[str] = None
+    instrument_type: Optional[str] = None
 
 
 class SearchResultItem(BaseModel):
@@ -162,6 +167,8 @@ async def list_flows(
     symbol: Optional[str] = None,
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
+    instrument_type: Optional[str] = None,
+    right: Optional[str] = None,
     user_id: str = Depends(get_request_user_id),
 ):
     try:
@@ -170,6 +177,8 @@ async def list_flows(
             symbol=symbol.upper() if symbol else None,
             start_date=start_date,
             end_date=end_date,
+            instrument_type=instrument_type,
+            right=right.upper() if right else None,
         )
         return {"flows": flows}
     except Exception as exc:
@@ -195,7 +204,7 @@ async def get_flow(flow_id: str, user_id: str = Depends(get_request_user_id)):
 async def create_flow(req: CreateFlowRequest, user_id: str = Depends(get_request_user_id)):
     try:
         steps = [s.model_dump() for s in req.steps]
-        f = svc.create_flow(user_id=user_id, symbol=req.symbol.upper(), date=req.date, steps=steps)
+        f = svc.create_flow(user_id=user_id, symbol=req.symbol.upper(), date=req.date, steps=steps, instrument_type=req.instrument_type, right=req.right)
         return f
     except Exception as exc:
         logger.error("create_flow error: %s", exc)
@@ -243,6 +252,7 @@ async def search_flows(req: SearchFlowsRequest, user_id: str = Depends(get_reque
             symbol=req.symbol.upper() if req.symbol else None,
             start_date=req.start_date,
             end_date=req.end_date,
+            instrument_type=req.instrument_type,
         )
         return {"results": results}
     except Exception as exc:
@@ -301,3 +311,65 @@ async def get_ohlc(
     except Exception as exc:
         logger.error("fine ohlc error %s %s: %s", symbol, date, exc)
         raise HTTPException(status_code=500, detail="Failed to load OHLC")
+
+
+@router.get("/ohlc-options/{symbol}/{date}")
+async def get_ohlc_options(
+    symbol: str,
+    date: str,
+    strike: int = Query(...),
+    expiry: str = Query(None),
+    right: str = Query(...),
+    interval_minutes: int = Query(3, ge=1, le=60),
+    user_id: str = Depends(get_request_user_id),
+):
+    """Return OHLC candles for an options contract for fine structure builder."""
+    if right.upper() not in ("CE", "PE"):
+        raise HTTPException(status_code=400, detail="right must be CE or PE")
+    try:
+        import pandas as pd
+        from app.utils import prior_trading_days
+        from app.services.options_service import fetch_options_historical, load_options_dataframe, get_expiry_date
+        from app.services.data_loader import resample_to_candles, candles_to_records
+
+        # Auto-calculate expiry if not provided
+        if not expiry:
+            expiry = get_expiry_date(symbol.upper(), date)
+            logger.info("Auto-calculated expiry for %s on %s: %s", symbol, date, expiry)
+
+        prior_dates = prior_trading_days(date, n=2)
+        all_dfs = []
+        for d in prior_dates:
+            try:
+                fetch_options_historical(symbol.upper(), d, strike, expiry, right.upper())
+                all_dfs.append(load_options_dataframe(symbol.upper(), d, strike, expiry, right.upper()))
+            except (FileNotFoundError, RuntimeError):
+                pass
+        fetch_options_historical(symbol.upper(), date, strike, expiry, right.upper())
+        all_dfs.append(load_options_dataframe(symbol.upper(), date, strike, expiry, right.upper()))
+        if not all_dfs:
+            raise FileNotFoundError
+        combined = pd.concat(all_dfs).sort_index()
+        candles = resample_to_candles(combined, interval_minutes)
+        records = candles_to_records(candles)
+
+        flow = None
+        try:
+            flows = svc.list_flows(user_id=user_id, symbol=symbol.upper(), start_date=date, end_date=date, right=right.upper())
+            if flows:
+                flow = flows[0]
+        except Exception:
+            pass
+
+        return FineOHLCResponse(
+            symbol=symbol.upper(),
+            date=date,
+            interval_minutes=interval_minutes,
+            candles=[OHLCItem(**r) for r in records],
+            flow=FlowItem(**flow) if flow else None,
+        )
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail=f"No options data for {symbol} {right} {strike} on {date}")
+    except Exception as exc:
+        logger.error("fine options ohlc error %s %s %s %s: %s", symbol, date, strike, right, exc)
+        raise HTTPException(status_code=500, detail="Failed to load options OHLC")

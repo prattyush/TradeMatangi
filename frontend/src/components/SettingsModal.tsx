@@ -324,6 +324,7 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
   // Experimental: live pattern detection
   const [experimentalPatternsEnabled, setExperimentalPatternsEnabled] = useState(false)
   const [patternShareEmails, setPatternShareEmails] = useState('')
+  const [fineStructureShareEmails, setFineStructureShareEmails] = useState('')
 
   // Strategies settings
   const [breakevenMode, setBreakevenMode] = useState(loadBreakevenMode)
@@ -418,6 +419,9 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
         }
         if (s.pattern_share_emails != null) {
           setPatternShareEmails(s.pattern_share_emails)
+        }
+        if (s.fine_structure_share_emails != null) {
+          setFineStructureShareEmails(s.fine_structure_share_emails)
         }
         // Sync entry auto-stoploss settings
         if (s.entry_auto_sl_enabled != null) {
@@ -1421,6 +1425,50 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
                       </button>
                       <span style={{ fontSize: 11, color: '#484f58' }}>
                         Shared users must already have a TradeMatangi account.
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Fine Structure Sharing */}
+                <div style={{ borderTop: '1px solid #21262d', paddingTop: 16 }}>
+                  <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 10, fontWeight: 600 }}>
+                    FINE STRUCTURE SHARING
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    <textarea
+                      value={fineStructureShareEmails}
+                      onChange={e => setFineStructureShareEmails(e.target.value)}
+                      placeholder="Comma-separated email addresses"
+                      rows={3}
+                      style={{
+                        width: '100%', resize: 'vertical', minHeight: 72,
+                        padding: '8px 10px', background: '#0d1117',
+                        border: '1px solid #30363d', borderRadius: 6,
+                        color: '#e6edf3', fontSize: 13, lineHeight: 1.4,
+                      }}
+                    />
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                      <button
+                        onClick={() => {
+                          api.updateUserSettings({ fine_structure_share_emails: fineStructureShareEmails }).then(() => {
+                            setStatus('Fine structure sharing saved')
+                            setTimeout(() => setStatus(null), 2000)
+                          }).catch((e: unknown) => {
+                            setStatus(e instanceof Error ? e.message : 'Failed to save fine structure sharing')
+                            setTimeout(() => setStatus(null), 2500)
+                          })
+                        }}
+                        style={{
+                          padding: '5px 14px', background: '#1f6feb',
+                          border: 'none', borderRadius: 6, color: '#fff',
+                          cursor: 'pointer', fontSize: 12,
+                        }}
+                      >
+                        Save
+                      </button>
+                      <span style={{ fontSize: 11, color: '#484f58' }}>
+                        Shared users can view and search your definitions and flows (read-only).
                       </span>
                     </div>
                   </div>
