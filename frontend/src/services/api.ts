@@ -1819,13 +1819,14 @@ const api = {
     return res.json()
   },
 
-  async fineStructureGetOptionsOHLC(symbol: string, date: string, strike: number, expiry: string, right: string, intervalMinutes = 3): Promise<{
+  async fineStructureGetOptionsOHLC(symbol: string, date: string, strike: number, expiry: string | undefined, right: string, intervalMinutes = 3): Promise<{
     symbol: string; date: string; interval_minutes: number
     candles: OHLCCandle[]; flow: FineFlow | null
   }> {
     const params = new URLSearchParams({
-      strike: String(strike), expiry, right, interval_minutes: String(intervalMinutes),
+      strike: String(strike), right, interval_minutes: String(intervalMinutes),
     })
+    if (expiry) params.set('expiry', expiry)
     const res = await fetch(
       `${BACKEND_URL}/api/fine-structures/ohlc-options/${encodeURIComponent(symbol)}/${encodeURIComponent(date)}?${params}`,
       { headers: _authHeaders() },

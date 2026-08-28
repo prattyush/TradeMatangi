@@ -318,7 +318,7 @@ async def get_ohlc_options(
     symbol: str,
     date: str,
     strike: int = Query(...),
-    expiry: str = Query(...),
+    expiry: str = Query(None),
     right: str = Query(...),
     interval_minutes: int = Query(3, ge=1, le=60),
     user_id: str = Depends(get_request_user_id),
@@ -329,8 +329,13 @@ async def get_ohlc_options(
     try:
         import pandas as pd
         from app.utils import prior_trading_days
-        from app.services.options_service import fetch_options_historical, load_options_dataframe
+        from app.services.options_service import fetch_options_historical, load_options_dataframe, get_expiry_date
         from app.services.data_loader import resample_to_candles, candles_to_records
+
+        # Auto-calculate expiry if not provided
+        if not expiry:
+            expiry = get_expiry_date(symbol.upper(), date)
+            logger.info("Auto-calculated expiry for %s on %s: %s", symbol, date, expiry)
 
         prior_dates = prior_trading_days(date, n=2)
         all_dfs = []

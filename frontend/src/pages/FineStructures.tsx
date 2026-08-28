@@ -740,7 +740,7 @@ function OptionsBuilderView({ definitions }: { definitions: FineDefinition[] }) 
         setPeStrike(peS)
 
         try {
-          const ceRes = await api.fineStructureGetOptionsOHLC(symbol, date, ceS, date, 'CE')
+          const ceRes = await api.fineStructureGetOptionsOHLC(symbol, date, ceS, undefined, 'CE')
           setCeCandles(ceRes.candles)
           if (ceRes.flow) {
             setCeFlowId(ceRes.flow.flow_id)
@@ -752,7 +752,7 @@ function OptionsBuilderView({ definitions }: { definitions: FineDefinition[] }) 
         } catch { setCeCandles([]); setCeSteps([]) }
 
         try {
-          const peRes = await api.fineStructureGetOptionsOHLC(symbol, date, peS, date, 'PE')
+          const peRes = await api.fineStructureGetOptionsOHLC(symbol, date, peS, undefined, 'PE')
           setPeCandles(peRes.candles)
           if (peRes.flow) {
             setPeFlowId(peRes.flow.flow_id)
@@ -845,6 +845,7 @@ function OptionsBuilderView({ definitions }: { definitions: FineDefinition[] }) 
           display: 'flex', flexDirection: 'column',
           border: isActive ? '2px solid #f0883e' : '1px solid #21262d',
           borderRadius: 4, overflow: 'hidden', cursor: 'pointer',
+          height: '100%',
         }}
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '2px 6px', background: '#161b22', borderBottom: '1px solid #21262d', flexShrink: 0 }}>
@@ -917,7 +918,7 @@ function OptionsBuilderView({ definitions }: { definitions: FineDefinition[] }) 
       {/* Main area: left charts, right flow steps */}
       <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
         {/* Left panel: charts */}
-        <div style={{ flex: 3, minWidth: 0, display: 'flex', flexDirection: 'column', padding: 4, height: '100%' }}>
+        <div style={{ flex: 3, minWidth: 0, display: 'flex', flexDirection: 'column', padding: 4 }}>
           {/* Underlying — 50% height */}
           <div style={{ flex: 1, minHeight: 0, marginBottom: 2 }}>
             {renderChart('underlying', underlyingCandles, underlyingSteps)}
@@ -974,23 +975,23 @@ function OptionsBuilderView({ definitions }: { definitions: FineDefinition[] }) 
             {activeSteps.length === 0 && <div style={{ fontSize: 10, color: '#484f58', padding: 8, textAlign: 'center' }}>Add steps below</div>}
           </div>
           {/* Add step form */}
-          <div style={{ padding: 6, borderTop: '1px solid #21262d', display: 'flex', flexDirection: 'column', gap: 4, flexShrink: 0 }}>
-            <select value={addDefId} onChange={e => { setAddDefId(e.target.value); setAddType('') }} style={{ ...selectStyle, fontSize: 11, padding: '2px 4px' }}>
+          <div style={{ padding: 6, borderTop: '1px solid #21262d', display: 'flex', gap: 4, flexShrink: 0, flexWrap: 'wrap' }}>
+            <select value={addDefId} onChange={e => { setAddDefId(e.target.value); setAddType('') }} style={{ ...selectStyle, fontSize: 11, padding: '2px 4px', flex: 1, minWidth: 0 }}>
               <option value="">— Structure —</option>
               {definitions.map(d => <option key={d.definition_id} value={d.definition_id}>{d.name}</option>)}
             </select>
             {addDef && addDef.sub_types.length > 0 && (
-              <select value={addType} onChange={e => setAddType(e.target.value)} style={{ ...selectStyle, fontSize: 11, padding: '2px 4px' }}>
+              <select value={addType} onChange={e => setAddType(e.target.value)} style={{ ...selectStyle, fontSize: 11, padding: '2px 4px', flex: 1, minWidth: 0 }}>
                 <option value="">— Type —</option>
                 {addDef.sub_types.map(st => <option key={st} value={st}>{st}</option>)}
               </select>
             )}
-            <select value={addDirection} onChange={e => setAddDirection(e.target.value)} style={{ ...selectStyle, fontSize: 11, padding: '2px 4px' }}>
+            <select value={addDirection} onChange={e => setAddDirection(e.target.value)} style={{ ...selectStyle, fontSize: 11, padding: '2px 4px', width: 60 }}>
               <option value="">Dir</option>
               <option value="Bull">Bull</option>
               <option value="Bear">Bear</option>
             </select>
-            <button onClick={addStep} disabled={!addDefId} style={{ ...btnStyle(), fontSize: 11 }}>+ Add Step</button>
+            <button onClick={addStep} disabled={!addDefId} style={{ ...btnStyle(), fontSize: 11 }}>+ Add</button>
           </div>
         </div>
       </div>
@@ -1065,7 +1066,7 @@ function ResultChart({ candles, steps }: { candles: OHLCCandle[]; steps: FlowSte
     return () => { ro.disconnect(); chart.remove(); chartRef.current = null }
   }, [candles, steps])
 
-  return <div ref={containerRef} style={{ flex: 1, minHeight: 0 }} />
+  return <div ref={containerRef} style={{ height: '100%', minHeight: 0 }} />
 }
 
 // ── Search Sub-tab ───────────────────────────────────────────────────────────
