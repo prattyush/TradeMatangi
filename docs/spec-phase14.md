@@ -43,6 +43,21 @@ Can you add a new strategy, which applies only for options, where user can use a
 In the Analysis section or stats section, number of trades is defined by total buy or sell orders, instead can you define a trade by the buy or sell action which resulted in a new position, and when that position is finally exited. User may be multiple multiple positions and exit them in any order. But one trade is defined lets say when in Call Option, a position is taken and then exited. That entire set of transactions of buying and sselling together constitute 1 trade. basically, I cam attacching patterns action and expected to one trade, so would like to see stats of trades count accordingly, similarly, the nummber of trades mentioned in Analysis section anywhere.
 
 
+
+### Fine Chart Structure Sharing
+Introduce similar feature to pattern sharing in which users can share fine structures as well, it would have similar settings UI as present with pattern sharing. 
+Once a email id added, the shared user can see all the definitions and can search them. The shared user can't edit the definitions shared by the sharing user or user who created them. Only the user who created them can edit it. you can include the new share box in the same settings tab of Analytics.
+
+
+
+### Fine Chart Structure Options
+Can you add support of options or equity, and in the builder users can choose NIFTY, or sensex or the currently supported stock symbols. If the user chooses, options, then shows the OTM option or max price as selected in the settings. If the max price is selected in the settings UI, user can select max price value otherwise OTM value is used. For calculating the max price or OTM it would use opening price or may be 12:00pm price, not sure make your choice.  If options is selected, then the chart window can have 2 options as UI:-
+a) The chart UI would be split into 2 vertical charts. one will plot CE and another PE. Now, for actually building the flow, user needs to also choosse which chart CE or PE and then add the flow steps and add the marker on the chart. If user clicks on PE when he is building CE flow steps, don't plot the marker on PE.
+b) Create 2 tabs, one for CE and PE, user switches between them and add the flow steps. In this case the flows steps added would reflect the choosen CE or PE tab or Call or Put tab and add flow steps. So, if user adds flow steps to Put and then switches to Call, the flow steps right hand panel should go blank or show the flow steps added to Call. Basically, UI supports 2 different flow steps one for Call and one for Put. And then save called, finds the tab choosen and saves it. 
+
+While searching, the user needs to choose equity or options, if options choosen system would search for all chart structuree flows added for that symbol and both Call And Put. 
+The search functionality remains just now it requires user to choose the symbol and also equity or options.
+
 ---
 
 ## Implementation Status
