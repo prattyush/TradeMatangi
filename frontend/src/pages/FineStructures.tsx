@@ -917,13 +917,13 @@ function OptionsBuilderView({ definitions }: { definitions: FineDefinition[] }) 
       {/* Main area: left charts, right flow steps */}
       <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
         {/* Left panel: charts */}
-        <div style={{ flex: 3, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 2, padding: 4 }}>
-          {/* Underlying */}
-          <div style={{ flex: 1, minHeight: 0 }}>
+        <div style={{ flex: 3, minWidth: 0, display: 'flex', flexDirection: 'column', padding: 4, height: '100%' }}>
+          {/* Underlying — 50% height */}
+          <div style={{ flex: 1, minHeight: 0, marginBottom: 2 }}>
             {renderChart('underlying', underlyingCandles, underlyingSteps)}
           </div>
-          {/* CE + PE */}
-          <div style={{ flex: 1, minHeight: 0, display: 'flex', gap: 2 }}>
+          {/* CE + PE — 50% height */}
+          <div style={{ flex: 1, minHeight: 0, display: 'flex', gap: 2, marginTop: 2 }}>
             <div style={{ flex: 1, minWidth: 0 }}>{renderChart('CE', ceCandles, ceSteps, true)}</div>
             <div style={{ flex: 1, minWidth: 0 }}>{renderChart('PE', peCandles, peSteps, true)}</div>
           </div>
