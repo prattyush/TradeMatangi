@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 
 DEFS_TABLE = "FineStructureDefinitions"
 FLOWS_TABLE = "FineStructureFlows"
+SHARE_TABLE = "FineStructureShares"
 
 SYSTEM_USER = "__SYSTEM__"
 _UUID_NS = uuid.UUID("a3f5c8e2-7b1d-4e9a-a6f0-123456789abc")
@@ -58,6 +59,111 @@ def _now_iso() -> str:
 
 def _deterministic_uuid(name: str) -> str:
     return str(uuid.uuid5(_UUID_NS, name))
+
+
+# ── Sharing ──────────────────────────────────────────────────────────────────
+
+def _share_table():
+    from app.services.db import get_dynamodb_resource
+    return get_dynamodb_resource().Table(SHARE_TABLE)
+
+
+def _ensure_share_table() -> None:
+    try:
+        from app.services.db import get_dynamodb_resource, get_dynamodb_client
+        existing = set(get_dynamodb_resource().meta.client.list_tables()["TableNames"])
+        if SHARE_TABLE in existing:
+            return
+        client = get_dynamodb_client()
+        client.create_table(
+            TableName=SHARE_TABLE,
+            KeySchema=[
+                {"AttributeName": "owner_user_id", "KeyType": "HASH"},
+                {"AttributeName": "shared_user_id", "KeyType": "RANGE"},
+            ],
+            AttributeDefinitions=[
+                {"AttributeName": "owner_user_id", "AttributeType": "S"},
+                {"AttributeName": "shared_user_id", "AttributeType": "S"},
+            ],
+            GlobalSecondaryIndexes=[
+                {
+                    "IndexName": "SharedUserIdIndex",
+                    "KeySchema": [{"AttributeName": "shared_user_id", "KeyType": "HASH"}],
+                    "Projection": {"ProjectionType": "ALL"},
+                    "ProvisionedThroughput": {"ReadCapacityUnits": 5, "WriteCapacityUnits": 5},
+                }
+            ],
+            BillingMode="PAY_PER_REQUEST",
+        )
+        logger.info("Created %s table", SHARE_TABLE)
+    except Exception:
+        logger.exception("Failed to ensure %s table", SHARE_TABLE)
+
+
+def _load_shared_owner_ids(user_id: str) -> list[str]:
+    _ensure_share_table()
+    try:
+        resp = _share_table().query(
+            IndexName="SharedUserIdIndex",
+            KeyConditionExpression=Key("shared_user_id").eq(user_id),
+        )
+        owners = {user_id}
+        for item in resp.get("Items", []):
+            owners.add(item.get("owner_user_id"))
+        return [o for o in owners if o]
+    except Exception:
+        logger.exception("Failed to load fine structure share owners for %s", user_id)
+        return [user_id]
+
+
+def _resolve_email_targets(emails_csv: str) -> list[dict]:
+    from app.services.user_service import get_user_by_email
+    emails = []
+    for raw in emails_csv.split(","):
+        email = raw.strip().lower()
+        if email and email not in emails:
+            emails.append(email)
+    missing: list[str] = []
+    targets: list[dict] = []
+    for email in emails:
+        user = get_user_by_email(email)
+        if not user:
+            missing.append(email)
+            continue
+        targets.append({"user_id": user["user_id"], "email": user.get("email", email)})
+    if missing:
+        raise ValueError(f"Unknown share email(s): {', '.join(missing)}")
+    return targets
+
+
+def sync_fine_structure_shares(owner_user_id: str, share_emails_csv: str) -> list[dict]:
+    _ensure_share_table()
+    from app.services.user_service import get_user_info
+    owner = get_user_info(owner_user_id) or {"email": ""}
+    owner_email = owner.get("email", "")
+    targets = _resolve_email_targets(share_emails_csv)
+    now = _now_iso()
+    try:
+        existing = _share_table().query(
+            KeyConditionExpression=Key("owner_user_id").eq(owner_user_id)
+        ).get("Items", [])
+        for item in existing:
+            _share_table().delete_item(
+                Key={"owner_user_id": item["owner_user_id"], "shared_user_id": item["shared_user_id"]}
+            )
+        for target in targets:
+            _share_table().put_item(Item={
+                "owner_user_id": owner_user_id,
+                "shared_user_id": target["user_id"],
+                "owner_email": owner_email,
+                "shared_email": target["email"],
+                "created_at": now,
+                "updated_at": now,
+            })
+    except Exception:
+        logger.exception("Failed to sync fine structure shares for owner %s", owner_user_id)
+        raise
+    return targets
 
 
 # ── Seeding ──────────────────────────────────────────────────────────────────
@@ -163,18 +269,27 @@ def _item_to_def(item: dict, user_id: str) -> dict:
 def list_definitions(user_id: str) -> list[dict]:
     seed_predefined_definitions()
     _seed_user_definitions(user_id)
-    try:
-        resp = _defs_table().query(
-            IndexName="UserIdIndex",
-            KeyConditionExpression=Key("user_id").eq(user_id),
-        )
-        items = resp.get("Items", [])
-    except Exception:
-        logger.exception("Failed to query definitions for %s", user_id)
-        items = []
+    owner_ids = _load_shared_owner_ids(user_id)
+    items: list[dict] = []
+    for uid in owner_ids:
+        try:
+            resp = _defs_table().query(
+                IndexName="UserIdIndex",
+                KeyConditionExpression=Key("user_id").eq(uid),
+            )
+            items.extend(resp.get("Items", []))
+        except Exception:
+            logger.exception("Failed to query definitions for %s", uid)
 
-    result = [_item_to_def(item, user_id) for item in items]
-    result.sort(key=lambda d: d["name"])
+    seen: set[str] = set()
+    result: list[dict] = []
+    for item in items:
+        did = item["definition_id"]
+        if did in seen:
+            continue
+        seen.add(did)
+        result.append(_item_to_def(item, user_id))
+    result.sort(key=lambda d: (d["user_id"] != user_id, d["name"]))
     return result
 
 
@@ -244,6 +359,8 @@ def _item_to_flow(item: dict, user_id: str) -> dict:
         "symbol": item["symbol"],
         "date": item["date"],
         "steps": item.get("steps", []),
+        "instrument_type": item.get("instrument_type", "equity"),
+        "right": item.get("right"),
         "user_id": item["user_id"],
         "can_delete": item["user_id"] == user_id,
         "created_at": item.get("created_at", ""),
@@ -256,16 +373,20 @@ def list_flows(
     symbol: Optional[str] = None,
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
+    instrument_type: Optional[str] = None,
+    right: Optional[str] = None,
 ) -> list[dict]:
-    try:
-        resp = _flows_table().query(
-            IndexName="UserIdIndex",
-            KeyConditionExpression=Key("user_id").eq(user_id),
-        )
-        items = resp.get("Items", [])
-    except Exception:
-        logger.exception("Failed to list flows for %s", user_id)
-        return []
+    owner_ids = _load_shared_owner_ids(user_id)
+    items: list[dict] = []
+    for uid in owner_ids:
+        try:
+            resp = _flows_table().query(
+                IndexName="UserIdIndex",
+                KeyConditionExpression=Key("user_id").eq(uid),
+            )
+            items.extend(resp.get("Items", []))
+        except Exception:
+            logger.exception("Failed to list flows for %s", uid)
 
     result: list[dict] = []
     for item in items:
@@ -275,6 +396,10 @@ def list_flows(
         if start_date and d < start_date:
             continue
         if end_date and d > end_date:
+            continue
+        if instrument_type and item.get("instrument_type", "equity") != instrument_type:
+            continue
+        if right is not None and item.get("right") != right:
             continue
         result.append(_item_to_flow(item, user_id))
     result.sort(key=lambda f: f["date"], reverse=True)
@@ -293,7 +418,7 @@ def get_flow(user_id: str, flow_id: str) -> Optional[dict]:
         return None
 
 
-def create_flow(user_id: str, symbol: str, date: str, steps: list[dict]) -> dict:
+def create_flow(user_id: str, symbol: str, date: str, steps: list[dict], instrument_type: str = "equity", right: Optional[str] = None) -> dict:
     now = _now_iso()
     item = {
         "flow_id": str(uuid.uuid4()),
@@ -301,6 +426,8 @@ def create_flow(user_id: str, symbol: str, date: str, steps: list[dict]) -> dict
         "symbol": symbol,
         "date": date,
         "steps": steps,
+        "instrument_type": instrument_type,
+        "right": right,
         "created_at": now,
         "updated_at": now,
     }
@@ -394,8 +521,9 @@ def search_flows(
     symbol: Optional[str] = None,
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
+    instrument_type: Optional[str] = None,
 ) -> list[dict]:
-    all_flows = list_flows(user_id, symbol, start_date, end_date)
+    all_flows = list_flows(user_id, symbol, start_date, end_date, instrument_type=instrument_type)
     results: list[dict] = []
     for flow in all_flows:
         idx = _matches_subsequence(flow["steps"], query_steps)
