@@ -695,6 +695,15 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
     return res
   }, [sim.sessionId, sim.bulkUpdateOrders])
 
+  const handleBulkConvert = useCallback(async (newOrderType: 'TARGET' | 'LIMIT' | 'STOPLOSS', right: string | null) => {
+    if (!sim.sessionId) return { converted: 0, orders: [] }
+    const res = await api.bulkConvertOrders(sim.sessionId, newOrderType, right)
+    if (res.orders.length > 0) {
+      sim.bulkUpdateOrders(res.orders)
+    }
+    return res
+  }, [sim.sessionId, sim.bulkUpdateOrders])
+
   // Net session P&L = gross dayPnl minus per-trade commissions (computed by backend)
   const netDayPnl = sim.dayPnl - sim.trades.reduce((s, t) => s + (t.commission ?? 0), 0)
   // Total day P&L includes realized P&L from previous sessions for same user+symbol+date+type
@@ -1551,6 +1560,7 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
               onCancelStrategy={handleCancelStrategy}
               onUpdateStrategyPrice={handleUpdateStrategyPrice}
               onBulkUpdateSL={handleBulkUpdateSL}
+              onBulkConvert={handleBulkConvert}
               onGuardRailBlocked={(type, reason) => setGuardrailPopup({ type, reason })}
               onSnapshotEvent={captureSnapshot}
             />
