@@ -680,6 +680,323 @@ function BuilderView({ definitions }: { definitions: FineDefinition[] }) {
   )
 }
 
+// ── Options Builder Sub-tab ──────────────────────────────────────────────────
+
+function OptionsBuilderView({ definitions }: { definitions: FineDefinition[] }) {
+  const [symbol, setSymbol] = useState('NIFTY')
+  const [date, setDate] = useState('')
+  const [otmOffset, setOtmOffset] = useState(2)
+  const [loading, setLoading] = useState(false)
+  const [saveMsg, setSaveMsg] = useState<string | null>(null)
+
+  const [underlyingCandles, setUnderlyingCandles] = useState<OHLCCandle[]>([])
+  const [ceCandles, setCeCandles] = useState<OHLCCandle[]>([])
+  const [peCandles, setPeCandles] = useState<OHLCCandle[]>([])
+  const [ceStrike, setCeStrike] = useState<number | null>(null)
+  const [peStrike, setPeStrike] = useState<number | null>(null)
+
+  const [underlyingSteps, setUnderlyingSteps] = useState<(FlowStep & { color: string })[]>([])
+  const [ceSteps, setCeSteps] = useState<(FlowStep & { color: string })[]>([])
+  const [peSteps, setPeSteps] = useState<(FlowStep & { color: string })[]>([])
+  const [underlyingFlowId, setUnderlyingFlowId] = useState<string | null>(null)
+  const [ceFlowId, setCeFlowId] = useState<string | null>(null)
+  const [peFlowId, setPeFlowId] = useState<string | null>(null)
+
+  const [activeChart, setActiveChart] = useState<'underlying' | 'CE' | 'PE'>('underlying')
+  const [maximizedChart, setMaximizedChart] = useState<'underlying' | 'CE' | 'PE' | null>(null)
+  const [activeStepIdx, setActiveStepIdx] = useState<number | null>(null)
+
+  const [addDefId, setAddDefId] = useState('')
+  const [addType, setAddType] = useState('')
+  const [addDirection, setAddDirection] = useState('')
+  const addDef = definitions.find(d => d.definition_id === addDefId)
+
+  const activeSteps = activeChart === 'underlying' ? underlyingSteps : activeChart === 'CE' ? ceSteps : peSteps
+  const setActiveSteps = activeChart === 'underlying' ? setUnderlyingSteps : activeChart === 'CE' ? setCeSteps : setPeSteps
+  const activeFlowId = activeChart === 'underlying' ? underlyingFlowId : activeChart === 'CE' ? ceFlowId : peFlowId
+
+  const loadChart = useCallback(async () => {
+    if (!symbol || !date) return
+    setLoading(true)
+    try {
+      const undRes = await api.fineStructureGetOHLC(symbol, date)
+      setUnderlyingCandles(undRes.candles)
+      if (undRes.flow && undRes.flow.instrument_type === 'options') {
+        setUnderlyingFlowId(undRes.flow.flow_id)
+        setUnderlyingSteps(undRes.flow.steps.map((s, i) => ({ ...s, color: STEP_COLORS[i % STEP_COLORS.length] })))
+      } else {
+        setUnderlyingFlowId(null)
+        setUnderlyingSteps([])
+      }
+
+      // Calculate ATM strike from first candle
+      if (undRes.candles.length > 0) {
+        const firstPrice = undRes.candles[0].open
+        const interval = symbol === 'SENSEX' ? 100 : 50
+        const atm = Math.round(firstPrice / interval) * interval
+        const ceS = atm + otmOffset * interval
+        const peS = atm - otmOffset * interval
+        setCeStrike(ceS)
+        setPeStrike(peS)
+
+        try {
+          const ceRes = await api.fineStructureGetOptionsOHLC(symbol, date, ceS, date, 'CE')
+          setCeCandles(ceRes.candles)
+          if (ceRes.flow) {
+            setCeFlowId(ceRes.flow.flow_id)
+            setCeSteps(ceRes.flow.steps.map((s, i) => ({ ...s, color: STEP_COLORS[i % STEP_COLORS.length] })))
+          } else {
+            setCeFlowId(null)
+            setCeSteps([])
+          }
+        } catch { setCeCandles([]); setCeSteps([]) }
+
+        try {
+          const peRes = await api.fineStructureGetOptionsOHLC(symbol, date, peS, date, 'PE')
+          setPeCandles(peRes.candles)
+          if (peRes.flow) {
+            setPeFlowId(peRes.flow.flow_id)
+            setPeSteps(peRes.flow.steps.map((s, i) => ({ ...s, color: STEP_COLORS[i % STEP_COLORS.length] })))
+          } else {
+            setPeFlowId(null)
+            setPeSteps([])
+          }
+        } catch { setPeCandles([]); setPeSteps([]) }
+      }
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Failed to load OHLC')
+    } finally {
+      setLoading(false)
+    }
+  }, [symbol, date, otmOffset])
+
+  useEffect(() => { setActiveStepIdx(null) }, [activeChart])
+
+  const addStep = () => {
+    if (!addDefId || !addDef) return
+    const step: FlowStep & { color: string } = {
+      definition_id: addDefId,
+      name: addDef.name,
+      type: addType || undefined,
+      direction: addDirection || undefined,
+      color: STEP_COLORS[activeSteps.length % STEP_COLORS.length],
+    }
+    setActiveSteps(prev => [...prev, step])
+    setAddDefId('')
+    setAddType('')
+    setAddDirection('')
+  }
+
+  const removeStep = (idx: number) => {
+    setActiveSteps(prev => prev.filter((_, i) => i !== idx))
+    if (activeStepIdx === idx) setActiveStepIdx(null)
+    else if (activeStepIdx !== null && activeStepIdx > idx) setActiveStepIdx(activeStepIdx - 1)
+  }
+
+  const moveStep = (idx: number, dir: -1 | 1) => {
+    const target = idx + dir
+    if (target < 0 || target >= activeSteps.length) return
+    setActiveSteps(prev => {
+      const next = [...prev]
+      ;[next[idx], next[target]] = [next[target], next[idx]]
+      return next
+    })
+    if (activeStepIdx === idx) setActiveStepIdx(target)
+    else if (activeStepIdx === target) setActiveStepIdx(idx)
+  }
+
+  const handleSaveActive = async () => {
+    if (!symbol || !date || activeSteps.length === 0) return
+    setSaveMsg(null)
+    try {
+      const right = activeChart === 'CE' ? 'CE' : activeChart === 'PE' ? 'PE' : null
+      const flowId = activeFlowId
+      const flowSteps: FlowStep[] = activeSteps.map(({ color, ...s }) => s)
+      if (flowId) {
+        await api.fineStructureUpdateFlow(flowId, flowSteps)
+      } else {
+        const f = await api.fineStructureCreateFlow({ symbol, date, steps: flowSteps, instrument_type: 'options', right })
+        if (right === 'CE') setCeFlowId(f.flow_id)
+        else if (right === 'PE') setPeFlowId(f.flow_id)
+        else setUnderlyingFlowId(f.flow_id)
+      }
+      setSaveMsg(`${activeChart} saved!`)
+      setTimeout(() => setSaveMsg(null), 2000)
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Save failed')
+    }
+  }
+
+  const chartTabs: { key: 'underlying' | 'CE' | 'PE'; label: string }[] = [
+    { key: 'underlying', label: 'Underlying' },
+  ]
+  if (ceCandles.length > 0) chartTabs.push({ key: 'CE', label: `CE ${ceStrike}` })
+  if (peCandles.length > 0) chartTabs.push({ key: 'PE', label: `PE ${peStrike}` })
+
+  const renderChart = (key: 'underlying' | 'CE' | 'PE', candles: OHLCCandle[], steps: FlowStep[], compact = false) => {
+    const isMax = maximizedChart === key
+    const isActive = activeChart === key
+    return (
+      <div
+        onClick={() => setActiveChart(key)}
+        style={{
+          flex: isMax ? 1 : undefined,
+          minHeight: compact && !isMax ? 150 : undefined,
+          display: 'flex', flexDirection: 'column',
+          border: isActive ? '2px solid #f0883e' : '1px solid #21262d',
+          borderRadius: 4, overflow: 'hidden', cursor: 'pointer',
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '2px 6px', background: '#161b22', borderBottom: '1px solid #21262d', flexShrink: 0 }}>
+          <span style={{ fontSize: 10, fontWeight: 600, color: isActive ? '#f0883e' : '#8b949e' }}>{key}</span>
+          <div style={{ flex: 1 }} />
+          <button
+            onClick={e => { e.stopPropagation(); setMaximizedChart(isMax ? null : key) }}
+            style={{ background: 'none', border: 'none', color: '#8b949e', cursor: 'pointer', fontSize: 11, padding: '0 4px' }}
+          >{isMax ? '⤡' : '⤢'}</button>
+        </div>
+        <div style={{ flex: 1, minHeight: 0 }}>
+          <ResultChart candles={candles} steps={steps} />
+        </div>
+      </div>
+    )
+  }
+
+  if (maximizedChart) {
+    const candles = maximizedChart === 'underlying' ? underlyingCandles : maximizedChart === 'CE' ? ceCandles : peCandles
+    const steps = maximizedChart === 'underlying' ? underlyingSteps : maximizedChart === 'CE' ? ceSteps : peSteps
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden' }}>
+        <div style={{ display: 'flex', gap: 8, padding: '8px 16px', alignItems: 'center', flexShrink: 0, borderBottom: '1px solid #21262d' }}>
+          <span style={{ fontSize: 12, fontWeight: 700, color: '#e6edf3' }}>{symbol} — {maximizedChart}</span>
+          <button onClick={() => setMaximizedChart(null)} style={btnStyle()}>⤡ Restore</button>
+          <div style={{ flex: 1 }} />
+          {saveMsg && <span style={{ fontSize: 12, color: '#3fb950' }}>{saveMsg}</span>}
+          <button onClick={handleSaveActive} disabled={activeSteps.length === 0} style={{ ...btnStyle(), background: '#238636', color: '#fff', border: 'none' }}>
+            Save {activeChart}
+          </button>
+        </div>
+        <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
+          <div style={{ flex: 3, minWidth: 0 }}>{renderChart(maximizedChart, candles, steps)}</div>
+          <div style={{ flex: 2, minWidth: 0, borderLeft: '1px solid #21262d', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+            <div style={{ padding: '6px 10px', borderBottom: '1px solid #21262d', flexShrink: 0 }}>
+              <span style={{ fontSize: 12, fontWeight: 700, color: '#e6edf3' }}>Flow Steps ({maximizedChart})</span>
+            </div>
+            <div style={{ flex: 1, overflow: 'auto', padding: 6 }}>
+              {steps.map((step, idx) => (
+                <div key={idx} style={{ background: '#0d1117', border: '1px solid #21262d', borderRadius: 4, padding: '4px 8px', marginBottom: 4, display: 'flex', alignItems: 'center', gap: 4, fontSize: 10 }}>
+                  <span style={{ color: '#484f58', width: 14 }}>{idx + 1}</span>
+                  <span style={{ color: '#e6edf3', fontWeight: 600 }}>{step.name}</span>
+                  {step.type && <span style={{ color: '#8b949e' }}>({step.type})</span>}
+                </div>
+              ))}
+              {steps.length === 0 && <div style={{ fontSize: 10, color: '#484f58', padding: 8, textAlign: 'center' }}>No steps</div>}
+            </div>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden' }}>
+      {/* Top bar */}
+      <div style={{ display: 'flex', gap: 8, padding: '8px 16px', alignItems: 'center', flexShrink: 0, borderBottom: '1px solid #21262d', flexWrap: 'wrap' }}>
+        <input value={symbol} onChange={e => setSymbol(e.target.value.toUpperCase())} placeholder="Symbol" style={{ ...inputStyle, width: 100 }} />
+        <input value={date} onChange={e => setDate(e.target.value)} type="date" style={{ ...inputStyle, width: 140 }} />
+        <span style={{ fontSize: 11, color: '#8b949e' }}>OTM:</span>
+        <input value={otmOffset} onChange={e => setOtmOffset(parseInt(e.target.value) || 2)} type="number" min={1} style={{ ...inputStyle, width: 50 }} />
+        <button onClick={loadChart} disabled={loading} style={btnStyle()}>{loading ? 'Loading...' : 'Load'}</button>
+        <div style={{ flex: 1 }} />
+        {saveMsg && <span style={{ fontSize: 12, color: '#3fb950' }}>{saveMsg}</span>}
+        <button onClick={handleSaveActive} disabled={activeSteps.length === 0} style={{ ...btnStyle(), background: '#238636', color: '#fff', border: 'none' }}>
+          Save {activeChart}
+        </button>
+      </div>
+
+      {/* Charts: underlying top, CE/PE bottom */}
+      <div style={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden', gap: 2, padding: 4 }}>
+        {/* Underlying */}
+        <div style={{ flex: 1, minHeight: 0 }}>
+          {renderChart('underlying', underlyingCandles, underlyingSteps)}
+        </div>
+        {/* CE + PE */}
+        <div style={{ flex: 1, minHeight: 0, display: 'flex', gap: 2 }}>
+          <div style={{ flex: 1, minWidth: 0 }}>{renderChart('CE', ceCandles, ceSteps, true)}</div>
+          <div style={{ flex: 1, minWidth: 0 }}>{renderChart('PE', peCandles, peSteps, true)}</div>
+        </div>
+      </div>
+
+      {/* Flow steps panel */}
+      <div style={{ borderTop: '1px solid #21262d', display: 'flex', flexDirection: 'column', height: 200, flexShrink: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '4px 12px', borderBottom: '1px solid #21262d', flexShrink: 0 }}>
+          {chartTabs.map(tab => (
+            <button
+              key={tab.key}
+              onClick={() => setActiveChart(tab.key)}
+              style={{
+                padding: '3px 10px', fontSize: 11, fontWeight: 600,
+                background: 'transparent', border: 'none',
+                borderBottom: activeChart === tab.key ? '2px solid #f0883e' : '2px solid transparent',
+                color: activeChart === tab.key ? '#f0883e' : '#8b949e',
+                cursor: 'pointer',
+              }}
+            >{tab.label}</button>
+          ))}
+          <div style={{ flex: 1 }} />
+          <span style={{ fontSize: 10, color: '#484f58' }}>{activeSteps.length} steps</span>
+        </div>
+        <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
+          {/* Steps list */}
+          <div style={{ flex: 1, overflow: 'auto', padding: 6 }}>
+            {activeSteps.map((step, idx) => (
+              <div
+                key={idx}
+                onClick={() => setActiveStepIdx(activeStepIdx === idx ? null : idx)}
+                style={{
+                  background: activeStepIdx === idx ? '#2a1a0a' : '#0d1117',
+                  border: `1px solid ${activeStepIdx === idx ? '#f0883e' : '#21262d'}`,
+                  borderRadius: 4, padding: '4px 8px', marginBottom: 3,
+                  cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4, fontSize: 10,
+                }}
+              >
+                <span style={{ color: '#484f58', width: 14 }}>{idx + 1}</span>
+                <span style={{ color: step.color, fontWeight: 600 }}>{step.name}</span>
+                {step.type && <span style={{ color: '#8b949e' }}>({step.type})</span>}
+                {step.direction && <span style={{ color: step.direction === 'Bull' ? '#3fb950' : '#f85149' }}>{step.direction}</span>}
+                <div style={{ flex: 1 }} />
+                <button onClick={e => { e.stopPropagation(); moveStep(idx, -1) }} style={{ background: 'none', border: 'none', color: '#8b949e', cursor: 'pointer', fontSize: 10 }}>↑</button>
+                <button onClick={e => { e.stopPropagation(); moveStep(idx, 1) }} style={{ background: 'none', border: 'none', color: '#8b949e', cursor: 'pointer', fontSize: 10 }}>↓</button>
+                <button onClick={e => { e.stopPropagation(); removeStep(idx) }} style={{ background: 'none', border: 'none', color: '#f85149', cursor: 'pointer', fontSize: 10 }}>✕</button>
+              </div>
+            ))}
+            {activeSteps.length === 0 && <div style={{ fontSize: 10, color: '#484f58', padding: 8, textAlign: 'center' }}>Add steps below</div>}
+          </div>
+          {/* Add step form */}
+          <div style={{ width: 250, borderLeft: '1px solid #21262d', padding: 6, display: 'flex', flexDirection: 'column', gap: 4, flexShrink: 0 }}>
+            <select value={addDefId} onChange={e => { setAddDefId(e.target.value); setAddType('') }} style={{ ...selectStyle, fontSize: 11, padding: '2px 4px' }}>
+              <option value="">— Structure —</option>
+              {definitions.map(d => <option key={d.definition_id} value={d.definition_id}>{d.name}</option>)}
+            </select>
+            {addDef && addDef.sub_types.length > 0 && (
+              <select value={addType} onChange={e => setAddType(e.target.value)} style={{ ...selectStyle, fontSize: 11, padding: '2px 4px' }}>
+                <option value="">— Type —</option>
+                {addDef.sub_types.map(st => <option key={st} value={st}>{st}</option>)}
+              </select>
+            )}
+            <select value={addDirection} onChange={e => setAddDirection(e.target.value)} style={{ ...selectStyle, fontSize: 11, padding: '2px 4px' }}>
+              <option value="">Dir</option>
+              <option value="Bull">Bull</option>
+              <option value="Bear">Bear</option>
+            </select>
+            <button onClick={addStep} disabled={!addDefId} style={{ ...btnStyle(), fontSize: 11 }}>+ Add Step</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ── Search Result Chart ──────────────────────────────────────────────────────
 
 function ResultChart({ candles, steps }: { candles: OHLCCandle[]; steps: FlowStep[] }) {
@@ -978,6 +1295,7 @@ function SearchView({ definitions }: {
 
 export default function FineStructures() {
   const [activeSubTab, setActiveSubTab] = useState<'definitions' | 'builder' | 'search'>('builder')
+  const [instrumentType, setInstrumentType] = useState<'equity' | 'options'>('equity')
   const [definitions, setDefinitions] = useState<FineDefinition[]>([])
 
   const loadDefinitions = useCallback(async () => {
@@ -992,7 +1310,7 @@ export default function FineStructures() {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden' }}>
       {/* Sub-tab bar */}
-      <div style={{ display: 'flex', gap: 0, padding: '0 16px', borderBottom: '1px solid #21262d', flexShrink: 0 }}>
+      <div style={{ display: 'flex', gap: 0, padding: '0 16px', borderBottom: '1px solid #21262d', flexShrink: 0, alignItems: 'center' }}>
         {(['definitions', 'builder', 'search'] as const).map(tab => (
           <button
             key={tab}
@@ -1008,10 +1326,31 @@ export default function FineStructures() {
             {tab === 'definitions' ? 'Definitions' : tab === 'builder' ? 'Builder' : 'Search'}
           </button>
         ))}
+        {activeSubTab === 'builder' && (
+          <div style={{ marginLeft: 16, display: 'flex', gap: 0 }}>
+            {(['equity', 'options'] as const).map(t => (
+              <button
+                key={t}
+                onClick={() => setInstrumentType(t)}
+                style={{
+                  padding: '4px 10px', fontSize: 11, fontWeight: 600,
+                  background: instrumentType === t ? '#2a1a0a' : 'transparent',
+                  border: `1px solid ${instrumentType === t ? '#f0883e' : '#30363d'}`,
+                  borderRadius: 3,
+                  color: instrumentType === t ? '#f0883e' : '#8b949e',
+                  cursor: 'pointer',
+                }}
+              >
+                {t === 'equity' ? 'Equity' : 'Options'}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
       {activeSubTab === 'definitions' && <DefinitionsView definitions={definitions} onRefresh={loadDefinitions} />}
-      {activeSubTab === 'builder' && <BuilderView definitions={definitions} />}
+      {activeSubTab === 'builder' && instrumentType === 'equity' && <BuilderView definitions={definitions} />}
+      {activeSubTab === 'builder' && instrumentType === 'options' && <OptionsBuilderView definitions={definitions} />}
       {activeSubTab === 'search' && <SearchView definitions={definitions} />}
     </div>
   )
