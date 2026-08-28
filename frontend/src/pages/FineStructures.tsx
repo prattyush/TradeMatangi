@@ -1,11 +1,19 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { createChart, IChartApi, ISeriesApi, Time, LineStyle } from 'lightweight-charts'
 import api, { FineDefinition, FlowStep, FineSearchResult, OHLCCandle } from '../services/api'
+import { loadMaxPriceMode, loadMaxPriceThresholdCE, loadMaxPriceThresholdPE } from '../components/SettingsModal'
 
 const STEP_COLORS = [
   '#58a6ff', '#3fb950', '#d29922', '#f0883e', '#bc8cff',
   '#f85149', '#79c0ff', '#a371f7', '#f778ba', '#7ee787',
 ]
+
+const THRESHOLD_VALUES_NIFTY = [25, 50, 75, 100, 125, 150]
+const THRESHOLD_VALUES_SENSEX = [50, 100, 150, 200, 250]
+
+function thresholdValuesFor(symbol: string) {
+  return symbol === 'BSESEN' ? THRESHOLD_VALUES_SENSEX : THRESHOLD_VALUES_NIFTY
+}
 
 function nextEMA(prev: number, close: number, k: number): number {
   return close * k + prev * (1 - k)
@@ -711,6 +719,12 @@ function OptionsBuilderView({ definitions }: { definitions: FineDefinition[] }) 
   const [addDirection, setAddDirection] = useState('')
   const addDef = definitions.find(d => d.definition_id === addDefId)
 
+  const strikeMode = loadMaxPriceMode()
+  const isIndex = symbol === 'NIFTY' || symbol === 'BSESEN'
+  const useMaxPrice = isIndex && strikeMode === 'threshold'
+  const [maxPriceCE, setMaxPriceCE] = useState(loadMaxPriceThresholdCE())
+  const [maxPricePE, setMaxPricePE] = useState(loadMaxPriceThresholdPE())
+
   const activeSteps = activeChart === 'underlying' ? underlyingSteps : activeChart === 'CE' ? ceSteps : peSteps
   const setActiveSteps = activeChart === 'underlying' ? setUnderlyingSteps : activeChart === 'CE' ? setCeSteps : setPeSteps
   const activeFlowId = activeChart === 'underlying' ? underlyingFlowId : activeChart === 'CE' ? ceFlowId : peFlowId
@@ -734,8 +748,25 @@ function OptionsBuilderView({ definitions }: { definitions: FineDefinition[] }) 
         const firstPrice = undRes.candles[0].open
         const interval = symbol === 'SENSEX' ? 100 : 50
         const atm = Math.round(firstPrice / interval) * interval
-        const ceS = atm + otmOffset * interval
-        const peS = atm - otmOffset * interval
+
+        let ceS: number, peS: number
+
+        if (useMaxPrice) {
+          // Max price mode: find strikes by premium threshold
+          const expiryRes = await api.getExpiry(symbol, date)
+          const refTime = '09:30:00'
+          const [ceRes, peRes] = await Promise.all([
+            api.findStrikeByPrice(symbol, date, expiryRes.expiry, 'CE', maxPriceCE, refTime),
+            api.findStrikeByPrice(symbol, date, expiryRes.expiry, 'PE', maxPricePE, refTime),
+          ])
+          ceS = ceRes.strike
+          peS = peRes.strike
+        } else {
+          // OTM offset mode
+          ceS = atm + otmOffset * interval
+          peS = atm - otmOffset * interval
+        }
+
         setCeStrike(ceS)
         setPeStrike(peS)
 
@@ -768,7 +799,7 @@ function OptionsBuilderView({ definitions }: { definitions: FineDefinition[] }) 
     } finally {
       setLoading(false)
     }
-  }, [symbol, date, otmOffset])
+  }, [symbol, date, otmOffset, useMaxPrice, maxPriceCE, maxPricePE])
 
   useEffect(() => { setActiveStepIdx(null) }, [activeChart])
 
@@ -905,8 +936,23 @@ function OptionsBuilderView({ definitions }: { definitions: FineDefinition[] }) 
       <div style={{ display: 'flex', gap: 8, padding: '8px 16px', alignItems: 'center', flexShrink: 0, borderBottom: '1px solid #21262d', flexWrap: 'wrap' }}>
         <input value={symbol} onChange={e => setSymbol(e.target.value.toUpperCase())} placeholder="Symbol" style={{ ...inputStyle, width: 100 }} />
         <input value={date} onChange={e => setDate(e.target.value)} type="date" style={{ ...inputStyle, width: 140 }} />
-        <span style={{ fontSize: 11, color: '#8b949e' }}>OTM:</span>
-        <input value={otmOffset} onChange={e => setOtmOffset(parseInt(e.target.value) || 2)} type="number" min={1} style={{ ...inputStyle, width: 50 }} />
+        {useMaxPrice ? (
+          <>
+            <span style={{ fontSize: 11, color: '#8b949e' }}>CE:</span>
+            <select value={maxPriceCE} onChange={e => setMaxPriceCE(Number(e.target.value))} style={{ ...selectStyle, width: 70, fontSize: 11 }}>
+              {thresholdValuesFor(symbol).map(v => <option key={v} value={v}>₹{v}</option>)}
+            </select>
+            <span style={{ fontSize: 11, color: '#8b949e' }}>PE:</span>
+            <select value={maxPricePE} onChange={e => setMaxPricePE(Number(e.target.value))} style={{ ...selectStyle, width: 70, fontSize: 11 }}>
+              {thresholdValuesFor(symbol).map(v => <option key={v} value={v}>₹{v}</option>)}
+            </select>
+          </>
+        ) : (
+          <>
+            <span style={{ fontSize: 11, color: '#8b949e' }}>OTM:</span>
+            <input value={otmOffset} onChange={e => setOtmOffset(parseInt(e.target.value) || 2)} type="number" min={1} style={{ ...inputStyle, width: 50 }} />
+          </>
+        )}
         <button onClick={loadChart} disabled={loading} style={btnStyle()}>{loading ? 'Loading...' : 'Load'}</button>
         <div style={{ flex: 1 }} />
         {saveMsg && <span style={{ fontSize: 12, color: '#3fb950' }}>{saveMsg}</span>}
