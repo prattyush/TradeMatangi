@@ -28,6 +28,7 @@ DEFAULT_SETTINGS: dict = {
     "analysis_price_source": "options",
     "experimental_patterns_enabled": False,
     "pattern_share_emails": "",
+    "fine_structure_share_emails": "",
     "entry_auto_sl_enabled": False,
     "entry_auto_sl_delay_sec": 3,
     "max_price_mode": "otm",
@@ -120,8 +121,11 @@ def update_settings(user_id: str, settings: dict) -> dict:
     current = get_settings(user_id)
     current.update({k: v for k, v in settings.items() if v is not None})
     shares_updated = "pattern_share_emails" in settings
+    fine_shares_updated = "fine_structure_share_emails" in settings
     if shares_updated:
         current["pattern_share_emails"] = _normalize_share_emails_value(current.get("pattern_share_emails", ""))
+    if fine_shares_updated:
+        current["fine_structure_share_emails"] = _normalize_share_emails_value(current.get("fine_structure_share_emails", ""))
     try:
         if shares_updated:
             from app.services import pattern_logger_service
@@ -131,6 +135,12 @@ def update_settings(user_id: str, settings: dict) -> dict:
                 chart_structure_service.sync_structure_shares(user_id, current.get("pattern_share_emails", ""))
             except Exception:
                 logger.exception("Failed to sync chart structure shares, continuing")
+        if fine_shares_updated:
+            try:
+                from app.services import fine_structure_service
+                fine_structure_service.sync_fine_structure_shares(user_id, current.get("fine_structure_share_emails", ""))
+            except Exception:
+                logger.exception("Failed to sync fine structure shares, continuing")
         from app.services.db import get_dynamodb_resource
         table = get_dynamodb_resource().Table("UserSettings")
         dynamo_item = {"user_id": user_id}

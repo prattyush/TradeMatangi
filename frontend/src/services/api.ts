@@ -144,6 +144,7 @@ export interface UserSettingsResponse {
   analysis_price_source?: string
   experimental_patterns_enabled?: boolean
   pattern_share_emails?: string
+  fine_structure_share_emails?: string
   entry_auto_sl_enabled?: boolean
   entry_auto_sl_delay_sec?: number
   max_price_mode?: string
