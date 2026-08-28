@@ -359,6 +359,8 @@ def _item_to_flow(item: dict, user_id: str) -> dict:
         "symbol": item["symbol"],
         "date": item["date"],
         "steps": item.get("steps", []),
+        "instrument_type": item.get("instrument_type", "equity"),
+        "right": item.get("right"),
         "user_id": item["user_id"],
         "can_delete": item["user_id"] == user_id,
         "created_at": item.get("created_at", ""),
@@ -371,6 +373,8 @@ def list_flows(
     symbol: Optional[str] = None,
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
+    instrument_type: Optional[str] = None,
+    right: Optional[str] = None,
 ) -> list[dict]:
     owner_ids = _load_shared_owner_ids(user_id)
     items: list[dict] = []
@@ -393,6 +397,10 @@ def list_flows(
             continue
         if end_date and d > end_date:
             continue
+        if instrument_type and item.get("instrument_type", "equity") != instrument_type:
+            continue
+        if right is not None and item.get("right") != right:
+            continue
         result.append(_item_to_flow(item, user_id))
     result.sort(key=lambda f: f["date"], reverse=True)
     return result
@@ -410,7 +418,7 @@ def get_flow(user_id: str, flow_id: str) -> Optional[dict]:
         return None
 
 
-def create_flow(user_id: str, symbol: str, date: str, steps: list[dict]) -> dict:
+def create_flow(user_id: str, symbol: str, date: str, steps: list[dict], instrument_type: str = "equity", right: Optional[str] = None) -> dict:
     now = _now_iso()
     item = {
         "flow_id": str(uuid.uuid4()),
@@ -418,6 +426,8 @@ def create_flow(user_id: str, symbol: str, date: str, steps: list[dict]) -> dict
         "symbol": symbol,
         "date": date,
         "steps": steps,
+        "instrument_type": instrument_type,
+        "right": right,
         "created_at": now,
         "updated_at": now,
     }
@@ -511,8 +521,9 @@ def search_flows(
     symbol: Optional[str] = None,
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
+    instrument_type: Optional[str] = None,
 ) -> list[dict]:
-    all_flows = list_flows(user_id, symbol, start_date, end_date)
+    all_flows = list_flows(user_id, symbol, start_date, end_date, instrument_type=instrument_type)
     results: list[dict] = []
     for flow in all_flows:
         idx = _matches_subsequence(flow["steps"], query_steps)
