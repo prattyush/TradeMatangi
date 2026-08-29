@@ -891,6 +891,14 @@ function OptionsBuilderView({ definitions }: { definitions: FineDefinition[] }) 
           height: '100%',
         }}
       >
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '2px 6px', background: '#161b22', borderBottom: '1px solid #21262d', flexShrink: 0 }}>
+          <span style={{ fontSize: 10, fontWeight: 600, color: isActive ? '#f0883e' : '#8b949e' }}>{key}</span>
+          <div style={{ flex: 1 }} />
+          <button
+            onClick={e => { e.stopPropagation(); setMaximizedChart(isMax ? null : key) }}
+            style={{ background: 'none', border: 'none', color: '#8b949e', cursor: 'pointer', fontSize: 11, padding: '0 4px' }}
+          >{isMax ? '⤡' : '⤢'}</button>
+        </div>
         <div style={{ flex: 1, minHeight: 0 }}>
           <OptionsChart
             candles={candles}
@@ -918,8 +926,8 @@ function OptionsBuilderView({ definitions }: { definitions: FineDefinition[] }) 
           </button>
         </div>
         <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
-          <div style={{ flex: 3, minWidth: 0 }}>{renderChart(maximizedChart, candles, steps)}</div>
-          <div style={{ flex: 2, minWidth: 0, borderLeft: '1px solid #21262d', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+          <div style={{ flex: 7, minWidth: 0 }}>{renderChart(maximizedChart, candles, steps)}</div>
+          <div style={{ flex: 3, minWidth: 0, borderLeft: '1px solid #21262d', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
             <div style={{ padding: '6px 10px', borderBottom: '1px solid #21262d', flexShrink: 0 }}>
               <span style={{ fontSize: 12, fontWeight: 700, color: '#e6edf3' }}>Flow Steps ({maximizedChart})</span>
             </div>
@@ -973,7 +981,7 @@ function OptionsBuilderView({ definitions }: { definitions: FineDefinition[] }) 
       {/* Main area: left charts, right flow steps */}
       <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
         {/* Left panel: charts */}
-        <div style={{ flex: 3, minWidth: 0, display: 'flex', flexDirection: 'column', padding: 4 }}>
+        <div style={{ flex: 7, minWidth: 0, display: 'flex', flexDirection: 'column', padding: 4 }}>
           {/* Underlying — 50% height */}
           <div style={{ flex: 1, minHeight: 0, marginBottom: 2 }}>
             {renderChart('underlying', underlyingCandles, underlyingSteps)}
@@ -986,7 +994,7 @@ function OptionsBuilderView({ definitions }: { definitions: FineDefinition[] }) 
         </div>
 
         {/* Right panel: flow steps */}
-        <div style={{ flex: 2, minWidth: 0, borderLeft: '1px solid #21262d', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+        <div style={{ flex: 3, minWidth: 0, borderLeft: '1px solid #21262d', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '4px 12px', borderBottom: '1px solid #21262d', flexShrink: 0 }}>
             {chartTabs.map(tab => (
               <button
