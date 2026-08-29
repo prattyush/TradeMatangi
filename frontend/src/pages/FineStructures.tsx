@@ -205,6 +205,7 @@ function DefinitionsView({ definitions, onRefresh }: {
 function BuilderView({ definitions }: { definitions: FineDefinition[] }) {
   const [symbol, setSymbol] = useState('NIFTY')
   const [date, setDate] = useState('')
+  const [symbols, setSymbols] = useState<{ symbol: string; display_name: string }[]>([])
   const [candles, setCandles] = useState<OHLCCandle[]>([])
   const [steps, setSteps] = useState<(FlowStep & { color: string })[]>([])
   const [flowId, setFlowId] = useState<string | null>(null)
@@ -219,6 +220,10 @@ function BuilderView({ definitions }: { definitions: FineDefinition[] }) {
   const [addDirection, setAddDirection] = useState('')
 
   const addDef = definitions.find(d => d.definition_id === addDefId)
+
+  useEffect(() => {
+    api.getSymbols().then(list => setSymbols(list)).catch(() => {})
+  }, [])
 
   const chartContainerRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<IChartApi | null>(null)
@@ -446,19 +451,33 @@ function BuilderView({ definitions }: { definitions: FineDefinition[] }) {
   }, [])
 
   const clearLastDrawing = useCallback(() => {
+    // First try to clear a drawing
     const drawing = drawingsRef.current.pop()
-    if (!drawing) return
-    switch (drawing.type) {
-      case 'hline':
-        try { seriesRef.current?.removePriceLine(drawing.ref) } catch { /* disposed */ }
-        break
-      default:
-        for (const s of drawing.refs) try { chartRef.current?.removeSeries(s) } catch { /* disposed */ }
+    if (drawing) {
+      switch (drawing.type) {
+        case 'hline':
+          try { seriesRef.current?.removePriceLine(drawing.ref) } catch { /* disposed */ }
+          break
+        default:
+          for (const s of drawing.refs) try { chartRef.current?.removeSeries(s) } catch { /* disposed */ }
+      }
+      setDrawingCount(c => c - 1)
+      setDrawMode('none')
+      drawPtsRef.current = []
+      setDrawStep(0)
+      return
     }
-    setDrawingCount(c => c - 1)
-    setDrawMode('none')
-    drawPtsRef.current = []
-    setDrawStep(0)
+    // If no drawings, clear the last marker (transition_bar_time from the last step that has one)
+    setSteps(prev => {
+      const next = [...prev]
+      for (let i = next.length - 1; i >= 0; i--) {
+        if (next[i].transition_bar_time) {
+          next[i] = { ...next[i], transition_bar_time: undefined }
+          break
+        }
+      }
+      return next
+    })
   }, [])
 
   // EMA visibility toggle
@@ -550,7 +569,12 @@ function BuilderView({ definitions }: { definitions: FineDefinition[] }) {
     <div style={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden' }}>
       {/* Top bar */}
       <div style={{ display: 'flex', gap: 8, padding: '8px 16px', alignItems: 'center', flexShrink: 0, borderBottom: '1px solid #21262d' }}>
-        <input value={symbol} onChange={e => setSymbol(e.target.value.toUpperCase())} placeholder="Symbol" style={{ ...inputStyle, width: 100 }} />
+        <select value={symbol} onChange={e => setSymbol(e.target.value)} style={{ ...selectStyle, width: 120 }}>
+          {symbols.length === 0
+            ? <option value={symbol}>{symbol}</option>
+            : symbols.map(s => <option key={s.symbol} value={s.symbol}>{s.display_name}</option>)
+          }
+        </select>
         <input value={date} onChange={e => setDate(e.target.value)} type="date" style={{ ...inputStyle, width: 140 }} />
         <button onClick={loadChart} disabled={loading} style={btnStyle()}>{loading ? 'Loading...' : 'Load'}</button>
         <div style={{ flex: 1 }} />
@@ -592,7 +616,7 @@ function BuilderView({ definitions }: { definitions: FineDefinition[] }) {
                 </div>
               )}
             </div>
-            {drawingCount > 0 && (
+            {(drawingCount > 0 || steps.some(s => s.transition_bar_time)) && (
               <button onClick={clearLastDrawing} style={btnStyle(false)}>Clear</button>
             )}
             {drawMode !== 'none' && (
@@ -693,6 +717,7 @@ function BuilderView({ definitions }: { definitions: FineDefinition[] }) {
 function OptionsBuilderView({ definitions }: { definitions: FineDefinition[] }) {
   const [symbol, setSymbol] = useState('NIFTY')
   const [date, setDate] = useState('')
+  const [symbols, setSymbols] = useState<{ symbol: string; display_name: string }[]>([])
   const [otmOffset, setOtmOffset] = useState(2)
   const [loading, setLoading] = useState(false)
   const [saveMsg, setSaveMsg] = useState<string | null>(null)
@@ -728,6 +753,10 @@ function OptionsBuilderView({ definitions }: { definitions: FineDefinition[] }) 
   const activeSteps = activeChart === 'underlying' ? underlyingSteps : activeChart === 'CE' ? ceSteps : peSteps
   const setActiveSteps = activeChart === 'underlying' ? setUnderlyingSteps : activeChart === 'CE' ? setCeSteps : setPeSteps
   const activeFlowId = activeChart === 'underlying' ? underlyingFlowId : activeChart === 'CE' ? ceFlowId : peFlowId
+
+  useEffect(() => {
+    api.getSymbols().then(list => setSymbols(list)).catch(() => {})
+  }, [])
 
   const loadChart = useCallback(async () => {
     if (!symbol || !date) return
@@ -866,6 +895,20 @@ function OptionsBuilderView({ definitions }: { definitions: FineDefinition[] }) 
 
   const handleStepTransitionChange = useCallback((chartKey: 'underlying' | 'CE' | 'PE', stepIdx: number, time: number) => {
     const setter = chartKey === 'underlying' ? setUnderlyingSteps : chartKey === 'CE' ? setCeSteps : setPeSteps
+    // stepIdx === -1 means clear the last marker
+    if (stepIdx === -1) {
+      setter(prev => {
+        const next = [...prev]
+        for (let i = next.length - 1; i >= 0; i--) {
+          if (next[i].transition_bar_time) {
+            next[i] = { ...next[i], transition_bar_time: undefined }
+            break
+          }
+        }
+        return next
+      })
+      return
+    }
     setter(prev => {
       const next = [...prev]
       if (stepIdx < next.length) {
@@ -928,18 +971,65 @@ function OptionsBuilderView({ definitions }: { definitions: FineDefinition[] }) 
         <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
           <div style={{ flex: 7, minWidth: 0 }}>{renderChart(maximizedChart, candles, steps)}</div>
           <div style={{ flex: 3, minWidth: 0, borderLeft: '1px solid #21262d', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-            <div style={{ padding: '6px 10px', borderBottom: '1px solid #21262d', flexShrink: 0 }}>
-              <span style={{ fontSize: 12, fontWeight: 700, color: '#e6edf3' }}>Flow Steps ({maximizedChart})</span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '4px 12px', borderBottom: '1px solid #21262d', flexShrink: 0 }}>
+              {chartTabs.map(tab => (
+                <button
+                  key={tab.key}
+                  onClick={() => setActiveChart(tab.key)}
+                  style={{
+                    padding: '3px 10px', fontSize: 11, fontWeight: 600,
+                    background: 'transparent', border: 'none',
+                    borderBottom: activeChart === tab.key ? '2px solid #f0883e' : '2px solid transparent',
+                    color: activeChart === tab.key ? '#f0883e' : '#8b949e',
+                    cursor: 'pointer',
+                  }}
+                >{tab.label}</button>
+              ))}
+              <div style={{ flex: 1 }} />
+              <span style={{ fontSize: 10, color: '#484f58' }}>{activeSteps.length} steps</span>
             </div>
             <div style={{ flex: 1, overflow: 'auto', padding: 6 }}>
-              {steps.map((step, idx) => (
-                <div key={idx} style={{ background: '#0d1117', border: '1px solid #21262d', borderRadius: 4, padding: '4px 8px', marginBottom: 4, display: 'flex', alignItems: 'center', gap: 4, fontSize: 10 }}>
+              {activeSteps.map((step, idx) => (
+                <div
+                  key={idx}
+                  onClick={() => setActiveStepIdx(activeStepIdx === idx ? null : idx)}
+                  style={{
+                    background: activeStepIdx === idx ? '#2a1a0a' : '#0d1117',
+                    border: `1px solid ${activeStepIdx === idx ? '#f0883e' : '#21262d'}`,
+                    borderRadius: 4, padding: '4px 8px', marginBottom: 3,
+                    cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4, fontSize: 10,
+                  }}
+                >
                   <span style={{ color: '#484f58', width: 14 }}>{idx + 1}</span>
-                  <span style={{ color: '#e6edf3', fontWeight: 600 }}>{step.name}</span>
+                  <span style={{ color: step.color, fontWeight: 600 }}>{step.name}</span>
                   {step.type && <span style={{ color: '#8b949e' }}>({step.type})</span>}
+                  {step.direction && <span style={{ color: step.direction === 'Bull' ? '#3fb950' : '#f85149' }}>{step.direction}</span>}
+                  <div style={{ flex: 1 }} />
+                  <button onClick={e => { e.stopPropagation(); moveStep(idx, -1) }} style={{ background: 'none', border: 'none', color: '#8b949e', cursor: 'pointer', fontSize: 10 }}>↑</button>
+                  <button onClick={e => { e.stopPropagation(); moveStep(idx, 1) }} style={{ background: 'none', border: 'none', color: '#8b949e', cursor: 'pointer', fontSize: 10 }}>↓</button>
+                  <button onClick={e => { e.stopPropagation(); removeStep(idx) }} style={{ background: 'none', border: 'none', color: '#f85149', cursor: 'pointer', fontSize: 10 }}>✕</button>
                 </div>
               ))}
-              {steps.length === 0 && <div style={{ fontSize: 10, color: '#484f58', padding: 8, textAlign: 'center' }}>No steps</div>}
+              {activeSteps.length === 0 && <div style={{ fontSize: 10, color: '#484f58', padding: 8, textAlign: 'center' }}>Add steps below</div>}
+            </div>
+            {/* Add step form */}
+            <div style={{ padding: 6, paddingBottom: 12, borderTop: '1px solid #21262d', display: 'flex', gap: 4, flexShrink: 0, flexWrap: 'wrap' }}>
+              <select value={addDefId} onChange={e => { setAddDefId(e.target.value); setAddType('') }} style={{ ...selectStyle, fontSize: 11, padding: '2px 4px', flex: 1, minWidth: 0 }}>
+                <option value="">— Structure —</option>
+                {definitions.map(d => <option key={d.definition_id} value={d.definition_id}>{d.name}</option>)}
+              </select>
+              {addDef && addDef.sub_types.length > 0 && (
+                <select value={addType} onChange={e => setAddType(e.target.value)} style={{ ...selectStyle, fontSize: 11, padding: '2px 4px', flex: 1, minWidth: 0 }}>
+                  <option value="">— Type —</option>
+                  {addDef.sub_types.map(st => <option key={st} value={st}>{st}</option>)}
+                </select>
+              )}
+              <select value={addDirection} onChange={e => setAddDirection(e.target.value)} style={{ ...selectStyle, fontSize: 11, padding: '2px 4px', width: 60 }}>
+                <option value="">Dir</option>
+                <option value="Bull">Bull</option>
+                <option value="Bear">Bear</option>
+              </select>
+              <button onClick={addStep} disabled={!addDefId} style={{ ...btnStyle(), fontSize: 11 }}>+ Add</button>
             </div>
           </div>
         </div>
@@ -951,7 +1041,12 @@ function OptionsBuilderView({ definitions }: { definitions: FineDefinition[] }) 
     <div style={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden' }}>
       {/* Top bar */}
       <div style={{ display: 'flex', gap: 8, padding: '8px 16px', alignItems: 'center', flexShrink: 0, borderBottom: '1px solid #21262d', flexWrap: 'wrap' }}>
-        <input value={symbol} onChange={e => setSymbol(e.target.value.toUpperCase())} placeholder="Symbol" style={{ ...inputStyle, width: 100 }} />
+        <select value={symbol} onChange={e => setSymbol(e.target.value)} style={{ ...selectStyle, width: 120 }}>
+          {symbols.length === 0
+            ? <option value={symbol}>{symbol}</option>
+            : symbols.map(s => <option key={s.symbol} value={s.symbol}>{s.display_name}</option>)
+          }
+        </select>
         <input value={date} onChange={e => setDate(e.target.value)} type="date" style={{ ...inputStyle, width: 140 }} />
         {useMaxPrice ? (
           <>
@@ -1038,7 +1133,7 @@ function OptionsBuilderView({ definitions }: { definitions: FineDefinition[] }) 
             {activeSteps.length === 0 && <div style={{ fontSize: 10, color: '#484f58', padding: 8, textAlign: 'center' }}>Add steps below</div>}
           </div>
           {/* Add step form */}
-          <div style={{ padding: 6, borderTop: '1px solid #21262d', display: 'flex', gap: 4, flexShrink: 0, flexWrap: 'wrap' }}>
+          <div style={{ padding: 6, paddingBottom: 12, borderTop: '1px solid #21262d', display: 'flex', gap: 4, flexShrink: 0, flexWrap: 'wrap' }}>
             <select value={addDefId} onChange={e => { setAddDefId(e.target.value); setAddType('') }} style={{ ...selectStyle, fontSize: 11, padding: '2px 4px', flex: 1, minWidth: 0 }}>
               <option value="">— Structure —</option>
               {definitions.map(d => <option key={d.definition_id} value={d.definition_id}>{d.name}</option>)}
@@ -1298,19 +1393,24 @@ function OptionsChart({
   }, [])
 
   const clearLastDrawing = useCallback(() => {
+    // First try to clear a drawing
     const drawing = drawingsRef.current.pop()
-    if (!drawing) return
-    switch (drawing.type) {
-      case 'hline':
-        try { seriesRef.current?.removePriceLine(drawing.ref) } catch { /* disposed */ }
-        break
-      default:
-        for (const s of drawing.refs) try { chartRef.current?.removeSeries(s) } catch { /* disposed */ }
+    if (drawing) {
+      switch (drawing.type) {
+        case 'hline':
+          try { seriesRef.current?.removePriceLine(drawing.ref) } catch { /* disposed */ }
+          break
+        default:
+          for (const s of drawing.refs) try { chartRef.current?.removeSeries(s) } catch { /* disposed */ }
+      }
+      setDrawingCount(c => c - 1)
+      setDrawMode('none')
+      drawPtsRef.current = []
+      setDrawStep(0)
+      return
     }
-    setDrawingCount(c => c - 1)
-    setDrawMode('none')
-    drawPtsRef.current = []
-    setDrawStep(0)
+    // If no drawings, clear the last marker (transition_bar_time from the last step that has one)
+    onStepTransitionChangeRef.current(-1, 0) // signal to clear last marker
   }, [])
 
   return (
@@ -1343,7 +1443,7 @@ function OptionsChart({
             </div>
           )}
         </div>
-        {drawingCount > 0 && (
+        {(drawingCount > 0 || steps.some(s => s.transition_bar_time)) && (
           <button onClick={clearLastDrawing} style={{ ...btnStyle(false), fontSize: 10, padding: '2px 6px' }}>Clear</button>
         )}
         {drawMode !== 'none' && (
