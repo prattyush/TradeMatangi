@@ -161,6 +161,8 @@ class SimulationSession:
     guardrail_maxsize_mode: str = "percentage"
     guardrail_maxsize_pct: float = 20.0
     guardrail_maxsize_value: float = 0.0
+    # Auto-close at end of day (15:09)
+    _auto_closed: bool = field(default=False, init=False, repr=False)
 
 
 # Registry of active sessions
@@ -405,6 +407,89 @@ def rebuild_session_from_db(
     return session
 
 
+# ── Auto-close positions at end of day ────────────────────────────────────────
+
+_AUTO_CLOSE_TIME = "15:09:00"
+
+
+def _auto_close_positions_if_eod(
+    session: SimulationSession,
+    tick: dict,
+    tick_right: Optional[str],
+) -> list[dict]:
+    """Check if it's past 15:09 and auto-close any open positions at market price."""
+    from app.services.order_service import place_order, get_open_orders, OrderType
+    from app.services.trading import get_position, TradeSide
+
+    tick_time = tick["time"]
+    tick_price = tick["close"]
+
+    # Parse the tick time to check if it's past auto-close time
+    from datetime import datetime as _dt
+    import pandas as _pd
+    auto_close_ts = int(_pd.Timestamp(f"{session.date} {_AUTO_CLOSE_TIME}").timestamp())
+    if tick_time < auto_close_ts:
+        return []
+
+    # Already auto-closed this session?
+    if getattr(session, '_auto_closed', False):
+        return []
+    session._auto_closed = True
+
+    fill_events = []
+
+    # Determine which positions to check
+    if session.instrument_type == "options" and session.right is None:
+        # Dual-stream options: check CE and PE independently
+        rights_to_check = ["CE", "PE"]
+    else:
+        rights_to_check = [tick_right]
+
+    for right in rights_to_check:
+        position = get_position(session.session_id, session.symbol, right)
+        if position.side == "FLAT" or position.quantity == 0:
+            continue
+
+        # Cancel any existing open orders for this right first
+        open_orders = get_open_orders(session.session_id)
+        for order in open_orders:
+            if right is None or order.right == right:
+                from app.services.order_service import cancel_order
+                cancel_order(session.session_id, order.order_id)
+
+        # Create a market order to close the position
+        if position.side == "LONG":
+            # Sell to close long
+            close_side = TradeSide.SELL
+        else:
+            # Buy to cover short
+            close_side = TradeSide.BUY
+
+        try:
+            close_order = place_order(
+                session_id=session.session_id,
+                symbol=session.symbol,
+                side=close_side,
+                order_type=OrderType.LIMIT,
+                quantity=position.quantity,
+                created_at=tick_time,
+                trading_date=session.date,
+                limit_price=tick_price,  # Will fill immediately at market
+                is_stoploss=True,  # Don't reserve wallet for closing orders
+                right=right,
+                strike=session.strike,
+                user_id=session.user_id,
+            )
+            logger.info(
+                "Auto-close: placed %s order for %s %s qty=%d at %.2f (session=%s)",
+                close_side.value, session.symbol, right, position.quantity, tick_price, session.session_id,
+            )
+        except Exception as exc:
+            logger.error("Auto-close order failed for session %s right=%s: %s", session.session_id, right, exc)
+
+    return fill_events
+
+
 def _emit_tick_and_check_orders(
     session: SimulationSession,
     tick: dict,
@@ -413,6 +498,10 @@ def _emit_tick_and_check_orders(
     """Put one tick on the queue and return fill events for any triggered orders."""
     from app.services.order_service import check_orders
     from app.services.trading import record_trade
+
+    # Auto-close positions at end of day (15:09) for sim/paper/stepwise
+    if session.session_type != "real":
+        _auto_close_positions_if_eod(session, tick, tick_right)
 
     session.queue.put_nowait(json.dumps(tick))
 
