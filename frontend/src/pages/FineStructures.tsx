@@ -1600,8 +1600,24 @@ function SearchView({ definitions }: {
     if (!r) return
     setLoadingChart(true)
     try {
-      const res = await api.fineStructureGetOHLC(r.flow.symbol, r.flow.date)
-      setResultCandles(res.candles)
+      // For options flows, fetch the options chart instead of underlying
+      if (r.flow.instrument_type === 'options' && r.flow.right) {
+        // First get underlying to calculate ATM strike
+        const undRes = await api.fineStructureGetOHLC(r.flow.symbol, r.flow.date)
+        if (undRes.candles.length > 0) {
+          const firstPrice = undRes.candles[0].open
+          const interval = r.flow.symbol === 'BSESEN' ? 100 : 50
+          const atm = Math.round(firstPrice / interval) * interval
+          // Use ATM strike for the options chart
+          const optRes = await api.fineStructureGetOptionsOHLC(r.flow.symbol, r.flow.date, atm, undefined, r.flow.right)
+          setResultCandles(optRes.candles)
+        } else {
+          setResultCandles([])
+        }
+      } else {
+        const res = await api.fineStructureGetOHLC(r.flow.symbol, r.flow.date)
+        setResultCandles(res.candles)
+      }
     } catch {
       setResultCandles([])
     } finally {
