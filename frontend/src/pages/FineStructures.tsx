@@ -996,21 +996,21 @@ function OptionsBuilderView({ definitions }: { definitions: FineDefinition[] }) 
                   style={{
                     background: activeStepIdx === idx ? '#2a1a0a' : '#0d1117',
                     border: `1px solid ${activeStepIdx === idx ? '#f0883e' : '#21262d'}`,
-                    borderRadius: 4, padding: '4px 8px', marginBottom: 3,
-                    cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4, fontSize: 10,
+                    borderRadius: 4, padding: '6px 10px', marginBottom: 4,
+                    cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, fontSize: 12,
                   }}
                 >
-                  <span style={{ color: '#484f58', width: 14 }}>{idx + 1}</span>
+                  <span style={{ color: '#484f58', width: 16 }}>{idx + 1}</span>
                   <span style={{ color: step.color, fontWeight: 600 }}>{step.name}</span>
                   {step.type && <span style={{ color: '#8b949e' }}>({step.type})</span>}
                   {step.direction && <span style={{ color: step.direction === 'Bull' ? '#3fb950' : '#f85149' }}>{step.direction}</span>}
                   <div style={{ flex: 1 }} />
-                  <button onClick={e => { e.stopPropagation(); moveStep(idx, -1) }} style={{ background: 'none', border: 'none', color: '#8b949e', cursor: 'pointer', fontSize: 10 }}>↑</button>
-                  <button onClick={e => { e.stopPropagation(); moveStep(idx, 1) }} style={{ background: 'none', border: 'none', color: '#8b949e', cursor: 'pointer', fontSize: 10 }}>↓</button>
-                  <button onClick={e => { e.stopPropagation(); removeStep(idx) }} style={{ background: 'none', border: 'none', color: '#f85149', cursor: 'pointer', fontSize: 10 }}>✕</button>
+                  <button onClick={e => { e.stopPropagation(); moveStep(idx, -1) }} style={{ background: 'none', border: 'none', color: '#8b949e', cursor: 'pointer', fontSize: 11 }}>↑</button>
+                  <button onClick={e => { e.stopPropagation(); moveStep(idx, 1) }} style={{ background: 'none', border: 'none', color: '#8b949e', cursor: 'pointer', fontSize: 11 }}>↓</button>
+                  <button onClick={e => { e.stopPropagation(); removeStep(idx) }} style={{ background: 'none', border: 'none', color: '#f85149', cursor: 'pointer', fontSize: 11 }}>✕</button>
                 </div>
               ))}
-              {activeSteps.length === 0 && <div style={{ fontSize: 10, color: '#484f58', padding: 8, textAlign: 'center' }}>Add steps below</div>}
+              {activeSteps.length === 0 && <div style={{ fontSize: 11, color: '#484f58', padding: 8, textAlign: 'center' }}>Add steps below</div>}
             </div>
             {/* Add step form */}
             <div style={{ padding: 6, paddingBottom: 12, borderTop: '1px solid #21262d', display: 'flex', gap: 4, flexShrink: 0, flexWrap: 'wrap' }}>
@@ -1116,21 +1116,21 @@ function OptionsBuilderView({ definitions }: { definitions: FineDefinition[] }) 
                 style={{
                   background: activeStepIdx === idx ? '#2a1a0a' : '#0d1117',
                   border: `1px solid ${activeStepIdx === idx ? '#f0883e' : '#21262d'}`,
-                  borderRadius: 4, padding: '4px 8px', marginBottom: 3,
-                  cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4, fontSize: 10,
+                  borderRadius: 4, padding: '6px 10px', marginBottom: 4,
+                  cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, fontSize: 12,
                 }}
               >
-                <span style={{ color: '#484f58', width: 14 }}>{idx + 1}</span>
+                <span style={{ color: '#484f58', width: 16 }}>{idx + 1}</span>
                 <span style={{ color: step.color, fontWeight: 600 }}>{step.name}</span>
                 {step.type && <span style={{ color: '#8b949e' }}>({step.type})</span>}
                 {step.direction && <span style={{ color: step.direction === 'Bull' ? '#3fb950' : '#f85149' }}>{step.direction}</span>}
                 <div style={{ flex: 1 }} />
-                <button onClick={e => { e.stopPropagation(); moveStep(idx, -1) }} style={{ background: 'none', border: 'none', color: '#8b949e', cursor: 'pointer', fontSize: 10 }}>↑</button>
-                <button onClick={e => { e.stopPropagation(); moveStep(idx, 1) }} style={{ background: 'none', border: 'none', color: '#8b949e', cursor: 'pointer', fontSize: 10 }}>↓</button>
-                <button onClick={e => { e.stopPropagation(); removeStep(idx) }} style={{ background: 'none', border: 'none', color: '#f85149', cursor: 'pointer', fontSize: 10 }}>✕</button>
+                <button onClick={e => { e.stopPropagation(); moveStep(idx, -1) }} style={{ background: 'none', border: 'none', color: '#8b949e', cursor: 'pointer', fontSize: 11 }}>↑</button>
+                <button onClick={e => { e.stopPropagation(); moveStep(idx, 1) }} style={{ background: 'none', border: 'none', color: '#8b949e', cursor: 'pointer', fontSize: 11 }}>↓</button>
+                <button onClick={e => { e.stopPropagation(); removeStep(idx) }} style={{ background: 'none', border: 'none', color: '#f85149', cursor: 'pointer', fontSize: 11 }}>✕</button>
               </div>
             ))}
-            {activeSteps.length === 0 && <div style={{ fontSize: 10, color: '#484f58', padding: 8, textAlign: 'center' }}>Add steps below</div>}
+            {activeSteps.length === 0 && <div style={{ fontSize: 11, color: '#484f58', padding: 8, textAlign: 'center' }}>Add steps below</div>}
           </div>
           {/* Add step form */}
           <div style={{ padding: 6, paddingBottom: 12, borderTop: '1px solid #21262d', display: 'flex', gap: 4, flexShrink: 0, flexWrap: 'wrap' }}>
@@ -1549,6 +1549,7 @@ function SearchView({ definitions }: {
   const [addDefId, setAddDefId] = useState('')
   const [addType, setAddType] = useState('')
   const [addDirection, setAddDirection] = useState('')
+  const [instrumentFilter, setInstrumentFilter] = useState<string>('')  // '', 'equity', 'options'
 
   const addDef = definitions.find(d => d.definition_id === addDefId)
 
@@ -1581,7 +1582,10 @@ function SearchView({ definitions }: {
     setSelectedIdx(null)
     setResultCandles([])
     try {
-      const res = await api.fineStructureSearch({ query_steps: querySteps })
+      const res = await api.fineStructureSearch({
+        query_steps: querySteps,
+        instrument_type: instrumentFilter || undefined,
+      })
       setResults(res)
     } catch (err) {
       alert(err instanceof Error ? err.message : 'Search failed')
@@ -1649,9 +1653,16 @@ function SearchView({ definitions }: {
             )}
             <button onClick={addQueryStep} disabled={!addDefId} style={{ ...btnStyle(), padding: '2px 8px', fontSize: 11 }}>Add</button>
           </div>
-          <button onClick={handleSearch} disabled={querySteps.length === 0 || searching} style={{ ...btnStyle(), background: '#238636', color: '#fff', border: 'none', width: '100%', marginTop: 6, fontSize: 11 }}>
-            {searching ? 'Searching...' : 'Search'}
-          </button>
+          <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginTop: 6 }}>
+            <select value={instrumentFilter} onChange={e => setInstrumentFilter(e.target.value)} style={{ ...selectStyle, fontSize: 11, padding: '2px 4px' }}>
+              <option value="">All Types</option>
+              <option value="equity">Equity Only</option>
+              <option value="options">Options Only</option>
+            </select>
+            <button onClick={handleSearch} disabled={querySteps.length === 0 || searching} style={{ ...btnStyle(), background: '#238636', color: '#fff', border: 'none', flex: 1, fontSize: 11 }}>
+              {searching ? 'Searching...' : 'Search'}
+            </button>
+          </div>
         </div>
 
         {/* Results tiles */}
