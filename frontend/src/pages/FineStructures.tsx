@@ -293,6 +293,7 @@ function BuilderView({ definitions }: { definitions: FineDefinition[] }) {
       layout: { background: { color: '#0d1117' }, textColor: '#8b949e' },
       grid: { vertLines: { color: '#21262d' }, horzLines: { color: '#21262d' } },
       timeScale: { timeVisible: true, secondsVisible: false },
+      crosshair: { mode: 0 },
     })
 
     const series = chart.addCandlestickSeries({
@@ -1214,6 +1215,7 @@ function OptionsChart({
       layout: { background: { color: '#0d1117' }, textColor: '#8b949e' },
       grid: { vertLines: { color: '#21262d' }, horzLines: { color: '#21262d' } },
       timeScale: { timeVisible: true, secondsVisible: false },
+      crosshair: { mode: 0 },
     })
 
     const series = chart.addCandlestickSeries({
@@ -1484,6 +1486,7 @@ function ResultChart({ candles, steps }: { candles: OHLCCandle[]; steps: FlowSte
       layout: { background: { color: '#0d1117' }, textColor: '#8b949e' },
       grid: { vertLines: { color: '#21262d' }, horzLines: { color: '#21262d' } },
       timeScale: { timeVisible: true, secondsVisible: false },
+      crosshair: { mode: 0 },
     })
 
     const series = chart.addCandlestickSeries({
