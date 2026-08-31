@@ -621,10 +621,18 @@ export default function Chart({
   // the doji that latestTick (which only sees the last batched tick) produced.
   // liveWindowRef is set to the correct bar so EMA computation works on the
   // next bar's window transition.
+  //
+  // When the chart interval differs from the strategy interval (e.g. 5-min
+  // chart with 3-min steps), the bar_time won't align with the chart's candle
+  // boundaries. In that case we skip the correction so the chart continues
+  // accumulating ticks into its own interval-aligned window naturally.
   useEffect(() => {
     const series = seriesRef.current
     if (!completedBar || !series) return
     try {
+      const chartWindowStart = Math.floor(completedBar.time / intervalSecs) * intervalSecs
+      if (chartWindowStart !== completedBar.time) return
+
       series.update({
         time: completedBar.time as Time,
         open: completedBar.open,
@@ -642,7 +650,7 @@ export default function Chart({
     } catch (err) {
       console.warn('Completed bar update skipped:', err)
     }
-  }, [completedBar])
+  }, [completedBar, intervalSecs])
 
   // ── Session ended: close the last open candle ──────────────────────────────
   const prevStartTimeRef = useRef<string | null>(null)
