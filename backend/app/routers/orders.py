@@ -95,6 +95,42 @@ async def place_order(req: PlaceOrderRequest):
             )
         except InsufficientFundsError as exc:
             raise HTTPException(status_code=402, detail=str(exc))
+    elif req.risk_ratio_pct is not None:
+        if req.risk_ratio_pct <= 0 or req.risk_ratio_pct > 1:
+            raise HTTPException(status_code=400, detail="risk_ratio_pct must be between 0 and 1")
+
+        # Entry price: trigger for TARGET/SL, limit for LIMIT
+        entry_price = req.trigger_price if req.order_type in (OrderType.TARGET, OrderType.STOPLOSS) else req.limit_price
+        if entry_price is None or entry_price <= 0:
+            raise HTTPException(status_code=400, detail="A valid price is required for RiskRatio quantity computation")
+
+        # Determine stoploss price
+        sl_price = req.entry_sl_price  # user-provided SL
+        if sl_price is None:
+            # Use default SL % from user settings
+            from app.services.user_settings_service import get_settings
+            settings = get_settings(session.user_id)
+            default_sl_pct = settings.get("default_sl_pct", 0.20)
+            if req.side == TradeSide.BUY:
+                sl_price = entry_price * (1 - default_sl_pct)
+            else:
+                sl_price = entry_price * (1 + default_sl_pct)
+
+        try:
+            current_wallet = get_balance(session.user_id, session.date)
+            quantity = order_service.compute_risk_ratio_quantity(
+                symbol=session.symbol,
+                entry_price=entry_price,
+                stoploss_price=sl_price,
+                session_capital=session.session_capital,
+                risk_ratio_pct=req.risk_ratio_pct,
+                current_wallet=current_wallet,
+                lot_size=lot_size,
+            )
+        except InsufficientFundsError as exc:
+            raise HTTPException(status_code=402, detail=str(exc))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
     else:
         if req.quantity is None or req.quantity < 1:
             raise HTTPException(status_code=400, detail="quantity must be at least 1")

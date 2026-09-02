@@ -311,22 +311,49 @@ def _on_bar_close_autostop(
     # Resolve quantity
     quantity = meta.get("quantity")
     if quantity is None:
+        risk_ratio_pct = meta.get("risk_ratio_pct")
         funds_ratio_pct = meta.get("funds_ratio_pct")
-        if funds_ratio_pct is None:
-            logger.warning("AutoStop %s: no quantity or funds_ratio_pct in metadata", strategy.strategy_id)
-            return
-        try:
-            from app.services.order_service import compute_funds_ratio_quantity
-            from app.services.wallet_service import get_balance
-            from app.config import LOT_SIZES
-            lot_size = LOT_SIZES.get(session.symbol, 1) if tick_right else 1
-            current_wallet = get_balance(session.user_id, session.date)
-            quantity = compute_funds_ratio_quantity(
-                session.symbol, trigger_price, session.session_capital,
-                funds_ratio_pct, current_wallet, lot_size=lot_size,
-            )
-        except Exception as exc:
-            logger.warning("AutoStop %s: quantity calc failed: %s", strategy.strategy_id, exc)
+        if risk_ratio_pct is not None:
+            try:
+                from app.services.order_service import compute_risk_ratio_quantity
+                from app.services.wallet_service import get_balance
+                from app.config import LOT_SIZES
+                lot_size = LOT_SIZES.get(session.symbol, 1) if tick_right else 1
+                current_wallet = get_balance(session.user_id, session.date)
+                # Determine stoploss price for risk calculation
+                entry_sl_price = meta.get("entry_sl_price")
+                if entry_sl_price is None:
+                    from app.services.user_settings_service import get_settings
+                    settings = get_settings(session.user_id)
+                    default_sl_pct = settings.get("default_sl_pct", 0.20)
+                    if direction == "BUY":
+                        entry_sl_price = trigger_price * (1 - default_sl_pct)
+                    else:
+                        entry_sl_price = trigger_price * (1 + default_sl_pct)
+                quantity = compute_risk_ratio_quantity(
+                    session.symbol, trigger_price, entry_sl_price,
+                    session.session_capital, risk_ratio_pct, current_wallet,
+                    lot_size=lot_size,
+                )
+            except Exception as exc:
+                logger.warning("AutoStop %s: risk ratio quantity calc failed: %s", strategy.strategy_id, exc)
+                return
+        elif funds_ratio_pct is not None:
+            try:
+                from app.services.order_service import compute_funds_ratio_quantity
+                from app.services.wallet_service import get_balance
+                from app.config import LOT_SIZES
+                lot_size = LOT_SIZES.get(session.symbol, 1) if tick_right else 1
+                current_wallet = get_balance(session.user_id, session.date)
+                quantity = compute_funds_ratio_quantity(
+                    session.symbol, trigger_price, session.session_capital,
+                    funds_ratio_pct, current_wallet, lot_size=lot_size,
+                )
+            except Exception as exc:
+                logger.warning("AutoStop %s: quantity calc failed: %s", strategy.strategy_id, exc)
+                return
+        else:
+            logger.warning("AutoStop %s: no quantity, risk_ratio_pct, or funds_ratio_pct in metadata", strategy.strategy_id)
             return
 
     # Resolve per-right strike so trade markers appear on the correct options pane

@@ -94,6 +94,50 @@ def compute_funds_ratio_quantity(
         return qty
 
 
+def compute_risk_ratio_quantity(
+    symbol: str,
+    entry_price: float,
+    stoploss_price: float,
+    session_capital: float,
+    risk_ratio_pct: float,
+    current_wallet: float,
+    lot_size: int = 1,
+) -> int:
+    """
+    Compute order quantity so that if price hits stoploss, the total loss
+    equals risk_ratio_pct of session_capital.
+
+    Formula:
+        risk_amount = session_capital * risk_ratio_pct
+        sl_distance = abs(entry_price - stoploss_price)
+        quantity = floor(risk_amount / sl_distance)
+    """
+    sl_distance = abs(entry_price - stoploss_price)
+    if sl_distance <= 0:
+        raise ValueError("stoploss_price must differ from entry_price")
+
+    risk_amount = session_capital * risk_ratio_pct
+
+    if lot_size > 1:
+        loss_per_lot = sl_distance * lot_size
+        lots = int(risk_amount / loss_per_lot)
+        if lots < 1:
+            unit_cost = entry_price * lot_size
+            if current_wallet >= unit_cost:
+                lots = 1
+            else:
+                raise InsufficientFundsError(current_wallet, unit_cost)
+        return lots * lot_size
+    else:
+        qty = int(risk_amount / sl_distance)
+        if qty < 1:
+            if current_wallet >= entry_price:
+                qty = 1
+            else:
+                raise InsufficientFundsError(current_wallet, entry_price)
+        return qty
+
+
 def _write_order_to_db(order: Order) -> None:
     try:
         from app.services.db import get_dynamodb_resource

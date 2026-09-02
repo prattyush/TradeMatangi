@@ -37,6 +37,10 @@ interface Props {
   openOrders?: Order[]
   // Price-pick mode: when non-null, a chart click calls this instead of draw mode
   onPriceSelect?: ((price: number) => void) | null
+  // Right-click context menu
+  onContextMenu?: (price: number, screenX: number, screenY: number, ctx: {
+    paneType: string; right?: 'CE' | 'PE'; hasPosition: boolean; hasOpenOrders: boolean; hasSLOrders: boolean
+  }) => void
   // Maximize / restore this pane
   onMaximize?: () => void
   isMaximized?: boolean
@@ -120,6 +124,7 @@ export default function Chart({
   trades = [],
   openOrders,
   onPriceSelect = null,
+  onContextMenu,
   onMaximize,
   isMaximized = false,
   swapTargets,
@@ -150,6 +155,7 @@ export default function Chart({
   const tradeMarkerPool = useRef<ISeriesApi<'Line'>[]>([])
   const orderPriceLinesRef = useRef<Map<string, IPriceLine>>(new Map())
   const onPriceSelectRef = useRef<((price: number) => void) | null>(null)
+  const onContextMenuRef = useRef(onContextMenu)
   const drawDropdownRef = useRef<HTMLDivElement>(null)
 
   const [showEma, setShowEma] = useState(true)
@@ -167,6 +173,7 @@ export default function Chart({
   currentSimTimeRef.current = currentSimTime
   useEffect(() => { drawModeRef.current = drawMode }, [drawMode])
   useEffect(() => { onPriceSelectRef.current = onPriceSelect ?? null }, [onPriceSelect])
+  useEffect(() => { onContextMenuRef.current = onContextMenu }, [onContextMenu])
   useEffect(() => {
     if (!drawDropdownOpen) return
     const close = (e: MouseEvent) => {
@@ -373,6 +380,26 @@ export default function Chart({
       }
     })
 
+    // Right-click context menu
+    const container = containerRef.current
+    const handleContextMenu = (e: MouseEvent) => {
+      e.preventDefault()
+      if (!seriesRef.current || !chartRef.current) return
+      const chartRect = container!.getBoundingClientRect()
+      const y = e.clientY - chartRect.top
+      const price = seriesRef.current.coordinateToPrice(y)
+      if (price === null) return
+
+      onContextMenuRef.current?.(price, e.clientX, e.clientY, {
+        paneType: paneType || 'equity',
+        right: right as 'CE' | 'PE' | undefined,
+        hasPosition: false,
+        hasOpenOrders: false,
+        hasSLOrders: false,
+      })
+    }
+    container!.addEventListener('contextmenu', handleContextMenu)
+
     const ro = new ResizeObserver(entries => {
       // Skip when the container is hidden (display:none during maximize of another pane)
       // to avoid applyOptions({ width: 0 }) which can corrupt the Lightweight Charts canvas.
@@ -383,6 +410,7 @@ export default function Chart({
 
     return () => {
       ro.disconnect()
+      container.removeEventListener('contextmenu', handleContextMenu)
       tradeMarkerPool.current = []
       orderPriceLinesRef.current.clear()
       chart.remove()

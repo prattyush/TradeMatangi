@@ -14,7 +14,7 @@ interface Props {
   // P&L display mode
   pnlPctMode?: boolean
   sessionCapital?: number
-  fundsRatioMode?: boolean
+  sizingMode?: 'quantity' | 'fundsRatio' | 'riskRatio'
   // In-session trade labeling
   sessionId?: string | null
   pendingExitLabels?: PendingExitRt[]
@@ -37,7 +37,7 @@ function fmt(n: number) { return n.toFixed(2) }
 
 export default function TradePanel({
   sessionState, currentPrice, position, pnl, sessionPnl,
-  activeRight = null, activeLabel, pnlPctMode, sessionCapital, fundsRatioMode,
+  activeRight = null, activeLabel, pnlPctMode, sessionCapital, sizingMode,
   sessionId,
   pendingExitLabels = [],
   openLegs = [],
@@ -118,11 +118,11 @@ export default function TradePanel({
         {position.side !== 'FLAT' && (
           <div style={{ fontSize: 12, color: '#8b949e', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <span>Avg entry: <span style={{ color: '#e6edf3' }}>{fmt(position.avg_entry_price)}</span></span>
-            {!fundsRatioMode && (
+            {!(sizingMode === 'fundsRatio' || sizingMode === 'riskRatio') && (
               <span>Qty: <span style={{ color: '#e6edf3' }}>{position.quantity}</span>
               </span>
             )}
-            {fundsRatioMode && (
+            {(sizingMode === 'fundsRatio' || sizingMode === 'riskRatio') && (
               <span>
                 <span style={{ color: '#e6edf3' }}>
                   {sessionCapital && sessionCapital > 0
