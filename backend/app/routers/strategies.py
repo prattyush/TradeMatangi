@@ -58,10 +58,10 @@ def start_strategy(req: StartStrategyRequest, user_id: str = Depends(get_request
 
     # AutoStop requires a sizing parameter
     if req.strategy_type == StrategyType.AUTO_STOP:
-        if req.quantity is None and req.funds_ratio_pct is None:
+        if req.quantity is None and req.funds_ratio_pct is None and req.risk_ratio_pct is None:
             raise HTTPException(
                 status_code=400,
-                detail="AutoStop requires quantity or funds_ratio_pct",
+                detail="AutoStop requires quantity, funds_ratio_pct, or risk_ratio_pct",
             )
 
     # TargetProfit and UnderlyingTargetProfit require a target value
@@ -132,6 +132,8 @@ def start_strategy(req: StartStrategyRequest, user_id: str = Depends(get_request
         metadata["quantity"] = req.quantity
     if req.funds_ratio_pct is not None:
         metadata["funds_ratio_pct"] = req.funds_ratio_pct
+    if req.risk_ratio_pct is not None:
+        metadata["risk_ratio_pct"] = req.risk_ratio_pct
     if req.entry_sl_price is not None:
         metadata["entry_sl_price"] = req.entry_sl_price
     if req.underlying_sl_price is not None:

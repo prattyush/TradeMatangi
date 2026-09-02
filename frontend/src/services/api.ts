@@ -153,6 +153,11 @@ export interface UserSettingsResponse {
   max_price_threshold_ce?: number
   max_price_threshold_pe?: number
   override_session_enabled?: boolean
+  risk_ratio_l_pct?: number
+  risk_ratio_m_pct?: number
+  risk_ratio_h_pct?: number
+  default_sl_pct?: number
+  context_menu_sl_mode?: string
 }
 
 // ── Strategy types ──────────────────────────────────────────────────────────
@@ -172,6 +177,7 @@ export interface StartStrategyRequest {
   right?: 'CE' | 'PE' | null
   quantity?: number
   funds_ratio_pct?: number
+  risk_ratio_pct?: number
   direction?: 'BUY' | 'SELL'
   autostop_trigger_type?: 'bar' | 'deviation'
   autostop_deviation_pct?: number
@@ -251,6 +257,7 @@ export interface PatternChartMeta {
   can_delete?: boolean
   top_patterns?: TopPatterns
   has_top_patterns?: boolean
+  risk_reward_ratios?: Record<string, string> | null
 }
 
 export interface PatternChart extends PatternChartMeta {
@@ -876,7 +883,7 @@ const api = {
     order_type: 'TARGET' | 'LIMIT' | 'STOPLOSS',
     price: number,
     quantityOrRatio: number | null,
-    opts: { is_stoploss?: boolean; funds_ratio_pct?: number; right?: string; target_deviation_pct?: number; entry_sl_price?: number; group_id?: string } = {},
+    opts: { is_stoploss?: boolean; funds_ratio_pct?: number; risk_ratio_pct?: number; right?: string; target_deviation_pct?: number; entry_sl_price?: number; group_id?: string } = {},
   ): Promise<Order> {
     const { target_deviation_pct, entry_sl_price, group_id, ...restOpts } = opts
     const body: Record<string, unknown> = { session_id, side, order_type, ...restOpts }
@@ -885,7 +892,9 @@ const api = {
     } else {
       body.trigger_price = price  // TARGET and STOPLOSS both use trigger_price
     }
-    if (opts.funds_ratio_pct != null) {
+    if (opts.risk_ratio_pct != null) {
+      body.risk_ratio_pct = opts.risk_ratio_pct
+    } else if (opts.funds_ratio_pct != null) {
       body.funds_ratio_pct = opts.funds_ratio_pct
     } else {
       body.quantity = quantityOrRatio
@@ -1533,6 +1542,7 @@ const api = {
     annotations: PatternAnnotation[]; notes: string;
     right?: string; strike?: number;
     top_patterns?: TopPatterns;
+    risk_reward_ratios?: Record<string, string>;
   }): Promise<PatternChart> {
     const res = await fetch(`${BACKEND_URL}/api/pattern/chart`, {
       method: 'POST',
@@ -1543,11 +1553,11 @@ const api = {
     return res.json()
   },
 
-  async patternUpdateChart(chartId: string, annotations: PatternAnnotation[], notes: string, topPatterns?: TopPatterns): Promise<PatternChart> {
+  async patternUpdateChart(chartId: string, annotations: PatternAnnotation[], notes: string, topPatterns?: TopPatterns, riskRewardRatios?: Record<string, string>): Promise<PatternChart> {
     const res = await fetch(`${BACKEND_URL}/api/pattern/chart/${chartId}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json', ..._authHeaders() },
-      body: JSON.stringify({ annotations, notes, top_patterns: topPatterns }),
+      body: JSON.stringify({ annotations, notes, top_patterns: topPatterns, risk_reward_ratios: riskRewardRatios }),
     })
     if (!res.ok) throw new Error(`Update chart failed: ${res.status}`)
     return res.json()
@@ -1559,6 +1569,16 @@ const api = {
       headers: _authHeaders(),
     })
     if (!res.ok) throw new Error(`Delete chart failed: ${res.status}`)
+  },
+
+  async patternBulkDeleteCharts(chartIds: string[]): Promise<{ deleted: string[]; failed: { chart_id: string; reason: string }[] }> {
+    const res = await fetch(`${BACKEND_URL}/api/pattern/charts/bulk-delete`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ..._authHeaders() },
+      body: JSON.stringify({ chart_ids: chartIds }),
+    })
+    if (!res.ok) throw new Error(`Bulk delete failed: ${res.status}`)
+    return res.json()
   },
 
   async patternOhlcEquity(symbol: string, date: string, intervalMinutes = 3, daysBack?: number): Promise<PatternOHLCResponse> {

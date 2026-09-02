@@ -195,6 +195,7 @@ class PlaceOrderRequest(BaseModel):
     limit_price: float | None = None     # required for LIMIT; auto-computed for TARGET
     quantity: int | None = None          # required when funds_ratio_pct is None
     funds_ratio_pct: float | None = None  # 0–1 fraction; backend computes quantity
+    risk_ratio_pct: float | None = None  # 0–1 fraction; risk-based quantity computation
     is_stoploss: bool = False
     right: str | None = None             # "CE" or "PE" for options orders; None for equity
     strike: int | None = None            # options strike; populated server-side from session when omitted
@@ -306,6 +307,7 @@ class StartStrategyRequest(BaseModel):
     # Sizing for entry strategies (AutoStop): supply one of these
     quantity: int | None = None
     funds_ratio_pct: float | None = None  # 0.0–1.0 fraction of session capital
+    risk_ratio_pct: float | None = None  # 0.0–1.0 fraction; risk-based quantity computation
     # Direction for AutoStop (equity only; options sessions always use BUY)
     direction: str = "BUY"               # "BUY" | "SELL"
     # AutoStop trigger settings

@@ -29,9 +29,22 @@ export interface FundsRatios {
   h: number
 }
 
+export interface RiskRatios {
+  l: number  // percentage 0-100
+  m: number
+  h: number
+}
+
+export type SizingMode = 'quantity' | 'fundsRatio' | 'riskRatio'
+
 const DEFAULT_FUNDS_RATIOS: FundsRatios = { l: 3, m: 6, h: 12 }
+const DEFAULT_RISK_RATIOS: RiskRatios = { l: 1, m: 2, h: 4 }
 const FUNDS_RATIO_MODE_KEY = 'fundsRatioMode'
 const FUNDS_RATIOS_KEY = 'fundsRatios'
+const SIZING_MODE_KEY = 'sizingMode'
+const RISK_RATIOS_KEY = 'riskRatios'
+const DEFAULT_SL_PCT_KEY = 'defaultSlPct'
+const CONTEXT_MENU_SL_MODE_KEY = 'contextMenuSLMode'
 const TARGET_DEVIATION_KEY = 'targetDeviationPct'
 const BROKERAGE_KEY = 'brokeragePerOrder'
 const STRATEGY_INTERVAL_KEY = 'strategyIntervalSecs'
@@ -189,6 +202,38 @@ export function loadFundsRatios(): FundsRatios {
   return { ...DEFAULT_FUNDS_RATIOS }
 }
 
+export function loadSizingMode(): SizingMode {
+  // Migration: if old fundsRatioMode=true, map to 'fundsRatio'
+  const old = localStorage.getItem(FUNDS_RATIO_MODE_KEY)
+  if (old === 'true') return 'fundsRatio'
+  const stored = localStorage.getItem(SIZING_MODE_KEY)
+  if (stored === 'fundsRatio' || stored === 'riskRatio') return stored
+  return 'quantity'
+}
+
+export function saveSizingMode(mode: SizingMode): void {
+  localStorage.setItem(SIZING_MODE_KEY, mode)
+  // Keep legacy key in sync
+  localStorage.setItem(FUNDS_RATIO_MODE_KEY, String(mode === 'fundsRatio'))
+}
+
+export function loadRiskRatios(): RiskRatios {
+  try {
+    const stored = localStorage.getItem(RISK_RATIOS_KEY)
+    if (stored) return { ...DEFAULT_RISK_RATIOS, ...JSON.parse(stored) }
+  } catch { /* ignore */ }
+  return { ...DEFAULT_RISK_RATIOS }
+}
+
+export function loadDefaultSlPct(): number {
+  const v = parseFloat(localStorage.getItem(DEFAULT_SL_PCT_KEY) ?? '')
+  return isNaN(v) || v < 1 || v > 50 ? 20 : v
+}
+
+export function loadContextMenuSLMode(): 'longOnly' | 'both' {
+  return localStorage.getItem(CONTEXT_MENU_SL_MODE_KEY) === 'both' ? 'both' : 'longOnly'
+}
+
 // Returns deviation as a fraction (0.01 = 1%)
 export function loadTargetDeviationPct(): number {
   const v = parseFloat(localStorage.getItem(TARGET_DEVIATION_KEY) ?? '')
@@ -271,7 +316,7 @@ interface Props {
   isRealTradingUser?: boolean
   sessionActive?: boolean
   onWalletReset: () => void
-  onFundsRatioChange: (mode: boolean, ratios: FundsRatios) => void
+  onSizingModeChange: (mode: SizingMode, fundsRatios: FundsRatios, riskRatios: RiskRatios, defaultSlPct: number) => void
   onTargetDeviationChange: (pct: number) => void  // fraction e.g. 0.01
   onBrokerageChange: (brokerage: number) => void  // rupees per order
   onStrategySettingsChange: (intervalSecs: number, triggerType: 'bar' | 'deviation', deviationPct: number, breakevenMode: 'shift_sl' | 'limit_order', bufferTicks: number, aggrSlOnlyInProfit: boolean) => void
@@ -283,13 +328,21 @@ interface Props {
   onLabelingModeChange?: (modes: LabelingModeByType) => void
 }
 
-export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessionActive, onWalletReset, onFundsRatioChange, onTargetDeviationChange, onBrokerageChange, onStrategySettingsChange, onHistoricalDaysChange, onPnlPctModeChange, onGuardRailSettingsChange, onAutoStartSnapshotsChange, onStepwiseLabelingPopupChange, onLabelingModeChange }: Props) {
+export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessionActive, onWalletReset, onSizingModeChange, onTargetDeviationChange, onBrokerageChange, onStrategySettingsChange, onHistoricalDaysChange, onPnlPctModeChange, onGuardRailSettingsChange, onAutoStartSnapshotsChange, onStepwiseLabelingPopupChange, onLabelingModeChange }: Props) {
   const [open, setOpen] = useState(false)
   const [customAmount, setCustomAmount] = useState('')
   const [status, setStatus] = useState<string | null>(null)
 
   const [pnlPctMode, setPnlPctMode] = useState(loadPnlPctMode)
-  const [fundsRatioMode, setFundsRatioMode] = useState(loadFundsRatioMode)
+  const [sizingMode, setSizingMode] = useState<SizingMode>(loadSizingMode)
+  const [riskRatios, setRiskRatios] = useState<RiskRatios>(loadRiskRatios)
+  const [riskRatioInputs, setRiskRatioInputs] = useState<{ l: string; m: string; h: string }>(() => {
+    const r = loadRiskRatios()
+    return { l: String(r.l), m: String(r.m), h: String(r.h) }
+  })
+  const [defaultSlPct, setDefaultSlPct] = useState(loadDefaultSlPct)
+  const [defaultSlPctInput, setDefaultSlPctInput] = useState<string>(() => String(loadDefaultSlPct()))
+  const [contextMenuSLMode, setContextMenuSLMode] = useState<'longOnly' | 'both'>(loadContextMenuSLMode)
   const [ratios, setRatios] = useState<FundsRatios>(loadFundsRatios)
   const [ratioInputs, setRatioInputs] = useState<{ l: string; m: string; h: string }>(() => {
     const r = loadFundsRatios()
@@ -332,7 +385,7 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
   const [aggrSlOnlyInProfit, setAggrSlOnlyInProfit] = useState(loadAggrSlOnlyInProfit)
 
   // Active tab
-  const [activeTab, setActiveTab] = useState<'general' | 'analytics' | 'strategies' | 'guardrails' | 'admin' | 'profile'>('general')
+  const [activeTab, setActiveTab] = useState<'general' | 'trading' | 'analytics' | 'strategies' | 'guardrails' | 'admin' | 'profile'>('general')
 
   // GuardRails settings state
   const [grBanEnabled, setGrBanEnabled] = useState(loadGuardRailBanEnabled)
@@ -448,6 +501,27 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
           setOverrideSessionEnabled(s.override_session_enabled)
           localStorage.setItem(OVERRIDE_SESSION_ENABLED_KEY, String(s.override_session_enabled))
         }
+        // Sync risk ratio settings from backend
+        if (s.risk_ratio_l_pct != null && s.risk_ratio_m_pct != null && s.risk_ratio_h_pct != null) {
+          const synced = {
+            l: Math.round(s.risk_ratio_l_pct * 100 * 100) / 100,
+            m: Math.round(s.risk_ratio_m_pct * 100 * 100) / 100,
+            h: Math.round(s.risk_ratio_h_pct * 100 * 100) / 100,
+          }
+          setRiskRatios(synced)
+          setRiskRatioInputs({ l: String(synced.l), m: String(synced.m), h: String(synced.h) })
+          localStorage.setItem(RISK_RATIOS_KEY, JSON.stringify(synced))
+        }
+        if (s.default_sl_pct != null) {
+          const pct = Math.round(s.default_sl_pct * 100)
+          setDefaultSlPct(pct)
+          setDefaultSlPctInput(String(pct))
+          localStorage.setItem(DEFAULT_SL_PCT_KEY, String(pct))
+        }
+        if (s.context_menu_sl_mode === 'longOnly' || s.context_menu_sl_mode === 'both') {
+          setContextMenuSLMode(s.context_menu_sl_mode)
+          localStorage.setItem(CONTEXT_MENU_SL_MODE_KEY, s.context_menu_sl_mode)
+        }
       }).catch(() => {})
 
       api.getGuardRailSettings().then(s => {
@@ -499,12 +573,13 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
 
   // Persist + notify parent whenever mode or ratios change
   useEffect(() => {
-    localStorage.setItem(FUNDS_RATIO_MODE_KEY, String(fundsRatioMode))
+    saveSizingMode(sizingMode)
     localStorage.setItem(FUNDS_RATIOS_KEY, JSON.stringify(ratios))
-    onFundsRatioChange(fundsRatioMode, ratios)
-  }, [fundsRatioMode, ratios])
-
-  const toggleMode = () => setFundsRatioMode(m => !m)
+    localStorage.setItem(RISK_RATIOS_KEY, JSON.stringify(riskRatios))
+    localStorage.setItem(DEFAULT_SL_PCT_KEY, String(defaultSlPct))
+    localStorage.setItem(CONTEXT_MENU_SL_MODE_KEY, contextMenuSLMode)
+    onSizingModeChange(sizingMode, ratios, riskRatios, defaultSlPct)
+  }, [sizingMode, ratios, riskRatios, defaultSlPct, contextMenuSLMode])
 
   const togglePnlPctMode = () => {
     const next = !pnlPctMode
@@ -529,6 +604,36 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
       funds_ratio_h_pct: h / 100,
     }).catch(() => {})
     setStatus('Saved')
+    setTimeout(() => setStatus(null), 2000)
+  }
+
+  const saveRiskRatiosFn = () => {
+    const l = parseFloat(riskRatioInputs.l)
+    const m = parseFloat(riskRatioInputs.m)
+    const h = parseFloat(riskRatioInputs.h)
+    if ([l, m, h].some(v => isNaN(v) || v <= 0 || v > 100)) {
+      setStatus('Risk ratios must be 1–100')
+      return
+    }
+    setRiskRatios({ l, m, h })
+    api.updateUserSettings({
+      risk_ratio_l_pct: l / 100,
+      risk_ratio_m_pct: m / 100,
+      risk_ratio_h_pct: h / 100,
+    }).catch(() => {})
+    setStatus('Saved')
+    setTimeout(() => setStatus(null), 2000)
+  }
+
+  const saveDefaultSlPctFn = () => {
+    const v = parseFloat(defaultSlPctInput)
+    if (isNaN(v) || v < 1 || v > 50) {
+      setStatus('Default SL % must be 1–50')
+      return
+    }
+    setDefaultSlPct(v)
+    api.updateUserSettings({ default_sl_pct: v / 100 }).catch(() => {})
+    setStatus(`Default SL saved: ${v}%`)
     setTimeout(() => setStatus(null), 2000)
   }
 
@@ -774,26 +879,28 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
               marginTop: -8,
             }}>
               {(isAdmin
-                ? ['general', 'analytics', 'strategies', 'guardrails', 'admin', 'profile'] as const
-                : ['general', 'analytics', 'strategies', 'guardrails', 'profile'] as const
+                ? ['general', 'trading', 'analytics', 'strategies', 'guardrails', 'admin', 'profile'] as const
+                : ['general', 'trading', 'analytics', 'strategies', 'guardrails', 'profile'] as const
               ).map(tab => (
                 <button
                   key={tab}
                   onClick={() => setActiveTab(tab)}
                   style={{
                     flex: 1,
-                    padding: '7px 0',
+                    padding: '8px 4px',
                     background: 'none',
                     border: 'none',
+                    borderLeft: tab !== (isAdmin ? 'general' : 'general') ? '1px solid #21262d' : 'none',
                     borderBottom: activeTab === tab
                       ? '2px solid #1f6feb'
                       : '2px solid transparent',
                     color: activeTab === tab ? '#79c0ff' : '#8b949e',
-                    fontSize: 11,
-                    fontWeight: 600,
+                    fontSize: 10,
+                    fontWeight: 700,
                     cursor: 'pointer',
                     textTransform: 'uppercase',
-                    letterSpacing: 0,
+                    letterSpacing: 0.5,
+                    transition: 'color 0.15s, background 0.15s',
                   }}
                 >
                   {tab}
@@ -805,150 +912,6 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
 
             {/* ── General tab content ── */}
             {activeTab === 'general' && <>
-
-            {/* Trading Mode */}
-            <div style={{ borderTop: '1px solid #21262d', paddingTop: 16 }}>
-              <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 10, fontWeight: 600 }}>TRADING MODE</div>
-              <div style={{ display: 'flex', gap: 0, borderRadius: 6, overflow: 'hidden', border: '1px solid #30363d' }}>
-                {(['Quantity', 'FundsRatio'] as const).map(mode => {
-                  const isActive = mode === 'FundsRatio' ? fundsRatioMode : !fundsRatioMode
-                  return (
-                    <button
-                      key={mode}
-                      onClick={toggleMode}
-                      style={{
-                        flex: 1, padding: '6px 0', fontSize: 12, fontWeight: 600,
-                        border: 'none', cursor: 'pointer',
-                        background: isActive ? '#1f3a5f' : '#161b22',
-                        color: isActive ? '#79c0ff' : '#484f58',
-                        transition: 'background 0.15s',
-                      }}
-                    >
-                      {mode}
-                    </button>
-                  )
-                })}
-              </div>
-              <div style={{ fontSize: 11, color: '#484f58', marginTop: 6 }}>
-                {fundsRatioMode
-                  ? 'Orders sized by % of session capital (L/M/H)'
-                  : 'Orders sized by explicit quantity'}
-              </div>
-            </div>
-
-            {/* FundsRatio % settings */}
-            {fundsRatioMode && (
-              <div style={{ borderTop: '1px solid #21262d', paddingTop: 16 }}>
-                <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 10, fontWeight: 600 }}>
-                  FUNDS RATIO (% of session capital)
-                </div>
-                <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8 }}>
-                  {(['l', 'm', 'h'] as const).map(key => (
-                    <div key={key} style={{ flex: 1 }}>
-                      <div style={{ fontSize: 11, color: '#8b949e', marginBottom: 3, textAlign: 'center' }}>
-                        {key.toUpperCase()}
-                      </div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-                        <input
-                          type="number"
-                          value={ratioInputs[key]}
-                          onChange={e => setRatioInputs(r => ({ ...r, [key]: e.target.value }))}
-                          min={1} max={100} step={1}
-                          style={{
-                            width: '100%', padding: '5px 6px', background: '#0d1117',
-                            border: '1px solid #30363d', borderRadius: 6,
-                            color: '#e6edf3', fontSize: 13, textAlign: 'center',
-                          }}
-                        />
-                        <span style={{ fontSize: 11, color: '#484f58' }}>%</span>
-                      </div>
-                    </div>
-                  ))}
-                  <button
-                    onClick={saveRatios}
-                    style={{
-                      marginTop: 16, padding: '5px 12px', background: '#1f6feb',
-                      border: 'none', borderRadius: 6, color: '#fff',
-                      cursor: 'pointer', fontSize: 12, alignSelf: 'flex-end',
-                    }}
-                  >
-                    Save
-                  </button>
-                </div>
-                <div style={{ fontSize: 11, color: '#484f58' }}>
-                  Current: L={ratios.l}% · M={ratios.m}% · H={ratios.h}%
-                </div>
-              </div>
-            )}
-
-            {/* TARGET Order Deviation */}
-            <div style={{ borderTop: '1px solid #21262d', paddingTop: 16 }}>
-              <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 10, fontWeight: 600 }}>
-                TARGET ORDER DEVIATION
-              </div>
-              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                <input
-                  type="number"
-                  value={deviationInput}
-                  onChange={e => setDeviationInput(e.target.value)}
-                  min={0} max={10} step={0.1}
-                  style={{
-                    width: 80, padding: '5px 8px', background: '#0d1117',
-                    border: '1px solid #30363d', borderRadius: 6,
-                    color: '#e6edf3', fontSize: 13, textAlign: 'center',
-                  }}
-                />
-                <span style={{ fontSize: 12, color: '#8b949e' }}>%</span>
-                <button
-                  onClick={saveDeviation}
-                  style={{
-                    padding: '5px 12px', background: '#1f6feb',
-                    border: 'none', borderRadius: 6, color: '#fff',
-                    cursor: 'pointer', fontSize: 12,
-                  }}
-                >
-                  Save
-                </button>
-              </div>
-              <div style={{ fontSize: 11, color: '#484f58', marginTop: 6 }}>
-                Auto-limit = trigger ± {deviationInput || '1'}% for TARGET orders
-              </div>
-            </div>
-
-            {/* Brokerage */}
-            <div style={{ borderTop: '1px solid #21262d', paddingTop: 16 }}>
-              <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 10, fontWeight: 600 }}>
-                BROKERAGE
-              </div>
-              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                <span style={{ fontSize: 12, color: '#8b949e' }}>₹</span>
-                <input
-                  type="number"
-                  value={brokerageInput}
-                  onChange={e => setBrokerageInput(e.target.value)}
-                  min={0} step={0.5}
-                  style={{
-                    width: 80, padding: '5px 8px', background: '#0d1117',
-                    border: '1px solid #30363d', borderRadius: 6,
-                    color: '#e6edf3', fontSize: 13, textAlign: 'center',
-                  }}
-                />
-                <span style={{ fontSize: 12, color: '#8b949e' }}>per order</span>
-                <button
-                  onClick={saveBrokerage}
-                  style={{
-                    padding: '5px 12px', background: '#1f6feb',
-                    border: 'none', borderRadius: 6, color: '#fff',
-                    cursor: 'pointer', fontSize: 12,
-                  }}
-                >
-                  Save
-                </button>
-              </div>
-              <div style={{ fontSize: 11, color: '#484f58', marginTop: 6 }}>
-                Flat brokerage per order + exchange charges (STT, GST) computed per trade
-              </div>
-            </div>
 
             {/* P&L Display Mode */}
             <div style={{ borderTop: '1px solid #21262d', paddingTop: 16 }}>
@@ -1137,6 +1100,283 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
               </div>
             )}
 
+            {/* Option Strike Mode */}
+            <div style={{ borderTop: '1px solid #21262d', paddingTop: 16 }}>
+              <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 10, fontWeight: 600 }}>
+                OPTION STRIKE MODE (indices only)
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                <div style={{ display: 'flex', gap: 0, borderRadius: 6, overflow: 'hidden', border: '1px solid #30363d', width: 'fit-content' }}>
+                  {([{ label: 'OTM Offset', value: 'otm' }, { label: 'Max Price', value: 'threshold' }] as const).map(opt => (
+                    <button
+                      key={opt.value}
+                      onClick={() => {
+                        setMaxPriceMode(opt.value)
+                        localStorage.setItem(MAX_PRICE_MODE_KEY, opt.value)
+                        api.updateUserSettings({ max_price_mode: opt.value }).catch(() => {})
+                      }}
+                      style={{
+                        padding: '5px 16px', fontSize: 12, fontWeight: 600,
+                        border: 'none', cursor: 'pointer',
+                        background: maxPriceMode === opt.value ? '#1f6feb' : '#161b22',
+                        color: maxPriceMode === opt.value ? '#fff' : '#8b949e',
+                      }}
+                    >{opt.label}</button>
+                  ))}
+                </div>
+                {maxPriceMode === 'threshold' && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    <div style={{ fontSize: 11, color: '#484f58' }}>
+                      CE/PE strike with premium ≤ threshold (ATM scan outward)
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <span style={{ fontSize: 11, color: '#8b949e' }}>CE max price:</span>
+                      <ThresholdSelect value={maxPriceThresholdCE} onChange={v => {
+                        setMaxPriceThresholdCE(v)
+                        localStorage.setItem(MAX_PRICE_THRESHOLD_CE_KEY, String(v))
+                        api.updateUserSettings({ max_price_threshold_ce: v }).catch(() => {})
+                      }} />
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <span style={{ fontSize: 11, color: '#8b949e' }}>PE max price:</span>
+                      <ThresholdSelect value={maxPriceThresholdPE} onChange={v => {
+                        setMaxPriceThresholdPE(v)
+                        localStorage.setItem(MAX_PRICE_THRESHOLD_PE_KEY, String(v))
+                        api.updateUserSettings({ max_price_threshold_pe: v }).catch(() => {})
+                      }} />
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            </> /* end General tab */}
+
+            {/* ── Trading tab content ── */}
+            {activeTab === 'trading' && <>
+
+            {/* Trading Mode */}
+            <div style={{ borderTop: '1px solid #21262d', paddingTop: 16 }}>
+              <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 10, fontWeight: 600 }}>TRADING MODE</div>
+              <div style={{ display: 'flex', gap: 0, borderRadius: 6, overflow: 'hidden', border: '1px solid #30363d' }}>
+                {(['quantity', 'fundsRatio', 'riskRatio'] as const).map(mode => (
+                  <button
+                    key={mode}
+                    onClick={() => setSizingMode(mode)}
+                    style={{
+                      flex: 1, padding: '6px 0', fontSize: 11, fontWeight: 600,
+                      border: 'none', cursor: 'pointer',
+                      background: sizingMode === mode ? '#1f3a5f' : '#161b22',
+                      color: sizingMode === mode ? '#79c0ff' : '#484f58',
+                      transition: 'background 0.15s',
+                    }}
+                  >
+                    {mode === 'quantity' ? 'Quantity' : mode === 'fundsRatio' ? 'Funds %' : 'Risk %'}
+                  </button>
+                ))}
+              </div>
+              <div style={{ fontSize: 11, color: '#484f58', marginTop: 6 }}>
+                {sizingMode === 'fundsRatio'
+                  ? 'Orders sized by % of session capital (L/M/H)'
+                  : sizingMode === 'riskRatio'
+                  ? 'Quantity so loss at SL = % of capital (L/M/H)'
+                  : 'Orders sized by explicit quantity'}
+              </div>
+            </div>
+
+            {/* FundsRatio % settings */}
+            {sizingMode === 'fundsRatio' && (
+              <div style={{ borderTop: '1px solid #21262d', paddingTop: 16 }}>
+                <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 10, fontWeight: 600 }}>
+                  FUNDS RATIO (% of session capital)
+                </div>
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8 }}>
+                  {(['l', 'm', 'h'] as const).map(key => (
+                    <div key={key} style={{ flex: 1 }}>
+                      <div style={{ fontSize: 11, color: '#8b949e', marginBottom: 3, textAlign: 'center' }}>
+                        {key.toUpperCase()}
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                        <input
+                          type="number"
+                          value={ratioInputs[key]}
+                          onChange={e => setRatioInputs(r => ({ ...r, [key]: e.target.value }))}
+                          min={1} max={100} step={1}
+                          style={{
+                            width: '100%', padding: '5px 6px', background: '#0d1117',
+                            border: '1px solid #30363d', borderRadius: 6,
+                            color: '#e6edf3', fontSize: 13, textAlign: 'center',
+                          }}
+                        />
+                        <span style={{ fontSize: 11, color: '#484f58' }}>%</span>
+                      </div>
+                    </div>
+                  ))}
+                  <button
+                    onClick={saveRatios}
+                    style={{
+                      marginTop: 16, padding: '5px 12px', background: '#1f6feb',
+                      border: 'none', borderRadius: 6, color: '#fff',
+                      cursor: 'pointer', fontSize: 12, alignSelf: 'flex-end',
+                    }}
+                  >
+                    Save
+                  </button>
+                </div>
+                <div style={{ fontSize: 11, color: '#484f58' }}>
+                  Current: L={ratios.l}% · M={ratios.m}% · H={ratios.h}%
+                </div>
+              </div>
+            )}
+
+            {/* Risk Ratio % settings */}
+            {sizingMode === 'riskRatio' && (
+              <div style={{ borderTop: '1px solid #21262d', paddingTop: 16 }}>
+                <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 10, fontWeight: 600 }}>
+                  RISK RATIO (% of capital at risk per trade)
+                </div>
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8 }}>
+                  {(['l', 'm', 'h'] as const).map(key => (
+                    <div key={key} style={{ flex: 1 }}>
+                      <div style={{ fontSize: 11, color: '#8b949e', marginBottom: 3, textAlign: 'center' }}>
+                        {key.toUpperCase()}
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                        <input
+                          type="number"
+                          value={riskRatioInputs[key]}
+                          onChange={e => setRiskRatioInputs(r => ({ ...r, [key]: e.target.value }))}
+                          min={0.1} max={100} step={0.5}
+                          style={{
+                            width: '100%', padding: '5px 6px', background: '#0d1117',
+                            border: '1px solid #30363d', borderRadius: 6,
+                            color: '#e6edf3', fontSize: 13, textAlign: 'center',
+                          }}
+                        />
+                        <span style={{ fontSize: 11, color: '#484f58' }}>%</span>
+                      </div>
+                    </div>
+                  ))}
+                  <button
+                    onClick={saveRiskRatiosFn}
+                    style={{
+                      marginTop: 16, padding: '5px 12px', background: '#1f6feb',
+                      border: 'none', borderRadius: 6, color: '#fff',
+                      cursor: 'pointer', fontSize: 12, alignSelf: 'flex-end',
+                    }}
+                  >
+                    Save
+                  </button>
+                </div>
+                <div style={{ fontSize: 11, color: '#484f58' }}>
+                  Current: L={riskRatios.l}% · M={riskRatios.m}% · H={riskRatios.h}%
+                </div>
+
+                {/* Default SL % */}
+                <div style={{ borderTop: '1px solid #21262d', paddingTop: 12, marginTop: 12 }}>
+                  <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 8, fontWeight: 600 }}>
+                    DEFAULT STOPLOSS %
+                  </div>
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                    <input
+                      type="number"
+                      value={defaultSlPctInput}
+                      onChange={e => setDefaultSlPctInput(e.target.value)}
+                      min={1} max={50} step={1}
+                      style={{
+                        width: 80, padding: '5px 8px', background: '#0d1117',
+                        border: '1px solid #30363d', borderRadius: 6,
+                        color: '#e6edf3', fontSize: 13, textAlign: 'center',
+                      }}
+                    />
+                    <span style={{ fontSize: 12, color: '#8b949e' }}>%</span>
+                    <button
+                      onClick={saveDefaultSlPctFn}
+                      style={{
+                        padding: '5px 12px', background: '#1f6feb',
+                        border: 'none', borderRadius: 6, color: '#fff',
+                        cursor: 'pointer', fontSize: 12,
+                      }}
+                    >
+                      Save
+                    </button>
+                  </div>
+                  <div style={{ fontSize: 11, color: '#484f58', marginTop: 6 }}>
+                    If no stoploss is set, default SL = entry ± {defaultSlPctInput}%
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* TARGET Order Deviation */}
+            <div style={{ borderTop: '1px solid #21262d', paddingTop: 16 }}>
+              <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 10, fontWeight: 600 }}>
+                TARGET ORDER DEVIATION
+              </div>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                <input
+                  type="number"
+                  value={deviationInput}
+                  onChange={e => setDeviationInput(e.target.value)}
+                  min={0} max={10} step={0.1}
+                  style={{
+                    width: 80, padding: '5px 8px', background: '#0d1117',
+                    border: '1px solid #30363d', borderRadius: 6,
+                    color: '#e6edf3', fontSize: 13, textAlign: 'center',
+                  }}
+                />
+                <span style={{ fontSize: 12, color: '#8b949e' }}>%</span>
+                <button
+                  onClick={saveDeviation}
+                  style={{
+                    padding: '5px 12px', background: '#1f6feb',
+                    border: 'none', borderRadius: 6, color: '#fff',
+                    cursor: 'pointer', fontSize: 12,
+                  }}
+                >
+                  Save
+                </button>
+              </div>
+              <div style={{ fontSize: 11, color: '#484f58', marginTop: 6 }}>
+                Auto-limit = trigger ± {deviationInput || '1'}% for TARGET orders
+              </div>
+            </div>
+
+            {/* Brokerage */}
+            <div style={{ borderTop: '1px solid #21262d', paddingTop: 16 }}>
+              <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 10, fontWeight: 600 }}>
+                BROKERAGE
+              </div>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                <span style={{ fontSize: 12, color: '#8b949e' }}>₹</span>
+                <input
+                  type="number"
+                  value={brokerageInput}
+                  onChange={e => setBrokerageInput(e.target.value)}
+                  min={0} step={0.5}
+                  style={{
+                    width: 80, padding: '5px 8px', background: '#0d1117',
+                    border: '1px solid #30363d', borderRadius: 6,
+                    color: '#e6edf3', fontSize: 13, textAlign: 'center',
+                  }}
+                />
+                <span style={{ fontSize: 12, color: '#8b949e' }}>per order</span>
+                <button
+                  onClick={saveBrokerage}
+                  style={{
+                    padding: '5px 12px', background: '#1f6feb',
+                    border: 'none', borderRadius: 6, color: '#fff',
+                    cursor: 'pointer', fontSize: 12,
+                  }}
+                >
+                  Save
+                </button>
+              </div>
+              <div style={{ fontSize: 11, color: '#484f58', marginTop: 6 }}>
+                Flat brokerage per order + exchange charges (STT, GST) computed per trade
+              </div>
+            </div>
+
             {/* Entry Auto-Stoploss */}
             <div style={{ borderTop: '1px solid #21262d', paddingTop: 16 }}>
               <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 10, fontWeight: 600 }}>
@@ -1198,57 +1438,35 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
               </div>
             </div>
 
-            {/* Option Strike Mode */}
+            {/* Right-Click SL Direction */}
             <div style={{ borderTop: '1px solid #21262d', paddingTop: 16 }}>
               <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 10, fontWeight: 600 }}>
-                OPTION STRIKE MODE (indices only)
+                RIGHT-CLICK SL DIRECTION
               </div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                <div style={{ display: 'flex', gap: 0, borderRadius: 6, overflow: 'hidden', border: '1px solid #30363d', width: 'fit-content' }}>
-                  {([{ label: 'OTM Offset', value: 'otm' }, { label: 'Max Price', value: 'threshold' }] as const).map(opt => (
-                    <button
-                      key={opt.value}
-                      onClick={() => {
-                        setMaxPriceMode(opt.value)
-                        localStorage.setItem(MAX_PRICE_MODE_KEY, opt.value)
-                        api.updateUserSettings({ max_price_mode: opt.value }).catch(() => {})
-                      }}
-                      style={{
-                        padding: '5px 16px', fontSize: 12, fontWeight: 600,
-                        border: 'none', cursor: 'pointer',
-                        background: maxPriceMode === opt.value ? '#1f6feb' : '#161b22',
-                        color: maxPriceMode === opt.value ? '#fff' : '#8b949e',
-                      }}
-                    >{opt.label}</button>
-                  ))}
-                </div>
-                {maxPriceMode === 'threshold' && (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                    <div style={{ fontSize: 11, color: '#484f58' }}>
-                      CE/PE strike with premium ≤ threshold (ATM scan outward)
-                    </div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                      <span style={{ fontSize: 11, color: '#8b949e' }}>CE max price:</span>
-                      <ThresholdSelect value={maxPriceThresholdCE} onChange={v => {
-                        setMaxPriceThresholdCE(v)
-                        localStorage.setItem(MAX_PRICE_THRESHOLD_CE_KEY, String(v))
-                        api.updateUserSettings({ max_price_threshold_ce: v }).catch(() => {})
-                      }} />
-                    </div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                      <span style={{ fontSize: 11, color: '#8b949e' }}>PE max price:</span>
-                      <ThresholdSelect value={maxPriceThresholdPE} onChange={v => {
-                        setMaxPriceThresholdPE(v)
-                        localStorage.setItem(MAX_PRICE_THRESHOLD_PE_KEY, String(v))
-                        api.updateUserSettings({ max_price_threshold_pe: v }).catch(() => {})
-                      }} />
-                    </div>
-                  </div>
-                )}
+              <div style={{ display: 'flex', gap: 0, borderRadius: 6, overflow: 'hidden', border: '1px solid #30363d', width: 'fit-content' }}>
+                {([{ label: 'Long Only', value: 'longOnly' }, { label: 'Both Long & Short', value: 'both' }] as const).map(opt => (
+                  <button
+                    key={opt.value}
+                    onClick={() => setContextMenuSLMode(opt.value)}
+                    style={{
+                      padding: '5px 16px', fontSize: 12, fontWeight: 600,
+                      border: 'none', cursor: 'pointer',
+                      background: contextMenuSLMode === opt.value ? '#1f3a5f' : '#161b22',
+                      color: contextMenuSLMode === opt.value ? '#79c0ff' : '#484f58',
+                    }}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+              <div style={{ fontSize: 11, color: '#484f58', marginTop: 6 }}>
+                {contextMenuSLMode === 'longOnly'
+                  ? 'Right-click "Use as SL" only places BUY orders'
+                  : 'Right-click shows both Long SL (BUY) and Short SL (SELL) options'}
               </div>
             </div>
 
-            </> /* end General tab */}
+            </> /* end Trading tab */}
 
             {/* ── Analytics tab content ── */}
             {activeTab === 'analytics' && <>

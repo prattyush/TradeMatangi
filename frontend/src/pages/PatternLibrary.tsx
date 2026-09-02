@@ -160,11 +160,12 @@ interface ChartPaneProps {
   isMaximized?: boolean
   onRemove?: () => void
   topPatterns?: TopPatterns
+  riskRewardRatios?: Record<string, string>
 }
 
 function ChartPane({
   candles, annotations, activeStrategy, activeCategory, label, onBarClick,
-  readonly = false, onMaximize, isMaximized = false, onRemove, topPatterns,
+  readonly = false, onMaximize, isMaximized = false, onRemove, topPatterns, riskRewardRatios,
 }: ChartPaneProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<IChartApi | null>(null)
@@ -383,8 +384,8 @@ function ChartPane({
 
   useEffect(() => {
     if (!seriesRef.current) return
-    seriesRef.current.setMarkers(buildMarkers(annotations, activeStrategy, activeCategory, topPatterns))
-  }, [annotations, activeStrategy, activeCategory, topPatterns])
+    seriesRef.current.setMarkers(buildMarkers(annotations, activeStrategy, activeCategory, topPatterns, riskRewardRatios))
+  }, [annotations, activeStrategy, activeCategory, topPatterns, riskRewardRatios])
 
   const enterDrawMode = useCallback((mode: DrawMode) => {
     setDrawDropdownOpen(false)
@@ -574,6 +575,13 @@ function GalleryCard({ chart, activeStrategy: _activeStrategy, onLoad, onDelete,
       <div style={{ fontSize: 12, color: '#484f58', marginBottom: viewMode ? 0 : 8, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
         Strat: {chart.strategy_names.join(' · ') || '—'}
       </div>
+      {chart.risk_reward_ratios && Object.keys(chart.risk_reward_ratios).length > 0 && (
+        <div style={{ fontSize: 11, color: '#f0883e', marginBottom: 4 }}>
+          {Object.entries(chart.risk_reward_ratios).map(([key, val]) => (
+            <span key={key} style={{ marginRight: 8 }}>{key.replace('::', '/')} 1:{val}</span>
+          ))}
+        </div>
+      )}
       <div style={{ display: 'flex', gap: 6 }}>
         <button
           style={btn('#1f6feb')}
@@ -664,6 +672,7 @@ export default function PatternLibrary() {
   const [activeCategory, setActiveCategory] = useState<string>('')
   const [newCategoryName, setNewCategoryName] = useState('')
   const [notes, setNotes] = useState('')
+  const [riskRewardRatios, setRiskRewardRatios] = useState<Record<string, string>>({})
 
   // Persistence
   const [currentChartId, setCurrentChartId] = useState<string | null>(null)
@@ -678,6 +687,7 @@ export default function PatternLibrary() {
   const [viewExpandedId, setViewExpandedId] = useState<string | null>(null)
   const [galleryColumns, setGalleryColumns] = useState(1)
   const galleryResizeObserverRef = useRef<ResizeObserver | null>(null)
+  const [bulkDeleteConfirm, setBulkDeleteConfirm] = useState(false)
 
   useEffect(() => {
     api.patternListStrategies().then(r => setStrategies(r.strategies)).catch(() => {})
@@ -691,6 +701,7 @@ export default function PatternLibrary() {
       const t = topOnly !== undefined ? topOnly : galleryTopOnly
       const res = await api.patternListCharts(s || undefined, c || undefined, t)
       setGalleryCharts(res.charts)
+      setBulkDeleteConfirm(false)
     } catch { /* non-fatal */ }
   }, [galleryStrategy, galleryCategory, galleryTopOnly])
 
@@ -735,6 +746,7 @@ export default function PatternLibrary() {
     setResolvedAtm(null)
     setMaximizedPaneId(null)
     setAddPaneError(null)
+    setRiskRewardRatios({})
     paneIdRef.current = 1
 
     try {
@@ -778,6 +790,7 @@ export default function PatternLibrary() {
         setAnnotations(existing.annotations)
         setCurrentChartId(existing.chart_id)
         setNotes(existing.notes ?? '')
+        setRiskRewardRatios(existing.risk_reward_ratios ?? {})
         setTopPatterns(cleanTopPatterns(existing.top_patterns || {}))
         if (existing.annotations.length > 0) {
           const firstAnn = existing.annotations[0]
@@ -873,14 +886,16 @@ export default function PatternLibrary() {
       if (topPatterns.top_1) cleanTopPatterns.top_1 = topPatterns.top_1
       if (topPatterns.top_2) cleanTopPatterns.top_2 = topPatterns.top_2
       if (topPatterns.bottom_1) cleanTopPatterns.bottom_1 = topPatterns.bottom_1
+      const rr = Object.keys(riskRewardRatios).length > 0 ? riskRewardRatios : undefined
       if (currentChartId) {
-        saved = await api.patternUpdateChart(currentChartId, annotations, notes, Object.keys(cleanTopPatterns).length ? cleanTopPatterns : undefined)
+        saved = await api.patternUpdateChart(currentChartId, annotations, notes, Object.keys(cleanTopPatterns).length ? cleanTopPatterns : undefined, rr)
       } else {
         saved = await api.patternCreateChart({
           symbol, date, instrument_type: instrumentType, annotations, notes,
           right: firstCe ? 'CE' : undefined,
           strike: firstCe?.strike,
           top_patterns: Object.keys(cleanTopPatterns).length ? cleanTopPatterns : undefined,
+          risk_reward_ratios: rr,
         })
         setCurrentChartId(saved.chart_id)
       }
@@ -904,7 +919,7 @@ export default function PatternLibrary() {
     } catch (err) {
       setSaveMsg(err instanceof Error ? err.message : 'Save failed')
     }
-  }, [currentChartId, annotations, notes, symbol, date, instrumentType, optionPanes, activeStrategy, newStrategyName, activeCategory, newCategoryName, topPatterns, refreshGallery])
+  }, [currentChartId, annotations, notes, riskRewardRatios, symbol, date, instrumentType, optionPanes, activeStrategy, newStrategyName, activeCategory, newCategoryName, topPatterns, refreshGallery])
 
   // ── Gallery load ──────────────────────────────────────────────────────────
 
@@ -916,6 +931,7 @@ export default function PatternLibrary() {
       setDate(chart.date)
       setInstrumentType(chart.instrument_type as 'equity' | 'options')
       setNotes(chart.notes ?? '')
+      setRiskRewardRatios(chart.risk_reward_ratios ?? {})
       setCurrentChartId(chart.chart_id)
       setAnnotations(chart.annotations)
       setTopPatterns(cleanTopPatterns(chart.top_patterns || {}))
@@ -980,6 +996,28 @@ export default function PatternLibrary() {
     } catch { /* non-fatal */ }
   }, [currentChartId, viewExpandedId, refreshGallery])
 
+  // ── Gallery bulk delete ─────────────────────────────────────────────────────
+
+  const handleBulkDelete = useCallback(async () => {
+    const deletableIds = galleryCharts.filter(c => c.can_delete !== false).map(c => c.chart_id)
+    if (deletableIds.length === 0) return
+    try {
+      await api.patternBulkDeleteCharts(deletableIds)
+      setBulkDeleteConfirm(false)
+      if (currentChartId && deletableIds.includes(currentChartId)) {
+        setCurrentChartId(null); setAnnotations([]); setChartLoaded(false)
+      }
+      if (viewExpandedId && deletableIds.includes(viewExpandedId)) setViewExpandedId(null)
+      await refreshGallery()
+      const [strats, cats] = await Promise.all([
+        api.patternListStrategies(),
+        api.patternListCategories(),
+      ])
+      setStrategies(strats.strategies)
+      setCategories(cats.categories)
+    } catch { /* non-fatal */ }
+  }, [galleryCharts, currentChartId, viewExpandedId, refreshGallery])
+
   // ── Derived ───────────────────────────────────────────────────────────────
 
   const resolvedActiveStrategy = activeStrategy || null
@@ -1019,6 +1057,7 @@ export default function PatternLibrary() {
             onMaximize={() => handleMaximize('underlying')}
             isMaximized={maximizedPaneId === 'underlying'}
             topPatterns={topPatterns}
+            riskRewardRatios={riskRewardRatios}
           />
         </div>
 
@@ -1045,6 +1084,7 @@ export default function PatternLibrary() {
                   isMaximized={maximizedPaneId === pane.id}
                   onRemove={!isReadonly ? () => handleRemovePane(pane.id) : undefined}
                   topPatterns={topPatterns}
+                  riskRewardRatios={riskRewardRatios}
                 />
               </div>
             ))}
@@ -1136,6 +1176,17 @@ export default function PatternLibrary() {
           Underlying Only
         </label>
         <span style={{ fontSize: 11, color: '#484f58' }}>{galleryCharts.length} chart{galleryCharts.length !== 1 ? 's' : ''}</span>
+        {galleryCharts.filter(c => c.can_delete !== false).length > 0 && (
+          bulkDeleteConfirm
+            ? <button
+                style={btn('#b62324')}
+                onClick={handleBulkDelete}
+              >Confirm Delete All?</button>
+            : <button
+                style={btn('#484f58')}
+                onClick={() => setBulkDeleteConfirm(true)}
+              >Clear All</button>
+        )}
       </div>
       {galleryCharts.length === 0 ? (
         <div style={{ fontSize: 12, color: '#484f58' }}>
@@ -1234,6 +1285,29 @@ export default function PatternLibrary() {
             <input placeholder="New strategy name…" value={newStrategyName}
               onChange={e => setNewStrategyName(e.target.value)}
               style={{ ...inputStyle, width: 180 }} />
+          )}
+          {(activeCategory || newCategoryName.trim()) && (activeStrategy || newStrategyName.trim()) && (
+            <>
+              <div style={{ width: 1, height: 16, background: '#30363d', margin: '0 4px' }} />
+              <span style={{ fontSize: 11, color: '#f0883e' }}>R:R 1:</span>
+              <input
+                type="text"
+                value={riskRewardRatios[`${activeCategory || newCategoryName.trim()}::${activeStrategy || newStrategyName.trim()}`] ?? ''}
+                onChange={e => {
+                  const cat = activeCategory || newCategoryName.trim()
+                  const strat = activeStrategy || newStrategyName.trim()
+                  const key = `${cat}::${strat}`
+                  const val = e.target.value
+                  setRiskRewardRatios(prev => {
+                    const next = { ...prev }
+                    if (!val) { delete next[key] } else { next[key] = val }
+                    return next
+                  })
+                }}
+                placeholder="e.g. 1.5"
+                style={{ ...inputStyle, width: 60 }}
+              />
+            </>
           )}
           <div style={{ width: 1, height: 16, background: '#30363d', margin: '0 4px' }} />
           {TOOL_OPTIONS.map(t => (
@@ -1375,6 +1449,17 @@ export default function PatternLibrary() {
                   Underlying Only
                 </label>
                 <span style={{ fontSize: 11, color: '#484f58' }}>{galleryCharts.length} chart{galleryCharts.length !== 1 ? 's' : ''}</span>
+                {galleryCharts.filter(c => c.can_delete !== false).length > 0 && (
+                  bulkDeleteConfirm
+                    ? <button
+                        style={btn('#b62324')}
+                        onClick={handleBulkDelete}
+                      >Confirm Delete All?</button>
+                    : <button
+                        style={btn('#484f58')}
+                        onClick={() => setBulkDeleteConfirm(true)}
+                      >Clear All</button>
+                )}
               </div>
               {galleryCharts.length === 0 ? (
                 <div style={{ fontSize: 12, color: '#484f58' }}>No saved charts yet. Switch to Create mode to add charts.</div>

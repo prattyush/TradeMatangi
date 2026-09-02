@@ -300,3 +300,49 @@ Redefine how trades are counted in the Analysis section. Currently, each buy or 
 2. Returns both `trade_count` (raw executions) and `round_trip_count` (complete position cycles)
 3. Frontend `groupSessions()` uses `round_trip_count` for the "Total Trades" display (falls back to `trade_count` if unavailable)
 4. Round-trip detection groups trades by `right` (equity/CE/PE tracked independently) and matches BUY→SELL chronologically
+
+---
+
+### Pattern Library — Risk:Reward Per Pattern & Bulk Delete
+
+**Status:** ✅ Complete
+
+Add per-pattern risk-reward ratio storage and display to the Pattern Library, plus a bulk delete ("Clear All") button in the gallery.
+
+**Requirements:**
+- Each unique pattern (category + strategy combination) within a chart can have its own risk-reward ratio (e.g. 1:1.5)
+- The ratio is stored per-chart as a dict keyed by `category::strategy`
+- Ratio is displayed on chart markers (prepended to marker text) and on gallery cards
+- A "Clear All" button in the gallery bulk-deletes all owned charts with a confirmation step
+- Backward compatible — charts without the field return empty dict
+
+#### Files Changed
+
+**Backend:**
+| File | Change |
+|------|--------|
+| `backend/app/routers/pattern_logger.py` | Added `risk_reward_ratios: Optional[dict]` to `CreateChartRequest` and `UpdateChartRequest`; added `BulkDeleteRequest` model; added `POST /api/pattern/charts/bulk-delete` endpoint |
+| `backend/app/services/pattern_logger_service.py` | `create_chart()` and `update_chart()` accept and persist `risk_reward_ratios` as JSON; `_chart_to_meta_filtered()` and `get_chart()` include it in responses |
+
+**Frontend:**
+| File | Change |
+|------|--------|
+| `frontend/src/services/api.ts` | Added `risk_reward_ratios?: Record<string, string> \| null` to `PatternChartMeta`; updated `patternCreateChart` and `patternUpdateChart` signatures; added `patternBulkDeleteCharts()` function |
+| `frontend/src/services/patternMarkers.ts` | `buildMarkers()` accepts optional `riskRewardRatios` param; prepends `(1:X)` to marker text when ratio exists for that pattern |
+| `frontend/src/pages/PatternLibrary.tsx` | Added `riskRewardRatios` state (Record<string, string>); R:R input in annotation toolbar (appears when category+strategy selected); passes `riskRewardRatios` to all ChartPane instances; gallery "Clear All" button with confirmation; GalleryCard displays per-pattern R:R ratios |
+
+#### How It Works
+
+1. **Setting R:R:** In create mode, select a category and strategy. An `R:R 1:` input appears in the toolbar. Type the reward value (e.g. `1.5` for 1:1.5). Each unique category+strategy combo has its own ratio.
+2. **Storage:** Ratios stored as a JSON dict in DynamoDB: `{"category::strategy": "1.5", ...}`. Backward compatible — old charts without the field return `{}`.
+3. **Chart Markers:** Markers prepend the ratio: `(1:1.5) Reve/Break`. Lightweight Charts truncates from the end, so the ratio is always visible.
+4. **Gallery Cards:** Each card displays all non-empty ratios, e.g. `WIN/OPEN_REV 1:2 TRAP_W/TR_BRKOUT 1:1`.
+5. **Bulk Delete:** Gallery shows "Clear All" button when deletable charts exist. Requires "Confirm Delete All?" click. Calls `POST /api/pattern/charts/bulk-delete` which validates ownership per chart before deleting.
+
+#### Verification
+
+1. Backend tests: `cd backend && python -m pytest tests/ -v -k pattern` (31 passed) ✅
+2. TypeScript check: `cd frontend && node node_modules/typescript/bin/tsc --noEmit` ✅
+3. Manual: Create mode → add annotations with category+strategy → set R:R → save → verify markers show ratio
+4. Manual: Gallery → verify card shows per-pattern R:R → click "Clear All" → confirm → verify charts deleted
+5. Manual: Load old chart without R:R → verify no errors, empty ratios handled gracefully
