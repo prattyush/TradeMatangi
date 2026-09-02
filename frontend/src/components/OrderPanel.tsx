@@ -10,15 +10,17 @@ interface Props {
   currentPrice: number
   openOrders: Order[]
   position: Position
-  fundsRatioMode: boolean
+  sizingMode: 'quantity' | 'fundsRatio' | 'riskRatio'
   fundsRatios: FundsRatios
+  riskRatios: { l: number; m: number; h: number }
+  defaultSlPct: number
   targetDeviationPct: number   // fraction e.g. 0.01 for 1%
   onPlaceOrder: (
     side: 'BUY' | 'SELL',
     orderType: 'TARGET' | 'LIMIT' | 'STOPLOSS',
     price: number,
     quantity: number | null,
-    opts: { is_stoploss?: boolean; funds_ratio_pct?: number; target_deviation_pct?: number; entry_sl_price?: number; group_id?: string },
+    opts: { is_stoploss?: boolean; funds_ratio_pct?: number; risk_ratio_pct?: number; target_deviation_pct?: number; entry_sl_price?: number; group_id?: string },
   ) => Promise<void>
   onCancelOrder: (orderId: string) => Promise<void>
   onConvertOrder?: (orderId: string, newOrderType: 'TARGET' | 'LIMIT' | 'STOPLOSS', price?: number) => Promise<void>
@@ -47,6 +49,7 @@ interface Props {
     opts: {
       quantity?: number
       fundsRatioPct?: number
+      riskRatioPct?: number
       direction?: 'BUY' | 'SELL'
       onlyInProfit?: boolean
       targetProfitValue?: number
@@ -72,7 +75,7 @@ type RatioKey = 'l' | 'm' | 'h'
 
 export default function OrderPanel({
   sessionState, currentPrice, openOrders, position,
-  fundsRatioMode, fundsRatios, targetDeviationPct,
+  sizingMode, fundsRatios, riskRatios, defaultSlPct: _defaultSlPct, targetDeviationPct,
   onPlaceOrder, onCancelOrder, onConvertOrder, onUpdateOrder,
   onRequestPricePick, injectedEditPrice,
   onRequestTpPick,
@@ -250,14 +253,24 @@ export default function OrderPanel({
     try {
       if (orderType === 'MARKET') {
         const mktPrice = side === 'BUY' ? currentPrice * 1.01 : currentPrice * 0.99
-        if (fundsRatioMode) {
+        if (sizingMode === 'riskRatio') {
+          const riskPct = riskRatios[ratio] / 100
+          await onPlaceOrder(side, 'LIMIT', mktPrice, null, { risk_ratio_pct: riskPct, ...entrySlOpts })
+        } else if (sizingMode === 'fundsRatio') {
           await onPlaceOrder(side, 'LIMIT', mktPrice, null, { funds_ratio_pct: ratioPct, ...entrySlOpts })
         } else {
           await onPlaceOrder(side, 'LIMIT', mktPrice, quantity, { ...entrySlOpts })
         }
       } else if (orderType === 'STOPLOSS') {
         await onPlaceOrder(side, 'STOPLOSS', parsedPrice, slQty, { is_stoploss: true })
-      } else if (fundsRatioMode) {
+      } else if (sizingMode === 'riskRatio') {
+        const riskPct = riskRatios[ratio] / 100
+        await onPlaceOrder(side, orderType, parsedPrice, null, {
+          risk_ratio_pct: riskPct,
+          target_deviation_pct: deviation,
+          ...entrySlOpts,
+        })
+      } else if (sizingMode === 'fundsRatio') {
         await onPlaceOrder(side, orderType, parsedPrice, null, {
           funds_ratio_pct: ratioPct,
           target_deviation_pct: deviation,
@@ -276,7 +289,7 @@ export default function OrderPanel({
           orderType: orderType === 'MARKET' ? 'LIMIT' : orderType,
           price: orderType === 'MARKET' ? (side === 'BUY' ? currentPrice * 1.01 : currentPrice * 0.99) : parsedPrice,
           quantity: orderType === 'STOPLOSS' ? slQty : quantity,
-          fundsRatioPct: fundsRatioMode ? ratioPct : undefined,
+          fundsRatioPct: sizingMode === 'fundsRatio' ? ratioPct : sizingMode === 'riskRatio' ? riskRatios[ratio] / 100 : undefined,
         },
       })
     } catch (e) {
@@ -355,7 +368,9 @@ export default function OrderPanel({
     try {
       const right = instrumentType === 'options' ? stratRight : null
       const direction = (instrumentType === 'options') ? 'BUY' : stratDirection
-      const opts = fundsRatioMode
+      const opts = sizingMode === 'riskRatio'
+        ? { riskRatioPct: riskRatios[stratRatio] / 100, direction }
+        : sizingMode === 'fundsRatio'
         ? { fundsRatioPct: fundsRatios[stratRatio] / 100, direction }
         : { quantity: stratQty, direction }
       let extraOpts: Record<string, unknown> = {}
@@ -597,7 +612,7 @@ export default function OrderPanel({
                 </div>
               )}
               {/* Sizing */}
-              {fundsRatioMode ? (
+              {sizingMode === 'fundsRatio' ? (
                 <div style={{ display: 'flex', gap: 3, marginBottom: 4 }}>
                   {(['l', 'm', 'h'] as RatioKey[]).map(k => (
                     <button key={k} onClick={() => setStratRatio(k)} style={{
@@ -607,6 +622,18 @@ export default function OrderPanel({
                       background: stratRatio === k ? '#1f3a5f' : '#161b22',
                       color: stratRatio === k ? '#79c0ff' : '#8b949e',
                     }}>{k.toUpperCase()}<span style={{ fontSize: 9, display: 'block' }}>{fundsRatios[k]}%</span></button>
+                  ))}
+                </div>
+              ) : sizingMode === 'riskRatio' ? (
+                <div style={{ display: 'flex', gap: 3, marginBottom: 4 }}>
+                  {(['l', 'm', 'h'] as RatioKey[]).map(k => (
+                    <button key={k} onClick={() => setStratRatio(k)} style={{
+                      flex: 1, padding: '3px 0', fontSize: 11, fontWeight: 700,
+                      border: `1px solid ${stratRatio === k ? '#f0883e' : '#30363d'}`,
+                      borderRadius: 4, cursor: 'pointer',
+                      background: stratRatio === k ? '#3d2200' : '#161b22',
+                      color: stratRatio === k ? '#f0883e' : '#8b949e',
+                    }}>R-{k.toUpperCase()}<span style={{ fontSize: 9, display: 'block' }}>{riskRatios[k]}%</span></button>
                   ))}
                 </div>
               ) : (
@@ -1176,10 +1203,32 @@ export default function OrderPanel({
             )
           })()}
         </div>
-      ) : fundsRatioMode ? (
+      ) : sizingMode === 'fundsRatio' ? (
         <div>
           <div style={{ fontSize: 11, color: '#8b949e', marginBottom: 3 }}>Capital Ratio</div>
           {ratioButtons}
+        </div>
+      ) : sizingMode === 'riskRatio' ? (
+        <div>
+          <div style={{ fontSize: 11, color: '#8b949e', marginBottom: 3 }}>Risk Ratio</div>
+          <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+            {(['l', 'm', 'h'] as const).map(key => (
+              <button
+                key={key}
+                disabled={!isActive}
+                onClick={() => setRatio(key)}
+                style={{
+                  padding: '3px 8px', fontSize: 12, borderRadius: 4,
+                  border: `1px solid ${ratio === key ? '#f0883e' : '#30363d'}`,
+                  background: ratio === key ? '#3d2200' : '#161b22',
+                  color: ratio === key ? '#f0883e' : '#8b949e',
+                  cursor: isActive ? 'pointer' : 'not-allowed',
+                }}
+              >
+                R-{key.toUpperCase()} · {riskRatios[key]}%
+              </button>
+            ))}
+          </div>
         </div>
       ) : (
         <div>
@@ -1281,9 +1330,11 @@ export default function OrderPanel({
       >
         {placing ? 'Placing…'
           : orderType === 'STOPLOSS' ? `Set SL (${side} @ trigger)`
-          : orderType === 'MARKET' ? `${side} Mkt [${ratio.toUpperCase()} · ${fundsRatios[ratio]}%]`
-          : fundsRatioMode
+          : orderType === 'MARKET' ? `${side} Mkt [${ratio.toUpperCase()} · ${sizingMode === 'riskRatio' ? riskRatios[ratio] : fundsRatios[ratio]}%]`
+          : sizingMode === 'fundsRatio'
             ? `Place ${side} ${orderType} [${ratio.toUpperCase()} · ${fundsRatios[ratio]}%]`
+          : sizingMode === 'riskRatio'
+            ? `Place ${side} ${orderType} [R-${ratio.toUpperCase()} · ${riskRatios[ratio]}%]`
             : `Place ${side} ${orderType}`}
       </button>
       </>

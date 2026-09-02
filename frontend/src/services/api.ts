@@ -153,6 +153,11 @@ export interface UserSettingsResponse {
   max_price_threshold_ce?: number
   max_price_threshold_pe?: number
   override_session_enabled?: boolean
+  risk_ratio_l_pct?: number
+  risk_ratio_m_pct?: number
+  risk_ratio_h_pct?: number
+  default_sl_pct?: number
+  context_menu_sl_mode?: string
 }
 
 // ── Strategy types ──────────────────────────────────────────────────────────
@@ -172,6 +177,7 @@ export interface StartStrategyRequest {
   right?: 'CE' | 'PE' | null
   quantity?: number
   funds_ratio_pct?: number
+  risk_ratio_pct?: number
   direction?: 'BUY' | 'SELL'
   autostop_trigger_type?: 'bar' | 'deviation'
   autostop_deviation_pct?: number
@@ -877,7 +883,7 @@ const api = {
     order_type: 'TARGET' | 'LIMIT' | 'STOPLOSS',
     price: number,
     quantityOrRatio: number | null,
-    opts: { is_stoploss?: boolean; funds_ratio_pct?: number; right?: string; target_deviation_pct?: number; entry_sl_price?: number; group_id?: string } = {},
+    opts: { is_stoploss?: boolean; funds_ratio_pct?: number; risk_ratio_pct?: number; right?: string; target_deviation_pct?: number; entry_sl_price?: number; group_id?: string } = {},
   ): Promise<Order> {
     const { target_deviation_pct, entry_sl_price, group_id, ...restOpts } = opts
     const body: Record<string, unknown> = { session_id, side, order_type, ...restOpts }
@@ -886,7 +892,9 @@ const api = {
     } else {
       body.trigger_price = price  // TARGET and STOPLOSS both use trigger_price
     }
-    if (opts.funds_ratio_pct != null) {
+    if (opts.risk_ratio_pct != null) {
+      body.risk_ratio_pct = opts.risk_ratio_pct
+    } else if (opts.funds_ratio_pct != null) {
       body.funds_ratio_pct = opts.funds_ratio_pct
     } else {
       body.quantity = quantityOrRatio

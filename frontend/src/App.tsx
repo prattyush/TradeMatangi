@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import React from 'react'
 import PatternLibrary from './pages/PatternLibrary'
 import ChartStructures from './pages/ChartStructures'
 import Chart, { PaneType } from './components/Chart'
+import ChartContextMenu, { ContextMenuAction } from './components/ChartContextMenu'
 import SessionControls, { OptionsReadyConfig } from './components/SessionControls'
 import TradePanel from './components/TradePanel'
 import TradeHistory from './components/TradeHistory'
@@ -10,7 +11,7 @@ import OrderPanel from './components/OrderPanel'
 import WalletWidget from './components/WalletWidget'
 import GuardRailPopup from './components/GuardRailPopup'
 import PatternAlertToast, { PatternAlert } from './components/PatternAlertToast'
-import SettingsModal, { loadFundsRatioMode, loadFundsRatios, loadTargetDeviationPct, loadBrokeragePerOrder, loadStrategyIntervalSecs, loadAutostopTriggerType, loadAutostopDeviationPct, loadHistoricalDays, loadPnlPctMode, loadBreakevenMode, loadTargetProfitBufferTicks, loadAggrSlOnlyInProfit, loadAutoStartEventSnapshots, loadStepwiseLabelingPopupEnabled, loadLabelingModeByType, loadOverrideSessionEnabled, FundsRatios } from './components/SettingsModal'
+import SettingsModal, { loadFundsRatios, loadTargetDeviationPct, loadBrokeragePerOrder, loadStrategyIntervalSecs, loadAutostopTriggerType, loadAutostopDeviationPct, loadHistoricalDays, loadPnlPctMode, loadBreakevenMode, loadTargetProfitBufferTicks, loadAggrSlOnlyInProfit, loadAutoStartEventSnapshots, loadStepwiseLabelingPopupEnabled, loadLabelingModeByType, loadOverrideSessionEnabled, FundsRatios, SizingMode, RiskRatios, loadSizingMode, loadRiskRatios, loadDefaultSlPct } from './components/SettingsModal'
 import { StrategyResponse, StartStrategyRequest, Order } from './services/api'
 import LoginScreen from './components/LoginScreen'
 import TradeAnalysis from './components/TradeAnalysis'
@@ -124,8 +125,10 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
   useEffect(() => { simRef.current = sim }, [sim])
   const { snapshotActive, startSnapshots, stopSnapshots, captureSnapshot } = useSnapshot(simRef)
   const [recDropdownOpen, setRecDropdownOpen] = useState(false)
-  const [fundsRatioMode, setFundsRatioMode] = useState(loadFundsRatioMode)
+  const [sizingMode, setSizingMode] = useState<SizingMode>(loadSizingMode)
   const [fundsRatios, setFundsRatios] = useState<FundsRatios>(loadFundsRatios)
+  const [riskRatios, setRiskRatios] = useState<RiskRatios>(loadRiskRatios)
+  const [defaultSlPct, setDefaultSlPct] = useState(loadDefaultSlPct)
   const [targetDeviationPct, setTargetDeviationPct] = useState(loadTargetDeviationPct)
   const [brokeragePerOrder, setBrokeragePerOrder] = useState(loadBrokeragePerOrder)
   const [stratIntervalSecs, setStratIntervalSecs] = useState(loadStrategyIntervalSecs)
@@ -145,6 +148,13 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
   const [overrideSessionEnabled] = useState(loadOverrideSessionEnabled)
   const [stepwiseLabelingPopup, setStepwiseLabelingPopup] = useState(loadStepwiseLabelingPopupEnabled)
   const [patternAlerts, setPatternAlerts] = useState<PatternAlert[]>([])
+
+  // ── Context menu state ─────────────────────────────────────────────────────
+  const [contextMenu, setContextMenu] = useState<{
+    x: number; y: number; price: number
+    paneType: string; right?: 'CE' | 'PE'
+    paneId: number
+  } | null>(null)
 
   // ── Trade Analysis modal ────────────────────────────────────────────────────
   const [showAnalysis, setShowAnalysis] = useState(false)
@@ -704,6 +714,195 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
     return res
   }, [sim.sessionId, sim.bulkUpdateOrders])
 
+  // ── Context menu handler ───────────────────────────────────────────────────
+  const handleChartContextMenu = useCallback((price: number, screenX: number, screenY: number, ctx: {
+    paneType: string; right?: 'CE' | 'PE'; hasPosition: boolean; hasOpenOrders: boolean; hasSLOrders: boolean
+  }, paneId: number) => {
+    if (sim.sessionState !== 'running' && sim.sessionState !== 'paused') return
+    setContextMenu({ x: screenX, y: screenY, price, paneType: ctx.paneType, right: ctx.right, paneId })
+  }, [sim.sessionState])
+
+  // ── Context menu actions ───────────────────────────────────────────────────
+  const contextMenuActions = useMemo((): ContextMenuAction[] => {
+    if (!contextMenu || !sim.sessionId) return []
+
+    const { price, paneType, right } = contextMenu
+    const actions: ContextMenuAction[] = []
+
+    // Determine the current price for the relevant pane
+    const paneCurrentPrice = (() => {
+      if (right === 'CE') return sim.currentPriceCE || sim.currentPrice
+      if (right === 'PE') return sim.currentPricePE || sim.currentPrice
+      return sim.currentPrice
+    })()
+
+    // Sizing submenu builder
+    const buildSizingSubmenu = (side: 'BUY' | 'SELL', orderType: 'MARKET' | 'AUTO_STOP'): ContextMenuAction[] => {
+      if (sizingMode === 'quantity') {
+        return [1, 2, 3, 5, 10].map(q => ({
+          label: `${q}`,
+          onClick: () => {
+            const mktPrice = side === 'BUY' ? paneCurrentPrice * 1.01 : paneCurrentPrice * 0.99
+            if (orderType === 'MARKET') {
+              sim.placeOrder(side, 'LIMIT', mktPrice, q, {
+                entry_sl_price: price,
+                group_id: crypto.randomUUID(),
+                ...(right ? { right } : {}),
+              } as Parameters<typeof sim.placeOrder>[4])
+            }
+          }
+        }))
+      }
+      const ratios = sizingMode === 'riskRatio' ? riskRatios : fundsRatios
+      const prefix = sizingMode === 'riskRatio' ? 'R-' : ''
+      return (['l', 'm', 'h'] as const).map(key => ({
+        label: `${prefix}${key.toUpperCase()} · ${ratios[key]}%`,
+        onClick: () => {
+          const ratioPct = ratios[key] / 100
+          const mktPrice = side === 'BUY' ? paneCurrentPrice * 1.01 : paneCurrentPrice * 0.99
+          if (orderType === 'MARKET') {
+            const opts: Record<string, unknown> = { entry_sl_price: price, group_id: crypto.randomUUID() }
+            if (sizingMode === 'riskRatio') opts.risk_ratio_pct = ratioPct
+            else opts.funds_ratio_pct = ratioPct
+            if (right) opts.right = right
+            sim.placeOrder(side, 'LIMIT', mktPrice, null, opts as Parameters<typeof sim.placeOrder>[4])
+          } else {
+            // AutoStop
+            const opts: Record<string, unknown> = { entry_sl_price: price }
+            if (sizingMode === 'riskRatio') opts.riskRatioPct = ratioPct
+            else opts.fundsRatioPct = ratioPct
+            api.startStrategy({
+              session_id: sim.sessionId!,
+              strategy_type: 'AutoStop',
+              right: right ?? undefined,
+              entry_sl_price: price,
+              risk_ratio_pct: sizingMode === 'riskRatio' ? ratioPct : undefined,
+              funds_ratio_pct: sizingMode !== 'riskRatio' ? ratioPct : undefined,
+            }).catch(() => {})
+          }
+        }
+      }))
+    }
+
+    // "Use as SL" actions
+    const slMode = localStorage.getItem('contextMenuSLMode') === 'both' ? 'both' : 'longOnly'
+
+    if (slMode === 'both') {
+      actions.push({
+        label: `Use as SL @ ${price.toFixed(2)}`,
+        submenu: [
+          {
+            label: 'Long SL (BUY)',
+            submenu: [
+              { label: 'Market Order', submenu: buildSizingSubmenu('BUY', 'MARKET') },
+              { label: 'Auto-Stop Order', submenu: buildSizingSubmenu('BUY', 'AUTO_STOP') },
+            ]
+          },
+          {
+            label: 'Short SL (SELL)',
+            submenu: [
+              { label: 'Market Order', submenu: buildSizingSubmenu('SELL', 'MARKET') },
+              { label: 'Auto-Stop Order', submenu: buildSizingSubmenu('SELL', 'AUTO_STOP') },
+            ]
+          },
+        ]
+      })
+    } else {
+      actions.push({
+        label: `Use as SL @ ${price.toFixed(2)}`,
+        submenu: [
+          { label: 'Market Order', submenu: buildSizingSubmenu('BUY', 'MARKET') },
+          { label: 'Auto-Stop Order', submenu: buildSizingSubmenu('BUY', 'AUTO_STOP') },
+        ]
+      })
+    }
+
+    // Shift SL to here
+    const hasSLOrders = sim.openOrders.some(o => o.is_stoploss && (!right || o.right === right))
+    if (hasSLOrders) {
+      actions.push({
+        label: 'Shift SL to here',
+        onClick: () => {
+          api.bulkUpdateSL(sim.sessionId!, price, right ?? null).then(res => {
+            if (res.orders.length > 0) sim.bulkUpdateOrders(res.orders)
+          }).catch(() => {})
+        }
+      })
+    }
+
+    // Make as limit price
+    const hasOpenOrders = sim.openOrders.some(o => !o.is_stoploss && o.status === 'PENDING' && (!right || o.right === right))
+    if (hasOpenOrders) {
+      actions.push({
+        label: 'Make as limit price',
+        onClick: () => {
+          const ordersToConvert = sim.openOrders.filter(o => !o.is_stoploss && o.status === 'PENDING' && (!right || o.right === right))
+          ordersToConvert.forEach(o => {
+            api.convertOrder(sim.sessionId!, o.order_id, 'LIMIT', price).then(updated => {
+              sim.handleOrderConverted(updated.order_id, updated.order_type, updated.trigger_price, updated.limit_price, updated.is_stoploss)
+            }).catch(() => {})
+          })
+        }
+      })
+    }
+
+    // Start strategy
+    const stratActions: ContextMenuAction[] = [
+      {
+        label: 'Target Profit',
+        onClick: () => {
+          api.startStrategy({
+            session_id: sim.sessionId!,
+            strategy_type: 'TargetProfit',
+            target_profit_value: price,
+            right: right ?? undefined,
+          }).catch(() => {})
+        }
+      },
+      {
+        label: 'Lock Profit',
+        onClick: () => {
+          api.startStrategy({
+            session_id: sim.sessionId!,
+            strategy_type: 'LockProfit',
+            lock_profit_value: price,
+            right: right ?? undefined,
+          }).catch(() => {})
+        }
+      },
+    ]
+
+    // Underlying-only strategies (equity pane in options sessions)
+    if (paneType === 'equity' && instrumentType === 'options') {
+      stratActions.push(
+        {
+          label: 'Underlying Target',
+          onClick: () => {
+            api.startStrategy({
+              session_id: sim.sessionId!,
+              strategy_type: 'UnderlyingTargetProfit',
+              target_profit_value: price,
+            }).catch(() => {})
+          }
+        },
+        {
+          label: 'Underlying SL',
+          onClick: () => {
+            api.startStrategy({
+              session_id: sim.sessionId!,
+              strategy_type: 'UnderlyingStoploss',
+              underlying_sl_price: price,
+            }).catch(() => {})
+          }
+        },
+      )
+    }
+
+    actions.push({ label: 'Start strategy', submenu: stratActions })
+
+    return actions
+  }, [contextMenu, sim.sessionId, sim.sessionState, sim.openOrders, sim.currentPrice, sim.currentPriceCE, sim.currentPricePE, sim.placeOrder, sim.bulkUpdateOrders, sim.handleOrderConverted, sizingMode, fundsRatios, riskRatios, instrumentType])
+
   // Net session P&L = gross dayPnl minus per-trade commissions (computed by backend)
   const netDayPnl = sim.dayPnl - sim.trades.reduce((s, t) => s + (t.commission ?? 0), 0)
   // Total day P&L includes realized P&L from previous sessions for same user+symbol+date+type
@@ -811,6 +1010,7 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
           trades={getTradesForPane(pane)}
           openOrders={getOrdersForPane(pane)}
           onPriceSelect={(pricePickOrderId || tpPickActive || utpPickActive || lpPickActive) && pane.id === activePaneId ? handleChartPriceSelect : null}
+          onContextMenu={(price, screenX, screenY, ctx) => handleChartContextMenu(price, screenX, screenY, ctx, pane.id)}
           historicalDays={historicalDays}
           onMaximize={() => setMaximizedPaneId(isMaximized ? null : pane.id)}
           isMaximized={isMaximized}
@@ -1189,7 +1389,12 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
           isRealTradingUser={isRealTradingUser}
           sessionActive={sim.sessionState === 'running' || sim.sessionState === 'paused'}
           onWalletReset={sim.incrementWalletRefreshKey}
-          onFundsRatioChange={(mode, ratios) => { setFundsRatioMode(mode); setFundsRatios(ratios) }}
+          onSizingModeChange={(mode, fr, rr, slPct) => {
+            setSizingMode(mode)
+            setFundsRatios(fr)
+            setRiskRatios(rr)
+            setDefaultSlPct(slPct)
+          }}
           onTargetDeviationChange={setTargetDeviationPct}
           onBrokerageChange={setBrokeragePerOrder}
           onStrategySettingsChange={(intervalSecs, triggerType, deviationPct, bkMode, bufTicks, onlyInProfit) => {
@@ -1462,7 +1667,7 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
             activeLabel={activeLabel}
             pnlPctMode={pnlPctMode}
             sessionCapital={sim.sessionCapital}
-            fundsRatioMode={fundsRatioMode}
+            sizingMode={sizingMode}
             sessionId={sim.sessionId}
             pendingExitLabels={sim.pendingExitLabels}
             openLegs={openLegs}
@@ -1516,8 +1721,10 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
               currentPrice={tradePanelPrice}
               openOrders={sim.openOrders}
               position={tradePanelPosition}
-              fundsRatioMode={fundsRatioMode}
+              sizingMode={sizingMode}
               fundsRatios={fundsRatios}
+              riskRatios={riskRatios}
+              defaultSlPct={defaultSlPct}
               targetDeviationPct={targetDeviationPct}
               instrumentType={instrumentType}
               activeRight={instrumentType === 'options' ? activeRight : undefined}
@@ -1602,6 +1809,17 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
         alerts={patternAlerts}
         onDismiss={id => setPatternAlerts(prev => prev.filter(a => a.id !== id))}
       />
+
+      {/* Right-click context menu */}
+      {contextMenu && (
+        <ChartContextMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          price={contextMenu.price}
+          actions={contextMenuActions}
+          onClose={() => setContextMenu(null)}
+        />
+      )}
     </div>
   )
 }
