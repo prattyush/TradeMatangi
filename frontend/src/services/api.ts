@@ -251,6 +251,7 @@ export interface PatternChartMeta {
   can_delete?: boolean
   top_patterns?: TopPatterns
   has_top_patterns?: boolean
+  risk_reward_ratios?: Record<string, string> | null
 }
 
 export interface PatternChart extends PatternChartMeta {
@@ -1533,6 +1534,7 @@ const api = {
     annotations: PatternAnnotation[]; notes: string;
     right?: string; strike?: number;
     top_patterns?: TopPatterns;
+    risk_reward_ratios?: Record<string, string>;
   }): Promise<PatternChart> {
     const res = await fetch(`${BACKEND_URL}/api/pattern/chart`, {
       method: 'POST',
@@ -1543,11 +1545,11 @@ const api = {
     return res.json()
   },
 
-  async patternUpdateChart(chartId: string, annotations: PatternAnnotation[], notes: string, topPatterns?: TopPatterns): Promise<PatternChart> {
+  async patternUpdateChart(chartId: string, annotations: PatternAnnotation[], notes: string, topPatterns?: TopPatterns, riskRewardRatios?: Record<string, string>): Promise<PatternChart> {
     const res = await fetch(`${BACKEND_URL}/api/pattern/chart/${chartId}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json', ..._authHeaders() },
-      body: JSON.stringify({ annotations, notes, top_patterns: topPatterns }),
+      body: JSON.stringify({ annotations, notes, top_patterns: topPatterns, risk_reward_ratios: riskRewardRatios }),
     })
     if (!res.ok) throw new Error(`Update chart failed: ${res.status}`)
     return res.json()
@@ -1559,6 +1561,16 @@ const api = {
       headers: _authHeaders(),
     })
     if (!res.ok) throw new Error(`Delete chart failed: ${res.status}`)
+  },
+
+  async patternBulkDeleteCharts(chartIds: string[]): Promise<{ deleted: string[]; failed: { chart_id: string; reason: string }[] }> {
+    const res = await fetch(`${BACKEND_URL}/api/pattern/charts/bulk-delete`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ..._authHeaders() },
+      body: JSON.stringify({ chart_ids: chartIds }),
+    })
+    if (!res.ok) throw new Error(`Bulk delete failed: ${res.status}`)
+    return res.json()
   },
 
   async patternOhlcEquity(symbol: string, date: string, intervalMinutes = 3, daysBack?: number): Promise<PatternOHLCResponse> {
