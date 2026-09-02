@@ -36,6 +36,7 @@ export function buildMarkers(
   activeStrategy: string | null,
   activeCategory: string | null,
   topPatterns?: TopPatterns,
+  riskRewardRatios?: Record<string, string>,
 ): SeriesMarker<Time>[] {
   return annotations
     .slice()
@@ -49,9 +50,12 @@ export function buildMarkers(
       const rank = rankingForIdentity(topPatterns, patternIdentity(ann))
       const rankStyle = rank ? TOP_RANK_STYLE[rank] : null
 
+      const rr = riskRewardRatios?.[`${ann.category || ''}::${ann.strategy_name}`]
+
       const displayText = dimmed
         ? ''
         : [
+            rr ? `(1:${rr}) ` : '',
             rankStyle ? rankStyle.badge : '',
             ann.category ? ann.category.slice(0, 5) + '/' : '',
             ann.strategy_name.slice(0, 10),

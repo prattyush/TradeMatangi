@@ -51,12 +51,18 @@ class CreateChartRequest(BaseModel):
     right: Optional[str] = None    # "CE" | "PE" (options only)
     strike: Optional[int] = None   # options reference strike
     top_patterns: Optional[TopPatternsPayload] = None
+    risk_reward_ratios: Optional[dict] = None  # {"category::strategy": "1.5", ...}
 
 
 class UpdateChartRequest(BaseModel):
     annotations: list[AnnotationItem]
     notes: str = ""
     top_patterns: Optional[TopPatternsPayload] = None
+    risk_reward_ratios: Optional[dict] = None  # {"category::strategy": "1.5", ...}
+
+
+class BulkDeleteRequest(BaseModel):
+    chart_ids: list[str]
 
 
 # ── Strategy / Category names ──────────────────────────────────────────────────
@@ -153,6 +159,7 @@ async def create_chart(req: CreateChartRequest, user_id: str = Depends(get_reque
             right=req.right,
             strike=req.strike,
             top_patterns=top_patterns,
+            risk_reward_ratios=req.risk_reward_ratios,
         )
         return chart
     except Exception as exc:
@@ -175,6 +182,7 @@ async def update_chart(chart_id: str, req: UpdateChartRequest, user_id: str = De
             [a.model_dump() for a in req.annotations],
             req.notes,
             top_patterns=top_patterns,
+            risk_reward_ratios=req.risk_reward_ratios,
         )
         if not updated:
             raise HTTPException(status_code=500, detail="Update failed")
@@ -200,6 +208,28 @@ async def delete_chart(chart_id: str, user_id: str = Depends(get_request_user_id
     except Exception as exc:
         logger.error("delete_chart error for %s: %s", chart_id, exc)
         raise HTTPException(status_code=500, detail="Failed to delete chart")
+
+
+@router.post("/charts/bulk-delete")
+async def bulk_delete_charts(req: BulkDeleteRequest, user_id: str = Depends(get_request_user_id)):
+    """Delete multiple chart records owned by the user."""
+    deleted = []
+    failed = []
+    for chart_id in req.chart_ids:
+        existing = svc.get_chart_for_user(user_id, chart_id)
+        if not existing:
+            failed.append({"chart_id": chart_id, "reason": "not found"})
+            continue
+        if not existing.get("can_delete"):
+            failed.append({"chart_id": chart_id, "reason": "not owned"})
+            continue
+        try:
+            svc.delete_chart(chart_id)
+            deleted.append(chart_id)
+        except Exception as exc:
+            logger.error("bulk_delete error for %s: %s", chart_id, exc)
+            failed.append({"chart_id": chart_id, "reason": "delete failed"})
+    return {"deleted": deleted, "failed": failed}
 
 
 # ── OHLC data (full day) ──────────────────────────────────────────────────────
