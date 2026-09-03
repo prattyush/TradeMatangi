@@ -877,6 +877,7 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
               borderBottom: '1px solid #21262d',
               marginBottom: 4,
               marginTop: -8,
+              overflowX: 'auto',
             }}>
               {(isAdmin
                 ? ['general', 'trading', 'analytics', 'strategies', 'guardrails', 'admin', 'profile'] as const
@@ -886,20 +887,24 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
                   key={tab}
                   onClick={() => setActiveTab(tab)}
                   style={{
-                    flex: 1,
-                    padding: '8px 4px',
+                    flex: '1 0 0',
+                    minWidth: 0,
+                    padding: '8px 2px',
                     background: 'none',
                     border: 'none',
-                    borderLeft: tab !== (isAdmin ? 'general' : 'general') ? '1px solid #21262d' : 'none',
+                    borderLeft: tab !== 'general' ? '1px solid #21262d' : 'none',
                     borderBottom: activeTab === tab
                       ? '2px solid #1f6feb'
                       : '2px solid transparent',
                     color: activeTab === tab ? '#79c0ff' : '#8b949e',
-                    fontSize: 10,
+                    fontSize: 9,
                     fontWeight: 700,
                     cursor: 'pointer',
                     textTransform: 'uppercase',
-                    letterSpacing: 0.5,
+                    letterSpacing: 0.3,
+                    whiteSpace: 'nowrap',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
                     transition: 'color 0.15s, background 0.15s',
                   }}
                 >
