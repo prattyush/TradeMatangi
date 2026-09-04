@@ -1193,7 +1193,7 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
       return render2RowLayout([0, 1, 2], [3, 4], undefined, { 0: { flex: 1 }, 1: { flex: 0.5 }, 2: { flex: 0.5 } })
     }
 
-    // layout 7: Tall Right — top [left half=1 pane, right half=2 stacked vertically], bottom 2 equal
+    // layout 7: Tall Right — top [left=1 tall pane, right=2 stacked vertically], bottom 2 equal
     // ┌───────┬─────┐
     // │       │  2  │
     // │   1   ├─────┤
@@ -1202,10 +1202,41 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
     // │   4   │  5  │
     // └───────┴─────┘
     if (layoutPreset === 7) {
-      return render2RowLayout(
-        [0, 1, 2], [3, 4],
-        { flexWrap: 'wrap' },
-        { 0: { flex: '1 1 50%', minHeight: rowHeight }, 1: { flex: '1 1 25%', minHeight: rowHeight }, 2: { flex: '1 1 25%', minHeight: rowHeight } },
+      const topH = Math.max(160, Math.floor((columnHeight - 36 - gap) / 2 * 0.966))
+      const halfTopH = Math.max(80, Math.floor((topH - gap) / 2))
+      if (maximizedPaneId !== null) {
+        const isTop = [0, 1, 2].some(i => panes[i]?.id === maximizedPaneId)
+        const isBottom = [3, 4].some(i => panes[i]?.id === maximizedPaneId)
+        return (
+          <div style={{ display: 'flex', flexDirection: 'column', gap }}>
+            <div style={{ display: isTop ? 'flex' : 'none', gap, height: maxH }}>
+              {panes[0] && renderPane(panes[0], maxH, panes[0].id === maximizedPaneId ? { width: '50%' } : { width: '50%', display: 'none' })}
+              <div style={{ display: 'flex', flexDirection: 'column', gap, flex: 1 }}>
+                {panes[1] && renderPane(panes[1], maxH, panes[1].id === maximizedPaneId ? {} : { display: 'none' })}
+                {panes[2] && renderPane(panes[2], maxH, panes[2].id === maximizedPaneId ? {} : { display: 'none' })}
+              </div>
+            </div>
+            <div style={{ display: isBottom ? 'flex' : 'none', gap }}>
+              {panes[3] && renderPane(panes[3], maxH, panes[3].id === maximizedPaneId ? { flex: 1 } : { flex: 1, display: 'none' })}
+              {panes[4] && renderPane(panes[4], maxH, panes[4].id === maximizedPaneId ? { flex: 1 } : { flex: 1, display: 'none' })}
+            </div>
+          </div>
+        )
+      }
+      return (
+        <div style={{ display: 'flex', flexDirection: 'column', gap }}>
+          <div style={{ display: 'flex', gap, height: topH }}>
+            {panes[0] && renderPane(panes[0], topH, { width: '50%' })}
+            <div style={{ display: 'flex', flexDirection: 'column', gap, flex: 1 }}>
+              {panes[1] && renderPane(panes[1], halfTopH)}
+              {panes[2] && renderPane(panes[2], halfTopH)}
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap }}>
+            {panes[3] && renderPane(panes[3], rowHeight, { flex: 1 })}
+            {panes[4] && renderPane(panes[4], rowHeight, { flex: 1 })}
+          </div>
+        </div>
       )
     }
   } // end renderLayout
