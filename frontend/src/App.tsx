@@ -1861,6 +1861,8 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
             } : undefined}
             roundTrips={roundTrips}
             labels={tradeLabels}
+            pnlPctMode={pnlPctMode}
+            sessionCapital={sim.sessionCapital}
           />
         </div>
       </div>

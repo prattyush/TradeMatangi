@@ -24,10 +24,19 @@ interface Props {
   onRefresh?: () => Promise<void>
   roundTrips?: RoundTrip[]
   labels?: TradeLabel[]
+  pnlPctMode?: boolean
+  sessionCapital?: number
 }
 
 function fmt(n: number) {
   return n.toFixed(2)
+}
+
+function fmtPnl(pnl: number, pctMode: boolean, capital: number): string {
+  if (pctMode && capital > 0) {
+    return `${(pnl / capital * 100).toFixed(2)}%`
+  }
+  return `₹${fmt(pnl)}`
 }
 
 function toDate(ts: number) {
@@ -54,7 +63,7 @@ const SEPARATOR_STYLE_EXPANDED: React.CSSProperties = {
   letterSpacing: '0.05em',
 }
 
-export default function TradeHistory({ trades, historicalTrades = [], sessionType, onRefresh, roundTrips = [], labels = [] }: Props) {
+export default function TradeHistory({ trades, historicalTrades = [], sessionType, onRefresh, roundTrips = [], labels = [], pnlPctMode = false, sessionCapital = 0 }: Props) {
   const [expanded, setExpanded] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
 
@@ -230,7 +239,7 @@ export default function TradeHistory({ trades, historicalTrades = [], sessionTyp
                           padding: '7px 14px', fontVariantNumeric: 'tabular-nums', fontWeight: pnl != null ? 600 : 400,
                           color: pnl != null ? (pnl >= 0 ? '#3fb950' : '#f85149') : '#484f58',
                         }}>
-                          {pnl != null ? `₹${fmt(pnl)}` : '—'}
+                          {pnl != null ? fmtPnl(pnl, pnlPctMode, sessionCapital) : '—'}
                         </td>
                         <td style={{ padding: '7px 14px', color: '#484f58', fontSize: 10 }}>
                           {t.trade_id.slice(0, 8)}…

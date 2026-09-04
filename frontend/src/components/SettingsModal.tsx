@@ -859,7 +859,7 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
         >
           <div style={{
             background: '#161b22', border: '1px solid #30363d', borderRadius: 10,
-            padding: 24, width: 520, display: 'flex', flexDirection: 'column', gap: 16,
+            padding: 24, width: 560, display: 'flex', flexDirection: 'column', gap: 16,
             maxHeight: '90vh', boxSizing: 'border-box',
           }}>
             {/* Header */}
