@@ -184,6 +184,7 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
   const [showPatternLibrary, setShowPatternLibrary] = useState(false)
   const [showChartStructures, setShowChartStructures] = useState(false)
   const [sessionControlsVisible, setSessionControlsVisible] = useState(true)
+  const [rightPanelCollapsed, setRightPanelCollapsed] = useState(false)
   // Stepwise trade labeling: compute completed round-trips at bar boundary.
   // Stepwise popup state (kept for backward compat — only populated when
   // stepwise mode is on AND the user's setting is 'popup'; otherwise the
@@ -989,13 +990,19 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
         // Vertical stack: panes[0]=Top, panes[1]=Bottom
         if (paneIndex === 0) { add('↓', 1) }
         else if (paneIndex === 1) { add('↑', 0) }
-      } else if (layoutPreset === 5 || layoutPreset === 6 || layoutPreset === 7) {
+      } else if (layoutPreset === 5 || layoutPreset === 6) {
         // 5-pane variants: panes[0]=TL, panes[1]=TC, panes[2]=TR, panes[3]=BL, panes[4]=BR
         if (paneIndex === 0) { add('→', 1); add('↓', 3) }
         else if (paneIndex === 1) { add('←', 0); add('→', 2); add('↓', 4) }
         else if (paneIndex === 2) { add('←', 1); add('↓', 4) }
         else if (paneIndex === 3) { add('→', 4); add('↑', 0) }
         else if (paneIndex === 4) { add('←', 3); add('↑', 1) }
+      } else if (layoutPreset === 7) {
+        // 1+3: panes[0]=Top, panes[1]=BL, panes[2]=BC, panes[3]=BR
+        if (paneIndex === 0) { add('↓', 1) }
+        else if (paneIndex === 1) { add('→', 2); add('↑', 0) }
+        else if (paneIndex === 2) { add('←', 1); add('→', 3); add('↑', 0) }
+        else if (paneIndex === 3) { add('←', 2); add('↑', 0) }
       }
     }
 
@@ -1193,52 +1200,13 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
       return render2RowLayout([0, 1, 2], [3, 4], undefined, { 0: { flex: 1 }, 1: { flex: 0.5 }, 2: { flex: 0.5 } })
     }
 
-    // layout 7: Tall Right — top [left=1 tall pane, right=2 stacked vertically], bottom 2 equal
-    // ┌───────┬─────┐
-    // │       │  2  │
-    // │   1   ├─────┤
-    // │       │  3  │
-    // ├───────┼─────┤
-    // │   4   │  5  │
-    // └───────┴─────┘
-    if (layoutPreset === 7) {
-      const topH = Math.max(160, Math.floor((columnHeight - 36 - gap) / 2 * 0.966))
-      const halfTopH = Math.max(80, Math.floor((topH - gap) / 2))
-      if (maximizedPaneId !== null) {
-        const isTop = [0, 1, 2].some(i => panes[i]?.id === maximizedPaneId)
-        const isBottom = [3, 4].some(i => panes[i]?.id === maximizedPaneId)
-        return (
-          <div style={{ display: 'flex', flexDirection: 'column', gap }}>
-            <div style={{ display: isTop ? 'flex' : 'none', gap, height: maxH }}>
-              {panes[0] && renderPane(panes[0], maxH, panes[0].id === maximizedPaneId ? { width: '50%' } : { width: '50%', display: 'none' })}
-              <div style={{ display: 'flex', flexDirection: 'column', gap, flex: 1 }}>
-                {panes[1] && renderPane(panes[1], maxH, panes[1].id === maximizedPaneId ? {} : { display: 'none' })}
-                {panes[2] && renderPane(panes[2], maxH, panes[2].id === maximizedPaneId ? {} : { display: 'none' })}
-              </div>
-            </div>
-            <div style={{ display: isBottom ? 'flex' : 'none', gap }}>
-              {panes[3] && renderPane(panes[3], maxH, panes[3].id === maximizedPaneId ? { flex: 1 } : { flex: 1, display: 'none' })}
-              {panes[4] && renderPane(panes[4], maxH, panes[4].id === maximizedPaneId ? { flex: 1 } : { flex: 1, display: 'none' })}
-            </div>
-          </div>
-        )
-      }
-      return (
-        <div style={{ display: 'flex', flexDirection: 'column', gap }}>
-          <div style={{ display: 'flex', gap, height: topH }}>
-            {panes[0] && renderPane(panes[0], topH, { width: '50%' })}
-            <div style={{ display: 'flex', flexDirection: 'column', gap, flex: 1 }}>
-              {panes[1] && renderPane(panes[1], halfTopH)}
-              {panes[2] && renderPane(panes[2], halfTopH)}
-            </div>
-          </div>
-          <div style={{ display: 'flex', gap }}>
-            {panes[3] && renderPane(panes[3], rowHeight, { flex: 1 })}
-            {panes[4] && renderPane(panes[4], rowHeight, { flex: 1 })}
-          </div>
-        </div>
-      )
-    }
+    // layout 7: 1+3 — top 1 full-width, bottom 3 equal
+    // ┌─────────────────┐
+    // │        1        │
+    // ├───────┬─────┬───┤
+    // │   2   │  3  │ 4 │
+    // └───────┴─────┴───┘
+    if (layoutPreset === 7) return render2RowLayout([0], [1, 2, 3])
   } // end renderLayout
 
   const idle = sim.sessionState === 'idle' || sim.sessionState === 'ended'
@@ -1623,7 +1591,7 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
               <option value={4}>4 Panes</option>
               <option value={5}>5 Panes — Equal</option>
               <option value={6}>5 Panes — Wide R</option>
-              <option value={7}>5 Panes — Tall R</option>
+              <option value={7}>4 Panes — 1+3</option>
             </select>
           </label>
 
@@ -1786,11 +1754,37 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
           {renderLayout()}
         </div>
 
-        {/* Right sidebar */}
+        {/* Right sidebar — collapsible */}
+        {rightPanelCollapsed ? (
+          <div style={{
+            width: 32, display: 'flex', flexDirection: 'column', alignItems: 'center',
+            padding: '12px 4px', borderLeft: '1px solid #30363d', gap: 8,
+          }}>
+            <button
+              onClick={() => setRightPanelCollapsed(false)}
+              title="Show trading panel"
+              style={{
+                background: '#161b22', border: '1px solid #30363d',
+                color: '#8b949e', borderRadius: 6, padding: '6px 2px',
+                fontSize: 10, cursor: 'pointer', writingMode: 'vertical-rl',
+                letterSpacing: 1,
+              }}
+            >◀ Panel</button>
+          </div>
+        ) : (
         <div style={{
           width: 240, padding: 12, display: 'flex', flexDirection: 'column',
           gap: 12, overflowY: 'auto', borderLeft: '1px solid #30363d',
         }}>
+          <button
+            onClick={() => setRightPanelCollapsed(true)}
+            title="Hide trading panel for more chart space"
+            style={{
+              background: '#161b22', border: '1px solid #30363d',
+              color: '#8b949e', borderRadius: 6, padding: '3px 8px',
+              fontSize: 11, cursor: 'pointer', alignSelf: 'flex-end',
+            }}
+          >▶ Collapse</button>
           <TradePanel
             sessionState={sim.sessionState}
             currentPrice={tradePanelPrice}
@@ -1932,6 +1926,7 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
             sessionCapital={sim.sessionCapital}
           />
         </div>
+        )}
       </div>
 
       <AIChatPanel
