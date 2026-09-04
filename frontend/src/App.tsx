@@ -49,7 +49,7 @@ interface PaneConfig {
   reloadKey?: number
 }
 
-type LayoutPreset = 1 | 2 | 3 | 4 | 5
+type LayoutPreset = 1 | 2 | 3 | 4 | 5 | 6 | 7
 const INTERVAL_OPTIONS = [1, 2, 3, 5, 15, 30]
 let nextPaneId = 10
 
@@ -184,6 +184,7 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
   const [showPatternLibrary, setShowPatternLibrary] = useState(false)
   const [showChartStructures, setShowChartStructures] = useState(false)
   const [sessionControlsVisible, setSessionControlsVisible] = useState(true)
+  const [rightPanelCollapsed, setRightPanelCollapsed] = useState(false)
   // Stepwise trade labeling: compute completed round-trips at bar boundary.
   // Stepwise popup state (kept for backward compat — only populated when
   // stepwise mode is on AND the user's setting is 'popup'; otherwise the
@@ -777,9 +778,8 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
         }))
       }
       const ratios = sizingMode === 'riskRatio' ? riskRatios : fundsRatios
-      const prefix = sizingMode === 'riskRatio' ? 'R-' : ''
       return (['l', 'm', 'h'] as const).map(key => ({
-        label: `${prefix}${key.toUpperCase()} · ${ratios[key]}%`,
+        label: sizingMode === 'riskRatio' ? `RR ${ratios[key]}%` : `${key.toUpperCase()} · ${ratios[key]}%`,
         onClick: () => {
           const ratioPct = ratios[key] / 100
           const mktPrice = side === 'BUY' ? paneCurrentPrice * 1.01 : paneCurrentPrice * 0.99
@@ -990,13 +990,19 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
         // Vertical stack: panes[0]=Top, panes[1]=Bottom
         if (paneIndex === 0) { add('↓', 1) }
         else if (paneIndex === 1) { add('↑', 0) }
-      } else if (layoutPreset === 5) {
-        // Triple Top: panes[0]=TL, panes[1]=TC, panes[2]=TR, panes[3]=BL, panes[4]=BR
+      } else if (layoutPreset === 5 || layoutPreset === 6) {
+        // 5-pane variants: panes[0]=TL, panes[1]=TC, panes[2]=TR, panes[3]=BL, panes[4]=BR
         if (paneIndex === 0) { add('→', 1); add('↓', 3) }
         else if (paneIndex === 1) { add('←', 0); add('→', 2); add('↓', 4) }
         else if (paneIndex === 2) { add('←', 1); add('↓', 4) }
         else if (paneIndex === 3) { add('→', 4); add('↑', 0) }
         else if (paneIndex === 4) { add('←', 3); add('↑', 1) }
+      } else if (layoutPreset === 7) {
+        // 1+3: panes[0]=Top, panes[1]=BL, panes[2]=BC, panes[3]=BR
+        if (paneIndex === 0) { add('↓', 1) }
+        else if (paneIndex === 1) { add('→', 2); add('↑', 0) }
+        else if (paneIndex === 2) { add('←', 1); add('→', 3); add('↑', 0) }
+        else if (paneIndex === 3) { add('←', 2); add('↑', 0) }
       }
     }
 
@@ -1111,69 +1117,96 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
     }
 
     // layout 4: 2×2 grid
-    if (maximizedPaneId !== null) {
-      const maxInRow1 = panes[0]?.id === maximizedPaneId || panes[1]?.id === maximizedPaneId
-      const maxInRow2 = panes[2]?.id === maximizedPaneId || panes[3]?.id === maximizedPaneId
+    if (layoutPreset === 4) {
+      if (maximizedPaneId !== null) {
+        const maxInRow1 = panes[0]?.id === maximizedPaneId || panes[1]?.id === maximizedPaneId
+        const maxInRow2 = panes[2]?.id === maximizedPaneId || panes[3]?.id === maximizedPaneId
+        return (
+          <div style={{ display: 'flex', flexDirection: 'column', gap }}>
+            <div style={{ display: maxInRow1 ? 'flex' : 'none', gap }}>
+              {panes[0] && renderPane(panes[0], maxH, panes[0].id === maximizedPaneId ? { flex: 1 } : { flex: 1, display: 'none' })}
+              {panes[1] && renderPane(panes[1], maxH, panes[1].id === maximizedPaneId ? { flex: 1 } : { flex: 1, display: 'none' })}
+            </div>
+            <div style={{ display: maxInRow2 ? 'flex' : 'none', gap }}>
+              {panes[2] && renderPane(panes[2], maxH, panes[2].id === maximizedPaneId ? { flex: 1 } : { flex: 1, display: 'none' })}
+              {panes[3] && renderPane(panes[3], maxH, panes[3].id === maximizedPaneId ? { flex: 1 } : { flex: 1, display: 'none' })}
+            </div>
+          </div>
+        )
+      }
       return (
         <div style={{ display: 'flex', flexDirection: 'column', gap }}>
-          <div style={{ display: maxInRow1 ? 'flex' : 'none', gap }}>
-            {panes[0] && renderPane(panes[0], maxH, panes[0].id === maximizedPaneId ? { flex: 1 } : { flex: 1, display: 'none' })}
-            {panes[1] && renderPane(panes[1], maxH, panes[1].id === maximizedPaneId ? { flex: 1 } : { flex: 1, display: 'none' })}
+          <div style={{ display: 'flex', gap }}>
+            {panes[0] && renderPane(panes[0], rowHeight, { flex: 1 })}
+            {panes[1] && renderPane(panes[1], rowHeight, { flex: 1 })}
           </div>
-          <div style={{ display: maxInRow2 ? 'flex' : 'none', gap }}>
-            {panes[2] && renderPane(panes[2], maxH, panes[2].id === maximizedPaneId ? { flex: 1 } : { flex: 1, display: 'none' })}
-            {panes[3] && renderPane(panes[3], maxH, panes[3].id === maximizedPaneId ? { flex: 1 } : { flex: 1, display: 'none' })}
+          <div style={{ display: 'flex', gap }}>
+            {panes[2] && renderPane(panes[2], rowHeight, { flex: 1 })}
+            {panes[3] && renderPane(panes[3], rowHeight, { flex: 1 })}
           </div>
         </div>
       )
     }
-    return (
-      <div style={{ display: 'flex', flexDirection: 'column', gap }}>
-        <div style={{ display: 'flex', gap }}>
-          {panes[0] && renderPane(panes[0], rowHeight, { flex: 1 })}
-          {panes[1] && renderPane(panes[1], rowHeight, { flex: 1 })}
-        </div>
-        <div style={{ display: 'flex', gap }}>
-          {panes[2] && renderPane(panes[2], rowHeight, { flex: 1 })}
-          {panes[3] && renderPane(panes[3], rowHeight, { flex: 1 })}
-        </div>
-      </div>
-    )
 
-  // layout 5: Triple Top — top row 3 equal, bottom row 2 equal
-  if (layoutPreset === 5) {
-    if (maximizedPaneId !== null) {
-      const maxInRow1 = panes[0]?.id === maximizedPaneId || panes[1]?.id === maximizedPaneId || panes[2]?.id === maximizedPaneId
-      const maxInRow2 = panes[3]?.id === maximizedPaneId || panes[4]?.id === maximizedPaneId
+    // Helper: maximize-aware wrapper for a 2-row layout
+    const render2RowLayout = (
+      topPanes: number[], bottomPanes: number[],
+      topRowStyle?: React.CSSProperties, topPaneStyles?: Record<number, React.CSSProperties>,
+    ) => {
+      if (maximizedPaneId !== null) {
+        const maxInTop = topPanes.some(i => panes[i]?.id === maximizedPaneId)
+        const maxInBottom = bottomPanes.some(i => panes[i]?.id === maximizedPaneId)
+        return (
+          <div style={{ display: 'flex', flexDirection: 'column', gap }}>
+            <div style={{ display: maxInTop ? 'flex' : 'none', gap, ...topRowStyle }}>
+              {topPanes.map(i => panes[i] && renderPane(panes[i], maxH,
+                { ...(topPaneStyles?.[i] ?? { flex: 1 }), ...(panes[i].id === maximizedPaneId ? {} : { display: 'none' }) }))}
+            </div>
+            <div style={{ display: maxInBottom ? 'flex' : 'none', gap }}>
+              {bottomPanes.map(i => panes[i] && renderPane(panes[i], maxH,
+                panes[i].id === maximizedPaneId ? { flex: 1 } : { flex: 1, display: 'none' }))}
+            </div>
+          </div>
+        )
+      }
       return (
         <div style={{ display: 'flex', flexDirection: 'column', gap }}>
-          <div style={{ display: maxInRow1 ? 'flex' : 'none', gap }}>
-            {panes[0] && renderPane(panes[0], maxH, panes[0].id === maximizedPaneId ? { flex: 1 } : { flex: 1, display: 'none' })}
-            {panes[1] && renderPane(panes[1], maxH, panes[1].id === maximizedPaneId ? { flex: 1 } : { flex: 1, display: 'none' })}
-            {panes[2] && renderPane(panes[2], maxH, panes[2].id === maximizedPaneId ? { flex: 1 } : { flex: 1, display: 'none' })}
+          <div style={{ display: 'flex', gap, ...topRowStyle }}>
+            {topPanes.map(i => panes[i] && renderPane(panes[i], rowHeight, topPaneStyles?.[i] ?? { flex: 1 }))}
           </div>
-          <div style={{ display: maxInRow2 ? 'flex' : 'none', gap }}>
-            {panes[3] && renderPane(panes[3], maxH, panes[3].id === maximizedPaneId ? { flex: 1 } : { flex: 1, display: 'none' })}
-            {panes[4] && renderPane(panes[4], maxH, panes[4].id === maximizedPaneId ? { flex: 1 } : { flex: 1, display: 'none' })}
+          <div style={{ display: 'flex', gap }}>
+            {bottomPanes.map(i => panes[i] && renderPane(panes[i], rowHeight, { flex: 1 }))}
           </div>
         </div>
       )
     }
-    return (
-      <div style={{ display: 'flex', flexDirection: 'column', gap }}>
-        <div style={{ display: 'flex', gap }}>
-          {panes[0] && renderPane(panes[0], rowHeight, { flex: 1 })}
-          {panes[1] && renderPane(panes[1], rowHeight, { flex: 1 })}
-          {panes[2] && renderPane(panes[2], rowHeight, { flex: 1 })}
-        </div>
-        <div style={{ display: 'flex', gap }}>
-          {panes[3] && renderPane(panes[3], rowHeight, { flex: 1 })}
-          {panes[4] && renderPane(panes[4], rowHeight, { flex: 1 })}
-        </div>
-      </div>
-    )
-  }
 
+    // layout 5: Equal — top row 3 equal, bottom row 2 equal
+    // ┌─────┬─────┬─────┐
+    // │  1  │  2  │  3  │
+    // ├─────┴─────┼─────┤
+    // │     4     │  5  │
+    // └───────────┴─────┘
+    if (layoutPreset === 5) return render2RowLayout([0, 1, 2], [3, 4])
+
+    // layout 6: Wide Right — top [left half=1 pane, right half=2 side-by-side], bottom 2 equal
+    // ┌───────┬───┬───┐
+    // │       │ 2 │ 3 │
+    // │   1   ├───┴───┤
+    // ├───────┼───────┤
+    // │   4   │   5   │
+    // └───────┴───────┘
+    if (layoutPreset === 6) {
+      return render2RowLayout([0, 1, 2], [3, 4], undefined, { 0: { flex: 1 }, 1: { flex: 0.5 }, 2: { flex: 0.5 } })
+    }
+
+    // layout 7: 1+3 — top 1 full-width, bottom 3 equal
+    // ┌─────────────────┐
+    // │        1        │
+    // ├───────┬─────┬───┤
+    // │   2   │  3  │ 4 │
+    // └───────┴─────┴───┘
+    if (layoutPreset === 7) return render2RowLayout([0], [1, 2, 3])
   } // end renderLayout
 
   const idle = sim.sessionState === 'idle' || sim.sessionState === 'ended'
@@ -1556,7 +1589,9 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
               <option value={2}>2 Panes</option>
               <option value={3}>3 Panes</option>
               <option value={4}>4 Panes</option>
-              <option value={5}>5 Panes</option>
+              <option value={5}>5 Panes — Equal</option>
+              <option value={6}>5 Panes — Wide R</option>
+              <option value={7}>4 Panes — 1+3</option>
             </select>
           </label>
 
@@ -1719,11 +1754,37 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
           {renderLayout()}
         </div>
 
-        {/* Right sidebar */}
+        {/* Right sidebar — collapsible */}
+        {rightPanelCollapsed ? (
+          <div style={{
+            width: 32, display: 'flex', flexDirection: 'column', alignItems: 'center',
+            padding: '12px 4px', borderLeft: '1px solid #30363d', gap: 8,
+          }}>
+            <button
+              onClick={() => setRightPanelCollapsed(false)}
+              title="Show trading panel"
+              style={{
+                background: '#161b22', border: '1px solid #30363d',
+                color: '#8b949e', borderRadius: 6, padding: '6px 2px',
+                fontSize: 10, cursor: 'pointer', writingMode: 'vertical-rl',
+                letterSpacing: 1,
+              }}
+            >◀ Panel</button>
+          </div>
+        ) : (
         <div style={{
           width: 240, padding: 12, display: 'flex', flexDirection: 'column',
           gap: 12, overflowY: 'auto', borderLeft: '1px solid #30363d',
         }}>
+          <button
+            onClick={() => setRightPanelCollapsed(true)}
+            title="Hide trading panel for more chart space"
+            style={{
+              background: '#161b22', border: '1px solid #30363d',
+              color: '#8b949e', borderRadius: 6, padding: '3px 8px',
+              fontSize: 11, cursor: 'pointer', alignSelf: 'flex-end',
+            }}
+          >▶ Collapse</button>
           <TradePanel
             sessionState={sim.sessionState}
             currentPrice={tradePanelPrice}
@@ -1865,6 +1926,7 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
             sessionCapital={sim.sessionCapital}
           />
         </div>
+        )}
       </div>
 
       <AIChatPanel
