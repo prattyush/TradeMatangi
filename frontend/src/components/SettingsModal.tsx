@@ -859,7 +859,7 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
         >
           <div style={{
             background: '#161b22', border: '1px solid #30363d', borderRadius: 10,
-            padding: 24, width: 440, display: 'flex', flexDirection: 'column', gap: 16,
+            padding: 24, width: 560, display: 'flex', flexDirection: 'column', gap: 16,
             maxHeight: '90vh', boxSizing: 'border-box',
           }}>
             {/* Header */}
@@ -889,7 +889,7 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
                   style={{
                     flex: '1 0 0',
                     minWidth: 0,
-                    padding: '8px 2px',
+                    padding: '8px 6px',
                     background: 'none',
                     border: 'none',
                     borderLeft: tab !== 'general' ? '1px solid #21262d' : 'none',
@@ -897,7 +897,7 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
                       ? '2px solid #1f6feb'
                       : '2px solid transparent',
                     color: activeTab === tab ? '#79c0ff' : '#8b949e',
-                    fontSize: 9,
+                    fontSize: 11,
                     fontWeight: 700,
                     cursor: 'pointer',
                     textTransform: 'uppercase',
@@ -1714,7 +1714,7 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
                 <div style={{ borderTop: '1px solid #21262d', paddingTop: 16 }}>
                   <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 10, fontWeight: 600 }}>STRATEGY CANDLE INTERVAL</div>
                   <div style={{ display: 'flex', gap: 0, borderRadius: 6, overflow: 'hidden', border: '1px solid #30363d', width: 'fit-content' }}>
-                    {([{ label: '3 min', value: 180 }, { label: '5 min', value: 300 }] as const).map(opt => (
+                    {([{ label: '2 min', value: 120 }, { label: '3 min', value: 180 }, { label: '5 min', value: 300 }] as const).map(opt => (
                       <button
                         key={opt.value}
                         onClick={() => setStratIntervalSecs(opt.value)}

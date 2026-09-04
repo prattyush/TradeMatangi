@@ -7,8 +7,13 @@
 | Trading % With Stoploss (Risk Ratio) | ✅ Complete | Backend + Frontend, ternary sizing mode |
 | Mouse Right Click Support | ✅ Complete | ChartContextMenu with nested submenus |
 | Setting Re-arrange | ✅ Complete | New Trading tab, improved tab styling |
+| Bug Fixes (a-f) | ✅ Complete | 6 bugs fixed — see details below |
+| Chart Time Interval Dropdown | ✅ Complete | Per-pane dropdown with 1m/2m/3m/5m/15m/30m |
+| 2-Minute Interval Support | ✅ Complete | Added to chart and strategy interval options |
+| 5-Pane Layout (Triple Top) | ✅ Complete | 3 top + 2 bottom panes with swap/maximize |
+| Trade History Strategy & P&L | ✅ Complete | Strategy labels + round-trip P&L on closing trades |
 
-**Tests:** TypeScript compiles clean. Backend: 726 passed, 8 failed (all pre-existing guardrail mock issues, not related to this PR).
+**Tests:** TypeScript compiles clean. Backend: 724 passed, 10 failed (all pre-existing guardrail mock issues, not related to this PR).
 
 ---
 
@@ -309,6 +314,45 @@ type Tab = 'general' | 'trading' | 'analytics' | 'strategies' | 'guardrails' | '
 6. Entry Auto-Stoploss
 7. Right-Click SL Direction (Long Only / Both)
 
+
+### Bugs
+Few reported Bugs:-
+a) Whwn starting options simulation max Price (50) with sensex as symbol for 7th August, at 09:42am, the CE and the PE price choosen at 09:42am were >500. Can you see if some bug is present in the code, specially cases where multiple depth has to be reached to reach a contract with price below such price. However, price 100 was working correctly.
+b) In the Update All button, when multiple stoploss or limit orders can be modified, the 2 buttons shift all to Sl and shift to limit is outside the viewing area. Can you put it just below the UpdateAll button, or maybe arrange them in a way such that they are more visible.
+c) The Settings UI tabs are all visible even for Admin, within the viewport, but the tab text are too small, can are increase them in size, and if required increase settings popup width as well.
+d) For risk % quantity, the risk ratio button have R-L-1%, then R-M 2.4%, then are too much space, can you just write "RR <value>" like RR 1.2%, RR 2.4%, here RR is risk reward ratio.
+e) When a position is already open, and I right click and start a target profit strategy, it doesn't show up in the UI when I click on Strat. What if I need to cancel the strategy which I started, I can't do that if I can't see that the strategy is working now. 
+f) Once a order is placed, can you clear the stoploss on entry field value. The trader can switch between CE and PE, does a wrong stoploss on entry price would result in wrong trades. Thus, best it is auto cleared when the order is placed or Buy or sell button is clicked. Same goes for strategy (the stoploss on entry edit box).
+
+
+### Chart Layout
+This section has new features list for chart layout.
+
+#### Time Interval
+Currently, the only way to see chart of a new time interval is to add a new chart of different time interval. I can not change the ohlc bar time interval of the chart.
+The feaure is to have a time interval dropdown of same values 1m, 3m, 5m, 15m, 30m at each chart, similar to dropdown which is present for "Draw". When the chart should chart to the respective time interval chart. It also needs to support time interval charts for CE and PE for options, I think currently I can only add 3m chart time interval charts.
+This is required, as sometimes it makes sense to see what the chart shows for 1m or 15m momentarily, than to have it present alll the time.
+The order markers should be visible correctly at the required prices when time intervals are shifted. Further, the strategies would be following the time interval as specified in the settings (Strategy Candle Interval).
+
+Do discuss the complexities of handling such a switch between time intervals, the impact on computation and how will it be done.
+
+
+#### Custom Time Windows
+Can you also support 2 min time intervals.
+
+
+#### Chart Panes
+Supporting 5 chart panes. 3 options for 5 chart panes, 2 rows, top row has 3 chart, bottom 2. Bottom 2 divide the total chart area equally. 
+a) The top row chart area is divided equally into 3 parts.
+b) The top row chart area is divied into 2 equal parts. And one part (lets call it part 1b) is sub-divied into 2 more equal parts, where the 2 charts in 1b is stacked horizontally.
+c) The top row chart area is divied into 2 equal parts. And one part (lets call it part 1b) is sub-divied into 2 more equal parts, where the 2 charts in 1b is stacked vertically.
+
+You can name them as you want.
+
+
+### Trade History
+ Can the trade history pop up which opens also contain if the user can mentioned the expected strategy and the actual profit and loss of the trade. A trade is closed when both the orders of buy and sell are executed. Only after trade is closed only then the actual profit or loss can be calculated. So, can that be included in the trade history. Not all rows will have the value, only the row which has the last closing position entry (Last sell for long position) and vice-versa.
+
 ---
 
 ### Files Changed Summary
@@ -348,4 +392,102 @@ type Tab = 'general' | 'trading' | 'analytics' | 'strategies' | 'guardrails' | '
 8. **Settings re-arrange**: Open Settings → verify Trading tab exists with correct settings → verify General tab no longer has trading settings → verify tab styling is improved
 9. **Run existing tests**: `cd backend && python -m pytest tests/ -v` and `cd frontend && node node_modules/typescript/bin/tsc --noEmit`
 
+---
 
+## Bug Fixes Implementation
+
+### Bug (a): Options max price scan returning wrong strikes
+
+**Root cause:** `_get_option_price_at()` uses 15-minute Breeze candles. The query `df[df.index >= target]` returns the close of the nearest candle boundary (e.g., 09:30 candle for a 09:42 query). In volatile markets, the option premium can shift dramatically in that window, causing the scan to accept strikes whose real price at the query time is far above `max_price`. Additionally, deep OTM strikes often have no cached data and are silently skipped.
+
+**Changes:**
+- `backend/app/services/options_service.py`: Increased `_MAX_SCAN_INTERVALS` from 20 to 30 (needed for high-value underlyings like BSESEN at 80k+)
+- Added stale data warning in `_get_option_price_at()` when candle starts >5 minutes before reference time
+- Added logging for fallback `fetch_options_historical()` failures (previously silently swallowed)
+- Added warning log when no strike is found within the scan range
+
+### Bug (b): UpdateAll buttons overflow viewport
+
+**Root cause:** LTP, Update All, All SL, and All Lmt buttons were in a single flex row, causing overflow on narrow sidebars.
+
+**Changes:**
+- `frontend/src/components/OrderPanel.tsx`: Split into two rows — Row 1: price input + LTP + Update All; Row 2: All SL + All Lmt (with `flex: 1` for equal width)
+
+### Bug (c): Settings tab text too small
+
+**Changes:**
+- `frontend/src/components/SettingsModal.tsx`: Tab `fontSize` 9→11, `padding` '8px 2px'→'8px 6px', popup `width` 440→520px
+
+### Bug (d): Risk ratio button labels too verbose
+
+**Changes:**
+- `frontend/src/components/OrderPanel.tsx`: Changed label format from "R-L · 1%" to "RR 1%" in three locations: strat tab buttons, main order form buttons, and place button text
+
+### Bug (e): Strategy started from context menu not visible in Strat panel
+
+**Root cause:** Context menu strategy actions called `api.startStrategy().catch(() => {})` — the response (containing `strategy_id`) was discarded, so `runningStrategies` state was never updated.
+
+**Changes:**
+- `frontend/src/App.tsx`: All four context menu strategy actions (Target Profit, Lock Profit, Underlying Target, Underlying SL) now capture the response via `.then(resp => setRunningStrategies(prev => [...prev, resp]))`
+
+### Bug (f): Stoploss-on-entry field not cleared after order placement
+
+**Changes:**
+- `frontend/src/components/OrderPanel.tsx`: After successful `handlePlace()`, clear `entrySlPrice` and collapse `slOnEntry`. After successful `handleStartStrategy()`, clear `entrySlPriceAuto` and collapse `slOnEntryAuto`
+
+---
+
+## Chart Layout Implementation
+
+### Time Interval Dropdown
+
+**Feature:** Each chart pane now has an interval dropdown (next to the Draw dropdown) supporting 1m, 2m, 3m, 5m, 15m, 30m candles. Changing the interval triggers a full data re-fetch from the backend (server-side resample from 1-second data).
+
+**Changes:**
+- `frontend/src/components/Chart.tsx`: Added `onIntervalChange` prop, interval dropdown in toolbar with click-outside-to-close handling
+- `frontend/src/App.tsx`: Added `handlePaneIntervalChange` callback, passes `onIntervalChange` to each `<Chart>` component
+
+**Notes:**
+- Drawings are cleared on interval change (acceptable per spec — "momentary viewing")
+- Order markers auto-adjust via `Math.floor(t.timestamp / intervalSecs) * intervalSecs`
+- Strategy bars continue on their configured `strategy_interval_secs` independent of chart display interval
+
+### 2-Minute Interval Support
+
+**Changes:**
+- `frontend/src/App.tsx`: Added `2` to `INTERVAL_OPTIONS`
+- `frontend/src/components/SettingsModal.tsx`: Added "2 min" option to strategy candle interval dropdown
+
+### 5-Pane Layout (Triple Top)
+
+**Feature:** New "5 Panes" layout option with top row of 3 equal panes and bottom row of 2 equal panes.
+
+**Changes:**
+- `frontend/src/App.tsx`: Extended `LayoutPreset` type to include `5`, added "5 Panes" option to layout dropdown, implemented layout rendering with maximize/restore support for all 5 panes, added swap targets (top row: 0↔1↔2, bottom row: 3↔4, cross-row: 0↓3, 1↓4, 2↓4)
+
+---
+
+## Trade History Implementation
+
+### Strategy & P&L Columns
+
+**Feature:** Expanded trade history modal now shows "Strategy" and "P&L" columns. P&L displays only on the closing trade of each FIFO round-trip (green for profit, red for loss, ₹ prefix). Strategy shows the `expected_strategy` from trade labels.
+
+**Changes:**
+- `frontend/src/components/TradeHistory.tsx`: Added `roundTrips` and `labels` props, builds lookup maps (closing trade → P&L, closing trade → strategy), added two new columns to expanded modal table
+- `frontend/src/App.tsx`: Added `roundTrips` and `tradeLabels` state, fetches via `api.getRoundTrips()` and `api.getLabels()` when session is active (re-fetches on trade count change), passes to `<TradeHistory>`
+
+**Backend:** No changes needed — existing `GET /api/analysis/round-trips` and `GET /api/analysis/labels` endpoints are used.
+
+---
+
+## Files Changed Summary
+
+| File | Changes |
+|------|---------|
+| `backend/app/services/options_service.py` | Increased scan range 20→30, stale data warning, fallback logging |
+| `frontend/src/components/SettingsModal.tsx` | Tab fontSize 9→11, padding, width 440→520, 2min strategy interval |
+| `frontend/src/components/OrderPanel.tsx` | RR labels, UpdateAll row split, clear SL on entry after placement |
+| `frontend/src/App.tsx` | Context menu strategy capture, interval change callback, 5-pane layout, round-trip/label fetching |
+| `frontend/src/components/Chart.tsx` | Interval dropdown in toolbar, `onIntervalChange` prop |
+| `frontend/src/components/TradeHistory.tsx` | Strategy + P&L columns in expanded modal |

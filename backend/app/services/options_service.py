@@ -404,7 +404,7 @@ def get_underlying_price_at(symbol: str, date: str, unix_ts: int) -> float | Non
         return None
 
 
-_MAX_SCAN_INTERVALS = 20  # max strikes to scan outward from ATM
+_MAX_SCAN_INTERVALS = 30  # max strikes to scan outward from ATM (increased for high-value underlyings like BSESEN)
 
 
 def find_strike_by_max_price(
@@ -470,6 +470,10 @@ def find_strike_by_max_price(
         if price is not None and 0 < price <= max_price:
             return {"strike": strike, "price": round(price, 2)}
 
+    logger.warning(
+        "find_strike_by_max_price: no strike found within %d intervals for %s %s max_price=%.2f ref_ts=%d atm=%d",
+        _MAX_SCAN_INTERVALS, symbol, right_upper, max_price, ref_ts, atm_strike,
+    )
     return {"strike": atm_strike, "price": 0}
 
 
@@ -496,6 +500,15 @@ def _get_option_price_at(
                 target = pd.Timestamp(ref_ts, unit="s", tz="UTC")
                 rows = df[df.index >= target]
                 if not rows.empty:
+                    candle_start = int(rows.index[0].timestamp())
+                    # The candle's start may be earlier than ref_ts (e.g., 09:30 candle for 09:42 query).
+                    # Warn if the candle starts > 5 min before the reference time (stale approximation).
+                    gap_secs = ref_ts - candle_start
+                    if gap_secs > 300:
+                        logger.warning(
+                            "_get_option_price_at: stale parquet data for %s %s %s — candle starts %d secs before ref_ts",
+                            symbol, right, strike, gap_secs,
+                        )
                     return float(rows.iloc[0]["close"])
         except Exception:
             pass
@@ -560,7 +573,8 @@ def _get_option_price_at(
             rows = df[df.index >= target]
             if not rows.empty:
                 return float(rows.iloc[0]["close"])
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("_get_option_price_at: fallback fetch failed for %s %s %s: %s",
+                     symbol, right, strike, exc)
 
     return None

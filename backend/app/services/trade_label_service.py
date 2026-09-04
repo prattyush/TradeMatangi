@@ -125,12 +125,13 @@ def _fifo_match_trades(trades: list[dict]) -> list[dict]:
             if net_qty == 0 and (buy_q or sell_q):
                 total_buy = sum(p * q for p, q in buy_q)
                 total_sell = sum(p * q for p, q in sell_q)
-                pnl = round(total_sell - total_buy, 2)
+                total_commission = sum(_safe_float(t.get("commission")) for t in entry_trades + exit_trades)
+                pnl = round(total_sell - total_buy - total_commission, 2)
                 round_trips.append({
                     "index": index,
                     "right": right,
                     "entry_trades": [_serialize_rt_trade(e) for e in entry_trades],
-                    "exit_trades": [_serialize_rt_trade(e) for e in exit_trades],
+                    "exit_trades": [_serialize_rt_trade(x) for x in exit_trades],
                     "pnl": pnl,
                 })
                 index += 1
@@ -151,6 +152,7 @@ def _serialize_rt_trade(t: dict) -> dict:
         "timestamp": int(t.get("timestamp", 0)),
         "right": t.get("right"),
         "strike": int(t.get("strike")) if t.get("strike") is not None else None,
+        "commission": _safe_float(t.get("commission")),
     }
 
 
