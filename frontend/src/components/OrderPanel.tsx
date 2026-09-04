@@ -280,6 +280,8 @@ export default function OrderPanel({
         await onPlaceOrder(side, orderType, parsedPrice, quantity, { target_deviation_pct: deviation, ...entrySlOpts })
       }
       setPrice('')
+      setEntrySlPrice('')
+      setSlOnEntry(false)
       const rightTag = instrumentType === 'options' && activeRight ? ` ${activeRight}` : ''
       onSnapshotEvent?.({
         type: 'order_placed',
@@ -411,6 +413,8 @@ export default function OrderPanel({
         extraOpts = { lockProfitValue: v, lockProfitIsPct: lpIsPct }
       }
       await onStartStrategy(strategyType, right, { ...opts, ...extraOpts })
+      setEntrySlPriceAuto('')
+      setSlOnEntryAuto(false)
     } catch (e) {
       setStratError(e instanceof Error ? e.message : 'Failed to start strategy')
     } finally {
@@ -633,7 +637,7 @@ export default function OrderPanel({
                       borderRadius: 4, cursor: 'pointer',
                       background: stratRatio === k ? '#3d2200' : '#161b22',
                       color: stratRatio === k ? '#f0883e' : '#8b949e',
-                    }}>R-{k.toUpperCase()}<span style={{ fontSize: 9, display: 'block' }}>{riskRatios[k]}%</span></button>
+                    }}>RR {riskRatios[k]}%</button>
                   ))}
                 </div>
               ) : (
@@ -1225,7 +1229,7 @@ export default function OrderPanel({
                   cursor: isActive ? 'pointer' : 'not-allowed',
                 }}
               >
-                R-{key.toUpperCase()} · {riskRatios[key]}%
+                RR {riskRatios[key]}%
               </button>
             ))}
           </div>
@@ -1330,11 +1334,11 @@ export default function OrderPanel({
       >
         {placing ? 'Placing…'
           : orderType === 'STOPLOSS' ? `Set SL (${side} @ trigger)`
-          : orderType === 'MARKET' ? `${side} Mkt [${ratio.toUpperCase()} · ${sizingMode === 'riskRatio' ? riskRatios[ratio] : fundsRatios[ratio]}%]`
+          : orderType === 'MARKET' ? `${side} Mkt [RR ${sizingMode === 'riskRatio' ? riskRatios[ratio] : fundsRatios[ratio]}%]`
           : sizingMode === 'fundsRatio'
             ? `Place ${side} ${orderType} [${ratio.toUpperCase()} · ${fundsRatios[ratio]}%]`
           : sizingMode === 'riskRatio'
-            ? `Place ${side} ${orderType} [R-${ratio.toUpperCase()} · ${riskRatios[ratio]}%]`
+            ? `Place ${side} ${orderType} [RR ${riskRatios[ratio]}%]`
             : `Place ${side} ${orderType}`}
       </button>
       </>
@@ -1391,33 +1395,33 @@ export default function OrderPanel({
                       fontSize: 10, fontWeight: 600, whiteSpace: 'nowrap',
                     }}
                   >{bulkUpdating ? '…' : 'Update All'}</button>
-                  {onBulkConvert && (
-                    <>
-                      <button
-                        onClick={() => handleBulkConvert('STOPLOSS')}
-                        disabled={bulkUpdating}
-                        title="Convert all to Stoploss"
-                        style={{
-                          padding: '3px 6px', background: '#2a1a1a',
-                          border: '1px solid #4a2000', borderRadius: 4,
-                          color: '#f85149', cursor: bulkUpdating ? 'not-allowed' : 'pointer',
-                          fontSize: 10, fontWeight: 600, whiteSpace: 'nowrap',
-                        }}
-                      >All SL</button>
-                      <button
-                        onClick={() => handleBulkConvert('LIMIT')}
-                        disabled={bulkUpdating}
-                        title="Convert all to Limit"
-                        style={{
-                          padding: '3px 6px', background: '#1a2a1a',
-                          border: '1px solid #204a20', borderRadius: 4,
-                          color: '#3fb950', cursor: bulkUpdating ? 'not-allowed' : 'pointer',
-                          fontSize: 10, fontWeight: 600, whiteSpace: 'nowrap',
-                        }}
-                      >All Lmt</button>
-                    </>
-                  )}
                 </div>
+                {onBulkConvert && (
+                  <div style={{ display: 'flex', gap: 4, marginTop: 4 }}>
+                    <button
+                      onClick={() => handleBulkConvert('STOPLOSS')}
+                      disabled={bulkUpdating}
+                      title="Convert all to Stoploss"
+                      style={{
+                        flex: 1, padding: '3px 6px', background: '#2a1a1a',
+                        border: '1px solid #4a2000', borderRadius: 4,
+                        color: '#f85149', cursor: bulkUpdating ? 'not-allowed' : 'pointer',
+                        fontSize: 10, fontWeight: 600, whiteSpace: 'nowrap',
+                      }}
+                    >All SL</button>
+                    <button
+                      onClick={() => handleBulkConvert('LIMIT')}
+                      disabled={bulkUpdating}
+                      title="Convert all to Limit"
+                      style={{
+                        flex: 1, padding: '3px 6px', background: '#1a2a1a',
+                        border: '1px solid #204a20', borderRadius: 4,
+                        color: '#3fb950', cursor: bulkUpdating ? 'not-allowed' : 'pointer',
+                        fontSize: 10, fontWeight: 600, whiteSpace: 'nowrap',
+                      }}
+                    >All Lmt</button>
+                  </div>
+                )}
               </div>
             )
           })()}

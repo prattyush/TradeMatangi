@@ -50,6 +50,8 @@ interface Props {
   liveFromTs?: number
   // Increment to trigger a manual data reload (fixes phantom candle after strike change)
   reloadKey?: number
+  // Interval change callback — parent updates pane intervalMinutes
+  onIntervalChange?: (minutes: number) => void
   // Number of prior trading days to load for chart context (default 2)
   historicalDays?: number
   // Latest equity tick timestamp — used as fallback cutoff when this pane's latestTick is null
@@ -130,6 +132,7 @@ export default function Chart({
   swapTargets,
   liveFromTs,
   reloadKey = 0,
+  onIntervalChange,
   historicalDays,
   currentSimTime,
   position,
@@ -157,12 +160,14 @@ export default function Chart({
   const onPriceSelectRef = useRef<((price: number) => void) | null>(null)
   const onContextMenuRef = useRef(onContextMenu)
   const drawDropdownRef = useRef<HTMLDivElement>(null)
+  const intervalDropdownRef = useRef<HTMLDivElement>(null)
 
   const [showEma, setShowEma] = useState(true)
   const [drawMode, setDrawMode] = useState<DrawMode>('none')
   const [drawStep, setDrawStep] = useState(0)
   const [drawingCount, setDrawingCount] = useState(0)
   const [drawDropdownOpen, setDrawDropdownOpen] = useState(false)
+  const [intervalDropdownOpen, setIntervalDropdownOpen] = useState(false)
   const [localReloadKey, setLocalReloadKey] = useState(0)
 
   // effectiveReloadKey combines the external reloadKey prop with the local one
@@ -184,6 +189,16 @@ export default function Chart({
     document.addEventListener('mousedown', close)
     return () => document.removeEventListener('mousedown', close)
   }, [drawDropdownOpen])
+  useEffect(() => {
+    if (!intervalDropdownOpen) return
+    const close = (e: MouseEvent) => {
+      if (intervalDropdownRef.current && !intervalDropdownRef.current.contains(e.target as Node)) {
+        setIntervalDropdownOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', close)
+    return () => document.removeEventListener('mousedown', close)
+  }, [intervalDropdownOpen])
 
   // ── Chart initialisation — runs once on mount only ───────────────────────
   useEffect(() => {
@@ -977,6 +992,44 @@ export default function Chart({
             </div>
           )}
         </div>
+
+        {/* Interval dropdown */}
+        {onIntervalChange && (
+          <div style={{ position: 'relative' }} ref={intervalDropdownRef}>
+            <button
+              onClick={e => { e.stopPropagation(); setIntervalDropdownOpen(v => !v) }}
+              style={toolbarBtnStyle(false)}
+              title="Change candle interval"
+            >
+              {intervalMinutes}m ▾
+            </button>
+            {intervalDropdownOpen && (
+              <div style={{
+                position: 'absolute', top: '100%', left: 0, zIndex: 100,
+                background: '#161b22', border: '1px solid #30363d',
+                borderRadius: 4, minWidth: 80, marginTop: 2,
+              }}>
+                {[1, 2, 3, 5, 15, 30].map(m => (
+                  <div
+                    key={m}
+                    onClick={e => {
+                      e.stopPropagation()
+                      setIntervalDropdownOpen(false)
+                      if (m !== intervalMinutes) onIntervalChange(m)
+                    }}
+                    style={{
+                      padding: '5px 10px', cursor: 'pointer', fontSize: 11,
+                      color: intervalMinutes === m ? '#f0883e' : '#e6edf3',
+                      background: intervalMinutes === m ? '#2a1a0a' : 'transparent',
+                    }}
+                  >
+                    {m} min
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
 
         {drawingCount > 0 && (
           <button onClick={e => { e.stopPropagation(); clearLastDrawing() }} style={toolbarBtnStyle(false)}>

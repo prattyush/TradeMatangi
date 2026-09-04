@@ -49,8 +49,8 @@ interface PaneConfig {
   reloadKey?: number
 }
 
-type LayoutPreset = 1 | 2 | 3 | 4
-const INTERVAL_OPTIONS = [1, 3, 5, 15, 30]
+type LayoutPreset = 1 | 2 | 3 | 4 | 5
+const INTERVAL_OPTIONS = [1, 2, 3, 5, 15, 30]
 let nextPaneId = 10
 
 function makeEquityPane(intervalMinutes: number): PaneConfig {
@@ -148,6 +148,8 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
   const [overrideSessionEnabled] = useState(loadOverrideSessionEnabled)
   const [stepwiseLabelingPopup, setStepwiseLabelingPopup] = useState(loadStepwiseLabelingPopupEnabled)
   const [patternAlerts, setPatternAlerts] = useState<PatternAlert[]>([])
+  const [roundTrips, setRoundTrips] = useState<import('./services/api').RoundTrip[]>([])
+  const [tradeLabels, setTradeLabels] = useState<import('./services/api').TradeLabel[]>([])
 
   // ── Context menu state ─────────────────────────────────────────────────────
   const [contextMenu, setContextMenu] = useState<{
@@ -461,6 +463,10 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
     })
   }, [])
 
+  const handlePaneIntervalChange = useCallback((paneId: number, minutes: number) => {
+    setPanes(prev => prev.map(p => p.id === paneId ? { ...p, intervalMinutes: minutes } : p))
+  }, [])
+
   // ── Active pane derivations ─────────────────────────────────────────────────
   const activePane = panes.find(p => p.id === activePaneId) ?? null
   const activeRight: 'CE' | 'PE' | null = activePane?.type === 'options' ? (activePane.right ?? null) : null
@@ -619,6 +625,23 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
   }, [sim.setLatestTick, sim.handleSessionEnded, sim.handleOrderFilled, sim.handleOrderCancelled, sim.addOpenOrder, sim.addTradeFromSSE, sim.handleBarPaused, setGuardrailPopup, setRunningStrategies, captureSnapshot])
 
   useSSE(sim.sseUrl, handleSSEMessage)
+
+  // Fetch round-trips and labels for trade history when session is active
+  useEffect(() => {
+    if (!sim.sessionId) { setRoundTrips([]); setTradeLabels([]); return }
+    let cancelled = false
+    const fetch = async () => {
+      try {
+        const [rts, lbs] = await Promise.all([
+          api.getRoundTrips(sim.sessionId!),
+          api.getLabels(sim.sessionId!),
+        ])
+        if (!cancelled) { setRoundTrips(rts); setTradeLabels(lbs) }
+      } catch { /* ignore */ }
+    }
+    fetch()
+    return () => { cancelled = true }
+  }, [sim.sessionId, sim.trades.length])
 
   const handleStart = useCallback(async (startTime: string, speed: number, instrumentConfig: InstrumentConfig) => {
     setRunningStrategies([])
@@ -856,7 +879,7 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
             strategy_type: 'TargetProfit',
             target_profit_value: price,
             right: right ?? undefined,
-          }).catch(() => {})
+          }).then(resp => { setRunningStrategies(prev => [...prev, resp]) }).catch(() => {})
         }
       },
       {
@@ -867,7 +890,7 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
             strategy_type: 'LockProfit',
             lock_profit_value: price,
             right: right ?? undefined,
-          }).catch(() => {})
+          }).then(resp => { setRunningStrategies(prev => [...prev, resp]) }).catch(() => {})
         }
       },
     ]
@@ -882,7 +905,7 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
               session_id: sim.sessionId!,
               strategy_type: 'UnderlyingTargetProfit',
               target_profit_value: price,
-            }).catch(() => {})
+            }).then(resp => { setRunningStrategies(prev => [...prev, resp]) }).catch(() => {})
           }
         },
         {
@@ -892,7 +915,7 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
               session_id: sim.sessionId!,
               strategy_type: 'UnderlyingStoploss',
               underlying_sl_price: price,
-            }).catch(() => {})
+            }).then(resp => { setRunningStrategies(prev => [...prev, resp]) }).catch(() => {})
           }
         },
       )
@@ -967,6 +990,13 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
         // Vertical stack: panes[0]=Top, panes[1]=Bottom
         if (paneIndex === 0) { add('↓', 1) }
         else if (paneIndex === 1) { add('↑', 0) }
+      } else if (layoutPreset === 5) {
+        // Triple Top: panes[0]=TL, panes[1]=TC, panes[2]=TR, panes[3]=BL, panes[4]=BR
+        if (paneIndex === 0) { add('→', 1); add('↓', 3) }
+        else if (paneIndex === 1) { add('←', 0); add('→', 2); add('↓', 4) }
+        else if (paneIndex === 2) { add('←', 1); add('↓', 4) }
+        else if (paneIndex === 3) { add('→', 4); add('↑', 0) }
+        else if (paneIndex === 4) { add('←', 3); add('↑', 1) }
       }
     }
 
@@ -1019,6 +1049,7 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
           pnl={getPnlForPane(pane)}
           pnlPctMode={pnlPctMode}
           sessionCapital={sim.sessionCapital}
+          onIntervalChange={(minutes) => handlePaneIntervalChange(pane.id, minutes)}
         />
       </div>
     )
@@ -1108,7 +1139,42 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
         </div>
       </div>
     )
+
+  // layout 5: Triple Top — top row 3 equal, bottom row 2 equal
+  if (layoutPreset === 5) {
+    if (maximizedPaneId !== null) {
+      const maxInRow1 = panes[0]?.id === maximizedPaneId || panes[1]?.id === maximizedPaneId || panes[2]?.id === maximizedPaneId
+      const maxInRow2 = panes[3]?.id === maximizedPaneId || panes[4]?.id === maximizedPaneId
+      return (
+        <div style={{ display: 'flex', flexDirection: 'column', gap }}>
+          <div style={{ display: maxInRow1 ? 'flex' : 'none', gap }}>
+            {panes[0] && renderPane(panes[0], maxH, panes[0].id === maximizedPaneId ? { flex: 1 } : { flex: 1, display: 'none' })}
+            {panes[1] && renderPane(panes[1], maxH, panes[1].id === maximizedPaneId ? { flex: 1 } : { flex: 1, display: 'none' })}
+            {panes[2] && renderPane(panes[2], maxH, panes[2].id === maximizedPaneId ? { flex: 1 } : { flex: 1, display: 'none' })}
+          </div>
+          <div style={{ display: maxInRow2 ? 'flex' : 'none', gap }}>
+            {panes[3] && renderPane(panes[3], maxH, panes[3].id === maximizedPaneId ? { flex: 1 } : { flex: 1, display: 'none' })}
+            {panes[4] && renderPane(panes[4], maxH, panes[4].id === maximizedPaneId ? { flex: 1 } : { flex: 1, display: 'none' })}
+          </div>
+        </div>
+      )
+    }
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap }}>
+        <div style={{ display: 'flex', gap }}>
+          {panes[0] && renderPane(panes[0], rowHeight, { flex: 1 })}
+          {panes[1] && renderPane(panes[1], rowHeight, { flex: 1 })}
+          {panes[2] && renderPane(panes[2], rowHeight, { flex: 1 })}
+        </div>
+        <div style={{ display: 'flex', gap }}>
+          {panes[3] && renderPane(panes[3], rowHeight, { flex: 1 })}
+          {panes[4] && renderPane(panes[4], rowHeight, { flex: 1 })}
+        </div>
+      </div>
+    )
   }
+
+  } // end renderLayout
 
   const idle = sim.sessionState === 'idle' || sim.sessionState === 'ended'
 
@@ -1490,6 +1556,7 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
               <option value={2}>2 Panes</option>
               <option value={3}>3 Panes</option>
               <option value={4}>4 Panes</option>
+              <option value={5}>5 Panes</option>
             </select>
           </label>
 
@@ -1792,6 +1859,10 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
                 setBrokerError(parts.join(' — '))
               }
             } : undefined}
+            roundTrips={roundTrips}
+            labels={tradeLabels}
+            pnlPctMode={pnlPctMode}
+            sessionCapital={sim.sessionCapital}
           />
         </div>
       </div>
