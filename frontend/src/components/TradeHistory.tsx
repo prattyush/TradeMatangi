@@ -1,11 +1,29 @@
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
 import { Trade } from '../services/api'
+
+interface RoundTrip {
+  index: number
+  right: string | null
+  entry_trades: { trade_id: string; side: string; quantity: number; price: number; timestamp: number }[]
+  exit_trades: { trade_id: string; side: string; quantity: number; price: number; timestamp: number }[]
+  pnl: number
+}
+
+interface TradeLabel {
+  round_trip_index: number
+  expected_strategy?: string
+  expected_category?: string
+  actual_strategy?: string
+  actual_category?: string
+}
 
 interface Props {
   trades: Trade[]
   historicalTrades?: Trade[]
   sessionType?: string
   onRefresh?: () => Promise<void>
+  roundTrips?: RoundTrip[]
+  labels?: TradeLabel[]
 }
 
 function fmt(n: number) {
@@ -36,7 +54,7 @@ const SEPARATOR_STYLE_EXPANDED: React.CSSProperties = {
   letterSpacing: '0.05em',
 }
 
-export default function TradeHistory({ trades, historicalTrades = [], sessionType, onRefresh }: Props) {
+export default function TradeHistory({ trades, historicalTrades = [], sessionType, onRefresh, roundTrips = [], labels = [] }: Props) {
   const [expanded, setExpanded] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
 
@@ -46,6 +64,30 @@ export default function TradeHistory({ trades, historicalTrades = [], sessionTyp
   // Compact view: most-recent-first current session, then separator, then historical most-recent-first
   const currentReversed = [...trades].reverse()
   const histReversed = [...historicalTrades].reverse()
+
+  // Build lookup maps for round-trip P&L and strategy labels
+  const { closingTradePnl, closingTradeStrategy } = useMemo(() => {
+    const pnlMap: Record<string, number> = {}
+    const stratMap: Record<string, string> = {}
+
+    // Map round_trip_index → expected_strategy from labels
+    const labelByIndex: Record<number, string> = {}
+    for (const lb of labels) {
+      if (lb.expected_strategy) labelByIndex[lb.round_trip_index] = lb.expected_strategy
+    }
+
+    // For each round-trip, the last exit trade gets the P&L and strategy
+    for (const rt of roundTrips) {
+      if (rt.exit_trades.length > 0) {
+        const lastExit = rt.exit_trades[rt.exit_trades.length - 1]
+        pnlMap[lastExit.trade_id] = rt.pnl
+        if (labelByIndex[rt.index]) {
+          stratMap[lastExit.trade_id] = labelByIndex[rt.index]
+        }
+      }
+    }
+    return { closingTradePnl: pnlMap, closingTradeStrategy: stratMap }
+  }, [roundTrips, labels])
 
   return (
     <>
@@ -161,31 +203,44 @@ export default function TradeHistory({ trades, historicalTrades = [], sessionTyp
               <table style={{ borderCollapse: 'collapse', fontSize: 12, whiteSpace: 'nowrap' }}>
                 <thead>
                   <tr style={{ color: '#8b949e', borderBottom: '1px solid #30363d' }}>
-                    {['Time (IST)', 'Symbol', 'Side', 'Qty', 'Price', 'Right', 'Strike', 'Trade ID'].map(h => (
+                    {['Time (IST)', 'Symbol', 'Side', 'Qty', 'Price', 'Right', 'Strike', 'Strategy', 'P&L', 'Trade ID'].map(h => (
                       <th key={h} style={{ padding: '8px 14px', textAlign: 'left', fontWeight: 500 }}>{h}</th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
-                  {currentReversed.map(t => (
-                    <tr key={t.trade_id} style={{ borderBottom: '1px solid #21262d' }}>
-                      <td style={{ padding: '7px 14px', color: '#8b949e' }}>{toDate(t.timestamp)}</td>
-                      <td style={{ padding: '7px 14px', color: '#e6edf3' }}>{t.symbol}</td>
-                      <td style={{ padding: '7px 14px', fontWeight: 600, color: t.side === 'BUY' ? '#26a641' : '#f85149' }}>
-                        {t.side}
-                      </td>
-                      <td style={{ padding: '7px 14px' }}>{t.quantity}</td>
-                      <td style={{ padding: '7px 14px', fontVariantNumeric: 'tabular-nums' }}>{fmt(t.price)}</td>
-                      <td style={{ padding: '7px 14px', color: '#8b949e' }}>{t.right ?? '—'}</td>
-                      <td style={{ padding: '7px 14px', color: '#8b949e' }}>{t.strike ?? '—'}</td>
-                      <td style={{ padding: '7px 14px', color: '#484f58', fontSize: 10 }}>
-                        {t.trade_id.slice(0, 8)}…
-                      </td>
-                    </tr>
-                  ))}
+                  {currentReversed.map(t => {
+                    const pnl = closingTradePnl[t.trade_id]
+                    const strategy = closingTradeStrategy[t.trade_id]
+                    return (
+                      <tr key={t.trade_id} style={{ borderBottom: '1px solid #21262d' }}>
+                        <td style={{ padding: '7px 14px', color: '#8b949e' }}>{toDate(t.timestamp)}</td>
+                        <td style={{ padding: '7px 14px', color: '#e6edf3' }}>{t.symbol}</td>
+                        <td style={{ padding: '7px 14px', fontWeight: 600, color: t.side === 'BUY' ? '#26a641' : '#f85149' }}>
+                          {t.side}
+                        </td>
+                        <td style={{ padding: '7px 14px' }}>{t.quantity}</td>
+                        <td style={{ padding: '7px 14px', fontVariantNumeric: 'tabular-nums' }}>{fmt(t.price)}</td>
+                        <td style={{ padding: '7px 14px', color: '#8b949e' }}>{t.right ?? '—'}</td>
+                        <td style={{ padding: '7px 14px', color: '#8b949e' }}>{t.strike ?? '—'}</td>
+                        <td style={{ padding: '7px 14px', color: strategy ? '#58a6ff' : '#484f58', fontSize: 11 }}>
+                          {strategy ?? '—'}
+                        </td>
+                        <td style={{
+                          padding: '7px 14px', fontVariantNumeric: 'tabular-nums', fontWeight: pnl != null ? 600 : 400,
+                          color: pnl != null ? (pnl >= 0 ? '#3fb950' : '#f85149') : '#484f58',
+                        }}>
+                          {pnl != null ? `₹${fmt(pnl)}` : '—'}
+                        </td>
+                        <td style={{ padding: '7px 14px', color: '#484f58', fontSize: 10 }}>
+                          {t.trade_id.slice(0, 8)}…
+                        </td>
+                      </tr>
+                    )
+                  })}
                   {histReversed.length > 0 && (
                     <>
-                      <tr><td colSpan={8} style={SEPARATOR_STYLE_EXPANDED}>── Previous sessions ──</td></tr>
+                      <tr><td colSpan={10} style={SEPARATOR_STYLE_EXPANDED}>── Previous sessions ──</td></tr>
                       {histReversed.map(t => (
                         <tr key={t.trade_id} style={{ borderBottom: '1px solid #21262d', opacity: 0.55 }}>
                           <td style={{ padding: '7px 14px', color: '#8b949e' }}>{toDate(t.timestamp)}</td>
@@ -197,6 +252,8 @@ export default function TradeHistory({ trades, historicalTrades = [], sessionTyp
                           <td style={{ padding: '7px 14px', fontVariantNumeric: 'tabular-nums' }}>{fmt(t.price)}</td>
                           <td style={{ padding: '7px 14px', color: '#8b949e' }}>{t.right ?? '—'}</td>
                           <td style={{ padding: '7px 14px', color: '#8b949e' }}>{t.strike ?? '—'}</td>
+                          <td style={{ padding: '7px 14px', color: '#484f58', fontSize: 11 }}>—</td>
+                          <td style={{ padding: '7px 14px', color: '#484f58' }}>—</td>
                           <td style={{ padding: '7px 14px', color: '#484f58', fontSize: 10 }}>
                             {t.trade_id.slice(0, 8)}…
                           </td>
