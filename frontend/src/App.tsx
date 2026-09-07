@@ -68,8 +68,12 @@ const DEFAULT_EQUITY_PANES: PaneConfig[] = [
 ]
 
 // ── Layout helpers ───────────────────────────────────────────────────────────
+const LAYOUT_PANE_COUNT: Record<LayoutPreset, number> = {
+  1: 1, 2: 2, 3: 3, 4: 4, 5: 5, 6: 5, 7: 4,
+}
+
 function defaultPanesForLayout(preset: LayoutPreset, current: PaneConfig[]): PaneConfig[] {
-  const n = preset  // target pane count
+  const n = LAYOUT_PANE_COUNT[preset]
   if (current.length >= n) return current.slice(0, n)
   const extras: PaneConfig[] = []
   const intervals = [15, 30, 1, 5]
