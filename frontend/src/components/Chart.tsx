@@ -857,7 +857,7 @@ export default function Chart({
     padding: '3px 8px', fontSize: 11, borderRadius: 4,
     border: `1px solid ${active ? '#f0883e' : '#30363d'}`,
     background: active ? '#2a1a0a' : '#161b22',
-    color: active ? '#f0883e' : '#8b949e',
+    color: active ? '#f0883e' : '#79c0ff',
     cursor: 'pointer',
   })
 
@@ -942,7 +942,7 @@ export default function Chart({
         paddingRight: 36,
         background: '#161b22', borderBottom: '1px solid #21262d', flexWrap: 'wrap',
       }}>
-        <span style={{ fontSize: 11, color: isActive ? '#58a6ff' : '#8b949e', marginRight: 4 }}>
+        <span style={{ fontSize: 11, color: isActive ? '#58a6ff' : '#79c0ff', marginRight: 4 }}>
           {paneLabel}
         </span>
 
