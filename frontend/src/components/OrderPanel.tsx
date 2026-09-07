@@ -137,6 +137,7 @@ export default function OrderPanel({
   const [lpIsPct, setLpIsPct] = useState(false)
 
   // Batch update SL state
+  const [selectedStrategy, setSelectedStrategy] = useState<string>('AutoStop')
   const [bulkSLPrice, setBulkSLPrice] = useState('')
   const [bulkUpdating, setBulkUpdating] = useState(false)
 
@@ -575,11 +576,13 @@ export default function OrderPanel({
       {orderType === 'STRAT' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
 
-          {/* Right selector (options only) */}
-          {instrumentType === 'options' && (
-            <div>
+          {/* ── Strategy Selector Dropdown ── */}
+          <div style={{ borderTop: '1px solid #21262d', paddingTop: 8 }}>
+            {instrumentType === 'options' && (
               <div style={{ fontSize: 10, color: '#8b949e', marginBottom: 3 }}>Options Right</div>
-              <div style={{ display: 'flex', gap: 4 }}>
+            )}
+            {instrumentType === 'options' && (
+              <div style={{ display: 'flex', gap: 4, marginBottom: 6 }}>
                 {(['CE', 'PE'] as const).map(r => (
                   <button key={r} onClick={() => setStratRight(r)} style={{
                     flex: 1, padding: '4px 0', fontSize: 12, fontWeight: 700,
@@ -590,19 +593,32 @@ export default function OrderPanel({
                   }}>{r}</button>
                 ))}
               </div>
-            </div>
-          )}
-
-          {/* ── Entry Strategies ── */}
-          <div style={{ borderTop: '1px solid #21262d', paddingTop: 8 }}>
-            <div style={{ fontSize: 10, color: '#3fb950', fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 6 }}>
-              Entry Strategies
-            </div>
+            )}
+            <select
+              value={selectedStrategy}
+              onChange={e => setSelectedStrategy(e.target.value)}
+              style={{
+                width: '100%', padding: '5px 6px', fontSize: 11, fontWeight: 600,
+                background: '#161b22', color: '#e6edf3',
+                border: '1px solid #30363d', borderRadius: 4, cursor: 'pointer',
+                marginBottom: 8,
+              }}
+            >
+              <option value="AutoStop">Entry — AutoStop</option>
+              <option value="BreakEven">{stratHasPosition ? '' : '🔒 '}Exit — BreakEven</option>
+              <option value="TargetProfit">{stratHasPosition ? '' : '🔒 '}Exit — Target Profit</option>
+              {instrumentType === 'options' && <option value="UnderlyingTargetProfit">{stratHasPosition ? '' : '🔒 '}Exit — Underlying Target</option>}
+              {instrumentType === 'options' && <option value="UnderlyingStoploss">{stratHasPosition ? '' : '🔒 '}Exit — Underlying SL</option>}
+              <option value="LockProfit">{stratHasPosition ? '' : '🔒 '}Exit — Lock Profit</option>
+              <option value="AggressiveStoploss">{stratHasPosition ? '' : '🔒 '}Mgmt — Aggressive SL</option>
+            </select>
 
             {/* AutoStop */}
-            <div style={{ marginBottom: 6 }}>
-              <div style={{ fontSize: 11, color: '#e6edf3', fontWeight: 600, marginBottom: 4 }}>AutoStop</div>
-              {/* Direction (equity only; options always BUY) */}
+            {selectedStrategy === 'AutoStop' && (
+            <div>
+              <div style={{ fontSize: 10, color: '#3fb950', fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 6 }}>
+                Entry Strategy
+              </div>
               {instrumentType === 'equity' && (
                 <div style={{ display: 'flex', gap: 4, marginBottom: 4 }}>
                   {(['BUY', 'SELL'] as const).map(d => (
@@ -615,7 +631,6 @@ export default function OrderPanel({
                   ))}
                 </div>
               )}
-              {/* Sizing */}
               {sizingMode === 'fundsRatio' ? (
                 <div style={{ display: 'flex', gap: 3, marginBottom: 4 }}>
                   {(['l', 'm', 'h'] as RatioKey[]).map(k => (
@@ -658,7 +673,6 @@ export default function OrderPanel({
                   ? `Trigger: ${stratDirection === 'BUY' || instrumentType === 'options' ? 'bar high' : 'bar low'}`
                   : `Trigger: close ± ${autostopDeviationPct}%`}
               </div>
-              {/* SL-on-entry expandable for AutoStop */}
               <div
                 onClick={() => { setSlOnEntryAuto(v => !v); if (!slOnEntryAuto) { setEntrySlPriceAuto('') } }}
                 style={{ fontSize: 10, color: '#8b949e', cursor: 'pointer', userSelect: 'none', marginBottom: 4, display: 'flex', alignItems: 'center', gap: 4 }}
@@ -706,20 +720,22 @@ export default function OrderPanel({
                 {stratLoading === 'AutoStop' ? 'Starting…' : '▶ Start AutoStop'}
               </button>
             </div>
-          </div>
+            )}
 
-          {/* ── Exit Strategies ── */}
-          <div style={{ borderTop: '1px solid #21262d', paddingTop: 8, opacity: stratHasPosition ? 1 : 0.45 }}>
-            <div style={{ fontSize: 10, color: '#f0883e', fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 6 }}>
-              Exit Strategies {!stratHasPosition && <span style={{ fontWeight: 400, fontSize: 9 }}>(need position)</span>}
-            </div>
-            <div style={{ marginBottom: 8 }}>
-              <div style={{ fontSize: 11, color: '#e6edf3', fontWeight: 600, marginBottom: 4 }}>
-                BreakEven{' '}
+            {/* BreakEven */}
+            {selectedStrategy === 'BreakEven' && (
+            <div>
+              <div style={{ fontSize: 10, color: '#f0883e', fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 6 }}>
+                Exit Strategy {!stratHasPosition && <span style={{ fontWeight: 400, fontSize: 9 }}>(need position)</span>}
+              </div>
+              <div style={{ fontSize: 11, color: '#8b949e', marginBottom: 6 }}>
                 <span title={breakevenMode === 'limit_order'
                   ? 'Places limit order at breakeven + buffer when reached'
                   : 'Shifts SL to breakeven + buffer when price hits threshold'}
-                  style={{ cursor: 'help', fontSize: 10 }}>ⓘ</span>
+                  style={{ cursor: 'help' }}>ⓘ</span>{' '}
+                {breakevenMode === 'limit_order'
+                  ? 'Places limit order at breakeven + buffer when reached'
+                  : 'Shifts SL to breakeven + buffer when price hits threshold'}
               </div>
               <button
                 onClick={() => handleStartStrategy('BreakEven')}
@@ -735,13 +751,18 @@ export default function OrderPanel({
                 {stratLoading === 'BreakEven' ? 'Starting…' : '▶ Start BreakEven'}
               </button>
             </div>
+            )}
 
-            {/* TargetProfit */}
-            <div style={{ marginBottom: 2 }}>
-              <div style={{ fontSize: 11, color: '#e6edf3', fontWeight: 600, marginBottom: 4 }}>
-                Target Profit{' '}
+            {/* Target Profit */}
+            {selectedStrategy === 'TargetProfit' && (
+            <div>
+              <div style={{ fontSize: 10, color: '#f0883e', fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 6 }}>
+                Exit Strategy {!stratHasPosition && <span style={{ fontWeight: 400, fontSize: 9 }}>(need position)</span>}
+              </div>
+              <div style={{ fontSize: 11, color: '#8b949e', marginBottom: 6 }}>
                 <span title="When option price reaches target, places a LIMIT order to exit. Buffer ticks ensure trigger is past the target."
-                  style={{ cursor: 'help', fontSize: 10 }}>ⓘ</span>
+                  style={{ cursor: 'help' }}>ⓘ</span>{' '}
+                When price reaches target, places a LIMIT order to exit.
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
                 <input
@@ -792,14 +813,18 @@ export default function OrderPanel({
                 {stratLoading === 'TargetProfit' ? 'Starting…' : '▶ Start TargetProfit'}
               </button>
             </div>
+            )}
 
-            {/* UnderlyingTargetProfit — options only */}
-            {instrumentType === 'options' && (
-            <div style={{ marginBottom: 2 }}>
-              <div style={{ fontSize: 11, color: '#e6edf3', fontWeight: 600, marginBottom: 4 }}>
-                Underlying Target{' '}
+            {/* Underlying Target (options only) */}
+            {selectedStrategy === 'UnderlyingTargetProfit' && (
+            <div>
+              <div style={{ fontSize: 10, color: '#f0883e', fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 6 }}>
+                Exit Strategy {!stratHasPosition && <span style={{ fontWeight: 400, fontSize: 9 }}>(need position)</span>}
+              </div>
+              <div style={{ fontSize: 11, color: '#8b949e', marginBottom: 6 }}>
                 <span title="Monitors underlying price. When reached, shifts SL to option LTP ± buffer ticks. Creates SL if none exist."
-                  style={{ cursor: 'help', fontSize: 10 }}>ⓘ</span>
+                  style={{ cursor: 'help' }}>ⓘ</span>{' '}
+                Monitors underlying price. When reached, shifts SL to option LTP ± buffer ticks.
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
                 <input
@@ -843,13 +868,16 @@ export default function OrderPanel({
             </div>
             )}
 
-            {/* UnderlyingStoploss — options only */}
-            {instrumentType === 'options' && (
-            <div style={{ marginBottom: 2 }}>
-              <div style={{ fontSize: 11, color: '#e6edf3', fontWeight: 600, marginBottom: 4 }}>
-                Underlying SL{' '}
+            {/* Underlying SL (options only) */}
+            {selectedStrategy === 'UnderlyingStoploss' && (
+            <div>
+              <div style={{ fontSize: 10, color: '#f0883e', fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 6 }}>
+                Exit Strategy {!stratHasPosition && <span style={{ fontWeight: 400, fontSize: 9 }}>(need position)</span>}
+              </div>
+              <div style={{ fontSize: 11, color: '#8b949e', marginBottom: 6 }}>
                 <span title="Monitors underlying price. When it moves against your position, shifts SL to option LTP ± buffer ticks. Creates SL if none exist."
-                  style={{ cursor: 'help', fontSize: 10 }}>ⓘ</span>
+                  style={{ cursor: 'help' }}>ⓘ</span>{' '}
+                Monitors underlying price. When it moves against you, shifts SL to option LTP ± buffer ticks.
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
                 <input
@@ -893,12 +921,16 @@ export default function OrderPanel({
             </div>
             )}
 
-            {/* LockProfit */}
-            <div style={{ marginBottom: 2 }}>
-              <div style={{ fontSize: 11, color: '#e6edf3', fontWeight: 600, marginBottom: 4 }}>
-                Lock Profit{' '}
+            {/* Lock Profit */}
+            {selectedStrategy === 'LockProfit' && (
+            <div>
+              <div style={{ fontSize: 10, color: '#f0883e', fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 6 }}>
+                Exit Strategy {!stratHasPosition && <span style={{ fontWeight: 400, fontSize: 9 }}>(need position)</span>}
+              </div>
+              <div style={{ fontSize: 11, color: '#8b949e', marginBottom: 6 }}>
                 <span title="When price hits lock level, shifts ALL SL orders to that price (one-time). Creates SL if none exist."
-                  style={{ cursor: 'help', fontSize: 10 }}>ⓘ</span>
+                  style={{ cursor: 'help' }}>ⓘ</span>{' '}
+                When price hits lock level, shifts ALL SL orders to that price (one-time).
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
                 <input
@@ -963,18 +995,19 @@ export default function OrderPanel({
                 {stratLoading === 'LockProfit' ? 'Starting…' : '▶ Start Lock Profit'}
               </button>
             </div>
-          </div>
+            )}
 
-          {/* ── Trade Management ── */}
-          <div style={{ borderTop: '1px solid #21262d', paddingTop: 8, opacity: stratHasPosition ? 1 : 0.45 }}>
-            <div style={{ fontSize: 10, color: '#79c0ff', fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 6 }}>
-              Trade Management {!stratHasPosition && <span style={{ fontWeight: 400, fontSize: 9 }}>(need position)</span>}
-            </div>
+            {/* Aggressive Stoploss */}
+            {selectedStrategy === 'AggressiveStoploss' && (
             <div>
-              <div style={{ fontSize: 11, color: '#e6edf3', fontWeight: 600, marginBottom: 4 }}>
-                Aggressive SL{' '}
+              <div style={{ fontSize: 10, color: '#79c0ff', fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 6 }}>
+                Trade Management {!stratHasPosition && <span style={{ fontWeight: 400, fontSize: 9 }}>(need position)</span>}
+              </div>
+              <div style={{ fontSize: 11, color: '#8b949e', marginBottom: 6 }}>
                 <span title={`One-shot: places a STOPLOSS at 1% from bar close to lock in profit.${aggrSlOnlyInProfit ? ' Only triggers when bar closes in profit.' : ''}`}
-                  style={{ cursor: 'help', fontSize: 10 }}>ⓘ</span>
+                  style={{ cursor: 'help' }}>ⓘ</span>{' '}
+                One-shot: places a STOPLOSS at 1% from bar close to lock in profit.
+                {aggrSlOnlyInProfit && ' Only triggers when bar closes in profit.'}
               </div>
               <button
                 onClick={() => handleStartStrategy('AggressiveStoploss')}
@@ -990,6 +1023,7 @@ export default function OrderPanel({
                 {stratLoading === 'AggressiveStoploss' ? 'Starting…' : '▶ Start Aggressive SL'}
               </button>
             </div>
+            )}
           </div>
 
           {/* ── Running Strategies ── */}
