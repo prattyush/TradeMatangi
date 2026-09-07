@@ -899,6 +899,23 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
       },
     ]
 
+    // Aggressive SL — requires open position on current pane (not for underlying pane in options)
+    if (!(paneType === 'equity' && instrumentType === 'options')) {
+      const panePosition = right === 'CE' ? sim.positionCE : right === 'PE' ? sim.positionPE : sim.position
+      if (panePosition && panePosition.side !== 'FLAT') {
+        stratActions.push({
+          label: 'Aggressive SL',
+          onClick: () => {
+            api.startStrategy({
+              session_id: sim.sessionId!,
+              strategy_type: 'AggressiveStoploss',
+              right: right ?? undefined,
+            }).then(resp => { setRunningStrategies(prev => [...prev, resp]) }).catch(() => {})
+          }
+        })
+      }
+    }
+
     // Underlying-only strategies (equity pane in options sessions)
     if (paneType === 'equity' && instrumentType === 'options') {
       stratActions.push(
@@ -928,7 +945,7 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
     actions.push({ label: 'Start strategy', submenu: stratActions })
 
     return actions
-  }, [contextMenu, sim.sessionId, sim.sessionState, sim.openOrders, sim.currentPrice, sim.currentPriceCE, sim.currentPricePE, sim.placeOrder, sim.bulkUpdateOrders, sim.handleOrderConverted, sizingMode, fundsRatios, riskRatios, instrumentType])
+  }, [contextMenu, sim.sessionId, sim.sessionState, sim.openOrders, sim.position, sim.positionCE, sim.positionPE, sim.currentPrice, sim.currentPriceCE, sim.currentPricePE, sim.placeOrder, sim.bulkUpdateOrders, sim.handleOrderConverted, sizingMode, fundsRatios, riskRatios, instrumentType])
 
   // Net session P&L = gross dayPnl minus per-trade commissions (computed by backend)
   const netDayPnl = sim.dayPnl - sim.trades.reduce((s, t) => s + (t.commission ?? 0), 0)
