@@ -62,7 +62,7 @@ interface Props {
   onCancelStrategy?: (strategyId: string) => Promise<void>
   onUpdateStrategyPrice?: (strategyId: string, price: number) => Promise<void>
   onBulkUpdateSL?: (triggerPrice: number, right: string | null) => Promise<{ updated: number }>
-  onBulkConvert?: (newOrderType: 'TARGET' | 'LIMIT' | 'STOPLOSS', right: string | null) => Promise<{ converted: number }>
+  onBulkConvert?: (newOrderType: 'TARGET' | 'LIMIT' | 'STOPLOSS', right: string | null, price?: number) => Promise<{ converted: number }>
   onRequestLpPick?: () => void
   injectedLpPrice?: number | null
   onGuardRailBlocked?: (type: 'BLOCK' | 'COOLDOWN' | 'BAN', reason: string) => void
@@ -488,7 +488,8 @@ export default function OrderPanel({
     setBulkUpdating(true)
     try {
       const right = instrumentType === 'options' ? activeRight : null
-      await onBulkConvert(newType, right ?? null)
+      const p = parseFloat(bulkSLPrice)
+      await onBulkConvert(newType, right ?? null, !isNaN(p) && p > 0 ? p : undefined)
     } catch (e) {
       setStratError(e instanceof Error ? e.message : 'Failed to bulk convert')
     } finally {
