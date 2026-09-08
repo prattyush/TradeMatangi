@@ -345,6 +345,7 @@ class BulkConvertRequest(BaseModel):
     session_id: str
     new_order_type: OrderType   # TARGET, LIMIT, or STOPLOSS
     right: str | None = None   # "CE" | "PE" | None (equity)
+    price: float | None = None
 
 
 class StrategyResponse(BaseModel):

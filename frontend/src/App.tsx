@@ -749,9 +749,9 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
     return res
   }, [sim.sessionId, sim.bulkUpdateOrders])
 
-  const handleBulkConvert = useCallback(async (newOrderType: 'TARGET' | 'LIMIT' | 'STOPLOSS', right: string | null) => {
+  const handleBulkConvert = useCallback(async (newOrderType: 'TARGET' | 'LIMIT' | 'STOPLOSS', right: string | null, price?: number) => {
     if (!sim.sessionId) return { converted: 0, orders: [] }
-    const res = await api.bulkConvertOrders(sim.sessionId, newOrderType, right)
+    const res = await api.bulkConvertOrders(sim.sessionId, newOrderType, right, price)
     if (res.orders.length > 0) {
       sim.bulkUpdateOrders(res.orders)
     }
