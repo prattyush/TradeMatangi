@@ -213,6 +213,10 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
   const [injectedUtpPrice, setInjectedUtpPrice] = useState<number | null>(null)
   const [lpPickActive, setLpPickActive] = useState(false)
   const [injectedLpPrice, setInjectedLpPrice] = useState<number | null>(null)
+  const [contextMenuOrderPick, setContextMenuOrderPick] = useState<{
+    side: 'BUY' | 'SELL'; orderType: 'TARGET' | 'LIMIT'; slPrice: number;
+    quantity: number | null; fundsRatioPct?: number; riskRatioPct?: number; right?: string;
+  } | null>(null)
 
   useEffect(() => {
     if (!localStorage.getItem('user')) {
@@ -669,11 +673,23 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
     } else if (lpPickActive) {
       setInjectedLpPrice(price)
       setLpPickActive(false)
+    } else if (contextMenuOrderPick) {
+      const p = contextMenuOrderPick
+      const opts: Record<string, unknown> = {
+        entry_sl_price: p.slPrice,
+        group_id: crypto.randomUUID(),
+      }
+      if (p.right) opts.right = p.right
+      if (p.fundsRatioPct != null) opts.funds_ratio_pct = p.fundsRatioPct
+      if (p.riskRatioPct != null) opts.risk_ratio_pct = p.riskRatioPct
+      if (p.orderType === 'TARGET') opts.target_deviation_pct = targetDeviationPct
+      sim.placeOrder(p.side, p.orderType, price, p.quantity, opts as Parameters<typeof sim.placeOrder>[4]).catch(() => {})
+      setContextMenuOrderPick(null)
     } else if (pricePickOrderId) {
       setInjectedEditPrice({ orderId: pricePickOrderId, price })
       setPricePickOrderId(null)
     }
-  }, [pricePickOrderId, tpPickActive, utpPickActive, lpPickActive])
+  }, [pricePickOrderId, tpPickActive, utpPickActive, lpPickActive, contextMenuOrderPick, targetDeviationPct, sim.placeOrder])
 
   // ── Strategy callbacks ────────────────────────────────────────────────────────
   const handleStartStrategy = useCallback(async (
@@ -765,20 +781,44 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
     })()
 
     // Sizing submenu builder
-    const buildSizingSubmenu = (side: 'BUY' | 'SELL', orderType: 'MARKET' | 'AUTO_STOP'): ContextMenuAction[] => {
+    const buildSizingSubmenu = (side: 'BUY' | 'SELL', orderType: 'MARKET' | 'AUTO_STOP' | 'TARGET' | 'LIMIT'): ContextMenuAction[] => {
+      const handleSize = (quantity: number | null, fundsRatioPct?: number, riskRatioPct?: number) => {
+        if (orderType === 'MARKET') {
+          const mktPrice = side === 'BUY' ? paneCurrentPrice * 1.01 : paneCurrentPrice * 0.99
+          const opts: Record<string, unknown> = { entry_sl_price: price, group_id: crypto.randomUUID() }
+          if (fundsRatioPct != null) opts.funds_ratio_pct = fundsRatioPct
+          if (riskRatioPct != null) opts.risk_ratio_pct = riskRatioPct
+          if (right) opts.right = right
+          sim.placeOrder(side, 'LIMIT', mktPrice, quantity, opts as Parameters<typeof sim.placeOrder>[4])
+        } else if (orderType === 'AUTO_STOP') {
+          const opts: Record<string, unknown> = { entry_sl_price: price }
+          if (riskRatioPct != null) opts.riskRatioPct = riskRatioPct
+          else if (fundsRatioPct != null) opts.fundsRatioPct = fundsRatioPct
+          api.startStrategy({
+            session_id: sim.sessionId!,
+            strategy_type: 'AutoStop',
+            right: right ?? undefined,
+            entry_sl_price: price,
+            risk_ratio_pct: riskRatioPct,
+            funds_ratio_pct: fundsRatioPct,
+          }).catch(() => {})
+        } else {
+          setContextMenuOrderPick({
+            side,
+            orderType,
+            slPrice: price,
+            quantity,
+            fundsRatioPct,
+            riskRatioPct,
+            right: right ?? undefined,
+          })
+        }
+      }
+
       if (sizingMode === 'quantity') {
         return [1, 2, 3, 5, 10].map(q => ({
           label: `${q}`,
-          onClick: () => {
-            const mktPrice = side === 'BUY' ? paneCurrentPrice * 1.01 : paneCurrentPrice * 0.99
-            if (orderType === 'MARKET') {
-              sim.placeOrder(side, 'LIMIT', mktPrice, q, {
-                entry_sl_price: price,
-                group_id: crypto.randomUUID(),
-                ...(right ? { right } : {}),
-              } as Parameters<typeof sim.placeOrder>[4])
-            }
-          }
+          onClick: () => handleSize(q),
         }))
       }
       const ratios = sizingMode === 'riskRatio' ? riskRatios : fundsRatios
@@ -786,27 +826,7 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
         label: sizingMode === 'riskRatio' ? `RR ${ratios[key]}%` : `${key.toUpperCase()} · ${ratios[key]}%`,
         onClick: () => {
           const ratioPct = ratios[key] / 100
-          const mktPrice = side === 'BUY' ? paneCurrentPrice * 1.01 : paneCurrentPrice * 0.99
-          if (orderType === 'MARKET') {
-            const opts: Record<string, unknown> = { entry_sl_price: price, group_id: crypto.randomUUID() }
-            if (sizingMode === 'riskRatio') opts.risk_ratio_pct = ratioPct
-            else opts.funds_ratio_pct = ratioPct
-            if (right) opts.right = right
-            sim.placeOrder(side, 'LIMIT', mktPrice, null, opts as Parameters<typeof sim.placeOrder>[4])
-          } else {
-            // AutoStop
-            const opts: Record<string, unknown> = { entry_sl_price: price }
-            if (sizingMode === 'riskRatio') opts.riskRatioPct = ratioPct
-            else opts.fundsRatioPct = ratioPct
-            api.startStrategy({
-              session_id: sim.sessionId!,
-              strategy_type: 'AutoStop',
-              right: right ?? undefined,
-              entry_sl_price: price,
-              risk_ratio_pct: sizingMode === 'riskRatio' ? ratioPct : undefined,
-              funds_ratio_pct: sizingMode !== 'riskRatio' ? ratioPct : undefined,
-            }).catch(() => {})
-          }
+          handleSize(null, sizingMode === 'riskRatio' ? undefined : ratioPct, sizingMode === 'riskRatio' ? ratioPct : undefined)
         }
       }))
     }
@@ -823,6 +843,8 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
             submenu: [
               { label: 'Market Order', submenu: buildSizingSubmenu('BUY', 'MARKET') },
               { label: 'Auto-Stop Order', submenu: buildSizingSubmenu('BUY', 'AUTO_STOP') },
+              { label: 'Target Order', submenu: buildSizingSubmenu('BUY', 'TARGET') },
+              { label: 'Limit Order', submenu: buildSizingSubmenu('BUY', 'LIMIT') },
             ]
           },
           {
@@ -830,6 +852,8 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
             submenu: [
               { label: 'Market Order', submenu: buildSizingSubmenu('SELL', 'MARKET') },
               { label: 'Auto-Stop Order', submenu: buildSizingSubmenu('SELL', 'AUTO_STOP') },
+              { label: 'Target Order', submenu: buildSizingSubmenu('SELL', 'TARGET') },
+              { label: 'Limit Order', submenu: buildSizingSubmenu('SELL', 'LIMIT') },
             ]
           },
         ]
@@ -840,6 +864,8 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
         submenu: [
           { label: 'Market Order', submenu: buildSizingSubmenu('BUY', 'MARKET') },
           { label: 'Auto-Stop Order', submenu: buildSizingSubmenu('BUY', 'AUTO_STOP') },
+          { label: 'Target Order', submenu: buildSizingSubmenu('BUY', 'TARGET') },
+          { label: 'Limit Order', submenu: buildSizingSubmenu('BUY', 'LIMIT') },
         ]
       })
     }
@@ -1059,14 +1085,16 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
           isActive={pane.id === activePaneId}
           onActivate={() => {
             setActivePaneId(pane.id)
-            if ((pricePickOrderId || tpPickActive || utpPickActive || lpPickActive) && pane.id !== activePaneId) {
+            if ((pricePickOrderId || tpPickActive || utpPickActive || lpPickActive || contextMenuOrderPick) && pane.id !== activePaneId) {
               setPricePickOrderId(null)
               setTpPickActive(false)
+              setContextMenuOrderPick(null)
             }
           }}
           trades={getTradesForPane(pane)}
           openOrders={getOrdersForPane(pane)}
-          onPriceSelect={(pricePickOrderId || tpPickActive || utpPickActive || lpPickActive) && pane.id === activePaneId ? handleChartPriceSelect : null}
+          onPriceSelect={(pricePickOrderId || tpPickActive || utpPickActive || lpPickActive || contextMenuOrderPick) && pane.id === activePaneId ? handleChartPriceSelect : null}
+          pricePickLabel={contextMenuOrderPick ? `⊕ Click for ${contextMenuOrderPick.orderType === 'TARGET' ? 'Target' : 'Limit'} Price` : undefined}
           onContextMenu={(price, screenX, screenY, ctx) => handleChartContextMenu(price, screenX, screenY, ctx, pane.id)}
           historicalDays={historicalDays}
           onMaximize={() => setMaximizedPaneId(isMaximized ? null : pane.id)}

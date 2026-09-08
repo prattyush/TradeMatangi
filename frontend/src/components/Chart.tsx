@@ -37,6 +37,7 @@ interface Props {
   openOrders?: Order[]
   // Price-pick mode: when non-null, a chart click calls this instead of draw mode
   onPriceSelect?: ((price: number) => void) | null
+  pricePickLabel?: string
   // Right-click context menu
   onContextMenu?: (price: number, screenX: number, screenY: number, ctx: {
     paneType: string; right?: 'CE' | 'PE'; hasPosition: boolean; hasOpenOrders: boolean; hasSLOrders: boolean
@@ -126,6 +127,7 @@ export default function Chart({
   trades = [],
   openOrders,
   onPriceSelect = null,
+  pricePickLabel,
   onContextMenu,
   onMaximize,
   isMaximized = false,
@@ -1074,7 +1076,7 @@ export default function Chart({
         )}
         {onPriceSelect && (
           <span style={{ fontSize: 11, color: '#3fb950', fontWeight: 600 }}>
-            ⊕ Click to pick price
+            {pricePickLabel || '⊕ Click to pick price'}
           </span>
         )}
         {barCountdown && (
