@@ -471,6 +471,7 @@ async def bulk_convert_route(req: BulkConvertRequest):
             order_id=order.order_id,
             new_order_type=req.new_order_type,
             trading_date=session.date,
+            price=req.price,
         )
         if converted:
             converted_orders.append(converted)

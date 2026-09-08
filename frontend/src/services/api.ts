@@ -1255,11 +1255,11 @@ const api = {
     return res.json()
   },
 
-  async bulkConvertOrders(session_id: string, new_order_type: 'TARGET' | 'LIMIT' | 'STOPLOSS', right: string | null): Promise<{ converted: number; orders: Order[] }> {
+  async bulkConvertOrders(session_id: string, new_order_type: 'TARGET' | 'LIMIT' | 'STOPLOSS', right: string | null, price?: number): Promise<{ converted: number; orders: Order[] }> {
     const res = await fetch(`${BACKEND_URL}/api/orders/bulk-convert`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json', ..._authHeaders() },
-      body: JSON.stringify({ session_id, new_order_type, right }),
+      body: JSON.stringify({ session_id, new_order_type, right, price: price ?? null }),
     })
     if (!res.ok) throw new Error(`Bulk convert failed: ${res.status}`)
     return res.json()
