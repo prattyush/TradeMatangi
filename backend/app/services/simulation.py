@@ -196,6 +196,14 @@ def _upsert_session_to_db(session: SimulationSession) -> None:
             "instrument_type": session.instrument_type,
             "session_type": session.session_type,
         }
+        if session.current_time is not None:
+            item["current_time"] = str(session.current_time)
+        if session.last_price:
+            item["last_price"] = Decimal(str(session.last_price))
+        if session.last_price_ce:
+            item["last_price_ce"] = Decimal(str(session.last_price_ce))
+        if session.last_price_pe:
+            item["last_price_pe"] = Decimal(str(session.last_price_pe))
         if session.created_at:
             item["created_at"] = session.created_at
         if session.instrument_type == "options":
@@ -392,6 +400,20 @@ def rebuild_session_from_db(
         stepwise=(session_type == "stepwise"),
         created_at=created_at,
     )
+    # Restore last-known tick state so orders can be placed immediately after
+    # restart, without waiting for the first live tick to arrive.
+    saved_current_time = db_record.get("current_time")
+    if saved_current_time is not None:
+        session.current_time = str(saved_current_time)
+    saved_last_price = db_record.get("last_price")
+    if saved_last_price is not None:
+        session.last_price = float(saved_last_price)
+    saved_last_price_ce = db_record.get("last_price_ce")
+    if saved_last_price_ce is not None:
+        session.last_price_ce = float(saved_last_price_ce)
+    saved_last_price_pe = db_record.get("last_price_pe")
+    if saved_last_price_pe is not None:
+        session.last_price_pe = float(saved_last_price_pe)
     session.resume_event.set()
     _sessions[session_id] = session
     _upsert_session_to_db(session)
