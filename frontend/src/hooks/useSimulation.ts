@@ -227,8 +227,17 @@ export function useSimulation() {
       setState(s => ({ ...s, historicalTrades: trades.filter(t => t.session_id !== currentSessionId) }))
     }).catch(() => {})
     // Reload this session's own trades from backend (populated from DB on resume)
-    api.getTrades(currentSessionId).then(trades => {
-      if (trades.length > 0) setState(s => ({ ...s, trades }))
+    // and fetch positions so the UI reflects open positions from prior runs.
+    api.getTrades(currentSessionId).then(async (trades) => {
+      if (trades.length > 0) {
+        setState(s => ({ ...s, trades }))
+        const [posEq, posCE, posPE] = await Promise.all([
+          api.getPosition(currentSessionId),
+          api.getPosition(currentSessionId, 'CE'),
+          api.getPosition(currentSessionId, 'PE'),
+        ])
+        setState(s => ({ ...s, position: posEq, positionCE: posCE, positionPE: posPE }))
+      }
     }).catch(() => {})
     return res.session_id
   }, [state.symbol, state.date])
