@@ -59,6 +59,7 @@ export interface FineFlow {
   steps: FlowStep[]
   instrument_type: string
   right?: string | null
+  interval_minutes: number
   user_id: string
   can_delete: boolean
   created_at: string
@@ -258,6 +259,7 @@ export interface PatternChartMeta {
   top_patterns?: TopPatterns
   has_top_patterns?: boolean
   risk_reward_ratios?: Record<string, string> | null
+  interval_minutes?: number
 }
 
 export interface PatternChart extends PatternChartMeta {
@@ -1543,6 +1545,7 @@ const api = {
     right?: string; strike?: number;
     top_patterns?: TopPatterns;
     risk_reward_ratios?: Record<string, string>;
+    interval_minutes?: number;
   }): Promise<PatternChart> {
     const res = await fetch(`${BACKEND_URL}/api/pattern/chart`, {
       method: 'POST',
@@ -1553,11 +1556,11 @@ const api = {
     return res.json()
   },
 
-  async patternUpdateChart(chartId: string, annotations: PatternAnnotation[], notes: string, topPatterns?: TopPatterns, riskRewardRatios?: Record<string, string>): Promise<PatternChart> {
+  async patternUpdateChart(chartId: string, annotations: PatternAnnotation[], notes: string, topPatterns?: TopPatterns, riskRewardRatios?: Record<string, string>, intervalMinutes?: number): Promise<PatternChart> {
     const res = await fetch(`${BACKEND_URL}/api/pattern/chart/${chartId}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json', ..._authHeaders() },
-      body: JSON.stringify({ annotations, notes, top_patterns: topPatterns, risk_reward_ratios: riskRewardRatios }),
+      body: JSON.stringify({ annotations, notes, top_patterns: topPatterns, risk_reward_ratios: riskRewardRatios, interval_minutes: intervalMinutes }),
     })
     if (!res.ok) throw new Error(`Update chart failed: ${res.status}`)
     return res.json()
@@ -1785,7 +1788,7 @@ const api = {
     return res.json()
   },
 
-  async fineStructureCreateFlow(data: { symbol: string; date: string; steps: FlowStep[]; instrument_type?: string; right?: string | null }): Promise<FineFlow> {
+  async fineStructureCreateFlow(data: { symbol: string; date: string; steps: FlowStep[]; instrument_type?: string; right?: string | null; interval_minutes?: number }): Promise<FineFlow> {
     const res = await fetch(`${BACKEND_URL}/api/fine-structures/flow`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ..._authHeaders() },
@@ -1795,11 +1798,11 @@ const api = {
     return res.json()
   },
 
-  async fineStructureUpdateFlow(flowId: string, steps: FlowStep[]): Promise<FineFlow> {
+  async fineStructureUpdateFlow(flowId: string, steps: FlowStep[], intervalMinutes?: number): Promise<FineFlow> {
     const res = await fetch(`${BACKEND_URL}/api/fine-structures/flow/${flowId}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json', ..._authHeaders() },
-      body: JSON.stringify({ steps }),
+      body: JSON.stringify({ steps, interval_minutes: intervalMinutes }),
     })
     if (!res.ok) throw new Error(`Update fine flow failed: ${res.status}`)
     return res.json()

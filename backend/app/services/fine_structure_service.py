@@ -361,6 +361,7 @@ def _item_to_flow(item: dict, user_id: str) -> dict:
         "steps": item.get("steps", []),
         "instrument_type": item.get("instrument_type", "equity"),
         "right": item.get("right"),
+        "interval_minutes": int(item.get("interval_minutes", 3)),
         "user_id": item["user_id"],
         "can_delete": item["user_id"] == user_id,
         "created_at": item.get("created_at", ""),
@@ -418,7 +419,7 @@ def get_flow(user_id: str, flow_id: str) -> Optional[dict]:
         return None
 
 
-def create_flow(user_id: str, symbol: str, date: str, steps: list[dict], instrument_type: str = "equity", right: Optional[str] = None) -> dict:
+def create_flow(user_id: str, symbol: str, date: str, steps: list[dict], instrument_type: str = "equity", right: Optional[str] = None, interval_minutes: int = 3) -> dict:
     now = _now_iso()
     item = {
         "flow_id": str(uuid.uuid4()),
@@ -428,6 +429,7 @@ def create_flow(user_id: str, symbol: str, date: str, steps: list[dict], instrum
         "steps": steps,
         "instrument_type": instrument_type,
         "right": right,
+        "interval_minutes": interval_minutes,
         "created_at": now,
         "updated_at": now,
     }
@@ -435,16 +437,21 @@ def create_flow(user_id: str, symbol: str, date: str, steps: list[dict], instrum
     return _item_to_flow(item, user_id)
 
 
-def update_flow(user_id: str, flow_id: str, steps: list[dict]) -> Optional[dict]:
+def update_flow(user_id: str, flow_id: str, steps: list[dict], interval_minutes: Optional[int] = None) -> Optional[dict]:
     existing = get_flow(user_id, flow_id)
     if not existing or existing["user_id"] != user_id:
         return None
     now = _now_iso()
     try:
+        expr_parts = ["steps = :steps", "updated_at = :ua"]
+        attr_values = {":steps": steps, ":ua": now}
+        if interval_minutes is not None:
+            expr_parts.append("interval_minutes = :im")
+            attr_values[":im"] = interval_minutes
         resp = _flows_table().update_item(
             Key={"flow_id": flow_id},
-            UpdateExpression="SET steps = :steps, updated_at = :ua",
-            ExpressionAttributeValues={":steps": steps, ":ua": now},
+            UpdateExpression="SET " + ", ".join(expr_parts),
+            ExpressionAttributeValues=attr_values,
             ReturnValues="ALL_NEW",
         )
         return _item_to_flow(resp["Attributes"], user_id)

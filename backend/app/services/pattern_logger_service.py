@@ -219,6 +219,7 @@ def _chart_to_meta_filtered(
         "top_patterns": top_patterns,
         "has_top_patterns": bool(top_patterns),
         "risk_reward_ratios": risk_reward_ratios,
+        "interval_minutes": int(item.get("interval_minutes", 3)),
     }
 
 
@@ -248,6 +249,7 @@ def create_chart(
     strike: Optional[int] = None,
     top_patterns: Optional[dict] = None,
     risk_reward_ratios: Optional[dict] = None,
+    interval_minutes: int = 3,
 ) -> dict:
     chart_id = str(uuid.uuid4())
     now = _now_iso()
@@ -259,6 +261,7 @@ def create_chart(
         "instrument_type": instrument_type,
         "annotations": json.dumps(annotations),
         "notes": notes,
+        "interval_minutes": interval_minutes,
         "created_at": now,
         "updated_at": now,
     }
@@ -286,7 +289,7 @@ def _parse_top_patterns(item: dict) -> dict:
     return tp or {}
 
 
-def update_chart(chart_id: str, annotations: list[dict], notes: str, top_patterns: Optional[dict] = None, risk_reward_ratios: Optional[dict] = None) -> Optional[dict]:
+def update_chart(chart_id: str, annotations: list[dict], notes: str, top_patterns: Optional[dict] = None, risk_reward_ratios: Optional[dict] = None, interval_minutes: Optional[int] = None) -> Optional[dict]:
     now = _now_iso()
     try:
         expr_parts = ["annotations = :a", "notes = :n", "updated_at = :u"]
@@ -301,6 +304,9 @@ def update_chart(chart_id: str, annotations: list[dict], notes: str, top_pattern
         if risk_reward_ratios is not None:
             expr_parts.append("risk_reward_ratios = :rr")
             attr_values[":rr"] = json.dumps(risk_reward_ratios)
+        if interval_minutes is not None:
+            expr_parts.append("interval_minutes = :im")
+            attr_values[":im"] = interval_minutes
         resp = _table().update_item(
             Key={"chart_id": chart_id},
             UpdateExpression="SET " + ", ".join(expr_parts),
@@ -334,6 +340,7 @@ def get_chart(chart_id: str) -> Optional[dict]:
     item["top_patterns"] = json.loads(tp_raw) if isinstance(tp_raw, str) else (tp_raw or {})
     rr_raw = item.get("risk_reward_ratios", "{}")
     item["risk_reward_ratios"] = json.loads(rr_raw) if isinstance(rr_raw, str) else (rr_raw or {})
+    item.setdefault("interval_minutes", 3)
     return item
 
 

@@ -633,7 +633,7 @@ export default function PatternLibrary() {
   })
   const [instrumentType, setInstrumentType] = useState<'equity' | 'options'>('equity')
   const [otmOffset, setOtmOffset] = useState(0)
-  const [intervalMinutes] = useState(3)
+  const [intervalMinutes, setIntervalMinutes] = useState(3)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
 
@@ -847,6 +847,28 @@ export default function PatternLibrary() {
     setMaximizedPaneId(prev => prev === id ? null : id)
   }, [])
 
+  // ── Interval change (reload OHLC without losing annotations) ────────────
+
+  const INTERVAL_OPTIONS = [1, 2, 3, 5, 15, 30]
+
+  const handleChangeInterval = useCallback(async (newInterval: number) => {
+    if (newInterval === intervalMinutes || !chartLoaded) return
+    setIntervalMinutes(newInterval)
+    try {
+      const eqRes = await api.patternOhlcEquity(symbol, date, newInterval, DAYS_BACK)
+      setEquityCandles(eqRes.candles)
+      if (optionPanes.length > 0 && resolvedExpiry) {
+        const updated = await Promise.all(optionPanes.map(async (pane) => {
+          try {
+            const res = await api.patternOhlcOptions(symbol, date, pane.strike, resolvedExpiry, pane.right, newInterval, DAYS_BACK)
+            return { ...pane, candles: res.candles }
+          } catch { return pane }
+        }))
+        setOptionPanes(updated)
+      }
+    } catch { /* non-fatal — keep existing candles */ }
+  }, [intervalMinutes, chartLoaded, symbol, date, optionPanes, resolvedExpiry])
+
   // ── Bar click ─────────────────────────────────────────────────────────────
 
   const handleBarClick = useCallback((time: number, price: number) => {
@@ -888,7 +910,7 @@ export default function PatternLibrary() {
       if (topPatterns.bottom_1) cleanTopPatterns.bottom_1 = topPatterns.bottom_1
       const rr = Object.keys(riskRewardRatios).length > 0 ? riskRewardRatios : undefined
       if (currentChartId) {
-        saved = await api.patternUpdateChart(currentChartId, annotations, notes, Object.keys(cleanTopPatterns).length ? cleanTopPatterns : undefined, rr)
+        saved = await api.patternUpdateChart(currentChartId, annotations, notes, Object.keys(cleanTopPatterns).length ? cleanTopPatterns : undefined, rr, intervalMinutes)
       } else {
         saved = await api.patternCreateChart({
           symbol, date, instrument_type: instrumentType, annotations, notes,
@@ -896,6 +918,7 @@ export default function PatternLibrary() {
           strike: firstCe?.strike,
           top_patterns: Object.keys(cleanTopPatterns).length ? cleanTopPatterns : undefined,
           risk_reward_ratios: rr,
+          interval_minutes: intervalMinutes,
         })
         setCurrentChartId(saved.chart_id)
       }
@@ -941,6 +964,10 @@ export default function PatternLibrary() {
       setMaximizedPaneId(null)
       paneIdRef.current = 1
 
+      // Restore saved candle interval (default 3 for old charts)
+      const savedInterval = chart.interval_minutes ?? 3
+      setIntervalMinutes(savedInterval)
+
       if (chart.annotations.length > 0) {
         if (mode === 'view') {
           setActiveStrategy(galleryStrategy)
@@ -952,7 +979,7 @@ export default function PatternLibrary() {
         }
       }
 
-      const eqRes = await api.patternOhlcEquity(chart.symbol, chart.date, intervalMinutes, DAYS_BACK)
+      const eqRes = await api.patternOhlcEquity(chart.symbol, chart.date, savedInterval, DAYS_BACK)
       setEquityCandles(eqRes.candles)
 
       if (chart.instrument_type === 'options' && chart.strike && !galleryUnderlyingOnly) {
@@ -960,8 +987,8 @@ export default function PatternLibrary() {
           const expiryRes = await api.getExpiry(chart.symbol, chart.date)
           const expiry = expiryRes.expiry
           const [ceRes, peRes] = await Promise.all([
-            api.patternOhlcOptions(chart.symbol, chart.date, chart.strike, expiry, 'CE', intervalMinutes, DAYS_BACK).catch(() => null),
-            api.patternOhlcOptions(chart.symbol, chart.date, chart.strike, expiry, 'PE', intervalMinutes, DAYS_BACK).catch(() => null),
+            api.patternOhlcOptions(chart.symbol, chart.date, chart.strike, expiry, 'CE', savedInterval, DAYS_BACK).catch(() => null),
+            api.patternOhlcOptions(chart.symbol, chart.date, chart.strike, expiry, 'PE', savedInterval, DAYS_BACK).catch(() => null),
           ])
           const annotatedRights = new Set(chart.annotations.map(a => a.instrument))
           const newPanes: OptionPane[] = []
@@ -977,7 +1004,7 @@ export default function PatternLibrary() {
     } catch (err) {
       setLoadError(err instanceof Error ? err.message : 'Failed to load chart')
     }
-  }, [intervalMinutes, mode, galleryStrategy, galleryCategory, galleryUnderlyingOnly])
+  }, [mode, galleryStrategy, galleryCategory, galleryUnderlyingOnly])
 
   // ── Gallery delete ────────────────────────────────────────────────────────
 
@@ -1041,6 +1068,14 @@ export default function PatternLibrary() {
 
     return (
       <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', gap: 4, padding: 8, overflow: 'hidden' }}>
+        {/* Interval selector */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+          <span style={{ fontSize: 11, color: '#8b949e' }}>Interval:</span>
+          <select value={intervalMinutes} onChange={e => handleChangeInterval(parseInt(e.target.value))}
+            style={{ ...selectStyle, width: 55, fontSize: 11 }}>
+            {INTERVAL_OPTIONS.map(m => <option key={m} value={m}>{m}m</option>)}
+          </select>
+        </div>
         {/* Underlying pane */}
         <div style={{
           display: showUnderlying ? 'flex' : 'none',
@@ -1249,6 +1284,13 @@ export default function PatternLibrary() {
                   style={{ ...inputStyle, width: 55 }} disabled={loading} />
               </label>
             )}
+            <label style={{ fontSize: 12, color: '#8b949e' }}>
+              Interval&nbsp;
+              <select value={intervalMinutes} onChange={e => handleChangeInterval(parseInt(e.target.value))}
+                style={{ ...selectStyle, width: 55 }} disabled={loading}>
+                {INTERVAL_OPTIONS.map(m => <option key={m} value={m}>{m}m</option>)}
+              </select>
+            </label>
             <button style={btn('#1f6feb', loading || !date)} onClick={handleLoadChart} disabled={loading || !date}>
               {loading ? 'Loading…' : 'Load Chart'}
             </button>
