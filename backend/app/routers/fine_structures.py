@@ -57,6 +57,7 @@ class FlowItem(BaseModel):
     steps: list[FlowStepItem]
     instrument_type: str = "equity"
     right: Optional[str] = None
+    interval_minutes: int = 3
     user_id: str
     can_delete: bool
     created_at: str
@@ -69,10 +70,12 @@ class CreateFlowRequest(BaseModel):
     steps: list[FlowStepItem]
     instrument_type: str = "equity"
     right: Optional[str] = None
+    interval_minutes: int = 3
 
 
 class UpdateFlowRequest(BaseModel):
     steps: list[FlowStepItem]
+    interval_minutes: Optional[int] = None
 
 
 class SearchQueryStep(BaseModel):
@@ -204,7 +207,7 @@ async def get_flow(flow_id: str, user_id: str = Depends(get_request_user_id)):
 async def create_flow(req: CreateFlowRequest, user_id: str = Depends(get_request_user_id)):
     try:
         steps = [s.model_dump() for s in req.steps]
-        f = svc.create_flow(user_id=user_id, symbol=req.symbol.upper(), date=req.date, steps=steps, instrument_type=req.instrument_type, right=req.right)
+        f = svc.create_flow(user_id=user_id, symbol=req.symbol.upper(), date=req.date, steps=steps, instrument_type=req.instrument_type, right=req.right, interval_minutes=req.interval_minutes)
         return f
     except Exception as exc:
         logger.error("create_flow error: %s", exc)
@@ -215,7 +218,7 @@ async def create_flow(req: CreateFlowRequest, user_id: str = Depends(get_request
 async def update_flow(flow_id: str, req: UpdateFlowRequest, user_id: str = Depends(get_request_user_id)):
     try:
         steps = [s.model_dump() for s in req.steps]
-        f = svc.update_flow(user_id=user_id, flow_id=flow_id, steps=steps)
+        f = svc.update_flow(user_id=user_id, flow_id=flow_id, steps=steps, interval_minutes=req.interval_minutes)
         if not f:
             raise HTTPException(status_code=404, detail="Flow not found or not editable")
         return f

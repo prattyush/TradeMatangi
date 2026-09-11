@@ -52,6 +52,7 @@ class CreateChartRequest(BaseModel):
     strike: Optional[int] = None   # options reference strike
     top_patterns: Optional[TopPatternsPayload] = None
     risk_reward_ratios: Optional[dict] = None  # {"category::strategy": "1.5", ...}
+    interval_minutes: int = 3      # candle interval used when creating this chart
 
 
 class UpdateChartRequest(BaseModel):
@@ -59,6 +60,7 @@ class UpdateChartRequest(BaseModel):
     notes: str = ""
     top_patterns: Optional[TopPatternsPayload] = None
     risk_reward_ratios: Optional[dict] = None  # {"category::strategy": "1.5", ...}
+    interval_minutes: Optional[int] = None     # update candle interval if provided
 
 
 class BulkDeleteRequest(BaseModel):
@@ -160,6 +162,7 @@ async def create_chart(req: CreateChartRequest, user_id: str = Depends(get_reque
             strike=req.strike,
             top_patterns=top_patterns,
             risk_reward_ratios=req.risk_reward_ratios,
+            interval_minutes=req.interval_minutes,
         )
         return chart
     except Exception as exc:
@@ -183,6 +186,7 @@ async def update_chart(chart_id: str, req: UpdateChartRequest, user_id: str = De
             req.notes,
             top_patterns=top_patterns,
             risk_reward_ratios=req.risk_reward_ratios,
+            interval_minutes=req.interval_minutes,
         )
         if not updated:
             raise HTTPException(status_code=500, detail="Update failed")

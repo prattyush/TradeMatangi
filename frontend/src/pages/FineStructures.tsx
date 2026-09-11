@@ -213,6 +213,8 @@ function BuilderView({ definitions }: { definitions: FineDefinition[] }) {
   const activeStepIdxRef = useRef<number | null>(null)
   const [loading, setLoading] = useState(false)
   const [saveMsg, setSaveMsg] = useState<string | null>(null)
+  const [intervalMinutes, setIntervalMinutes] = useState(3)
+  const INTERVAL_OPTIONS = [1, 2, 3, 5, 15, 30]
 
   // Add step form
   const [addDefId, setAddDefId] = useState('')
@@ -261,11 +263,12 @@ function BuilderView({ definitions }: { definitions: FineDefinition[] }) {
     if (!symbol || !date) return
     setLoading(true)
     try {
-      const res = await api.fineStructureGetOHLC(symbol, date)
+      const res = await api.fineStructureGetOHLC(symbol, date, intervalMinutes)
       setCandles(res.candles)
       if (res.flow) {
         setFlowId(res.flow.flow_id)
         setSteps(res.flow.steps.map((s, i) => ({ ...s, color: STEP_COLORS[i % STEP_COLORS.length] })))
+        setIntervalMinutes(res.flow.interval_minutes ?? 3)
       } else {
         setFlowId(null)
         setSteps([])
@@ -275,7 +278,7 @@ function BuilderView({ definitions }: { definitions: FineDefinition[] }) {
     } finally {
       setLoading(false)
     }
-  }, [symbol, date])
+  }, [symbol, date, intervalMinutes])
 
   useEffect(() => {
     if (!chartContainerRef.current || candles.length === 0) return
@@ -554,9 +557,9 @@ function BuilderView({ definitions }: { definitions: FineDefinition[] }) {
     const flowSteps: FlowStep[] = steps.map(({ color, ...s }) => s)
     try {
       if (flowId) {
-        await api.fineStructureUpdateFlow(flowId, flowSteps)
+        await api.fineStructureUpdateFlow(flowId, flowSteps, intervalMinutes)
       } else {
-        const f = await api.fineStructureCreateFlow({ symbol, date, steps: flowSteps })
+        const f = await api.fineStructureCreateFlow({ symbol, date, steps: flowSteps, interval_minutes: intervalMinutes })
         setFlowId(f.flow_id)
       }
       setSaveMsg('Saved!')
@@ -578,6 +581,11 @@ function BuilderView({ definitions }: { definitions: FineDefinition[] }) {
         </select>
         <input value={date} onChange={e => setDate(e.target.value)} type="date" style={{ ...inputStyle, width: 140 }} />
         <button onClick={loadChart} disabled={loading} style={btnStyle()}>{loading ? 'Loading...' : 'Load'}</button>
+        <span style={{ fontSize: 11, color: '#8b949e' }}>Interval:</span>
+        <select value={intervalMinutes} onChange={e => { setIntervalMinutes(parseInt(e.target.value)) }}
+          style={{ ...selectStyle, width: 55 }} disabled={loading}>
+          {INTERVAL_OPTIONS.map(m => <option key={m} value={m}>{m}m</option>)}
+        </select>
         <div style={{ flex: 1 }} />
         {saveMsg && <span style={{ fontSize: 12, color: '#3fb950' }}>{saveMsg}</span>}
         <button onClick={handleSave} disabled={steps.length === 0} style={{ ...btnStyle(), background: '#238636', color: '#fff', border: 'none' }}>
@@ -722,6 +730,8 @@ function OptionsBuilderView({ definitions }: { definitions: FineDefinition[] }) 
   const [otmOffset, setOtmOffset] = useState(2)
   const [loading, setLoading] = useState(false)
   const [saveMsg, setSaveMsg] = useState<string | null>(null)
+  const [intervalMinutes, setIntervalMinutes] = useState(3)
+  const INTERVAL_OPTIONS = [1, 2, 3, 5, 15, 30]
 
   const [underlyingCandles, setUnderlyingCandles] = useState<OHLCCandle[]>([])
   const [ceCandles, setCeCandles] = useState<OHLCCandle[]>([])
@@ -763,11 +773,12 @@ function OptionsBuilderView({ definitions }: { definitions: FineDefinition[] }) 
     if (!symbol || !date) return
     setLoading(true)
     try {
-      const undRes = await api.fineStructureGetOHLC(symbol, date)
+      const undRes = await api.fineStructureGetOHLC(symbol, date, intervalMinutes)
       setUnderlyingCandles(undRes.candles)
       if (undRes.flow && undRes.flow.instrument_type === 'options') {
         setUnderlyingFlowId(undRes.flow.flow_id)
         setUnderlyingSteps(undRes.flow.steps.map((s, i) => ({ ...s, color: STEP_COLORS[i % STEP_COLORS.length] })))
+        setIntervalMinutes(undRes.flow.interval_minutes ?? 3)
       } else {
         setUnderlyingFlowId(null)
         setUnderlyingSteps([])
@@ -801,7 +812,7 @@ function OptionsBuilderView({ definitions }: { definitions: FineDefinition[] }) 
         setPeStrike(peS)
 
         try {
-          const ceRes = await api.fineStructureGetOptionsOHLC(symbol, date, ceS, undefined, 'CE')
+          const ceRes = await api.fineStructureGetOptionsOHLC(symbol, date, ceS, undefined, 'CE', intervalMinutes)
           setCeCandles(ceRes.candles)
           if (ceRes.flow) {
             setCeFlowId(ceRes.flow.flow_id)
@@ -813,7 +824,7 @@ function OptionsBuilderView({ definitions }: { definitions: FineDefinition[] }) 
         } catch { setCeCandles([]); setCeSteps([]) }
 
         try {
-          const peRes = await api.fineStructureGetOptionsOHLC(symbol, date, peS, undefined, 'PE')
+          const peRes = await api.fineStructureGetOptionsOHLC(symbol, date, peS, undefined, 'PE', intervalMinutes)
           setPeCandles(peRes.candles)
           if (peRes.flow) {
             setPeFlowId(peRes.flow.flow_id)
@@ -829,7 +840,7 @@ function OptionsBuilderView({ definitions }: { definitions: FineDefinition[] }) 
     } finally {
       setLoading(false)
     }
-  }, [symbol, date, otmOffset, useMaxPrice, maxPriceCE, maxPricePE])
+  }, [symbol, date, otmOffset, useMaxPrice, maxPriceCE, maxPricePE, intervalMinutes])
 
   useEffect(() => { setActiveStepIdx(null) }, [activeChart])
 
@@ -874,9 +885,9 @@ function OptionsBuilderView({ definitions }: { definitions: FineDefinition[] }) 
       const flowId = activeFlowId
       const flowSteps: FlowStep[] = activeSteps.map(({ color, ...s }) => s)
       if (flowId) {
-        await api.fineStructureUpdateFlow(flowId, flowSteps)
+        await api.fineStructureUpdateFlow(flowId, flowSteps, intervalMinutes)
       } else {
-        const f = await api.fineStructureCreateFlow({ symbol, date, steps: flowSteps, instrument_type: 'options', right })
+        const f = await api.fineStructureCreateFlow({ symbol, date, steps: flowSteps, instrument_type: 'options', right, interval_minutes: intervalMinutes })
         if (right === 'CE') setCeFlowId(f.flow_id)
         else if (right === 'PE') setPeFlowId(f.flow_id)
         else setUnderlyingFlowId(f.flow_id)
@@ -1067,6 +1078,11 @@ function OptionsBuilderView({ definitions }: { definitions: FineDefinition[] }) 
           </>
         )}
         <button onClick={loadChart} disabled={loading} style={btnStyle()}>{loading ? 'Loading...' : 'Load'}</button>
+        <span style={{ fontSize: 11, color: '#8b949e' }}>Interval:</span>
+        <select value={intervalMinutes} onChange={e => { setIntervalMinutes(parseInt(e.target.value)) }}
+          style={{ ...selectStyle, width: 55 }} disabled={loading}>
+          {INTERVAL_OPTIONS.map(m => <option key={m} value={m}>{m}m</option>)}
+        </select>
         <div style={{ flex: 1 }} />
         {saveMsg && <span style={{ fontSize: 12, color: '#3fb950' }}>{saveMsg}</span>}
         <button onClick={handleSaveActive} disabled={activeSteps.length === 0} style={{ ...btnStyle(), background: '#238636', color: '#fff', border: 'none' }}>
@@ -1553,6 +1569,8 @@ function SearchView({ definitions }: {
   const [addType, setAddType] = useState('')
   const [addDirection, setAddDirection] = useState('')
   const [instrumentFilter, setInstrumentFilter] = useState<string>('')  // '', 'equity', 'options'
+  const [overrideInterval, setOverrideInterval] = useState<number | null>(null)  // null = use saved
+  const INTERVAL_OPTIONS = [1, 2, 3, 5, 15, 30]
 
   const addDef = definitions.find(d => d.definition_id === addDefId)
 
@@ -1602,23 +1620,24 @@ function SearchView({ definitions }: {
     const r = results[idx]
     if (!r) return
     setLoadingChart(true)
+    const interval = overrideInterval ?? r.flow.interval_minutes ?? 3
     try {
       // For options flows, fetch the options chart instead of underlying
       if (r.flow.instrument_type === 'options' && r.flow.right) {
         // First get underlying to calculate ATM strike
-        const undRes = await api.fineStructureGetOHLC(r.flow.symbol, r.flow.date)
+        const undRes = await api.fineStructureGetOHLC(r.flow.symbol, r.flow.date, interval)
         if (undRes.candles.length > 0) {
           const firstPrice = undRes.candles[0].open
-          const interval = r.flow.symbol === 'BSESEN' ? 100 : 50
-          const atm = Math.round(firstPrice / interval) * interval
+          const strikeInterval = r.flow.symbol === 'BSESEN' ? 100 : 50
+          const atm = Math.round(firstPrice / strikeInterval) * strikeInterval
           // Use ATM strike for the options chart
-          const optRes = await api.fineStructureGetOptionsOHLC(r.flow.symbol, r.flow.date, atm, undefined, r.flow.right)
+          const optRes = await api.fineStructureGetOptionsOHLC(r.flow.symbol, r.flow.date, atm, undefined, r.flow.right, interval)
           setResultCandles(optRes.candles)
         } else {
           setResultCandles([])
         }
       } else {
-        const res = await api.fineStructureGetOHLC(r.flow.symbol, r.flow.date)
+        const res = await api.fineStructureGetOHLC(r.flow.symbol, r.flow.date, interval)
         setResultCandles(res.candles)
       }
     } catch {
@@ -1626,7 +1645,14 @@ function SearchView({ definitions }: {
     } finally {
       setLoadingChart(false)
     }
-  }, [results])
+  }, [results, overrideInterval])
+
+  // Re-fetch chart when override interval changes
+  useEffect(() => {
+    if (selectedIdx !== null && selectedIdx < results.length) {
+      selectResult(selectedIdx)
+    }
+  }, [overrideInterval])
 
   return (
     <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
@@ -1739,6 +1765,18 @@ function SearchView({ definitions }: {
               <div style={{ padding: '4px 12px', borderBottom: '1px solid #21262d', display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
                 <span style={{ fontSize: 13, fontWeight: 700, color: '#e6edf3' }}>{selected.flow.symbol}</span>
                 <span style={{ fontSize: 12, color: '#8b949e' }}>{selected.flow.date}</span>
+                <span style={{ fontSize: 11, color: '#8b949e' }}>Interval:</span>
+                <select
+                  value={overrideInterval ?? ''}
+                  onChange={e => {
+                    const v = e.target.value
+                    setOverrideInterval(v === '' ? null : parseInt(v))
+                  }}
+                  style={{ ...selectStyle, width: 65, fontSize: 11 }}
+                >
+                  <option value="">Auto ({selected.flow.interval_minutes ?? 3}m)</option>
+                  {INTERVAL_OPTIONS.map(m => <option key={m} value={m}>{m}m</option>)}
+                </select>
               </div>
               {loadingChart ? (
                 <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
