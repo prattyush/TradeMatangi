@@ -161,11 +161,14 @@ interface ChartPaneProps {
   onRemove?: () => void
   topPatterns?: TopPatterns
   riskRewardRatios?: Record<string, string>
+  intervalMinutes?: number
+  onIntervalChange?: (minutes: number) => void
 }
 
 function ChartPane({
   candles, annotations, activeStrategy, activeCategory, label, onBarClick,
   readonly = false, onMaximize, isMaximized = false, onRemove, topPatterns, riskRewardRatios,
+  intervalMinutes, onIntervalChange,
 }: ChartPaneProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<IChartApi | null>(null)
@@ -185,6 +188,8 @@ function ChartPane({
   const [drawStep, setDrawStep] = useState(0)
   const [drawingCount, setDrawingCount] = useState(0)
   const [drawDropdownOpen, setDrawDropdownOpen] = useState(false)
+  const [intervalDropdownOpen, setIntervalDropdownOpen] = useState(false)
+  const intervalDropdownRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => { drawModeRef.current = drawMode }, [drawMode])
 
@@ -197,6 +202,16 @@ function ChartPane({
     document.addEventListener('mousedown', close)
     return () => document.removeEventListener('mousedown', close)
   }, [drawDropdownOpen])
+
+  useEffect(() => {
+    if (!intervalDropdownOpen) return
+    const close = (e: MouseEvent) => {
+      if (intervalDropdownRef.current && !intervalDropdownRef.current.contains(e.target as Node))
+        setIntervalDropdownOpen(false)
+    }
+    document.addEventListener('mousedown', close)
+    return () => document.removeEventListener('mousedown', close)
+  }, [intervalDropdownOpen])
 
   // Chart init — runs once on mount
   useEffect(() => {
@@ -427,6 +442,39 @@ function ChartPane({
         position: 'relative',
       }}>
         <span style={{ fontSize: 11, color: '#8b949e', marginRight: 4 }}>{label}</span>
+        {intervalMinutes != null && onIntervalChange && (
+          <div style={{ position: 'relative', marginRight: 4 }} ref={intervalDropdownRef}>
+            <button
+              onClick={() => setIntervalDropdownOpen(v => !v)}
+              style={paneToolBtn(false)}
+            >{intervalMinutes}m ▾</button>
+            {intervalDropdownOpen && (
+              <div style={{
+                position: 'absolute', top: '100%', left: 0, zIndex: 200,
+                background: '#161b22', border: '1px solid #30363d',
+                borderRadius: 4, minWidth: 80, marginTop: 2,
+              }}>
+                {[1, 2, 3, 5, 15, 30].map(m => (
+                  <div
+                    key={m}
+                    onClick={e => {
+                      e.stopPropagation()
+                      setIntervalDropdownOpen(false)
+                      if (m !== intervalMinutes) onIntervalChange(m)
+                    }}
+                    style={{
+                      padding: '5px 10px', cursor: 'pointer', fontSize: 11,
+                      color: intervalMinutes === m ? '#f0883e' : '#e6edf3',
+                      background: intervalMinutes === m ? '#2a1a0a' : 'transparent',
+                    }}
+                  >
+                    {m} min
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
         <button onClick={() => setShowEma(v => !v)} style={paneToolBtn(showEma)}>EMA 9/21</button>
         {!readonly && (
           <>
@@ -1068,14 +1116,6 @@ export default function PatternLibrary() {
 
     return (
       <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', gap: 4, padding: 8, overflow: 'hidden' }}>
-        {/* Interval selector */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
-          <span style={{ fontSize: 11, color: '#8b949e' }}>Interval:</span>
-          <select value={intervalMinutes} onChange={e => handleChangeInterval(parseInt(e.target.value))}
-            style={{ ...selectStyle, width: 55, fontSize: 11 }}>
-            {INTERVAL_OPTIONS.map(m => <option key={m} value={m}>{m}m</option>)}
-          </select>
-        </div>
         {/* Underlying pane */}
         <div style={{
           display: showUnderlying ? 'flex' : 'none',
@@ -1086,13 +1126,15 @@ export default function PatternLibrary() {
             annotations={annotations.filter(a => a.instrument === 'underlying')}
             activeStrategy={resolvedActiveStrategy}
             activeCategory={resolvedActiveCategory}
-            label={`${symbol} — Underlying (${intervalMinutes}min)`}
+            label={`${symbol} — Underlying`}
             onBarClick={handleBarClick}
             readonly={isReadonly}
             onMaximize={() => handleMaximize('underlying')}
             isMaximized={maximizedPaneId === 'underlying'}
             topPatterns={topPatterns}
             riskRewardRatios={riskRewardRatios}
+            intervalMinutes={intervalMinutes}
+            onIntervalChange={handleChangeInterval}
           />
         </div>
 
@@ -1112,7 +1154,7 @@ export default function PatternLibrary() {
                   annotations={annotations.filter(a => a.instrument === pane.right)}
                   activeStrategy={resolvedActiveStrategy}
                   activeCategory={resolvedActiveCategory}
-                  label={`${symbol} ${pane.right} ${pane.strike} (${intervalMinutes}min)`}
+                  label={`${symbol} ${pane.right} ${pane.strike}`}
                   onBarClick={handleBarClick}
                   readonly={isReadonly}
                   onMaximize={() => handleMaximize(pane.id)}
@@ -1120,6 +1162,8 @@ export default function PatternLibrary() {
                   onRemove={!isReadonly ? () => handleRemovePane(pane.id) : undefined}
                   topPatterns={topPatterns}
                   riskRewardRatios={riskRewardRatios}
+                  intervalMinutes={intervalMinutes}
+                  onIntervalChange={handleChangeInterval}
                 />
               </div>
             ))}
