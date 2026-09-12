@@ -1,15 +1,18 @@
 import { useEffect, useRef, useCallback } from 'react'
+import api from '../services/api'
 
 type SSECallback = (event: Record<string, unknown>) => void
 
-export function useSSE(url: string | null, onMessage: SSECallback) {
+export function useSSE(sessionId: string | null, onMessage: SSECallback, onReconnect?: () => void) {
   const esRef = useRef<EventSource | null>(null)
   const retryTimeout = useRef<ReturnType<typeof setTimeout> | null>(null)
   const retryDelay = useRef(1000)
   const connectRef = useRef<() => void>(() => {})
+  const lastEventIdRef = useRef<string | null>(null)
+  const hasOpenedRef = useRef(false)
 
   const connect = useCallback(() => {
-    if (!url) return
+    if (!sessionId) return
 
     // Close any existing connection first
     esRef.current?.close()
@@ -19,11 +22,18 @@ export function useSSE(url: string | null, onMessage: SSECallback) {
       retryTimeout.current = null
     }
 
-    const es = new EventSource(url)
+    const es = new EventSource(api.getSSEUrl(sessionId, lastEventIdRef.current))
     esRef.current = es
+
+    es.onopen = () => {
+      retryDelay.current = 1000
+      if (hasOpenedRef.current) onReconnect?.()
+      hasOpenedRef.current = true
+    }
 
     es.onmessage = (e) => {
       try {
+        if (e.lastEventId) lastEventIdRef.current = e.lastEventId
         const data = JSON.parse(e.data) as Record<string, unknown>
         onMessage(data)
         retryDelay.current = 1000 // reset backoff on success
@@ -40,7 +50,7 @@ export function useSSE(url: string | null, onMessage: SSECallback) {
         connectRef.current()
       }, retryDelay.current)
     }
-  }, [url, onMessage])
+  }, [sessionId, onMessage, onReconnect])
 
   // Keep connectRef in sync so the visibility handler always calls the latest
   connectRef.current = connect
@@ -48,14 +58,19 @@ export function useSSE(url: string | null, onMessage: SSECallback) {
   // ── Page Visibility: reconnect instantly when the tab becomes visible ──────
   useEffect(() => {
     const onVisibilityChange = () => {
-      if (document.visibilityState === 'visible' && url) {
+      if (document.visibilityState === 'visible' && sessionId) {
         retryDelay.current = 1000  // reset backoff
         connectRef.current()       // immediate reconnect
       }
     }
     document.addEventListener('visibilitychange', onVisibilityChange)
     return () => document.removeEventListener('visibilitychange', onVisibilityChange)
-  }, [url])
+  }, [sessionId])
+
+  useEffect(() => {
+    lastEventIdRef.current = null
+    hasOpenedRef.current = false
+  }, [sessionId])
 
   useEffect(() => {
     connect()

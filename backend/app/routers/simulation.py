@@ -203,6 +203,7 @@ async def start_simulation(
                 strike_pe=active.strike_pe,
                 brokerage_per_order=active.brokerage_per_order,
                 session_type=active.session_type,
+                state=active.state,
                 stepwise=active.stepwise,
                 total_bars=None,
             )
@@ -251,6 +252,7 @@ async def start_simulation(
                 strike_pe=session.strike_pe,
                 brokerage_per_order=session.brokerage_per_order,
                 session_type=session.session_type,
+                state=session.state,
                 stepwise=session.stepwise,
                 total_bars=None,
             )
@@ -288,6 +290,7 @@ async def start_simulation(
         strike_pe=session.strike_pe,
         brokerage_per_order=session.brokerage_per_order,
         session_type="stepwise" if is_stepwise else session.session_type,
+        state=session.state,
         stepwise=session.stepwise,
         total_bars=session.total_bars if session.stepwise else None,
     )
@@ -416,6 +419,40 @@ async def get_status(session_id: str):
         speed=session.speed,
         symbol=session.symbol,
         date=session.date,
+    )
+
+
+@router.get("/active", response_model=SimulationStartResponse)
+async def get_active_session(
+    session_id: str,
+    user_id: str = Depends(get_request_user_id),
+):
+    """Return attach metadata for an in-memory session without starting a new one."""
+    session = sim_svc.get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if session.user_id != user_id:
+        raise HTTPException(status_code=403, detail="Session does not belong to this user")
+    if session.state == sim_svc.SimulationState.ENDED:
+        raise HTTPException(status_code=410, detail="Session has ended")
+    return SimulationStartResponse(
+        session_id=session.session_id,
+        symbol=session.symbol,
+        date=session.date,
+        start_time=session.start_time,
+        speed=session.speed,
+        session_capital=session.session_capital,
+        instrument_type=session.instrument_type,
+        strike=session.strike,
+        expiry=session.expiry,
+        right=session.right,
+        strike_ce=session.strike_ce,
+        strike_pe=session.strike_pe,
+        brokerage_per_order=session.brokerage_per_order,
+        session_type=session.session_type,
+        state=session.state,
+        stepwise=session.stepwise,
+        total_bars=session.total_bars if session.stepwise else None,
     )
 
 

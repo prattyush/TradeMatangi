@@ -50,6 +50,7 @@ class SimulationStartResponse(BaseModel):
     strike_pe: int | None = None
     brokerage_per_order: float = 1.0
     session_type: str = "sim"
+    state: SimulationState | None = None
     stepwise: bool = False
     total_bars: int | None = None
 
