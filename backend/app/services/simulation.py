@@ -90,6 +90,83 @@ class RingQueue:
     def __len__(self) -> int:
         return len(self._dq)
 
+
+class ReplayEventQueue:
+    """
+    Per-session SSE replay buffer.
+
+    Unlike RingQueue.get(), reading by event id does not remove events. This lets
+    multiple browser tabs/windows attach to the same trading session without
+    stealing ticks and order events from each other.
+    """
+
+    def __init__(self, maxsize: int = 12000) -> None:
+        self._dq: deque[tuple[int, str]] = deque(maxlen=maxsize)
+        self._event = asyncio.Event()
+        self._closed = False
+        self._dropped: int = 0
+        self._maxsize = maxsize
+        self._next_id = 1
+
+    def put_nowait(self, item: str) -> None:
+        if self._closed:
+            return
+        if len(self._dq) == self._maxsize:
+            self._dropped += 1
+            if self._dropped % 100 == 1:
+                logger.warning(
+                    "ReplayEventQueue dropped %d events (maxsize=%d)",
+                    self._dropped, self._maxsize,
+                )
+        event_id = self._next_id
+        self._next_id += 1
+        self._dq.append((event_id, item))
+        self._event.set()
+
+    async def put(self, item: str) -> None:
+        self.put_nowait(item)
+        await asyncio.sleep(0)
+
+    def get_nowait(self) -> str:
+        """Legacy test helper: pop the oldest buffered payload."""
+        if len(self._dq) == 0:
+            raise IndexError("ReplayEventQueue is empty")
+        return self._dq.popleft()[1]
+
+    async def get_after(self, last_event_id: int | None) -> tuple[int, str] | None:
+        """Return the first event after last_event_id, waiting for new data if needed."""
+        cursor = last_event_id or 0
+        while True:
+            for event_id, item in self._dq:
+                if event_id > cursor:
+                    return event_id, item
+            if self._closed:
+                return None
+            self._event.clear()
+            for event_id, item in self._dq:
+                if event_id > cursor:
+                    return event_id, item
+            await self._event.wait()
+
+    def latest_id(self) -> int:
+        return self._next_id - 1
+
+    def oldest_id(self) -> int | None:
+        return self._dq[0][0] if self._dq else None
+
+    def close(self) -> None:
+        self._closed = True
+        self._event.set()
+
+    def empty(self) -> bool:
+        return len(self._dq) == 0
+
+    def qsize(self) -> int:
+        return len(self._dq)
+
+    def __len__(self) -> int:
+        return len(self._dq)
+
 logger = logging.getLogger(__name__)
 
 
@@ -124,7 +201,7 @@ class SimulationSession:
     kotak_order_map: dict[str, str] = field(default_factory=dict)
     # Kotak order IDs reconciled from external/manual broker orders (not in our system)
     external_reconciled_kotak_ids: set = field(default_factory=set)
-    queue: RingQueue = field(default_factory=lambda: RingQueue(12000))
+    queue: ReplayEventQueue = field(default_factory=lambda: ReplayEventQueue(12000))
     # paper_tick_queue: receives raw tick dicts from KiteBroadcaster / BreezeStreamManager / KotakBroadcaster
     paper_tick_queue: RingQueue = field(default_factory=lambda: RingQueue(1000))
     resume_event: asyncio.Event = field(default_factory=asyncio.Event)

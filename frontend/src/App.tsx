@@ -52,6 +52,20 @@ interface PaneConfig {
 type LayoutPreset = 1 | 2 | 3 | 4 | 5 | 6 | 7
 const INTERVAL_OPTIONS = [1, 2, 3, 5, 15, 30]
 let nextPaneId = 10
+type WorkspaceView = 'trading' | 'analysis' | 'patterns' | 'structures'
+
+interface WorkspaceSnapshot {
+  view?: WorkspaceView
+  analysisOpen?: boolean
+  sessionId?: string | null
+  panes?: PaneConfig[]
+  layoutPreset?: LayoutPreset
+  activePaneId?: number | null
+  maximizedPaneId?: number | null
+  instrumentType?: 'equity' | 'options'
+  optionsReady?: OptionsReadyConfig | null
+  sessionControlsVisible?: boolean
+}
 
 function makeEquityPane(intervalMinutes: number): PaneConfig {
   return { id: nextPaneId++, type: 'equity', intervalMinutes }
@@ -59,6 +73,10 @@ function makeEquityPane(intervalMinutes: number): PaneConfig {
 
 function makeOptionsPane(right: 'CE' | 'PE', strike: number, expiry: string): PaneConfig {
   return { id: nextPaneId++, type: 'options', intervalMinutes: 3, right, strike, expiry }
+}
+
+function isLayoutPreset(value: unknown): value is LayoutPreset {
+  return typeof value === 'number' && value >= 1 && value <= 7
 }
 
 // Default pane sets
@@ -123,6 +141,8 @@ export default function App() {
 
 function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: string; email: string; isAdmin: boolean; accountName?: string }; onLogout: () => void; setAuthUser: React.Dispatch<React.SetStateAction<{ userId: string; email: string; isAdmin: boolean; accountName?: string } | null>> }) {
   const sim = useSimulation()
+  const workspaceStorageKey = `tradematangi_workspace_${authUser.userId}`
+  const workspaceRestoredRef = useRef(false)
   const { recordingState, recordingError, startRecording, pauseRecording, resumeRecording, stopRecording } = useRecording()
   const simRef = useRef(sim)
   // Keep simRef in sync with latest sim state for useSnapshot
@@ -341,15 +361,96 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
   const [addInterval, setAddInterval] = useState(15)
   const [addOffset, setAddOffset] = useState(0)
 
-  // ── Chart container height ──────────────────────────────────────────────────
-  const chartColumnRef = useRef<HTMLDivElement>(null)
-  const [columnHeight, setColumnHeight] = useState(window.innerHeight - 160)
+  useEffect(() => {
+    let cancelled = false
+    const restore = async () => {
+      try {
+        const raw = localStorage.getItem(workspaceStorageKey)
+        if (!raw) return
+        const saved = JSON.parse(raw) as WorkspaceSnapshot
+        if (saved.view === 'patterns') setShowPatternLibrary(true)
+        if (saved.view === 'structures') setShowChartStructures(true)
+        if (saved.analysisOpen || saved.view === 'analysis') setShowAnalysis(true)
+        if (typeof saved.sessionControlsVisible === 'boolean') {
+          setSessionControlsVisible(saved.sessionControlsVisible)
+        }
+        if (isLayoutPreset(saved.layoutPreset)) setLayoutPreset(saved.layoutPreset)
+        if (typeof saved.activePaneId === 'number' || saved.activePaneId === null) setActivePaneId(saved.activePaneId)
+        if (typeof saved.maximizedPaneId === 'number' || saved.maximizedPaneId === null) setMaximizedPaneId(saved.maximizedPaneId)
+        if (saved.instrumentType === 'equity' || saved.instrumentType === 'options') setInstrumentType(saved.instrumentType)
+        if (saved.optionsReady !== undefined) setOptionsReady(saved.optionsReady)
+        if (Array.isArray(saved.panes) && saved.panes.length > 0) {
+          const restoredPanes = saved.panes.filter(p => typeof p.id === 'number' && (p.type === 'equity' || p.type === 'options'))
+          if (restoredPanes.length > 0) {
+            nextPaneId = Math.max(nextPaneId, ...restoredPanes.map(p => p.id + 1))
+            setPanes(restoredPanes)
+          }
+        }
+        if (saved.sessionId) {
+          await sim.attachToActiveSession(saved.sessionId).catch(() => {})
+        }
+      } catch {
+        localStorage.removeItem(workspaceStorageKey)
+      } finally {
+        if (!cancelled) workspaceRestoredRef.current = true
+      }
+    }
+    restore()
+    return () => { cancelled = true }
+  }, [workspaceStorageKey]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
-    const obs = new ResizeObserver(entries => setColumnHeight(entries[0].contentRect.height))
-    if (chartColumnRef.current) obs.observe(chartColumnRef.current)
+    if (!workspaceRestoredRef.current) return
+    const view: WorkspaceView = showPatternLibrary
+      ? 'patterns'
+      : showChartStructures
+        ? 'structures'
+        : showAnalysis
+          ? 'analysis'
+          : 'trading'
+    const snapshot: WorkspaceSnapshot = {
+      view,
+      analysisOpen: showAnalysis,
+      sessionId: sim.sessionId,
+      panes,
+      layoutPreset,
+      activePaneId,
+      maximizedPaneId,
+      instrumentType,
+      optionsReady,
+      sessionControlsVisible,
+    }
+    localStorage.setItem(workspaceStorageKey, JSON.stringify(snapshot))
+  }, [
+    workspaceStorageKey, showPatternLibrary, showChartStructures, showAnalysis,
+    sim.sessionId, panes, layoutPreset, activePaneId, maximizedPaneId,
+    instrumentType, optionsReady, sessionControlsVisible,
+  ])
+
+  // ── Chart container height ──────────────────────────────────────────────────
+  const mainContentRef = useRef<HTMLDivElement>(null)
+  const [columnHeight, setColumnHeight] = useState(window.innerHeight - 160)
+  const measureChartArea = useCallback(() => {
+    const h = mainContentRef.current?.getBoundingClientRect().height
+    if (h && h > 0) setColumnHeight(Math.max(160, h - 8))
+  }, [])
+
+  useEffect(() => {
+    const obs = new ResizeObserver(entries => {
+      const h = entries[0]?.contentRect.height
+      if (h && h > 0) setColumnHeight(Math.max(160, h - 8))
+    })
+    if (mainContentRef.current) obs.observe(mainContentRef.current)
     return () => obs.disconnect()
   }, [])
+
+  useEffect(() => {
+    if (!showPatternLibrary && !showChartStructures) {
+      measureChartArea()
+      const raf = requestAnimationFrame(measureChartArea)
+      return () => cancelAnimationFrame(raf)
+    }
+  }, [showPatternLibrary, showChartStructures, measureChartArea])
 
   // ── Options ready: switch to 3-pane options default ─────────────────────────
   const handleOptionsReady = useCallback((cfg: OptionsReadyConfig | null) => {
@@ -633,7 +734,12 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
     }
   }, [sim.setLatestTick, sim.handleSessionEnded, sim.handleOrderFilled, sim.handleOrderCancelled, sim.addOpenOrder, sim.addTradeFromSSE, sim.handleBarPaused, setGuardrailPopup, setRunningStrategies, captureSnapshot])
 
-  useSSE(sim.sseUrl, handleSSEMessage)
+  const handleSSEReconnect = useCallback(() => {
+    sim.refreshSessionData()
+    setPanes(prev => prev.map(p => ({ ...p, reloadKey: (p.reloadKey ?? 0) + 1 })))
+  }, [sim.refreshSessionData])
+
+  useSSE(sim.sessionId, handleSSEMessage, handleSSEReconnect)
 
   // Fetch round-trips and labels for trade history when session is active
   useEffect(() => {
@@ -1010,7 +1116,8 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
   }, [sim.pnlEquity, sim.pnlCE, sim.pnlPE, panes])
 
   // ── Layout rendering helpers ──────────────────────────────────────────────────
-  const rowHeight = Math.max(160, Math.floor((columnHeight - 36) / 2 * 0.966))
+  const chartToolbarHeight = 32
+  const rowHeight = Math.max(160, Math.floor((columnHeight - chartToolbarHeight * 2 - 4) / 2))
 
   const renderPane = (pane: PaneConfig, height: number, style?: React.CSSProperties) => {
     const isMaximized = maximizedPaneId === pane.id
@@ -1116,7 +1223,7 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
 
   const renderLayout = () => {
     const gap = 4
-    const maxH = Math.max(160, columnHeight - 36)
+    const maxH = Math.max(160, columnHeight - chartToolbarHeight)
 
     // Maximize is handled inline per-layout rather than with a separate top-level
     // branch. Keeping the same flex container structure means the pane wrapper div's
@@ -1124,12 +1231,12 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
     // Non-maximized panes get display:none — still mounted, liveWindowRef preserved.
 
     if (layoutPreset === 1) {
-      const h = columnHeight - 36
+      const h = columnHeight - chartToolbarHeight
       return panes[0] ? renderPane(panes[0], Math.max(160, h)) : null
     }
 
     if (layoutPreset === 2) {
-      const h = Math.max(160, Math.floor((columnHeight - 36 - gap) / 2 * 0.9))
+      const h = Math.max(160, Math.floor((columnHeight - chartToolbarHeight * 2 - gap) / 2))
       return (
         <div style={{ display: 'flex', flexDirection: 'column', gap }}>
           {panes.slice(0, 2).map(p => {
@@ -1794,11 +1901,10 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
       )}
 
       {/* Main content */}
-      <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
+      <div ref={mainContentRef} style={{ display: 'flex', flex: 1, minHeight: 0, overflow: 'hidden' }}>
         {/* Chart column */}
         <div
-          ref={chartColumnRef}
-          style={{ flex: 1, overflow: 'auto', padding: '4px 12px' }}
+          style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: '4px 12px' }}
         >
           {renderLayout()}
         </div>
