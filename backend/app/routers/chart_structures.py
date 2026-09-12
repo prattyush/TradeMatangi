@@ -133,6 +133,7 @@ async def get_ohlc(
     symbol: str,
     date: str,
     interval_minutes: int = Query(3, ge=1, le=60),
+    days_back: int = Query(2, ge=1, le=5),
     user_id: str = Depends(get_request_user_id),
 ):
     try:
@@ -141,8 +142,8 @@ async def get_ohlc(
         from app.services.broker_service import fetch_historical
         from app.services.data_loader import load_dataframe, resample_to_candles, candles_to_records
 
-        # Load current date + up to 2 prior trading days for context
-        prior_dates = prior_trading_days(date, n=2)
+        # Load current date + up to N prior trading days for context
+        prior_dates = prior_trading_days(date, n=days_back)
         all_dfs = []
         for d in prior_dates:
             try:

@@ -11,6 +11,7 @@ import {
 } from 'lightweight-charts'
 import api, { ChartStructureItem, OHLCCandle } from '../services/api'
 import FineStructures from './FineStructures'
+import { loadHistoricalDays } from '../components/SettingsModal'
 
 // ── EMA helpers ───────────────────────────────────────────────────────────────
 
@@ -198,7 +199,7 @@ function ChartModal({
 
   useEffect(() => {
     const symbol = item.symbol === 'BSESEN' ? 'BSESEN' : item.symbol
-    api.chartStructureGetOHLC(symbol, item.date).then(data => {
+    api.chartStructureGetOHLC(symbol, item.date, 3, loadHistoricalDays()).then(data => {
       setCandles(data.candles)
       if (data.structure) setStructure(data.structure)
       setEditOpen(data.structure?.opening_type || 'undefined')

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { createChart, IChartApi, ISeriesApi, Time, LineStyle } from 'lightweight-charts'
 import api, { FineDefinition, FlowStep, FineSearchResult, OHLCCandle } from '../services/api'
-import { loadMaxPriceMode, loadMaxPriceThresholdCE, loadMaxPriceThresholdPE } from '../components/SettingsModal'
+import { loadMaxPriceMode, loadMaxPriceThresholdCE, loadMaxPriceThresholdPE, loadHistoricalDays } from '../components/SettingsModal'
 
 const STEP_COLORS = [
   '#58a6ff', '#3fb950', '#d29922', '#f0883e', '#bc8cff',
@@ -263,7 +263,7 @@ function BuilderView({ definitions }: { definitions: FineDefinition[] }) {
     if (!symbol || !date) return
     setLoading(true)
     try {
-      const res = await api.fineStructureGetOHLC(symbol, date, intervalMinutes)
+      const res = await api.fineStructureGetOHLC(symbol, date, intervalMinutes, loadHistoricalDays())
       setCandles(res.candles)
       if (res.flow) {
         setFlowId(res.flow.flow_id)
@@ -773,7 +773,7 @@ function OptionsBuilderView({ definitions }: { definitions: FineDefinition[] }) 
     if (!symbol || !date) return
     setLoading(true)
     try {
-      const undRes = await api.fineStructureGetOHLC(symbol, date, intervalMinutes)
+      const undRes = await api.fineStructureGetOHLC(symbol, date, intervalMinutes, loadHistoricalDays())
       setUnderlyingCandles(undRes.candles)
       if (undRes.flow && undRes.flow.instrument_type === 'options') {
         setUnderlyingFlowId(undRes.flow.flow_id)
@@ -812,7 +812,7 @@ function OptionsBuilderView({ definitions }: { definitions: FineDefinition[] }) 
         setPeStrike(peS)
 
         try {
-          const ceRes = await api.fineStructureGetOptionsOHLC(symbol, date, ceS, undefined, 'CE', intervalMinutes)
+          const ceRes = await api.fineStructureGetOptionsOHLC(symbol, date, ceS, undefined, 'CE', intervalMinutes, loadHistoricalDays())
           setCeCandles(ceRes.candles)
           if (ceRes.flow) {
             setCeFlowId(ceRes.flow.flow_id)
@@ -824,7 +824,7 @@ function OptionsBuilderView({ definitions }: { definitions: FineDefinition[] }) 
         } catch { setCeCandles([]); setCeSteps([]) }
 
         try {
-          const peRes = await api.fineStructureGetOptionsOHLC(symbol, date, peS, undefined, 'PE', intervalMinutes)
+          const peRes = await api.fineStructureGetOptionsOHLC(symbol, date, peS, undefined, 'PE', intervalMinutes, loadHistoricalDays())
           setPeCandles(peRes.candles)
           if (peRes.flow) {
             setPeFlowId(peRes.flow.flow_id)
@@ -1625,19 +1625,19 @@ function SearchView({ definitions }: {
       // For options flows, fetch the options chart instead of underlying
       if (r.flow.instrument_type === 'options' && r.flow.right) {
         // First get underlying to calculate ATM strike
-        const undRes = await api.fineStructureGetOHLC(r.flow.symbol, r.flow.date, interval)
+        const undRes = await api.fineStructureGetOHLC(r.flow.symbol, r.flow.date, interval, loadHistoricalDays())
         if (undRes.candles.length > 0) {
           const firstPrice = undRes.candles[0].open
           const strikeInterval = r.flow.symbol === 'BSESEN' ? 100 : 50
           const atm = Math.round(firstPrice / strikeInterval) * strikeInterval
           // Use ATM strike for the options chart
-          const optRes = await api.fineStructureGetOptionsOHLC(r.flow.symbol, r.flow.date, atm, undefined, r.flow.right, interval)
+          const optRes = await api.fineStructureGetOptionsOHLC(r.flow.symbol, r.flow.date, atm, undefined, r.flow.right, interval, loadHistoricalDays())
           setResultCandles(optRes.candles)
         } else {
           setResultCandles([])
         }
       } else {
-        const res = await api.fineStructureGetOHLC(r.flow.symbol, r.flow.date, interval)
+        const res = await api.fineStructureGetOHLC(r.flow.symbol, r.flow.date, interval, loadHistoricalDays())
         setResultCandles(res.candles)
       }
     } catch {

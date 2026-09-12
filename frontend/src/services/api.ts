@@ -1646,13 +1646,13 @@ const api = {
     return res.json()
   },
 
-  async chartStructureGetOHLC(symbol: string, date: string, intervalMinutes = 3): Promise<{
+  async chartStructureGetOHLC(symbol: string, date: string, intervalMinutes = 3, daysBack?: number): Promise<{
     symbol: string; date: string; interval_minutes: number
     candles: OHLCCandle[]; structure: ChartStructureItem | null
   }> {
-    const res = await fetch(
-      `${BACKEND_URL}/api/chart-structures/ohlc/${encodeURIComponent(symbol)}/${date}?interval_minutes=${intervalMinutes}`,
-      { headers: _authHeaders() },
+    let url = `${BACKEND_URL}/api/chart-structures/ohlc/${encodeURIComponent(symbol)}/${date}?interval_minutes=${intervalMinutes}`
+    if (daysBack) url += `&days_back=${daysBack}`
+    const res = await fetch(url, { headers: _authHeaders() },
     )
     if (!res.ok) throw new Error(`Structure OHLC failed: ${res.status}`)
     return res.json()
@@ -1830,19 +1830,19 @@ const api = {
     return json.results
   },
 
-  async fineStructureGetOHLC(symbol: string, date: string, intervalMinutes = 3): Promise<{
+  async fineStructureGetOHLC(symbol: string, date: string, intervalMinutes = 3, daysBack?: number): Promise<{
     symbol: string; date: string; interval_minutes: number
     candles: OHLCCandle[]; flow: FineFlow | null
   }> {
-    const res = await fetch(
-      `${BACKEND_URL}/api/fine-structures/ohlc/${encodeURIComponent(symbol)}/${encodeURIComponent(date)}?interval_minutes=${intervalMinutes}`,
-      { headers: _authHeaders() },
+    let url = `${BACKEND_URL}/api/fine-structures/ohlc/${encodeURIComponent(symbol)}/${encodeURIComponent(date)}?interval_minutes=${intervalMinutes}`
+    if (daysBack) url += `&days_back=${daysBack}`
+    const res = await fetch(url, { headers: _authHeaders() },
     )
     if (!res.ok) throw new Error(`Get fine OHLC failed: ${res.status}`)
     return res.json()
   },
 
-  async fineStructureGetOptionsOHLC(symbol: string, date: string, strike: number, expiry: string | undefined, right: string, intervalMinutes = 3): Promise<{
+  async fineStructureGetOptionsOHLC(symbol: string, date: string, strike: number, expiry: string | undefined, right: string, intervalMinutes = 3, daysBack?: number): Promise<{
     symbol: string; date: string; interval_minutes: number
     candles: OHLCCandle[]; flow: FineFlow | null
   }> {
@@ -1850,6 +1850,7 @@ const api = {
       strike: String(strike), right, interval_minutes: String(intervalMinutes),
     })
     if (expiry) params.set('expiry', expiry)
+    if (daysBack) params.set('days_back', String(daysBack))
     const res = await fetch(
       `${BACKEND_URL}/api/fine-structures/ohlc-options/${encodeURIComponent(symbol)}/${encodeURIComponent(date)}?${params}`,
       { headers: _authHeaders() },
