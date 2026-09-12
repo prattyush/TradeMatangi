@@ -13,6 +13,7 @@ import {
 } from 'lightweight-charts'
 import api, { PatternAnnotation, PatternChart, PatternChartMeta, OHLCCandle, TopPatterns } from '../services/api'
 import { buildMarkers, patternIdentity, cleanTopPatterns, MARKER_COLORS } from '../services/patternMarkers'
+import { loadHistoricalDays } from '../components/SettingsModal'
 
 // ── EMA helpers ───────────────────────────────────────────────────────────────
 
@@ -654,7 +655,6 @@ function GalleryCard({ chart, activeStrategy: _activeStrategy, onLoad, onDelete,
 
 const SUPPORTED_SYMBOLS = ['NIFTY', 'BSESEN', 'RELIND', 'TATMOT', 'TATPOW']
 const STRIKE_INTERVALS: Record<string, number> = { NIFTY: 50, BSESEN: 100, RELIND: 5, TATMOT: 5, TATPOW: 5 }
-const DAYS_BACK = 2
 const GALLERY_MAX_COLUMNS = 6
 const GALLERY_CARD_MIN_WIDTH = 220
 
@@ -798,7 +798,7 @@ export default function PatternLibrary() {
     paneIdRef.current = 1
 
     try {
-      const eqPromise = api.patternOhlcEquity(symbol, date, intervalMinutes, DAYS_BACK)
+      const eqPromise = api.patternOhlcEquity(symbol, date, intervalMinutes, loadHistoricalDays())
 
       let newPanes: OptionPane[] = []
       let expiry: string | null = null
@@ -816,8 +816,8 @@ export default function PatternLibrary() {
         const peStrike = atm - otmOffset * interval
 
         const [ceRes, peRes] = await Promise.all([
-          api.patternOhlcOptions(symbol, date, ceStrike, expiry, 'CE', intervalMinutes, DAYS_BACK),
-          api.patternOhlcOptions(symbol, date, peStrike, expiry, 'PE', intervalMinutes, DAYS_BACK),
+          api.patternOhlcOptions(symbol, date, ceStrike, expiry, 'CE', intervalMinutes, loadHistoricalDays()),
+          api.patternOhlcOptions(symbol, date, peStrike, expiry, 'PE', intervalMinutes, loadHistoricalDays()),
         ])
         newPanes = [
           { id: paneIdRef.current++, right: 'CE', strike: ceStrike, expiry, candles: ceRes.candles },
@@ -864,7 +864,7 @@ export default function PatternLibrary() {
     setAddPaneError(null)
     setAddPaneSuccess(null)
     try {
-      const res = await api.patternOhlcOptions(symbol, date, strike, resolvedExpiry, addPaneRight, intervalMinutes, DAYS_BACK)
+      const res = await api.patternOhlcOptions(symbol, date, strike, resolvedExpiry, addPaneRight, intervalMinutes, loadHistoricalDays())
       const newPane: OptionPane = {
         id: paneIdRef.current++,
         right: addPaneRight,
@@ -903,12 +903,12 @@ export default function PatternLibrary() {
     if (newInterval === intervalMinutes || !chartLoaded) return
     setIntervalMinutes(newInterval)
     try {
-      const eqRes = await api.patternOhlcEquity(symbol, date, newInterval, DAYS_BACK)
+      const eqRes = await api.patternOhlcEquity(symbol, date, newInterval, loadHistoricalDays())
       setEquityCandles(eqRes.candles)
       if (optionPanes.length > 0 && resolvedExpiry) {
         const updated = await Promise.all(optionPanes.map(async (pane) => {
           try {
-            const res = await api.patternOhlcOptions(symbol, date, pane.strike, resolvedExpiry, pane.right, newInterval, DAYS_BACK)
+            const res = await api.patternOhlcOptions(symbol, date, pane.strike, resolvedExpiry, pane.right, newInterval, loadHistoricalDays())
             return { ...pane, candles: res.candles }
           } catch { return pane }
         }))
@@ -1027,7 +1027,7 @@ export default function PatternLibrary() {
         }
       }
 
-      const eqRes = await api.patternOhlcEquity(chart.symbol, chart.date, savedInterval, DAYS_BACK)
+      const eqRes = await api.patternOhlcEquity(chart.symbol, chart.date, savedInterval, loadHistoricalDays())
       setEquityCandles(eqRes.candles)
 
       if (chart.instrument_type === 'options' && chart.strike && !galleryUnderlyingOnly) {
@@ -1035,8 +1035,8 @@ export default function PatternLibrary() {
           const expiryRes = await api.getExpiry(chart.symbol, chart.date)
           const expiry = expiryRes.expiry
           const [ceRes, peRes] = await Promise.all([
-            api.patternOhlcOptions(chart.symbol, chart.date, chart.strike, expiry, 'CE', savedInterval, DAYS_BACK).catch(() => null),
-            api.patternOhlcOptions(chart.symbol, chart.date, chart.strike, expiry, 'PE', savedInterval, DAYS_BACK).catch(() => null),
+            api.patternOhlcOptions(chart.symbol, chart.date, chart.strike, expiry, 'CE', savedInterval, loadHistoricalDays()).catch(() => null),
+            api.patternOhlcOptions(chart.symbol, chart.date, chart.strike, expiry, 'PE', savedInterval, loadHistoricalDays()).catch(() => null),
           ])
           const annotatedRights = new Set(chart.annotations.map(a => a.instrument))
           const newPanes: OptionPane[] = []

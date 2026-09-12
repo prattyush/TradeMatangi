@@ -270,6 +270,7 @@ async def get_ohlc(
     symbol: str,
     date: str,
     interval_minutes: int = Query(3, ge=1, le=60),
+    days_back: int = Query(2, ge=1, le=5),
     user_id: str = Depends(get_request_user_id),
 ):
     try:
@@ -278,7 +279,7 @@ async def get_ohlc(
         from app.services.broker_service import fetch_historical
         from app.services.data_loader import load_dataframe, resample_to_candles, candles_to_records
 
-        prior_dates = prior_trading_days(date, n=2)
+        prior_dates = prior_trading_days(date, n=days_back)
         all_dfs = []
         for d in prior_dates:
             try:
@@ -324,6 +325,7 @@ async def get_ohlc_options(
     expiry: str = Query(None),
     right: str = Query(...),
     interval_minutes: int = Query(3, ge=1, le=60),
+    days_back: int = Query(2, ge=1, le=5),
     user_id: str = Depends(get_request_user_id),
 ):
     """Return OHLC candles for an options contract for fine structure builder."""
@@ -340,7 +342,7 @@ async def get_ohlc_options(
             expiry = get_expiry_date(symbol.upper(), date)
             logger.info("Auto-calculated expiry for %s on %s: %s", symbol, date, expiry)
 
-        prior_dates = prior_trading_days(date, n=2)
+        prior_dates = prior_trading_days(date, n=days_back)
         all_dfs = []
         for d in prior_dates:
             try:
