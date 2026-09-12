@@ -206,7 +206,9 @@ export interface SimulationStartResponse {
   right: string | null
   strike_ce: number | null
   strike_pe: number | null
+  brokerage_per_order?: number
   session_type: string
+  state?: 'idle' | 'running' | 'paused' | 'ended' | null
   stepwise: boolean
   total_bars: number | null
 }
@@ -774,6 +776,18 @@ const api = {
     return res.json()
   },
 
+  async getActiveSimulation(session_id: string): Promise<SimulationStartResponse> {
+    const qs = new URLSearchParams({ session_id })
+    const res = await fetch(`${BACKEND_URL}/api/simulation/active?${qs}`, {
+      headers: _authHeaders(),
+    })
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}))
+      throw new Error(body.detail || `Active simulation fetch failed: ${res.status}`)
+    }
+    return res.json()
+  },
+
   async checkExistingSession(params: { symbol: string; date: string; session_type: string; instrument_type?: string }): Promise<{ exists: boolean; session: Record<string, unknown> | null }> {
     const qs = new URLSearchParams({
       symbol: params.symbol,
@@ -1005,8 +1019,9 @@ const api = {
     if (!res.ok) throw new Error(`Update pane strike failed: ${res.status}`)
   },
 
-  getSSEUrl(session_id: string): string {
-    return `${BACKEND_URL}/api/stream/${session_id}`
+  getSSEUrl(session_id: string, lastEventId?: string | null): string {
+    const base = `${BACKEND_URL}/api/stream/${session_id}`
+    return lastEventId ? `${base}?last_event_id=${encodeURIComponent(lastEventId)}` : base
   },
 
   // ── Auth ───────────────────────────────────────────────────────────────────

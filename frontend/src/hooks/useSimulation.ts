@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef } from 'react'
-import api, { Trade, Position, Order, TickEvent, BarCandle, InsufficientFundsError } from '../services/api'
+import api, { Trade, Position, Order, TickEvent, BarCandle, InsufficientFundsError, SimulationStartResponse } from '../services/api'
 
 export type SessionState = 'idle' | 'running' | 'paused' | 'ended'
 
@@ -127,6 +127,72 @@ export function useSimulation() {
     activeEntryStrategies: {},
   })
 
+  const activateSession = useCallback(async (res: SimulationStartResponse) => {
+    const sym = res.symbol
+    const instrumentType = (res.instrument_type as 'equity' | 'options') || 'equity'
+    const sessionType = res.session_type ?? 'sim'
+    const restoredState = res.state === 'paused' ? 'paused' : 'running'
+    setState(s => ({
+      ...s,
+      sessionId: res.session_id,
+      sessionState: restoredState,
+      symbol: sym,
+      date: res.date,
+      startTime: res.start_time,
+      sseUrl: api.getSSEUrl(res.session_id),
+      latestEquityTick: null,
+      latestCETick: null,
+      latestPETick: null,
+      currentPrice: 0,
+      currentPriceCE: 0,
+      currentPricePE: 0,
+      trades: [],
+      historicalTrades: [],
+      position: FLAT_POSITION(sym),
+      positionCE: FLAT_POSITION(sym),
+      positionPE: FLAT_POSITION(sym),
+      openOrders: [],
+      walletRefreshKey: s.walletRefreshKey + 1,
+      orderError: null,
+      sessionInstrumentType: instrumentType,
+      sessionCapital: res.session_capital,
+      sessionStrike: res.strike,
+      sessionStrikeCE: res.strike_ce ?? res.strike,
+      sessionStrikePE: res.strike_pe ?? res.strike,
+      sessionExpiry: res.expiry,
+      sessionType,
+      brokeragePerOrder: res.brokerage_per_order ?? 0,
+      stepwise: res.stepwise === true,
+      barPaused: false,
+      barIndex: 0,
+      totalBars: res.total_bars ?? 0,
+      lastCompletedBarEquity: null,
+      lastCompletedBarCE: null,
+      lastCompletedBarPE: null,
+    }))
+
+    api.getTradesByContext(sym, res.date, instrumentType, sessionType).then(({ trades }) => {
+      setState(s => ({ ...s, historicalTrades: trades.filter(t => t.session_id !== res.session_id) }))
+    }).catch(() => {})
+
+    const [trades, posEq, posCE, posPE, openOrders] = await Promise.all([
+      api.getTrades(res.session_id).catch(() => []),
+      api.getPosition(res.session_id).catch(() => FLAT_POSITION(sym)),
+      api.getPosition(res.session_id, 'CE').catch(() => FLAT_POSITION(sym)),
+      api.getPosition(res.session_id, 'PE').catch(() => FLAT_POSITION(sym)),
+      api.getOrders(res.session_id, true).catch(() => []),
+    ])
+    setState(s => ({
+      ...s,
+      trades,
+      position: posEq,
+      positionCE: posCE,
+      positionPE: posPE,
+      openOrders,
+      walletRefreshKey: s.walletRefreshKey + 1,
+    }))
+  }, [])
+
   const setLatestTick = useCallback((tick: TickEvent) => {
     // Update ref synchronously so any concurrent buy/sell/handleOrderFilled reads the latest price
     if (!tick.right) latestEquityTickRef.current = tick
@@ -181,66 +247,37 @@ export function useSimulation() {
       speed,
       ...(instrumentConfig || { instrument_type: 'equity' }),
     })
-    const sym = res.symbol
-    const instrumentType = (res.instrument_type as 'equity' | 'options') || 'equity'
-    const sessionType = instrumentConfig?.session_type ?? 'sim'
-    const isStepwise = res.stepwise === true
+    await activateSession(res)
+    return res.session_id
+  }, [state.symbol, state.date, activateSession])
+
+  const attachToActiveSession = useCallback(async (sessionId: string) => {
+    const res = await api.getActiveSimulation(sessionId)
+    await activateSession(res)
+    return res
+  }, [activateSession])
+
+  const refreshSessionData = useCallback(async () => {
+    const id = state.sessionId
+    if (!id) return
+    const sym = state.symbol
+    const [trades, posEq, posCE, posPE, openOrders] = await Promise.all([
+      api.getTrades(id).catch(() => []),
+      api.getPosition(id).catch(() => FLAT_POSITION(sym)),
+      api.getPosition(id, 'CE').catch(() => FLAT_POSITION(sym)),
+      api.getPosition(id, 'PE').catch(() => FLAT_POSITION(sym)),
+      api.getOrders(id, true).catch(() => []),
+    ])
     setState(s => ({
       ...s,
-      sessionId: res.session_id,
-      sessionState: 'running',
-      startTime: res.start_time,
-      sseUrl: api.getSSEUrl(res.session_id),
-      latestEquityTick: null,
-      latestCETick: null,
-      latestPETick: null,
-      currentPrice: 0,
-      currentPriceCE: 0,
-      currentPricePE: 0,
-      trades: [],
-      historicalTrades: [],
-      position: FLAT_POSITION(sym),
-      positionCE: FLAT_POSITION(sym),
-      positionPE: FLAT_POSITION(sym),
-      openOrders: [],
+      trades,
+      position: posEq,
+      positionCE: posCE,
+      positionPE: posPE,
+      openOrders,
       walletRefreshKey: s.walletRefreshKey + 1,
-      orderError: null,
-      sessionInstrumentType: instrumentType,
-      sessionCapital: res.session_capital,
-      sessionStrike: res.strike,
-      sessionStrikeCE: res.strike_ce ?? res.strike,
-      sessionStrikePE: res.strike_pe ?? res.strike,
-      sessionExpiry: res.expiry,
-      sessionType,
-      brokeragePerOrder: instrumentConfig?.brokerage_per_order ?? 0,
-      stepwise: isStepwise,
-      barPaused: false,
-      barIndex: 0,
-      totalBars: res.total_bars ?? 0,
-      lastCompletedBarEquity: null,
-      lastCompletedBarCE: null,
-      lastCompletedBarPE: null,
     }))
-    // Fire-and-forget: load previous-session trades for same user+symbol+date+type
-    const currentSessionId = res.session_id
-    api.getTradesByContext(sym, state.date, instrumentType, sessionType).then(({ trades }) => {
-      setState(s => ({ ...s, historicalTrades: trades.filter(t => t.session_id !== currentSessionId) }))
-    }).catch(() => {})
-    // Reload this session's own trades from backend (populated from DB on resume)
-    // and fetch positions so the UI reflects open positions from prior runs.
-    api.getTrades(currentSessionId).then(async (trades) => {
-      if (trades.length > 0) {
-        setState(s => ({ ...s, trades }))
-        const [posEq, posCE, posPE] = await Promise.all([
-          api.getPosition(currentSessionId),
-          api.getPosition(currentSessionId, 'CE'),
-          api.getPosition(currentSessionId, 'PE'),
-        ])
-        setState(s => ({ ...s, position: posEq, positionCE: posCE, positionPE: posPE }))
-      }
-    }).catch(() => {})
-    return res.session_id
-  }, [state.symbol, state.date])
+  }, [state.sessionId, state.symbol])
 
   const stopSession = useCallback(async () => {
     const id = state.sessionId
@@ -830,6 +867,8 @@ export function useSimulation() {
     updateDate,
     updateSessionStrike,
     startSession,
+    attachToActiveSession,
+    refreshSessionData,
     stopSession,
     pauseSession,
     resumeSession,
