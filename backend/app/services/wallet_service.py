@@ -22,6 +22,8 @@ DEFAULT_BALANCE = 150_000.0
 
 # {(user_id, date): float}
 _wallets: dict[tuple[str, str], float] = {}
+_ledgers: dict[tuple[str, str], float] = {}
+_LEDGER_TABLE = "WalletLedgers"
 
 
 class InsufficientFundsError(Exception):
@@ -81,6 +83,82 @@ def get_or_init_wallet(user_id: str, date: str) -> float:
 
 def get_balance(user_id: str, date: str) -> float:
     return get_or_init_wallet(user_id, date)
+
+
+def _ensure_ledger_table() -> None:
+    try:
+        from app.services.db import get_dynamodb_resource, get_dynamodb_client
+        if _LEDGER_TABLE in set(get_dynamodb_resource().meta.client.list_tables()["TableNames"]):
+            return
+        get_dynamodb_client().create_table(
+            TableName=_LEDGER_TABLE,
+            KeySchema=[{"AttributeName": "user_id", "KeyType": "HASH"}, {"AttributeName": "ledger_id", "KeyType": "RANGE"}],
+            AttributeDefinitions=[{"AttributeName": "user_id", "AttributeType": "S"}, {"AttributeName": "ledger_id", "AttributeType": "S"}],
+            BillingMode="PAY_PER_REQUEST",
+        )
+    except Exception:
+        logger.exception("Could not ensure %s", _LEDGER_TABLE)
+
+
+def get_or_init_ledger(user_id: str, date: str, ledger_id: str, ledger_kind: str = "sim") -> float:
+    """Ledger-aware facade. First use copies the legacy balance, preserving history."""
+    key = (user_id, ledger_id)
+    if key in _ledgers:
+        return _ledgers[key]
+    balance: float | None = None
+    try:
+        _ensure_ledger_table()
+        from app.services.db import get_dynamodb_resource
+        item = get_dynamodb_resource().Table(_LEDGER_TABLE).get_item(Key={"user_id": user_id, "ledger_id": ledger_id}).get("Item")
+        if item:
+            balance = float(item["current_balance"])
+    except Exception:
+        logger.exception("DynamoDB ledger read failed user=%s ledger=%s", user_id, ledger_id)
+    if balance is None:
+        balance = get_or_init_wallet(user_id, date)
+    _ledgers[key] = balance
+    _write_ledger(user_id, date, ledger_id, ledger_kind, balance)
+    return balance
+
+
+def _write_ledger(user_id: str, date: str, ledger_id: str, ledger_kind: str, balance: float) -> None:
+    try:
+        _ensure_ledger_table()
+        from app.services.db import get_dynamodb_resource
+        import time
+        get_dynamodb_resource().Table(_LEDGER_TABLE).put_item(Item={
+            "user_id": user_id, "ledger_id": ledger_id, "date": date, "ledger_kind": ledger_kind,
+            "current_balance": Decimal(str(round(balance, 2))), "updated_at": int(time.time() * 1000),
+        })
+    except Exception:
+        logger.exception("DynamoDB ledger write failed user=%s ledger=%s", user_id, ledger_id)
+
+
+def get_ledger_balance(user_id: str, date: str, ledger_id: str, ledger_kind: str = "sim") -> float:
+    return get_or_init_ledger(user_id, date, ledger_id, ledger_kind)
+
+
+def debit_ledger(user_id: str, amount: float, date: str, ledger_id: str, ledger_kind: str = "sim") -> float:
+    balance = get_or_init_ledger(user_id, date, ledger_id, ledger_kind)
+    if amount > balance:
+        raise InsufficientFundsError(balance, amount)
+    balance -= max(amount, 0)
+    _ledgers[(user_id, ledger_id)] = balance
+    _write_ledger(user_id, date, ledger_id, ledger_kind, balance)
+    return balance
+
+
+def credit_ledger(user_id: str, amount: float, date: str, ledger_id: str, ledger_kind: str = "sim") -> float:
+    balance = get_or_init_ledger(user_id, date, ledger_id, ledger_kind) + max(amount, 0)
+    _ledgers[(user_id, ledger_id)] = balance
+    _write_ledger(user_id, date, ledger_id, ledger_kind, balance)
+    return balance
+
+
+def reset_ledger(user_id: str, date: str, ledger_id: str, amount: float, ledger_kind: str = "real") -> float:
+    _ledgers[(user_id, ledger_id)] = amount
+    _write_ledger(user_id, date, ledger_id, ledger_kind, amount)
+    return amount
 
 
 def debit(user_id: str, amount: float, date: str) -> float:

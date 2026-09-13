@@ -196,22 +196,35 @@ async def get_options_historical(
     from app.services.options_service import fetch_options_historical, load_options_dataframe
     from app.services.broker_service import BreezeTokenError
 
-    # Fetch N prior days for context + the trading date itself (pre-session candles)
-    prior_dates = prior_trading_days(date, n=historical_days) + [date]
+    # Fetch N prior days for context + the trading date itself.  Option symbols
+    # are expiry-scoped; after expiry the same contract cannot trade.  If a
+    # stale chart asks for a date after expiry, clamp to expiry instead of
+    # hammering Breeze for impossible post-expiry dates.
+    effective_date = min(date, expiry)
+    if effective_date != date:
+        logger.warning(
+            "Clamping options history date for %s %s %s from %s to expiry %s",
+            symbol, right.upper(), strike, date, expiry,
+        )
+    candidate_dates = prior_trading_days(effective_date, n=historical_days) + [effective_date]
+    prior_dates = [d for d in candidate_dates if d <= expiry]
     all_candles: list[OHLCCandle] = []
+    loaded_dates: list[str] = []
 
     for prior_date in prior_dates:
         try:
-            fetch_options_historical(symbol, prior_date, strike, expiry, right.upper())
+            if prior_date == effective_date:
+                fetch_options_historical(symbol, prior_date, strike, expiry, right.upper())
             df = load_options_dataframe(symbol, prior_date, strike, expiry, right.upper())
             candles = resample_to_candles(df, interval_minutes)
             records = candles_to_records(candles)
             all_candles.extend(OHLCCandle(**r) for r in records)
+            loaded_dates.append(prior_date)
         except BreezeTokenError as e:
             raise HTTPException(status_code=503, detail=str(e))
         except FileNotFoundError:
             logger.warning(
-                "Options data not found for %s %s %s on %s — skipping prior day",
+                "Options data not cached for %s %s %s on %s - skipping context day",
                 symbol, right.upper(), strike, prior_date,
             )
         except Exception as e:
@@ -225,7 +238,7 @@ async def get_options_historical(
 
     return HistoricalDataResponse(
         symbol=f"{symbol}-{right.upper()}-{strike}",
-        dates=prior_dates,  # includes the 2 prior days + the trading date
+        dates=loaded_dates,
         candles=all_candles,
     )
 

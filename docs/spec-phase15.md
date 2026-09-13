@@ -369,6 +369,35 @@ You can name them as you want.
 
  Full sprint-wise migration plan: [Phase 15 KLineCharts Migration Plan](./phase15-klinecharts-migration-plan.md)
 
+
+### Multi Session
+
+Detailed sprint-level implementation plan: [Phase 15 Multi-Session Plan](./phase15-multi-session-implementation-plan.md)
+
+#### Both Paper And Real
+currently, if admin adds a user for real-time trading, that user will only see option of real time trading for the current date. He can't start a paper trading. I want that option to be present to the user if he is added to the real-time trading dataset, that he can still have a paper trading session on today's date. So some way to tell the user wants to start a paper trading session even if real is enabled for that user.
+
+#### Parallel Sessions
+This requirement is about sessions. So the idea is to have multiple sessions in which user can switch between these sessions during a trading day. So a primary underlying boundary of multi-session would be that user can switch between them but the date and speed of replay would be same. 
+The backend should be fetching data for symbols which are present in all active sessions continuously, so that when user switches, he can see that chart quickly rather than a restart. Another point is that both sessions would be for the same day and the same timing. So whatever speed, if both sessions are simulation sessions, they would be on the same day and the same speed in with the time running. So the time is constant. The only constant is time. 
+
+How they can be used?
+ For example, we can have a paper trading session and a real trading session at the same time for the same logged-in user of different symbols, or maybe of the same symbol. Another option would be having two real-time trading sessions of both the indices, that is Sensex and Nifty 50, in options trading. So I can switch between them based on which ones I can trade. The idea is definitely during a day trading, I switch between them. So the restrictions would be that there cannot be a combination of a simulation with paper or real, and vice versa. Also stepwise can only be combined with stepwise, and simulation can only be combined with simulation, paper and real can be used together as both use the same time (clock, real-time clock). 
+ 
+ Also, I want some way to label these sessions so that user can switch between them. I'm not sure how the switching can be, but it should be simple, easier way to switch. The switching way should take minimum space. Some examples of labels - The label can be a combination, which is Nifty 50 and paper, or something like that, Nifty 50 real and Nifty 50 simulation, because the date is anyway the same. The label should be at the top visible, so that user doesn't get confussed when the user is running a real trading and a paper trading session both on NIFTY 50. The logic to do that, is paper trading when anxiety is bad and emotions not much in control, and if some real opportunity comes switch to real immediately and take the trade. Also, now this also has to be handled when the Chrome browser kind of dies out, all sessions are re-stored, currently I think only 1 sesssion is stored to be re-stored, so that edge case is also to be handled, and any other edge cases in between.
+
+#### Implementation notes and current status (2026-09-13)
+
+The multi-session foundation is implemented. Active members are represented by a server-owned session group (maximum four), with compatible clock families, shared replay date/speed, aliases, ownership checks, and explicit wallet-ledger identities. Add Session inherits the active group's date and clock settings; date and replay speed are locked in the UI. Override is scoped to the selected symbol/session context and does not delete sibling sessions or ledgers.
+
+Switching is seamless rather than a stop/restart operation. The backend keeps each member's runner, quote/options iterators, order checks, strategies, and SSE queue alive. The frontend subscribes to every active member, stores latest ticks/prices/bar state per session, and restores that cached runtime state immediately when a tab is selected. Chart history is cached by session/instrument/strike/date, so normal tab changes do not re-download the same data. The selected tab then hydrates authoritative orders, positions, trades, and strategies from the backend. A limit order in a hidden session can therefore continue to fill while another session is visible.
+
+Safeguards address the cross-session bugs observed during testing: option expiry and strikes are normalized against the requested symbol/date (including protection against NIFTY strikes leaking into BSESEN), events are routed by session ID so one symbol cannot appear on another chart, and reload recovery restores the whole active group and selected member. Paper and Real ledgers remain independent; simulation members share only their intended simulation ledger.
+
+The browser cache is an acceleration layer, not durable state. After a browser restart, the active-group restore endpoint and backend session state remain authoritative and hydrate the selected member as needed.
+
+
+
 ---
 
 ### Files Changed Summary

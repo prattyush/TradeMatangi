@@ -9,6 +9,7 @@ import TradePanel from './components/TradePanel'
 import TradeHistory from './components/TradeHistory'
 import OrderPanel from './components/OrderPanel'
 import WalletWidget from './components/WalletWidget'
+import SessionSwitcher from './components/SessionSwitcher'
 import GuardRailPopup from './components/GuardRailPopup'
 import PatternAlertToast, { PatternAlert } from './components/PatternAlertToast'
 import SettingsModal, { loadFundsRatios, loadTargetDeviationPct, loadBrokeragePerOrder, loadStrategyIntervalSecs, loadAutostopTriggerType, loadAutostopDeviationPct, loadHistoricalDays, loadPnlPctMode, loadBreakevenMode, loadTargetProfitBufferTicks, loadAggrSlOnlyInProfit, loadAutoStartEventSnapshots, loadStepwiseLabelingPopupEnabled, loadLabelingModeByType, loadTradingRocRatioMode, FundsRatios, SizingMode, RiskRatios, loadSizingMode, loadRiskRatios, loadDefaultSlPct } from './components/SettingsModal'
@@ -18,7 +19,7 @@ import TradeAnalysis from './components/TradeAnalysis'
 import StepwiseLabelPopup from './components/StepwiseLabelPopup'
 import AIChatPanel from './components/AIChatPanel'
 import { useSimulation, InstrumentConfig } from './hooks/useSimulation'
-import { useSSE } from './hooks/useSSE'
+import { useMultiSSE } from './hooks/useSSE'
 import { useRecording } from './hooks/useRecording'
 import { useSnapshot } from './hooks/useSnapshot'
 import api, { OHLCCandle } from './services/api'
@@ -230,6 +231,9 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
   const [showPatternLibrary, setShowPatternLibrary] = useState(false)
   const [showChartStructures, setShowChartStructures] = useState(false)
   const [sessionControlsVisible, setSessionControlsVisible] = useState(true)
+  const [addingSession, setAddingSession] = useState(false)
+  const [addSessionSymbol, setAddSessionSymbol] = useState('NIFTY')
+  const [addSessionDate, setAddSessionDate] = useState('2026-05-06')
   const [rightPanelCollapsed, setRightPanelCollapsed] = useState(false)
   // Stepwise trade labeling: compute completed round-trips at bar boundary.
   // Stepwise popup state (kept for backward compat — only populated when
@@ -386,13 +390,40 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
   const [addInterval, setAddInterval] = useState(15)
   const [addOffset, setAddOffset] = useState(0)
 
+  const resetWorkspaceToIdle = useCallback(() => {
+    setShowPatternLibrary(false)
+    setShowChartStructures(false)
+    setShowAnalysis(false)
+    setSessionControlsVisible(true)
+    setLayoutPreset(2)
+    setActivePaneId(1)
+    setMaximizedPaneId(null)
+    setInstrumentType('equity')
+    setOptionsReady(null)
+    setPanes(DEFAULT_EQUITY_PANES)
+  }, [])
+
   useEffect(() => {
     let cancelled = false
     const restore = async () => {
       try {
         const raw = localStorage.getItem(workspaceStorageKey)
-        if (!raw) return
-        const saved = JSON.parse(raw) as WorkspaceSnapshot
+        const saved = raw ? JSON.parse(raw) as WorkspaceSnapshot : {}
+
+        let attached = false
+        const group = await sim.restoreActiveGroup().catch(() => null)
+        if (group) {
+          attached = true
+        } else if (saved.sessionId) {
+          attached = !!(await sim.attachToActiveSession(saved.sessionId).catch(() => null))
+        }
+
+        if (!attached) {
+          resetWorkspaceToIdle()
+          localStorage.removeItem(workspaceStorageKey)
+          return
+        }
+
         if (saved.view === 'patterns') setShowPatternLibrary(true)
         if (saved.view === 'structures') setShowChartStructures(true)
         if (saved.analysisOpen || saved.view === 'analysis') setShowAnalysis(true)
@@ -411,18 +442,16 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
             setPanes(restoredPanes)
           }
         }
-        if (saved.sessionId) {
-          await sim.attachToActiveSession(saved.sessionId).catch(() => {})
-        }
       } catch {
         localStorage.removeItem(workspaceStorageKey)
+        resetWorkspaceToIdle()
       } finally {
         if (!cancelled) workspaceRestoredRef.current = true
       }
     }
     restore()
     return () => { cancelled = true }
-  }, [workspaceStorageKey]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [workspaceStorageKey, resetWorkspaceToIdle]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!workspaceRestoredRef.current) return
@@ -451,6 +480,12 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
     sim.sessionId, panes, layoutPreset, activePaneId, maximizedPaneId,
     instrumentType, optionsReady, sessionControlsVisible,
   ])
+
+  useEffect(() => {
+    setPaneCandles({})
+    setIndicatorCandleCache({})
+    indicatorCacheLoadingRef.current.clear()
+  }, [sim.sessionId])
 
   // ── Chart container height ──────────────────────────────────────────────────
   const mainContentRef = useRef<HTMLDivElement>(null)
@@ -496,6 +531,66 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
       setActivePaneId(1)
     }
   }, [])
+
+  const applyWorkspaceForSessionConfig = useCallback((cfg: {
+    instrument_type?: 'equity' | 'options'
+    strike?: number | null
+    expiry?: string | null
+    strike_ce?: number | null
+    strike_pe?: number | null
+  }) => {
+    if (cfg.instrument_type === 'options' && cfg.expiry && cfg.strike_ce != null && cfg.strike_pe != null) {
+      setOptionsReady({
+        strike: cfg.strike ?? cfg.strike_ce,
+        ceStrike: cfg.strike_ce,
+        peStrike: cfg.strike_pe,
+        expiry: cfg.expiry,
+        atmStrike: cfg.strike ?? cfg.strike_ce,
+        underlyingPrice: 0,
+      })
+      setInstrumentType('options')
+      setLayoutPreset(3)
+      setPanes([
+        { id: 1, type: 'equity', intervalMinutes: 3 },
+        makeOptionsPane('CE', cfg.strike_ce, cfg.expiry),
+        makeOptionsPane('PE', cfg.strike_pe, cfg.expiry),
+      ])
+      setActivePaneId(null)
+      return
+    }
+    setOptionsReady(null)
+    setInstrumentType('equity')
+    setLayoutPreset(2)
+    setPanes(DEFAULT_EQUITY_PANES)
+    setActivePaneId(1)
+  }, [])
+
+  useEffect(() => {
+    if (!sim.sessionId || addingSession) return
+    applyWorkspaceForSessionConfig({
+      instrument_type: sim.sessionInstrumentType,
+      strike: sim.sessionStrike,
+      expiry: sim.sessionExpiry,
+      strike_ce: sim.sessionStrikeCE,
+      strike_pe: sim.sessionStrikePE,
+    })
+  }, [
+    sim.sessionId,
+    sim.sessionInstrumentType,
+    sim.sessionStrike,
+    sim.sessionExpiry,
+    sim.sessionStrikeCE,
+    sim.sessionStrikePE,
+    addingSession,
+    applyWorkspaceForSessionConfig,
+  ])
+
+  const beginAddSession = useCallback(() => {
+    setAddSessionSymbol(sim.symbol)
+    setAddSessionDate(sim.group?.date ?? sim.date)
+    setAddingSession(true)
+    setSessionControlsVisible(true)
+  }, [sim.symbol, sim.group?.date, sim.date])
 
   // ── Layout preset change ────────────────────────────────────────────────────
   const handleLayoutChange = useCallback((preset: LayoutPreset) => {
@@ -886,13 +981,24 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
     return null
   }, [sim.lastCompletedBarEquity, sim.lastCompletedBarCE, sim.lastCompletedBarPE])
 
+  const streamSessionIds = useMemo(() => {
+    const ids = sim.group?.members.map(m => m.session_id) ?? (sim.sessionId ? [sim.sessionId] : [])
+    return Array.from(new Set(ids.filter(Boolean))).sort()
+  }, [sim.group, sim.sessionId])
+
   // ── SSE at app level ─────────────────────────────────────────────────────────
   const handleSSEMessage = useCallback((event: Record<string, unknown>) => {
+    const eventSessionId = typeof event.session_id === 'string' ? event.session_id : sim.sessionId ?? undefined
+    const isActiveSessionEvent = !eventSessionId || eventSessionId === sim.sessionId
     if (event.type === 'tick') {
       sim.setLatestTick(event as unknown as Parameters<typeof sim.setLatestTick>[0])
+      if (!isActiveSessionEvent) return
     } else if (event.type === 'session_ended') {
-      sim.handleSessionEnded()
+      sim.handleSessionEnded(eventSessionId)
+      if (!isActiveSessionEvent) return
       setGuardrailPopup(null)
+    } else if (!isActiveSessionEvent && event.type !== 'bar_paused') {
+      return
     } else if (event.type === 'guardrail_activated') {
       const grType = (event.guardrail_type as string ?? 'BLOCK').toUpperCase() as 'BLOCK' | 'COOLDOWN' | 'BAN'
       const grReason = (event.reason as string) ?? 'Trading paused by guardrail'
@@ -944,16 +1050,17 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
       const eqBar = mkCandle(event.bar_open, event.bar_high, event.bar_low, event.bar_close, event.bar_time)
       const ceBar = mkCandle(event.bar_open_ce, event.bar_high_ce, event.bar_low_ce, event.bar_close_ce, event.bar_time)
       const peBar = mkCandle(event.bar_open_pe, event.bar_high_pe, event.bar_low_pe, event.bar_close_pe, event.bar_time)
-      sim.handleBarPaused(event.bar_index as number, event.total_bars as number, eqBar, ceBar, peBar)
+      sim.handleBarPaused(event.bar_index as number, event.total_bars as number, eqBar, ceBar, peBar, eventSessionId)
     }
-  }, [sim.setLatestTick, sim.handleSessionEnded, sim.handleOrderFilled, sim.handleOrderCancelled, sim.addOpenOrder, sim.addTradeFromSSE, sim.handleBarPaused, setGuardrailPopup, setRunningStrategies, captureSnapshot])
+  }, [sim.sessionId, sim.setLatestTick, sim.handleSessionEnded, sim.handleOrderFilled, sim.handleOrderCancelled, sim.addOpenOrder, sim.addTradeFromSSE, sim.handleBarPaused, setGuardrailPopup, setRunningStrategies, captureSnapshot])
 
-  const handleSSEReconnect = useCallback(() => {
+  const handleSSEReconnect = useCallback((sessionId?: string) => {
+    if (sessionId && sessionId !== sim.sessionId) return
     sim.refreshSessionData()
     setPanes(prev => prev.map(p => ({ ...p, reloadKey: (p.reloadKey ?? 0) + 1 })))
-  }, [sim.refreshSessionData])
+  }, [sim.refreshSessionData, sim.sessionId])
 
-  useSSE(sim.sessionId, handleSSEMessage, handleSSEReconnect)
+  useMultiSSE(streamSessionIds, handleSSEMessage, handleSSEReconnect)
 
   // Fetch round-trips and labels for trade history when session is active
   useEffect(() => {
@@ -974,13 +1081,16 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
 
   const handleStart = useCallback(async (startTime: string, speed: number, instrumentConfig: InstrumentConfig) => {
     setRunningStrategies([])
-    await sim.startSession(startTime, speed, {
+    const effectiveSpeed = sim.group?.speed ?? speed
+    await sim.startSession(startTime, effectiveSpeed, {
       ...instrumentConfig,
       brokerage_per_order: brokeragePerOrder,
       strategy_interval_secs: stratIntervalSecs,
+      ...(addingSession && sim.groupId ? { group_id: sim.groupId } : {}),
     })
+    setAddingSession(false)
     if (autoStartSnapshots) startSnapshots()
-  }, [sim.startSession, brokeragePerOrder, stratIntervalSecs, autoStartSnapshots, startSnapshots])
+  }, [sim.startSession, sim.groupId, sim.group?.speed, addingSession, brokeragePerOrder, stratIntervalSecs, autoStartSnapshots, startSnapshots])
 
   // ── Price pick: chart clicked in pick mode ───────────────────────────────────
   const handleChartPriceSelect = useCallback((price: number) => {
@@ -1389,6 +1499,7 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
           >✕</button>
         )}
         <Chart
+          key={`${sim.sessionId ?? 'no-session'}:${pane.id}:${pane.type}:${pane.right ?? 'EQ'}:${pane.strike ?? ''}:${pane.expiry ?? ''}`}
           symbol={sim.symbol}
           tradingDate={sim.date}
           startTime={sim.startTime}
@@ -1625,6 +1736,15 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
         display: 'flex', alignItems: 'center', gap: 12,
       }}>
         <span style={{ fontSize: 18, fontWeight: 700, color: '#58a6ff' }}>TradeMatangi</span>
+        {sim.group && <SessionSwitcher group={sim.group} selectedSessionId={sim.sessionId}
+          onSelect={(id) => { sim.selectGroupMember(id).catch(() => {}) }}
+          onRename={async (id, alias) => { if (!sim.groupId) return; await api.renameSessionGroupMember(sim.groupId, id, alias); await sim.refreshGroup() }}
+          onAdd={beginAddSession} />}
+        {sim.sessionState !== 'idle' && !sim.group && (
+          <button onClick={beginAddSession} style={{ color: '#58a6ff', background: '#161b22', border: '1px dashed #30363d', borderRadius: 5, padding: '4px 7px', cursor: 'pointer', fontSize: 11 }}>
+            + Add Session
+          </button>
+        )}
         <div style={{ flex: 1 }} />
         {sim.sessionState !== 'idle' && (
           <div style={{
@@ -1667,7 +1787,7 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
             BLOCK
           </button>
         )}
-        <WalletWidget date={sim.date} refreshKey={sim.walletRefreshKey} />
+        <WalletWidget date={sim.date} sessionId={sim.sessionId} refreshKey={sim.walletRefreshKey} />
         <button
           onClick={() => setShowAnalysis(true)}
           title="Trade Analysis"
@@ -1934,16 +2054,17 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
       {/* Session Controls — layout/pane controls injected inline via extraControls */}
       <div style={{ display: sessionControlsVisible ? 'block' : 'none' }}>
       <SessionControls
+        key={addingSession ? `add:${addSessionSymbol}` : `active:${sim.sessionId ?? 'idle'}:${sim.symbol}`}
         sessionState={sim.sessionState}
-        currentSymbol={sim.symbol}
-        currentDate={sim.date}
-        onSymbolChange={sim.updateSymbol}
-        onDateChange={sim.updateDate}
+        currentSymbol={addingSession ? addSessionSymbol : sim.symbol}
+        currentDate={addingSession ? addSessionDate : sim.date}
+        onSymbolChange={addingSession ? setAddSessionSymbol : sim.updateSymbol}
+        onDateChange={addingSession ? setAddSessionDate : sim.updateDate}
         onStart={handleStart}
         onStop={sim.stopSession}
         onPause={sim.pauseSession}
         onResume={sim.resumeSession}
-        onOptionsReady={handleOptionsReady}
+        onOptionsReady={addingSession ? (() => {}) : handleOptionsReady}
         lastStartedContext={sim.lastStartedContext}
         isRealTradingUser={isRealTradingUser || authUser.isAdmin}
         stepwise={sim.stepwise}
@@ -1951,6 +2072,8 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
         barIndex={sim.barIndex}
         totalBars={sim.totalBars}
         onNextBar={wrappedNextBar}
+        addMode={addingSession}
+        lockedSpeed={sim.group?.speed ?? null}
         extraControls={<>
           <div style={{ width: 1, height: 16, background: '#30363d', margin: '0 4px' }} />
 

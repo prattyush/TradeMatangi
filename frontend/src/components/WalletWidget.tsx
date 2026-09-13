@@ -4,13 +4,14 @@ import api from '../services/api'
 interface Props {
   date: string
   refreshKey: number
+  sessionId?: string | null
 }
 
 function formatINR(amount: number): string {
   return '₹' + amount.toLocaleString('en-IN', { maximumFractionDigits: 0 })
 }
 
-export default function WalletWidget({ date, refreshKey }: Props) {
+export default function WalletWidget({ date, refreshKey, sessionId }: Props) {
   const [balance, setBalance] = useState<number | null>(null)
   const [loading, setLoading] = useState(false)
 
@@ -18,12 +19,12 @@ export default function WalletWidget({ date, refreshKey }: Props) {
     if (!date) return
     let cancelled = false
     setLoading(true)
-    api.getWallet(date)
+    api.getWallet(date, sessionId)
       .then(w => { if (!cancelled) setBalance(w.balance) })
       .catch(() => {/* backend may not be running */})
       .finally(() => { if (!cancelled) setLoading(false) })
     return () => { cancelled = true }
-  }, [date, refreshKey])
+  }, [date, refreshKey, sessionId])
 
   const color = balance !== null && balance < 0 ? '#f85149' : '#3fb950'
 

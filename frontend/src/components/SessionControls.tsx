@@ -32,6 +32,8 @@ interface Props {
   barIndex?: number
   totalBars?: number
   onNextBar?: () => Promise<void>
+  addMode?: boolean
+  lockedSpeed?: number | null
 }
 
 export interface OptionsReadyConfig {
@@ -108,6 +110,8 @@ export default function SessionControls({
   barIndex = 0,
   totalBars = 0,
   onNextBar,
+  addMode = false,
+  lockedSpeed = null,
 }: Props) {
   const [symbols, setSymbols] = useState<SymbolInfo[]>([])
   const [startTime, setStartTime] = useState('09:15')
@@ -124,6 +128,7 @@ export default function SessionControls({
   )
   const [optionsOffset, setOptionsOffset] = useState(0)
   const [stepwiseMode, setStepwiseMode] = useState(false)
+  const [liveSessionType, setLiveSessionType] = useState<'paper' | 'real'>('paper')
 
   // Max price threshold
   const [maxThreshold, setMaxThreshold] = useState(() => parseFloat(localStorage.getItem('maxPriceThresholdCE') ?? '50'))
@@ -137,6 +142,7 @@ export default function SessionControls({
   const timeInputRef = useRef<HTMLInputElement | null>(null)
 
   const handleTimeWheel = useCallback((e: WheelEvent) => {
+    if (addMode) return
     e.preventDefault()
     if (timeScrollThrottleRef.current) return
     timeScrollThrottleRef.current = setTimeout(() => {
@@ -148,7 +154,7 @@ export default function SessionControls({
       const totalMins = Math.max(0, Math.min(23 * 60 + 59, h * 60 + m + direction))
       return `${String(Math.floor(totalMins / 60)).padStart(2, '0')}:${String(totalMins % 60).padStart(2, '0')}`
     })
-  }, [])
+  }, [addMode])
 
   useEffect(() => {
     const el = timeInputRef.current
@@ -157,13 +163,17 @@ export default function SessionControls({
     return () => el.removeEventListener('wheel', handleTimeWheel)
   }, [handleTimeWheel])
 
-  const idle = sessionState === 'idle' || sessionState === 'ended'
+  const idle = addMode || sessionState === 'idle' || sessionState === 'ended'
   const running = sessionState === 'running'
   const paused = sessionState === 'paused'
   const today = formatLocalDate(new Date())
   const isToday = currentDate === todayIST()
-  const isRealMode = isRealTradingUser && isToday
+  const isRealMode = isToday && isRealTradingUser && liveSessionType === 'real'
   const isPaperMode = isToday && !isRealMode
+
+  useEffect(() => {
+    if (addMode && lockedSpeed != null) setSpeed(lockedSpeed)
+  }, [addMode, lockedSpeed])
 
   // Load symbols once on mount; set date to last weekday
   useEffect(() => {
@@ -175,15 +185,19 @@ export default function SessionControls({
         }
       })
       .catch(() => {})
-    onDateChange(lastWeekday())
+    if (!addMode && (!currentDate || currentDate === '2026-05-06')) onDateChange(lastWeekday())
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Force options when NIFTY is selected
+  // Reset stale local form state when the add-session draft switches symbols.
   useEffect(() => {
     if (OPTIONS_ONLY_SYMBOLS.has(currentSymbol) && instrumentType !== 'options') {
       setInstrumentType('options')
     }
-  }, [currentSymbol]) // eslint-disable-line react-hooks/exhaustive-deps
+    setStartError(null)
+    setDateError(null)
+    setOverrideConfirm(null)
+    setMaxThreshold(parseFloat(localStorage.getItem('maxPriceThresholdCE') ?? String(thresholdValuesFor(currentSymbol)[0] ?? 50)))
+  }, [currentSymbol, currentDate]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleDateChange = (d: string) => {
     if (!d) return
@@ -215,8 +229,8 @@ export default function SessionControls({
     setStartError(null)
     setLoading(true)
     try {
-      const sessionType = isRealMode ? 'real' : (isPaperMode ? 'paper' : (stepwiseMode ? 'stepwise' : 'sim'))
-      let config: InstrumentConfig = { instrument_type: 'equity' }
+      const sessionType = isToday ? liveSessionType : (stepwiseMode ? 'stepwise' : 'sim')
+      let config: InstrumentConfig = { symbol: currentSymbol, date: currentDate, instrument_type: 'equity' }
 
       if (instrumentType === 'options') {
         try {
@@ -236,11 +250,13 @@ export default function SessionControls({
           let ceStrike: number, peStrike: number
 
           if (isIndex && strikeMode === 'threshold') {
-            const threshold = parseFloat(localStorage.getItem('maxPriceThresholdCE') ?? '50')
+            const defaultThreshold = String(thresholdValuesFor(currentSymbol)[0] ?? 50)
+            const thresholdCE = parseFloat(localStorage.getItem('maxPriceThresholdCE') ?? defaultThreshold)
+            const thresholdPE = parseFloat(localStorage.getItem('maxPriceThresholdPE') ?? defaultThreshold)
             const refTime = isLiveSession ? getCurrentIstTime() : startTime
             const [ceRes, peRes] = await Promise.all([
-              api.findStrikeByPrice(currentSymbol, currentDate, expiryRes.expiry, 'CE', threshold, refTime),
-              api.findStrikeByPrice(currentSymbol, currentDate, expiryRes.expiry, 'PE', threshold, refTime),
+              api.findStrikeByPrice(currentSymbol, currentDate, expiryRes.expiry, 'CE', thresholdCE, refTime),
+              api.findStrikeByPrice(currentSymbol, currentDate, expiryRes.expiry, 'PE', thresholdPE, refTime),
             ])
             ceStrike = ceRes.strike
             peStrike = peRes.strike
@@ -258,6 +274,8 @@ export default function SessionControls({
           }
           onOptionsReady(cfg)
           config = {
+            symbol: currentSymbol,
+            date: currentDate,
             instrument_type: 'options',
             strike: cfg.strike,
             expiry: cfg.expiry,
@@ -272,7 +290,7 @@ export default function SessionControls({
         }
       } else {
         onOptionsReady(null)
-        config = { instrument_type: 'equity', session_type: sessionType }
+        config = { symbol: currentSymbol, date: currentDate, instrument_type: 'equity', session_type: sessionType }
       }
 
       // Always confirm before replacing data for the same symbol, date, session,
@@ -437,7 +455,7 @@ export default function SessionControls({
           <input
             type="date" value={currentDate} max={today}
             onChange={e => handleDateChange(e.target.value)}
-            style={inputStyle} disabled={!idle}
+            style={inputStyle} disabled={!idle || addMode}
           />
         </label>
 
@@ -448,12 +466,16 @@ export default function SessionControls({
               ref={timeInputRef}
               type="time" step="60" value={startTime}
               onChange={e => setStartTime(e.target.value)}
-              style={inputStyle} disabled={!idle}
+              style={inputStyle} disabled={!idle || addMode}
             />
           </label>
         )}
 
-        {isRealMode ? (
+        {isToday && isRealTradingUser ? (
+          <div style={{ display: 'flex', border: '1px solid #30363d', borderRadius: 6, overflow: 'hidden' }}>
+            {(['paper', 'real'] as const).map(mode => <button key={mode} type="button" disabled={!idle} onClick={() => setLiveSessionType(mode)} style={{ border: 0, padding: '4px 8px', cursor: 'pointer', fontWeight: 700, fontSize: 11, color: liveSessionType === mode ? '#fff' : '#8b949e', background: liveSessionType === mode ? (mode === 'real' ? '#b62324' : '#1a7f37') : '#161b22' }}>{mode === 'paper' ? 'PAPER' : 'REAL'}</button>)}
+          </div>
+        ) : isRealMode ? (
           <span style={{
             background: 'rgba(248,81,73,0.15)', color: '#f85149', border: '1px solid #f85149',
             borderRadius: 6, padding: '4px 10px', fontSize: 12, fontWeight: 700,
@@ -473,7 +495,7 @@ export default function SessionControls({
                 <input
                   type="number" min={0.05} max={100} step={0.05} value={speed}
                   onChange={e => setSpeed(parseFloat(e.target.value) || 1)}
-                  style={{ ...inputStyle, width: 70 }} disabled={!idle}
+                  style={{ ...inputStyle, width: 70 }} disabled={!idle || addMode}
                 />
                 <span style={{ marginLeft: 4 }}>x</span>
               </label>

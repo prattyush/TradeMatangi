@@ -7,6 +7,7 @@ from __future__ import annotations
 import datetime
 import logging
 import os
+import time
 from pathlib import Path
 from typing import Iterator
 
@@ -19,6 +20,7 @@ logger = logging.getLogger(__name__)
 
 _CHUNK_MINUTES = 15
 _CUTOFF_DATE = datetime.date(2025, 9, 1)  # From this date: Tuesday expiry; before: Thursday
+_BREEZE_RATE_LIMIT_BACKOFF_SECS = (5, 10, 20)
 
 STRIKE_INTERVALS: dict[str, int] = {
     "NIFTY": 50,
@@ -134,6 +136,10 @@ def _breeze_expiry_format(expiry: str) -> str:
     return f"{expiry}T06:00:00.000Z"
 
 
+def _is_breeze_rate_limit_error(error: object) -> bool:
+    return "rate limit" in str(error or "").lower()
+
+
 def _fetch_options_day_paginated(
     breeze, symbol: str, date: str, strike: int, expiry: str, right: str
 ) -> list[dict]:
@@ -157,17 +163,44 @@ def _fetch_options_day_paginated(
     current = from_ts
     while current < to_ts:
         chunk_end = min(current + chunk_delta, to_ts)
-        response = breeze.get_historical_data_v2(
-            interval="1second",
-            from_date=current.strftime("%Y-%m-%d %H:%M:%S"),
-            to_date=chunk_end.strftime("%Y-%m-%d %H:%M:%S"),
-            stock_code=stock_code,
-            exchange_code=options_exchange,
-            product_type="options",
-            expiry_date=expiry_iso,
-            strike_price=str(strike),
-            right=right_str,
-        )
+        response = None
+        for attempt in range(len(_BREEZE_RATE_LIMIT_BACKOFF_SECS) + 1):
+            try:
+                response = breeze.get_historical_data_v2(
+                    interval="1second",
+                    from_date=current.strftime("%Y-%m-%d %H:%M:%S"),
+                    to_date=chunk_end.strftime("%Y-%m-%d %H:%M:%S"),
+                    stock_code=stock_code,
+                    exchange_code=options_exchange,
+                    product_type="options",
+                    expiry_date=expiry_iso,
+                    strike_price=str(strike),
+                    right=right_str,
+                )
+            except Exception as exc:
+                if not _is_breeze_rate_limit_error(exc) or attempt >= len(_BREEZE_RATE_LIMIT_BACKOFF_SECS):
+                    raise
+                wait_secs = _BREEZE_RATE_LIMIT_BACKOFF_SECS[attempt]
+                logger.warning(
+                    "Breeze rate limit for %s options %s %s %s %s-%s; retrying in %ss",
+                    symbol, right, strike, date,
+                    current.strftime("%H:%M"), chunk_end.strftime("%H:%M"), wait_secs,
+                )
+                time.sleep(wait_secs)
+                continue
+            error = response.get("Error") if response else None
+            status = response.get("Status") if response else None
+            if not (error and _is_breeze_rate_limit_error(error)):
+                break
+            if attempt >= len(_BREEZE_RATE_LIMIT_BACKOFF_SECS):
+                break
+            wait_secs = _BREEZE_RATE_LIMIT_BACKOFF_SECS[attempt]
+            logger.warning(
+                "Breeze rate limit for %s options %s %s %s %s-%s; retrying in %ss",
+                symbol, right, strike, date,
+                current.strftime("%H:%M"), chunk_end.strftime("%H:%M"), wait_secs,
+            )
+            time.sleep(wait_secs)
         if response is None:
             raise BreezeTokenError(
                 "Breeze returned no response. Your session_token may be expired. "
@@ -542,25 +575,33 @@ def _get_option_price_at(
                     return ltp
         except Exception as exc:
             msg = str(exc)
-            if "503" in msg or "Expecting value" in msg:
-                # Transient Breeze failure — retry once after 1s delay
-                import time
-                time.sleep(1)
-                try:
-                    resp = breeze.get_quotes(
-                        stock_code=stock_code, exchange_code=options_exchange,
-                        expiry_date=expiry_iso, product_type="options",
-                        right=right_str, strike_price=str(strike),
-                    )
-                    if resp and resp.get("Status") == 200 and resp.get("Success"):
-                        data = resp["Success"]
-                        if isinstance(data, list):
-                            data = data[0] if data else {}
-                        ltp = float(data.get("ltp", data.get("last_price", data.get("last", 0))))
-                        if ltp > 0:
-                            return ltp
-                except Exception:
-                    pass
+            if "503" in msg or "Expecting value" in msg or _is_breeze_rate_limit_error(msg):
+                waits = _BREEZE_RATE_LIMIT_BACKOFF_SECS if _is_breeze_rate_limit_error(msg) else (1,)
+                for wait_secs in waits:
+                    if _is_breeze_rate_limit_error(msg):
+                        logger.warning(
+                            "Breeze rate limit for quote %s options %s %s; retrying in %ss",
+                            symbol, right, strike, wait_secs,
+                        )
+                    time.sleep(wait_secs)
+                    try:
+                        resp = breeze.get_quotes(
+                            stock_code=stock_code, exchange_code=options_exchange,
+                            expiry_date=expiry_iso, product_type="options",
+                            right=right_str, strike_price=str(strike),
+                        )
+                        if resp and resp.get("Status") == 200 and resp.get("Success"):
+                            data = resp["Success"]
+                            if isinstance(data, list):
+                                data = data[0] if data else {}
+                            ltp = float(data.get("ltp", data.get("last_price", data.get("last", 0))))
+                            if ltp > 0:
+                                return ltp
+                        if not _is_breeze_rate_limit_error(resp.get("Error") if resp else None):
+                            break
+                    except Exception as retry_exc:
+                        if not _is_breeze_rate_limit_error(retry_exc):
+                            break
             logger.debug("Breeze get_quotes failed for %s %s %s: %s",
                          symbol, right, strike, exc)
 
