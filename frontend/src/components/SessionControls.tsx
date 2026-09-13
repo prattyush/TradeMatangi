@@ -25,7 +25,6 @@ interface Props {
   onOptionsReady: (cfg: OptionsReadyConfig | null) => void
   extraControls?: ReactNode
   isRealTradingUser?: boolean
-  overrideSessionEnabled?: boolean
   // Stepwise replayer props
   stepwise?: boolean
   barPaused?: boolean
@@ -102,7 +101,6 @@ export default function SessionControls({
   onOptionsReady,
   extraControls,
   isRealTradingUser = false,
-  overrideSessionEnabled = false,
   stepwise = false,
   barPaused = false,
   barIndex = 0,
@@ -275,8 +273,10 @@ export default function SessionControls({
         config = { instrument_type: 'equity', session_type: sessionType }
       }
 
-      // Override check: if enabled and sim/stepwise, check for existing session
-      if (overrideSessionEnabled && (sessionType === 'sim' || sessionType === 'stepwise')) {
+      // Always confirm before replacing data for the same symbol, date, session,
+      // and instrument type. This applies equally to simulation and live paper
+      // sessions; the user can choose to resume by selecting No.
+      if (sessionType === 'sim' || sessionType === 'paper' || sessionType === 'stepwise' || sessionType === 'real') {
         try {
           const existing = await api.checkExistingSession({
             symbol: currentSymbol,
@@ -289,7 +289,7 @@ export default function SessionControls({
             const speedParam = isToday ? 1.0 : speed
             setOverrideConfirm({
               config,
-              message: `A previous ${sessionType} session exists for ${currentSymbol} on ${currentDate}. Override it and delete all its data?`,
+              message: `A previous ${sessionType} ${config.instrument_type} session exists for ${currentSymbol} on ${currentDate}. Delete its data and start a new session?`,
               startTime: startTimeParam,
               speed: speedParam,
             })

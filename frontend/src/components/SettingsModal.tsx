@@ -1055,7 +1055,7 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
                 <div>
                   <div style={{ fontSize: 12, color: '#e6edf3' }}>Prompt to override on duplicate session</div>
                   <div style={{ fontSize: 11, color: '#484f58', marginTop: 2 }}>
-                    When starting a sim/stepwise session, checks for a previous session with the same symbol, date, and type and asks to delete it
+                    When starting a session, checks for previous data with the same symbol, date, session, and instrument type
                   </div>
                 </div>
               </label>

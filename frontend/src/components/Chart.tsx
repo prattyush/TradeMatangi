@@ -180,11 +180,11 @@ function indicatorKeysForPane(paneType: PaneType, right?: 'CE' | 'PE'): RocCompa
 }
 
 function hasIndicatorData(key: RocComparisonKey, ratioCandles?: Props['ratioCandles']): boolean {
-  if (!ratioCandles || ratioCandles.underlying.length < 2) return false
-  if (key === 'underlying_ce') return !!ratioCandles.ce && ratioCandles.ce.length > 1
-  if (key === 'underlying_pe') return !!ratioCandles.pe && ratioCandles.pe.length > 1
-  if (key === 'ce_pe') return !!ratioCandles.ce && ratioCandles.ce.length > 1 && !!ratioCandles.pe && ratioCandles.pe.length > 1
-  return !!ratioCandles.ce && ratioCandles.ce.length > 1 && !!ratioCandles.pe && ratioCandles.pe.length > 1
+  if (!ratioCandles) return false
+  if (key === 'underlying_ce') return !!ratioCandles.ce && ratioCandles.ce.length > 0
+  if (key === 'underlying_pe') return !!ratioCandles.pe && ratioCandles.pe.length > 0
+  if (key === 'ce_pe') return !!ratioCandles.ce && ratioCandles.ce.length > 0 && !!ratioCandles.pe && ratioCandles.pe.length > 0
+  return !!ratioCandles.ce && ratioCandles.ce.length > 0 && !!ratioCandles.pe && ratioCandles.pe.length > 0
 }
 
 function RatioIndicatorPanel({ comparison, series, ratioMode, height, expanded, onToggleExpand, visibleRange }: {

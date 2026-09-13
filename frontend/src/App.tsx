@@ -11,7 +11,7 @@ import OrderPanel from './components/OrderPanel'
 import WalletWidget from './components/WalletWidget'
 import GuardRailPopup from './components/GuardRailPopup'
 import PatternAlertToast, { PatternAlert } from './components/PatternAlertToast'
-import SettingsModal, { loadFundsRatios, loadTargetDeviationPct, loadBrokeragePerOrder, loadStrategyIntervalSecs, loadAutostopTriggerType, loadAutostopDeviationPct, loadHistoricalDays, loadPnlPctMode, loadBreakevenMode, loadTargetProfitBufferTicks, loadAggrSlOnlyInProfit, loadAutoStartEventSnapshots, loadStepwiseLabelingPopupEnabled, loadLabelingModeByType, loadOverrideSessionEnabled, loadTradingRocRatioMode, FundsRatios, SizingMode, RiskRatios, loadSizingMode, loadRiskRatios, loadDefaultSlPct } from './components/SettingsModal'
+import SettingsModal, { loadFundsRatios, loadTargetDeviationPct, loadBrokeragePerOrder, loadStrategyIntervalSecs, loadAutostopTriggerType, loadAutostopDeviationPct, loadHistoricalDays, loadPnlPctMode, loadBreakevenMode, loadTargetProfitBufferTicks, loadAggrSlOnlyInProfit, loadAutoStartEventSnapshots, loadStepwiseLabelingPopupEnabled, loadLabelingModeByType, loadTradingRocRatioMode, FundsRatios, SizingMode, RiskRatios, loadSizingMode, loadRiskRatios, loadDefaultSlPct } from './components/SettingsModal'
 import { StrategyResponse, StartStrategyRequest, Order } from './services/api'
 import LoginScreen from './components/LoginScreen'
 import TradeAnalysis from './components/TradeAnalysis'
@@ -171,7 +171,6 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
   const [guardrailPopup, setGuardrailPopup] = useState<{ type: 'BLOCK' | 'COOLDOWN' | 'BAN'; reason: string } | null>(null)
   const [combinedPnlOpen, setCombinedPnlOpen] = useState(false)
   const [autoStartSnapshots, setAutoStartSnapshots] = useState(loadAutoStartEventSnapshots)
-  const [overrideSessionEnabled] = useState(loadOverrideSessionEnabled)
   const [stepwiseLabelingPopup, setStepwiseLabelingPopup] = useState(loadStepwiseLabelingPopupEnabled)
   const [patternAlerts, setPatternAlerts] = useState<PatternAlert[]>([])
   const [roundTrips, setRoundTrips] = useState<import('./services/api').RoundTrip[]>([])
@@ -606,7 +605,6 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
     const cePane = pane.right === 'CE' ? pane : findPane(candidate => candidate.type === 'options' && candidate.right === 'CE')
     const pePane = pane.right === 'PE' ? pane : findPane(candidate => candidate.type === 'options' && candidate.right === 'PE')
     const underlying = underlyingPane ? paneCandles[underlyingPane.id] ?? [] : []
-    if (underlying.length < 2) return null
     return {
       underlying,
       ce: cePane ? paneCandles[cePane.id] ?? null : null,
@@ -1769,7 +1767,6 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
         onResume={sim.resumeSession}
         onOptionsReady={handleOptionsReady}
         isRealTradingUser={isRealTradingUser || authUser.isAdmin}
-        overrideSessionEnabled={overrideSessionEnabled}
         stepwise={sim.stepwise}
         barPaused={sim.barPaused}
         barIndex={sim.barIndex}
