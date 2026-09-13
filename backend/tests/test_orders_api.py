@@ -7,7 +7,7 @@ from unittest.mock import patch, MagicMock
 from httpx import AsyncClient, ASGITransport
 
 from app.main import app
-from app.models.schemas import SimulationState
+from app.models.schemas import Position, SimulationState
 from app.services import order_service
 
 
@@ -23,11 +23,22 @@ def _make_session(session_id: str = SESSION):
     session.current_time = "1746518100"
     session.state = SimulationState.RUNNING
     session.user_id = FIXED_USER_ID
+    session.session_type = "sim"
+    session.instrument_type = "equity"
     session.guardrail_ban_active = False
     session.guardrail_block_until_bar = 0
     session.guardrail_block_bars = 3
+    session.guardrail_maxsize_enabled = False
+    session.guardrail_maxsize_mode = "percentage"
+    session.guardrail_maxsize_pct = 100.0
+    session.guardrail_maxsize_value = 100000.0
+    session.session_capital = 100000.0
     session.interval = 180
     return session
+
+
+def _make_position(side: str = "LONG", quantity: int = 2):
+    return Position(symbol="NIFTY", quantity=quantity, avg_entry_price=100.0, side=side, entry_commission=0.0)
 
 
 @pytest.fixture(autouse=True)
@@ -231,7 +242,8 @@ class TestCancelOrderEndpoint:
 class TestBulkUpdateSLEndpoint:
     async def test_bulk_update_sl_updates_multiple_orders(self):
         session = _make_session()
-        with patch("app.routers.orders.sim_svc.get_session", return_value=session):
+        with patch("app.routers.orders.sim_svc.get_session", return_value=session), \
+             patch("app.routers.orders.trading_service.get_position", return_value=_make_position("LONG", 2)):
             async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
                 # Place two SL orders
                 await client.post("/api/orders", json={
@@ -258,7 +270,8 @@ class TestBulkUpdateSLEndpoint:
     async def test_bulk_update_sl_filters_by_right(self):
         session = _make_session()
         session.instrument_type = "options"
-        with patch("app.routers.orders.sim_svc.get_session", return_value=session):
+        with patch("app.routers.orders.sim_svc.get_session", return_value=session), \
+             patch("app.routers.orders.trading_service.get_position", return_value=_make_position("LONG", 2)):
             async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
                 # Place one CE SL and one PE SL
                 await client.post("/api/orders", json={
@@ -281,3 +294,94 @@ class TestBulkUpdateSLEndpoint:
         assert len(data["orders"]) == 1
         assert data["orders"][0]["right"] == "CE"
         assert data["orders"][0]["trigger_price"] == 98.0
+
+    async def test_bulk_update_updates_mixed_closing_orders_only(self):
+        session = _make_session()
+        with patch("app.routers.orders.sim_svc.get_session", return_value=session), \
+             patch("app.routers.orders.trading_service.get_position", return_value=_make_position("LONG", 3)):
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+                await client.post("/api/orders", json={
+                    "session_id": SESSION, "side": "SELL", "order_type": "STOPLOSS",
+                    "trigger_price": 95.0, "quantity": 1, "is_stoploss": True,
+                })
+                await client.post("/api/orders", json={
+                    "session_id": SESSION, "side": "SELL", "order_type": "LIMIT",
+                    "limit_price": 110.0, "quantity": 1,
+                })
+                entry_resp = await client.post("/api/orders", json={
+                    "session_id": SESSION, "side": "BUY", "order_type": "LIMIT",
+                    "limit_price": 90.0, "quantity": 1,
+                })
+
+                resp = await client.patch("/api/orders/bulk-update-sl", json={
+                    "session_id": SESSION, "trigger_price": 105.0,
+                })
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["updated"] == 2
+        assert {o["side"] for o in data["orders"]} == {"SELL"}
+        assert {o["order_type"] for o in data["orders"]} == {"STOPLOSS", "LIMIT"}
+        limit_order = next(o for o in data["orders"] if o["order_type"] == "LIMIT")
+        sl_order = next(o for o in data["orders"] if o["order_type"] == "STOPLOSS")
+        assert limit_order["limit_price"] == 105.0
+        assert limit_order["trigger_price"] == 105.0
+        assert sl_order["trigger_price"] == 105.0
+        assert entry_resp.json()["order_id"] not in {o["order_id"] for o in data["orders"]}
+
+    async def test_bulk_update_short_position_updates_buy_closing_orders(self):
+        session = _make_session()
+        with patch("app.routers.orders.sim_svc.get_session", return_value=session), \
+             patch("app.routers.orders.trading_service.get_position", return_value=_make_position("SHORT", 2)):
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+                await client.post("/api/orders", json={
+                    "session_id": SESSION, "side": "BUY", "order_type": "STOPLOSS",
+                    "trigger_price": 105.0, "quantity": 1, "is_stoploss": True,
+                })
+                await client.post("/api/orders", json={
+                    "session_id": SESSION, "side": "BUY", "order_type": "LIMIT",
+                    "limit_price": 90.0, "quantity": 1,
+                })
+                await client.post("/api/orders", json={
+                    "session_id": SESSION, "side": "SELL", "order_type": "LIMIT",
+                    "limit_price": 110.0, "quantity": 1,
+                })
+
+                resp = await client.patch("/api/orders/bulk-update-sl", json={
+                    "session_id": SESSION, "trigger_price": 92.0,
+                })
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["updated"] == 2
+        assert {o["side"] for o in data["orders"]} == {"BUY"}
+
+    async def test_bulk_convert_converts_closing_orders_only(self):
+        session = _make_session()
+        with patch("app.routers.orders.sim_svc.get_session", return_value=session), \
+             patch("app.routers.orders.trading_service.get_position", return_value=_make_position("LONG", 3)):
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+                await client.post("/api/orders", json={
+                    "session_id": SESSION, "side": "SELL", "order_type": "STOPLOSS",
+                    "trigger_price": 95.0, "quantity": 1, "is_stoploss": True,
+                })
+                await client.post("/api/orders", json={
+                    "session_id": SESSION, "side": "SELL", "order_type": "LIMIT",
+                    "limit_price": 110.0, "quantity": 1,
+                })
+                entry_resp = await client.post("/api/orders", json={
+                    "session_id": SESSION, "side": "BUY", "order_type": "LIMIT",
+                    "limit_price": 90.0, "quantity": 1,
+                })
+
+                resp = await client.patch("/api/orders/bulk-convert", json={
+                    "session_id": SESSION, "new_order_type": "LIMIT", "price": 108.0,
+                })
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["converted"] == 2
+        assert {o["side"] for o in data["orders"]} == {"SELL"}
+        assert {o["order_type"] for o in data["orders"]} == {"LIMIT"}
+        assert {o["limit_price"] for o in data["orders"]} == {108.0}
+        assert entry_resp.json()["order_id"] not in {o["order_id"] for o in data["orders"]}

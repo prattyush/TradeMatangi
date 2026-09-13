@@ -25,7 +25,11 @@ export const ROC_COMPARISON_META: Record<RocComparisonKey, { label: string; colo
   ce_ul_pe_ul: { label: '(CE/UL)/(PE/UL)', color: '#f778ba' },
 }
 
-const MIN_NORMALIZED_MOVE = 5
+// A normalized move is already scaled to a maximum absolute value of 100.
+// Suppressing values below 5 made CE/UL and PE/UL disappear whenever the
+// underlying moved in small increments, which is common during live bars.
+// Only a true zero denominator is undefined for the ratio.
+const MIN_NORMALIZED_MOVE = 1e-9
 const MIN_RAW_MOVE = 1e-9
 
 function byTime(candles: IndicatorCandle[]): Map<number, IndicatorCandle> {
