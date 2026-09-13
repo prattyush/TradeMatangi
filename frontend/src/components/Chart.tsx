@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback } from 'react'
+import { useEffect, useRef, useState, useCallback, useMemo } from 'react'
 import {
   createChart,
   IChartApi,
@@ -11,6 +11,14 @@ import {
   LineStyle,
 } from 'lightweight-charts'
 import api, { OHLCCandle, TickEvent, BarCandle, Trade, Order, Position } from '../services/api'
+import {
+  computeOptionsRocComparison,
+  IndicatorCandle,
+  ROC_COMPARISON_META,
+  RocComparisonKey,
+  RocRatioMode,
+  RocSeries,
+} from '../indicators/optionsRoc'
 
 export type PaneType = 'equity' | 'options'
 
@@ -62,6 +70,13 @@ interface Props {
   pnlPctMode?: boolean
   sessionCapital?: number
   pnl?: number
+  onCandlesChange?: (candles: IndicatorCandle[]) => void
+  ratioCandles?: {
+    underlying: IndicatorCandle[]
+    ce: IndicatorCandle[] | null
+    pe: IndicatorCandle[] | null
+  } | null
+  ratioMode?: RocRatioMode
 }
 
 type DrawMode = 'none' | 'hline' | 'trendline' | 'fibretracement' | 'channel' | 'buymarker' | 'sellmarker' | 'rrindicator'
@@ -87,9 +102,16 @@ const DRAW_LABEL: Partial<Record<DrawMode, string>> = {
 }
 
 const CANDLE_INTERVAL_SECS = (m: number) => m * 60
+const RATIO_PANEL_HEIGHT_RATIO = 0.18
+const RATIO_PANEL_EXPANDED_HEIGHT_RATIO = 0.25
+const MIN_RATIO_PANEL_HEIGHT = 90
 
 function toCandle(c: OHLCCandle): CandlestickData {
   return { time: c.time as Time, open: c.open, high: c.high, low: c.low, close: c.close }
+}
+
+function toIndicatorCandle(c: OHLCCandle | BarCandle): IndicatorCandle {
+  return { time: c.time, close: c.close }
 }
 
 function nextEMA(prev: number, close: number, k: number): number {
@@ -119,6 +141,182 @@ function computeEMA(closes: number[], period: number): (number | null)[] {
   return result
 }
 
+function orderDisplayPrice(order: Order): number {
+  return order.order_type === 'LIMIT' ? order.limit_price : order.trigger_price
+}
+
+function isExitOrderForPosition(order: Order, position?: Position): position is Position {
+  return !!position &&
+    position.side !== 'FLAT' &&
+    ((position.side === 'LONG' && order.side === 'SELL') ||
+      (position.side === 'SHORT' && order.side === 'BUY'))
+}
+
+function projectedOrderPnl(order: Order, position: Position): number {
+  const dir = position.side === 'LONG' ? 1 : -1
+  const projectedQty = Math.min(order.quantity, position.quantity)
+  return dir * (orderDisplayPrice(order) - position.avg_entry_price) * projectedQty
+}
+
+function formatProjectedPnl(pnl: number, pnlPctMode?: boolean, sessionCapital?: number): string {
+  if (pnlPctMode && sessionCapital && sessionCapital > 0) {
+    const pct = (pnl / sessionCapital) * 100
+    return `${pct >= 0 ? '+' : ''}${pct.toFixed(1)}%`
+  }
+  return `${pnl >= 0 ? '+' : ''}${Math.round(pnl)}`
+}
+
+function orderLineTypeLabel(order: Order): string {
+  if (order.is_stoploss || order.order_type === 'STOPLOSS') return 'SL'
+  return order.order_type === 'LIMIT' ? 'L' : 'T'
+}
+
+function indicatorKeysForPane(paneType: PaneType, right?: 'CE' | 'PE'): RocComparisonKey[] {
+  if (paneType === 'equity') return ['underlying_ce', 'underlying_pe', 'ce_ul_pe_ul']
+  if (right === 'CE') return ['underlying_ce', 'ce_pe', 'ce_ul_pe_ul']
+  if (right === 'PE') return ['underlying_pe', 'ce_pe', 'ce_ul_pe_ul']
+  return []
+}
+
+function hasIndicatorData(key: RocComparisonKey, ratioCandles?: Props['ratioCandles']): boolean {
+  if (!ratioCandles || ratioCandles.underlying.length < 2) return false
+  if (key === 'underlying_ce') return !!ratioCandles.ce && ratioCandles.ce.length > 1
+  if (key === 'underlying_pe') return !!ratioCandles.pe && ratioCandles.pe.length > 1
+  if (key === 'ce_pe') return !!ratioCandles.ce && ratioCandles.ce.length > 1 && !!ratioCandles.pe && ratioCandles.pe.length > 1
+  return !!ratioCandles.ce && ratioCandles.ce.length > 1 && !!ratioCandles.pe && ratioCandles.pe.length > 1
+}
+
+function RatioIndicatorPanel({ comparison, series, ratioMode, height, expanded, onToggleExpand, visibleRange }: {
+  comparison: RocComparisonKey
+  series: RocSeries[]
+  ratioMode: RocRatioMode
+  height: number
+  expanded: boolean
+  onToggleExpand: () => void
+  visibleRange: { from: Time; to: Time } | null
+}) {
+  const containerRef = useRef<HTMLDivElement>(null)
+  const chartRef = useRef<IChartApi | null>(null)
+  const seriesRefs = useRef<Map<string, ISeriesApi<'Line'>>>(new Map())
+  const fittedRef = useRef(false)
+  const meta = ROC_COMPARISON_META[comparison]
+
+  useEffect(() => {
+    const el = containerRef.current
+    if (!el) return
+    const chart = createChart(el, {
+      width: el.clientWidth || 500,
+      height: Math.max(40, height - 30),
+      layout: { background: { color: '#0d1117' }, textColor: '#8b949e', fontSize: 12, fontFamily: 'Arial, sans-serif' },
+      grid: { vertLines: { color: '#1e2732' }, horzLines: { color: '#1e2732' } },
+      crosshair: { mode: 0 },
+      rightPriceScale: { borderColor: '#30363d' },
+      timeScale: { borderColor: '#30363d', timeVisible: true, secondsVisible: false },
+      localization: { priceFormatter: (price: number) => price.toFixed(2) },
+    })
+    chartRef.current = chart
+
+    const ro = new ResizeObserver(entries => {
+      const w = entries[0].contentRect.width
+      if (w > 0) chart.applyOptions({ width: w })
+    })
+    ro.observe(el)
+    return () => {
+      ro.disconnect()
+      chart.remove()
+      chartRef.current = null
+      seriesRefs.current.clear()
+    }
+  }, [])
+
+  useEffect(() => {
+    chartRef.current?.applyOptions({ height: Math.max(40, height - 30) })
+  }, [height])
+
+  useEffect(() => {
+    if (!visibleRange) return
+    try {
+      chartRef.current?.timeScale().setVisibleRange(visibleRange)
+    } catch { /* ratio chart may not have data for the parent range yet */ }
+  }, [visibleRange])
+
+  useEffect(() => {
+    const chart = chartRef.current
+    if (!chart) return
+    const nextKeys = new Set(series.map(item => item.key))
+    for (const [key, line] of seriesRefs.current) {
+      if (!nextKeys.has(key)) {
+        try { chart.removeSeries(line) } catch {}
+        seriesRefs.current.delete(key)
+      }
+    }
+    for (const item of series) {
+      let line = seriesRefs.current.get(item.key)
+      if (!line) {
+        line = chart.addLineSeries({
+          color: item.color, lineWidth: 2, priceLineVisible: false, lastValueVisible: false,
+        })
+        seriesRefs.current.set(item.key, line)
+      } else {
+        line.applyOptions({ color: item.color })
+      }
+      line.setData(item.points.map(p => ({ time: p.time as Time, value: p.value })))
+    }
+    if (!fittedRef.current && series.some(item => item.points.length > 0)) {
+      chart.timeScale().fitContent()
+      fittedRef.current = true
+    }
+  }, [series])
+
+  const last = series
+    .map(item => item.points.length ? { label: item.label, color: item.color, value: item.points[item.points.length - 1].value } : null)
+    .filter((item): item is { label: string; color: string; value: number } => item !== null)
+
+  return (
+    <div style={{
+      height, minHeight: height,
+      border: '1px solid #21262d', background: '#0d1117',
+      display: 'flex', flexDirection: 'column', position: 'relative',
+      flex: expanded ? '0 0 100%' : '1 1 0',
+      minWidth: expanded ? '100%' : 0,
+    }}>
+      <div style={{
+        height: 28, display: 'flex', alignItems: 'center', gap: 8,
+        padding: '3px 8px', background: '#161b22', borderBottom: '1px solid #21262d',
+      }}>
+        <span style={{ width: 8, height: 8, borderRadius: 4, background: meta.color }} />
+        <span style={{ fontSize: 11, color: '#e6edf3', fontWeight: 700 }}>{meta.label}</span>
+        <span style={{ fontSize: 10, color: '#8b949e' }}>{ratioMode === 'raw' ? 'Raw' : 'Normalized'}</span>
+        <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          {last.map(item => (
+            <span key={item.label} style={{ fontSize: 10, color: item.color, fontVariantNumeric: 'tabular-nums' }}>
+              {item.value.toFixed(2)}
+            </span>
+          ))}
+        </div>
+        <button
+          onClick={e => { e.stopPropagation(); onToggleExpand() }}
+          title={expanded ? 'Restore split indicator view' : 'Focus this indicator'}
+          style={{
+            padding: '1px 6px', fontSize: 11, borderRadius: 4,
+            border: `1px solid ${expanded ? meta.color : '#30363d'}`,
+            background: 'transparent', color: expanded ? meta.color : '#8b949e',
+            cursor: 'pointer',
+          }}
+        >
+          {expanded ? '⤡' : '⤢'}
+        </button>
+      </div>
+      {last.length === 0 && (
+        <div style={{ position: 'absolute', top: 45, left: 10, fontSize: 11, color: '#484f58' }}>
+          No comparable ratio points
+        </div>
+      )}
+      <div ref={containerRef} style={{ flex: 1, minHeight: 0, width: '100%' }} />
+    </div>
+  )
+}
+
 export default function Chart({
   symbol, tradingDate, startTime, intervalMinutes,
   latestTick, completedBar, onPriceUpdate, height = 380,
@@ -141,6 +339,9 @@ export default function Chart({
   pnlPctMode,
   sessionCapital,
   pnl = 0,
+  onCandlesChange,
+  ratioCandles = null,
+  ratioMode = 'normalized',
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<IChartApi | null>(null)
@@ -161,10 +362,17 @@ export default function Chart({
   const orderPriceLinesRef = useRef<Map<string, IPriceLine>>(new Map())
   const onPriceSelectRef = useRef<((price: number) => void) | null>(null)
   const onContextMenuRef = useRef(onContextMenu)
+  const onCandlesChangeRef = useRef(onCandlesChange)
+  const indicatorCandlesRef = useRef<IndicatorCandle[]>([])
   const drawDropdownRef = useRef<HTMLDivElement>(null)
+  const indicatorDropdownRef = useRef<HTMLDivElement>(null)
   const intervalDropdownRef = useRef<HTMLDivElement>(null)
 
   const [showEma, setShowEma] = useState(true)
+  const [activeRatioIndicators, setActiveRatioIndicators] = useState<RocComparisonKey[]>([])
+  const [expandedRatioIndicator, setExpandedRatioIndicator] = useState<RocComparisonKey | null>(null)
+  const [indicatorDropdownOpen, setIndicatorDropdownOpen] = useState(false)
+  const [chartVisibleRange, setChartVisibleRange] = useState<{ from: Time; to: Time } | null>(null)
   const [drawMode, setDrawMode] = useState<DrawMode>('none')
   const [drawStep, setDrawStep] = useState(0)
   const [drawingCount, setDrawingCount] = useState(0)
@@ -175,9 +383,42 @@ export default function Chart({
   // effectiveReloadKey combines the external reloadKey prop with the local one
   // so both parent-triggered and toolbar-triggered reloads work.
   const effectiveReloadKey = reloadKey + localReloadKey
+  const availableRatioKeys = useMemo(
+    () => indicatorKeysForPane(paneType, right).filter(key => hasIndicatorData(key, ratioCandles)),
+    [paneType, right, ratioCandles],
+  )
+  const activeAvailableRatioIndicators = activeRatioIndicators.filter(key => availableRatioKeys.includes(key))
+  const ratioSeriesByKey = useMemo(() => {
+    const result: Partial<Record<RocComparisonKey, RocSeries[]>> = {}
+    if (!ratioCandles) return result
+    for (const key of activeAvailableRatioIndicators) {
+      result[key] = computeOptionsRocComparison(
+        key,
+        ratioCandles.underlying,
+        ratioCandles.ce,
+        ratioCandles.pe,
+        ratioMode,
+      )
+    }
+    return result
+  }, [activeAvailableRatioIndicators, ratioCandles, ratioMode])
+  const ratioPanelsVisible = activeAvailableRatioIndicators.length > 0
+  const visibleRatioIndicators = expandedRatioIndicator && activeAvailableRatioIndicators.includes(expandedRatioIndicator)
+    ? [expandedRatioIndicator]
+    : activeAvailableRatioIndicators
+  const ratioBandHeight = ratioPanelsVisible
+    ? Math.max(
+        MIN_RATIO_PANEL_HEIGHT,
+        Math.floor(height * (expandedRatioIndicator ? RATIO_PANEL_EXPANDED_HEIGHT_RATIO : RATIO_PANEL_HEIGHT_RATIO)),
+      )
+    : 0
+  const chartHeight = ratioPanelsVisible
+    ? Math.max(160, height - ratioBandHeight)
+    : height
 
   latestTickRef.current = latestTick
   currentSimTimeRef.current = currentSimTime
+  onCandlesChangeRef.current = onCandlesChange
   useEffect(() => { drawModeRef.current = drawMode }, [drawMode])
   useEffect(() => { onPriceSelectRef.current = onPriceSelect ?? null }, [onPriceSelect])
   useEffect(() => { onContextMenuRef.current = onContextMenu }, [onContextMenu])
@@ -192,6 +433,16 @@ export default function Chart({
     return () => document.removeEventListener('mousedown', close)
   }, [drawDropdownOpen])
   useEffect(() => {
+    if (!indicatorDropdownOpen) return
+    const close = (e: MouseEvent) => {
+      if (indicatorDropdownRef.current && !indicatorDropdownRef.current.contains(e.target as Node)) {
+        setIndicatorDropdownOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', close)
+    return () => document.removeEventListener('mousedown', close)
+  }, [indicatorDropdownOpen])
+  useEffect(() => {
     if (!intervalDropdownOpen) return
     const close = (e: MouseEvent) => {
       if (intervalDropdownRef.current && !intervalDropdownRef.current.contains(e.target as Node)) {
@@ -202,12 +453,26 @@ export default function Chart({
     return () => document.removeEventListener('mousedown', close)
   }, [intervalDropdownOpen])
 
+  const publishIndicatorCandles = useCallback((candles: IndicatorCandle[]) => {
+    indicatorCandlesRef.current = candles
+    onCandlesChangeRef.current?.(candles)
+  }, [])
+
+  const upsertCompletedIndicatorCandle = useCallback((candle: IndicatorCandle) => {
+    const nextCandles = [...indicatorCandlesRef.current]
+    const existingIdx = nextCandles.findIndex(c => c.time === candle.time)
+    if (existingIdx >= 0) nextCandles[existingIdx] = candle
+    else nextCandles.push(candle)
+    nextCandles.sort((a, b) => a.time - b.time)
+    publishIndicatorCandles(nextCandles)
+  }, [publishIndicatorCandles])
+
   // ── Chart initialisation — runs once on mount only ───────────────────────
   useEffect(() => {
     if (!containerRef.current) return
     const chart = createChart(containerRef.current, {
       width: containerRef.current.clientWidth,
-      height,
+      height: chartHeight,
       layout: { background: { color: '#0d1117' }, textColor: '#e6edf3', fontSize: 16, fontFamily: 'Arial, sans-serif'},
       grid: { vertLines: { color: '#1e2732' }, horzLines: { color: '#1e2732' } },
       timeScale: { timeVisible: true, secondsVisible: false, borderColor: '#30363d' },
@@ -435,8 +700,8 @@ export default function Chart({
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
-    chartRef.current?.applyOptions({ height })
-  }, [height])
+    chartRef.current?.applyOptions({ height: chartHeight })
+  }, [chartHeight])
 
   useEffect(() => {
     ema9Ref.current?.applyOptions({ visible: showEma })
@@ -506,6 +771,12 @@ export default function Chart({
             liveWindowRef.current = { start: last.time, open: last.open, high: last.high, low: last.low, close: last.close }
           }
         }
+        const completedIntervalSecs = intervalMinutes * 60
+        const completedCutoff = liveTs != null ? Math.floor(liveTs / completedIntervalSecs) * completedIntervalSecs : null
+        const completedIndicatorCandles = completedCutoff != null
+          ? allCandles.filter(c => c.time < completedCutoff)
+          : allCandles
+        publishIndicatorCandles(completedIndicatorCandles.map(toIndicatorCandle))
 
         const closes = allCandles.map(c => c.close)
         const ema9vals = computeEMA(closes, 9)
@@ -529,7 +800,7 @@ export default function Chart({
       }
     })()
     return () => { cancelled = true }
-  }, [symbol, tradingDate, intervalMinutes, paneType, startTime, effectiveReloadKey])
+  }, [symbol, tradingDate, intervalMinutes, paneType, startTime, effectiveReloadKey, publishIndicatorCandles])
 
   // ── Historical data — options (full trading day, loads when session starts) ──
   // Backend caches options data during session start, so we wait for startTime.
@@ -572,6 +843,7 @@ export default function Chart({
         const priorCandles = candles.filter(c => c.time < cutoffTs)
 
         series.setData(priorCandles.map(toCandle))
+        publishIndicatorCandles(priorCandles.map(toIndicatorCandle))
         candleTimesRef.current = priorCandles.map(c => c.time)
 
         // Restore current partial candle accumulation from historical data.
@@ -611,7 +883,7 @@ export default function Chart({
       })
       .catch(console.error)
     return () => { cancelled = true }
-  }, [symbol, tradingDate, intervalMinutes, paneType, strike, expiry, right, startTime, liveFromTs, effectiveReloadKey])
+  }, [symbol, tradingDate, intervalMinutes, paneType, strike, expiry, right, startTime, liveFromTs, effectiveReloadKey, publishIndicatorCandles])
 
   // ── Live tick processing — latestTick is already filtered by caller ─────────
   const intervalSecs = CANDLE_INTERVAL_SECS(intervalMinutes)
@@ -641,6 +913,7 @@ export default function Chart({
             lastEma21Ref.current = nextEMA(lastEma21Ref.current, live.close, k21)
             e21.update({ time: live.start as Time, value: lastEma21Ref.current })
           }
+          upsertCompletedIndicatorCandle({ time: live.start, close: live.close })
         }
         liveWindowRef.current = {
           start: windowStart,
@@ -658,7 +931,7 @@ export default function Chart({
       // Chart may be disposed or have out-of-order timestamps; skip this tick
       console.warn('Chart update skipped:', err)
     }
-  }, [latestTick, intervalSecs, onPriceUpdate])
+  }, [latestTick, intervalSecs, onPriceUpdate, upsertCompletedIndicatorCandle])
 
   // ── Stepwise completed-bar: correct the chart after React-batched ticks ─────
   // Declared AFTER latestTick effect so it runs last in the same render cycle.
@@ -692,10 +965,11 @@ export default function Chart({
         low: completedBar.low,
         close: completedBar.close,
       }
+      upsertCompletedIndicatorCandle(toIndicatorCandle(completedBar))
     } catch (err) {
       console.warn('Completed bar update skipped:', err)
     }
-  }, [completedBar, intervalSecs])
+  }, [completedBar, intervalSecs, upsertCompletedIndicatorCandle])
 
   // ── Session ended: close the last open candle ──────────────────────────────
   const prevStartTimeRef = useRef<string | null>(null)
@@ -796,20 +1070,12 @@ export default function Chart({
     })
 
     for (const order of pending) {
-      const price = order.order_type === 'LIMIT' ? order.limit_price : order.trigger_price
+      const price = orderDisplayPrice(order)
       let label = (order.side === 'BUY' ? 'B' : 'S') + (order.order_type === 'LIMIT' ? 'L' : 'T')
 
-      if (order.order_type === 'STOPLOSS' && position && position.side !== 'FLAT') {
-        const dir = position.side === 'LONG' ? 1 : -1
-        const grossPnl = dir * (order.trigger_price - position.avg_entry_price) * position.quantity
-        let pnlStr: string
-        if (pnlPctMode && sessionCapital && sessionCapital > 0) {
-          const pct = (grossPnl / sessionCapital) * 100
-          pnlStr = `${pct >= 0 ? '+' : ''}${pct.toFixed(1)}%`
-        } else {
-          pnlStr = `${grossPnl >= 0 ? '+' : ''}${Math.round(grossPnl)}`
-        }
-        label = `ST ${pnlStr}`
+      if (isExitOrderForPosition(order, position)) {
+        const pnlStr = formatProjectedPnl(projectedOrderPnl(order, position), pnlPctMode, sessionCapital)
+        label = `${orderLineTypeLabel(order)} ${pnlStr}`
       }
 
       try {
@@ -912,6 +1178,18 @@ export default function Chart({
     return () => chart.timeScale().unsubscribeVisibleLogicalRangeChange(updatePnlCoord)
   }, [updatePnlCoord])
 
+  useEffect(() => {
+    const chart = chartRef.current
+    if (!chart) return
+    const syncVisibleRange = () => {
+      const range = chart.timeScale().getVisibleRange()
+      setChartVisibleRange(range ? { from: range.from, to: range.to } : null)
+    }
+    syncVisibleRange()
+    chart.timeScale().subscribeVisibleTimeRangeChange(syncVisibleRange)
+    return () => chart.timeScale().unsubscribeVisibleTimeRangeChange(syncVisibleRange)
+  }, [])
+
   // ── Bar close countdown ────────────────────────────────────────────────────
   const barCountdown = (() => {
     if (!latestTick) return null
@@ -928,6 +1206,11 @@ export default function Chart({
     : `${symbol} ${intervalMinutes}m`
 
   const borderColor = isActive ? '#58a6ff' : '#30363d'
+  const toggleRatioIndicator = (key: RocComparisonKey) => {
+    setActiveRatioIndicators(prev => prev.includes(key) ? prev.filter(k => k !== key) : [...prev, key])
+    if (expandedRatioIndicator === key) setExpandedRatioIndicator(null)
+  }
+  const indicatorButtonActive = showEma || activeRatioIndicators.length > 0
 
   return (
     <div
@@ -936,6 +1219,7 @@ export default function Chart({
         display: 'flex', flexDirection: 'column',
         border: `1px solid ${borderColor}`, borderRadius: 8, overflow: 'hidden',
         cursor: onActivate ? 'pointer' : 'default',
+        position: 'relative',
       }}
     >
       {/* Pane toolbar — paddingRight leaves room for the absolute-positioned ✕ remove button */}
@@ -948,9 +1232,73 @@ export default function Chart({
           {paneLabel}
         </span>
 
-        <button onClick={e => { e.stopPropagation(); setShowEma(v => !v) }} style={toolbarBtnStyle(showEma)}>
-          EMA 9/21
-        </button>
+        <div style={{ position: 'relative' }} ref={indicatorDropdownRef}>
+          <button
+            onClick={e => { e.stopPropagation(); setIndicatorDropdownOpen(v => !v) }}
+            style={toolbarBtnStyle(indicatorButtonActive)}
+            title="Indicators"
+          >
+            Indicators ▾
+          </button>
+          {indicatorDropdownOpen && (
+            <div
+              onClick={e => e.stopPropagation()}
+              style={{
+                position: 'absolute', top: '100%', left: 0, zIndex: 120,
+                background: '#161b22', border: '1px solid #30363d',
+                borderRadius: 4, minWidth: 220, marginTop: 2,
+                boxShadow: '0 8px 24px rgba(0,0,0,0.35)',
+              }}
+            >
+              <label style={{
+                display: 'flex', alignItems: 'center', gap: 8,
+                padding: '7px 10px', cursor: 'pointer', fontSize: 11,
+                color: showEma ? '#f0883e' : '#e6edf3',
+              }}>
+                <input
+                  type="checkbox"
+                  checked={showEma}
+                  onChange={() => setShowEma(v => !v)}
+                />
+                <span>EMA 9/21</span>
+              </label>
+              {ratioCandles && indicatorKeysForPane(paneType, right).length > 0 && (
+                <>
+                  <div style={{ height: 1, background: '#30363d', margin: '2px 0' }} />
+                  {indicatorKeysForPane(paneType, right).map(key => {
+                    const meta = ROC_COMPARISON_META[key]
+                    const selected = activeRatioIndicators.includes(key)
+                    const available = availableRatioKeys.includes(key)
+                    return (
+                      <label
+                        key={key}
+                        title={available ? meta.label : 'Matching option candles are not loaded yet'}
+                        style={{
+                          display: 'flex', alignItems: 'center', gap: 8,
+                          padding: '7px 10px', cursor: available ? 'pointer' : 'not-allowed',
+                          fontSize: 11, color: !available ? '#484f58' : selected ? meta.color : '#e6edf3',
+                        }}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={selected}
+                          disabled={!available}
+                          onChange={() => available && toggleRatioIndicator(key)}
+                        />
+                        <span>{meta.label}</span>
+                      </label>
+                    )
+                  })}
+                  {activeRatioIndicators.length > 0 && (
+                    <div style={{ padding: '5px 10px', fontSize: 10, color: '#8b949e', borderTop: '1px solid #21262d' }}>
+                      Ratio panels share the bottom band
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          )}
+        </div>
 
         {/* Drawing tools dropdown */}
         <div style={{ position: 'relative' }} ref={drawDropdownRef}>
@@ -1094,6 +1442,30 @@ export default function Chart({
         ref={containerRef}
         style={{ width: '100%', cursor: (drawMode !== 'none' || onPriceSelect) ? 'crosshair' : 'default' }}
       />
+
+      {ratioPanelsVisible && (
+        <div style={{
+          height: ratioBandHeight,
+          minHeight: ratioBandHeight,
+          display: 'flex',
+          gap: 0,
+          borderTop: '1px solid #21262d',
+          background: '#0d1117',
+        }}>
+          {visibleRatioIndicators.map(key => (
+            <RatioIndicatorPanel
+              key={key}
+              comparison={key}
+              series={ratioSeriesByKey[key] ?? []}
+              ratioMode={ratioMode}
+              height={ratioBandHeight}
+              expanded={expandedRatioIndicator === key}
+              onToggleExpand={() => setExpandedRatioIndicator(current => current === key ? null : key)}
+              visibleRange={chartVisibleRange}
+            />
+          ))}
+        </div>
+      )}
 
       {hasPosition && pnlCoord && (
         <div style={{

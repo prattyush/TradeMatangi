@@ -11,7 +11,7 @@ import OrderPanel from './components/OrderPanel'
 import WalletWidget from './components/WalletWidget'
 import GuardRailPopup from './components/GuardRailPopup'
 import PatternAlertToast, { PatternAlert } from './components/PatternAlertToast'
-import SettingsModal, { loadFundsRatios, loadTargetDeviationPct, loadBrokeragePerOrder, loadStrategyIntervalSecs, loadAutostopTriggerType, loadAutostopDeviationPct, loadHistoricalDays, loadPnlPctMode, loadBreakevenMode, loadTargetProfitBufferTicks, loadAggrSlOnlyInProfit, loadAutoStartEventSnapshots, loadStepwiseLabelingPopupEnabled, loadLabelingModeByType, loadOverrideSessionEnabled, FundsRatios, SizingMode, RiskRatios, loadSizingMode, loadRiskRatios, loadDefaultSlPct } from './components/SettingsModal'
+import SettingsModal, { loadFundsRatios, loadTargetDeviationPct, loadBrokeragePerOrder, loadStrategyIntervalSecs, loadAutostopTriggerType, loadAutostopDeviationPct, loadHistoricalDays, loadPnlPctMode, loadBreakevenMode, loadTargetProfitBufferTicks, loadAggrSlOnlyInProfit, loadAutoStartEventSnapshots, loadStepwiseLabelingPopupEnabled, loadLabelingModeByType, loadOverrideSessionEnabled, loadTradingRocRatioMode, FundsRatios, SizingMode, RiskRatios, loadSizingMode, loadRiskRatios, loadDefaultSlPct } from './components/SettingsModal'
 import { StrategyResponse, StartStrategyRequest, Order } from './services/api'
 import LoginScreen from './components/LoginScreen'
 import TradeAnalysis from './components/TradeAnalysis'
@@ -22,6 +22,7 @@ import { useSSE } from './hooks/useSSE'
 import { useRecording } from './hooks/useRecording'
 import { useSnapshot } from './hooks/useSnapshot'
 import api from './services/api'
+import { IndicatorCandle, RocRatioMode } from './indicators/optionsRoc'
 
 const FIXED_USER = { userId: 'abc12300-0000-0000-0000-000000000001', username: 'abc123' }
 
@@ -163,6 +164,7 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
   const [aggrSlOnlyInProfit, setAggrSlOnlyInProfit] = useState(loadAggrSlOnlyInProfit)
   const [historicalDays, setHistoricalDays] = useState(loadHistoricalDays)
   const [pnlPctMode, setPnlPctMode] = useState(loadPnlPctMode)
+  const [tradingRocRatioMode, setTradingRocRatioMode] = useState<RocRatioMode>(loadTradingRocRatioMode)
   const [runningStrategies, setRunningStrategies] = useState<StrategyResponse[]>([])
   const [brokerError, setBrokerError] = useState<string | null>(null)
   const [isRealTradingUser, setIsRealTradingUser] = useState(false)
@@ -352,6 +354,7 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
   const [layoutPreset, setLayoutPreset] = useState<LayoutPreset>(2)
   const [activePaneId, setActivePaneId] = useState<number | null>(1)
   const [maximizedPaneId, setMaximizedPaneId] = useState<number | null>(null)
+  const [paneCandles, setPaneCandles] = useState<Record<number, IndicatorCandle[]>>({})
 
   // ── Options mode state ──────────────────────────────────────────────────────
   const [instrumentType, setInstrumentType] = useState<'equity' | 'options'>('equity')
@@ -559,6 +562,11 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
       const next = p.filter(x => x.id !== id)
       return next.length === 0 ? p : next  // keep at least one pane
     })
+    setPaneCandles(prev => {
+      const next = { ...prev }
+      delete next[id]
+      return next
+    })
     setActivePaneId(a => a === id ? null : a)
     setMaximizedPaneId(m => m === id ? null : m)
   }, [])
@@ -576,6 +584,35 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
   const handlePaneIntervalChange = useCallback((paneId: number, minutes: number) => {
     setPanes(prev => prev.map(p => p.id === paneId ? { ...p, intervalMinutes: minutes } : p))
   }, [])
+
+  const handlePaneCandlesChange = useCallback((paneId: number, candles: IndicatorCandle[]) => {
+    setPaneCandles(prev => {
+      const current = prev[paneId]
+      const lastCurrent = current?.[current.length - 1]
+      const lastNext = candles[candles.length - 1]
+      if (current?.length === candles.length && lastCurrent?.time === lastNext?.time && lastCurrent?.close === lastNext?.close) {
+        return prev
+      }
+      return { ...prev, [paneId]: candles }
+    })
+  }, [])
+
+  const getRatioCandlesForPane = useCallback((pane: PaneConfig) => {
+    if (instrumentType !== 'options' && sim.sessionInstrumentType !== 'options') return null
+    const findPane = (predicate: (candidate: PaneConfig) => boolean) =>
+      panes.find(candidate => candidate.intervalMinutes === pane.intervalMinutes && predicate(candidate)) ??
+      panes.find(predicate)
+    const underlyingPane = pane.type === 'equity' ? pane : findPane(candidate => candidate.type === 'equity')
+    const cePane = pane.right === 'CE' ? pane : findPane(candidate => candidate.type === 'options' && candidate.right === 'CE')
+    const pePane = pane.right === 'PE' ? pane : findPane(candidate => candidate.type === 'options' && candidate.right === 'PE')
+    const underlying = underlyingPane ? paneCandles[underlyingPane.id] ?? [] : []
+    if (underlying.length < 2) return null
+    return {
+      underlying,
+      ce: cePane ? paneCandles[cePane.id] ?? null : null,
+      pe: pePane ? paneCandles[pePane.id] ?? null : null,
+    }
+  }, [instrumentType, sim.sessionInstrumentType, panes, paneCandles])
 
   // ── Active pane derivations ─────────────────────────────────────────────────
   const activePane = panes.find(p => p.id === activePaneId) ?? null
@@ -1212,6 +1249,9 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
           pnlPctMode={pnlPctMode}
           sessionCapital={sim.sessionCapital}
           onIntervalChange={(minutes) => handlePaneIntervalChange(pane.id, minutes)}
+          onCandlesChange={(candles) => handlePaneCandlesChange(pane.id, candles)}
+          ratioCandles={getRatioCandlesForPane(pane)}
+          ratioMode={tradingRocRatioMode}
         />
       </div>
     )
@@ -1666,6 +1706,9 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
           onAutoStartSnapshotsChange={setAutoStartSnapshots}
           onStepwiseLabelingPopupChange={setStepwiseLabelingPopup}
           onLabelingModeChange={setLabelModeByType}
+          onTradingIndicatorSettingsChange={(ratioMode) => {
+            setTradingRocRatioMode(ratioMode)
+          }}
         />
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: '#484f58' }}>
           <span>{authUser.accountName || authUser.email}</span>

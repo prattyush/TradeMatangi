@@ -73,6 +73,14 @@ const QUANTITY_OPTIONS = [1, 2, 3, 5, 10]
 const RATIO_LABELS = ['L', 'M', 'H'] as const
 type RatioKey = 'l' | 'm' | 'h'
 
+function isClosingOrderForPosition(order: Order, position: Position, activeRight: 'CE' | 'PE' | null): boolean {
+  return order.status === 'PENDING' &&
+    (order.right ?? null) === (activeRight ?? null) &&
+    position.side !== 'FLAT' &&
+    ((position.side === 'LONG' && order.side === 'SELL') ||
+      (position.side === 'SHORT' && order.side === 'BUY'))
+}
+
 export default function OrderPanel({
   sessionState, currentPrice, openOrders, position,
   sizingMode, fundsRatios, riskRatios, defaultSlPct: _defaultSlPct, targetDeviationPct,
@@ -1386,19 +1394,15 @@ export default function OrderPanel({
             Open Orders ({openOrders.length})
           </div>
 
-          {/* Batch Update SL — shown when 2+ SL orders exist for active tab */}
+          {/* Batch Update exits — shown when 2+ closing orders exist for active tab */}
           {(() => {
-            const slOrders = openOrders.filter(o =>
-              o.is_stoploss &&
-              o.status === 'PENDING' &&
-              (o.right ?? null) === (activeRight ?? null)
-            )
-            if (slOrders.length < 2 || !onBulkUpdateSL) return null
+            const closingOrders = openOrders.filter(o => isClosingOrderForPosition(o, position, activeRight ?? null))
+            if (closingOrders.length < 2 || !onBulkUpdateSL) return null
             const rightLabel = activeRight ? ` ${activeRight}` : ''
             return (
               <div style={{ marginBottom: 6, padding: '6px 8px', background: '#0d1117', borderRadius: 5, border: '1px solid #4a2000' }}>
                 <div style={{ fontSize: 9, color: '#f0883e', marginBottom: 4, fontWeight: 600 }}>
-                  Update All{rightLabel} SLs ({slOrders.length} orders)
+                  Update All{rightLabel} Exits ({closingOrders.length} orders)
                 </div>
                 <div style={{ display: 'flex', gap: 4 }}>
                   <input
@@ -1436,7 +1440,7 @@ export default function OrderPanel({
                     <button
                       onClick={() => handleBulkConvert('STOPLOSS')}
                       disabled={bulkUpdating}
-                      title="Convert all to Stoploss"
+                      title="Convert all closing orders to Stoploss"
                       style={{
                         flex: 1, padding: '3px 6px', background: '#2a1a1a',
                         border: '1px solid #4a2000', borderRadius: 4,
@@ -1447,7 +1451,7 @@ export default function OrderPanel({
                     <button
                       onClick={() => handleBulkConvert('LIMIT')}
                       disabled={bulkUpdating}
-                      title="Convert all to Limit"
+                      title="Convert all closing orders to Limit"
                       style={{
                         flex: 1, padding: '3px 6px', background: '#1a2a1a',
                         border: '1px solid #204a20', borderRadius: 4,

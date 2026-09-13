@@ -2,13 +2,75 @@ import json
 import logging
 from fastapi import APIRouter, HTTPException, Query
 from app.models.schemas import Order, OrderType, TradeSide, PlaceOrderRequest, UpdateOrderRequest, BulkUpdateSLRequest, ConvertOrderRequest, BulkConvertRequest
-from app.services import order_service, simulation as sim_svc
+from app.services import order_service, simulation as sim_svc, trading as trading_service
 from app.services.wallet_service import InsufficientFundsError, get_balance
 from app.config import LOT_SIZES, EQUITY_MIS_MARGIN_RATE
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/orders", tags=["orders"])
+
+
+def _is_closing_order_for_position(order: Order, position) -> bool:
+    return (
+        position.side != "FLAT"
+        and (
+            (position.side == "LONG" and order.side == TradeSide.SELL)
+            or (position.side == "SHORT" and order.side == TradeSide.BUY)
+        )
+    )
+
+
+def _get_closing_orders(session, right: str | None) -> list[Order]:
+    position = trading_service.get_position(session.session_id, session.symbol, right=right)
+    if position.side == "FLAT" or position.quantity <= 0:
+        return []
+
+    return [
+        order
+        for order in order_service.get_open_orders(session.session_id)
+        if (order.right or None) == right and _is_closing_order_for_position(order, position)
+    ]
+
+
+def _sync_kotak_after_convert(session, order: Order, new_order_type: OrderType) -> None:
+    if session.session_type != "real":
+        return
+
+    if new_order_type == OrderType.LIMIT and order.kotak_order_id:
+        try:
+            from app.services.kotak_service import get_service as get_kotak
+            get_kotak().modify_sl_to_limit_order(
+                order.kotak_order_id, order.limit_price, order.quantity,
+            )
+        except Exception as exc:
+            logger.warning(
+                "convert_order %s: Kotak SL→LIMIT failed: %s", order.order_id, exc,
+            )
+    elif new_order_type == OrderType.STOPLOSS:
+        if order.kotak_order_id:
+            try:
+                from app.services.kotak_service import get_service as get_kotak
+                from app.config import KOTAK_SLIPPAGE_PCT
+                trigger = order.trigger_price
+                if order.side == TradeSide.BUY:
+                    kotak_limit = round(trigger * (1 + KOTAK_SLIPPAGE_PCT), 2)
+                else:
+                    kotak_limit = round(trigger * (1 - KOTAK_SLIPPAGE_PCT), 2)
+                get_kotak().modify_sl_order(order.kotak_order_id, trigger, kotak_limit, order.quantity)
+            except Exception as exc:
+                logger.warning(
+                    "convert_order %s: Kotak SL modify failed: %s", order.order_id, exc,
+                )
+        else:
+            try:
+                import asyncio
+                from app.services.simulation import _register_kotak_sl_for_order
+                _register_kotak_sl_for_order(session, order, asyncio.get_event_loop())
+            except Exception as exc:
+                logger.warning(
+                    "convert_order %s: Kotak SL registration failed: %s", order.order_id, exc,
+                )
 
 
 @router.post("", response_model=Order)
@@ -404,7 +466,7 @@ async def cancel_order(order_id: str, session_id: str = Query(...)):
 @router.patch("/bulk-update-sl")
 async def bulk_update_sl_route(req: BulkUpdateSLRequest):
     """
-    Set all pending SL orders for a session's symbol/right to the same trigger price.
+    Set all pending closing orders for a session's symbol/right to the same price.
     Handles Kotak real-trading orders too.
     """
     session = sim_svc.get_session(req.session_id)
@@ -414,19 +476,23 @@ async def bulk_update_sl_route(req: BulkUpdateSLRequest):
         raise HTTPException(status_code=400, detail="trigger_price must be positive")
 
     right = req.right.upper() if req.right else None
-    open_orders = order_service.get_open_orders(req.session_id)
-    sl_orders = [o for o in open_orders if o.is_stoploss and (o.right or None) == right]
+    closing_orders = _get_closing_orders(session, right)
 
-    if not sl_orders:
+    if not closing_orders:
         return {"updated": 0, "orders": []}
 
     updated_orders = []
-    for order in sl_orders:
+    for order in closing_orders:
+        update_kwargs = (
+            {"limit_price": req.trigger_price}
+            if order.order_type == OrderType.LIMIT
+            else {"trigger_price": req.trigger_price}
+        )
         updated_order = order_service.update_order(
             session_id=req.session_id,
             order_id=order.order_id,
             trading_date=session.date,
-            trigger_price=req.trigger_price,
+            **update_kwargs,
         )
         if updated_order:
             updated_orders.append(updated_order)
@@ -452,28 +518,41 @@ async def bulk_update_sl_route(req: BulkUpdateSLRequest):
 
 @router.patch("/bulk-convert")
 async def bulk_convert_route(req: BulkConvertRequest):
-    """Convert all pending orders for a session's right to a different type, keeping same price."""
+    """Convert all pending closing orders for a session's right to a different type, keeping same price."""
     session = sim_svc.get_session(req.session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
 
     right = req.right.upper() if req.right else None
-    open_orders = order_service.get_open_orders(req.session_id)
-    target_orders = [o for o in open_orders if (o.right or None) == right and o.status == 'PENDING']
+    target_orders = _get_closing_orders(session, right)
 
     if not target_orders:
         return {"converted": 0, "orders": []}
 
     converted_orders = []
     for order in target_orders:
-        converted = order_service.convert_order(
-            session_id=req.session_id,
-            order_id=order.order_id,
-            new_order_type=req.new_order_type,
-            trading_date=session.date,
-            price=req.price,
-        )
+        if order.order_type == req.new_order_type and req.price is not None:
+            update_kwargs = (
+                {"limit_price": req.price}
+                if order.order_type == OrderType.LIMIT
+                else {"trigger_price": req.price}
+            )
+            converted = order_service.update_order(
+                session_id=req.session_id,
+                order_id=order.order_id,
+                trading_date=session.date,
+                **update_kwargs,
+            )
+        else:
+            converted = order_service.convert_order(
+                session_id=req.session_id,
+                order_id=order.order_id,
+                new_order_type=req.new_order_type,
+                trading_date=session.date,
+                price=req.price,
+            )
         if converted:
+            _sync_kotak_after_convert(session, converted, req.new_order_type)
             converted_orders.append(converted)
 
     return {"converted": len(converted_orders), "orders": converted_orders}
@@ -497,27 +576,7 @@ async def convert_order(order_id: str, req: ConvertOrderRequest):
         raise HTTPException(status_code=404, detail="Order not found or not pending")
 
     # ── Kotak real-trading integration ──────────────────────────────────────
-    if session.session_type == "real" and order.kotak_order_id:
-        if req.new_order_type == OrderType.LIMIT and order.order_type == OrderType.LIMIT:
-            # Was a STOPLOSS → now LIMIT: convert broker-side SL to LIMIT
-            try:
-                from app.services.kotak_service import get_service as get_kotak
-                get_kotak().modify_sl_to_limit_order(
-                    order.kotak_order_id, order.limit_price, order.quantity,
-                )
-            except Exception as exc:
-                logger.warning(
-                    "convert_order %s: Kotak SL→LIMIT failed: %s", order_id, exc,
-                )
-        elif req.new_order_type == OrderType.STOPLOSS:
-            # Converted to STOPLOSS — cancel on Kotak (was a local order)
-            try:
-                from app.services.kotak_service import get_service as get_kotak
-                get_kotak().cancel_order(order.kotak_order_id)
-                get_kotak().deregister_fill_callback(order.kotak_order_id)
-            except Exception:
-                pass
-            order.kotak_order_id = None
+    _sync_kotak_after_convert(session, order, req.new_order_type)
 
     # Emit SSE event so the frontend updates the order in-place
     try:

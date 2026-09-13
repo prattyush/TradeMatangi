@@ -1,6 +1,7 @@
 import { Fragment, useState, useEffect, useRef } from 'react'
 import api from '../services/api'
 import KotakTOTPModal from './KotakTOTPModal'
+import { RocRatioMode } from '../indicators/optionsRoc'
 
 const THRESHOLD_VALUES_NIFTY = [25, 50, 75, 100, 125, 150]   // interval 50
 const THRESHOLD_VALUES_SENSEX = [50, 100, 150, 200, 250]       // interval 100
@@ -52,6 +53,7 @@ const AUTOSTOP_TRIGGER_TYPE_KEY = 'autostopTriggerType'
 const AUTOSTOP_DEVIATION_PCT_KEY = 'autostopDeviationPct'
 const HISTORICAL_DAYS_KEY = 'historicalDays'
 const PNL_PCT_MODE_KEY = 'pnlPctMode'
+const TRADING_ROC_RATIO_MODE_KEY = 'tradingRocRatioMode'
 const BREAKEVEN_MODE_KEY = 'breakevenMode'
 const TARGET_PROFIT_BUFFER_TICKS_KEY = 'targetProfitBufferTicks'
 const AGGR_SL_ONLY_IN_PROFIT_KEY = 'aggrSlOnlyInProfit'
@@ -190,6 +192,10 @@ export function loadPnlPctMode(): boolean {
   return localStorage.getItem(PNL_PCT_MODE_KEY) === 'true'
 }
 
+export function loadTradingRocRatioMode(): RocRatioMode {
+  return localStorage.getItem(TRADING_ROC_RATIO_MODE_KEY) === 'raw' ? 'raw' : 'normalized'
+}
+
 export function loadFundsRatioMode(): boolean {
   return localStorage.getItem(FUNDS_RATIO_MODE_KEY) === 'true'
 }
@@ -326,14 +332,16 @@ interface Props {
   onAutoStartSnapshotsChange?: (enabled: boolean) => void
   onStepwiseLabelingPopupChange?: (enabled: boolean) => void
   onLabelingModeChange?: (modes: LabelingModeByType) => void
+  onTradingIndicatorSettingsChange?: (ratioMode: RocRatioMode) => void
 }
 
-export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessionActive, onWalletReset, onSizingModeChange, onTargetDeviationChange, onBrokerageChange, onStrategySettingsChange, onHistoricalDaysChange, onPnlPctModeChange, onGuardRailSettingsChange, onAutoStartSnapshotsChange, onStepwiseLabelingPopupChange, onLabelingModeChange }: Props) {
+export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessionActive, onWalletReset, onSizingModeChange, onTargetDeviationChange, onBrokerageChange, onStrategySettingsChange, onHistoricalDaysChange, onPnlPctModeChange, onGuardRailSettingsChange, onAutoStartSnapshotsChange, onStepwiseLabelingPopupChange, onLabelingModeChange, onTradingIndicatorSettingsChange }: Props) {
   const [open, setOpen] = useState(false)
   const [customAmount, setCustomAmount] = useState('')
   const [status, setStatus] = useState<string | null>(null)
 
   const [pnlPctMode, setPnlPctMode] = useState(loadPnlPctMode)
+  const [tradingRocRatioMode, setTradingRocRatioMode] = useState<RocRatioMode>(loadTradingRocRatioMode)
   const [sizingMode, setSizingMode] = useState<SizingMode>(loadSizingMode)
   const [riskRatios, setRiskRatios] = useState<RiskRatios>(loadRiskRatios)
   const [riskRatioInputs, setRiskRatioInputs] = useState<{ l: string; m: string; h: string }>(() => {
@@ -982,6 +990,38 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
               </div>
               <div style={{ fontSize: 11, color: '#484f58', marginTop: 6 }}>
                 Prior trading days of chart context loaded at session start
+              </div>
+            </div>
+
+            {/* Trading Chart Indicators */}
+            <div style={{ borderTop: '1px solid #21262d', paddingTop: 16 }}>
+              <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 10, fontWeight: 600 }}>
+                TRADING CHART INDICATORS
+              </div>
+              <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+                <div style={{ display: 'flex', gap: 0, borderRadius: 6, overflow: 'hidden', border: '1px solid #30363d' }}>
+                  {(['normalized', 'raw'] as RocRatioMode[]).map(mode => (
+                    <button
+                      key={mode}
+                      onClick={() => {
+                        setTradingRocRatioMode(mode)
+                        localStorage.setItem(TRADING_ROC_RATIO_MODE_KEY, mode)
+                        onTradingIndicatorSettingsChange?.(mode)
+                      }}
+                      style={{
+                        padding: '5px 12px', fontSize: 12, fontWeight: 600,
+                        border: 'none', cursor: 'pointer', textTransform: 'capitalize',
+                        background: tradingRocRatioMode === mode ? '#1f3a5f' : '#161b22',
+                        color: tradingRocRatioMode === mode ? '#79c0ff' : '#484f58',
+                      }}
+                    >
+                      {mode}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div style={{ fontSize: 11, color: '#484f58', marginTop: 6 }}>
+                Selected ratio indicators share a compact band below each trading chart
               </div>
             </div>
 
