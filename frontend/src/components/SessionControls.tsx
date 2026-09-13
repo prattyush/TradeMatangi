@@ -23,9 +23,9 @@ interface Props {
   onPause: () => Promise<void>
   onResume: () => Promise<void>
   onOptionsReady: (cfg: OptionsReadyConfig | null) => void
+  lastStartedContext?: { symbol: string; date: string; sessionType: string; instrumentType: 'equity' | 'options' } | null
   extraControls?: ReactNode
   isRealTradingUser?: boolean
-  overrideSessionEnabled?: boolean
   // Stepwise replayer props
   stepwise?: boolean
   barPaused?: boolean
@@ -100,9 +100,9 @@ export default function SessionControls({
   onSymbolChange, onDateChange,
   onStart, onStop, onPause, onResume,
   onOptionsReady,
+  lastStartedContext = null,
   extraControls,
   isRealTradingUser = false,
-  overrideSessionEnabled = false,
   stepwise = false,
   barPaused = false,
   barIndex = 0,
@@ -275,8 +275,10 @@ export default function SessionControls({
         config = { instrument_type: 'equity', session_type: sessionType }
       }
 
-      // Override check: if enabled and sim/stepwise, check for existing session
-      if (overrideSessionEnabled && (sessionType === 'sim' || sessionType === 'stepwise')) {
+      // Always confirm before replacing data for the same symbol, date, session,
+      // and instrument type. This applies equally to simulation and live paper
+      // sessions; the user can choose to resume by selecting No.
+      if (sessionType === 'sim' || sessionType === 'paper' || sessionType === 'stepwise' || sessionType === 'real') {
         try {
           const existing = await api.checkExistingSession({
             symbol: currentSymbol,
@@ -284,19 +286,37 @@ export default function SessionControls({
             session_type: sessionType,
             instrument_type: config.instrument_type,
           })
-          if (existing.exists) {
+          const localDuplicate = lastStartedContext?.symbol === currentSymbol &&
+            lastStartedContext.date === currentDate &&
+            lastStartedContext.sessionType === sessionType &&
+            lastStartedContext.instrumentType === config.instrument_type
+          if (existing.exists || localDuplicate) {
             const startTimeParam = isToday ? '09:15:00' : startTime + ':00'
             const speedParam = isToday ? 1.0 : speed
             setOverrideConfirm({
               config,
-              message: `A previous ${sessionType} session exists for ${currentSymbol} on ${currentDate}. Override it and delete all its data?`,
+              message: `A previous ${sessionType} ${config.instrument_type} session exists for ${currentSymbol} on ${currentDate}. Delete its data and start a new session?`,
               startTime: startTimeParam,
               speed: speedParam,
             })
             return
           }
         } catch {
-          // If check fails, proceed without override (fail-open)
+          // A just-started current-day session may not be queryable yet. The
+          // local context still protects it from being silently replaced.
+          const localDuplicate = lastStartedContext?.symbol === currentSymbol &&
+            lastStartedContext.date === currentDate &&
+            lastStartedContext.sessionType === sessionType &&
+            lastStartedContext.instrumentType === config.instrument_type
+          if (localDuplicate) {
+            setOverrideConfirm({
+              config,
+              message: `A previous ${sessionType} ${config.instrument_type} session exists for ${currentSymbol} on ${currentDate}. Delete its data and start a new session?`,
+              startTime: isToday ? '09:15:00' : startTime + ':00',
+              speed: isToday ? 1.0 : speed,
+            })
+            return
+          }
         }
       }
 

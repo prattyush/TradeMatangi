@@ -355,6 +355,7 @@ def find_session_by_context(
     symbol: str,
     date: str,
     session_type: str,
+    instrument_type: Optional[str] = None,
 ) -> Optional[dict]:
     """Return the most recent DynamoDB Sessions record for (user, symbol, date, session_type).
 
@@ -373,6 +374,11 @@ def find_session_by_context(
             if it.get("symbol") == symbol
             and it.get("date") == date
             and it.get("session_type") == session_type
+            and (
+                instrument_type is None
+                or it.get("instrument_type") == instrument_type
+                or (instrument_type == "options" and (it.get("expiry") or it.get("strike") or it.get("strike_ce") or it.get("strike_pe")))
+            )
         ]
         if not matches:
             return None
@@ -390,6 +396,7 @@ def find_all_sessions_by_context(
     symbol: str,
     date: str,
     session_type: str,
+    instrument_type: Optional[str] = None,
 ) -> list[dict]:
     """Return ALL DynamoDB Sessions records matching (user, symbol, date, session_type).
 
@@ -408,6 +415,11 @@ def find_all_sessions_by_context(
             if it.get("symbol") == symbol
             and it.get("date") == date
             and it.get("session_type") == session_type
+            and (
+                instrument_type is None
+                or it.get("instrument_type") == instrument_type
+                or (instrument_type == "options" and (it.get("expiry") or it.get("strike") or it.get("strike_ce") or it.get("strike_pe")))
+            )
         ]
     except Exception:
         logger.exception(
