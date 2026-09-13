@@ -583,9 +583,8 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
   }, [])
 
   const handlePaneIntervalChange = useCallback((paneId: number, minutes: number) => {
-    const optionsSession = instrumentType === 'options' || sim.sessionInstrumentType === 'options'
-    setPanes(prev => prev.map(p => optionsSession || p.id === paneId ? { ...p, intervalMinutes: minutes } : p))
-  }, [instrumentType, sim.sessionInstrumentType])
+    setPanes(prev => prev.map(p => p.id === paneId ? { ...p, intervalMinutes: minutes } : p))
+  }, [])
 
   const handlePaneCandlesChange = useCallback((paneId: number, candles: IndicatorCandle[]) => {
     setPaneCandles(prev => {
@@ -612,6 +611,7 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
       underlying,
       ce: cePane ? paneCandles[cePane.id] ?? null : null,
       pe: pePane ? paneCandles[pePane.id] ?? null : null,
+      anchor: paneCandles[pane.id] ?? [],
     }
   }, [instrumentType, sim.sessionInstrumentType, panes, paneCandles])
 

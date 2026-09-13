@@ -41,6 +41,16 @@ function commonTimes(a: IndicatorCandle[], b: IndicatorCandle[]): number[] {
   return a.map(c => c.time).filter(time => bTimes.has(time)).sort((x, y) => x - y)
 }
 
+function alignToTimes(candles: IndicatorCandle[], times: number[]): IndicatorCandle[] {
+  const sorted = [...candles].sort((a, b) => a.time - b.time)
+  let index = 0
+  let latest: IndicatorCandle | null = null
+  return times.flatMap(time => {
+    while (index < sorted.length && sorted[index].time <= time) latest = sorted[index++]
+    return latest ? [{ time, close: latest.close }] : []
+  })
+}
+
 function normalizedMoveSeries(
   key: string,
   label: string,
@@ -117,33 +127,36 @@ export function computeOptionsRocComparison(
   ce: IndicatorCandle[] | null,
   pe: IndicatorCandle[] | null,
   mode: RocRatioMode,
+  anchor: IndicatorCandle[] | null = null,
 ): RocSeries[] {
   const moveSeries = mode === 'normalized' ? normalizedMoveSeries : rawMoveSeries
   const minDenominator = mode === 'normalized' ? MIN_NORMALIZED_MOVE : MIN_RAW_MOVE
 
   if (key === 'underlying_ce' && ce) {
-    const times = commonTimes(underlying, ce)
-    const ul = moveSeries('underlying', 'Underlying', '#79c0ff', underlying, times)
-    const call = moveSeries('ce', 'CE', '#3fb950', ce, times)
+    const times = anchor ? anchor.map(c => c.time) : commonTimes(underlying, ce)
+    const ul = moveSeries('underlying', 'Underlying', '#79c0ff', alignToTimes(underlying, times), times)
+    const call = moveSeries('ce', 'CE', '#3fb950', alignToTimes(ce, times), times)
     return [ratioSeries('ce_underlying_ratio', 'CE / UL', '#3fb950', call, ul, minDenominator)]
   }
   if (key === 'underlying_pe' && pe) {
-    const times = commonTimes(underlying, pe)
-    const ul = moveSeries('underlying', 'Underlying', '#79c0ff', underlying, times)
-    const put = moveSeries('pe', 'PE', '#bc8cff', pe, times)
+    const times = anchor ? anchor.map(c => c.time) : commonTimes(underlying, pe)
+    const ul = moveSeries('underlying', 'Underlying', '#79c0ff', alignToTimes(underlying, times), times)
+    const put = moveSeries('pe', 'PE', '#bc8cff', alignToTimes(pe, times), times)
     return [ratioSeries('pe_underlying_ratio', 'PE / UL', '#bc8cff', put, ul, minDenominator)]
   }
   if (key === 'ce_pe' && ce && pe) {
-    const times = commonTimes(ce, pe)
-    const call = moveSeries('ce', 'CE', '#3fb950', ce, times)
-    const put = moveSeries('pe', 'PE', '#bc8cff', pe, times)
+    const times = anchor ? anchor.map(c => c.time) : commonTimes(ce, pe)
+    const call = moveSeries('ce', 'CE', '#3fb950', alignToTimes(ce, times), times)
+    const put = moveSeries('pe', 'PE', '#bc8cff', alignToTimes(pe, times), times)
     return [ratioSeries('ce_pe_ratio', 'CE / PE', '#f0883e', call, put, minDenominator)]
   }
   if (key === 'ce_ul_pe_ul' && ce && pe) {
-    const times = commonTimes(commonTimes(underlying, ce).map(time => ({ time, close: 0 })), pe)
-    const ul = moveSeries('underlying', 'Underlying', '#79c0ff', underlying, times)
-    const call = moveSeries('ce', 'CE', '#3fb950', ce, times)
-    const put = moveSeries('pe', 'PE', '#bc8cff', pe, times)
+    const times = anchor
+      ? anchor.map(c => c.time)
+      : commonTimes(commonTimes(underlying, ce).map(time => ({ time, close: 0 })), pe)
+    const ul = moveSeries('underlying', 'Underlying', '#79c0ff', alignToTimes(underlying, times), times)
+    const call = moveSeries('ce', 'CE', '#3fb950', alignToTimes(ce, times), times)
+    const put = moveSeries('pe', 'PE', '#bc8cff', alignToTimes(pe, times), times)
     const ceUl = ratioSeries('ce_underlying_ratio_inner', 'CE / UL', '#3fb950', call, ul, minDenominator)
     const peUl = ratioSeries('pe_underlying_ratio_inner', 'PE / UL', '#bc8cff', put, ul, minDenominator)
     return [ratioSeries('ce_ul_pe_ul_ratio', '(CE/UL)/(PE/UL)', '#f778ba', ceUl, peUl, minDenominator)]
