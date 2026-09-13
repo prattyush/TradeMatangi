@@ -80,3 +80,102 @@ export function useSSE(sessionId: string | null, onMessage: SSECallback, onRecon
     }
   }, [connect])
 }
+
+export function useMultiSSE(sessionIds: string[], onMessage: SSECallback, onReconnect?: (sessionId: string) => void) {
+  const onMessageRef = useRef(onMessage)
+  const onReconnectRef = useRef(onReconnect)
+  const connectionsRef = useRef<Map<string, {
+    es: EventSource | null
+    retryTimeout: ReturnType<typeof setTimeout> | null
+    retryDelay: number
+    lastEventId: string | null
+    hasOpened: boolean
+  }>>(new Map())
+  const idsKey = sessionIds.join('|')
+
+  onMessageRef.current = onMessage
+  onReconnectRef.current = onReconnect
+
+  const closeConnection = useCallback((sessionId: string) => {
+    const conn = connectionsRef.current.get(sessionId)
+    if (!conn) return
+    conn.es?.close()
+    if (conn.retryTimeout) clearTimeout(conn.retryTimeout)
+    connectionsRef.current.delete(sessionId)
+  }, [])
+
+  const connectOne = useCallback((sessionId: string) => {
+    const existing = connectionsRef.current.get(sessionId)
+    if (existing?.es) return
+
+    const conn = existing ?? {
+      es: null,
+      retryTimeout: null,
+      retryDelay: 1000,
+      lastEventId: null,
+      hasOpened: false,
+    }
+    if (conn.retryTimeout) {
+      clearTimeout(conn.retryTimeout)
+      conn.retryTimeout = null
+    }
+
+    const es = new EventSource(api.getSSEUrl(sessionId, conn.lastEventId))
+    conn.es = es
+    connectionsRef.current.set(sessionId, conn)
+
+    es.onopen = () => {
+      conn.retryDelay = 1000
+      if (conn.hasOpened) onReconnectRef.current?.(sessionId)
+      conn.hasOpened = true
+    }
+
+    es.onmessage = (e) => {
+      try {
+        if (e.lastEventId) conn.lastEventId = e.lastEventId
+        const data = JSON.parse(e.data) as Record<string, unknown>
+        onMessageRef.current(data)
+        conn.retryDelay = 1000
+      } catch {
+        // ignore malformed events
+      }
+    }
+
+    es.onerror = () => {
+      es.close()
+      conn.es = null
+      conn.retryTimeout = setTimeout(() => {
+        conn.retryDelay = Math.min(conn.retryDelay * 2, 30000)
+        connectOne(sessionId)
+      }, conn.retryDelay)
+    }
+  }, [])
+
+  useEffect(() => {
+    const desired = new Set(sessionIds.filter(Boolean))
+    for (const id of Array.from(connectionsRef.current.keys())) {
+      if (!desired.has(id)) closeConnection(id)
+    }
+    for (const id of desired) connectOne(id)
+    return () => {}
+  }, [idsKey, connectOne, closeConnection]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    const onVisibilityChange = () => {
+      if (document.visibilityState !== 'visible') return
+      for (const id of sessionIds) {
+        const conn = connectionsRef.current.get(id)
+        if (conn) conn.retryDelay = 1000
+        if (!conn?.es) connectOne(id)
+      }
+    }
+    document.addEventListener('visibilitychange', onVisibilityChange)
+    return () => document.removeEventListener('visibilitychange', onVisibilityChange)
+  }, [idsKey, connectOne]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    return () => {
+      for (const id of Array.from(connectionsRef.current.keys())) closeConnection(id)
+    }
+  }, [closeConnection])
+}

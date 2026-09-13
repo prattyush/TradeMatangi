@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from datetime import datetime, timezone
 from typing import Callable
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -10,6 +11,9 @@ from app.models.schemas import (
     SimulationStatusResponse,
     SimulationState,
     UpdatePaneStrikeRequest,
+    SessionGroupResponse,
+    SessionGroupMember,
+    RenameSessionGroupMemberRequest,
 )
 from app.services import simulation as sim_svc
 from app.config import SUPPORTED_SYMBOLS
@@ -18,6 +22,135 @@ from app.dependencies import get_request_user_id
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/simulation", tags=["simulation"])
+
+
+def _session_response(session, group=None) -> SimulationStartResponse:
+    group = group or (session.group_id and __import__("app.services.session_group_service", fromlist=["get_group"]).get_group(session.group_id, session.user_id))
+    return SimulationStartResponse(
+        session_id=session.session_id, symbol=session.symbol, date=session.date,
+        start_time=session.start_time, speed=session.speed, session_capital=session.session_capital,
+        instrument_type=session.instrument_type, strike=session.strike, expiry=session.expiry,
+        right=session.right, strike_ce=session.strike_ce, strike_pe=session.strike_pe,
+        brokerage_per_order=session.brokerage_per_order, session_type=session.session_type,
+        state=session.state, stepwise=session.stepwise,
+        total_bars=session.total_bars if session.stepwise else None,
+        group_id=session.group_id, clock_family=group.get("clock_family") if group else None,
+        group_state=group.get("state") if group else None,
+        group_current_time=group.get("current_time") if group else None,
+        session_alias=session.session_alias, wallet_ledger_id=session.wallet_ledger_id,
+    )
+
+
+def _group_response(group: dict) -> SessionGroupResponse:
+    members = []
+    for member in group.get("members", []):
+        session = sim_svc.get_session(member["session_id"])
+        members.append(SessionGroupMember(**member, state=session.state if session else None))
+    return SessionGroupResponse(group_id=group["group_id"], date=group["date"],
+        clock_family=group["clock_family"], state=group["state"], speed=group["speed"],
+        current_time=group.get("current_time"), strategy_interval_secs=group.get("strategy_interval_secs"), members=members)
+
+
+def _has_live_group_session(group: dict) -> bool:
+    for session_id in group.get("member_session_ids", []):
+        session = sim_svc.get_session(session_id)
+        if session and session.state != sim_svc.SimulationState.ENDED:
+            return True
+    return False
+
+
+def _active_group_with_live_sessions(group: dict | None) -> dict | None:
+    if not group:
+        return None
+    if _has_live_group_session(group):
+        return group
+    try:
+        from app.services import session_group_service as groups
+        groups.update_clock(group, state="ended")
+    except Exception:
+        logger.exception("Could not end stale session group %s", group.get("group_id"))
+    return None
+
+
+def _delete_existing_context_sessions(user_id: str, date: str, session_type: str, symbol: str, instrument_type: str) -> None:
+    from app.services.session_cleanup_service import delete_session_cascade
+    all_sessions = sim_svc.find_all_sessions_by_context(
+        user_id, symbol, date, session_type, instrument_type
+    )
+    logger.info("start_simulation: override requested - cascade deleting %d session(s)", len(all_sessions))
+    for record in all_sessions:
+        sid = record["session_id"]
+        active = sim_svc.get_session(sid)
+        if active:
+            sim_svc.stop_session(active)
+        try:
+            delete_session_cascade(sid, user_id, date)
+        except Exception:
+            logger.exception("start_simulation: failed to cascade delete session %s", sid)
+
+
+def _normalise_option_contract_request(req: SimulationStartRequest) -> None:
+    """Defend against stale client option metadata after symbol/date switches."""
+    if req.instrument_type != "options" or req.expiry is None:
+        return
+    try:
+        from app.services import options_service
+        expected_expiry = options_service.get_expiry_date(req.symbol, req.date)
+        if req.expiry != expected_expiry:
+            logger.warning(
+                "start_simulation: correcting stale expiry for %s %s: %s -> %s",
+                req.symbol, req.date, req.expiry, expected_expiry,
+            )
+            req.expiry = expected_expiry
+
+        requested_strikes = [
+            strike for strike in (req.strike, req.strike_ce, req.strike_pe)
+            if strike is not None
+        ]
+        has_obvious_cross_symbol_strike = (
+            (req.symbol == "BSESEN" and any(int(strike) < 50000 for strike in requested_strikes)) or
+            (req.symbol == "NIFTY" and any(int(strike) > 50000 for strike in requested_strikes))
+        )
+
+        # Historical sim/stepwise sessions must have the selected symbol/date
+        # cached before strike validation.  Otherwise a stale NIFTY strike can
+        # slip into a newly-added SENSEX session when the cache miss makes
+        # get_underlying_price_at() return None.
+        if req.session_type not in ("paper", "real") or has_obvious_cross_symbol_strike:
+            _ensure_session_data(req.symbol, req.date)
+
+        start_time = req.start_time if len(req.start_time) == 8 else f"{req.start_time}:00"
+        ts = int(datetime.strptime(f"{req.date} {start_time}", "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc).timestamp())
+        underlying = options_service.get_underlying_price_at(req.symbol, req.date, ts)
+        if underlying is None or underlying <= 0:
+            if has_obvious_cross_symbol_strike:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"Could not validate option strikes for {req.symbol} on {req.date}. "
+                        "Please retry after the underlying data loads."
+                    ),
+                )
+            return
+        atm = options_service.get_atm_strike(req.symbol, underlying)
+        interval = options_service.STRIKE_INTERVALS.get(req.symbol, 5)
+        max_distance = max(interval * 30, atm * 0.15)
+
+        ce = req.strike_ce if req.strike_ce is not None else req.strike
+        pe = req.strike_pe if req.strike_pe is not None else req.strike
+        stale = has_obvious_cross_symbol_strike or any(abs(int(strike) - atm) > max_distance for strike in (req.strike, ce, pe) if strike is not None)
+        if stale:
+            logger.warning(
+                "start_simulation: correcting stale option strikes for %s %s underlying=%.2f atm=%s strike=%s ce=%s pe=%s",
+                req.symbol, req.date, underlying, atm, req.strike, req.strike_ce, req.strike_pe,
+            )
+            req.strike = atm
+            req.strike_ce = atm
+            req.strike_pe = atm
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("start_simulation: option contract normalisation failed")
 
 
 def _ensure_session_data(symbol: str, date: str) -> None:
@@ -80,12 +213,57 @@ async def start_simulation(
     req: SimulationStartRequest,
     user_id: str = Depends(get_request_user_id),
 ):
+    internal_session_type = req.session_type
     is_stepwise = (req.session_type == "stepwise")
     is_paper = (req.session_type == "paper")
     is_real = (req.session_type == "real")
 
     if is_stepwise and (is_paper or is_real):
         raise HTTPException(status_code=400, detail="Stepwise mode is only supported for historical simulation (session_type='stepwise')")
+
+    # Resolve the session group before any date-sensitive work. Add-session
+    # requests inherit the group's locked date/speed/clock, so using the form's
+    # stale date here can cache or validate the wrong market data.
+    from app.services import session_group_service as groups
+    active_group = _active_group_with_live_sessions(groups.get_active_group(user_id))
+    if req.group_id:
+        group = groups.get_group(req.group_id, user_id)
+        if not group:
+            raise HTTPException(status_code=404, detail="Session group not found")
+        if not _has_live_group_session(group):
+            groups.update_clock(group, state="ended")
+            raise HTTPException(status_code=410, detail="Session group has ended. Start a new session.")
+        req.date = group["date"]
+        if req.override:
+            _delete_existing_context_sessions(user_id, req.date, internal_session_type, req.symbol, req.instrument_type)
+            for member in list(group.get("members", [])):
+                if (member.get("symbol") == req.symbol and
+                    member.get("session_type") == internal_session_type and
+                    member.get("instrument_type") == req.instrument_type):
+                    groups.remove_member(group, member["session_id"])
+            if group.get("state") == "ended":
+                groups.update_clock(group, state="running")
+        try:
+            groups.validate_add(group, date=group["date"], session_type=internal_session_type, speed=req.speed,
+                strategy_interval_secs=req.strategy_interval_secs, symbol=req.symbol, instrument_type=req.instrument_type)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+    elif active_group:
+        raise HTTPException(status_code=409, detail="You already have an active session group. Use Add Session to add a member.")
+    else:
+        group = groups.create_group(user_id, req.date, internal_session_type, req.speed, req.strategy_interval_secs)
+
+    # Group fields are locked values, never values supplied by a later tab.
+    req.date = group["date"]
+    if group["clock_family"] == "sim":
+        req.speed = float(group["speed"])
+        if group.get("current_time"):
+            from datetime import datetime, timezone
+            req.start_time = datetime.fromtimestamp(int(group["current_time"]), tz=timezone.utc).strftime("%H:%M:%S")
+    if group["clock_family"] == "stepwise":
+        req.strategy_interval_secs = int(group["strategy_interval_secs"])
+
+    _normalise_option_contract_request(req)
 
     if is_real:
         # Real trading: whitelist + Kotak auth + fund sync
@@ -150,9 +328,6 @@ async def start_simulation(
     else:
         raise HTTPException(status_code=400, detail="instrument_type must be 'equity' or 'options'")
 
-    # Stepwise is its own session_type (stored in DB and used for analysis filtering)
-    internal_session_type = req.session_type
-
     # Enforce one session per (user, symbol, date, type) per day.
     # For paper/real: resume the existing session so positions and trades remain visible
     # under the same session_id after a reconnect.
@@ -165,18 +340,7 @@ async def start_simulation(
         existing_session_id = existing_record["session_id"]
         active = sim_svc.get_session(existing_session_id)
         if req.override:
-            # Cascade delete all previous sessions matching this exact context.
-            from app.services.session_cleanup_service import delete_session_cascade
-            all_sessions = sim_svc.find_all_sessions_by_context(
-                user_id, req.symbol, req.date, internal_session_type, req.instrument_type
-            )
-            logger.info("start_simulation: override requested — cascade deleting %d session(s)", len(all_sessions))
-            for s in all_sessions:
-                sid = s["session_id"]
-                try:
-                    delete_session_cascade(sid, user_id, req.date)
-                except Exception:
-                    logger.exception("start_simulation: failed to cascade delete session %s", sid)
+            _delete_existing_context_sessions(user_id, req.date, internal_session_type, req.symbol, req.instrument_type)
             existing_record = None
         # For sim and stepwise sessions: stop the old one and create fresh with new params
         elif internal_session_type in ("sim", "stepwise"):
@@ -189,25 +353,7 @@ async def start_simulation(
         elif active:
             # Paper/real: already running in memory — return it (idempotent start)
             logger.info("start_simulation: returning already-active session %s", existing_session_id)
-            return SimulationStartResponse(
-                session_id=active.session_id,
-                symbol=active.symbol,
-                date=active.date,
-                start_time=active.start_time,
-                speed=active.speed,
-                session_capital=active.session_capital,
-                instrument_type=active.instrument_type,
-                strike=active.strike,
-                expiry=active.expiry,
-                right=active.right,
-                strike_ce=active.strike_ce,
-                strike_pe=active.strike_pe,
-                brokerage_per_order=active.brokerage_per_order,
-                session_type=active.session_type,
-                state=active.state,
-                stepwise=active.stepwise,
-                total_bars=None,
-            )
+            return _session_response(active, group)
         else:
             # Paper/real: session exists in DB but not in memory — rebuild and resume.
             # Forward the request's CE/PE strikes so the user can change OTM on each restart.
@@ -238,25 +384,7 @@ async def start_simulation(
                 except Exception as exc:
                     logger.warning("start_simulation: Kotak wallet sync on resume failed: %s", exc)
             sim_svc.start_session(session)
-            return SimulationStartResponse(
-                session_id=session.session_id,
-                symbol=session.symbol,
-                date=session.date,
-                start_time=session.start_time,
-                speed=session.speed,
-                session_capital=session.session_capital,
-                instrument_type=session.instrument_type,
-                strike=session.strike,
-                expiry=session.expiry,
-                right=session.right,
-                strike_ce=session.strike_ce,
-                strike_pe=session.strike_pe,
-                brokerage_per_order=session.brokerage_per_order,
-                session_type=session.session_type,
-                state=session.state,
-                stepwise=session.stepwise,
-                total_bars=None,
-            )
+            return _session_response(session, group)
 
     session = sim_svc.create_session(
         symbol=req.symbol,
@@ -274,27 +402,15 @@ async def start_simulation(
         strategy_interval_secs=req.strategy_interval_secs,
         session_type=internal_session_type,
         stepwise=is_stepwise,
+        group_id=group["group_id"],
+        session_alias=req.session_alias,
+        wallet_ledger_id=(f"paper:{group['group_id']}" if internal_session_type == "paper" else f"real:{req.date}" if internal_session_type == "real" else f"sim:{req.date}"),
     )
+    groups.add_member(group, {"session_id": session.session_id, "symbol": session.symbol,
+        "session_type": session.session_type, "instrument_type": session.instrument_type,
+        "session_alias": session.session_alias})
     sim_svc.start_session(session)
-    return SimulationStartResponse(
-        session_id=session.session_id,
-        symbol=session.symbol,
-        date=session.date,
-        start_time=session.start_time,
-        speed=session.speed,
-        session_capital=session.session_capital,
-        instrument_type=session.instrument_type,
-        strike=session.strike,
-        expiry=session.expiry,
-        right=session.right,
-        strike_ce=session.strike_ce,
-        strike_pe=session.strike_pe,
-        brokerage_per_order=session.brokerage_per_order,
-        session_type="stepwise" if is_stepwise else session.session_type,
-        state=session.state,
-        stepwise=session.stepwise,
-        total_bars=session.total_bars if session.stepwise else None,
-    )
+    return _session_response(session, group)
 
 
 @router.get("/check-existing")
@@ -323,19 +439,27 @@ async def check_existing_session(
 
 
 @router.post("/pause")
-async def pause_simulation(req: SimulationControlRequest):
+async def pause_simulation(req: SimulationControlRequest, user_id: str = Depends(get_request_user_id)):
     session = sim_svc.get_session(req.session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
+    if session.user_id != user_id:
+        raise HTTPException(status_code=403, detail="Session does not belong to this user")
+    if session.group_id:
+        return await pause_group(session.group_id, user_id)
     sim_svc.pause_session(session)
     return {"status": session.state}
 
 
 @router.post("/resume")
-async def resume_simulation(req: SimulationControlRequest):
+async def resume_simulation(req: SimulationControlRequest, user_id: str = Depends(get_request_user_id)):
     session = sim_svc.get_session(req.session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
+    if session.user_id != user_id:
+        raise HTTPException(status_code=403, detail="Session does not belong to this user")
+    if session.group_id:
+        return await resume_group(session.group_id, user_id)
     sim_svc.resume_session(session)
     return {"status": session.state}
 
@@ -400,11 +524,19 @@ async def update_pane_strike(session_id: str, req: UpdatePaneStrikeRequest):
 
 
 @router.post("/stop")
-async def stop_simulation(req: SimulationControlRequest):
+async def stop_simulation(req: SimulationControlRequest, user_id: str = Depends(get_request_user_id)):
     session = sim_svc.get_session(req.session_id)
     if not session:
         return {"status": "stopped"}
+    if session.user_id != user_id:
+        raise HTTPException(status_code=403, detail="Session does not belong to this user")
+    group_id = session.group_id
     sim_svc.stop_session(session)
+    if group_id:
+        from app.services import session_group_service as groups
+        group = groups.get_group(group_id, user_id)
+        if group:
+            groups.remove_member(group, req.session_id)
     return {"status": "stopped"}
 
 
@@ -436,25 +568,72 @@ async def get_active_session(
         raise HTTPException(status_code=403, detail="Session does not belong to this user")
     if session.state == sim_svc.SimulationState.ENDED:
         raise HTTPException(status_code=410, detail="Session has ended")
-    return SimulationStartResponse(
-        session_id=session.session_id,
-        symbol=session.symbol,
-        date=session.date,
-        start_time=session.start_time,
-        speed=session.speed,
-        session_capital=session.session_capital,
-        instrument_type=session.instrument_type,
-        strike=session.strike,
-        expiry=session.expiry,
-        right=session.right,
-        strike_ce=session.strike_ce,
-        strike_pe=session.strike_pe,
-        brokerage_per_order=session.brokerage_per_order,
-        session_type=session.session_type,
-        state=session.state,
-        stepwise=session.stepwise,
-        total_bars=session.total_bars if session.stepwise else None,
-    )
+    return _session_response(session)
+
+
+@router.get("/groups/active", response_model=SessionGroupResponse | None)
+async def get_active_group(user_id: str = Depends(get_request_user_id)):
+    from app.services import session_group_service as groups
+    group = _active_group_with_live_sessions(groups.get_active_group(user_id))
+    return _group_response(group) if group else None
+
+
+@router.patch("/groups/{group_id}/members/{session_id}", response_model=SessionGroupMember)
+async def rename_group_member(group_id: str, session_id: str, req: RenameSessionGroupMemberRequest,
+                              user_id: str = Depends(get_request_user_id)):
+    from app.services import session_group_service as groups
+    group = groups.get_group(group_id, user_id)
+    if not group:
+        raise HTTPException(status_code=404, detail="Session group not found")
+    try:
+        member = groups.rename_member(group, session_id, req.session_alias)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    session = sim_svc.get_session(session_id)
+    if session:
+        session.session_alias = member.get("session_alias")
+        sim_svc._upsert_session_to_db(session)
+    return SessionGroupMember(**member, state=session.state if session else None)
+
+
+async def _control_group(group_id: str, user_id: str, action: str):
+    from app.services import session_group_service as groups
+    group = groups.get_group(group_id, user_id)
+    if not group:
+        raise HTTPException(status_code=404, detail="Session group not found")
+    if group["clock_family"] == "live":
+        raise HTTPException(status_code=400, detail="Live session groups cannot be paused")
+    for session_id in group["member_session_ids"]:
+        session = sim_svc.get_session(session_id)
+        if session:
+            (sim_svc.pause_session if action == "pause" else sim_svc.resume_session)(session)
+    groups.update_clock(group, state="paused" if action == "pause" else "running")
+    return _group_response(group)
+
+
+@router.post("/groups/{group_id}/pause", response_model=SessionGroupResponse)
+async def pause_group(group_id: str, user_id: str = Depends(get_request_user_id)):
+    return await _control_group(group_id, user_id, "pause")
+
+
+@router.post("/groups/{group_id}/resume", response_model=SessionGroupResponse)
+async def resume_group(group_id: str, user_id: str = Depends(get_request_user_id)):
+    return await _control_group(group_id, user_id, "resume")
+
+
+@router.post("/groups/{group_id}/next-bar", response_model=SessionGroupResponse)
+async def next_group_bar(group_id: str, user_id: str = Depends(get_request_user_id)):
+    from app.services import session_group_service as groups
+    group = groups.get_group(group_id, user_id)
+    if not group:
+        raise HTTPException(status_code=404, detail="Session group not found")
+    if group["clock_family"] != "stepwise":
+        raise HTTPException(status_code=400, detail="Next Bar is only available for Stepwise groups")
+    for session_id in group["member_session_ids"]:
+        session = sim_svc.get_session(session_id)
+        if session:
+            session.step_event.set()
+    return _group_response(group)
 
 
 class AICommandsActiveRequest(BaseModel):

@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef } from 'react'
-import api, { Trade, Position, Order, TickEvent, BarCandle, InsufficientFundsError, SimulationStartResponse } from '../services/api'
+import api, { Trade, Position, Order, TickEvent, BarCandle, InsufficientFundsError, SimulationStartResponse, SessionGroupResponse } from '../services/api'
 
 export type SessionState = 'idle' | 'running' | 'paused' | 'ended'
 
@@ -22,6 +22,8 @@ const FLAT_POSITION = (symbol: string): Position => ({
 
 export interface SimulationState {
   sessionId: string | null
+  groupId: string | null
+  group: SessionGroupResponse | null
   sessionState: SessionState
   symbol: string
   date: string
@@ -69,7 +71,25 @@ export interface SimulationState {
   lastStartedContext: { symbol: string; date: string; sessionType: string; instrumentType: 'equity' | 'options' } | null
 }
 
+interface SessionRuntimeCache {
+  latestEquityTick: TickEvent | null
+  latestCETick: TickEvent | null
+  latestPETick: TickEvent | null
+  currentPrice: number
+  currentPriceCE: number
+  currentPricePE: number
+  lastCompletedBarEquity: BarCandle | null
+  lastCompletedBarCE: BarCandle | null
+  lastCompletedBarPE: BarCandle | null
+  barPaused?: boolean
+  barIndex?: number
+  totalBars?: number
+  sessionState?: SessionState
+}
+
 export interface InstrumentConfig {
+  symbol?: string
+  date?: string
   instrument_type: 'equity' | 'options'
   strike?: number
   expiry?: string
@@ -79,15 +99,21 @@ export interface InstrumentConfig {
   strategy_interval_secs?: number
   session_type?: 'sim' | 'paper' | 'real' | 'stepwise'
   override?: boolean
+  group_id?: string
+  session_alias?: string
 }
 
 export function useSimulation() {
   // Ref keeps the latest equity tick accessible synchronously inside buy/sell/addTradeFromSSE
   // callbacks without adding latestEquityTick to their dependency arrays.
   const latestEquityTickRef = useRef<TickEvent | null>(null)
+  const attachGenerationRef = useRef(0)
+  const sessionRuntimeRef = useRef<Record<string, SessionRuntimeCache>>({})
 
   const [state, setState] = useState<SimulationState>({
     sessionId: null,
+    groupId: null,
+    group: null,
     sessionState: 'idle',
     symbol: 'NIFTY',
     date: '2026-05-06',
@@ -130,24 +156,29 @@ export function useSimulation() {
   })
 
   const activateSession = useCallback(async (res: SimulationStartResponse) => {
+    const generation = ++attachGenerationRef.current
     const sym = res.symbol
     const instrumentType = (res.instrument_type as 'equity' | 'options') || 'equity'
     const sessionType = res.session_type ?? 'sim'
     const restoredState = res.state === 'paused' ? 'paused' : 'running'
+    const cached = sessionRuntimeRef.current[res.session_id]
+    if (cached?.latestEquityTick) latestEquityTickRef.current = cached.latestEquityTick
+    else latestEquityTickRef.current = null
     setState(s => ({
       ...s,
       sessionId: res.session_id,
+      groupId: res.group_id,
       sessionState: restoredState,
       symbol: sym,
       date: res.date,
       startTime: res.start_time,
       sseUrl: api.getSSEUrl(res.session_id),
-      latestEquityTick: null,
-      latestCETick: null,
-      latestPETick: null,
-      currentPrice: 0,
-      currentPriceCE: 0,
-      currentPricePE: 0,
+      latestEquityTick: cached?.latestEquityTick ?? null,
+      latestCETick: cached?.latestCETick ?? null,
+      latestPETick: cached?.latestPETick ?? null,
+      currentPrice: cached?.currentPrice ?? 0,
+      currentPriceCE: cached?.currentPriceCE ?? 0,
+      currentPricePE: cached?.currentPricePE ?? 0,
       trades: [],
       historicalTrades: [],
       position: FLAT_POSITION(sym),
@@ -166,15 +197,16 @@ export function useSimulation() {
       lastStartedContext: { symbol: sym, date: res.date, sessionType, instrumentType },
       brokeragePerOrder: res.brokerage_per_order ?? 0,
       stepwise: res.stepwise === true,
-      barPaused: false,
-      barIndex: 0,
+      barPaused: cached?.barPaused ?? false,
+      barIndex: cached?.barIndex ?? 0,
       totalBars: res.total_bars ?? 0,
-      lastCompletedBarEquity: null,
-      lastCompletedBarCE: null,
-      lastCompletedBarPE: null,
+      lastCompletedBarEquity: cached?.lastCompletedBarEquity ?? null,
+      lastCompletedBarCE: cached?.lastCompletedBarCE ?? null,
+      lastCompletedBarPE: cached?.lastCompletedBarPE ?? null,
     }))
 
     api.getTradesByContext(sym, res.date, instrumentType, sessionType).then(({ trades }) => {
+      if (generation !== attachGenerationRef.current) return
       setState(s => ({ ...s, historicalTrades: trades.filter(t => t.session_id !== res.session_id) }))
     }).catch(() => {})
 
@@ -185,6 +217,7 @@ export function useSimulation() {
       api.getPosition(res.session_id, 'PE').catch(() => FLAT_POSITION(sym)),
       api.getOrders(res.session_id, true).catch(() => []),
     ])
+    if (generation !== attachGenerationRef.current) return
     setState(s => ({
       ...s,
       trades,
@@ -196,11 +229,55 @@ export function useSimulation() {
     }))
   }, [])
 
+  const restoreActiveGroup = useCallback(async () => {
+    const group = await api.getActiveSessionGroup()
+    if (!group?.members.length) return null
+    const saved = localStorage.getItem(`session-group:${group.group_id}`)
+    let selected = group.members[0].session_id
+    try {
+      const candidate = JSON.parse(saved || '{}').selectedSessionId
+      if (group.members.some(m => m.session_id === candidate)) selected = candidate
+    } catch {}
+    const response = await api.getActiveSimulation(selected)
+    await activateSession(response)
+    setState(s => ({ ...s, groupId: group.group_id, group }))
+    return group
+  }, [activateSession])
+
+  const selectGroupMember = useCallback(async (sessionId: string) => {
+    const response = await api.getActiveSimulation(sessionId)
+    await activateSession(response)
+    if (response.group_id) {
+      localStorage.setItem(`session-group:${response.group_id}`, JSON.stringify({ version: 2, selectedSessionId: sessionId }))
+      const group = await api.getActiveSessionGroup().catch(() => null)
+      setState(s => ({ ...s, groupId: response.group_id, group }))
+    }
+    return response
+  }, [activateSession])
+
+  const refreshGroup = useCallback(async () => {
+    const group = await api.getActiveSessionGroup()
+    setState(s => ({ ...s, groupId: group?.group_id ?? null, group }))
+    return group
+  }, [])
+
   const setLatestTick = useCallback((tick: TickEvent) => {
-    // Update ref synchronously so any concurrent buy/sell/handleOrderFilled reads the latest price
-    if (!tick.right) latestEquityTickRef.current = tick
+    const eventSessionId = tick.session_id
     setState(s => {
-      const update: Partial<SimulationState> = {}
+      const sid = eventSessionId ?? s.sessionId
+      if (!sid) return s
+      const cached = sessionRuntimeRef.current[sid] ?? {
+        latestEquityTick: null,
+        latestCETick: null,
+        latestPETick: null,
+        currentPrice: 0,
+        currentPriceCE: 0,
+        currentPricePE: 0,
+        lastCompletedBarEquity: null,
+        lastCompletedBarCE: null,
+        lastCompletedBarPE: null,
+      }
+      const update: Partial<SessionRuntimeCache> = {}
       if (!tick.right) {
         update.currentPrice = tick.close
         update.latestEquityTick = tick
@@ -211,15 +288,27 @@ export function useSimulation() {
         update.currentPricePE = tick.close
         update.latestPETick = tick
       }
+      const nextCache = { ...cached, ...update }
+      sessionRuntimeRef.current[sid] = nextCache
+      if (sid !== s.sessionId) return s
+      // Update ref synchronously so any concurrent buy/sell/handleOrderFilled reads the latest price.
+      if (!tick.right) latestEquityTickRef.current = tick
       return { ...s, ...update }
     })
   }, [])
 
-  const handleSessionEnded = useCallback(() => {
-    setState(s => ({
-      ...s, sessionState: 'ended', sseUrl: null,
-      latestEquityTick: null, latestCETick: null, latestPETick: null,
-    }))
+  const handleSessionEnded = useCallback((sessionId?: string) => {
+    const sid = sessionId
+    if (sid && sessionRuntimeRef.current[sid]) {
+      sessionRuntimeRef.current[sid] = { ...sessionRuntimeRef.current[sid], sessionState: 'ended' }
+    }
+    setState(s => {
+      if (sid && sid !== s.sessionId) return s
+      return {
+        ...s, sessionState: 'ended', sseUrl: null,
+        latestEquityTick: null, latestCETick: null, latestPETick: null,
+      }
+    })
   }, [])
 
   const updateSymbol = useCallback((symbol: string) => {
@@ -244,13 +333,19 @@ export function useSimulation() {
     instrumentConfig?: InstrumentConfig,
   ) => {
     const res = await api.startSimulation({
-      symbol: state.symbol,
-      date: state.date,
+      symbol: instrumentConfig?.symbol ?? state.symbol,
+      date: instrumentConfig?.date ?? state.date,
       start_time: startTime,
       speed,
       ...(instrumentConfig || { instrument_type: 'equity' }),
     })
     await activateSession(res)
+    // The start response describes the selected member; fetch the authoritative
+    // member list so the switcher is available immediately after first start.
+    if (res.group_id) {
+      const group = await api.getActiveSessionGroup().catch(() => null)
+      setState(s => ({ ...s, groupId: res.group_id, group }))
+    }
     return res.session_id
   }, [state.symbol, state.date, activateSession])
 
@@ -691,16 +786,43 @@ export function useSimulation() {
     equity: BarCandle | null,
     ce: BarCandle | null,
     pe: BarCandle | null,
+    sessionId?: string,
   ) => {
-    setState(s => ({
-      ...s,
-      barPaused: true,
-      barIndex,
-      totalBars,
-      lastCompletedBarEquity: equity ?? s.lastCompletedBarEquity,
-      lastCompletedBarCE: ce ?? s.lastCompletedBarCE,
-      lastCompletedBarPE: pe ?? s.lastCompletedBarPE,
-    }))
+    setState(s => {
+      const sid = sessionId ?? s.sessionId
+      if (sid) {
+        const cached = sessionRuntimeRef.current[sid] ?? {
+          latestEquityTick: null,
+          latestCETick: null,
+          latestPETick: null,
+          currentPrice: 0,
+          currentPriceCE: 0,
+          currentPricePE: 0,
+          lastCompletedBarEquity: null,
+          lastCompletedBarCE: null,
+          lastCompletedBarPE: null,
+        }
+        sessionRuntimeRef.current[sid] = {
+          ...cached,
+          barPaused: true,
+          barIndex,
+          totalBars,
+          lastCompletedBarEquity: equity ?? cached.lastCompletedBarEquity,
+          lastCompletedBarCE: ce ?? cached.lastCompletedBarCE,
+          lastCompletedBarPE: pe ?? cached.lastCompletedBarPE,
+        }
+      }
+      if (sid && sid !== s.sessionId) return s
+      return {
+        ...s,
+        barPaused: true,
+        barIndex,
+        totalBars,
+        lastCompletedBarEquity: equity ?? s.lastCompletedBarEquity,
+        lastCompletedBarCE: ce ?? s.lastCompletedBarCE,
+        lastCompletedBarPE: pe ?? s.lastCompletedBarPE,
+      }
+    })
   }, [])
 
   const nextBar = useCallback(async () => {
@@ -871,6 +993,9 @@ export function useSimulation() {
     updateSessionStrike,
     startSession,
     attachToActiveSession,
+    restoreActiveGroup,
+    selectGroupMember,
+    refreshGroup,
     refreshSessionData,
     stopSession,
     pauseSession,

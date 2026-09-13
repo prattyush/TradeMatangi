@@ -73,6 +73,7 @@ export interface FineSearchResult {
 
 export interface TickEvent {
   type: 'tick'
+  session_id?: string
   time: number
   open: number
   high: number
@@ -137,6 +138,8 @@ export interface SimulationStartRequest {
   session_type?: 'sim' | 'paper' | 'real' | 'stepwise'
   stepwise?: boolean
   override?: boolean
+  group_id?: string
+  session_alias?: string
 }
 
 export interface UserSettingsResponse {
@@ -211,6 +214,32 @@ export interface SimulationStartResponse {
   state?: 'idle' | 'running' | 'paused' | 'ended' | null
   stepwise: boolean
   total_bars: number | null
+  group_id: string | null
+  clock_family: 'sim' | 'stepwise' | 'live' | null
+  group_state: 'running' | 'paused' | 'ended' | null
+  group_current_time: string | null
+  session_alias: string | null
+  wallet_ledger_id: string
+}
+
+export interface SessionGroupMember {
+  session_id: string
+  symbol: string
+  session_type: 'sim' | 'stepwise' | 'paper' | 'real'
+  instrument_type: 'equity' | 'options'
+  session_alias: string | null
+  state: 'idle' | 'running' | 'paused' | 'ended' | null
+}
+
+export interface SessionGroupResponse {
+  group_id: string
+  date: string
+  clock_family: 'sim' | 'stepwise' | 'live'
+  state: 'running' | 'paused' | 'ended'
+  speed: number
+  current_time: string | null
+  strategy_interval_secs: number | null
+  members: SessionGroupMember[]
 }
 
 export interface WalletResponse {
@@ -788,6 +817,40 @@ const api = {
     return res.json()
   },
 
+  async getActiveSessionGroup(): Promise<SessionGroupResponse | null> {
+    const res = await fetch(`${BACKEND_URL}/api/simulation/groups/active`, { headers: _authHeaders() })
+    if (res.status === 404 || res.status === 204) return null
+    if (!res.ok) throw new Error(`Active group fetch failed: ${res.status}`)
+    return res.json()
+  },
+
+  async renameSessionGroupMember(groupId: string, sessionId: string, session_alias: string | null): Promise<SessionGroupMember> {
+    const res = await fetch(`${BACKEND_URL}/api/simulation/groups/${groupId}/members/${sessionId}`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json', ..._authHeaders() },
+      body: JSON.stringify({ session_alias }),
+    })
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || 'Rename failed')
+    return res.json()
+  },
+
+  async pauseSessionGroup(groupId: string): Promise<SessionGroupResponse> {
+    const res = await fetch(`${BACKEND_URL}/api/simulation/groups/${groupId}/pause`, { method: 'POST', headers: _authHeaders() })
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || 'Pause failed')
+    return res.json()
+  },
+
+  async resumeSessionGroup(groupId: string): Promise<SessionGroupResponse> {
+    const res = await fetch(`${BACKEND_URL}/api/simulation/groups/${groupId}/resume`, { method: 'POST', headers: _authHeaders() })
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || 'Resume failed')
+    return res.json()
+  },
+
+  async nextSessionGroupBar(groupId: string): Promise<SessionGroupResponse> {
+    const res = await fetch(`${BACKEND_URL}/api/simulation/groups/${groupId}/next-bar`, { method: 'POST', headers: _authHeaders() })
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || 'Next Bar failed')
+    return res.json()
+  },
+
   async checkExistingSession(params: { symbol: string; date: string; session_type: string; instrument_type?: string }): Promise<{ exists: boolean; session: Record<string, unknown> | null }> {
     const qs = new URLSearchParams({
       symbol: params.symbol,
@@ -973,8 +1036,10 @@ const api = {
     return res.json()
   },
 
-  async getWallet(date: string): Promise<WalletResponse> {
-    const res = await fetch(`${BACKEND_URL}/api/wallet?date=${encodeURIComponent(date)}`, {
+  async getWallet(date: string, sessionId?: string | null): Promise<WalletResponse> {
+    const qs = new URLSearchParams({ date })
+    if (sessionId) qs.set('session_id', sessionId)
+    const res = await fetch(`${BACKEND_URL}/api/wallet?${qs}`, {
       headers: _authHeaders(),
     })
     if (!res.ok) throw new Error(`Wallet fetch failed: ${res.status}`)

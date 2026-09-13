@@ -106,6 +106,42 @@ const CANDLE_INTERVAL_SECS = (m: number) => m * 60
 const RATIO_PANEL_HEIGHT_RATIO = 0.18
 const RATIO_PANEL_EXPANDED_HEIGHT_RATIO = 0.25
 const MIN_RATIO_PANEL_HEIGHT = 90
+const CHART_DATA_CACHE_MAX = 80
+
+const chartDataCache = new Map<string, Promise<OHLCCandle[]>>()
+
+function rememberChartData(key: string, loader: () => Promise<OHLCCandle[]>, forceRefresh = false): Promise<OHLCCandle[]> {
+  if (!forceRefresh) {
+    const cached = chartDataCache.get(key)
+    if (cached) return cached.then(candles => candles.map(c => ({ ...c })))
+  }
+
+  const promise = loader()
+    .then(candles => candles.map(c => ({ ...c })))
+    .catch(err => {
+      chartDataCache.delete(key)
+      throw err
+    })
+
+  chartDataCache.set(key, promise)
+  if (chartDataCache.size > CHART_DATA_CACHE_MAX) {
+    const oldest = chartDataCache.keys().next().value
+    if (oldest) chartDataCache.delete(oldest)
+  }
+  return promise.then(candles => candles.map(c => ({ ...c })))
+}
+
+function historicalCacheKey(symbol: string, tradingDate: string, intervalMinutes: number, historicalDays?: number) {
+  return `hist:${symbol}:${tradingDate}:${intervalMinutes}:${historicalDays ?? ''}`
+}
+
+function preSessionCacheKey(symbol: string, tradingDate: string, startTime: string, intervalMinutes: number) {
+  return `pre:${symbol}:${tradingDate}:${startTime}:${intervalMinutes}`
+}
+
+function optionsCacheKey(symbol: string, tradingDate: string, strike: number, expiry: string, right: string, intervalMinutes: number, historicalDays?: number) {
+  return `opt:${symbol}:${tradingDate}:${strike}:${expiry}:${right}:${intervalMinutes}:${historicalDays ?? ''}`
+}
 
 function toCandle(c: OHLCCandle): CandlestickData {
   return { time: c.time as Time, open: c.open, high: c.high, low: c.low, close: c.close }
@@ -731,27 +767,35 @@ export default function Chart({
     let cancelled = false
     ;(async () => {
       try {
-        const [{ candles: histCandles }, preCandles] = await Promise.all([
-          api.getHistorical(symbol, tradingDate, intervalMinutes, historicalDays),
-          (() => {
-            // On refresh during a running session, extend pre-session to the current
-            // sim time so completed candles (e.g. 09:15, 09:18, 09:21) are restored
-            // immediately rather than rebuilt tick-by-tick. Guard with a date check so
-            // stale ticks from a previous session never poison a different trading date.
-            const currentTs = currentSimTimeRef.current
-            if (currentTs != null) {
-              const simDate = new Date(currentTs * 1000).toISOString().slice(0, 10)
-              if (simDate === tradingDate) {
-                const totalSecs = currentTs % 86400
-                const h = Math.floor(totalSecs / 3600)
-                const m = Math.floor((totalSecs % 3600) / 60)
-                const s = totalSecs % 60
-                const timeStr = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
-                return api.getPreSession(symbol, tradingDate, timeStr, intervalMinutes)
-              }
-            }
-            return startTime ? api.getPreSession(symbol, tradingDate, startTime, intervalMinutes) : Promise.resolve([])
-          })()
+        const currentTs = currentSimTimeRef.current
+        let preSessionTime: string | null = null
+        // On refresh during a running session, extend pre-session to the current
+        // sim time so completed candles (e.g. 09:15, 09:18, 09:21) are restored
+        // immediately rather than rebuilt tick-by-tick. Guard with a date check so
+        // stale ticks from a previous session never poison a different trading date.
+        if (currentTs != null) {
+          const simDate = new Date(currentTs * 1000).toISOString().slice(0, 10)
+          if (simDate === tradingDate) {
+            const totalSecs = currentTs % 86400
+            const h = Math.floor(totalSecs / 3600)
+            const m = Math.floor((totalSecs % 3600) / 60)
+            const s = totalSecs % 60
+            preSessionTime = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
+          }
+        }
+        if (!preSessionTime && startTime) preSessionTime = startTime
+
+        const [histCandles, preCandles] = await Promise.all([
+          rememberChartData(
+            `${historicalCacheKey(symbol, tradingDate, intervalMinutes, historicalDays)}:reload:${effectiveReloadKey}`,
+            () => api.getHistorical(symbol, tradingDate, intervalMinutes, historicalDays).then(res => res.candles),
+          ),
+          preSessionTime
+            ? rememberChartData(
+                `${preSessionCacheKey(symbol, tradingDate, preSessionTime, intervalMinutes)}:reload:${effectiveReloadKey}`,
+                () => api.getPreSession(symbol, tradingDate, preSessionTime, intervalMinutes),
+              )
+            : Promise.resolve([]),
         ])
         if (cancelled) return
 
@@ -820,8 +864,11 @@ export default function Chart({
     candleTimesRef.current = []
 
     let cancelled = false
-    api.getOptionsHistorical(symbol, tradingDate, strike, expiry, right, intervalMinutes, historicalDays)
-      .then(({ candles }) => {
+    rememberChartData(
+      `${optionsCacheKey(symbol, tradingDate, strike, expiry, right, intervalMinutes, historicalDays)}:reload:${effectiveReloadKey}`,
+      () => api.getOptionsHistorical(symbol, tradingDate, strike, expiry, right, intervalMinutes, historicalDays).then(res => res.candles),
+    )
+      .then((candles) => {
         if (cancelled) return
         // Only show candles BEFORE the session start window — live ticks will
         // append from startTime onwards. Loading future candles first would
