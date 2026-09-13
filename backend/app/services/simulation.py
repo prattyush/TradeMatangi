@@ -193,6 +193,9 @@ class SimulationSession:
     brokerage_per_order: float = 1.0    # flat brokerage per trade (from session start config)
     strategy_interval_secs: int = 180   # candle interval for all strategies (180=3min, 300=5min)
     session_type: str = "sim"           # "sim", "paper", "real", or "stepwise"
+    group_id: str | None = None
+    session_alias: str | None = None
+    wallet_ledger_id: str = ""
     stepwise: bool = False              # advance one bar per next-bar signal
     step_event: asyncio.Event = field(default_factory=asyncio.Event)
     current_bar_index: int = 0         # bars completed so far (stepwise)
@@ -283,6 +286,12 @@ def _upsert_session_to_db(session: SimulationSession) -> None:
             item["last_price_pe"] = Decimal(str(session.last_price_pe))
         if session.created_at:
             item["created_at"] = session.created_at
+        if session.group_id:
+            item["group_id"] = session.group_id
+        if session.session_alias:
+            item["session_alias"] = session.session_alias
+        if session.wallet_ledger_id:
+            item["wallet_ledger_id"] = session.wallet_ledger_id
         if session.instrument_type == "options":
             item["strike"] = session.strike
             item["expiry"] = session.expiry
@@ -316,10 +325,15 @@ def create_session(
     strategy_interval_secs: int = 180,
     session_type: str = "sim",
     stepwise: bool = False,
+    group_id: str | None = None,
+    session_alias: str | None = None,
+    wallet_ledger_id: str | None = None,
 ) -> SimulationSession:
     from app.services import wallet_service
     session_id = str(uuid.uuid4())
-    session_capital = wallet_service.get_balance(user_id, date)
+    ledger_id = wallet_ledger_id or f"sim:{date}"
+    ledger_kind = "paper" if session_type == "paper" else ("real" if session_type == "real" else "sim")
+    session_capital = wallet_service.get_ledger_balance(user_id, date, ledger_id, ledger_kind)
     session = SimulationSession(
         session_id=session_id,
         symbol=symbol,
@@ -338,6 +352,9 @@ def create_session(
         strategy_interval_secs=strategy_interval_secs,
         session_type=session_type,
         stepwise=stepwise,
+        group_id=group_id,
+        session_alias=session_alias.strip() if session_alias else None,
+        wallet_ledger_id=ledger_id,
     )
     session.resume_event.set()  # not paused initially
     session.created_at = int(datetime.now(timezone.utc).timestamp() * 1000)
@@ -467,7 +484,9 @@ def rebuild_session_from_db(
     effective_ce = strike_ce if strike_ce is not None else (int(db_ce_raw) if db_ce_raw is not None else strike)
     effective_pe = strike_pe if strike_pe is not None else (int(db_pe_raw) if db_pe_raw is not None else strike)
 
-    session_capital = wallet_service.get_balance(user_id, date)
+    ledger_id = db_record.get("wallet_ledger_id") or f"sim:{date}"
+    ledger_kind = "paper" if session_type == "paper" else ("real" if session_type == "real" else "sim")
+    session_capital = wallet_service.get_ledger_balance(user_id, date, ledger_id, ledger_kind)
 
     session = SimulationSession(
         session_id=session_id,
@@ -488,6 +507,9 @@ def rebuild_session_from_db(
         session_type=session_type,
         stepwise=(session_type == "stepwise"),
         created_at=created_at,
+        group_id=db_record.get("group_id"),
+        session_alias=db_record.get("session_alias"),
+        wallet_ledger_id=ledger_id,
     )
     # Restore last-known tick state so orders can be placed immediately after
     # restart, without waiting for the first live tick to arrive.
@@ -614,9 +636,19 @@ def _emit_tick_and_check_orders(
     if session.session_type != "real":
         _auto_close_positions_if_eod(session, tick, tick_right)
 
-    session.queue.put_nowait(json.dumps(tick))
+    session.queue.put_nowait(json.dumps({**tick, "session_id": session.session_id}))
 
     current_time = tick["time"]
+    # A grouped replay has one durable clock.  Each member may have different
+    # quote availability, but its visible clock is always this common tick.
+    if session.group_id and session.session_type in ("sim", "stepwise"):
+        try:
+            from app.services import session_group_service
+            group = session_group_service.get_group(session.group_id, session.user_id)
+            if group and group.get("current_time") != str(current_time):
+                session_group_service.update_clock(group, str(current_time))
+        except Exception:
+            logger.exception("Could not persist clock for group %s", session.group_id)
     current_price = tick["close"]
     filled = check_orders(
         session.session_id, current_price, current_time, session.date,
@@ -2024,7 +2056,7 @@ def _emit_tick_and_check_orders_real(
     from app.config import KOTAK_SLIPPAGE_PCT
 
     try:
-        session.queue.put_nowait(json.dumps(tick))
+        session.queue.put_nowait(json.dumps({**tick, "session_id": session.session_id}))
     except asyncio.QueueFull:
         logger.warning("Queue full, dropping tick for real session %s", session.session_id)
 

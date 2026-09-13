@@ -174,7 +174,7 @@ async def buy(req: TradeRequest):
 
     lot_size = LOT_SIZES.get(session.symbol, 1) if session.instrument_type == "options" else 1
     if req.funds_ratio_pct is not None:
-        current_wallet = wallet_service.get_balance(session.user_id, session.date)
+        current_wallet = wallet_service.get_ledger_balance(session.user_id, session.date, session.wallet_ledger_id)
         quantity = order_service.compute_funds_ratio_quantity(
             symbol=session.symbol,
             price=price,
@@ -201,7 +201,7 @@ async def buy(req: TradeRequest):
         raise HTTPException(status_code=403, detail=reason)
 
     try:
-        wallet_service.debit(session.user_id, price * quantity, session.date)
+        wallet_service.debit_ledger(session.user_id, price * quantity, session.date, session.wallet_ledger_id)
     except InsufficientFundsError as exc:
         raise HTTPException(status_code=402, detail=str(exc))
 
@@ -242,7 +242,7 @@ async def sell(req: TradeRequest):
 
     lot_size = LOT_SIZES.get(session.symbol, 1) if session.instrument_type == "options" else 1
     if req.funds_ratio_pct is not None:
-        current_wallet = wallet_service.get_balance(session.user_id, session.date)
+        current_wallet = wallet_service.get_ledger_balance(session.user_id, session.date, session.wallet_ledger_id)
         quantity = order_service.compute_funds_ratio_quantity(
             symbol=session.symbol,
             price=price,
@@ -268,7 +268,7 @@ async def sell(req: TradeRequest):
     if blocked:
         raise HTTPException(status_code=403, detail=reason)
 
-    wallet_service.credit(session.user_id, price * quantity, session.date)
+    wallet_service.credit_ledger(session.user_id, price * quantity, session.date, session.wallet_ledger_id)
 
     timestamp = int(session.current_time)
     trade = trading_svc.record_trade(

@@ -33,6 +33,8 @@ class SimulationStartRequest(BaseModel):
     session_type: str = "sim"          # "sim" (historical replay), "paper" (live data), "real" (Kotak live orders), or "stepwise"
     stepwise: bool = False             # stepwise mode: advance one bar per Next Bar press (only valid for session_type="stepwise")
     override: bool = False             # if true, delete previous session data for same (symbol, date, type) before starting
+    group_id: str | None = None
+    session_alias: str | None = Field(default=None, max_length=40)
 
 
 class SimulationStartResponse(BaseModel):
@@ -53,6 +55,36 @@ class SimulationStartResponse(BaseModel):
     state: SimulationState | None = None
     stepwise: bool = False
     total_bars: int | None = None
+    group_id: str | None = None
+    clock_family: Literal["sim", "stepwise", "live"] | None = None
+    group_state: Literal["running", "paused", "ended"] | None = None
+    group_current_time: str | None = None
+    session_alias: str | None = None
+    wallet_ledger_id: str = ""
+
+
+class SessionGroupMember(BaseModel):
+    session_id: str
+    symbol: str
+    session_type: str
+    instrument_type: str
+    session_alias: str | None = None
+    state: SimulationState | None = None
+
+
+class SessionGroupResponse(BaseModel):
+    group_id: str
+    date: str
+    clock_family: Literal["sim", "stepwise", "live"]
+    state: Literal["running", "paused", "ended"]
+    speed: float
+    current_time: str | None = None
+    strategy_interval_secs: int | None = None
+    members: list[SessionGroupMember] = []
+
+
+class RenameSessionGroupMemberRequest(BaseModel):
+    session_alias: str | None = Field(default=None, max_length=40)
 
 
 class SimulationControlRequest(BaseModel):
