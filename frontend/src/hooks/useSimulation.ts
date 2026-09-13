@@ -66,6 +66,7 @@ export interface SimulationState {
   savedEntryRtKeys: string[]       // dedupe: "sessionId#rtIdx#right" for entries already saved
   savedExitRtKeys: string[]        // dedupe: same for exits already saved
   activeEntryStrategies: Record<string, ActiveEntryStrategy>  // keyed by 'EQ'|'CE'|'PE'
+  lastStartedContext: { symbol: string; date: string; sessionType: string; instrumentType: 'equity' | 'options' } | null
 }
 
 export interface InstrumentConfig {
@@ -125,6 +126,7 @@ export function useSimulation() {
     savedEntryRtKeys: [],
     savedExitRtKeys: [],
     activeEntryStrategies: {},
+    lastStartedContext: null,
   })
 
   const activateSession = useCallback(async (res: SimulationStartResponse) => {
@@ -161,6 +163,7 @@ export function useSimulation() {
       sessionStrikePE: res.strike_pe ?? res.strike,
       sessionExpiry: res.expiry,
       sessionType,
+      lastStartedContext: { symbol: sym, date: res.date, sessionType, instrumentType },
       brokeragePerOrder: res.brokerage_per_order ?? 0,
       stepwise: res.stepwise === true,
       barPaused: false,

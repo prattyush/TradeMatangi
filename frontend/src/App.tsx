@@ -1766,6 +1766,7 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
         onPause={sim.pauseSession}
         onResume={sim.resumeSession}
         onOptionsReady={handleOptionsReady}
+        lastStartedContext={sim.lastStartedContext}
         isRealTradingUser={isRealTradingUser || authUser.isAdmin}
         stepwise={sim.stepwise}
         barPaused={sim.barPaused}
