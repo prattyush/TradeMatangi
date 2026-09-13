@@ -72,8 +72,8 @@ function makeEquityPane(intervalMinutes: number): PaneConfig {
   return { id: nextPaneId++, type: 'equity', intervalMinutes }
 }
 
-function makeOptionsPane(right: 'CE' | 'PE', strike: number, expiry: string): PaneConfig {
-  return { id: nextPaneId++, type: 'options', intervalMinutes: 3, right, strike, expiry }
+function makeOptionsPane(right: 'CE' | 'PE', strike: number, expiry: string, intervalMinutes = 3): PaneConfig {
+  return { id: nextPaneId++, type: 'options', intervalMinutes, right, strike, expiry }
 }
 
 function isLayoutPreset(value: unknown): value is LayoutPreset {
@@ -537,7 +537,8 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
 
       const right = addPaneType as 'CE' | 'PE'
       const liveFromTs = sim.latestEquityTick?.time ?? undefined
-      const newPane = { ...makeOptionsPane(right, strike, effectiveExpiry), liveFromTs }
+      const activeInterval = panes.find(p => p.id === activePaneId)?.intervalMinutes ?? addInterval
+      const newPane = { ...makeOptionsPane(right, strike, effectiveExpiry, activeInterval), liveFromTs }
       setPanes(p => [...p, newPane])
 
       if (sim.sessionId && (sim.sessionState === 'running' || sim.sessionState === 'paused')) {
@@ -555,7 +556,7 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
     }
   }, [instrumentType, addPaneType, addInterval, addOffset, optionsReady, sim.symbol,
       sim.currentPrice, sim.latestEquityTick, sim.sessionId, sim.sessionState,
-      sim.sessionInstrumentType, sim.sessionExpiry, sim.updateSessionStrike])
+      sim.sessionInstrumentType, sim.sessionExpiry, sim.updateSessionStrike, panes, activePaneId])
 
   const removePane = useCallback((id: number) => {
     setPanes(p => {
@@ -582,8 +583,9 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
   }, [])
 
   const handlePaneIntervalChange = useCallback((paneId: number, minutes: number) => {
-    setPanes(prev => prev.map(p => p.id === paneId ? { ...p, intervalMinutes: minutes } : p))
-  }, [])
+    const optionsSession = instrumentType === 'options' || sim.sessionInstrumentType === 'options'
+    setPanes(prev => prev.map(p => optionsSession || p.id === paneId ? { ...p, intervalMinutes: minutes } : p))
+  }, [instrumentType, sim.sessionInstrumentType])
 
   const handlePaneCandlesChange = useCallback((paneId: number, candles: IndicatorCandle[]) => {
     setPaneCandles(prev => {
@@ -600,8 +602,7 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
   const getRatioCandlesForPane = useCallback((pane: PaneConfig) => {
     if (instrumentType !== 'options' && sim.sessionInstrumentType !== 'options') return null
     const findPane = (predicate: (candidate: PaneConfig) => boolean) =>
-      panes.find(candidate => candidate.intervalMinutes === pane.intervalMinutes && predicate(candidate)) ??
-      panes.find(predicate)
+      panes.find(candidate => candidate.intervalMinutes === pane.intervalMinutes && predicate(candidate))
     const underlyingPane = pane.type === 'equity' ? pane : findPane(candidate => candidate.type === 'equity')
     const cePane = pane.right === 'CE' ? pane : findPane(candidate => candidate.type === 'options' && candidate.right === 'CE')
     const pePane = pane.right === 'PE' ? pane : findPane(candidate => candidate.type === 'options' && candidate.right === 'PE')
