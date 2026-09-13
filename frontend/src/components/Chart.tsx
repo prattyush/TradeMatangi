@@ -75,6 +75,7 @@ interface Props {
     underlying: IndicatorCandle[]
     ce: IndicatorCandle[] | null
     pe: IndicatorCandle[] | null
+    anchor: IndicatorCandle[]
   } | null
   ratioMode?: RocRatioMode
 }
@@ -398,6 +399,7 @@ export default function Chart({
         ratioCandles.ce,
         ratioCandles.pe,
         ratioMode,
+        ratioCandles.anchor,
       )
     }
     return result
