@@ -21,7 +21,7 @@ import { useSimulation, InstrumentConfig } from './hooks/useSimulation'
 import { useSSE } from './hooks/useSSE'
 import { useRecording } from './hooks/useRecording'
 import { useSnapshot } from './hooks/useSnapshot'
-import api from './services/api'
+import api, { OHLCCandle } from './services/api'
 import { IndicatorCandle, RocRatioMode } from './indicators/optionsRoc'
 
 const FIXED_USER = { userId: 'abc12300-0000-0000-0000-000000000001', username: 'abc123' }
@@ -66,6 +66,27 @@ interface WorkspaceSnapshot {
   instrumentType?: 'equity' | 'options'
   optionsReady?: OptionsReadyConfig | null
   sessionControlsVisible?: boolean
+}
+
+type IndicatorLeg = 'underlying' | 'CE' | 'PE'
+
+interface IndicatorCacheDescriptor {
+  leg: IndicatorLeg
+  intervalMinutes: number
+  strike?: number
+  expiry?: string
+}
+
+function toIndicatorCandle(candle: OHLCCandle): IndicatorCandle {
+  return { time: candle.time, close: candle.close }
+}
+
+function formatTimeFromTs(ts: number): string {
+  const totalSecs = ts % 86400
+  const h = Math.floor(totalSecs / 3600)
+  const m = Math.floor((totalSecs % 3600) / 60)
+  const s = totalSecs % 60
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
 }
 
 function makeEquityPane(intervalMinutes: number): PaneConfig {
@@ -354,6 +375,8 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
   const [activePaneId, setActivePaneId] = useState<number | null>(1)
   const [maximizedPaneId, setMaximizedPaneId] = useState<number | null>(null)
   const [paneCandles, setPaneCandles] = useState<Record<number, IndicatorCandle[]>>({})
+  const [indicatorCandleCache, setIndicatorCandleCache] = useState<Record<string, IndicatorCandle[]>>({})
+  const indicatorCacheLoadingRef = useRef<Set<string>>(new Set())
 
   // ── Options mode state ──────────────────────────────────────────────────────
   const [instrumentType, setInstrumentType] = useState<'equity' | 'options'>('equity')
@@ -585,6 +608,29 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
     setPanes(prev => prev.map(p => p.id === paneId ? { ...p, intervalMinutes: minutes } : p))
   }, [])
 
+  const indicatorCacheKey = useCallback((descriptor: IndicatorCacheDescriptor) => {
+    const parts = [
+      sim.symbol,
+      sim.date,
+      descriptor.leg,
+      `${descriptor.intervalMinutes}m`,
+      descriptor.strike ?? '',
+      descriptor.expiry ?? '',
+    ]
+    return parts.join('|')
+  }, [sim.symbol, sim.date])
+
+  const descriptorForPane = useCallback((pane: PaneConfig): IndicatorCacheDescriptor => ({
+    leg: pane.type === 'equity' ? 'underlying' : pane.right ?? 'underlying',
+    intervalMinutes: pane.intervalMinutes,
+    strike: pane.strike,
+    expiry: pane.expiry,
+  }), [])
+
+  const getCachedCandles = useCallback((descriptor: IndicatorCacheDescriptor): IndicatorCandle[] | null => {
+    return indicatorCandleCache[indicatorCacheKey(descriptor)] ?? null
+  }, [indicatorCacheKey, indicatorCandleCache])
+
   const handlePaneCandlesChange = useCallback((paneId: number, candles: IndicatorCandle[]) => {
     setPaneCandles(prev => {
       const current = prev[paneId]
@@ -595,7 +641,115 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
       }
       return { ...prev, [paneId]: candles }
     })
-  }, [])
+    const pane = panes.find(p => p.id === paneId)
+    if (!pane) return
+    const key = indicatorCacheKey(descriptorForPane(pane))
+    setIndicatorCandleCache(prev => {
+      const current = prev[key]
+      const lastCurrent = current?.[current.length - 1]
+      const lastNext = candles[candles.length - 1]
+      if (current?.length === candles.length && lastCurrent?.time === lastNext?.time && lastCurrent?.close === lastNext?.close) {
+        return prev
+      }
+      return { ...prev, [key]: candles }
+    })
+  }, [descriptorForPane, indicatorCacheKey, panes])
+
+  useEffect(() => {
+    if (instrumentType !== 'options' && sim.sessionInstrumentType !== 'options') return
+
+    const expiry = sim.sessionExpiry ?? optionsReady?.expiry
+    const ceStrike = sim.sessionStrikeCE ?? (panes.find(p => p.type === 'options' && p.right === 'CE')?.strike)
+    const peStrike = sim.sessionStrikePE ?? (panes.find(p => p.type === 'options' && p.right === 'PE')?.strike)
+    const intervals = Array.from(new Set(panes.map(p => p.intervalMinutes)))
+    const descriptors = intervals.flatMap(intervalMinutes => {
+      const next: IndicatorCacheDescriptor[] = [{ leg: 'underlying', intervalMinutes }]
+      if (expiry && ceStrike) next.push({ leg: 'CE', intervalMinutes, strike: ceStrike, expiry })
+      if (expiry && peStrike) next.push({ leg: 'PE', intervalMinutes, strike: peStrike, expiry })
+      return next
+    })
+
+    const liveTs = sim.latestEquityTick?.time ?? null
+    const startTime = sim.startTime
+
+    descriptors.forEach(descriptor => {
+      const key = indicatorCacheKey(descriptor)
+      const intervalSecs = descriptor.intervalMinutes * 60
+      const cutoffTs = liveTs != null
+        ? Math.floor(liveTs / intervalSecs) * intervalSecs
+        : startTime
+          ? Math.floor(new Date(`${sim.date}T${startTime.length === 5 ? startTime + ':00' : startTime}Z`).getTime() / 1000 / intervalSecs) * intervalSecs
+          : null
+      const cached = indicatorCandleCache[key]
+      const lastCachedTime = cached?.[cached.length - 1]?.time
+      if (
+        cached &&
+        (cached.length === 0 || cutoffTs == null || (lastCachedTime != null && lastCachedTime >= cutoffTs - intervalSecs))
+      ) return
+      if (indicatorCacheLoadingRef.current.has(key)) return
+      if (descriptor.leg !== 'underlying' && (!descriptor.strike || !descriptor.expiry || !startTime)) return
+      indicatorCacheLoadingRef.current.add(key)
+
+      ;(async () => {
+        try {
+          if (descriptor.leg === 'underlying') {
+            const cutoffTime = liveTs != null ? formatTimeFromTs(liveTs) : startTime
+            const [historical, preSession] = await Promise.all([
+              api.getHistorical(sim.symbol, sim.date, descriptor.intervalMinutes, historicalDays).catch(() => ({ candles: [] })),
+              cutoffTime
+                ? api.getPreSession(sim.symbol, sim.date, cutoffTime, descriptor.intervalMinutes)
+                : Promise.resolve([]),
+            ])
+            const allCandles = [...historical.candles, ...preSession]
+            const indicatorCandles = (cutoffTs != null ? allCandles.filter(c => c.time < cutoffTs) : allCandles).map(toIndicatorCandle)
+            setIndicatorCandleCache(prev => {
+              const currentLast = prev[key]?.[prev[key].length - 1]?.time ?? -Infinity
+              const nextLast = indicatorCandles[indicatorCandles.length - 1]?.time ?? -Infinity
+              return nextLast <= currentLast ? prev : { ...prev, [key]: indicatorCandles }
+            })
+          } else {
+            const { candles } = await api.getOptionsHistorical(
+              sim.symbol,
+              sim.date,
+              descriptor.strike!,
+              descriptor.expiry!,
+              descriptor.leg,
+              descriptor.intervalMinutes,
+              historicalDays,
+            )
+            const indicatorCandles = candles.filter(c => cutoffTs == null || c.time < cutoffTs).map(toIndicatorCandle)
+            setIndicatorCandleCache(prev => {
+              const currentLast = prev[key]?.[prev[key].length - 1]?.time ?? -Infinity
+              const nextLast = indicatorCandles[indicatorCandles.length - 1]?.time ?? -Infinity
+              return nextLast <= currentLast ? prev : {
+                ...prev,
+                [key]: indicatorCandles,
+              }
+            })
+          }
+        } catch (err) {
+          console.error(err)
+        } finally {
+          indicatorCacheLoadingRef.current.delete(key)
+        }
+      })()
+    })
+  }, [
+    instrumentType,
+    sim.sessionInstrumentType,
+    sim.sessionExpiry,
+    sim.sessionStrikeCE,
+    sim.sessionStrikePE,
+    sim.latestEquityTick?.time,
+    sim.startTime,
+    sim.symbol,
+    sim.date,
+    optionsReady?.expiry,
+    panes,
+    indicatorCandleCache,
+    indicatorCacheKey,
+    historicalDays,
+  ])
 
   const getRatioCandlesForPane = useCallback((pane: PaneConfig) => {
     if (instrumentType !== 'options' && sim.sessionInstrumentType !== 'options') return null
@@ -604,14 +758,38 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
     const underlyingPane = pane.type === 'equity' ? pane : findPane(candidate => candidate.type === 'equity')
     const cePane = pane.right === 'CE' ? pane : findPane(candidate => candidate.type === 'options' && candidate.right === 'CE')
     const pePane = pane.right === 'PE' ? pane : findPane(candidate => candidate.type === 'options' && candidate.right === 'PE')
-    const underlying = underlyingPane ? paneCandles[underlyingPane.id] ?? [] : []
+    const expiry = sim.sessionExpiry ?? optionsReady?.expiry
+    const ceStrike = cePane?.strike ?? sim.sessionStrikeCE ?? undefined
+    const peStrike = pePane?.strike ?? sim.sessionStrikePE ?? undefined
+    const underlying = underlyingPane
+      ? paneCandles[underlyingPane.id] ?? getCachedCandles(descriptorForPane(underlyingPane)) ?? []
+      : getCachedCandles({ leg: 'underlying', intervalMinutes: pane.intervalMinutes }) ?? []
     return {
       underlying,
-      ce: cePane ? paneCandles[cePane.id] ?? null : null,
-      pe: pePane ? paneCandles[pePane.id] ?? null : null,
+      ce: cePane
+        ? paneCandles[cePane.id] ?? getCachedCandles(descriptorForPane(cePane)) ?? null
+        : ceStrike && expiry
+          ? getCachedCandles({ leg: 'CE', intervalMinutes: pane.intervalMinutes, strike: ceStrike, expiry })
+          : null,
+      pe: pePane
+        ? paneCandles[pePane.id] ?? getCachedCandles(descriptorForPane(pePane)) ?? null
+        : peStrike && expiry
+          ? getCachedCandles({ leg: 'PE', intervalMinutes: pane.intervalMinutes, strike: peStrike, expiry })
+          : null,
       anchor: paneCandles[pane.id] ?? [],
     }
-  }, [instrumentType, sim.sessionInstrumentType, panes, paneCandles])
+  }, [
+    instrumentType,
+    sim.sessionInstrumentType,
+    sim.sessionExpiry,
+    sim.sessionStrikeCE,
+    sim.sessionStrikePE,
+    optionsReady?.expiry,
+    panes,
+    paneCandles,
+    descriptorForPane,
+    getCachedCandles,
+  ])
 
   // ── Active pane derivations ─────────────────────────────────────────────────
   const activePane = panes.find(p => p.id === activePaneId) ?? null
