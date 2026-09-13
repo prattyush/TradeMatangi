@@ -353,6 +353,22 @@ You can name them as you want.
 ### Trade History
  Can the trade history pop up which opens also contain if the user can mentioned the expected strategy and the actual profit and loss of the trade. A trade is closed when both the orders of buy and sell are executed. Only after trade is closed only then the actual profit or loss can be calculated. So, can that be included in the trade history. Not all rows will have the value, only the row which has the last closing position entry (Last sell for long position) and vice-versa.
 
+
+
+ ### Indicators
+ The idea is to implement indicators similar to EMA, currently we have only EMA, I want introduce a new indicator and possibly others going forward. You can take inspiration from Trading View UI to suggesting on UI front. Ideally, we should have options to close them like currently we have them for ema.
+
+ #### Rate of Change Indicator Options
+ Can you create an indicator which would be valid for options trading? And that indicator should be able to tell it, let's say at a per-minute bar or a per-three-minute bar, whether the difference, the rate of change of the underlying chart as compared to the rate of change of the CE option, and also let's say the rate of change of the underlying chart and the PE option, or the rate of change between the CE and the PE options. So, the idea behind that is that this would be able to tell when, with the same amount of change in the underlying, there should be a similar change in CE and PE options. But if those changes are irregular and let's say the rate of change for CE is much higher compared to the other, there might be some trading opportunities during those areas. So I want that indicator to be find such oppurtunities.
+
+ How sure how to name it, or where to put it. Put I may want to see this indicator Underlying versus CE, Underlying versus PE and CE versus PE, and first check during Patterns if I can use that to create some trading oppurtunities. So, first step would be to see them in patterns section and then later during real trading to actually use it for making trading decisions. Please discuss and suggest where it should be and where to place it. This indicator only currently makes sense during options trading ssessions and not equity.
+
+
+ ### K-Line Charts
+ Can you plan the change to change lightweight charts to K-line charts? I know K-line charts offers multiple indicators. I'm not sure whether they are English or Japanese, but definitely I want to between English, and it supports a lot of indicators. The changes, if possible, it would be across from the web, that the trading charts that we see to the fine structures and the patterns, and possibly everywhere we are seeing the charts, even in analysis windows, we are seeing the chart. It is the complete change from using to K-line instead of lightweights. What I want to know is how much, like how big is the change, and also how complicated is the change, how many things can fail. Third thing would be, is it really beneficial to switch completely to K-line charts, and if I stay on lightweight chart, what I would be missing? And yeah, that's it.
+
+ Full sprint-wise migration plan: [Phase 15 KLineCharts Migration Plan](./phase15-klinecharts-migration-plan.md)
+
 ---
 
 ### Files Changed Summary
