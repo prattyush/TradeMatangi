@@ -6,7 +6,7 @@
  * or replaced with a different strike. View mode: responsive gallery with
  * click-to-expand read-only chart view.
  */
-import { useState, useEffect, useRef, useCallback, CSSProperties } from 'react'
+import { useState, useEffect, useRef, useCallback, useMemo, CSSProperties } from 'react'
 import {
   createChart, IChartApi, ISeriesApi, CandlestickData, LineData, Time,
   IPriceLine, LineStyle,
@@ -14,6 +14,7 @@ import {
 import api, { PatternAnnotation, PatternChart, PatternChartMeta, OHLCCandle, TopPatterns } from '../services/api'
 import { buildMarkers, patternIdentity, cleanTopPatterns, MARKER_COLORS } from '../services/patternMarkers'
 import { loadHistoricalDays } from '../components/SettingsModal'
+import { computeOptionsRocComparison, ROC_COMPARISON_META, RocComparisonKey, RocRatioMode, RocSeries } from '../indicators/optionsRoc'
 
 // ── EMA helpers ───────────────────────────────────────────────────────────────
 
@@ -136,6 +137,32 @@ const TOOL_OPTIONS = [
   { key: 'entry-PE',         label: '▲ Entry PE', type: 'entry' as const, instrument: 'PE'         as const },
   { key: 'exit-PE',          label: '▼ Exit PE',  type: 'exit'  as const, instrument: 'PE'         as const },
 ]
+
+const ROC_KEYS: RocComparisonKey[] = ['underlying_ce', 'underlying_pe', 'ce_pe', 'ce_ul_pe_ul']
+type RocPanelSize = 'compact' | 'medium' | 'large'
+const ROC_PANEL_HEIGHT: Record<RocPanelSize, number> = { compact: 132, medium: 210, large: 300 }
+
+function loadRocIndicators(): RocComparisonKey[] {
+  try {
+    const raw = localStorage.getItem('patternRocIndicators')
+    if (!raw) return []
+    const parsed = JSON.parse(raw)
+    if (!Array.isArray(parsed)) return []
+    return parsed.filter((v): v is RocComparisonKey => ROC_KEYS.includes(v))
+  } catch {
+    return []
+  }
+}
+
+function loadRocPanelSize(): RocPanelSize {
+  const raw = localStorage.getItem('patternRocPanelSize')
+  return raw === 'medium' || raw === 'large' || raw === 'compact' ? raw : 'medium'
+}
+
+function loadRocRatioMode(): RocRatioMode {
+  const raw = localStorage.getItem('patternRocRatioMode')
+  return raw === 'raw' || raw === 'normalized' ? raw : 'normalized'
+}
 
 // ── Option pane data model ────────────────────────────────────────────────────
 
@@ -559,6 +586,136 @@ function ChartPane({
   )
 }
 
+interface RocIndicatorPanelProps {
+  comparison: RocComparisonKey
+  series: RocSeries[]
+  ratioMode: RocRatioMode
+  size: RocPanelSize
+  isMaximized?: boolean
+  onMaximize: () => void
+  onClose: () => void
+}
+
+function RocIndicatorPanel({ comparison, series, ratioMode, size, isMaximized = false, onMaximize, onClose }: RocIndicatorPanelProps) {
+  const containerRef = useRef<HTMLDivElement>(null)
+  const chartRef = useRef<IChartApi | null>(null)
+  const seriesRefs = useRef<Map<string, ISeriesApi<'Line'>>>(new Map())
+  const meta = ROC_COMPARISON_META[comparison]
+
+  useEffect(() => {
+    const el = containerRef.current
+    if (!el) return
+    const chart = createChart(el, {
+      width: el.clientWidth || 800,
+      height: el.clientHeight || 120,
+      layout: { background: { color: '#0d1117' }, textColor: '#8b949e' },
+      grid: { vertLines: { color: '#1e2732' }, horzLines: { color: '#1e2732' } },
+      crosshair: { mode: 0 },
+      rightPriceScale: { borderColor: '#30363d' },
+      timeScale: { borderColor: '#30363d', timeVisible: true, secondsVisible: false },
+      localization: { priceFormatter: (price: number) => price.toFixed(2) },
+    })
+    chartRef.current = chart
+
+    const ro = new ResizeObserver(entries => {
+      const { width, height } = entries[0].contentRect
+      if (width > 0 && height > 0) chart.applyOptions({ width, height })
+    })
+    ro.observe(el)
+    return () => {
+      ro.disconnect()
+      chart.remove()
+      chartRef.current = null
+      seriesRefs.current.clear()
+    }
+  }, [])
+
+  useEffect(() => {
+    const chart = chartRef.current
+    if (!chart) return
+    const nextKeys = new Set(series.map(s => s.key))
+    for (const [key, line] of seriesRefs.current) {
+      if (!nextKeys.has(key)) {
+        try { chart.removeSeries(line) } catch {}
+        seriesRefs.current.delete(key)
+      }
+    }
+
+    for (const item of series) {
+      let line = seriesRefs.current.get(item.key)
+      if (!line) {
+        line = chart.addLineSeries({
+          color: item.color, lineWidth: 2, priceLineVisible: false, lastValueVisible: false,
+        })
+        seriesRefs.current.set(item.key, line)
+      } else {
+        line.applyOptions({ color: item.color })
+      }
+      const lineData: LineData[] = item.points.map(p => ({ time: p.time as Time, value: p.value }))
+      line.setData(lineData)
+    }
+
+    if (series.some(item => item.points.length > 0)) {
+      chartRef.current?.timeScale().fitContent()
+    }
+  }, [series])
+
+  const lastValues = series
+    .map(item => item.points.length ? { label: item.label, color: item.color, value: item.points[item.points.length - 1].value } : null)
+    .filter((item): item is { label: string; color: string; value: number } => item !== null)
+  const panelHeight = ROC_PANEL_HEIGHT[size]
+
+  return (
+    <div style={{
+      border: '1px solid #30363d', borderRadius: 6, overflow: 'hidden',
+      background: '#0d1117', height: isMaximized ? undefined : panelHeight,
+      minHeight: isMaximized ? 0 : panelHeight, display: 'flex', flexDirection: 'column',
+      position: 'relative', flex: isMaximized ? 1 : undefined,
+    }}>
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 8, padding: '4px 8px',
+        background: '#161b22', borderBottom: '1px solid #21262d', flexShrink: 0,
+      }}>
+        <span style={{ width: 8, height: 8, borderRadius: 4, background: meta.color }} />
+        <span style={{ fontSize: 11, color: '#e6edf3', fontWeight: 700 }}>{meta.label}</span>
+        <span style={{ fontSize: 10, color: '#8b949e' }}>{ratioMode === 'raw' ? 'Raw ratio' : 'Normalized ratio'}</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginLeft: 'auto', flexWrap: 'wrap' }}>
+          {lastValues.map(item => (
+            <span key={item.label} style={{ fontSize: 10, color: item.color, fontVariantNumeric: 'tabular-nums' }}>
+              {item.label} {item.value.toFixed(2)}
+            </span>
+          ))}
+        </div>
+        <button
+          onClick={onMaximize}
+          title={isMaximized ? 'Restore indicator layout' : `Maximize ${meta.label}`}
+          style={{
+            padding: '1px 6px', fontSize: 12, borderRadius: 4,
+            border: `1px solid ${isMaximized ? meta.color : '#30363d'}`,
+            background: 'transparent', color: isMaximized ? meta.color : '#8b949e',
+            cursor: 'pointer',
+          }}
+        >{isMaximized ? 'restore' : 'max'}</button>
+        <button
+          onClick={onClose}
+          title={`Close ${meta.label}`}
+          style={{
+            padding: '1px 6px', fontSize: 12, borderRadius: 4,
+            border: '1px solid #30363d', background: 'transparent',
+            color: '#8b949e', cursor: 'pointer',
+          }}
+        >x</button>
+      </div>
+      {lastValues.length === 0 && (
+        <div style={{ position: 'absolute', padding: '44px 12px', fontSize: 11, color: '#484f58' }}>
+          No comparable ratio points
+        </div>
+      )}
+      <div ref={containerRef} style={{ flex: 1, minHeight: 0, width: '100%' }} />
+    </div>
+  )
+}
+
 // ── Gallery card ───────────────────────────────────────────────────────────────
 
 interface GalleryCardProps {
@@ -721,6 +878,10 @@ export default function PatternLibrary() {
   const [newCategoryName, setNewCategoryName] = useState('')
   const [notes, setNotes] = useState('')
   const [riskRewardRatios, setRiskRewardRatios] = useState<Record<string, string>>({})
+  const [activeRocIndicators, setActiveRocIndicators] = useState<RocComparisonKey[]>(loadRocIndicators)
+  const [rocPanelSize, setRocPanelSize] = useState<RocPanelSize>(loadRocPanelSize)
+  const [rocRatioMode, setRocRatioMode] = useState<RocRatioMode>(loadRocRatioMode)
+  const [maximizedRocIndicator, setMaximizedRocIndicator] = useState<RocComparisonKey | null>(null)
 
   // Persistence
   const [currentChartId, setCurrentChartId] = useState<string | null>(null)
@@ -741,6 +902,24 @@ export default function PatternLibrary() {
     api.patternListStrategies().then(r => setStrategies(r.strategies)).catch(() => {})
     api.patternListCategories().then(r => setCategories(r.categories)).catch(() => {})
   }, [])
+
+  useEffect(() => {
+    localStorage.setItem('patternRocIndicators', JSON.stringify(activeRocIndicators))
+  }, [activeRocIndicators])
+
+  useEffect(() => {
+    localStorage.setItem('patternRocPanelSize', rocPanelSize)
+  }, [rocPanelSize])
+
+  useEffect(() => {
+    localStorage.setItem('patternRocRatioMode', rocRatioMode)
+  }, [rocRatioMode])
+
+  useEffect(() => {
+    if (maximizedRocIndicator && !activeRocIndicators.includes(maximizedRocIndicator)) {
+      setMaximizedRocIndicator(null)
+    }
+  }, [activeRocIndicators, maximizedRocIndicator])
 
   const refreshGallery = useCallback(async (strat?: string, cat?: string, topOnly?: boolean) => {
     try {
@@ -892,6 +1071,7 @@ export default function PatternLibrary() {
   // ── Maximize ──────────────────────────────────────────────────────────────
 
   const handleMaximize = useCallback((id: 'underlying' | number) => {
+    setMaximizedRocIndicator(null)
     setMaximizedPaneId(prev => prev === id ? null : id)
   }, [])
 
@@ -1098,6 +1278,130 @@ export default function PatternLibrary() {
   const resolvedActiveStrategy = activeStrategy || null
   const resolvedActiveCategory = activeCategory || null
   const hasOptions = optionPanes.length > 0
+  const firstCePane = useMemo(() => optionPanes.find(p => p.right === 'CE') ?? null, [optionPanes])
+  const firstPePane = useMemo(() => optionPanes.find(p => p.right === 'PE') ?? null, [optionPanes])
+  const availableRocIndicators = useMemo(() => ({
+    underlying_ce: equityCandles.length > 1 && !!firstCePane && firstCePane.candles.length > 1,
+    underlying_pe: equityCandles.length > 1 && !!firstPePane && firstPePane.candles.length > 1,
+    ce_pe: !!firstCePane && !!firstPePane && firstCePane.candles.length > 1 && firstPePane.candles.length > 1,
+    ce_ul_pe_ul: equityCandles.length > 1 && !!firstCePane && firstCePane.candles.length > 1 && !!firstPePane && firstPePane.candles.length > 1,
+  }), [equityCandles.length, firstCePane, firstPePane])
+  const rocSeries = useMemo(() => {
+    const result: Partial<Record<RocComparisonKey, RocSeries[]>> = {}
+    for (const key of activeRocIndicators) {
+      result[key] = computeOptionsRocComparison(
+        key,
+        equityCandles,
+        firstCePane?.candles ?? null,
+        firstPePane?.candles ?? null,
+        rocRatioMode,
+      )
+    }
+    return result
+  }, [activeRocIndicators, equityCandles, firstCePane, firstPePane, rocRatioMode])
+
+  const toggleRocIndicator = useCallback((key: RocComparisonKey) => {
+    setActiveRocIndicators(prev => prev.includes(key) ? prev.filter(k => k !== key) : [...prev, key])
+  }, [])
+
+  const renderRocControls = () => {
+    if (instrumentType !== 'options') return null
+    return (
+      <>
+        <div style={{ width: 1, height: 16, background: '#30363d', margin: '0 4px' }} />
+        <span style={{ fontSize: 11, color: '#8b949e', fontWeight: 700 }}>Relative:</span>
+        {ROC_KEYS.map(key => {
+          const active = activeRocIndicators.includes(key)
+          const available = availableRocIndicators[key]
+          const meta = ROC_COMPARISON_META[key]
+          return (
+            <button
+              key={key}
+              onClick={() => toggleRocIndicator(key)}
+              disabled={!available && !active}
+              title={available || active ? `${active ? 'Close' : 'Add'} ${meta.label}` : 'Load an options chart with matching candles first'}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 5,
+                padding: '4px 10px', fontSize: 11, borderRadius: 4,
+                border: `1px solid ${active ? meta.color : '#30363d'}`,
+                background: active ? '#0d1117' : 'transparent',
+                color: !available && !active ? '#484f58' : active ? meta.color : '#e6edf3',
+                cursor: !available && !active ? 'not-allowed' : 'pointer',
+                fontWeight: active ? 700 : 400,
+              }}
+            >
+              <span>{meta.label}</span>
+              {active && <span style={{ color: '#8b949e' }}>x</span>}
+            </button>
+          )
+        })}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
+          {(['normalized', 'raw'] as RocRatioMode[]).map(mode => (
+            <button
+              key={mode}
+              onClick={() => setRocRatioMode(mode)}
+              title={mode === 'normalized' ? 'Scale each leg before ratio' : 'Use raw percent-change ratio'}
+              style={{
+                padding: '3px 7px', fontSize: 10, borderRadius: 4,
+                border: `1px solid ${rocRatioMode === mode ? '#8b949e' : '#30363d'}`,
+                background: rocRatioMode === mode ? '#21262d' : 'transparent',
+                color: rocRatioMode === mode ? '#e6edf3' : '#8b949e',
+                cursor: 'pointer', textTransform: 'capitalize',
+              }}
+            >
+              {mode}
+            </button>
+          ))}
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
+          {(['compact', 'medium', 'large'] as RocPanelSize[]).map(size => (
+            <button
+              key={size}
+              onClick={() => setRocPanelSize(size)}
+              title={`${size[0].toUpperCase()}${size.slice(1)} indicator panels`}
+              style={{
+                padding: '3px 7px', fontSize: 10, borderRadius: 4,
+                border: `1px solid ${rocPanelSize === size ? '#8b949e' : '#30363d'}`,
+                background: rocPanelSize === size ? '#21262d' : 'transparent',
+                color: rocPanelSize === size ? '#e6edf3' : '#8b949e',
+                cursor: 'pointer', textTransform: 'capitalize',
+              }}
+            >
+              {size}
+            </button>
+          ))}
+        </div>
+      </>
+    )
+  }
+
+  const renderRocPanels = () => {
+    if (instrumentType !== 'options' || !chartLoaded || activeRocIndicators.length === 0) return null
+    return (
+      <div style={{
+        display: 'grid',
+        gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))',
+        gap: 4,
+        flexShrink: 0,
+      }}>
+        {activeRocIndicators.map(key => (
+          <RocIndicatorPanel
+            key={key}
+            comparison={key}
+            series={rocSeries[key] ?? []}
+            ratioMode={rocRatioMode}
+            size={rocPanelSize}
+            isMaximized={maximizedRocIndicator === key}
+            onMaximize={() => {
+              setMaximizedPaneId(null)
+              setMaximizedRocIndicator(prev => prev === key ? null : key)
+            }}
+            onClose={() => toggleRocIndicator(key)}
+          />
+        ))}
+      </div>
+    )
+  }
 
   // ── Chart area renderer ───────────────────────────────────────────────────
 
@@ -1106,6 +1410,39 @@ export default function PatternLibrary() {
       return (
         <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#484f58', fontSize: 13 }}>
           {loading ? 'Loading…' : 'Select symbol, date and click Load Chart to begin.'}
+        </div>
+      )
+    }
+
+    if (maximizedRocIndicator && activeRocIndicators.includes(maximizedRocIndicator)) {
+      return (
+        <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', gap: 4, padding: 8, overflow: 'hidden' }}>
+          <div style={{ flex: 1, minHeight: 0, display: 'flex' }}>
+            <ChartPane
+              candles={equityCandles}
+              annotations={annotations.filter(a => a.instrument === 'underlying')}
+              activeStrategy={resolvedActiveStrategy}
+              activeCategory={resolvedActiveCategory}
+              label={`${symbol} — Underlying`}
+              onBarClick={handleBarClick}
+              readonly={isReadonly}
+              onMaximize={() => setMaximizedRocIndicator(null)}
+              isMaximized
+              topPatterns={topPatterns}
+              riskRewardRatios={riskRewardRatios}
+              intervalMinutes={intervalMinutes}
+              onIntervalChange={handleChangeInterval}
+            />
+          </div>
+          <RocIndicatorPanel
+            comparison={maximizedRocIndicator}
+            series={rocSeries[maximizedRocIndicator] ?? []}
+            ratioMode={rocRatioMode}
+            size={rocPanelSize}
+            isMaximized
+            onMaximize={() => setMaximizedRocIndicator(null)}
+            onClose={() => toggleRocIndicator(maximizedRocIndicator)}
+          />
         </div>
       )
     }
@@ -1169,6 +1506,7 @@ export default function PatternLibrary() {
             ))}
           </div>
         )}
+        {hasOptions && maximizedPaneId === null && renderRocPanels()}
       </div>
     )
   }
@@ -1409,6 +1747,7 @@ export default function PatternLibrary() {
           <button style={btn('#484f58', annotations.length === 0)} onClick={() => setAnnotations([])} disabled={annotations.length === 0}>
             ✕ Clear All
           </button>
+          {renderRocControls()}
           <div style={{ width: 1, height: 16, background: '#30363d', margin: '0 4px' }} />
           <input placeholder="Notes…" value={notes} onChange={e => setNotes(e.target.value)}
             style={{ ...inputStyle, width: 180 }} />
