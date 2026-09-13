@@ -159,27 +159,28 @@ async def start_simulation(
     # For sim: if the user restarts with new params (start_time, speed, OTM), stop the
     # old session and create a fresh one — the user wants a new practice run, not a resume.
     existing_record = sim_svc.find_session_by_context(
-        user_id, req.symbol, req.date, internal_session_type
+        user_id, req.symbol, req.date, internal_session_type, req.instrument_type
     )
     if existing_record:
         existing_session_id = existing_record["session_id"]
         active = sim_svc.get_session(existing_session_id)
+        if req.override:
+            # Cascade delete all previous sessions matching this exact context.
+            from app.services.session_cleanup_service import delete_session_cascade
+            all_sessions = sim_svc.find_all_sessions_by_context(
+                user_id, req.symbol, req.date, internal_session_type, req.instrument_type
+            )
+            logger.info("start_simulation: override requested — cascade deleting %d session(s)", len(all_sessions))
+            for s in all_sessions:
+                sid = s["session_id"]
+                try:
+                    delete_session_cascade(sid, user_id, req.date)
+                except Exception:
+                    logger.exception("start_simulation: failed to cascade delete session %s", sid)
+            existing_record = None
         # For sim and stepwise sessions: stop the old one and create fresh with new params
-        if internal_session_type in ("sim", "stepwise"):
-            if req.override:
-                # Cascade delete: wipe ALL data for ALL previous sessions matching this context
-                from app.services.session_cleanup_service import delete_session_cascade
-                all_sessions = sim_svc.find_all_sessions_by_context(
-                    user_id, req.symbol, req.date, internal_session_type
-                )
-                logger.info("start_simulation: override requested — cascade deleting %d session(s)", len(all_sessions))
-                for s in all_sessions:
-                    sid = s["session_id"]
-                    try:
-                        delete_session_cascade(sid, user_id, req.date)
-                    except Exception:
-                        logger.exception("start_simulation: failed to cascade delete session %s", sid)
-            elif active:
+        elif internal_session_type in ("sim", "stepwise"):
+            if active:
                 logger.info("start_simulation: stopping existing sim session %s for restart", existing_session_id)
                 sim_svc.stop_session(active)
             else:
@@ -305,7 +306,7 @@ async def check_existing_session(
     user_id: str = Depends(get_request_user_id),
 ):
     """Check if a previous session exists for the given combination. Returns the session record or null."""
-    existing = sim_svc.find_session_by_context(user_id, symbol, date, session_type)
+    existing = sim_svc.find_session_by_context(user_id, symbol, date, session_type, instrument_type)
     if existing is None:
         return {"exists": False, "session": None}
     return {
