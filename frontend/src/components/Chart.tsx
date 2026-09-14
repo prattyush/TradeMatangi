@@ -22,6 +22,11 @@ import {
 
 export type PaneType = 'equity' | 'options'
 
+export interface ChartVisibleRange {
+  from: Time
+  to: Time
+}
+
 interface Props {
   symbol: string
   tradingDate: string
@@ -78,6 +83,8 @@ interface Props {
     anchor: IndicatorCandle[]
   } | null
   ratioMode?: RocRatioMode
+  initialVisibleRange?: ChartVisibleRange | null
+  onVisibleRangeChange?: (range: ChartVisibleRange) => void
 }
 
 type DrawMode = 'none' | 'hline' | 'trendline' | 'fibretracement' | 'channel' | 'buymarker' | 'sellmarker' | 'rrindicator'
@@ -148,7 +155,13 @@ function toCandle(c: OHLCCandle): CandlestickData {
 }
 
 function toIndicatorCandle(c: OHLCCandle | BarCandle): IndicatorCandle {
-  return { time: c.time, close: c.close }
+  return {
+    time: c.time,
+    open: c.open,
+    high: c.high,
+    low: c.low,
+    close: c.close,
+  }
 }
 
 function nextEMA(prev: number, close: number, k: number): number {
@@ -379,6 +392,8 @@ export default function Chart({
   onCandlesChange,
   ratioCandles = null,
   ratioMode = 'normalized',
+  initialVisibleRange,
+  onVisibleRangeChange,
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<IChartApi | null>(null)
@@ -404,6 +419,10 @@ export default function Chart({
   const drawDropdownRef = useRef<HTMLDivElement>(null)
   const indicatorDropdownRef = useRef<HTMLDivElement>(null)
   const intervalDropdownRef = useRef<HTMLDivElement>(null)
+  const initialVisibleRangeRef = useRef(initialVisibleRange)
+  const visibleRangeRestoredRef = useRef(false)
+  const onVisibleRangeChangeRef = useRef(onVisibleRangeChange)
+  onVisibleRangeChangeRef.current = onVisibleRangeChange
 
   const [showEma, setShowEma] = useState(true)
   const [activeRatioIndicators, setActiveRatioIndicators] = useState<RocComparisonKey[]>([])
@@ -416,6 +435,16 @@ export default function Chart({
   const [drawDropdownOpen, setDrawDropdownOpen] = useState(false)
   const [intervalDropdownOpen, setIntervalDropdownOpen] = useState(false)
   const [localReloadKey, setLocalReloadKey] = useState(0)
+
+  const restoreInitialVisibleRange = useCallback(() => {
+    if (visibleRangeRestoredRef.current || !initialVisibleRangeRef.current) return
+    try {
+      chartRef.current?.timeScale().setVisibleRange(initialVisibleRangeRef.current)
+      visibleRangeRestoredRef.current = true
+    } catch {
+      // The range may be temporarily unavailable while chart data is loading.
+    }
+  }, [])
 
   // effectiveReloadKey combines the external reloadKey prop with the local one
   // so both parent-triggered and toolbar-triggered reloads work.
@@ -804,6 +833,7 @@ export default function Chart({
 
         series.setData(allCandles.map(toCandle))
         chartRef.current?.timeScale().fitContent()
+        restoreInitialVisibleRange()
         candleTimesRef.current = allCandles.map(c => c.time)
 
         // If a session is running, restore the partial candle accumulation so
@@ -911,6 +941,7 @@ export default function Chart({
 
         if (priorCandles.length === 0) return
         chartRef.current?.timeScale().fitContent()
+        restoreInitialVisibleRange()
 
         const closes = priorCandles.map(c => c.close)
         const ema9vals = computeEMA(closes, 9)
@@ -962,7 +993,13 @@ export default function Chart({
             lastEma21Ref.current = nextEMA(lastEma21Ref.current, live.close, k21)
             e21.update({ time: live.start as Time, value: lastEma21Ref.current })
           }
-          upsertCompletedIndicatorCandle({ time: live.start, close: live.close })
+          upsertCompletedIndicatorCandle({
+            time: live.start,
+            open: live.open,
+            high: live.high,
+            low: live.low,
+            close: live.close,
+          })
         }
         liveWindowRef.current = {
           start: windowStart,
@@ -1232,7 +1269,10 @@ export default function Chart({
     if (!chart) return
     const syncVisibleRange = () => {
       const range = chart.timeScale().getVisibleRange()
-      setChartVisibleRange(range ? { from: range.from, to: range.to } : null)
+      if (!range) return
+      const nextRange = { from: range.from, to: range.to }
+      setChartVisibleRange(nextRange)
+      onVisibleRangeChangeRef.current?.(nextRange)
     }
     syncVisibleRange()
     chart.timeScale().subscribeVisibleTimeRangeChange(syncVisibleRange)

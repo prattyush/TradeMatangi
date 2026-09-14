@@ -186,9 +186,19 @@ def credit(user_id: str, amount: float, date: str) -> float:
 
 
 def reset(user_id: str, date: str, amount: float = DEFAULT_BALANCE) -> float:
-    """Overwrite wallet balance for (user_id, date)."""
+    """Overwrite the pre-session wallet balance for (user_id, date).
+
+    The shared simulation ledger uses ``sim:<date>`` and can survive a prior
+    replay in the same process. Keep it in sync when the wallet is reset before
+    the next session is created, otherwise a stale ledger can mask the value
+    configured in Settings.
+    """
     _wallets[(user_id, date)] = amount
     _write_wallet_to_db(user_id, date, amount)
+    simulation_ledger_id = f"sim:{date}"
+    if (user_id, simulation_ledger_id) in _ledgers:
+        _ledgers[(user_id, simulation_ledger_id)] = amount
+        _write_ledger(user_id, date, simulation_ledger_id, "sim", amount)
     return amount
 
 

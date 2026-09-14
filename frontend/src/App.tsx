@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import React from 'react'
 import PatternLibrary from './pages/PatternLibrary'
 import ChartStructures from './pages/ChartStructures'
-import Chart, { PaneType } from './components/Chart'
+import Chart, { ChartVisibleRange, PaneType } from './components/Chart'
 import ChartContextMenu, { ContextMenuAction } from './components/ChartContextMenu'
 import SessionControls, { OptionsReadyConfig } from './components/SessionControls'
 import TradePanel from './components/TradePanel'
@@ -69,6 +69,15 @@ interface WorkspaceSnapshot {
   sessionControlsVisible?: boolean
 }
 
+interface DraftWorkspace {
+  panes: PaneConfig[]
+  layoutPreset: LayoutPreset
+  activePaneId: number | null
+  maximizedPaneId: number | null
+  instrumentType: 'equity' | 'options'
+  optionsReady: OptionsReadyConfig | null
+}
+
 type IndicatorLeg = 'underlying' | 'CE' | 'PE'
 
 interface IndicatorCacheDescriptor {
@@ -79,7 +88,13 @@ interface IndicatorCacheDescriptor {
 }
 
 function toIndicatorCandle(candle: OHLCCandle): IndicatorCandle {
-  return { time: candle.time, close: candle.close }
+  return {
+    time: candle.time,
+    open: candle.open,
+    high: candle.high,
+    low: candle.low,
+    close: candle.close,
+  }
 }
 
 function formatTimeFromTs(ts: number): string {
@@ -100,6 +115,25 @@ function makeOptionsPane(right: 'CE' | 'PE', strike: number, expiry: string, int
 
 function isLayoutPreset(value: unknown): value is LayoutPreset {
   return typeof value === 'number' && value >= 1 && value <= 7
+}
+
+function chartRangeKey(sessionId: string, pane: PaneConfig, paneIndex: number): string {
+  return [
+    sessionId,
+    paneIndex,
+    pane.type,
+    pane.intervalMinutes,
+    pane.right ?? 'EQ',
+    pane.strike ?? '',
+    pane.expiry ?? '',
+  ].join(':')
+}
+
+function isChartVisibleRange(value: unknown): value is ChartVisibleRange {
+  if (!value || typeof value !== 'object') return false
+  const range = value as { from?: unknown; to?: unknown }
+  return typeof range.from === 'number' && Number.isFinite(range.from) &&
+    typeof range.to === 'number' && Number.isFinite(range.to) && range.from < range.to
 }
 
 // Default pane sets
@@ -165,6 +199,19 @@ export default function App() {
 function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: string; email: string; isAdmin: boolean; accountName?: string }; onLogout: () => void; setAuthUser: React.Dispatch<React.SetStateAction<{ userId: string; email: string; isAdmin: boolean; accountName?: string } | null>> }) {
   const sim = useSimulation()
   const workspaceStorageKey = `tradematangi_workspace_${authUser.userId}`
+  const chartRangeStorageKey = `${workspaceStorageKey}_ranges`
+  const [chartRanges, setChartRanges] = useState<Record<string, ChartVisibleRange>>(() => {
+    try {
+      const raw = localStorage.getItem(chartRangeStorageKey)
+      const parsed = raw ? JSON.parse(raw) : {}
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {}
+      return Object.fromEntries(
+        Object.entries(parsed).filter(([, range]) => isChartVisibleRange(range)),
+      ) as Record<string, ChartVisibleRange>
+    } catch {
+      return {}
+    }
+  })
   const workspaceRestoredRef = useRef(false)
   const { recordingState, recordingError, startRecording, pauseRecording, resumeRecording, stopRecording } = useRecording()
   const simRef = useRef(sim)
@@ -381,6 +428,7 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
   const [paneCandles, setPaneCandles] = useState<Record<number, IndicatorCandle[]>>({})
   const [indicatorCandleCache, setIndicatorCandleCache] = useState<Record<string, IndicatorCandle[]>>({})
   const indicatorCacheLoadingRef = useRef<Set<string>>(new Set())
+  const draftWorkspaceRef = useRef<DraftWorkspace | null>(null)
 
   // ── Options mode state ──────────────────────────────────────────────────────
   const [instrumentType, setInstrumentType] = useState<'equity' | 'options'>('equity')
@@ -480,6 +528,10 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
     sim.sessionId, panes, layoutPreset, activePaneId, maximizedPaneId,
     instrumentType, optionsReady, sessionControlsVisible,
   ])
+
+  useEffect(() => {
+    localStorage.setItem(chartRangeStorageKey, JSON.stringify(chartRanges))
+  }, [chartRangeStorageKey, chartRanges])
 
   useEffect(() => {
     setPaneCandles({})
@@ -586,11 +638,41 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
   ])
 
   const beginAddSession = useCallback(() => {
+    draftWorkspaceRef.current = {
+      panes,
+      layoutPreset,
+      activePaneId,
+      maximizedPaneId,
+      instrumentType,
+      optionsReady,
+    }
     setAddSessionSymbol(sim.symbol)
     setAddSessionDate(sim.group?.date ?? sim.date)
+    setPanes(DEFAULT_EQUITY_PANES.map(p => ({ ...p })))
+    setLayoutPreset(2)
+    setActivePaneId(1)
+    setMaximizedPaneId(null)
+    setInstrumentType('equity')
+    setOptionsReady(null)
+    setPaneCandles({})
     setAddingSession(true)
     setSessionControlsVisible(true)
-  }, [sim.symbol, sim.group?.date, sim.date])
+  }, [activePaneId, instrumentType, layoutPreset, maximizedPaneId, optionsReady, panes, sim.date, sim.group?.date, sim.symbol])
+
+  const cancelAddSession = useCallback(() => {
+    const draft = draftWorkspaceRef.current
+    if (draft) {
+      setPanes(draft.panes)
+      setLayoutPreset(draft.layoutPreset)
+      setActivePaneId(draft.activePaneId)
+      setMaximizedPaneId(draft.maximizedPaneId)
+      setInstrumentType(draft.instrumentType)
+      setOptionsReady(draft.optionsReady)
+    }
+    draftWorkspaceRef.current = null
+    setPaneCandles({})
+    setAddingSession(false)
+  }, [])
 
   // ── Layout preset change ────────────────────────────────────────────────────
   const handleLayoutChange = useCallback((preset: LayoutPreset) => {
@@ -1446,6 +1528,13 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
   const renderPane = (pane: PaneConfig, height: number, style?: React.CSSProperties) => {
     const isMaximized = maximizedPaneId === pane.id
     const paneIndex = panes.findIndex(p => p.id === pane.id)
+    const draft = addingSession
+    const chartSymbol = draft ? addSessionSymbol : sim.symbol
+    const chartDate = draft ? addSessionDate : sim.date
+    const chartSessionKey = draft ? `draft:${addSessionSymbol}:${addSessionDate}` : (sim.sessionId ?? 'no-session')
+    const savedChartRangeKey = !draft && sim.sessionId
+      ? chartRangeKey(sim.sessionId, pane, paneIndex)
+      : null
 
     // Compute valid swap targets based on layout and position
     const swapTargets: { dir: string; onClick: () => void }[] = []
@@ -1499,13 +1588,13 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
           >✕</button>
         )}
         <Chart
-          key={`${sim.sessionId ?? 'no-session'}:${pane.id}:${pane.type}:${pane.right ?? 'EQ'}:${pane.strike ?? ''}:${pane.expiry ?? ''}`}
-          symbol={sim.symbol}
-          tradingDate={sim.date}
-          startTime={sim.startTime}
+          key={`${chartSessionKey}:${pane.id}:${pane.type}:${pane.right ?? 'EQ'}:${pane.strike ?? ''}:${pane.expiry ?? ''}`}
+          symbol={chartSymbol}
+          tradingDate={chartDate}
+          startTime={draft ? null : sim.startTime}
           intervalMinutes={pane.intervalMinutes}
-          latestTick={getTickForPane(pane)}
-          completedBar={getCompletedBarForPane(pane)}
+          latestTick={draft ? null : getTickForPane(pane)}
+          completedBar={draft ? null : getCompletedBarForPane(pane)}
           height={height}
           paneType={pane.type}
           strike={pane.strike}
@@ -1513,7 +1602,7 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
           right={pane.right as 'CE' | 'PE' | undefined}
           liveFromTs={pane.liveFromTs}
           reloadKey={pane.reloadKey ?? 0}
-          currentSimTime={sim.latestEquityTick?.time ?? null}
+          currentSimTime={draft ? null : (sim.latestEquityTick?.time ?? null)}
           isActive={pane.id === activePaneId}
           onActivate={() => {
             setActivePaneId(pane.id)
@@ -1523,23 +1612,32 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
               setContextMenuOrderPick(null)
             }
           }}
-          trades={getTradesForPane(pane)}
-          openOrders={getOrdersForPane(pane)}
+          trades={draft ? [] : getTradesForPane(pane)}
+          openOrders={draft ? [] : getOrdersForPane(pane)}
           onPriceSelect={(pricePickOrderId || tpPickActive || utpPickActive || lpPickActive || contextMenuOrderPick) && pane.id === activePaneId ? handleChartPriceSelect : null}
           pricePickLabel={contextMenuOrderPick ? `⊕ Click for ${contextMenuOrderPick.orderType === 'TARGET' ? 'Target' : 'Limit'} Price` : undefined}
-          onContextMenu={(price, screenX, screenY, ctx) => handleChartContextMenu(price, screenX, screenY, ctx, pane.id)}
+          onContextMenu={draft ? undefined : (price, screenX, screenY, ctx) => handleChartContextMenu(price, screenX, screenY, ctx, pane.id)}
           historicalDays={historicalDays}
           onMaximize={() => setMaximizedPaneId(isMaximized ? null : pane.id)}
           isMaximized={isMaximized}
           swapTargets={swapTargets.length > 0 ? swapTargets : undefined}
-          position={getPositionForPane(pane)}
-          pnl={getPnlForPane(pane)}
+          position={draft ? undefined : getPositionForPane(pane)}
+          pnl={draft ? 0 : getPnlForPane(pane)}
           pnlPctMode={pnlPctMode}
-          sessionCapital={sim.sessionCapital}
+          sessionCapital={draft ? 0 : sim.sessionCapital}
           onIntervalChange={(minutes) => handlePaneIntervalChange(pane.id, minutes)}
-          onCandlesChange={(candles) => handlePaneCandlesChange(pane.id, candles)}
-          ratioCandles={getRatioCandlesForPane(pane)}
+          onCandlesChange={draft ? undefined : (candles) => handlePaneCandlesChange(pane.id, candles)}
+          ratioCandles={draft ? null : getRatioCandlesForPane(pane)}
           ratioMode={tradingRocRatioMode}
+          initialVisibleRange={savedChartRangeKey ? chartRanges[savedChartRangeKey] ?? null : null}
+          onVisibleRangeChange={savedChartRangeKey ? (range) => {
+            setChartRanges(current => {
+              if (current[savedChartRangeKey]?.from === range.from && current[savedChartRangeKey]?.to === range.to) {
+                return current
+              }
+              return { ...current, [savedChartRangeKey]: range }
+            })
+          } : undefined}
         />
       </div>
     )
@@ -1737,7 +1835,7 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
       }}>
         <span style={{ fontSize: 18, fontWeight: 700, color: '#58a6ff' }}>TradeMatangi</span>
         {sim.group && <SessionSwitcher group={sim.group} selectedSessionId={sim.sessionId}
-          onSelect={(id) => { sim.selectGroupMember(id).catch(() => {}) }}
+          onSelect={(id) => { if (addingSession) cancelAddSession(); sim.selectGroupMember(id).catch(() => {}) }}
           onRename={async (id, alias) => { if (!sim.groupId) return; await api.renameSessionGroupMember(sim.groupId, id, alias); await sim.refreshGroup() }}
           onAdd={beginAddSession} />}
         {sim.sessionState !== 'idle' && !sim.group && (
@@ -2055,7 +2153,7 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
       <div style={{ display: sessionControlsVisible ? 'block' : 'none' }}>
       <SessionControls
         key={addingSession ? `add:${addSessionSymbol}` : `active:${sim.sessionId ?? 'idle'}:${sim.symbol}`}
-        sessionState={sim.sessionState}
+        sessionState={addingSession ? 'idle' : sim.sessionState}
         currentSymbol={addingSession ? addSessionSymbol : sim.symbol}
         currentDate={addingSession ? addSessionDate : sim.date}
         onSymbolChange={addingSession ? setAddSessionSymbol : sim.updateSymbol}
@@ -2067,10 +2165,10 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
         onOptionsReady={addingSession ? (() => {}) : handleOptionsReady}
         lastStartedContext={sim.lastStartedContext}
         isRealTradingUser={isRealTradingUser || authUser.isAdmin}
-        stepwise={sim.stepwise}
-        barPaused={sim.barPaused}
-        barIndex={sim.barIndex}
-        totalBars={sim.totalBars}
+        stepwise={addingSession ? false : sim.stepwise}
+        barPaused={addingSession ? false : sim.barPaused}
+        barIndex={addingSession ? 0 : sim.barIndex}
+        totalBars={addingSession ? 0 : sim.totalBars}
         onNextBar={wrappedNextBar}
         addMode={addingSession}
         lockedSpeed={sim.group?.speed ?? null}

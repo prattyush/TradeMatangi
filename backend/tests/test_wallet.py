@@ -14,8 +14,10 @@ DATE2 = "2026-05-07"
 @pytest.fixture(autouse=True)
 def clean_wallets():
     svc._wallets.clear()
+    svc._ledgers.clear()
     yield
     svc._wallets.clear()
+    svc._ledgers.clear()
 
 
 @pytest.fixture(autouse=True)
@@ -86,6 +88,14 @@ class TestReset:
         svc.debit(USER, 100_000.0, DATE)
         balance = svc.reset(USER, DATE, 50_000.0)
         assert balance == 50_000.0
+
+    def test_reset_updates_existing_simulation_ledger(self):
+        """A pre-session reset must not be hidden by a stale sim:<date> ledger."""
+        svc._ledgers[(USER, f"sim:{DATE}")] = 150_000.0
+        with patch("app.services.wallet_service._write_ledger"):
+            balance = svc.reset(USER, DATE, 18_000.0)
+        assert balance == 18_000.0
+        assert svc.get_ledger_balance(USER, DATE, f"sim:{DATE}") == 18_000.0
 
 
 class TestCarryForward:

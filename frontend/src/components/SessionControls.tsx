@@ -588,7 +588,7 @@ export default function SessionControls({
           <span style={{ ...label, color: '#f85149' }}>Session ended — configure above and restart</span>
         )}
 
-        {extraControls}
+        {!addMode && extraControls}
       </div>
 
       {(dateError || startError) && (
