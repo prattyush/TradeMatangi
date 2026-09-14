@@ -57,7 +57,7 @@ function alignToTimes(candles: IndicatorCandle[], times: number[]): IndicatorCan
 function isSmallBody(candle: IndicatorCandle): boolean {
   const range = candle.high - candle.low
   const body = Math.abs(candle.close - candle.open)
-  return range <= 0 || body < range * 0.5
+  return range <= 0 || body < range * 0.33
 }
 
 function validRatioTimes(...candles: IndicatorCandle[][]): Set<number> {
