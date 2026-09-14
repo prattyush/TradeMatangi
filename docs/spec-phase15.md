@@ -12,6 +12,7 @@
 | 2-Minute Interval Support | ✅ Complete | Added to chart and strategy interval options |
 | 5-Pane Layout (Triple Top) | ✅ Complete | 3 top + 2 bottom panes with swap/maximize |
 | Trade History Strategy & P&L | ✅ Complete | Strategy labels + round-trip P&L on closing trades |
+| Multi-Session Groups and Switching | ✅ Complete | Same-date session groups, isolated state, wallet continuity, and per-session chart views |
 
 **Tests:** TypeScript compiles clean. Backend: 724 passed, 10 failed (all pre-existing guardrail mock issues, not related to this PR).
 
@@ -386,7 +387,7 @@ How they can be used?
  
  Also, I want some way to label these sessions so that user can switch between them. I'm not sure how the switching can be, but it should be simple, easier way to switch. The switching way should take minimum space. Some examples of labels - The label can be a combination, which is Nifty 50 and paper, or something like that, Nifty 50 real and Nifty 50 simulation, because the date is anyway the same. The label should be at the top visible, so that user doesn't get confussed when the user is running a real trading and a paper trading session both on NIFTY 50. The logic to do that, is paper trading when anxiety is bad and emotions not much in control, and if some real opportunity comes switch to real immediately and take the trade. Also, now this also has to be handled when the Chrome browser kind of dies out, all sessions are re-stored, currently I think only 1 sesssion is stored to be re-stored, so that edge case is also to be handled, and any other edge cases in between.
 
-#### Implementation notes and current status (2026-09-13)
+#### Implementation notes and current status (2026-09-14)
 
 The multi-session foundation is implemented. Active members are represented by a server-owned session group (maximum four), with compatible clock families, shared replay date/speed, aliases, ownership checks, and explicit wallet-ledger identities. Add Session inherits the active group's date and clock settings; date and replay speed are locked in the UI. Override is scoped to the selected symbol/session context and does not delete sibling sessions or ledgers.
 
@@ -395,6 +396,12 @@ Switching is seamless rather than a stop/restart operation. The backend keeps ea
 Safeguards address the cross-session bugs observed during testing: option expiry and strikes are normalized against the requested symbol/date (including protection against NIFTY strikes leaking into BSESEN), events are routed by session ID so one symbol cannot appear on another chart, and reload recovery restores the whole active group and selected member. Paper and Real ledgers remain independent; simulation members share only their intended simulation ledger.
 
 The browser cache is an acceleration layer, not durable state. After a browser restart, the active-group restore endpoint and backend session state remain authoritative and hydrate the selected member as needed.
+
+The follow-up session workflow is also implemented. When Add Session is opened, the new-session form starts with an idle workspace containing only the new session's default charts; Pause and Stop controls remain attached to the previously selected active session. Cancelling the form restores the previous workspace, and selecting another session while the form is open cancels the draft first.
+
+Simulation sessions created for the same group/date use the shared simulation wallet ledger. Resetting the wallet before creating another same-date session updates an existing `sim:<date>` ledger as well, so a new NIFTY or SENSEX options session sees the configured balance instead of the default wallet amount.
+
+Each OHLC chart now persists its visible time range by session and semantic pane identity (pane position, interval, option side, strike, and expiry). Switching away and back restores the last zoom level, including the view focused on the current trading day. Saved ranges are stored per authenticated user and survive a browser reload; charts without a saved range continue to fit all available data.
 
 
 
@@ -436,6 +443,10 @@ The browser cache is an acceleration layer, not durable state. After a browser r
 7. **Underlying strategies**: Start options session → right-click on underlying chart → verify Underlying Target/SL options appear
 8. **Settings re-arrange**: Open Settings → verify Trading tab exists with correct settings → verify General tab no longer has trading settings → verify tab styling is improved
 9. **Run existing tests**: `cd backend && python -m pytest tests/ -v` and `cd frontend && node node_modules/typescript/bin/tsc --noEmit`
+10. **Same-date wallet continuity**: Start a NIFTY simulation, change the wallet to 18K, add a SENSEX options simulation, and verify the new session shows 18K rather than the default balance.
+11. **Add Session workspace isolation**: With an active session running, open Add Session and verify the draft shows Start plus its two default charts, while Pause/Stop and the previous session charts remain outside the draft workspace.
+12. **Session chart zoom persistence**: Zoom session 1 to the current trading day, switch to session 2, return to session 1, and verify the original OHLC range is restored. Repeat for CE/PE panes and different intervals.
+13. **Chart zoom reload recovery**: Reload the browser after saving a session's zoom and verify the same session/pane range is restored.
 
 ---
 
