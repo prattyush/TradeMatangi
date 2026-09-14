@@ -295,7 +295,7 @@ class TestBulkUpdateSLEndpoint:
         assert data["orders"][0]["right"] == "CE"
         assert data["orders"][0]["trigger_price"] == 98.0
 
-    async def test_bulk_update_updates_mixed_closing_orders_only(self):
+    async def test_bulk_update_updates_stoploss_orders_only(self):
         session = _make_session()
         with patch("app.routers.orders.sim_svc.get_session", return_value=session), \
              patch("app.routers.orders.trading_service.get_position", return_value=_make_position("LONG", 3)):
@@ -316,18 +316,20 @@ class TestBulkUpdateSLEndpoint:
                 resp = await client.patch("/api/orders/bulk-update-sl", json={
                     "session_id": SESSION, "trigger_price": 105.0,
                 })
+                open_orders = await client.get(f"/api/orders?session_id={SESSION}")
 
         assert resp.status_code == 200
         data = resp.json()
-        assert data["updated"] == 2
+        assert data["updated"] == 1
         assert {o["side"] for o in data["orders"]} == {"SELL"}
-        assert {o["order_type"] for o in data["orders"]} == {"STOPLOSS", "LIMIT"}
-        limit_order = next(o for o in data["orders"] if o["order_type"] == "LIMIT")
+        assert {o["order_type"] for o in data["orders"]} == {"STOPLOSS"}
         sl_order = next(o for o in data["orders"] if o["order_type"] == "STOPLOSS")
-        assert limit_order["limit_price"] == 105.0
-        assert limit_order["trigger_price"] == 105.0
         assert sl_order["trigger_price"] == 105.0
         assert entry_resp.json()["order_id"] not in {o["order_id"] for o in data["orders"]}
+
+        limit_order = next(o for o in open_orders.json() if o["order_type"] == "LIMIT" and o["side"] == "SELL")
+        assert limit_order["limit_price"] == 110.0
+        assert limit_order["trigger_price"] == 110.0
 
     async def test_bulk_update_short_position_updates_buy_closing_orders(self):
         session = _make_session()
@@ -353,8 +355,9 @@ class TestBulkUpdateSLEndpoint:
 
         assert resp.status_code == 200
         data = resp.json()
-        assert data["updated"] == 2
+        assert data["updated"] == 1
         assert {o["side"] for o in data["orders"]} == {"BUY"}
+        assert {o["order_type"] for o in data["orders"]} == {"STOPLOSS"}
 
     async def test_bulk_convert_converts_closing_orders_only(self):
         session = _make_session()

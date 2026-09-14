@@ -466,7 +466,8 @@ async def cancel_order(order_id: str, session_id: str = Query(...)):
 @router.patch("/bulk-update-sl")
 async def bulk_update_sl_route(req: BulkUpdateSLRequest):
     """
-    Set all pending closing orders for a session's symbol/right to the same price.
+    Set all pending stoploss closing orders for a session's symbol/right to the same price.
+    Pending LIMIT/TARGET exit orders are intentionally left unchanged.
     Handles Kotak real-trading orders too.
     """
     session = sim_svc.get_session(req.session_id)
@@ -476,7 +477,10 @@ async def bulk_update_sl_route(req: BulkUpdateSLRequest):
         raise HTTPException(status_code=400, detail="trigger_price must be positive")
 
     right = req.right.upper() if req.right else None
-    closing_orders = _get_closing_orders(session, right)
+    closing_orders = [
+        order for order in _get_closing_orders(session, right)
+        if order.is_stoploss
+    ]
 
     if not closing_orders:
         return {"updated": 0, "orders": []}
