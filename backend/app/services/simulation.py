@@ -646,7 +646,12 @@ def _emit_tick_and_check_orders(
             from app.services import session_group_service
             group = session_group_service.get_group(session.group_id, session.user_id)
             if group and group.get("current_time") != str(current_time):
-                session_group_service.update_clock(group, str(current_time))
+                # Keep the shared clock current in the in-memory group cache.
+                # Persisting this on every tick makes one Stepwise click issue
+                # hundreds of synchronous DynamoDB writes before the next bar
+                # can finish processing.  The clock is persisted at the bar
+                # boundary by _persist_group_clock().
+                group["current_time"] = str(current_time)
         except Exception:
             logger.exception("Could not persist clock for group %s", session.group_id)
     current_price = tick["close"]
@@ -750,6 +755,19 @@ def _emit_tick_and_check_orders(
     return fill_events
 
 
+def _persist_group_clock(session: SimulationSession) -> None:
+    """Persist a grouped replay clock after a bar, not once per tick."""
+    if not session.group_id or session.session_type not in ("sim", "stepwise"):
+        return
+    try:
+        from app.services import session_group_service
+        group = session_group_service.get_group(session.group_id, session.user_id)
+        if group:
+            session_group_service.update_clock(group, session.current_time)
+    except Exception:
+        logger.exception("Could not persist clock for group %s", session.group_id)
+
+
 async def _run_session(session: SimulationSession) -> None:
     session.state = SimulationState.RUNNING
 
@@ -809,6 +827,7 @@ async def _run_session(session: SimulationSession) -> None:
                             }))
                         except asyncio.QueueFull:
                             pass
+                        _persist_group_clock(session)
                         bar_o_ds = bar_h_ds = bar_l_ds = bar_c_ds = None
                         bar_o_ce = bar_h_ce = bar_l_ce = bar_c_ce = None
                         bar_o_pe = bar_h_pe = bar_l_pe = bar_c_pe = None
@@ -917,6 +936,7 @@ async def _run_session(session: SimulationSession) -> None:
                             }))
                         except asyncio.QueueFull:
                             pass
+                        _persist_group_clock(session)
                         bar_o_so = bar_h_so = bar_l_so = bar_c_so = None
                         session.step_event.clear()
                         await session.step_event.wait()
@@ -969,6 +989,7 @@ async def _run_session(session: SimulationSession) -> None:
                             }))
                         except asyncio.QueueFull:
                             pass
+                        _persist_group_clock(session)
                         bar_o_eq = bar_h_eq = bar_l_eq = bar_c_eq = None
                         session.step_event.clear()
                         await session.step_event.wait()
