@@ -82,6 +82,46 @@ async fn desktop_connection_state(base_url: String, host: tauri::State<'_, HostS
 }
 
 #[tauri::command]
+async fn desktop_historical_page(base_url: String, symbol: String, trading_date: String, interval_minutes: u32) -> Result<serde_json::Value, String> {
+    let token = stored_tokens()?.access_token;
+    let response = reqwest::Client::new()
+        .get(format!("{}/api/desktop/v1/historical/pages", base_url.trim_end_matches('/')))
+        .bearer_auth(token)
+        .query(&[("symbol", symbol), ("trading_date", trading_date), ("interval_minutes", interval_minutes.to_string()), ("context_days", "5".into())])
+        .send().await.map_err(|error| error.to_string())?;
+    if !response.status().is_success() { return Err(format!("History request failed ({})", response.status())); }
+    response.json::<serde_json::Value>().await.map_err(|error| error.to_string())
+}
+
+async fn desktop_get(base_url: String, path: &str, query: Vec<(&str, String)>) -> Result<serde_json::Value, String> {
+    let token = stored_tokens()?.access_token;
+    let response = reqwest::Client::new()
+        .get(format!("{}/api/desktop/v1/{}", base_url.trim_end_matches('/'), path))
+        .bearer_auth(token).query(&query).send().await.map_err(|error| error.to_string())?;
+    if !response.status().is_success() { return Err(format!("Desktop request failed ({})", response.status())); }
+    response.json::<serde_json::Value>().await.map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn desktop_catalogue(base_url: String) -> Result<serde_json::Value, String> {
+    desktop_get(base_url, "catalogue", vec![]).await
+}
+
+#[tauri::command]
+async fn desktop_option_metadata(base_url: String, symbol: String, as_of_date: String) -> Result<serde_json::Value, String> {
+    desktop_get(base_url, "option-metadata", vec![("symbol", symbol), ("as_of_date", as_of_date)]).await
+}
+
+#[tauri::command]
+async fn desktop_option_historical_page(base_url: String, symbol: String, trading_date: String, expiry: String, strike: u32, right: String, interval_minutes: u32) -> Result<serde_json::Value, String> {
+    desktop_get(base_url, "options/historical/pages", vec![
+        ("symbol", symbol), ("trading_date", trading_date), ("expiry", expiry),
+        ("strike", strike.to_string()), ("right", right),
+        ("interval_minutes", interval_minutes.to_string()), ("context_days", "5".into()),
+    ]).await
+}
+
+#[tauri::command]
 fn desktop_logout(host: tauri::State<HostState>) -> Result<(), String> {
     clear_desktop_tokens()?;
     host.set_connection("authentication_required");
@@ -186,7 +226,7 @@ async fn start_sse_subscription(url: String, host: tauri::State<'_, HostState>) 
 pub fn run() {
     tauri::Builder::default()
         .manage(HostState::default())
-        .invoke_handler(tauri::generate_handler![save_desktop_tokens, clear_desktop_tokens, desktop_login, desktop_connection_state, desktop_logout, queue_offline_mutation, pending_offline_mutations, acknowledge_offline_mutation, host_snapshot, start_sse_subscription])
+        .invoke_handler(tauri::generate_handler![save_desktop_tokens, clear_desktop_tokens, desktop_login, desktop_connection_state, desktop_historical_page, desktop_catalogue, desktop_option_metadata, desktop_option_historical_page, desktop_logout, queue_offline_mutation, pending_offline_mutations, acknowledge_offline_mutation, host_snapshot, start_sse_subscription])
         .run(tauri::generate_context!())
         .expect("tauri application error");
 }
