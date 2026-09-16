@@ -1,0 +1,9 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Trade Matangi Charts",
+  "version": "0.1.0",
+  "identifier": "in.trade-matangi.desktop-charts",
+  "build": { "beforeDevCommand": "npm run dev", "devUrl": "http://127.0.0.1:1420", "beforeBuildCommand": "npm run build", "frontendDist": "../dist" },
+  "app": { "windows": [{ "title": "Trade Matangi Charts", "width": 1280, "height": 800, "minWidth": 960, "minHeight": 640 }], "security": { "csp": "default-src 'self'; connect-src 'self' http: https:; img-src 'self' asset: data:; style-src 'self' 'unsafe-inline'; script-src 'self'" } },
+  "bundle": { "active": true, "targets": "nsis", "icon": ["icons/icon.png", "icons/icon.ico"], "windows": { "webviewInstallMode": { "type": "offlineInstaller" } } }
+}
