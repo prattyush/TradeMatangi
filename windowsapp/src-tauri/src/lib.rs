@@ -6,6 +6,9 @@ use tauri::Manager;
 
 const CREDENTIAL_SERVICE: &str = "in.trade-matangi.desktop-charts";
 const CREDENTIAL_ACCOUNT: &str = "desktop-session";
+// An explicit target avoids a derived Windows Credential Manager name that
+// can be unavailable to an installed NSIS application after sign-in.
+const CREDENTIAL_TARGET: &str = "TradeMatangi.Desktop.Session";
 
 #[derive(Serialize, Deserialize)]
 pub struct TokenBundle {
@@ -29,12 +32,26 @@ pub struct HostSnapshot {
 }
 
 fn credentials() -> Result<keyring::Entry, String> {
+    keyring::Entry::new_with_target(CREDENTIAL_TARGET, CREDENTIAL_SERVICE, CREDENTIAL_ACCOUNT)
+        .map_err(|error| error.to_string())
+}
+
+/// Preserve sign-in on upgrade from releases using keyring's derived target.
+fn legacy_credentials() -> Result<keyring::Entry, String> {
     keyring::Entry::new(CREDENTIAL_SERVICE, CREDENTIAL_ACCOUNT).map_err(|error| error.to_string())
 }
 
+fn tokens_from(entry: keyring::Entry) -> Result<TokenBundle, keyring::Error> {
+    let raw = entry.get_password()?;
+    serde_json::from_str(&raw).map_err(|error| keyring::Error::BadEncoding(error.to_string().into_bytes()))
+}
+
 fn stored_tokens() -> Result<TokenBundle, String> {
-    let raw = credentials()?.get_password().map_err(|error| error.to_string())?;
-    serde_json::from_str(&raw).map_err(|error| error.to_string())
+    match tokens_from(credentials()?) {
+        Ok(tokens) => Ok(tokens),
+        Err(keyring::Error::NoEntry) => tokens_from(legacy_credentials()?).map_err(|error| error.to_string()),
+        Err(error) => Err(error.to_string()),
+    }
 }
 
 async fn authenticate(base_url: &str, email: &str, password: &str) -> Result<TokenBundle, String> {
@@ -52,15 +69,24 @@ async fn authenticate(base_url: &str, email: &str, password: &str) -> Result<Tok
 #[tauri::command]
 fn save_desktop_tokens(tokens: TokenBundle) -> Result<(), String> {
     let encoded = serde_json::to_string(&tokens).map_err(|error| error.to_string())?;
-    credentials()?.set_password(&encoded).map_err(|error| error.to_string())
+    let entry = credentials()?;
+    entry.set_password(&encoded).map_err(|error| format!("Windows Credential Manager could not save the desktop session: {error}"))?;
+    // Fail sign-in immediately if Windows did not make this entry readable to
+    // this installed application, rather than failing later while loading data.
+    let saved = entry.get_password().map_err(|error| format!("Windows Credential Manager did not retain the desktop session: {error}"))?;
+    if saved != encoded { return Err("Windows Credential Manager did not retain the desktop session. Remove the Trade Matangi credential in Credential Manager and sign in again.".into()); }
+    Ok(())
 }
 
 #[tauri::command]
 fn clear_desktop_tokens() -> Result<(), String> {
-    match credentials()?.delete_credential() {
-        Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
-        Err(error) => Err(error.to_string()),
+    for entry in [credentials()?, legacy_credentials()?] {
+        match entry.delete_credential() {
+            Ok(()) | Err(keyring::Error::NoEntry) => {},
+            Err(error) => return Err(error.to_string()),
+        }
     }
+    Ok(())
 }
 
 #[tauri::command]
