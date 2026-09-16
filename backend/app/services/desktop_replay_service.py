@@ -119,7 +119,13 @@ async def next_bar(run: ReplayRun) -> bool:
     if run.mode != "stepwise" or run.state == "stopped" or run.next_lock.locked():
         return False
     async with run.next_lock:
-        run.cursor = ((run.cursor // run.interval_seconds) + 1) * run.interval_seconds
+        # A bar is complete only at its final source-second.  Advancing to the
+        # next boundary exposed just that boundary's opening price as a
+        # one-point OHLC candle.  Finish the current incomplete interval first;
+        # after it is complete, finish the following interval on each click.
+        bar_start = (run.cursor // run.interval_seconds) * run.interval_seconds
+        bar_end = bar_start + run.interval_seconds - 1
+        run.cursor = bar_end if run.cursor < bar_end else bar_end + run.interval_seconds
         run.bar_index += 1
         await _emit(run, "stepwise_bar")
     return True
