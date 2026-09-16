@@ -122,6 +122,33 @@ async fn desktop_option_historical_page(base_url: String, symbol: String, tradin
 }
 
 #[tauri::command]
+async fn desktop_chart_settings(base_url: String) -> Result<serde_json::Value, String> {
+    desktop_get(base_url, "chart-settings", vec![]).await
+}
+
+#[tauri::command]
+async fn save_desktop_chart_settings(base_url: String, settings: serde_json::Value) -> Result<serde_json::Value, String> {
+    let token = stored_tokens()?.access_token;
+    let response = reqwest::Client::new().put(format!("{}/api/desktop/v1/chart-settings", base_url.trim_end_matches('/')))
+        .bearer_auth(token).json(&serde_json::json!({"settings": settings})).send().await.map_err(|error| error.to_string())?;
+    if !response.status().is_success() { return Err(format!("Settings request failed ({})", response.status())); }
+    response.json::<serde_json::Value>().await.map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn desktop_replay_request(base_url: String, path: String, method: String, body: serde_json::Value) -> Result<serde_json::Value, String> {
+    let token = stored_tokens()?.access_token;
+    let url = format!("{}/api/desktop/v1/replay/{}", base_url.trim_end_matches('/'), path.trim_start_matches('/'));
+    let client = reqwest::Client::new();
+    let request = match method.as_str() {
+        "GET" => client.get(url), "POST" => client.post(url).json(&body), _ => return Err("Unsupported replay request".into()),
+    };
+    let response = request.bearer_auth(token).send().await.map_err(|error| error.to_string())?;
+    if !response.status().is_success() { return Err(format!("Replay request failed ({})", response.status())); }
+    response.json::<serde_json::Value>().await.map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 fn desktop_logout(host: tauri::State<HostState>) -> Result<(), String> {
     clear_desktop_tokens()?;
     host.set_connection("authentication_required");
@@ -226,7 +253,7 @@ async fn start_sse_subscription(url: String, host: tauri::State<'_, HostState>) 
 pub fn run() {
     tauri::Builder::default()
         .manage(HostState::default())
-        .invoke_handler(tauri::generate_handler![save_desktop_tokens, clear_desktop_tokens, desktop_login, desktop_connection_state, desktop_historical_page, desktop_catalogue, desktop_option_metadata, desktop_option_historical_page, desktop_logout, queue_offline_mutation, pending_offline_mutations, acknowledge_offline_mutation, host_snapshot, start_sse_subscription])
+        .invoke_handler(tauri::generate_handler![save_desktop_tokens, clear_desktop_tokens, desktop_login, desktop_connection_state, desktop_historical_page, desktop_catalogue, desktop_option_metadata, desktop_option_historical_page, desktop_chart_settings, save_desktop_chart_settings, desktop_replay_request, desktop_logout, queue_offline_mutation, pending_offline_mutations, acknowledge_offline_mutation, host_snapshot, start_sse_subscription])
         .run(tauri::generate_context!())
         .expect("tauri application error");
 }

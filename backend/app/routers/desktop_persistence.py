@@ -24,10 +24,24 @@ class DrawingWrite(BaseModel):
     mutation_id: str | None = None
 
 
+class ChartSettingsWrite(BaseModel):
+    settings: dict
+
+
 def _conflict(error: ValueError) -> None:
     if str(error) == "revision_conflict":
         raise HTTPException(status_code=409, detail="Record was changed by another screen; reload and reconcile")
     raise HTTPException(status_code=422, detail=str(error))
+
+
+@router.get("/chart-settings")
+async def chart_settings(user_id: str = Depends(get_desktop_user_id)):
+    return persistence.get_chart_settings(user_id)
+
+
+@router.put("/chart-settings")
+async def save_chart_settings(req: ChartSettingsWrite, user_id: str = Depends(get_desktop_user_id)):
+    return persistence.save_chart_settings(user_id, req.settings)
 
 
 @router.get("/screens")

@@ -1,4 +1,5 @@
 """Sprint 5 shared Replay and Stepwise controls for a desktop screen."""
+import asyncio
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -43,7 +44,9 @@ async def start(req: StartReplayRequest, user_id: str = Depends(get_desktop_user
             canonical_instrument_id(tile.instrument)
         except ValueError as error:
             raise HTTPException(status_code=422, detail=str(error))
-    run = replay.create(user_id, req.mode, req.date, _cursor(req.date, req.start_time), req.interval_seconds, req.speed, [tile.model_dump() for tile in req.tiles])
+    tiles = [tile.model_dump() for tile in req.tiles]
+    candles = await asyncio.to_thread(replay.prepare_tiles, tiles, req.date, req.interval_seconds)
+    run = replay.create(user_id, req.mode, req.date, _cursor(req.date, req.start_time), req.interval_seconds, req.speed, tiles, candles)
     return replay.snapshot(run)
 
 

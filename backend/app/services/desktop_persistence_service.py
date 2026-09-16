@@ -9,13 +9,14 @@ from boto3.dynamodb.conditions import Key
 
 _SCREENS_TABLE = "DesktopScreens"
 _DRAWINGS_TABLE = "DesktopDrawings"
+_SETTINGS_TABLE = "DesktopChartSettings"
 
 
 def _ensure_tables() -> None:
     from app.services.db import get_dynamodb_client, get_dynamodb_resource
     existing = set(get_dynamodb_resource().meta.client.list_tables()["TableNames"])
     client = get_dynamodb_client()
-    for table in (_SCREENS_TABLE, _DRAWINGS_TABLE):
+    for table in (_SCREENS_TABLE, _DRAWINGS_TABLE, _SETTINGS_TABLE):
         if table not in existing:
             client.create_table(
                 TableName=table,
@@ -89,6 +90,18 @@ def delete_screen(user_id: str, screen_id: str) -> bool:
         return False
     table.delete_item(Key={"user_id": user_id, "record_id": screen_id})
     return True
+
+
+def get_chart_settings(user_id: str) -> dict:
+    """Per-user desktop display settings; no credentials are stored here."""
+    item = _table(_SETTINGS_TABLE).get_item(Key={"user_id": user_id, "record_id": "chart"}).get("Item")
+    return item or {"version": 1, "settings": {}, "revision": 0}
+
+
+def save_chart_settings(user_id: str, settings: dict) -> dict:
+    item = {"user_id": user_id, "record_id": "chart", "version": 1, "settings": settings, "updated_at": _now()}
+    _table(_SETTINGS_TABLE).put_item(Item=item)
+    return item
 
 
 def list_drawings(user_id: str, instrument: dict, include_deleted: bool = False) -> list[dict]:
