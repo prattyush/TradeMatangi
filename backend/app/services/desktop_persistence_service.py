@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import uuid
 from decimal import Decimal
 from datetime import datetime, timezone
@@ -11,6 +12,7 @@ from boto3.dynamodb.conditions import Key
 _SCREENS_TABLE = "DesktopScreens"
 _DRAWINGS_TABLE = "DesktopDrawings"
 _SETTINGS_TABLE = "DesktopChartSettings"
+logger = logging.getLogger(__name__)
 
 
 def _ensure_tables() -> None:
@@ -107,12 +109,14 @@ def delete_screen(user_id: str, screen_id: str) -> bool:
 def get_chart_settings(user_id: str) -> dict:
     """Per-user desktop display settings; no credentials are stored here."""
     item = _table(_SETTINGS_TABLE).get_item(Key={"user_id": user_id, "record_id": "chart"}).get("Item")
+    logger.info("desktop chart settings loaded user_id=%s table=%s found=%s", user_id, _SETTINGS_TABLE, bool(item))
     return item or {"version": 1, "settings": {}, "revision": 0}
 
 
 def save_chart_settings(user_id: str, settings: dict) -> dict:
     item = {"user_id": user_id, "record_id": "chart", "version": 1, "settings": _dynamodb_safe(settings), "updated_at": _now()}
     _table(_SETTINGS_TABLE).put_item(Item=item)
+    logger.info("desktop chart settings saved user_id=%s table=%s record_id=chart keys=%s", user_id, _SETTINGS_TABLE, sorted(settings.keys()))
     return item
 
 

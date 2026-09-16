@@ -4,7 +4,7 @@ import { dispose, init, type Chart, type KLineData } from 'klinecharts'
 import { registerExtensions } from 'react-klinecharts-ui/extensions'
 import type { Candle } from './contracts'
 
-interface ChartSettings { background: string; textColor: string; gridColor: string; gridOpacity: number; gridStyle: 'solid' | 'dashed'; gridSize: number; movingAverageType: 'MA' | 'EMA'; movingAveragePeriods: string; horizontalLineColor: string; trendLineColor: string }
+interface ChartSettings { background: string; textColor: string; gridColor: string; gridOpacity: number; gridStyle: 'solid' | 'dashed'; gridSize: number; movingAverageType: 'MA' | 'EMA'; movingAveragePeriods: string; horizontalLineColor: string; horizontalLineWidth: number; trendLineColor: string; trendLineWidth: number; drawingLineColor: string; drawingLineWidth: number; drawingFillColor: string; drawingFillOpacity: number }
 const withOpacity = (hex: string, opacity: number) => `${hex}${Math.round(opacity * 255).toString(16).padStart(2, '0')}`
 
 const demo: Candle[] = [
@@ -89,14 +89,16 @@ export function ChartTile({ symbol, interval, supportedIntervals, onIntervalChan
   }, [selected])
   const addDrawing = (nextTool: string) => {
     const name = nextTool === 'Trend' ? 'segment' : nextTool === 'Horizontal' ? 'horizontalStraightLine' : nextTool === 'Fib Retracement' ? 'fibonacciLine' : nextTool
-    const lineColor = nextTool === 'Trend' ? settings.trendLineColor : settings.horizontalLineColor
+    const lineColor = nextTool === 'Trend' ? settings.trendLineColor : nextTool === 'Horizontal' ? settings.horizontalLineColor : settings.drawingLineColor
+    const lineWidth = nextTool === 'Trend' ? settings.trendLineWidth : nextTool === 'Horizontal' ? settings.horizontalLineWidth : settings.drawingLineWidth
+    const fillColor = withOpacity(settings.drawingFillColor, settings.drawingFillOpacity)
     const id = chartRef.current?.createOverlay({
       name,
       paneId: 'candle_pane',
       // Use a high-contrast explicit line instead of depending on a theme's
       // drawing defaults, which made newly-created overlays hard to see.
-      styles: { line: { color: lineColor, size: 2, style: 'solid', dashedValue: [2, 2] } },
-      onDrawEnd: event => { const points = event.overlay.points.map(point => ({ timestamp: Math.floor(Number(point.timestamp) / 1000), price: Number(point.value) })); if (points.length) void invoke('desktop_drawing_request', { baseUrl, path: 'drawings', method: 'POST', body: { instrument, drawing: { tool: nextTool, points, style: { color: lineColor }, visible: true, locked: false } } }) },
+      styles: { line: { color: lineColor, size: lineWidth, style: 'solid', dashedValue: [2, 2] }, polygon: { color: fillColor }, rect: { color: fillColor }, circle: { color: fillColor } },
+      onDrawEnd: event => { const points = event.overlay.points.map(point => ({ timestamp: Math.floor(Number(point.timestamp) / 1000), price: Number(point.value) })); if (points.length) void invoke('desktop_drawing_request', { baseUrl, path: 'drawings', method: 'POST', body: { instrument, drawing: { tool: nextTool, points, style: { color: lineColor, width: lineWidth, fillColor, fillOpacity: settings.drawingFillOpacity }, visible: true, locked: false } } }) },
       onSelected: event => setSelected(event.overlay.id),
       onRemoved: event => setDrawings(current => current.filter(drawing => drawing.id !== event.overlay.id)),
     })
