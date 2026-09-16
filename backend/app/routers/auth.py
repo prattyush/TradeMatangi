@@ -29,6 +29,10 @@ class GoogleAuthRequest(BaseModel):
     account_name: str | None = None
 
 
+class DesktopGoogleTokenRequest(GoogleAuthRequest):
+    device_name: str | None = None
+
+
 class SetAccountNameRequest(BaseModel):
     account_name: str
 
@@ -55,6 +59,14 @@ async def desktop_token(req: DesktopTokenRequest):
     user = login_user(req.email, req.password)
     if not user:
         raise HTTPException(status_code=401, detail="Invalid email or password")
+    return issue_token_bundle(user["user_id"], req.device_name)
+
+
+@router.post("/desktop/google-token", response_model=DesktopTokenResponse)
+async def desktop_google_token(req: DesktopGoogleTokenRequest):
+    user = google_auth(req.id_token, account_name=req.account_name)
+    if not user:
+        raise HTTPException(status_code=401, detail="Invalid Google token or account_name required")
     return issue_token_bundle(user["user_id"], req.device_name)
 
 

@@ -112,6 +112,36 @@ async fn authenticate(base_url: &str, email: &str, password: &str) -> Result<Tok
         .map_err(|error| error.to_string())
 }
 
+async fn authenticate_google(
+    base_url: &str,
+    id_token: &str,
+    account_name: Option<String>,
+) -> Result<TokenBundle, String> {
+    let response = reqwest::Client::new()
+        .post(format!(
+            "{}/api/auth/desktop/google-token",
+            base_url.trim_end_matches('/')
+        ))
+        .json(&serde_json::json!({ "id_token": id_token, "account_name": account_name, "device_name": "Trade Matangi Desktop" }))
+        .send()
+        .await
+        .map_err(|error| error.to_string())?;
+    if !response.status().is_success() {
+        let status = response.status();
+        let detail = response
+            .json::<serde_json::Value>()
+            .await
+            .ok()
+            .and_then(|value| value.get("detail").and_then(|detail| detail.as_str()).map(str::to_string))
+            .unwrap_or_else(|| format!("Google login failed ({status})"));
+        return Err(detail);
+    }
+    response
+        .json::<TokenBundle>()
+        .await
+        .map_err(|error| error.to_string())
+}
+
 /// Tokens stay in the Windows Credential Manager through the OS keyring.
 /// The WebView can ask the host to perform a refresh but never reads refresh
 /// credentials or writes them to a config/store file.
@@ -162,6 +192,20 @@ async fn desktop_login(
     host: tauri::State<'_, HostState>,
 ) -> Result<(), String> {
     let tokens = authenticate(&base_url, &email, &password).await?;
+    persist_desktop_tokens(&tokens)?;
+    host.set_tokens(tokens);
+    host.set_connection("connected");
+    Ok(())
+}
+
+#[tauri::command]
+async fn desktop_google_login(
+    base_url: String,
+    id_token: String,
+    account_name: Option<String>,
+    host: tauri::State<'_, HostState>,
+) -> Result<(), String> {
+    let tokens = authenticate_google(&base_url, &id_token, account_name).await?;
     persist_desktop_tokens(&tokens)?;
     host.set_tokens(tokens);
     host.set_connection("connected");
@@ -628,6 +672,7 @@ pub fn run() {
             save_desktop_tokens,
             clear_desktop_tokens,
             desktop_login,
+            desktop_google_login,
             desktop_connection_state,
             desktop_historical_page,
             desktop_catalogue,
