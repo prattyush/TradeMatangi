@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import uuid
+from decimal import Decimal
 from datetime import datetime, timezone
 
 from boto3.dynamodb.conditions import Key
@@ -34,6 +35,17 @@ def _table(name: str):
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _dynamodb_safe(value):
+    """DynamoDB rejects Python float values decoded from desktop JSON."""
+    if isinstance(value, float):
+        return Decimal(str(value))
+    if isinstance(value, dict):
+        return {key: _dynamodb_safe(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_dynamodb_safe(item) for item in value]
+    return value
 
 
 def canonical_instrument_id(instrument: dict) -> str:
@@ -99,7 +111,7 @@ def get_chart_settings(user_id: str) -> dict:
 
 
 def save_chart_settings(user_id: str, settings: dict) -> dict:
-    item = {"user_id": user_id, "record_id": "chart", "version": 1, "settings": settings, "updated_at": _now()}
+    item = {"user_id": user_id, "record_id": "chart", "version": 1, "settings": _dynamodb_safe(settings), "updated_at": _now()}
     _table(_SETTINGS_TABLE).put_item(Item=item)
     return item
 
