@@ -2,7 +2,7 @@
 * { box-sizing: border-box; }
 body { margin: 0; overflow: hidden; }
 main { height: 100vh; display: grid; grid-template-rows: 48px minmax(0, 1fr); }
-header { display: flex; align-items: center; gap: 8px; padding: 0 12px; background: #181d27; border-bottom: 1px solid #293142; white-space: nowrap; }
+header { display: flex; align-items: center; gap: 8px; padding: 0 12px; background: #181d27; border-bottom: 1px solid #293142; white-space: nowrap; overflow-x: auto; }
 button, select, input { color: inherit; background: #252c39; border: 1px solid #3b4659; border-radius: 4px; padding: 6px 9px; }
 button:disabled { opacity: .45; }
 input { width: 160px; }

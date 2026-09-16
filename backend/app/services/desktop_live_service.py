@@ -6,6 +6,8 @@ import time
 import uuid
 from collections import deque
 from dataclasses import dataclass, field
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 
 @dataclass
@@ -76,19 +78,26 @@ def _merge(candles: list[dict], incoming: dict) -> list[dict]:
 async def _seed(tile: dict) -> None:
     """Fetch chart history without invoking a session, order, wallet or strategy service."""
     instrument, interval = tile["instrument"], tile["interval_minutes"]
-    today = time.strftime("%Y-%m-%d", time.gmtime())
+    today = datetime.now(ZoneInfo("Asia/Kolkata")).date().isoformat()
     try:
+        from app.services.data_loader import candles_to_records, resample_to_candles
+        from app.utils import prior_trading_days
+        dates = prior_trading_days(today, 5) + [today]
+        candles: list[dict] = []
         if instrument.get("kind") == "option":
             from app.services.options_service import fetch_options_historical, load_options_dataframe
-            await asyncio.to_thread(fetch_options_historical, instrument["underlying"], today, int(instrument["strike"]), instrument["expiry"], instrument["right"])
-            frame = await asyncio.to_thread(load_options_dataframe, instrument["underlying"], today, int(instrument["strike"]), instrument["expiry"], instrument["right"])
+            for day in (day for day in dates if day <= instrument["expiry"]):
+                await asyncio.to_thread(fetch_options_historical, instrument["underlying"], day, int(instrument["strike"]), instrument["expiry"], instrument["right"])
+                frame = await asyncio.to_thread(load_options_dataframe, instrument["underlying"], day, int(instrument["strike"]), instrument["expiry"], instrument["right"])
+                candles.extend({"timestamp": row["time"], "open": row["open"], "high": row["high"], "low": row["low"], "close": row["close"]} for row in candles_to_records(resample_to_candles(frame, interval)))
         else:
             from app.routers.data import _ensure_data
             from app.services.data_loader import load_dataframe
-            await asyncio.to_thread(_ensure_data, instrument["symbol"], today)
-            frame = await asyncio.to_thread(load_dataframe, instrument["symbol"], today)
-        from app.services.data_loader import candles_to_records, resample_to_candles
-        tile["candles"] = [{"timestamp": row["time"], "open": row["open"], "high": row["high"], "low": row["low"], "close": row["close"]} for row in candles_to_records(resample_to_candles(frame, interval))]
+            for day in dates:
+                await asyncio.to_thread(_ensure_data, instrument["symbol"], day)
+                frame = await asyncio.to_thread(load_dataframe, instrument["symbol"], day)
+                candles.extend({"timestamp": row["time"], "open": row["open"], "high": row["high"], "low": row["low"], "close": row["close"]} for row in candles_to_records(resample_to_candles(frame, interval)))
+        tile["candles"] = sorted({candle["timestamp"]: candle for candle in candles}.values(), key=lambda candle: candle["timestamp"])
         tile["availability"] = "available"
         tile.pop("reason", None)
     except Exception as error:
