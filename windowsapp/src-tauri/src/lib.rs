@@ -166,7 +166,7 @@ async fn desktop_drawing_request(base_url: String, path: String, method: String,
     let token = stored_tokens()?.access_token;
     let url = format!("{}/api/desktop/v1/{}", base_url.trim_end_matches('/'), path.trim_start_matches('/'));
     let client = reqwest::Client::new();
-    let request = match method.as_str() { "GET" => client.get(url), "POST" => client.post(url).json(&body), "PUT" => client.put(url).json(&body), "DELETE" => client.delete(url).json(&body), _ => return Err("Unsupported drawing request".into() };
+    let request = match method.as_str() { "GET" => client.get(url), "POST" => client.post(url).json(&body), "PUT" => client.put(url).json(&body), "DELETE" => client.delete(url).json(&body), _ => return Err("Unsupported drawing request".into()) };
     let response = request.bearer_auth(token).send().await.map_err(|error| error.to_string())?;
     if !response.status().is_success() { return Err(format!("Drawing request failed ({})", response.status())); }
     response.json::<serde_json::Value>().await.map_err(|error| error.to_string())
