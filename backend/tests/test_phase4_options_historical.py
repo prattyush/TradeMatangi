@@ -64,6 +64,9 @@ class TestOptionsHistoricalTwoDays:
         assert len(body["candles"]) > 0
         # 3 fetch calls: prior-2, prior-1, and trading date
         assert mock_fetch.call_count == 3
+        assert [call.args[1] for call in mock_fetch.call_args_list] == [
+            "2026-05-05", "2026-05-06", "2026-05-07",
+        ]
 
     async def test_skips_prior_day_if_file_not_found(self):
         """FileNotFoundError on a prior day is skipped; subsequent days still returned."""
@@ -116,6 +119,25 @@ class TestOptionsHistoricalTwoDays:
 
         assert resp.status_code == 200
         assert len(resp.json()["candles"]) > 0
+
+    async def test_post_expiry_request_fetches_only_dates_through_expiry(self):
+        """A stale chart request must not query the impossible post-expiry day."""
+        expiry = "2026-05-08"
+        dfs = [
+            make_df(300, 150.0, "2026-05-06 09:15:00"),
+            make_df(300, 155.0, "2026-05-07 09:15:00"),
+            make_df(300, 160.0, "2026-05-08 09:15:00"),
+        ]
+        with patch("app.routers.data.prior_trading_days", return_value=["2026-05-06", "2026-05-07"]), \
+             patch("app.services.options_service.fetch_options_historical") as mock_fetch, \
+             patch("app.services.options_service.load_options_dataframe", side_effect=dfs):
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+                resp = await self._get(client, {"date": "2026-05-12", "expiry": expiry})
+
+        assert resp.status_code == 200
+        assert [call.args[1] for call in mock_fetch.call_args_list] == [
+            "2026-05-06", "2026-05-07", expiry,
+        ]
 
     async def test_invalid_right_returns_400(self):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:

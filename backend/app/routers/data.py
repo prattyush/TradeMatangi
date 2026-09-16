@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 import pandas as pd
@@ -213,8 +214,13 @@ async def get_options_historical(
 
     for prior_date in prior_dates:
         try:
-            if prior_date == effective_date:
-                fetch_options_historical(symbol, prior_date, strike, expiry, right.upper())
+            # A session-start fetch only guarantees the selected date.  Fetch
+            # every requested context day here so an empty local cache does not
+            # silently omit previous-day option candles.
+            await asyncio.to_thread(
+                fetch_options_historical,
+                symbol, prior_date, strike, expiry, right.upper(),
+            )
             df = load_options_dataframe(symbol, prior_date, strike, expiry, right.upper())
             candles = resample_to_candles(df, interval_minutes)
             records = candles_to_records(candles)
@@ -224,11 +230,11 @@ async def get_options_historical(
             raise HTTPException(status_code=503, detail=str(e))
         except FileNotFoundError:
             logger.warning(
-                "Options data not cached for %s %s %s on %s - skipping context day",
+                "Options data unavailable for %s %s %s on %s - skipping context day",
                 symbol, right.upper(), strike, prior_date,
             )
         except Exception as e:
-            logger.warning("Failed to load options data for %s on %s: %s", symbol, prior_date, e)
+            logger.warning("Failed to fetch or load options data for %s on %s: %s", symbol, prior_date, e)
 
     if not all_candles:
         raise HTTPException(

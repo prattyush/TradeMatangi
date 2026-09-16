@@ -7,6 +7,7 @@ from __future__ import annotations
 import datetime
 import logging
 import os
+import threading
 import time
 from pathlib import Path
 from typing import Iterator
@@ -29,6 +30,13 @@ STRIKE_INTERVALS: dict[str, int] = {
     "TATMOT": 5,
     "TATPOW": 5,
 }
+
+# Concurrent chart panes and indicator requests can ask for the same missing
+# option contract at session start.  Keep one lock per on-disk daily cache key
+# so only one caller downloads its 25 Breeze chunks; waiters re-check the cache
+# once that download completes.
+_options_fetch_locks: dict[tuple[str, str, int, str, str], threading.Lock] = {}
+_options_fetch_locks_guard = threading.Lock()
 
 
 def _prev_trading_day(d: datetime.date) -> datetime.date:
@@ -255,7 +263,7 @@ _OPTIONS_TODAY_CACHE_TTL = 600  # 10 min — re-fetch today's partial options da
 _MIN_OPTIONS_DAY_ROWS = 20000  # complete day ≈ 22,500 rows; below → partial session file
 
 
-def fetch_options_historical(
+def _fetch_options_historical_unlocked(
     symbol: str, date: str, strike: int, expiry: str, right: str
 ) -> Path:
     """
@@ -357,6 +365,18 @@ def fetch_options_historical(
 
     logger.info("Saved %d rows to %s", len(df), pq)
     return pq
+
+
+def fetch_options_historical(
+    symbol: str, date: str, strike: int, expiry: str, right: str
+) -> Path:
+    """Fetch one contract/day, coalescing simultaneous cache-miss requests."""
+    right_key = "CE" if right.upper() in ("CE", "CALL") else "PE"
+    key = (symbol, date, int(strike), expiry, right_key)
+    with _options_fetch_locks_guard:
+        lock = _options_fetch_locks.setdefault(key, threading.Lock())
+    with lock:
+        return _fetch_options_historical_unlocked(symbol, date, strike, expiry, right)
 
 
 def load_options_dataframe(
