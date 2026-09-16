@@ -3,6 +3,9 @@ Tests for options_service.py: expiry calculation, ATM strike, cache paths,
 options data fetch, and margin computation.
 """
 import datetime
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -492,6 +495,32 @@ class TestFetchOptionsHistorical:
                 result = fetch_options_historical("NIFTY", date, 24000, "2026-05-19", "CE")
             mock_breeze.assert_not_called()
             assert result == pq
+
+    def test_serializes_concurrent_fetches_for_the_same_contract_day(self):
+        """Concurrent chart requests must not download the same cache in parallel."""
+        active = 0
+        max_active = 0
+        guard = threading.Lock()
+
+        def fake_fetch(*_args):
+            nonlocal active, max_active
+            with guard:
+                active += 1
+                max_active = max(max_active, active)
+            time.sleep(0.05)
+            with guard:
+                active -= 1
+            return Path("/tmp/options.parquet")
+
+        with patch("app.services.options_service._fetch_options_historical_unlocked", side_effect=fake_fetch):
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                futures = [
+                    executor.submit(fetch_options_historical, "NIFTY", "2026-05-06", 24000, "2026-05-19", "CE")
+                    for _ in range(2)
+                ]
+                [future.result() for future in futures]
+
+        assert max_active == 1
 
     def test_fetches_and_saves_on_miss(self, tmp_path):
         date = "2026-05-06"
