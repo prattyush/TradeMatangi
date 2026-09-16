@@ -37,6 +37,15 @@ fn stored_tokens() -> Result<TokenBundle, String> {
     serde_json::from_str(&raw).map_err(|error| error.to_string())
 }
 
+async fn authenticate(base_url: &str, email: &str, password: &str) -> Result<TokenBundle, String> {
+    let response = reqwest::Client::new()
+        .post(format!("{}/api/auth/desktop/token", base_url.trim_end_matches('/')))
+        .json(&serde_json::json!({ "email": email, "password": password, "device_name": "Trade Matangi Desktop" }))
+        .send().await.map_err(|error| error.to_string())?;
+    if !response.status().is_success() { return Err("Login failed: check your email and password".into()); }
+    response.json::<TokenBundle>().await.map_err(|error| error.to_string())
+}
+
 /// Tokens stay in the Windows Credential Manager through the OS keyring.
 /// The WebView can ask the host to perform a refresh but never reads refresh
 /// credentials or writes them to a config/store file.
@@ -52,6 +61,30 @@ fn clear_desktop_tokens() -> Result<(), String> {
         Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
         Err(error) => Err(error.to_string()),
     }
+}
+
+#[tauri::command]
+async fn desktop_login(base_url: String, email: String, password: String, host: tauri::State<'_, HostState>) -> Result<(), String> {
+    let tokens = authenticate(&base_url, &email, &password).await?;
+    save_desktop_tokens(tokens)?;
+    host.set_connection("connected");
+    Ok(())
+}
+
+#[tauri::command]
+async fn desktop_connection_state(base_url: String, host: tauri::State<'_, HostState>) -> String {
+    let token = match stored_tokens() { Ok(tokens) => tokens.access_token, Err(_) => return "authentication_required".into() };
+    let result = reqwest::Client::new().get(format!("{}/api/desktop/v1/capabilities", base_url.trim_end_matches('/'))).bearer_auth(token).send().await;
+    let state = match result { Ok(response) if response.status().is_success() => "connected", Ok(response) if response.status().as_u16() == 401 => "authentication_required", _ => "offline" };
+    host.set_connection(state);
+    state.into()
+}
+
+#[tauri::command]
+fn desktop_logout(host: tauri::State<HostState>) -> Result<(), String> {
+    clear_desktop_tokens()?;
+    host.set_connection("authentication_required");
+    Ok(())
 }
 
 fn cache_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
@@ -152,7 +185,7 @@ async fn start_sse_subscription(url: String, host: tauri::State<'_, HostState>) 
 pub fn run() {
     tauri::Builder::default()
         .manage(HostState::default())
-        .invoke_handler(tauri::generate_handler![save_desktop_tokens, clear_desktop_tokens, queue_offline_mutation, pending_offline_mutations, acknowledge_offline_mutation, host_snapshot, start_sse_subscription])
+        .invoke_handler(tauri::generate_handler![save_desktop_tokens, clear_desktop_tokens, desktop_login, desktop_connection_state, desktop_logout, queue_offline_mutation, pending_offline_mutations, acknowledge_offline_mutation, host_snapshot, start_sse_subscription])
         .run(tauri::generate_context!())
         .expect("tauri application error");
 }
