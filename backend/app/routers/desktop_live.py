@@ -24,6 +24,10 @@ class StartLiveRequest(BaseModel):
     tiles: list[LiveTile] = Field(min_length=1, max_length=4)
 
 
+class ConfigureLiveRequest(BaseModel):
+    tile: LiveTile
+
+
 def _tile_state(tile: LiveTile) -> dict:
     instrument = tile.instrument
     try:
@@ -42,6 +46,7 @@ async def start_live(req: StartLiveRequest, user_id: str = Depends(get_desktop_u
     if len(tile_ids) != len(set(tile_ids)):
         raise HTTPException(status_code=422, detail="Every live tile needs a unique tile_id")
     stream = live.start(user_id, [_tile_state(tile) for tile in req.tiles])
+    await live.activate(stream)
     return live.snapshot(stream)
 
 
@@ -53,10 +58,41 @@ async def live_snapshot(stream_id: str, user_id: str = Depends(get_desktop_user_
     return live.snapshot(stream)
 
 
-@router.post("/{stream_id}/stop", status_code=204)
+@router.post("/{stream_id}/stop")
 async def stop_live(stream_id: str, user_id: str = Depends(get_desktop_user_id)):
     if not live.stop(user_id, stream_id):
         raise HTTPException(status_code=404, detail="Live stream was not found")
+    return {"version": 1, "stream_id": stream_id, "stopped": True}
+
+
+@router.put("/{stream_id}/tiles/{tile_id}")
+async def configure_live_tile(stream_id: str, tile_id: str, req: ConfigureLiveRequest, user_id: str = Depends(get_desktop_user_id)):
+    """A tile configured after Start joins the existing chart-only stream."""
+    stream = live.get(user_id, stream_id)
+    if not stream:
+        raise HTTPException(status_code=404, detail="Live stream was not found")
+    if req.tile.tile_id != tile_id:
+        raise HTTPException(status_code=422, detail="tile_id must match the route")
+    replacement = _tile_state(req.tile)
+    for index, tile in enumerate(stream.tiles):
+        if tile["tile_id"] == tile_id:
+            stream.tiles[index] = replacement
+            await live.activate(stream)
+            return live.snapshot(stream)
+    if len(stream.tiles) >= 4:
+        raise HTTPException(status_code=422, detail="A live screen supports at most four tiles")
+    stream.tiles.append(replacement)
+    await live.activate(stream)
+    return live.snapshot(stream)
+
+
+@router.post("/{stream_id}/refresh")
+async def refresh_live(stream_id: str, user_id: str = Depends(get_desktop_user_id)):
+    stream = live.get(user_id, stream_id)
+    if not stream:
+        raise HTTPException(status_code=404, detail="Live stream was not found")
+    await live.refresh(stream)
+    return live.snapshot(stream)
 
 
 def _event_id(raw: str | None) -> int | None:

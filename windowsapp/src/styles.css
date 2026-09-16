@@ -21,6 +21,9 @@ input { width: 160px; }
 .tiles-1 { grid-template-columns: 1fr; }
 .tiles-2, .tiles-4 { grid-template-columns: 1fr 1fr; }
 .tiles-4 { grid-template-rows: minmax(0, 1fr) minmax(0, 1fr); }
+.tiles-2-stacked { grid-template-columns: 1fr; grid-template-rows: minmax(0, 1fr) minmax(0, 1fr); }
+.tiles-3-wide-top { grid-template-columns: 1fr 1fr; grid-template-rows: minmax(0, 1fr) minmax(0, 1fr); }
+.tiles-3-wide-top .workspace-tile:first-child { grid-column: 1 / -1; }
 .has-maximized { grid-template-columns: 1fr; grid-template-rows: 1fr; }
 .has-maximized .workspace-tile:not(.is-maximized) { display: none; }
 .workspace-tile { min-height: 0; display: grid; grid-template-rows: minmax(0, 1fr) auto; overflow: hidden; border: 1px solid #293142; }
