@@ -72,12 +72,13 @@ async fn desktop_login(base_url: String, email: String, password: String, host: 
 }
 
 #[tauri::command]
-async fn desktop_connection_state(base_url: String, host: tauri::State<'_, HostState>) -> String {
-    let token = match stored_tokens() { Ok(tokens) => tokens.access_token, Err(_) => return "authentication_required".into() };
+async fn desktop_connection_state(base_url: String, host: tauri::State<'_, HostState>) -> Result<String, String> {
+    let host = host.inner().clone();
+    let token = match stored_tokens() { Ok(tokens) => tokens.access_token, Err(_) => return Ok("authentication_required".into()) };
     let result = reqwest::Client::new().get(format!("{}/api/desktop/v1/capabilities", base_url.trim_end_matches('/'))).bearer_auth(token).send().await;
     let state = match result { Ok(response) if response.status().is_success() => "connected", Ok(response) if response.status().as_u16() == 401 => "authentication_required", _ => "offline" };
     host.set_connection(state);
-    state.into()
+    Ok(state.into())
 }
 
 #[tauri::command]
