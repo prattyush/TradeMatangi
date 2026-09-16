@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { dispose, init, type Chart } from 'klinecharts'
 import type { Candle } from './contracts'
 
-interface ChartSettings { background: string; textColor: string; gridColor: string; gridOpacity: number; gridStyle: 'solid' | 'dashed'; gridSize: number }
+interface ChartSettings { background: string; textColor: string; gridColor: string; gridOpacity: number; gridStyle: 'solid' | 'dashed'; gridSize: number; movingAverageType: 'MA' | 'EMA'; movingAveragePeriods: string }
 const withOpacity = (hex: string, opacity: number) => `${hex}${Math.round(opacity * 255).toString(16).padStart(2, '0')}`
 
 const demo: Candle[] = [
@@ -28,7 +28,7 @@ export function ChartTile({ symbol, interval, supportedIntervals, onIntervalChan
     // as UTC-labelled seconds. Rendering as UTC prevents KLineCharts from
     // applying the machine/Asia-Kolkata offset a second time.
     chart.setTimezone('Etc/UTC')
-    chart.setStyles({ grid: { horizontal: { show: true, color: withOpacity(settings.gridColor, settings.gridOpacity), style: settings.gridStyle, size: settings.gridSize, dashedValue: [2, 2] }, vertical: { show: true, color: withOpacity(settings.gridColor, settings.gridOpacity), style: settings.gridStyle, size: settings.gridSize, dashedValue: [2, 2] } }, xAxis: { tickText: { color: settings.textColor } }, yAxis: { tickText: { color: settings.textColor } } })
+    chart.setStyles({ grid: { horizontal: { show: true, color: withOpacity(settings.gridColor, settings.gridOpacity), style: settings.gridStyle, size: settings.gridSize, dashedValue: [2, 2] }, vertical: { show: true, color: withOpacity(settings.gridColor, settings.gridOpacity), style: settings.gridStyle, size: settings.gridSize, dashedValue: [2, 2] } }, crosshair: { show: true, horizontal: { show: true, line: { show: true, color: '#94a3b8', style: 'dashed', size: 1, dashedValue: [4, 2] } }, vertical: { show: true, line: { show: true, color: '#94a3b8', style: 'dashed', size: 1, dashedValue: [4, 2] } } }, xAxis: { tickText: { color: settings.textColor } }, yAxis: { tickText: { color: settings.textColor } } })
     chart.setSymbol({ ticker: symbol, pricePrecision: 2, volumePrecision: 0 })
     chart.setPeriod({ span: Number(interval.replace('m', '')), type: 'minute' })
     chart.setDataLoader({
@@ -37,7 +37,7 @@ export function ChartTile({ symbol, interval, supportedIntervals, onIntervalChan
     // MA is drawn over the candle pane. RSI and MACD are deliberately created
     // without a pane ID: KLineCharts creates a real, independently resizable pane.
     indicators.forEach(indicator => {
-      if (indicator === 'MA') chart.createIndicator({ name: 'MA', paneId: 'candle_pane' }, true)
+      if (indicator === 'MA') { const periods = settings.movingAveragePeriods.split(',').map(value => Number(value)).filter(value => Number.isInteger(value) && value > 0).slice(0, 6); chart.createIndicator({ name: settings.movingAverageType, calcParams: periods.length ? periods : [5, 10, 20], paneId: 'candle_pane' }, true) }
       else chart.createIndicator(indicator)
     })
     return () => { chartRef.current = null; dispose(element.current!) }
