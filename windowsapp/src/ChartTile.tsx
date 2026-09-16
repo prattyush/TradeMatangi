@@ -11,12 +11,12 @@ const demo: Candle[] = [
   { timestamp: 1746523020, open: 23132, high: 23148, low: 23120, close: 23125 },
 ]
 
-export function ChartTile({ symbol, interval, supportedIntervals, onIntervalChange, candles = demo, loading, message, settings, isReplaying, onConfigure, onMaximize, maximized }: { symbol: string; interval: string; supportedIntervals: number[]; onIntervalChange: (interval: string) => void; candles?: Candle[]; loading: boolean; message: string; settings: ChartSettings; isReplaying: boolean; onConfigure: () => void; onMaximize: () => void; maximized: boolean }) {
+export function ChartTile({ symbol, interval, supportedIntervals, onIntervalChange, candles = demo, loading, message, settings, isReplaying, replayDatasetKey, onConfigure, onMaximize, maximized }: { symbol: string; interval: string; supportedIntervals: number[]; onIntervalChange: (interval: string) => void; candles?: Candle[]; loading: boolean; message: string; settings: ChartSettings; isReplaying: boolean; replayDatasetKey?: string; onConfigure: () => void; onMaximize: () => void; maximized: boolean }) {
   const element = useRef<HTMLDivElement>(null)
   const chartRef = useRef<Chart | null>(null)
   const candlesRef = useRef(candles)
   const subscribeBarRef = useRef<((data: KLineData) => void) | null>(null)
-  const replayWasActiveRef = useRef(false)
+  const replayDatasetKeyRef = useRef<string | undefined>(undefined)
   const [tool, setTool] = useState<string | null>(null)
   const [drawings, setDrawings] = useState<Array<{ id: string; tool: string; locked: boolean; hidden: boolean }>>([])
   const [selected, setSelected] = useState<string | null>(null)
@@ -51,12 +51,12 @@ export function ChartTile({ symbol, interval, supportedIntervals, onIntervalChan
     const chart = chartRef.current
     if (!chart) return
     const latest = candles[candles.length - 1]
-    // Browse may have already loaded the whole session.  The first frame of a
-    // replay must replace that dataset with the cursor-limited one; later
-    // frames use KLineCharts' incremental subscription and retain crosshair.
-    const isFirstReplayFrame = isReplaying && !replayWasActiveRef.current
-    replayWasActiveRef.current = isReplaying
-    if (isReplaying && !isFirstReplayFrame && latest && subscribeBarRef.current) {
+    // Reset exactly once per run/history dataset. Subsequent snapshots use
+    // KLineCharts' incremental path, preserving crosshair and viewport.
+    const shouldResetReplayData = isReplaying && replayDatasetKey !== replayDatasetKeyRef.current
+    if (isReplaying) replayDatasetKeyRef.current = replayDatasetKey
+    else replayDatasetKeyRef.current = undefined
+    if (isReplaying && !shouldResetReplayData && latest && subscribeBarRef.current) {
       subscribeBarRef.current({ timestamp: latest.timestamp * 1000, open: latest.open, high: latest.high, low: latest.low, close: latest.close })
       return
     }
