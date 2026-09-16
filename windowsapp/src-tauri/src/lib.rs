@@ -162,6 +162,17 @@ async fn desktop_live_request(base_url: String, path: String, method: String, bo
 }
 
 #[tauri::command]
+async fn desktop_drawing_request(base_url: String, path: String, method: String, body: serde_json::Value) -> Result<serde_json::Value, String> {
+    let token = stored_tokens()?.access_token;
+    let url = format!("{}/api/desktop/v1/{}", base_url.trim_end_matches('/'), path.trim_start_matches('/'));
+    let client = reqwest::Client::new();
+    let request = match method.as_str() { "GET" => client.get(url), "POST" => client.post(url).json(&body), "PUT" => client.put(url).json(&body), "DELETE" => client.delete(url).json(&body), _ => return Err("Unsupported drawing request".into() };
+    let response = request.bearer_auth(token).send().await.map_err(|error| error.to_string())?;
+    if !response.status().is_success() { return Err(format!("Drawing request failed ({})", response.status())); }
+    response.json::<serde_json::Value>().await.map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 fn desktop_logout(host: tauri::State<HostState>) -> Result<(), String> {
     clear_desktop_tokens()?;
     host.set_connection("authentication_required");
@@ -266,7 +277,7 @@ async fn start_sse_subscription(url: String, host: tauri::State<'_, HostState>) 
 pub fn run() {
     tauri::Builder::default()
         .manage(HostState::default())
-        .invoke_handler(tauri::generate_handler![save_desktop_tokens, clear_desktop_tokens, desktop_login, desktop_connection_state, desktop_historical_page, desktop_catalogue, desktop_option_metadata, desktop_option_historical_page, desktop_chart_settings, save_desktop_chart_settings, desktop_replay_request, desktop_live_request, desktop_logout, queue_offline_mutation, pending_offline_mutations, acknowledge_offline_mutation, host_snapshot, start_sse_subscription])
+        .invoke_handler(tauri::generate_handler![save_desktop_tokens, clear_desktop_tokens, desktop_login, desktop_connection_state, desktop_historical_page, desktop_catalogue, desktop_option_metadata, desktop_option_historical_page, desktop_chart_settings, save_desktop_chart_settings, desktop_replay_request, desktop_live_request, desktop_drawing_request, desktop_logout, queue_offline_mutation, pending_offline_mutations, acknowledge_offline_mutation, host_snapshot, start_sse_subscription])
         .run(tauri::generate_context!())
         .expect("tauri application error");
 }
