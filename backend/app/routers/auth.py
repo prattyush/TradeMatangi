@@ -6,6 +6,7 @@ from app.services.user_service import (
     login_user, register_user, get_user_info, change_password,
     google_auth, set_account_name,
 )
+from app.services.desktop_auth_service import issue_token_bundle, refresh_token_bundle, revoke_refresh_token
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -30,6 +31,44 @@ class GoogleAuthRequest(BaseModel):
 
 class SetAccountNameRequest(BaseModel):
     account_name: str
+
+
+class DesktopTokenRequest(BaseModel):
+    email: str
+    password: str
+    device_name: str | None = None
+
+
+class RefreshTokenRequest(BaseModel):
+    refresh_token: str
+
+
+class DesktopTokenResponse(BaseModel):
+    access_token: str
+    refresh_token: str
+    token_type: str
+    expires_in: int
+
+
+@router.post("/desktop/token", response_model=DesktopTokenResponse)
+async def desktop_token(req: DesktopTokenRequest):
+    user = login_user(req.email, req.password)
+    if not user:
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+    return issue_token_bundle(user["user_id"], req.device_name)
+
+
+@router.post("/desktop/refresh", response_model=DesktopTokenResponse)
+async def desktop_refresh(req: RefreshTokenRequest):
+    bundle = refresh_token_bundle(req.refresh_token)
+    if not bundle:
+        raise HTTPException(status_code=401, detail="Refresh token is invalid, expired, or revoked")
+    return bundle
+
+
+@router.post("/desktop/logout", status_code=204)
+async def desktop_logout(req: RefreshTokenRequest):
+    revoke_refresh_token(req.refresh_token)
 
 
 @router.post("/login", response_model=AuthResponse)

@@ -17,6 +17,12 @@ LOG_DIR = Path(_paths.get("logs", str(DATA_DIR / "logs")))
 PORT = int(os.getenv("PORT", "8700"))
 LOG_LEVEL = os.getenv("LOG_LEVEL", "info")
 
+# Sprint 1 desktop JWT signing key. Production deployments must set this to a
+# long random secret; the fallback exists only for isolated local development.
+DESKTOP_JWT_SECRET = os.getenv("DESKTOP_JWT_SECRET", "development-only-desktop-jwt-secret")
+DESKTOP_ACCESS_TOKEN_MINUTES = int(os.getenv("DESKTOP_ACCESS_TOKEN_MINUTES", "15"))
+DESKTOP_REFRESH_TOKEN_DAYS = int(os.getenv("DESKTOP_REFRESH_TOKEN_DAYS", "30"))
+
 DEFAULT_SYMBOL = "NIFTY"
 
 AI_HELPER_URL = os.getenv("AI_HELPER_URL", "http://localhost:8701")
