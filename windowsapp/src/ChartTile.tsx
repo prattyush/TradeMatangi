@@ -3,7 +3,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { dispose, init, type Chart, type KLineData } from 'klinecharts'
 import type { Candle } from './contracts'
 
-interface ChartSettings { background: string; textColor: string; gridColor: string; gridOpacity: number; gridStyle: 'solid' | 'dashed'; gridSize: number; movingAverageType: 'MA' | 'EMA'; movingAveragePeriods: string }
+interface ChartSettings { background: string; textColor: string; gridColor: string; gridOpacity: number; gridStyle: 'solid' | 'dashed'; gridSize: number; movingAverageType: 'MA' | 'EMA'; movingAveragePeriods: string; horizontalLineColor: string; trendLineColor: string }
 const withOpacity = (hex: string, opacity: number) => `${hex}${Math.round(opacity * 255).toString(16).padStart(2, '0')}`
 
 const demo: Candle[] = [
@@ -19,7 +19,6 @@ export function ChartTile({ symbol, interval, supportedIntervals, onIntervalChan
   const subscribeBarRef = useRef<((data: KLineData) => void) | null>(null)
   const replayDatasetKeyRef = useRef<string | undefined>(undefined)
   const [tool, setTool] = useState<string | null>(null)
-  const [drawingColor, setDrawingColor] = useState('#facc15')
   const [drawings, setDrawings] = useState<Array<{ id: string; tool: string; locked: boolean; hidden: boolean }>>([])
   const [selected, setSelected] = useState<string | null>(null)
   const [indicators, setIndicators] = useState<string[]>([])
@@ -77,13 +76,14 @@ export function ChartTile({ symbol, interval, supportedIntervals, onIntervalChan
   }, [selected])
   const addDrawing = (nextTool: string) => {
     const name = nextTool === 'Trend' ? 'segment' : nextTool === 'Horizontal' ? 'horizontalStraightLine' : 'fibonacciLine'
+    const lineColor = nextTool === 'Trend' ? settings.trendLineColor : settings.horizontalLineColor
     const id = chartRef.current?.createOverlay({
       name,
       paneId: 'candle_pane',
       // Use a high-contrast explicit line instead of depending on a theme's
       // drawing defaults, which made newly-created overlays hard to see.
-      styles: { line: { color: drawingColor, size: 2, style: 'solid', dashedValue: [2, 2] } },
-      onDrawEnd: event => { const points = event.overlay.points.map(point => ({ timestamp: Math.floor(Number(point.timestamp) / 1000), price: Number(point.value) })); if (points.length) void invoke('desktop_drawing_request', { baseUrl, path: 'drawings', method: 'POST', body: { instrument, drawing: { tool: nextTool, points, style: { color: drawingColor }, visible: true, locked: false } } }) },
+      styles: { line: { color: lineColor, size: 2, style: 'solid', dashedValue: [2, 2] } },
+      onDrawEnd: event => { const points = event.overlay.points.map(point => ({ timestamp: Math.floor(Number(point.timestamp) / 1000), price: Number(point.value) })); if (points.length) void invoke('desktop_drawing_request', { baseUrl, path: 'drawings', method: 'POST', body: { instrument, drawing: { tool: nextTool, points, style: { color: lineColor }, visible: true, locked: false } } }) },
       onSelected: event => setSelected(event.overlay.id),
       onRemoved: event => setDrawings(current => current.filter(drawing => drawing.id !== event.overlay.id)),
     })

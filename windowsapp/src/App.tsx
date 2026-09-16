@@ -12,13 +12,13 @@ interface TileConfig { id: string; kind: 'spot' | 'option'; symbol: string; inte
 type Layout = '1' | '2-side' | '2-stacked' | '3-wide-top' | '4-grid'
 interface Screen { id: string; name: string; tiles: TileConfig[]; layout: Layout }
 interface ReplaySnapshot { run_id: string; cursor: number; state: string; mode: string; bar_index: number; tile_states: Array<{ tile_id: string; availability: string; candle?: Candle }> }
-interface ChartSettings { background: string; textColor: string; gridColor: string; gridOpacity: number; gridStyle: 'solid' | 'dashed'; gridSize: number; movingAverageType: 'MA' | 'EMA'; movingAveragePeriods: string; liveProvider: 'breeze' }
+interface ChartSettings { background: string; textColor: string; gridColor: string; gridOpacity: number; gridStyle: 'solid' | 'dashed'; gridSize: number; movingAverageType: 'MA' | 'EMA'; movingAveragePeriods: string; liveProvider: 'breeze'; horizontalLineColor: string; trendLineColor: string }
 interface LiveTileState { tile_id: string; availability: string; reason?: string; candles?: Candle[] }
 interface LiveSnapshot { stream_id: string; event_id: number; tiles: LiveTileState[] }
 let activeLiveSnapshot: LiveSnapshot | null = null
 type Api = <T,>(path: string, params?: URLSearchParams) => Promise<T>
 const fallbackCatalogue: Instrument[] = [{ symbol: 'NIFTY', display_name: 'NIFTY 50', exchange: 'NSE', chart_type: 'index', option_eligible: true, supported_intervals: [1, 3, 5, 15, 30, 60] }]
-const defaultChartSettings: ChartSettings = { background: '#151a23', textColor: '#aeb8ca', gridColor: '#ffffff', gridOpacity: 0.12, gridStyle: 'solid', gridSize: 1, movingAverageType: 'MA', movingAveragePeriods: '5,10,20', liveProvider: 'breeze' }
+const defaultChartSettings: ChartSettings = { background: '#151a23', textColor: '#aeb8ca', gridColor: '#ffffff', gridOpacity: 0.12, gridStyle: 'solid', gridSize: 1, movingAverageType: 'MA', movingAveragePeriods: '5,10,20', liveProvider: 'breeze', horizontalLineColor: '#facc15', trendLineColor: '#60a5fa' }
 const newTile = (): TileConfig => ({ id: crypto.randomUUID(), kind: 'spot', symbol: 'NIFTY', interval: '5', tradingDate: '2026-05-06', expiry: '', strike: '', right: 'CE' })
 const newScreen = (number: number): Screen => ({ id: crypto.randomUUID(), name: `Screen ${number}`, layout: '1', tiles: [newTile()] })
 
