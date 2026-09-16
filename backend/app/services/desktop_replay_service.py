@@ -39,6 +39,9 @@ def prepare_tiles(tiles: list[dict], date: str, interval_seconds: int) -> dict[s
         instrument = tile["instrument"]
         try:
             if instrument.get("kind") == "option":
+                if date > instrument["expiry"]:
+                    prepared[tile["tile_id"]] = []
+                    continue
                 from app.services.options_service import load_options_dataframe
                 frame = load_options_dataframe(instrument["underlying"], date, int(instrument["strike"]), instrument["expiry"], instrument["right"])
             else:

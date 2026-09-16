@@ -14,6 +14,7 @@ input { width: 160px; }
 .mode-button { font-size: .72rem; padding: 4px 6px; }
 .run-controls { display: flex; align-items: center; gap: 4px; font-size: .7rem; }
 .run-controls button { font-size: .68rem; padding: 3px 5px; }
+.run-controls input { width: 124px; padding: 3px 5px; font-size: .72rem; }
 .run-error { position: fixed; z-index: 5; top: 50px; left: 12px; margin: 0; padding: 5px 8px; background: #7f1d1d; color: #fecaca; font-size: .75rem; }
 .layout-control { margin-left: auto; display: flex; align-items: center; gap: 5px; font-size: .78rem; }
 .tile-grid { min-height: 0; display: grid; overflow: hidden; }
