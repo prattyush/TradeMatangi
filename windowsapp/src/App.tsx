@@ -15,12 +15,42 @@ interface ReplaySnapshot { run_id: string; cursor: number; state: string; mode: 
 interface ChartSettings { background: string; textColor: string; gridColor: string; gridOpacity: number; gridStyle: 'solid' | 'dashed'; gridSize: number; movingAverageType: 'MA' | 'EMA'; movingAveragePeriods: string; liveProvider: 'breeze'; horizontalLineColor: string; trendLineColor: string }
 interface LiveTileState { tile_id: string; availability: string; reason?: string; candles?: Candle[] }
 interface LiveSnapshot { stream_id: string; event_id: number; tiles: LiveTileState[] }
+interface DrawingCommand { id: number; tool: string }
+interface DrawingAction { id: number; action: 'delete' | 'hide' | 'lock' }
 let activeLiveSnapshot: LiveSnapshot | null = null
 type Api = <T,>(path: string, params?: URLSearchParams) => Promise<T>
 const fallbackCatalogue: Instrument[] = [{ symbol: 'NIFTY', display_name: 'NIFTY 50', exchange: 'NSE', chart_type: 'index', option_eligible: true, supported_intervals: [1, 3, 5, 15, 30, 60] }]
 const defaultChartSettings: ChartSettings = { background: '#151a23', textColor: '#aeb8ca', gridColor: '#ffffff', gridOpacity: 0.12, gridStyle: 'solid', gridSize: 1, movingAverageType: 'MA', movingAveragePeriods: '5,10,20', liveProvider: 'breeze', horizontalLineColor: '#facc15', trendLineColor: '#60a5fa' }
 const newTile = (): TileConfig => ({ id: crypto.randomUUID(), kind: 'spot', symbol: 'NIFTY', interval: '5', tradingDate: '2026-05-06', expiry: '', strike: '', right: 'CE' })
 const newScreen = (number: number): Screen => ({ id: crypto.randomUUID(), name: `Screen ${number}`, layout: '1', tiles: [newTile()] })
+const mainIndicators = ['MA', 'EMA', 'BOLL_TV', 'VWAP', 'SuperTrend', 'Ichimoku', 'MA_Ribbon', 'HMA', 'PivotPoints']
+const subIndicators = ['RSI_TV', 'MACD_TV', 'Stochastic', 'CCI_TV']
+const drawingTools = [
+  { label: 'Horizontal', tool: 'Horizontal' },
+  { label: 'Trend', tool: 'Trend' },
+  { label: 'Ray', tool: 'ray' },
+  { label: 'Arrow', tool: 'arrow' },
+  { label: 'Rect', tool: 'rect' },
+  { label: 'Brush', tool: 'brush' },
+  { label: 'Fib', tool: 'Fib Retracement' },
+  { label: 'Fib Ext', tool: 'fibonacciExtension' },
+  { label: 'Fib Fan', tool: 'fibonacciSpeedResistanceFan' },
+  { label: 'Parallel', tool: 'parallelChannel' },
+  { label: 'Measure', tool: 'measure' },
+  { label: 'Gann Box', tool: 'gannBox' },
+  { label: 'Long', tool: 'longPosition' },
+  { label: 'Short', tool: 'shortPosition' },
+]
+
+function WorkspaceToolPanel({ tiles, activeTileId, setActiveTileId, indicators, toggleIndicator, clearIndicators, sendDrawing, sendDrawingAction }: { tiles: TileConfig[]; activeTileId: string; setActiveTileId: (tileId: string) => void; indicators: string[]; toggleIndicator: (name: string) => void; clearIndicators: () => void; sendDrawing: (tool: string) => void; sendDrawingAction: (action: DrawingAction['action']) => void }) {
+  return <aside className="tool-panel" aria-label="Chart tools">
+    <label>Chart<select value={activeTileId} onChange={event => setActiveTileId(event.target.value)}>{tiles.map((tile, index) => <option key={tile.id} value={tile.id}>{index + 1}. {tile.kind === 'option' ? `${tile.symbol} ${tile.strike}${tile.right}` : tile.symbol}</option>)}</select></label>
+    <section><strong>Draw</strong><div className="tool-grid">{drawingTools.map(item => <button key={item.tool} title={item.tool} onClick={() => sendDrawing(item.tool)}>{item.label}</button>)}</div><div className="tool-actions"><button onClick={() => sendDrawingAction('lock')}>Lock</button><button onClick={() => sendDrawingAction('hide')}>Hide</button><button onClick={() => sendDrawingAction('delete')}>Delete</button></div></section>
+    <section><strong>Main indicators</strong><div className="tool-grid">{mainIndicators.map(name => <button key={name} className={indicators.includes(name) ? 'active' : ''} onClick={() => toggleIndicator(name)}>{name.replace('_TV', '').replace('_Ribbon', ' Ribbon')}</button>)}</div></section>
+    <section><strong>Sub indicators</strong><div className="tool-grid">{subIndicators.map(name => <button key={name} className={indicators.includes(name) ? 'active' : ''} onClick={() => toggleIndicator(name)}>{name.replace('_TV', '')}</button>)}</div></section>
+    <button className="panel-clear" disabled={!indicators.length} onClick={clearIndicators}>Clear indicators</button>
+  </aside>
+}
 
 function InstrumentPicker({ initial, catalogue, api, onSave, onClose }: { initial: TileConfig; catalogue: Instrument[]; api: Api; onSave: (tile: TileConfig) => void; onClose: () => void }) {
   const [draft, setDraft] = useState(initial)
@@ -55,7 +85,7 @@ function ChartSettingsModal({ settings, onSave, onClose }: { settings: ChartSett
   return <div className="modal-backdrop"><section className="instrument-modal" role="dialog" aria-modal="true" aria-label="Chart display settings"><header><strong>Chart display</strong><button onClick={onClose}>×</button></header><div className="picker-fields"><label>Background<input type="color" value={draft.background} onChange={event => setDraft({ ...draft, background: event.target.value })} /></label><label>Text color<input type="color" value={draft.textColor} onChange={event => setDraft({ ...draft, textColor: event.target.value })} /></label><label>Grid color<input type="color" value={draft.gridColor} onChange={event => setDraft({ ...draft, gridColor: event.target.value })} /></label><label>Grid opacity <input type="range" min="0" max="1" step="0.02" value={draft.gridOpacity} onChange={event => setDraft({ ...draft, gridOpacity: Number(event.target.value) })} />{Math.round(draft.gridOpacity * 100)}%</label><label>Grid style<select value={draft.gridStyle} onChange={event => setDraft({ ...draft, gridStyle: event.target.value as ChartSettings['gridStyle'] })}><option value="solid">Solid</option><option value="dashed">Dashed</option></select></label><label>Grid thickness<select value={draft.gridSize} onChange={event => setDraft({ ...draft, gridSize: Number(event.target.value) })}><option value="1">1px</option><option value="2">2px</option></select></label><label>Moving average<select value={draft.movingAverageType} onChange={event => setDraft({ ...draft, movingAverageType: event.target.value as ChartSettings['movingAverageType'] })}><option value="MA">Simple MA</option><option value="EMA">Exponential MA</option></select></label><label>MA/EMA periods<input value={draft.movingAveragePeriods} onChange={event => setDraft({ ...draft, movingAveragePeriods: event.target.value.replace(/[^0-9,]/g, '') })} placeholder="5,10,20" /></label></div><footer><button onClick={onClose}>Cancel</button><button className="selected" onClick={() => onSave(draft)}>Save settings</button></footer></section></div>
 }
 
-function DesktopTile({ config, catalogue, connection, api, settings, serverUrl, replayCursor, replayRunId, replayCandle, liveTile, onConfigure, onMaximize, onIntervalChange, maximized }: { config: TileConfig; catalogue: Instrument[]; connection: string; api: Api; settings: ChartSettings; serverUrl: string; replayCursor?: number; replayRunId?: string; replayCandle?: Candle; liveTile?: LiveTileState; onConfigure: () => void; onMaximize: () => void; onIntervalChange: (interval: string) => void; maximized: boolean }) {
+function DesktopTile({ config, catalogue, connection, api, settings, serverUrl, replayCursor, replayRunId, replayCandle, liveTile, onConfigure, onMaximize, onIntervalChange, maximized, active, indicators, drawingCommand, drawingAction, onActivate }: { config: TileConfig; catalogue: Instrument[]; connection: string; api: Api; settings: ChartSettings; serverUrl: string; replayCursor?: number; replayRunId?: string; replayCandle?: Candle; liveTile?: LiveTileState; onConfigure: () => void; onMaximize: () => void; onIntervalChange: (interval: string) => void; maximized: boolean; active: boolean; indicators: string[]; drawingCommand: DrawingCommand | null; drawingAction: DrawingAction | null; onActivate: () => void }) {
   const [metadata, setMetadata] = useState<OptionMetadata | null>(null)
   const [candles, setCandles] = useState<Candle[]>([])
   const [status, setStatus] = useState('')
@@ -69,12 +99,13 @@ function DesktopTile({ config, catalogue, connection, api, settings, serverUrl, 
   const subscribedTile = liveTile ?? activeLiveSnapshot?.tiles.find(tile => tile.tile_id === config.id)
   const visibleCandles = subscribedTile?.candles ?? replayCandles(candles, replayCursor, replayCandle)
   const replayDatasetKey = replayCursor ? `${replayRunId ?? 'pending'}:${historyVersion}` : undefined
-  return <div className={`workspace-tile ${maximized ? 'is-maximized' : ''}`}><ChartTile symbol={label} interval={`${config.interval}m`} supportedIntervals={catalogueInstrument.supported_intervals} onIntervalChange={onIntervalChange} candles={visibleCandles} loading={subscribedTile ? false : loading} message={subscribedTile && subscribedTile.availability !== 'available' ? (subscribedTile.reason ?? subscribedTile.availability) : status} settings={settings} isReplaying={Boolean(replayCursor)} replayDatasetKey={replayDatasetKey} instrument={chartInstrument} baseUrl={serverUrl} onConfigure={onConfigure} onMaximize={onMaximize} maximized={maximized} /></div>
+  return <div className={`workspace-tile ${maximized ? 'is-maximized' : ''}`}><ChartTile symbol={label} interval={`${config.interval}m`} supportedIntervals={catalogueInstrument.supported_intervals} onIntervalChange={onIntervalChange} candles={visibleCandles} loading={subscribedTile ? false : loading} message={subscribedTile && subscribedTile.availability !== 'available' ? (subscribedTile.reason ?? subscribedTile.availability) : status} settings={settings} isReplaying={Boolean(replayCursor)} replayDatasetKey={replayDatasetKey} instrument={chartInstrument} baseUrl={serverUrl} onConfigure={onConfigure} onMaximize={onMaximize} maximized={maximized} active={active} indicators={indicators} drawingCommand={drawingCommand} drawingAction={drawingAction} onActivate={onActivate} /></div>
 }
 
 export default function App() {
   const [serverUrl, setServerUrl] = useState(() => localStorage.getItem('desktop-server-url') ?? 'http://localhost:8700'), [email, setEmail] = useState('admin@tradematangi.com'), [password, setPassword] = useState('admin123'), [connection, setConnection] = useState<'connected' | 'offline' | 'authentication_required'>('authentication_required'), [loginError, setLoginError] = useState(''), [browserToken, setBrowserToken] = useState(''), [mode, setMode] = useState<'Browse' | 'Live' | 'Replay' | 'Stepwise'>('Browse'), [catalogue, setCatalogue] = useState<Instrument[]>(fallbackCatalogue), [screens, setScreens] = useState<Screen[]>([newScreen(1)]), [chartSettings, setChartSettings] = useState<ChartSettings>(defaultChartSettings), [showSettings, setShowSettings] = useState(false), [replay, setReplay] = useState<ReplaySnapshot | null>(null), [replayError, setReplayError] = useState(''), [runDate, setRunDate] = useState('2026-05-06'), [runStartTime, setRunStartTime] = useState('09:15'), [replaySpeed, setReplaySpeed] = useState('1'), [live, setLive] = useState<LiveSnapshot | null>(null), [liveError, setLiveError] = useState('')
   const [activeScreenId, setActiveScreenId] = useState(screens[0].id), [pickerTileId, setPickerTileId] = useState<string | null>(null), [maximizedTileId, setMaximizedTileId] = useState<string | null>(null)
+  const [activeToolTileId, setActiveToolTileId] = useState(screens[0].tiles[0].id), [tileIndicators, setTileIndicators] = useState<Record<string, string[]>>({}), [drawingCommand, setDrawingCommand] = useState<DrawingCommand | null>(null), [drawingAction, setDrawingAction] = useState<DrawingAction | null>(null)
   const setLiveSnapshot = (snapshot: LiveSnapshot | null) => { activeLiveSnapshot = snapshot; setLive(snapshot) }
   const hasNativeHost = '__TAURI_INTERNALS__' in window
   const api: Api = async (path, params) => { if (hasNativeHost) { const commands: Record<string, string> = { catalogue: 'desktop_catalogue', metadata: 'desktop_option_metadata', history: 'desktop_historical_page', optionHistory: 'desktop_option_historical_page' }; const values = Object.fromEntries((params ?? new URLSearchParams()).entries()); return invoke(commands[path], { baseUrl: serverUrl, ...values, tradingDate: values.trading_date, intervalMinutes: Number(values.interval_minutes), strike: Number(values.strike) }) }; const route = path === 'catalogue' ? 'catalogue' : path === 'metadata' ? 'option-metadata' : path === 'history' ? 'historical/pages' : 'options/historical/pages'; const response = await fetch(`${serverUrl.replace(/\/$/, '')}/api/desktop/v1/${route}${params ? `?${params}` : ''}`, { headers: { Authorization: `Bearer ${browserToken}` } }); if (!response.ok) throw new Error(`Request failed (${response.status})`); return response.json() }
@@ -83,6 +114,13 @@ export default function App() {
   useEffect(() => { if (connection === 'connected') void api<Catalogue>('catalogue').then(value => setCatalogue(value.instruments)).catch(() => undefined) }, [browserToken, connection, serverUrl])
   useEffect(() => { if (connection !== 'connected') return; if (hasNativeHost) void invoke<{ settings: Partial<ChartSettings> }>('desktop_chart_settings', { baseUrl: serverUrl }).then(value => setChartSettings({ ...defaultChartSettings, ...value.settings })).catch(() => undefined); else void fetch(`${serverUrl.replace(/\/$/, '')}/api/desktop/v1/chart-settings`, { headers: { Authorization: `Bearer ${browserToken}` } }).then(response => response.ok ? response.json() as Promise<{ settings: Partial<ChartSettings> }> : Promise.reject()).then(value => setChartSettings({ ...defaultChartSettings, ...value.settings })).catch(() => undefined) }, [browserToken, connection, serverUrl])
   const activeScreen = screens.find(screen => screen.id === activeScreenId) ?? screens[0], pickerTile = activeScreen.tiles.find(tile => tile.id === pickerTileId)
+  const activeToolTile = activeScreen.tiles.some(tile => tile.id === activeToolTileId) ? activeToolTileId : activeScreen.tiles[0]?.id
+  useEffect(() => { if (activeToolTile && activeToolTile !== activeToolTileId) setActiveToolTileId(activeToolTile) }, [activeToolTile, activeToolTileId])
+  const selectedIndicators = tileIndicators[activeToolTile] ?? []
+  const toggleIndicator = (name: string) => setTileIndicators(current => ({ ...current, [activeToolTile]: (current[activeToolTile] ?? []).includes(name) ? (current[activeToolTile] ?? []).filter(item => item !== name) : [...(current[activeToolTile] ?? []), name] }))
+  const clearIndicators = () => setTileIndicators(current => ({ ...current, [activeToolTile]: [] }))
+  const sendDrawing = (tool: string) => setDrawingCommand(command => ({ id: (command?.id ?? 0) + 1, tool }))
+  const sendDrawingAction = (action: DrawingAction['action']) => setDrawingAction(command => ({ id: (command?.id ?? 0) + 1, action }))
   const layoutTileCount: Record<Layout, number> = { '1': 1, '2-side': 2, '2-stacked': 2, '3-wide-top': 3, '4-grid': 4 }
   const setLayout = (layout: Layout) => setScreens(current => current.map(screen => screen.id === activeScreenId ? { ...screen, layout, tiles: layoutTileCount[layout] > screen.tiles.length ? [...screen.tiles, ...Array.from({ length: layoutTileCount[layout] - screen.tiles.length }, newTile)] : screen.tiles.slice(0, layoutTileCount[layout]) } : screen))
   const saveTile = (tile: TileConfig) => { setScreens(current => current.map(screen => screen.id === activeScreenId ? { ...screen, tiles: screen.tiles.map(item => item.id === tile.id ? tile : item) } : screen)); setPickerTileId(null) }
@@ -113,7 +151,10 @@ export default function App() {
       <button className="icon-button" title="Chart settings" aria-label="Chart settings" onClick={() => setShowSettings(true)}>⚙</button><span className={`connection ${connection}`}>● {connection}</span><button onClick={() => { if (hasNativeHost) void invoke('desktop_logout'); setBrowserToken(''); setConnection('authentication_required') }}>Log out</button>
     </header>
     {(replayError || liveError) && <p className="run-error">{replayError || liveError}</p>}
-    <section className={`tile-grid tiles-${activeScreen.layout} ${maximizedTileId ? 'has-maximized' : ''}`}>{activeScreen.tiles.map(tile => <DesktopTile key={tile.id} config={tile} catalogue={catalogue} connection={connection} api={api} settings={chartSettings} serverUrl={serverUrl} replayCursor={replay?.cursor} replayRunId={replay?.run_id} replayCandle={replay?.tile_states.find(state => state.tile_id === tile.id)?.candle} maximized={maximizedTileId === tile.id} onConfigure={() => setPickerTileId(tile.id)} onMaximize={() => setMaximizedTileId(current => current === tile.id ? null : tile.id)} onIntervalChange={interval => saveTile({ ...tile, interval })} />)}</section>
+    <section className="workspace-shell">
+      <WorkspaceToolPanel tiles={activeScreen.tiles} activeTileId={activeToolTile} setActiveTileId={setActiveToolTileId} indicators={selectedIndicators} toggleIndicator={toggleIndicator} clearIndicators={clearIndicators} sendDrawing={sendDrawing} sendDrawingAction={sendDrawingAction} />
+      <section className={`tile-grid tiles-${activeScreen.layout} ${maximizedTileId ? 'has-maximized' : ''}`}>{activeScreen.tiles.map(tile => <DesktopTile key={tile.id} config={tile} catalogue={catalogue} connection={connection} api={api} settings={chartSettings} serverUrl={serverUrl} replayCursor={replay?.cursor} replayRunId={replay?.run_id} replayCandle={replay?.tile_states.find(state => state.tile_id === tile.id)?.candle} maximized={maximizedTileId === tile.id} active={activeToolTile === tile.id} indicators={tileIndicators[tile.id] ?? []} drawingCommand={drawingCommand} drawingAction={drawingAction} onActivate={() => setActiveToolTileId(tile.id)} onConfigure={() => setPickerTileId(tile.id)} onMaximize={() => setMaximizedTileId(current => current === tile.id ? null : tile.id)} onIntervalChange={interval => saveTile({ ...tile, interval })} />)}</section>
+    </section>
     {pickerTile && <InstrumentPicker initial={pickerTile} catalogue={catalogue} api={api} onSave={saveTile} onClose={() => setPickerTileId(null)} />}{showSettings && <ChartSettingsModal settings={chartSettings} onSave={saveChartSettings} onClose={() => setShowSettings(false)} />}
   </main>
 }
