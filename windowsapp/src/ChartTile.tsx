@@ -19,6 +19,7 @@ export function ChartTile({ symbol, interval, supportedIntervals, onIntervalChan
   const subscribeBarRef = useRef<((data: KLineData) => void) | null>(null)
   const replayDatasetKeyRef = useRef<string | undefined>(undefined)
   const [tool, setTool] = useState<string | null>(null)
+  const [drawingColor, setDrawingColor] = useState('#facc15')
   const [drawings, setDrawings] = useState<Array<{ id: string; tool: string; locked: boolean; hidden: boolean }>>([])
   const [selected, setSelected] = useState<string | null>(null)
   const [indicators, setIndicators] = useState<string[]>([])
