@@ -17,9 +17,14 @@ export function ChartTile({ symbol, interval }: { symbol: string; interval: stri
   useEffect(() => {
     if (!element.current) return
     const chart = init(element.current)
-    chart.applyNewData(demo.map(candle => ({ timestamp: candle.timestamp, open: candle.open, high: candle.high, low: candle.low, close: candle.close })))
+    if (!chart) return
+    chart.setSymbol({ ticker: symbol, pricePrecision: 2, volumePrecision: 0 })
+    chart.setPeriod({ span: 1, type: 'minute' })
+    chart.setDataLoader({
+      getBars: ({ callback }) => callback(demo.map(candle => ({ timestamp: candle.timestamp * 1000, open: candle.open, high: candle.high, low: candle.low, close: candle.close }))),
+    })
     return () => { dispose(element.current!) }
-  }, [])
+  }, [symbol])
   useEffect(() => {
     const shortcuts = (event: KeyboardEvent) => {
       if (event.key === 'Escape') setTool(null)

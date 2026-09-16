@@ -10,7 +10,7 @@ export function fromSnapshot(snapshot: ChartSnapshot): ChartState {
 export function applyEvent(state: ChartState, event: ChartEvent): ChartState {
   if (event.generation < state.generation || (event.generation === state.generation && event.eventId <= state.eventId)) return state
   if (event.type !== 'candle') return { ...state, generation: event.generation, eventId: event.eventId }
-  const last = state.candles.at(-1)
+  const last = state.candles[state.candles.length - 1]
   if (last && event.candle.timestamp < last.timestamp) return { ...state, generation: event.generation, eventId: event.eventId }
   const candles = last?.timestamp === event.candle.timestamp
     ? [...state.candles.slice(0, -1), event.candle]
