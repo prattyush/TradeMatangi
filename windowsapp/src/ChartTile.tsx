@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { dispose, init, type Chart, type KLineData } from 'klinecharts'
+import { registerExtensions } from 'react-klinecharts-ui/extensions'
 import type { Candle } from './contracts'
 
-interface ChartSettings { background: string; textColor: string; gridColor: string; gridOpacity: number; gridStyle: 'solid' | 'dashed'; gridSize: number; movingAverageType: 'MA' | 'EMA'; movingAveragePeriods: string; horizontalLineColor: string; trendLineColor: string }
+interface ChartSettings { background: string; textColor: string; gridColor: string; gridOpacity: number; gridStyle: 'solid' | 'dashed'; gridSize: number; movingAverageType: 'MA' | 'EMA'; movingAveragePeriods: string; horizontalLineColor: string; horizontalLineWidth: number; trendLineColor: string; trendLineWidth: number; drawingLineColor: string; drawingLineWidth: number; drawingFillColor: string; drawingFillOpacity: number }
 const withOpacity = (hex: string, opacity: number) => `${hex}${Math.round(opacity * 255).toString(16).padStart(2, '0')}`
 
 const demo: Candle[] = [
@@ -12,19 +13,30 @@ const demo: Candle[] = [
   { timestamp: 1746523020, open: 23132, high: 23148, low: 23120, close: 23125 },
 ]
 
-export function ChartTile({ symbol, interval, supportedIntervals, onIntervalChange, candles = demo, loading, message, settings, isReplaying, replayDatasetKey, instrument, baseUrl, onConfigure, onMaximize, maximized }: { symbol: string; interval: string; supportedIntervals: number[]; onIntervalChange: (interval: string) => void; candles?: Candle[]; loading: boolean; message: string; settings: ChartSettings; isReplaying: boolean; replayDatasetKey?: string; instrument: Record<string, unknown>; baseUrl: string; onConfigure: () => void; onMaximize: () => void; maximized: boolean }) {
+let extensionsRegistered = false
+const ensureExtensions = () => {
+  if (extensionsRegistered) return
+  registerExtensions()
+  extensionsRegistered = true
+}
+
+interface DrawingCommand { id: number; tool: string }
+interface DrawingAction { id: number; action: 'delete' | 'hide' | 'lock' }
+
+export function ChartTile({ symbol, interval, supportedIntervals, onIntervalChange, candles = demo, loading, message, settings, isReplaying, replayDatasetKey, instrument, baseUrl, onConfigure, onMaximize, maximized, active, indicators, drawingCommand, drawingAction, onActivate }: { symbol: string; interval: string; supportedIntervals: number[]; onIntervalChange: (interval: string) => void; candles?: Candle[]; loading: boolean; message: string; settings: ChartSettings; isReplaying: boolean; replayDatasetKey?: string; instrument: Record<string, unknown>; baseUrl: string; onConfigure: () => void; onMaximize: () => void; maximized: boolean; active: boolean; indicators: string[]; drawingCommand: DrawingCommand | null; drawingAction: DrawingAction | null; onActivate: () => void }) {
   const element = useRef<HTMLDivElement>(null)
   const chartRef = useRef<Chart | null>(null)
   const candlesRef = useRef(candles)
   const subscribeBarRef = useRef<((data: KLineData) => void) | null>(null)
   const replayDatasetKeyRef = useRef<string | undefined>(undefined)
+  const lastDrawingCommandRef = useRef(0)
+  const lastDrawingActionRef = useRef(0)
   const [tool, setTool] = useState<string | null>(null)
-  const [drawingColor, setDrawingColor] = useState('#facc15')
   const [drawings, setDrawings] = useState<Array<{ id: string; tool: string; locked: boolean; hidden: boolean }>>([])
   const [selected, setSelected] = useState<string | null>(null)
-  const [indicators, setIndicators] = useState<string[]>([])
   useEffect(() => {
     if (!element.current) return
+    ensureExtensions()
     const chart = init(element.current)
     if (!chart) return
     chartRef.current = chart
@@ -76,15 +88,17 @@ export function ChartTile({ symbol, interval, supportedIntervals, onIntervalChan
     return () => window.removeEventListener('keydown', shortcuts)
   }, [selected])
   const addDrawing = (nextTool: string) => {
-    const name = nextTool === 'Trend' ? 'segment' : nextTool === 'Horizontal' ? 'horizontalStraightLine' : 'fibonacciLine'
-    const lineColor = nextTool === 'Trend' ? settings.trendLineColor : settings.horizontalLineColor
+    const name = nextTool === 'Trend' ? 'segment' : nextTool === 'Horizontal' ? 'horizontalStraightLine' : nextTool === 'Fib Retracement' ? 'fibonacciLine' : nextTool
+    const lineColor = nextTool === 'Trend' ? settings.trendLineColor : nextTool === 'Horizontal' ? settings.horizontalLineColor : settings.drawingLineColor
+    const lineWidth = nextTool === 'Trend' ? settings.trendLineWidth : nextTool === 'Horizontal' ? settings.horizontalLineWidth : settings.drawingLineWidth
+    const fillColor = withOpacity(settings.drawingFillColor, settings.drawingFillOpacity)
     const id = chartRef.current?.createOverlay({
       name,
       paneId: 'candle_pane',
       // Use a high-contrast explicit line instead of depending on a theme's
       // drawing defaults, which made newly-created overlays hard to see.
-      styles: { line: { color: lineColor, size: 2, style: 'solid', dashedValue: [2, 2] } },
-      onDrawEnd: event => { const points = event.overlay.points.map(point => ({ timestamp: Math.floor(Number(point.timestamp) / 1000), price: Number(point.value) })); if (points.length) void invoke('desktop_drawing_request', { baseUrl, path: 'drawings', method: 'POST', body: { instrument, drawing: { tool: nextTool, points, style: { color: lineColor }, visible: true, locked: false } } }) },
+      styles: { line: { color: lineColor, size: lineWidth, style: 'solid', dashedValue: [2, 2] }, polygon: { color: fillColor }, rect: { color: fillColor }, circle: { color: fillColor } },
+      onDrawEnd: event => { const points = event.overlay.points.map(point => ({ timestamp: Math.floor(Number(point.timestamp) / 1000), price: Number(point.value) })); if (points.length) void invoke('desktop_drawing_request', { baseUrl, path: 'drawings', method: 'POST', body: { instrument, drawing: { tool: nextTool, points, style: { color: lineColor, width: lineWidth, fillColor, fillOpacity: settings.drawingFillOpacity }, visible: true, locked: false } } }) },
       onSelected: event => setSelected(event.overlay.id),
       onRemoved: event => setDrawings(current => current.filter(drawing => drawing.id !== event.overlay.id)),
     })
@@ -92,6 +106,17 @@ export function ChartTile({ symbol, interval, supportedIntervals, onIntervalChan
     setTool(nextTool); setDrawings(current => [...current, { id, tool: nextTool, locked: false, hidden: false }]); setSelected(id)
   }
   const updateSelected = (update: (drawing: { id: string; tool: string; locked: boolean; hidden: boolean }) => { id: string; tool: string; locked: boolean; hidden: boolean }) => setDrawings(current => current.map(drawing => { if (drawing.id !== selected) return drawing; const next = update(drawing); chartRef.current?.overrideOverlay({ id: next.id, lock: next.locked, visible: !next.hidden }); return next }))
-  const addIndicator = (name: string) => setIndicators(current => current.includes(name) ? current : [...current, name])
-  return <section className="chart" style={{ background: settings.background, color: settings.textColor }}><div className="chart-head"><span>{symbol} · <select className="interval-picker" value={interval.replace('m', '')} onChange={event => onIntervalChange(event.target.value)} aria-label="Candle interval">{supportedIntervals.map(value => <option key={value} value={value}>{value}m</option>)}</select> · IST</span><span className="chart-actions"><button onClick={() => addIndicator('MA')}>+ MA</button><button onClick={() => addIndicator('RSI')}>+ RSI</button><button onClick={() => addIndicator('MACD')}>+ MACD</button><button disabled={!indicators.length} onClick={() => setIndicators([])}>Clear</button><button className="icon-button" title="Choose instrument" aria-label="Choose instrument" onClick={onConfigure}>⌕</button><button className="icon-button" title={maximized ? 'Restore chart' : 'Maximize chart'} aria-label={maximized ? 'Restore chart' : 'Maximize chart'} onClick={onMaximize}>{maximized ? '⊡' : '⛶'}</button><span>{tool ? `Drawing: ${tool}` : 'Browse'}</span></span></div><div className="kline-container"><div className="kline" ref={element} />{loading && <div className="chart-loading"><span className="spinner" />Loading candles…</div>}{!loading && message && <div className="chart-loading chart-message">{message}</div>}</div><div className="drawing-bar"><label>Line color <input type="color" value={drawingColor} onChange={event => setDrawingColor(event.target.value)} /></label><button onClick={() => addDrawing('Trend')}>Trend</button><button onClick={() => addDrawing('Horizontal')}>Horizontal level</button><button onClick={() => addDrawing('Fib')}>Fib</button><button disabled={selected === null} onClick={() => updateSelected(drawing => ({ ...drawing, locked: !drawing.locked }))}>Lock</button><button disabled={selected === null} onClick={() => updateSelected(drawing => ({ ...drawing, hidden: !drawing.hidden }))}>Hide</button><button disabled={selected === null} onClick={() => { if (selected) chartRef.current?.removeOverlay({ id: selected }); setDrawings(current => current.filter(drawing => drawing.id !== selected)); setSelected(null) }}>Delete</button><small>{drawings.length} drawing(s) · click chart to place · Esc cancel · Del remove · Ctrl+Z undo</small></div></section>
+  useEffect(() => {
+    if (!active || !drawingCommand || drawingCommand.id === lastDrawingCommandRef.current) return
+    lastDrawingCommandRef.current = drawingCommand.id
+    addDrawing(drawingCommand.tool)
+  }, [active, drawingCommand])
+  useEffect(() => {
+    if (!active || !drawingAction || drawingAction.id === lastDrawingActionRef.current || selected === null) return
+    lastDrawingActionRef.current = drawingAction.id
+    if (drawingAction.action === 'delete') { chartRef.current?.removeOverlay({ id: selected }); setDrawings(current => current.filter(drawing => drawing.id !== selected)); setSelected(null) }
+    if (drawingAction.action === 'hide') updateSelected(drawing => ({ ...drawing, hidden: !drawing.hidden }))
+    if (drawingAction.action === 'lock') updateSelected(drawing => ({ ...drawing, locked: !drawing.locked }))
+  }, [active, drawingAction, selected])
+  return <section className={`chart ${active ? 'active-chart' : ''}`} style={{ background: settings.background, color: settings.textColor }} onPointerDownCapture={onActivate}><div className="chart-head"><span>{symbol} · <select className="interval-picker" value={interval.replace('m', '')} onChange={event => onIntervalChange(event.target.value)} aria-label="Candle interval">{supportedIntervals.map(value => <option key={value} value={value}>{value}m</option>)}</select> · IST</span><span className="chart-actions"><button className="icon-button" title="Choose instrument" aria-label="Choose instrument" onClick={onConfigure}>⌕</button><button className="icon-button" title={maximized ? 'Restore chart' : 'Maximize chart'} aria-label={maximized ? 'Restore chart' : 'Maximize chart'} onClick={onMaximize}>{maximized ? '⊡' : '⛶'}</button><span>{tool ? `Drawing: ${tool}` : 'Browse'} · {drawings.length} drawing(s)</span></span></div><div className="kline-container"><div className="kline" ref={element} />{loading && <div className="chart-loading"><span className="spinner" />Loading candles…</div>}{!loading && message && <div className="chart-loading chart-message">{message}</div>}</div></section>
 }

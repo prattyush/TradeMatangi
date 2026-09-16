@@ -1,4 +1,6 @@
 """Sprint 3 screen and drawing APIs; all records are scoped to the caller."""
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
@@ -6,6 +8,7 @@ from app.dependencies import get_desktop_user_id
 from app.services import desktop_persistence_service as persistence
 
 router = APIRouter(prefix="/api/desktop/v1", tags=["desktop"])
+logger = logging.getLogger(__name__)
 
 
 class ScreenWrite(BaseModel):
@@ -36,11 +39,13 @@ def _conflict(error: ValueError) -> None:
 
 @router.get("/chart-settings")
 async def chart_settings(user_id: str = Depends(get_desktop_user_id)):
+    logger.info("desktop chart settings load requested user_id=%s", user_id)
     return persistence.get_chart_settings(user_id)
 
 
 @router.put("/chart-settings")
 async def save_chart_settings(req: ChartSettingsWrite, user_id: str = Depends(get_desktop_user_id)):
+    logger.info("desktop chart settings save requested user_id=%s keys=%s", user_id, sorted(req.settings.keys()))
     return persistence.save_chart_settings(user_id, req.settings)
 
 
