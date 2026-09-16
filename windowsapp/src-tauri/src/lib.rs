@@ -1,5 +1,5 @@
 use std::sync::{Arc, Mutex};
-use std::{fs, path::PathBuf};
+use std::{fs, path::PathBuf, time::{SystemTime, UNIX_EPOCH}};
 use serde::{Deserialize, Serialize};
 use futures_util::StreamExt;
 use tauri::Manager;
@@ -9,6 +9,20 @@ const CREDENTIAL_ACCOUNT: &str = "desktop-session";
 // An explicit target avoids a derived Windows Credential Manager name that
 // can be unavailable to an installed NSIS application after sign-in.
 const CREDENTIAL_TARGET: &str = "TradeMatangi.Desktop.Session";
+
+/// A small, token-free diagnostic trail for installed Windows builds.  It is
+/// intentionally kept outside the keyring and never includes credentials,
+/// URLs, request bodies, or server responses.
+fn diagnostic_log(message: &str) {
+    let Some(local_app_data) = std::env::var_os("LOCALAPPDATA") else { return };
+    let directory = PathBuf::from(local_app_data).join("Trade Matangi Charts").join("logs");
+    if fs::create_dir_all(&directory).is_err() { return; }
+    let seconds = SystemTime::now().duration_since(UNIX_EPOCH).map(|value| value.as_secs()).unwrap_or(0);
+    use std::io::Write;
+    if let Ok(mut file) = fs::OpenOptions::new().create(true).append(true).open(directory.join("desktop.log")) {
+        let _ = writeln!(file, "{seconds} {message}");
+    }
+}
 
 #[derive(Serialize, Deserialize)]
 pub struct TokenBundle {
@@ -48,9 +62,15 @@ fn tokens_from(entry: keyring::Entry) -> Result<TokenBundle, keyring::Error> {
 
 fn stored_tokens() -> Result<TokenBundle, String> {
     match tokens_from(credentials()?) {
-        Ok(tokens) => Ok(tokens),
-        Err(keyring::Error::NoEntry) => tokens_from(legacy_credentials()?).map_err(|error| error.to_string()),
-        Err(error) => Err(error.to_string()),
+        Ok(tokens) => { diagnostic_log("credential read: explicit target"); Ok(tokens) },
+        Err(keyring::Error::NoEntry) => {
+            diagnostic_log("credential read: explicit target absent; trying legacy target");
+            tokens_from(legacy_credentials()?).map_err(|error| {
+                diagnostic_log(&format!("credential read: legacy target failed: {error}"));
+                error.to_string()
+            })
+        }
+        Err(error) => { diagnostic_log(&format!("credential read: explicit target failed: {error}")); Err(error.to_string()) },
     }
 }
 
@@ -70,11 +90,22 @@ async fn authenticate(base_url: &str, email: &str, password: &str) -> Result<Tok
 fn save_desktop_tokens(tokens: TokenBundle) -> Result<(), String> {
     let encoded = serde_json::to_string(&tokens).map_err(|error| error.to_string())?;
     let entry = credentials()?;
-    entry.set_password(&encoded).map_err(|error| format!("Windows Credential Manager could not save the desktop session: {error}"))?;
+    diagnostic_log("credential write: starting");
+    entry.set_password(&encoded).map_err(|error| {
+        diagnostic_log(&format!("credential write: failed: {error}"));
+        format!("Windows Credential Manager could not save the desktop session: {error}")
+    })?;
     // Fail sign-in immediately if Windows did not make this entry readable to
     // this installed application, rather than failing later while loading data.
-    let saved = entry.get_password().map_err(|error| format!("Windows Credential Manager did not retain the desktop session: {error}"))?;
-    if saved != encoded { return Err("Windows Credential Manager did not retain the desktop session. Remove the Trade Matangi credential in Credential Manager and sign in again.".into()); }
+    let saved = entry.get_password().map_err(|error| {
+        diagnostic_log(&format!("credential write verification: failed: {error}"));
+        format!("Windows Credential Manager did not retain the desktop session: {error}")
+    })?;
+    if saved != encoded {
+        diagnostic_log("credential write verification: value mismatch");
+        return Err("Windows Credential Manager did not retain the desktop session. Remove the Trade Matangi credential in Credential Manager and sign in again.".into());
+    }
+    diagnostic_log("credential write verification: success");
     Ok(())
 }
 
