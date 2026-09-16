@@ -16,6 +16,7 @@ export function ChartTile({ symbol, interval, supportedIntervals, onIntervalChan
   const chartRef = useRef<Chart | null>(null)
   const candlesRef = useRef(candles)
   const subscribeBarRef = useRef<((data: KLineData) => void) | null>(null)
+  const replayWasActiveRef = useRef(false)
   const [tool, setTool] = useState<string | null>(null)
   const [drawings, setDrawings] = useState<Array<{ id: string; tool: string; locked: boolean; hidden: boolean }>>([])
   const [selected, setSelected] = useState<string | null>(null)
@@ -50,7 +51,12 @@ export function ChartTile({ symbol, interval, supportedIntervals, onIntervalChan
     const chart = chartRef.current
     if (!chart) return
     const latest = candles[candles.length - 1]
-    if (isReplaying && latest && subscribeBarRef.current) {
+    // Browse may have already loaded the whole session.  The first frame of a
+    // replay must replace that dataset with the cursor-limited one; later
+    // frames use KLineCharts' incremental subscription and retain crosshair.
+    const isFirstReplayFrame = isReplaying && !replayWasActiveRef.current
+    replayWasActiveRef.current = isReplaying
+    if (isReplaying && !isFirstReplayFrame && latest && subscribeBarRef.current) {
       subscribeBarRef.current({ timestamp: latest.timestamp * 1000, open: latest.open, high: latest.high, low: latest.low, close: latest.close })
       return
     }
