@@ -19,8 +19,8 @@ input { width: 160px; }
 .layout-control { margin-left: auto; display: flex; align-items: center; gap: 5px; font-size: .78rem; }
 .tile-grid { min-height: 0; display: grid; overflow: hidden; }
 .tiles-1 { grid-template-columns: 1fr; }
-.tiles-2, .tiles-4 { grid-template-columns: 1fr 1fr; }
-.tiles-4 { grid-template-rows: minmax(0, 1fr) minmax(0, 1fr); }
+.tiles-2, .tiles-2-side, .tiles-4-grid { grid-template-columns: 1fr 1fr; }
+.tiles-4, .tiles-4-grid { grid-template-rows: minmax(0, 1fr) minmax(0, 1fr); }
 .tiles-2-stacked { grid-template-columns: 1fr; grid-template-rows: minmax(0, 1fr) minmax(0, 1fr); }
 .tiles-3-wide-top { grid-template-columns: 1fr 1fr; grid-template-rows: minmax(0, 1fr) minmax(0, 1fr); }
 .tiles-3-wide-top .workspace-tile:first-child { grid-column: 1 / -1; }
