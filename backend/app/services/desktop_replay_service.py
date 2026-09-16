@@ -73,7 +73,10 @@ def snapshot(run: ReplayRun) -> dict:
         if source:
             start = (source[-1]["time"] // run.interval_seconds) * run.interval_seconds
             bar = [item for item in source if item["time"] >= start]
-            candle = {"time": start, "open": bar[0]["open"], "high": max(item["high"] for item in bar), "low": min(item["low"] for item in bar), "close": bar[-1]["close"]}
+            # Desktop historical pages use ``timestamp``.  Keep the replay
+            # snapshot on that same public contract; ``time`` is only the
+            # internal source-record field returned by candles_to_records.
+            candle = {"timestamp": start, "open": bar[0]["open"], "high": max(item["high"] for item in bar), "low": min(item["low"] for item in bar), "close": bar[-1]["close"]}
         tile_states.append({"tile_id": tile["tile_id"], "availability": "available" if candle else "no_data", "candle": candle})
     return {"version": 1, "run_id": run.run_id, "stream_id": run.stream.stream_id, "mode": run.mode, "date": run.date, "cursor": run.cursor, "interval_seconds": run.interval_seconds, "speed": run.speed, "state": run.state, "bar_index": run.bar_index, "tiles": run.tiles, "tile_states": tile_states}
 

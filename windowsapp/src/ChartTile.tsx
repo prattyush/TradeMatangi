@@ -75,7 +75,16 @@ export function ChartTile({ symbol, interval, supportedIntervals, onIntervalChan
     const points = nextTool === 'Horizontal'
       ? [{ timestamp: latest.timestamp * 1000, value: latest.close }]
       : [{ timestamp: previous.timestamp * 1000, value: previous.close }, { timestamp: latest.timestamp * 1000, value: latest.close }]
-    const id = chartRef.current?.createOverlay({ name, points, onSelected: event => setSelected(event.overlay.id), onRemoved: event => setDrawings(current => current.filter(drawing => drawing.id !== event.overlay.id)) })
+    const id = chartRef.current?.createOverlay({
+      name,
+      paneId: 'candle_pane',
+      points,
+      // Use a high-contrast explicit line instead of depending on a theme's
+      // drawing defaults, which made newly-created overlays hard to see.
+      styles: { line: { color: '#facc15', size: 2, style: 'solid', dashedValue: [2, 2] } },
+      onSelected: event => setSelected(event.overlay.id),
+      onRemoved: event => setDrawings(current => current.filter(drawing => drawing.id !== event.overlay.id)),
+    })
     if (typeof id !== 'string') return
     setTool(nextTool); setDrawings(current => [...current, { id, tool: nextTool, locked: false, hidden: false }]); setSelected(id)
   }
