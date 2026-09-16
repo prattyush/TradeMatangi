@@ -7,7 +7,7 @@ import uuid
 from dataclasses import dataclass, field
 
 from app.services import desktop_live_service as events
-from app.services.data_loader import candles_to_records, load_dataframe, resample_to_candles
+from app.services.data_loader import candles_to_records, load_dataframe
 
 
 @dataclass
@@ -32,8 +32,7 @@ _runs: dict[str, ReplayRun] = {}
 
 
 def prepare_tiles(tiles: list[dict], date: str, interval_seconds: int) -> dict[str, list[dict]]:
-    """Load actual historical candles once; the replay clock never invents bars."""
-    interval_minutes = interval_seconds // 60
+    """Load source seconds once; snapshots aggregate the in-progress bar."""
     prepared: dict[str, list[dict]] = {}
     for tile in tiles:
         instrument = tile["instrument"]
@@ -46,7 +45,7 @@ def prepare_tiles(tiles: list[dict], date: str, interval_seconds: int) -> dict[s
                 frame = load_options_dataframe(instrument["underlying"], date, int(instrument["strike"]), instrument["expiry"], instrument["right"])
             else:
                 frame = load_dataframe(instrument["symbol"], date)
-            prepared[tile["tile_id"]] = candles_to_records(resample_to_candles(frame, interval_minutes))
+            prepared[tile["tile_id"]] = candles_to_records(frame)
         except Exception:
             prepared[tile["tile_id"]] = []
     return prepared
@@ -69,7 +68,12 @@ def snapshot(run: ReplayRun) -> dict:
     tile_states = []
     for tile in run.tiles:
         candles = run.tile_candles.get(tile["tile_id"], [])
-        candle = next((item for item in reversed(candles) if item["time"] <= run.cursor), None)
+        source = [item for item in candles if item["time"] <= run.cursor]
+        candle = None
+        if source:
+            start = (source[-1]["time"] // run.interval_seconds) * run.interval_seconds
+            bar = [item for item in source if item["time"] >= start]
+            candle = {"time": start, "open": bar[0]["open"], "high": max(item["high"] for item in bar), "low": min(item["low"] for item in bar), "close": bar[-1]["close"]}
         tile_states.append({"tile_id": tile["tile_id"], "availability": "available" if candle else "no_data", "candle": candle})
     return {"version": 1, "run_id": run.run_id, "stream_id": run.stream.stream_id, "mode": run.mode, "date": run.date, "cursor": run.cursor, "interval_seconds": run.interval_seconds, "speed": run.speed, "state": run.state, "bar_index": run.bar_index, "tiles": run.tiles, "tile_states": tile_states}
 
@@ -83,7 +87,7 @@ async def _clock(run: ReplayRun) -> None:
         if run.state == "running":
             run.cursor += 1
             await _emit(run)
-            if all(not candles or run.cursor > candles[-1]["time"] + run.interval_seconds for candles in run.tile_candles.values()):
+            if all(not candles or run.cursor > candles[-1]["time"] for candles in run.tile_candles.values()):
                 await stop(run)
                 return
         await asyncio.sleep(max(0.01, 1 / max(run.speed, 0.05)))

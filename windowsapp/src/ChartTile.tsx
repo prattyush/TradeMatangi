@@ -14,6 +14,7 @@ const demo: Candle[] = [
 export function ChartTile({ symbol, interval, supportedIntervals, onIntervalChange, candles = demo, loading, message, settings, onConfigure, onMaximize, maximized }: { symbol: string; interval: string; supportedIntervals: number[]; onIntervalChange: (interval: string) => void; candles?: Candle[]; loading: boolean; message: string; settings: ChartSettings; onConfigure: () => void; onMaximize: () => void; maximized: boolean }) {
   const element = useRef<HTMLDivElement>(null)
   const chartRef = useRef<Chart | null>(null)
+  const candlesRef = useRef(candles)
   const [tool, setTool] = useState<string | null>(null)
   const [drawings, setDrawings] = useState<Array<{ id: string; tool: string; locked: boolean; hidden: boolean }>>([])
   const [selected, setSelected] = useState<string | null>(null)
@@ -31,7 +32,7 @@ export function ChartTile({ symbol, interval, supportedIntervals, onIntervalChan
     chart.setSymbol({ ticker: symbol, pricePrecision: 2, volumePrecision: 0 })
     chart.setPeriod({ span: Number(interval.replace('m', '')), type: 'minute' })
     chart.setDataLoader({
-      getBars: ({ callback }) => callback(candles.map(candle => ({ timestamp: candle.timestamp * 1000, open: candle.open, high: candle.high, low: candle.low, close: candle.close }))),
+      getBars: ({ callback }) => callback(candlesRef.current.map(candle => ({ timestamp: candle.timestamp * 1000, open: candle.open, high: candle.high, low: candle.low, close: candle.close }))),
     })
     // MA is drawn over the candle pane. RSI and MACD are deliberately created
     // without a pane ID: KLineCharts creates a real, independently resizable pane.
@@ -40,7 +41,15 @@ export function ChartTile({ symbol, interval, supportedIntervals, onIntervalChan
       else chart.createIndicator(indicator)
     })
     return () => { chartRef.current = null; dispose(element.current!) }
-  }, [symbol, interval, candles, indicators, settings])
+  }, [symbol, interval, indicators, settings])
+  useEffect(() => {
+    candlesRef.current = candles
+    const chart = chartRef.current
+    if (!chart) return
+    const barSpace = chart.getBarSpace().bar
+    chart.resetData()
+    chart.setBarSpace(barSpace)
+  }, [candles])
   useEffect(() => {
     const shortcuts = (event: KeyboardEvent) => {
       if (event.key === 'Escape') setTool(null)
@@ -52,7 +61,13 @@ export function ChartTile({ symbol, interval, supportedIntervals, onIntervalChan
   }, [selected])
   const addDrawing = (nextTool: string) => {
     const name = nextTool === 'Trend' ? 'segment' : nextTool === 'Horizontal' ? 'horizontalStraightLine' : 'fibonacciLine'
-    const id = chartRef.current?.createOverlay({ name, onSelected: event => setSelected(event.overlay.id), onRemoved: event => setDrawings(current => current.filter(drawing => drawing.id !== event.overlay.id)) })
+    const latest = candlesRef.current[candlesRef.current.length - 1]
+    const previous = candlesRef.current[Math.max(0, candlesRef.current.length - 6)]
+    if (!latest || !previous) return
+    const points = nextTool === 'Horizontal'
+      ? [{ timestamp: latest.timestamp * 1000, value: latest.close }]
+      : [{ timestamp: previous.timestamp * 1000, value: previous.close }, { timestamp: latest.timestamp * 1000, value: latest.close }]
+    const id = chartRef.current?.createOverlay({ name, points, onSelected: event => setSelected(event.overlay.id), onRemoved: event => setDrawings(current => current.filter(drawing => drawing.id !== event.overlay.id)) })
     if (typeof id !== 'string') return
     setTool(nextTool); setDrawings(current => [...current, { id, tool: nextTool, locked: false, hidden: false }]); setSelected(id)
   }
