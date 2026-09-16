@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { dispose, init, type Chart } from 'klinecharts'
+import { dispose, init, type Chart, type KLineData } from 'klinecharts'
 import type { Candle } from './contracts'
 
 interface ChartSettings { background: string; textColor: string; gridColor: string; gridOpacity: number; gridStyle: 'solid' | 'dashed'; gridSize: number; movingAverageType: 'MA' | 'EMA'; movingAveragePeriods: string }
@@ -11,10 +11,11 @@ const demo: Candle[] = [
   { timestamp: 1746523020, open: 23132, high: 23148, low: 23120, close: 23125 },
 ]
 
-export function ChartTile({ symbol, interval, supportedIntervals, onIntervalChange, candles = demo, loading, message, settings, onConfigure, onMaximize, maximized }: { symbol: string; interval: string; supportedIntervals: number[]; onIntervalChange: (interval: string) => void; candles?: Candle[]; loading: boolean; message: string; settings: ChartSettings; onConfigure: () => void; onMaximize: () => void; maximized: boolean }) {
+export function ChartTile({ symbol, interval, supportedIntervals, onIntervalChange, candles = demo, loading, message, settings, isReplaying, onConfigure, onMaximize, maximized }: { symbol: string; interval: string; supportedIntervals: number[]; onIntervalChange: (interval: string) => void; candles?: Candle[]; loading: boolean; message: string; settings: ChartSettings; isReplaying: boolean; onConfigure: () => void; onMaximize: () => void; maximized: boolean }) {
   const element = useRef<HTMLDivElement>(null)
   const chartRef = useRef<Chart | null>(null)
   const candlesRef = useRef(candles)
+  const subscribeBarRef = useRef<((data: KLineData) => void) | null>(null)
   const [tool, setTool] = useState<string | null>(null)
   const [drawings, setDrawings] = useState<Array<{ id: string; tool: string; locked: boolean; hidden: boolean }>>([])
   const [selected, setSelected] = useState<string | null>(null)
@@ -33,6 +34,8 @@ export function ChartTile({ symbol, interval, supportedIntervals, onIntervalChan
     chart.setPeriod({ span: Number(interval.replace('m', '')), type: 'minute' })
     chart.setDataLoader({
       getBars: ({ callback }) => callback(candlesRef.current.map(candle => ({ timestamp: candle.timestamp * 1000, open: candle.open, high: candle.high, low: candle.low, close: candle.close }))),
+      subscribeBar: ({ callback }) => { subscribeBarRef.current = callback },
+      unsubscribeBar: () => { subscribeBarRef.current = null },
     })
     // MA is drawn over the candle pane. RSI and MACD are deliberately created
     // without a pane ID: KLineCharts creates a real, independently resizable pane.
@@ -40,16 +43,21 @@ export function ChartTile({ symbol, interval, supportedIntervals, onIntervalChan
       if (indicator === 'MA') { const periods = settings.movingAveragePeriods.split(',').map(value => Number(value)).filter(value => Number.isInteger(value) && value > 0).slice(0, 6); chart.createIndicator({ name: settings.movingAverageType, calcParams: periods.length ? periods : [5, 10, 20], paneId: 'candle_pane' }, true) }
       else chart.createIndicator(indicator)
     })
-    return () => { chartRef.current = null; dispose(element.current!) }
+    return () => { subscribeBarRef.current = null; chartRef.current = null; dispose(element.current!) }
   }, [symbol, interval, indicators, settings])
   useEffect(() => {
     candlesRef.current = candles
     const chart = chartRef.current
     if (!chart) return
+    const latest = candles[candles.length - 1]
+    if (isReplaying && latest && subscribeBarRef.current) {
+      subscribeBarRef.current({ timestamp: latest.timestamp * 1000, open: latest.open, high: latest.high, low: latest.low, close: latest.close })
+      return
+    }
     const barSpace = chart.getBarSpace().bar
     chart.resetData()
     chart.setBarSpace(barSpace)
-  }, [candles])
+  }, [candles, isReplaying])
   useEffect(() => {
     const shortcuts = (event: KeyboardEvent) => {
       if (event.key === 'Escape') setTool(null)
