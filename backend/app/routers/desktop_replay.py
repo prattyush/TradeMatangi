@@ -1,5 +1,6 @@
 """Sprint 5 shared Replay and Stepwise controls for a desktop screen."""
 import asyncio
+import logging
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -10,6 +11,7 @@ from app.services import desktop_replay_service as replay
 from app.services.desktop_persistence_service import canonical_instrument_id
 
 router = APIRouter(prefix="/api/desktop/v1/replay", tags=["desktop"])
+logger = logging.getLogger(__name__)
 
 
 class ReplayTile(BaseModel):
@@ -58,7 +60,9 @@ async def start(req: StartReplayRequest, user_id: str = Depends(get_desktop_user
 async def snapshot(run_id: str, user_id: str = Depends(get_desktop_user_id)):
     run = replay.get(user_id, run_id)
     if not run:
+        logger.warning("Replay snapshot missing run_id=%s user_id=%s", run_id, user_id)
         raise HTTPException(status_code=404, detail="Replay run was not found")
+    logger.debug("Replay snapshot run_id=%s user_id=%s cursor=%s event_id=%s", run_id, user_id, run.cursor, run.stream.event_id)
     return replay.snapshot(run)
 
 

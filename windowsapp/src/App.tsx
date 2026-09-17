@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { ChartTile } from './ChartTile'
 import { replayCandles } from './chartState'
@@ -11,7 +11,7 @@ interface OptionMetadata { expiries: string[]; strike_interval: number; rights: 
 interface TileConfig { id: string; kind: 'spot' | 'option'; symbol: string; interval: string; tradingDate: string; expiry: string; strike: string; right: string }
 type Layout = '1' | '2-side' | '2-stacked' | '3-wide-top' | '4-grid'
 interface Screen { id: string; name: string; tiles: TileConfig[]; layout: Layout }
-interface ReplaySnapshot { run_id: string; cursor: number; state: string; mode: string; bar_index: number; interval_seconds: number; tile_states: Array<{ tile_id: string; availability: string; candle?: Candle }> }
+interface ReplaySnapshot { run_id: string; event_id: number; cursor: number; state: string; mode: string; bar_index: number; interval_seconds: number; tile_states: Array<{ tile_id: string; availability: string; candle?: Candle }> }
 interface ChartSettings { background: string; textColor: string; gridColor: string; gridOpacity: number; gridStyle: 'solid' | 'dashed'; gridSize: number; movingAverageType: 'MA' | 'EMA'; movingAveragePeriods: string; liveProvider: 'breeze'; horizontalLineColor: string; horizontalLineWidth: number; trendLineColor: string; trendLineWidth: number; drawingLineColor: string; drawingLineWidth: number; drawingFillColor: string; drawingFillOpacity: number }
 interface LiveTileState { tile_id: string; availability: string; reason?: string; candles?: Candle[]; instrument?: Record<string, unknown>; interval_minutes?: number }
 interface LiveSnapshot { stream_id: string; event_id: number; tiles: LiveTileState[] }
@@ -36,7 +36,7 @@ const GOOGLE_CLIENT_ID = '249337992826-jm174i5bqdhr4bfqpmip44gnnp4eo2eh.apps.goo
 const fallbackCatalogue: Instrument[] = [{ symbol: 'NIFTY', display_name: 'NIFTY 50', exchange: 'NSE', chart_type: 'index', option_eligible: true, supported_intervals: [1, 3, 5, 15, 30, 60] }]
 const defaultChartSettings: ChartSettings = { background: '#151a23', textColor: '#aeb8ca', gridColor: '#ffffff', gridOpacity: 0.12, gridStyle: 'solid', gridSize: 1, movingAverageType: 'MA', movingAveragePeriods: '5,10,20', liveProvider: 'breeze', horizontalLineColor: '#facc15', horizontalLineWidth: 2, trendLineColor: '#60a5fa', trendLineWidth: 2, drawingLineColor: '#60a5fa', drawingLineWidth: 2, drawingFillColor: '#60a5fa', drawingFillOpacity: 0.16 }
 const noIndicators: string[] = []
-const newTile = (): TileConfig => ({ id: crypto.randomUUID(), kind: 'spot', symbol: 'NIFTY', interval: '5', tradingDate: '2026-05-06', expiry: '', strike: '', right: 'CE' })
+const newTile = (): TileConfig => ({ id: crypto.randomUUID(), kind: 'spot', symbol: 'NIFTY', interval: '3', tradingDate: '2026-05-06', expiry: '', strike: '', right: 'CE' })
 const newScreen = (number: number): Screen => ({ id: crypto.randomUUID(), name: `Screen ${number}`, layout: '1', tiles: [newTile()] })
 const mainIndicators = ['MA', 'EMA', 'BOLL_TV', 'VWAP', 'SuperTrend', 'Ichimoku', 'MA_Ribbon', 'HMA', 'PivotPoints']
 const subIndicators = ['RSI_TV', 'MACD_TV', 'Stochastic', 'CCI_TV']
@@ -120,6 +120,7 @@ function DesktopTile({ config, catalogue, connection, api, settings, serverUrl, 
 
 export default function App() {
   const [serverUrl, setServerUrl] = useState(() => localStorage.getItem('desktop-server-url') ?? 'http://localhost:8700'), [email, setEmail] = useState('admin@tradematangi.com'), [password, setPassword] = useState('admin123'), [connection, setConnection] = useState<'connected' | 'offline' | 'authentication_required'>('authentication_required'), [loginError, setLoginError] = useState(''), [browserToken, setBrowserToken] = useState(''), [mode, setMode] = useState<'Browse' | 'Live' | 'Replay' | 'Stepwise'>('Browse'), [catalogue, setCatalogue] = useState<Instrument[]>(fallbackCatalogue), [screens, setScreens] = useState<Screen[]>([newScreen(1)]), [chartSettings, setChartSettings] = useState<ChartSettings>(defaultChartSettings), [showSettings, setShowSettings] = useState(false), [replay, setReplay] = useState<ReplaySnapshot | null>(null), [replayError, setReplayError] = useState(''), [runDate, setRunDate] = useState('2026-05-06'), [runStartTime, setRunStartTime] = useState('09:15'), [replaySpeed, setReplaySpeed] = useState('1'), [live, setLive] = useState<LiveSnapshot | null>(null), [liveError, setLiveError] = useState('')
+  const replayPollInFlight = useRef(false)
   const [googleLoading, setGoogleLoading] = useState(false), [googleReady, setGoogleReady] = useState(false), [googleAccountName, setGoogleAccountName] = useState(''), [pendingGoogleToken, setPendingGoogleToken] = useState<string | null>(null)
   const [activeScreenId, setActiveScreenId] = useState(screens[0].id), [pickerTileId, setPickerTileId] = useState<string | null>(null), [maximizedTileId, setMaximizedTileId] = useState<string | null>(null)
   const [activeToolTileId, setActiveToolTileId] = useState(screens[0].tiles[0].id), [toolPanelOpen, setToolPanelOpen] = useState(true), [tileIndicators, setTileIndicators] = useState<Record<string, string[]>>({}), [drawingCommand, setDrawingCommand] = useState<DrawingCommand | null>(null), [drawingAction, setDrawingAction] = useState<DrawingAction | null>(null)
@@ -157,7 +158,15 @@ export default function App() {
   const saveTile = (tile: TileConfig) => { setScreens(current => current.map(screen => screen.id === activeScreenId ? { ...screen, tiles: screen.tiles.map(item => item.id === tile.id ? tile : item) } : screen)); setPickerTileId(null) }
   const addScreen = () => { const next = newScreen(screens.length + 1); setScreens(current => [...current, next]); setActiveScreenId(next.id) }
   const saveChartSettings = (settings: ChartSettings) => { setChartSettings(settings); setShowSettings(false); if (hasNativeHost) void invoke('save_desktop_chart_settings', { baseUrl: serverUrl, settings }); else void fetch(`${serverUrl.replace(/\/$/, '')}/api/desktop/v1/chart-settings`, { method: 'PUT', headers: { Authorization: `Bearer ${browserToken}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ settings }) }) }
-  const replayRequest = async (path: string, method: 'GET' | 'POST' | 'PUT', body: Record<string, unknown> = {}): Promise<ReplaySnapshot> => { if (hasNativeHost) return invoke<ReplaySnapshot>('desktop_replay_request', { baseUrl: serverUrl, path, method, body }); const response = await fetch(`${serverUrl.replace(/\/$/, '')}/api/desktop/v1/replay/${path}`, { method, headers: { Authorization: `Bearer ${browserToken}`, 'Content-Type': 'application/json' }, body: method === 'GET' ? undefined : JSON.stringify(body) }); if (!response.ok) throw new Error(`Replay request failed (${response.status})`); return response.json() as Promise<ReplaySnapshot> }
+  const replayRequest = async (path: string, method: 'GET' | 'POST' | 'PUT', body: Record<string, unknown> = {}): Promise<ReplaySnapshot> => {
+    if (hasNativeHost) return invoke<ReplaySnapshot>('desktop_replay_request', { baseUrl: serverUrl, path, method, body })
+    const response = await fetch(`${serverUrl.replace(/\/$/, '')}/api/desktop/v1/replay/${path}`, { method, headers: { Authorization: `Bearer ${browserToken}`, 'Content-Type': 'application/json' }, body: method === 'GET' ? undefined : JSON.stringify(body) })
+    if (!response.ok) {
+      const detail = await response.text().catch(() => '')
+      throw new Error(`Replay request failed (${response.status})${detail ? `: ${detail.slice(0, 240)}` : ''}`)
+    }
+    return response.json() as Promise<ReplaySnapshot>
+  }
   const liveRequest = async (path: string, method: 'GET' | 'POST' | 'PUT' | 'DELETE', body: Record<string, unknown> = {}): Promise<LiveSnapshot> => { if (hasNativeHost) return invoke<LiveSnapshot>('desktop_live_request', { baseUrl: serverUrl, path, method, body }); const response = await fetch(`${serverUrl.replace(/\/$/, '')}/api/desktop/v1/live/${path}`, { method, headers: { Authorization: `Bearer ${browserToken}`, 'Content-Type': 'application/json' }, body: method === 'GET' || method === 'DELETE' ? undefined : JSON.stringify(body) }); if (!response.ok) throw new Error(`Live request failed (${response.status})`); return response.json() as Promise<LiveSnapshot> }
   const liveTile = (tile: TileConfig) => { const item = catalogue.find(entry => entry.symbol === tile.symbol) ?? fallbackCatalogue[0]; const instrument = tile.kind === 'option' ? { kind: 'option', exchange: item.exchange, underlying: tile.symbol, expiry: tile.expiry, strike: Number(tile.strike), right: tile.right } : { kind: item.chart_type ?? 'equity', exchange: item.exchange, symbol: tile.symbol }; return { tile_id: tile.id, instrument, interval_minutes: Number(tile.interval) } }
   const liveTiles = () => activeScreen.tiles.map(liveTile)
@@ -205,7 +214,35 @@ export default function App() {
     void replayRequest(`${replay.run_id}/tiles`, 'PUT', { tiles: activeScreen.tiles.map(replayTile) }).then(next => { if (!cancelled) setReplay(next) }).catch(error => { if (!cancelled) setReplayError(String(error)) })
     return () => { cancelled = true }
   }, [replay?.run_id, replay?.state, activeScreen.id, activeScreen.tiles, catalogue])
-  useEffect(() => { if (!replay || replay.state === 'stopped') return; const timer = window.setInterval(() => { void replayRequest(`${replay.run_id}/snapshot`, 'GET').then(setReplay).catch(error => setReplayError(String(error))) }, 500); return () => window.clearInterval(timer) }, [replay?.run_id, replay?.state])
+  useEffect(() => {
+    if (!replay || replay.state === 'stopped') return
+    const runId = replay.run_id
+    const timer = window.setInterval(() => {
+      if (replayPollInFlight.current) return
+      replayPollInFlight.current = true
+      void replayRequest(`${runId}/snapshot`, 'GET')
+        .then(next => {
+          if (next.run_id !== runId) return
+          setReplay(next)
+          setReplayError('')
+        })
+        .catch(error => {
+          const message = String(error)
+          if (message.includes('(401)')) {
+            setReplay(null)
+            setConnection('authentication_required')
+            setLoginError('Replay authentication expired; please sign in again.')
+          } else if (message.includes('(404)')) {
+            setReplay(null)
+            setReplayError('Replay expired or the backend restarted; please start Replay again.')
+          } else {
+            setReplayError('Replay update unavailable; retrying…')
+          }
+        })
+        .finally(() => { replayPollInFlight.current = false })
+    }, 500)
+    return () => window.clearInterval(timer)
+  }, [replay?.run_id, replay?.state])
   if (connection === 'authentication_required') return <main className="login-page"><section className="login-card"><h1>Trade Matangi Charts</h1><p>Sign in to the chart-only desktop companion.</p><label>Server URL<input value={serverUrl} onChange={event => setServerUrl(event.target.value)} /></label>{pendingGoogleToken ? <><p className="login-help">Google sign-in succeeded. Choose an account name to finish creating your Trade Matangi account.</p><label>Account name<input value={googleAccountName} onChange={event => setGoogleAccountName(event.target.value)} placeholder="Your display name" /></label><button className="login-button" disabled={googleLoading || !googleAccountName.trim()} onClick={() => void googleLogin(pendingGoogleToken, googleAccountName.trim())}>{googleLoading ? 'Creating account…' : 'Continue'}</button><button onClick={() => { setPendingGoogleToken(null); setGoogleAccountName('') }}>Use email instead</button></> : <><button className="google-login-button" disabled={googleLoading || (!hasNativeHost && !googleReady)} onClick={beginGoogleLogin}><span className="google-mark">G</span>{googleLoading ? 'Signing in…' : hasNativeHost || googleReady ? 'Continue with Google' : 'Loading Google…'}</button><div className="login-divider"><span />or<span /></div><label>Email<input value={email} onChange={event => setEmail(event.target.value)} /></label><label>Password<input type="password" value={password} onChange={event => setPassword(event.target.value)} /></label><button className="login-button" onClick={login}>Sign in</button></>}{loginError && <p className="login-error">{loginError}</p>}</section></main>
   return <main>
     <header>
