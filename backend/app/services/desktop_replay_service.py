@@ -64,6 +64,27 @@ def get(user_id: str, run_id: str) -> ReplayRun | None:
     return run if run and run.user_id == user_id else None
 
 
+def sync_tiles(run: ReplayRun, tiles: list[dict]) -> None:
+    """Attach the screen's current tiles without changing the replay clock.
+
+    Source records are loaded only for new or changed instruments.  The next
+    snapshot aggregates each tile through the run cursor, so a tile added
+    mid-bar starts with a partial candle rather than a completed historical bar.
+    """
+    previous = {tile["tile_id"]: tile for tile in run.tiles}
+    previous_candles = run.tile_candles
+    changed = [
+        tile for tile in tiles
+        if tile["tile_id"] not in previous or previous[tile["tile_id"]].get("instrument") != tile.get("instrument")
+    ]
+    loaded = prepare_tiles(changed, run.date, run.interval_seconds) if changed else {}
+    run.tiles = list(tiles)
+    run.tile_candles = {
+        tile["tile_id"]: loaded.get(tile["tile_id"], previous_candles.get(tile["tile_id"], []))
+        for tile in run.tiles
+    }
+
+
 def snapshot(run: ReplayRun) -> dict:
     tile_states = []
     for tile in run.tiles:

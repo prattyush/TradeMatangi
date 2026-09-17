@@ -613,6 +613,7 @@ async fn desktop_replay_request(
     let request = match method.as_str() {
         "GET" => client.get(url),
         "POST" => client.post(url).json(&body),
+        "PUT" => client.put(url).json(&body),
         _ => return Err("Unsupported replay request".into()),
     };
     let response = request
