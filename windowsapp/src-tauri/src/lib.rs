@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 use std::{
     fs,
     path::PathBuf,
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use tauri::Manager;
 
@@ -53,6 +53,8 @@ pub struct TokenBundle {
     pub refresh_token: String,
     pub expires_in: u64,
 }
+
+const TOKEN_REFRESH_SKEW: Duration = Duration::from_secs(60);
 
 #[derive(Serialize)]
 pub struct QueuedMutation {
@@ -148,6 +150,19 @@ async fn authenticate_google(
         .map_err(|error| error.to_string())
 }
 
+async fn refresh_desktop_tokens(base_url: &str, refresh_token: &str) -> Result<TokenBundle, String> {
+    let response = reqwest::Client::new()
+        .post(format!("{}/api/auth/desktop/refresh", base_url.trim_end_matches('/')))
+        .json(&serde_json::json!({ "refresh_token": refresh_token }))
+        .send()
+        .await
+        .map_err(|error| error.to_string())?;
+    if !response.status().is_success() {
+        return Err(format!("Desktop session refresh failed ({})", response.status()));
+    }
+    response.json::<TokenBundle>().await.map_err(|error| error.to_string())
+}
+
 fn random_url_token() -> Result<String, String> {
     let mut bytes = [0_u8; 32];
     getrandom::fill(&mut bytes).map_err(|error| error.to_string())?;
@@ -192,7 +207,9 @@ fn percent_decode(value: &str) -> Result<String, String> {
 fn open_external_url(url: &str) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
+        use std::os::windows::process::CommandExt;
         Command::new("cmd")
+            .creation_flags(0x08000000)
             .args(["/C", "start", "", url])
             .spawn()
             .map_err(|error| format!("Could not open the system browser: {error}"))?;
@@ -411,8 +428,8 @@ async fn desktop_connection_state(
     host: tauri::State<'_, HostState>,
 ) -> Result<String, String> {
     let host = host.inner().clone();
-    let token = match host.token() {
-        Ok(tokens) => tokens.access_token,
+    let token = match host.access_token(&base_url).await {
+        Ok(token) => token,
         Err(_) => return Ok("authentication_required".into()),
     };
     let result = reqwest::Client::new()
@@ -440,7 +457,7 @@ async fn desktop_historical_page(
     interval_minutes: u32,
     host: tauri::State<'_, HostState>,
 ) -> Result<serde_json::Value, String> {
-    let token = host.token()?.access_token;
+    let token = host.access_token(&base_url).await?;
     let response = reqwest::Client::new()
         .get(format!(
             "{}/api/desktop/v1/historical/pages",
@@ -471,7 +488,7 @@ async fn desktop_get(
     query: Vec<(&str, String)>,
     host: tauri::State<'_, HostState>,
 ) -> Result<serde_json::Value, String> {
-    let token = host.token()?.access_token;
+    let token = host.access_token(&base_url).await?;
     let response = reqwest::Client::new()
         .get(format!(
             "{}/api/desktop/v1/{}",
@@ -558,7 +575,7 @@ async fn save_desktop_chart_settings(
     settings: serde_json::Value,
     host: tauri::State<'_, HostState>,
 ) -> Result<serde_json::Value, String> {
-    let token = host.token()?.access_token;
+    let token = host.access_token(&base_url).await?;
     let response = reqwest::Client::new()
         .put(format!(
             "{}/api/desktop/v1/chart-settings",
@@ -586,7 +603,7 @@ async fn desktop_replay_request(
     body: serde_json::Value,
     host: tauri::State<'_, HostState>,
 ) -> Result<serde_json::Value, String> {
-    let token = host.token()?.access_token;
+    let token = host.access_token(&base_url).await?;
     let url = format!(
         "{}/api/desktop/v1/replay/{}",
         base_url.trim_end_matches('/'),
@@ -620,7 +637,7 @@ async fn desktop_live_request(
     body: serde_json::Value,
     host: tauri::State<'_, HostState>,
 ) -> Result<serde_json::Value, String> {
-    let token = host.token()?.access_token;
+    let token = host.access_token(&base_url).await?;
     let url = format!(
         "{}/api/desktop/v1/live/{}",
         base_url.trim_end_matches('/'),
@@ -656,7 +673,7 @@ async fn desktop_drawing_request(
     body: serde_json::Value,
     host: tauri::State<'_, HostState>,
 ) -> Result<serde_json::Value, String> {
-    let token = host.token()?.access_token;
+    let token = host.access_token(&base_url).await?;
     let url = format!(
         "{}/api/desktop/v1/{}",
         base_url.trim_end_matches('/'),
@@ -756,8 +773,15 @@ fn acknowledge_offline_mutation(app: tauri::AppHandle, id: i64) -> Result<(), St
 }
 
 /// Durable native state: it continues receiving stream events with no WebView listener.
-#[derive(Default, Clone)]
-pub struct HostState(Arc<Mutex<LatestState>>);
+#[derive(Clone)]
+pub struct HostState(Arc<Mutex<LatestState>>, Arc<tokio::sync::Mutex<()>>);
+
+impl Default for HostState {
+    fn default() -> Self {
+        Self(Arc::new(Mutex::new(LatestState::default())), Arc::new(tokio::sync::Mutex::new(())))
+    }
+}
+
 #[derive(Default)]
 struct LatestState {
     last_event_id: u64,
@@ -765,6 +789,7 @@ struct LatestState {
     connection: String,
     tokens: Option<TokenBundle>,
     pending_google_token: Option<String>,
+    token_expires_at: Option<SystemTime>,
 }
 
 impl HostState {
@@ -787,7 +812,10 @@ impl HostState {
         self.0.lock().expect("host state lock").connection = connection.into();
     }
     fn set_tokens(&self, tokens: TokenBundle) {
-        self.0.lock().expect("host state lock").tokens = Some(tokens);
+        let expires_at = SystemTime::now() + Duration::from_secs(tokens.expires_in);
+        let mut state = self.0.lock().expect("host state lock");
+        state.tokens = Some(tokens);
+        state.token_expires_at = Some(expires_at);
     }
     fn clear_tokens(&self) {
         let mut state = self.0.lock().expect("host state lock");
@@ -806,8 +834,40 @@ impl HostState {
             return Ok(tokens);
         }
         let tokens = stored_tokens()?;
-        self.set_tokens(tokens.clone());
+        let mut state = self.0.lock().expect("host state lock");
+        state.tokens = Some(tokens.clone());
+        // A persisted bundle may have expired while the app was closed. Force
+        // the first API call to rotate it instead of trusting expires_in.
+        state.token_expires_at = Some(SystemTime::UNIX_EPOCH);
         Ok(tokens)
+    }
+
+    async fn access_token(&self, base_url: &str) -> Result<String, String> {
+        let needs_refresh = {
+            let state = self.0.lock().expect("host state lock");
+            match (&state.tokens, state.token_expires_at) {
+                (Some(_), Some(expires_at)) => expires_at <= SystemTime::now() + TOKEN_REFRESH_SKEW,
+                _ => true,
+            }
+        };
+        let tokens = self.token()?;
+        if !needs_refresh {
+            return Ok(tokens.access_token);
+        }
+        let _refresh_guard = self.1.lock().await;
+        let still_needs_refresh = {
+            let state = self.0.lock().expect("host state lock");
+            state.token_expires_at.map(|expires_at| expires_at <= SystemTime::now() + TOKEN_REFRESH_SKEW).unwrap_or(true)
+        };
+        if still_needs_refresh {
+            diagnostic_log("credential refresh: starting");
+            let refreshed = refresh_desktop_tokens(base_url, &tokens.refresh_token).await?;
+            persist_desktop_tokens(&refreshed)?;
+            self.set_tokens(refreshed.clone());
+            diagnostic_log("credential refresh: success");
+            return Ok(refreshed.access_token);
+        }
+        self.0.lock().expect("host state lock").tokens.as_ref().map(|value| value.access_token.clone()).ok_or_else(|| "Desktop session is not authenticated".into())
     }
 }
 
