@@ -185,6 +185,23 @@ class TestBreezeStreamManagerStop:
         mgr = BreezeStreamManager()
         mgr.stop()  # should not raise
 
+    @pytest.mark.asyncio
+    async def test_consumers_share_socket_but_stop_independently(self):
+        first = BreezeStreamManager()
+        second = BreezeStreamManager()
+        mock_breeze = MagicMock()
+        mock_breeze.on_ticks = None
+        first_instrument = {"exchange_code": "NSE", "stock_code": "NIFTY", "product_type": "cash"}
+        second_instrument = {"exchange_code": "NFO", "stock_code": "NIFTY", "product_type": "options", "expiry_date": "2026-06-25", "strike_price": "24000", "right": "call"}
+        with patch("app.services.broker_service._get_breeze", return_value=mock_breeze):
+            first.start(asyncio.Queue(), asyncio.get_running_loop(), [first_instrument])
+            second.start(asyncio.Queue(), asyncio.get_running_loop(), [second_instrument])
+            first.stop()
+            assert not mock_breeze.ws_disconnect.called
+            second.stop()
+        mock_breeze.ws_connect.assert_called_once()
+        mock_breeze.ws_disconnect.assert_called_once()
+
 
 # Sample Breeze tick (equity) — matches real Breeze WebSocket format
 _BREEZE_EQ_TICK = {

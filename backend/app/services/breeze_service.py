@@ -22,12 +22,77 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import threading
 import time as _time
+import weakref
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
+
+_multiplexer_lock = threading.RLock()
+_multiplexer_managers: weakref.WeakSet = weakref.WeakSet()
+_multiplexer_feed_refs: dict[str, int] = {}
+_multiplexer_feed_specs: dict[str, dict] = {}
+_multiplexer_breeze = None
+_multiplexer_connected = False
+
+
+def _dispatch_multiplexed_ticks(ticks) -> None:
+    """Fan one Breeze callback out to isolated per-consumer managers."""
+    with _multiplexer_lock:
+        managers = list(_multiplexer_managers)
+    for manager in managers:
+        manager._on_ticks(ticks)
+
+
+def _feed_spec(instrument: dict) -> dict:
+    expiry = instrument.get("expiry_date", "")
+    if expiry:
+        try:
+            expiry = datetime.strptime(expiry.split("T")[0], "%Y-%m-%d").strftime("%d-%b-%Y")
+        except ValueError:
+            pass
+    return {
+        "exchange_code": instrument.get("exchange_code", ""),
+        "stock_code": instrument.get("stock_code", ""),
+        "product_type": instrument.get("product_type", "cash"),
+        "expiry_date": expiry,
+        "strike_price": instrument.get("strike_price", ""),
+        "right": instrument.get("right", ""),
+    }
+
+
+def _feed_key(instrument: dict) -> str:
+    spec = _feed_spec(instrument)
+    return "|".join(str(spec[key]).lower() for key in (
+        "exchange_code", "stock_code", "product_type", "expiry_date", "strike_price", "right"
+    ))
+
+
+def _subscribe_feed(breeze, spec: dict) -> None:
+    breeze.subscribe_feeds(
+        exchange_code=spec["exchange_code"],
+        stock_code=spec["stock_code"],
+        product_type=spec["product_type"],
+        expiry_date=spec["expiry_date"],
+        strike_price=spec["strike_price"],
+        right=spec["right"],
+        get_exchange_quotes=True,
+        get_market_depth=False,
+    )
+
+
+def _unsubscribe_feed(breeze, spec: dict) -> None:
+    breeze.unsubscribe_feeds(
+        exchange_code=spec["exchange_code"],
+        stock_code=spec["stock_code"],
+        product_type=spec["product_type"],
+        expiry_date=spec["expiry_date"],
+        strike_price=spec["strike_price"],
+        right=spec["right"],
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -92,6 +157,7 @@ class BreezeStreamManager:
         self._logged_ticks: int = 0
         self._equity_stock_name: str | None = None
         self._equity_exchange: str | None = None
+        self._registered = False
         # Map of Breeze ScripCode (raw token id from WS tick "symbol" field)
         # → (strike_price, right_label). Populated at subscribe time by
         # parsing the Breeze Security Master file because Breeze WS payloads
@@ -120,8 +186,23 @@ class BreezeStreamManager:
         self._route_queues = routes or {}
 
         breeze = _get_breeze()
-        breeze.on_ticks = self._on_ticks
-        breeze.ws_connect()
+        global _multiplexer_breeze, _multiplexer_connected
+        with _multiplexer_lock:
+            # A credential refresh can replace the SDK object. Do not carry
+            # subscriptions from the old connection into the new one.
+            if _multiplexer_breeze is not None and _multiplexer_breeze is not breeze:
+                _multiplexer_managers.clear()
+                _multiplexer_feed_refs.clear()
+                _multiplexer_feed_specs.clear()
+                _multiplexer_connected = False
+            _multiplexer_breeze = breeze
+            breeze.on_ticks = _dispatch_multiplexed_ticks
+            first_consumer = not _multiplexer_managers
+            _multiplexer_managers.add(self)
+            self._registered = True
+            if first_consumer and not _multiplexer_connected:
+                breeze.ws_connect()
+                _multiplexer_connected = True
 
         logger.info("BreezeStreamManager subscribing to %d instruments:", len(instruments))
         for inst in instruments:
@@ -149,16 +230,13 @@ class BreezeStreamManager:
                 inst.get("product_type", "cash"), expiry_raw,
                 inst.get("strike_price", ""), inst.get("right", ""),
             )
-            breeze.subscribe_feeds(
-                exchange_code=inst["exchange_code"],
-                stock_code=inst["stock_code"],
-                product_type=inst.get("product_type", "cash"),
-                expiry_date=expiry_raw,
-                strike_price=inst.get("strike_price", ""),
-                right=inst.get("right", ""),
-                get_exchange_quotes=True,
-                get_market_depth=False,
-            )
+            spec = _feed_spec(inst)
+            feed_key = _feed_key(inst)
+            with _multiplexer_lock:
+                if _multiplexer_feed_refs.get(feed_key, 0) == 0:
+                    _subscribe_feed(breeze, spec)
+                    _multiplexer_feed_specs[feed_key] = spec
+                _multiplexer_feed_refs[feed_key] = _multiplexer_feed_refs.get(feed_key, 0) + 1
             # Resolve the ScripCode for option instruments. Breeze's WS
             # payload uses raw symbols like "8.1!855562" where 855562 is the
             # ScripCode; the tick does NOT carry right/strike_price on BFO
@@ -221,19 +299,32 @@ class BreezeStreamManager:
         return scrip_map
 
     def stop(self) -> None:
-        if not self._breeze:
+        if not self._breeze and not self._registered:
             return
+        global _multiplexer_connected, _multiplexer_breeze
         try:
-            for inst in self._instruments:
-                self._breeze.unsubscribe_feeds(
-                    exchange_code=inst["exchange_code"],
-                    stock_code=inst["stock_code"],
-                    product_type=inst.get("product_type", "cash"),
-                    expiry_date=inst.get("expiry_date", ""),
-                    strike_price=inst.get("strike_price", ""),
-                    right=inst.get("right", ""),
-                )
-            self._breeze.ws_disconnect()
+            with _multiplexer_lock:
+                breeze = self._breeze or _multiplexer_breeze
+                if self._registered:
+                    _multiplexer_managers.discard(self)
+                    self._registered = False
+                if breeze:
+                    for inst in self._instruments:
+                        feed_key = _feed_key(inst)
+                        refs = _multiplexer_feed_refs.get(feed_key, 0) - 1
+                        if refs <= 0:
+                            spec = _multiplexer_feed_specs.pop(feed_key, _feed_spec(inst))
+                            try:
+                                _unsubscribe_feed(breeze, spec)
+                            except Exception as exc:
+                                logger.warning("Breeze multiplexer unsubscribe error: %s", exc)
+                            _multiplexer_feed_refs.pop(feed_key, None)
+                        else:
+                            _multiplexer_feed_refs[feed_key] = refs
+                    if not _multiplexer_managers and _multiplexer_connected:
+                        breeze.ws_disconnect()
+                        _multiplexer_connected = False
+                        _multiplexer_breeze = None
         except Exception as exc:
             logger.warning("BreezeStreamManager stop error: %s", exc)
         finally:
