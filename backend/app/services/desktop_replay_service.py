@@ -99,7 +99,7 @@ def snapshot(run: ReplayRun) -> dict:
             # internal source-record field returned by candles_to_records.
             candle = {"timestamp": start, "open": bar[0]["open"], "high": max(item["high"] for item in bar), "low": min(item["low"] for item in bar), "close": bar[-1]["close"]}
         tile_states.append({"tile_id": tile["tile_id"], "availability": "available" if candle else "no_data", "candle": candle})
-    return {"version": 1, "run_id": run.run_id, "stream_id": run.stream.stream_id, "mode": run.mode, "date": run.date, "cursor": run.cursor, "interval_seconds": run.interval_seconds, "speed": run.speed, "state": run.state, "bar_index": run.bar_index, "tiles": run.tiles, "tile_states": tile_states}
+    return {"version": 1, "event_id": run.stream.event_id, "run_id": run.run_id, "stream_id": run.stream.stream_id, "mode": run.mode, "date": run.date, "cursor": run.cursor, "interval_seconds": run.interval_seconds, "speed": run.speed, "state": run.state, "bar_index": run.bar_index, "tiles": run.tiles, "tile_states": tile_states}
 
 
 async def _emit(run: ReplayRun, event_type: str = "replay_state") -> None:

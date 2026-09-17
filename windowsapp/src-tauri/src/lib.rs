@@ -622,7 +622,9 @@ async fn desktop_replay_request(
         .await
         .map_err(|error| error.to_string())?;
     if !response.status().is_success() {
-        return Err(format!("Replay request failed ({})", response.status()));
+        let status = response.status();
+        let detail = response.text().await.unwrap_or_default();
+        return Err(format!("Replay request failed ({status}): {}", detail.chars().take(240).collect::<String>()));
     }
     response
         .json::<serde_json::Value>()
