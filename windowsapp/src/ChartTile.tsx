@@ -6,6 +6,7 @@ import type { Candle } from './contracts'
 
 interface ChartSettings { background: string; textColor: string; gridColor: string; gridOpacity: number; gridStyle: 'solid' | 'dashed'; gridSize: number; movingAverageType: 'MA' | 'EMA'; movingAveragePeriods: string; horizontalLineColor: string; horizontalLineWidth: number; trendLineColor: string; trendLineWidth: number; drawingLineColor: string; drawingLineWidth: number; drawingFillColor: string; drawingFillOpacity: number }
 const withOpacity = (hex: string, opacity: number) => `${hex}${Math.round(opacity * 255).toString(16).padStart(2, '0')}`
+const applyChartStyles = (chart: Chart, settings: ChartSettings) => chart.setStyles({ grid: { horizontal: { show: true, color: withOpacity(settings.gridColor, settings.gridOpacity), style: settings.gridStyle, size: settings.gridSize, dashedValue: [2, 2] }, vertical: { show: true, color: withOpacity(settings.gridColor, settings.gridOpacity), style: settings.gridStyle, size: settings.gridSize, dashedValue: [2, 2] } }, crosshair: { show: true, horizontal: { show: true, line: { show: true, color: '#94a3b8', style: 'dashed', size: 1, dashedValue: [4, 2] } }, vertical: { show: true, line: { show: true, color: '#94a3b8', style: 'dashed', size: 1, dashedValue: [4, 2] } } }, xAxis: { tickText: { color: settings.textColor } }, yAxis: { tickText: { color: settings.textColor } } })
 
 const demo: Candle[] = [
   { timestamp: 1746522900, open: 23100, high: 23124, low: 23080, close: 23112 },
@@ -23,18 +24,18 @@ const ensureExtensions = () => {
 interface DrawingCommand { id: number; tool: string }
 interface DrawingAction { id: number; action: 'delete' | 'hide' | 'lock' }
 
-export function ChartTile({ symbol, interval, supportedIntervals, onIntervalChange, candles = demo, loading, message, settings, isReplaying, replayDatasetKey, instrument, baseUrl, onConfigure, onMaximize, maximized, active, indicators, drawingCommand, drawingAction, onActivate }: { symbol: string; interval: string; supportedIntervals: number[]; onIntervalChange: (interval: string) => void; candles?: Candle[]; loading: boolean; message: string; settings: ChartSettings; isReplaying: boolean; replayDatasetKey?: string; instrument: Record<string, unknown>; baseUrl: string; onConfigure: () => void; onMaximize: () => void; maximized: boolean; active: boolean; indicators: string[]; drawingCommand: DrawingCommand | null; drawingAction: DrawingAction | null; onActivate: () => void }) {
+export function ChartTile({ symbol, interval, supportedIntervals, onIntervalChange, candles = demo, loading, message, settings, isReplaying, instrument, baseUrl, onConfigure, onMaximize, maximized, active, indicators, drawingCommand, drawingAction, onActivate }: { symbol: string; interval: string; supportedIntervals: number[]; onIntervalChange: (interval: string) => void; candles?: Candle[]; loading: boolean; message: string; settings: ChartSettings; isReplaying: boolean; replayDatasetKey?: string; instrument: Record<string, unknown>; baseUrl: string; onConfigure: () => void; onMaximize: () => void; maximized: boolean; active: boolean; indicators: string[]; drawingCommand: DrawingCommand | null; drawingAction: DrawingAction | null; onActivate: () => void }) {
   const element = useRef<HTMLDivElement>(null)
   const chartRef = useRef<Chart | null>(null)
   const candlesRef = useRef(candles)
   const renderedCandlesRef = useRef<Candle[]>([])
   const subscribeBarRef = useRef<((data: KLineData) => void) | null>(null)
-  const replayDatasetKeyRef = useRef<string | undefined>(undefined)
   const lastDrawingCommandRef = useRef(0)
   const lastDrawingActionRef = useRef(0)
   const [tool, setTool] = useState<string | null>(null)
   const [drawings, setDrawings] = useState<Array<{ id: string; tool: string; locked: boolean; hidden: boolean }>>([])
   const [selected, setSelected] = useState<string | null>(null)
+  const indicatorKey = indicators.join('|')
   useEffect(() => {
     if (!element.current) return
     ensureExtensions()
@@ -45,7 +46,7 @@ export function ChartTile({ symbol, interval, supportedIntervals, onIntervalChan
     // as UTC-labelled seconds. Rendering as UTC prevents KLineCharts from
     // applying the machine/Asia-Kolkata offset a second time.
     chart.setTimezone('Etc/UTC')
-    chart.setStyles({ grid: { horizontal: { show: true, color: withOpacity(settings.gridColor, settings.gridOpacity), style: settings.gridStyle, size: settings.gridSize, dashedValue: [2, 2] }, vertical: { show: true, color: withOpacity(settings.gridColor, settings.gridOpacity), style: settings.gridStyle, size: settings.gridSize, dashedValue: [2, 2] } }, crosshair: { show: true, horizontal: { show: true, line: { show: true, color: '#94a3b8', style: 'dashed', size: 1, dashedValue: [4, 2] } }, vertical: { show: true, line: { show: true, color: '#94a3b8', style: 'dashed', size: 1, dashedValue: [4, 2] } } }, xAxis: { tickText: { color: settings.textColor } }, yAxis: { tickText: { color: settings.textColor } } })
+    applyChartStyles(chart, settings)
     chart.setSymbol({ ticker: symbol, pricePrecision: 2, volumePrecision: 0 })
     chart.setPeriod({ span: Number(interval.replace('m', '')), type: 'minute' })
     chart.setDataLoader({
@@ -53,14 +54,23 @@ export function ChartTile({ symbol, interval, supportedIntervals, onIntervalChan
       subscribeBar: ({ callback }) => { subscribeBarRef.current = callback },
       unsubscribeBar: () => { subscribeBarRef.current = null },
     })
-    // MA is drawn over the candle pane. RSI and MACD are deliberately created
-    // without a pane ID: KLineCharts creates a real, independently resizable pane.
+    return () => { subscribeBarRef.current = null; renderedCandlesRef.current = []; chartRef.current = null; dispose(element.current!) }
+  }, [symbol, interval])
+  useEffect(() => {
+    const chart = chartRef.current
+    if (!chart) return
+    applyChartStyles(chart, settings)
+  }, [settings])
+  useEffect(() => {
+    const chart = chartRef.current
+    if (!chart) return
+    chart.removeIndicator()
+    // MA is drawn over the candle pane. Other indicators get their own pane.
     indicators.forEach(indicator => {
       if (indicator === 'MA') { const periods = settings.movingAveragePeriods.split(',').map(value => Number(value)).filter(value => Number.isInteger(value) && value > 0).slice(0, 6); chart.createIndicator({ name: settings.movingAverageType, calcParams: periods.length ? periods : [5, 10, 20], paneId: 'candle_pane' }, true) }
       else chart.createIndicator(indicator)
     })
-    return () => { subscribeBarRef.current = null; chartRef.current = null; dispose(element.current!) }
-  }, [symbol, interval, indicators, settings])
+  }, [indicatorKey, settings.movingAveragePeriods, settings.movingAverageType, symbol, interval])
   useEffect(() => {
     candlesRef.current = candles
     const chart = chartRef.current
@@ -71,11 +81,15 @@ export function ChartTile({ symbol, interval, supportedIntervals, onIntervalChan
     // Live snapshots normally change only the current candle or append one
     // candle. Feed those updates through KLineCharts' incremental loader so
     // the user's scroll position and crosshair remain untouched.
-    const incremental = Boolean(subscribeBarRef.current && previous.length > 0 && candles.length >= previous.length && candles.length <= previous.length + 1 && previous.every((candle, index) => sameCandle(candle, candles[index])))
-    const shouldResetReplayData = isReplaying && replayDatasetKey !== replayDatasetKeyRef.current
-    if (isReplaying) replayDatasetKeyRef.current = replayDatasetKey
-    else replayDatasetKeyRef.current = undefined
-    if (!shouldResetReplayData && incremental && latest && subscribeBarRef.current) {
+    // Replay and live snapshots commonly update the last candle in place. The
+    // previous implementation compared every candle, including that mutable
+    // last candle, so every replay tick fell back to resetData() and cleared
+    // the crosshair. Permit a same-length last-bar update, or one new bar,
+    // while still resetting when history/symbol data is replaced.
+    const sameLengthUpdate = candles.length === previous.length && previous.length > 0 && previous.slice(0, -1).every((candle, index) => sameCandle(candle, candles[index]))
+    const appendUpdate = candles.length === previous.length + 1 && previous.length > 0 && previous.every((candle, index) => sameCandle(candle, candles[index]))
+    const incremental = Boolean(subscribeBarRef.current && (sameLengthUpdate || appendUpdate))
+    if (incremental && latest && subscribeBarRef.current) {
       subscribeBarRef.current({ timestamp: latest.timestamp * 1000, open: latest.open, high: latest.high, low: latest.low, close: latest.close })
       renderedCandlesRef.current = candles
       return
