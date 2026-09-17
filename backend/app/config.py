@@ -20,7 +20,9 @@ LOG_LEVEL = os.getenv("LOG_LEVEL", "info")
 # Sprint 1 desktop JWT signing key. Production deployments must set this to a
 # long random secret; the fallback exists only for isolated local development.
 DESKTOP_JWT_SECRET = os.getenv("DESKTOP_JWT_SECRET", "development-only-desktop-jwt-secret")
-DESKTOP_ACCESS_TOKEN_MINUTES = int(os.getenv("DESKTOP_ACCESS_TOKEN_MINUTES", "15"))
+# Desktop sessions are long-lived chart sessions; native clients still refresh
+# proactively before expiry and on a 401. Operators can shorten this via env.
+DESKTOP_ACCESS_TOKEN_MINUTES = int(os.getenv("DESKTOP_ACCESS_TOKEN_MINUTES", "1440"))
 DESKTOP_REFRESH_TOKEN_DAYS = int(os.getenv("DESKTOP_REFRESH_TOKEN_DAYS", "30"))
 
 DEFAULT_SYMBOL = "NIFTY"
