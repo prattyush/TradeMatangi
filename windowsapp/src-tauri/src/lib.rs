@@ -207,7 +207,9 @@ fn percent_decode(value: &str) -> Result<String, String> {
 fn open_external_url(url: &str) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
+        use std::os::windows::process::CommandExt;
         Command::new("cmd")
+            .creation_flags(0x08000000)
             .args(["/C", "start", "", url])
             .spawn()
             .map_err(|error| format!("Could not open the system browser: {error}"))?;
