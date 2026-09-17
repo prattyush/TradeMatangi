@@ -1,5 +1,10 @@
 use futures_util::StreamExt;
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+use std::io::{Read, Write};
+use std::net::TcpListener;
+use std::process::Command;
 use std::sync::{Arc, Mutex};
 use std::{
     fs,
@@ -13,6 +18,7 @@ const CREDENTIAL_ACCOUNT: &str = "desktop-session";
 // An explicit target avoids a derived Windows Credential Manager name that
 // can be unavailable to an installed NSIS application after sign-in.
 const CREDENTIAL_TARGET: &str = "TradeMatangi.Desktop.Session";
+const GOOGLE_REDIRECT_PORT: u16 = 8765;
 
 /// A small, token-free diagnostic trail for installed Windows builds.  It is
 /// intentionally kept outside the keyring and never includes credentials,
@@ -112,6 +118,207 @@ async fn authenticate(base_url: &str, email: &str, password: &str) -> Result<Tok
         .map_err(|error| error.to_string())
 }
 
+async fn authenticate_google(
+    base_url: &str,
+    id_token: &str,
+    account_name: Option<String>,
+) -> Result<TokenBundle, String> {
+    let response = reqwest::Client::new()
+        .post(format!(
+            "{}/api/auth/desktop/google-token",
+            base_url.trim_end_matches('/')
+        ))
+        .json(&serde_json::json!({ "id_token": id_token, "account_name": account_name, "device_name": "Trade Matangi Desktop" }))
+        .send()
+        .await
+        .map_err(|error| error.to_string())?;
+    if !response.status().is_success() {
+        let status = response.status();
+        let detail = response
+            .json::<serde_json::Value>()
+            .await
+            .ok()
+            .and_then(|value| value.get("detail").and_then(|detail| detail.as_str()).map(str::to_string))
+            .unwrap_or_else(|| format!("Google login failed ({status})"));
+        return Err(detail);
+    }
+    response
+        .json::<TokenBundle>()
+        .await
+        .map_err(|error| error.to_string())
+}
+
+fn random_url_token() -> Result<String, String> {
+    let mut bytes = [0_u8; 32];
+    getrandom::fill(&mut bytes).map_err(|error| error.to_string())?;
+    Ok(URL_SAFE_NO_PAD.encode(bytes))
+}
+
+fn percent_encode(value: &str) -> String {
+    value.bytes().fold(String::new(), |mut output, byte| {
+        if byte.is_ascii_alphanumeric() || b"-._~".contains(&byte) {
+            output.push(byte as char);
+        } else {
+            output.push_str(&format!("%{byte:02X}"));
+        }
+        output
+    })
+}
+
+fn percent_decode(value: &str) -> Result<String, String> {
+    let bytes = value.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'%' {
+            if index + 2 >= bytes.len() {
+                return Err("Malformed OAuth callback".into());
+            }
+            let hex = std::str::from_utf8(&bytes[index + 1..index + 3])
+                .map_err(|_| "Malformed OAuth callback".to_string())?;
+            decoded.push(u8::from_str_radix(hex, 16).map_err(|_| "Malformed OAuth callback".to_string())?);
+            index += 3;
+        } else if bytes[index] == b'+' {
+            decoded.push(b' ');
+            index += 1;
+        } else {
+            decoded.push(bytes[index]);
+            index += 1;
+        }
+    }
+    String::from_utf8(decoded).map_err(|_| "Malformed OAuth callback".into())
+}
+
+fn open_external_url(url: &str) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        Command::new("cmd")
+            .args(["/C", "start", "", url])
+            .spawn()
+            .map_err(|error| format!("Could not open the system browser: {error}"))?;
+    }
+    #[cfg(target_os = "macos")]
+    {
+        Command::new("open")
+            .arg(url)
+            .spawn()
+            .map_err(|error| format!("Could not open the system browser: {error}"))?;
+    }
+    #[cfg(target_os = "linux")]
+    {
+        Command::new("xdg-open")
+            .arg(url)
+            .spawn()
+            .map_err(|error| format!("Could not open the system browser: {error}"))?;
+    }
+    Ok(())
+}
+
+fn authorize_google_in_browser(client_id: String) -> Result<String, String> {
+    let listener = TcpListener::bind(("127.0.0.1", GOOGLE_REDIRECT_PORT))
+        .map_err(|error| format!("Could not start the local Google sign-in callback: {error}"))?;
+    listener
+        .set_nonblocking(false)
+        .map_err(|error| error.to_string())?;
+    let redirect_uri = format!("http://127.0.0.1:{GOOGLE_REDIRECT_PORT}/oauth/callback");
+    let verifier = random_url_token()?;
+    let state = random_url_token()?;
+    let challenge = URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()));
+    let authorize_url = format!(
+        "https://accounts.google.com/o/oauth2/v2/auth?client_id={}&redirect_uri={}&response_type=code&scope=openid%20email%20profile&code_challenge={}&code_challenge_method=S256&state={}",
+        percent_encode(&client_id),
+        percent_encode(&redirect_uri),
+        percent_encode(&challenge),
+        percent_encode(&state),
+    );
+    open_external_url(&authorize_url)?;
+
+    let (mut stream, _) = listener
+        .accept()
+        .map_err(|error| format!("Google sign-in callback failed: {error}"))?;
+    stream
+        .set_read_timeout(Some(std::time::Duration::from_secs(30)))
+        .map_err(|error| error.to_string())?;
+    let mut request = [0_u8; 8192];
+    let bytes_read = stream
+        .read(&mut request)
+        .map_err(|error| format!("Could not read Google sign-in callback: {error}"))?;
+    let request_line = std::str::from_utf8(&request[..bytes_read])
+        .map_err(|_| "Google sign-in returned an invalid callback".to_string())?
+        .lines()
+        .next()
+        .ok_or_else(|| "Google sign-in returned an empty callback".to_string())?;
+    let path = request_line
+        .strip_prefix("GET ")
+        .and_then(|value| value.split_whitespace().next())
+        .ok_or_else(|| "Google sign-in returned an invalid callback".to_string())?;
+    let query = path.split_once('?').map(|(_, query)| query).unwrap_or("");
+    let mut code = None;
+    let mut returned_state = None;
+    let mut error = None;
+    for parameter in query.split('&') {
+        let Some((key, value)) = parameter.split_once('=') else { continue };
+        let value = percent_decode(value)?;
+        match key {
+            "code" => code = Some(value),
+            "state" => returned_state = Some(value),
+            "error" => error = Some(value),
+            _ => {}
+        }
+    }
+    let response = b"HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nConnection: close\r\n\r\n<h2>Trade Matangi sign-in complete</h2><p>You can close this browser tab and return to the desktop app.</p>";
+    let _ = stream.write_all(response);
+    if let Some(error) = error {
+        return Err(format!("Google sign-in was cancelled: {error}"));
+    }
+    if returned_state.as_deref() != Some(state.as_str()) {
+        return Err("Google sign-in state validation failed".into());
+    }
+    let code = code.ok_or_else(|| "Google sign-in did not return an authorization code".to_string())?;
+    let token = reqwest::blocking::Client::new()
+        .post("https://oauth2.googleapis.com/token")
+        .form(&[
+            ("client_id", client_id.as_str()),
+            ("code", code.as_str()),
+            ("code_verifier", verifier.as_str()),
+            ("grant_type", "authorization_code"),
+            ("redirect_uri", redirect_uri.as_str()),
+        ])
+        .send()
+        .map_err(|error| error.to_string())?
+        .error_for_status()
+        .map_err(|error| format!("Google token exchange failed: {error}"))?
+        .json::<serde_json::Value>()
+        .map_err(|error| error.to_string())?;
+    token
+        .get("id_token")
+        .and_then(|value| value.as_str())
+        .map(str::to_string)
+        .ok_or_else(|| "Google token exchange did not return an ID token".into())
+}
+
+async fn desktop_google_client_id(base_url: &str) -> Result<String, String> {
+    let response = reqwest::Client::new()
+        .get(format!(
+            "{}/api/auth/desktop/google-config",
+            base_url.trim_end_matches('/')
+        ))
+        .send()
+        .await
+        .map_err(|error| error.to_string())?;
+    if !response.status().is_success() {
+        return Err(format!("Desktop Google sign-in is not configured ({})", response.status()));
+    }
+    response
+        .json::<serde_json::Value>()
+        .await
+        .map_err(|error| error.to_string())?
+        .get("client_id")
+        .and_then(|value| value.as_str())
+        .map(str::to_string)
+        .ok_or_else(|| "Desktop Google sign-in returned no client ID".into())
+}
+
 /// Tokens stay in the Windows Credential Manager through the OS keyring.
 /// The WebView can ask the host to perform a refresh but never reads refresh
 /// credentials or writes them to a config/store file.
@@ -162,6 +369,36 @@ async fn desktop_login(
     host: tauri::State<'_, HostState>,
 ) -> Result<(), String> {
     let tokens = authenticate(&base_url, &email, &password).await?;
+    persist_desktop_tokens(&tokens)?;
+    host.set_tokens(tokens);
+    host.set_connection("connected");
+    Ok(())
+}
+
+#[tauri::command]
+async fn desktop_google_login(
+    base_url: String,
+    account_name: Option<String>,
+    host: tauri::State<'_, HostState>,
+) -> Result<(), String> {
+    let host = host.inner().clone();
+    let id_token = host.take_pending_google_token().unwrap_or_else(|| String::new());
+    let id_token = if id_token.is_empty() {
+        let client_id = desktop_google_client_id(&base_url).await?;
+        tauri::async_runtime::spawn_blocking(move || authorize_google_in_browser(client_id))
+            .await
+            .map_err(|error| format!("Google sign-in did not complete: {error}"))??
+    } else {
+        id_token
+    };
+    let tokens = match authenticate_google(&base_url, &id_token, account_name.clone()).await {
+        Ok(tokens) => tokens,
+        Err(error) if account_name.is_none() && error.contains("account_name") => {
+            host.set_pending_google_token(id_token);
+            return Err("account_name required".into());
+        }
+        Err(error) => return Err(error),
+    };
     persist_desktop_tokens(&tokens)?;
     host.set_tokens(tokens);
     host.set_connection("connected");
@@ -394,6 +631,7 @@ async fn desktop_live_request(
         "GET" => client.get(url),
         "POST" => client.post(url).json(&body),
         "PUT" => client.put(url).json(&body),
+        "DELETE" => client.delete(url),
         _ => return Err("Unsupported live request".into()),
     };
     let response = request
@@ -526,6 +764,7 @@ struct LatestState {
     latest_payload: String,
     connection: String,
     tokens: Option<TokenBundle>,
+    pending_google_token: Option<String>,
 }
 
 impl HostState {
@@ -551,7 +790,15 @@ impl HostState {
         self.0.lock().expect("host state lock").tokens = Some(tokens);
     }
     fn clear_tokens(&self) {
-        self.0.lock().expect("host state lock").tokens = None;
+        let mut state = self.0.lock().expect("host state lock");
+        state.tokens = None;
+        state.pending_google_token = None;
+    }
+    fn set_pending_google_token(&self, token: String) {
+        self.0.lock().expect("host state lock").pending_google_token = Some(token);
+    }
+    fn take_pending_google_token(&self) -> Option<String> {
+        self.0.lock().expect("host state lock").pending_google_token.take()
     }
     fn token(&self) -> Result<TokenBundle, String> {
         if let Some(tokens) = self.0.lock().expect("host state lock").tokens.clone() {
@@ -628,6 +875,7 @@ pub fn run() {
             save_desktop_tokens,
             clear_desktop_tokens,
             desktop_login,
+            desktop_google_login,
             desktop_connection_state,
             desktop_historical_page,
             desktop_catalogue,

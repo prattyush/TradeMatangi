@@ -66,4 +66,8 @@ input { width: 160px; }
 .login-card { width: min(420px, calc(100vw - 32px)); display: grid; gap: 14px; padding: 28px; background: #181d27; border: 1px solid #293142; border-radius: 10px; }
 .login-card h1, .login-card p { margin: 0; }
 .login-button { background: #2563eb; border-color: #3b82f6; }
+.google-login-button { display: flex; align-items: center; justify-content: center; gap: 8px; background: #f8fafc; color: #111827; border-color: #cbd5e1; font-weight: 700; }
+.google-mark { display: inline-grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; color: #4285f4; background: #fff; font-weight: 800; font-family: Arial, sans-serif; }
+.login-divider { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 10px; color: #64748b; font-size: .72rem; }
+.login-divider span { height: 1px; background: #334155; }
 .login-error { color: #fca5a5; }

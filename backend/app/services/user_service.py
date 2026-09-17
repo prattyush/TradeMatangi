@@ -173,13 +173,31 @@ def get_user_id() -> str:
     return FIXED_USER_ID
 
 
-def _get_google_client_id() -> str:
-    """Read Google Sign-In client_id from data/accesskeys.ini [googlesignin] section."""
+def _get_google_client_ids() -> list[str]:
+    """Read the web and optional desktop Google client IDs from accesskeys.ini."""
     import configparser
     from pathlib import Path
     ini_path = Path(__file__).resolve().parent.parent.parent.parent / "data" / "accesskeys.ini"
     cfg = configparser.ConfigParser()
     cfg.read(str(ini_path))
+    client_ids = [cfg.get("googlesignin", "client_id", fallback="")]
+    client_ids.append(cfg.get("googlesignin", "desktop_client_id", fallback=""))
+    return list(dict.fromkeys(client_id for client_id in client_ids if client_id))
+
+
+def get_google_client_id(*, desktop: bool = False) -> str:
+    """Return the configured client ID for the website or desktop OAuth flow."""
+    import configparser
+    from pathlib import Path
+    ini_path = Path(__file__).resolve().parent.parent.parent.parent / "data" / "accesskeys.ini"
+    cfg = configparser.ConfigParser()
+    cfg.read(str(ini_path))
+    if desktop:
+        return cfg.get(
+            "googlesignin",
+            "desktop_client_id",
+            fallback=cfg.get("googlesignin", "client_id", fallback=""),
+        )
     return cfg.get("googlesignin", "client_id", fallback="")
 
 
@@ -193,8 +211,8 @@ def google_auth(id_token: str, account_name: str | None = None) -> dict | None:
       - Creates user record with google_sub, no password_hash
     Returns {user_id, email, is_admin, account_name} or None on invalid token.
     """
-    client_id = _get_google_client_id()
-    if not client_id:
+    client_ids = _get_google_client_ids()
+    if not client_ids:
         logger.error("Google Sign-In client_id not configured in accesskeys.ini")
         return None
 
@@ -209,7 +227,7 @@ def google_auth(id_token: str, account_name: str | None = None) -> dict | None:
         logger.exception("Google token verification request failed")
         return None
 
-    if payload.get("aud") != client_id:
+    if payload.get("aud") not in client_ids:
         logger.warning("Google token audience mismatch: %s", payload.get("aud"))
         return None
 
