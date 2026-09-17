@@ -346,6 +346,10 @@ class BreezeStreamManager:
                 else:
                     route_key = equity_route_key
 
+                # Keep OHLC accumulators independent for different tiles,
+                # especially options with the same underlying and right but
+                # different strikes.
+                key = route_key or key
                 ts_second = int(_time.time()) + 19800
 
                 candle = self._accumulators[key].update(price, ts_second)
