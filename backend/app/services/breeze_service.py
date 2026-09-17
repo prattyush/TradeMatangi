@@ -426,7 +426,9 @@ class BreezeStreamManager:
                         for instrument in self._instruments:
                             if instrument.get("product_type") != "options":
                                 continue
-                            if str(instrument.get("strike_price")) == str(strike) and instrument.get("right", "").upper() == mapped_right:
+                            configured_right = str(instrument.get("right", "")).upper()
+                            configured_right = "CE" if configured_right in ("CALL", "CE") else "PE"
+                            if str(instrument.get("strike_price")) == str(strike) and configured_right == mapped_right:
                                 route_key = self.instrument_route_key(instrument)
                                 break
                     else:
