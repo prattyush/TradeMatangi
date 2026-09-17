@@ -340,7 +340,9 @@ class BreezeStreamManager:
                                 break
                     else:
                         for instrument in self._instruments:
-                            if instrument.get("product_type") == "options" and instrument.get("right", "").upper() == right:
+                            configured_right = str(instrument.get("right", "")).upper()
+                            configured_right = "CE" if configured_right in ("CALL", "CE") else "PE"
+                            if instrument.get("product_type") == "options" and configured_right == right:
                                 route_key = self.instrument_route_key(instrument)
                                 break
                 else:
@@ -369,8 +371,14 @@ class BreezeStreamManager:
                 payload = {**candle}
                 if right:
                     payload["right"] = right
-                target_queue = self._route_queues.get(route_key) if route_key else None
-                if target_queue is None:
+                if self._route_queues:
+                    # Desktop streams are explicitly routed. A tick that
+                    # cannot be identified must not fill a shared fallback
+                    # queue and starve all other tiles.
+                    target_queue = self._route_queues.get(route_key) if route_key else None
+                    if target_queue is None:
+                        continue
+                else:
                     target_queue = self._queue
                 try:
                     if target_queue is not None:
