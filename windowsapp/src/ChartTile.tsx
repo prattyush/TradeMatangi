@@ -79,7 +79,13 @@ export function ChartTile({ symbol, interval, supportedIntervals, onIntervalChan
     const appendUpdate = candles.length === previous.length + 1 && previous.length > 0 && previous.every((candle, index) => sameCandle(candle, candles[index]))
     const incremental = Boolean(subscribeBarRef.current && (sameLengthUpdate || appendUpdate))
     if (incremental && latest && subscribeBarRef.current) {
+      // KLineCharts may follow the newest bar when its subscription callback
+      // receives an update. Preserve the user's deliberate right-side gap so
+      // a manually panned Replay chart does not jump back to real time.
+      const rightOffset = chart.getOffsetRightDistance()
       subscribeBarRef.current({ timestamp: latest.timestamp * 1000, open: latest.open, high: latest.high, low: latest.low, close: latest.close })
+      chart.setOffsetRightDistance(rightOffset)
+      requestAnimationFrame(() => chart.setOffsetRightDistance(rightOffset))
       renderedCandlesRef.current = candles
       return
     }
