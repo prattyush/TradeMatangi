@@ -24,4 +24,13 @@ describe('replay candle seeding', () => {
     expect(seeded.map(candle => candle.timestamp)).toEqual([100, 200, 300])
     expect(seeded[2].high).toBe(6)
   })
+
+  it('does not expose a future portion of an active interval without a replay candle', () => {
+    const candles = [
+      { timestamp: 180, open: 1, high: 2, low: 0, close: 1 },
+      { timestamp: 360, open: 2, high: 5, low: 1, close: 4 },
+    ]
+    const seeded = replayCandles(candles, 500, undefined, 180)
+    expect(seeded.map(candle => candle.timestamp)).toEqual([180])
+  })
 })
