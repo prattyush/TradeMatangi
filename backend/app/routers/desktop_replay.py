@@ -26,6 +26,10 @@ class StartReplayRequest(BaseModel):
     tiles: list[ReplayTile] = Field(min_length=1, max_length=4)
 
 
+class SyncReplayTilesRequest(BaseModel):
+    tiles: list[ReplayTile] = Field(min_length=1, max_length=4)
+
+
 def _cursor(date: str, start_time: str) -> int:
     try:
         # Project invariant: UTC-labelled epoch represents IST wall-clock time.
@@ -55,6 +59,24 @@ async def snapshot(run_id: str, user_id: str = Depends(get_desktop_user_id)):
     run = replay.get(user_id, run_id)
     if not run:
         raise HTTPException(status_code=404, detail="Replay run was not found")
+    return replay.snapshot(run)
+
+
+@router.put("/{run_id}/tiles")
+async def sync_tiles(run_id: str, req: SyncReplayTilesRequest, user_id: str = Depends(get_desktop_user_id)):
+    run = replay.get(user_id, run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Replay run was not found")
+    ids = [tile.tile_id for tile in req.tiles]
+    if len(ids) != len(set(ids)):
+        raise HTTPException(status_code=422, detail="Every replay tile needs a unique tile_id")
+    for tile in req.tiles:
+        try:
+            canonical_instrument_id(tile.instrument)
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail=str(error))
+    tiles = [tile.model_dump() for tile in req.tiles]
+    await asyncio.to_thread(replay.sync_tiles, run, tiles)
     return replay.snapshot(run)
 
 

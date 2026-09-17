@@ -22,8 +22,9 @@ export function applyEvent(state: ChartState, event: ChartEvent): ChartState {
  * Keep Browse context through the replay cursor, then replace the current
  * in-progress candle with the backend-authoritative snapshot.
  */
-export function replayCandles(candles: Candle[], cursor: number | undefined, current?: Candle): Candle[] {
+export function replayCandles(candles: Candle[], cursor: number | undefined, current?: Candle, intervalSeconds = 60): Candle[] {
   if (!cursor) return candles
   const cutoff = current?.timestamp ?? cursor
-  return [...candles.filter(candle => candle.timestamp < cutoff), ...(current ? [current] : [])]
+  const completed = candles.filter(candle => candle.timestamp < cutoff && candle.timestamp + intervalSeconds <= cursor)
+  return [...completed, ...(current ? [current] : [])]
 }
