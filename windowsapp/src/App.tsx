@@ -13,7 +13,7 @@ type Layout = '1' | '2-side' | '2-stacked' | '3-wide-top' | '4-grid'
 interface Screen { id: string; name: string; tiles: TileConfig[]; layout: Layout }
 interface ReplaySnapshot { run_id: string; cursor: number; state: string; mode: string; bar_index: number; tile_states: Array<{ tile_id: string; availability: string; candle?: Candle }> }
 interface ChartSettings { background: string; textColor: string; gridColor: string; gridOpacity: number; gridStyle: 'solid' | 'dashed'; gridSize: number; movingAverageType: 'MA' | 'EMA'; movingAveragePeriods: string; liveProvider: 'breeze'; horizontalLineColor: string; horizontalLineWidth: number; trendLineColor: string; trendLineWidth: number; drawingLineColor: string; drawingLineWidth: number; drawingFillColor: string; drawingFillOpacity: number }
-interface LiveTileState { tile_id: string; availability: string; reason?: string; candles?: Candle[] }
+interface LiveTileState { tile_id: string; availability: string; reason?: string; candles?: Candle[]; instrument?: Record<string, unknown>; interval_minutes?: number }
 interface LiveSnapshot { stream_id: string; event_id: number; tiles: LiveTileState[] }
 interface DrawingCommand { id: number; tool: string }
 interface DrawingAction { id: number; action: 'delete' | 'hide' | 'lock' }
@@ -156,11 +156,40 @@ export default function App() {
   const addScreen = () => { const next = newScreen(screens.length + 1); setScreens(current => [...current, next]); setActiveScreenId(next.id) }
   const saveChartSettings = (settings: ChartSettings) => { setChartSettings(settings); setShowSettings(false); if (hasNativeHost) void invoke('save_desktop_chart_settings', { baseUrl: serverUrl, settings }); else void fetch(`${serverUrl.replace(/\/$/, '')}/api/desktop/v1/chart-settings`, { method: 'PUT', headers: { Authorization: `Bearer ${browserToken}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ settings }) }) }
   const replayRequest = async (path: string, method: 'GET' | 'POST', body: Record<string, unknown> = {}): Promise<ReplaySnapshot> => { if (hasNativeHost) return invoke<ReplaySnapshot>('desktop_replay_request', { baseUrl: serverUrl, path, method, body }); const response = await fetch(`${serverUrl.replace(/\/$/, '')}/api/desktop/v1/replay/${path}`, { method, headers: { Authorization: `Bearer ${browserToken}`, 'Content-Type': 'application/json' }, body: method === 'POST' ? JSON.stringify(body) : undefined }); if (!response.ok) throw new Error(`Replay request failed (${response.status})`); return response.json() as Promise<ReplaySnapshot> }
-  const liveRequest = async (path: string, method: 'GET' | 'POST' | 'PUT', body: Record<string, unknown> = {}): Promise<LiveSnapshot> => { if (hasNativeHost) return invoke<LiveSnapshot>('desktop_live_request', { baseUrl: serverUrl, path, method, body }); const response = await fetch(`${serverUrl.replace(/\/$/, '')}/api/desktop/v1/live/${path}`, { method, headers: { Authorization: `Bearer ${browserToken}`, 'Content-Type': 'application/json' }, body: method === 'GET' ? undefined : JSON.stringify(body) }); if (!response.ok) throw new Error(`Live request failed (${response.status})`); return response.json() as Promise<LiveSnapshot> }
-  const liveTiles = () => activeScreen.tiles.map(tile => { const item = catalogue.find(entry => entry.symbol === tile.symbol) ?? fallbackCatalogue[0]; const instrument = tile.kind === 'option' ? { kind: 'option', exchange: item.exchange, underlying: tile.symbol, expiry: tile.expiry, strike: Number(tile.strike), right: tile.right } : { kind: item.chart_type ?? 'equity', exchange: item.exchange, symbol: tile.symbol }; return { tile_id: tile.id, instrument, interval_minutes: Number(tile.interval) } })
+  const liveRequest = async (path: string, method: 'GET' | 'POST' | 'PUT' | 'DELETE', body: Record<string, unknown> = {}): Promise<LiveSnapshot> => { if (hasNativeHost) return invoke<LiveSnapshot>('desktop_live_request', { baseUrl: serverUrl, path, method, body }); const response = await fetch(`${serverUrl.replace(/\/$/, '')}/api/desktop/v1/live/${path}`, { method, headers: { Authorization: `Bearer ${browserToken}`, 'Content-Type': 'application/json' }, body: method === 'GET' || method === 'DELETE' ? undefined : JSON.stringify(body) }); if (!response.ok) throw new Error(`Live request failed (${response.status})`); return response.json() as Promise<LiveSnapshot> }
+  const liveTile = (tile: TileConfig) => { const item = catalogue.find(entry => entry.symbol === tile.symbol) ?? fallbackCatalogue[0]; const instrument = tile.kind === 'option' ? { kind: 'option', exchange: item.exchange, underlying: tile.symbol, expiry: tile.expiry, strike: Number(tile.strike), right: tile.right } : { kind: item.chart_type ?? 'equity', exchange: item.exchange, symbol: tile.symbol }; return { tile_id: tile.id, instrument, interval_minutes: Number(tile.interval) } }
+  const liveTiles = () => activeScreen.tiles.map(liveTile)
   const startLive = async () => { try { setLiveError(''); setLiveSnapshot(await liveRequest('start', 'POST', { tiles: liveTiles() })) } catch (error) { setLiveError(String(error)) } }
   const stopLive = async () => { if (!live) return; try { await liveRequest(`${live.stream_id}/stop`, 'POST'); setLiveSnapshot(null) } catch (error) { setLiveError(String(error)) } }
   const refreshLive = async () => { if (!live) return; try { setLiveSnapshot(await liveRequest(`${live.stream_id}/refresh`, 'POST')) } catch (error) { setLiveError(String(error)) } }
+  useEffect(() => {
+    if (mode !== 'Live' || !live) return
+    let cancelled = false
+    const sync = async () => {
+      try {
+        let snapshot = live
+        const desired = activeScreen.tiles.map(liveTile)
+        const desiredIds = new Set(desired.map(tile => tile.tile_id))
+        for (const existing of snapshot.tiles) {
+          if (!desiredIds.has(existing.tile_id)) {
+            snapshot = await liveRequest(`${snapshot.stream_id}/tiles/${encodeURIComponent(existing.tile_id)}`, 'DELETE')
+          }
+        }
+        for (const tile of desired) {
+          const existing = snapshot.tiles.find(item => item.tile_id === tile.tile_id)
+          const same = existing && JSON.stringify({ instrument: existing.instrument, interval_minutes: existing.interval_minutes }) === JSON.stringify({ instrument: tile.instrument, interval_minutes: tile.interval_minutes })
+          if (!same) {
+            snapshot = await liveRequest(`${snapshot.stream_id}/tiles/${encodeURIComponent(tile.tile_id)}`, 'PUT', { tile })
+          }
+        }
+        if (!cancelled) setLiveSnapshot(snapshot)
+      } catch (error) {
+        if (!cancelled) setLiveError(String(error))
+      }
+    }
+    void sync()
+    return () => { cancelled = true }
+  }, [mode, live?.stream_id, activeScreen.id, activeScreen.tiles])
   useEffect(() => { if (!live) return; const timer = window.setInterval(() => { void liveRequest(`${live.stream_id}/snapshot`, 'GET').then(setLiveSnapshot).catch(error => setLiveError(String(error))) }, 1000); return () => window.clearInterval(timer) }, [live?.stream_id])
   useEffect(() => { if (mode === 'Live' && !live && connection === 'connected') void startLive() }, [mode])
   useEffect(() => { if (mode !== 'Live' && live) void stopLive() }, [mode])

@@ -76,6 +76,7 @@ async def configure_live_tile(stream_id: str, tile_id: str, req: ConfigureLiveRe
     replacement = _tile_state(req.tile)
     for index, tile in enumerate(stream.tiles):
         if tile["tile_id"] == tile_id:
+            await live.deactivate_tile(stream, tile_id)
             stream.tiles[index] = replacement
             await live.activate(stream)
             return live.snapshot(stream)
@@ -83,6 +84,17 @@ async def configure_live_tile(stream_id: str, tile_id: str, req: ConfigureLiveRe
         raise HTTPException(status_code=422, detail="A live screen supports at most four tiles")
     stream.tiles.append(replacement)
     await live.activate(stream)
+    return live.snapshot(stream)
+
+
+@router.delete("/{stream_id}/tiles/{tile_id}")
+async def remove_live_tile(stream_id: str, tile_id: str, user_id: str = Depends(get_desktop_user_id)):
+    """Remove a tile and unsubscribe its provider feed while Live continues."""
+    stream = live.get(user_id, stream_id)
+    if not stream:
+        raise HTTPException(status_code=404, detail="Live stream was not found")
+    if not await live.remove_tile(stream, tile_id):
+        raise HTTPException(status_code=404, detail="Live tile was not found")
     return live.snapshot(stream)
 
 

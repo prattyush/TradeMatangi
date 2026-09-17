@@ -631,6 +631,7 @@ async fn desktop_live_request(
         "GET" => client.get(url),
         "POST" => client.post(url).json(&body),
         "PUT" => client.put(url).json(&body),
+        "DELETE" => client.delete(url),
         _ => return Err("Unsupported live request".into()),
     };
     let response = request
