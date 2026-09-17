@@ -23,13 +23,12 @@ const ensureExtensions = () => {
 interface DrawingCommand { id: number; tool: string }
 interface DrawingAction { id: number; action: 'delete' | 'hide' | 'lock' }
 
-export function ChartTile({ symbol, interval, supportedIntervals, onIntervalChange, candles = demo, loading, message, settings, isReplaying, replayDatasetKey, instrument, baseUrl, onConfigure, onMaximize, maximized, active, indicators, drawingCommand, drawingAction, onActivate }: { symbol: string; interval: string; supportedIntervals: number[]; onIntervalChange: (interval: string) => void; candles?: Candle[]; loading: boolean; message: string; settings: ChartSettings; isReplaying: boolean; replayDatasetKey?: string; instrument: Record<string, unknown>; baseUrl: string; onConfigure: () => void; onMaximize: () => void; maximized: boolean; active: boolean; indicators: string[]; drawingCommand: DrawingCommand | null; drawingAction: DrawingAction | null; onActivate: () => void }) {
+export function ChartTile({ symbol, interval, supportedIntervals, onIntervalChange, candles = demo, loading, message, settings, isReplaying, instrument, baseUrl, onConfigure, onMaximize, maximized, active, indicators, drawingCommand, drawingAction, onActivate }: { symbol: string; interval: string; supportedIntervals: number[]; onIntervalChange: (interval: string) => void; candles?: Candle[]; loading: boolean; message: string; settings: ChartSettings; isReplaying: boolean; replayDatasetKey?: string; instrument: Record<string, unknown>; baseUrl: string; onConfigure: () => void; onMaximize: () => void; maximized: boolean; active: boolean; indicators: string[]; drawingCommand: DrawingCommand | null; drawingAction: DrawingAction | null; onActivate: () => void }) {
   const element = useRef<HTMLDivElement>(null)
   const chartRef = useRef<Chart | null>(null)
   const candlesRef = useRef(candles)
   const renderedCandlesRef = useRef<Candle[]>([])
   const subscribeBarRef = useRef<((data: KLineData) => void) | null>(null)
-  const replayDatasetKeyRef = useRef<string | undefined>(undefined)
   const lastDrawingCommandRef = useRef(0)
   const lastDrawingActionRef = useRef(0)
   const [tool, setTool] = useState<string | null>(null)
@@ -71,11 +70,15 @@ export function ChartTile({ symbol, interval, supportedIntervals, onIntervalChan
     // Live snapshots normally change only the current candle or append one
     // candle. Feed those updates through KLineCharts' incremental loader so
     // the user's scroll position and crosshair remain untouched.
-    const incremental = Boolean(subscribeBarRef.current && previous.length > 0 && candles.length >= previous.length && candles.length <= previous.length + 1 && previous.every((candle, index) => sameCandle(candle, candles[index])))
-    const shouldResetReplayData = isReplaying && replayDatasetKey !== replayDatasetKeyRef.current
-    if (isReplaying) replayDatasetKeyRef.current = replayDatasetKey
-    else replayDatasetKeyRef.current = undefined
-    if (!shouldResetReplayData && incremental && latest && subscribeBarRef.current) {
+    // Replay and live snapshots commonly update the last candle in place. The
+    // previous implementation compared every candle, including that mutable
+    // last candle, so every replay tick fell back to resetData() and cleared
+    // the crosshair. Permit a same-length last-bar update, or one new bar,
+    // while still resetting when history/symbol data is replaced.
+    const sameLengthUpdate = candles.length === previous.length && previous.length > 0 && previous.slice(0, -1).every((candle, index) => sameCandle(candle, candles[index]))
+    const appendUpdate = candles.length === previous.length + 1 && previous.length > 0 && previous.every((candle, index) => sameCandle(candle, candles[index]))
+    const incremental = Boolean(subscribeBarRef.current && (sameLengthUpdate || appendUpdate))
+    if (incremental && latest && subscribeBarRef.current) {
       subscribeBarRef.current({ timestamp: latest.timestamp * 1000, open: latest.open, high: latest.high, low: latest.low, close: latest.close })
       renderedCandlesRef.current = candles
       return
