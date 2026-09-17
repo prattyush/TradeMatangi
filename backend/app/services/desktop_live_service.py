@@ -174,7 +174,10 @@ async def activate(stream: DesktopStream) -> None:
         manager = BreezeStreamManager()
         instruments = [_breeze_instrument(tile["instrument"]) for tile in active_tiles]
         routes = {BreezeStreamManager.instrument_route_key(instrument): stream.tile_queues[tile["tile_id"]] for tile, instrument in zip(active_tiles, instruments)}
-        manager.start(asyncio.Queue(maxsize=1), loop, instruments, routes=routes)
+        # The fallback queue is unused for routed desktop streams; keep it
+        # unbounded so an unexpected provider identity can never raise QueueFull
+        # in the event loop. Routed ticks are delivered only to their tile queue.
+        manager.start(asyncio.Queue(), loop, instruments, routes=routes)
         stream.manager = manager
         stream.managers = [manager]
     except Exception as error:
