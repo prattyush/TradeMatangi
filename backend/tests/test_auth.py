@@ -72,6 +72,38 @@ class TestLogin:
         assert resp.status_code == 401
 
 
+class TestDesktopGoogleToken:
+    def test_success_issues_desktop_token_bundle(self):
+        bundle = {
+            "access_token": "desktop-access",
+            "refresh_token": "desktop-refresh",
+            "token_type": "Bearer",
+            "expires_in": 900,
+        }
+        with patch("app.routers.auth.google_auth", return_value={"user_id": "google-user", "email": "g@example.com"}), \
+             patch("app.routers.auth.issue_token_bundle", return_value=bundle) as issue:
+            resp = client.post("/api/auth/desktop/google-token", json={"id_token": "id-token", "device_name": "desktop"})
+        assert resp.status_code == 200
+        assert resp.json() == bundle
+        issue.assert_called_once_with("google-user", "desktop")
+
+    def test_invalid_google_token_returns_401(self):
+        with patch("app.routers.auth.google_auth", return_value=None):
+            resp = client.post("/api/auth/desktop/google-token", json={"id_token": "bad-token"})
+        assert resp.status_code == 401
+
+    def test_desktop_google_config_returns_public_client_id(self):
+        with patch("app.routers.auth.get_google_client_id", return_value="desktop-client-id"):
+            resp = client.get("/api/auth/desktop/google-config")
+        assert resp.status_code == 200
+        assert resp.json() == {"client_id": "desktop-client-id"}
+
+    def test_desktop_google_config_requires_configuration(self):
+        with patch("app.routers.auth.get_google_client_id", return_value=""):
+            resp = client.get("/api/auth/desktop/google-config")
+        assert resp.status_code == 503
+
+
 # ── Change Password ───────────────────────────────────────────────────────────
 
 _CHANGE_URL = "/api/auth/change-password"

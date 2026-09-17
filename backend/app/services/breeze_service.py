@@ -99,12 +99,14 @@ class BreezeStreamManager:
         # wrapper cannot rely on those fields being present). get_quotes()
         # is unreliable for BFO so we fall back to the master file.
         self._option_scrip_map: dict[str, tuple[int, str]] = {}
+        self._route_queues: dict[str, asyncio.Queue] = {}
 
     def start(
         self,
         queue: asyncio.Queue,
         loop: asyncio.AbstractEventLoop,
         instruments: list[dict],
+        routes: dict[str, asyncio.Queue] | None = None,
     ) -> None:
         """
         instruments: list of dicts with keys:
@@ -115,6 +117,7 @@ class BreezeStreamManager:
         self._queue = queue
         self._loop = loop
         self._instruments = instruments
+        self._route_queues = routes or {}
 
         breeze = _get_breeze()
         breeze.on_ticks = self._on_ticks
@@ -235,6 +238,15 @@ class BreezeStreamManager:
             logger.warning("BreezeStreamManager stop error: %s", exc)
         finally:
             self._breeze = None
+            self._route_queues = {}
+
+    @staticmethod
+    def instrument_route_key(instrument: dict) -> str:
+        if instrument.get("product_type") == "options":
+            right = str(instrument.get("right", "")).upper()
+            right = "CE" if right in ("CALL", "CE") else "PE"
+            return f"option:{instrument.get('stock_code')}:{instrument.get('strike_price')}:{right}"
+        return f"equity:{instrument.get('exchange_code')}:{instrument.get('stock_code')}"
 
     def _on_ticks(self, ticks) -> None:
         if self._queue is None or self._loop is None:
@@ -283,33 +295,61 @@ class BreezeStreamManager:
 
                 name = tick.get("stock_name", tick.get("stock_code", tick.get("symbol", "")))
                 exchange = tick.get("exchange", "")
+                equity_route_key = None
 
                 # Filter out equity ticks from non-target stocks. Breeze
-                # broadcasts market data for ALL instruments; we only want
-                # equity ticks matching our session's subscribed symbol.
-                # Combine exchange prefix + stock name matching to avoid
-                # picking up other stocks on the same exchange.
-                if not right and self._equity_stock_name:
-                    tick_exch = tick.get("exchange", "")
-                    # Must be on the right exchange segment
-                    if self._equity_exchange and tick_exch:
-                        if self._equity_exchange not in tick_exch:
+                # broadcasts all subscribed stocks, so match every equity tile
+                # instead of only the first tile in the screen.
+                equity_instruments = [
+                    instrument for instrument in self._instruments
+                    if instrument.get("product_type") != "options"
+                ]
+                if not right and equity_instruments:
+                    tick_exch = str(tick.get("exchange", ""))
+                    tick_stock = str(tick.get("stock_code", ""))
+                    name_lower = str(name).lower()
+                    matching = []
+                    for instrument in equity_instruments:
+                        exchange_code = str(instrument.get("exchange_code", ""))
+                        stock_code = str(instrument.get("stock_code", ""))
+                        if exchange_code and tick_exch and exchange_code not in tick_exch:
                             continue
-                    # Must match the subscribed equity — check both stock_code
-                    # and stock_name since Breeze sometimes omits stock_code.
-                    tick_stock = tick.get("stock_code", "")
-                    if tick_stock and tick_stock != self._equity_stock_name:
+                        if tick_stock and tick_stock != stock_code:
+                            continue
+                        if not tick_stock and stock_code.lower() not in name_lower and stock_code.lower().replace("bsesen", "sensex") not in name_lower:
+                            continue
+                        matching.append(instrument)
+                    if not matching:
                         continue
-                    if not tick_stock:
-                        # Breeze sends empty stock_code for indices; match by
-                        # known index display names
-                        eq_lower = self._equity_stock_name.lower()
-                        name_lower = str(name).lower()
-                        if eq_lower not in name_lower and eq_lower.replace("bsesen", "sensex") not in name_lower:
-                            continue
+                    equity_route_key = self.instrument_route_key(matching[0])
 
                 key = f"{name}_{right or 'EQ'}"
 
+                route_key = None
+                if right:
+                    raw_symbol = str(tick.get("symbol", ""))
+                    scrip_code = raw_symbol.rsplit("!", 1)[-1].strip() if "!" in raw_symbol else raw_symbol
+                    mapped = self._option_scrip_map.get(scrip_code)
+                    if mapped:
+                        strike, mapped_right = mapped
+                        for instrument in self._instruments:
+                            if instrument.get("product_type") != "options":
+                                continue
+                            if str(instrument.get("strike_price")) == str(strike) and instrument.get("right", "").upper() == mapped_right:
+                                route_key = self.instrument_route_key(instrument)
+                                break
+                    else:
+                        for instrument in self._instruments:
+                            if instrument.get("product_type") == "options" and instrument.get("right", "").upper() == right:
+                                route_key = self.instrument_route_key(instrument)
+                                break
+                else:
+                    route_key = equity_route_key
+
+                # Keep OHLC accumulators independent for different tiles,
+                # especially options with the same underlying and right but
+                # different strikes.
+                key = route_key or key
                 ts_second = int(_time.time()) + 19800
 
                 candle = self._accumulators[key].update(price, ts_second)
@@ -329,8 +369,12 @@ class BreezeStreamManager:
                 payload = {**candle}
                 if right:
                     payload["right"] = right
+                target_queue = self._route_queues.get(route_key) if route_key else None
+                if target_queue is None:
+                    target_queue = self._queue
                 try:
-                    self._loop.call_soon_threadsafe(self._queue.put_nowait, payload)
+                    if target_queue is not None:
+                        self._loop.call_soon_threadsafe(target_queue.put_nowait, payload)
                 except Exception as exc:
                     logger.warning("Breeze tick push failed: %s", exc)
             except Exception as exc:

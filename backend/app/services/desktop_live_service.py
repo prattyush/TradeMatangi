@@ -22,6 +22,10 @@ class DesktopStream:
     stopped: bool = False
     managers: list[object] = field(default_factory=list)
     tasks: list[asyncio.Task] = field(default_factory=list)
+    subscriptions: dict[str, tuple[object, asyncio.Task]] = field(default_factory=dict)
+    manager: object | None = None
+    tile_queues: dict[str, asyncio.Queue] = field(default_factory=dict)
+    tile_tasks: dict[str, asyncio.Task] = field(default_factory=dict)
 
 
 _streams: dict[str, DesktopStream] = {}
@@ -50,7 +54,31 @@ def stop(user_id: str, stream_id: str) -> bool:
             manager.stop()
         except Exception:
             pass
+    if stream.manager:
+        try:
+            stream.manager.stop()
+        except Exception:
+            pass
     _streams.pop(stream_id, None)
+    return True
+
+
+async def deactivate_tile(stream: DesktopStream, tile_id: str) -> None:
+    """Stop the provider subscription owned by one tile before replacing it."""
+    task = stream.tile_tasks.pop(tile_id, None)
+    if task:
+        task.cancel()
+        stream.tasks = [item for item in stream.tasks if item is not task]
+    stream.tile_queues.pop(tile_id, None)
+    stream.subscriptions.pop(tile_id, None)
+
+
+async def remove_tile(stream: DesktopStream, tile_id: str) -> bool:
+    existing = next((tile for tile in stream.tiles if tile["tile_id"] == tile_id), None)
+    if existing is None:
+        return False
+    await deactivate_tile(stream, tile_id)
+    stream.tiles = [tile for tile in stream.tiles if tile["tile_id"] != tile_id]
     return True
 
 
@@ -130,14 +158,27 @@ async def activate(stream: DesktopStream) -> None:
         await _seed(tile)
         if tile.get("availability") != "available":
             continue
-        try:
-            queue: asyncio.Queue = asyncio.Queue(maxsize=512)
-            manager = BreezeStreamManager()
-            manager.start(queue, loop, [_breeze_instrument(tile["instrument"])])
-            stream.managers.append(manager)
-            stream.tasks.append(asyncio.create_task(_consume(stream, tile, queue)))
-            tile["subscribed"] = True
-        except Exception as error:
+        queue = stream.tile_queues.setdefault(tile["tile_id"], asyncio.Queue(maxsize=512))
+        if tile["tile_id"] not in stream.tile_tasks:
+            task = asyncio.create_task(_consume(stream, tile, queue))
+            stream.tile_tasks[tile["tile_id"]] = task
+            stream.tasks.append(task)
+        tile["subscribed"] = True
+
+    active_tiles = [tile for tile in stream.tiles if tile.get("subscribed") and tile.get("availability") == "available"]
+    if not active_tiles:
+        return
+    try:
+        if stream.manager:
+            stream.manager.stop()
+        manager = BreezeStreamManager()
+        instruments = [_breeze_instrument(tile["instrument"]) for tile in active_tiles]
+        routes = {BreezeStreamManager.instrument_route_key(instrument): stream.tile_queues[tile["tile_id"]] for tile, instrument in zip(active_tiles, instruments)}
+        manager.start(asyncio.Queue(maxsize=1), loop, instruments, routes=routes)
+        stream.manager = manager
+        stream.managers = [manager]
+    except Exception as error:
+        for tile in active_tiles:
             tile["availability"] = "provider_error"
             tile["reason"] = str(error)
 
