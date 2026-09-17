@@ -5,6 +5,7 @@ from app.dependencies import get_request_user_id
 from app.services.user_service import (
     login_user, register_user, get_user_info, change_password,
     google_auth, set_account_name,
+    get_google_client_id,
 )
 from app.services.desktop_auth_service import issue_token_bundle, refresh_token_bundle, revoke_refresh_token
 
@@ -68,6 +69,15 @@ async def desktop_google_token(req: DesktopGoogleTokenRequest):
     if not user:
         raise HTTPException(status_code=401, detail="Invalid Google token or account_name required")
     return issue_token_bundle(user["user_id"], req.device_name)
+
+
+@router.get("/desktop/google-config")
+async def desktop_google_config():
+    """Return the public OAuth client ID used by the native desktop flow."""
+    client_id = get_google_client_id(desktop=True)
+    if not client_id:
+        raise HTTPException(status_code=503, detail="Desktop Google sign-in is not configured")
+    return {"client_id": client_id}
 
 
 @router.post("/desktop/refresh", response_model=DesktopTokenResponse)

@@ -92,6 +92,17 @@ class TestDesktopGoogleToken:
             resp = client.post("/api/auth/desktop/google-token", json={"id_token": "bad-token"})
         assert resp.status_code == 401
 
+    def test_desktop_google_config_returns_public_client_id(self):
+        with patch("app.routers.auth.get_google_client_id", return_value="desktop-client-id"):
+            resp = client.get("/api/auth/desktop/google-config")
+        assert resp.status_code == 200
+        assert resp.json() == {"client_id": "desktop-client-id"}
+
+    def test_desktop_google_config_requires_configuration(self):
+        with patch("app.routers.auth.get_google_client_id", return_value=""):
+            resp = client.get("/api/auth/desktop/google-config")
+        assert resp.status_code == 503
+
 
 # ── Change Password ───────────────────────────────────────────────────────────
 
