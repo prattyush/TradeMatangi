@@ -27,6 +27,7 @@ export function ChartTile({ symbol, interval, supportedIntervals, onIntervalChan
   const element = useRef<HTMLDivElement>(null)
   const chartRef = useRef<Chart | null>(null)
   const candlesRef = useRef(candles)
+  const renderedCandlesRef = useRef<Candle[]>([])
   const subscribeBarRef = useRef<((data: KLineData) => void) | null>(null)
   const replayDatasetKeyRef = useRef<string | undefined>(undefined)
   const lastDrawingCommandRef = useRef(0)
@@ -65,18 +66,24 @@ export function ChartTile({ symbol, interval, supportedIntervals, onIntervalChan
     const chart = chartRef.current
     if (!chart) return
     const latest = candles[candles.length - 1]
-    // Reset exactly once per run/history dataset. Subsequent snapshots use
-    // KLineCharts' incremental path, preserving crosshair and viewport.
+    const previous = renderedCandlesRef.current
+    const sameCandle = (left: Candle, right: Candle) => left.timestamp === right.timestamp && left.open === right.open && left.high === right.high && left.low === right.low && left.close === right.close
+    // Live snapshots normally change only the current candle or append one
+    // candle. Feed those updates through KLineCharts' incremental loader so
+    // the user's scroll position and crosshair remain untouched.
+    const incremental = Boolean(subscribeBarRef.current && previous.length > 0 && candles.length >= previous.length && candles.length <= previous.length + 1 && previous.every((candle, index) => sameCandle(candle, candles[index])))
     const shouldResetReplayData = isReplaying && replayDatasetKey !== replayDatasetKeyRef.current
     if (isReplaying) replayDatasetKeyRef.current = replayDatasetKey
     else replayDatasetKeyRef.current = undefined
-    if (isReplaying && !shouldResetReplayData && latest && subscribeBarRef.current) {
+    if (!shouldResetReplayData && incremental && latest && subscribeBarRef.current) {
       subscribeBarRef.current({ timestamp: latest.timestamp * 1000, open: latest.open, high: latest.high, low: latest.low, close: latest.close })
+      renderedCandlesRef.current = candles
       return
     }
     const barSpace = chart.getBarSpace().bar
     chart.resetData()
     chart.setBarSpace(barSpace)
+    renderedCandlesRef.current = candles
   }, [candles, isReplaying])
   useEffect(() => {
     const shortcuts = (event: KeyboardEvent) => {
