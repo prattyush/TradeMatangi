@@ -33,8 +33,7 @@ export function ChartTile({ symbol, interval, supportedIntervals, onIntervalChan
   const subscribeBarRef = useRef<((data: KLineData) => void) | null>(null)
   const lastDrawingCommandRef = useRef(0)
   const lastDrawingActionRef = useRef(0)
-  const [tool, setTool] = useState<string | null>(null)
-  const [drawings, setDrawings] = useState<Array<{ id: string; tool: string; locked: boolean; hidden: boolean }>>([])
+  const [, setDrawings] = useState<Array<{ id: string; tool: string; locked: boolean; hidden: boolean }>>([])
   const [selected, setSelected] = useState<string | null>(null)
   const [clock, setClock] = useState(() => Date.now())
   const indicatorKey = indicators.join('|')
@@ -109,7 +108,6 @@ export function ChartTile({ symbol, interval, supportedIntervals, onIntervalChan
   }, [candles, isReplaying])
   useEffect(() => {
     const shortcuts = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setTool(null)
       if ((event.key === 'Delete' || event.key === 'Backspace') && selected !== null) { chartRef.current?.removeOverlay({ id: selected }); setDrawings(current => current.filter(drawing => drawing.id !== selected)); setSelected(null) }
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z') setDrawings(current => { const drawing = current[current.length - 1]; if (drawing) chartRef.current?.removeOverlay({ id: drawing.id }); setSelected(null); return current.slice(0, -1) })
     }
@@ -132,7 +130,7 @@ export function ChartTile({ symbol, interval, supportedIntervals, onIntervalChan
       onRemoved: event => setDrawings(current => current.filter(drawing => drawing.id !== event.overlay.id)),
     })
     if (typeof id !== 'string') return
-    setTool(nextTool); setDrawings(current => [...current, { id, tool: nextTool, locked: false, hidden: false }]); setSelected(id)
+    setDrawings(current => [...current, { id, tool: nextTool, locked: false, hidden: false }]); setSelected(id)
   }
   const updateSelected = (update: (drawing: { id: string; tool: string; locked: boolean; hidden: boolean }) => { id: string; tool: string; locked: boolean; hidden: boolean }) => setDrawings(current => current.map(drawing => { if (drawing.id !== selected) return drawing; const next = update(drawing); chartRef.current?.overrideOverlay({ id: next.id, lock: next.locked, visible: !next.hidden }); return next }))
   useEffect(() => {
@@ -148,5 +146,5 @@ export function ChartTile({ symbol, interval, supportedIntervals, onIntervalChan
     if (drawingAction.action === 'lock') updateSelected(drawing => ({ ...drawing, locked: !drawing.locked }))
   }, [active, drawingAction, selected])
   const closeCountdown = formatCandleCloseCountdown(clock / 1000, Number(interval.replace('m', '')))
-  return <section className={`chart ${active ? 'active-chart' : ''}`} style={{ background: settings.background, color: settings.textColor }} onPointerDownCapture={onActivate}><div className="chart-head"><span>{symbol} · <select className="interval-picker" value={interval.replace('m', '')} onChange={event => onIntervalChange(event.target.value)} aria-label="Candle interval">{supportedIntervals.map(value => <option key={value} value={value}>{value}m</option>)}</select> · IST</span><span className="chart-actions">{isLive && <span className="candle-close" aria-label={`Candle closes in ${closeCountdown}`}>Close in {closeCountdown}</span>}<button className="icon-button" title="Choose instrument" aria-label="Choose instrument" onClick={onConfigure}>⌕</button><button className="icon-button" title={maximized ? 'Restore chart' : 'Maximize chart'} aria-label={maximized ? 'Restore chart' : 'Maximize chart'} onClick={onMaximize}>{maximized ? '⊡' : '⛶'}</button><span>{tool ? `Drawing: ${tool}` : 'Browse'} · {drawings.length} drawing(s)</span></span></div><div className="kline-container"><div className="kline" ref={element} />{loading && <div className="chart-loading"><span className="spinner" />Loading candles…</div>}{!loading && message && <div className="chart-loading chart-message">{message}</div>}</div></section>
+  return <section className={`chart ${active ? 'active-chart' : ''}`} style={{ background: settings.background, color: settings.textColor }} onPointerDownCapture={onActivate}><div className="chart-head"><span>{symbol} · <select className="interval-picker" value={interval.replace('m', '')} onChange={event => onIntervalChange(event.target.value)} aria-label="Candle interval">{supportedIntervals.map(value => <option key={value} value={value}>{value}m</option>)}</select> · IST</span><span className="chart-actions">{isLive && <span className="candle-close" aria-label={`Candle closes in ${closeCountdown}`}>{closeCountdown}</span>}<button className="icon-button" title="Choose instrument" aria-label="Choose instrument" onClick={onConfigure}>⌕</button><button className="icon-button" title={maximized ? 'Restore chart' : 'Maximize chart'} aria-label={maximized ? 'Restore chart' : 'Maximize chart'} onClick={onMaximize}>{maximized ? '⊡' : '⛶'}</button></span></div><div className="kline-container"><div className="kline" ref={element} />{loading && <div className="chart-loading"><span className="spinner" />Loading candles…</div>}{!loading && message && <div className="chart-loading chart-message">{message}</div>}</div></section>
 }
