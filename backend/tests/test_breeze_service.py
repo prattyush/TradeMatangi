@@ -221,6 +221,31 @@ _BREEZE_EQ_TICK = {
 class TestBreezeStreamManagerOnTicks:
 
     @pytest.mark.asyncio
+    async def test_on_ticks_fans_out_one_route_to_multiple_desktop_tiles(self):
+        """Identical instruments at different intervals each receive the tick."""
+        mgr = BreezeStreamManager()
+        loop = asyncio.get_running_loop()
+        first_queue, second_queue = asyncio.Queue(), asyncio.Queue()
+        instrument = {"exchange_code": "NSE", "stock_code": "NIFTY", "product_type": "cash"}
+        route_key = mgr.instrument_route_key(instrument)
+        mgr._breeze = True
+        mgr._queue = asyncio.Queue()
+        mgr._loop = loop
+        mgr._instruments = [instrument]
+        mgr._route_queues = {route_key: [first_queue, second_queue]}
+        acc = _OHLCAccumulator()
+        acc.current_second = 1000
+        acc.open = acc.high = acc.low = acc.close = 24200.0
+        mgr._accumulators[route_key] = acc
+
+        mgr._on_ticks([{**_BREEZE_EQ_TICK, "last": 24210.00}])
+        await asyncio.sleep(0)
+
+        assert first_queue.qsize() == 1
+        assert second_queue.qsize() == 1
+        assert first_queue.get_nowait() == second_queue.get_nowait()
+
+    @pytest.mark.asyncio
     async def test_on_ticks_accumulates_and_pushes_candle(self):
         mgr = BreezeStreamManager()
         loop = asyncio.get_running_loop()
