@@ -47,6 +47,7 @@ input { width: 160px; }
 .chart-head { display: flex; justify-content: space-between; gap: 5px; padding: 5px 8px; color: #aeb8ca; border-bottom: 1px solid #293142; font-size: .75rem; }
 .interval-picker { padding: 1px 3px; font-size: .72rem; }
 .chart-actions { display: flex; align-items: center; gap: 5px; }
+.candle-close { color: #93c5fd; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .chart-actions button { font-size: .62rem; padding: 3px 5px; }
 .icon-button { width: 25px; height: 23px; padding: 0 !important; font-size: 1rem !important; line-height: 1; }
 .kline-container { min-height: 0; position: relative; }
