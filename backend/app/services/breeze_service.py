@@ -165,14 +165,16 @@ class BreezeStreamManager:
         # wrapper cannot rely on those fields being present). get_quotes()
         # is unreliable for BFO so we fall back to the master file.
         self._option_scrip_map: dict[str, tuple[int, str]] = {}
-        self._route_queues: dict[str, asyncio.Queue] = {}
+        # A provider instrument can be used by multiple desktop tiles (for
+        # example NIFTY 3m and NIFTY 5m). Keep every destination for a route.
+        self._route_queues: dict[str, list[asyncio.Queue]] = {}
 
     def start(
         self,
         queue: asyncio.Queue,
         loop: asyncio.AbstractEventLoop,
         instruments: list[dict],
-        routes: dict[str, asyncio.Queue] | None = None,
+        routes: dict[str, asyncio.Queue | list[asyncio.Queue]] | None = None,
     ) -> None:
         """
         instruments: list of dicts with keys:
@@ -183,7 +185,10 @@ class BreezeStreamManager:
         self._queue = queue
         self._loop = loop
         self._instruments = instruments
-        self._route_queues = routes or {}
+        self._route_queues = {
+            key: value if isinstance(value, list) else [value]
+            for key, value in (routes or {}).items()
+        }
 
         breeze = _get_breeze()
         global _multiplexer_breeze, _multiplexer_connected
@@ -468,13 +473,13 @@ class BreezeStreamManager:
                     # Desktop streams are explicitly routed. A tick that
                     # cannot be identified must not fill a shared fallback
                     # queue and starve all other tiles.
-                    target_queue = self._route_queues.get(route_key) if route_key else None
-                    if target_queue is None:
+                    target_queues = self._route_queues.get(route_key) if route_key else None
+                    if not target_queues:
                         continue
                 else:
-                    target_queue = self._queue
+                    target_queues = [self._queue] if self._queue is not None else []
                 try:
-                    if target_queue is not None:
+                    for target_queue in target_queues:
                         self._loop.call_soon_threadsafe(target_queue.put_nowait, payload)
                 except Exception as exc:
                     logger.warning("Breeze tick push failed: %s", exc)
