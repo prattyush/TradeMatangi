@@ -1620,7 +1620,12 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
           }}
           trades={draft ? [] : getTradesForPane(pane)}
           openOrders={draft ? [] : getOrdersForPane(pane)}
-          onPriceSelect={(pricePickOrderId || tpPickActive || utpPickActive || lpPickActive || contextMenuOrderPick) && pane.id === activePaneId ? handleChartPriceSelect : null}
+          onPriceSelect={(pricePickOrderId || tpPickActive || utpPickActive || lpPickActive || contextMenuOrderPick)
+            ? (price) => {
+                setActivePaneId(pane.id)
+                handleChartPriceSelect(price)
+              }
+            : null}
           pricePickLabel={contextMenuOrderPick ? `⊕ Click for ${contextMenuOrderPick.orderType === 'TARGET' ? 'Target' : 'Limit'} Price` : undefined}
           onContextMenu={draft ? undefined : (price, screenX, screenY, ctx) => handleChartContextMenu(price, screenX, screenY, ctx, pane.id)}
           historicalDays={historicalDays}
