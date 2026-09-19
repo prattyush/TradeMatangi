@@ -224,6 +224,60 @@ fn google_authorize_url(client_id: &str, redirect_uri: &str, challenge: &str, st
     )
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct DesktopGoogleConfig {
+    client_id: String,
+    client_secret: Option<String>,
+}
+
+fn google_token_form<'a>(
+    client_id: &'a str,
+    client_secret: Option<&'a str>,
+    code: &'a str,
+    verifier: &'a str,
+    redirect_uri: &'a str,
+) -> Vec<(&'static str, &'a str)> {
+    let mut form = vec![
+        ("client_id", client_id),
+        ("code", code),
+        ("code_verifier", verifier),
+        ("grant_type", "authorization_code"),
+        ("redirect_uri", redirect_uri),
+    ];
+    if let Some(client_secret) = client_secret.filter(|value| !value.is_empty()) {
+        form.push(("client_secret", client_secret));
+    }
+    form
+}
+
+fn google_token_error(status: reqwest::StatusCode, body: &str) -> String {
+    let detail = serde_json::from_str::<serde_json::Value>(body)
+        .ok()
+        .and_then(|value| {
+            let error = value.get("error").and_then(|value| value.as_str()).unwrap_or("");
+            let description = value
+                .get("error_description")
+                .and_then(|value| value.as_str())
+                .unwrap_or("");
+            match (error.is_empty(), description.is_empty()) {
+                (false, false) => Some(format!("{error} - {description}")),
+                (false, true) => Some(error.to_string()),
+                (true, false) => Some(description.to_string()),
+                (true, true) => None,
+            }
+        })
+        .or_else(|| {
+            let trimmed = body.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.chars().take(300).collect())
+            }
+        })
+        .unwrap_or_else(|| status.to_string());
+    format!("Google token exchange failed: {detail}")
+}
+
 #[cfg(target_os = "windows")]
 fn windows_url_launcher(url: &str) -> (&'static str, Vec<&str>) {
     ("rundll32.exe", vec!["url.dll,FileProtocolHandler", url])
@@ -269,7 +323,7 @@ fn open_external_url(url: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn authorize_google_in_browser(client_id: String) -> Result<String, String> {
+fn authorize_google_in_browser(config: DesktopGoogleConfig) -> Result<String, String> {
     let listener = TcpListener::bind(("127.0.0.1", GOOGLE_REDIRECT_PORT))
         .map_err(|error| format!("Could not start the local Google sign-in callback: {error}"))?;
     listener
@@ -279,7 +333,7 @@ fn authorize_google_in_browser(client_id: String) -> Result<String, String> {
     let verifier = random_url_token()?;
     let state = random_url_token()?;
     let challenge = URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()));
-    let authorize_url = google_authorize_url(&client_id, &redirect_uri, &challenge, &state);
+    let authorize_url = google_authorize_url(&config.client_id, &redirect_uri, &challenge, &state);
     open_external_url(&authorize_url)?;
 
     let (mut stream, _) = listener
@@ -324,21 +378,24 @@ fn authorize_google_in_browser(client_id: String) -> Result<String, String> {
         return Err("Google sign-in state validation failed".into());
     }
     let code = code.ok_or_else(|| "Google sign-in did not return an authorization code".to_string())?;
-    let token = reqwest::blocking::Client::new()
+    let form = google_token_form(
+        &config.client_id,
+        config.client_secret.as_deref(),
+        &code,
+        &verifier,
+        &redirect_uri,
+    );
+    let response = reqwest::blocking::Client::new()
         .post("https://oauth2.googleapis.com/token")
-        .form(&[
-            ("client_id", client_id.as_str()),
-            ("code", code.as_str()),
-            ("code_verifier", verifier.as_str()),
-            ("grant_type", "authorization_code"),
-            ("redirect_uri", redirect_uri.as_str()),
-        ])
+        .form(&form)
         .send()
-        .map_err(|error| error.to_string())?
-        .error_for_status()
-        .map_err(|error| format!("Google token exchange failed: {error}"))?
-        .json::<serde_json::Value>()
         .map_err(|error| error.to_string())?;
+    let status = response.status();
+    let body = response.text().map_err(|error| error.to_string())?;
+    if !status.is_success() {
+        return Err(google_token_error(status, &body));
+    }
+    let token = serde_json::from_str::<serde_json::Value>(&body).map_err(|error| error.to_string())?;
     token
         .get("id_token")
         .and_then(|value| value.as_str())
@@ -346,7 +403,7 @@ fn authorize_google_in_browser(client_id: String) -> Result<String, String> {
         .ok_or_else(|| "Google token exchange did not return an ID token".into())
 }
 
-async fn desktop_google_client_id(base_url: &str) -> Result<String, String> {
+async fn desktop_google_config(base_url: &str) -> Result<DesktopGoogleConfig, String> {
     let response = reqwest::Client::new()
         .get(format!(
             "{}/api/auth/desktop/google-config",
@@ -358,14 +415,24 @@ async fn desktop_google_client_id(base_url: &str) -> Result<String, String> {
     if !response.status().is_success() {
         return Err(format!("Desktop Google sign-in is not configured ({})", response.status()));
     }
-    response
+    let body = response
         .json::<serde_json::Value>()
         .await
-        .map_err(|error| error.to_string())?
+        .map_err(|error| error.to_string())?;
+    let client_id = body
         .get("client_id")
         .and_then(|value| value.as_str())
         .map(str::to_string)
-        .ok_or_else(|| "Desktop Google sign-in returned no client ID".into())
+        .ok_or_else(|| "Desktop Google sign-in returned no client ID".to_string())?;
+    let client_secret = body
+        .get("client_secret")
+        .and_then(|value| value.as_str())
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+    Ok(DesktopGoogleConfig {
+        client_id,
+        client_secret,
+    })
 }
 
 /// Tokens stay in the Windows Credential Manager through the OS keyring.
@@ -433,8 +500,8 @@ async fn desktop_google_login(
     let host = host.inner().clone();
     let id_token = host.take_pending_google_token().unwrap_or_else(|| String::new());
     let id_token = if id_token.is_empty() {
-        let client_id = desktop_google_client_id(&base_url).await?;
-        tauri::async_runtime::spawn_blocking(move || authorize_google_in_browser(client_id))
+        let config = desktop_google_config(&base_url).await?;
+        tauri::async_runtime::spawn_blocking(move || authorize_google_in_browser(config))
             .await
             .map_err(|error| format!("Google sign-in did not complete: {error}"))??
     } else {
@@ -1233,6 +1300,50 @@ mod tests {
         assert!(url.contains("code_challenge=challenge%2Fwith%2Breserved%3D"));
         assert!(url.contains("code_challenge_method=S256"));
         assert!(url.contains("state=state%26value"));
+    }
+
+    #[test]
+    fn google_token_form_omits_empty_client_secret() {
+        let form = google_token_form(
+            "desktop-client-id",
+            None,
+            "authorization-code",
+            "pkce-verifier",
+            "http://127.0.0.1:8765/oauth/callback",
+        );
+
+        assert!(form.contains(&("client_id", "desktop-client-id")));
+        assert!(form.contains(&("code", "authorization-code")));
+        assert!(form.contains(&("code_verifier", "pkce-verifier")));
+        assert!(form.contains(&("grant_type", "authorization_code")));
+        assert!(form.contains(&("redirect_uri", "http://127.0.0.1:8765/oauth/callback")));
+        assert!(!form.iter().any(|(key, _)| *key == "client_secret"));
+    }
+
+    #[test]
+    fn google_token_form_includes_configured_client_secret() {
+        let form = google_token_form(
+            "desktop-client-id",
+            Some("desktop-secret"),
+            "authorization-code",
+            "pkce-verifier",
+            "http://127.0.0.1:8765/oauth/callback",
+        );
+
+        assert!(form.contains(&("client_secret", "desktop-secret")));
+    }
+
+    #[test]
+    fn google_token_error_uses_google_json_detail() {
+        let message = google_token_error(
+            reqwest::StatusCode::BAD_REQUEST,
+            r#"{"error":"invalid_request","error_description":"client_secret is missing"}"#,
+        );
+
+        assert_eq!(
+            message,
+            "Google token exchange failed: invalid_request - client_secret is missing"
+        );
     }
 
     #[cfg(target_os = "windows")]
