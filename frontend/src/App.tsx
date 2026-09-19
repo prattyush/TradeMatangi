@@ -1275,8 +1275,14 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
     paneType: string; right?: 'CE' | 'PE'; hasPosition: boolean; hasOpenOrders: boolean; hasSLOrders: boolean
   }, paneId: number) => {
     if (sim.sessionState !== 'running' && sim.sessionState !== 'paused') return
+    if (paneId !== activePaneId) {
+      setPricePickOrderId(null)
+      setTpPickActive(false)
+      setContextMenuOrderPick(null)
+    }
+    setActivePaneId(paneId)
     setContextMenu({ x: screenX, y: screenY, price, paneType: ctx.paneType, right: ctx.right, paneId })
-  }, [sim.sessionState])
+  }, [sim.sessionState, activePaneId])
 
   // ── Context menu actions ───────────────────────────────────────────────────
   const contextMenuActions = useMemo((): ContextMenuAction[] => {
