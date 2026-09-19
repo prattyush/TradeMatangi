@@ -13,6 +13,38 @@ The initial product contains no order placement, paper trading, real trading,
 wallet, positions, strategies, guardrails, trade labelling, or Pattern Library
 workflows.
 
+## Current Desktop Live Status
+
+- The chart-only Live hub is active and isolated from trading services. It
+  supports up to four independently configured tiles, including duplicate
+  instruments, whose provider ticks are fanned out to every matching tile.
+- Live snapshots currently reach the desktop once per second through the
+  existing browser/native request bridge. Native-host SSE recovery remains
+  Sprint 6 work.
+- Refresh safely replaces completed provider history while retaining the
+  in-memory, tick-built active candle; per-chart close timers use each tile's
+  selected interval.
+- Live interval switching is being moved to interval-neutral one-second tick
+  delivery with local per-tile aggregation. This avoids restarting provider
+  routes or disturbing other tiles when a chart interval changes.
+
+### Live Interval Switching Tradeoff
+
+The desktop keeps interval-neutral one-second ticks in an active Live-session
+cache keyed by canonical instrument, not by tile. Duplicate instrument tiles
+share the same tick cache immediately, and changing only a chart interval
+rebuilds visible candles from the historical baseline plus those raw ticks
+without restarting the provider route. The cache is cleared when Live stops,
+when the user logs out, or when a new Live stream starts. Completed history
+remains backend-authoritative; Refresh replaces completed provider candles and
+merges the active session's raw ticks back over the returned history to cover
+provider lag while preserving the active live candle.
+
+The website chart keeps only a 15-minute recent tick cache for this same
+refresh backfill purpose. Drawing persistence remains Sprint 3 work, and full
+screen persistence remains in the later desktop shell persistence scope rather
+than this Live/cache pass.
+
 ## Desktop Technology
 
 - Ship as a Windows desktop application, initially targeting Windows 10 and
