@@ -5,7 +5,7 @@ from app.dependencies import get_request_user_id
 from app.services.user_service import (
     login_user, register_user, get_user_info, change_password,
     google_auth, set_account_name,
-    get_google_client_id,
+    get_google_client_id, get_google_desktop_client_secret,
 )
 from app.services.desktop_auth_service import issue_token_bundle, refresh_token_bundle, revoke_refresh_token
 
@@ -77,7 +77,11 @@ async def desktop_google_config():
     client_id = get_google_client_id(desktop=True)
     if not client_id:
         raise HTTPException(status_code=503, detail="Desktop Google sign-in is not configured: add desktop_client_id to accesskeys.ini")
-    return {"client_id": client_id}
+    config = {"client_id": client_id}
+    client_secret = get_google_desktop_client_secret()
+    if client_secret:
+        config["client_secret"] = client_secret
+    return config
 
 
 @router.post("/desktop/refresh", response_model=DesktopTokenResponse)

@@ -178,7 +178,9 @@ email in the header display for all user types.
 The native desktop loopback OAuth flow requires a separate Google Cloud OAuth
 client with application type **Desktop app**. Configure its ID as
 `desktop_client_id` in the same `[googlesignin]` section; the desktop flow must
-never use the web client ID for its `127.0.0.1` callback.
+never use the web client ID for its `127.0.0.1` callback. If Google requires a
+secret during the desktop authorization-code exchange, configure the Desktop app
+secret as `desktop_client_secret`; it is used only by the native desktop flow.
 
 
 ## Phase 13 — Implementation Status

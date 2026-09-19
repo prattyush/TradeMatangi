@@ -201,6 +201,16 @@ def get_google_client_id(*, desktop: bool = False) -> str:
     return cfg.get("googlesignin", "client_id", fallback="")
 
 
+def get_google_desktop_client_secret() -> str:
+    """Return the optional desktop OAuth client secret for native token exchange."""
+    import configparser
+    from pathlib import Path
+    ini_path = Path(__file__).resolve().parent.parent.parent.parent / "data" / "accesskeys.ini"
+    cfg = configparser.ConfigParser()
+    cfg.read(str(ini_path))
+    return cfg.get("googlesignin", "desktop_client_secret", fallback="")
+
+
 def google_auth(id_token: str, account_name: str | None = None) -> dict | None:
     """
     Verify Google ID token, then match or create user by email.

@@ -93,10 +93,21 @@ class TestDesktopGoogleToken:
         assert resp.status_code == 401
 
     def test_desktop_google_config_returns_public_client_id(self):
-        with patch("app.routers.auth.get_google_client_id", return_value="desktop-client-id"):
+        with patch("app.routers.auth.get_google_client_id", return_value="desktop-client-id"), \
+             patch("app.routers.auth.get_google_desktop_client_secret", return_value=""):
             resp = client.get("/api/auth/desktop/google-config")
         assert resp.status_code == 200
         assert resp.json() == {"client_id": "desktop-client-id"}
+
+    def test_desktop_google_config_returns_optional_client_secret(self):
+        with patch("app.routers.auth.get_google_client_id", return_value="desktop-client-id"), \
+             patch("app.routers.auth.get_google_desktop_client_secret", return_value="desktop-secret"):
+            resp = client.get("/api/auth/desktop/google-config")
+        assert resp.status_code == 200
+        assert resp.json() == {
+            "client_id": "desktop-client-id",
+            "client_secret": "desktop-secret",
+        }
 
     def test_desktop_google_config_requires_configuration(self):
         with patch("app.routers.auth.get_google_client_id", return_value=""):
@@ -110,10 +121,21 @@ class TestDesktopGoogleToken:
         config = MagicMock()
         config.get.side_effect = lambda _section, option, fallback="": {
             "client_id": "web-client-id",
+            "desktop_client_secret": "desktop-secret",
         }.get(option, fallback)
         with patch("configparser.ConfigParser", return_value=config):
             assert get_google_client_id(desktop=True) == ""
             assert get_google_client_id() == "web-client-id"
+
+    def test_desktop_client_secret_reads_dedicated_config_key(self):
+        from app.services.user_service import get_google_desktop_client_secret
+
+        config = MagicMock()
+        config.get.side_effect = lambda _section, option, fallback="": {
+            "desktop_client_secret": "desktop-secret",
+        }.get(option, fallback)
+        with patch("configparser.ConfigParser", return_value=config):
+            assert get_google_desktop_client_secret() == "desktop-secret"
 
 
 # ── Change Password ───────────────────────────────────────────────────────────
