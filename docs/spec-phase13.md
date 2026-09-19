@@ -173,7 +173,12 @@ email in the header display for all user types.
 | Email + Password | Login (unchanged) | Register with account_name | Login, backfill popup shown |
 | Google | Login (matched by email) | Popup for account_name, then create | Login, backfill popup shown |
 
-**Client ID:** `249337992826-jm174i5bqdhr4bfqpmip44gnnp4eo2eh.apps.googleusercontent.com` (from `data/accesskeys.ini` `[googlesignin]` section)
+**Web Client ID:** `249337992826-jm174i5bqdhr4bfqpmip44gnnp4eo2eh.apps.googleusercontent.com` (from `data/accesskeys.ini` `[googlesignin]` section)
+
+The native desktop loopback OAuth flow requires a separate Google Cloud OAuth
+client with application type **Desktop app**. Configure its ID as
+`desktop_client_id` in the same `[googlesignin]` section; the desktop flow must
+never use the web client ID for its `127.0.0.1` callback.
 
 
 ## Phase 13 — Implementation Status

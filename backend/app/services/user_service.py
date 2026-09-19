@@ -186,18 +186,18 @@ def _get_google_client_ids() -> list[str]:
 
 
 def get_google_client_id(*, desktop: bool = False) -> str:
-    """Return the configured client ID for the website or desktop OAuth flow."""
+    """Return the configured client ID for the website or desktop OAuth flow.
+
+    Native desktop OAuth uses a loopback redirect and must use a Desktop
+    application client. It must never silently fall back to the web client.
+    """
     import configparser
     from pathlib import Path
     ini_path = Path(__file__).resolve().parent.parent.parent.parent / "data" / "accesskeys.ini"
     cfg = configparser.ConfigParser()
     cfg.read(str(ini_path))
     if desktop:
-        return cfg.get(
-            "googlesignin",
-            "desktop_client_id",
-            fallback=cfg.get("googlesignin", "client_id", fallback=""),
-        )
+        return cfg.get("googlesignin", "desktop_client_id", fallback="")
     return cfg.get("googlesignin", "client_id", fallback="")
 
 
