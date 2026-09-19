@@ -655,9 +655,16 @@ def _emit_tick_and_check_orders(
         except Exception:
             logger.exception("Could not persist clock for group %s", session.group_id)
     current_price = tick["close"]
+    tick_strike = None
+    if tick_right == "CE":
+        tick_strike = session.strike_ce or session.strike
+    elif tick_right == "PE":
+        tick_strike = session.strike_pe or session.strike
     filled = check_orders(
         session.session_id, current_price, current_time, session.date,
         tick_right=tick_right,
+        tick_strike=tick_strike,
+        tick_expiry=session.expiry if tick_right else None,
     )
     fill_events = []
     for order in filled:
@@ -670,11 +677,12 @@ def _emit_tick_and_check_orders(
             symbol=order.symbol,
             instrument_type=session.instrument_type,
             strike=order.strike if order.strike is not None else session.strike,
-            expiry=session.expiry,
+            expiry=order.expiry if order.expiry is not None else session.expiry,
             right=order.right,
             brokerage_per_order=session.brokerage_per_order,
             user_id=session.user_id,
             session_type=session.session_type,
+            source=order.source,
         )
         fill_events.append({
             "type": "order_filled",

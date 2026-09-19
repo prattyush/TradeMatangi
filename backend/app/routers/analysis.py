@@ -48,6 +48,7 @@ class TradeSummary(BaseModel):
     expiry: str | None = None
     commission: float = 0.0
     underlying_price: float | None = None
+    source: str | None = None
 
 
 class SessionDetail(SessionSummary):
@@ -63,26 +64,30 @@ async def get_sessions(
     session_type: str | None = Query(default=None, description="sim, paper, real, or stepwise"),
     user_id: str = Depends(get_request_user_id),
 ):
+    query_session_type = "stepwise" if session_type == "desktop_stepwise" else session_type
     sessions = analysis_service.get_sessions_for_user(
         user_id, symbol=symbol,
         start_date=start_date, end_date=end_date,
         instrument_type=instrument_type,
-        session_type=session_type,
+        session_type=query_session_type,
     )
     result = []
     for s in sessions:
         trades = analysis_service.get_trades_for_session(s["session_id"])
+        if session_type == "desktop_stepwise":
+            trades = [t for t in trades if t.get("source") == "desktop_stepwise"]
+        if not trades and session_type == "desktop_stepwise":
+            continue
         summary = analysis_service.compute_session_summary(s, trades)
         result.append(summary)
     return result
 
 
 @router.get("/sessions/{session_id}", response_model=SessionDetail)
-async def get_session_detail(session_id: str):
+async def get_session_detail(session_id: str, user_id: str = Depends(get_request_user_id)):
     detail = analysis_service.get_session_summary_with_trades(session_id)
-    if not detail:
+    if not detail or detail.get("user_id") != user_id:
         raise HTTPException(status_code=404, detail="Session not found")
-    
     return detail
 
 

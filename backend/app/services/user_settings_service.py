@@ -40,6 +40,10 @@ DEFAULT_SETTINGS: dict = {
     "max_price_threshold_ce": 50.0,
     "max_price_threshold_pe": 50.0,
     "override_session_enabled": False,
+    "desktop_hide_chart_labels": False,
+    "desktop_order_size_mode": "quantity",
+    "desktop_pnl_display_mode": "currency",
+    "desktop_confirm_flatten": True,
 }
 
 
@@ -103,6 +107,10 @@ def get_settings(user_id: str) -> dict:
             "max_price_threshold_ce": float(item.get("max_price_threshold_ce", DEFAULT_SETTINGS["max_price_threshold_ce"])),
             "max_price_threshold_pe": float(item.get("max_price_threshold_pe", DEFAULT_SETTINGS["max_price_threshold_pe"])),
             "override_session_enabled": bool(item.get("override_session_enabled", DEFAULT_SETTINGS["override_session_enabled"])),
+            "desktop_hide_chart_labels": bool(item.get("desktop_hide_chart_labels", DEFAULT_SETTINGS["desktop_hide_chart_labels"])),
+            "desktop_order_size_mode": str(item.get("desktop_order_size_mode", DEFAULT_SETTINGS["desktop_order_size_mode"])),
+            "desktop_pnl_display_mode": str(item.get("desktop_pnl_display_mode", DEFAULT_SETTINGS["desktop_pnl_display_mode"])),
+            "desktop_confirm_flatten": bool(item.get("desktop_confirm_flatten", DEFAULT_SETTINGS["desktop_confirm_flatten"])),
         }
     except Exception:
         logger.exception("Failed to get settings for user %s", user_id)

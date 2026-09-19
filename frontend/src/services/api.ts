@@ -359,6 +359,7 @@ export interface AnalysisTrade {
   expiry: string | null
   commission: number
   underlying_price?: number
+  source?: string | null
 }
 
 export interface SessionDetail extends SessionSummary {

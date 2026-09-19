@@ -115,6 +115,7 @@ class Trade(BaseModel):
     right: str | None = None
     commission: float = 0.0  # computed at record time: exchange charges + brokerage
     session_type: str = "sim"  # "sim" or "paper" — inherited from parent session
+    source: str | None = None  # e.g. "desktop_stepwise" for desktop-originated practice trades
     underlying_price: float | None = None  # snapshotted underlying price at fill time
 
 
@@ -214,6 +215,8 @@ class Order(BaseModel):
     is_stoploss: bool = False      # SL orders skip all wallet debit/credit
     right: str | None = None       # "CE" or "PE" for options orders; None for equity
     strike: int | None = None      # options strike price; None for equity
+    expiry: str | None = None      # options expiry; None for equity
+    source: str | None = None      # e.g. "desktop_stepwise"
     kotak_order_id: str | None = None  # set for real-session orders placed on Kotak
     kotak_fill_confirmed: bool = False  # True once Kotak WebSocket or reconcile records the fill
     entry_sl_price: float | None = None  # auto-stoploss price set at entry time
@@ -232,6 +235,7 @@ class PlaceOrderRequest(BaseModel):
     is_stoploss: bool = False
     right: str | None = None             # "CE" or "PE" for options orders; None for equity
     strike: int | None = None            # options strike; populated server-side from session when omitted
+    expiry: str | None = None            # options expiry; populated server-side from session when omitted
     target_deviation_pct: float = 0.01   # deviation used to compute limit from trigger for TARGET orders
     entry_sl_price: float | None = None  # optional auto-stoploss placed on entry fill
     group_id: str | None = None          # shared UUID linking entry + auto-SL order
@@ -303,6 +307,10 @@ class UserSettingsResponse(BaseModel):
     max_price_threshold_ce: float = 50.0
     max_price_threshold_pe: float = 50.0
     override_session_enabled: bool = False
+    desktop_hide_chart_labels: bool = False
+    desktop_order_size_mode: Literal["quantity", "funds_ratio", "risk_ratio"] = "quantity"
+    desktop_pnl_display_mode: Literal["currency", "percent"] = "currency"
+    desktop_confirm_flatten: bool = True
 
 
 class UserSettingsUpdateRequest(BaseModel):
@@ -319,6 +327,10 @@ class UserSettingsUpdateRequest(BaseModel):
     max_price_threshold_ce: float | None = None
     max_price_threshold_pe: float | None = None
     override_session_enabled: bool | None = None
+    desktop_hide_chart_labels: bool | None = None
+    desktop_order_size_mode: Literal["quantity", "funds_ratio", "risk_ratio"] | None = None
+    desktop_pnl_display_mode: Literal["currency", "percent"] | None = None
+    desktop_confirm_flatten: bool | None = None
 
 
 # ── Strategies ────────────────────────────────────────────────────────────────

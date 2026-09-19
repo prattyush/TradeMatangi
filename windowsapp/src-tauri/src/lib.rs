@@ -785,6 +785,7 @@ async fn desktop_drawing_request(
     let request = match method.as_str() {
         "GET" => client.get(url),
         "POST" => client.post(url).json(&body),
+        "PATCH" => client.patch(url).json(&body),
         "PUT" => client.put(url).json(&body),
         "DELETE" => client.delete(url).json(&body),
         _ => return Err("Unsupported drawing request".into()),
