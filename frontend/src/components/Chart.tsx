@@ -1281,6 +1281,20 @@ export default function Chart({
     }
   }, [hasPosition])
 
+  const handleFitChart = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation()
+    const chart = chartRef.current
+    const series = seriesRef.current
+    if (!chart || !series) return
+    try {
+      series.priceScale().applyOptions({ autoScale: true })
+    } catch {
+      // Older chart instances may already be auto-scaled or disposed.
+    }
+    chart.timeScale().fitContent()
+    updatePnlCoord()
+  }, [updatePnlCoord])
+
   useEffect(() => {
     updatePnlCoord()
   }, [pnl, updatePnlCoord])
@@ -1509,6 +1523,14 @@ export default function Chart({
           style={{ ...toolbarBtnStyle(false), fontSize: 13, padding: '2px 7px' }}
         >
           ↻
+        </button>
+        <button
+          onClick={handleFitChart}
+          title="Fit data to chart"
+          aria-label="Fit data to chart"
+          style={{ ...toolbarBtnStyle(false), fontSize: 13, padding: '2px 7px' }}
+        >
+          ⤧
         </button>
         {swapTargets && swapTargets.map(({ dir, onClick }) => (
           <button
