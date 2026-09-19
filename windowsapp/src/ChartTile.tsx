@@ -32,7 +32,7 @@ const hasNativeHost = '__TAURI_INTERNALS__' in window
 const overlayName = (tool: string) => tool === 'Trend' ? 'segment' : tool === 'Horizontal' ? 'horizontalStraightLine' : tool === 'Fib Retracement' ? 'fibonacciLine' : tool
 const drawingPoints = (drawing: PersistedDrawing) => drawing.points.map(point => ({ timestamp: point.timestamp * 1000, value: point.price }))
 
-export function ChartTile({ symbol, interval, supportedIntervals, onIntervalChange, candles = demo, loading, message, settings, isReplaying, isLive, instrument, baseUrl, onConfigure, onMaximize, maximized, active, indicators, drawingCommand, drawingAction, drawingMode, onDrawingComplete, onActivate }: { symbol: string; interval: string; supportedIntervals: number[]; onIntervalChange: (interval: string) => void; candles?: Candle[]; loading: boolean; message: string; settings: ChartSettings; isReplaying: boolean; isLive: boolean; replayDatasetKey?: string; instrument: Record<string, unknown>; baseUrl: string; onConfigure: () => void; onMaximize: () => void; maximized: boolean; active: boolean; indicators: string[]; drawingCommand: DrawingCommand | null; drawingAction: DrawingAction | null; drawingMode: DrawingMode; onDrawingComplete: () => void; onActivate: () => void }) {
+export function ChartTile({ symbol, interval, supportedIntervals, onIntervalChange, candles = demo, loading, message, settings, isReplaying, isLive, instrument, baseUrl, onConfigure, onMaximize, maximized, active, indicators, drawingCommand, drawingAction, drawingMode, onDrawingComplete, onActivate }: { symbol: string; interval: string; supportedIntervals: number[]; onIntervalChange: (interval: string) => void; candles?: Candle[]; loading: boolean; message: string; settings: ChartSettings; isReplaying: boolean; isLive: boolean; replayDatasetKey?: string; instrument: Record<string, unknown>; baseUrl: string; onConfigure: () => void; onMaximize: () => void; maximized: boolean; active: boolean; indicators: string[]; drawingCommand: DrawingCommand | null; drawingAction: DrawingAction | null; drawingMode: DrawingMode; onDrawingComplete: (commandId: number, tool: string) => void; onActivate: () => void }) {
   const element = useRef<HTMLDivElement>(null)
   const chartRef = useRef<Chart | null>(null)
   const candlesRef = useRef(candles)
@@ -166,7 +166,7 @@ export function ChartTile({ symbol, interval, supportedIntervals, onIntervalChan
     window.addEventListener('keydown', shortcuts)
     return () => window.removeEventListener('keydown', shortcuts)
   }, [selected, drawings])
-  const addDrawing = (nextTool: string) => {
+  const addDrawing = (nextTool: string, commandId: number) => {
     const name = overlayName(nextTool)
     const lineColor = nextTool === 'Trend' ? settings.trendLineColor : nextTool === 'Horizontal' ? settings.horizontalLineColor : settings.drawingLineColor
     const lineWidth = nextTool === 'Trend' ? settings.trendLineWidth : nextTool === 'Horizontal' ? settings.horizontalLineWidth : settings.drawingLineWidth
@@ -177,7 +177,7 @@ export function ChartTile({ symbol, interval, supportedIntervals, onIntervalChan
       // Use a high-contrast explicit line instead of depending on a theme's
       // drawing defaults, which made newly-created overlays hard to see.
       styles: { line: { color: lineColor, size: lineWidth, style: 'solid', dashedValue: [2, 2] }, polygon: { color: fillColor }, rect: { color: fillColor }, circle: { color: fillColor } },
-      onDrawEnd: event => { const points = event.overlay.points.map(point => ({ timestamp: Math.floor(Number(point.timestamp) / 1000), price: Number(point.value) })); const drawing = { tool: nextTool, points, style: { color: lineColor, width: lineWidth, fillColor, fillOpacity: settings.drawingFillOpacity }, visible: true, locked: false }; if (points.length && typeof event.overlay.id === 'string') void persistDrawing('drawings', 'POST', drawing).then(record => { if (!record) return; setDrawings(current => current.map(item => item.id === event.overlay.id ? { ...item, backendId: record.drawing_id, revision: record.revision, drawing: record.drawing } : item)) }); onDrawingComplete(); if (drawingModeRef.current === 'repeat') window.setTimeout(() => addDrawing(nextTool), 0) },
+      onDrawEnd: event => { const points = event.overlay.points.map(point => ({ timestamp: Math.floor(Number(point.timestamp) / 1000), price: Number(point.value) })); const drawing = { tool: nextTool, points, style: { color: lineColor, width: lineWidth, fillColor, fillOpacity: settings.drawingFillOpacity }, visible: true, locked: false }; if (points.length && typeof event.overlay.id === 'string') void persistDrawing('drawings', 'POST', drawing).then(record => { if (!record) return; setDrawings(current => current.map(item => item.id === event.overlay.id ? { ...item, backendId: record.drawing_id, revision: record.revision, drawing: record.drawing } : item)) }); onDrawingComplete(commandId, nextTool); if (drawingModeRef.current === 'repeat') window.setTimeout(() => addDrawing(nextTool, commandId), 0) },
       onSelected: event => setSelected(event.overlay.id),
       onRemoved: event => setDrawings(current => current.filter(drawing => drawing.id !== event.overlay.id)),
     })
@@ -188,7 +188,7 @@ export function ChartTile({ symbol, interval, supportedIntervals, onIntervalChan
   useEffect(() => {
     if (!active || !drawingCommand || drawingCommand.id === lastDrawingCommandRef.current) return
     lastDrawingCommandRef.current = drawingCommand.id
-    addDrawing(drawingCommand.tool)
+    addDrawing(drawingCommand.tool, drawingCommand.id)
   }, [active, drawingCommand])
   useEffect(() => {
     if (!active || !drawingAction || drawingAction.id === lastDrawingActionRef.current || selected === null) return
