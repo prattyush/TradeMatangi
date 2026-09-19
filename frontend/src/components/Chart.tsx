@@ -114,6 +114,7 @@ const RATIO_PANEL_HEIGHT_RATIO = 0.18
 const RATIO_PANEL_EXPANDED_HEIGHT_RATIO = 0.25
 const MIN_RATIO_PANEL_HEIGHT = 90
 const CHART_DATA_CACHE_MAX = 80
+const RECENT_LIVE_TICK_SECONDS = 15 * 60
 
 const chartDataCache = new Map<string, Promise<OHLCCandle[]>>()
 
@@ -162,6 +163,26 @@ function toIndicatorCandle(c: OHLCCandle | BarCandle): IndicatorCandle {
     low: c.low,
     close: c.close,
   }
+}
+
+function appendRecentLiveTick(ticks: TickEvent[], tick: TickEvent): TickEvent[] {
+  const byTime = new Map(ticks.map(item => [item.time, item]))
+  byTime.set(tick.time, tick)
+  const cutoff = tick.time - RECENT_LIVE_TICK_SECONDS
+  return [...byTime.values()].filter(item => item.time >= cutoff).sort((left, right) => left.time - right.time)
+}
+
+function mergeRecentTicksIntoHistory(candles: OHLCCandle[], ticks: TickEvent[], intervalMinutes: number): OHLCCandle[] {
+  const intervalSecs = intervalMinutes * 60
+  const byTime = new Map(candles.map(candle => [candle.time, { ...candle }]))
+  for (const tick of ticks) {
+    const time = Math.floor(tick.time / intervalSecs) * intervalSecs
+    const current = byTime.get(time)
+    byTime.set(time, current
+      ? { time, open: current.open, high: Math.max(current.high, tick.high), low: Math.min(current.low, tick.low), close: tick.close }
+      : { time, open: tick.open, high: tick.high, low: tick.low, close: tick.close })
+  }
+  return [...byTime.values()].sort((left, right) => left.time - right.time)
 }
 
 function nextEMA(prev: number, close: number, k: number): number {
@@ -401,6 +422,7 @@ export default function Chart({
   const ema9Ref = useRef<ISeriesApi<'Line'> | null>(null)
   const ema21Ref = useRef<ISeriesApi<'Line'> | null>(null)
   const liveWindowRef = useRef<{ start: number; open: number; high: number; low: number; close: number } | null>(null)
+  const recentLiveTicksRef = useRef<TickEvent[]>([])
   const lastEma9Ref = useRef<number | null>(null)
   const lastEma21Ref = useRef<number | null>(null)
   const candleTimesRef = useRef<number[]>([])
@@ -828,7 +850,7 @@ export default function Chart({
         ])
         if (cancelled) return
 
-        const allCandles = [...histCandles, ...preCandles]
+        const allCandles = mergeRecentTicksIntoHistory([...histCandles, ...preCandles], recentLiveTicksRef.current, intervalMinutes)
         if (allCandles.length === 0) return
 
         series.setData(allCandles.map(toCandle))
@@ -900,6 +922,7 @@ export default function Chart({
     )
       .then((candles) => {
         if (cancelled) return
+        const patchedCandles = mergeRecentTicksIntoHistory(candles, recentLiveTicksRef.current, intervalMinutes)
         // Only show candles BEFORE the session start window — live ticks will
         // append from startTime onwards. Loading future candles first would
         // cause "Cannot update oldest data" when the first live tick arrives.
@@ -919,7 +942,7 @@ export default function Chart({
           : liveFromTs
             ? Math.floor(liveFromTs / intervalSecs) * intervalSecs
             : startWindowTs
-        const priorCandles = candles.filter(c => c.time < cutoffTs)
+        const priorCandles = patchedCandles.filter(c => c.time < cutoffTs)
 
         series.setData(priorCandles.map(toCandle))
         publishIndicatorCandles(priorCandles.map(toIndicatorCandle))
@@ -933,7 +956,7 @@ export default function Chart({
         // the in-progress bar and restarting from the next arriving tick.
         const liveTsForRestore = currentSimTimeRef.current ?? latestTickRef.current?.time
         if (liveTsForRestore != null) {
-          const partialCandle = candles.find(c => c.time === cutoffTs)
+          const partialCandle = patchedCandles.find(c => c.time === cutoffTs)
           if (partialCandle) {
             liveWindowRef.current = { start: partialCandle.time, open: partialCandle.open, high: partialCandle.high, low: partialCandle.low, close: partialCandle.close }
           }
@@ -969,10 +992,15 @@ export default function Chart({
   const intervalSecs = CANDLE_INTERVAL_SECS(intervalMinutes)
 
   useEffect(() => {
+    recentLiveTicksRef.current = []
+  }, [symbol, tradingDate, paneType, strike, expiry, right])
+
+  useEffect(() => {
     const series = seriesRef.current
     const e9 = ema9Ref.current
     const e21 = ema21Ref.current
     if (!latestTick || !series || !e9 || !e21) return
+    recentLiveTicksRef.current = appendRecentLiveTick(recentLiveTicksRef.current, latestTick)
 
     onPriceUpdate?.(latestTick.close)
 

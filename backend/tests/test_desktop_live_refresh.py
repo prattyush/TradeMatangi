@@ -80,8 +80,90 @@ async def test_refresh_does_not_lose_a_tick_received_while_history_loads(monkeyp
         await consumer
 
     active = next(item for item in current["candles"] if item["timestamp"] == boundary)
-    assert active == candle(boundary, 100) | {"high": 111, "close": 111}
+    assert active == candle(boundary, 100)
+    assert current["latest_tick"] == candle(boundary + 20, 111)
     assert next(item for item in current["candles"] if item["timestamp"] == boundary - 180)["close"] == 2
+
+
+@pytest.mark.asyncio
+async def test_interval_reconfiguration_keeps_the_existing_raw_tick_route(monkeypatch):
+    current = tile("three", 3, [candle(180, 100)])
+    current["latest_tick"] = candle(200, 101)
+    stream = live.DesktopStream(stream_id="stream", user_id="user", generation=1, tiles=[current])
+    task = asyncio.create_task(asyncio.sleep(60))
+    stream.tile_tasks[current["tile_id"]] = task
+
+    async def load_history(tile):
+        assert tile["interval_minutes"] == 5
+        return [candle(0, 90), candle(300, 102)]
+
+    monkeypatch.setattr(live, "_load_history", load_history)
+    await live.reconfigure_interval(stream, current, 5)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert stream.tile_tasks[current["tile_id"]] is task
+    assert current["latest_tick"] == candle(200, 101)
+    assert current["candles"] == [candle(0, 90), candle(300, 102)]
+
+
+@pytest.mark.asyncio
+async def test_duplicate_live_tiles_reuse_cached_history(monkeypatch):
+    first = tile("first", 3, [])
+    second = tile("second", 3, [])
+    stream = live.DesktopStream(stream_id="stream", user_id="user", generation=1, tiles=[first, second])
+    calls = 0
+
+    async def load_history(_tile):
+        nonlocal calls
+        calls += 1
+        return [candle(180, 100)]
+
+    monkeypatch.setattr(live, "_load_history", load_history)
+    await live._seed(stream, first)
+    await live._seed(stream, second)
+
+    assert calls == 1
+    assert first["candles"] == [candle(180, 100)]
+    assert second["candles"] == [candle(180, 100)]
+    assert first["candles"] is not second["candles"]
+
+
+@pytest.mark.asyncio
+async def test_duplicate_instrument_live_tiles_share_one_provider_route(monkeypatch):
+    import app.services.breeze_service as breeze_service
+
+    first = tile("first", 3, [candle(180, 100)])
+    second = tile("second", 5, [candle(0, 90)])
+    stream = live.DesktopStream(stream_id="stream", user_id="user", generation=1, tiles=[first, second])
+    first.pop("subscribed")
+    second.pop("subscribed")
+    starts = []
+
+    async def seed(_stream, current):
+        current["availability"] = "available"
+
+    class FakeManager:
+        @staticmethod
+        def instrument_route_key(instrument):
+            return f"{instrument['exchange_code']}:{instrument['stock_code']}"
+
+        def start(self, _queue, _loop, instruments, routes=None):
+            starts.append((instruments, routes))
+
+        def stop(self):
+            pass
+
+    monkeypatch.setattr(live, "_seed", seed)
+    monkeypatch.setattr(breeze_service, "BreezeStreamManager", FakeManager)
+
+    await live.activate(stream)
+
+    instruments, routes = starts[0]
+    assert len(instruments) == 1
+    route_queues = next(iter(routes.values()))
+    assert route_queues == [stream.tile_queues["first"], stream.tile_queues["second"]]
 
 
 @pytest.mark.asyncio

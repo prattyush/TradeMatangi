@@ -27,6 +27,7 @@ class DesktopStream:
     tile_queues: dict[str, asyncio.Queue] = field(default_factory=dict)
     tile_tasks: dict[str, asyncio.Task] = field(default_factory=dict)
     tile_locks: dict[str, asyncio.Lock] = field(default_factory=dict)
+    history_cache: dict[str, list[dict]] = field(default_factory=dict)
 
 
 _streams: dict[str, DesktopStream] = {}
@@ -62,6 +63,16 @@ def stop(user_id: str, stream_id: str) -> bool:
             pass
     _streams.pop(stream_id, None)
     return True
+
+
+def _history_cache_key(tile: dict) -> str:
+    today = datetime.now(ZoneInfo("Asia/Kolkata")).date().isoformat()
+    try:
+        from app.services.desktop_persistence_service import canonical_instrument_id
+        instrument = canonical_instrument_id(tile["instrument"])
+    except (KeyError, ValueError):
+        instrument = repr(sorted(tile["instrument"].items()))
+    return f"{instrument}:{today}:{tile['interval_minutes']}"
 
 
 async def deactivate_tile(stream: DesktopStream, tile_id: str) -> None:
@@ -147,7 +158,10 @@ async def _load_history(tile: dict) -> list[dict]:
 async def _seed(stream: DesktopStream, tile: dict) -> None:
     """Load initial history and report a provider error only for this tile."""
     try:
-        candles = await _load_history(tile)
+        key = _history_cache_key(tile)
+        if key not in stream.history_cache:
+            stream.history_cache[key] = await _load_history(tile)
+        candles = [candle.copy() for candle in stream.history_cache[key]]
     except Exception as error:
         async with _tile_lock(stream, tile["tile_id"]):
             tile["availability"] = "provider_error"
@@ -160,18 +174,22 @@ async def _seed(stream: DesktopStream, tile: dict) -> None:
 
 
 async def _consume(stream: DesktopStream, tile: dict, queue: asyncio.Queue) -> None:
-    """Aggregate authorised one-second Breeze updates into the tile interval."""
-    interval_seconds = tile["interval_minutes"] * 60
+    """Keep an interval-neutral latest Breeze second for one desktop tile."""
     while not stream.stopped:
         tick = await queue.get()
-        timestamp = (int(tick["time"]) // interval_seconds) * interval_seconds
+        latest_tick = {"timestamp": int(tick["time"]), "open": tick["open"], "high": tick["high"], "low": tick["low"], "close": tick["close"]}
         async with _tile_lock(stream, tile["tile_id"]):
-            current = next((bar for bar in reversed(tile.get("candles", [])) if bar["timestamp"] == timestamp), None)
-            candle = {"timestamp": timestamp, "open": tick["open"], "high": tick["high"], "low": tick["low"], "close": tick["close"]} if current is None else {"timestamp": timestamp, "open": current["open"], "high": max(current["high"], tick["high"]), "low": min(current["low"], tick["low"]), "close": tick["close"]}
-            tile["candles"] = _merge(tile.get("candles", []), candle)
+            tile["latest_tick"] = latest_tick
             tile["availability"] = "available"
             tile.pop("reason", None)
-        await publish(stream, "candle", tile["tile_id"], candle)
+        await publish(stream, "candle", tile["tile_id"], latest_tick)
+
+
+async def reconfigure_interval(stream: DesktopStream, tile: dict, interval_minutes: int) -> None:
+    """Reload one tile's history without disturbing its raw-tick route."""
+    async with _tile_lock(stream, tile["tile_id"]):
+        tile["interval_minutes"] = interval_minutes
+    await _seed(stream, tile)
 
 
 async def activate(stream: DesktopStream) -> None:
@@ -200,14 +218,17 @@ async def activate(stream: DesktopStream) -> None:
         if stream.manager:
             stream.manager.stop()
         manager = BreezeStreamManager()
-        instruments = [_breeze_instrument(tile["instrument"]) for tile in active_tiles]
         routes: dict[str, list[asyncio.Queue]] = {}
-        for tile, instrument in zip(active_tiles, instruments):
-            routes.setdefault(BreezeStreamManager.instrument_route_key(instrument), []).append(stream.tile_queues[tile["tile_id"]])
+        instruments_by_route: dict[str, dict] = {}
+        for tile in active_tiles:
+            instrument = _breeze_instrument(tile["instrument"])
+            route = BreezeStreamManager.instrument_route_key(instrument)
+            instruments_by_route.setdefault(route, instrument)
+            routes.setdefault(route, []).append(stream.tile_queues[tile["tile_id"]])
         # The fallback queue is unused for routed desktop streams; keep it
         # unbounded so an unexpected provider identity can never raise QueueFull
         # in the event loop. Routed ticks are delivered only to their tile queue.
-        manager.start(asyncio.Queue(), loop, instruments, routes=routes)
+        manager.start(asyncio.Queue(), loop, list(instruments_by_route.values()), routes=routes)
         stream.manager = manager
         stream.managers = [manager]
     except Exception as error:

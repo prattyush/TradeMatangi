@@ -24,8 +24,9 @@ const ensureExtensions = () => {
 
 interface DrawingCommand { id: number; tool: string }
 interface DrawingAction { id: number; action: 'delete' | 'hide' | 'lock' }
+type DrawingMode = 'once' | 'repeat'
 
-export function ChartTile({ symbol, interval, supportedIntervals, onIntervalChange, candles = demo, loading, message, settings, isReplaying, isLive, instrument, baseUrl, onConfigure, onMaximize, maximized, active, indicators, drawingCommand, drawingAction, onActivate }: { symbol: string; interval: string; supportedIntervals: number[]; onIntervalChange: (interval: string) => void; candles?: Candle[]; loading: boolean; message: string; settings: ChartSettings; isReplaying: boolean; isLive: boolean; replayDatasetKey?: string; instrument: Record<string, unknown>; baseUrl: string; onConfigure: () => void; onMaximize: () => void; maximized: boolean; active: boolean; indicators: string[]; drawingCommand: DrawingCommand | null; drawingAction: DrawingAction | null; onActivate: () => void }) {
+export function ChartTile({ symbol, interval, supportedIntervals, onIntervalChange, candles = demo, loading, message, settings, isReplaying, isLive, instrument, baseUrl, onConfigure, onMaximize, maximized, active, indicators, drawingCommand, drawingAction, drawingMode, onDrawingComplete, onActivate }: { symbol: string; interval: string; supportedIntervals: number[]; onIntervalChange: (interval: string) => void; candles?: Candle[]; loading: boolean; message: string; settings: ChartSettings; isReplaying: boolean; isLive: boolean; replayDatasetKey?: string; instrument: Record<string, unknown>; baseUrl: string; onConfigure: () => void; onMaximize: () => void; maximized: boolean; active: boolean; indicators: string[]; drawingCommand: DrawingCommand | null; drawingAction: DrawingAction | null; drawingMode: DrawingMode; onDrawingComplete: () => void; onActivate: () => void }) {
   const element = useRef<HTMLDivElement>(null)
   const chartRef = useRef<Chart | null>(null)
   const candlesRef = useRef(candles)
@@ -33,10 +34,12 @@ export function ChartTile({ symbol, interval, supportedIntervals, onIntervalChan
   const subscribeBarRef = useRef<((data: KLineData) => void) | null>(null)
   const lastDrawingCommandRef = useRef(0)
   const lastDrawingActionRef = useRef(0)
+  const drawingModeRef = useRef<DrawingMode>(drawingMode)
   const [, setDrawings] = useState<Array<{ id: string; tool: string; locked: boolean; hidden: boolean }>>([])
   const [selected, setSelected] = useState<string | null>(null)
   const [clock, setClock] = useState(() => Date.now())
   const indicatorKey = indicators.join('|')
+  useEffect(() => { drawingModeRef.current = drawingMode }, [drawingMode])
   useEffect(() => {
     if (!isLive) return
     setClock(Date.now())
@@ -125,7 +128,7 @@ export function ChartTile({ symbol, interval, supportedIntervals, onIntervalChan
       // Use a high-contrast explicit line instead of depending on a theme's
       // drawing defaults, which made newly-created overlays hard to see.
       styles: { line: { color: lineColor, size: lineWidth, style: 'solid', dashedValue: [2, 2] }, polygon: { color: fillColor }, rect: { color: fillColor }, circle: { color: fillColor } },
-      onDrawEnd: event => { const points = event.overlay.points.map(point => ({ timestamp: Math.floor(Number(point.timestamp) / 1000), price: Number(point.value) })); if (points.length) void invoke('desktop_drawing_request', { baseUrl, path: 'drawings', method: 'POST', body: { instrument, drawing: { tool: nextTool, points, style: { color: lineColor, width: lineWidth, fillColor, fillOpacity: settings.drawingFillOpacity }, visible: true, locked: false } } }) },
+      onDrawEnd: event => { const points = event.overlay.points.map(point => ({ timestamp: Math.floor(Number(point.timestamp) / 1000), price: Number(point.value) })); if (points.length) void invoke('desktop_drawing_request', { baseUrl, path: 'drawings', method: 'POST', body: { instrument, drawing: { tool: nextTool, points, style: { color: lineColor, width: lineWidth, fillColor, fillOpacity: settings.drawingFillOpacity }, visible: true, locked: false } } }); onDrawingComplete(); if (drawingModeRef.current === 'repeat') window.setTimeout(() => addDrawing(nextTool), 0) },
       onSelected: event => setSelected(event.overlay.id),
       onRemoved: event => setDrawings(current => current.filter(drawing => drawing.id !== event.overlay.id)),
     })
