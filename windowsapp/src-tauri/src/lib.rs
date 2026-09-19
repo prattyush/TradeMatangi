@@ -214,15 +214,43 @@ fn percent_decode(value: &str) -> Result<String, String> {
     String::from_utf8(decoded).map_err(|_| "Malformed OAuth callback".into())
 }
 
+fn google_authorize_url(client_id: &str, redirect_uri: &str, challenge: &str, state: &str) -> String {
+    format!(
+        "https://accounts.google.com/o/oauth2/v2/auth?client_id={}&redirect_uri={}&response_type=code&scope=openid%20email%20profile&code_challenge={}&code_challenge_method=S256&state={}",
+        percent_encode(client_id),
+        percent_encode(redirect_uri),
+        percent_encode(challenge),
+        percent_encode(state),
+    )
+}
+
+#[cfg(target_os = "windows")]
+fn windows_url_launcher(url: &str) -> (&'static str, Vec<&str>) {
+    ("rundll32.exe", vec!["url.dll,FileProtocolHandler", url])
+}
+
 fn open_external_url(url: &str) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
         use std::os::windows::process::CommandExt;
-        Command::new("cmd")
+        let (program, args) = windows_url_launcher(url);
+        let first_error = Command::new(program)
             .creation_flags(0x08000000)
-            .args(["/C", "start", "", url])
+            .args(&args)
             .spawn()
-            .map_err(|error| format!("Could not open the system browser: {error}"))?;
+            .map(|_| ())
+            .map_err(|error| error.to_string());
+        if let Err(error) = first_error {
+            Command::new("explorer.exe")
+                .creation_flags(0x08000000)
+                .arg(url)
+                .spawn()
+                .map_err(|fallback_error| {
+                    format!(
+                        "Could not open the system browser: {error}; fallback failed: {fallback_error}"
+                    )
+                })?;
+        }
     }
     #[cfg(target_os = "macos")]
     {
@@ -251,13 +279,7 @@ fn authorize_google_in_browser(client_id: String) -> Result<String, String> {
     let verifier = random_url_token()?;
     let state = random_url_token()?;
     let challenge = URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()));
-    let authorize_url = format!(
-        "https://accounts.google.com/o/oauth2/v2/auth?client_id={}&redirect_uri={}&response_type=code&scope=openid%20email%20profile&code_challenge={}&code_challenge_method=S256&state={}",
-        percent_encode(&client_id),
-        percent_encode(&redirect_uri),
-        percent_encode(&challenge),
-        percent_encode(&state),
-    );
+    let authorize_url = google_authorize_url(&client_id, &redirect_uri, &challenge, &state);
     open_external_url(&authorize_url)?;
 
     let (mut stream, _) = listener
@@ -1193,6 +1215,36 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn google_authorize_url_contains_required_oauth_parameters() {
+        let url = google_authorize_url(
+            "desktop-client-id.apps.googleusercontent.com",
+            "http://127.0.0.1:8765/oauth/callback",
+            "challenge/with+reserved=",
+            "state&value",
+        );
+
+        assert!(url.starts_with("https://accounts.google.com/o/oauth2/v2/auth?"));
+        assert!(url.contains("client_id=desktop-client-id.apps.googleusercontent.com"));
+        assert!(url.contains("redirect_uri=http%3A%2F%2F127.0.0.1%3A8765%2Foauth%2Fcallback"));
+        assert!(url.contains("response_type=code"));
+        assert!(url.contains("scope=openid%20email%20profile"));
+        assert!(url.contains("code_challenge=challenge%2Fwith%2Breserved%3D"));
+        assert!(url.contains("code_challenge_method=S256"));
+        assert!(url.contains("state=state%26value"));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_url_launcher_passes_oauth_url_as_single_argument() {
+        let oauth_url = "https://accounts.google.com/o/oauth2/v2/auth?client_id=id&redirect_uri=http%3A%2F%2F127.0.0.1%3A8765%2Foauth%2Fcallback&response_type=code";
+        let (program, args) = windows_url_launcher(oauth_url);
+
+        assert_eq!(program, "rundll32.exe");
+        assert_eq!(args, vec!["url.dll,FileProtocolHandler", oauth_url]);
+    }
+
     #[test]
     fn fake_sse_updates_host_state_without_a_webview_listener() {
         let host = HostState::default();
