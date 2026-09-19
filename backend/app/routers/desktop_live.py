@@ -76,6 +76,12 @@ async def configure_live_tile(stream_id: str, tile_id: str, req: ConfigureLiveRe
     replacement = _tile_state(req.tile)
     for index, tile in enumerate(stream.tiles):
         if tile["tile_id"] == tile_id:
+            # Candle interval is a client-side aggregation concern in Live.
+            # Keep the existing raw-tick queue and provider route, only reload
+            # this tile's historical baseline at the requested interval.
+            if tile.get("instrument") == replacement.get("instrument") and tile.get("subscribed"):
+                await live.reconfigure_interval(stream, tile, replacement["interval_minutes"])
+                return live.snapshot(stream)
             await live.deactivate_tile(stream, tile_id)
             stream.tiles[index] = replacement
             await live.activate(stream)
