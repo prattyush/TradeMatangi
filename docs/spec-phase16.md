@@ -18,9 +18,9 @@ workflows.
 - The chart-only Live hub is active and isolated from trading services. It
   supports up to four independently configured tiles, including duplicate
   instruments, whose provider ticks are fanned out to every matching tile.
-- Live snapshots currently reach the desktop once per second through the
-  existing browser/native request bridge. Native-host SSE recovery remains
-  Sprint 6 work.
+- Live snapshots reach the desktop through the native-host stream bridge.
+  Native-host SSE recovery, reconnect, snapshot reconciliation, and background
+  continuity are implemented.
 - Refresh safely replaces completed provider history while retaining the
   in-memory, tick-built active candle; per-chart close timers use each tile's
   selected interval.
@@ -41,9 +41,9 @@ merges the active session's raw ticks back over the returned history to cover
 provider lag while preserving the active live candle.
 
 The website chart keeps only a 15-minute recent tick cache for this same
-refresh backfill purpose. Drawing persistence remains Sprint 3 work, and full
-screen persistence remains in the later desktop shell persistence scope rather
-than this Live/cache pass.
+refresh backfill purpose. Desktop screen, viewport, indicator, and drawing
+persistence are implemented, including restoration across matching charts and
+screens. Full live-environment validation remains before release sign-off.
 
 ## Desktop Technology
 
@@ -327,6 +327,28 @@ migration must remain reversible until it passes simulation, stepwise, paper,
 and real-trading smoke tests.
 
 ## Implementation Plan
+
+### Implementation Status
+
+Implementation for the Phase 16 release scope covering Sprints 0–8 is complete
+on `dev`. The changes have been merged to `main` and the implemented flows
+have passed local and development testing. The remaining release gate is live
+testing against the deployed backend and Windows runtime.
+
+| Sprint | Area | Status | Remaining validation |
+|--------|------|--------|----------------------|
+| 0 | Tauri/KLineCharts foundation and chart contracts | ✅ Implemented | Live Windows smoke test |
+| 1 | JWT authentication and desktop API foundation | ✅ Implemented | Deployed auth and logout/reconnect checks |
+| 2 | Symbols, Browse mode, and historical data | ✅ Implemented | Live catalogue and historical-data checks |
+| 3 | Screens, layouts, and drawing persistence | ✅ Implemented | Restart, multi-screen, and deployed-backend checks |
+| 4 | Chart-only Live stream backend | ✅ Implemented | Provider/network interruption testing |
+| 5 | Shared Replay and Stepwise backend | ✅ Implemented | Live replay and Stepwise session testing |
+| 6 | Native host streaming and background recovery | ✅ Implemented | Minimize, sleep/resume, reconnect, and token-expiry testing |
+| 7 | Desktop workspace and chart UI | ✅ Implemented | Windows 10/11 live smoke test |
+| 8 | Indicators, drawings, and offline UI | ✅ Implemented | Offline queue and last-write-wins testing in the live environment |
+
+Sprint 9 (NIFTY 100 expansion and final packaging) remains follow-up scope and
+is not part of the completed Sprints 0–8 release gate.
 
 ### Delivery Strategy
 
