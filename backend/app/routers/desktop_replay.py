@@ -1,12 +1,15 @@
 """Sprint 5 shared Replay and Stepwise controls for a desktop screen."""
 import asyncio
+import json
 import logging
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from app.dependencies import get_desktop_user_id
+from app.services import desktop_live_service as live_events
 from app.services import desktop_replay_service as replay
 from app.services.desktop_persistence_service import canonical_instrument_id
 
@@ -30,6 +33,10 @@ class StartReplayRequest(BaseModel):
 
 class SyncReplayTilesRequest(BaseModel):
     tiles: list[ReplayTile] = Field(min_length=1, max_length=4)
+
+
+class SpeedUpdateRequest(BaseModel):
+    speed: float = Field(ge=0.05, le=100)
 
 
 def _cursor(date: str, start_time: str) -> int:
@@ -66,6 +73,50 @@ async def snapshot(run_id: str, user_id: str = Depends(get_desktop_user_id)):
     return replay.snapshot(run)
 
 
+def _event_id(raw: str | None) -> int | None:
+    try:
+        return int(raw) if raw not in (None, "") else None
+    except ValueError:
+        return None
+
+
+@router.get("/{run_id}/events")
+async def events(
+    run_id: str,
+    last_event_id: int | None = Query(default=None),
+    last_event_id_header: str | None = Header(default=None, alias="Last-Event-ID"),
+    user_id: str = Depends(get_desktop_user_id),
+):
+    run = replay.get(user_id, run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Replay run was not found")
+
+    async def event_source():
+        queue: asyncio.Queue = asyncio.Queue(maxsize=256)
+        run.stream.subscribers.append(queue)
+        try:
+            cursor = last_event_id if last_event_id is not None else _event_id(last_event_id_header)
+            reset, buffered = live_events.events_after(run.stream, cursor)
+            if reset:
+                yield f"event: stream_reset\ndata: {json.dumps(replay.snapshot(run))}\n\n"
+            elif cursor is None:
+                yield f"id: {run.stream.event_id}\nevent: snapshot\ndata: {json.dumps(replay.snapshot(run))}\n\n"
+            else:
+                for event in buffered:
+                    yield f"id: {event['event_id']}\nevent: {event['type']}\ndata: {json.dumps(event['payload'])}\n\n"
+            while run.state != "stopped":
+                try:
+                    event = await asyncio.wait_for(queue.get(), timeout=15)
+                    yield f"id: {event['event_id']}\nevent: {event['type']}\ndata: {json.dumps(event['payload'])}\n\n"
+                except asyncio.TimeoutError:
+                    yield ": heartbeat\n\n"
+            yield f"id: {run.stream.event_id}\nevent: replay_stopped\ndata: {json.dumps(replay.snapshot(run))}\n\n"
+        finally:
+            if queue in run.stream.subscribers:
+                run.stream.subscribers.remove(queue)
+    return StreamingResponse(event_source(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
 @router.put("/{run_id}/tiles")
 async def sync_tiles(run_id: str, req: SyncReplayTilesRequest, user_id: str = Depends(get_desktop_user_id)):
     run = replay.get(user_id, run_id)
@@ -99,6 +150,17 @@ async def resume(run_id: str, user_id: str = Depends(get_desktop_user_id)):
     if not run:
         raise HTTPException(status_code=404, detail="Replay run was not found")
     await replay.resume(run)
+    return replay.snapshot(run)
+
+
+@router.post("/{run_id}/speed")
+async def update_speed(run_id: str, req: SpeedUpdateRequest, user_id: str = Depends(get_desktop_user_id)):
+    run = replay.get(user_id, run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Replay run was not found")
+    if run.mode != "replay" or run.state == "stopped":
+        raise HTTPException(status_code=409, detail="Replay speed can only change during a normal replay run")
+    await replay.update_speed(run, req.speed)
     return replay.snapshot(run)
 
 

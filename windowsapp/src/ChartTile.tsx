@@ -25,6 +25,12 @@ const ensureExtensions = () => {
 interface DrawingCommand { id: number; tool: string }
 interface DrawingAction { id: number; action: 'delete' | 'hide' | 'lock' }
 type DrawingMode = 'once' | 'repeat'
+interface PersistedDrawing { tool: string; points: Array<{ timestamp: number; price: number }>; style?: { color?: string; width?: number; fillColor?: string; fillOpacity?: number }; visible?: boolean; locked?: boolean }
+interface DrawingRecord { drawing_id: string; revision: number; drawing: PersistedDrawing }
+interface LocalDrawing { id: string; backendId?: string; revision?: number; drawing: PersistedDrawing; locked: boolean; hidden: boolean }
+const hasNativeHost = '__TAURI_INTERNALS__' in window
+const overlayName = (tool: string) => tool === 'Trend' ? 'segment' : tool === 'Horizontal' ? 'horizontalStraightLine' : tool === 'Fib Retracement' ? 'fibonacciLine' : tool
+const drawingPoints = (drawing: PersistedDrawing) => drawing.points.map(point => ({ timestamp: point.timestamp * 1000, value: point.price }))
 
 export function ChartTile({ symbol, interval, supportedIntervals, onIntervalChange, candles = demo, loading, message, settings, isReplaying, isLive, instrument, baseUrl, onConfigure, onMaximize, maximized, active, indicators, drawingCommand, drawingAction, drawingMode, onDrawingComplete, onActivate }: { symbol: string; interval: string; supportedIntervals: number[]; onIntervalChange: (interval: string) => void; candles?: Candle[]; loading: boolean; message: string; settings: ChartSettings; isReplaying: boolean; isLive: boolean; replayDatasetKey?: string; instrument: Record<string, unknown>; baseUrl: string; onConfigure: () => void; onMaximize: () => void; maximized: boolean; active: boolean; indicators: string[]; drawingCommand: DrawingCommand | null; drawingAction: DrawingAction | null; drawingMode: DrawingMode; onDrawingComplete: () => void; onActivate: () => void }) {
   const element = useRef<HTMLDivElement>(null)
@@ -35,7 +41,7 @@ export function ChartTile({ symbol, interval, supportedIntervals, onIntervalChan
   const lastDrawingCommandRef = useRef(0)
   const lastDrawingActionRef = useRef(0)
   const drawingModeRef = useRef<DrawingMode>(drawingMode)
-  const [, setDrawings] = useState<Array<{ id: string; tool: string; locked: boolean; hidden: boolean }>>([])
+  const [drawings, setDrawings] = useState<LocalDrawing[]>([])
   const [selected, setSelected] = useState<string | null>(null)
   const [clock, setClock] = useState(() => Date.now())
   const indicatorKey = indicators.join('|')
@@ -109,16 +115,47 @@ export function ChartTile({ symbol, interval, supportedIntervals, onIntervalChan
     chart.setBarSpace(barSpace)
     renderedCandlesRef.current = candles
   }, [candles, isReplaying])
+  const persistDrawing = async (path: string, method: 'POST' | 'PUT' | 'DELETE', drawing: PersistedDrawing, revision?: number) => {
+    if (!hasNativeHost) return null
+    return invoke<DrawingRecord>('desktop_drawing_request', { baseUrl, path, method, body: { instrument, drawing, revision, mutation_id: crypto.randomUUID() } })
+  }
+  const createPersistedOverlay = (record: DrawingRecord) => {
+    const style = record.drawing.style ?? {}
+    const id = chartRef.current?.createOverlay({
+      id: record.drawing_id,
+      name: overlayName(record.drawing.tool),
+      paneId: 'candle_pane',
+      points: drawingPoints(record.drawing),
+      lock: Boolean(record.drawing.locked),
+      visible: record.drawing.visible !== false,
+      styles: { line: { color: style.color ?? settings.drawingLineColor, size: style.width ?? settings.drawingLineWidth, style: 'solid', dashedValue: [2, 2] }, polygon: { color: style.fillColor ?? withOpacity(settings.drawingFillColor, style.fillOpacity ?? settings.drawingFillOpacity) }, rect: { color: style.fillColor ?? withOpacity(settings.drawingFillColor, style.fillOpacity ?? settings.drawingFillOpacity) }, circle: { color: style.fillColor ?? withOpacity(settings.drawingFillColor, style.fillOpacity ?? settings.drawingFillOpacity) } },
+      onSelected: (event: any) => setSelected(event.overlay.id),
+      onRemoved: (event: any) => setDrawings(current => current.filter(drawing => drawing.id !== event.overlay.id)),
+    } as any)
+    if (typeof id !== 'string') return
+    setDrawings(current => current.some(item => item.id === id) ? current : [...current, { id, backendId: record.drawing_id, revision: record.revision, drawing: record.drawing, locked: Boolean(record.drawing.locked), hidden: record.drawing.visible === false }])
+  }
+  useEffect(() => {
+    if (!chartRef.current || !hasNativeHost) return
+    let cancelled = false
+    const encoded = encodeURIComponent(JSON.stringify(instrument))
+    void invoke<{ drawings: DrawingRecord[] }>('desktop_drawing_request', { baseUrl, path: `drawings?instrument=${encoded}`, method: 'GET', body: {} }).then(value => {
+      if (cancelled) return
+      setDrawings([])
+      value.drawings.forEach(createPersistedOverlay)
+    }).catch(() => undefined)
+    return () => { cancelled = true }
+  }, [baseUrl, JSON.stringify(instrument), symbol, interval])
   useEffect(() => {
     const shortcuts = (event: KeyboardEvent) => {
-      if ((event.key === 'Delete' || event.key === 'Backspace') && selected !== null) { chartRef.current?.removeOverlay({ id: selected }); setDrawings(current => current.filter(drawing => drawing.id !== selected)); setSelected(null) }
+      if ((event.key === 'Delete' || event.key === 'Backspace') && selected !== null) { const drawing = drawings.find(item => item.id === selected); if (drawing?.backendId && drawing.revision) void persistDrawing(`drawings/${drawing.backendId}`, 'DELETE', drawing.drawing, drawing.revision); chartRef.current?.removeOverlay({ id: selected }); setDrawings(current => current.filter(item => item.id !== selected)); setSelected(null) }
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z') setDrawings(current => { const drawing = current[current.length - 1]; if (drawing) chartRef.current?.removeOverlay({ id: drawing.id }); setSelected(null); return current.slice(0, -1) })
     }
     window.addEventListener('keydown', shortcuts)
     return () => window.removeEventListener('keydown', shortcuts)
-  }, [selected])
+  }, [selected, drawings])
   const addDrawing = (nextTool: string) => {
-    const name = nextTool === 'Trend' ? 'segment' : nextTool === 'Horizontal' ? 'horizontalStraightLine' : nextTool === 'Fib Retracement' ? 'fibonacciLine' : nextTool
+    const name = overlayName(nextTool)
     const lineColor = nextTool === 'Trend' ? settings.trendLineColor : nextTool === 'Horizontal' ? settings.horizontalLineColor : settings.drawingLineColor
     const lineWidth = nextTool === 'Trend' ? settings.trendLineWidth : nextTool === 'Horizontal' ? settings.horizontalLineWidth : settings.drawingLineWidth
     const fillColor = withOpacity(settings.drawingFillColor, settings.drawingFillOpacity)
@@ -128,14 +165,14 @@ export function ChartTile({ symbol, interval, supportedIntervals, onIntervalChan
       // Use a high-contrast explicit line instead of depending on a theme's
       // drawing defaults, which made newly-created overlays hard to see.
       styles: { line: { color: lineColor, size: lineWidth, style: 'solid', dashedValue: [2, 2] }, polygon: { color: fillColor }, rect: { color: fillColor }, circle: { color: fillColor } },
-      onDrawEnd: event => { const points = event.overlay.points.map(point => ({ timestamp: Math.floor(Number(point.timestamp) / 1000), price: Number(point.value) })); if (points.length) void invoke('desktop_drawing_request', { baseUrl, path: 'drawings', method: 'POST', body: { instrument, drawing: { tool: nextTool, points, style: { color: lineColor, width: lineWidth, fillColor, fillOpacity: settings.drawingFillOpacity }, visible: true, locked: false } } }); onDrawingComplete(); if (drawingModeRef.current === 'repeat') window.setTimeout(() => addDrawing(nextTool), 0) },
+      onDrawEnd: event => { const points = event.overlay.points.map(point => ({ timestamp: Math.floor(Number(point.timestamp) / 1000), price: Number(point.value) })); const drawing = { tool: nextTool, points, style: { color: lineColor, width: lineWidth, fillColor, fillOpacity: settings.drawingFillOpacity }, visible: true, locked: false }; if (points.length && typeof event.overlay.id === 'string') void persistDrawing('drawings', 'POST', drawing).then(record => { if (!record) return; setDrawings(current => current.map(item => item.id === event.overlay.id ? { ...item, backendId: record.drawing_id, revision: record.revision, drawing: record.drawing } : item)) }); onDrawingComplete(); if (drawingModeRef.current === 'repeat') window.setTimeout(() => addDrawing(nextTool), 0) },
       onSelected: event => setSelected(event.overlay.id),
       onRemoved: event => setDrawings(current => current.filter(drawing => drawing.id !== event.overlay.id)),
     })
     if (typeof id !== 'string') return
-    setDrawings(current => [...current, { id, tool: nextTool, locked: false, hidden: false }]); setSelected(id)
+    setDrawings(current => [...current, { id, drawing: { tool: nextTool, points: [], style: { color: lineColor, width: lineWidth, fillColor, fillOpacity: settings.drawingFillOpacity }, visible: true, locked: false }, locked: false, hidden: false }]); setSelected(id)
   }
-  const updateSelected = (update: (drawing: { id: string; tool: string; locked: boolean; hidden: boolean }) => { id: string; tool: string; locked: boolean; hidden: boolean }) => setDrawings(current => current.map(drawing => { if (drawing.id !== selected) return drawing; const next = update(drawing); chartRef.current?.overrideOverlay({ id: next.id, lock: next.locked, visible: !next.hidden }); return next }))
+  const updateSelected = (update: (drawing: LocalDrawing) => LocalDrawing) => setDrawings(current => current.map(drawing => { if (drawing.id !== selected) return drawing; const next = update(drawing); const persisted = { ...next.drawing, locked: next.locked, visible: !next.hidden }; chartRef.current?.overrideOverlay({ id: next.id, lock: next.locked, visible: !next.hidden }); if (next.backendId && next.revision) void persistDrawing(`drawings/${next.backendId}`, 'PUT', persisted, next.revision).then(record => { if (record) setDrawings(items => items.map(item => item.id === next.id ? { ...item, revision: record.revision, drawing: record.drawing } : item)) }); return { ...next, drawing: persisted } }))
   useEffect(() => {
     if (!active || !drawingCommand || drawingCommand.id === lastDrawingCommandRef.current) return
     lastDrawingCommandRef.current = drawingCommand.id
@@ -144,10 +181,10 @@ export function ChartTile({ symbol, interval, supportedIntervals, onIntervalChan
   useEffect(() => {
     if (!active || !drawingAction || drawingAction.id === lastDrawingActionRef.current || selected === null) return
     lastDrawingActionRef.current = drawingAction.id
-    if (drawingAction.action === 'delete') { chartRef.current?.removeOverlay({ id: selected }); setDrawings(current => current.filter(drawing => drawing.id !== selected)); setSelected(null) }
+    if (drawingAction.action === 'delete') { const drawing = drawings.find(item => item.id === selected); if (drawing?.backendId && drawing.revision) void persistDrawing(`drawings/${drawing.backendId}`, 'DELETE', drawing.drawing, drawing.revision); chartRef.current?.removeOverlay({ id: selected }); setDrawings(current => current.filter(drawing => drawing.id !== selected)); setSelected(null) }
     if (drawingAction.action === 'hide') updateSelected(drawing => ({ ...drawing, hidden: !drawing.hidden }))
     if (drawingAction.action === 'lock') updateSelected(drawing => ({ ...drawing, locked: !drawing.locked }))
-  }, [active, drawingAction, selected])
+  }, [active, drawingAction, selected, drawings])
   const closeCountdown = formatCandleCloseCountdown(clock / 1000, Number(interval.replace('m', '')))
   return <section className={`chart ${active ? 'active-chart' : ''}`} style={{ background: settings.background, color: settings.textColor }} onPointerDownCapture={onActivate}><div className="chart-head"><span>{symbol} · <select className="interval-picker" value={interval.replace('m', '')} onChange={event => onIntervalChange(event.target.value)} aria-label="Candle interval">{supportedIntervals.map(value => <option key={value} value={value}>{value}m</option>)}</select> · IST</span><span className="chart-actions">{isLive && <span className="candle-close" aria-label={`Candle closes in ${closeCountdown}`}>{closeCountdown}</span>}<button className="icon-button" title="Choose instrument" aria-label="Choose instrument" onClick={onConfigure}>⌕</button><button className="icon-button" title={maximized ? 'Restore chart' : 'Maximize chart'} aria-label={maximized ? 'Restore chart' : 'Maximize chart'} onClick={onMaximize}>{maximized ? '⊡' : '⛶'}</button></span></div><div className="kline-container"><div className="kline" ref={element} />{loading && <div className="chart-loading"><span className="spinner" />Loading candles…</div>}{!loading && message && <div className="chart-loading chart-message">{message}</div>}</div></section>
 }
