@@ -3,7 +3,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { ChartTile } from './ChartTile'
 import { replayCandles } from './chartState'
 import { shouldConsumeDrawingCommand } from './drawingState'
-import type { Candle } from './contracts'
+import type { Candle, DesktopOrder, DesktopPosition, DesktopTradingSnapshot } from './contracts'
 import { aggregateLiveCandles, appendLiveTick } from './liveCandles'
 
 interface HistoricalPage { candles: Candle[]; available?: boolean; unavailable_reason?: string }
@@ -23,6 +23,8 @@ interface DesktopStreamSnapshot<T> { key: string; last_event_id: number; latest_
 interface DrawingCommand { id: number; tool: string }
 interface DrawingAction { id: number; action: 'delete' | 'hide' | 'lock' }
 type DrawingMode = 'once' | 'repeat'
+type ConversionTarget = 'LIMIT' | 'STOPLOSS' | 'TARGET'
+type OrderAction = 'BUY_LIMIT' | 'SELL_LIMIT' | 'TARGET' | 'STOPLOSS' | 'BULK_LIMIT' | 'BULK_STOPLOSS' | 'BULK_MOVE_SL'
 declare global {
   interface Window {
     google?: {
@@ -78,6 +80,11 @@ const instrumentKeyForTile = (tile: TileConfig, catalogue: Instrument[]): string
   return canonicalKey(instrument)
 }
 
+const contractKeyForTile = (tile: TileConfig): string | null => {
+  if (tile.kind !== 'option' || !tile.expiry || !tile.strike || !tile.right) return null
+  return `${tile.symbol}:${tile.expiry}:${Number(tile.strike)}:${tile.right.toUpperCase()}`
+}
+
 function WorkspaceToolPanel({ tiles, activeTileId, setActiveTileId, indicators, toggleIndicator, clearIndicators, sendDrawing, sendDrawingAction, activeDrawingTool, drawingMode, setDrawingMode }: { tiles: TileConfig[]; activeTileId: string; setActiveTileId: (tileId: string) => void; indicators: string[]; toggleIndicator: (name: string) => void; clearIndicators: () => void; sendDrawing: (tool: string) => void; sendDrawingAction: (action: DrawingAction['action']) => void; activeDrawingTool: string | null; drawingMode: DrawingMode; setDrawingMode: (mode: DrawingMode) => void }) {
   return <aside className="tool-panel" aria-label="Chart tools">
     <label>Chart<select value={activeTileId} onChange={event => setActiveTileId(event.target.value)}>{tiles.map((tile, index) => <option key={tile.id} value={tile.id}>{index + 1}. {tile.kind === 'option' ? `${tile.symbol} ${tile.strike}${tile.right}` : tile.symbol}</option>)}</select></label>
@@ -88,7 +95,7 @@ function WorkspaceToolPanel({ tiles, activeTileId, setActiveTileId, indicators, 
   </aside>
 }
 
-function InstrumentPicker({ initial, catalogue, api, onSave, onClose }: { initial: TileConfig; catalogue: Instrument[]; api: Api; onSave: (tile: TileConfig) => void; onClose: () => void }) {
+function InstrumentPicker({ initial, catalogue, api, onSave, onClose }: { initial: TileConfig; catalogue: Instrument[]; api: Api; onSave: (tile: TileConfig) => void | Promise<void>; onClose: () => void }) {
   const [draft, setDraft] = useState(initial)
   const [metadata, setMetadata] = useState<OptionMetadata | null>(null)
   const [openingPrice, setOpeningPrice] = useState<number | null>(null)
@@ -113,7 +120,7 @@ function InstrumentPicker({ initial, catalogue, api, onSave, onClose }: { initia
   const gap = metadata?.strike_interval ?? 0
   const baseStrike = openingPrice === null || !gap ? 0 : Math.round(openingPrice / gap) * gap
   const strikes = baseStrike ? Array.from({ length: 21 }, (_, index) => baseStrike + (index - 10) * gap).filter(value => value > 0) : []
-  return <div className="modal-backdrop" role="presentation"><section className="instrument-modal" role="dialog" aria-modal="true" aria-label="Select chart instrument"><header><strong>Select instrument</strong><button onClick={onClose}>×</button></header><div className="picker-fields"><label>Type<select value={draft.kind} onChange={event => setDraft({ ...draft, kind: event.target.value as TileConfig['kind'], expiry: '', strike: '' })}><option value="spot">Equity / index</option><option value="option" disabled={!instrument.option_eligible}>Option</option></select></label><label>Symbol<select value={draft.symbol} onChange={event => setDraft({ ...draft, symbol: event.target.value, expiry: '', strike: '' })}>{catalogue.map(item => <option key={item.symbol} value={item.symbol}>{item.display_name}</option>)}</select></label><label>Browse date<input type="date" value={draft.tradingDate} onChange={event => setDraft({ ...draft, tradingDate: event.target.value, expiry: '', strike: '' })} /></label>{draft.kind === 'option' && <><label>Expiry<select value={draft.expiry} onChange={event => setDraft({ ...draft, expiry: event.target.value })} disabled={!metadata?.available}>{metadata?.expiries.map(value => <option key={value} value={value}>{value}</option>)}</select></label><label>Underlying open<input value={openingPrice ?? 'Loading…'} readOnly /></label><label>Strike<select value={draft.strike} onChange={event => setDraft({ ...draft, strike: event.target.value })} disabled={!strikes.length}>{strikes.map(value => <option key={value} value={value}>{value}</option>)}</select></label><label>Right<select value={draft.right} onChange={event => setDraft({ ...draft, right: event.target.value })}>{metadata?.rights.map(value => <option key={value} value={value}>{value}</option>)}</select></label></>}</div>{metadata && !metadata.available && <p className="tile-notice">{metadata.unavailable_reason}</p>}{error && <p className="tile-notice">{error}</p>}<footer><button onClick={onClose}>Cancel</button><button className="selected" disabled={draft.kind === 'option' && (!draft.expiry || !draft.strike || !metadata?.available)} onClick={() => onSave(draft)}>Apply to chart</button></footer></section></div>
+  return <div className="modal-backdrop" role="presentation"><section className="instrument-modal" role="dialog" aria-modal="true" aria-label="Select chart instrument"><header><strong>Select instrument</strong><button onClick={onClose}>×</button></header><div className="picker-fields"><label>Type<select value={draft.kind} onChange={event => setDraft({ ...draft, kind: event.target.value as TileConfig['kind'], expiry: '', strike: '' })}><option value="spot">Equity / index</option><option value="option" disabled={!instrument.option_eligible}>Option</option></select></label><label>Symbol<select value={draft.symbol} onChange={event => setDraft({ ...draft, symbol: event.target.value, expiry: '', strike: '' })}>{catalogue.map(item => <option key={item.symbol} value={item.symbol}>{item.display_name}</option>)}</select></label><label>Browse date<input type="date" value={draft.tradingDate} onChange={event => setDraft({ ...draft, tradingDate: event.target.value, expiry: '', strike: '' })} /></label>{draft.kind === 'option' && <><label>Expiry<select value={draft.expiry} onChange={event => setDraft({ ...draft, expiry: event.target.value })} disabled={!metadata?.available}>{metadata?.expiries.map(value => <option key={value} value={value}>{value}</option>)}</select></label><label>Underlying open<input value={openingPrice ?? 'Loading…'} readOnly /></label><label>Strike<select value={draft.strike} onChange={event => setDraft({ ...draft, strike: event.target.value })} disabled={!strikes.length}>{strikes.map(value => <option key={value} value={value}>{value}</option>)}</select></label><label>Right<select value={draft.right} onChange={event => setDraft({ ...draft, right: event.target.value })}>{metadata?.rights.map(value => <option key={value} value={value}>{value}</option>)}</select></label></>}</div>{metadata && !metadata.available && <p className="tile-notice">{metadata.unavailable_reason}</p>}{error && <p className="tile-notice">{error}</p>}<footer><button onClick={onClose}>Cancel</button><button className="selected" disabled={draft.kind === 'option' && (!draft.expiry || !draft.strike || !metadata?.available)} onClick={() => void onSave(draft)}>Apply to chart</button></footer></section></div>
 }
 
 function ChartSettingsModal({ settings, onSave, onClose }: { settings: ChartSettings; onSave: (settings: ChartSettings) => void; onClose: () => void }) {
@@ -121,7 +128,7 @@ function ChartSettingsModal({ settings, onSave, onClose }: { settings: ChartSett
   return <div className="modal-backdrop"><section className="instrument-modal" role="dialog" aria-modal="true" aria-label="Chart display settings"><header><strong>Chart display</strong><button onClick={onClose}>×</button></header><div className="picker-fields"><label>Background<input type="color" value={draft.background} onChange={event => setDraft({ ...draft, background: event.target.value })} /></label><label>Text color<input type="color" value={draft.textColor} onChange={event => setDraft({ ...draft, textColor: event.target.value })} /></label><label>Grid color<input type="color" value={draft.gridColor} onChange={event => setDraft({ ...draft, gridColor: event.target.value })} /></label><label>Grid opacity <input type="range" min="0" max="1" step="0.02" value={draft.gridOpacity} onChange={event => setDraft({ ...draft, gridOpacity: Number(event.target.value) })} />{Math.round(draft.gridOpacity * 100)}%</label><label>Grid style<select value={draft.gridStyle} onChange={event => setDraft({ ...draft, gridStyle: event.target.value as ChartSettings['gridStyle'] })}><option value="solid">Solid</option><option value="dashed">Dashed</option></select></label><label>Grid thickness<select value={draft.gridSize} onChange={event => setDraft({ ...draft, gridSize: Number(event.target.value) })}><option value="1">1px</option><option value="2">2px</option></select></label><label>Moving average<select value={draft.movingAverageType} onChange={event => setDraft({ ...draft, movingAverageType: event.target.value as ChartSettings['movingAverageType'] })}><option value="MA">Simple MA</option><option value="EMA">Exponential MA</option></select></label><label>MA/EMA periods<input value={draft.movingAveragePeriods} onChange={event => setDraft({ ...draft, movingAveragePeriods: event.target.value.replace(/[^0-9,]/g, '') })} placeholder="5,10,20" /></label><label>Horizontal line color<input type="color" value={draft.horizontalLineColor} onChange={event => setDraft({ ...draft, horizontalLineColor: event.target.value })} /></label><label>Horizontal line width<select value={draft.horizontalLineWidth} onChange={event => setDraft({ ...draft, horizontalLineWidth: Number(event.target.value) })}><option value="1">1px</option><option value="2">2px</option><option value="3">3px</option><option value="4">4px</option></select></label><label>Trend line color<input type="color" value={draft.trendLineColor} onChange={event => setDraft({ ...draft, trendLineColor: event.target.value })} /></label><label>Trend line width<select value={draft.trendLineWidth} onChange={event => setDraft({ ...draft, trendLineWidth: Number(event.target.value) })}><option value="1">1px</option><option value="2">2px</option><option value="3">3px</option><option value="4">4px</option></select></label><label>Other drawing line<input type="color" value={draft.drawingLineColor} onChange={event => setDraft({ ...draft, drawingLineColor: event.target.value })} /></label><label>Other drawing width<select value={draft.drawingLineWidth} onChange={event => setDraft({ ...draft, drawingLineWidth: Number(event.target.value) })}><option value="1">1px</option><option value="2">2px</option><option value="3">3px</option><option value="4">4px</option></select></label><label>Shape fill color<input type="color" value={draft.drawingFillColor} onChange={event => setDraft({ ...draft, drawingFillColor: event.target.value })} /></label><label>Shape fill opacity <input type="range" min="0" max="0.8" step="0.02" value={draft.drawingFillOpacity} onChange={event => setDraft({ ...draft, drawingFillOpacity: Number(event.target.value) })} />{Math.round(draft.drawingFillOpacity * 100)}%</label></div><footer><button onClick={onClose}>Cancel</button><button className="selected" onClick={() => onSave(draft)}>Save settings</button></footer></section></div>
 }
 
-function DesktopTile({ config, catalogue, connection, api, settings, serverUrl, replayCursor, replayRunId, replayCandle, replayAttached, liveTile, liveTicks, onLiveTick, onConfigure, onMaximize, onIntervalChange, maximized, active, indicators, drawingCommand, drawingAction, drawingMode, onDrawingComplete, onActivate }: { config: TileConfig; catalogue: Instrument[]; connection: string; api: Api; settings: ChartSettings; serverUrl: string; replayCursor?: number; replayRunId?: string; replayCandle?: Candle; replayAttached?: boolean; liveTile?: LiveTileState; liveTicks: Candle[]; onLiveTick: (key: string, tick: Candle) => void; onConfigure: () => void; onMaximize: () => void; onIntervalChange: (interval: string) => void; maximized: boolean; active: boolean; indicators: string[]; drawingCommand: DrawingCommand | null; drawingAction: DrawingAction | null; drawingMode: DrawingMode; onDrawingComplete: (commandId: number, tool: string) => void; onActivate: () => void }) {
+function DesktopTile({ config, catalogue, connection, api, settings, serverUrl, replayCursor, replayRunId, replayCandle, replayAttached, liveTile, liveTicks, onLiveTick, onConfigure, onMaximize, onIntervalChange, maximized, active, indicators, drawingCommand, drawingAction, drawingMode, onDrawingComplete, onActivate, tradingSnapshot, pricePickAction, onPricePick, onOrderDrag, onOrderCancel, onOrderConvertRequest, onChartOrderAction }: { config: TileConfig; catalogue: Instrument[]; connection: string; api: Api; settings: ChartSettings; serverUrl: string; replayCursor?: number; replayRunId?: string; replayCandle?: Candle; replayAttached?: boolean; liveTile?: LiveTileState; liveTicks: Candle[]; onLiveTick: (key: string, tick: Candle) => void; onConfigure: () => void; onMaximize: () => void; onIntervalChange: (interval: string) => void; maximized: boolean; active: boolean; indicators: string[]; drawingCommand: DrawingCommand | null; drawingAction: DrawingAction | null; drawingMode: DrawingMode; onDrawingComplete: (commandId: number, tool: string) => void; onActivate: () => void; tradingSnapshot?: DesktopTradingSnapshot | null; pricePickAction?: { orderId?: string; conversion?: ConversionTarget } | null; onPricePick?: (price: number) => void; onOrderDrag?: (order: DesktopOrder, price: number) => void; onOrderCancel?: (order: DesktopOrder) => void; onOrderConvertRequest?: (order: DesktopOrder, target: ConversionTarget) => void; onChartOrderAction?: (tile: TileConfig, action: OrderAction, price: number) => void }) {
   const [metadata, setMetadata] = useState<OptionMetadata | null>(null)
   const [candles, setCandles] = useState<Candle[]>([])
   const [status, setStatus] = useState('')
@@ -141,11 +148,19 @@ function DesktopTile({ config, catalogue, connection, api, settings, serverUrl, 
   const visibleCandles = subscribedTile ? aggregateLiveCandles(subscribedTile.candles ?? [], liveTicks, Number(config.interval)) : replayCandles(candles, replayCursor, replayCandle, Number(config.interval) * 60)
   const replayDatasetKey = replayCursor ? `${replayRunId ?? 'pending'}:${historyVersion}` : undefined
   const replaySyncing = Boolean(replayCursor && !replayAttached)
-  return <div className={`workspace-tile ${maximized ? 'is-maximized' : ''}`}><ChartTile symbol={label} interval={`${config.interval}m`} supportedIntervals={catalogueInstrument.supported_intervals} onIntervalChange={onIntervalChange} candles={visibleCandles} loading={subscribedTile ? false : loading || replaySyncing} message={subscribedTile && subscribedTile.availability !== 'available' ? (subscribedTile.reason ?? subscribedTile.availability) : replaySyncing ? 'Attaching to replay...' : status} settings={settings} isReplaying={Boolean(replayCursor)} isLive={Boolean(subscribedTile)} replayDatasetKey={replayDatasetKey} instrument={chartInstrument} baseUrl={serverUrl} onConfigure={onConfigure} onMaximize={onMaximize} maximized={maximized} active={active} indicators={indicators} drawingCommand={drawingCommand} drawingAction={drawingAction} drawingMode={drawingMode} onDrawingComplete={onDrawingComplete} onActivate={onActivate} /></div>
+  const tileRight = config.kind === 'option' ? config.right as 'CE' | 'PE' : null
+  const tileContractKey = contractKeyForTile(config)
+  const tileOrders = (tradingSnapshot?.open_orders ?? []).filter(order => {
+    if (!tileContractKey) return (order.right ?? null) === tileRight
+    return `${order.symbol}:${order.expiry ?? ''}:${Number(order.strike)}:${order.right ?? ''}` === tileContractKey
+  })
+  const tilePosition: DesktopPosition | null = tileContractKey ? tradingSnapshot?.positions_by_contract?.[tileContractKey] ?? null : tileRight ? tradingSnapshot?.positions[tileRight] ?? null : tradingSnapshot?.positions.equity ?? null
+  return <div className={`workspace-tile ${maximized ? 'is-maximized' : ''}`}><ChartTile symbol={label} interval={`${config.interval}m`} supportedIntervals={catalogueInstrument.supported_intervals} onIntervalChange={onIntervalChange} candles={visibleCandles} loading={subscribedTile ? false : loading || replaySyncing} message={subscribedTile && subscribedTile.availability !== 'available' ? (subscribedTile.reason ?? subscribedTile.availability) : replaySyncing ? 'Attaching to replay...' : status} settings={settings} isReplaying={Boolean(replayCursor)} isLive={Boolean(subscribedTile)} replayDatasetKey={replayDatasetKey} instrument={chartInstrument} baseUrl={serverUrl} onConfigure={onConfigure} onMaximize={onMaximize} maximized={maximized} active={active} indicators={indicators} drawingCommand={drawingCommand} drawingAction={drawingAction} drawingMode={drawingMode} onDrawingComplete={onDrawingComplete} onActivate={onActivate} openOrders={tileOrders} position={tilePosition} tradingSettings={tradingSnapshot?.settings ?? null} tradingEnabled={Boolean(tradingSnapshot)} pricePickAction={pricePickAction} onPricePick={onPricePick} onOrderDrag={onOrderDrag} onOrderCancel={onOrderCancel} onOrderConvertRequest={onOrderConvertRequest} onChartOrderAction={(action, price) => onChartOrderAction?.(config, action, price)} /></div>
 }
 
 export default function App() {
   const [serverUrl, setServerUrl] = useState(() => localStorage.getItem('desktop-server-url') ?? 'http://localhost:8700'), [email, setEmail] = useState('admin@tradematangi.com'), [password, setPassword] = useState('admin123'), [connection, setConnection] = useState<'connected' | 'reconnecting' | 'offline' | 'authentication_required'>('authentication_required'), [loginError, setLoginError] = useState(''), [browserToken, setBrowserToken] = useState(''), [mode, setMode] = useState<'Browse' | 'Live' | 'Replay' | 'Stepwise'>('Browse'), [catalogue, setCatalogue] = useState<Instrument[]>(fallbackCatalogue), [screens, setScreens] = useState<Screen[]>([newScreen(1)]), [chartSettings, setChartSettings] = useState<ChartSettings>(defaultChartSettings), [showSettings, setShowSettings] = useState(false), [replay, setReplay] = useState<ReplaySnapshot | null>(null), [replayError, setReplayError] = useState(''), [runDate, setRunDate] = useState('2026-05-06'), [runStartTime, setRunStartTime] = useState('09:15'), [replaySpeed, setReplaySpeed] = useState('1'), [live, setLive] = useState<LiveSnapshot | null>(null), [liveError, setLiveError] = useState('')
+  const [trading, setTrading] = useState<DesktopTradingSnapshot | null>(null), [tradingError, setTradingError] = useState(''), [pricePickAction, setPricePickAction] = useState<{ orderId?: string; conversion?: ConversionTarget } | null>(null)
   const replayPollInFlight = useRef(false)
   const screensLoadedRef = useRef(false)
   const screenSaveTimerRef = useRef<number | null>(null)
@@ -230,7 +245,26 @@ export default function App() {
   const onLiveTick = (key: string, tick: Candle) => setLiveTickCache(current => ({ ...current, [key]: appendLiveTick(current[key] ?? [], tick) }))
   const layoutTileCount: Record<Layout, number> = { '1': 1, '2-side': 2, '2-stacked': 2, '3-wide-top': 3, '4-grid': 4 }
   const setLayout = (layout: Layout) => setScreens(current => current.map(screen => screen.id === activeScreenId ? { ...screen, layout, tiles: layoutTileCount[layout] > screen.tiles.length ? [...screen.tiles, ...Array.from({ length: layoutTileCount[layout] - screen.tiles.length }, newTile)] : screen.tiles.slice(0, layoutTileCount[layout]) } : screen))
-  const saveTile = (tile: TileConfig) => { setScreens(current => current.map(screen => screen.id === activeScreenId ? { ...screen, tiles: screen.tiles.map(item => item.id === tile.id ? tile : item) } : screen)); setPickerTileId(null) }
+  const saveTile = async (tile: TileConfig) => {
+    if (mode === 'Stepwise' && trading) {
+      if (tile.symbol !== trading.session.symbol) {
+        setTradingError(`This Stepwise session is locked to ${trading.session.symbol}. Open another screen to view or trade ${tile.symbol}.`)
+        return
+      }
+      if (tile.kind === 'option') {
+        try {
+          const snapshot = await desktopTradingRequest<DesktopTradingSnapshot>(`${trading.session.session_id}/contracts`, 'POST', { symbol: tile.symbol, expiry: tile.expiry, strike: Number(tile.strike), right: tile.right })
+          setTrading(snapshot)
+          setTradingError('')
+        } catch (error) {
+          setTradingError(String(error))
+          return
+        }
+      }
+    }
+    setScreens(current => current.map(screen => screen.id === activeScreenId ? { ...screen, tiles: screen.tiles.map(item => item.id === tile.id ? tile : item) } : screen))
+    setPickerTileId(null)
+  }
   const addScreen = () => { const next = newScreen(screens.length + 1); setScreens(current => [...current, next]); setActiveScreenId(next.id) }
   const renameScreen = () => { const name = window.prompt('Screen name', activeScreen.name)?.trim(); if (name) setScreens(current => current.map(screen => screen.id === activeScreenId ? { ...screen, name } : screen)) }
   const duplicateScreen = () => { const mapped = activeScreen.tiles.map(tile => ({ from: tile.id, tile: { ...tile, id: crypto.randomUUID() } })); const next: Screen = { ...activeScreen, id: crypto.randomUUID(), persistedId: undefined, revision: undefined, name: `${activeScreen.name} Copy`, tiles: mapped.map(item => item.tile) }; setTileIndicators(current => ({ ...current, ...Object.fromEntries(mapped.map(item => [item.tile.id, current[item.from] ?? []])) })); setScreens(current => [...current, next]); setActiveScreenId(next.id); setActiveToolTileId(next.tiles[0]?.id ?? '') }
@@ -258,6 +292,15 @@ export default function App() {
     if (hasNativeHost) return invoke<T>('desktop_drawing_request', { baseUrl: serverUrl, path, method, body })
     const response = await fetch(`${serverUrl.replace(/\/$/, '')}/api/desktop/v1/${path}`, { method, headers: { Authorization: `Bearer ${browserToken}`, 'Content-Type': 'application/json' }, body: method === 'GET' ? undefined : JSON.stringify(body) })
     if (!response.ok) throw new Error(`Desktop record request failed (${response.status})`)
+    return (response.status === 204 ? null : await response.json()) as T
+  }
+  const desktopTradingRequest = async <T,>(path: string, method: 'GET' | 'POST' | 'PATCH' | 'DELETE', body: Record<string, unknown> = {}): Promise<T> => {
+    if (hasNativeHost) return invoke<T>('desktop_drawing_request', { baseUrl: serverUrl, path: `trading/${path}`, method, body })
+    const response = await fetch(`${serverUrl.replace(/\/$/, '')}/api/desktop/v1/trading/${path}`, { method, headers: { Authorization: `Bearer ${browserToken}`, 'Content-Type': 'application/json' }, body: method === 'GET' ? undefined : JSON.stringify(body) })
+    if (!response.ok) {
+      const detail = await response.text().catch(() => '')
+      throw new Error(`Trading request failed (${response.status})${detail ? `: ${detail.slice(0, 220)}` : ''}`)
+    }
     return (response.status === 204 ? null : await response.json()) as T
   }
   const screenState = (screen: Screen): PersistedScreenState => ({ id: screen.id, layout: screen.layout, tiles: screen.tiles, indicators: tileIndicators, activeToolTileId: activeToolTile })
@@ -329,8 +372,61 @@ export default function App() {
   useEffect(() => { if (mode !== 'Live' && live) void stopLive() }, [mode])
   useEffect(() => { if (connection === 'authentication_required') clearLiveTickCache() }, [connection])
   useEffect(() => { const onKeyDown = (event: KeyboardEvent) => { if (mode !== 'Live' || !live) return; if (event.key === 'F5') { event.preventDefault(); void refreshLive() } }; window.addEventListener('keydown', onKeyDown); return () => window.removeEventListener('keydown', onKeyDown) }, [live?.stream_id, mode])
-  const startRun = async () => { try { setReplayError(''); const date = runDate; setScreens(current => current.map(screen => screen.id === activeScreenId ? { ...screen, tiles: screen.tiles.map(tile => ({ ...tile, tradingDate: date })) } : screen)); const tiles = activeScreen.tiles.map(tile => { const item = catalogue.find(entry => entry.symbol === tile.symbol) ?? fallbackCatalogue[0]; const instrument = tile.kind === 'option' ? { kind: 'option', exchange: item.exchange, underlying: tile.symbol, expiry: tile.expiry, strike: Number(tile.strike), right: tile.right } : { kind: item.chart_type ?? 'equity', exchange: item.exchange, symbol: tile.symbol }; return { tile_id: tile.id, instrument } }); const backendInterval = mode === 'Stepwise' ? Math.min(...activeScreen.tiles.map(tile => Number(tile.interval))) : Number(activeScreen.tiles[0].interval); const next = await replayRequest('start', 'POST', { mode: mode.toLowerCase(), date, start_time: `${runStartTime}:00`, interval_seconds: backendInterval * 60, speed: Number(replaySpeed), tiles }); setReplay(next); await startNativeStream(`replay:${next.run_id}`, `replay/${next.run_id}/events`, `replay/${next.run_id}/snapshot`) } catch (error) { setReplayError(String(error)) } }
-  const replayAction = async (action: string) => { if (!replay) return; try { const next = await replayRequest(`${replay.run_id}/${action}`, 'POST'); if (action === 'stop') stopNativeStream(`replay:${replay.run_id}`); setReplay(next) } catch (error) { setReplayError(String(error)) } }
+  const tradingStartBody = (date: string) => {
+    const tile = activeScreen.tiles.find(item => item.id === activeToolTile) ?? activeScreen.tiles[0]
+    const item = catalogue.find(entry => entry.symbol === tile.symbol) ?? fallbackCatalogue[0]
+    const startTime = `${runStartTime}:00`
+    return {
+      symbol: tile.symbol,
+      date,
+      start_time: startTime,
+      speed: 1,
+      instrument_type: (item.chart_type === 'index' || tile.kind === 'option') ? 'options' : 'equity',
+      strategy_interval_secs: Math.min(...activeScreen.tiles.map(item => Number(item.interval))) * 60,
+      session_type: 'stepwise',
+      stepwise: true,
+    }
+  }
+  const startRun = async () => {
+    try {
+      setReplayError('')
+      setTradingError('')
+      const date = runDate
+      setScreens(current => current.map(screen => screen.id === activeScreenId ? { ...screen, tiles: screen.tiles.map(tile => ({ ...tile, tradingDate: date })) } : screen))
+      const tiles = activeScreen.tiles.map(tile => { const item = catalogue.find(entry => entry.symbol === tile.symbol) ?? fallbackCatalogue[0]; const instrument = tile.kind === 'option' ? { kind: 'option', exchange: item.exchange, underlying: tile.symbol, expiry: tile.expiry, strike: Number(tile.strike), right: tile.right } : { kind: item.chart_type ?? 'equity', exchange: item.exchange, symbol: tile.symbol }; return { tile_id: tile.id, instrument } })
+      const backendInterval = mode === 'Stepwise' ? Math.min(...activeScreen.tiles.map(tile => Number(tile.interval))) : Number(activeScreen.tiles[0].interval)
+      const next = await replayRequest('start', 'POST', { mode: mode.toLowerCase(), date, start_time: `${runStartTime}:00`, interval_seconds: backendInterval * 60, speed: Number(replaySpeed), tiles })
+      setReplay(next)
+      await startNativeStream(`replay:${next.run_id}`, `replay/${next.run_id}/events`, `replay/${next.run_id}/snapshot`)
+      if (mode === 'Stepwise') {
+        const tradeSnapshot = await desktopTradingRequest<DesktopTradingSnapshot>('start', 'POST', tradingStartBody(date))
+        setTrading(tradeSnapshot)
+        for (const tile of activeScreen.tiles) {
+          if (tile.kind !== 'option' || tile.symbol !== tradeSnapshot.session.symbol || !tile.expiry || !tile.strike) continue
+          try {
+            const snapshot = await desktopTradingRequest<DesktopTradingSnapshot>(`${tradeSnapshot.session.session_id}/contracts`, 'POST', { symbol: tile.symbol, expiry: tile.expiry, strike: Number(tile.strike), right: tile.right })
+            setTrading(snapshot)
+          } catch (error) {
+            setTradingError(String(error))
+          }
+        }
+      }
+    } catch (error) {
+      setReplayError(String(error))
+      if (mode === 'Stepwise') setTradingError(String(error))
+    }
+  }
+  const replayAction = async (action: string) => {
+    if (!replay) return
+    try {
+      const next = await replayRequest(`${replay.run_id}/${action}`, 'POST')
+      if (action === 'stop') { stopNativeStream(`replay:${replay.run_id}`); setTrading(null); setPricePickAction(null) }
+      setReplay(next)
+      if (mode === 'Stepwise' && trading?.session.session_id && action === 'next-bar') {
+        await desktopTradingRequest<DesktopTradingSnapshot>(`${trading.session.session_id}/next-bar`, 'POST').then(setTrading)
+      }
+    } catch (error) { setReplayError(String(error)); if (mode === 'Stepwise') setTradingError(String(error)) }
+  }
   const updateReplaySpeed = (value: string) => { setReplaySpeed(value); if (replay && replay.mode === 'replay' && replay.state !== 'stopped') void replayRequest(`${replay.run_id}/speed`, 'POST', { speed: Number(value) }).then(setReplay).catch(error => setReplayError(String(error))) }
   const replayTile = (tile: TileConfig) => { const item = catalogue.find(entry => entry.symbol === tile.symbol) ?? fallbackCatalogue[0]; const instrument = tile.kind === 'option' ? { kind: 'option', exchange: item.exchange, underlying: tile.symbol, expiry: tile.expiry, strike: Number(tile.strike), right: tile.right } : { kind: item.chart_type ?? 'equity', exchange: item.exchange, symbol: tile.symbol }; return { tile_id: tile.id, instrument } }
   const switchMode = (value: 'Browse' | 'Live' | 'Replay' | 'Stepwise') => {
@@ -377,6 +473,69 @@ export default function App() {
     }, 500)
     return () => window.clearInterval(timer)
   }, [replay?.run_id, replay?.state, hasNativeHost, serverUrl])
+  useEffect(() => {
+    if (mode !== 'Stepwise' || !trading?.session.session_id) return
+    const sessionId = trading.session.session_id
+    const timer = window.setInterval(() => {
+      void desktopTradingRequest<DesktopTradingSnapshot>(`${sessionId}/snapshot`, 'GET')
+        .then(snapshot => { if (snapshot.session.session_id === sessionId) { setTrading(snapshot); setTradingError('') } })
+        .catch(error => setTradingError(String(error)))
+    }, 800)
+    return () => window.clearInterval(timer)
+  }, [mode, trading?.session.session_id, serverUrl, browserToken])
+  const contractPayloadForTile = (tile: TileConfig): Record<string, unknown> => tile.kind === 'option' ? { right: tile.right, strike: Number(tile.strike), expiry: tile.expiry } : { right: null }
+  const updateOrderLine = async (order: DesktopOrder, price: number) => {
+    if (!trading) return
+    const body = order.order_type === 'LIMIT' ? { limit_price: price } : { trigger_price: price }
+    const updated = await desktopTradingRequest<DesktopOrder>(`${trading.session.session_id}/orders/${order.order_id}`, 'PATCH', body)
+    setTrading(snapshot => snapshot ? { ...snapshot, open_orders: snapshot.open_orders.map(item => item.order_id === updated.order_id ? updated : item) } : snapshot)
+  }
+  const cancelOrderLine = async (order: DesktopOrder) => {
+    if (!trading) return
+    await desktopTradingRequest<DesktopOrder | null>(`${trading.session.session_id}/orders/${order.order_id}`, 'DELETE')
+    setTrading(snapshot => snapshot ? { ...snapshot, open_orders: snapshot.open_orders.filter(item => item.order_id !== order.order_id) } : snapshot)
+  }
+  const requestOrderConvert = (order: DesktopOrder, target: ConversionTarget) => setPricePickAction({ orderId: order.order_id, conversion: target })
+  const completePricePick = async (price: number) => {
+    if (!trading || !pricePickAction) return
+    if (!Number.isFinite(price)) { setPricePickAction(null); return }
+    if (pricePickAction.orderId && pricePickAction.conversion) {
+      const updated = await desktopTradingRequest<DesktopOrder>(`${trading.session.session_id}/orders/${pricePickAction.orderId}/convert`, 'POST', { session_id: trading.session.session_id, new_order_type: pricePickAction.conversion, price })
+      setTrading(snapshot => snapshot ? { ...snapshot, open_orders: snapshot.open_orders.map(item => item.order_id === updated.order_id ? updated : item) } : snapshot)
+      setPricePickAction(null)
+      return
+    }
+  }
+  const placeChartOrder = async (tile: TileConfig, action: OrderAction, price: number) => {
+    if (!trading) return
+    const contractPayload = contractPayloadForTile(tile)
+    if (action === 'BULK_LIMIT' || action === 'BULK_STOPLOSS') {
+      const result = await desktopTradingRequest<{ converted: number; orders: DesktopOrder[] }>(`${trading.session.session_id}/orders/bulk-convert`, 'PATCH', { new_order_type: action === 'BULK_LIMIT' ? 'LIMIT' : 'STOPLOSS', ...contractPayload, price })
+      const updates = new Map(result.orders.map(order => [order.order_id, order]))
+      setTrading(snapshot => snapshot ? { ...snapshot, open_orders: snapshot.open_orders.map(order => updates.get(order.order_id) ?? order) } : snapshot)
+      return
+    }
+    if (action === 'BULK_MOVE_SL') {
+      const result = await desktopTradingRequest<{ converted: number; orders: DesktopOrder[] }>(`${trading.session.session_id}/orders/bulk-convert`, 'PATCH', { new_order_type: 'STOPLOSS', ...contractPayload, price })
+      const updates = new Map(result.orders.map(order => [order.order_id, order]))
+      setTrading(snapshot => snapshot ? { ...snapshot, open_orders: snapshot.open_orders.map(order => updates.get(order.order_id) ?? order) } : snapshot)
+      return
+    }
+    const side = action === 'SELL_LIMIT' ? 'SELL' : 'BUY'
+    const orderType = action === 'TARGET' ? 'TARGET' : action === 'STOPLOSS' ? 'STOPLOSS' : 'LIMIT'
+    const body: Record<string, unknown> = { session_id: trading.session.session_id, side, order_type: orderType, quantity: 1, ...contractPayload }
+    if (orderType === 'LIMIT') body.limit_price = price
+    else body.trigger_price = price
+    if (orderType === 'STOPLOSS') body.is_stoploss = true
+    const order = await desktopTradingRequest<DesktopOrder>(`${trading.session.session_id}/orders`, 'POST', body)
+    setTrading(snapshot => snapshot ? { ...snapshot, open_orders: [...snapshot.open_orders.filter(item => item.order_id !== order.order_id), order] } : snapshot)
+  }
+  const flattenTrading = async () => {
+    if (!trading) return
+    if (trading.settings.desktop_confirm_flatten && !window.confirm('Flatten all open positions now?')) return
+    const result = await desktopTradingRequest<{ snapshot: DesktopTradingSnapshot }>(`${trading.session.session_id}/flatten`, 'POST', {})
+    setTrading(result.snapshot)
+  }
   const logoutDesktop = () => {
     if (live) stopNativeStream(`live:${live.stream_id}`)
     if (replay) stopNativeStream(`replay:${replay.run_id}`)
@@ -397,13 +556,14 @@ export default function App() {
       {(['Browse', 'Live', 'Replay', 'Stepwise'] as const).map(value => <button className={mode === value ? 'selected mode-button' : 'mode-button'} onClick={() => switchMode(value)} key={value}>{value}</button>)}
       {(mode === 'Replay' || mode === 'Stepwise') && <span className="run-controls"><label>Date <input type="date" value={runDate} onChange={event => setRunDate(event.target.value)} disabled={Boolean(replay && replay.state !== 'stopped')} /></label><label>Start <input type="time" value={runStartTime} onChange={event => setRunStartTime(event.target.value)} disabled={Boolean(replay && replay.state !== 'stopped')} step="60" /></label>{mode === 'Replay' && <label>Speed <select value={replaySpeed} onChange={event => updateReplaySpeed(event.target.value)}><option value="0.25">0.25×</option><option value="0.5">0.5×</option><option value="1">1×</option><option value="1.1">1.1×</option><option value="1.25">1.25×</option><option value="1.5">1.5×</option><option value="2">2×</option><option value="5">5×</option><option value="10">10×</option></select></label>}{!replay || replay.state === 'stopped' ? <button onClick={startRun}>Start</button> : <>{mode === 'Replay' && <button onClick={() => replayAction(replay.state === 'paused' ? 'resume' : 'pause')}>{replay.state === 'paused' ? 'Resume' : 'Pause'}</button>}{mode === 'Stepwise' && <button onClick={() => replayAction('next-bar')}>Next bar</button>}<button onClick={() => replayAction('stop')}>Stop</button><small>{replay.bar_index} · {new Date(replay.cursor * 1000).toISOString().slice(11, 19)}</small></>}</span>}
       {mode === 'Live' && <span className="run-controls live-controls"><button onClick={live ? stopLive : startLive}>{live ? 'Stop' : 'Start'}</button><button onClick={refreshLive} disabled={!live}>Refresh Live charts</button></span>}
+      {mode === 'Stepwise' && trading && <><span className="trading-pill good">Wallet ₹{Math.round(trading.wallet_balance).toLocaleString('en-IN')}</span><span className={`trading-pill ${trading.pnl.day >= 0 ? 'good' : 'bad'}`}>P&L {trading.settings.desktop_pnl_display_mode === 'percent' ? `${trading.pnl.day_pct.toFixed(2)}%` : `₹${Math.round(trading.pnl.day).toLocaleString('en-IN')}`}</span><button className="flatten-button" onClick={flattenTrading}>Flatten</button></>}
       <label className="layout-control">Layout <select value={activeScreen.layout} onChange={event => setLayout(event.target.value as Layout)}><option value="1">1 chart</option><option value="2-side">2 side-by-side</option><option value="2-stacked">2 stacked</option><option value="3-wide-top">3 wide-top</option><option value="4-grid">4 grid</option></select></label>
       <button className="icon-button" title="Chart settings" aria-label="Chart settings" onClick={() => setShowSettings(true)}>⚙</button><span className={`connection ${connection}`}>● {connection}</span><button onClick={logoutDesktop}>Log out</button>
     </header>
-    {(replayError || liveError) && <p className="run-error">{replayError || liveError}</p>}
+    {(replayError || liveError || tradingError) && <p className="run-error">{replayError || liveError || tradingError}</p>}
     <section className={`workspace-shell ${toolPanelOpen ? '' : 'tools-collapsed'}`}>
       {toolPanelOpen && <WorkspaceToolPanel tiles={activeScreen.tiles} activeTileId={activeToolTile} setActiveTileId={setActiveToolTileId} indicators={selectedIndicators} toggleIndicator={toggleIndicator} clearIndicators={clearIndicators} sendDrawing={sendDrawing} sendDrawingAction={sendDrawingAction} activeDrawingTool={activeDrawingTool} drawingMode={drawingMode} setDrawingMode={setDrawingMode} />}
-      <section className={`tile-grid tiles-${activeScreen.layout} ${maximizedTileId ? 'has-maximized' : ''}`}>{activeScreen.tiles.map(tile => { const state = replay?.tile_states.find(item => item.tile_id === tile.id); const liveState = live?.tiles.find(item => item.tile_id === tile.id); const cacheKey = liveState?.instrument ? canonicalKey(liveState.instrument) : instrumentKeyForTile(tile, catalogue); return <DesktopTile key={tile.id} config={tile} catalogue={catalogue} connection={connection} api={api} settings={chartSettings} serverUrl={serverUrl} replayCursor={replay?.cursor} replayRunId={replay?.run_id} replayCandle={state?.candle} replayAttached={Boolean(state)} liveTile={liveState} liveTicks={liveTickCache[cacheKey] ?? []} onLiveTick={onLiveTick} maximized={maximizedTileId === tile.id} active={activeToolTile === tile.id} indicators={tileIndicators[tile.id] ?? noIndicators} drawingCommand={drawingCommand} drawingAction={drawingAction} drawingMode={drawingMode} onDrawingComplete={onDrawingComplete} onActivate={() => setActiveToolTileId(tile.id)} onConfigure={() => setPickerTileId(tile.id)} onMaximize={() => setMaximizedTileId(current => current === tile.id ? null : tile.id)} onIntervalChange={interval => saveTile({ ...tile, interval })} />})}</section>
+      <section className={`tile-grid tiles-${activeScreen.layout} ${maximizedTileId ? 'has-maximized' : ''}`}>{activeScreen.tiles.map(tile => { const state = replay?.tile_states.find(item => item.tile_id === tile.id); const liveState = live?.tiles.find(item => item.tile_id === tile.id); const cacheKey = liveState?.instrument ? canonicalKey(liveState.instrument) : instrumentKeyForTile(tile, catalogue); return <DesktopTile key={tile.id} config={tile} catalogue={catalogue} connection={connection} api={api} settings={chartSettings} serverUrl={serverUrl} replayCursor={replay?.cursor} replayRunId={replay?.run_id} replayCandle={state?.candle} replayAttached={Boolean(state)} liveTile={liveState} liveTicks={liveTickCache[cacheKey] ?? []} onLiveTick={onLiveTick} maximized={maximizedTileId === tile.id} active={activeToolTile === tile.id} indicators={tileIndicators[tile.id] ?? noIndicators} drawingCommand={drawingCommand} drawingAction={drawingAction} drawingMode={drawingMode} onDrawingComplete={onDrawingComplete} onActivate={() => setActiveToolTileId(tile.id)} onConfigure={() => setPickerTileId(tile.id)} onMaximize={() => setMaximizedTileId(current => current === tile.id ? null : tile.id)} onIntervalChange={interval => saveTile({ ...tile, interval })} tradingSnapshot={mode === 'Stepwise' ? trading : null} pricePickAction={activeToolTile === tile.id ? pricePickAction : null} onPricePick={completePricePick} onOrderDrag={updateOrderLine} onOrderCancel={cancelOrderLine} onOrderConvertRequest={requestOrderConvert} onChartOrderAction={placeChartOrder} />})}</section>
     </section>
     {pickerTile && <InstrumentPicker initial={pickerTile} catalogue={catalogue} api={api} onSave={saveTile} onClose={() => setPickerTileId(null)} />}{showSettings && <ChartSettingsModal settings={chartSettings} onSave={saveChartSettings} onClose={() => setShowSettings(false)} />}
   </main>

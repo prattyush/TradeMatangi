@@ -6,7 +6,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import LOG_DIR
-from app.routers import data, simulation, trading, stream, orders, wallet, auth, analysis, strategies, users, admin, kotak, breeze, guardrails, internal, pattern_logger, snapshots, chart_structures, labels, fine_structures, desktop, desktop_persistence, desktop_live, desktop_replay
+from app.routers import data, simulation, trading, stream, orders, wallet, auth, analysis, strategies, users, admin, kotak, breeze, guardrails, internal, pattern_logger, snapshots, chart_structures, labels, fine_structures, desktop, desktop_persistence, desktop_live, desktop_replay, desktop_trading
 
 
 def _configure_logging() -> None:
@@ -75,6 +75,7 @@ app.include_router(desktop.router)
 app.include_router(desktop_persistence.router)
 app.include_router(desktop_live.router)
 app.include_router(desktop_replay.router)
+app.include_router(desktop_trading.router)
 app.include_router(data.router)
 app.include_router(simulation.router)
 app.include_router(trading.router)

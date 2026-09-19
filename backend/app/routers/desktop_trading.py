@@ -1,0 +1,601 @@
+"""Desktop trading facade for the chart cockpit.
+
+This router keeps the desktop app on a versioned API while reusing the
+existing simulation, order, strategy, wallet, and trade services as the source
+of truth. Phase 17 starts with Stepwise sessions only.
+"""
+from __future__ import annotations
+
+from datetime import datetime, timezone
+
+from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel, Field
+
+from app.dependencies import get_desktop_user_id
+from app.models.schemas import (
+    CancelAllStrategiesRequest,
+    ConvertOrderRequest,
+    Order,
+    OrderType,
+    PlaceOrderRequest,
+    SimulationStartRequest,
+    SimulationStartResponse,
+    StartStrategyRequest,
+    StrategyResponse,
+    TradeSide,
+    UpdateOrderRequest,
+    UpdateStrategyPriceRequest,
+    WalletResetRequest,
+)
+from app.routers import simulation as simulation_router
+from app.services import order_service, options_service, simulation as sim_svc, strategy_service, trading as trading_service, wallet_service
+from app.services.user_settings_service import get_settings, update_settings
+
+router = APIRouter(prefix="/api/desktop/v1/trading", tags=["desktop"])
+
+
+class DesktopTradingSnapshot(BaseModel):
+    version: int = 1
+    session: SimulationStartResponse
+    current_price: float
+    current_price_ce: float
+    current_price_pe: float
+    trades: list[dict]
+    open_orders: list[Order]
+    strategies: list[StrategyResponse]
+    positions: dict
+    contracts: list[dict] = []
+    positions_by_contract: dict[str, dict] = {}
+    wallet_balance: float
+    pnl: dict
+    settings: dict
+
+
+class DesktopOptionContract(BaseModel):
+    symbol: str
+    expiry: str
+    strike: int
+    right: str
+
+
+class AttachContractRequest(DesktopOptionContract):
+    pass
+
+
+class FlattenRequest(BaseModel):
+    right: str | None = None
+    strike: int | None = None
+    expiry: str | None = None
+    emergency_offset_pct: float = Field(default=0.03, ge=0.001, le=0.25)
+
+
+class BulkChartConvertRequest(BaseModel):
+    new_order_type: OrderType
+    right: str | None = None
+    strike: int | None = None
+    expiry: str | None = None
+    price: float = Field(gt=0)
+
+
+class DesktopSettingsUpdateRequest(BaseModel):
+    settings: dict
+
+
+def _require_session(session_id: str, user_id: str):
+    session = sim_svc.get_session(session_id)
+    if not session or session.user_id != user_id:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return session
+
+
+def _session_response(session) -> SimulationStartResponse:
+    return simulation_router._session_response(session)
+
+
+def _contract_key(symbol: str, expiry: str | None, strike: int | None, right: str | None) -> str:
+    return f"{symbol}:{expiry or ''}:{strike or ''}:{(right or '').upper()}"
+
+
+def _desktop_contracts(session) -> list[dict]:
+    contracts = getattr(session, "desktop_contracts", None)
+    if contracts is None:
+        contracts = []
+        setattr(session, "desktop_contracts", contracts)
+    return contracts
+
+
+def _normalise_contract(req: DesktopOptionContract) -> dict:
+    right = req.right.upper()
+    if right not in ("CE", "PE"):
+        raise HTTPException(status_code=400, detail="right must be CE or PE")
+    return {
+        "symbol": req.symbol,
+        "expiry": req.expiry,
+        "strike": int(req.strike),
+        "right": right,
+        "contract_key": _contract_key(req.symbol, req.expiry, int(req.strike), right),
+    }
+
+
+def _get_registered_contract(session, right: str | None, strike: int | None, expiry: str | None) -> dict | None:
+    if not right or strike is None or not expiry:
+        return None
+    key = _contract_key(session.symbol, expiry, int(strike), right)
+    return next((item for item in _desktop_contracts(session) if item.get("contract_key") == key), None)
+
+
+def _require_registered_contract(session, right: str | None, strike: int | None, expiry: str | None) -> dict:
+    contract = _get_registered_contract(session, right, strike, expiry)
+    if not contract:
+        raise HTTPException(status_code=400, detail="Option contract is not attached to this Stepwise session")
+    return contract
+
+
+def _register_contract(session, contract: dict) -> dict:
+    contracts = _desktop_contracts(session)
+    existing = next((item for item in contracts if item.get("contract_key") == contract["contract_key"]), None)
+    if existing:
+        return existing
+    contracts.append(contract)
+    return contract
+
+
+def _has_open_contract_risk(session, contract: dict) -> bool:
+    position = _position_for(session, contract["right"], contract["strike"], contract["expiry"])
+    if position.side != "FLAT" and position.quantity > 0:
+        return True
+    for order in order_service.get_open_orders(session.session_id):
+        if (
+            order.symbol == contract["symbol"]
+            and (order.right or "").upper() == contract["right"]
+            and int(order.strike or 0) == int(contract["strike"])
+            and (order.expiry or "") == contract["expiry"]
+        ):
+            return True
+    return False
+
+
+def _assert_can_switch_active_right(session, contract: dict) -> None:
+    for existing in _desktop_contracts(session):
+        if existing["right"] != contract["right"] or existing["contract_key"] == contract["contract_key"]:
+            continue
+        if _has_open_contract_risk(session, existing):
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"Close open {existing['symbol']} {existing['strike']} {existing['right']} "
+                    "orders/position before switching this right to another strike"
+                ),
+            )
+
+
+def _seed_underlying_options_request(req: SimulationStartRequest) -> None:
+    """Resolve expiry/ATM for desktop sessions that start from only the underlying chart."""
+    if req.instrument_type != "options" or (req.strike is not None and req.expiry):
+        return
+    expiry = req.expiry or options_service.get_expiry_date(req.symbol, req.date)
+    start_time = req.start_time if len(req.start_time) == 8 else f"{req.start_time}:00"
+    ts = int(datetime.strptime(f"{req.date} {start_time}", "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc).timestamp())
+    underlying = options_service.get_underlying_price_at(req.symbol, req.date, ts)
+    if underlying is None or underlying <= 0:
+        simulation_router._ensure_session_data(req.symbol, req.date)
+        underlying = options_service.get_underlying_price_at(req.symbol, req.date, ts)
+    if underlying is None or underlying <= 0:
+        raise HTTPException(status_code=400, detail="Could not resolve ATM strike from the underlying chart for this date/start time")
+    atm = options_service.get_atm_strike(req.symbol, underlying)
+    req.expiry = expiry
+    req.strike = atm
+    req.strike_ce = req.strike_ce if req.strike_ce is not None else atm
+    req.strike_pe = req.strike_pe if req.strike_pe is not None else atm
+    req.right = None
+
+
+def _strategy_response(instance) -> StrategyResponse:
+    return StrategyResponse(
+        strategy_id=instance.strategy_id,
+        strategy_type=instance.strategy_type,
+        symbol=instance.symbol,
+        right=instance.right,
+        status=instance.status.value,
+        triggered=bool(instance.metadata.get("triggered", False)),
+    )
+
+
+def _last_price_for_right(session, right: str | None) -> float:
+    if session.instrument_type == "options":
+        if right == "CE":
+            return float(session.last_price_ce or 0)
+        if right == "PE":
+            return float(session.last_price_pe or 0)
+    return float(session.last_price or 0)
+
+
+def _position_for(session, right: str | None, strike: int | None = None, expiry: str | None = None):
+    return trading_service.get_position(session.session_id, session.symbol, right=right, strike=strike, expiry=expiry)
+
+
+def _estimate_exit_commission(session, side: TradeSide, price: float, quantity: int) -> float:
+    if price <= 0 or quantity <= 0:
+        return 0.0
+    return trading_service.compute_commission(side, price, quantity, session.brokerage_per_order)
+
+
+def _position_pnl(session, right: str | None, strike: int | None = None, expiry: str | None = None) -> float:
+    position = _position_for(session, right, strike, expiry)
+    price = _last_price_for_right(session, right)
+    if position.side == "FLAT" or price <= 0:
+        return 0.0
+    direction = 1 if position.side == "LONG" else -1
+    exit_side = TradeSide.SELL if position.side == "LONG" else TradeSide.BUY
+    return round(
+        direction * position.quantity * (price - position.avg_entry_price)
+        - position.entry_commission
+        - _estimate_exit_commission(session, exit_side, price, position.quantity),
+        2,
+    )
+
+
+def _day_pnl(session) -> float:
+    trades = trading_service.get_trades(session.session_id)
+    net = 0.0
+    for trade in trades:
+        net += trade.quantity * trade.price if trade.side == TradeSide.SELL else -trade.quantity * trade.price
+        net -= trade.commission or 0
+    if session.instrument_type == "options":
+        contracts = _desktop_contracts(session)
+        if contracts:
+            net += sum(_position_pnl(session, item["right"], item["strike"], item["expiry"]) for item in contracts)
+        else:
+            net += _position_pnl(session, "CE") + _position_pnl(session, "PE")
+    else:
+        net += _position_pnl(session, None)
+    return round(net, 2)
+
+
+def _snapshot(session, user_id: str) -> DesktopTradingSnapshot:
+    wallet = wallet_service.get_ledger_balance(user_id, session.date, session.wallet_ledger_id)
+    strategies = [_strategy_response(item) for item in strategy_service.list_running(session.session_id)]
+    day_pnl = _day_pnl(session)
+    session_capital = float(session.session_capital or 0)
+    pnl_pct = round((day_pnl / session_capital) * 100, 2) if session_capital > 0 else 0.0
+    settings = get_settings(user_id)
+    contracts = _desktop_contracts(session)
+    positions_by_contract = {
+        item["contract_key"]: _position_for(session, item["right"], item["strike"], item["expiry"]).model_dump(mode="json")
+        for item in contracts
+    }
+    return DesktopTradingSnapshot(
+        session=_session_response(session),
+        current_price=float(session.last_price or 0),
+        current_price_ce=float(session.last_price_ce or 0),
+        current_price_pe=float(session.last_price_pe or 0),
+        trades=[trade.model_dump(mode="json") for trade in trading_service.get_trades(session.session_id)],
+        open_orders=order_service.get_open_orders(session.session_id),
+        strategies=strategies,
+        positions={
+            "equity": _position_for(session, None).model_dump(mode="json"),
+            "CE": _position_for(session, "CE").model_dump(mode="json"),
+            "PE": _position_for(session, "PE").model_dump(mode="json"),
+        },
+        contracts=contracts,
+        positions_by_contract=positions_by_contract,
+        wallet_balance=wallet,
+        pnl={
+            "equity": _position_pnl(session, None),
+            "ce": _position_pnl(session, "CE"),
+            "pe": _position_pnl(session, "PE"),
+            "contracts": {
+                item["contract_key"]: _position_pnl(session, item["right"], item["strike"], item["expiry"])
+                for item in contracts
+            },
+            "day": day_pnl,
+            "day_pct": pnl_pct,
+        },
+        settings={
+            "desktop_hide_chart_labels": settings.get("desktop_hide_chart_labels", False),
+            "desktop_order_size_mode": settings.get("desktop_order_size_mode", "quantity"),
+            "desktop_pnl_display_mode": settings.get("desktop_pnl_display_mode", "currency"),
+            "desktop_confirm_flatten": settings.get("desktop_confirm_flatten", True),
+            "funds_ratio_l_pct": settings.get("funds_ratio_l_pct", 0.03),
+            "funds_ratio_m_pct": settings.get("funds_ratio_m_pct", 0.06),
+            "funds_ratio_h_pct": settings.get("funds_ratio_h_pct", 0.12),
+            "risk_ratio_l_pct": settings.get("risk_ratio_l_pct", 0.01),
+            "risk_ratio_m_pct": settings.get("risk_ratio_m_pct", 0.02),
+            "risk_ratio_h_pct": settings.get("risk_ratio_h_pct", 0.04),
+            "default_sl_pct": settings.get("default_sl_pct", 0.20),
+        },
+    )
+
+
+def _emit_order_event(session, event: dict) -> None:
+    try:
+        import json
+        session.queue.put_nowait(json.dumps(event))
+    except Exception:
+        pass
+
+
+def _emit_order_converted(session, order: Order) -> None:
+    _emit_order_event(session, {
+        "type": "order_converted",
+        "order_id": order.order_id,
+        "new_order_type": order.order_type.value,
+        "trigger_price": order.trigger_price,
+        "limit_price": order.limit_price,
+        "is_stoploss": order.is_stoploss,
+    })
+
+
+def _is_closing_order(order: Order, position) -> bool:
+    return (
+        position.side != "FLAT"
+        and (
+            (position.side == "LONG" and order.side == TradeSide.SELL)
+            or (position.side == "SHORT" and order.side == TradeSide.BUY)
+        )
+    )
+
+
+def _closing_orders(session, right: str | None, strike: int | None = None, expiry: str | None = None) -> list[Order]:
+    position = _position_for(session, right, strike, expiry)
+    if position.side == "FLAT":
+        return []
+    return [
+        order for order in order_service.get_open_orders(session.session_id)
+        if (order.right or None) == right
+        and (strike is None or order.strike == strike)
+        and (expiry is None or order.expiry == expiry)
+        and _is_closing_order(order, position)
+    ]
+
+
+@router.post("/start", response_model=DesktopTradingSnapshot, status_code=201)
+async def start_stepwise(req: SimulationStartRequest, user_id: str = Depends(get_desktop_user_id)):
+    req.session_type = "stepwise"
+    req.stepwise = True
+    _seed_underlying_options_request(req)
+    session_response = await simulation_router.start_simulation(req, user_id)
+    session = _require_session(session_response.session_id, user_id)
+    if session.instrument_type == "options" and req.expiry:
+        if req.strike_ce is not None:
+            _register_contract(session, _normalise_contract(DesktopOptionContract(symbol=session.symbol, expiry=req.expiry, strike=req.strike_ce, right="CE")))
+        if req.strike_pe is not None:
+            _register_contract(session, _normalise_contract(DesktopOptionContract(symbol=session.symbol, expiry=req.expiry, strike=req.strike_pe, right="PE")))
+    return _snapshot(session, user_id)
+
+
+@router.post("/{session_id}/contracts", response_model=DesktopTradingSnapshot)
+async def attach_contract(session_id: str, req: AttachContractRequest, user_id: str = Depends(get_desktop_user_id)):
+    session = _require_session(session_id, user_id)
+    contract = _normalise_contract(req)
+    if session.instrument_type != "options":
+        raise HTTPException(status_code=400, detail="This Stepwise session is not configured for options")
+    if contract["symbol"] != session.symbol:
+        raise HTTPException(status_code=400, detail=f"This Stepwise session is locked to {session.symbol}. Open another screen to use {contract['symbol']}.")
+    if session.expiry and contract["expiry"] != session.expiry:
+        raise HTTPException(status_code=400, detail=f"This Stepwise session is locked to expiry {session.expiry}")
+    if not session.expiry:
+        session.expiry = contract["expiry"]
+    _assert_can_switch_active_right(session, contract)
+    simulation_router._ensure_options_data(session.symbol, session.date, contract["strike"], contract["expiry"], contract["right"])
+    if contract["right"] == "CE":
+        session.strike_ce = contract["strike"]
+    else:
+        session.strike_pe = contract["strike"]
+    _register_contract(session, contract)
+    return _snapshot(session, user_id)
+
+
+@router.get("/active", response_model=DesktopTradingSnapshot | None)
+async def active_stepwise(
+    symbol: str | None = Query(default=None),
+    date: str | None = Query(default=None),
+    instrument_type: str | None = Query(default=None),
+    user_id: str = Depends(get_desktop_user_id),
+):
+    for session in list(sim_svc._sessions.values()):
+        if session.user_id != user_id or session.session_type != "stepwise" or session.state == sim_svc.SimulationState.ENDED:
+            continue
+        if symbol and session.symbol != symbol:
+            continue
+        if date and session.date != date:
+            continue
+        if instrument_type and session.instrument_type != instrument_type:
+            continue
+        return _snapshot(session, user_id)
+    return None
+
+
+@router.get("/{session_id}/snapshot", response_model=DesktopTradingSnapshot)
+async def snapshot(session_id: str, user_id: str = Depends(get_desktop_user_id)):
+    return _snapshot(_require_session(session_id, user_id), user_id)
+
+
+@router.post("/{session_id}/next-bar", response_model=DesktopTradingSnapshot)
+async def next_bar(session_id: str, user_id: str = Depends(get_desktop_user_id)):
+    session = _require_session(session_id, user_id)
+    if not session.stepwise:
+        raise HTTPException(status_code=400, detail="Session is not in stepwise mode")
+    session.step_event.set()
+    return _snapshot(session, user_id)
+
+
+@router.post("/{session_id}/orders", response_model=Order)
+async def place_order(session_id: str, req: PlaceOrderRequest, user_id: str = Depends(get_desktop_user_id)):
+    session = _require_session(session_id, user_id)
+    req.session_id = session_id
+    if session.instrument_type == "options":
+        right = req.right.upper() if req.right else None
+        expiry = req.expiry or session.expiry
+        strike = req.strike if req.strike is not None else (session.strike_ce if right == "CE" else session.strike_pe if right == "PE" else None)
+        contract = _require_registered_contract(session, right, strike, expiry)
+        req.right = contract["right"]
+        req.strike = contract["strike"]
+        req.expiry = contract["expiry"]
+    from app.routers.orders import place_order as web_place_order
+    return await web_place_order(req)
+
+
+@router.patch("/{session_id}/orders/{order_id}", response_model=Order)
+async def update_order(session_id: str, order_id: str, req: UpdateOrderRequest, user_id: str = Depends(get_desktop_user_id)):
+    _require_session(session_id, user_id)
+    from app.routers.orders import update_order as web_update_order
+    return await web_update_order(order_id, req, session_id=session_id)
+
+
+@router.delete("/{session_id}/orders/{order_id}", response_model=Order | None)
+async def cancel_order(session_id: str, order_id: str, user_id: str = Depends(get_desktop_user_id)):
+    _require_session(session_id, user_id)
+    from app.routers.orders import cancel_order as web_cancel_order
+    return await web_cancel_order(order_id, session_id=session_id)
+
+
+@router.post("/{session_id}/orders/{order_id}/convert", response_model=Order)
+async def convert_order(session_id: str, order_id: str, req: ConvertOrderRequest, user_id: str = Depends(get_desktop_user_id)):
+    session = _require_session(session_id, user_id)
+    req.session_id = session_id
+    from app.routers.orders import convert_order as web_convert_order
+    return await web_convert_order(order_id, req)
+
+
+@router.patch("/{session_id}/orders/bulk-convert")
+async def bulk_convert(session_id: str, req: BulkChartConvertRequest, user_id: str = Depends(get_desktop_user_id)):
+    session = _require_session(session_id, user_id)
+    right = req.right.upper() if req.right else None
+    converted: list[Order] = []
+    if right and req.strike is not None and req.expiry:
+        _require_registered_contract(session, right, req.strike, req.expiry)
+    for order in _closing_orders(session, right, req.strike, req.expiry):
+        updated = order_service.convert_order(
+            session_id=session_id,
+            order_id=order.order_id,
+            new_order_type=req.new_order_type,
+            trading_date=session.date,
+            price=req.price,
+        )
+        if updated:
+            converted.append(updated)
+            _emit_order_converted(session, updated)
+    return {"converted": len(converted), "orders": converted}
+
+
+@router.post("/{session_id}/strategies/start", response_model=StrategyResponse)
+async def start_strategy(session_id: str, req: StartStrategyRequest, user_id: str = Depends(get_desktop_user_id)):
+    _require_session(session_id, user_id)
+    req.session_id = session_id
+    from app.routers.strategies import start_strategy as web_start_strategy
+    return web_start_strategy(req, user_id=user_id)
+
+
+@router.post("/{session_id}/strategies/cancel-all")
+async def cancel_all_strategies(session_id: str, user_id: str = Depends(get_desktop_user_id)):
+    _require_session(session_id, user_id)
+    from app.routers.strategies import cancel_all_strategies as web_cancel_all
+    return web_cancel_all(CancelAllStrategiesRequest(session_id=session_id), user_id=user_id)
+
+
+@router.post("/{session_id}/strategies/{strategy_id}/cancel")
+async def cancel_strategy(session_id: str, strategy_id: str, user_id: str = Depends(get_desktop_user_id)):
+    _require_session(session_id, user_id)
+    from app.routers.strategies import cancel_strategy as web_cancel_strategy
+    return web_cancel_strategy(strategy_id, CancelAllStrategiesRequest(session_id=session_id), user_id=user_id)
+
+
+@router.patch("/{session_id}/strategies/{strategy_id}/price")
+async def update_strategy_price(session_id: str, strategy_id: str, req: UpdateStrategyPriceRequest, user_id: str = Depends(get_desktop_user_id)):
+    _require_session(session_id, user_id)
+    req.session_id = session_id
+    from app.routers.strategies import update_strategy_price as web_update_price
+    return web_update_price(strategy_id, req, user_id=user_id)
+
+
+@router.post("/{session_id}/flatten")
+async def flatten(session_id: str, req: FlattenRequest, user_id: str = Depends(get_desktop_user_id)):
+    session = _require_session(session_id, user_id)
+    if session.instrument_type == "options" and req.right and req.strike is not None and req.expiry:
+        targets = [_require_registered_contract(session, req.right.upper(), req.strike, req.expiry)]
+    elif session.instrument_type == "options" and req.right is None and _desktop_contracts(session):
+        targets = _desktop_contracts(session)
+    else:
+        targets = [{"right": right, "strike": None, "expiry": None} for right in (["CE", "PE"] if session.instrument_type == "options" and req.right is None else [req.right])]
+    result = {"converted": [], "created": [], "cancelled": []}
+    for target in targets:
+        right = target.get("right")
+        strike = target.get("strike")
+        expiry = target.get("expiry")
+        position = _position_for(session, right, strike, expiry)
+        if position.side == "FLAT" or position.quantity <= 0:
+            continue
+        exit_side = TradeSide.SELL if position.side == "LONG" else TradeSide.BUY
+        price = _last_price_for_right(session, right)
+        if price <= 0:
+            continue
+        emergency_price = round(price * (1 - req.emergency_offset_pct), 2) if exit_side == TradeSide.SELL else round(price * (1 + req.emergency_offset_pct), 2)
+        closers = _closing_orders(session, right, strike, expiry)
+        if closers:
+            for order in closers:
+                converted = order_service.convert_order(session_id, order.order_id, OrderType.LIMIT, session.date, emergency_price)
+                if converted:
+                    result["converted"].append(converted.model_dump(mode="json"))
+                    _emit_order_converted(session, converted)
+        else:
+            created = order_service.place_order(
+                session_id=session_id,
+                symbol=session.symbol,
+                side=exit_side,
+                order_type=OrderType.LIMIT,
+                quantity=position.quantity,
+                created_at=int(session.current_time) if session.current_time else 0,
+                trading_date=session.date,
+                limit_price=emergency_price,
+                right=right,
+                strike=strike if strike is not None else session.strike_ce if right == "CE" else session.strike_pe if right == "PE" else None,
+                expiry=expiry if expiry is not None else session.expiry,
+                user_id=user_id,
+                source="desktop_stepwise",
+            )
+            result["created"].append(created.model_dump(mode="json"))
+            _emit_order_event(session, {
+                "type": "order_placed",
+                "order_id": created.order_id,
+                "session_id": created.session_id,
+                "user_id": created.user_id,
+                "symbol": created.symbol,
+                "side": created.side.value,
+                "order_type": created.order_type.value,
+                "quantity": created.quantity,
+                "trigger_price": created.trigger_price,
+                "limit_price": created.limit_price,
+                "status": created.status.value,
+                "created_at": created.created_at,
+                "filled_at": created.filled_at,
+                "filled_price": created.filled_price,
+                "is_stoploss": created.is_stoploss,
+                "right": created.right,
+                "strike": created.strike,
+            })
+    result["snapshot"] = _snapshot(session, user_id).model_dump(mode="json")
+    return result
+
+
+@router.get("/{session_id}/wallet")
+async def wallet(session_id: str, user_id: str = Depends(get_desktop_user_id)):
+    session = _require_session(session_id, user_id)
+    return {"user_id": user_id, "date": session.date, "balance": wallet_service.get_ledger_balance(user_id, session.date, session.wallet_ledger_id)}
+
+
+@router.post("/{session_id}/wallet/reset")
+async def reset_wallet(session_id: str, req: WalletResetRequest, user_id: str = Depends(get_desktop_user_id)):
+    session = _require_session(session_id, user_id)
+    balance = wallet_service.reset(user_id, session.date, req.amount)
+    return {"user_id": user_id, "date": session.date, "balance": balance}
+
+
+@router.get("/settings/current")
+async def get_desktop_settings(user_id: str = Depends(get_desktop_user_id)):
+    return get_settings(user_id)
+
+
+@router.put("/settings/current")
+async def update_desktop_settings(req: DesktopSettingsUpdateRequest, user_id: str = Depends(get_desktop_user_id)):
+    return update_settings(user_id, req.settings)

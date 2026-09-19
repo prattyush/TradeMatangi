@@ -164,6 +164,10 @@ def _write_order_to_db(order: Order) -> None:
             item["right"] = order.right
         if order.strike is not None:
             item["strike"] = order.strike
+        if order.expiry is not None:
+            item["expiry"] = order.expiry
+        if order.source is not None:
+            item["source"] = order.source
         if order.entry_sl_price is not None:
             item["entry_sl_price"] = Decimal(str(order.entry_sl_price))
         if order.group_id is not None:
@@ -186,11 +190,13 @@ def place_order(
     is_stoploss: bool = False,
     right: str | None = None,
     strike: int | None = None,
+    expiry: str | None = None,
     target_deviation_pct: float = _TARGET_DEVIATION,
     user_id: str = FIXED_USER_ID,
     margin_rate: float = 1.0,
     entry_sl_price: float | None = None,
     group_id: str | None = None,
+    source: str | None = None,
 ) -> Order:
     _ensure_session(session_id)
 
@@ -234,6 +240,8 @@ def place_order(
         is_stoploss=is_stoploss,
         right=right,
         strike=strike,
+        expiry=expiry,
+        source=source,
         entry_sl_price=entry_sl_price,
         group_id=group_id,
     )
@@ -410,6 +418,8 @@ def check_orders(
     current_time: int,
     trading_date: str = "",
     tick_right: str | None = None,
+    tick_strike: int | None = None,
+    tick_expiry: str | None = None,
 ) -> list[Order]:
     """
     Evaluate PENDING orders against current_price and return newly FILLED ones.
@@ -428,10 +438,15 @@ def check_orders(
         # Skip orders placed directly on Kotak broker; fills arrive via order-feed WebSocket.
         if order.kotak_order_id:
             continue
-        # For options ticks: only check orders for the same contract (right).
+        # For options ticks: only check orders for the same contract.
         # For equity ticks (tick_right=None): only check orders with right=None.
         if order.right != tick_right:
             continue
+        if tick_right is not None:
+            if tick_strike is not None and order.strike is not None and int(order.strike) != int(tick_strike):
+                continue
+            if tick_expiry is not None and order.expiry is not None and order.expiry != tick_expiry:
+                continue
 
         if order.order_type in (OrderType.TARGET, OrderType.STOPLOSS):
             triggered = (
