@@ -102,6 +102,18 @@ class TestDesktopGoogleToken:
         with patch("app.routers.auth.get_google_client_id", return_value=""):
             resp = client.get("/api/auth/desktop/google-config")
         assert resp.status_code == 503
+        assert "desktop_client_id" in resp.json()["detail"]
+
+    def test_desktop_client_id_does_not_fall_back_to_web_client(self):
+        from app.services.user_service import get_google_client_id
+
+        config = MagicMock()
+        config.get.side_effect = lambda _section, option, fallback="": {
+            "client_id": "web-client-id",
+        }.get(option, fallback)
+        with patch("configparser.ConfigParser", return_value=config):
+            assert get_google_client_id(desktop=True) == ""
+            assert get_google_client_id() == "web-client-id"
 
 
 # ── Change Password ───────────────────────────────────────────────────────────

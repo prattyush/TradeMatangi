@@ -76,7 +76,7 @@ async def desktop_google_config():
     """Return the public OAuth client ID used by the native desktop flow."""
     client_id = get_google_client_id(desktop=True)
     if not client_id:
-        raise HTTPException(status_code=503, detail="Desktop Google sign-in is not configured")
+        raise HTTPException(status_code=503, detail="Desktop Google sign-in is not configured: add desktop_client_id to accesskeys.ini")
     return {"client_id": client_id}
 
 
