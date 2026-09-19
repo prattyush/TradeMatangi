@@ -129,6 +129,11 @@ async def resume(run: ReplayRun) -> None:
     await _emit(run)
 
 
+async def update_speed(run: ReplayRun, speed: float) -> None:
+    run.speed = speed
+    await _emit(run, "replay_speed")
+
+
 async def stop(run: ReplayRun) -> None:
     run.state = "stopped"
     if run.task:

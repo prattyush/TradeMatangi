@@ -2,6 +2,7 @@ use futures_util::StreamExt;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::process::Command;
@@ -12,6 +13,7 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use tauri::Manager;
+use tokio::task::AbortHandle;
 
 const CREDENTIAL_SERVICE: &str = "in.trade-matangi.desktop-charts";
 const CREDENTIAL_ACCOUNT: &str = "desktop-session";
@@ -67,6 +69,14 @@ pub struct QueuedMutation {
 pub struct HostSnapshot {
     last_event_id: u64,
     latest_payload: String,
+    connection: String,
+}
+
+#[derive(Clone, Serialize)]
+pub struct DesktopStreamSnapshot {
+    key: String,
+    last_event_id: u64,
+    latest_payload: serde_json::Value,
     connection: String,
 }
 
@@ -698,6 +708,9 @@ async fn desktop_drawing_request(
     if !response.status().is_success() {
         return Err(format!("Drawing request failed ({})", response.status()));
     }
+    if response.status().as_u16() == 204 {
+        return Ok(serde_json::Value::Null);
+    }
     response
         .json::<serde_json::Value>()
         .await
@@ -705,7 +718,17 @@ async fn desktop_drawing_request(
 }
 
 #[tauri::command]
-fn desktop_logout(host: tauri::State<HostState>) -> Result<(), String> {
+async fn desktop_logout(base_url: String, host: tauri::State<'_, HostState>) -> Result<(), String> {
+    if let Ok(tokens) = host.token() {
+        let result = reqwest::Client::new()
+            .post(format!("{}/api/auth/desktop/logout", base_url.trim_end_matches('/')))
+            .json(&serde_json::json!({ "refresh_token": tokens.refresh_token }))
+            .send()
+            .await;
+        if let Err(error) = result {
+            diagnostic_log(&format!("desktop logout revoke failed: {error}"));
+        }
+    }
     clear_desktop_tokens()?;
     host.clear_tokens();
     host.set_connection("authentication_required");
@@ -793,6 +816,14 @@ struct LatestState {
     tokens: Option<TokenBundle>,
     pending_google_token: Option<String>,
     token_expires_at: Option<SystemTime>,
+    streams: HashMap<String, NativeStreamState>,
+}
+
+struct NativeStreamState {
+    last_event_id: u64,
+    latest_payload: serde_json::Value,
+    connection: String,
+    abort: AbortHandle,
 }
 
 impl HostState {
@@ -814,6 +845,54 @@ impl HostState {
     fn set_connection(&self, connection: &str) {
         self.0.lock().expect("host state lock").connection = connection.into();
     }
+    fn start_stream(&self, key: &str, abort: AbortHandle) {
+        let mut state = self.0.lock().expect("host state lock");
+        if let Some(existing) = state.streams.remove(key) {
+            existing.abort.abort();
+        }
+        state.streams.insert(
+            key.into(),
+            NativeStreamState {
+                last_event_id: 0,
+                latest_payload: serde_json::Value::Null,
+                connection: "reconnecting".into(),
+                abort,
+            },
+        );
+    }
+    fn stop_stream(&self, key: &str) {
+        let mut state = self.0.lock().expect("host state lock");
+        if let Some(existing) = state.streams.remove(key) {
+            existing.abort.abort();
+        }
+    }
+    fn set_stream_connection(&self, key: &str, connection: &str) {
+        if let Some(stream) = self.0.lock().expect("host state lock").streams.get_mut(key) {
+            stream.connection = connection.into();
+        }
+    }
+    fn record_stream(&self, key: &str, event_id: u64, payload: serde_json::Value) {
+        if let Some(stream) = self.0.lock().expect("host state lock").streams.get_mut(key) {
+            if event_id >= stream.last_event_id {
+                stream.last_event_id = event_id;
+                stream.latest_payload = payload;
+            }
+        }
+    }
+    fn stream_snapshot(&self, key: &str) -> DesktopStreamSnapshot {
+        let state = self.0.lock().expect("host state lock");
+        let stream = state.streams.get(key);
+        DesktopStreamSnapshot {
+            key: key.into(),
+            last_event_id: stream.map(|value| value.last_event_id).unwrap_or(0),
+            latest_payload: stream
+                .map(|value| value.latest_payload.clone())
+                .unwrap_or(serde_json::Value::Null),
+            connection: stream
+                .map(|value| value.connection.clone())
+                .unwrap_or_else(|| "offline".into()),
+        }
+    }
     fn set_tokens(&self, tokens: TokenBundle) {
         let expires_at = SystemTime::now() + Duration::from_secs(tokens.expires_in);
         let mut state = self.0.lock().expect("host state lock");
@@ -824,6 +903,9 @@ impl HostState {
         let mut state = self.0.lock().expect("host state lock");
         state.tokens = None;
         state.pending_google_token = None;
+        for (_, stream) in state.streams.drain() {
+            stream.abort.abort();
+        }
     }
     fn set_pending_google_token(&self, token: String) {
         self.0.lock().expect("host state lock").pending_google_token = Some(token);
@@ -877,6 +959,151 @@ impl HostState {
 #[tauri::command]
 fn host_snapshot(host: tauri::State<HostState>) -> HostSnapshot {
     host.snapshot()
+}
+
+#[tauri::command]
+fn desktop_stream_snapshot(
+    key: String,
+    host: tauri::State<HostState>,
+) -> DesktopStreamSnapshot {
+    host.stream_snapshot(&key)
+}
+
+#[tauri::command]
+fn stop_desktop_stream(key: String, host: tauri::State<HostState>) {
+    host.stop_stream(&key);
+}
+
+fn desktop_api_url(base_url: &str, path: &str) -> String {
+    format!(
+        "{}/api/desktop/v1/{}",
+        base_url.trim_end_matches('/'),
+        path.trim_start_matches('/')
+    )
+}
+
+async fn fetch_stream_snapshot(
+    client: &reqwest::Client,
+    base_url: &str,
+    snapshot_path: &str,
+    host: &HostState,
+) -> Result<serde_json::Value, String> {
+    let token = host.access_token(base_url).await?;
+    let response = client
+        .get(desktop_api_url(base_url, snapshot_path))
+        .bearer_auth(token)
+        .send()
+        .await
+        .map_err(|error| error.to_string())?;
+    if !response.status().is_success() {
+        return Err(format!("Snapshot request failed ({})", response.status()));
+    }
+    response
+        .json::<serde_json::Value>()
+        .await
+        .map_err(|error| error.to_string())
+}
+
+fn parse_sse_frame(frame: &str) -> (Option<u64>, Option<String>) {
+    let id = frame
+        .lines()
+        .find_map(|line| line.strip_prefix("id: "))
+        .and_then(|id| id.parse().ok());
+    let data = frame
+        .lines()
+        .filter_map(|line| line.strip_prefix("data: "))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let data = if data.is_empty() { None } else { Some(data) };
+    (id, data)
+}
+
+#[tauri::command]
+async fn start_desktop_stream(
+    base_url: String,
+    key: String,
+    events_path: String,
+    snapshot_path: String,
+    host: tauri::State<'_, HostState>,
+) -> Result<(), String> {
+    let host = host.inner().clone();
+    let stream_host = host.clone();
+    let stream_key = key.clone();
+    let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
+    let task = tokio::spawn(async move {
+        let _ = ready_rx.await;
+        let client = reqwest::Client::new();
+        let mut backoff = 1_u64;
+        loop {
+            stream_host.set_stream_connection(&stream_key, "reconnecting");
+            let token = match stream_host.access_token(&base_url).await {
+                Ok(token) => token,
+                Err(error) => {
+                    diagnostic_log(&format!("desktop stream auth failed: {error}"));
+                    stream_host.set_stream_connection(&stream_key, "authentication_required");
+                    tokio::time::sleep(Duration::from_secs(backoff)).await;
+                    backoff = (backoff * 2).min(30);
+                    continue;
+                }
+            };
+            let mut request = client
+                .get(desktop_api_url(&base_url, &events_path))
+                .bearer_auth(token)
+                .header("Accept", "text/event-stream");
+            let event_id = stream_host.stream_snapshot(&stream_key).last_event_id;
+            if event_id > 0 {
+                request = request.header("Last-Event-ID", event_id.to_string());
+            }
+            match request.send().await {
+                Ok(response) if response.status().is_success() => {
+                    stream_host.set_stream_connection(&stream_key, "connected");
+                    backoff = 1;
+                    let mut stream = response.bytes_stream();
+                    let mut buffer = String::new();
+                    while let Some(chunk) = stream.next().await {
+                        let bytes = match chunk {
+                            Ok(bytes) => bytes,
+                            Err(error) => {
+                                diagnostic_log(&format!("desktop stream read failed: {error}"));
+                                break;
+                            }
+                        };
+                        buffer.push_str(&String::from_utf8_lossy(&bytes));
+                        while let Some(end) = buffer.find("\n\n") {
+                            let frame = buffer[..end].to_string();
+                            buffer = buffer[end + 2..].to_string();
+                            let (id, data) = parse_sse_frame(&frame);
+                            let event_id = id.unwrap_or_else(|| stream_host.stream_snapshot(&stream_key).last_event_id);
+                            if let Some(data) = data {
+                                if let Ok(payload) = serde_json::from_str::<serde_json::Value>(&data) {
+                                    stream_host.record_stream(&stream_key, event_id, payload);
+                                }
+                                if let Ok(snapshot) = fetch_stream_snapshot(&client, &base_url, &snapshot_path, &stream_host).await {
+                                    stream_host.record_stream(&stream_key, event_id, snapshot);
+                                }
+                            }
+                        }
+                    }
+                }
+                Ok(response) if response.status().as_u16() == 401 => {
+                    stream_host.set_stream_connection(&stream_key, "authentication_required");
+                }
+                Ok(response) => {
+                    diagnostic_log(&format!("desktop stream connect failed: {}", response.status()));
+                    stream_host.set_stream_connection(&stream_key, "offline");
+                }
+                Err(error) => {
+                    diagnostic_log(&format!("desktop stream connect error: {error}"));
+                    stream_host.set_stream_connection(&stream_key, "offline");
+                }
+            }
+            tokio::time::sleep(Duration::from_secs(backoff)).await;
+            backoff = (backoff * 2).min(30);
+        }
+    });
+    host.start_stream(&key, task.abort_handle());
+    let _ = ready_tx.send(());
+    Ok(())
 }
 
 #[tauri::command]
@@ -954,6 +1181,9 @@ pub fn run() {
             pending_offline_mutations,
             acknowledge_offline_mutation,
             host_snapshot,
+            desktop_stream_snapshot,
+            start_desktop_stream,
+            stop_desktop_stream,
             start_sse_subscription
         ])
         .run(tauri::generate_context!())
