@@ -144,6 +144,7 @@ export interface SimulationStartRequest {
 
 export interface UserSettingsResponse {
   historical_days: number
+  desktop_order_size_mode?: 'quantity' | 'funds_ratio' | 'risk_ratio'
   funds_ratio_l_pct?: number
   funds_ratio_m_pct?: number
   funds_ratio_h_pct?: number
@@ -963,7 +964,7 @@ const api = {
     order_type: 'TARGET' | 'LIMIT' | 'STOPLOSS',
     price: number,
     quantityOrRatio: number | null,
-    opts: { is_stoploss?: boolean; funds_ratio_pct?: number; risk_ratio_pct?: number; right?: string; target_deviation_pct?: number; entry_sl_price?: number; group_id?: string } = {},
+    opts: { is_stoploss?: boolean; funds_ratio_pct?: number; risk_pct?: number; risk_ratio_pct?: number; right?: string; target_deviation_pct?: number; entry_sl_price?: number; group_id?: string } = {},
   ): Promise<Order> {
     const { target_deviation_pct, entry_sl_price, group_id, ...restOpts } = opts
     const body: Record<string, unknown> = { session_id, side, order_type, ...restOpts }
@@ -972,7 +973,9 @@ const api = {
     } else {
       body.trigger_price = price  // TARGET and STOPLOSS both use trigger_price
     }
-    if (opts.risk_ratio_pct != null) {
+    if (opts.risk_pct != null) {
+      body.risk_pct = opts.risk_pct
+    } else if (opts.risk_ratio_pct != null) {
       body.risk_ratio_pct = opts.risk_ratio_pct
     } else if (opts.funds_ratio_pct != null) {
       body.funds_ratio_pct = opts.funds_ratio_pct

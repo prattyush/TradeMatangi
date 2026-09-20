@@ -159,9 +159,16 @@ async def place_order(req: PlaceOrderRequest):
             )
         except InsufficientFundsError as exc:
             raise HTTPException(status_code=402, detail=str(exc))
-    elif req.risk_ratio_pct is not None:
-        if req.risk_ratio_pct <= 0 or req.risk_ratio_pct > 1:
-            raise HTTPException(status_code=400, detail="risk_ratio_pct must be between 0 and 1")
+    elif req.risk_pct is not None or req.risk_ratio_pct is not None:
+        if req.risk_pct is not None:
+            if req.risk_pct <= 0 or req.risk_pct > 100:
+                raise HTTPException(status_code=400, detail="risk_pct must be greater than 0 and at most 100")
+            risk_fraction = req.risk_pct / 100.0
+        else:
+            # Backward compatibility for existing clients that send fractions.
+            if req.risk_ratio_pct <= 0 or req.risk_ratio_pct > 1:
+                raise HTTPException(status_code=400, detail="risk_ratio_pct must be between 0 and 1")
+            risk_fraction = req.risk_ratio_pct
 
         # Entry price: trigger for TARGET/SL, limit for LIMIT
         entry_price = req.trigger_price if req.order_type in (OrderType.TARGET, OrderType.STOPLOSS) else req.limit_price
@@ -187,7 +194,7 @@ async def place_order(req: PlaceOrderRequest):
                 entry_price=entry_price,
                 stoploss_price=sl_price,
                 session_capital=session.session_capital,
-                risk_ratio_pct=req.risk_ratio_pct,
+                risk_ratio_pct=risk_fraction,
                 current_wallet=current_wallet,
                 lot_size=lot_size,
             )

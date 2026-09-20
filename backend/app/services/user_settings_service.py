@@ -25,9 +25,10 @@ DEFAULT_SETTINGS: dict = {
     "funds_ratio_l_pct": 0.03,
     "funds_ratio_m_pct": 0.06,
     "funds_ratio_h_pct": 0.12,
-    "risk_ratio_l_pct": 0.01,
-    "risk_ratio_m_pct": 0.02,
-    "risk_ratio_h_pct": 0.04,
+    # Stored as percentage points: 1 means 1% of session capital.
+    "risk_ratio_l_pct": 1.0,
+    "risk_ratio_m_pct": 2.0,
+    "risk_ratio_h_pct": 4.0,
     "default_sl_pct": 0.20,
     "context_menu_sl_mode": "longOnly",
     "analysis_price_source": "options",
@@ -68,6 +69,16 @@ def _ensure_table() -> None:
         logger.exception("Failed to ensure UserSettings table")
 
 
+def _risk_percentage(value, default: float) -> float:
+    """Return risk as percentage points, migrating legacy fractional values."""
+    if value is None:
+        return default
+    parsed = float(value)
+    # Treat values strictly below 1 as legacy fractions. A stored value of 1
+    # is a valid new setting meaning exactly 1%.
+    return parsed * 100 if 0 < parsed < 1 else parsed
+
+
 def get_settings(user_id: str) -> dict:
     """Return user settings, falling back to defaults if not found."""
     _ensure_table()
@@ -95,9 +106,9 @@ def get_settings(user_id: str) -> dict:
             "funds_ratio_l_pct": float(item.get("funds_ratio_l_pct", DEFAULT_SETTINGS["funds_ratio_l_pct"])),
             "funds_ratio_m_pct": float(item.get("funds_ratio_m_pct", DEFAULT_SETTINGS["funds_ratio_m_pct"])),
             "funds_ratio_h_pct": float(item.get("funds_ratio_h_pct", DEFAULT_SETTINGS["funds_ratio_h_pct"])),
-            "risk_ratio_l_pct": float(item.get("risk_ratio_l_pct", DEFAULT_SETTINGS["risk_ratio_l_pct"])),
-            "risk_ratio_m_pct": float(item.get("risk_ratio_m_pct", DEFAULT_SETTINGS["risk_ratio_m_pct"])),
-            "risk_ratio_h_pct": float(item.get("risk_ratio_h_pct", DEFAULT_SETTINGS["risk_ratio_h_pct"])),
+            "risk_ratio_l_pct": _risk_percentage(item.get("risk_ratio_l_pct"), DEFAULT_SETTINGS["risk_ratio_l_pct"]),
+            "risk_ratio_m_pct": _risk_percentage(item.get("risk_ratio_m_pct"), DEFAULT_SETTINGS["risk_ratio_m_pct"]),
+            "risk_ratio_h_pct": _risk_percentage(item.get("risk_ratio_h_pct"), DEFAULT_SETTINGS["risk_ratio_h_pct"]),
             "default_sl_pct": float(item.get("default_sl_pct", DEFAULT_SETTINGS["default_sl_pct"])),
             "context_menu_sl_mode": str(item.get("context_menu_sl_mode", DEFAULT_SETTINGS["context_menu_sl_mode"])),
             "analysis_price_source": str(item.get("analysis_price_source", DEFAULT_SETTINGS["analysis_price_source"])),

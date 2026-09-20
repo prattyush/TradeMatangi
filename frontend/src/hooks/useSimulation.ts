@@ -553,7 +553,7 @@ export function useSimulation() {
     orderType: 'TARGET' | 'LIMIT' | 'STOPLOSS',
     price: number,
     quantity: number | null,
-    opts: { is_stoploss?: boolean; funds_ratio_pct?: number; right?: string; target_deviation_pct?: number } = {},
+    opts: { is_stoploss?: boolean; funds_ratio_pct?: number; risk_pct?: number; right?: string; target_deviation_pct?: number } = {},
   ) => {
     if (!state.sessionId) return
     try {

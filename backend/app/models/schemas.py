@@ -231,7 +231,8 @@ class PlaceOrderRequest(BaseModel):
     limit_price: float | None = None     # required for LIMIT; auto-computed for TARGET
     quantity: int | None = None          # required when funds_ratio_pct is None
     funds_ratio_pct: float | None = None  # 0–1 fraction; backend computes quantity
-    risk_ratio_pct: float | None = None  # 0–1 fraction; risk-based quantity computation
+    risk_pct: float | None = None        # percentage points; 2 means 2% of session capital
+    risk_ratio_pct: float | None = None  # legacy 0–1 fraction; use risk_pct for new callers
     is_stoploss: bool = False
     right: str | None = None             # "CE" or "PE" for options orders; None for equity
     strike: int | None = None            # options strike; populated server-side from session when omitted
@@ -298,6 +299,9 @@ class UserSettingsResponse(BaseModel):
     funds_ratio_l_pct: float = 0.03
     funds_ratio_m_pct: float = 0.06
     funds_ratio_h_pct: float = 0.12
+    risk_ratio_l_pct: float = 1.0
+    risk_ratio_m_pct: float = 2.0
+    risk_ratio_h_pct: float = 4.0
     analysis_price_source: str = "options"
     experimental_patterns_enabled: bool = False
     pattern_share_emails: str = ""
@@ -320,6 +324,9 @@ class UserSettingsUpdateRequest(BaseModel):
     funds_ratio_l_pct: float | None = Field(default=None, ge=0.001, le=1.0)
     funds_ratio_m_pct: float | None = Field(default=None, ge=0.001, le=1.0)
     funds_ratio_h_pct: float | None = Field(default=None, ge=0.001, le=1.0)
+    risk_ratio_l_pct: float | None = Field(default=None, gt=0.0, le=100.0)
+    risk_ratio_m_pct: float | None = Field(default=None, gt=0.0, le=100.0)
+    risk_ratio_h_pct: float | None = Field(default=None, gt=0.0, le=100.0)
     analysis_price_source: str | None = None
     experimental_patterns_enabled: bool | None = None
     pattern_share_emails: str | None = None
