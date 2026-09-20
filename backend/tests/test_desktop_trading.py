@@ -2,6 +2,7 @@ import pytest
 import asyncio
 from fastapi.testclient import TestClient
 from fastapi import HTTPException
+from starlette.routing import Match
 from unittest.mock import patch
 
 from app.main import app
@@ -73,6 +74,18 @@ def _clear(session_id="desktop-stepwise-test"):
     sim_svc._sessions.pop(session_id, None)
     order_service.clear_session(session_id)
     trading_service.clear_session(session_id)
+
+
+@pytest.mark.parametrize("action", [
+    "bulk-convert",
+    "bulk-update-sl",
+])
+def test_desktop_bulk_order_routes_match_before_dynamic_order_route(action):
+    path = f"/api/desktop/v1/trading/desktop-stepwise-test/orders/{action}"
+    scope = {"type": "http", "path": path, "method": "PATCH", "headers": []}
+    matched_route = next(route for route in desktop_trading.router.routes if route.matches(scope)[0] is Match.FULL)
+
+    assert matched_route.path.endswith(f"/orders/{action}")
 
 
 @pytest.mark.parametrize(("strategy_type", "field", "price"), [
