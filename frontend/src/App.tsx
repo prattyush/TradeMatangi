@@ -1193,7 +1193,7 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
       }
       if (p.right) opts.right = p.right
       if (p.fundsRatioPct != null) opts.funds_ratio_pct = p.fundsRatioPct
-      if (p.riskRatioPct != null) opts.risk_ratio_pct = p.riskRatioPct
+      if (p.riskRatioPct != null) opts.risk_pct = p.riskRatioPct
       if (p.orderType === 'TARGET') opts.target_deviation_pct = targetDeviationPct
       sim.placeOrder(p.side, p.orderType, price, p.quantity, opts as Parameters<typeof sim.placeOrder>[4]).catch(() => {})
       setContextMenuOrderPick(null)
@@ -1305,7 +1305,7 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
           const mktPrice = side === 'BUY' ? paneCurrentPrice * 1.01 : paneCurrentPrice * 0.99
           const opts: Record<string, unknown> = { entry_sl_price: price, group_id: crypto.randomUUID() }
           if (fundsRatioPct != null) opts.funds_ratio_pct = fundsRatioPct
-          if (riskRatioPct != null) opts.risk_ratio_pct = riskRatioPct
+          if (riskRatioPct != null) opts.risk_pct = riskRatioPct
           if (right) opts.right = right
           sim.placeOrder(side, 'LIMIT', mktPrice, quantity, opts as Parameters<typeof sim.placeOrder>[4])
         } else if (orderType === 'AUTO_STOP') {
@@ -1317,7 +1317,7 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
             strategy_type: 'AutoStop',
             right: right ?? undefined,
             entry_sl_price: price,
-            risk_ratio_pct: riskRatioPct,
+            risk_ratio_pct: riskRatioPct != null ? riskRatioPct / 100 : undefined,
             funds_ratio_pct: fundsRatioPct,
           }).catch(() => {})
         } else {
@@ -1341,10 +1341,11 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
       }
       const ratios = sizingMode === 'riskRatio' ? riskRatios : fundsRatios
       return (['l', 'm', 'h'] as const).map(key => ({
-        label: sizingMode === 'riskRatio' ? `RR ${ratios[key]}%` : `${key.toUpperCase()} · ${ratios[key]}%`,
+        label: sizingMode === 'riskRatio' ? `Risk ${ratios[key]}%` : `${key.toUpperCase()} · ${ratios[key]}%`,
         onClick: () => {
-          const ratioPct = ratios[key] / 100
-          handleSize(null, sizingMode === 'riskRatio' ? undefined : ratioPct, sizingMode === 'riskRatio' ? ratioPct : undefined)
+          const fundsPct = ratios[key] / 100
+          const riskPct = ratios[key]
+          handleSize(null, sizingMode === 'riskRatio' ? undefined : fundsPct, sizingMode === 'riskRatio' ? riskPct : undefined)
         }
       }))
     }

@@ -543,7 +543,7 @@ export default function App() {
     }
     if (settings.desktop_order_size_mode === 'risk_ratio') {
       const key = ticket.sizeKey as 'l' | 'm' | 'h'
-      return { risk_ratio_pct: key === 'h' ? settings.risk_ratio_h_pct : key === 'm' ? settings.risk_ratio_m_pct : settings.risk_ratio_l_pct }
+      return { risk_pct: key === 'h' ? settings.risk_ratio_h_pct : key === 'm' ? settings.risk_ratio_m_pct : settings.risk_ratio_l_pct }
     }
     return { quantity: Number(ticket.sizeKey) || 1 }
   }
@@ -640,7 +640,7 @@ export default function App() {
     }
     if (settings.desktop_order_size_mode === 'risk_ratio') {
       const pct = key === 'h' ? settings.risk_ratio_h_pct : key === 'm' ? settings.risk_ratio_m_pct : settings.risk_ratio_l_pct
-      return `RR ${Math.round(pct * 10000) / 100}%`
+      return `Risk ${pct}%`
     }
     return key
   }
