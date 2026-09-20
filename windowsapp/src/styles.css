@@ -19,6 +19,12 @@ input { width: 160px; }
 .mode-button { font-size: .72rem; padding: 4px 6px; }
 .run-controls { display: flex; align-items: center; gap: 4px; font-size: .7rem; }
 .run-controls button { font-size: .68rem; padding: 3px 5px; }
+.run-controls .run-start, .run-controls .run-next { background: #0f766e; border-color: #2dd4bf; color: #ecfeff; font-weight: 700; }
+.run-controls .run-start:hover:not(:disabled), .run-controls .run-next:hover:not(:disabled) { background: #0d9488; border-color: #5eead4; }
+.run-controls .run-pause { background: #1d4ed8; border-color: #60a5fa; color: #eff6ff; font-weight: 700; }
+.run-controls .run-pause:hover:not(:disabled) { background: #2563eb; border-color: #93c5fd; }
+.run-controls .run-stop { background: #991b1b; border-color: #f87171; color: #fff1f2; font-weight: 700; }
+.run-controls .run-stop:hover:not(:disabled) { background: #b91c1c; border-color: #fca5a5; }
 .live-controls button { background: #1d4ed8; border-color: #3b82f6; color: #fff; font-weight: 600; }
 .live-controls button:hover:not(:disabled) { background: #2563eb; }
 .run-controls input { width: 124px; padding: 3px 5px; font-size: .72rem; }
