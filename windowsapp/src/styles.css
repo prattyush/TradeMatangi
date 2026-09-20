@@ -23,6 +23,7 @@ input { width: 160px; }
 .live-controls button:hover:not(:disabled) { background: #2563eb; }
 .run-controls input { width: 124px; padding: 3px 5px; font-size: .72rem; }
 .run-error { position: fixed; z-index: 5; top: 50px; left: 12px; margin: 0; padding: 5px 8px; background: #7f1d1d; color: #fecaca; font-size: .75rem; }
+.run-notice { position: fixed; z-index: 5; top: 50px; left: 12px; margin: 0; padding: 5px 8px; background: #14532d; color: #bbf7d0; font-size: .75rem; }
 .layout-control { margin-left: auto; display: flex; align-items: center; gap: 5px; font-size: .78rem; }
 .panel-toggle { flex: 0 0 auto; }
 .workspace-shell { min-height: 0; display: grid; grid-template-columns: 158px minmax(0, 1fr); overflow: hidden; }

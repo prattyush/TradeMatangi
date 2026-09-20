@@ -5,7 +5,7 @@ from fastapi import HTTPException
 from unittest.mock import patch
 
 from app.main import app
-from app.models.schemas import ConvertOrderRequest, OrderStatus, OrderType, PlaceOrderRequest, SimulationState, TradeSide, WalletResetRequest
+from app.models.schemas import ConvertOrderRequest, OrderStatus, OrderType, PlaceOrderRequest, SimulationState, StartStrategyRequest, StrategyType, TradeSide, WalletResetRequest
 from app.routers import desktop_trading
 from app.services import order_service, simulation as sim_svc, trading as trading_service, wallet_service
 
@@ -75,6 +75,26 @@ def _clear(session_id="desktop-stepwise-test"):
     trading_service.clear_session(session_id)
 
 
+@pytest.mark.parametrize(("strategy_type", "field", "price"), [
+    (StrategyType.TARGET_PROFIT, "target_profit_value", 112.5),
+    (StrategyType.LOCK_PROFIT, "lock_profit_value", 106.5),
+    (StrategyType.UNDERLYING_TARGET_PROFIT, "target_profit_value", 24125),
+    (StrategyType.UNDERLYING_STOPLOSS, "underlying_sl_price", 23950),
+])
+def test_desktop_strategy_start_forwards_chart_price_and_contract_right(no_db, strategy_type, field, price):
+    _clear()
+    session = _session()
+    request = StartStrategyRequest(session_id="ignored", strategy_type=strategy_type, right="CE", **{field: price})
+    with patch("app.routers.strategies.start_strategy", return_value={"strategy_id": "strategy-1"}) as start:
+        response = asyncio.run(desktop_trading.start_strategy(session.session_id, request, user_id="desktop-user"))
+
+    assert response == {"strategy_id": "strategy-1"}
+    forwarded = start.call_args.args[0]
+    assert forwarded.session_id == session.session_id
+    assert forwarded.right == "CE"
+    assert getattr(forwarded, field) == price
+
+
 def test_desktop_bulk_convert_uses_clicked_price_for_closing_orders(no_db):
     _clear()
     session = _session()
@@ -105,6 +125,20 @@ def test_desktop_bulk_convert_uses_clicked_price_for_closing_orders(no_db):
         strike=24000,
         user_id="desktop-user",
     )
+    target = order_service.place_order(
+        session_id=session.session_id,
+        symbol="NIFTY",
+        side=TradeSide.SELL,
+        order_type=OrderType.TARGET,
+        quantity=65,
+        created_at=1778058900,
+        trading_date=session.date,
+        trigger_price=110,
+        right="CE",
+        strike=24000,
+        expiry="2026-05-07",
+        user_id="desktop-user",
+    )
 
     response = asyncio.run(desktop_trading.bulk_convert(
         session.session_id,
@@ -112,11 +146,14 @@ def test_desktop_bulk_convert_uses_clicked_price_for_closing_orders(no_db):
         user_id="desktop-user",
     ))
 
-    assert response["converted"] == 1
+    assert response["converted"] == 2
     updated = order_service.get_order(session.session_id, order.order_id)
     assert updated.order_type == OrderType.LIMIT
     assert updated.limit_price == 96.5
     assert updated.is_stoploss is False
+    updated_target = order_service.get_order(session.session_id, target.order_id)
+    assert updated_target.order_type == OrderType.LIMIT
+    assert updated_target.limit_price == 96.5
     _clear()
 
 
@@ -151,6 +188,20 @@ def test_desktop_bulk_update_sl_only_updates_stoploss_closing_orders(no_db):
         expiry="2026-05-07",
         user_id="desktop-user",
     )
+    second_sl = order_service.place_order(
+        session_id=session.session_id,
+        symbol="NIFTY",
+        side=TradeSide.SELL,
+        order_type=OrderType.STOPLOSS,
+        quantity=65,
+        created_at=1778058900,
+        trading_date=session.date,
+        trigger_price=89,
+        right="CE",
+        strike=24000,
+        expiry="2026-05-07",
+        user_id="desktop-user",
+    )
     limit = order_service.place_order(
         session_id=session.session_id,
         symbol="NIFTY",
@@ -172,9 +223,38 @@ def test_desktop_bulk_update_sl_only_updates_stoploss_closing_orders(no_db):
         user_id="desktop-user",
     ))
 
-    assert response["updated"] == 1
+    assert response["updated"] == 2
     assert order_service.get_order(session.session_id, sl.order_id).trigger_price == 94.25
+    assert order_service.get_order(session.session_id, second_sl.order_id).trigger_price == 94.25
     assert order_service.get_order(session.session_id, limit.order_id).limit_price == 112
+    _clear()
+
+
+def test_desktop_day_pnl_marks_open_long_at_current_contract_quote(no_db):
+    _clear()
+    session = _session()
+    session.last_price_ce = 110
+    trade = trading_service.record_trade(
+        session_id=session.session_id, side=TradeSide.BUY, price=100,
+        timestamp=1778058900, quantity=65, symbol="NIFTY", instrument_type="options",
+        strike=24000, expiry="2026-05-07", right="CE", user_id="desktop-user", session_type="stepwise",
+    )
+
+    assert desktop_trading._day_pnl(session) == round((110 - 100) * 65 - trade.commission, 2)
+    _clear()
+
+
+def test_desktop_day_pnl_marks_open_short_at_current_contract_quote(no_db):
+    _clear()
+    session = _session()
+    session.last_price_ce = 90
+    trade = trading_service.record_trade(
+        session_id=session.session_id, side=TradeSide.SELL, price=100,
+        timestamp=1778058900, quantity=65, symbol="NIFTY", instrument_type="options",
+        strike=24000, expiry="2026-05-07", right="CE", user_id="desktop-user", session_type="stepwise",
+    )
+
+    assert desktop_trading._day_pnl(session) == round((100 - 90) * 65 - trade.commission, 2)
     _clear()
 
 
