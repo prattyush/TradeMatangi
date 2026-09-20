@@ -195,7 +195,7 @@ function DesktopTile({ config, catalogue, connection, api, settings, serverUrl, 
     return `${order.symbol}:${order.expiry ?? ''}:${Number(order.strike)}:${order.right ?? ''}` === tileContractKey
   })
   const tilePosition: DesktopPosition | null = tileContractKey ? tradingSnapshot?.positions_by_contract?.[tileContractKey] ?? null : tileRight ? tradingSnapshot?.positions[tileRight] ?? null : tradingSnapshot?.positions.equity ?? null
-  return <div className={`workspace-tile ${maximized ? 'is-maximized' : ''}`}><ChartTile symbol={label} interval={`${config.interval}m`} supportedIntervals={catalogueInstrument.supported_intervals} onIntervalChange={onIntervalChange} candles={visibleCandles} loading={subscribedTile ? false : loading || replaySyncing} message={subscribedTile && subscribedTile.availability !== 'available' ? (subscribedTile.reason ?? subscribedTile.availability) : replaySyncing ? 'Attaching to replay...' : status} settings={settings} isReplaying={Boolean(replayCursor)} isLive={Boolean(subscribedTile)} replayDatasetKey={replayDatasetKey} instrument={chartInstrument} baseUrl={serverUrl} onConfigure={onConfigure} onMaximize={onMaximize} maximized={maximized} active={active} indicators={indicators} drawingCommand={drawingCommand} drawingAction={drawingAction} drawingMode={drawingMode} onDrawingComplete={onDrawingComplete} onActivate={onActivate} openOrders={tileOrders} position={tilePosition} sessionCapital={tradingSnapshot?.session.session_capital ?? 0} tradingSettings={tradingSnapshot?.settings ?? null} tradingEnabled={Boolean(tradingSnapshot)} pricePickAction={pricePickAction} onPricePick={onPricePick} onOrderDrag={onOrderDrag} onOrderCancel={onOrderCancel} onOrderConvertRequest={onOrderConvertRequest} onChartOrderAction={(action, price, anchor) => onChartOrderAction?.(config, action, price, anchor)} /></div>
+  return <div className={`workspace-tile ${maximized ? 'is-maximized' : ''}`}><ChartTile symbol={label} interval={`${config.interval}m`} supportedIntervals={catalogueInstrument.supported_intervals} onIntervalChange={onIntervalChange} candles={visibleCandles} loading={subscribedTile ? false : loading || replaySyncing} message={subscribedTile && subscribedTile.availability !== 'available' ? (subscribedTile.reason ?? subscribedTile.availability) : replaySyncing ? 'Attaching to replay...' : status} settings={settings} isReplaying={Boolean(replayCursor)} isLive={Boolean(subscribedTile)} replayDatasetKey={replayDatasetKey} instrument={chartInstrument} baseUrl={serverUrl} onConfigure={onConfigure} onMaximize={onMaximize} maximized={maximized} active={active} indicators={indicators} drawingCommand={drawingCommand} drawingAction={drawingAction} drawingMode={drawingMode} onDrawingComplete={onDrawingComplete} onActivate={onActivate} openOrders={tileOrders} position={tilePosition} sessionCapital={tradingSnapshot?.session.session_capital ?? 0} tradingSettings={tradingSnapshot?.settings ?? null} tradingEnabled={Boolean(tradingSnapshot) && config.kind === 'option'} pricePickAction={pricePickAction} onPricePick={onPricePick} onOrderDrag={onOrderDrag} onOrderCancel={onOrderCancel} onOrderConvertRequest={onOrderConvertRequest} onChartOrderAction={(action, price, anchor) => onChartOrderAction?.(config, action, price, anchor)} /></div>
 }
 
 export default function App() {
@@ -319,14 +319,14 @@ export default function App() {
     if (closing.persistedId) void desktopRecordRequest(`screens/${closing.persistedId}`, 'DELETE').catch(() => undefined)
   }
   const saveChartSettings = (settings: ChartSettings) => { setChartSettings(settings); setShowSettings(false); if (hasNativeHost) void invoke('save_desktop_chart_settings', { baseUrl: serverUrl, settings }); else void fetch(`${serverUrl.replace(/\/$/, '')}/api/desktop/v1/chart-settings`, { method: 'PUT', headers: { Authorization: `Bearer ${browserToken}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ settings }) }) }
-  const replayRequest = async (path: string, method: 'GET' | 'POST' | 'PUT', body: Record<string, unknown> = {}): Promise<ReplaySnapshot> => {
-    if (hasNativeHost) return invoke<ReplaySnapshot>('desktop_replay_request', { baseUrl: serverUrl, path, method, body })
+  const replayRequest = async <T = ReplaySnapshot,>(path: string, method: 'GET' | 'POST' | 'PUT', body: Record<string, unknown> = {}): Promise<T> => {
+    if (hasNativeHost) return invoke<T>('desktop_replay_request', { baseUrl: serverUrl, path, method, body })
     const response = await fetch(`${serverUrl.replace(/\/$/, '')}/api/desktop/v1/replay/${path}`, { method, headers: { Authorization: `Bearer ${browserToken}`, 'Content-Type': 'application/json' }, body: method === 'GET' ? undefined : JSON.stringify(body) })
     if (!response.ok) {
       const detail = await response.text().catch(() => '')
       throw new Error(`Replay request failed (${response.status})${detail ? `: ${detail.slice(0, 240)}` : ''}`)
     }
-    return response.json() as Promise<ReplaySnapshot>
+    return response.json() as Promise<T>
   }
   const liveRequest = async (path: string, method: 'GET' | 'POST' | 'PUT' | 'DELETE', body: Record<string, unknown> = {}): Promise<LiveSnapshot> => { if (hasNativeHost) return invoke<LiveSnapshot>('desktop_live_request', { baseUrl: serverUrl, path, method, body }); const response = await fetch(`${serverUrl.replace(/\/$/, '')}/api/desktop/v1/live/${path}`, { method, headers: { Authorization: `Bearer ${browserToken}`, 'Content-Type': 'application/json' }, body: method === 'GET' || method === 'DELETE' ? undefined : JSON.stringify(body) }); if (!response.ok) throw new Error(`Live request failed (${response.status})`); return response.json() as Promise<LiveSnapshot> }
   const desktopRecordRequest = async <T,>(path: string, method: 'GET' | 'POST' | 'PUT' | 'DELETE', body: Record<string, unknown> = {}): Promise<T> => {
@@ -464,12 +464,15 @@ export default function App() {
       if (action === 'stop' && mode === 'Stepwise' && tradingSessionId) {
         await desktopTradingRequest(`${tradingSessionId}/stop`, 'POST')
       }
+      if (action === 'next-bar' && mode === 'Stepwise' && tradingSessionId) {
+        const combined = await replayRequest<{ replay: ReplaySnapshot; trading: DesktopTradingSnapshot }>(`${replay.run_id}/next-bar`, 'POST', { trading_session_id: tradingSessionId })
+        setReplay(combined.replay)
+        setTrading(combined.trading)
+        return
+      }
       const next = await replayRequest(`${replay.run_id}/${action}`, 'POST')
       if (action === 'stop') { stopNativeStream(`replay:${replay.run_id}`); setTrading(null); setTradeTicket(null); setPricePickAction(null) }
       setReplay(next)
-      if (mode === 'Stepwise' && trading?.session.session_id && action === 'next-bar') {
-        await desktopTradingRequest<DesktopTradingSnapshot>(`${trading.session.session_id}/next-bar`, 'POST').then(setTrading)
-      }
     } catch (error) { setReplayError(String(error)); if (mode === 'Stepwise') setTradingError(String(error)) }
   }
   const updateReplaySpeed = (value: string) => { setReplaySpeed(value); if (replay && replay.mode === 'replay' && replay.state !== 'stopped') void replayRequest(`${replay.run_id}/speed`, 'POST', { speed: Number(value) }).then(setReplay).catch(error => setReplayError(String(error))) }
@@ -531,7 +534,10 @@ export default function App() {
   const contractPayloadForTile = (tile: TileConfig): Record<string, unknown> => tile.kind === 'option' ? { right: tile.right, strike: Number(tile.strike), expiry: tile.expiry } : { right: null }
   const paneCurrentPrice = (tile: TileConfig) => {
     if (!trading) return 0
-    if (tile.kind === 'option') return tile.right === 'PE' ? trading.current_price_pe || trading.current_price : trading.current_price_ce || trading.current_price
+    if (tile.kind === 'option') {
+      const key = contractKeyForTile(tile)
+      return (key ? trading.contract_quotes?.[key]?.price : 0) || (tile.right === 'PE' ? trading.current_price_pe : trading.current_price_ce) || trading.current_price
+    }
     return trading.current_price
   }
   const sizePayload = (ticket: TradeTicket): Record<string, unknown> => {
@@ -547,23 +553,22 @@ export default function App() {
     }
     return { quantity: Number(ticket.sizeKey) || 1 }
   }
-  const placeTicketOrder = async (ticket: TradeTicket, entryPrice: number) => {
+  const placeTicketOrder = async (ticket: TradeTicket, entryPrice?: number) => {
     if (!trading || !ticket.sizeKey || !ticket.orderType) return
-    const contractPayload = contractPayloadForTile(ticket.tile)
-    const orderType = ticket.orderType === 'MARKET' ? 'LIMIT' : ticket.orderType
+    if (ticket.tile.kind !== 'option') throw new Error('Chart entry is available only for options')
+    const intent = ticket.orderType.toLowerCase()
     const body: Record<string, unknown> = {
-      session_id: trading.session.session_id,
+      symbol: ticket.tile.symbol,
       side: ticket.side,
-      order_type: orderType,
+      intent,
       entry_sl_price: ticket.slPrice,
       group_id: crypto.randomUUID(),
       target_deviation_pct: trading.settings.target_deviation_pct,
-      ...contractPayload,
+      ...contractPayloadForTile(ticket.tile),
       ...sizePayload(ticket),
     }
-    if (orderType === 'LIMIT') body.limit_price = entryPrice
-    else body.trigger_price = entryPrice
-    await desktopTradingRequest<DesktopOrder>(`${trading.session.session_id}/orders`, 'POST', body)
+    if (intent !== 'market') body.price = entryPrice
+    await desktopTradingRequest<DesktopOrder>(`${trading.session.session_id}/chart-orders`, 'POST', body)
     const snapshot = await desktopTradingRequest<DesktopTradingSnapshot>(`${trading.session.session_id}/snapshot`, 'GET')
     setTrading(snapshot)
     setTradeTicket(null)
@@ -640,7 +645,7 @@ export default function App() {
     }
     if (settings.desktop_order_size_mode === 'risk_ratio') {
       const pct = key === 'h' ? settings.risk_ratio_h_pct : key === 'm' ? settings.risk_ratio_m_pct : settings.risk_ratio_l_pct
-      return `Risk ${pct}%`
+      return `${pct}%`
     }
     return key
   }
@@ -651,9 +656,7 @@ export default function App() {
       return
     }
     if (ticket.orderType === 'MARKET') {
-      const current = paneCurrentPrice(ticket.tile)
-      const entry = ticket.side === 'BUY' ? current * 1.01 : current * 0.99
-      void placeTicketOrder(ticket, Number(entry.toFixed(2))).catch(error => setTradingError(String(error)))
+      void placeTicketOrder(ticket).catch(error => setTradingError(String(error)))
     } else {
       setTradeTicket(ticket)
       setPricePickAction({ ticket })
@@ -705,7 +708,7 @@ export default function App() {
         <div className="ticket-buttons">{(['MARKET', 'LIMIT', 'TARGET'] as const).map(orderType => <button key={orderType} className={tradeTicket.orderType === orderType ? 'active' : ''} onClick={() => chooseTicketOrderType(orderType)}>{orderTypeLabel(orderType)}</button>)}</div>
         <div className="ticket-buttons">{ticketSizeOptions().map(key => <button key={key} className={tradeTicket.sizeKey === key ? 'active' : ''} onClick={() => chooseTicketSize(key)}>{ticketSizeLabel(key)}</button>)}</div>
       </div>
-      <div className="ticket-hint">{tradeTicket.orderType === 'MARKET' ? 'Places now' : tradeTicket.orderType ? 'Pick price' : 'Type + size'}</div>
+      <div className="ticket-hint">{tradeTicket.orderType === 'MARKET' ? `Uses chart quote ${paneCurrentPrice(tradeTicket.tile).toFixed(2)}; proxy set by server` : tradeTicket.orderType ? 'Pick price' : 'Type + size'}</div>
     </div>}
     <section className={`workspace-shell ${toolPanelOpen ? '' : 'tools-collapsed'}`}>
       {toolPanelOpen && <WorkspaceToolPanel tiles={activeScreen.tiles} activeTileId={activeToolTile} setActiveTileId={setActiveToolTileId} indicators={selectedIndicators} toggleIndicator={toggleIndicator} clearIndicators={clearIndicators} sendDrawing={sendDrawing} sendDrawingAction={sendDrawingAction} activeDrawingTool={activeDrawingTool} drawingMode={drawingMode} setDrawingMode={setDrawingMode} tradeHistoryCount={trading?.trades.length ?? 0} onOpenTradeHistory={() => setTradeHistoryOpen(true)} />}

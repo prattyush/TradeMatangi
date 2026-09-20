@@ -221,6 +221,12 @@ class Order(BaseModel):
     kotak_fill_confirmed: bool = False  # True once Kotak WebSocket or reconcile records the fill
     entry_sl_price: float | None = None  # auto-stoploss price set at entry time
     group_id: str | None = None          # links entry order with its auto-placed SL order
+    # The authoritative quote used to create a chart-originated order.  These
+    # fields are intentionally optional so persisted and non-desktop orders
+    # remain backwards compatible.
+    quote_price: float | None = None
+    quote_timestamp: int | None = None
+    quote_source: str | None = None
 
 
 class PlaceOrderRequest(BaseModel):
@@ -240,6 +246,9 @@ class PlaceOrderRequest(BaseModel):
     target_deviation_pct: float = 0.01   # deviation used to compute limit from trigger for TARGET orders
     entry_sl_price: float | None = None  # optional auto-stoploss placed on entry fill
     group_id: str | None = None          # shared UUID linking entry + auto-SL order
+    quote_price: float | None = None
+    quote_timestamp: int | None = None
+    quote_source: str | None = None
 
 
 class UpdateOrderRequest(BaseModel):

@@ -26,6 +26,7 @@ export interface DesktopOrder {
   filled_at?: number | null; filled_price?: number | null
   is_stoploss: boolean; right?: 'CE' | 'PE' | null; strike?: number | null; expiry?: string | null
   source?: string | null
+  quote_price?: number | null; quote_timestamp?: number | null; quote_source?: string | null
 }
 
 export interface DesktopPosition {
@@ -66,6 +67,7 @@ export interface DesktopTradingSnapshot {
   version: number
   session: DesktopTradingSession
   current_price: number; current_price_ce: number; current_price_pe: number
+  contract_quotes: Record<string, { symbol: string; expiry: string; strike: number; right: 'CE' | 'PE'; contract_key: string; price: number; timestamp: number; source: string }>
   trades: Array<Record<string, unknown>>
   open_orders: DesktopOrder[]
   strategies: DesktopStrategy[]
