@@ -461,6 +461,11 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
       api.getUserSettings().then(s => {
         setHistoricalDays(s.historical_days)
         localStorage.setItem(HISTORICAL_DAYS_KEY, String(s.historical_days))
+        if (s.desktop_order_size_mode === 'quantity' || s.desktop_order_size_mode === 'funds_ratio' || s.desktop_order_size_mode === 'risk_ratio') {
+          const mode = s.desktop_order_size_mode === 'funds_ratio' ? 'fundsRatio' : s.desktop_order_size_mode === 'risk_ratio' ? 'riskRatio' : 'quantity'
+          setSizingMode(mode)
+          saveSizingMode(mode)
+        }
         // Sync ratio settings from backend (overrides localStorage if backend has values)
         if (s.funds_ratio_l_pct != null && s.funds_ratio_m_pct != null && s.funds_ratio_h_pct != null) {
           const synced = {
@@ -512,9 +517,9 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
         // Sync risk ratio settings from backend
         if (s.risk_ratio_l_pct != null && s.risk_ratio_m_pct != null && s.risk_ratio_h_pct != null) {
           const synced = {
-            l: Math.round(s.risk_ratio_l_pct * 100 * 100) / 100,
-            m: Math.round(s.risk_ratio_m_pct * 100 * 100) / 100,
-            h: Math.round(s.risk_ratio_h_pct * 100 * 100) / 100,
+            l: s.risk_ratio_l_pct,
+            m: s.risk_ratio_m_pct,
+            h: s.risk_ratio_h_pct,
           }
           setRiskRatios(synced)
           setRiskRatioInputs({ l: String(synced.l), m: String(synced.m), h: String(synced.h) })
@@ -625,9 +630,9 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
     }
     setRiskRatios({ l, m, h })
     api.updateUserSettings({
-      risk_ratio_l_pct: l / 100,
-      risk_ratio_m_pct: m / 100,
-      risk_ratio_h_pct: h / 100,
+      risk_ratio_l_pct: l,
+      risk_ratio_m_pct: m,
+      risk_ratio_h_pct: h,
     }).catch(() => {})
     setStatus('Saved')
     setTimeout(() => setStatus(null), 2000)
@@ -1207,7 +1212,11 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
                 {(['quantity', 'fundsRatio', 'riskRatio'] as const).map(mode => (
                   <button
                     key={mode}
-                    onClick={() => setSizingMode(mode)}
+                    onClick={() => {
+                      setSizingMode(mode)
+                      saveSizingMode(mode)
+                      api.updateUserSettings({ desktop_order_size_mode: mode === 'fundsRatio' ? 'funds_ratio' : mode === 'riskRatio' ? 'risk_ratio' : 'quantity' }).catch(() => {})
+                    }}
                     style={{
                       flex: 1, padding: '6px 0', fontSize: 11, fontWeight: 600,
                       border: 'none', cursor: 'pointer',
@@ -1224,7 +1233,7 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
                 {sizingMode === 'fundsRatio'
                   ? 'Orders sized by % of session capital (L/M/H)'
                   : sizingMode === 'riskRatio'
-                  ? 'Quantity so loss at SL = % of capital (L/M/H)'
+                  ? 'Quantity so loss at SL = this % of capital (L/M/H)'
                   : 'Orders sized by explicit quantity'}
               </div>
             </div>

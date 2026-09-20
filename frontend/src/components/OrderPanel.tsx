@@ -20,7 +20,7 @@ interface Props {
     orderType: 'TARGET' | 'LIMIT' | 'STOPLOSS',
     price: number,
     quantity: number | null,
-    opts: { is_stoploss?: boolean; funds_ratio_pct?: number; risk_ratio_pct?: number; target_deviation_pct?: number; entry_sl_price?: number; group_id?: string },
+    opts: { is_stoploss?: boolean; funds_ratio_pct?: number; risk_pct?: number; risk_ratio_pct?: number; target_deviation_pct?: number; entry_sl_price?: number; group_id?: string },
   ) => Promise<void>
   onCancelOrder: (orderId: string) => Promise<void>
   onConvertOrder?: (orderId: string, newOrderType: 'TARGET' | 'LIMIT' | 'STOPLOSS', price?: number) => Promise<void>
@@ -263,8 +263,8 @@ export default function OrderPanel({
       if (orderType === 'MARKET') {
         const mktPrice = side === 'BUY' ? currentPrice * 1.01 : currentPrice * 0.99
         if (sizingMode === 'riskRatio') {
-          const riskPct = riskRatios[ratio] / 100
-          await onPlaceOrder(side, 'LIMIT', mktPrice, null, { risk_ratio_pct: riskPct, ...entrySlOpts })
+          const riskPct = riskRatios[ratio]
+          await onPlaceOrder(side, 'LIMIT', mktPrice, null, { risk_pct: riskPct, ...entrySlOpts })
         } else if (sizingMode === 'fundsRatio') {
           await onPlaceOrder(side, 'LIMIT', mktPrice, null, { funds_ratio_pct: ratioPct, ...entrySlOpts })
         } else {
@@ -273,9 +273,9 @@ export default function OrderPanel({
       } else if (orderType === 'STOPLOSS') {
         await onPlaceOrder(side, 'STOPLOSS', parsedPrice, slQty, { is_stoploss: true })
       } else if (sizingMode === 'riskRatio') {
-        const riskPct = riskRatios[ratio] / 100
+        const riskPct = riskRatios[ratio]
         await onPlaceOrder(side, orderType, parsedPrice, null, {
-          risk_ratio_pct: riskPct,
+          risk_pct: riskPct,
           target_deviation_pct: deviation,
           ...entrySlOpts,
         })

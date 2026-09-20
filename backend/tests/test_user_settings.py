@@ -56,6 +56,19 @@ class TestGetSettings:
             result = svc.get_settings("user-123")
         assert result["historical_days"] == 2
 
+    def test_legacy_risk_fractions_are_returned_as_percentage_points(self):
+        mock_resource, _ = _mock_db({
+            "user_id": "user-123",
+            "risk_ratio_l_pct": 0.01,
+            "risk_ratio_m_pct": 0.02,
+            "risk_ratio_h_pct": 0.04,
+        })
+        with patch("app.services.db.get_dynamodb_resource", return_value=mock_resource):
+            result = svc.get_settings("user-123")
+        assert result["risk_ratio_l_pct"] == 1.0
+        assert result["risk_ratio_m_pct"] == 2.0
+        assert result["risk_ratio_h_pct"] == 4.0
+
 
 class TestUpdateSettings:
     def test_stores_and_returns_updated(self):
@@ -135,6 +148,36 @@ class TestUserSettingsEndpoints:
             resp = client.put("/api/users/settings", json={"historical_days": 5})
         assert resp.status_code == 200
         assert resp.json()["historical_days"] == 5
+
+    def test_put_risk_percentages_preserves_percentage_points(self):
+        updated = {
+            "historical_days": 2,
+            "risk_ratio_l_pct": 1.0,
+            "risk_ratio_m_pct": 2.0,
+            "risk_ratio_h_pct": 10.0,
+        }
+        with patch("app.services.user_settings_service.update_settings", return_value=updated) as mock_fn:
+            resp = client.put("/api/users/settings", json={
+                "risk_ratio_l_pct": 1,
+                "risk_ratio_m_pct": 2,
+                "risk_ratio_h_pct": 10,
+            })
+        assert resp.status_code == 200
+        assert resp.json()["risk_ratio_h_pct"] == 10.0
+        assert mock_fn.call_args[0][1] == {
+            "risk_ratio_l_pct": 1,
+            "risk_ratio_m_pct": 2,
+            "risk_ratio_h_pct": 10,
+        }
+
+    def test_put_risk_percentage_allows_values_above_one(self):
+        with patch("app.services.user_settings_service.update_settings", return_value={"historical_days": 2}):
+            resp = client.put("/api/users/settings", json={"risk_ratio_m_pct": 2})
+        assert resp.status_code == 200
+
+    def test_put_risk_percentage_rejects_non_positive_or_above_100(self):
+        assert client.put("/api/users/settings", json={"risk_ratio_l_pct": 0}).status_code == 422
+        assert client.put("/api/users/settings", json={"risk_ratio_l_pct": 101}).status_code == 422
 
     def test_put_pattern_share_emails(self):
         updated = {

@@ -32,9 +32,9 @@ def no_db():
              "funds_ratio_l_pct": 0.03,
              "funds_ratio_m_pct": 0.06,
              "funds_ratio_h_pct": 0.12,
-             "risk_ratio_l_pct": 0.01,
-             "risk_ratio_m_pct": 0.02,
-             "risk_ratio_h_pct": 0.04,
+             "risk_ratio_l_pct": 1.0,
+             "risk_ratio_m_pct": 2.0,
+             "risk_ratio_h_pct": 4.0,
              "default_sl_pct": 0.20,
          }):
         yield
@@ -270,7 +270,7 @@ def test_desktop_limit_entry_places_matching_stoploss_on_fill(no_db):
             side=TradeSide.BUY,
             order_type=OrderType.LIMIT,
             limit_price=100,
-            risk_ratio_pct=0.01,
+            risk_pct=1,
             entry_sl_price=91,
             group_id="desktop-sl-group",
             right="CE",
@@ -283,6 +283,7 @@ def test_desktop_limit_entry_places_matching_stoploss_on_fill(no_db):
     sim_svc._emit_tick_and_check_orders(session, {"time": 1778058901, "open": 99, "high": 99, "low": 99, "close": 99}, "CE")
 
     assert order_service.get_order(session.session_id, order.order_id).status == OrderStatus.FILLED
+    assert order.quantity == 130  # 1% of 150000 / (100 - 91), rounded to 2 NIFTY lots
     stoplosses = [item for item in order_service.get_open_orders(session.session_id) if item.is_stoploss]
     assert len(stoplosses) == 1
     sl = stoplosses[0]

@@ -323,9 +323,9 @@ def _snapshot(session, user_id: str) -> DesktopTradingSnapshot:
             "funds_ratio_l_pct": settings.get("funds_ratio_l_pct", 0.03),
             "funds_ratio_m_pct": settings.get("funds_ratio_m_pct", 0.06),
             "funds_ratio_h_pct": settings.get("funds_ratio_h_pct", 0.12),
-            "risk_ratio_l_pct": settings.get("risk_ratio_l_pct", 0.01),
-            "risk_ratio_m_pct": settings.get("risk_ratio_m_pct", 0.02),
-            "risk_ratio_h_pct": settings.get("risk_ratio_h_pct", 0.04),
+            "risk_ratio_l_pct": settings.get("risk_ratio_l_pct", 1.0),
+            "risk_ratio_m_pct": settings.get("risk_ratio_m_pct", 2.0),
+            "risk_ratio_h_pct": settings.get("risk_ratio_h_pct", 4.0),
             "default_sl_pct": settings.get("default_sl_pct", 0.20),
         },
     )
