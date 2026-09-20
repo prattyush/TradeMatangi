@@ -249,6 +249,9 @@ async def place_order(req: PlaceOrderRequest):
             entry_sl_price=req.entry_sl_price,
             group_id=req.group_id,
             source="desktop_stepwise" if session.session_type == "stepwise" else None,
+            quote_price=req.quote_price,
+            quote_timestamp=req.quote_timestamp,
+            quote_source=req.quote_source,
         )
     except InsufficientFundsError as exc:
         raise HTTPException(status_code=402, detail=str(exc))

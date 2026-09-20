@@ -40,6 +40,7 @@ class DesktopTradingSnapshot(BaseModel):
     current_price: float
     current_price_ce: float
     current_price_pe: float
+    contract_quotes: dict[str, dict] = {}
     trades: list[dict]
     open_orders: list[Order]
     strategies: list[StrategyResponse]
@@ -60,6 +61,27 @@ class DesktopOptionContract(BaseModel):
 
 class AttachContractRequest(DesktopOptionContract):
     pass
+
+
+class ChartOrderIntent(BaseModel):
+    """An entry selected from a specific option chart.
+
+    Market orders deliberately carry no renderer-computed price.  The server
+    resolves the chart contract's quote and records the resulting proxy limit.
+    """
+    symbol: str
+    expiry: str
+    strike: int
+    right: str
+    side: TradeSide
+    intent: str = Field(pattern="^(market|limit|target)$")
+    price: float | None = Field(default=None, gt=0)
+    quantity: int | None = Field(default=None, ge=1)
+    funds_ratio_pct: float | None = None
+    risk_pct: float | None = None
+    entry_sl_price: float | None = Field(default=None, gt=0)
+    group_id: str | None = None
+    target_deviation_pct: float = 0.01
 
 
 class FlattenRequest(BaseModel):
@@ -147,6 +169,60 @@ def _register_contract(session, contract: dict) -> dict:
     return contract
 
 
+def _quote_registry(session) -> dict[str, dict]:
+    registry = getattr(session, "desktop_contract_quotes", None)
+    if registry is None:
+        registry = {}
+        setattr(session, "desktop_contract_quotes", registry)
+    return registry
+
+
+def _historical_contract_quote(session, contract: dict) -> dict | None:
+    """Resolve the quote at the shared simulation clock, caching a contract's ticks.
+
+    This makes attached strikes first-class even though the legacy simulator
+    only maintains CE/PE convenience prices for its primary streams.
+    """
+    current_time = int(session.current_time or 0)
+    if current_time <= 0:
+        return None
+    cache = getattr(session, "desktop_contract_quote_ticks", None)
+    if cache is None:
+        cache = {}
+        setattr(session, "desktop_contract_quote_ticks", cache)
+    key = contract["contract_key"]
+    ticks = cache.get(key)
+    if ticks is None:
+        try:
+            from app.services.options_service import options_iter_ticks
+            ticks = list(options_iter_ticks(session.symbol, session.date, contract["strike"], contract["expiry"], contract["right"], session.start_time))
+        except Exception:
+            ticks = []
+        cache[key] = ticks
+    eligible = [tick for tick in ticks if int(tick.get("time", 0)) <= current_time]
+    if eligible:
+        tick = eligible[-1]
+        return {"price": float(tick["close"]), "timestamp": int(tick["time"]), "source": "historical_stepwise"}
+    # Existing sessions/tests that have not loaded source data retain the
+    # historic CE/PE values as a compatibility fallback only for that exact
+    # active contract.
+    active_strike = session.strike_ce if contract["right"] == "CE" else session.strike_pe
+    if int(active_strike or 0) == int(contract["strike"]):
+        price = session.last_price_ce if contract["right"] == "CE" else session.last_price_pe
+        if price:
+            return {"price": float(price), "timestamp": current_time, "source": "historical_stepwise"}
+    return None
+
+
+def _refresh_contract_quotes(session) -> dict[str, dict]:
+    registry = _quote_registry(session)
+    for contract in _desktop_contracts(session):
+        quote = _historical_contract_quote(session, contract) if session.session_type in ("stepwise", "sim") else registry.get(contract["contract_key"])
+        if quote:
+            registry[contract["contract_key"]] = {**contract, **quote}
+    return registry
+
+
 def _has_open_contract_risk(session, contract: dict) -> bool:
     position = _position_for(session, contract["right"], contract["strike"], contract["expiry"])
     if position.side != "FLAT" and position.quantity > 0:
@@ -223,8 +299,13 @@ def _strategy_response(instance) -> StrategyResponse:
     )
 
 
-def _last_price_for_right(session, right: str | None) -> float:
+def _last_price_for_right(session, right: str | None, strike: int | None = None, expiry: str | None = None) -> float:
     if session.instrument_type == "options":
+        contract = _get_registered_contract(session, right, strike, expiry)
+        if contract:
+            quote = _refresh_contract_quotes(session).get(contract["contract_key"])
+            if quote:
+                return float(quote["price"])
         if right == "CE":
             return float(session.last_price_ce or 0)
         if right == "PE":
@@ -244,7 +325,7 @@ def _estimate_exit_commission(session, side: TradeSide, price: float, quantity: 
 
 def _position_pnl(session, right: str | None, strike: int | None = None, expiry: str | None = None) -> float:
     position = _position_for(session, right, strike, expiry)
-    price = _last_price_for_right(session, right)
+    price = _last_price_for_right(session, right, strike, expiry)
     if position.side == "FLAT" or price <= 0:
         return 0.0
     direction = 1 if position.side == "LONG" else -1
@@ -282,6 +363,7 @@ def _snapshot(session, user_id: str) -> DesktopTradingSnapshot:
     pnl_pct = round((day_pnl / session_capital) * 100, 2) if session_capital > 0 else 0.0
     settings = get_settings(user_id)
     contracts = _desktop_contracts(session)
+    quotes = _refresh_contract_quotes(session)
     positions_by_contract = {
         item["contract_key"]: _position_for(session, item["right"], item["strike"], item["expiry"]).model_dump(mode="json")
         for item in contracts
@@ -291,6 +373,7 @@ def _snapshot(session, user_id: str) -> DesktopTradingSnapshot:
         current_price=float(session.last_price or 0),
         current_price_ce=float(session.last_price_ce or 0),
         current_price_pe=float(session.last_price_pe or 0),
+        contract_quotes=quotes,
         trades=[trade.model_dump(mode="json") for trade in trading_service.get_trades(session.session_id)],
         open_orders=order_service.get_open_orders(session.session_id),
         strategies=strategies,
@@ -471,6 +554,50 @@ async def place_order(session_id: str, req: PlaceOrderRequest, user_id: str = De
         req.right = contract["right"]
         req.strike = contract["strike"]
         req.expiry = contract["expiry"]
+    from app.routers.orders import place_order as web_place_order
+    return await web_place_order(req)
+
+
+@router.post("/{session_id}/chart-orders", response_model=Order)
+async def place_chart_order(session_id: str, intent: ChartOrderIntent, user_id: str = Depends(get_desktop_user_id)):
+    """Place an option-chart entry without trusting a frontend market price."""
+    session = _require_session(session_id, user_id)
+    if session.instrument_type != "options":
+        raise HTTPException(status_code=400, detail="Desktop chart entry is available only for option contracts")
+    contract = _require_registered_contract(session, intent.right.upper(), intent.strike, intent.expiry)
+    if intent.symbol != contract["symbol"]:
+        raise HTTPException(status_code=400, detail="Chart contract symbol does not match the attached contract")
+    quote = _refresh_contract_quotes(session).get(contract["contract_key"])
+    if intent.intent == "market":
+        if not quote or float(quote.get("price", 0)) <= 0:
+            raise HTTPException(status_code=409, detail="No authoritative quote is available for this chart contract")
+        quote_price = float(quote["price"])
+        entry_price = round(quote_price * (1.01 if intent.side == TradeSide.BUY else 0.99), 2)
+        order_type = OrderType.LIMIT
+    else:
+        if intent.price is None:
+            raise HTTPException(status_code=422, detail="A chart-selected price is required for limit and target orders")
+        quote_price = float(intent.price)
+        entry_price = float(intent.price)
+        order_type = OrderType.LIMIT if intent.intent == "limit" else OrderType.TARGET
+
+    req = PlaceOrderRequest(
+        session_id=session_id,
+        side=intent.side,
+        order_type=order_type,
+        limit_price=entry_price if order_type == OrderType.LIMIT else None,
+        trigger_price=entry_price if order_type == OrderType.TARGET else None,
+        quantity=intent.quantity,
+        funds_ratio_pct=intent.funds_ratio_pct,
+        risk_pct=intent.risk_pct,
+        entry_sl_price=intent.entry_sl_price,
+        group_id=intent.group_id,
+        target_deviation_pct=intent.target_deviation_pct,
+        right=contract["right"], strike=contract["strike"], expiry=contract["expiry"],
+        quote_price=quote_price,
+        quote_timestamp=int(quote["timestamp"]) if quote else int(session.current_time or 0),
+        quote_source=str(quote["source"]) if quote else "chart_selected",
+    )
     from app.routers.orders import place_order as web_place_order
     return await web_place_order(req)
 

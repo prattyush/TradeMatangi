@@ -198,6 +198,9 @@ class SimulationSession:
     wallet_ledger_id: str = ""
     stepwise: bool = False              # advance one bar per next-bar signal
     step_event: asyncio.Event = field(default_factory=asyncio.Event)
+    # Set whenever a completed Stepwise bar is available to consumers that
+    # need an atomic snapshot after advancing the shared clock.
+    bar_paused_event: asyncio.Event = field(default_factory=asyncio.Event)
     current_bar_index: int = 0         # bars completed so far (stepwise)
     total_bars: int = 0                # total bars in the day (stepwise)
     # Real trading: maps our order_id → Kotak order ID for Kotak-placed orders
@@ -839,6 +842,7 @@ async def _run_session(session: SimulationSession) -> None:
                         bar_o_ds = bar_h_ds = bar_l_ds = bar_c_ds = None
                         bar_o_ce = bar_h_ce = bar_l_ce = bar_c_ce = None
                         bar_o_pe = bar_h_pe = bar_l_pe = bar_c_pe = None
+                        session.bar_paused_event.set()
                         session.step_event.clear()
                         await session.step_event.wait()
                         if session.state == SimulationState.ENDED:
@@ -946,6 +950,7 @@ async def _run_session(session: SimulationSession) -> None:
                             pass
                         _persist_group_clock(session)
                         bar_o_so = bar_h_so = bar_l_so = bar_c_so = None
+                        session.bar_paused_event.set()
                         session.step_event.clear()
                         await session.step_event.wait()
                         if session.state == SimulationState.ENDED:
@@ -999,6 +1004,7 @@ async def _run_session(session: SimulationSession) -> None:
                             pass
                         _persist_group_clock(session)
                         bar_o_eq = bar_h_eq = bar_l_eq = bar_c_eq = None
+                        session.bar_paused_event.set()
                         session.step_event.clear()
                         await session.step_event.wait()
                         if session.state == SimulationState.ENDED:

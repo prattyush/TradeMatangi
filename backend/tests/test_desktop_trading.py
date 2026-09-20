@@ -372,3 +372,34 @@ def test_desktop_attached_contract_order_is_contract_scoped(no_db, monkeypatch):
     assert order.expiry == "2026-05-07"
     assert order.source == "desktop_stepwise"
     _clear()
+
+
+def test_chart_market_intent_uses_the_clicked_contract_quote(no_db, monkeypatch):
+    """A second CE chart must not inherit the primary CE stream's price."""
+    _clear()
+    session = _session()
+    second = {"symbol": "NIFTY", "expiry": "2026-05-07", "strike": 24100, "right": "CE", "contract_key": "NIFTY:2026-05-07:24100:CE"}
+    session.desktop_contracts.append(second)
+
+    def ticks(symbol, date, strike, expiry, right, start_time):
+        return [{"time": 1778058900, "open": 150, "high": 150, "low": 150, "close": 150 if strike == 24100 else 100}]
+
+    monkeypatch.setattr("app.services.options_service.options_iter_ticks", ticks)
+    snapshot = desktop_trading._snapshot(session, "desktop-user")
+    assert snapshot.contract_quotes[second["contract_key"]]["price"] == 150
+
+    order = asyncio.run(desktop_trading.place_chart_order(
+        session.session_id,
+        desktop_trading.ChartOrderIntent(
+            symbol="NIFTY", expiry="2026-05-07", strike=24100, right="CE",
+            side=TradeSide.BUY, intent="market", quantity=65, entry_sl_price=120,
+        ),
+        user_id="desktop-user",
+    ))
+
+    assert order.strike == 24100
+    assert order.limit_price == 151.5
+    assert order.quote_price == 150
+    assert order.quote_timestamp == 1778058900
+    assert order.quote_source == "historical_stepwise"
+    _clear()

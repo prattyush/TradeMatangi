@@ -12,6 +12,7 @@ from app.dependencies import get_desktop_user_id
 from app.services import desktop_live_service as live_events
 from app.services import desktop_replay_service as replay
 from app.services.desktop_persistence_service import canonical_instrument_id
+from app.services import simulation as sim_svc
 
 router = APIRouter(prefix="/api/desktop/v1/replay", tags=["desktop"])
 logger = logging.getLogger(__name__)
@@ -37,6 +38,10 @@ class SyncReplayTilesRequest(BaseModel):
 
 class SpeedUpdateRequest(BaseModel):
     speed: float = Field(ge=0.05, le=100)
+
+
+class CoordinatedNextBarRequest(BaseModel):
+    trading_session_id: str | None = None
 
 
 def _cursor(date: str, start_time: str) -> int:
@@ -165,10 +170,31 @@ async def update_speed(run_id: str, req: SpeedUpdateRequest, user_id: str = Depe
 
 
 @router.post("/{run_id}/next-bar")
-async def next_bar(run_id: str, user_id: str = Depends(get_desktop_user_id)):
+async def next_bar(run_id: str, req: CoordinatedNextBarRequest | None = None, user_id: str = Depends(get_desktop_user_id)):
     run = replay.get(user_id, run_id)
     if not run:
         raise HTTPException(status_code=404, detail="Replay run was not found")
+    if req and req.trading_session_id:
+        session = sim_svc.get_session(req.trading_session_id)
+        if not session or session.user_id != user_id or not session.stepwise:
+            raise HTTPException(status_code=404, detail="Stepwise trading session was not found")
+        previous_index = session.current_bar_index
+        session.bar_paused_event.clear()
+        session.step_event.set()
+        try:
+            await asyncio.wait_for(session.bar_paused_event.wait(), timeout=3)
+        except asyncio.TimeoutError:
+            raise HTTPException(status_code=409, detail="Stepwise trading session did not complete the next bar")
+        if session.current_bar_index <= previous_index:
+            raise HTTPException(status_code=409, detail="Stepwise trading session did not advance")
+        # The simulator clock is the authority.  Pin replay to its completed
+        # final tick instead of independently calculating a possibly drifting
+        # next interval.
+        run.cursor = int(session.current_time or run.cursor)
+        run.bar_index = session.current_bar_index
+        await replay._emit(run, "stepwise_bar")
+        from app.routers.desktop_trading import _snapshot
+        return {"replay": replay.snapshot(run), "trading": _snapshot(session, user_id).model_dump(mode="json")}
     if not await replay.next_bar(run):
         raise HTTPException(status_code=409, detail="Next Bar is unavailable for this replay state")
     return replay.snapshot(run)

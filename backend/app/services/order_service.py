@@ -172,6 +172,12 @@ def _write_order_to_db(order: Order) -> None:
             item["entry_sl_price"] = Decimal(str(order.entry_sl_price))
         if order.group_id is not None:
             item["group_id"] = order.group_id
+        if order.quote_price is not None:
+            item["quote_price"] = Decimal(str(order.quote_price))
+        if order.quote_timestamp is not None:
+            item["quote_timestamp"] = order.quote_timestamp
+        if order.quote_source is not None:
+            item["quote_source"] = order.quote_source
         table.put_item(Item=item)
     except Exception:
         logger.exception("DynamoDB write failed for order %s", order.order_id)
@@ -197,6 +203,9 @@ def place_order(
     entry_sl_price: float | None = None,
     group_id: str | None = None,
     source: str | None = None,
+    quote_price: float | None = None,
+    quote_timestamp: int | None = None,
+    quote_source: str | None = None,
 ) -> Order:
     _ensure_session(session_id)
 
@@ -244,6 +253,9 @@ def place_order(
         source=source,
         entry_sl_price=entry_sl_price,
         group_id=group_id,
+        quote_price=quote_price,
+        quote_timestamp=quote_timestamp,
+        quote_source=quote_source,
     )
     _orders[session_id][order.order_id] = order
     _write_order_to_db(order)
