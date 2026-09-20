@@ -339,19 +339,38 @@ def _position_pnl(session, right: str | None, strike: int | None = None, expiry:
 
 
 def _day_pnl(session) -> float:
+    """Return realised cash flow plus the market value of still-open lots.
+
+    Trade cash flow already includes the original entry debit/credit.  Adding
+    `_position_pnl` to it therefore subtracts an open entry a second time.
+    Marking each remaining lot at its contract quote produces the proper
+    realised + unrealised session P&L instead.
+    """
     trades = trading_service.get_trades(session.session_id)
     net = 0.0
     for trade in trades:
         net += trade.quantity * trade.price if trade.side == TradeSide.SELL else -trade.quantity * trade.price
         net -= trade.commission or 0
+
     if session.instrument_type == "options":
         contracts = _desktop_contracts(session)
         if contracts:
-            net += sum(_position_pnl(session, item["right"], item["strike"], item["expiry"]) for item in contracts)
+            for item in contracts:
+                position = _position_for(session, item["right"], item["strike"], item["expiry"])
+                price = _last_price_for_right(session, item["right"], item["strike"], item["expiry"])
+                if position.side != "FLAT" and price > 0:
+                    net += position.quantity * price if position.side == "LONG" else -position.quantity * price
         else:
-            net += _position_pnl(session, "CE") + _position_pnl(session, "PE")
+            for right in ("CE", "PE"):
+                position = _position_for(session, right)
+                price = _last_price_for_right(session, right)
+                if position.side != "FLAT" and price > 0:
+                    net += position.quantity * price if position.side == "LONG" else -position.quantity * price
     else:
-        net += _position_pnl(session, None)
+        position = _position_for(session, None)
+        price = _last_price_for_right(session, None)
+        if position.side != "FLAT" and price > 0:
+            net += position.quantity * price if position.side == "LONG" else -position.quantity * price
     return round(net, 2)
 
 

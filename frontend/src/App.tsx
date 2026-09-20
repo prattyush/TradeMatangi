@@ -78,6 +78,13 @@ interface DraftWorkspace {
   optionsReady: OptionsReadyConfig | null
 }
 
+type ContextMenuEntryOrderType = 'MARKET' | 'AUTO_STOP' | 'TARGET' | 'LIMIT'
+interface ContextMenuEntryTicket {
+  x: number; y: number; price: number; right?: 'CE' | 'PE'
+  side: 'BUY' | 'SELL' | null
+  orderType?: ContextMenuEntryOrderType
+}
+
 type IndicatorLeg = 'underlying' | 'CE' | 'PE'
 
 interface IndicatorCacheDescriptor {
@@ -310,6 +317,19 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
     side: 'BUY' | 'SELL'; orderType: 'TARGET' | 'LIMIT'; slPrice: number;
     quantity: number | null; fundsRatioPct?: number; riskRatioPct?: number; right?: string;
   } | null>(null)
+  const [contextMenuEntryTicket, setContextMenuEntryTicket] = useState<ContextMenuEntryTicket | null>(null)
+  const contextMenuEntryTicketRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!contextMenuEntryTicket) return
+    const closeOnOutsideClick = (event: MouseEvent) => {
+      if (!contextMenuEntryTicketRef.current?.contains(event.target as Node)) setContextMenuEntryTicket(null)
+    }
+    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === 'Escape') setContextMenuEntryTicket(null) }
+    document.addEventListener('mousedown', closeOnOutsideClick)
+    document.addEventListener('keydown', closeOnEscape)
+    return () => { document.removeEventListener('mousedown', closeOnOutsideClick); document.removeEventListener('keydown', closeOnEscape) }
+  }, [contextMenuEntryTicket])
 
   useEffect(() => {
     if (!localStorage.getItem('user')) {
@@ -1270,6 +1290,32 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
     return res
   }, [sim.sessionId, sim.bulkUpdateOrders])
 
+  const submitContextMenuEntry = useCallback((ticket: ContextMenuEntryTicket, quantity: number | null, fundsRatioPct?: number, riskRatioPct?: number) => {
+    if (!sim.sessionId || !ticket.side || !ticket.orderType) return
+    if (ticket.orderType === 'MARKET') {
+      const panePrice = ticket.right === 'CE' ? (sim.currentPriceCE || sim.currentPrice) : ticket.right === 'PE' ? (sim.currentPricePE || sim.currentPrice) : sim.currentPrice
+      const marketablePrice = ticket.side === 'BUY' ? panePrice * 1.01 : panePrice * 0.99
+      const opts: Record<string, unknown> = { entry_sl_price: ticket.price, group_id: crypto.randomUUID() }
+      if (fundsRatioPct != null) opts.funds_ratio_pct = fundsRatioPct
+      if (riskRatioPct != null) opts.risk_pct = riskRatioPct
+      if (ticket.right) opts.right = ticket.right
+      sim.placeOrder(ticket.side, 'LIMIT', marketablePrice, quantity, opts as Parameters<typeof sim.placeOrder>[4]).catch(() => {})
+    } else if (ticket.orderType === 'AUTO_STOP') {
+      api.startStrategy({
+        session_id: sim.sessionId,
+        strategy_type: 'AutoStop',
+        right: ticket.right,
+        entry_sl_price: ticket.price,
+        risk_ratio_pct: riskRatioPct != null ? riskRatioPct / 100 : undefined,
+        funds_ratio_pct: fundsRatioPct,
+        quantity: quantity ?? undefined,
+      }).catch(() => {})
+    } else {
+      setContextMenuOrderPick({ side: ticket.side, orderType: ticket.orderType, slPrice: ticket.price, quantity, fundsRatioPct, riskRatioPct, right: ticket.right })
+    }
+    setContextMenuEntryTicket(null)
+  }, [sim.sessionId, sim.currentPrice, sim.currentPriceCE, sim.currentPricePE, sim.placeOrder])
+
   // ── Context menu handler ───────────────────────────────────────────────────
   const handleChartContextMenu = useCallback((price: number, screenX: number, screenY: number, ctx: {
     paneType: string; right?: 'CE' | 'PE'; hasPosition: boolean; hasOpenOrders: boolean; hasSLOrders: boolean
@@ -1280,6 +1326,7 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
       setTpPickActive(false)
       setContextMenuOrderPick(null)
     }
+    setContextMenuEntryTicket(null)
     setActivePaneId(paneId)
     setContextMenu({ x: screenX, y: screenY, price, paneType: ctx.paneType, right: ctx.right, paneId })
   }, [sim.sessionState, activePaneId])
@@ -1291,103 +1338,13 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
     const { price, paneType, right } = contextMenu
     const actions: ContextMenuAction[] = []
 
-    // Determine the current price for the relevant pane
-    const paneCurrentPrice = (() => {
-      if (right === 'CE') return sim.currentPriceCE || sim.currentPrice
-      if (right === 'PE') return sim.currentPricePE || sim.currentPrice
-      return sim.currentPrice
-    })()
-
-    // Sizing submenu builder
-    const buildSizingSubmenu = (side: 'BUY' | 'SELL', orderType: 'MARKET' | 'AUTO_STOP' | 'TARGET' | 'LIMIT'): ContextMenuAction[] => {
-      const handleSize = (quantity: number | null, fundsRatioPct?: number, riskRatioPct?: number) => {
-        if (orderType === 'MARKET') {
-          const mktPrice = side === 'BUY' ? paneCurrentPrice * 1.01 : paneCurrentPrice * 0.99
-          const opts: Record<string, unknown> = { entry_sl_price: price, group_id: crypto.randomUUID() }
-          if (fundsRatioPct != null) opts.funds_ratio_pct = fundsRatioPct
-          if (riskRatioPct != null) opts.risk_pct = riskRatioPct
-          if (right) opts.right = right
-          sim.placeOrder(side, 'LIMIT', mktPrice, quantity, opts as Parameters<typeof sim.placeOrder>[4])
-        } else if (orderType === 'AUTO_STOP') {
-          const opts: Record<string, unknown> = { entry_sl_price: price }
-          if (riskRatioPct != null) opts.riskRatioPct = riskRatioPct
-          else if (fundsRatioPct != null) opts.fundsRatioPct = fundsRatioPct
-          api.startStrategy({
-            session_id: sim.sessionId!,
-            strategy_type: 'AutoStop',
-            right: right ?? undefined,
-            entry_sl_price: price,
-            risk_ratio_pct: riskRatioPct != null ? riskRatioPct / 100 : undefined,
-            funds_ratio_pct: fundsRatioPct,
-          }).catch(() => {})
-        } else {
-          setContextMenuOrderPick({
-            side,
-            orderType,
-            slPrice: price,
-            quantity,
-            fundsRatioPct,
-            riskRatioPct,
-            right: right ?? undefined,
-          })
-        }
-      }
-
-      if (sizingMode === 'quantity') {
-        return [1, 2, 3, 5, 10].map(q => ({
-          label: `${q}`,
-          onClick: () => handleSize(q),
-        }))
-      }
-      const ratios = sizingMode === 'riskRatio' ? riskRatios : fundsRatios
-      return (['l', 'm', 'h'] as const).map(key => ({
-        label: sizingMode === 'riskRatio' ? `Risk ${ratios[key]}%` : `${key.toUpperCase()} · ${ratios[key]}%`,
-        onClick: () => {
-          const fundsPct = ratios[key] / 100
-          const riskPct = ratios[key]
-          handleSize(null, sizingMode === 'riskRatio' ? undefined : fundsPct, sizingMode === 'riskRatio' ? riskPct : undefined)
-        }
-      }))
-    }
-
     // "Use as SL" actions
     const slMode = localStorage.getItem('contextMenuSLMode') === 'both' ? 'both' : 'longOnly'
 
-    if (slMode === 'both') {
-      actions.push({
-        label: `Use as SL @ ${price.toFixed(2)}`,
-        submenu: [
-          {
-            label: 'Long SL (BUY)',
-            submenu: [
-              { label: 'Market Order', submenu: buildSizingSubmenu('BUY', 'MARKET') },
-              { label: 'Auto-Stop Order', submenu: buildSizingSubmenu('BUY', 'AUTO_STOP') },
-              { label: 'Target Order', submenu: buildSizingSubmenu('BUY', 'TARGET') },
-              { label: 'Limit Order', submenu: buildSizingSubmenu('BUY', 'LIMIT') },
-            ]
-          },
-          {
-            label: 'Short SL (SELL)',
-            submenu: [
-              { label: 'Market Order', submenu: buildSizingSubmenu('SELL', 'MARKET') },
-              { label: 'Auto-Stop Order', submenu: buildSizingSubmenu('SELL', 'AUTO_STOP') },
-              { label: 'Target Order', submenu: buildSizingSubmenu('SELL', 'TARGET') },
-              { label: 'Limit Order', submenu: buildSizingSubmenu('SELL', 'LIMIT') },
-            ]
-          },
-        ]
-      })
-    } else {
-      actions.push({
-        label: `Use as SL @ ${price.toFixed(2)}`,
-        submenu: [
-          { label: 'Market Order', submenu: buildSizingSubmenu('BUY', 'MARKET') },
-          { label: 'Auto-Stop Order', submenu: buildSizingSubmenu('BUY', 'AUTO_STOP') },
-          { label: 'Target Order', submenu: buildSizingSubmenu('BUY', 'TARGET') },
-          { label: 'Limit Order', submenu: buildSizingSubmenu('BUY', 'LIMIT') },
-        ]
-      })
-    }
+    actions.push({
+      label: `Use as SL @ ${price.toFixed(2)}`,
+      onClick: () => setContextMenuEntryTicket({ x: contextMenu.x, y: contextMenu.y, price, right, side: slMode === 'both' ? null : 'BUY' }),
+    })
 
     // Shift SL to here
     const hasSLOrders = sim.openOrders.some(o => o.is_stoploss && (!right || o.right === right))
@@ -2561,6 +2518,15 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
           onClose={() => setContextMenu(null)}
         />
       )}
+
+      {contextMenuEntryTicket && <div ref={contextMenuEntryTicketRef} style={{
+        position: 'fixed', left: Math.max(8, Math.min(contextMenuEntryTicket.x + 10, window.innerWidth - 268)), top: Math.max(8, Math.min(contextMenuEntryTicket.y + 10, window.innerHeight - 210)), zIndex: 10002,
+        width: 250, background: '#161b22', border: '1px solid #30363d', borderRadius: 8, padding: 10, boxShadow: '0 8px 24px rgba(0,0,0,0.4)', color: '#e6edf3',
+      }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}><strong style={{ fontSize: 13 }}>Use as SL</strong><button aria-label="Close order ticket" onClick={() => setContextMenuEntryTicket(null)} style={{ border: 0, background: 'transparent', color: '#8b949e', cursor: 'pointer' }}>×</button></div>
+        <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 10 }}>SL ₹{contextMenuEntryTicket.price.toFixed(2)}</div>
+        {!contextMenuEntryTicket.side ? <><div style={{ fontSize: 12, marginBottom: 7 }}>Choose direction</div><div style={{ display: 'flex', gap: 6 }}><button onClick={() => setContextMenuEntryTicket(ticket => ticket ? { ...ticket, side: 'BUY' } : ticket)}>Buy</button><button onClick={() => setContextMenuEntryTicket(ticket => ticket ? { ...ticket, side: 'SELL' } : ticket)}>Sell</button></div></> : !contextMenuEntryTicket.orderType ? <><div style={{ fontSize: 12, marginBottom: 7 }}>{contextMenuEntryTicket.side === 'BUY' ? 'Buy' : 'Sell'} entry type</div><div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>{([['MARKET', 'Market'], ['LIMIT', 'Limit'], ['AUTO_STOP', 'AutoStop'], ['TARGET', 'Target']] as const).map(([orderType, label]) => <button key={orderType} onClick={() => setContextMenuEntryTicket(ticket => ticket ? { ...ticket, orderType } : ticket)}>{label}</button>)}</div></> : <><div style={{ fontSize: 12, marginBottom: 7 }}>Choose saved size</div><div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>{sizingMode === 'quantity' ? [1, 2, 3, 5, 10].map(quantity => <button key={quantity} onClick={() => submitContextMenuEntry(contextMenuEntryTicket, quantity)}>{quantity}</button>) : (['l', 'm', 'h'] as const).map(key => { const value = sizingMode === 'riskRatio' ? riskRatios[key] : fundsRatios[key]; return <button key={key} onClick={() => submitContextMenuEntry(contextMenuEntryTicket, null, sizingMode === 'fundsRatio' ? value / 100 : undefined, sizingMode === 'riskRatio' ? value : undefined)}>{sizingMode === 'riskRatio' ? `Risk ${value}%` : `${key.toUpperCase()} · ${value}%`}</button> })}</div><button onClick={() => setContextMenuEntryTicket(ticket => ticket ? { ...ticket, orderType: undefined } : ticket)} style={{ marginTop: 9 }}>Back</button></>}
+      </div>}
     </div>
   )
 }
