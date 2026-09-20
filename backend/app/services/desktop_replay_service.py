@@ -64,6 +64,11 @@ def get(user_id: str, run_id: str) -> ReplayRun | None:
     return run if run and run.user_id == user_id else None
 
 
+def forget(run: ReplayRun) -> None:
+    _runs.pop(run.run_id, None)
+    events.stop(run.user_id, run.stream.stream_id)
+
+
 def sync_tiles(run: ReplayRun, tiles: list[dict]) -> None:
     """Attach the screen's current tiles without changing the replay clock.
 

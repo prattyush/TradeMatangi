@@ -25,8 +25,8 @@ interface DrawingAction { id: number; action: 'delete' | 'hide' | 'lock' }
 type DrawingMode = 'once' | 'repeat'
 type ConversionTarget = 'LIMIT' | 'STOPLOSS' | 'TARGET'
 type ChartOrderType = 'MARKET' | 'LIMIT' | 'TARGET'
-type OrderAction = `USE_SL_BUY:${ChartOrderType}` | `USE_SL_SELL:${ChartOrderType}` | 'BULK_LIMIT' | 'BULK_MOVE_SL'
-interface TradeTicket { tile: TileConfig; side: 'BUY' | 'SELL'; slPrice: number; orderType: ChartOrderType; anchor: { x: number; y: number }; sizeKey?: 'l' | 'm' | 'h' | '1' | '2' | '3' | '5' | '10' }
+type OrderAction = 'USE_SL_BUY' | 'USE_SL_SELL' | 'BULK_LIMIT' | 'BULK_MOVE_SL'
+interface TradeTicket { tile: TileConfig; side: 'BUY' | 'SELL'; slPrice: number; orderType: ChartOrderType | null; anchor: { x: number; y: number }; sizeKey?: 'l' | 'm' | 'h' | '1' | '2' | '3' | '5' | '10' }
 type PricePickAction = { orderId?: string; conversion?: ConversionTarget; ticket?: TradeTicket }
 declare global {
   interface Window {
@@ -460,8 +460,12 @@ export default function App() {
   const replayAction = async (action: string) => {
     if (!replay) return
     try {
+      const tradingSessionId = trading?.session.session_id
+      if (action === 'stop' && mode === 'Stepwise' && tradingSessionId) {
+        await desktopTradingRequest(`${tradingSessionId}/stop`, 'POST')
+      }
       const next = await replayRequest(`${replay.run_id}/${action}`, 'POST')
-      if (action === 'stop') { stopNativeStream(`replay:${replay.run_id}`); setTrading(null); setPricePickAction(null) }
+      if (action === 'stop') { stopNativeStream(`replay:${replay.run_id}`); setTrading(null); setTradeTicket(null); setPricePickAction(null) }
       setReplay(next)
       if (mode === 'Stepwise' && trading?.session.session_id && action === 'next-bar') {
         await desktopTradingRequest<DesktopTradingSnapshot>(`${trading.session.session_id}/next-bar`, 'POST').then(setTrading)
@@ -544,7 +548,7 @@ export default function App() {
     return { quantity: Number(ticket.sizeKey) || 1 }
   }
   const placeTicketOrder = async (ticket: TradeTicket, entryPrice: number) => {
-    if (!trading || !ticket.sizeKey) return
+    if (!trading || !ticket.sizeKey || !ticket.orderType) return
     const contractPayload = contractPayloadForTile(ticket.tile)
     const orderType = ticket.orderType === 'MARKET' ? 'LIMIT' : ticket.orderType
     const body: Record<string, unknown> = {
@@ -606,8 +610,7 @@ export default function App() {
       setTrading(snapshot => snapshot ? { ...snapshot, open_orders: snapshot.open_orders.map(order => updates.get(order.order_id) ?? order) } : snapshot)
       return
     }
-    const [sideToken, orderTypeToken] = action.split(':')
-    setTradeTicket({ tile, side: sideToken === 'USE_SL_SELL' ? 'SELL' : 'BUY', slPrice: price, orderType: (orderTypeToken ?? 'LIMIT') as ChartOrderType, anchor })
+    setTradeTicket({ tile, side: action === 'USE_SL_SELL' ? 'SELL' : 'BUY', slPrice: price, orderType: null, anchor })
   }
   const flattenTrading = async () => {
     if (!trading) return
@@ -625,7 +628,7 @@ export default function App() {
     setWalletOpen(false)
   }
   const ticketSizeOptions = () => {
-    if (!trading || trading.settings.desktop_order_size_mode === 'quantity') return ['1', '2', '3', '5', '10'] as const
+    if (!trading || trading.settings.desktop_order_size_mode === 'quantity') return ['1', '2', '3'] as const
     return ['l', 'm', 'h'] as const
   }
   const ticketSizeLabel = (key: string) => {
@@ -641,9 +644,12 @@ export default function App() {
     }
     return key
   }
-  const chooseTicketSize = (key: TradeTicket['sizeKey']) => {
-    if (!tradeTicket || !key) return
-    const ticket = { ...tradeTicket, sizeKey: key }
+  const orderTypeLabel = (orderType: ChartOrderType) => orderType === 'MARKET' ? 'M' : orderType === 'LIMIT' ? 'L' : 'T'
+  const submitTicketWhenReady = (ticket: TradeTicket) => {
+    if (!ticket.orderType || !ticket.sizeKey) {
+      setTradeTicket(ticket)
+      return
+    }
     if (ticket.orderType === 'MARKET') {
       const current = paneCurrentPrice(ticket.tile)
       const entry = ticket.side === 'BUY' ? current * 1.01 : current * 0.99
@@ -652,6 +658,14 @@ export default function App() {
       setTradeTicket(ticket)
       setPricePickAction({ ticket })
     }
+  }
+  const chooseTicketOrderType = (orderType: ChartOrderType) => {
+    if (!tradeTicket) return
+    submitTicketWhenReady({ ...tradeTicket, orderType })
+  }
+  const chooseTicketSize = (key: TradeTicket['sizeKey']) => {
+    if (!tradeTicket || !key) return
+    submitTicketWhenReady({ ...tradeTicket, sizeKey: key })
   }
   const logoutDesktop = () => {
     if (live) stopNativeStream(`live:${live.stream_id}`)
@@ -685,10 +699,13 @@ export default function App() {
       <div><button onClick={() => void resetWallet().catch(error => setTradingError(String(error)))}>Reset</button><button onClick={() => setWalletOpen(false)}>Close</button></div>
     </div>}
     {tradeTicket && <div className="trade-ticket" style={placeNearPoint(tradeTicket.anchor.x, tradeTicket.anchor.y, 260, 190)}>
-      <header><strong>{tradeTicket.side} {tradeTicket.orderType}</strong><button onClick={() => { setTradeTicket(null); setPricePickAction(null) }}>x</button></header>
+      <header><strong>{tradeTicket.side} SL</strong><button onClick={() => { setTradeTicket(null); setPricePickAction(null) }}>x</button></header>
       <div className="ticket-row"><span>Stoploss</span><b>{tradeTicket.slPrice.toFixed(2)}</b></div>
-      <div className="ticket-hint">{tradeTicket.orderType === 'MARKET' ? 'Choose size to place an aggressive limit order now.' : `Choose size, then click chart for ${tradeTicket.orderType === 'TARGET' ? 'target trigger' : 'limit'} price.`}</div>
-      <div className="ticket-buttons">{ticketSizeOptions().map(key => <button key={key} onClick={() => chooseTicketSize(key)}>{ticketSizeLabel(key)}</button>)}</div>
+      <div className="ticket-picker">
+        <div className="ticket-buttons">{(['MARKET', 'LIMIT', 'TARGET'] as const).map(orderType => <button key={orderType} className={tradeTicket.orderType === orderType ? 'active' : ''} onClick={() => chooseTicketOrderType(orderType)}>{orderTypeLabel(orderType)}</button>)}</div>
+        <div className="ticket-buttons">{ticketSizeOptions().map(key => <button key={key} className={tradeTicket.sizeKey === key ? 'active' : ''} onClick={() => chooseTicketSize(key)}>{ticketSizeLabel(key)}</button>)}</div>
+      </div>
+      <div className="ticket-hint">{tradeTicket.orderType === 'MARKET' ? 'Places now' : tradeTicket.orderType ? 'Pick price' : 'Type + size'}</div>
     </div>}
     <section className={`workspace-shell ${toolPanelOpen ? '' : 'tools-collapsed'}`}>
       {toolPanelOpen && <WorkspaceToolPanel tiles={activeScreen.tiles} activeTileId={activeToolTile} setActiveTileId={setActiveToolTileId} indicators={selectedIndicators} toggleIndicator={toggleIndicator} clearIndicators={clearIndicators} sendDrawing={sendDrawing} sendDrawingAction={sendDrawingAction} activeDrawingTool={activeDrawingTool} drawingMode={drawingMode} setDrawingMode={setDrawingMode} tradeHistoryCount={trading?.trades.length ?? 0} onOpenTradeHistory={() => setTradeHistoryOpen(true)} />}
