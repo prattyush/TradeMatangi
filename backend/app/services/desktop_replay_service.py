@@ -52,7 +52,13 @@ def prepare_tiles(tiles: list[dict], date: str, interval_seconds: int) -> dict[s
 
 
 def create(user_id: str, mode: str, date: str, cursor: int, interval_seconds: int, speed: float, tiles: list[dict], tile_candles: dict[str, list[dict]]) -> ReplayRun:
+    # Stepwise always presents a completed candle.  This is the same initial
+    # interval that the paired Stepwise simulator pauses on.
+    if mode == "stepwise":
+        cursor += interval_seconds - 1
     run = ReplayRun(str(uuid.uuid4()), user_id, mode, date, cursor, interval_seconds, speed, tiles, tile_candles, events.start(user_id, tiles))
+    if mode == "stepwise":
+        run.bar_index = 1
     _runs[run.run_id] = run
     if mode == "replay":
         run.task = asyncio.create_task(_clock(run))
