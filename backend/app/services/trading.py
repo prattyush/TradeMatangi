@@ -54,6 +54,8 @@ def _write_trade_to_db(trade: Trade) -> None:
             "instrument_type": trade.instrument_type,
             "commission": Decimal(str(trade.commission)),
         }
+        if trade.source:
+            item["source"] = trade.source
         if trade.underlying_price is not None:
             item["underlying_price"] = Decimal(str(trade.underlying_price))
 
@@ -84,6 +86,7 @@ def record_trade(
     brokerage_per_order: float = 1.0,
     user_id: str = FIXED_USER_ID,
     session_type: str = "sim",
+    source: str | None = None,
 ) -> Trade:
     ensure_session(session_id)
 
@@ -124,6 +127,7 @@ def record_trade(
         right=right,
         commission=compute_commission(side, price, quantity, brokerage_per_order),
         session_type=session_type,
+        source=source,
         underlying_price=underlying_price,
     )
     _trades[session_id].append(trade)
@@ -140,13 +144,24 @@ def get_trades(session_id: str) -> list[Trade]:
     return _trades.get(session_id, [])
 
 
-def get_position(session_id: str, symbol: str | None = None, right: str | None = None) -> Position:
+def get_position(
+    session_id: str,
+    symbol: str | None = None,
+    right: str | None = None,
+    strike: int | None = None,
+    expiry: str | None = None,
+) -> Position:
     trades = _trades.get(session_id, [])
     if symbol is None:
         symbol = trades[0].symbol if trades else DEFAULT_SYMBOL
-    # For options: filter by right so CE and PE positions are tracked independently.
+    # For options: filter by full contract key when available so multiple same-side
+    # strikes do not collapse into one position.
     # right=None matches equity trades (those with right=None on the trade record).
     symbol_trades = [t for t in trades if t.symbol == symbol and t.right == right]
+    if right is not None and strike is not None:
+        symbol_trades = [t for t in symbol_trades if t.strike is None or int(t.strike) == int(strike)]
+    if right is not None and expiry is not None:
+        symbol_trades = [t for t in symbol_trades if t.expiry is None or t.expiry == expiry]
 
     # FIFO matching: only lots that are still open contribute to avg_entry and entry_commission.
     # Without FIFO, a closed trade followed by a new entry would dilute avg_entry
@@ -244,6 +259,7 @@ def reload_trades_from_db(session_id: str) -> None:
                     right=item.get("right"),
                     commission=float(item.get("commission", 0)),
                     session_type=str(item.get("session_type", "sim")),
+                    source=item.get("source"),
                     underlying_price=float(item.get("underlying_price")) if item.get("underlying_price") is not None else None,
                 ))
             except Exception:

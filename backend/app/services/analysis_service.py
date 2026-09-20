@@ -155,4 +155,5 @@ def _serialize_trade(t: dict) -> dict:
         "expiry": t.get("expiry"),
         "commission": _safe_float(t.get("commission", 0)),
         "underlying_price": _safe_float(t.get("underlying_price")) if t.get("underlying_price") is not None else None,
+        "source": t.get("source"),
     }

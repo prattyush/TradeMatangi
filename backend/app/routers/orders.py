@@ -99,6 +99,7 @@ async def place_order(req: PlaceOrderRequest):
     # Resolve which options contract this order targets
     order_right: str | None = None
     order_strike: int | None = None
+    order_expiry: str | None = None
     if session.instrument_type == "options":
         order_right = req.right if req.right is not None else session.right
         if order_right is None:
@@ -106,7 +107,8 @@ async def place_order(req: PlaceOrderRequest):
                 status_code=400,
                 detail="right (CE or PE) is required when placing orders in a dual-stream options session",
             )
-        order_strike = session.strike_ce if order_right == "CE" else session.strike_pe
+        order_strike = req.strike if req.strike is not None else (session.strike_ce if order_right == "CE" else session.strike_pe)
+        order_expiry = req.expiry if req.expiry is not None else session.expiry
 
     # Naked short margin check for options sessions
     if (
@@ -116,7 +118,7 @@ async def place_order(req: PlaceOrderRequest):
         and req.order_type != OrderType.STOPLOSS
     ):
         from app.services.trading import get_position
-        position = get_position(session.session_id, session.symbol, right=order_right)
+        position = get_position(session.session_id, session.symbol, right=order_right, strike=order_strike, expiry=order_expiry)
         if position.side != "LONG":  # no open buy position — naked short
             from app.services.options_service import compute_short_margin, get_underlying_price_at
             current_ts = int(session.current_time) if session.current_time else 0
@@ -233,11 +235,13 @@ async def place_order(req: PlaceOrderRequest):
             is_stoploss=req.is_stoploss,
             right=order_right,
             strike=order_strike,
+            expiry=order_expiry,
             target_deviation_pct=req.target_deviation_pct,
             user_id=session.user_id,
             margin_rate=order_margin_rate,
             entry_sl_price=req.entry_sl_price,
             group_id=req.group_id,
+            source="desktop_stepwise" if session.session_type == "stepwise" else None,
         )
     except InsufficientFundsError as exc:
         raise HTTPException(status_code=402, detail=str(exc))
@@ -305,11 +309,12 @@ async def place_order(req: PlaceOrderRequest):
                         symbol=o.symbol,
                         instrument_type=sess.instrument_type,
                         strike=o.strike if o.strike is not None else sess.strike,
-                        expiry=sess.expiry,
+                        expiry=o.expiry if o.expiry is not None else sess.expiry,
                         right=o.right,
                         brokerage_per_order=sess.brokerage_per_order,
                         user_id=sess.user_id,
                         session_type=sess.session_type,
+                        source=o.source,
                     )
                     if o.side.value == "SELL":
                         wallet_service.credit(sess.user_id, round(fill_price * fill_qty, 2), sess.date)
@@ -404,8 +409,10 @@ async def place_order(req: PlaceOrderRequest):
                     is_stoploss=req.is_stoploss,
                     right=order_right,
                     strike=order_strike,
+                    expiry=order_expiry,
                     user_id=session.user_id,
                     margin_rate=order_margin_rate,
+                    source="desktop_stepwise" if session.session_type == "stepwise" else None,
                 )
                 if session.session_type == "real" and req.order_type == OrderType.STOPLOSS:
                     from app.services.simulation import _register_kotak_sl_for_order

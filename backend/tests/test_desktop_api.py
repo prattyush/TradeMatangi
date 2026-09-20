@@ -1,4 +1,4 @@
-"""Phase 16 desktop boundary: it must be authorised and chart-only."""
+"""Desktop boundary: it must be authorised and versioned."""
 from fastapi.testclient import TestClient
 
 from app.main import app
@@ -13,12 +13,13 @@ def test_desktop_routes_require_an_explicit_identity():
     assert response.json()["detail"] == "Authentication required"
 
 
-def test_capabilities_are_versioned_and_exclude_trading():
+def test_capabilities_are_versioned_and_advertise_stepwise_trading():
     response = client.get("/api/desktop/v1/capabilities", headers=HEADERS)
     assert response.status_code == 200
     data = response.json()
     assert data["api_version"] == "v1"
-    assert data["trading_capabilities"] == []
+    assert "stepwise" in data["trading_capabilities"]
+    assert "flatten" in data["trading_capabilities"]
 
 
 def test_initial_catalogue_is_the_five_chart_symbols():
