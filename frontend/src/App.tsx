@@ -1078,10 +1078,10 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
 
   const getCompletedBarForPane = useCallback((pane: PaneConfig) => {
     if (pane.type === 'equity') return sim.lastCompletedBarEquity
-    if (pane.right === 'CE') return sim.lastCompletedBarCE ?? sim.lastCompletedBarEquity
-    if (pane.right === 'PE') return sim.lastCompletedBarPE ?? sim.lastCompletedBarEquity
+    if (pane.right === 'CE') return sim.sessionStrikeCE !== null && pane.strike === sim.sessionStrikeCE ? sim.lastCompletedBarCE : null
+    if (pane.right === 'PE') return sim.sessionStrikePE !== null && pane.strike === sim.sessionStrikePE ? sim.lastCompletedBarPE : null
     return null
-  }, [sim.lastCompletedBarEquity, sim.lastCompletedBarCE, sim.lastCompletedBarPE])
+  }, [sim.lastCompletedBarEquity, sim.lastCompletedBarCE, sim.lastCompletedBarPE, sim.sessionStrikeCE, sim.sessionStrikePE])
 
   const streamSessionIds = useMemo(() => {
     const ids = sim.group?.members.map(m => m.session_id) ?? (sim.sessionId ? [sim.sessionId] : [])
