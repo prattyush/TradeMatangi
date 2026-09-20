@@ -180,4 +180,6 @@ async def stop(run_id: str, user_id: str = Depends(get_desktop_user_id)):
     if not run:
         raise HTTPException(status_code=404, detail="Replay run was not found")
     await replay.stop(run)
-    return replay.snapshot(run)
+    snapshot = replay.snapshot(run)
+    replay.forget(run)
+    return snapshot
