@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { ChartTile } from './ChartTile'
 import { replayCandles } from './chartState'
@@ -203,6 +203,7 @@ export default function App() {
   const [serverUrl, setServerUrl] = useState(() => localStorage.getItem('desktop-server-url') ?? 'http://localhost:8700'), [email, setEmail] = useState('admin@tradematangi.com'), [password, setPassword] = useState('admin123'), [connection, setConnection] = useState<'connected' | 'reconnecting' | 'offline' | 'authentication_required'>('authentication_required'), [loginError, setLoginError] = useState(''), [browserToken, setBrowserToken] = useState(''), [mode, setMode] = useState<'Browse' | 'Live' | 'Replay' | 'Stepwise'>('Browse'), [catalogue, setCatalogue] = useState<Instrument[]>(fallbackCatalogue), [screens, setScreens] = useState<Screen[]>([newScreen(1)]), [chartSettings, setChartSettings] = useState<ChartSettings>(defaultChartSettings), [showSettings, setShowSettings] = useState(false), [replay, setReplay] = useState<ReplaySnapshot | null>(null), [replayError, setReplayError] = useState(''), [runDate, setRunDate] = useState('2026-05-06'), [runStartTime, setRunStartTime] = useState('09:15'), [replaySpeed, setReplaySpeed] = useState('1'), [live, setLive] = useState<LiveSnapshot | null>(null), [liveError, setLiveError] = useState('')
   const [trading, setTrading] = useState<DesktopTradingSnapshot | null>(null), [tradingError, setTradingError] = useState(''), [tradingNotice, setTradingNotice] = useState(''), [pricePickAction, setPricePickAction] = useState<{ orderId?: string; conversion?: ConversionTarget; ticket?: TradeTicket } | null>(null), [tradeTicket, setTradeTicket] = useState<TradeTicket | null>(null), [underlyingStrategyTicket, setUnderlyingStrategyTicket] = useState<UnderlyingStrategyTicket | null>(null)
   const replayPollInFlight = useRef(false)
+  const tradingErrorTimerRef = useRef<number | null>(null)
   const screensLoadedRef = useRef(false)
   const screenSaveTimerRef = useRef<number | null>(null)
   const lastScreenPayloadRef = useRef('')
@@ -210,6 +211,22 @@ export default function App() {
   const [walletOpen, setWalletOpen] = useState(false), [walletAmount, setWalletAmount] = useState('150000'), [tradeHistoryOpen, setTradeHistoryOpen] = useState(false)
   const [activeScreenId, setActiveScreenId] = useState(screens[0].id), [pickerTileId, setPickerTileId] = useState<string | null>(null), [maximizedTileId, setMaximizedTileId] = useState<string | null>(null)
   const [activeToolTileId, setActiveToolTileId] = useState(screens[0].tiles[0].id), [toolPanelOpen, setToolPanelOpen] = useState(true), [tileIndicators, setTileIndicators] = useState<Record<string, string[]>>({}), [drawingCommand, setDrawingCommand] = useState<DrawingCommand | null>(null), [drawingAction, setDrawingAction] = useState<DrawingAction | null>(null), [drawingMode, setDrawingMode] = useState<DrawingMode>('once'), [activeDrawingTool, setActiveDrawingTool] = useState<string | null>(null), [liveTickCache, setLiveTickCache] = useState<Record<string, Candle[]>>({})
+  const clearTradingError = useCallback(() => {
+    if (tradingErrorTimerRef.current !== null) window.clearTimeout(tradingErrorTimerRef.current)
+    tradingErrorTimerRef.current = null
+    setTradingError('')
+  }, [])
+  const reportTradingError = useCallback((error: unknown) => {
+    if (tradingErrorTimerRef.current !== null) window.clearTimeout(tradingErrorTimerRef.current)
+    setTradingError(String(error))
+    tradingErrorTimerRef.current = window.setTimeout(() => {
+      tradingErrorTimerRef.current = null
+      setTradingError('')
+    }, 10_000)
+  }, [])
+  useEffect(() => () => {
+    if (tradingErrorTimerRef.current !== null) window.clearTimeout(tradingErrorTimerRef.current)
+  }, [])
   const clearLiveTickCache = () => setLiveTickCache({})
   const setLiveSnapshot = (snapshot: LiveSnapshot | null) => { activeLiveSnapshot = snapshot; setLive(snapshot); if (snapshot) setLiveError('') }
   const hasNativeHost = '__TAURI_INTERNALS__' in window
@@ -290,16 +307,16 @@ export default function App() {
   const saveTile = async (tile: TileConfig) => {
     if (mode === 'Stepwise' && trading) {
       if (tile.symbol !== trading.session.symbol) {
-        setTradingError(`This Stepwise session is locked to ${trading.session.symbol}. Open another screen to view or trade ${tile.symbol}.`)
+        reportTradingError(`This Stepwise session is locked to ${trading.session.symbol}. Open another screen to view or trade ${tile.symbol}.`)
         return
       }
       if (tile.kind === 'option') {
         try {
           const snapshot = await desktopTradingRequest<DesktopTradingSnapshot>(`${trading.session.session_id}/contracts`, 'POST', { symbol: tile.symbol, expiry: tile.expiry, strike: Number(tile.strike), right: tile.right })
           setTrading(snapshot)
-          setTradingError('')
+          clearTradingError()
         } catch (error) {
-          setTradingError(String(error))
+          reportTradingError(error)
           return
         }
       }
@@ -432,7 +449,7 @@ export default function App() {
   const startRun = async () => {
     try {
       setReplayError('')
-      setTradingError('')
+      clearTradingError()
       const date = runDate
       setScreens(current => current.map(screen => screen.id === activeScreenId ? { ...screen, tiles: screen.tiles.map(tile => ({ ...tile, tradingDate: date })) } : screen))
       const tiles = activeScreen.tiles.map(tile => { const item = catalogue.find(entry => entry.symbol === tile.symbol) ?? fallbackCatalogue[0]; const instrument = tile.kind === 'option' ? { kind: 'option', exchange: item.exchange, underlying: tile.symbol, expiry: tile.expiry, strike: Number(tile.strike), right: tile.right } : { kind: item.chart_type ?? 'equity', exchange: item.exchange, symbol: tile.symbol }; return { tile_id: tile.id, instrument } })
@@ -449,13 +466,13 @@ export default function App() {
             const snapshot = await desktopTradingRequest<DesktopTradingSnapshot>(`${tradeSnapshot.session.session_id}/contracts`, 'POST', { symbol: tile.symbol, expiry: tile.expiry, strike: Number(tile.strike), right: tile.right })
             setTrading(snapshot)
           } catch (error) {
-            setTradingError(String(error))
+            reportTradingError(error)
           }
         }
       }
     } catch (error) {
       setReplayError(String(error))
-      if (mode === 'Stepwise') setTradingError(String(error))
+      if (mode === 'Stepwise') reportTradingError(error)
     }
   }
   const replayAction = async (action: string) => {
@@ -472,9 +489,9 @@ export default function App() {
         return
       }
       const next = await replayRequest(`${replay.run_id}/${action}`, 'POST')
-      if (action === 'stop') { stopNativeStream(`replay:${replay.run_id}`); setTrading(null); setTradeTicket(null); setPricePickAction(null) }
+      if (action === 'stop') { stopNativeStream(`replay:${replay.run_id}`); setTrading(null); setTradeTicket(null); setPricePickAction(null); clearTradingError() }
       setReplay(next)
-    } catch (error) { setReplayError(String(error)); if (mode === 'Stepwise') setTradingError(String(error)) }
+    } catch (error) { setReplayError(String(error)); if (mode === 'Stepwise') reportTradingError(error) }
   }
   const updateReplaySpeed = (value: string) => { setReplaySpeed(value); if (replay && replay.mode === 'replay' && replay.state !== 'stopped') void replayRequest(`${replay.run_id}/speed`, 'POST', { speed: Number(value) }).then(setReplay).catch(error => setReplayError(String(error))) }
   const replayTile = (tile: TileConfig) => { const item = catalogue.find(entry => entry.symbol === tile.symbol) ?? fallbackCatalogue[0]; const instrument = tile.kind === 'option' ? { kind: 'option', exchange: item.exchange, underlying: tile.symbol, expiry: tile.expiry, strike: Number(tile.strike), right: tile.right } : { kind: item.chart_type ?? 'equity', exchange: item.exchange, symbol: tile.symbol }; return { tile_id: tile.id, instrument } }
@@ -527,8 +544,8 @@ export default function App() {
     const sessionId = trading.session.session_id
     const timer = window.setInterval(() => {
       void desktopTradingRequest<DesktopTradingSnapshot>(`${sessionId}/snapshot`, 'GET')
-        .then(snapshot => { if (snapshot.session.session_id === sessionId) { setTrading(snapshot); setTradingError('') } })
-        .catch(error => setTradingError(String(error)))
+        .then(snapshot => { if (snapshot.session.session_id === sessionId) setTrading(snapshot) })
+        .catch(reportTradingError)
     }, 800)
     return () => window.clearInterval(timer)
   }, [mode, trading?.session.session_id, serverUrl, browserToken])
@@ -539,7 +556,7 @@ export default function App() {
     if (key && trading.contracts.some(contract => contract.contract_key === key)) return
     const snapshot = await desktopTradingRequest<DesktopTradingSnapshot>(`${trading.session.session_id}/contracts`, 'POST', { symbol: tile.symbol, expiry: tile.expiry, strike: Number(tile.strike), right: tile.right })
     setTrading(snapshot)
-    setTradingError('')
+    clearTradingError()
   }
   const paneCurrentPrice = (tile: TileConfig) => {
     if (!trading) return 0
@@ -576,7 +593,7 @@ export default function App() {
     }
     await desktopTradingRequest(`${trading.session.session_id}/strategies/start`, 'POST', body)
     setTrading(await desktopTradingRequest<DesktopTradingSnapshot>(`${trading.session.session_id}/snapshot`, 'GET'))
-    setTradingError('')
+    clearTradingError()
     setTradingNotice(`${strategyType === 'AutoStop' ? 'Auto stop' : strategyType.replace(/([A-Z])/g, ' $1').trim()} started.`)
   }
   const placeTicketOrder = async (ticket: TradeTicket, entryPrice?: number) => {
@@ -603,7 +620,7 @@ export default function App() {
     await desktopTradingRequest<DesktopOrder>(`${trading.session.session_id}/chart-orders`, 'POST', body)
     const snapshot = await desktopTradingRequest<DesktopTradingSnapshot>(`${trading.session.session_id}/snapshot`, 'GET')
     setTrading(snapshot)
-    setTradingError('')
+    clearTradingError()
     setTradeTicket(null)
     setPricePickAction(null)
   }
@@ -649,17 +666,17 @@ export default function App() {
     const contractPayload = contractPayloadForTile(tile)
     if (action === 'BULK_LIMIT') {
       const result = await desktopTradingRequest<{ converted: number; orders: DesktopOrder[] }>(`${trading.session.session_id}/orders/bulk-convert`, 'PATCH', { new_order_type: 'LIMIT', ...contractPayload, price })
-      if (!result.converted) { setTradingError('No pending closing orders were eligible to move to a limit.'); return }
+      if (!result.converted) { reportTradingError('No pending closing orders were eligible to move to a limit.'); return }
       setTrading(await desktopTradingRequest<DesktopTradingSnapshot>(`${trading.session.session_id}/snapshot`, 'GET'))
-      setTradingError('')
+      clearTradingError()
       setTradingNotice(`Moved ${result.converted} exit order${result.converted === 1 ? '' : 's'} to limit.`)
       return
     }
     if (action === 'BULK_MOVE_SL') {
       const result = await desktopTradingRequest<{ updated: number; orders: DesktopOrder[] }>(`${trading.session.session_id}/orders/bulk-update-sl`, 'PATCH', { trigger_price: price, ...contractPayload })
-      if (!result.updated) { setTradingError('No pending stop-loss orders were eligible to move.'); return }
+      if (!result.updated) { reportTradingError('No pending stop-loss orders were eligible to move.'); return }
       setTrading(await desktopTradingRequest<DesktopTradingSnapshot>(`${trading.session.session_id}/snapshot`, 'GET'))
-      setTradingError('')
+      clearTradingError()
       setTradingNotice(`Moved ${result.updated} stop-loss order${result.updated === 1 ? '' : 's'}.`)
       return
     }
@@ -674,10 +691,11 @@ export default function App() {
   const resetWallet = async () => {
     if (!trading) return
     const amount = Number(walletAmount)
-    if (!Number.isFinite(amount) || amount < 0) { setTradingError('Wallet reset amount must be a positive number'); return }
+    if (!Number.isFinite(amount) || amount < 0) { reportTradingError('Wallet reset amount must be a positive number'); return }
     await desktopTradingRequest(`${trading.session.session_id}/wallet/reset`, 'POST', { amount })
     const snapshot = await desktopTradingRequest<DesktopTradingSnapshot>(`${trading.session.session_id}/snapshot`, 'GET')
     setTrading(snapshot)
+    clearTradingError()
     setWalletOpen(false)
   }
   const ticketSizeOptions = () => {
@@ -704,9 +722,9 @@ export default function App() {
       return
     }
     if (ticket.orderType === 'MARKET' || ticket.orderType === 'AUTO_STOP') {
-      void placeTicketOrder(ticket).catch(error => setTradingError(String(error)))
+      void placeTicketOrder(ticket).catch(reportTradingError)
     } else {
-      setTradeTicket(ticket)
+      setTradeTicket(null)
       setPricePickAction({ ticket })
     }
   }
@@ -748,7 +766,7 @@ export default function App() {
       <strong>Wallet</strong>
       <span>Current ₹{Math.round(trading.wallet_balance).toLocaleString('en-IN')}</span>
       <label>Reset to<input type="number" min="0" value={walletAmount} onChange={event => setWalletAmount(event.target.value)} /></label>
-      <div><button onClick={() => void resetWallet().catch(error => setTradingError(String(error)))}>Reset</button><button onClick={() => setWalletOpen(false)}>Close</button></div>
+      <div><button onClick={() => void resetWallet().catch(reportTradingError)}>Reset</button><button onClick={() => setWalletOpen(false)}>Close</button></div>
     </div>}
     {tradeTicket && <div className="trade-ticket" style={placeNearPoint(tradeTicket.anchor.x, tradeTicket.anchor.y, 260, 190)}>
       <header><strong>{tradeTicket.side} SL</strong><button onClick={() => { setTradeTicket(null); setPricePickAction(null) }}>x</button></header>
@@ -763,11 +781,11 @@ export default function App() {
       <header><strong>{underlyingStrategyTicket.strategyType === 'UnderlyingTargetProfit' ? 'Underlying target' : 'Underlying SL'}</strong><button onClick={() => setUnderlyingStrategyTicket(null)}>x</button></header>
       <div className="ticket-row"><span>Underlying price</span><b>{underlyingStrategyTicket.price.toFixed(2)}</b></div>
       <div className="ticket-hint">Apply to the open option position:</div>
-      <div className="ticket-buttons"><button onClick={() => { const picker = underlyingStrategyTicket; void startDesktopStrategy(picker.strategyType, 'CE', picker.price).then(() => setUnderlyingStrategyTicket(null)).catch(error => setTradingError(String(error))) }}>CE</button><button onClick={() => { const picker = underlyingStrategyTicket; void startDesktopStrategy(picker.strategyType, 'PE', picker.price).then(() => setUnderlyingStrategyTicket(null)).catch(error => setTradingError(String(error))) }}>PE</button></div>
+      <div className="ticket-buttons"><button onClick={() => { const picker = underlyingStrategyTicket; void startDesktopStrategy(picker.strategyType, 'CE', picker.price).then(() => setUnderlyingStrategyTicket(null)).catch(reportTradingError) }}>CE</button><button onClick={() => { const picker = underlyingStrategyTicket; void startDesktopStrategy(picker.strategyType, 'PE', picker.price).then(() => setUnderlyingStrategyTicket(null)).catch(reportTradingError) }}>PE</button></div>
     </div>}
     <section className={`workspace-shell ${toolPanelOpen ? '' : 'tools-collapsed'}`}>
       {toolPanelOpen && <WorkspaceToolPanel tiles={activeScreen.tiles} activeTileId={activeToolTile} setActiveTileId={setActiveToolTileId} indicators={selectedIndicators} toggleIndicator={toggleIndicator} clearIndicators={clearIndicators} sendDrawing={sendDrawing} sendDrawingAction={sendDrawingAction} activeDrawingTool={activeDrawingTool} drawingMode={drawingMode} setDrawingMode={setDrawingMode} tradeHistoryCount={trading?.trades.length ?? 0} onOpenTradeHistory={() => setTradeHistoryOpen(true)} />}
-      <section className={`tile-grid tiles-${activeScreen.layout} ${maximizedTileId ? 'has-maximized' : ''}`}>{activeScreen.tiles.map(tile => { const state = replay?.tile_states.find(item => item.tile_id === tile.id); const liveState = live?.tiles.find(item => item.tile_id === tile.id); const cacheKey = liveState?.instrument ? canonicalKey(liveState.instrument) : instrumentKeyForTile(tile, catalogue); return <DesktopTile key={tile.id} config={tile} catalogue={catalogue} connection={connection} api={api} settings={chartSettings} serverUrl={serverUrl} replayCursor={replay?.cursor} replayRunId={replay?.run_id} replayCandle={state?.candle} replayAttached={Boolean(state)} liveTile={liveState} liveTicks={liveTickCache[cacheKey] ?? []} onLiveTick={onLiveTick} maximized={maximizedTileId === tile.id} active={activeToolTile === tile.id} indicators={tileIndicators[tile.id] ?? noIndicators} drawingCommand={drawingCommand} drawingAction={drawingAction} drawingMode={drawingMode} onDrawingComplete={onDrawingComplete} onActivate={() => setActiveToolTileId(tile.id)} onConfigure={() => setPickerTileId(tile.id)} onMaximize={() => setMaximizedTileId(current => current === tile.id ? null : tile.id)} onIntervalChange={interval => saveTile({ ...tile, interval })} tradingSnapshot={mode === 'Stepwise' ? trading : null} pricePickAction={activeToolTile === tile.id ? pricePickAction : null} onPricePick={price => void completePricePick(price).catch(error => { setTradingNotice(''); setTradingError(String(error)) })} onOrderDrag={updateOrderLine} onOrderCancel={cancelOrderLine} onOrderConvertRequest={requestOrderConvert} onChartOrderAction={(tileForAction, action, price, anchor) => void placeChartOrder(tileForAction, action, price, anchor).catch(error => { setTradingNotice(''); setTradingError(String(error)) })} />})}</section>
+      <section className={`tile-grid tiles-${activeScreen.layout} ${maximizedTileId ? 'has-maximized' : ''}`}>{activeScreen.tiles.map(tile => { const state = replay?.tile_states.find(item => item.tile_id === tile.id); const liveState = live?.tiles.find(item => item.tile_id === tile.id); const cacheKey = liveState?.instrument ? canonicalKey(liveState.instrument) : instrumentKeyForTile(tile, catalogue); return <DesktopTile key={tile.id} config={tile} catalogue={catalogue} connection={connection} api={api} settings={chartSettings} serverUrl={serverUrl} replayCursor={replay?.cursor} replayRunId={replay?.run_id} replayCandle={state?.candle} replayAttached={Boolean(state)} liveTile={liveState} liveTicks={liveTickCache[cacheKey] ?? []} onLiveTick={onLiveTick} maximized={maximizedTileId === tile.id} active={activeToolTile === tile.id} indicators={tileIndicators[tile.id] ?? noIndicators} drawingCommand={drawingCommand} drawingAction={drawingAction} drawingMode={drawingMode} onDrawingComplete={onDrawingComplete} onActivate={() => setActiveToolTileId(tile.id)} onConfigure={() => setPickerTileId(tile.id)} onMaximize={() => setMaximizedTileId(current => current === tile.id ? null : tile.id)} onIntervalChange={interval => saveTile({ ...tile, interval })} tradingSnapshot={mode === 'Stepwise' ? trading : null} pricePickAction={activeToolTile === tile.id ? pricePickAction : null} onPricePick={price => void completePricePick(price).catch(error => { setTradingNotice(''); reportTradingError(error) })} onOrderDrag={updateOrderLine} onOrderCancel={cancelOrderLine} onOrderConvertRequest={requestOrderConvert} onChartOrderAction={(tileForAction, action, price, anchor) => void placeChartOrder(tileForAction, action, price, anchor).catch(error => { setTradingNotice(''); reportTradingError(error) })} />})}</section>
     </section>
     {tradeHistoryOpen && <TradeHistoryModal trades={trading?.trades ?? []} onClose={() => setTradeHistoryOpen(false)} />}
     {pickerTile && <InstrumentPicker initial={pickerTile} catalogue={catalogue} api={api} onSave={saveTile} onClose={() => setPickerTileId(null)} />}{showSettings && <ChartSettingsModal settings={chartSettings} onSave={saveChartSettings} onClose={() => setShowSettings(false)} />}

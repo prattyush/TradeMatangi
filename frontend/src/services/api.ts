@@ -145,6 +145,7 @@ export interface SimulationStartRequest {
 export interface UserSettingsResponse {
   historical_days: number
   desktop_order_size_mode?: 'quantity' | 'funds_ratio' | 'risk_ratio'
+  desktop_pnl_display_mode?: 'currency' | 'percent'
   funds_ratio_l_pct?: number
   funds_ratio_m_pct?: number
   funds_ratio_h_pct?: number
