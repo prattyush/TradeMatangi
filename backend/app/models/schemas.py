@@ -311,6 +311,8 @@ class UserSettingsResponse(BaseModel):
     desktop_order_size_mode: Literal["quantity", "funds_ratio", "risk_ratio"] = "quantity"
     desktop_pnl_display_mode: Literal["currency", "percent"] = "currency"
     desktop_confirm_flatten: bool = True
+    context_menu_sl_mode: Literal["longOnly", "both"] = "longOnly"
+    target_deviation_pct: float = 0.01
 
 
 class UserSettingsUpdateRequest(BaseModel):
@@ -331,6 +333,8 @@ class UserSettingsUpdateRequest(BaseModel):
     desktop_order_size_mode: Literal["quantity", "funds_ratio", "risk_ratio"] | None = None
     desktop_pnl_display_mode: Literal["currency", "percent"] | None = None
     desktop_confirm_flatten: bool | None = None
+    context_menu_sl_mode: Literal["longOnly", "both"] | None = None
+    target_deviation_pct: float | None = Field(default=None, ge=0.0, le=0.10)
 
 
 # ── Strategies ────────────────────────────────────────────────────────────────
@@ -400,6 +404,7 @@ class StrategyResponse(BaseModel):
     right: str | None
     status: str
     triggered: bool = False    # True once LockProfit (or TargetProfit) has fired
+    price: float | None = None
 
 
 class CancelAllStrategiesRequest(BaseModel):
