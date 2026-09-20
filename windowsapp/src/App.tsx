@@ -581,7 +581,10 @@ export default function App() {
   }
   const startDesktopStrategy = async (strategyType: 'AutoStop' | 'TargetProfit' | 'LockProfit' | 'UnderlyingTargetProfit' | 'UnderlyingStoploss', right: 'CE' | 'PE', price: number, ticket?: TradeTicket) => {
     if (!trading) return
-    const body: Record<string, unknown> = { strategy_type: strategyType, right }
+    // The desktop route scopes the URL by session, but it delegates to the
+    // shared strategy request model which also requires session_id in its
+    // validated request body.
+    const body: Record<string, unknown> = { session_id: trading.session.session_id, strategy_type: strategyType, right }
     if (strategyType === 'TargetProfit' || strategyType === 'UnderlyingTargetProfit') body.target_profit_value = price
     if (strategyType === 'LockProfit') body.lock_profit_value = price
     if (strategyType === 'UnderlyingStoploss') body.underlying_sl_price = price
