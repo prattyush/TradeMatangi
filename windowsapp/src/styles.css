@@ -73,6 +73,22 @@ input { width: 160px; }
 .chart-context-menu strong { color: #93c5fd; font-size: .68rem; padding: 2px 4px 5px; border-bottom: 1px solid #334155; }
 .chart-context-menu button { width: 100%; text-align: left; padding: 5px 7px; font-size: .68rem; background: transparent; border-color: transparent; }
 .chart-context-menu button:hover { background: #1f2937; border-color: #334155; }
+.trade-ticket { position: fixed; z-index: 40; right: 18px; top: 64px; width: 260px; display: grid; gap: 10px; padding: 10px; background: #111827; border: 1px solid #475569; border-radius: 6px; box-shadow: 0 18px 48px rgb(0 0 0 / .45); }
+.trade-ticket header { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 0; background: transparent; border: 0; min-height: 0; }
+.trade-ticket header strong { color: #e5e7eb; font-size: .78rem; }
+.trade-ticket header button { min-width: 26px; padding: 3px 6px; }
+.ticket-row { display: flex; justify-content: space-between; align-items: center; color: #94a3b8; font-size: .72rem; }
+.ticket-row b { color: #f87171; font-size: .82rem; }
+.ticket-buttons { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+.ticket-buttons button { padding: 6px 5px; font-size: .68rem; white-space: nowrap; }
+.ticket-buttons button.active { background: #1d4ed8; border-color: #60a5fa; color: #fff; }
+.ticket-hint { color: #94a3b8; font-size: .68rem; line-height: 1.35; }
+.wallet-button { border: 1px solid #14532d; cursor: pointer; }
+.wallet-popover { position: fixed; z-index: 41; top: 58px; right: 180px; width: 220px; display: grid; gap: 8px; padding: 10px; background: #111827; border: 1px solid #475569; border-radius: 6px; box-shadow: 0 18px 48px rgb(0 0 0 / .45); color: #d1d5db; font-size: .72rem; }
+.wallet-popover strong { color: #e5e7eb; }
+.wallet-popover label { display: grid; gap: 4px; color: #94a3b8; }
+.wallet-popover input { background: #0f172a; border: 1px solid #334155; color: #e5e7eb; border-radius: 4px; padding: 6px; }
+.wallet-popover div { display: flex; gap: 6px; justify-content: flex-end; }
 .trading-pill { display: inline-flex; align-items: center; gap: 5px; padding: 3px 7px; border: 1px solid #334155; border-radius: 999px; color: #cbd5e1; font-size: .7rem; font-variant-numeric: tabular-nums; }
 .trading-pill.good { color: #86efac; border-color: #166534; background: #052e16; }
 .trading-pill.bad { color: #fca5a5; border-color: #7f1d1d; background: #450a0a; }

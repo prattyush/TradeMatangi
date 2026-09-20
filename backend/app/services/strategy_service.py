@@ -184,6 +184,11 @@ def update_strategy_price(session_id: str, strategy_id: str, price: float) -> bo
                 s.metadata["triggered"] = False
                 _write_strategy_to_db(s)
                 return True
+            elif s.strategy_type == "UnderlyingStoploss":
+                s.metadata["underlying_sl_price"] = price
+                s.metadata["triggered"] = False
+                _write_strategy_to_db(s)
+                return True
     return False
 
 

@@ -36,6 +36,7 @@ export interface DesktopPosition {
 export interface DesktopStrategy {
   strategy_id: string; strategy_type: string; symbol: string
   right: 'CE' | 'PE' | null; status: string; triggered: boolean
+  price?: number | null
 }
 
 export interface DesktopTradingSession {
@@ -54,6 +55,8 @@ export interface DesktopTradingSettings {
   desktop_order_size_mode: 'quantity' | 'funds_ratio' | 'risk_ratio'
   desktop_pnl_display_mode: 'currency' | 'percent'
   desktop_confirm_flatten: boolean
+  context_menu_sl_mode: 'longOnly' | 'both'
+  target_deviation_pct: number
   funds_ratio_l_pct: number; funds_ratio_m_pct: number; funds_ratio_h_pct: number
   risk_ratio_l_pct: number; risk_ratio_m_pct: number; risk_ratio_h_pct: number
   default_sl_pct: number
