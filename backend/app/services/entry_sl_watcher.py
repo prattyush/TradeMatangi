@@ -48,13 +48,15 @@ def on_entry_filled(
     if order.entry_sl_price is None:
         return
 
-    try:
-        from app.services.user_settings_service import get_settings
-        settings = get_settings(order.user_id)
-        if not settings.get("entry_auto_sl_enabled", False):
+    explicit_desktop_sl = getattr(order, "source", None) == "desktop_stepwise"
+    if not explicit_desktop_sl:
+        try:
+            from app.services.user_settings_service import get_settings
+            settings = get_settings(order.user_id)
+            if not settings.get("entry_auto_sl_enabled", False):
+                return
+        except Exception:
             return
-    except Exception:
-        return
 
     session_type = getattr(session, "session_type", "sim")
 
@@ -74,7 +76,8 @@ def on_entry_filled(
 def _place_sl_immediately(order: Any, session: Any) -> None:
     from app.models.schemas import TradeSide, OrderType
 
-    sl_side = TradeSide.SELL if order.side == "BUY" else TradeSide.BUY
+    side_value = getattr(order.side, "value", order.side)
+    sl_side = TradeSide.SELL if side_value == TradeSide.BUY.value else TradeSide.BUY
 
     try:
         from app.services.order_service import place_order
@@ -92,6 +95,7 @@ def _place_sl_immediately(order: Any, session: Any) -> None:
             is_stoploss=True,
             right=getattr(order, "right", None),
             strike=getattr(order, "strike", None),
+            expiry=getattr(order, "expiry", None),
             group_id=getattr(order, "group_id", None),
             user_id=getattr(order, "user_id", "00000000-0000-0000-0000-000000000001"),
         )

@@ -443,6 +443,13 @@ async def snapshot(session_id: str, user_id: str = Depends(get_desktop_user_id))
     return _snapshot(_require_session(session_id, user_id), user_id)
 
 
+@router.post("/{session_id}/stop")
+async def stop_stepwise(session_id: str, user_id: str = Depends(get_desktop_user_id)):
+    session = _require_session(session_id, user_id)
+    sim_svc.stop_session(session)
+    return {"status": "stopped"}
+
+
 @router.post("/{session_id}/next-bar", response_model=DesktopTradingSnapshot)
 async def next_bar(session_id: str, user_id: str = Depends(get_desktop_user_id)):
     session = _require_session(session_id, user_id)

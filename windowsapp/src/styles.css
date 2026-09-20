@@ -66,19 +66,28 @@ input { width: 160px; }
 .kline { height: 100%; min-height: 0; width: 100%; }
 .chart-loading { position: absolute; inset: 0; display: grid; place-content: center; gap: 9px; justify-items: center; background: rgb(16 19 26 / .78); color: #cbd5e1; font-size: .82rem; }
 .chart-message { color: #fbbf24; padding: 16px; text-align: center; }
-.line-actions { position: absolute; z-index: 4; right: 10px; top: 10px; display: flex; align-items: center; gap: 5px; padding: 5px; background: rgb(15 23 42 / .92); border: 1px solid #475569; border-radius: 6px; box-shadow: 0 10px 28px rgb(0 0 0 / .35); font-size: .68rem; }
+.line-actions { position: fixed; z-index: 31; display: flex; align-items: center; gap: 5px; padding: 5px; background: rgb(15 23 42 / .92); border: 1px solid #475569; border-radius: 6px; box-shadow: 0 10px 28px rgb(0 0 0 / .35); font-size: .68rem; }
 .line-actions span { color: #fde68a; font-weight: 700; margin-right: 3px; }
 .line-actions button { padding: 3px 5px; font-size: .64rem; }
-.chart-context-menu { position: fixed; z-index: 30; min-width: 152px; display: grid; gap: 3px; padding: 6px; background: #111827; border: 1px solid #475569; border-radius: 6px; box-shadow: 0 18px 48px rgb(0 0 0 / .5); }
+.chart-context-menu { position: fixed; z-index: 30; min-width: 190px; display: grid; gap: 4px; padding: 6px; background: #111827; border: 1px solid #475569; border-radius: 6px; box-shadow: 0 18px 48px rgb(0 0 0 / .5); }
 .chart-context-menu strong { color: #93c5fd; font-size: .68rem; padding: 2px 4px 5px; border-bottom: 1px solid #334155; }
 .chart-context-menu button { width: 100%; text-align: left; padding: 5px 7px; font-size: .68rem; background: transparent; border-color: transparent; }
 .chart-context-menu button:hover { background: #1f2937; border-color: #334155; }
-.trade-ticket { position: fixed; z-index: 40; right: 18px; top: 64px; width: 260px; display: grid; gap: 10px; padding: 10px; background: #111827; border: 1px solid #475569; border-radius: 6px; box-shadow: 0 18px 48px rgb(0 0 0 / .45); }
+.context-menu-item { position: relative; display: grid; gap: 3px; padding: 5px 7px; border: 1px solid transparent; border-radius: 4px; color: #e5e7eb; font-size: .68rem; }
+.context-menu-item:hover { background: #1f2937; border-color: #334155; }
+.context-menu-item > span::after { content: '›'; float: right; color: #94a3b8; }
+.context-submenu { display: none; position: absolute; left: calc(100% + 7px); top: 0; min-width: 132px; padding: 5px; background: #111827; border: 1px solid #475569; border-radius: 6px; box-shadow: 0 14px 34px rgb(0 0 0 / .45); }
+.chart-context-menu.open-left .context-submenu { left: auto; right: calc(100% + 7px); }
+.context-menu-item:hover .context-submenu, .context-menu-item:focus-within .context-submenu { display: grid; gap: 3px; }
+.order-line-label { position: absolute; z-index: 3; transform: translateY(-50%); padding: 2px 5px; background: rgb(15 23 42 / .9); border: 1px solid; border-radius: 4px; font-size: .64rem; font-weight: 800; pointer-events: none; font-variant-numeric: tabular-nums; }
+.position-pnl-label { position: absolute; z-index: 3; transform: translate(-50%, -50%); padding: 2px 5px; background: rgb(15 23 42 / .9); border: 1px solid; border-radius: 4px; font-size: .64rem; font-weight: 800; pointer-events: none; font-variant-numeric: tabular-nums; }
+.trade-ticket { position: fixed; z-index: 40; width: 260px; display: grid; gap: 10px; padding: 10px; background: #111827; border: 1px solid #475569; border-radius: 6px; box-shadow: 0 18px 48px rgb(0 0 0 / .45); }
 .trade-ticket header { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 0; background: transparent; border: 0; min-height: 0; }
 .trade-ticket header strong { color: #e5e7eb; font-size: .78rem; }
 .trade-ticket header button { min-width: 26px; padding: 3px 6px; }
 .ticket-row { display: flex; justify-content: space-between; align-items: center; color: #94a3b8; font-size: .72rem; }
 .ticket-row b { color: #f87171; font-size: .82rem; }
+.ticket-picker { display: grid; grid-template-columns: 74px 1fr; gap: 8px; align-items: stretch; }
 .ticket-buttons { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
 .ticket-buttons button { padding: 6px 5px; font-size: .68rem; white-space: nowrap; }
 .ticket-buttons button.active { background: #1d4ed8; border-color: #60a5fa; color: #fff; }
@@ -89,6 +98,15 @@ input { width: 160px; }
 .wallet-popover label { display: grid; gap: 4px; color: #94a3b8; }
 .wallet-popover input { background: #0f172a; border: 1px solid #334155; color: #e5e7eb; border-radius: 4px; padding: 6px; }
 .wallet-popover div { display: flex; gap: 6px; justify-content: flex-end; }
+.history-tool-button { text-align: left; }
+.trade-history-modal { width: min(720px, calc(100vw - 32px)); max-height: min(620px, calc(100vh - 56px)); display: grid; grid-template-rows: auto minmax(0, 1fr); background: #181d27; border: 1px solid #3b4659; border-radius: 8px; box-shadow: 0 20px 70px #000; }
+.trade-history-modal header { display: flex; align-items: center; justify-content: space-between; padding: 10px 12px; border-bottom: 1px solid #293142; background: transparent; }
+.trade-history-table { min-height: 0; overflow: auto; padding: 8px; }
+.trade-history-row { display: grid; grid-template-columns: 90px 70px 70px 90px minmax(120px, 1fr); gap: 8px; align-items: center; padding: 6px 8px; border-bottom: 1px solid #293142; color: #d1d5db; font-size: .72rem; font-variant-numeric: tabular-nums; }
+.trade-history-head { position: sticky; top: 0; z-index: 1; background: #181d27; color: #93c5fd; font-weight: 800; }
+.trade-history-empty { padding: 24px; text-align: center; color: #94a3b8; font-size: .78rem; }
+.trade-buy { color: #86efac; font-weight: 800; }
+.trade-sell { color: #fca5a5; font-weight: 800; }
 .trading-pill { display: inline-flex; align-items: center; gap: 5px; padding: 3px 7px; border: 1px solid #334155; border-radius: 999px; color: #cbd5e1; font-size: .7rem; font-variant-numeric: tabular-nums; }
 .trading-pill.good { color: #86efac; border-color: #166534; background: #052e16; }
 .trading-pill.bad { color: #fca5a5; border-color: #7f1d1d; background: #450a0a; }

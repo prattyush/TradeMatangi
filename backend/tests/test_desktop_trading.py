@@ -5,7 +5,7 @@ from fastapi import HTTPException
 from unittest.mock import patch
 
 from app.main import app
-from app.models.schemas import ConvertOrderRequest, OrderType, PlaceOrderRequest, SimulationState, TradeSide, WalletResetRequest
+from app.models.schemas import ConvertOrderRequest, OrderStatus, OrderType, PlaceOrderRequest, SimulationState, TradeSide, WalletResetRequest
 from app.routers import desktop_trading
 from app.services import order_service, simulation as sim_svc, trading as trading_service, wallet_service
 
@@ -256,6 +256,88 @@ def test_desktop_order_requires_attached_option_contract(no_db):
 
     assert exc.value.status_code == 400
     assert exc.value.detail == "Option contract is not attached to this Stepwise session"
+    _clear()
+
+
+def test_desktop_limit_entry_places_matching_stoploss_on_fill(no_db):
+    _clear()
+    session = _session()
+
+    order = asyncio.run(desktop_trading.place_order(
+        session.session_id,
+        PlaceOrderRequest(
+            session_id=session.session_id,
+            side=TradeSide.BUY,
+            order_type=OrderType.LIMIT,
+            limit_price=100,
+            risk_ratio_pct=0.01,
+            entry_sl_price=91,
+            group_id="desktop-sl-group",
+            right="CE",
+            strike=24000,
+            expiry="2026-05-07",
+        ),
+        user_id="desktop-user",
+    ))
+
+    sim_svc._emit_tick_and_check_orders(session, {"time": 1778058901, "open": 99, "high": 99, "low": 99, "close": 99}, "CE")
+
+    assert order_service.get_order(session.session_id, order.order_id).status == OrderStatus.FILLED
+    stoplosses = [item for item in order_service.get_open_orders(session.session_id) if item.is_stoploss]
+    assert len(stoplosses) == 1
+    sl = stoplosses[0]
+    assert sl.side == TradeSide.SELL
+    assert sl.quantity == order.quantity
+    assert sl.trigger_price == 91
+    assert sl.group_id == "desktop-sl-group"
+    assert sl.right == "CE"
+    assert sl.strike == 24000
+    assert sl.expiry == "2026-05-07"
+    _clear()
+
+
+def test_desktop_target_entry_places_matching_stoploss_on_fill(no_db):
+    _clear()
+    session = _session()
+
+    order = asyncio.run(desktop_trading.place_order(
+        session.session_id,
+        PlaceOrderRequest(
+            session_id=session.session_id,
+            side=TradeSide.BUY,
+            order_type=OrderType.TARGET,
+            trigger_price=105,
+            quantity=65,
+            entry_sl_price=94,
+            group_id="desktop-target-sl",
+            right="CE",
+            strike=24000,
+            expiry="2026-05-07",
+        ),
+        user_id="desktop-user",
+    ))
+
+    sim_svc._emit_tick_and_check_orders(session, {"time": 1778058902, "open": 106, "high": 106, "low": 106, "close": 106}, "CE")
+
+    assert order_service.get_order(session.session_id, order.order_id).status == OrderStatus.FILLED
+    stoplosses = [item for item in order_service.get_open_orders(session.session_id) if item.is_stoploss]
+    assert len(stoplosses) == 1
+    assert stoplosses[0].trigger_price == 94
+    assert stoplosses[0].quantity == 65
+    assert stoplosses[0].expiry == "2026-05-07"
+    _clear()
+
+
+def test_desktop_stop_removes_active_stepwise_session(no_db):
+    _clear()
+    session = _session()
+
+    with patch("app.services.simulation._upsert_session_to_db"):
+        response = asyncio.run(desktop_trading.stop_stepwise(session.session_id, user_id="desktop-user"))
+    active = asyncio.run(desktop_trading.active_stepwise(user_id="desktop-user"))
+
+    assert response == {"status": "stopped"}
+    assert active is None
     _clear()
 
 
