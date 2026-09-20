@@ -795,10 +795,25 @@ async fn desktop_drawing_request(
         .send()
         .await
         .map_err(|error| error.to_string())?;
-    if !response.status().is_success() {
-        return Err(format!("Drawing request failed ({})", response.status()));
+    let status = response.status();
+    if !status.is_success() {
+        let detail = response.text().await.unwrap_or_default();
+        let request_kind = if path.trim_start_matches('/').starts_with("trading/") {
+            "Trading"
+        } else {
+            "Desktop"
+        };
+        let suffix = if detail.is_empty() {
+            String::new()
+        } else {
+            format!(": {}", detail.chars().take(500).collect::<String>())
+        };
+        return Err(format!(
+            "{} request failed ({}){}",
+            request_kind, status, suffix
+        ));
     }
-    if response.status().as_u16() == 204 {
+    if status.as_u16() == 204 {
         return Ok(serde_json::Value::Null);
     }
     response

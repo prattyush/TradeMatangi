@@ -533,6 +533,14 @@ export default function App() {
     return () => window.clearInterval(timer)
   }, [mode, trading?.session.session_id, serverUrl, browserToken])
   const contractPayloadForTile = (tile: TileConfig): Record<string, unknown> => tile.kind === 'option' ? { right: tile.right, strike: Number(tile.strike), expiry: tile.expiry } : { right: null }
+  const ensureOptionContractAttached = async (tile: TileConfig) => {
+    if (!trading || tile.kind !== 'option') return
+    const key = contractKeyForTile(tile)
+    if (key && trading.contracts.some(contract => contract.contract_key === key)) return
+    const snapshot = await desktopTradingRequest<DesktopTradingSnapshot>(`${trading.session.session_id}/contracts`, 'POST', { symbol: tile.symbol, expiry: tile.expiry, strike: Number(tile.strike), right: tile.right })
+    setTrading(snapshot)
+    setTradingError('')
+  }
   const paneCurrentPrice = (tile: TileConfig) => {
     if (!trading) return 0
     if (tile.kind === 'option') {
@@ -579,6 +587,7 @@ export default function App() {
       setTradeTicket(null)
       return
     }
+    await ensureOptionContractAttached(ticket.tile)
     const intent = ticket.orderType.toLowerCase()
     const body: Record<string, unknown> = {
       symbol: ticket.tile.symbol,
@@ -594,7 +603,9 @@ export default function App() {
     await desktopTradingRequest<DesktopOrder>(`${trading.session.session_id}/chart-orders`, 'POST', body)
     const snapshot = await desktopTradingRequest<DesktopTradingSnapshot>(`${trading.session.session_id}/snapshot`, 'GET')
     setTrading(snapshot)
+    setTradingError('')
     setTradeTicket(null)
+    setPricePickAction(null)
   }
   const updateOrderLine = async (order: DesktopOrder, price: number) => {
     if (!trading) return
@@ -756,7 +767,7 @@ export default function App() {
     </div>}
     <section className={`workspace-shell ${toolPanelOpen ? '' : 'tools-collapsed'}`}>
       {toolPanelOpen && <WorkspaceToolPanel tiles={activeScreen.tiles} activeTileId={activeToolTile} setActiveTileId={setActiveToolTileId} indicators={selectedIndicators} toggleIndicator={toggleIndicator} clearIndicators={clearIndicators} sendDrawing={sendDrawing} sendDrawingAction={sendDrawingAction} activeDrawingTool={activeDrawingTool} drawingMode={drawingMode} setDrawingMode={setDrawingMode} tradeHistoryCount={trading?.trades.length ?? 0} onOpenTradeHistory={() => setTradeHistoryOpen(true)} />}
-      <section className={`tile-grid tiles-${activeScreen.layout} ${maximizedTileId ? 'has-maximized' : ''}`}>{activeScreen.tiles.map(tile => { const state = replay?.tile_states.find(item => item.tile_id === tile.id); const liveState = live?.tiles.find(item => item.tile_id === tile.id); const cacheKey = liveState?.instrument ? canonicalKey(liveState.instrument) : instrumentKeyForTile(tile, catalogue); return <DesktopTile key={tile.id} config={tile} catalogue={catalogue} connection={connection} api={api} settings={chartSettings} serverUrl={serverUrl} replayCursor={replay?.cursor} replayRunId={replay?.run_id} replayCandle={state?.candle} replayAttached={Boolean(state)} liveTile={liveState} liveTicks={liveTickCache[cacheKey] ?? []} onLiveTick={onLiveTick} maximized={maximizedTileId === tile.id} active={activeToolTile === tile.id} indicators={tileIndicators[tile.id] ?? noIndicators} drawingCommand={drawingCommand} drawingAction={drawingAction} drawingMode={drawingMode} onDrawingComplete={onDrawingComplete} onActivate={() => setActiveToolTileId(tile.id)} onConfigure={() => setPickerTileId(tile.id)} onMaximize={() => setMaximizedTileId(current => current === tile.id ? null : tile.id)} onIntervalChange={interval => saveTile({ ...tile, interval })} tradingSnapshot={mode === 'Stepwise' ? trading : null} pricePickAction={activeToolTile === tile.id ? pricePickAction : null} onPricePick={completePricePick} onOrderDrag={updateOrderLine} onOrderCancel={cancelOrderLine} onOrderConvertRequest={requestOrderConvert} onChartOrderAction={(tileForAction, action, price, anchor) => void placeChartOrder(tileForAction, action, price, anchor).catch(error => { setTradingNotice(''); setTradingError(String(error)) })} />})}</section>
+      <section className={`tile-grid tiles-${activeScreen.layout} ${maximizedTileId ? 'has-maximized' : ''}`}>{activeScreen.tiles.map(tile => { const state = replay?.tile_states.find(item => item.tile_id === tile.id); const liveState = live?.tiles.find(item => item.tile_id === tile.id); const cacheKey = liveState?.instrument ? canonicalKey(liveState.instrument) : instrumentKeyForTile(tile, catalogue); return <DesktopTile key={tile.id} config={tile} catalogue={catalogue} connection={connection} api={api} settings={chartSettings} serverUrl={serverUrl} replayCursor={replay?.cursor} replayRunId={replay?.run_id} replayCandle={state?.candle} replayAttached={Boolean(state)} liveTile={liveState} liveTicks={liveTickCache[cacheKey] ?? []} onLiveTick={onLiveTick} maximized={maximizedTileId === tile.id} active={activeToolTile === tile.id} indicators={tileIndicators[tile.id] ?? noIndicators} drawingCommand={drawingCommand} drawingAction={drawingAction} drawingMode={drawingMode} onDrawingComplete={onDrawingComplete} onActivate={() => setActiveToolTileId(tile.id)} onConfigure={() => setPickerTileId(tile.id)} onMaximize={() => setMaximizedTileId(current => current === tile.id ? null : tile.id)} onIntervalChange={interval => saveTile({ ...tile, interval })} tradingSnapshot={mode === 'Stepwise' ? trading : null} pricePickAction={activeToolTile === tile.id ? pricePickAction : null} onPricePick={price => void completePricePick(price).catch(error => { setTradingNotice(''); setTradingError(String(error)) })} onOrderDrag={updateOrderLine} onOrderCancel={cancelOrderLine} onOrderConvertRequest={requestOrderConvert} onChartOrderAction={(tileForAction, action, price, anchor) => void placeChartOrder(tileForAction, action, price, anchor).catch(error => { setTradingNotice(''); setTradingError(String(error)) })} />})}</section>
     </section>
     {tradeHistoryOpen && <TradeHistoryModal trades={trading?.trades ?? []} onClose={() => setTradeHistoryOpen(false)} />}
     {pickerTile && <InstrumentPicker initial={pickerTile} catalogue={catalogue} api={api} onSave={saveTile} onClose={() => setPickerTileId(null)} />}{showSettings && <ChartSettingsModal settings={chartSettings} onSave={saveChartSettings} onClose={() => setShowSettings(false)} />}

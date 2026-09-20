@@ -621,28 +621,6 @@ async def place_chart_order(session_id: str, intent: ChartOrderIntent, user_id: 
     return await web_place_order(req)
 
 
-@router.patch("/{session_id}/orders/{order_id}", response_model=Order)
-async def update_order(session_id: str, order_id: str, req: UpdateOrderRequest, user_id: str = Depends(get_desktop_user_id)):
-    _require_session(session_id, user_id)
-    from app.routers.orders import update_order as web_update_order
-    return await web_update_order(order_id, req, session_id=session_id)
-
-
-@router.delete("/{session_id}/orders/{order_id}", response_model=Order | None)
-async def cancel_order(session_id: str, order_id: str, user_id: str = Depends(get_desktop_user_id)):
-    _require_session(session_id, user_id)
-    from app.routers.orders import cancel_order as web_cancel_order
-    return await web_cancel_order(order_id, session_id=session_id)
-
-
-@router.post("/{session_id}/orders/{order_id}/convert", response_model=Order)
-async def convert_order(session_id: str, order_id: str, req: ConvertOrderRequest, user_id: str = Depends(get_desktop_user_id)):
-    session = _require_session(session_id, user_id)
-    req.session_id = session_id
-    from app.routers.orders import convert_order as web_convert_order
-    return await web_convert_order(order_id, req)
-
-
 @router.patch("/{session_id}/orders/bulk-convert")
 async def bulk_convert(session_id: str, req: BulkChartConvertRequest, user_id: str = Depends(get_desktop_user_id)):
     session = _require_session(session_id, user_id)
@@ -686,6 +664,28 @@ async def bulk_update_sl(session_id: str, req: BulkChartUpdateSLRequest, user_id
                 "is_stoploss": result.is_stoploss,
             })
     return {"updated": len(updated), "orders": updated}
+
+
+@router.patch("/{session_id}/orders/{order_id}", response_model=Order)
+async def update_order(session_id: str, order_id: str, req: UpdateOrderRequest, user_id: str = Depends(get_desktop_user_id)):
+    _require_session(session_id, user_id)
+    from app.routers.orders import update_order as web_update_order
+    return await web_update_order(order_id, req, session_id=session_id)
+
+
+@router.delete("/{session_id}/orders/{order_id}", response_model=Order | None)
+async def cancel_order(session_id: str, order_id: str, user_id: str = Depends(get_desktop_user_id)):
+    _require_session(session_id, user_id)
+    from app.routers.orders import cancel_order as web_cancel_order
+    return await web_cancel_order(order_id, session_id=session_id)
+
+
+@router.post("/{session_id}/orders/{order_id}/convert", response_model=Order)
+async def convert_order(session_id: str, order_id: str, req: ConvertOrderRequest, user_id: str = Depends(get_desktop_user_id)):
+    session = _require_session(session_id, user_id)
+    req.session_id = session_id
+    from app.routers.orders import convert_order as web_convert_order
+    return await web_convert_order(order_id, req)
 
 
 @router.post("/{session_id}/strategies/start", response_model=StrategyResponse)
