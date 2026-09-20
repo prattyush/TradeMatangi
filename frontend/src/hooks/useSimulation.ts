@@ -320,11 +320,26 @@ export function useSimulation() {
   }, [])
 
   const updateSessionStrike = useCallback((right: 'CE' | 'PE', strike: number) => {
-    setState(s => ({
-      ...s,
-      sessionStrikeCE: right === 'CE' ? strike : s.sessionStrikeCE,
-      sessionStrikePE: right === 'PE' ? strike : s.sessionStrikePE,
-    }))
+    setState(s => {
+      const clearCE = right === 'CE'
+      if (s.sessionId && sessionRuntimeRef.current[s.sessionId]) {
+        const cached = sessionRuntimeRef.current[s.sessionId]
+        sessionRuntimeRef.current[s.sessionId] = {
+          ...cached,
+          ...(clearCE
+            ? { currentPriceCE: 0, latestCETick: null, lastCompletedBarCE: null }
+            : { currentPricePE: 0, latestPETick: null, lastCompletedBarPE: null }),
+        }
+      }
+      return {
+        ...s,
+        sessionStrikeCE: clearCE ? strike : s.sessionStrikeCE,
+        sessionStrikePE: clearCE ? s.sessionStrikePE : strike,
+        ...(clearCE
+          ? { currentPriceCE: 0, latestCETick: null, lastCompletedBarCE: null }
+          : { currentPricePE: 0, latestPETick: null, lastCompletedBarPE: null }),
+      }
+    })
   }, [])
 
   const startSession = useCallback(async (

@@ -461,6 +461,11 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
       api.getUserSettings().then(s => {
         setHistoricalDays(s.historical_days)
         localStorage.setItem(HISTORICAL_DAYS_KEY, String(s.historical_days))
+        if (s.desktop_pnl_display_mode === 'currency' || s.desktop_pnl_display_mode === 'percent') {
+          const percentMode = s.desktop_pnl_display_mode === 'percent'
+          setPnlPctMode(percentMode)
+          localStorage.setItem(PNL_PCT_MODE_KEY, String(percentMode))
+        }
         if (s.desktop_order_size_mode === 'quantity' || s.desktop_order_size_mode === 'funds_ratio' || s.desktop_order_size_mode === 'risk_ratio') {
           const mode = s.desktop_order_size_mode === 'funds_ratio' ? 'fundsRatio' : s.desktop_order_size_mode === 'risk_ratio' ? 'riskRatio' : 'quantity'
           setSizingMode(mode)
@@ -598,6 +603,7 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
     const next = !pnlPctMode
     setPnlPctMode(next)
     localStorage.setItem(PNL_PCT_MODE_KEY, String(next))
+    api.updateUserSettings({ desktop_pnl_display_mode: next ? 'percent' : 'currency' }).catch(() => {})
     onPnlPctModeChange?.(next)
   }
 
