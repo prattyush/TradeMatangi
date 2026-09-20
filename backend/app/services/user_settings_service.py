@@ -44,6 +44,8 @@ DEFAULT_SETTINGS: dict = {
     "desktop_order_size_mode": "quantity",
     "desktop_pnl_display_mode": "currency",
     "desktop_confirm_flatten": True,
+    "context_menu_sl_mode": "longOnly",
+    "target_deviation_pct": 0.01,
 }
 
 
@@ -111,6 +113,8 @@ def get_settings(user_id: str) -> dict:
             "desktop_order_size_mode": str(item.get("desktop_order_size_mode", DEFAULT_SETTINGS["desktop_order_size_mode"])),
             "desktop_pnl_display_mode": str(item.get("desktop_pnl_display_mode", DEFAULT_SETTINGS["desktop_pnl_display_mode"])),
             "desktop_confirm_flatten": bool(item.get("desktop_confirm_flatten", DEFAULT_SETTINGS["desktop_confirm_flatten"])),
+            "context_menu_sl_mode": str(item.get("context_menu_sl_mode", DEFAULT_SETTINGS["context_menu_sl_mode"])),
+            "target_deviation_pct": float(item.get("target_deviation_pct", DEFAULT_SETTINGS["target_deviation_pct"])),
         }
     except Exception:
         logger.exception("Failed to get settings for user %s", user_id)

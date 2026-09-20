@@ -77,6 +77,13 @@ class BulkChartConvertRequest(BaseModel):
     price: float = Field(gt=0)
 
 
+class BulkChartUpdateSLRequest(BaseModel):
+    trigger_price: float = Field(gt=0)
+    right: str | None = None
+    strike: int | None = None
+    expiry: str | None = None
+
+
 class DesktopSettingsUpdateRequest(BaseModel):
     settings: dict
 
@@ -191,6 +198,20 @@ def _seed_underlying_options_request(req: SimulationStartRequest) -> None:
 
 
 def _strategy_response(instance) -> StrategyResponse:
+    metadata = instance.metadata
+    price = None
+    if instance.strategy_type in ("TargetProfit", "UnderlyingTargetProfit"):
+        value = metadata.get("target_profit_value")
+        if value is not None and not metadata.get("target_profit_is_pct", False):
+            price = float(value)
+    elif instance.strategy_type == "LockProfit":
+        value = metadata.get("lock_profit_price", metadata.get("lock_profit_value"))
+        if value is not None and not metadata.get("lock_profit_is_pct", False):
+            price = float(value)
+    elif instance.strategy_type == "UnderlyingStoploss":
+        value = metadata.get("underlying_sl_price")
+        if value is not None:
+            price = float(value)
     return StrategyResponse(
         strategy_id=instance.strategy_id,
         strategy_type=instance.strategy_type,
@@ -198,6 +219,7 @@ def _strategy_response(instance) -> StrategyResponse:
         right=instance.right,
         status=instance.status.value,
         triggered=bool(instance.metadata.get("triggered", False)),
+        price=price,
     )
 
 
@@ -296,6 +318,8 @@ def _snapshot(session, user_id: str) -> DesktopTradingSnapshot:
             "desktop_order_size_mode": settings.get("desktop_order_size_mode", "quantity"),
             "desktop_pnl_display_mode": settings.get("desktop_pnl_display_mode", "currency"),
             "desktop_confirm_flatten": settings.get("desktop_confirm_flatten", True),
+            "context_menu_sl_mode": settings.get("context_menu_sl_mode", "longOnly"),
+            "target_deviation_pct": settings.get("target_deviation_pct", 0.01),
             "funds_ratio_l_pct": settings.get("funds_ratio_l_pct", 0.03),
             "funds_ratio_m_pct": settings.get("funds_ratio_m_pct", 0.06),
             "funds_ratio_h_pct": settings.get("funds_ratio_h_pct", 0.12),
@@ -347,6 +371,14 @@ def _closing_orders(session, right: str | None, strike: int | None = None, expir
         and (expiry is None or order.expiry == expiry)
         and _is_closing_order(order, position)
     ]
+
+
+def _target_scope(session, right: str | None, strike: int | None, expiry: str | None) -> tuple[str | None, int | None, str | None]:
+    scoped_right = right.upper() if right else None
+    if scoped_right and strike is not None and expiry:
+        contract = _require_registered_contract(session, scoped_right, strike, expiry)
+        return contract["right"], contract["strike"], contract["expiry"]
+    return scoped_right, strike, expiry
 
 
 @router.post("/start", response_model=DesktopTradingSnapshot, status_code=201)
@@ -461,11 +493,9 @@ async def convert_order(session_id: str, order_id: str, req: ConvertOrderRequest
 @router.patch("/{session_id}/orders/bulk-convert")
 async def bulk_convert(session_id: str, req: BulkChartConvertRequest, user_id: str = Depends(get_desktop_user_id)):
     session = _require_session(session_id, user_id)
-    right = req.right.upper() if req.right else None
+    right, strike, expiry = _target_scope(session, req.right, req.strike, req.expiry)
     converted: list[Order] = []
-    if right and req.strike is not None and req.expiry:
-        _require_registered_contract(session, right, req.strike, req.expiry)
-    for order in _closing_orders(session, right, req.strike, req.expiry):
+    for order in _closing_orders(session, right, strike, expiry):
         updated = order_service.convert_order(
             session_id=session_id,
             order_id=order.order_id,
@@ -477,6 +507,32 @@ async def bulk_convert(session_id: str, req: BulkChartConvertRequest, user_id: s
             converted.append(updated)
             _emit_order_converted(session, updated)
     return {"converted": len(converted), "orders": converted}
+
+
+@router.patch("/{session_id}/orders/bulk-update-sl")
+async def bulk_update_sl(session_id: str, req: BulkChartUpdateSLRequest, user_id: str = Depends(get_desktop_user_id)):
+    session = _require_session(session_id, user_id)
+    right, strike, expiry = _target_scope(session, req.right, req.strike, req.expiry)
+    updated: list[Order] = []
+    for order in _closing_orders(session, right, strike, expiry):
+        if not order.is_stoploss:
+            continue
+        result = order_service.update_order(
+            session_id=session_id,
+            order_id=order.order_id,
+            trading_date=session.date,
+            trigger_price=req.trigger_price,
+        )
+        if result:
+            updated.append(result)
+            _emit_order_event(session, {
+                "type": "order_updated",
+                "order_id": result.order_id,
+                "trigger_price": result.trigger_price,
+                "limit_price": result.limit_price,
+                "is_stoploss": result.is_stoploss,
+            })
+    return {"updated": len(updated), "orders": updated}
 
 
 @router.post("/{session_id}/strategies/start", response_model=StrategyResponse)
@@ -587,7 +643,7 @@ async def wallet(session_id: str, user_id: str = Depends(get_desktop_user_id)):
 @router.post("/{session_id}/wallet/reset")
 async def reset_wallet(session_id: str, req: WalletResetRequest, user_id: str = Depends(get_desktop_user_id)):
     session = _require_session(session_id, user_id)
-    balance = wallet_service.reset(user_id, session.date, req.amount)
+    balance = wallet_service.reset_ledger(user_id, session.date, session.wallet_ledger_id, req.amount, "sim")
     return {"user_id": user_id, "date": session.date, "balance": balance}
 
 
