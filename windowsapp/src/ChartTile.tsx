@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { dispose, init, type Chart, type KLineData } from 'klinecharts'
 import { registerExtensions } from 'react-klinecharts-ui/extensions'
-import type { Candle, DesktopOrder, DesktopPosition, DesktopTradingSettings } from './contracts'
+import type { Candle, DesktopOrder, DesktopPosition, DesktopStrategy, DesktopTradingSettings } from './contracts'
 import { formatCandleCloseCountdown } from './liveCountdown'
 
 interface ChartSettings { background: string; textColor: string; gridColor: string; gridOpacity: number; gridStyle: 'solid' | 'dashed'; gridSize: number; movingAverageType: 'MA' | 'EMA'; movingAveragePeriods: string; horizontalLineColor: string; horizontalLineWidth: number; trendLineColor: string; trendLineWidth: number; drawingLineColor: string; drawingLineWidth: number; drawingFillColor: string; drawingFillOpacity: number }
@@ -64,7 +64,7 @@ const placeNearPoint = (x: number, y: number, width: number, height: number) => 
   }
 }
 
-export function ChartTile({ symbol, interval, supportedIntervals, onIntervalChange, candles = demo, loading, message, settings, isReplaying, isLive, instrument, baseUrl, onConfigure, onMaximize, maximized, active, indicators, drawingCommand, drawingAction, drawingMode, onDrawingComplete, onActivate, openOrders = [], position = null, sessionCapital = 0, tradingSettings = null, tradingEnabled = false, orderEntryEnabled = false, underlyingStrategyEnabled = false, pricePickAction = null, onPricePick, onOrderDrag, onOrderCancel, onOrderConvertRequest, onChartOrderAction }: { symbol: string; interval: string; supportedIntervals: number[]; onIntervalChange: (interval: string) => void; candles?: Candle[]; loading: boolean; message: string; settings: ChartSettings; isReplaying: boolean; isLive: boolean; replayDatasetKey?: string; instrument: Record<string, unknown>; baseUrl: string; onConfigure: () => void; onMaximize: () => void; maximized: boolean; active: boolean; indicators: string[]; drawingCommand: DrawingCommand | null; drawingAction: DrawingAction | null; drawingMode: DrawingMode; onDrawingComplete: (commandId: number, tool: string) => void; onActivate: () => void; openOrders?: DesktopOrder[]; position?: DesktopPosition | null; sessionCapital?: number; tradingSettings?: DesktopTradingSettings | null; tradingEnabled?: boolean; orderEntryEnabled?: boolean; underlyingStrategyEnabled?: boolean; pricePickAction?: PricePickAction | null; onPricePick?: (price: number) => void; onOrderDrag?: (order: DesktopOrder, price: number) => void; onOrderCancel?: (order: DesktopOrder) => void; onOrderConvertRequest?: (order: DesktopOrder, target: ConversionTarget) => void; onChartOrderAction?: (action: OrderAction, price: number, anchor: { x: number; y: number }) => void }) {
+export function ChartTile({ symbol, interval, supportedIntervals, onIntervalChange, candles = demo, loading, message, settings, isReplaying, isLive, instrument, baseUrl, onConfigure, onMaximize, maximized, active, indicators, drawingCommand, drawingAction, drawingMode, onDrawingComplete, onActivate, openOrders = [], strategies = [], position = null, sessionCapital = 0, tradingSettings = null, tradingEnabled = false, orderEntryEnabled = false, underlyingStrategyEnabled = false, pricePickAction = null, onPricePick, onOrderDrag, onStrategyDrag, onOrderCancel, onOrderConvertRequest, onChartOrderAction }: { symbol: string; interval: string; supportedIntervals: number[]; onIntervalChange: (interval: string) => void; candles?: Candle[]; loading: boolean; message: string; settings: ChartSettings; isReplaying: boolean; isLive: boolean; replayDatasetKey?: string; instrument: Record<string, unknown>; baseUrl: string; onConfigure: () => void; onMaximize: () => void; maximized: boolean; active: boolean; indicators: string[]; drawingCommand: DrawingCommand | null; drawingAction: DrawingAction | null; drawingMode: DrawingMode; onDrawingComplete: (commandId: number, tool: string) => void; onActivate: () => void; openOrders?: DesktopOrder[]; strategies?: DesktopStrategy[]; position?: DesktopPosition | null; sessionCapital?: number; tradingSettings?: DesktopTradingSettings | null; tradingEnabled?: boolean; orderEntryEnabled?: boolean; underlyingStrategyEnabled?: boolean; pricePickAction?: PricePickAction | null; onPricePick?: (price: number) => void; onOrderDrag?: (order: DesktopOrder, price: number) => void; onStrategyDrag?: (strategyId: string, price: number) => void; onOrderCancel?: (order: DesktopOrder) => void; onOrderConvertRequest?: (order: DesktopOrder, target: ConversionTarget) => void; onChartOrderAction?: (action: OrderAction, price: number, anchor: { x: number; y: number }) => void }) {
   const element = useRef<HTMLDivElement>(null)
   const chartRef = useRef<Chart | null>(null)
   const candlesRef = useRef(candles)
@@ -83,6 +83,7 @@ export function ChartTile({ symbol, interval, supportedIntervals, onIntervalChan
   const [clock, setClock] = useState(() => Date.now())
   const indicatorKey = indicators.join('|')
   const orderOverlayIdsRef = useRef<Map<string, string>>(new Map())
+  const strategyOverlayIdsRef = useRef<Map<string, string>>(new Map())
   const pricePickActionRef = useRef(pricePickAction)
   const onPricePickRef = useRef(onPricePick)
   const tradingEnabledRef = useRef(tradingEnabled)
@@ -311,6 +312,8 @@ export function ChartTile({ symbol, interval, supportedIntervals, onIntervalChan
     if (!chart) return
     for (const id of orderOverlayIdsRef.current.values()) chart.removeOverlay({ id })
     orderOverlayIdsRef.current.clear()
+    for (const id of strategyOverlayIdsRef.current.values()) chart.removeOverlay({ id })
+    strategyOverlayIdsRef.current.clear()
     const rendered = renderedCandlesRef.current
     const currentCandles = candlesRef.current
     const lastRendered = rendered.length ? rendered[rendered.length - 1] : undefined
@@ -343,13 +346,28 @@ export function ChartTile({ symbol, interval, supportedIntervals, onIntervalChan
       } as any)
       if (typeof id === 'string') orderOverlayIdsRef.current.set(order.order_id, id)
     }
+    for (const strategy of strategies) {
+      if (typeof strategy.price !== 'number' || !Number.isFinite(strategy.price)) continue
+      const id = chart.createOverlay({
+        name: 'horizontalStraightLine', paneId: 'candle_pane', points: [{ timestamp, value: strategy.price }],
+        styles: { line: { color: '#f59e0b', size: 2, style: 'dashed', dashedValue: [3, 3] } },
+        extendData: { strategyId: strategy.strategy_id, label: `${strategy.strategy_type} @ ${strategy.price.toFixed(2)}` },
+        onPressedMoveEnd: (event: any) => {
+          const value = event.overlay.points[0]?.value
+          if (typeof value === 'number' && Number.isFinite(value)) onStrategyDrag?.(strategy.strategy_id, Number(value.toFixed(2)))
+        },
+      } as any)
+      if (typeof id === 'string') strategyOverlayIdsRef.current.set(strategy.strategy_id, id)
+    }
     setFloatingLabels(nextLabels)
     return () => {
       for (const id of orderOverlayIdsRef.current.values()) chart.removeOverlay({ id })
       orderOverlayIdsRef.current.clear()
+      for (const id of strategyOverlayIdsRef.current.values()) chart.removeOverlay({ id })
+      strategyOverlayIdsRef.current.clear()
       setFloatingLabels([])
     }
-  }, [openOrders, selectedOrderId, position, tradingSettings, sessionCapital, symbol, interval, candles])
+  }, [openOrders, strategies, selectedOrderId, position, tradingSettings, sessionCapital, symbol, interval, candles])
   useEffect(() => {
     const chart = chartRef.current
     const latest = candles[candles.length - 1]

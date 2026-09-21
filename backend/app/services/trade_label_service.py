@@ -89,58 +89,89 @@ def _load_session(session_id: str) -> dict | None:
         return None
 
 
+def _contract_identity(trade: dict) -> tuple[str | None, int | None, str | None]:
+    """Keep option strikes separate when producing desktop round trips."""
+    strike = trade.get("strike")
+    return (
+        trade.get("right"),
+        int(strike) if strike is not None else None,
+        trade.get("expiry"),
+    )
+
+
+def compute_round_trip_state(trades: list[dict]) -> tuple[list[dict], list[dict]]:
+    """Return completed and still-open FIFO round trips with stable global ids.
+
+    A label is saved when the entry fills, so an open trade needs an index before
+    its closing trade exists. Allocating the index at the zero-to-nonzero
+    transition makes that id stable through exit. The contract identity includes
+    expiry and strike; CE alone is insufficient for a desktop session.
+    """
+    completed: list[dict] = []
+    open_trips: list[dict] = []
+    legs: dict[tuple[str | None, int | None, str | None], dict] = {}
+    next_index = 0
+
+    for trade in sorted(trades, key=lambda item: (int(item.get("timestamp", 0)), str(item.get("trade_id", "")))):
+        quantity = int(trade.get("quantity", 0))
+        if quantity <= 0:
+            continue
+        key = _contract_identity(trade)
+        state = legs.get(key)
+        side = trade.get("side", "BUY")
+        signed = quantity if side == "BUY" else -quantity
+        if state is None or state["net_qty"] == 0:
+            state = {
+                "index": next_index,
+                "right": key[0],
+                "strike": key[1],
+                "expiry": key[2],
+                "net_qty": 0,
+                "entry_trades": [],
+                "exit_trades": [],
+            }
+            next_index += 1
+            legs[key] = state
+
+        # A trade in the same direction extends the entry. A trade in the
+        # opposite direction is an exit; Stepwise does not allow a single fill
+        # to cross through flat, so that is sufficient for the current engine.
+        if state["net_qty"] == 0 or (state["net_qty"] > 0 and signed > 0) or (state["net_qty"] < 0 and signed < 0):
+            state["entry_trades"].append(trade)
+        else:
+            state["exit_trades"].append(trade)
+        state["net_qty"] += signed
+
+        if state["net_qty"] == 0:
+            all_trades = state["entry_trades"] + state["exit_trades"]
+            total_buy = sum(_safe_float(item.get("price")) * int(item.get("quantity", 0)) for item in all_trades if item.get("side") == "BUY")
+            total_sell = sum(_safe_float(item.get("price")) * int(item.get("quantity", 0)) for item in all_trades if item.get("side") == "SELL")
+            completed.append({
+                "index": state["index"],
+                "right": state["right"],
+                "strike": state["strike"],
+                "expiry": state["expiry"],
+                "entry_trades": [_serialize_rt_trade(item) for item in state["entry_trades"]],
+                "exit_trades": [_serialize_rt_trade(item) for item in state["exit_trades"]],
+                "pnl": round(total_sell - total_buy - sum(_safe_float(item.get("commission")) for item in all_trades), 2),
+            })
+            legs.pop(key, None)
+
+    for state in legs.values():
+        open_trips.append({
+            "index": state["index"],
+            "right": state["right"],
+            "strike": state["strike"],
+            "expiry": state["expiry"],
+            "entry_trades": [_serialize_rt_trade(item) for item in state["entry_trades"]],
+            "exit_trades": [_serialize_rt_trade(item) for item in state["exit_trades"]],
+            "pnl": 0.0,
+        })
+    return completed, open_trips
+
+
 def _fifo_match_trades(trades: list[dict]) -> list[dict]:
-    """
-    FIFO match trades by right (None=underlying, CE, PE).
-    Returns round-trips: [{index, right, entry_trades[], exit_trades[], pnl}]
-    """
-    by_right = defaultdict(list)
-    for t in sorted(trades, key=lambda x: int(x.get("timestamp", 0))):
-        by_right[t.get("right")].append(t)
-
-    round_trips = []
-    index = 0
-
-    for right, rt_trades in by_right.items():
-        buy_q = deque()
-        sell_q = deque()
-        net_qty = 0
-        entry_trades = []
-        exit_trades = []
-
-        for t in rt_trades:
-            qty = int(t.get("quantity", 0))
-            price = _safe_float(t.get("price"))
-            side = t.get("side", "BUY")
-
-            if side == "BUY":
-                net_qty += qty
-                buy_q.append([price, qty])
-                entry_trades.append(t)
-            else:
-                net_qty -= qty
-                sell_q.append([price, qty])
-                exit_trades.append(t)
-
-            if net_qty == 0 and (buy_q or sell_q):
-                total_buy = sum(p * q for p, q in buy_q)
-                total_sell = sum(p * q for p, q in sell_q)
-                total_commission = sum(_safe_float(t.get("commission")) for t in entry_trades + exit_trades)
-                pnl = round(total_sell - total_buy - total_commission, 2)
-                round_trips.append({
-                    "index": index,
-                    "right": right,
-                    "entry_trades": [_serialize_rt_trade(e) for e in entry_trades],
-                    "exit_trades": [_serialize_rt_trade(x) for x in exit_trades],
-                    "pnl": pnl,
-                })
-                index += 1
-                buy_q.clear()
-                sell_q.clear()
-                entry_trades = []
-                exit_trades = []
-
-    return round_trips
+    return compute_round_trip_state(trades)[0]
 
 
 def _serialize_rt_trade(t: dict) -> dict:

@@ -37,7 +37,7 @@ export interface DesktopPosition {
 export interface DesktopStrategy {
   strategy_id: string; strategy_type: string; symbol: string
   right: 'CE' | 'PE' | null; status: string; triggered: boolean
-  price?: number | null
+  price?: number | null; strike?: number | null; expiry?: string | null; contract_key?: string | null
 }
 
 export interface DesktopTradingSession {
@@ -66,6 +66,8 @@ export interface DesktopTradingSettings {
 export interface DesktopTradingSnapshot {
   version: number
   session: DesktopTradingSession
+  current_time: number
+  current_bar_index: number
   current_price: number; current_price_ce: number; current_price_pe: number
   contract_quotes: Record<string, { symbol: string; expiry: string; strike: number; right: 'CE' | 'PE'; contract_key: string; price: number; timestamp: number; source: string }>
   trades: Array<Record<string, unknown>>
