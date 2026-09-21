@@ -3,6 +3,18 @@
 This document has the bugs which are found while testing. They are divided at Phase wise.
 Look at each of the bugs, fix them and then mark them resolved as well if approved manually. Do get manual approval against each bug to resolve it.
 
+## Desktop Live Diagnostics
+
+### Open Bugs
+
+**[UNDER INVESTIGATION]** Desktop Live window becomes black after live candles begin updating.
+- **Symptom**: The Tauri desktop app receives live 1-second OHLC updates and renders candles briefly, then the whole WebView becomes black and does not respond to refresh or UI controls.
+- **Data-retention decision**: Full-session raw OHLC tick retention is intentional. The desktop host now also persists every live tick to the native SQLite cache table `desktop_live_ticks` using `(stream_id, instrument_key, timestamp)` as the identity, so duplicate 1-second candles update in place.
+- **Storage direction**: Keep the full live OHLC session durably on disk, then move the renderer toward a 15-minute hot cache plus on-demand disk reads for interval changes/backfill. Do not reduce visible chart fidelity; the disk journal is the source for older live ticks when they are no longer hot in React memory.
+- **Snapshot policy**: Desktop Live no longer fetches a full backend snapshot after every candle SSE event. Full snapshots remain for start, reset/recovery, manual refresh, and tile configuration changes; normal 1-second OHLC candles now flow as incremental stream events.
+- **Diagnostic coverage**: `%LOCALAPPDATA%\Trade Matangi Charts\logs\desktop-live.ndjson` records native SSE candle events (including complete OHLC), recovery snapshot timing/size when needed, frontend chart initialization/disposal, reset/incremental update outcomes, and JavaScript errors/unhandled rejections. The journal rotates at 16 MiB and keeps the prior file as `desktop-live.previous.ndjson`.
+- **Reproduction evidence to collect**: After the next black screen, preserve both journal files plus `desktop-cache.sqlite3`, then identify the last `chart_*_success` record followed by the first `*_error`, `window_error`, `unhandled_rejection`, or native stream failure. Do not mark resolved until that trace establishes root cause.
+
 ## Phase-VII PaperTrading
 
 ### Open Bugs
