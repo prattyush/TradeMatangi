@@ -23,6 +23,8 @@ interface DesktopRoundTrip { index: number; right: string | null; strike?: numbe
 interface DesktopTradeLabel { round_trip_index: number; expected_category: string; expected_strategy: string; actual_category: string; actual_strategy: string; entry_tag: string; exit_tag: string }
 interface DesktopTradeLabelState { completed: DesktopRoundTrip[]; open: DesktopRoundTrip[]; labels: DesktopTradeLabel[] }
 interface DesktopLabelMetadata { categories: string[]; strategies: string[]; entry_tags: string[]; exit_tags: string[] }
+type DesktopLabelMetadataStatus = 'idle' | 'loading' | 'ready' | 'error'
+const emptyLabelMetadata: DesktopLabelMetadata = { categories: [], strategies: [], entry_tags: [], exit_tags: [] }
 interface DrawingCommand { id: number; tool: string }
 interface DrawingAction { id: number; action: 'delete' | 'hide' | 'lock' }
 type DrawingMode = 'once' | 'repeat'
@@ -101,13 +103,13 @@ const contractKeyForTile = (tile: TileConfig): string | null => {
   return `${tile.symbol}:${tile.expiry}:${Number(tile.strike)}:${tile.right.toUpperCase()}`
 }
 
-function WorkspaceToolPanel({ tiles, activeTileId, setActiveTileId, indicators, toggleIndicator, clearIndicators, sendDrawing, sendDrawingAction, activeDrawingTool, drawingMode, setDrawingMode, tradeHistoryCount, onOpenTradeHistory, labelState, labelMetadata, onSaveTradeLabel, strategies, onCancelStrategy, onUpdateStrategyPrice }: { tiles: TileConfig[]; activeTileId: string; setActiveTileId: (tileId: string) => void; indicators: string[]; toggleIndicator: (name: string) => void; clearIndicators: () => void; sendDrawing: (tool: string) => void; sendDrawingAction: (action: DrawingAction['action']) => void; activeDrawingTool: string | null; drawingMode: DrawingMode; setDrawingMode: (mode: DrawingMode) => void; tradeHistoryCount: number; onOpenTradeHistory: () => void; labelState: DesktopTradeLabelState | null; labelMetadata: DesktopLabelMetadata; onSaveTradeLabel: (roundTrip: DesktopRoundTrip, fields: Partial<DesktopTradeLabel>) => void; strategies: DesktopTradingSnapshot['strategies']; onCancelStrategy: (strategyId: string) => void; onUpdateStrategyPrice: (strategyId: string, currentPrice: number) => void }) {
+function WorkspaceToolPanel({ tiles, activeTileId, setActiveTileId, indicators, toggleIndicator, clearIndicators, sendDrawing, sendDrawingAction, activeDrawingTool, drawingMode, setDrawingMode, tradeHistoryCount, onOpenTradeHistory, labelState, labelMetadata, labelMetadataStatus, labelMetadataError, onReloadLabelMetadata, onSaveTradeLabel, strategies, onCancelStrategy, onUpdateStrategyPrice }: { tiles: TileConfig[]; activeTileId: string; setActiveTileId: (tileId: string) => void; indicators: string[]; toggleIndicator: (name: string) => void; clearIndicators: () => void; sendDrawing: (tool: string) => void; sendDrawingAction: (action: DrawingAction['action']) => void; activeDrawingTool: string | null; drawingMode: DrawingMode; setDrawingMode: (mode: DrawingMode) => void; tradeHistoryCount: number; onOpenTradeHistory: () => void; labelState: DesktopTradeLabelState | null; labelMetadata: DesktopLabelMetadata; labelMetadataStatus: DesktopLabelMetadataStatus; labelMetadataError: string; onReloadLabelMetadata: () => void; onSaveTradeLabel: (roundTrip: DesktopRoundTrip, fields: Partial<DesktopTradeLabel>) => void; strategies: DesktopTradingSnapshot['strategies']; onCancelStrategy: (strategyId: string) => void; onUpdateStrategyPrice: (strategyId: string, currentPrice: number) => void }) {
   return <aside className="tool-panel" aria-label="Chart tools">
     <label>Chart<select value={activeTileId} onChange={event => setActiveTileId(event.target.value)}>{tiles.map((tile, index) => <option key={tile.id} value={tile.id}>{index + 1}. {tile.kind === 'option' ? `${tile.symbol} ${tile.strike}${tile.right}` : tile.symbol}</option>)}</select></label>
     <section><strong>Draw</strong><div className="segmented"><button className={drawingMode === 'once' ? 'active' : ''} aria-pressed={drawingMode === 'once'} onClick={() => setDrawingMode('once')}>Once</button><button className={drawingMode === 'repeat' ? 'active' : ''} aria-pressed={drawingMode === 'repeat'} onClick={() => setDrawingMode('repeat')}>Repeat</button></div><div className="tool-grid icon-tool-grid">{drawingTools.map(item => <button key={item.tool} className={`tool-icon ${activeDrawingTool === item.tool ? 'active' : ''}`} aria-label={item.label} aria-pressed={activeDrawingTool === item.tool} data-tooltip={item.label} title={item.label} onClick={() => sendDrawing(item.tool)}>{item.icon}</button>)}</div><div className="tool-actions icon-actions"><button className="tool-icon" aria-label="Lock selected drawing" data-tooltip="Lock selected drawing" title="Lock selected drawing" onClick={() => sendDrawingAction('lock')}>🔒</button><button className="tool-icon" aria-label="Hide selected drawing" data-tooltip="Hide selected drawing" title="Hide selected drawing" onClick={() => sendDrawingAction('hide')}>◌</button><button className="tool-icon" aria-label="Delete selected drawing" data-tooltip="Delete selected drawing" title="Delete selected drawing" onClick={() => sendDrawingAction('delete')}>⌫</button></div></section>
     <section><strong>Main indicators</strong><div className="tool-grid">{mainIndicators.map(name => <button key={name} className={indicators.includes(name) ? 'active' : ''} onClick={() => toggleIndicator(name)}>{name.replace('_TV', '').replace('_Ribbon', ' Ribbon')}</button>)}</div></section>
     <section><strong>Sub indicators</strong><div className="tool-grid">{subIndicators.map(name => <button key={name} className={indicators.includes(name) ? 'active' : ''} onClick={() => toggleIndicator(name)}>{name.replace('_TV', '')}</button>)}</div></section>
-    <section><strong>Trading</strong><button className="panel-clear history-tool-button" title="Trade history" aria-label="Trade history" onClick={onOpenTradeHistory}>History {tradeHistoryCount ? `(${tradeHistoryCount})` : ''}</button><DesktopLabelPanel state={labelState} metadata={labelMetadata} onSave={onSaveTradeLabel} />{strategies.length > 0 && <div className="desktop-strategy-list"><strong>Running strategies</strong>{strategies.map(strategy => <div className="desktop-strategy-row" key={strategy.strategy_id}><span>{strategy.strategy_type} {strategy.right ?? ''}{strategy.strike ? ` ${strategy.strike}` : ''}{strategy.price ? ` @${strategy.price.toFixed(2)}` : ''}</span>{strategy.price !== undefined && strategy.price !== null && <button onClick={() => onUpdateStrategyPrice(strategy.strategy_id, strategy.price ?? 0)}>Move</button>}<button onClick={() => onCancelStrategy(strategy.strategy_id)}>Cancel</button></div>)}</div>}</section>
+    <section><strong>Trading</strong><button className="panel-clear history-tool-button" title="Trade history" aria-label="Trade history" onClick={onOpenTradeHistory}>History {tradeHistoryCount ? `(${tradeHistoryCount})` : ''}</button><DesktopLabelPanel state={labelState} metadata={labelMetadata} metadataStatus={labelMetadataStatus} metadataError={labelMetadataError} onReloadMetadata={onReloadLabelMetadata} onSave={onSaveTradeLabel} />{strategies.length > 0 && <div className="desktop-strategy-list"><strong>Running strategies</strong>{strategies.map(strategy => <div className="desktop-strategy-row" key={strategy.strategy_id}><span>{strategy.strategy_type} {strategy.right ?? ''}{strategy.strike ? ` ${strategy.strike}` : ''}{strategy.price ? ` @${strategy.price.toFixed(2)}` : ''}</span>{strategy.price !== undefined && strategy.price !== null && <button onClick={() => onUpdateStrategyPrice(strategy.strategy_id, strategy.price ?? 0)}>Move</button>}<button onClick={() => onCancelStrategy(strategy.strategy_id)}>Cancel</button></div>)}</div>}</section>
     <button className="panel-clear" disabled={!indicators.length} onClick={clearIndicators}>Clear indicators</button>
   </aside>
 }
@@ -155,7 +157,7 @@ function TradeHistoryModal({ trades, roundTrips, labels, sessionCapital, onClose
   </div>
 }
 
-function DesktopLabelPanel({ state, metadata, onSave }: { state: DesktopTradeLabelState | null; metadata: DesktopLabelMetadata; onSave: (roundTrip: DesktopRoundTrip, fields: Partial<DesktopTradeLabel>) => void }) {
+function DesktopLabelPanel({ state, metadata, metadataStatus, metadataError, onReloadMetadata, onSave }: { state: DesktopTradeLabelState | null; metadata: DesktopLabelMetadata; metadataStatus: DesktopLabelMetadataStatus; metadataError: string; onReloadMetadata: () => void; onSave: (roundTrip: DesktopRoundTrip, fields: Partial<DesktopTradeLabel>) => void }) {
   const [popup, setPopup] = useState<{ mode: 'entry' | 'exit'; roundTrip: DesktopRoundTrip } | null>(null)
   if (!state) return null
   const existing = (roundTrip: DesktopRoundTrip) => state.labels.find(label => label.round_trip_index === roundTrip.index)
@@ -163,14 +165,15 @@ function DesktopLabelPanel({ state, metadata, onSave }: { state: DesktopTradeLab
   const openRows = state.open.filter(roundTrip => { const label = existing(roundTrip); return !(label?.expected_category || label?.expected_strategy) })
   const closedRows = state.completed.filter(roundTrip => { const label = existing(roundTrip); return !(label?.actual_category || label?.actual_strategy) })
   if (!openRows.length && !closedRows.length) return null
+  const openPopup = (mode: 'entry' | 'exit', roundTrip: DesktopRoundTrip) => { if (metadataStatus !== 'ready') onReloadMetadata(); setPopup({ mode, roundTrip }) }
   return <section className="desktop-label-panel"><div className="desktop-label-heading"><span>Strategy</span><span className="desktop-label-icon">🏷</span></div>
-    {openRows.map(roundTrip => <button className="desktop-label-row" key={`open-${roundTrip.index}`} onClick={() => setPopup({ mode: 'entry', roundTrip })}><span>{title(roundTrip)} open</span><span>Expected</span></button>)}
-    {closedRows.map(roundTrip => <button className="desktop-label-row" key={`closed-${roundTrip.index}`} onClick={() => setPopup({ mode: 'exit', roundTrip })}><span>{title(roundTrip)} close</span><span className={roundTrip.pnl >= 0 ? 'trade-buy' : 'trade-sell'}>{roundTrip.pnl >= 0 ? '+' : ''}{roundTrip.pnl.toFixed(2)}</span></button>)}
-    {popup && <DesktopLabelPopup mode={popup.mode} roundTrip={popup.roundTrip} existing={existing(popup.roundTrip)} metadata={metadata} onClose={() => setPopup(null)} onSave={(roundTrip, fields) => { onSave(roundTrip, fields); setPopup(null) }} />}
+    {openRows.map(roundTrip => <button className="desktop-label-row" key={`open-${roundTrip.index}`} onClick={() => openPopup('entry', roundTrip)}><span>{title(roundTrip)} open</span><span>Expected</span></button>)}
+    {closedRows.map(roundTrip => <button className="desktop-label-row" key={`closed-${roundTrip.index}`} onClick={() => openPopup('exit', roundTrip)}><span>{title(roundTrip)} close</span><span className={roundTrip.pnl >= 0 ? 'trade-buy' : 'trade-sell'}>{roundTrip.pnl >= 0 ? '+' : ''}{roundTrip.pnl.toFixed(2)}</span></button>)}
+    {popup && <DesktopLabelPopup mode={popup.mode} roundTrip={popup.roundTrip} existing={existing(popup.roundTrip)} metadata={metadata} metadataStatus={metadataStatus} metadataError={metadataError} onReloadMetadata={onReloadMetadata} onClose={() => setPopup(null)} onSave={(roundTrip, fields) => { onSave(roundTrip, fields); setPopup(null) }} />}
   </section>
 }
 
-function DesktopLabelPopup({ mode, roundTrip, existing, metadata, onClose, onSave }: { mode: 'entry' | 'exit'; roundTrip: DesktopRoundTrip; existing?: DesktopTradeLabel; metadata: DesktopLabelMetadata; onClose: () => void; onSave: (roundTrip: DesktopRoundTrip, fields: Partial<DesktopTradeLabel>) => void }) {
+function DesktopLabelPopup({ mode, roundTrip, existing, metadata, metadataStatus, metadataError, onReloadMetadata, onClose, onSave }: { mode: 'entry' | 'exit'; roundTrip: DesktopRoundTrip; existing?: DesktopTradeLabel; metadata: DesktopLabelMetadata; metadataStatus: DesktopLabelMetadataStatus; metadataError: string; onReloadMetadata: () => void; onClose: () => void; onSave: (roundTrip: DesktopRoundTrip, fields: Partial<DesktopTradeLabel>) => void }) {
   const isEntry = mode === 'entry'
   const [category, setCategory] = useState(isEntry ? existing?.expected_category ?? '' : existing?.actual_category ?? '')
   const [strategy, setStrategy] = useState(isEntry ? existing?.expected_strategy ?? '' : existing?.actual_strategy ?? '')
@@ -181,6 +184,9 @@ function DesktopLabelPopup({ mode, roundTrip, existing, metadata, onClose, onSav
       <header><strong>{isEntry ? 'Expected Pattern' : 'Actual Pattern'}</strong><button onClick={onClose}>x</button></header>
       <div className="label-modal-body">
         <div className="label-summary"><span>{label} {isEntry ? 'open' : 'close'}</span>{!isEntry && <b className={roundTrip.pnl >= 0 ? 'trade-buy' : 'trade-sell'}>{roundTrip.pnl >= 0 ? '+' : ''}{roundTrip.pnl.toFixed(2)}</b>}</div>
+        {metadataStatus === 'loading' && <div className="label-metadata-status">Loading saved label values…</div>}
+        {metadataStatus === 'error' && <div className="label-metadata-status error">Could not load saved label values. <button onClick={onReloadMetadata}>Retry</button><small>{metadataError}</small></div>}
+        {metadataStatus === 'ready' && !metadata.categories.length && !metadata.strategies.length && <div className="label-metadata-status">No saved Pattern Library categories or strategies are available for this account yet.</div>}
         <label>Category<select value={category} onChange={event => setCategory(event.target.value)}><option value="">Category</option>{metadata.categories.map(value => <option key={value} value={value}>{value}</option>)}</select></label>
         <label>Strategy<select value={strategy} onChange={event => setStrategy(event.target.value)}><option value="">Strategy</option>{metadata.strategies.map(value => <option key={value} value={value}>{value}</option>)}</select></label>
         <label>{isEntry ? 'Entry tag' : 'Exit tag'}<input list={`desktop-label-tags-${mode}-${roundTrip.index}`} value={tag} onChange={event => setTag(event.target.value)} placeholder="AS_PER_PATTERN" /></label>
@@ -259,8 +265,9 @@ function DesktopTile({ config, catalogue, connection, api, settings, serverUrl, 
 
 export default function App() {
   const [serverUrl, setServerUrl] = useState(() => localStorage.getItem('desktop-server-url') ?? 'http://localhost:8700'), [email, setEmail] = useState('admin@tradematangi.com'), [password, setPassword] = useState('admin123'), [connection, setConnection] = useState<'connected' | 'reconnecting' | 'offline' | 'authentication_required'>('authentication_required'), [loginError, setLoginError] = useState(''), [browserToken, setBrowserToken] = useState(''), [mode, setMode] = useState<'Browse' | 'Live' | 'Replay' | 'Stepwise'>('Browse'), [catalogue, setCatalogue] = useState<Instrument[]>(fallbackCatalogue), [screens, setScreens] = useState<Screen[]>([newScreen(1)]), [chartSettings, setChartSettings] = useState<ChartSettings>(defaultChartSettings), [showSettings, setShowSettings] = useState(false), [replay, setReplay] = useState<ReplaySnapshot | null>(null), [replayError, setReplayError] = useState(''), [runDate, setRunDate] = useState('2026-05-06'), [runStartTime, setRunStartTime] = useState('09:15'), [replaySpeed, setReplaySpeed] = useState('1'), [live, setLive] = useState<LiveSnapshot | null>(null), [liveError, setLiveError] = useState('')
-  const [trading, setTrading] = useState<DesktopTradingSnapshot | null>(null), [tradingError, setTradingError] = useState(''), [tradingNotice, setTradingNotice] = useState(''), [pricePickAction, setPricePickAction] = useState<{ orderId?: string; conversion?: ConversionTarget; ticket?: TradeTicket } | null>(null), [tradeTicket, setTradeTicket] = useState<TradeTicket | null>(null), [underlyingStrategyTicket, setUnderlyingStrategyTicket] = useState<UnderlyingStrategyTicket | null>(null), [tradeLabelState, setTradeLabelState] = useState<DesktopTradeLabelState | null>(null), [labelMetadata, setLabelMetadata] = useState<DesktopLabelMetadata>({ categories: [], strategies: [], entry_tags: [], exit_tags: [] }), [sharedTradingSession, setSharedTradingSession] = useState(false)
+  const [trading, setTrading] = useState<DesktopTradingSnapshot | null>(null), [tradingError, setTradingError] = useState(''), [tradingNotice, setTradingNotice] = useState(''), [pricePickAction, setPricePickAction] = useState<{ orderId?: string; conversion?: ConversionTarget; ticket?: TradeTicket } | null>(null), [tradeTicket, setTradeTicket] = useState<TradeTicket | null>(null), [underlyingStrategyTicket, setUnderlyingStrategyTicket] = useState<UnderlyingStrategyTicket | null>(null), [tradeLabelState, setTradeLabelState] = useState<DesktopTradeLabelState | null>(null), [labelMetadata, setLabelMetadata] = useState<DesktopLabelMetadata>(emptyLabelMetadata), [labelMetadataStatus, setLabelMetadataStatus] = useState<DesktopLabelMetadataStatus>('idle'), [labelMetadataError, setLabelMetadataError] = useState(''), [sharedTradingSession, setSharedTradingSession] = useState(false)
   const replayPollInFlight = useRef(false)
+  const labelMetadataRequestIdRef = useRef(0)
   const tradingErrorTimerRef = useRef<number | null>(null)
   const screensLoadedRef = useRef(false)
   const screenSaveTimerRef = useRef<number | null>(null)
@@ -477,6 +484,26 @@ export default function App() {
     }
     return (response.status === 204 ? null : await response.json()) as T
   }
+  const loadLabelMetadata = async () => {
+    const requestId = ++labelMetadataRequestIdRef.current
+    setLabelMetadataStatus('loading')
+    setLabelMetadataError('')
+    try {
+      const value = await desktopTradingRequest<DesktopLabelMetadata>('trade-labels/metadata', 'GET')
+      if (requestId !== labelMetadataRequestIdRef.current) return
+      setLabelMetadata({
+        categories: Array.isArray(value.categories) ? value.categories : [],
+        strategies: Array.isArray(value.strategies) ? value.strategies : [],
+        entry_tags: Array.isArray(value.entry_tags) ? value.entry_tags : [],
+        exit_tags: Array.isArray(value.exit_tags) ? value.exit_tags : [],
+      })
+      setLabelMetadataStatus('ready')
+    } catch (error) {
+      if (requestId !== labelMetadataRequestIdRef.current) return
+      setLabelMetadataStatus('error')
+      setLabelMetadataError(String(error))
+    }
+  }
   useEffect(() => {
     if (!isHistoricalTradingMode(mode) || !trading?.session.session_id) {
       setTradeLabelState(null)
@@ -489,12 +516,14 @@ export default function App() {
     return () => { cancelled = true }
   }, [mode, trading?.session.session_id, trading?.trades.length])
   useEffect(() => {
-    if (!isHistoricalTradingMode(mode) || !trading?.session.session_id) return
-    let cancelled = false
-    void desktopTradingRequest<DesktopLabelMetadata>('trade-labels/metadata', 'GET')
-      .then(value => { if (!cancelled) setLabelMetadata(value) })
-      .catch(error => { if (!cancelled) console.warn('desktop label metadata unavailable', error) })
-    return () => { cancelled = true }
+    if (!isHistoricalTradingMode(mode) || !trading?.session.session_id) {
+      labelMetadataRequestIdRef.current += 1
+      setLabelMetadata(emptyLabelMetadata)
+      setLabelMetadataStatus('idle')
+      setLabelMetadataError('')
+      return
+    }
+    void loadLabelMetadata()
   }, [mode, trading?.session.session_id])
   const screenState = (screen: Screen): PersistedScreenState => ({ id: screen.id, layout: screen.layout, tiles: screen.tiles, indicators: tileIndicators, activeToolTileId: activeToolTile })
   const normalizeScreen = (record: DesktopScreenRecord): Screen => ({ id: record.state?.id ?? record.screen_id, persistedId: record.screen_id, revision: record.revision, name: record.name, layout: record.state?.layout ?? '1', tiles: record.state?.tiles?.length ? record.state.tiles : [newTile()] })
@@ -603,7 +632,8 @@ export default function App() {
         tradeSnapshot = await desktopTradingRequest<DesktopTradingSnapshot>('start', 'POST', startBody)
       }
       const attachedStartTime = attached?.current_time ? new Date(attached.current_time * 1000).toISOString().slice(11, 19) : `${runStartTime}:00`
-      const next = await replayRequest('start', 'POST', { mode: mode.toLowerCase(), date, start_time: attachedStartTime, initial_cursor: tradeSnapshot?.current_time, initial_bar_index: tradeSnapshot?.current_bar_index, interval_seconds: backendInterval * 60, speed: Number(replaySpeed), trading_session_id: tradeSnapshot?.session.session_id, owns_trading_session: Boolean(startBody && tradeSnapshot && !attached), tiles })
+      const initialCursor = tradeSnapshot && tradeSnapshot.current_time > 0 ? tradeSnapshot.current_time : undefined
+      const next = await replayRequest('start', 'POST', { mode: mode.toLowerCase(), date, start_time: attachedStartTime, ...(initialCursor !== undefined ? { initial_cursor: initialCursor } : {}), initial_bar_index: tradeSnapshot?.current_bar_index, interval_seconds: backendInterval * 60, speed: Number(replaySpeed), trading_session_id: tradeSnapshot?.session.session_id, owns_trading_session: Boolean(startBody && tradeSnapshot && !attached), tiles })
       setReplay(next)
       await startNativeStream(`replay:${next.run_id}`, `replay/${next.run_id}/events`, `replay/${next.run_id}/snapshot`)
       if (startBody && tradeSnapshot) {
@@ -984,7 +1014,7 @@ export default function App() {
       <div className="ticket-buttons"><button onClick={() => { const picker = underlyingStrategyTicket; void startDesktopStrategy(picker.strategyType, 'CE', picker.price).then(() => setUnderlyingStrategyTicket(null)).catch(reportTradingError) }}>CE</button><button onClick={() => { const picker = underlyingStrategyTicket; void startDesktopStrategy(picker.strategyType, 'PE', picker.price).then(() => setUnderlyingStrategyTicket(null)).catch(reportTradingError) }}>PE</button></div>
     </div>}
     <section className={`workspace-shell ${toolPanelOpen ? '' : 'tools-collapsed'}`}>
-      {toolPanelOpen && <WorkspaceToolPanel tiles={activeScreen.tiles} activeTileId={activeToolTile} setActiveTileId={setActiveToolTileId} indicators={selectedIndicators} toggleIndicator={toggleIndicator} clearIndicators={clearIndicators} sendDrawing={sendDrawing} sendDrawingAction={sendDrawingAction} activeDrawingTool={activeDrawingTool} drawingMode={drawingMode} setDrawingMode={setDrawingMode} tradeHistoryCount={trading?.trades.length ?? 0} onOpenTradeHistory={() => setTradeHistoryOpen(true)} labelState={isHistoricalTradingMode(mode) ? tradeLabelState : null} labelMetadata={labelMetadata} onSaveTradeLabel={saveTradeLabel} strategies={isHistoricalTradingMode(mode) ? trading?.strategies ?? [] : []} onCancelStrategy={cancelDesktopStrategy} onUpdateStrategyPrice={requestDesktopStrategyPrice} />}
+      {toolPanelOpen && <WorkspaceToolPanel tiles={activeScreen.tiles} activeTileId={activeToolTile} setActiveTileId={setActiveToolTileId} indicators={selectedIndicators} toggleIndicator={toggleIndicator} clearIndicators={clearIndicators} sendDrawing={sendDrawing} sendDrawingAction={sendDrawingAction} activeDrawingTool={activeDrawingTool} drawingMode={drawingMode} setDrawingMode={setDrawingMode} tradeHistoryCount={trading?.trades.length ?? 0} onOpenTradeHistory={() => setTradeHistoryOpen(true)} labelState={isHistoricalTradingMode(mode) ? tradeLabelState : null} labelMetadata={labelMetadata} labelMetadataStatus={labelMetadataStatus} labelMetadataError={labelMetadataError} onReloadLabelMetadata={() => void loadLabelMetadata()} onSaveTradeLabel={saveTradeLabel} strategies={isHistoricalTradingMode(mode) ? trading?.strategies ?? [] : []} onCancelStrategy={cancelDesktopStrategy} onUpdateStrategyPrice={requestDesktopStrategyPrice} />}
       <section className={`tile-grid tiles-${activeScreen.layout} ${maximizedTileId ? 'has-maximized' : ''}`}>{activeScreen.tiles.map(tile => { const state = replay?.tile_states.find(item => item.tile_id === tile.id); const liveState = live?.tiles.find(item => item.tile_id === tile.id); const cacheKey = liveState?.instrument ? canonicalKey(liveState.instrument) : instrumentKeyForTile(tile, catalogue); return <DesktopTile key={tile.id} config={tile} catalogue={catalogue} connection={connection} api={api} settings={chartSettings} serverUrl={serverUrl} replayCursor={replay?.cursor} replayRunId={replay?.run_id} replayCandle={state?.candle} replayAttached={Boolean(state)} liveTile={liveState} liveTicks={liveTickCache[cacheKey] ?? []} onLiveTick={onLiveTick} maximized={maximizedTileId === tile.id} active={activeToolTile === tile.id} indicators={tileIndicators[tile.id] ?? noIndicators} drawingCommand={drawingCommand} drawingAction={drawingAction} drawingMode={drawingMode} onDrawingComplete={onDrawingComplete} onActivate={() => setActiveToolTileId(tile.id)} onConfigure={() => setPickerTileId(tile.id)} onMaximize={() => setMaximizedTileId(current => current === tile.id ? null : tile.id)} onIntervalChange={interval => saveTile({ ...tile, interval })} tradingSnapshot={isHistoricalTradingMode(mode) ? trading : null} pricePickAction={activeToolTile === tile.id ? pricePickAction : null} onPricePick={price => void completePricePick(price).catch(error => { setTradingNotice(''); reportTradingError(error) })} onOrderDrag={updateOrderLine} onStrategyDrag={updateDesktopStrategyPrice} onOrderCancel={cancelOrderLine} onOrderConvertRequest={requestOrderConvert} onChartOrderAction={(tileForAction, action, price, anchor) => void placeChartOrder(tileForAction, action, price, anchor).catch(error => { setTradingNotice(''); reportTradingError(error) })} />})}</section>
     </section>
     {tradeHistoryOpen && <TradeHistoryModal trades={trading?.trades ?? []} roundTrips={[...(tradeLabelState?.open ?? []), ...(tradeLabelState?.completed ?? [])]} labels={tradeLabelState?.labels ?? []} sessionCapital={trading?.session.session_capital ?? 0} onClose={() => setTradeHistoryOpen(false)} />}

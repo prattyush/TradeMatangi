@@ -7,6 +7,7 @@ of truth for Stepwise and desktop Replay trading.
 from __future__ import annotations
 
 import asyncio
+import logging
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -33,6 +34,7 @@ from app.services import order_service, options_service, simulation as sim_svc, 
 from app.services.user_settings_service import get_settings, update_settings
 
 router = APIRouter(prefix="/api/desktop/v1/trading", tags=["desktop"])
+logger = logging.getLogger(__name__)
 
 
 class DesktopTradingSnapshot(BaseModel):
@@ -909,12 +911,21 @@ async def trade_labels(session_id: str, user_id: str = Depends(get_desktop_user_
 @router.get("/trade-labels/metadata", response_model=DesktopLabelMetadata)
 async def trade_label_metadata(user_id: str = Depends(get_desktop_user_id)):
     from app.services import pattern_logger_service, trade_label_service
-    return DesktopLabelMetadata(
+    metadata = DesktopLabelMetadata(
         categories=pattern_logger_service.list_category_names(user_id),
         strategies=pattern_logger_service.list_strategy_names(user_id),
         entry_tags=trade_label_service.list_entry_tags(user_id),
         exit_tags=trade_label_service.list_exit_tags(user_id),
     )
+    logger.info(
+        "desktop trade-label metadata loaded user_id=%s categories=%d strategies=%d entry_tags=%d exit_tags=%d",
+        user_id,
+        len(metadata.categories),
+        len(metadata.strategies),
+        len(metadata.entry_tags),
+        len(metadata.exit_tags),
+    )
+    return metadata
 
 
 @router.post("/{session_id}/trade-labels")
