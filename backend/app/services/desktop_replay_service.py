@@ -22,6 +22,8 @@ class ReplayRun:
     tiles: list[dict]
     tile_candles: dict[str, list[dict]]
     stream: events.DesktopStream
+    trading_session_id: str | None = None
+    owns_trading_session: bool = False
     state: str = "running"
     bar_index: int = 0
     task: asyncio.Task | None = None
@@ -51,16 +53,37 @@ def prepare_tiles(tiles: list[dict], date: str, interval_seconds: int) -> dict[s
     return prepared
 
 
-def create(user_id: str, mode: str, date: str, cursor: int, interval_seconds: int, speed: float, tiles: list[dict], tile_candles: dict[str, list[dict]]) -> ReplayRun:
+def _sync_from_trading(run: ReplayRun) -> None:
+    if not run.trading_session_id:
+        return
+    try:
+        from app.services import simulation as sim_svc
+        session = sim_svc.get_session(run.trading_session_id)
+        if not session:
+            run.state = "stopped"
+            return
+        if session.current_time:
+            run.cursor = int(session.current_time)
+        if session.state.value == "paused":
+            run.state = "paused"
+        elif session.state.value == "ended":
+            run.state = "stopped"
+        else:
+            run.state = "running"
+    except Exception:
+        return
+
+
+def create(user_id: str, mode: str, date: str, cursor: int, interval_seconds: int, speed: float, tiles: list[dict], tile_candles: dict[str, list[dict]], trading_session_id: str | None = None, owns_trading_session: bool = False) -> ReplayRun:
     # Stepwise always presents a completed candle.  This is the same initial
     # interval that the paired Stepwise simulator pauses on.
     if mode == "stepwise":
         cursor += interval_seconds - 1
-    run = ReplayRun(str(uuid.uuid4()), user_id, mode, date, cursor, interval_seconds, speed, tiles, tile_candles, events.start(user_id, tiles))
+    run = ReplayRun(str(uuid.uuid4()), user_id, mode, date, cursor, interval_seconds, speed, tiles, tile_candles, events.start(user_id, tiles), trading_session_id=trading_session_id, owns_trading_session=owns_trading_session)
     if mode == "stepwise":
         run.bar_index = 1
     _runs[run.run_id] = run
-    if mode == "replay":
+    if mode == "replay" and not trading_session_id:
         run.task = asyncio.create_task(_clock(run))
     return run
 
@@ -97,6 +120,7 @@ def sync_tiles(run: ReplayRun, tiles: list[dict]) -> None:
 
 
 def snapshot(run: ReplayRun) -> dict:
+    _sync_from_trading(run)
     tile_states = []
     for tile in run.tiles:
         candles = run.tile_candles.get(tile["tile_id"], [])
