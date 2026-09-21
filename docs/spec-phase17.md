@@ -14,7 +14,12 @@ Primary scope:
 
 ### Implementation Status
 
-The Phase 17 implementation is present on the development worktree and is ready for review.
+**Status: complete.**
+
+The original Phase 17 implementation was merged in PR #480 and has since received
+desktop-trading follow-ups, including contract-scoped quotes, order-entry fixes,
+option-switch lifecycle fixes, and the completion work below. The user manually
+verified the complete Stepwise workflow after the earlier audit.
 
 Implemented:
 
@@ -25,17 +30,37 @@ Implemented:
 - Contract-aware order matching, fills, positions, chart filtering, and source metadata (`desktop_stepwise`).
 - Chart order overlays, drag-to-update, two-step selected-line conversion, clicked-price placement, and chart context-menu bulk conversion.
 - Shared desktop settings, wallet/P&L/flatten controls, and desktop capability advertisement.
+- Shared-session discovery before a desktop Stepwise start, explicit attach
+  confirmation, and a visible shared-session status. Detaching the desktop
+  screen does not stop an attached website/shared session.
+- Strategy chart lines for price-based strategies, drag-to-update behavior, and
+  compact running-strategy cancel/edit controls in the left panel.
+- Contract-correct Flatten pricing: every target now resolves its exact
+  `right + strike + expiry` quote.
+- Authoritative desktop `next-bar`: it waits for the simulator to finish the
+  next bar before returning its snapshot.
+- Stepwise trade-strategy labels in the left panel below Trade History. Expected
+  category/strategy is saved while a round trip is open; actual
+  category/strategy is saved after exit. Label round trips use the full option
+  contract identity so same-right strikes do not collide.
 - Desktop fills are available through the existing website Analysis Trades/Trade History surface for the same user.
 - No separate Order Book tab or Analysis UI was added; “order book” in the implementation means the existing trade/order history data path and is not a new user-facing Analysis surface.
 - This specification was updated alongside the implementation, including the assumptions and known streaming limitation below.
 
 Verification status:
 
-- Python syntax compilation passed for all changed backend modules.
-- Windows desktop TypeScript check passed.
-- Backend tests were added for identity, contract attachment, order scoping, clicked-price conversion, and source persistence.
-- Full backend pytest execution is pending in an environment with the project backend dependencies installed (`pytest` and FastAPI are not installed in the current execution environment).
-- Frontend TypeScript/build verification is pending because `frontend/node_modules` is not installed in the current execution environment.
+- Windows desktop tests passed: 18 tests in 5 files (`npm test`).
+- Windows desktop TypeScript check and production build passed (`npm run build`).
+- Backend tests exist for explicit desktop identity/capabilities, contract attachment and scoping, clicked-price conversion, quote selection, fills, wallet reset, and selected user-isolation cases. A focused contract-aware Stepwise label-state test was added.
+- Python syntax compilation passed for backend code and tests. The full backend pytest suite was not run because FastAPI/pytest are absent from this environment.
+- The desktop test suite still does not simulate every chart gesture; manual acceptance testing covers the completed Stepwise workflow.
+
+### Lessons Learned
+
+- A `right` (`CE`/`PE`) is not a sufficient trading identity once a session can attach more than one strike. Every quote lookup, position, order filter, bulk action, and flatten operation must carry `symbol + expiry + strike + right`.
+- The coordinated replay `next-bar` endpoint waits for the simulator to finish its bar before returning a combined replay/trading snapshot. Desktop actions should use that coordination point rather than assume that merely signalling a Stepwise event means state has advanced.
+- A backend route is not a finished desktop capability until the desktop invokes it, presents its state, and has a tested recovery/error path. `/active` and the strategy endpoints are concrete examples.
+- Live-renderer work reinforced the same principle for chart state: hot updates must be incremental, while full snapshots belong at start, reset, refresh, and recovery boundaries—not on every event.
 
 ### Backend Plan
 

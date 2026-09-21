@@ -421,6 +421,11 @@ class StrategyResponse(BaseModel):
     status: str
     triggered: bool = False    # True once LockProfit (or TargetProfit) has fired
     price: float | None = None
+    # Optional desktop contract identity. Legacy and website strategies do not
+    # carry these fields, but desktop overlays must not conflate CE/PE strikes.
+    strike: int | None = None
+    expiry: str | None = None
+    contract_key: str | None = None
 
 
 class CancelAllStrategiesRequest(BaseModel):

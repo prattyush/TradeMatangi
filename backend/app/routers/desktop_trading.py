@@ -6,6 +6,7 @@ of truth. Phase 17 starts with Stepwise sessions only.
 """
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -37,6 +38,8 @@ router = APIRouter(prefix="/api/desktop/v1/trading", tags=["desktop"])
 class DesktopTradingSnapshot(BaseModel):
     version: int = 1
     session: SimulationStartResponse
+    current_time: int = 0
+    current_bar_index: int = 0
     current_price: float
     current_price_ce: float
     current_price_pe: float
@@ -108,6 +111,16 @@ class BulkChartUpdateSLRequest(BaseModel):
 
 class DesktopSettingsUpdateRequest(BaseModel):
     settings: dict
+
+
+class DesktopTradeLabelRequest(BaseModel):
+    round_trip_index: int = Field(ge=0)
+    expected_category: str = ""
+    expected_strategy: str = ""
+    actual_category: str = ""
+    actual_strategy: str = ""
+    entry_tag: str = "AS_PER_PATTERN"
+    exit_tag: str = "AS_PER_PATTERN"
 
 
 def _require_session(session_id: str, user_id: str):
@@ -250,6 +263,12 @@ def _assert_can_switch_active_right(session, contract: dict) -> None:
                     "orders/position before switching this right to another strike"
                 ),
             )
+    for strategy in strategy_service.list_running(session.session_id):
+        if strategy.right == contract["right"] and strategy.metadata.get("desktop_contract_key") != contract["contract_key"]:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Cancel the active {contract['right']} strategy before switching this right to another strike",
+            )
 
 
 def _seed_underlying_options_request(req: SimulationStartRequest) -> None:
@@ -296,6 +315,9 @@ def _strategy_response(instance) -> StrategyResponse:
         status=instance.status.value,
         triggered=bool(instance.metadata.get("triggered", False)),
         price=price,
+        strike=instance.metadata.get("desktop_strike"),
+        expiry=instance.metadata.get("desktop_expiry"),
+        contract_key=instance.metadata.get("desktop_contract_key"),
     )
 
 
@@ -389,6 +411,8 @@ def _snapshot(session, user_id: str) -> DesktopTradingSnapshot:
     }
     return DesktopTradingSnapshot(
         session=_session_response(session),
+        current_time=int(session.current_time or 0),
+        current_bar_index=int(session.current_bar_index or 0),
         current_price=float(session.last_price or 0),
         current_price_ce=float(session.last_price_ce or 0),
         current_price_pe=float(session.last_price_pe or 0),
@@ -431,6 +455,20 @@ def _snapshot(session, user_id: str) -> DesktopTradingSnapshot:
             "default_sl_pct": settings.get("default_sl_pct", 0.20),
         },
     )
+
+
+def _desktop_label_state(session) -> dict:
+    """Expose in-session, contract-aware label slots for Stepwise only."""
+    if not session.stepwise:
+        raise HTTPException(status_code=409, detail="Trade labels are available only for Stepwise sessions")
+    from app.services import trade_label_service
+    trades = [trade.model_dump(mode="json") for trade in trading_service.get_trades(session.session_id)]
+    completed, open_trips = trade_label_service.compute_round_trip_state(trades)
+    return {
+        "completed": completed,
+        "open": open_trips,
+        "labels": trade_label_service.get_labels_for_session(session.session_id),
+    }
 
 
 def _emit_order_event(session, event: dict) -> None:
@@ -557,7 +595,17 @@ async def next_bar(session_id: str, user_id: str = Depends(get_desktop_user_id))
     session = _require_session(session_id, user_id)
     if not session.stepwise:
         raise HTTPException(status_code=400, detail="Session is not in stepwise mode")
+    if session.state == sim_svc.SimulationState.ENDED:
+        raise HTTPException(status_code=409, detail="Stepwise session has ended")
+    previous_index = session.current_bar_index
+    session.bar_paused_event.clear()
     session.step_event.set()
+    try:
+        await asyncio.wait_for(session.bar_paused_event.wait(), timeout=3)
+    except asyncio.TimeoutError:
+        raise HTTPException(status_code=409, detail="Stepwise trading session did not complete the next bar")
+    if session.current_bar_index <= previous_index:
+        raise HTTPException(status_code=409, detail="Stepwise trading session did not advance")
     return _snapshot(session, user_id)
 
 
@@ -690,10 +738,27 @@ async def convert_order(session_id: str, order_id: str, req: ConvertOrderRequest
 
 @router.post("/{session_id}/strategies/start", response_model=StrategyResponse)
 async def start_strategy(session_id: str, req: StartStrategyRequest, user_id: str = Depends(get_desktop_user_id)):
-    _require_session(session_id, user_id)
+    session = _require_session(session_id, user_id)
     req.session_id = session_id
+    contract = None
+    if session.instrument_type == "options" and req.right:
+        right = req.right.upper()
+        strike = session.strike_ce if right == "CE" else session.strike_pe if right == "PE" else None
+        contract = _require_registered_contract(session, right, strike, session.expiry)
     from app.routers.strategies import start_strategy as web_start_strategy
-    return web_start_strategy(req, user_id=user_id)
+    response = web_start_strategy(req, user_id=user_id)
+    if contract:
+        strategy_id = response.strategy_id if isinstance(response, StrategyResponse) else response.get("strategy_id")
+        instance = next((item for item in strategy_service.list_running(session_id) if item.strategy_id == strategy_id), None)
+        if instance:
+            instance.metadata.update({
+                "desktop_contract_key": contract["contract_key"],
+                "desktop_strike": contract["strike"],
+                "desktop_expiry": contract["expiry"],
+            })
+            strategy_service._write_strategy_to_db(instance)
+            return _strategy_response(instance)
+    return response
 
 
 @router.post("/{session_id}/strategies/cancel-all")
@@ -736,7 +801,7 @@ async def flatten(session_id: str, req: FlattenRequest, user_id: str = Depends(g
         if position.side == "FLAT" or position.quantity <= 0:
             continue
         exit_side = TradeSide.SELL if position.side == "LONG" else TradeSide.BUY
-        price = _last_price_for_right(session, right)
+        price = _last_price_for_right(session, right, strike, expiry)
         if price <= 0:
             continue
         emergency_price = round(price * (1 - req.emergency_offset_pct), 2) if exit_side == TradeSide.SELL else round(price * (1 + req.emergency_offset_pct), 2)
@@ -798,6 +863,20 @@ async def reset_wallet(session_id: str, req: WalletResetRequest, user_id: str = 
     session = _require_session(session_id, user_id)
     balance = wallet_service.reset_ledger(user_id, session.date, session.wallet_ledger_id, req.amount, "sim")
     return {"user_id": user_id, "date": session.date, "balance": balance}
+
+
+@router.get("/{session_id}/trade-labels")
+async def trade_labels(session_id: str, user_id: str = Depends(get_desktop_user_id)):
+    return _desktop_label_state(_require_session(session_id, user_id))
+
+
+@router.post("/{session_id}/trade-labels")
+async def save_trade_label(session_id: str, req: DesktopTradeLabelRequest, user_id: str = Depends(get_desktop_user_id)):
+    session = _require_session(session_id, user_id)
+    _desktop_label_state(session)  # validates Stepwise before writing
+    from app.services import trade_label_service
+    saved = trade_label_service.save_labels(session_id, [req.model_dump()], user_id)
+    return {"label": saved[0] if saved else None, **_desktop_label_state(session)}
 
 
 @router.get("/settings/current")
