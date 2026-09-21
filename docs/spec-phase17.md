@@ -14,7 +14,13 @@ Primary scope:
 
 ### Implementation Status
 
-The Phase 17 implementation is present on the development worktree and is ready for review.
+**Status: substantially implemented; follow-up work remains before Phase 17 can be marked complete.**
+
+The original Phase 17 implementation was merged in PR #480 and has since received
+desktop-trading follow-ups, including contract-scoped quotes, order-entry fixes,
+and option-switch lifecycle fixes. This review was performed against `dev` at
+`45aa0df` on 2026-09-21; it is a code-and-test audit, not a manual trading
+acceptance test.
 
 Implemented:
 
@@ -31,11 +37,31 @@ Implemented:
 
 Verification status:
 
-- Python syntax compilation passed for all changed backend modules.
-- Windows desktop TypeScript check passed.
-- Backend tests were added for identity, contract attachment, order scoping, clicked-price conversion, and source persistence.
-- Full backend pytest execution is pending in an environment with the project backend dependencies installed (`pytest` and FastAPI are not installed in the current execution environment).
-- Frontend TypeScript/build verification is pending because `frontend/node_modules` is not installed in the current execution environment.
+- Windows desktop tests passed: 18 tests in 5 files (`npm test`).
+- Windows desktop TypeScript check and production build passed (`npm run build`).
+- Backend tests exist for explicit desktop identity/capabilities, contract attachment and scoping, clicked-price conversion, quote selection, fills, wallet reset, and selected user-isolation cases.
+- Backend tests were **not** run in this audit because no Python interpreter is available in the current environment. Their current pass/fail status must therefore not be inferred from the desktop build.
+- The desktop test suite currently covers chart/live/drawing state only; it does not exercise Phase 17 order, strategy, flatten, shared-session, or chart-interaction workflows.
+- The Phase 17 manual acceptance checklist below has not been evidenced by this audit.
+
+### Remaining Implementation Work
+
+The completed backend facade should not be confused with every planned desktop
+workflow being complete. The following items remain:
+
+1. **Shared Stepwise-session attachment and visible status — required.** `GET /active` is implemented, but the desktop start flow never calls it; it always starts a new session. There is also no visible shared/attached session indicator. Implement the pre-start compatible-session lookup, a user decision to attach or start separately, and a persistent status badge. Add backend and desktop tests for same-user sharing and user isolation.
+2. **Strategy controls and strategy chart lines — required.** The backend has start/cancel/cancel-all/update-price endpoints, but the desktop only starts strategies from the chart menu. It does not render strategy lines, list running strategies, cancel them, or drag/update a price. Add contract-aware strategy overlays and a compact management section; ensure every mutation refreshes the authoritative snapshot.
+3. **Flatten must use the exact contract quote — correctness fix.** The flatten loop identifies each attached contract correctly, but currently obtains its price using only `right`; for a non-primary attached strike that can select the active CE/PE quote instead of the target contract's quote. Pass `right + strike + expiry` to quote resolution, then add long/short, CE/PE, primary/non-primary, existing-closing-order, no-closing-order, and no-position tests.
+4. **Make the standalone desktop `next-bar` endpoint authoritative, or retire it.** The desktop uses the coordinated replay endpoint, which waits for bar completion. In contrast, `/trading/{session_id}/next-bar` only signals the simulator and immediately returns a snapshot, which may still describe the previous bar. Align its contract with the documented “advances” behavior, or remove it from the public facade and document the coordinated endpoint as the sole supported path.
+5. **Finish the planned desktop controls — scope decision required.** The compact left rail currently has Trade History and generic chart settings, while Orders are chart overlays and Strategies have no management UI. The documented compact Orders, Strategies, and trading Settings sections are therefore incomplete. Decide whether to implement these panels or explicitly narrow the Phase 17 UI scope and revise this spec.
+6. **Close verification gaps.** Add focused desktop interaction tests for label formatting, selected-line conversion/cancel, drag mapping, right-click bulk actions, strategy management, and flatten confirmation. Run the backend desktop suite in a configured Python environment. Then execute and record the manual checklist before changing the phase status to complete.
+
+### Lessons Learned
+
+- A `right` (`CE`/`PE`) is not a sufficient trading identity once a session can attach more than one strike. Every quote lookup, position, order filter, bulk action, and flatten operation must carry `symbol + expiry + strike + right`.
+- The coordinated replay `next-bar` endpoint waits for the simulator to finish its bar before returning a combined replay/trading snapshot. Desktop actions should use that coordination point rather than assume that merely signalling a Stepwise event means state has advanced.
+- A backend route is not a finished desktop capability until the desktop invokes it, presents its state, and has a tested recovery/error path. `/active` and the strategy endpoints are concrete examples.
+- Live-renderer work reinforced the same principle for chart state: hot updates must be incremental, while full snapshots belong at start, reset, refresh, and recovery boundaries—not on every event.
 
 ### Backend Plan
 
