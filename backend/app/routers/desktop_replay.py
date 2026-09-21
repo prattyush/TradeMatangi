@@ -32,6 +32,8 @@ class StartReplayRequest(BaseModel):
     tiles: list[ReplayTile] = Field(min_length=1, max_length=4)
     initial_cursor: int | None = Field(default=None, gt=0)
     initial_bar_index: int | None = Field(default=None, ge=0)
+    trading_session_id: str | None = None
+    owns_trading_session: bool = False
 
 
 class SyncReplayTilesRequest(BaseModel):
@@ -66,7 +68,11 @@ async def start(req: StartReplayRequest, user_id: str = Depends(get_desktop_user
             raise HTTPException(status_code=422, detail=str(error))
     tiles = [tile.model_dump() for tile in req.tiles]
     candles = await asyncio.to_thread(replay.prepare_tiles, tiles, req.date, req.interval_seconds)
-    run = replay.create(user_id, req.mode, req.date, _cursor(req.date, req.start_time), req.interval_seconds, req.speed, tiles, candles)
+    if req.trading_session_id:
+        session = sim_svc.get_session(req.trading_session_id)
+        if not session or session.user_id != user_id or session.state == sim_svc.SimulationState.ENDED:
+            raise HTTPException(status_code=404, detail="Trading session was not found")
+    run = replay.create(user_id, req.mode, req.date, _cursor(req.date, req.start_time), req.interval_seconds, req.speed, tiles, candles, req.trading_session_id, req.owns_trading_session)
     if req.initial_cursor is not None:
         run.cursor = req.initial_cursor
     if req.initial_bar_index is not None:
@@ -151,7 +157,14 @@ async def pause(run_id: str, user_id: str = Depends(get_desktop_user_id)):
     run = replay.get(user_id, run_id)
     if not run:
         raise HTTPException(status_code=404, detail="Replay run was not found")
-    await replay.pause(run)
+    if run.trading_session_id:
+        session = sim_svc.get_session(run.trading_session_id)
+        if not session or session.user_id != user_id:
+            raise HTTPException(status_code=404, detail="Trading session was not found")
+        sim_svc.pause_session(session)
+        run.state = "paused"
+    else:
+        await replay.pause(run)
     return replay.snapshot(run)
 
 
@@ -160,7 +173,14 @@ async def resume(run_id: str, user_id: str = Depends(get_desktop_user_id)):
     run = replay.get(user_id, run_id)
     if not run:
         raise HTTPException(status_code=404, detail="Replay run was not found")
-    await replay.resume(run)
+    if run.trading_session_id:
+        session = sim_svc.get_session(run.trading_session_id)
+        if not session or session.user_id != user_id:
+            raise HTTPException(status_code=404, detail="Trading session was not found")
+        sim_svc.resume_session(session)
+        run.state = "running"
+    else:
+        await replay.resume(run)
     return replay.snapshot(run)
 
 
@@ -171,6 +191,13 @@ async def update_speed(run_id: str, req: SpeedUpdateRequest, user_id: str = Depe
         raise HTTPException(status_code=404, detail="Replay run was not found")
     if run.mode != "replay" or run.state == "stopped":
         raise HTTPException(status_code=409, detail="Replay speed can only change during a normal replay run")
+    if run.trading_session_id:
+        session = sim_svc.get_session(run.trading_session_id)
+        if not session or session.user_id != user_id:
+            raise HTTPException(status_code=404, detail="Trading session was not found")
+        session.speed = max(0.01, 1 / max(req.speed, 0.05))
+        run.speed = req.speed
+        return replay.snapshot(run)
     await replay.update_speed(run, req.speed)
     return replay.snapshot(run)
 
@@ -211,6 +238,10 @@ async def stop(run_id: str, user_id: str = Depends(get_desktop_user_id)):
     run = replay.get(user_id, run_id)
     if not run:
         raise HTTPException(status_code=404, detail="Replay run was not found")
+    if run.trading_session_id and run.owns_trading_session:
+        session = sim_svc.get_session(run.trading_session_id)
+        if session and session.user_id == user_id:
+            sim_svc.stop_session(session)
     await replay.stop(run)
     snapshot = replay.snapshot(run)
     replay.forget(run)
