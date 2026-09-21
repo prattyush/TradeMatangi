@@ -18,6 +18,7 @@ from app.models.schemas import (
 from app.services import simulation as sim_svc
 from app.config import SUPPORTED_SYMBOLS
 from app.dependencies import get_request_user_id
+from app.config import LOT_SIZES
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +39,7 @@ def _session_response(session, group=None) -> SimulationStartResponse:
         group_state=group.get("state") if group else None,
         group_current_time=group.get("current_time") if group else None,
         session_alias=session.session_alias, wallet_ledger_id=session.wallet_ledger_id,
+        lot_size=LOT_SIZES.get(session.symbol, 1) if session.instrument_type == "options" else 1,
     )
 
 
@@ -74,6 +76,7 @@ def _active_group_with_live_sessions(group: dict | None) -> dict | None:
 
 def _delete_existing_context_sessions(user_id: str, date: str, session_type: str, symbol: str, instrument_type: str) -> None:
     from app.services.session_cleanup_service import delete_session_cascade
+    from app.services import wallet_service
     all_sessions = sim_svc.find_all_sessions_by_context(
         user_id, symbol, date, session_type, instrument_type
     )
@@ -84,9 +87,11 @@ def _delete_existing_context_sessions(user_id: str, date: str, session_type: str
         if active:
             sim_svc.stop_session(active)
         try:
-            delete_session_cascade(sid, user_id, date)
+            delete_session_cascade(sid, user_id, date, reset_wallet=False)
         except Exception:
             logger.exception("start_simulation: failed to cascade delete session %s", sid)
+    if session_type in ("sim", "stepwise"):
+        wallet_service.recalculate_sim_ledger_for_date(user_id, date)
 
 
 def _normalise_option_contract_request(req: SimulationStartRequest) -> None:

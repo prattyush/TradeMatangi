@@ -222,6 +222,7 @@ export interface SimulationStartResponse {
   group_current_time: string | null
   session_alias: string | null
   wallet_ledger_id: string
+  lot_size: number
 }
 
 export interface SessionGroupMember {

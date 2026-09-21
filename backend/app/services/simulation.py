@@ -295,6 +295,18 @@ def _upsert_session_to_db(session: SimulationSession) -> None:
             item["session_alias"] = session.session_alias
         if session.wallet_ledger_id:
             item["wallet_ledger_id"] = session.wallet_ledger_id
+        desktop_mode = getattr(session, "desktop_mode", None)
+        if desktop_mode:
+            item["desktop_mode"] = desktop_mode
+        desktop_origin = getattr(session, "desktop_origin", None)
+        if desktop_origin:
+            item["desktop_origin"] = desktop_origin
+        if getattr(session, "desktop_checkpointed", False):
+            item["desktop_checkpointed"] = True
+            item["desktop_checkpoint_time"] = int(getattr(session, "desktop_checkpoint_time", 0) or 0)
+            item["desktop_checkpoint_bar_index"] = int(getattr(session, "desktop_checkpoint_bar_index", 0) or 0)
+            item["desktop_checkpoint_mode"] = str(getattr(session, "desktop_checkpoint_mode", desktop_mode or ""))
+            item["desktop_checkpoint_contracts"] = getattr(session, "desktop_contracts", []) or []
         if session.instrument_type == "options":
             item["strike"] = session.strike
             item["expiry"] = session.expiry

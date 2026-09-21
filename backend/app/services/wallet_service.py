@@ -66,6 +66,25 @@ def _load_from_db(user_id: str, date: str) -> float | None:
     return None
 
 
+def _load_prior_from_db(user_id: str, date: str) -> float | None:
+    """Query DynamoDB for the most recent wallet record strictly before `date`."""
+    try:
+        from app.services.db import get_dynamodb_resource
+        from boto3.dynamodb.conditions import Key
+        table = get_dynamodb_resource().Table("Wallet")
+        resp = table.query(
+            KeyConditionExpression=Key("user_id").eq(user_id) & Key("date").lt(date),
+            ScanIndexForward=False,
+            Limit=1,
+        )
+        items = resp.get("Items", [])
+        if items:
+            return float(items[0]["current_balance"])
+    except Exception:
+        logger.exception("DynamoDB prior wallet query failed for user=%s date=%s", user_id, date)
+    return None
+
+
 def get_or_init_wallet(user_id: str, date: str) -> float:
     """Return balance for (user_id, date), initialising with carry-forward or default if new."""
     key = (user_id, date)
@@ -159,6 +178,52 @@ def reset_ledger(user_id: str, date: str, ledger_id: str, amount: float, ledger_
     _ledgers[(user_id, ledger_id)] = amount
     _write_ledger(user_id, date, ledger_id, ledger_kind, amount)
     return amount
+
+
+def recalculate_sim_ledger_for_date(user_id: str, date: str) -> float:
+    """Rebuild the shared historical simulation ledger after deleting sessions.
+
+    The shared sim ledger is keyed by date, so override cleanup must remove the
+    deleted sessions' cash-flow effects without erasing retained sessions for
+    the same day.
+    """
+    balance = _load_prior_from_db(user_id, date)
+    if balance is None:
+        balance = DEFAULT_BALANCE
+    try:
+        from app.services.db import get_dynamodb_resource
+        from boto3.dynamodb.conditions import Key
+        resource = get_dynamodb_resource()
+        sessions_table = resource.Table("Sessions")
+        trades_table = resource.Table("Trades")
+        resp = sessions_table.query(
+            IndexName="UserIdIndex",
+            KeyConditionExpression=Key("user_id").eq(user_id),
+        )
+        sessions = [
+            item for item in resp.get("Items", [])
+            if item.get("date") == date
+            and item.get("session_type") in ("sim", "stepwise")
+            and (item.get("wallet_ledger_id") or f"sim:{date}") == f"sim:{date}"
+        ]
+        trades: list[dict] = []
+        for session in sessions:
+            sid = session.get("session_id")
+            if not sid:
+                continue
+            trade_resp = trades_table.query(KeyConditionExpression=Key("session_id").eq(sid))
+            trades.extend(trade_resp.get("Items", []))
+        trades.sort(key=lambda item: int(item.get("timestamp", 0)))
+        for trade in trades:
+            amount = float(trade.get("price", 0)) * int(trade.get("quantity", 0))
+            if trade.get("side") == "BUY":
+                balance -= amount
+            elif trade.get("side") == "SELL":
+                balance += amount
+    except Exception:
+        logger.exception("Could not recalculate sim ledger user=%s date=%s", user_id, date)
+    reset(user_id, date, balance)
+    return reset_ledger(user_id, date, f"sim:{date}", balance, "sim")
 
 
 def debit(user_id: str, amount: float, date: str) -> float:

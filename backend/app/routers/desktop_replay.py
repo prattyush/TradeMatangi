@@ -241,6 +241,9 @@ async def stop(run_id: str, user_id: str = Depends(get_desktop_user_id)):
     if run.trading_session_id and run.owns_trading_session:
         session = sim_svc.get_session(run.trading_session_id)
         if session and session.user_id == user_id:
+            from app.routers.desktop_trading import _flatten_positions_for_stop, _mark_desktop_checkpoint
+            _flatten_positions_for_stop(session, user_id)
+            _mark_desktop_checkpoint(session)
             sim_svc.stop_session(session)
     await replay.stop(run)
     snapshot = replay.snapshot(run)
