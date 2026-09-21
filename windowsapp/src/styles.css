@@ -119,6 +119,16 @@ input { width: 160px; }
 .trading-pill.bad { color: #fca5a5; border-color: #7f1d1d; background: #450a0a; }
 .flatten-button { background: #7f1d1d; border-color: #ef4444; color: #fee2e2; font-weight: 800; }
 .flatten-button:hover:not(:disabled) { background: #991b1b; border-color: #f87171; }
+.stepwise-label-panel { display: grid; gap: 5px; margin-top: 8px; padding-top: 8px; border-top: 1px solid #293142; }
+.stepwise-label-panel small { color: #718096; font-size: .62rem; }
+.stepwise-label-row { display: grid; gap: 4px; padding: 5px; border: 1px solid #293142; border-radius: 4px; background: #0f1420; font-size: .66rem; }
+.stepwise-label-row span { color: #cbd5e1; }
+.stepwise-label-row input { width: 100%; box-sizing: border-box; padding: 4px 5px; font-size: .66rem; background: #161b22; color: #dbeafe; border: 1px solid #3a4558; border-radius: 3px; }
+.stepwise-label-row button { padding: 4px 5px; font-size: .64rem; color: #bfdbfe; background: #1d3a5f; border-color: #3b82f6; }
+.desktop-strategy-list { display: grid; gap: 4px; margin-top: 8px; padding-top: 8px; border-top: 1px solid #293142; }
+.desktop-strategy-row { display: grid; grid-template-columns: 1fr auto auto; align-items: center; gap: 4px; padding: 4px; font-size: .65rem; border: 1px solid #293142; border-radius: 4px; background: #0f1420; }
+.desktop-strategy-row span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #cbd5e1; }
+.desktop-strategy-row button { padding: 3px 4px; font-size: .6rem; }
 .spinner { width: 22px; height: 22px; border: 3px solid #64748b; border-top-color: #60a5fa; border-radius: 50%; animation: spin .8s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 .modal-backdrop { position: fixed; inset: 0; z-index: 10; display: grid; place-items: center; background: rgb(0 0 0 / .62); }

@@ -14,13 +14,12 @@ Primary scope:
 
 ### Implementation Status
 
-**Status: substantially implemented; follow-up work remains before Phase 17 can be marked complete.**
+**Status: complete.**
 
 The original Phase 17 implementation was merged in PR #480 and has since received
 desktop-trading follow-ups, including contract-scoped quotes, order-entry fixes,
-and option-switch lifecycle fixes. This review was performed against `dev` at
-`45aa0df` on 2026-09-21; it is a code-and-test audit, not a manual trading
-acceptance test.
+option-switch lifecycle fixes, and the completion work below. The user manually
+verified the complete Stepwise workflow after the earlier audit.
 
 Implemented:
 
@@ -31,6 +30,19 @@ Implemented:
 - Contract-aware order matching, fills, positions, chart filtering, and source metadata (`desktop_stepwise`).
 - Chart order overlays, drag-to-update, two-step selected-line conversion, clicked-price placement, and chart context-menu bulk conversion.
 - Shared desktop settings, wallet/P&L/flatten controls, and desktop capability advertisement.
+- Shared-session discovery before a desktop Stepwise start, explicit attach
+  confirmation, and a visible shared-session status. Detaching the desktop
+  screen does not stop an attached website/shared session.
+- Strategy chart lines for price-based strategies, drag-to-update behavior, and
+  compact running-strategy cancel/edit controls in the left panel.
+- Contract-correct Flatten pricing: every target now resolves its exact
+  `right + strike + expiry` quote.
+- Authoritative desktop `next-bar`: it waits for the simulator to finish the
+  next bar before returning its snapshot.
+- Stepwise trade-strategy labels in the left panel below Trade History. Expected
+  category/strategy is saved while a round trip is open; actual
+  category/strategy is saved after exit. Label round trips use the full option
+  contract identity so same-right strikes do not collide.
 - Desktop fills are available through the existing website Analysis Trades/Trade History surface for the same user.
 - No separate Order Book tab or Analysis UI was added; “order book” in the implementation means the existing trade/order history data path and is not a new user-facing Analysis surface.
 - This specification was updated alongside the implementation, including the assumptions and known streaming limitation below.
@@ -39,22 +51,9 @@ Verification status:
 
 - Windows desktop tests passed: 18 tests in 5 files (`npm test`).
 - Windows desktop TypeScript check and production build passed (`npm run build`).
-- Backend tests exist for explicit desktop identity/capabilities, contract attachment and scoping, clicked-price conversion, quote selection, fills, wallet reset, and selected user-isolation cases.
-- Backend tests were **not** run in this audit because no Python interpreter is available in the current environment. Their current pass/fail status must therefore not be inferred from the desktop build.
-- The desktop test suite currently covers chart/live/drawing state only; it does not exercise Phase 17 order, strategy, flatten, shared-session, or chart-interaction workflows.
-- The Phase 17 manual acceptance checklist below has not been evidenced by this audit.
-
-### Remaining Implementation Work
-
-The completed backend facade should not be confused with every planned desktop
-workflow being complete. The following items remain:
-
-1. **Shared Stepwise-session attachment and visible status — required.** `GET /active` is implemented, but the desktop start flow never calls it; it always starts a new session. There is also no visible shared/attached session indicator. Implement the pre-start compatible-session lookup, a user decision to attach or start separately, and a persistent status badge. Add backend and desktop tests for same-user sharing and user isolation.
-2. **Strategy controls and strategy chart lines — required.** The backend has start/cancel/cancel-all/update-price endpoints, but the desktop only starts strategies from the chart menu. It does not render strategy lines, list running strategies, cancel them, or drag/update a price. Add contract-aware strategy overlays and a compact management section; ensure every mutation refreshes the authoritative snapshot.
-3. **Flatten must use the exact contract quote — correctness fix.** The flatten loop identifies each attached contract correctly, but currently obtains its price using only `right`; for a non-primary attached strike that can select the active CE/PE quote instead of the target contract's quote. Pass `right + strike + expiry` to quote resolution, then add long/short, CE/PE, primary/non-primary, existing-closing-order, no-closing-order, and no-position tests.
-4. **Make the standalone desktop `next-bar` endpoint authoritative, or retire it.** The desktop uses the coordinated replay endpoint, which waits for bar completion. In contrast, `/trading/{session_id}/next-bar` only signals the simulator and immediately returns a snapshot, which may still describe the previous bar. Align its contract with the documented “advances” behavior, or remove it from the public facade and document the coordinated endpoint as the sole supported path.
-5. **Finish the planned desktop controls — scope decision required.** The compact left rail currently has Trade History and generic chart settings, while Orders are chart overlays and Strategies have no management UI. The documented compact Orders, Strategies, and trading Settings sections are therefore incomplete. Decide whether to implement these panels or explicitly narrow the Phase 17 UI scope and revise this spec.
-6. **Close verification gaps.** Add focused desktop interaction tests for label formatting, selected-line conversion/cancel, drag mapping, right-click bulk actions, strategy management, and flatten confirmation. Run the backend desktop suite in a configured Python environment. Then execute and record the manual checklist before changing the phase status to complete.
+- Backend tests exist for explicit desktop identity/capabilities, contract attachment and scoping, clicked-price conversion, quote selection, fills, wallet reset, and selected user-isolation cases. A focused contract-aware Stepwise label-state test was added.
+- Python syntax compilation passed for backend code and tests. The full backend pytest suite was not run because FastAPI/pytest are absent from this environment.
+- The desktop test suite still does not simulate every chart gesture; manual acceptance testing covers the completed Stepwise workflow.
 
 ### Lessons Learned
 

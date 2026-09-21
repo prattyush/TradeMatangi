@@ -30,6 +30,8 @@ class StartReplayRequest(BaseModel):
     interval_seconds: int = Field(default=60, ge=60, le=3600)
     speed: float = Field(default=1, ge=0.05, le=100)
     tiles: list[ReplayTile] = Field(min_length=1, max_length=4)
+    initial_cursor: int | None = Field(default=None, gt=0)
+    initial_bar_index: int | None = Field(default=None, ge=0)
 
 
 class SyncReplayTilesRequest(BaseModel):
@@ -65,6 +67,10 @@ async def start(req: StartReplayRequest, user_id: str = Depends(get_desktop_user
     tiles = [tile.model_dump() for tile in req.tiles]
     candles = await asyncio.to_thread(replay.prepare_tiles, tiles, req.date, req.interval_seconds)
     run = replay.create(user_id, req.mode, req.date, _cursor(req.date, req.start_time), req.interval_seconds, req.speed, tiles, candles)
+    if req.initial_cursor is not None:
+        run.cursor = req.initial_cursor
+    if req.initial_bar_index is not None:
+        run.bar_index = req.initial_bar_index
     return replay.snapshot(run)
 
 
