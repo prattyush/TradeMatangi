@@ -1,5 +1,6 @@
 """Desktop boundary: it must be authorised and versioned."""
 from fastapi.testclient import TestClient
+from unittest.mock import patch
 
 from app.main import app
 
@@ -36,3 +37,21 @@ def test_option_metadata_is_date_aware_for_non_trading_days():
     data = response.json()
     assert data["available"] is False
     assert data["expiries"] == []
+
+
+def test_trade_label_metadata_uses_the_authenticated_desktop_user():
+    with patch("app.services.pattern_logger_service.list_category_names", return_value=["Breakout"] ) as categories, \
+         patch("app.services.pattern_logger_service.list_strategy_names", return_value=["Opening Range"] ) as strategies, \
+         patch("app.services.trade_label_service.list_entry_tags", return_value=["ORB"] ) as entry_tags, \
+         patch("app.services.trade_label_service.list_exit_tags", return_value=["Target"] ) as exit_tags:
+        response = client.get("/api/desktop/v1/trading/trade-labels/metadata", headers={"X-User-Id": "label-owner"})
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "categories": ["Breakout"],
+        "strategies": ["Opening Range"],
+        "entry_tags": ["ORB"],
+        "exit_tags": ["Target"],
+    }
+    for method in (categories, strategies, entry_tags, exit_tags):
+        method.assert_called_once_with("label-owner")

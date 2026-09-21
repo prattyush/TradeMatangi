@@ -1,7 +1,20 @@
 import pytest
+from pydantic import ValidationError
 
 from app.routers import desktop_replay
 from app.services import desktop_replay_service as replay
+
+
+def test_replay_start_request_requires_a_positive_explicit_cursor():
+    payload = {
+        "mode": "stepwise",
+        "date": "2026-05-06",
+        "tiles": [{"tile_id": "tile-1", "instrument": {"kind": "index", "symbol": "NIFTY"}}],
+    }
+
+    assert desktop_replay.StartReplayRequest.model_validate(payload).initial_cursor is None
+    with pytest.raises(ValidationError):
+        desktop_replay.StartReplayRequest.model_validate({**payload, "initial_cursor": 0})
 
 
 @pytest.mark.asyncio
