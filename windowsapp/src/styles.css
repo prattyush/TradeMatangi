@@ -131,6 +131,10 @@ input { width: 160px; }
 .label-modal-body { display: grid; gap: 10px; padding: 14px; }
 .label-modal-body label { display: grid; gap: 5px; color: #aeb8ca; font-size: .76rem; }
 .label-modal-body input, .label-modal-body select { width: 100%; }
+.label-metadata-status { padding: 7px 8px; border: 1px solid #293142; border-radius: 4px; color: #aeb8ca; font-size: .72rem; }
+.label-metadata-status.error { border-color: #7f1d1d; color: #fca5a5; }
+.label-metadata-status button { margin-left: 6px; padding: 2px 6px; font-size: .7rem; }
+.label-metadata-status small { display: block; margin-top: 4px; color: #fca5a5; overflow-wrap: anywhere; }
 .label-summary { display: flex; justify-content: space-between; align-items: center; color: #e5e7eb; font-size: .78rem; }
 .desktop-strategy-list { display: grid; gap: 4px; margin-top: 8px; padding-top: 8px; border-top: 1px solid #293142; }
 .desktop-strategy-row { display: grid; grid-template-columns: 1fr auto auto; align-items: center; gap: 4px; padding: 4px; font-size: .65rem; border: 1px solid #293142; border-radius: 4px; background: #0f1420; }
