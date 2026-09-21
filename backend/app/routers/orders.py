@@ -11,6 +11,14 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/orders", tags=["orders"])
 
 
+def _desktop_order_source(session) -> str | None:
+    if session.session_type == "stepwise":
+        return "desktop_stepwise"
+    if getattr(session, "desktop_origin", None) == "desktop_replay":
+        return "desktop_replay"
+    return None
+
+
 def _is_closing_order_for_position(order: Order, position) -> bool:
     return (
         position.side != "FLAT"
@@ -248,7 +256,7 @@ async def place_order(req: PlaceOrderRequest):
             margin_rate=order_margin_rate,
             entry_sl_price=req.entry_sl_price,
             group_id=req.group_id,
-            source="desktop_stepwise" if session.session_type == "stepwise" else None,
+            source=_desktop_order_source(session),
             quote_price=req.quote_price,
             quote_timestamp=req.quote_timestamp,
             quote_source=req.quote_source,
@@ -422,7 +430,7 @@ async def place_order(req: PlaceOrderRequest):
                     expiry=order_expiry,
                     user_id=session.user_id,
                     margin_rate=order_margin_rate,
-                    source="desktop_stepwise" if session.session_type == "stepwise" else None,
+                    source=_desktop_order_source(session),
                 )
                 if session.session_type == "real" and req.order_type == OrderType.STOPLOSS:
                     from app.services.simulation import _register_kotak_sl_for_order

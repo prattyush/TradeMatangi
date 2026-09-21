@@ -2,7 +2,7 @@
 
 This router keeps the desktop app on a versioned API while reusing the
 existing simulation, order, strategy, wallet, and trade services as the source
-of truth. Phase 17 starts with Stepwise sessions only.
+of truth for Stepwise and desktop Replay trading.
 """
 from __future__ import annotations
 
@@ -37,6 +37,8 @@ router = APIRouter(prefix="/api/desktop/v1/trading", tags=["desktop"])
 
 class DesktopTradingSnapshot(BaseModel):
     version: int = 1
+    desktop_mode: str = "stepwise"
+    source: str = "desktop_stepwise"
     session: SimulationStartResponse
     current_time: int = 0
     current_bar_index: int = 0
@@ -113,6 +115,13 @@ class DesktopSettingsUpdateRequest(BaseModel):
     settings: dict
 
 
+class DesktopLabelMetadata(BaseModel):
+    categories: list[str] = []
+    strategies: list[str] = []
+    entry_tags: list[str] = []
+    exit_tags: list[str] = []
+
+
 class DesktopTradeLabelRequest(BaseModel):
     round_trip_index: int = Field(ge=0)
     expected_category: str = ""
@@ -121,6 +130,18 @@ class DesktopTradeLabelRequest(BaseModel):
     actual_strategy: str = ""
     entry_tag: str = "AS_PER_PATTERN"
     exit_tag: str = "AS_PER_PATTERN"
+
+
+class DesktopTradingStartRequest(SimulationStartRequest):
+    desktop_mode: str = Field(default="stepwise", pattern="^(stepwise|replay)$")
+
+
+def _desktop_mode(session) -> str:
+    return str(getattr(session, "desktop_mode", "") or ("stepwise" if session.session_type == "stepwise" else "replay" if getattr(session, "desktop_origin", None) == "desktop_replay" else session.session_type))
+
+
+def _desktop_source(session) -> str:
+    return "desktop_replay" if _desktop_mode(session) == "replay" else "desktop_stepwise"
 
 
 def _require_session(session_id: str, user_id: str):
@@ -169,7 +190,7 @@ def _get_registered_contract(session, right: str | None, strike: int | None, exp
 def _require_registered_contract(session, right: str | None, strike: int | None, expiry: str | None) -> dict:
     contract = _get_registered_contract(session, right, strike, expiry)
     if not contract:
-        raise HTTPException(status_code=400, detail="Option contract is not attached to this Stepwise session")
+        raise HTTPException(status_code=400, detail="Option contract is not attached to this desktop trading session")
     return contract
 
 
@@ -410,6 +431,8 @@ def _snapshot(session, user_id: str) -> DesktopTradingSnapshot:
         for item in contracts
     }
     return DesktopTradingSnapshot(
+        desktop_mode=_desktop_mode(session),
+        source=_desktop_source(session),
         session=_session_response(session),
         current_time=int(session.current_time or 0),
         current_bar_index=int(session.current_bar_index or 0),
@@ -458,9 +481,9 @@ def _snapshot(session, user_id: str) -> DesktopTradingSnapshot:
 
 
 def _desktop_label_state(session) -> dict:
-    """Expose in-session, contract-aware label slots for Stepwise only."""
-    if not session.stepwise:
-        raise HTTPException(status_code=409, detail="Trade labels are available only for Stepwise sessions")
+    """Expose in-session, contract-aware label slots for desktop historical sessions."""
+    if session.session_type not in ("stepwise", "sim"):
+        raise HTTPException(status_code=409, detail="Trade labels are available only for desktop historical sessions")
     from app.services import trade_label_service
     trades = [trade.model_dump(mode="json") for trade in trading_service.get_trades(session.session_id)]
     completed, open_trips = trade_label_service.compute_round_trip_state(trades)
@@ -522,12 +545,19 @@ def _target_scope(session, right: str | None, strike: int | None, expiry: str | 
 
 
 @router.post("/start", response_model=DesktopTradingSnapshot, status_code=201)
-async def start_stepwise(req: SimulationStartRequest, user_id: str = Depends(get_desktop_user_id)):
-    req.session_type = "stepwise"
-    req.stepwise = True
+async def start_desktop_trading(req: DesktopTradingStartRequest, user_id: str = Depends(get_desktop_user_id)):
+    if req.desktop_mode == "replay":
+        req.session_type = "sim"
+        req.stepwise = False
+        req.speed = max(0.01, 1 / max(float(req.speed), 0.05))
+    else:
+        req.session_type = "stepwise"
+        req.stepwise = True
     _seed_underlying_options_request(req)
     session_response = await simulation_router.start_simulation(req, user_id)
     session = _require_session(session_response.session_id, user_id)
+    setattr(session, "desktop_mode", req.desktop_mode)
+    setattr(session, "desktop_origin", _desktop_source(session))
     if session.instrument_type == "options" and req.expiry:
         if req.strike_ce is not None:
             _register_contract(session, _normalise_contract(DesktopOptionContract(symbol=session.symbol, expiry=req.expiry, strike=req.strike_ce, right="CE")))
@@ -541,11 +571,11 @@ async def attach_contract(session_id: str, req: AttachContractRequest, user_id: 
     session = _require_session(session_id, user_id)
     contract = _normalise_contract(req)
     if session.instrument_type != "options":
-        raise HTTPException(status_code=400, detail="This Stepwise session is not configured for options")
+        raise HTTPException(status_code=400, detail="This desktop trading session is not configured for options")
     if contract["symbol"] != session.symbol:
-        raise HTTPException(status_code=400, detail=f"This Stepwise session is locked to {session.symbol}. Open another screen to use {contract['symbol']}.")
+        raise HTTPException(status_code=400, detail=f"This desktop trading session is locked to {session.symbol}. Open another screen to use {contract['symbol']}.")
     if session.expiry and contract["expiry"] != session.expiry:
-        raise HTTPException(status_code=400, detail=f"This Stepwise session is locked to expiry {session.expiry}")
+        raise HTTPException(status_code=400, detail=f"This desktop trading session is locked to expiry {session.expiry}")
     if not session.expiry:
         session.expiry = contract["expiry"]
     _assert_can_switch_active_right(session, contract)
@@ -563,10 +593,16 @@ async def active_stepwise(
     symbol: str | None = Query(default=None),
     date: str | None = Query(default=None),
     instrument_type: str | None = Query(default=None),
+    desktop_mode: str | None = Query(default=None, pattern="^(stepwise|replay)$"),
     user_id: str = Depends(get_desktop_user_id),
 ):
     for session in list(sim_svc._sessions.values()):
-        if session.user_id != user_id or session.session_type != "stepwise" or session.state == sim_svc.SimulationState.ENDED:
+        if session.user_id != user_id or session.state == sim_svc.SimulationState.ENDED:
+            continue
+        mode = _desktop_mode(session)
+        if desktop_mode and mode != desktop_mode:
+            continue
+        if not desktop_mode and session.session_type != "stepwise":
             continue
         if symbol and session.symbol != symbol:
             continue
@@ -826,7 +862,7 @@ async def flatten(session_id: str, req: FlattenRequest, user_id: str = Depends(g
                 strike=strike if strike is not None else session.strike_ce if right == "CE" else session.strike_pe if right == "PE" else None,
                 expiry=expiry if expiry is not None else session.expiry,
                 user_id=user_id,
-                source="desktop_stepwise",
+                source=_desktop_source(session),
             )
             result["created"].append(created.model_dump(mode="json"))
             _emit_order_event(session, {
@@ -868,6 +904,17 @@ async def reset_wallet(session_id: str, req: WalletResetRequest, user_id: str = 
 @router.get("/{session_id}/trade-labels")
 async def trade_labels(session_id: str, user_id: str = Depends(get_desktop_user_id)):
     return _desktop_label_state(_require_session(session_id, user_id))
+
+
+@router.get("/trade-labels/metadata", response_model=DesktopLabelMetadata)
+async def trade_label_metadata(user_id: str = Depends(get_desktop_user_id)):
+    from app.services import pattern_logger_service, trade_label_service
+    return DesktopLabelMetadata(
+        categories=pattern_logger_service.list_category_names(user_id),
+        strategies=pattern_logger_service.list_strategy_names(user_id),
+        entry_tags=trade_label_service.list_entry_tags(user_id),
+        exit_tags=trade_label_service.list_exit_tags(user_id),
+    )
 
 
 @router.post("/{session_id}/trade-labels")

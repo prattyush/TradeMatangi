@@ -48,7 +48,7 @@ def on_entry_filled(
     if order.entry_sl_price is None:
         return
 
-    explicit_desktop_sl = getattr(order, "source", None) == "desktop_stepwise"
+    explicit_desktop_sl = getattr(order, "source", None) in ("desktop_stepwise", "desktop_replay")
     if not explicit_desktop_sl:
         try:
             from app.services.user_settings_service import get_settings
