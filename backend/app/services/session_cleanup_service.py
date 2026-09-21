@@ -107,7 +107,7 @@ def _batch_delete_composite_key(table_name: str, pk_attr: str, sk_attr: str,
     return len(items)
 
 
-def delete_session_cascade(session_id: str, user_id: str, date: str) -> None:
+def delete_session_cascade(session_id: str, user_id: str, date: str, reset_wallet: bool = True) -> None:
     """Delete all data for a session: trades, orders, strategies, labels, snapshots, AI commands/logs, session record, and wallet entry."""
     logger.info("Starting cascade delete for session %s (user=%s, date=%s)", session_id, user_id, date)
 
@@ -116,7 +116,7 @@ def delete_session_cascade(session_id: str, user_id: str, date: str) -> None:
         from app.services.simulation import get_session, stop_session
         session = get_session(session_id)
         if session is not None:
-            stop_session(session_id)
+            stop_session(session)
             logger.info("Stopped running session %s", session_id)
     except Exception:
         logger.exception("Error stopping session %s during cascade delete", session_id)
@@ -154,11 +154,11 @@ def delete_session_cascade(session_id: str, user_id: str, date: str) -> None:
     except Exception:
         logger.exception("Failed to delete session record %s", session_id)
 
-    # Wallet entry for user+date
-    try:
-        from app.services.wallet_service import delete_entry
-        delete_entry(user_id, date)
-    except Exception:
-        logger.exception("Error deleting wallet entry for user=%s date=%s", user_id, date)
+    if reset_wallet:
+        try:
+            from app.services.wallet_service import delete_entry
+            delete_entry(user_id, date)
+        except Exception:
+            logger.exception("Error deleting wallet entry for user=%s date=%s", user_id, date)
 
     logger.info("Cascade delete complete for session %s", session_id)

@@ -313,7 +313,7 @@ export default function SessionControls({
             const speedParam = isToday ? 1.0 : speed
             setOverrideConfirm({
               config,
-              message: `A previous ${sessionType} ${config.instrument_type} session exists for ${currentSymbol} on ${currentDate}. Delete its data and start a new session?`,
+              message: `A previous ${sessionType} ${config.instrument_type} session exists for ${currentSymbol} on ${currentDate}. Delete its data and start clean? Choose No to keep previous history visible and start another clean run from the selected time.`,
               startTime: startTimeParam,
               speed: speedParam,
             })
@@ -329,7 +329,7 @@ export default function SessionControls({
           if (localDuplicate) {
             setOverrideConfirm({
               config,
-              message: `A previous ${sessionType} ${config.instrument_type} session exists for ${currentSymbol} on ${currentDate}. Delete its data and start a new session?`,
+              message: `A previous ${sessionType} ${config.instrument_type} session exists for ${currentSymbol} on ${currentDate}. Delete its data and start clean? Choose No to keep previous history visible and start another clean run from the selected time.`,
               startTime: isToday ? '09:15:00' : startTime + ':00',
               speed: isToday ? 1.0 : speed,
             })

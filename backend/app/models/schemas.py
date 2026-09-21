@@ -61,6 +61,7 @@ class SimulationStartResponse(BaseModel):
     group_current_time: str | None = None
     session_alias: str | None = None
     wallet_ledger_id: str = ""
+    lot_size: int = 1
 
 
 class SessionGroupMember(BaseModel):

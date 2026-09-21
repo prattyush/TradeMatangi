@@ -59,6 +59,13 @@ class DesktopTradingSnapshot(BaseModel):
     settings: dict
 
 
+class DesktopTradingCandidate(BaseModel):
+    status: str
+    active: DesktopTradingSnapshot | None = None
+    checkpoint: dict | None = None
+    existing_session_id: str | None = None
+
+
 class DesktopOptionContract(BaseModel):
     symbol: str
     expiry: str
@@ -136,6 +143,7 @@ class DesktopTradeLabelRequest(BaseModel):
 
 class DesktopTradingStartRequest(SimulationStartRequest):
     desktop_mode: str = Field(default="stepwise", pattern="^(stepwise|replay)$")
+    resume_bar_index: int | None = Field(default=None, ge=0)
 
 
 def _desktop_mode(session) -> str:
@@ -192,7 +200,7 @@ def _get_registered_contract(session, right: str | None, strike: int | None, exp
 def _require_registered_contract(session, right: str | None, strike: int | None, expiry: str | None) -> dict:
     contract = _get_registered_contract(session, right, strike, expiry)
     if not contract:
-        raise HTTPException(status_code=400, detail="Option contract is not attached to this desktop trading session")
+        raise HTTPException(status_code=400, detail="Option contract is not attached to this Stepwise session")
     return contract
 
 
@@ -432,6 +440,11 @@ def _snapshot(session, user_id: str) -> DesktopTradingSnapshot:
         item["contract_key"]: _position_for(session, item["right"], item["strike"], item["expiry"]).model_dump(mode="json")
         for item in contracts
     }
+    session_trades = [trade.model_dump(mode="json") for trade in trading_service.get_trades(session.session_id)]
+    historical_trades = _historical_context_trades(session, user_id)
+    known_trade_ids = {str(item.get("trade_id")) for item in session_trades}
+    display_trades = session_trades + [item for item in historical_trades if str(item.get("trade_id")) not in known_trade_ids]
+    display_trades.sort(key=lambda item: int(item.get("timestamp", 0)))
     return DesktopTradingSnapshot(
         desktop_mode=_desktop_mode(session),
         source=_desktop_source(session),
@@ -442,7 +455,7 @@ def _snapshot(session, user_id: str) -> DesktopTradingSnapshot:
         current_price_ce=float(session.last_price_ce or 0),
         current_price_pe=float(session.last_price_pe or 0),
         contract_quotes=quotes,
-        trades=[trade.model_dump(mode="json") for trade in trading_service.get_trades(session.session_id)],
+        trades=display_trades,
         open_orders=order_service.get_open_orders(session.session_id),
         strategies=strategies,
         positions={
@@ -480,6 +493,93 @@ def _snapshot(session, user_id: str) -> DesktopTradingSnapshot:
             "default_sl_pct": settings.get("default_sl_pct", 0.20),
         },
     )
+
+
+def _historical_context_trades(session, user_id: str) -> list[dict]:
+    try:
+        from app.services.analysis_service import get_sessions_for_user, get_trades_for_session
+        sessions = get_sessions_for_user(
+            user_id=user_id,
+            symbol=session.symbol,
+            start_date=session.date,
+            end_date=session.date,
+            instrument_type=session.instrument_type,
+            session_type=session.session_type,
+        )
+        trades: list[dict] = []
+        for record in sessions:
+            sid = record.get("session_id")
+            if sid and sid != session.session_id:
+                trades.extend(get_trades_for_session(sid))
+        return trades
+    except Exception as exc:
+        logger.warning("desktop historical context trades failed for session=%s: %s", session.session_id, exc)
+        return []
+
+
+def _checkpoint_from_record(record: dict) -> dict:
+    return {
+        "session_id": record.get("session_id"),
+        "symbol": record.get("symbol"),
+        "date": record.get("date"),
+        "instrument_type": record.get("instrument_type"),
+        "session_type": record.get("session_type"),
+        "desktop_mode": record.get("desktop_checkpoint_mode") or record.get("desktop_mode"),
+        "current_time": int(record.get("desktop_checkpoint_time") or record.get("current_time") or 0),
+        "current_bar_index": int(record.get("desktop_checkpoint_bar_index") or 0),
+        "contracts": record.get("desktop_checkpoint_contracts") or [],
+    }
+
+
+def _flatten_positions_for_stop(session, user_id: str) -> None:
+    targets = []
+    if session.instrument_type == "options" and _desktop_contracts(session):
+        targets = list(_desktop_contracts(session))
+    elif session.instrument_type == "options":
+        targets = [{"right": "CE", "strike": session.strike_ce, "expiry": session.expiry}, {"right": "PE", "strike": session.strike_pe, "expiry": session.expiry}]
+    else:
+        targets = [{"right": None, "strike": None, "expiry": None}]
+    timestamp = int(session.current_time or 0)
+    if timestamp <= 0:
+        raise HTTPException(status_code=409, detail="Cannot stop cleanly before the trading clock has a valid time")
+    for target in targets:
+        right = target.get("right")
+        strike = target.get("strike")
+        expiry = target.get("expiry")
+        position = _position_for(session, right, strike, expiry)
+        if position.side == "FLAT" or position.quantity <= 0:
+            continue
+        price = _last_price_for_right(session, right, strike, expiry)
+        if price <= 0:
+            raise HTTPException(status_code=409, detail=f"Cannot close {right or session.symbol} before a valid price is available")
+        side = TradeSide.SELL if position.side == "LONG" else TradeSide.BUY
+        if side == TradeSide.SELL:
+            wallet_service.credit_ledger(user_id, price * position.quantity, session.date, session.wallet_ledger_id)
+        else:
+            wallet_service.debit_ledger(user_id, price * position.quantity, session.date, session.wallet_ledger_id)
+        trading_service.record_trade(
+            session.session_id,
+            side,
+            price=price,
+            timestamp=timestamp,
+            symbol=session.symbol,
+            instrument_type=session.instrument_type,
+            strike=strike,
+            expiry=expiry,
+            right=right,
+            quantity=position.quantity,
+            brokerage_per_order=session.brokerage_per_order,
+            user_id=user_id,
+            session_type=session.session_type,
+            source=_desktop_source(session),
+        )
+
+
+def _mark_desktop_checkpoint(session) -> None:
+    setattr(session, "desktop_checkpointed", True)
+    setattr(session, "desktop_checkpoint_time", int(session.current_time or 0))
+    setattr(session, "desktop_checkpoint_bar_index", int(session.current_bar_index or 0))
+    setattr(session, "desktop_checkpoint_mode", _desktop_mode(session))
 
 
 def _desktop_label_state(session) -> dict:
@@ -560,12 +660,42 @@ async def start_desktop_trading(req: DesktopTradingStartRequest, user_id: str = 
     session = _require_session(session_response.session_id, user_id)
     setattr(session, "desktop_mode", req.desktop_mode)
     setattr(session, "desktop_origin", _desktop_source(session))
+    if req.resume_bar_index is not None:
+        session.current_bar_index = req.resume_bar_index
     if session.instrument_type == "options" and req.expiry:
         if req.strike_ce is not None:
             _register_contract(session, _normalise_contract(DesktopOptionContract(symbol=session.symbol, expiry=req.expiry, strike=req.strike_ce, right="CE")))
         if req.strike_pe is not None:
             _register_contract(session, _normalise_contract(DesktopOptionContract(symbol=session.symbol, expiry=req.expiry, strike=req.strike_pe, right="PE")))
     return _snapshot(session, user_id)
+
+
+@router.get("/candidate", response_model=DesktopTradingCandidate)
+async def candidate(
+    symbol: str,
+    date: str,
+    instrument_type: str,
+    desktop_mode: str = Query(pattern="^(stepwise|replay)$"),
+    user_id: str = Depends(get_desktop_user_id),
+):
+    session_type = "stepwise" if desktop_mode == "stepwise" else "sim"
+    for session in list(sim_svc._sessions.values()):
+        if session.user_id != user_id or session.state == sim_svc.SimulationState.ENDED:
+            continue
+        if session.symbol == symbol and session.date == date and session.instrument_type == instrument_type and _desktop_mode(session) == desktop_mode:
+            return DesktopTradingCandidate(status="active", active=_snapshot(session, user_id))
+    records = sim_svc.find_all_sessions_by_context(user_id, symbol, date, session_type, instrument_type)
+    if not records:
+        return DesktopTradingCandidate(status="none")
+    checkpoints = [
+        record for record in records
+        if record.get("desktop_checkpointed") and (record.get("desktop_checkpoint_mode") or record.get("desktop_mode")) == desktop_mode
+    ]
+    if checkpoints:
+        record = max(checkpoints, key=lambda item: int(item.get("desktop_checkpoint_time") or item.get("current_time") or item.get("created_at") or 0))
+        return DesktopTradingCandidate(status="checkpoint", checkpoint=_checkpoint_from_record(record), existing_session_id=record.get("session_id"))
+    record = max(records, key=lambda item: int(item.get("created_at", 0)))
+    return DesktopTradingCandidate(status="existing", existing_session_id=record.get("session_id"))
 
 
 @router.post("/{session_id}/contracts", response_model=DesktopTradingSnapshot)
@@ -624,6 +754,8 @@ async def snapshot(session_id: str, user_id: str = Depends(get_desktop_user_id))
 @router.post("/{session_id}/stop")
 async def stop_stepwise(session_id: str, user_id: str = Depends(get_desktop_user_id)):
     session = _require_session(session_id, user_id)
+    _flatten_positions_for_stop(session, user_id)
+    _mark_desktop_checkpoint(session)
     sim_svc.stop_session(session)
     return {"status": "stopped"}
 
