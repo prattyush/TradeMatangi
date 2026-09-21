@@ -34,6 +34,7 @@ interface Props {
   injectedUtpPrice?: number | null
   // Strategy props
   instrumentType?: 'equity' | 'options'
+  lotSize?: number
   activeRight?: 'CE' | 'PE' | null
   positionCE?: Position
   positionPE?: Position
@@ -91,6 +92,7 @@ export default function OrderPanel({
   onRequestUtpPick,
   injectedUtpPrice,
   instrumentType = 'equity',
+  lotSize = 1,
   activeRight = null,
   positionCE,
   positionPE,
@@ -116,6 +118,7 @@ export default function OrderPanel({
   const [quantity, setQuantity] = useState(1)
   const [ratio, setRatio] = useState<RatioKey>('l')
   const [slQty, setSlQty] = useState(1)
+  const slQtyStep = instrumentType === 'options' ? Math.max(1, lotSize || 1) : 1
   const [placing, setPlacing] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -1229,6 +1232,7 @@ export default function OrderPanel({
             value={slQty}
             min={1}
             max={position.quantity}
+            step={slQtyStep}
             onChange={e => setSlQty(Math.min(position.quantity, Math.max(1, parseInt(e.target.value) || 1)))}
             disabled={!isActive}
             style={{

@@ -2420,6 +2420,7 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
               defaultSlPct={defaultSlPct}
               targetDeviationPct={targetDeviationPct}
               instrumentType={instrumentType}
+              lotSize={sim.lotSize}
               activeRight={instrumentType === 'options' ? activeRight : undefined}
               positionCE={sim.positionCE}
               positionPE={sim.positionPE}

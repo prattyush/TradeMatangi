@@ -49,6 +49,7 @@ export interface DesktopTradingSession {
   state?: 'idle' | 'running' | 'paused' | 'ended' | null
   stepwise: boolean; total_bars: number | null
   group_id: string | null; wallet_ledger_id: string
+  lot_size: number
 }
 
 export interface DesktopTradingSettings {
