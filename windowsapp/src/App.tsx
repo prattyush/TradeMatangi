@@ -5,6 +5,7 @@ import { replayCandles } from './chartState'
 import { shouldConsumeDrawingCommand } from './drawingState'
 import type { Candle, DesktopOrder, DesktopPosition, DesktopTradingSnapshot } from './contracts'
 import { aggregateLiveCandles, appendLiveTick } from './liveCandles'
+import { applyLiveStreamPayloadToSnapshot, type LiveSnapshot, type LiveTileState } from './liveStreamState'
 
 interface HistoricalPage { candles: Candle[]; available?: boolean; unavailable_reason?: string }
 interface Instrument { symbol: string; display_name: string; exchange: string; chart_type?: string; option_eligible: boolean; supported_intervals: number[] }
@@ -17,8 +18,6 @@ interface PersistedScreenState { id?: string; layout?: Layout; tiles?: TileConfi
 interface DesktopScreenRecord { screen_id: string; name: string; state: PersistedScreenState; revision: number; order: number; active?: boolean }
 interface ReplaySnapshot { run_id: string; event_id: number; cursor: number; state: string; mode: string; bar_index: number; interval_seconds: number; tile_states: Array<{ tile_id: string; availability: string; candle?: Candle }> }
 interface ChartSettings { background: string; textColor: string; gridColor: string; gridOpacity: number; gridStyle: 'solid' | 'dashed'; gridSize: number; movingAverageType: 'MA' | 'EMA'; movingAveragePeriods: string; liveProvider: 'breeze'; horizontalLineColor: string; horizontalLineWidth: number; trendLineColor: string; trendLineWidth: number; drawingLineColor: string; drawingLineWidth: number; drawingFillColor: string; drawingFillOpacity: number }
-interface LiveTileState { tile_id: string; availability: string; reason?: string; candles?: Candle[]; latest_tick?: Candle; instrument?: Record<string, unknown>; interval_minutes?: number }
-interface LiveSnapshot { stream_id: string; event_id: number; tiles: LiveTileState[] }
 interface DesktopStreamSnapshot<T> { key: string; last_event_id: number; latest_payload: T | null; connection: 'connected' | 'reconnecting' | 'offline' | 'authentication_required' }
 interface DrawingCommand { id: number; tool: string }
 interface DrawingAction { id: number; action: 'delete' | 'hide' | 'lock' }
@@ -229,7 +228,44 @@ export default function App() {
   }, [])
   const clearLiveTickCache = () => setLiveTickCache({})
   const setLiveSnapshot = (snapshot: LiveSnapshot | null) => { activeLiveSnapshot = snapshot; setLive(snapshot); if (snapshot) setLiveError('') }
+  const updateLiveSnapshot = (updater: (snapshot: LiveSnapshot | null) => LiveSnapshot | null) => {
+    setLive(current => {
+      const next = updater(current)
+      activeLiveSnapshot = next
+      if (next) setLiveError('')
+      return next
+    })
+  }
   const hasNativeHost = '__TAURI_INTERNALS__' in window
+  const recordRendererDiagnostic = useCallback((kind: string, payload: Record<string, unknown>) => {
+    if (!hasNativeHost) return
+    void invoke('record_desktop_renderer_diagnostic', { kind, payload }).catch(() => undefined)
+  }, [hasNativeHost])
+  useEffect(() => {
+    const onError = (event: ErrorEvent) => recordRendererDiagnostic('window_error', {
+      message: event.message,
+      filename: event.filename,
+      line: event.lineno,
+      column: event.colno,
+      stack: event.error instanceof Error ? event.error.stack : undefined,
+      mode,
+      live_stream_id: live?.stream_id,
+      live_event_id: live?.event_id,
+    })
+    const onUnhandledRejection = (event: PromiseRejectionEvent) => recordRendererDiagnostic('unhandled_rejection', {
+      reason: String(event.reason),
+      stack: event.reason instanceof Error ? event.reason.stack : undefined,
+      mode,
+      live_stream_id: live?.stream_id,
+      live_event_id: live?.event_id,
+    })
+    window.addEventListener('error', onError)
+    window.addEventListener('unhandledrejection', onUnhandledRejection)
+    return () => {
+      window.removeEventListener('error', onError)
+      window.removeEventListener('unhandledrejection', onUnhandledRejection)
+    }
+  }, [live?.event_id, live?.stream_id, mode, recordRendererDiagnostic])
   const api: Api = async (path, params) => { if (hasNativeHost) { const commands: Record<string, string> = { catalogue: 'desktop_catalogue', metadata: 'desktop_option_metadata', history: 'desktop_historical_page', optionHistory: 'desktop_option_historical_page' }; const values = Object.fromEntries((params ?? new URLSearchParams()).entries()); return invoke(commands[path], { baseUrl: serverUrl, ...values, asOfDate: values.as_of_date, tradingDate: values.trading_date, intervalMinutes: Number(values.interval_minutes), strike: Number(values.strike) }) }; const route = path === 'catalogue' ? 'catalogue' : path === 'metadata' ? 'option-metadata' : path === 'history' ? 'historical/pages' : 'options/historical/pages'; const response = await fetch(`${serverUrl.replace(/\/$/, '')}/api/desktop/v1/${route}${params ? `?${params}` : ''}`, { headers: { Authorization: `Bearer ${browserToken}` } }); if (!response.ok) throw new Error(`Request failed (${response.status})`); return response.json() }
   const login = async () => { try { setLoginError(''); if (hasNativeHost) await invoke('desktop_login', { baseUrl: serverUrl, email, password }); else { const response = await fetch(`${serverUrl.replace(/\/$/, '')}/api/auth/desktop/token`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, password, device_name: 'Browser development preview' }) }); if (!response.ok) throw new Error('Login failed: check your email and password'); setBrowserToken((await response.json() as { access_token: string }).access_token) }; setConnection('connected') } catch (error) { setConnection('authentication_required'); setLoginError(String(error)) } }
   const googleLogin = async (idToken: string, accountName?: string) => { try { setLoginError(''); setGoogleLoading(true); if (hasNativeHost) await invoke('desktop_google_login', { baseUrl: serverUrl, accountName: accountName ?? null }); else { const response = await fetch(`${serverUrl.replace(/\/$/, '')}/api/auth/desktop/google-token`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id_token: idToken, account_name: accountName ?? null, device_name: 'Browser development preview' }) }); if (!response.ok) { const data = await response.json().catch(() => ({})); throw new Error(data.detail || `Google login failed (${response.status})`) } setBrowserToken((await response.json() as { access_token: string }).access_token) }; setPendingGoogleToken(null); setGoogleAccountName(''); setConnection('connected') } catch (error) { const message = String(error); if (!accountName && message.includes('account_name')) setPendingGoogleToken(hasNativeHost ? 'native-google-token' : idToken); else setLoginError(message) } finally { setGoogleLoading(false) } }
@@ -301,7 +337,27 @@ export default function App() {
     setActiveDrawingTool(null)
     setDrawingCommand(null)
   }
-  const onLiveTick = (key: string, tick: Candle) => setLiveTickCache(current => ({ ...current, [key]: appendLiveTick(current[key] ?? [], tick) }))
+  const onLiveTick = (key: string, tick: Candle) => {
+    if (hasNativeHost && live?.stream_id) {
+      void invoke('record_desktop_live_tick', {
+        streamId: live.stream_id,
+        instrumentKey: key,
+        tick,
+      }).catch(error => recordRendererDiagnostic('live_tick_persist_error', {
+        instrument_key: key,
+        live_stream_id: live.stream_id,
+        live_event_id: live.event_id,
+        error: String(error),
+      }))
+    }
+    recordRendererDiagnostic('live_tick_received', {
+      instrument_key: key,
+      tick,
+      live_stream_id: live?.stream_id,
+      live_event_id: live?.event_id,
+    })
+    setLiveTickCache(current => ({ ...current, [key]: appendLiveTick(current[key] ?? [], tick) }))
+  }
   const layoutTileCount: Record<Layout, number> = { '1': 1, '2-side': 2, '2-stacked': 2, '3-wide-top': 3, '4-grid': 4 }
   const setLayout = (layout: Layout) => setScreens(current => current.map(screen => screen.id === activeScreenId ? { ...screen, layout, tiles: layoutTileCount[layout] > screen.tiles.length ? [...screen.tiles, ...Array.from({ length: layoutTileCount[layout] - screen.tiles.length }, newTile)] : screen.tiles.slice(0, layoutTileCount[layout]) } : screen))
   const saveTile = async (tile: TileConfig) => {
@@ -383,6 +439,7 @@ export default function App() {
     else if (connection !== 'connected') setConnection('connected')
     return snapshot.latest_payload
   }
+  const applyLiveStreamPayload = (payload: unknown) => updateLiveSnapshot(current => applyLiveStreamPayloadToSnapshot(current, payload))
   const liveTile = (tile: TileConfig) => { const item = catalogue.find(entry => entry.symbol === tile.symbol) ?? fallbackCatalogue[0]; const instrument = tile.kind === 'option' ? { kind: 'option', exchange: item.exchange, underlying: tile.symbol, expiry: tile.expiry, strike: Number(tile.strike), right: tile.right } : { kind: item.chart_type ?? 'equity', exchange: item.exchange, symbol: tile.symbol }; return { tile_id: tile.id, instrument, interval_minutes: Number(tile.interval) } }
   const liveTiles = () => activeScreen.tiles.map(liveTile)
   const startLive = async () => { try { setLiveError(''); clearLiveTickCache(); const next = await liveRequest('start', 'POST', { tiles: liveTiles() }); setLiveSnapshot(next); await startNativeStream(`live:${next.stream_id}`, `live/${next.stream_id}/events`, `live/${next.stream_id}/snapshot`) } catch (error) { setLiveError(String(error)) } }
@@ -420,7 +477,7 @@ export default function App() {
     if (!live) return
     const timer = window.setInterval(() => {
       if (hasNativeHost) {
-        void readNativeStream<LiveSnapshot>(`live:${live.stream_id}`).then(snapshot => { if (snapshot?.stream_id === live.stream_id) setLiveSnapshot(snapshot) }).catch(error => setLiveError(String(error)))
+        void readNativeStream<unknown>(`live:${live.stream_id}`).then(applyLiveStreamPayload).catch(error => setLiveError(String(error)))
       } else {
         void liveRequest(`${live.stream_id}/snapshot`, 'GET').then(setLiveSnapshot).catch(error => setLiveError(String(error)))
       }

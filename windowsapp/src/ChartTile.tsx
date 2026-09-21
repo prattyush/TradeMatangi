@@ -33,6 +33,10 @@ interface PersistedDrawing { tool: string; points: Array<{ timestamp: number; pr
 interface DrawingRecord { drawing_id: string; revision: number; drawing: PersistedDrawing }
 interface LocalDrawing { id: string; backendId?: string; revision?: number; drawing: PersistedDrawing; locked: boolean; hidden: boolean }
 const hasNativeHost = '__TAURI_INTERNALS__' in window
+const reportChartDiagnostic = (kind: string, payload: Record<string, unknown>) => {
+  if (!hasNativeHost) return
+  void invoke('record_desktop_renderer_diagnostic', { kind, payload }).catch(() => undefined)
+}
 const overlayName = (tool: string) => tool === 'Trend' ? 'segment' : tool === 'Horizontal' ? 'horizontalStraightLine' : tool === 'Fib Retracement' ? 'fibonacciLine' : tool
 const drawingPoints = (drawing: PersistedDrawing) => drawing.points.map(point => ({ timestamp: point.timestamp * 1000, value: point.price }))
 const orderPrice = (order: DesktopOrder) => order.order_type === 'LIMIT' ? order.limit_price : order.trigger_price
@@ -92,10 +96,15 @@ export function ChartTile({ symbol, interval, supportedIntervals, onIntervalChan
     if (!chart || !container || data.length === 0) return
     const width = Math.max(1, container.clientWidth)
     const nextBarSpace = Math.max(1, Math.min(18, width / Math.max(data.length + 8, 1)))
-    chart.setBarSpace(nextBarSpace)
-    chart.setOffsetRightDistance(8)
-    chart.scrollToDataIndex(data.length - 1, 0)
-    chart.resize()
+    try {
+      chart.setBarSpace(nextBarSpace)
+      chart.setOffsetRightDistance(8)
+      chart.scrollToDataIndex(data.length - 1, 0)
+      chart.resize()
+      reportChartDiagnostic('fit_success', { symbol, interval, candle_count: data.length })
+    } catch (error) {
+      reportChartDiagnostic('fit_error', { symbol, interval, candle_count: data.length, error: String(error), stack: error instanceof Error ? error.stack : undefined })
+    }
   }
   useEffect(() => { drawingModeRef.current = drawingMode }, [drawingMode])
   useEffect(() => {
@@ -106,22 +115,36 @@ export function ChartTile({ symbol, interval, supportedIntervals, onIntervalChan
   }, [isLive])
   useEffect(() => {
     if (!element.current) return
-    ensureExtensions()
-    const chart = init(element.current)
-    if (!chart) return
-    chartRef.current = chart
+    let chart: Chart | null = null
+    try {
+      ensureExtensions()
+      chart = init(element.current)
+      if (!chart) {
+        reportChartDiagnostic('chart_init_empty', { symbol, interval })
+        return
+      }
+      chartRef.current = chart
     // Backend candle timestamps deliberately encode IST market wall-clock time
     // as UTC-labelled seconds. Rendering as UTC prevents KLineCharts from
     // applying the machine/Asia-Kolkata offset a second time.
-    chart.setTimezone('Etc/UTC')
-    applyChartStyles(chart, settings)
-    chart.setSymbol({ ticker: symbol, pricePrecision: 2, volumePrecision: 0 })
-    chart.setPeriod({ span: Number(interval.replace('m', '')), type: 'minute' })
-    chart.setDataLoader({
-      getBars: ({ callback }) => callback(candlesRef.current.map(candle => ({ timestamp: candle.timestamp * 1000, open: candle.open, high: candle.high, low: candle.low, close: candle.close }))),
-      subscribeBar: ({ callback }) => { subscribeBarRef.current = callback },
-      unsubscribeBar: () => { subscribeBarRef.current = null },
-    })
+      chart.setTimezone('Etc/UTC')
+      applyChartStyles(chart, settings)
+      chart.setSymbol({ ticker: symbol, pricePrecision: 2, volumePrecision: 0 })
+      chart.setPeriod({ span: Number(interval.replace('m', '')), type: 'minute' })
+      chart.setDataLoader({
+        getBars: ({ callback }) => callback(candlesRef.current.map(candle => ({ timestamp: candle.timestamp * 1000, open: candle.open, high: candle.high, low: candle.low, close: candle.close }))),
+        subscribeBar: ({ callback }) => { subscribeBarRef.current = callback },
+        unsubscribeBar: () => { subscribeBarRef.current = null },
+      })
+      reportChartDiagnostic('chart_init_success', { symbol, interval, candle_count: candlesRef.current.length })
+    } catch (error) {
+      reportChartDiagnostic('chart_init_error', { symbol, interval, error: String(error), stack: error instanceof Error ? error.stack : undefined })
+      if (chart && element.current) {
+        try { dispose(element.current) } catch {}
+      }
+      chartRef.current = null
+      return
+    }
     const container = element.current
     const rememberPointer = (event: MouseEvent) => { lastPointerRef.current = { x: event.clientX, y: event.clientY } }
     const pickPrice = (event: MouseEvent) => {
@@ -147,7 +170,12 @@ export function ChartTile({ symbol, interval, supportedIntervals, onIntervalChan
     container.addEventListener('mousedown', rememberPointer)
     container.addEventListener('click', pickPrice)
     container.addEventListener('contextmenu', openContext)
-    return () => { container.removeEventListener('mousedown', rememberPointer); container.removeEventListener('click', pickPrice); container.removeEventListener('contextmenu', openContext); subscribeBarRef.current = null; renderedCandlesRef.current = []; chartRef.current = null; dispose(element.current!) }
+    return () => {
+      container.removeEventListener('mousedown', rememberPointer); container.removeEventListener('click', pickPrice); container.removeEventListener('contextmenu', openContext)
+      subscribeBarRef.current = null; renderedCandlesRef.current = []; chartRef.current = null
+      try { dispose(element.current!) ; reportChartDiagnostic('chart_dispose_success', { symbol, interval }) }
+      catch (error) { reportChartDiagnostic('chart_dispose_error', { symbol, interval, error: String(error), stack: error instanceof Error ? error.stack : undefined }) }
+    }
   }, [symbol, interval])
   useEffect(() => {
     if (!contextMenu) return
@@ -190,15 +218,21 @@ export function ChartTile({ symbol, interval, supportedIntervals, onIntervalChan
     const sameLengthUpdate = candles.length === previous.length && previous.length > 0 && previous.slice(0, -1).every((candle, index) => sameCandle(candle, candles[index]))
     const appendUpdate = candles.length === previous.length + 1 && previous.length > 0 && previous.every((candle, index) => sameCandle(candle, candles[index]))
     const incremental = Boolean(subscribeBarRef.current && (sameLengthUpdate || appendUpdate))
-    if (incremental && latest && subscribeBarRef.current) {
-      subscribeBarRef.current({ timestamp: latest.timestamp * 1000, open: latest.open, high: latest.high, low: latest.low, close: latest.close })
+    try {
+      if (incremental && latest && subscribeBarRef.current) {
+        subscribeBarRef.current({ timestamp: latest.timestamp * 1000, open: latest.open, high: latest.high, low: latest.low, close: latest.close })
+        renderedCandlesRef.current = candles
+        reportChartDiagnostic('chart_incremental_success', { symbol, interval, candle_count: candles.length, latest })
+        return
+      }
+      const barSpace = chart.getBarSpace().bar
+      chart.resetData()
+      chart.setBarSpace(barSpace)
       renderedCandlesRef.current = candles
-      return
+      reportChartDiagnostic('chart_reset_success', { symbol, interval, candle_count: candles.length, latest: latest ?? null })
+    } catch (error) {
+      reportChartDiagnostic('chart_data_error', { symbol, interval, candle_count: candles.length, latest: latest ?? null, error: String(error), stack: error instanceof Error ? error.stack : undefined })
     }
-    const barSpace = chart.getBarSpace().bar
-    chart.resetData()
-    chart.setBarSpace(barSpace)
-    renderedCandlesRef.current = candles
   }, [candles, isReplaying])
   const persistDrawing = async (path: string, method: 'POST' | 'PUT' | 'DELETE', drawing: PersistedDrawing, revision?: number) => {
     if (!hasNativeHost) return null

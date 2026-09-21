@@ -49,6 +49,36 @@ fn diagnostic_log(message: &str) {
     }
 }
 
+/// Persist a compact, structured renderer/stream trace for diagnosing WebView
+/// failures. Market OHLC values are intentionally retained; credentials and
+/// HTTP request metadata must never be supplied to this function.
+fn live_diagnostic(kind: &str, payload: &serde_json::Value) {
+    let Some(local_app_data) = std::env::var_os("LOCALAPPDATA") else {
+        return;
+    };
+    let directory = PathBuf::from(local_app_data)
+        .join("Trade Matangi Charts")
+        .join("logs");
+    if fs::create_dir_all(&directory).is_err() {
+        return;
+    }
+    let path = directory.join("desktop-live.ndjson");
+    const MAX_JOURNAL_BYTES: u64 = 16 * 1024 * 1024;
+    if fs::metadata(&path).map(|meta| meta.len() > MAX_JOURNAL_BYTES).unwrap_or(false) {
+        let previous = directory.join("desktop-live.previous.ndjson");
+        let _ = fs::remove_file(&previous);
+        let _ = fs::rename(&path, previous);
+    }
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|value| value.as_millis())
+        .unwrap_or(0);
+    let entry = serde_json::json!({ "timestamp_ms": timestamp, "kind": kind, "payload": payload });
+    if let Ok(mut file) = fs::OpenOptions::new().create(true).append(true).open(path) {
+        let _ = writeln!(file, "{}", entry);
+    }
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 pub struct TokenBundle {
     pub access_token: String,
@@ -78,6 +108,16 @@ pub struct DesktopStreamSnapshot {
     last_event_id: u64,
     latest_payload: serde_json::Value,
     connection: String,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct DesktopLiveTick {
+    timestamp: i64,
+    open: f64,
+    high: f64,
+    low: f64,
+    close: f64,
+    volume: Option<f64>,
 }
 
 fn credentials() -> Result<keyring::Entry, String> {
@@ -852,9 +892,36 @@ fn cache_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
 fn cache(app: &tauri::AppHandle) -> Result<rusqlite::Connection, String> {
     let connection =
         rusqlite::Connection::open(cache_path(app)?).map_err(|error| error.to_string())?;
-    connection.execute_batch("CREATE TABLE IF NOT EXISTS offline_mutations (id INTEGER PRIMARY KEY, kind TEXT NOT NULL, payload TEXT NOT NULL);")
-        .map_err(|error| error.to_string())?;
+    ensure_cache_schema(&connection)?;
     Ok(connection)
+}
+
+fn ensure_cache_schema(connection: &rusqlite::Connection) -> Result<(), String> {
+    connection.execute_batch(
+        "
+        CREATE TABLE IF NOT EXISTS offline_mutations (
+            id INTEGER PRIMARY KEY,
+            kind TEXT NOT NULL,
+            payload TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS desktop_live_ticks (
+            stream_id TEXT NOT NULL,
+            instrument_key TEXT NOT NULL,
+            timestamp INTEGER NOT NULL,
+            open REAL NOT NULL,
+            high REAL NOT NULL,
+            low REAL NOT NULL,
+            close REAL NOT NULL,
+            volume REAL,
+            recorded_at INTEGER NOT NULL,
+            PRIMARY KEY (stream_id, instrument_key, timestamp)
+        );
+        CREATE INDEX IF NOT EXISTS idx_desktop_live_ticks_lookup
+            ON desktop_live_ticks (stream_id, instrument_key, timestamp);
+        ",
+    )
+        .map_err(|error| error.to_string())?;
+    Ok(())
 }
 
 /// Queue a screen/drawing write while offline. The server remains authoritative
@@ -899,6 +966,114 @@ fn pending_offline_mutations(app: tauri::AppHandle) -> Result<Vec<QueuedMutation
 fn acknowledge_offline_mutation(app: tauri::AppHandle, id: i64) -> Result<(), String> {
     cache(&app)?
         .execute("DELETE FROM offline_mutations WHERE id = ?1", [id])
+        .map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+fn record_desktop_live_tick(
+    app: tauri::AppHandle,
+    stream_id: String,
+    instrument_key: String,
+    tick: DesktopLiveTick,
+) -> Result<(), String> {
+    let connection = cache(&app)?;
+    record_desktop_live_tick_in_connection(&connection, stream_id, instrument_key, tick)
+}
+
+fn record_desktop_live_tick_in_connection(
+    connection: &rusqlite::Connection,
+    stream_id: String,
+    instrument_key: String,
+    tick: DesktopLiveTick,
+) -> Result<(), String> {
+    let recorded_at = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|value| value.as_secs() as i64)
+        .unwrap_or(0);
+    connection
+        .execute(
+            "
+            INSERT INTO desktop_live_ticks
+                (stream_id, instrument_key, timestamp, open, high, low, close, volume, recorded_at)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+            ON CONFLICT(stream_id, instrument_key, timestamp) DO UPDATE SET
+                open = excluded.open,
+                high = excluded.high,
+                low = excluded.low,
+                close = excluded.close,
+                volume = excluded.volume,
+                recorded_at = excluded.recorded_at
+            ",
+            rusqlite::params![
+                stream_id,
+                instrument_key,
+                tick.timestamp,
+                tick.open,
+                tick.high,
+                tick.low,
+                tick.close,
+                tick.volume,
+                recorded_at,
+            ],
+        )
+        .map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+fn desktop_live_ticks(
+    app: tauri::AppHandle,
+    stream_id: String,
+    instrument_key: String,
+    since_timestamp: Option<i64>,
+) -> Result<Vec<DesktopLiveTick>, String> {
+    let connection = cache(&app)?;
+    desktop_live_ticks_in_connection(&connection, stream_id, instrument_key, since_timestamp)
+}
+
+fn desktop_live_ticks_in_connection(
+    connection: &rusqlite::Connection,
+    stream_id: String,
+    instrument_key: String,
+    since_timestamp: Option<i64>,
+) -> Result<Vec<DesktopLiveTick>, String> {
+    let mut statement = connection
+        .prepare(
+            "
+            SELECT timestamp, open, high, low, close, volume
+            FROM desktop_live_ticks
+            WHERE stream_id = ?1
+              AND instrument_key = ?2
+              AND (?3 IS NULL OR timestamp >= ?3)
+            ORDER BY timestamp
+            ",
+        )
+        .map_err(|error| error.to_string())?;
+    let ticks = statement
+        .query_map(
+            rusqlite::params![stream_id, instrument_key, since_timestamp],
+            |row| {
+                Ok(DesktopLiveTick {
+                    timestamp: row.get(0)?,
+                    open: row.get(1)?,
+                    high: row.get(2)?,
+                    low: row.get(3)?,
+                    close: row.get(4)?,
+                    volume: row.get(5)?,
+                })
+            },
+        )
+        .map_err(|error| error.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| error.to_string())?;
+    Ok(ticks)
+}
+
+#[tauri::command]
+fn clear_desktop_live_ticks(app: tauri::AppHandle, stream_id: String) -> Result<(), String> {
+    cache(&app)?
+        .execute("DELETE FROM desktop_live_ticks WHERE stream_id = ?1", [stream_id])
         .map_err(|error| error.to_string())?;
     Ok(())
 }
@@ -1074,6 +1249,14 @@ fn desktop_stream_snapshot(
     host.stream_snapshot(&key)
 }
 
+/// The WebView uses this for renderer-side failures and chart-operation
+/// breadcrumbs. It is deliberately a write-only journal; no diagnostic data
+/// is returned to JavaScript.
+#[tauri::command]
+fn record_desktop_renderer_diagnostic(kind: String, payload: serde_json::Value) {
+    live_diagnostic(&format!("renderer:{kind}"), &payload);
+}
+
 #[tauri::command]
 fn stop_desktop_stream(key: String, host: tauri::State<HostState>) {
     host.stop_stream(&key);
@@ -1109,18 +1292,22 @@ async fn fetch_stream_snapshot(
         .map_err(|error| error.to_string())
 }
 
-fn parse_sse_frame(frame: &str) -> (Option<u64>, Option<String>) {
+fn parse_sse_frame(frame: &str) -> (Option<u64>, Option<String>, Option<String>) {
     let id = frame
         .lines()
         .find_map(|line| line.strip_prefix("id: "))
         .and_then(|id| id.parse().ok());
+    let event = frame
+        .lines()
+        .find_map(|line| line.strip_prefix("event: "))
+        .map(str::to_string);
     let data = frame
         .lines()
         .filter_map(|line| line.strip_prefix("data: "))
         .collect::<Vec<_>>()
         .join("\n");
     let data = if data.is_empty() { None } else { Some(data) };
-    (id, data)
+    (id, event, data)
 }
 
 #[tauri::command]
@@ -1177,14 +1364,47 @@ async fn start_desktop_stream(
                         while let Some(end) = buffer.find("\n\n") {
                             let frame = buffer[..end].to_string();
                             buffer = buffer[end + 2..].to_string();
-                            let (id, data) = parse_sse_frame(&frame);
+                            let (id, event_name, data) = parse_sse_frame(&frame);
                             let event_id = id.unwrap_or_else(|| stream_host.stream_snapshot(&stream_key).last_event_id);
                             if let Some(data) = data {
                                 if let Ok(payload) = serde_json::from_str::<serde_json::Value>(&data) {
+                                    if payload.get("type").and_then(|value| value.as_str()) == Some("candle") {
+                                        live_diagnostic("native_sse_candle", &serde_json::json!({
+                                            "stream_key": &stream_key,
+                                            "event_id": event_id,
+                                            "event": &payload,
+                                        }));
+                                    } else {
+                                        live_diagnostic("native_sse_event", &serde_json::json!({
+                                            "stream_key": &stream_key,
+                                            "event_id": event_id,
+                                            "type": payload.get("type"),
+                                        }));
+                                    }
                                     stream_host.record_stream(&stream_key, event_id, payload);
-                                }
-                                if let Ok(snapshot) = fetch_stream_snapshot(&client, &base_url, &snapshot_path, &stream_host).await {
-                                    stream_host.record_stream(&stream_key, event_id, snapshot);
+                                } else {
+                                    live_diagnostic("native_sse_parse_failed", &serde_json::json!({
+                                        "stream_key": &stream_key,
+                                        "event_id": event_id,
+                                        "event": event_name,
+                                    }));
+                                    let snapshot_started = SystemTime::now();
+                                    if let Ok(snapshot) = fetch_stream_snapshot(&client, &base_url, &snapshot_path, &stream_host).await {
+                                        let elapsed_ms = snapshot_started.elapsed().map(|value| value.as_millis()).unwrap_or(0);
+                                        live_diagnostic("native_snapshot_recovery_received", &serde_json::json!({
+                                            "stream_key": &stream_key,
+                                            "event_id": event_id,
+                                            "elapsed_ms": elapsed_ms,
+                                            "bytes": snapshot.to_string().len(),
+                                        }));
+                                        stream_host.record_stream(&stream_key, event_id, snapshot);
+                                    } else {
+                                        live_diagnostic("native_snapshot_recovery_failed", &serde_json::json!({
+                                            "stream_key": &stream_key,
+                                            "event_id": event_id,
+                                            "event": event_name,
+                                        }));
+                                    }
                                 }
                             }
                         }
@@ -1285,8 +1505,12 @@ pub fn run() {
             queue_offline_mutation,
             pending_offline_mutations,
             acknowledge_offline_mutation,
+            record_desktop_live_tick,
+            desktop_live_ticks,
+            clear_desktop_live_ticks,
             host_snapshot,
             desktop_stream_snapshot,
+            record_desktop_renderer_diagnostic,
             start_desktop_stream,
             stop_desktop_stream,
             start_sse_subscription
@@ -1381,5 +1605,71 @@ mod tests {
         let state = host.0.lock().unwrap();
         assert_eq!(state.last_event_id, 2);
         assert_eq!(state.latest_payload, "second");
+    }
+
+    #[test]
+    fn sse_parser_reads_event_name_and_multiline_data() {
+        let (id, event, data) = parse_sse_frame("id: 42\nevent: candle\ndata: {\"a\":1}\ndata: {\"b\":2}");
+
+        assert_eq!(id, Some(42));
+        assert_eq!(event.as_deref(), Some("candle"));
+        assert_eq!(data.as_deref(), Some("{\"a\":1}\n{\"b\":2}"));
+    }
+
+    #[test]
+    fn desktop_live_tick_cache_updates_duplicate_second_in_place() {
+        let connection = rusqlite::Connection::open_in_memory().unwrap();
+        ensure_cache_schema(&connection).unwrap();
+        record_desktop_live_tick_in_connection(
+            &connection,
+            "stream-1".into(),
+            "instrument-1".into(),
+            DesktopLiveTick {
+                timestamp: 100,
+                open: 1.0,
+                high: 2.0,
+                low: 0.5,
+                close: 1.5,
+                volume: None,
+            },
+        )
+        .unwrap();
+        record_desktop_live_tick_in_connection(
+            &connection,
+            "stream-1".into(),
+            "instrument-1".into(),
+            DesktopLiveTick {
+                timestamp: 100,
+                open: 1.0,
+                high: 3.0,
+                low: 0.25,
+                close: 2.5,
+                volume: Some(10.0),
+            },
+        )
+        .unwrap();
+
+        let ticks = desktop_live_ticks_in_connection(
+            &connection,
+            "stream-1".into(),
+            "instrument-1".into(),
+            Some(90),
+        )
+        .unwrap();
+
+        assert_eq!(ticks.len(), 1);
+        assert_eq!(ticks[0].timestamp, 100);
+        assert_eq!(ticks[0].high, 3.0);
+        assert_eq!(ticks[0].low, 0.25);
+        assert_eq!(ticks[0].close, 2.5);
+        assert_eq!(ticks[0].volume, Some(10.0));
+        assert!(desktop_live_ticks_in_connection(
+            &connection,
+            "stream-1".into(),
+            "instrument-1".into(),
+            Some(101),
+        )
+        .unwrap()
+        .is_empty());
     }
 }
