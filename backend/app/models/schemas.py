@@ -214,6 +214,7 @@ class Order(BaseModel):
     filled_price: float | None = None
     reserved_amount: float = 0.0  # wallet amount debited on BUY placement; 0 for SELL
     is_stoploss: bool = False      # SL orders skip all wallet debit/credit
+    is_autostop: bool = False      # internal provenance for AutoStop entry fills
     right: str | None = None       # "CE" or "PE" for options orders; None for equity
     strike: int | None = None      # options strike price; None for equity
     expiry: str | None = None      # options expiry; None for equity

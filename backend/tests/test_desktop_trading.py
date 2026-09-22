@@ -392,6 +392,43 @@ def test_desktop_limit_entry_places_matching_stoploss_on_fill(no_db):
 
 def test_desktop_target_entry_places_matching_stoploss_on_fill(no_db):
     _clear()
+
+
+def test_desktop_autostop_without_explicit_stoploss_uses_fill_price_fallback(no_db):
+    _clear()
+    session = _session()
+
+    order = order_service.place_order(
+        session_id=session.session_id,
+        symbol=session.symbol,
+        side=TradeSide.BUY,
+        order_type=OrderType.TARGET,
+        quantity=65,
+        created_at=1778058900,
+        trading_date=session.date,
+        trigger_price=105,
+        right="CE",
+        strike=24000,
+        expiry="2026-05-07",
+        user_id=session.user_id,
+        source="desktop_stepwise",
+        is_autostop=True,
+    )
+
+    sim_svc._emit_tick_and_check_orders(
+        session,
+        {"time": 1778058901, "open": 106, "high": 106, "low": 106, "close": 106},
+        "CE",
+    )
+
+    assert order.status == OrderStatus.FILLED
+    stoplosses = [item for item in order_service.get_open_orders(session.session_id) if item.is_stoploss]
+    assert len(stoplosses) == 1
+    assert stoplosses[0].side == TradeSide.SELL
+    assert stoplosses[0].trigger_price == pytest.approx(79.5)
+    assert stoplosses[0].quantity == 65
+    assert stoplosses[0].expiry == "2026-05-07"
+    _clear()
     session = _session()
 
     order = asyncio.run(desktop_trading.place_order(

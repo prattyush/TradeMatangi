@@ -28,6 +28,7 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 _IST_OFFSET = 19800
+_AUTOSTOP_FALLBACK_SL_PCT = 0.25
 
 _pending_real_timers: dict[str, threading.Timer] = {}
 _timers_lock = threading.Lock()
@@ -45,11 +46,12 @@ def on_entry_filled(
     session: Any,
     loop: Any = None,
 ) -> None:
-    if order.entry_sl_price is None:
+    is_autostop = bool(getattr(order, "is_autostop", False))
+    if order.entry_sl_price is None and not is_autostop:
         return
 
     explicit_desktop_sl = getattr(order, "source", None) in ("desktop_stepwise", "desktop_replay")
-    if not explicit_desktop_sl:
+    if not explicit_desktop_sl and not is_autostop:
         try:
             from app.services.user_settings_service import get_settings
             settings = get_settings(order.user_id)
@@ -78,6 +80,21 @@ def _place_sl_immediately(order: Any, session: Any) -> None:
 
     side_value = getattr(order.side, "value", order.side)
     sl_side = TradeSide.SELL if side_value == TradeSide.BUY.value else TradeSide.BUY
+    sl_price = getattr(order, "entry_sl_price", None)
+    if sl_price is None:
+        fill_price = getattr(order, "filled_price", None)
+        if fill_price is None or fill_price <= 0:
+            logger.warning(
+                "EntryStoplossWatcher: cannot calculate AutoStop fallback for order %s without fill price",
+                getattr(order, "order_id", "?"),
+            )
+            return
+        sl_price = round(
+            fill_price * (1 - _AUTOSTOP_FALLBACK_SL_PCT)
+            if side_value == TradeSide.BUY.value
+            else fill_price * (1 + _AUTOSTOP_FALLBACK_SL_PCT),
+            2,
+        )
 
     try:
         from app.services.order_service import place_order
@@ -91,7 +108,7 @@ def _place_sl_immediately(order: Any, session: Any) -> None:
             quantity=order.quantity,
             created_at=ts,
             trading_date=session.date,
-            trigger_price=order.entry_sl_price,
+            trigger_price=sl_price,
             is_stoploss=True,
             right=getattr(order, "right", None),
             strike=getattr(order, "strike", None),
@@ -101,7 +118,7 @@ def _place_sl_immediately(order: Any, session: Any) -> None:
         )
         logger.info(
             "EntryStoplossWatcher: placed SL %s qty=%d trigger=%.2f group=%s",
-            sl_side, order.quantity, order.entry_sl_price,
+            sl_side, order.quantity, sl_price,
             getattr(order, "group_id", None),
         )
     except Exception as exc:

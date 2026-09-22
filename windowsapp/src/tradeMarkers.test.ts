@@ -32,4 +32,13 @@ describe('desktop trade markers', () => {
   it('does not create an underlying marker without an underlying fill snapshot', () => {
     expect(buildTradeMarkers([trade({ right: 'CE', strike: 24000 })], { kind: 'equity' }, 180)).toEqual([])
   })
+
+  it('shows only open-position markers when historical markers are hidden', () => {
+    expect(buildTradeMarkers([
+      trade({ trade_id: 'closed', right: 'CE', strike: 24000, is_open: false }),
+      trade({ trade_id: 'open', right: 'CE', strike: 24000, timestamp: 1746523179, is_open: true }),
+    ], { kind: 'option', right: 'CE', strike: 24000 }, 180, false)).toEqual([
+      { id: 'open', timestamp: 1746523080, price: 123.45, text: 'B', color: '#FFFFFF' },
+    ])
+  })
 })

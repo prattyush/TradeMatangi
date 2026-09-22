@@ -155,6 +155,7 @@ def _write_order_to_db(order: Order) -> None:
             "status": order.status.value,
             "created_at": order.created_at,
             "is_stoploss": order.is_stoploss,
+            "is_autostop": order.is_autostop,
         }
         if order.filled_at is not None:
             item["filled_at"] = order.filled_at
@@ -203,6 +204,7 @@ def place_order(
     entry_sl_price: float | None = None,
     group_id: str | None = None,
     source: str | None = None,
+    is_autostop: bool = False,
     quote_price: float | None = None,
     quote_timestamp: int | None = None,
     quote_source: str | None = None,
@@ -247,6 +249,7 @@ def place_order(
         created_at=created_at,
         reserved_amount=reserved_amount,
         is_stoploss=is_stoploss,
+        is_autostop=is_autostop,
         right=right,
         strike=strike,
         expiry=expiry,

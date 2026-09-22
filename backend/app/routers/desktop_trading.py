@@ -427,6 +427,40 @@ def _day_pnl(session) -> float:
     return round(net, 2)
 
 
+def _mark_open_trades(trades: list[dict]) -> list[dict]:
+    """Annotate trades whose remaining quantity belongs to an open lot.
+
+    FIFO matching is done per contract so historical closed round trips do not
+    remain visible as active-position markers after a later re-entry.
+    """
+    lots_by_contract: dict[tuple, list[dict]] = {}
+    ordered = sorted(trades, key=lambda item: int(item.get("timestamp", 0)))
+    for trade in ordered:
+        key = (
+            trade.get("symbol"), trade.get("expiry"), trade.get("strike"),
+            trade.get("right"),
+        )
+        side = trade.get("side")
+        remaining = int(trade.get("quantity", 0) or 0)
+        lots = lots_by_contract.setdefault(key, [])
+        while remaining > 0 and lots and lots[0]["side"] != side:
+            matched = min(remaining, lots[0]["remaining"])
+            remaining -= matched
+            lots[0]["remaining"] -= matched
+            if lots[0]["remaining"] == 0:
+                lots.pop(0)
+        if remaining > 0:
+            lots.append({"trade_id": trade.get("trade_id"), "side": side, "remaining": remaining})
+
+    open_ids = {
+        lot["trade_id"]
+        for lots in lots_by_contract.values()
+        for lot in lots
+        if lot["remaining"] > 0
+    }
+    return [{**trade, "is_open": trade.get("trade_id") in open_ids} for trade in trades]
+
+
 def _snapshot(session, user_id: str) -> DesktopTradingSnapshot:
     wallet = wallet_service.get_ledger_balance(user_id, session.date, session.wallet_ledger_id)
     strategies = [_strategy_response(item) for item in strategy_service.list_running(session.session_id)]
@@ -440,7 +474,9 @@ def _snapshot(session, user_id: str) -> DesktopTradingSnapshot:
         item["contract_key"]: _position_for(session, item["right"], item["strike"], item["expiry"]).model_dump(mode="json")
         for item in contracts
     }
-    session_trades = [trade.model_dump(mode="json") for trade in trading_service.get_trades(session.session_id)]
+    session_trades = _mark_open_trades([
+        trade.model_dump(mode="json") for trade in trading_service.get_trades(session.session_id)
+    ])
     historical_trades = _historical_context_trades(session, user_id)
     known_trade_ids = {str(item.get("trade_id")) for item in session_trades}
     display_trades = session_trades + [item for item in historical_trades if str(item.get("trade_id")) not in known_trade_ids]
