@@ -24,7 +24,7 @@ export interface DesktopOrder {
   quantity: number; trigger_price: number; limit_price: number
   status: 'PENDING' | 'FILLED' | 'CANCELLED'; created_at: number
   filled_at?: number | null; filled_price?: number | null
-  is_stoploss: boolean; right?: 'CE' | 'PE' | null; strike?: number | null; expiry?: string | null
+  is_stoploss: boolean; is_autostop?: boolean; right?: 'CE' | 'PE' | null; strike?: number | null; expiry?: string | null
   source?: string | null
   quote_price?: number | null; quote_timestamp?: number | null; quote_source?: string | null
 }
@@ -38,7 +38,7 @@ export interface DesktopTrade {
   [key: string]: unknown
   trade_id: string; symbol: string; side: 'BUY' | 'SELL'; quantity: number
   price: number; timestamp: number; right?: 'CE' | 'PE' | null
-  strike?: number | null; expiry?: string | null; underlying_price?: number | null
+  strike?: number | null; expiry?: string | null; underlying_price?: number | null; is_open?: boolean
 }
 
 export interface DesktopStrategy {

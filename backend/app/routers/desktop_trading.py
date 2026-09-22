@@ -146,6 +146,18 @@ class DesktopTradingStartRequest(SimulationStartRequest):
     resume_bar_index: int | None = Field(default=None, ge=0)
 
 
+def _active_desktop_session_for_date(user_id: str, date: str):
+    """Return an active desktop Replay/Stepwise session for a date, if any."""
+    for session in sim_svc._sessions.values():
+        if session.user_id != user_id or session.date != date:
+            continue
+        if session.state == sim_svc.SimulationState.ENDED:
+            continue
+        if _desktop_mode(session) in ("replay", "stepwise"):
+            return session
+    return None
+
+
 def _desktop_mode(session) -> str:
     return str(getattr(session, "desktop_mode", "") or ("stepwise" if session.session_type == "stepwise" else "replay" if getattr(session, "desktop_origin", None) == "desktop_replay" else session.session_type))
 
@@ -427,6 +439,40 @@ def _day_pnl(session) -> float:
     return round(net, 2)
 
 
+def _mark_open_trades(trades: list[dict]) -> list[dict]:
+    """Annotate trades whose remaining quantity belongs to an open lot.
+
+    FIFO matching is done per contract so historical closed round trips do not
+    remain visible as active-position markers after a later re-entry.
+    """
+    lots_by_contract: dict[tuple, list[dict]] = {}
+    ordered = sorted(trades, key=lambda item: int(item.get("timestamp", 0)))
+    for trade in ordered:
+        key = (
+            trade.get("symbol"), trade.get("expiry"), trade.get("strike"),
+            trade.get("right"),
+        )
+        side = trade.get("side")
+        remaining = int(trade.get("quantity", 0) or 0)
+        lots = lots_by_contract.setdefault(key, [])
+        while remaining > 0 and lots and lots[0]["side"] != side:
+            matched = min(remaining, lots[0]["remaining"])
+            remaining -= matched
+            lots[0]["remaining"] -= matched
+            if lots[0]["remaining"] == 0:
+                lots.pop(0)
+        if remaining > 0:
+            lots.append({"trade_id": trade.get("trade_id"), "side": side, "remaining": remaining})
+
+    open_ids = {
+        lot["trade_id"]
+        for lots in lots_by_contract.values()
+        for lot in lots
+        if lot["remaining"] > 0
+    }
+    return [{**trade, "is_open": trade.get("trade_id") in open_ids} for trade in trades]
+
+
 def _snapshot(session, user_id: str) -> DesktopTradingSnapshot:
     wallet = wallet_service.get_ledger_balance(user_id, session.date, session.wallet_ledger_id)
     strategies = [_strategy_response(item) for item in strategy_service.list_running(session.session_id)]
@@ -440,7 +486,9 @@ def _snapshot(session, user_id: str) -> DesktopTradingSnapshot:
         item["contract_key"]: _position_for(session, item["right"], item["strike"], item["expiry"]).model_dump(mode="json")
         for item in contracts
     }
-    session_trades = [trade.model_dump(mode="json") for trade in trading_service.get_trades(session.session_id)]
+    session_trades = _mark_open_trades([
+        trade.model_dump(mode="json") for trade in trading_service.get_trades(session.session_id)
+    ])
     historical_trades = _historical_context_trades(session, user_id)
     known_trade_ids = {str(item.get("trade_id")) for item in session_trades}
     display_trades = session_trades + [item for item in historical_trades if str(item.get("trade_id")) not in known_trade_ids]
@@ -1028,9 +1076,34 @@ async def wallet(session_id: str, user_id: str = Depends(get_desktop_user_id)):
     return {"user_id": user_id, "date": session.date, "balance": wallet_service.get_ledger_balance(user_id, session.date, session.wallet_ledger_id)}
 
 
+@router.get("/wallet")
+async def pre_session_wallet(date: str = Query(...), user_id: str = Depends(get_desktop_user_id)):
+    """Return the wallet balance that the next desktop run will use."""
+    active = _active_desktop_session_for_date(user_id, date)
+    ledger_id = active.wallet_ledger_id if active else f"sim:{date}"
+    balance = wallet_service.get_ledger_balance(user_id, date, ledger_id, "sim")
+    return {"user_id": user_id, "date": date, "balance": balance}
+
+
+@router.post("/wallet/reset")
+async def reset_pre_session_wallet(
+    req: WalletResetRequest,
+    date: str = Query(...),
+    user_id: str = Depends(get_desktop_user_id),
+):
+    """Set the wallet for the next desktop Replay/Stepwise run."""
+    if _active_desktop_session_for_date(user_id, date):
+        raise HTTPException(status_code=409, detail="Wallet cannot be changed during an active desktop session")
+    wallet_service.reset(user_id, date, req.amount)
+    balance = wallet_service.reset_ledger(user_id, date, f"sim:{date}", req.amount, "sim")
+    return {"user_id": user_id, "date": date, "balance": balance}
+
+
 @router.post("/{session_id}/wallet/reset")
 async def reset_wallet(session_id: str, req: WalletResetRequest, user_id: str = Depends(get_desktop_user_id)):
     session = _require_session(session_id, user_id)
+    if session.state != sim_svc.SimulationState.ENDED:
+        raise HTTPException(status_code=409, detail="Wallet cannot be changed during an active desktop session")
     balance = wallet_service.reset_ledger(user_id, session.date, session.wallet_ledger_id, req.amount, "sim")
     return {"user_id": user_id, "date": session.date, "balance": balance}
 

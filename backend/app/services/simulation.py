@@ -734,7 +734,7 @@ def _emit_tick_and_check_orders(
         # but BEFORE strategy_service.on_tick() so strategies like BreakEven
         # can see and modify the newly placed SL.
         for order in filled:
-            if order.entry_sl_price is not None:
+            if order.entry_sl_price is not None or order.is_autostop:
                 from app.services.entry_sl_watcher import on_entry_filled
                 on_entry_filled(order, session)
         strategy_service.on_tick(session, tick, tick_right)
@@ -764,6 +764,7 @@ def _emit_tick_and_check_orders(
                     "filled_at": new_order.filled_at,
                     "filled_price": new_order.filled_price,
                     "is_stoploss": new_order.is_stoploss,
+                    "is_autostop": new_order.is_autostop,
                     "right": new_order.right,
                     "strike": new_order.strike,
                     "entry_sl_price": new_order.entry_sl_price,
@@ -2233,6 +2234,9 @@ def _emit_tick_and_check_orders_real(
                         wallet_service.credit(sess.user_id, fill_price * fill_qty, sess.date)
                     else:
                         wallet_service.debit(sess.user_id, fill_price * fill_qty, sess.date)
+                    if o.entry_sl_price is not None or o.is_autostop:
+                        from app.services.entry_sl_watcher import on_entry_filled
+                        on_entry_filled(o, sess, loop)
                     evt = {
                         "type": "order_filled",
                         "order_id": ord_id,
@@ -2334,6 +2338,7 @@ def _emit_tick_and_check_orders_real(
                     "filled_at": new_order.filled_at,
                     "filled_price": new_order.filled_price,
                     "is_stoploss": new_order.is_stoploss,
+                    "is_autostop": new_order.is_autostop,
                     "right": new_order.right,
                     "strike": new_order.strike,
                 })

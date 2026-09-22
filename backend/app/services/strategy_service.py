@@ -384,6 +384,11 @@ def _on_bar_close_autostop(
     if entry_sl_price is not None:
         group_id = str(_uuid.uuid4())
     try:
+        desktop_source = None
+        if getattr(session, "session_type", None) == "stepwise":
+            desktop_source = "desktop_stepwise"
+        elif getattr(session, "desktop_origin", None) == "desktop_replay":
+            desktop_source = "desktop_replay"
         place_order(
             session_id=session.session_id,
             symbol=session.symbol,
@@ -395,9 +400,12 @@ def _on_bar_close_autostop(
             trigger_price=trigger_price,
             right=tick_right,
             strike=order_strike,
+            expiry=getattr(session, "expiry", None),
             user_id=session.user_id,
             entry_sl_price=entry_sl_price,
             group_id=group_id,
+            source=desktop_source,
+            is_autostop=True,
         )
         logger.info(
             "AutoStop %s placed %s TARGET at %.2f for %s right=%s sl=%.2f",
