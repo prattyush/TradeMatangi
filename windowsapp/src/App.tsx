@@ -790,9 +790,9 @@ export default function App() {
     setWalletOpen(false)
   }
   useEffect(() => {
-    if (!isHistoricalTradingMode(mode) || trading || historicalStarting || !browserToken) return
+    if (!isHistoricalTradingMode(mode) || trading || historicalStarting || connection !== 'connected') return
     void loadPreStartWallet(runDate).catch(reportTradingError)
-  }, [mode, runDate, trading?.session.session_id, historicalStarting, browserToken])
+  }, [mode, runDate, trading?.session.session_id, historicalStarting, connection, serverUrl, browserToken])
   useEffect(() => {
     if (!replay || replay.state === 'stopped') return
     let cancelled = false
