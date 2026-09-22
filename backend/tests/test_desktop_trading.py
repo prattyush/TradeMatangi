@@ -271,12 +271,26 @@ def test_desktop_day_pnl_marks_open_short_at_current_contract_quote(no_db):
     _clear()
 
 
-def test_desktop_wallet_reset_updates_session_ledger(no_db):
+def test_desktop_wallet_reset_is_blocked_for_active_session(no_db):
     _clear()
     session = _session()
 
-    response = asyncio.run(desktop_trading.reset_wallet(session.session_id, WalletResetRequest(amount=123456), user_id="desktop-user"))
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(desktop_trading.reset_wallet(session.session_id, WalletResetRequest(amount=123456), user_id="desktop-user"))
     current = asyncio.run(desktop_trading.wallet(session.session_id, user_id="desktop-user"))
+
+    assert exc.value.status_code == 409
+    assert current["balance"] == 150000
+    _clear()
+
+
+def test_desktop_pre_session_wallet_reset_updates_sim_ledger(no_db):
+    wallet_service._ledgers.pop(("desktop-user", "sim:2026-05-06"), None)
+
+    response = asyncio.run(desktop_trading.reset_pre_session_wallet(
+        WalletResetRequest(amount=123456), date="2026-05-06", user_id="desktop-user"
+    ))
+    current = asyncio.run(desktop_trading.pre_session_wallet("2026-05-06", user_id="desktop-user"))
 
     assert response["balance"] == 123456
     assert current["balance"] == 123456

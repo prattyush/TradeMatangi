@@ -146,6 +146,18 @@ class DesktopTradingStartRequest(SimulationStartRequest):
     resume_bar_index: int | None = Field(default=None, ge=0)
 
 
+def _active_desktop_session_for_date(user_id: str, date: str):
+    """Return an active desktop Replay/Stepwise session for a date, if any."""
+    for session in sim_svc._sessions.values():
+        if session.user_id != user_id or session.date != date:
+            continue
+        if session.state == sim_svc.SimulationState.ENDED:
+            continue
+        if _desktop_mode(session) in ("replay", "stepwise"):
+            return session
+    return None
+
+
 def _desktop_mode(session) -> str:
     return str(getattr(session, "desktop_mode", "") or ("stepwise" if session.session_type == "stepwise" else "replay" if getattr(session, "desktop_origin", None) == "desktop_replay" else session.session_type))
 
@@ -1064,9 +1076,34 @@ async def wallet(session_id: str, user_id: str = Depends(get_desktop_user_id)):
     return {"user_id": user_id, "date": session.date, "balance": wallet_service.get_ledger_balance(user_id, session.date, session.wallet_ledger_id)}
 
 
+@router.get("/wallet")
+async def pre_session_wallet(date: str = Query(...), user_id: str = Depends(get_desktop_user_id)):
+    """Return the wallet balance that the next desktop run will use."""
+    active = _active_desktop_session_for_date(user_id, date)
+    ledger_id = active.wallet_ledger_id if active else f"sim:{date}"
+    balance = wallet_service.get_ledger_balance(user_id, date, ledger_id, "sim")
+    return {"user_id": user_id, "date": date, "balance": balance}
+
+
+@router.post("/wallet/reset")
+async def reset_pre_session_wallet(
+    req: WalletResetRequest,
+    date: str = Query(...),
+    user_id: str = Depends(get_desktop_user_id),
+):
+    """Set the wallet for the next desktop Replay/Stepwise run."""
+    if _active_desktop_session_for_date(user_id, date):
+        raise HTTPException(status_code=409, detail="Wallet cannot be changed during an active desktop session")
+    wallet_service.reset(user_id, date, req.amount)
+    balance = wallet_service.reset_ledger(user_id, date, f"sim:{date}", req.amount, "sim")
+    return {"user_id": user_id, "date": date, "balance": balance}
+
+
 @router.post("/{session_id}/wallet/reset")
 async def reset_wallet(session_id: str, req: WalletResetRequest, user_id: str = Depends(get_desktop_user_id)):
     session = _require_session(session_id, user_id)
+    if session.state != sim_svc.SimulationState.ENDED:
+        raise HTTPException(status_code=409, detail="Wallet cannot be changed during an active desktop session")
     balance = wallet_service.reset_ledger(user_id, session.date, session.wallet_ledger_id, req.amount, "sim")
     return {"user_id": user_id, "date": session.date, "balance": balance}
 
