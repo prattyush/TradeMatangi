@@ -48,6 +48,7 @@ interface FloatingLabel { key: string; x: number; y: number; text: string; color
 interface PersistedDrawing { tool: string; points: Array<{ timestamp: number; price: number }>; style?: { color?: string; width?: number; fillColor?: string; fillOpacity?: number }; visible?: boolean; locked?: boolean }
 interface DrawingRecord { drawing_id: string; revision: number; drawing: PersistedDrawing }
 interface LocalDrawing { id: string; backendId?: string; revision?: number; drawing: PersistedDrawing; locked: boolean; hidden: boolean }
+type DrawingRequest = (path: string, method: 'GET' | 'POST' | 'PUT' | 'DELETE', body?: Record<string, unknown>) => Promise<unknown>
 const hasNativeHost = '__TAURI_INTERNALS__' in window
 const reportChartDiagnostic = (kind: string, payload: Record<string, unknown>) => {
   if (!hasNativeHost) return
@@ -81,7 +82,8 @@ const placeNearPoint = (x: number, y: number, width: number, height: number) => 
   }
 }
 
-export function ChartTile({ symbol, interval, supportedIntervals, onIntervalChange, candles = demo, loading, message, settings, isReplaying, isLive, instrument, baseUrl, onConfigure, onMaximize, maximized, active, indicators, drawingCommand, drawingAction, drawingMode, onDrawingComplete, onActivate, trades = [], openOrders = [], strategies = [], position = null, sessionCapital = 0, tradingSettings = null, tradingEnabled = false, orderEntryEnabled = false, underlyingStrategyEnabled = false, showHistoricalMarkers = false, onToggleHistoricalMarkers, pricePickAction = null, onPricePick, onOrderDrag, onStrategyDrag, onOrderCancel, onOrderConvertRequest, onChartOrderAction }: { symbol: string; interval: string; supportedIntervals: number[]; onIntervalChange: (interval: string) => void; candles?: Candle[]; loading: boolean; message: string; settings: ChartSettings; isReplaying: boolean; isLive: boolean; replayDatasetKey?: string; instrument: Record<string, unknown>; baseUrl: string; onConfigure: () => void; onMaximize: () => void; maximized: boolean; active: boolean; indicators: string[]; drawingCommand: DrawingCommand | null; drawingAction: DrawingAction | null; drawingMode: DrawingMode; onDrawingComplete: (commandId: number, tool: string) => void; onActivate: () => void; trades?: DesktopTrade[]; openOrders?: DesktopOrder[]; strategies?: DesktopStrategy[]; position?: DesktopPosition | null; sessionCapital?: number; tradingSettings?: DesktopTradingSettings | null; tradingEnabled?: boolean; orderEntryEnabled?: boolean; underlyingStrategyEnabled?: boolean; showHistoricalMarkers?: boolean; onToggleHistoricalMarkers?: () => void; pricePickAction?: PricePickAction | null; onPricePick?: (price: number) => void; onOrderDrag?: (order: DesktopOrder, price: number) => void; onStrategyDrag?: (strategyId: string, price: number) => void; onOrderCancel?: (order: DesktopOrder) => void; onOrderConvertRequest?: (order: DesktopOrder, target: ConversionTarget) => void; onChartOrderAction?: (action: OrderAction, price: number, anchor: { x: number; y: number }) => void }) {
+export function ChartTile({ symbol, interval, supportedIntervals, onIntervalChange, candles = demo, loading, message, settings, isReplaying, isLive, instrument, baseUrl, drawingRequest, onDrawingError, onConfigure, onMaximize, maximized, active, indicators, drawingCommand, drawingAction, drawingMode, onDrawingComplete, onActivate, trades = [], openOrders = [], strategies = [], position = null, sessionCapital = 0, tradingSettings = null, tradingEnabled = false, orderEntryEnabled = false, underlyingStrategyEnabled = false, showHistoricalMarkers = false, onToggleHistoricalMarkers, pricePickAction = null, onPricePick, onOrderDrag, onStrategyDrag, onOrderCancel, onOrderConvertRequest, onChartOrderAction }: { symbol: string; interval: string; supportedIntervals: number[]; onIntervalChange: (interval: string) => void; candles?: Candle[]; loading: boolean; message: string; settings: ChartSettings; isReplaying: boolean; isLive: boolean; replayDatasetKey?: string; instrument: Record<string, unknown>; baseUrl: string; drawingRequest: DrawingRequest; onDrawingError?: (error: unknown) => void; onConfigure: () => void; onMaximize: () => void; maximized: boolean; active: boolean; indicators: string[]; drawingCommand: DrawingCommand | null; drawingAction: DrawingAction | null; drawingMode: DrawingMode; onDrawingComplete: (commandId: number, tool: string) => void; onActivate: () => void; trades?: DesktopTrade[]; openOrders?: DesktopOrder[]; strategies?: DesktopStrategy[]; position?: DesktopPosition | null; sessionCapital?: number; tradingSettings?: DesktopTradingSettings | null; tradingEnabled?: boolean; orderEntryEnabled?: boolean; underlyingStrategyEnabled?: boolean; showHistoricalMarkers?: boolean; onToggleHistoricalMarkers?: () => void; pricePickAction?: PricePickAction | null; onPricePick?: (price: number) => void; onOrderDrag?: (order: DesktopOrder, price: number) => void; onStrategyDrag?: (strategyId: string, price: number) => void; onOrderCancel?: (order: DesktopOrder) => void; onOrderConvertRequest?: (order: DesktopOrder, target: ConversionTarget) => void; onChartOrderAction?: (action: OrderAction, price: number, anchor: { x: number; y: number }) => void }) {
+  void baseUrl
   const element = useRef<HTMLDivElement>(null)
   const [historicalMarkersVisible, setHistoricalMarkersVisible] = useState(showHistoricalMarkers)
   const chartRef = useRef<Chart | null>(null)
@@ -285,8 +287,12 @@ export function ChartTile({ symbol, interval, supportedIntervals, onIntervalChan
     }
   }, [candles, isReplaying])
   const persistDrawing = async (path: string, method: 'POST' | 'PUT' | 'DELETE', drawing: PersistedDrawing, revision?: number) => {
-    if (!hasNativeHost) return null
-    return invoke<DrawingRecord>('desktop_drawing_request', { baseUrl, path, method, body: { instrument, drawing, revision, mutation_id: crypto.randomUUID() } })
+    try {
+      return await drawingRequest(path, method, { instrument, drawing, revision, mutation_id: crypto.randomUUID() }) as DrawingRecord
+    } catch (error) {
+      onDrawingError?.(error)
+      return null
+    }
   }
   const createPersistedOverlay = (record: DrawingRecord) => {
     const style = record.drawing.style ?? {}
@@ -309,24 +315,25 @@ export function ChartTile({ symbol, interval, supportedIntervals, onIntervalChan
   }
   createPersistedOverlayRef.current = createPersistedOverlay
   useEffect(() => {
-    if (!chartRef.current || !hasNativeHost) return
+    if (!chartRef.current) return
     let cancelled = false
     const encoded = encodeURIComponent(drawingInstrumentKey)
-    void invoke<{ drawings: DrawingRecord[] }>('desktop_drawing_request', { baseUrl, path: `drawings?instrument=${encoded}`, method: 'GET', body: {} }).then(value => {
+    void drawingRequest(`drawings?instrument=${encoded}`, 'GET').then(value => {
       if (cancelled) return
       for (const id of drawingOverlayIdsRef.current) chartRef.current?.removeOverlay({ id })
       drawingOverlayIdsRef.current.clear()
       setDrawings([])
-      value.drawings.forEach(createPersistedOverlay)
-    }).catch(() => undefined)
+      const records = (value as { drawings?: DrawingRecord[] }).drawings ?? []
+      records.forEach(createPersistedOverlay)
+    }).catch(error => { if (!cancelled) onDrawingError?.(error) })
     return () => { cancelled = true }
-  }, [baseUrl, drawingInstrumentKey])
+  }, [drawingInstrumentKey, drawingRequest, onDrawingError])
   useEffect(() => {
     const shortcuts = (event: KeyboardEvent) => {
       if (event.key === 'Escape') { setContextMenu(null); if (pricePickAction) onPricePick?.(NaN) }
       if ((event.key === 'Delete' || event.key === 'Backspace') && selectedOrderId !== null) { const order = openOrders.find(item => item.order_id === selectedOrderId); if (order) onOrderCancel?.(order); setSelectedOrderId(null); return }
       if ((event.key === 'Delete' || event.key === 'Backspace') && selected !== null) { const drawing = drawings.find(item => item.id === selected); if (drawing?.backendId && drawing.revision) void persistDrawing(`drawings/${drawing.backendId}`, 'DELETE', drawing.drawing, drawing.revision); chartRef.current?.removeOverlay({ id: selected }); drawingOverlayIdsRef.current.delete(selected); setDrawings(current => current.filter(item => item.id !== selected)); setSelected(null) }
-      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z') setDrawings(current => { const drawing = current[current.length - 1]; if (drawing) { chartRef.current?.removeOverlay({ id: drawing.id }); drawingOverlayIdsRef.current.delete(drawing.id) }; setSelected(null); return current.slice(0, -1) })
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z') setDrawings(current => { const drawing = current[current.length - 1]; if (drawing) { if (drawing.backendId && drawing.revision) void persistDrawing(`drawings/${drawing.backendId}`, 'DELETE', drawing.drawing, drawing.revision); chartRef.current?.removeOverlay({ id: drawing.id }); drawingOverlayIdsRef.current.delete(drawing.id) }; setSelected(null); return current.slice(0, -1) })
     }
     window.addEventListener('keydown', shortcuts)
     return () => window.removeEventListener('keydown', shortcuts)
