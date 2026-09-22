@@ -24,7 +24,7 @@ import csv
 import logging
 import urllib.request
 import zipfile
-from datetime import datetime, time, timedelta
+from datetime import datetime, time
 from pathlib import Path
 from typing import Optional
 
@@ -75,6 +75,27 @@ def _is_cache_fresh(zip_path: Path) -> bool:
         return False
     mtime = datetime.fromtimestamp(zip_path.stat().st_mtime)
     return mtime >= _daily_refresh_cutoff()
+
+
+def _normalise_expiry(value: object) -> str:
+    """Return Breeze expiry text in a stable, case-insensitive form."""
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    for fmt in ("%d-%b-%Y", "%Y-%m-%d", "%Y-%m-%dT%H:%M:%S.%fZ"):
+        try:
+            return datetime.strptime(raw.split("T")[0] if fmt == "%Y-%m-%d" else raw, fmt).strftime("%d-%b-%Y").lower()
+        except ValueError:
+            continue
+    return raw.lower()
+
+
+def _normalise_strike(value: object) -> int | None:
+    try:
+        parsed = float(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+    return int(parsed) if parsed.is_integer() else None
 
 
 def ensure_security_master_downloaded(exchange_code: str) -> Optional[Path]:
@@ -154,12 +175,9 @@ def load_breeze_security_master(
                     or row.get("Series", "").upper() != "OPTION"
                 ):
                     continue
-                try:
-                    if int(row.get("StrikePrice", "0")) != strike:
-                        continue
-                except ValueError:
+                if _normalise_strike(row.get("StrikePrice")) != int(strike):
                     continue
-                if row.get("ExpiryDate", "").strip() != expiry_breeze:
+                if _normalise_expiry(row.get("ExpiryDate")) != _normalise_expiry(expiry_breeze):
                     continue
                 if row.get("OptionType", "").strip().upper() != right.upper():
                     continue

@@ -2,15 +2,14 @@
 Breeze (ICICI Direct) live streaming service for paper and real trading.
 
 Architecture:
-  BreezeStreamManager is a per-session wrapper around the BreezeConnect WebSocket.
-  Each session creates its own Breeze WebSocket connection via ws_connect().
+  BreezeStreamManager is a per-session consumer of a process-wide
+  BreezeConnect WebSocket multiplexer. Each manager owns its contract identity
+  map and queue while the multiplexer shares the provider connection.
   Incoming LTP ticks are aggregated into 1-second OHLC dicts and pushed
   to session.paper_tick_queue via call_soon_threadsafe.
 
-  Unlike KiteBroadcaster/KotakBroadcaster (singletons shared by all sessions),
-  BreezeStreamManager is created per session. This keeps the implementation
-  simple while the Breeze SDK's callback list (breeze.on_ticks) supports
-  multiple subscribers natively.
+  Each manager is still created per session. The shared callback deliberately
+  fans out raw ticks, so option routing must be exact and fail-closed.
 
 Usage (primary stream source — paper/real sessions):
   from app.services.breeze_service import BreezeStreamManager
@@ -37,6 +36,16 @@ _multiplexer_feed_refs: dict[str, int] = {}
 _multiplexer_feed_specs: dict[str, dict] = {}
 _multiplexer_breeze = None
 _multiplexer_connected = False
+
+
+def _normalise_right(value: object) -> str:
+    value = str(value or "").strip().upper()
+    return {"CALL": "CE", "PUT": "PE", "CE": "CE", "PE": "PE", "C": "CE", "P": "PE"}.get(value, value)
+
+
+def _scrip_code(tick: dict) -> str:
+    raw_symbol = str(tick.get("symbol", ""))
+    return raw_symbol.rsplit("!", 1)[-1].strip() if "!" in raw_symbol else raw_symbol.strip()
 
 
 def _dispatch_multiplexed_ticks(ticks) -> None:
@@ -155,16 +164,19 @@ class BreezeStreamManager:
         self._instruments: list[dict] = []
         self._tick_count: int = 0
         self._logged_ticks: int = 0
+        self._identity_warning_count: int = 0
         self._equity_stock_name: str | None = None
         self._equity_exchange: str | None = None
         self._registered = False
         # Map of Breeze ScripCode (raw token id from WS tick "symbol" field)
-        # → (strike_price, right_label). Populated at subscribe time by
+        # → (strike_price, right_label). Populated before subscription by
         # parsing the Breeze Security Master file because Breeze WS payloads
         # omit right/strike_price on BFO option ticks (the production
         # wrapper cannot rely on those fields being present). get_quotes()
         # is unreliable for BFO so we fall back to the master file.
         self._option_scrip_map: dict[str, tuple[int, str]] = {}
+        # ScripCode → the exact desktop/paper route owned by this manager.
+        self._option_scrip_routes: dict[str, str] = {}
         # A provider instrument can be used by multiple desktop tiles (for
         # example NIFTY 3m and NIFTY 5m). Keep every destination for a route.
         self._route_queues: dict[str, list[asyncio.Queue]] = {}
@@ -189,6 +201,57 @@ class BreezeStreamManager:
             key: value if isinstance(value, list) else [value]
             for key, value in (routes or {}).items()
         }
+
+        # Resolve contract identity before registering this manager with the
+        # shared callback. Other managers' ticks are deliberately broadcast to
+        # us; only these exact ScripCodes may be accepted below.
+        self._option_scrip_map.clear()
+        self._option_scrip_routes.clear()
+        for inst in instruments:
+            if inst.get("product_type") != "options" or not inst.get("right"):
+                continue
+            expiry_raw = _feed_spec(inst)["expiry_date"]
+            right_label = _normalise_right(inst.get("right"))
+            try:
+                scrip_map = self._build_scrip_map(
+                    inst["stock_code"],
+                    inst["exchange_code"],
+                    int(float(inst["strike_price"])),
+                    right_label,
+                    expiry_raw,
+                )
+            except Exception as exc:
+                scrip_map = {}
+                logger.warning(
+                    "BreezeStreamManager: option identity lookup failed "
+                    "exchange=%s stock=%s expiry=%s strike=%s right=%s: %s",
+                    inst.get("exchange_code"), inst.get("stock_code"), expiry_raw,
+                    inst.get("strike_price"), right_label, exc,
+                )
+            route_key = self.instrument_route_key(inst)
+            if not scrip_map:
+                logger.warning(
+                    "BreezeStreamManager: no ScripCode mapping for option "
+                    "exchange=%s stock=%s expiry=%s strike=%s right=%s; "
+                    "unresolved ticks will be dropped",
+                    inst.get("exchange_code"), inst.get("stock_code"), expiry_raw,
+                    inst.get("strike_price"), right_label,
+                )
+            for scrip_code, (m_strike, m_right) in scrip_map.items():
+                existing = self._option_scrip_routes.get(scrip_code)
+                if existing and existing != route_key:
+                    logger.warning(
+                        "BreezeStreamManager: ScripCode=%s resolved to multiple "
+                        "routes (%s, %s); ignoring duplicate",
+                        scrip_code, existing, route_key,
+                    )
+                    continue
+                self._option_scrip_map[scrip_code] = (m_strike, _normalise_right(m_right))
+                self._option_scrip_routes[scrip_code] = route_key
+                logger.info(
+                    "BreezeStreamManager: mapped option ScripCode=%s → %s",
+                    scrip_code, route_key,
+                )
 
         breeze = _get_breeze()
         global _multiplexer_breeze, _multiplexer_connected
@@ -242,38 +305,6 @@ class BreezeStreamManager:
                     _subscribe_feed(breeze, spec)
                     _multiplexer_feed_specs[feed_key] = spec
                 _multiplexer_feed_refs[feed_key] = _multiplexer_feed_refs.get(feed_key, 0) + 1
-            # Resolve the ScripCode for option instruments. Breeze's WS
-            # payload uses raw symbols like "8.1!855562" where 855562 is the
-            # ScripCode; the tick does NOT carry right/strike_price on BFO
-            # option streams, so we build a ScripCode → (strike, right) map
-            # here for the tick handler to look up. We use the Breeze
-            # Security Master file (FOBSEScripMaster.txt / FONSEScripMaster.txt)
-            # rather than get_quotes() because get_quotes() is unreliable
-            # for BFO options (returns empty/non-JSON for BSE F&O).
-            if inst.get("product_type") == "options" and inst.get("right"):
-                try:
-                    right_label = (
-                        "CE" if inst["right"].lower() in ("call", "ce") else "PE"
-                    )
-                    scrip_map = self._build_scrip_map(
-                        inst["stock_code"],
-                        inst["exchange_code"],
-                        int(inst["strike_price"]),
-                        right_label,
-                        expiry_raw,
-                    )
-                    for scrip_code, (m_strike, m_right) in scrip_map.items():
-                        self._option_scrip_map[scrip_code] = (m_strike, m_right)
-                        logger.info(
-                            "BreezeStreamManager: mapped option ScripCode=%s → strike=%s right=%s",
-                            scrip_code, m_strike, m_right,
-                        )
-                except Exception as exc:
-                    logger.debug(
-                        "BreezeStreamManager: scrip-code lookup failed for %s %s %s: %s",
-                        inst.get("exchange_code"), inst.get("strike_price"),
-                        inst.get("right"), exc,
-                    )
         self._breeze = breeze
         logger.info("BreezeStreamManager started for %d instruments", len(instruments))
 
@@ -339,9 +370,12 @@ class BreezeStreamManager:
     @staticmethod
     def instrument_route_key(instrument: dict) -> str:
         if instrument.get("product_type") == "options":
-            right = str(instrument.get("right", "")).upper()
-            right = "CE" if right in ("CALL", "CE") else "PE"
-            return f"option:{instrument.get('stock_code')}:{instrument.get('strike_price')}:{right}"
+            spec = _feed_spec(instrument)
+            right = _normalise_right(spec["right"])
+            return (
+                f"option:{spec['exchange_code']}:{spec['stock_code']}:"
+                f"{spec['expiry_date']}:{spec['strike_price']}:{right}"
+            )
         return f"equity:{instrument.get('exchange_code')}:{instrument.get('stock_code')}"
 
     def _on_ticks(self, ticks) -> None:
@@ -368,9 +402,9 @@ class BreezeStreamManager:
                 price = float(tick.get("last", tick.get("ltp", 0.0)))
                 if price == 0.0:
                     continue
-                right_raw = tick.get("right", "").upper()
-                _right_map = {"CALL": "CE", "PUT": "PE", "CE": "CE", "PE": "PE", "C": "CE", "P": "PE"}
-                right = _right_map.get(right_raw) if right_raw else None
+                right = _normalise_right(tick.get("right")) or None
+                scrip_code = _scrip_code(tick)
+                mapped = self._option_scrip_map.get(scrip_code)
 
                 # Breeze option ticks (especially BFO / SENSEX) omit
                 # right/strike_price; identify options by the presence of
@@ -379,15 +413,44 @@ class BreezeStreamManager:
                 # Note: Breeze index ticks ALSO carry quotes: "Quotes Data"
                 # but lack OI/CHNGOI — using OI/CHNGOI as the option
                 # discriminator avoids misclassifying the index tick.
-                is_option_tick = "OI" in tick or "CHNGOI" in tick
-                if is_option_tick and not right:
-                    raw_symbol = str(tick.get("symbol", ""))
-                    scrip_code = (
-                        raw_symbol.rsplit("!", 1)[-1].strip()
-                        if "!" in raw_symbol else raw_symbol
-                    )
-                    if scrip_code in self._option_scrip_map:
-                        _, right = self._option_scrip_map[scrip_code]
+                is_option_tick = (
+                    "OI" in tick
+                    or "CHNGOI" in tick
+                    or bool(right)
+                    or mapped is not None
+                )
+                if is_option_tick:
+                    # The shared Breeze callback delivers other consumers'
+                    # option ticks here too. A right label alone is not
+                    # identity; accept only a ScripCode owned by this manager.
+                    if mapped is None:
+                        self._identity_warning_count += 1
+                        if (
+                            self._identity_warning_count <= 5
+                            or self._identity_warning_count % 100 == 0
+                        ):
+                            logger.warning(
+                                "BreezeStreamManager: dropping unmatched option tick "
+                                "scrip=%s right=%s symbol=%s count=%d",
+                                scrip_code, right, tick.get("symbol", ""),
+                                self._identity_warning_count,
+                            )
+                        continue
+                    _, mapped_right = mapped
+                    if right and right != mapped_right:
+                        self._identity_warning_count += 1
+                        if (
+                            self._identity_warning_count <= 5
+                            or self._identity_warning_count % 100 == 0
+                        ):
+                            logger.warning(
+                                "BreezeStreamManager: dropping contradictory option tick "
+                                "scrip=%s raw_right=%s mapped_right=%s count=%d",
+                                scrip_code, right, mapped_right,
+                                self._identity_warning_count,
+                            )
+                        continue
+                    right = mapped_right
 
                 name = tick.get("stock_name", tick.get("stock_code", tick.get("symbol", "")))
                 exchange = tick.get("exchange", "")
@@ -423,26 +486,7 @@ class BreezeStreamManager:
 
                 route_key = None
                 if right:
-                    raw_symbol = str(tick.get("symbol", ""))
-                    scrip_code = raw_symbol.rsplit("!", 1)[-1].strip() if "!" in raw_symbol else raw_symbol
-                    mapped = self._option_scrip_map.get(scrip_code)
-                    if mapped:
-                        strike, mapped_right = mapped
-                        for instrument in self._instruments:
-                            if instrument.get("product_type") != "options":
-                                continue
-                            configured_right = str(instrument.get("right", "")).upper()
-                            configured_right = "CE" if configured_right in ("CALL", "CE") else "PE"
-                            if str(instrument.get("strike_price")) == str(strike) and configured_right == mapped_right:
-                                route_key = self.instrument_route_key(instrument)
-                                break
-                    else:
-                        for instrument in self._instruments:
-                            configured_right = str(instrument.get("right", "")).upper()
-                            configured_right = "CE" if configured_right in ("CALL", "CE") else "PE"
-                            if instrument.get("product_type") == "options" and configured_right == right:
-                                route_key = self.instrument_route_key(instrument)
-                                break
+                    route_key = self._option_scrip_routes.get(scrip_code)
                 else:
                     route_key = equity_route_key
 
