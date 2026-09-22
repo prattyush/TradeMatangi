@@ -174,10 +174,15 @@ function appendRecentLiveTick(ticks: TickEvent[], tick: TickEvent): TickEvent[] 
 
 function mergeRecentTicksIntoHistory(candles: OHLCCandle[], ticks: TickEvent[], intervalMinutes: number): OHLCCandle[] {
   const intervalSecs = intervalMinutes * 60
+  const backendTimes = new Set(candles.map(candle => candle.time))
   const byTime = new Map(candles.map(candle => [candle.time, { ...candle }]))
   for (const tick of ticks) {
     const time = Math.floor(tick.time / intervalSecs) * intervalSecs
+    if (backendTimes.has(time)) continue
     const current = byTime.get(time)
+    // A refresh response is authoritative for every bucket it contains.
+    // The bounded browser tick cache only fills a backend-lagging or absent
+    // tail; it must not rewrite a returned candle's OHLC values.
     byTime.set(time, current
       ? { time, open: current.open, high: Math.max(current.high, tick.high), low: Math.min(current.low, tick.low), close: tick.close }
       : { time, open: tick.open, high: tick.high, low: tick.low, close: tick.close })
