@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 import uuid
 from collections import deque
 from dataclasses import dataclass, field
@@ -228,6 +229,7 @@ class SimulationSession:
     _ai_bar_tracker: dict = field(default_factory=dict, init=False, repr=False)
     # Unix epoch ms of initial session creation; preserved across DB writes for resume lookup
     created_at: int = 0
+    resumed_from_db: bool = False
     # GuardRails runtime state (snapshotted from UserSettings at create_session)
     guardrail_block_until_bar: int = 0        # Unix bar-slot ts; blocked while current_bar_slot <= this
     guardrail_ban_active: bool = False
@@ -525,6 +527,7 @@ def rebuild_session_from_db(
         group_id=db_record.get("group_id"),
         session_alias=db_record.get("session_alias"),
         wallet_ledger_id=ledger_id,
+        resumed_from_db=True,
     )
     # Restore last-known tick state so orders can be placed immediately after
     # restart, without waiting for the first live tick to arrive.
@@ -652,6 +655,12 @@ def _emit_tick_and_check_orders(
         _auto_close_positions_if_eod(session, tick, tick_right)
 
     session.queue.put_nowait(json.dumps({**tick, "session_id": session.session_id}))
+    if not getattr(session, "_first_tick_forwarded_logged", False):
+        session._first_tick_forwarded_logged = True
+        logger.debug(
+            "paper_tick_forwarded_to_sse session_id=%s right=%s time=%s",
+            session.session_id, tick_right or "EQ", tick.get("time"),
+        )
 
     current_time = tick["time"]
     # A grouped replay has one durable clock.  Each member may have different
@@ -1268,6 +1277,13 @@ async def _run_paper_session(session: SimulationSession) -> None:
       on session.queue for SSE delivery — exactly as _run_session does.
     """
     session.state = SimulationState.RUNNING
+    phase1_started = time.monotonic()
+    logger.info(
+        "paper_phase1_started session_id=%s resumed=%s symbol=%s instrument_type=%s "
+        "strike=%s strike_ce=%s strike_pe=%s expiry=%s right=%s",
+        session.session_id, session.resumed_from_db, session.symbol, session.instrument_type,
+        session.strike, session.strike_ce, session.strike_pe, session.expiry, session.right,
+    )
 
     start_event = {
         "type": "session_started",
@@ -1448,6 +1464,17 @@ async def _run_paper_session(session: SimulationSession) -> None:
         if session.state == SimulationState.ENDED:
             return
 
+        logger.info(
+            "paper_phase1_completed session_id=%s resumed=%s duration_seconds=%.3f last_historical_ts=%s",
+            session.session_id, session.resumed_from_db, time.monotonic() - phase1_started,
+            _last_breeze_ts or "-",
+        )
+        if time.monotonic() - phase1_started >= 30:
+            logger.warning(
+                "paper_phase1_slow session_id=%s duration_seconds=%.3f",
+                session.session_id, time.monotonic() - phase1_started,
+            )
+
         # ── Phase 2: live streaming ────────────────────────────────────────────
         loop = asyncio.get_running_loop()
 
@@ -1455,8 +1482,8 @@ async def _run_paper_session(session: SimulationSession) -> None:
         from app.services import token_service as _ts
         stream_source = _ts.get_token("live_stream_source") or "kite"
         logger.info(
-            "Paper session %s: Phase 2 — live streaming source=%s",
-            session.session_id, stream_source,
+            "paper_phase2_source_selected session_id=%s resumed=%s source=%s",
+            session.session_id, session.resumed_from_db, stream_source,
         )
 
         # ── Fyers streaming path ───────────────────────────────────────────────
@@ -1504,7 +1531,7 @@ async def _run_paper_session(session: SimulationSession) -> None:
                 from app.services.breeze_service import BreezeStreamManager
                 instruments = _build_breeze_instruments(session)
                 manager = BreezeStreamManager()
-                manager.start(session.paper_tick_queue, loop, instruments)
+                manager.start(session.paper_tick_queue, loop, instruments, session_id=session.session_id)
                 session.stream_manager = manager
                 session.breeze_streaming = True
                 logger.info(
@@ -1618,7 +1645,7 @@ async def _run_paper_session(session: SimulationSession) -> None:
                     from app.services.breeze_service import BreezeStreamManager
                     instruments = _build_breeze_instruments(session)
                     manager = BreezeStreamManager()
-                    manager.start(session.paper_tick_queue, loop, instruments)
+                    manager.start(session.paper_tick_queue, loop, instruments, session_id=session.session_id)
                     session.stream_manager = manager
                     logger.info(
                         "Paper session %s: Breeze fallback streaming started",
@@ -1643,8 +1670,10 @@ async def _run_paper_session(session: SimulationSession) -> None:
                     return
 
         # ── Phase 3: consume live ticks indefinitely ──────────────────────────
-        logger.info("Paper session %s: Phase 3 — waiting for live ticks", session.session_id)
+        logger.info("paper_phase3_waiting session_id=%s source=%s", session.session_id, stream_source)
         _phase3_tick_count = 0
+        _phase3_first_received = False
+        _phase3_last_timeout_logged = 0.0
         while session.state != SimulationState.ENDED:
             await session.resume_event.wait()
             if session.state == SimulationState.ENDED:
@@ -1653,13 +1682,25 @@ async def _run_paper_session(session: SimulationSession) -> None:
             try:
                 payload = await asyncio.wait_for(session.paper_tick_queue.get(), timeout=30.0)
             except asyncio.TimeoutError:
-                logger.debug("Paper session %s: Phase 3 — 30s timeout waiting for tick (market may be closed)", session.session_id)
+                now = time.monotonic()
+                if not _phase3_first_received and now - _phase3_last_timeout_logged >= 30:
+                    _phase3_last_timeout_logged = now
+                    logger.debug(
+                        "breeze_live_no_tick_warning session_id=%s source=%s seconds_waiting=%.1f",
+                        session.session_id, stream_source, now - phase1_started,
+                    )
                 continue  # normal during market close / weekend — no data, keep waiting
 
             if payload is None:  # queue closed — session stopping
                 break
 
             _phase3_tick_count += 1
+            if not _phase3_first_received:
+                _phase3_first_received = True
+                logger.info(
+                    "paper_tick_queue_first_received session_id=%s source=%s right=%s time=%s",
+                    session.session_id, stream_source, payload.get("right"), payload.get("time"),
+                )
             if _phase3_tick_count <= 3 or _phase3_tick_count % 60 == 0:
                 logger.info("Paper session %s: Phase 3 tick #%d received: time=%s close=%s right=%s",
                             session.session_id, _phase3_tick_count,
@@ -1835,7 +1876,7 @@ async def _run_real_session(session: SimulationSession) -> None:
                 from app.services.breeze_service import BreezeStreamManager
                 instruments = _build_breeze_instruments(session)
                 manager = BreezeStreamManager()
-                manager.start(session.paper_tick_queue, loop, instruments)
+                manager.start(session.paper_tick_queue, loop, instruments, session_id=session.session_id)
                 session.stream_manager = manager
                 session.breeze_streaming = True
                 logger.info(

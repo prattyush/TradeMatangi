@@ -262,3 +262,118 @@ Look at each of the bugs, fix them and then mark them resolved as well if approv
      - Added `--symbol NIFTY|BSESEN` flag — selects the per-broker right value format (Breeze `call`/`put` lowercase for both), exchange code (NFO vs BFO), base name (NIFTY vs SENSEX), strike interval (50 vs 100), and weekly-expiry weekday (Thursday always; NSE Tuesday from 2025-09-01).
 - **Files**: `backend/app/services/breeze_master.py` (new), `backend/app/services/breeze_service.py`, `scripts/test_broker_streaming.py`, `backend/tests/test_breeze_master.py` (new), `backend/tests/test_breeze_service.py`.
 - **Tests**: 29 tests pass — covers BFO tick resolution, equity fallback when ScripCode unknown, daily-refresh cutoff, cache freshness, download path, master parse filter by (strike, right, expiry).
+# Live paper options resume: historical candles but no Breeze ticks
+
+## Symptoms
+
+An old website paper-trading options session is resumed. Historical CE/PE data appears, but live ticks do not arrive. Starting a desktop Breeze live session may show live data in the desktop while the website remains stale. This is especially important when the website and desktop use different option contracts for the same underlying and right.
+
+## Likely failure points
+
+The website resume path rebuilds the session, replays historical data, and only then starts the Breeze stream. Breeze option payloads can contain only a ScripCode, so the resumed manager must resolve the exact `exchange + stock + expiry + strike + right` through the Breeze security master. If that lookup/download/parsing fails, the manager can still subscribe, but it has no identity map and drops the option ticks. Historical REST data can therefore work while live option data is absent.
+
+The website can also remain in Phase 1 for a long time, use a different live source than the desktop, lose its manager when the Breeze client changes, or update a pane strike without updating the active Breeze subscription.
+
+## Log search checklist
+
+Search one resumed `session_id` through the following stages:
+
+```text
+paper_session_resume_db
+paper_session_resume_started
+paper_phase1_started
+paper_phase1_completed
+paper_phase2_source_selected
+breeze_manager_starting
+breeze_contract_mapping_succeeded
+breeze_contract_mapping_empty
+breeze_contract_mapping_failed
+breeze_feed_subscribed
+breeze_manager_started
+breeze_tick_first_received
+breeze_option_tick_first_accepted
+paper_tick_queue_first_received
+paper_tick_forwarded_to_sse
+sse_connected
+sse_first_event_sent
+```
+
+The most important option-drop messages are:
+
+```text
+breeze_contract_mapping_empty
+breeze_option_tick_dropped ... reason=unmatched_scrip
+breeze_option_tick_dropped ... reason=contradictory_right
+```
+
+Also search for these provider/security-master failures:
+
+```text
+BreezeStreamManager: option identity lookup failed
+Breeze security master download failed
+Breeze security master extract failed
+Breeze security master zip missing
+Breeze security master parse failed
+breeze_client_changed
+breeze_live_no_tick_warning
+```
+
+## Interpretation
+
+```text
+resume log, but no paper_phase1_completed
+```
+
+Historical replay is still running or the paper task failed before live setup.
+
+```text
+paper_phase2_source_selected, but no breeze_manager_started
+```
+
+Breeze setup failed or another provider was selected.
+
+```text
+breeze_manager_started, then breeze_contract_mapping_empty
+```
+
+The WebSocket may be connected, but option ticks will be rejected because the exact ScripCode is unknown.
+
+```text
+breeze_manager_started, no breeze_tick_first_received
+```
+
+Investigate provider callback delivery, subscription state, Breeze client replacement, or separate backend processes.
+
+```text
+breeze_tick_first_received, but no paper_tick_queue_first_received
+```
+
+The manager accepted a tick but it was not delivered/consumed by the paper session queue.
+
+```text
+paper_tick_queue_first_received, but no sse_first_event_sent
+```
+
+Investigate paper-session processing or SSE attachment.
+
+```text
+sse_first_event_sent, website still shows no live data
+```
+
+Investigate frontend session ID, strike filtering, or stale pane state.
+
+## Useful commands
+
+```bash
+rg -n -i \
+"paper_session_resume|paper_phase1|paper_phase2|breeze_manager|breeze_contract_mapping|breeze_feed|breeze_tick|breeze_option_tick_dropped|paper_tick_queue|paper_tick_forwarded_to_sse|sse_" \
+backend/logs .
+```
+
+For a single session:
+
+```bash
+rg -n "session_id=<SESSION_ID>" backend/logs .
+```
+
+Never include Breeze API keys, session tokens, or access tokens in logs.
