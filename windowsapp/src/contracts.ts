@@ -34,6 +34,13 @@ export interface DesktopPosition {
   side: 'LONG' | 'SHORT' | 'FLAT'; entry_commission: number
 }
 
+export interface DesktopTrade {
+  [key: string]: unknown
+  trade_id: string; symbol: string; side: 'BUY' | 'SELL'; quantity: number
+  price: number; timestamp: number; right?: 'CE' | 'PE' | null
+  strike?: number | null; expiry?: string | null; underlying_price?: number | null
+}
+
 export interface DesktopStrategy {
   strategy_id: string; strategy_type: string; symbol: string
   right: 'CE' | 'PE' | null; status: string; triggered: boolean
@@ -73,7 +80,7 @@ export interface DesktopTradingSnapshot {
   current_bar_index: number
   current_price: number; current_price_ce: number; current_price_pe: number
   contract_quotes: Record<string, { symbol: string; expiry: string; strike: number; right: 'CE' | 'PE'; contract_key: string; price: number; timestamp: number; source: string }>
-  trades: Array<Record<string, unknown>>
+  trades: DesktopTrade[]
   open_orders: DesktopOrder[]
   strategies: DesktopStrategy[]
   positions: { equity: DesktopPosition; CE: DesktopPosition; PE: DesktopPosition }

@@ -1236,6 +1236,7 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
       right: right ?? undefined,
       quantity: opts.quantity as number | undefined,
       funds_ratio_pct: opts.fundsRatioPct as number | undefined,
+      risk_ratio_pct: opts.riskRatioPct as number | undefined,
       direction: opts.direction as 'BUY' | 'SELL' | undefined,
       autostop_trigger_type: autostopTriggerType,
       autostop_deviation_pct: autostopDeviationPct,

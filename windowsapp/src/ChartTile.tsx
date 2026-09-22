@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
-import { dispose, init, type Chart, type KLineData } from 'klinecharts'
+import { dispose, init, registerOverlay, type Chart, type KLineData } from 'klinecharts'
 import { registerExtensions } from 'react-klinecharts-ui/extensions'
-import type { Candle, DesktopOrder, DesktopPosition, DesktopStrategy, DesktopTradingSettings } from './contracts'
+import type { Candle, DesktopOrder, DesktopPosition, DesktopStrategy, DesktopTrade, DesktopTradingSettings } from './contracts'
 import { formatCandleCloseCountdown } from './liveCountdown'
+import { buildTradeMarkers } from './tradeMarkers'
 
 interface ChartSettings { background: string; textColor: string; gridColor: string; gridOpacity: number; gridStyle: 'solid' | 'dashed'; gridSize: number; movingAverageType: 'MA' | 'EMA'; movingAveragePeriods: string; horizontalLineColor: string; horizontalLineWidth: number; trendLineColor: string; trendLineWidth: number; drawingLineColor: string; drawingLineWidth: number; drawingFillColor: string; drawingFillOpacity: number }
 const withOpacity = (hex: string, opacity: number) => `${hex}${Math.round(opacity * 255).toString(16).padStart(2, '0')}`
@@ -19,13 +20,28 @@ let extensionsRegistered = false
 const ensureExtensions = () => {
   if (extensionsRegistered) return
   registerExtensions()
+  registerOverlay({
+    name: 'desktopTradeMarker',
+    totalStep: 1,
+    lock: true,
+    needDefaultPointFigure: false,
+    createPointFigures: ({ coordinates, overlay }) => {
+      const coordinate = coordinates[0]
+      const marker = overlay.extendData as { color: string; text: string }
+      if (!coordinate || !marker) return []
+      return [
+        { type: 'circle', attrs: { x: coordinate.x, y: coordinate.y, r: 3 }, styles: { style: 'fill', color: marker.color }, ignoreEvent: true },
+        { type: 'text', attrs: { x: coordinate.x, y: coordinate.y - 6, text: marker.text, align: 'center', baseline: 'bottom' }, styles: { color: marker.color, size: 8, family: 'Inter, system-ui, sans-serif', weight: 'bold' }, ignoreEvent: true },
+      ]
+    },
+  })
   extensionsRegistered = true
 }
 
 interface DrawingCommand { id: number; tool: string }
 interface DrawingAction { id: number; action: 'delete' | 'hide' | 'lock' }
 type DrawingMode = 'once' | 'repeat'
-type OrderAction = 'USE_SL_BUY' | 'USE_SL_SELL' | 'BULK_LIMIT' | 'BULK_MOVE_SL' | 'START_TARGET_PROFIT' | 'START_LOCK_PROFIT' | 'START_UNDERLYING_TARGET' | 'START_UNDERLYING_SL'
+type OrderAction = 'USE_SL_BUY' | 'USE_SL_SELL' | 'BULK_LIMIT' | 'BULK_MOVE_SL' | 'START_TARGET_PROFIT' | 'START_LOCK_PROFIT' | 'START_AGGRESSIVE_SL' | 'START_BREAKEVEN' | 'START_UNDERLYING_TARGET' | 'START_UNDERLYING_SL'
 type ConversionTarget = 'LIMIT' | 'STOPLOSS' | 'TARGET'
 type PricePickAction = { orderId?: string; conversion?: ConversionTarget; ticket?: unknown }
 interface FloatingLabel { key: string; x: number; y: number; text: string; color: string }
@@ -65,7 +81,7 @@ const placeNearPoint = (x: number, y: number, width: number, height: number) => 
   }
 }
 
-export function ChartTile({ symbol, interval, supportedIntervals, onIntervalChange, candles = demo, loading, message, settings, isReplaying, isLive, instrument, baseUrl, onConfigure, onMaximize, maximized, active, indicators, drawingCommand, drawingAction, drawingMode, onDrawingComplete, onActivate, openOrders = [], strategies = [], position = null, sessionCapital = 0, tradingSettings = null, tradingEnabled = false, orderEntryEnabled = false, underlyingStrategyEnabled = false, pricePickAction = null, onPricePick, onOrderDrag, onStrategyDrag, onOrderCancel, onOrderConvertRequest, onChartOrderAction }: { symbol: string; interval: string; supportedIntervals: number[]; onIntervalChange: (interval: string) => void; candles?: Candle[]; loading: boolean; message: string; settings: ChartSettings; isReplaying: boolean; isLive: boolean; replayDatasetKey?: string; instrument: Record<string, unknown>; baseUrl: string; onConfigure: () => void; onMaximize: () => void; maximized: boolean; active: boolean; indicators: string[]; drawingCommand: DrawingCommand | null; drawingAction: DrawingAction | null; drawingMode: DrawingMode; onDrawingComplete: (commandId: number, tool: string) => void; onActivate: () => void; openOrders?: DesktopOrder[]; strategies?: DesktopStrategy[]; position?: DesktopPosition | null; sessionCapital?: number; tradingSettings?: DesktopTradingSettings | null; tradingEnabled?: boolean; orderEntryEnabled?: boolean; underlyingStrategyEnabled?: boolean; pricePickAction?: PricePickAction | null; onPricePick?: (price: number) => void; onOrderDrag?: (order: DesktopOrder, price: number) => void; onStrategyDrag?: (strategyId: string, price: number) => void; onOrderCancel?: (order: DesktopOrder) => void; onOrderConvertRequest?: (order: DesktopOrder, target: ConversionTarget) => void; onChartOrderAction?: (action: OrderAction, price: number, anchor: { x: number; y: number }) => void }) {
+export function ChartTile({ symbol, interval, supportedIntervals, onIntervalChange, candles = demo, loading, message, settings, isReplaying, isLive, instrument, baseUrl, onConfigure, onMaximize, maximized, active, indicators, drawingCommand, drawingAction, drawingMode, onDrawingComplete, onActivate, trades = [], openOrders = [], strategies = [], position = null, sessionCapital = 0, tradingSettings = null, tradingEnabled = false, orderEntryEnabled = false, underlyingStrategyEnabled = false, pricePickAction = null, onPricePick, onOrderDrag, onStrategyDrag, onOrderCancel, onOrderConvertRequest, onChartOrderAction }: { symbol: string; interval: string; supportedIntervals: number[]; onIntervalChange: (interval: string) => void; candles?: Candle[]; loading: boolean; message: string; settings: ChartSettings; isReplaying: boolean; isLive: boolean; replayDatasetKey?: string; instrument: Record<string, unknown>; baseUrl: string; onConfigure: () => void; onMaximize: () => void; maximized: boolean; active: boolean; indicators: string[]; drawingCommand: DrawingCommand | null; drawingAction: DrawingAction | null; drawingMode: DrawingMode; onDrawingComplete: (commandId: number, tool: string) => void; onActivate: () => void; trades?: DesktopTrade[]; openOrders?: DesktopOrder[]; strategies?: DesktopStrategy[]; position?: DesktopPosition | null; sessionCapital?: number; tradingSettings?: DesktopTradingSettings | null; tradingEnabled?: boolean; orderEntryEnabled?: boolean; underlyingStrategyEnabled?: boolean; pricePickAction?: PricePickAction | null; onPricePick?: (price: number) => void; onOrderDrag?: (order: DesktopOrder, price: number) => void; onStrategyDrag?: (strategyId: string, price: number) => void; onOrderCancel?: (order: DesktopOrder) => void; onOrderConvertRequest?: (order: DesktopOrder, target: ConversionTarget) => void; onChartOrderAction?: (action: OrderAction, price: number, anchor: { x: number; y: number }) => void }) {
   const element = useRef<HTMLDivElement>(null)
   const chartRef = useRef<Chart | null>(null)
   const candlesRef = useRef(candles)
@@ -88,6 +104,7 @@ export function ChartTile({ symbol, interval, supportedIntervals, onIntervalChan
   const indicatorKey = indicators.join('|')
   const orderOverlayIdsRef = useRef<Map<string, string>>(new Map())
   const strategyOverlayIdsRef = useRef<Map<string, string>>(new Map())
+  const tradeMarkerOverlayIdsRef = useRef<Set<string>>(new Set())
   const pricePickActionRef = useRef(pricePickAction)
   const onPricePickRef = useRef(onPricePick)
   const tradingEnabledRef = useRef(tradingEnabled)
@@ -114,6 +131,22 @@ export function ChartTile({ symbol, interval, supportedIntervals, onIntervalChan
     }
   }
   useEffect(() => { drawingModeRef.current = drawingMode }, [drawingMode])
+  useEffect(() => {
+    const chart = chartRef.current
+    if (!chart) return
+    for (const id of tradeMarkerOverlayIdsRef.current) chart.removeOverlay({ id })
+    tradeMarkerOverlayIdsRef.current.clear()
+    const intervalSeconds = Number(interval.replace('m', '')) * 60
+    if (!intervalSeconds) return
+    buildTradeMarkers(trades, instrument, intervalSeconds).forEach(marker => {
+      const id = chart.createOverlay({ name: 'desktopTradeMarker', paneId: 'candle_pane', points: [{ timestamp: marker.timestamp * 1000, value: marker.price }], extendData: { color: marker.color, text: marker.text }, lock: true, visible: true, zLevel: 10 })
+      if (typeof id === 'string') tradeMarkerOverlayIdsRef.current.add(id)
+    })
+    return () => {
+      for (const id of tradeMarkerOverlayIdsRef.current) chart.removeOverlay({ id })
+      tradeMarkerOverlayIdsRef.current.clear()
+    }
+  }, [trades, instrument, interval, candles])
   useEffect(() => {
     if (!isLive) return
     setClock(Date.now())
@@ -415,7 +448,8 @@ export function ChartTile({ symbol, interval, supportedIntervals, onIntervalChan
   const menuAction = (action: OrderAction) => { if (!contextMenu) return; onChartOrderActionRef.current?.(action, contextMenu.price, { x: contextMenu.x, y: contextMenu.y }); setContextMenu(null) }
   const hasClosingOrders = Boolean(position && position.side !== 'FLAT' && openOrders.some(order => order.status === 'PENDING' && ((position.side === 'LONG' && order.side === 'SELL') || (position.side === 'SHORT' && order.side === 'BUY'))))
   const hasSlOrders = Boolean(position && position.side !== 'FLAT' && openOrders.some(order => order.status === 'PENDING' && order.is_stoploss && ((position.side === 'LONG' && order.side === 'SELL') || (position.side === 'SHORT' && order.side === 'BUY'))))
-  const menuPosition = contextMenu ? placeNearPoint(contextMenu.x, contextMenu.y, 230, orderEntryEnabled ? 270 : 130) : { left: 0, top: 0 }
+  const hasPosition = Boolean(position && position.side !== 'FLAT' && position.quantity > 0)
+  const menuPosition = contextMenu ? placeNearPoint(contextMenu.x, contextMenu.y, 230, orderEntryEnabled ? 330 : 180) : { left: 0, top: 0 }
   const lineActionPosition = selectedOrderAnchor ? placeNearPoint(selectedOrderAnchor.x, selectedOrderAnchor.y, 360, 46) : { left: 12, top: 64 }
-  return <section className={`chart ${active ? 'active-chart' : ''}`} style={{ background: settings.background, color: settings.textColor }} onPointerDownCapture={onActivate}><div className="chart-head"><span>{tradingSettings?.desktop_hide_chart_labels ? '' : `${symbol} · `}<select className="interval-picker" value={interval.replace('m', '')} onChange={event => onIntervalChange(event.target.value)} aria-label="Candle interval">{supportedIntervals.map(value => <option key={value} value={value}>{value}m</option>)}</select>{tradingSettings?.desktop_hide_chart_labels ? '' : ' · IST'}</span><span className="chart-actions">{pricePickAction && <span className="candle-close">Pick price</span>}{isLive && <span className="candle-close" aria-label={`Candle closes in ${closeCountdown}`}>{closeCountdown}</span>}<button className="icon-button" title="Fit data to chart" aria-label="Fit data to chart" onClick={fitChart}>⤧</button><button className="icon-button" title="Choose instrument" aria-label="Choose instrument" onClick={onConfigure}>⌕</button><button className="icon-button" title={maximized ? 'Restore chart' : 'Maximize chart'} aria-label={maximized ? 'Restore chart' : 'Maximize chart'} onClick={onMaximize}>{maximized ? '⊡' : '⛶'}</button></span></div><div className="kline-container"><div className="kline" ref={element} />{floatingLabels.map(label => <div key={label.key} className="order-line-label" style={{ left: label.x, top: label.y, borderColor: label.color, color: label.color }}>{label.text}</div>)}{pnlLabel && <div className="position-pnl-label" style={{ left: pnlLabel.x, top: pnlLabel.y, color: pnlLabel.color, borderColor: pnlLabel.color }}>{pnlLabel.text}</div>}{selectedOrder && <div className="line-actions" style={{ left: lineActionPosition.left, top: lineActionPosition.top }}><span>{orderLineLabel(selectedOrder, position, tradingSettings, sessionCapital)}</span><button onClick={() => onOrderConvertRequest?.(selectedOrder, 'LIMIT')}>To Limit</button><button onClick={() => onOrderConvertRequest?.(selectedOrder, 'STOPLOSS')}>To SL</button><button onClick={() => onOrderConvertRequest?.(selectedOrder, 'TARGET')}>To Target</button><button onClick={() => onOrderCancel?.(selectedOrder)}>Delete</button></div>}{contextMenu && <div className="chart-context-menu" style={{ left: menuPosition.left, top: menuPosition.top }}><strong>{orderEntryEnabled ? `Use as SL ${contextMenu.price.toFixed(2)}` : `Underlying ${contextMenu.price.toFixed(2)}`}</strong>{orderEntryEnabled && <><button onClick={() => menuAction('USE_SL_BUY')}>Buy entry</button>{tradingSettings?.context_menu_sl_mode === 'both' && <button onClick={() => menuAction('USE_SL_SELL')}>Sell entry</button>}{hasSlOrders && <button onClick={() => menuAction('BULK_MOVE_SL')}>Move SL here</button>}{hasClosingOrders && <button onClick={() => menuAction('BULK_LIMIT')}>Move exits to Limit here</button>}<button onClick={() => menuAction('START_TARGET_PROFIT')}>Take profit here</button><button onClick={() => menuAction('START_LOCK_PROFIT')}>Lock profit here</button></>}{underlyingStrategyEnabled && <><button onClick={() => menuAction('START_UNDERLYING_TARGET')}>Underlying target here</button><button onClick={() => menuAction('START_UNDERLYING_SL')}>Underlying SL here</button></>}</div>}{loading && <div className="chart-loading"><span className="spinner" />Loading candles...</div>}{!loading && message && <div className="chart-loading chart-message">{message}</div>}</div></section>
+  return <section className={`chart ${active ? 'active-chart' : ''}`} style={{ background: settings.background, color: settings.textColor }} onPointerDownCapture={onActivate}><div className="chart-head"><span>{tradingSettings?.desktop_hide_chart_labels ? '' : `${symbol} · `}<select className="interval-picker" value={interval.replace('m', '')} onChange={event => onIntervalChange(event.target.value)} aria-label="Candle interval">{supportedIntervals.map(value => <option key={value} value={value}>{value}m</option>)}</select>{tradingSettings?.desktop_hide_chart_labels ? '' : ' · IST'}</span><span className="chart-actions">{pricePickAction && <span className="candle-close">Pick price</span>}{isLive && <span className="candle-close" aria-label={`Candle closes in ${closeCountdown}`}>{closeCountdown}</span>}<button className="icon-button" title="Fit data to chart" aria-label="Fit data to chart" onClick={fitChart}>⤧</button><button className="icon-button" title="Choose instrument" aria-label="Choose instrument" onClick={onConfigure}>⌕</button><button className="icon-button" title={maximized ? 'Restore chart' : 'Maximize chart'} aria-label={maximized ? 'Restore chart' : 'Maximize chart'} onClick={onMaximize}>{maximized ? '⊡' : '⛶'}</button></span></div><div className="kline-container"><div className="kline" ref={element} />{floatingLabels.map(label => <div key={label.key} className="order-line-label" style={{ left: label.x, top: label.y, borderColor: label.color, color: label.color }}>{label.text}</div>)}{pnlLabel && <div className="position-pnl-label" style={{ left: pnlLabel.x, top: pnlLabel.y, color: pnlLabel.color, borderColor: pnlLabel.color }}>{pnlLabel.text}</div>}{selectedOrder && <div className="line-actions" style={{ left: lineActionPosition.left, top: lineActionPosition.top }}><span>{orderLineLabel(selectedOrder, position, tradingSettings, sessionCapital)}</span><button onClick={() => onOrderConvertRequest?.(selectedOrder, 'LIMIT')}>To Limit</button><button onClick={() => onOrderConvertRequest?.(selectedOrder, 'STOPLOSS')}>To SL</button><button onClick={() => onOrderConvertRequest?.(selectedOrder, 'TARGET')}>To Target</button><button onClick={() => onOrderCancel?.(selectedOrder)}>Delete</button></div>}{contextMenu && <div className="chart-context-menu" style={{ left: menuPosition.left, top: menuPosition.top }}><strong>{orderEntryEnabled ? `Use as SL ${contextMenu.price.toFixed(2)}` : `Underlying ${contextMenu.price.toFixed(2)}`}</strong>{hasPosition && <><button onClick={() => menuAction('START_AGGRESSIVE_SL')}>Aggressive SL</button><button onClick={() => menuAction('START_BREAKEVEN')}>Breakeven</button></>}{orderEntryEnabled && <><button onClick={() => menuAction('USE_SL_BUY')}>Buy entry</button>{tradingSettings?.context_menu_sl_mode === 'both' && <button onClick={() => menuAction('USE_SL_SELL')}>Sell entry</button>}{hasSlOrders && <button onClick={() => menuAction('BULK_MOVE_SL')}>Move SL here</button>}{hasClosingOrders && <button onClick={() => menuAction('BULK_LIMIT')}>Move exits to Limit here</button>}<button onClick={() => menuAction('START_TARGET_PROFIT')}>Take profit here</button><button onClick={() => menuAction('START_LOCK_PROFIT')}>Lock profit here</button></>}{underlyingStrategyEnabled && <><button onClick={() => menuAction('START_UNDERLYING_TARGET')}>Underlying target here</button><button onClick={() => menuAction('START_UNDERLYING_SL')}>Underlying SL here</button></>}</div>}{loading && <div className="chart-loading"><span className="spinner" />Loading candles...</div>}{!loading && message && <div className="chart-loading chart-message">{message}</div>}</div></section>
 }

@@ -38,6 +38,16 @@ input { width: 160px; }
 .tool-panel label, .tool-panel section { display: grid; gap: 6px; color: #aeb8ca; font-size: .7rem; }
 .tool-panel strong { color: #dbeafe; font-size: .68rem; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; }
 .tool-panel select { width: 100%; padding: 4px 5px; font-size: .68rem; }
+.desktop-position-panel { gap: 4px !important; padding: 6px; border: 1px solid #293142; border-radius: 5px; background: #0f1420; }
+.desktop-position-instrument { color: #93c5fd; font-size: .64rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.desktop-position-side { font-weight: 800; font-size: .72rem; }
+.desktop-position-side.long { color: #86efac; }
+.desktop-position-side.short { color: #fca5a5; }
+.desktop-position-flat { color: #94a3b8; font-size: .68rem; }
+.desktop-position-metrics { display: grid; gap: 3px; color: #94a3b8; font-size: .64rem; }
+.desktop-position-metrics span { display: flex; justify-content: space-between; gap: 5px; }
+.desktop-position-metrics b { color: #e5e7eb; font-variant-numeric: tabular-nums; }
+.desktop-position-metrics small { color: #64748b; font-size: .6rem; }
 .tool-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
 .tool-grid button, .tool-actions button, .panel-clear { min-height: 25px; padding: 3px 4px; font-size: .64rem; line-height: 1.1; }
 .tool-actions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; }
@@ -117,6 +127,7 @@ input { width: 160px; }
 .trading-pill { display: inline-flex; align-items: center; gap: 5px; padding: 3px 7px; border: 1px solid #334155; border-radius: 999px; color: #cbd5e1; font-size: .7rem; font-variant-numeric: tabular-nums; }
 .trading-pill.good { color: #86efac; border-color: #166534; background: #052e16; }
 .trading-pill.bad { color: #fca5a5; border-color: #7f1d1d; background: #450a0a; }
+.session-indicator { width: 25px; justify-content: center; padding: 3px 0; font-size: .85rem; font-weight: 800; }
 .flatten-button { background: #7f1d1d; border-color: #ef4444; color: #fee2e2; font-weight: 800; }
 .flatten-button:hover:not(:disabled) { background: #991b1b; border-color: #f87171; }
 .desktop-label-panel { display: grid; gap: 5px; margin-top: 8px; padding-top: 8px; border-top: 1px solid #293142; }
