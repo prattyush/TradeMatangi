@@ -4,7 +4,7 @@ import { ChartTile } from './ChartTile'
 import { replayCandles } from './chartState'
 import { shouldConsumeDrawingCommand } from './drawingState'
 import type { Candle, DesktopOrder, DesktopPosition, DesktopTradingSnapshot } from './contracts'
-import { aggregateLiveCandles, appendLiveTick } from './liveCandles'
+import { aggregateLiveCandles, appendLiveTick, reconcileLiveTicks } from './liveCandles'
 import { applyLiveStreamPayloadToSnapshot, type LiveSnapshot, type LiveTileState } from './liveStreamState'
 
 interface HistoricalPage { candles: Candle[]; available?: boolean; unavailable_reason?: string }
@@ -296,7 +296,12 @@ export default function App() {
   useEffect(() => () => {
     if (tradingErrorTimerRef.current !== null) window.clearTimeout(tradingErrorTimerRef.current)
   }, [])
-  const clearLiveTickCache = () => setLiveTickCache({})
+  const clearLiveTickCache = (streamId?: string) => {
+    setLiveTickCache({})
+    if (hasNativeHost && streamId) {
+      void invoke('clear_desktop_live_ticks', { streamId }).catch(error => recordRendererDiagnostic('live_tick_clear_error', { live_stream_id: streamId, error: String(error) }))
+    }
+  }
   const setLiveSnapshot = (snapshot: LiveSnapshot | null) => { activeLiveSnapshot = snapshot; setLive(snapshot); if (snapshot) setLiveError('') }
   const updateLiveSnapshot = (updater: (snapshot: LiveSnapshot | null) => LiveSnapshot | null) => {
     setLive(current => {
@@ -554,8 +559,45 @@ export default function App() {
   const liveTile = (tile: TileConfig) => { const item = catalogue.find(entry => entry.symbol === tile.symbol) ?? fallbackCatalogue[0]; const instrument = tile.kind === 'option' ? { kind: 'option', exchange: item.exchange, underlying: tile.symbol, expiry: tile.expiry, strike: Number(tile.strike), right: tile.right } : { kind: item.chart_type ?? 'equity', exchange: item.exchange, symbol: tile.symbol }; return { tile_id: tile.id, instrument, interval_minutes: Number(tile.interval) } }
   const liveTiles = () => activeScreen.tiles.map(liveTile)
   const startLive = async () => { try { setLiveError(''); clearLiveTickCache(); const next = await liveRequest('start', 'POST', { tiles: liveTiles() }); setLiveSnapshot(next); await startNativeStream(`live:${next.stream_id}`, `live/${next.stream_id}/events`, `live/${next.stream_id}/snapshot`) } catch (error) { setLiveError(String(error)) } }
-  const stopLive = async () => { if (!live) return; try { stopNativeStream(`live:${live.stream_id}`); await liveRequest(`${live.stream_id}/stop`, 'POST'); setLiveSnapshot(null); clearLiveTickCache() } catch (error) { setLiveError(String(error)) } }
-  const refreshLive = async () => { if (!live) return; try { setLiveSnapshot(await liveRequest(`${live.stream_id}/refresh`, 'POST')) } catch (error) { setLiveError(String(error)) } }
+  const stopLive = async () => { if (!live) return; try { const streamId = live.stream_id; stopNativeStream(`live:${streamId}`); await liveRequest(`${streamId}/stop`, 'POST'); setLiveSnapshot(null); clearLiveTickCache(streamId) } catch (error) { setLiveError(String(error)) } }
+  const refreshLive = async () => {
+    if (!live) return
+    try {
+      setLiveError('')
+      const refreshed = await liveRequest(`${live.stream_id}/refresh`, 'POST')
+      const reconciledByInstrument: Record<string, Candle[]> = {}
+      for (const tile of refreshed.tiles) {
+        if (!tile.instrument) continue
+        const instrumentKey = canonicalKey(tile.instrument)
+        let localTicks = liveTickCache[instrumentKey] ?? []
+        if (hasNativeHost) {
+          try {
+            const persisted = await invoke<Candle[]>('desktop_live_ticks', {
+              streamId: refreshed.stream_id,
+              instrumentKey,
+              sinceTimestamp: null,
+            })
+            localTicks = reconcileLiveTicks(persisted, localTicks)
+          } catch (error) {
+            recordRendererDiagnostic('live_tick_restore_error', { instrument_key: instrumentKey, live_stream_id: refreshed.stream_id, error: String(error) })
+          }
+        }
+        const reconciled = reconcileLiveTicks(localTicks, tile.current_date_seconds ?? [])
+        reconciledByInstrument[instrumentKey] = reconciled
+        if (hasNativeHost && reconciled.length) {
+          try {
+            await invoke('record_desktop_live_ticks', { streamId: refreshed.stream_id, instrumentKey, ticks: reconciled })
+          } catch (error) {
+            recordRendererDiagnostic('live_tick_reconcile_persist_error', { instrument_key: instrumentKey, live_stream_id: refreshed.stream_id, error: String(error) })
+          }
+        }
+      }
+      setLiveTickCache(current => ({ ...current, ...reconciledByInstrument }))
+      setLiveSnapshot(refreshed)
+    } catch (error) {
+      setLiveError(String(error))
+    }
+  }
   useEffect(() => {
     if (mode !== 'Live' || !live) return
     let cancelled = false
@@ -1011,7 +1053,7 @@ export default function App() {
     if (hasNativeHost) void invoke('desktop_logout', { baseUrl: serverUrl })
     setBrowserToken('')
     setLiveSnapshot(null)
-    clearLiveTickCache()
+    clearLiveTickCache(live?.stream_id)
     setReplay(null)
     setConnection('authentication_required')
   }

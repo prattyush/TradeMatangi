@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { aggregateLiveCandles, appendLiveTick, mergeHistoryWithLiveTicks, recentLiveTicks } from './liveCandles'
+import { aggregateLiveCandles, appendLiveTick, mergeHistoryWithLiveTicks, recentLiveTicks, reconcileLiveTicks } from './liveCandles'
 
 const candle = (timestamp: number, close: number) => ({ timestamp, open: close, high: close, low: close, close })
 
@@ -23,6 +23,12 @@ describe('desktop live candle aggregation', () => {
     expect(cached).toHaveLength(61 * 60 + 1)
     const updated = appendLiveTick(cached, candle(61 * 60, 999))
     expect(updated[updated.length - 1]?.close).toBe(999)
+  })
+
+  it('keeps local seconds absent from refresh while backend wins matching seconds', () => {
+    const local = [candle(100, 10), candle(101, 11)]
+    const backend = [candle(101, 21), candle(102, 22)]
+    expect(reconcileLiveTicks(local, backend)).toEqual([candle(100, 10), candle(101, 21), candle(102, 22)])
   })
 
   it('can expose only recent ticks for website history backfill', () => {

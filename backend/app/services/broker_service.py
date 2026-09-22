@@ -16,7 +16,7 @@ import pandas as pd
 from pathlib import Path
 
 from app.config import DATA_DIR, MARKET_OPEN, MARKET_CLOSE, get_market_close, SUPPORTED_SYMBOLS
-from app.services.data_loader import parquet_path, pickle_path, validate_and_fill_gaps
+from app.services.data_loader import has_native_second_cadence, parquet_path, pickle_path, validate_and_fill_gaps
 
 _CHUNK_MINUTES = 15   # 900-second windows stay safely under the ~1000-record Breeze API limit
 _MIN_DAY_ROWS = 20000  # A complete trading day has ~22500 rows; below this triggers re-fetch
@@ -299,7 +299,10 @@ def fetch_historical(symbol: str, date: str) -> Path:
     if df.empty:
         raise RuntimeError(f"Could not parse Breeze data for {symbol} on {date}.")
 
-    df = validate_and_fill_gaps(df, date, partial=is_today)
+    # Current-day minute data must remain minute data. Expanding it to one
+    # second would fabricate ticks that the desktop could incorrectly cache.
+    if not is_today or has_native_second_cadence(df):
+        df = validate_and_fill_gaps(df, date, partial=is_today)
 
     tmp = pq.with_name(pq.name + ".tmp")
     try:

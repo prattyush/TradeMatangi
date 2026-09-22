@@ -353,7 +353,10 @@ def _fetch_options_historical_unlocked(
             f"Could not parse Breeze options data for {symbol} {right} {strike} on {date}."
         )
 
-    df = _validate_options_gaps(df, date, partial=is_today)
+    from app.services.data_loader import has_native_second_cadence
+    # Do not manufacture second OHLC from a current-day minute source.
+    if not is_today or has_native_second_cadence(df):
+        df = _validate_options_gaps(df, date, partial=is_today)
 
     tmp = pq.with_name(pq.name + ".tmp")
     try:

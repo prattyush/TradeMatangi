@@ -8,6 +8,18 @@ export const appendLiveTick = (ticks: Candle[], tick: Candle): Candle[] => {
   return [...byTimestamp.values()].sort((left, right) => left.timestamp - right.timestamp)
 }
 
+/** Merge local seconds with an authoritative refresh payload.
+ *
+ * Local ticks whose timestamp is not in the payload remain intact, while the
+ * backend replaces the same timestamp.  This is deliberately independent of
+ * candle interval: SQLite and memory hold only raw one-second OHLC.
+ */
+export const reconcileLiveTicks = (localTicks: Candle[], backendTicks: Candle[]): Candle[] => {
+  const byTimestamp = new Map(localTicks.map(item => [item.timestamp, item]))
+  backendTicks.forEach(tick => byTimestamp.set(tick.timestamp, tick))
+  return [...byTimestamp.values()].sort((left, right) => left.timestamp - right.timestamp)
+}
+
 export const aggregateLiveCandles = (history: Candle[], ticks: Candle[], intervalMinutes: number): Candle[] => {
   const intervalSeconds = intervalMinutes * 60
   const byTimestamp = new Map(history.map(candle => [candle.timestamp, candle]))

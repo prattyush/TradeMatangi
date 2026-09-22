@@ -1,5 +1,6 @@
 import asyncio
 
+import pandas as pd
 import pytest
 
 from app.services import desktop_live_service as live
@@ -20,8 +21,40 @@ def tile(tile_id, interval, candles):
     }
 
 
+def test_completed_current_candles_omits_partial_selected_interval_tail():
+    frame = pd.DataFrame(
+        {
+            "open": [10, 11, 12, 13],
+            "high": [10, 11, 12, 13],
+            "low": [10, 11, 12, 13],
+            "close": [10, 11, 12, 13],
+        },
+        index=pd.to_datetime([
+            "2026-05-06 11:36:00+00:00",
+            "2026-05-06 11:38:59+00:00",
+            "2026-05-06 11:39:00+00:00",
+            "2026-05-06 11:41:30+00:00",
+        ]),
+    )
+
+    candles = live._completed_current_candles(frame, 3)
+
+    assert [candle["timestamp"] for candle in candles] == [int(frame.index[0].timestamp())]
+
+
+def test_completed_current_candles_keeps_bucket_after_its_last_second_arrives():
+    frame = pd.DataFrame(
+        {"open": [10, 11], "high": [10, 11], "low": [10, 11], "close": [10, 11]},
+        index=pd.to_datetime(["2026-05-06 11:39:00+00:00", "2026-05-06 11:41:59+00:00"]),
+    )
+
+    candles = live._completed_current_candles(frame, 3)
+
+    assert [candle["timestamp"] for candle in candles] == [int(frame.index[0].timestamp())]
+
+
 @pytest.mark.asyncio
-async def test_refresh_merges_only_completed_candles_per_tile_interval(monkeypatch):
+async def test_refresh_replaces_chart_baseline_and_returns_current_date_seconds(monkeypatch):
     # IST wall-clock timestamp for 09:24:10, as used by desktop Breeze ticks.
     now = 9 * 3600 + 24 * 60 + 10
     intervals = (1, 3, 5, 15)
@@ -37,8 +70,11 @@ async def test_refresh_merges_only_completed_candles_per_tile_interval(monkeypat
         seconds = current["interval_minutes"] * 60
         return [candle(boundary - seconds, 2), candle(boundary, 3)]
 
+    async def load_seconds(current):
+        return [candle(9 * 3600, float(current["interval_minutes"]))]
+
     monkeypatch.setattr(live, "_load_history", load_history)
-    monkeypatch.setattr(live, "_active_boundary", lambda interval, timestamp=None: (now // (interval * 60)) * (interval * 60))
+    monkeypatch.setattr(live, "_load_current_date_seconds", load_seconds)
 
     await live.refresh(stream)
 
@@ -46,8 +82,9 @@ async def test_refresh_merges_only_completed_candles_per_tile_interval(monkeypat
         boundary = (now // (current["interval_minutes"] * 60)) * (current["interval_minutes"] * 60)
         by_timestamp = {item["timestamp"]: item for item in current["candles"]}
         assert by_timestamp[boundary - current["interval_minutes"] * 60]["close"] == 2
-        assert by_timestamp[boundary]["close"] == 99
+        assert by_timestamp[boundary]["close"] == 3
         assert [item["timestamp"] for item in current["candles"]] == sorted(by_timestamp)
+        assert current["current_date_seconds"] == [candle(9 * 3600, float(current["interval_minutes"]))]
 
 
 @pytest.mark.asyncio
@@ -64,7 +101,11 @@ async def test_refresh_does_not_lose_a_tick_received_while_history_loads(monkeyp
         await release.wait()
         return [candle(boundary - 180, 2), candle(boundary, 3)]
 
+    async def load_seconds(_tile):
+        return [candle(boundary + 10, 110)]
+
     monkeypatch.setattr(live, "_load_history", load_history)
+    monkeypatch.setattr(live, "_load_current_date_seconds", load_seconds)
     monkeypatch.setattr(live, "_active_boundary", lambda interval, timestamp=None: boundary)
     queue = asyncio.Queue()
     consumer = asyncio.create_task(live._consume(stream, current, queue))
@@ -80,7 +121,7 @@ async def test_refresh_does_not_lose_a_tick_received_while_history_loads(monkeyp
         await consumer
 
     active = next(item for item in current["candles"] if item["timestamp"] == boundary)
-    assert active == candle(boundary, 100)
+    assert active == candle(boundary, 3)
     assert current["latest_tick"] == candle(boundary + 20, 111)
     assert next(item for item in current["candles"] if item["timestamp"] == boundary - 180)["close"] == 2
 
@@ -177,8 +218,11 @@ async def test_refresh_provider_failure_isolated_to_that_tile(monkeypatch):
             raise RuntimeError("provider unavailable")
         return [candle(60, 2)]
 
+    async def load_seconds(_tile):
+        return [candle(60, 2)]
+
     monkeypatch.setattr(live, "_load_history", load_history)
-    monkeypatch.setattr(live, "_active_boundary", lambda interval, timestamp=None: 120)
+    monkeypatch.setattr(live, "_load_current_date_seconds", load_seconds)
     await live.refresh(stream)
 
     assert good["candles"] == [candle(60, 2)]

@@ -9,6 +9,7 @@ from app.services.data_loader import (
     resample_to_candles,
     candles_to_records,
     iter_ticks,
+    has_native_second_cadence,
     pre_session_candles,
     validate_and_fill_gaps,
 )
@@ -27,6 +28,14 @@ def make_ist_df(n_seconds: int = 360, base_price: float = 24200.0) -> pd.DataFra
         "volume": np.zeros(n_seconds),
     }
     return pd.DataFrame(data, index=idx)
+
+
+def test_has_native_second_cadence_rejects_minute_bars():
+    minute_bars = make_ist_df(n_seconds=3)
+    minute_bars.index = pd.date_range("2026-05-06 09:15:00", periods=3, freq="min")
+
+    assert has_native_second_cadence(make_ist_df(n_seconds=3)) is True
+    assert has_native_second_cadence(minute_bars) is False
 
 
 class TestLoadDataframe:
