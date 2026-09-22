@@ -437,11 +437,10 @@ class TestBreezeStreamManagerOnTicks:
         assert candle["right"] == "PE"
 
     @pytest.mark.asyncio
-    async def test_on_ticks_bfo_option_falls_back_to_eq_when_scrip_unknown(self):
+    async def test_on_ticks_drops_bfo_option_when_scrip_unknown(self):
         """
-        If the ScripCode isn't in the map (e.g. get_quotes failed at subscribe
-        time), the tick should still flow through without crashing — right
-        will be None and the candle will be tagged under an EQ-like key.
+        An option ScripCode unknown to this manager must be dropped. It may
+        belong to another consumer of the shared Breeze callback.
         """
         from app.services.breeze_service import _OHLCAccumulator
         mgr = BreezeStreamManager()
@@ -449,11 +448,6 @@ class TestBreezeStreamManagerOnTicks:
         mgr._breeze = True
         mgr._queue = queue
         mgr._loop = asyncio.get_running_loop()
-
-        acc = _OHLCAccumulator()
-        acc.current_second = 1000
-        acc.open = acc.high = acc.low = acc.close = 100.0
-        mgr._accumulators["8.1!999999_EQ"] = acc
 
         bfo_unknown_tick = {
             "symbol": "8.1!999999",
@@ -467,4 +461,50 @@ class TestBreezeStreamManagerOnTicks:
         mgr._on_ticks([{**bfo_unknown_tick, "last": 115.0}])
 
         await asyncio.sleep(0)
-        assert queue.qsize() == 1
+        assert queue.qsize() == 0
+
+    @pytest.mark.asyncio
+    async def test_shared_callback_does_not_mix_different_ce_strikes(self):
+        """A manager must ignore another manager's same-right option tick."""
+        first = BreezeStreamManager()
+        second = BreezeStreamManager()
+        first_queue = asyncio.Queue()
+        second_queue = asyncio.Queue()
+        loop = asyncio.get_running_loop()
+
+        first_instrument = {
+            "exchange_code": "NFO", "stock_code": "NIFTY",
+            "product_type": "options", "expiry_date": "2026-06-25",
+            "strike_price": "24000", "right": "call",
+        }
+        second_instrument = {**first_instrument, "strike_price": "24100"}
+
+        for manager, queue, instrument, token in (
+            (first, first_queue, first_instrument, "24000TOKEN"),
+            (second, second_queue, second_instrument, "24100TOKEN"),
+        ):
+            manager._breeze = True
+            manager._queue = queue
+            manager._loop = loop
+            manager._instruments = [instrument]
+            route = manager.instrument_route_key(instrument)
+            manager._option_scrip_map[token] = (int(instrument["strike_price"]), "CE")
+            manager._option_scrip_routes[token] = route
+            acc = _OHLCAccumulator()
+            acc.current_second = 1000
+            acc.open = acc.high = acc.low = acc.close = 100.0
+            manager._accumulators[route] = acc
+
+        tick = {
+            "symbol": "4.1!24000TOKEN",
+            "last": 115.0,
+            "right": "CALL",
+            "OI": 100,
+            "CHNGOI": 5,
+        }
+        first._on_ticks([tick])
+        second._on_ticks([tick])
+        await asyncio.sleep(0)
+
+        assert first_queue.qsize() == 1
+        assert second_queue.qsize() == 0

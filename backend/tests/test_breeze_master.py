@@ -128,3 +128,17 @@ class TestLoadSecurityMaster:
                 strike=77000, right="PE", expiry_breeze="20-Aug-2026",
             )
         assert result == {"222": (77000, "PE")}
+
+    def test_normalises_expiry_case_and_decimal_strike(self, tmp_path):
+        master_txt = tmp_path / "FOBSEScripMaster.txt"
+        _write_master_csv(master_txt, [
+            {"Token": "999", "ShortName": "BSESEN", "Series": "OPTION",
+             "ExpiryDate": "20-AUG-2026", "StrikePrice": "77000.0", "OptionType": "CE"},
+        ])
+
+        with patch.object(breeze_master, "_master_txt_path", return_value=master_txt):
+            result = breeze_master.load_breeze_security_master(
+                stock_code="BSESEN", exchange_code="BFO",
+                strike=77000, right="CE", expiry_breeze="20-Aug-2026",
+            )
+        assert result == {"999": (77000, "CE")}
