@@ -25,11 +25,13 @@ export const buildTradeMarkers = (
   trades: DesktopTrade[],
   instrument: Record<string, unknown>,
   intervalSeconds: number,
+  showHistoricalMarkers = true,
 ): TradeMarker[] => {
   const isOption = instrument.kind === 'option'
   const right = instrument.right as 'CE' | 'PE' | undefined
   const strike = Number(instrument.strike)
   return trades.flatMap(trade => {
+    if (!showHistoricalMarkers && trade.is_open !== true) return []
     if (!Number.isFinite(trade.timestamp) || !Number.isFinite(trade.price) || trade.price <= 0) return []
     if (isOption) {
       if (trade.right !== right || Number(trade.strike) !== strike) return []
