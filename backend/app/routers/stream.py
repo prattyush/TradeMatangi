@@ -1,9 +1,11 @@
 import asyncio
+import logging
 from fastapi import APIRouter, Header, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from app.services import simulation as sim_svc
 
 router = APIRouter(prefix="/api/stream", tags=["stream"])
+logger = logging.getLogger(__name__)
 
 HEARTBEAT_INTERVAL = 15  # seconds
 
@@ -20,10 +22,16 @@ def _parse_event_id(raw: str | None) -> int | None:
 async def _event_generator(session_id: str, last_event_id: int | None):
     session = sim_svc.get_session(session_id)
     if not session:
+        logger.debug("sse_session_missing session_id=%s", session_id)
         yield "data: {\"type\":\"error\",\"message\":\"Session not found\"}\n\n"
         return
 
+    logger.debug(
+        "sse_connected session_id=%s last_event_id=%s state=%s",
+        session_id, last_event_id if last_event_id is not None else "-", session.state,
+    )
     cursor = last_event_id
+    sent = 0
     while True:
         try:
             # Wait for next event with timeout for heartbeat
@@ -32,6 +40,9 @@ async def _event_generator(session_id: str, last_event_id: int | None):
                 break
             event_id, event = next_event
             cursor = event_id
+            sent += 1
+            if sent == 1:
+                logger.debug("sse_first_event_sent session_id=%s event_id=%s", session_id, event_id)
             yield f"id: {event_id}\ndata: {event}\n\n"
 
             # Stop streaming once the session has ended and queue is drained
@@ -41,6 +52,7 @@ async def _event_generator(session_id: str, last_event_id: int | None):
             # Heartbeat to keep connection alive through proxies
             yield ": heartbeat\n\n"
         except asyncio.CancelledError:
+            logger.debug("sse_disconnected session_id=%s events_sent=%d", session_id, sent)
             break
 
 
@@ -52,6 +64,7 @@ async def stream_session(
 ):
     session = sim_svc.get_session(session_id)
     if not session:
+        logger.debug("sse_session_missing session_id=%s", session_id)
         raise HTTPException(status_code=404, detail="Session not found")
     cursor = last_event_id if last_event_id is not None else _parse_event_id(last_event_id_header)
 

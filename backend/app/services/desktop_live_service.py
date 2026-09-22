@@ -292,7 +292,10 @@ async def activate(stream: DesktopStream) -> None:
         # The fallback queue is unused for routed desktop streams; keep it
         # unbounded so an unexpected provider identity can never raise QueueFull
         # in the event loop. Routed ticks are delivered only to their tile queue.
-        manager.start(asyncio.Queue(), loop, list(instruments_by_route.values()), routes=routes)
+        manager.start(
+            asyncio.Queue(), loop, list(instruments_by_route.values()),
+            routes=routes, session_id=f"desktop:{stream.stream_id}",
+        )
         stream.manager = manager
         stream.managers = [manager]
     except Exception as error:
