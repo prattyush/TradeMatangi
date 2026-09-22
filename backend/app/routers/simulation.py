@@ -362,7 +362,12 @@ async def start_simulation(
         else:
             # Paper/real: session exists in DB but not in memory — rebuild and resume.
             # Forward the request's CE/PE strikes so the user can change OTM on each restart.
-            logger.info("start_simulation: resuming session %s from DB", existing_session_id)
+            logger.info(
+                "paper_session_resume_db session_id=%s user_id=%s symbol=%s date=%s "
+                "instrument_type=%s requested_strike=%s requested_strike_ce=%s requested_strike_pe=%s",
+                existing_session_id, user_id, req.symbol, req.date, req.instrument_type,
+                req.strike, req.strike_ce, req.strike_pe,
+            )
             req_ce = req.strike_ce if req.strike_ce is not None else req.strike
             req_pe = req.strike_pe if req.strike_pe is not None else req.strike
             session = sim_svc.rebuild_session_from_db(
@@ -389,6 +394,12 @@ async def start_simulation(
                 except Exception as exc:
                     logger.warning("start_simulation: Kotak wallet sync on resume failed: %s", exc)
             sim_svc.start_session(session)
+            logger.info(
+                "paper_session_resume_started session_id=%s strike=%s strike_ce=%s strike_pe=%s "
+                "expiry=%s right=%s",
+                session.session_id, session.strike, session.strike_ce, session.strike_pe,
+                session.expiry, session.right,
+            )
             return _session_response(session, group)
 
     session = sim_svc.create_session(

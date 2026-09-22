@@ -23,6 +23,7 @@ import asyncio
 import logging
 import threading
 import time as _time
+import uuid
 import weakref
 from collections import defaultdict
 from dataclasses import dataclass
@@ -157,6 +158,8 @@ class BreezeStreamManager:
     """
 
     def __init__(self) -> None:
+        self._manager_id = uuid.uuid4().hex[:12]
+        self._session_id: str | None = None
         self._breeze = None
         self._accumulators: dict[str, _OHLCAccumulator] = defaultdict(_OHLCAccumulator)
         self._queue: asyncio.Queue | None = None
@@ -165,6 +168,9 @@ class BreezeStreamManager:
         self._tick_count: int = 0
         self._logged_ticks: int = 0
         self._identity_warning_count: int = 0
+        self._raw_tick_count: int = 0
+        self._accepted_tick_count: int = 0
+        self._first_accepted_logged: bool = False
         self._equity_stock_name: str | None = None
         self._equity_exchange: str | None = None
         self._registered = False
@@ -187,6 +193,7 @@ class BreezeStreamManager:
         loop: asyncio.AbstractEventLoop,
         instruments: list[dict],
         routes: dict[str, asyncio.Queue | list[asyncio.Queue]] | None = None,
+        session_id: str | None = None,
     ) -> None:
         """
         instruments: list of dicts with keys:
@@ -197,6 +204,11 @@ class BreezeStreamManager:
         self._queue = queue
         self._loop = loop
         self._instruments = instruments
+        self._session_id = session_id
+        logger.info(
+            "breeze_manager_starting manager_id=%s session_id=%s instruments=%d routed=%s",
+            self._manager_id, self._session_id or "-", len(instruments), bool(routes),
+        )
         self._route_queues = {
             key: value if isinstance(value, list) else [value]
             for key, value in (routes or {}).items()
@@ -230,7 +242,13 @@ class BreezeStreamManager:
                 )
             route_key = self.instrument_route_key(inst)
             if not scrip_map:
-                logger.warning(
+                logger.debug(
+                    "breeze_contract_mapping_empty manager_id=%s session_id=%s "
+                    "exchange=%s stock=%s expiry=%s strike=%s right=%s reason=no_contract_match_or_master_unavailable",
+                    self._manager_id, self._session_id or "-", inst.get("exchange_code"),
+                    inst.get("stock_code"), expiry_raw, inst.get("strike_price"), right_label,
+                )
+                logger.debug(
                     "BreezeStreamManager: no ScripCode mapping for option "
                     "exchange=%s stock=%s expiry=%s strike=%s right=%s; "
                     "unresolved ticks will be dropped",
@@ -252,6 +270,14 @@ class BreezeStreamManager:
                     "BreezeStreamManager: mapped option ScripCode=%s → %s",
                     scrip_code, route_key,
                 )
+            if scrip_map:
+                logger.debug(
+                    "breeze_contract_mapping_succeeded manager_id=%s session_id=%s "
+                    "exchange=%s stock=%s expiry=%s strike=%s right=%s mapped_count=%d",
+                    self._manager_id, self._session_id or "-", inst.get("exchange_code"),
+                    inst.get("stock_code"), expiry_raw, inst.get("strike_price"),
+                    right_label, len(scrip_map),
+                )
 
         breeze = _get_breeze()
         global _multiplexer_breeze, _multiplexer_connected
@@ -259,6 +285,12 @@ class BreezeStreamManager:
             # A credential refresh can replace the SDK object. Do not carry
             # subscriptions from the old connection into the new one.
             if _multiplexer_breeze is not None and _multiplexer_breeze is not breeze:
+                logger.warning(
+                    "breeze_client_changed manager_id=%s session_id=%s old_client=%s new_client=%s "
+                    "clearing_managers=%d",
+                    self._manager_id, self._session_id or "-", id(_multiplexer_breeze),
+                    id(breeze), len(_multiplexer_managers),
+                )
                 _multiplexer_managers.clear()
                 _multiplexer_feed_refs.clear()
                 _multiplexer_feed_specs.clear()
@@ -269,8 +301,16 @@ class BreezeStreamManager:
             _multiplexer_managers.add(self)
             self._registered = True
             if first_consumer and not _multiplexer_connected:
+                logger.info(
+                    "breeze_ws_connecting manager_id=%s session_id=%s",
+                    self._manager_id, self._session_id or "-",
+                )
                 breeze.ws_connect()
                 _multiplexer_connected = True
+                logger.info(
+                    "breeze_ws_connected manager_id=%s session_id=%s managers=%d",
+                    self._manager_id, self._session_id or "-", len(_multiplexer_managers),
+                )
 
         logger.info("BreezeStreamManager subscribing to %d instruments:", len(instruments))
         for inst in instruments:
@@ -302,11 +342,23 @@ class BreezeStreamManager:
             feed_key = _feed_key(inst)
             with _multiplexer_lock:
                 if _multiplexer_feed_refs.get(feed_key, 0) == 0:
+                    logger.info(
+                        "breeze_feed_subscribe_started manager_id=%s session_id=%s feed=%s",
+                        self._manager_id, self._session_id or "-", feed_key,
+                    )
                     _subscribe_feed(breeze, spec)
                     _multiplexer_feed_specs[feed_key] = spec
+                    logger.info(
+                        "breeze_feed_subscribed manager_id=%s session_id=%s feed=%s",
+                        self._manager_id, self._session_id or "-", feed_key,
+                    )
                 _multiplexer_feed_refs[feed_key] = _multiplexer_feed_refs.get(feed_key, 0) + 1
         self._breeze = breeze
-        logger.info("BreezeStreamManager started for %d instruments", len(instruments))
+        logger.info(
+            "breeze_manager_started manager_id=%s session_id=%s instruments=%d mapped_options=%d feeds=%d managers=%d",
+            self._manager_id, self._session_id or "-", len(instruments),
+            len(self._option_scrip_map), len(_multiplexer_feed_refs), len(_multiplexer_managers),
+        )
 
     def _build_scrip_map(
         self,
@@ -399,6 +451,7 @@ class BreezeStreamManager:
                 if not isinstance(tick, dict):
                     continue
                 self._tick_count += 1
+                self._raw_tick_count += 1
                 price = float(tick.get("last", tick.get("ltp", 0.0)))
                 if price == 0.0:
                     continue
@@ -429,11 +482,12 @@ class BreezeStreamManager:
                             self._identity_warning_count <= 5
                             or self._identity_warning_count % 100 == 0
                         ):
-                            logger.warning(
-                                "BreezeStreamManager: dropping unmatched option tick "
-                                "scrip=%s right=%s symbol=%s count=%d",
-                                scrip_code, right, tick.get("symbol", ""),
-                                self._identity_warning_count,
+                            logger.debug(
+                                "breeze_option_tick_dropped manager_id=%s session_id=%s reason=unmatched_scrip "
+                                "scrip=%s raw_right=%s symbol=%s count=%d mapped_options=%d",
+                                self._manager_id, self._session_id or "-", scrip_code, right,
+                                tick.get("symbol", ""), self._identity_warning_count,
+                                len(self._option_scrip_map),
                             )
                         continue
                     _, mapped_right = mapped
@@ -443,11 +497,11 @@ class BreezeStreamManager:
                             self._identity_warning_count <= 5
                             or self._identity_warning_count % 100 == 0
                         ):
-                            logger.warning(
-                                "BreezeStreamManager: dropping contradictory option tick "
+                            logger.debug(
+                                "breeze_option_tick_dropped manager_id=%s session_id=%s reason=contradictory_right "
                                 "scrip=%s raw_right=%s mapped_right=%s count=%d",
-                                scrip_code, right, mapped_right,
-                                self._identity_warning_count,
+                                self._manager_id, self._session_id or "-", scrip_code, right,
+                                mapped_right, self._identity_warning_count,
                             )
                         continue
                     right = mapped_right
@@ -497,6 +551,15 @@ class BreezeStreamManager:
                 ts_second = int(_time.time()) + 19800
 
                 candle = self._accumulators[key].update(price, ts_second)
+                self._accepted_tick_count += 1
+                if not self._first_accepted_logged:
+                    self._first_accepted_logged = True
+                    logger.info(
+                        "breeze_tick_first_accepted manager_id=%s session_id=%s route=%s "
+                        "scrip=%s right=%s raw_ticks=%d",
+                        self._manager_id, self._session_id or "-", key, scrip_code,
+                        right or "EQ", self._raw_tick_count,
+                    )
                 if candle is None:
                     continue
 
