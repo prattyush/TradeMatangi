@@ -1,6 +1,6 @@
 import type { Candle } from './contracts'
 
-export interface LiveTileState { tile_id: string; availability: string; reason?: string; candles?: Candle[]; latest_tick?: Candle; instrument?: Record<string, unknown>; interval_minutes?: number }
+export interface LiveTileState { tile_id: string; availability: string; reason?: string; candles?: Candle[]; current_date_seconds?: Candle[]; latest_tick?: Candle; instrument?: Record<string, unknown>; interval_minutes?: number }
 export interface LiveSnapshot { stream_id: string; event_id: number; tiles: LiveTileState[] }
 export interface LiveStreamEvent { version: number; stream_id: string; generation?: number; event_id: number; timestamp: number; type: string; tile_id: string; payload: unknown }
 

@@ -17,6 +17,19 @@ from app.config import DATA_DIR, OHLCDATA_DIR, CANDLE_INTERVAL_MINUTES, MARKET_O
 _MAX_GAP_SECONDS = 900  # 15 minutes — gaps larger than this cannot be interpolated
 
 
+def has_native_second_cadence(df: pd.DataFrame) -> bool:
+    """Whether provider rows include genuine adjacent one-second OHLC points.
+
+    This must be checked before ``validate_and_fill_gaps``: that helper
+    intentionally materialises missing seconds, which would otherwise make a
+    minute-level provider response look like genuine second data.
+    """
+    if len(df.index) < 2:
+        return False
+    index = df.index.sort_values()
+    return any((right - left).total_seconds() == 1 for left, right in zip(index, index[1:]))
+
+
 def parquet_path(symbol: str, date: str) -> Path:
     """date format: YYYY-MM-DD  →  ohlcdata/SYMBOL-DD-MM-YYYY.parquet"""
     y, m, d = date.split("-")

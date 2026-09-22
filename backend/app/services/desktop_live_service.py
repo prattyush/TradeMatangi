@@ -131,6 +131,29 @@ def _active_boundary(interval_minutes: int, now: int | None = None) -> int:
     return (timestamp // interval_seconds) * interval_seconds
 
 
+def _completed_current_candles(frame, interval_minutes: int) -> list[dict]:
+    """Resample only closed selected-interval buckets from today's source.
+
+    The newest provider bucket can be partial. It belongs to the desktop's
+    genuine second cache and live stream, never to the authoritative refresh
+    baseline. A source that reaches the final second of a bucket completes it;
+    otherwise that bucket is omitted.
+    """
+    from app.services.data_loader import candles_to_records, resample_to_candles
+    records = candles_to_records(resample_to_candles(frame, interval_minutes))
+    if frame.empty:
+        return []
+    latest = int(frame.index.max().timestamp())
+    interval_seconds = interval_minutes * 60
+    bucket_start = (latest // interval_seconds) * interval_seconds
+    complete_before = bucket_start + interval_seconds if latest >= bucket_start + interval_seconds - 1 else bucket_start
+    return [
+        {"timestamp": row["time"], "open": row["open"], "high": row["high"], "low": row["low"], "close": row["close"]}
+        for row in records
+        if row["time"] < complete_before
+    ]
+
+
 async def _load_history(tile: dict) -> list[dict]:
     """Fetch chart history without changing in-memory live tile state."""
     instrument, interval = tile["instrument"], tile["interval_minutes"]
@@ -144,15 +167,56 @@ async def _load_history(tile: dict) -> list[dict]:
         for day in (day for day in dates if day <= instrument["expiry"]):
             await asyncio.to_thread(fetch_options_historical, instrument["underlying"], day, int(instrument["strike"]), instrument["expiry"], instrument["right"])
             frame = await asyncio.to_thread(load_options_dataframe, instrument["underlying"], day, int(instrument["strike"]), instrument["expiry"], instrument["right"])
-            candles.extend({"timestamp": row["time"], "open": row["open"], "high": row["high"], "low": row["low"], "close": row["close"]} for row in candles_to_records(resample_to_candles(frame, interval)))
+            if day == today:
+                candles.extend(_completed_current_candles(frame, interval))
+            else:
+                candles.extend({"timestamp": row["time"], "open": row["open"], "high": row["high"], "low": row["low"], "close": row["close"]} for row in candles_to_records(resample_to_candles(frame, interval)))
     else:
         from app.routers.data import _ensure_data
         from app.services.data_loader import load_dataframe
         for day in dates:
             await asyncio.to_thread(_ensure_data, instrument["symbol"], day)
             frame = await asyncio.to_thread(load_dataframe, instrument["symbol"], day)
-            candles.extend({"timestamp": row["time"], "open": row["open"], "high": row["high"], "low": row["low"], "close": row["close"]} for row in candles_to_records(resample_to_candles(frame, interval)))
+            if day == today:
+                candles.extend(_completed_current_candles(frame, interval))
+            else:
+                candles.extend({"timestamp": row["time"], "open": row["open"], "high": row["high"], "low": row["low"], "close": row["close"]} for row in candles_to_records(resample_to_candles(frame, interval)))
     return sorted({candle["timestamp"]: candle for candle in candles}.values(), key=lambda candle: candle["timestamp"])
+
+
+async def _load_current_date_seconds(tile: dict) -> list[dict]:
+    """Return raw one-second OHLC only for today's live trading date.
+
+    Historical chart bars remain compact, while an explicit desktop refresh can
+    reconcile today's raw provider data with seconds the desktop has already
+    received from the stream.  Do not expose raw seconds for previous dates.
+    """
+    instrument = tile["instrument"]
+    today = datetime.now(ZoneInfo("Asia/Kolkata")).date().isoformat()
+    from app.services.data_loader import candles_to_records, has_native_second_cadence
+
+    if instrument.get("kind") == "option":
+        if today > instrument["expiry"]:
+            return []
+        from app.services.options_service import fetch_options_historical, load_options_dataframe
+        await asyncio.to_thread(fetch_options_historical, instrument["underlying"], today, int(instrument["strike"]), instrument["expiry"], instrument["right"])
+        frame = await asyncio.to_thread(load_options_dataframe, instrument["underlying"], today, int(instrument["strike"]), instrument["expiry"], instrument["right"])
+    else:
+        from app.routers.data import _ensure_data
+        from app.services.data_loader import load_dataframe
+        await asyncio.to_thread(_ensure_data, instrument["symbol"], today)
+        frame = await asyncio.to_thread(load_dataframe, instrument["symbol"], today)
+
+    # A provider can fall back to minute (or larger) bars. Those bars are
+    # already represented by the normal chart-candle baseline, but must never
+    # be labelled as raw seconds or copied into the desktop tick cache.
+    if not has_native_second_cadence(frame):
+        return []
+
+    return [
+        {"timestamp": row["time"], "open": row["open"], "high": row["high"], "low": row["low"], "close": row["close"]}
+        for row in candles_to_records(frame)
+    ]
 
 
 async def _seed(stream: DesktopStream, tile: dict) -> None:
@@ -238,11 +302,12 @@ async def activate(stream: DesktopStream) -> None:
 
 
 async def refresh(stream: DesktopStream) -> None:
-    """Backfill completed bars without replacing a candle being built from ticks."""
+    """Refresh authoritative chart bars and today's raw second OHLC per tile."""
     tiles = list(stream.tiles)
-    refresh_started = int(time.time()) + 19800
-    boundaries = {tile["tile_id"]: _active_boundary(tile["interval_minutes"], refresh_started) for tile in tiles}
-    results = await asyncio.gather(*(_load_history(tile) for tile in tiles), return_exceptions=True)
+    results = await asyncio.gather(
+        *(asyncio.gather(_load_history(tile), _load_current_date_seconds(tile)) for tile in tiles),
+        return_exceptions=True,
+    )
     for tile, result in zip(tiles, results):
         async with _tile_lock(stream, tile["tile_id"]):
             if isinstance(result, Exception):
@@ -250,15 +315,13 @@ async def refresh(stream: DesktopStream) -> None:
                 tile["availability"] = "provider_error"
                 tile["reason"] = str(result)
                 continue
-            boundary = boundaries[tile["tile_id"]]
-            # Provider data may lag or contain a partial current bar. Only it
-            # may replace completed bars; in-memory current/future bars belong
-            # to the live tick aggregator and are retained verbatim.
-            completed = [candle for candle in result if candle["timestamp"] < boundary]
-            existing = tile.get("candles", [])
-            by_time = {candle["timestamp"]: candle for candle in existing}
-            by_time.update({candle["timestamp"]: candle for candle in completed})
-            tile["candles"] = [by_time[timestamp] for timestamp in sorted(by_time)]
+            candles, current_date_seconds = result
+            # The refresh response is the chart baseline.  The desktop then
+            # layers its locally received seconds that the provider has not
+            # reached yet, without ever replacing timestamps the provider did
+            # return.
+            tile["candles"] = candles
+            tile["current_date_seconds"] = current_date_seconds
             tile["availability"] = "available"
             tile.pop("reason", None)
     await publish(stream, "snapshot", "screen", snapshot(stream))

@@ -1021,6 +1021,67 @@ fn record_desktop_live_tick_in_connection(
     Ok(())
 }
 
+/// Persist a reconciled refresh in one native call.  The cache stores raw
+/// seconds only; chart candles never enter this table.
+#[tauri::command]
+fn record_desktop_live_ticks(
+    app: tauri::AppHandle,
+    stream_id: String,
+    instrument_key: String,
+    ticks: Vec<DesktopLiveTick>,
+) -> Result<(), String> {
+    let connection = cache(&app)?;
+    record_desktop_live_ticks_in_connection(&connection, stream_id, instrument_key, ticks)
+}
+
+fn record_desktop_live_ticks_in_connection(
+    connection: &rusqlite::Connection,
+    stream_id: String,
+    instrument_key: String,
+    ticks: Vec<DesktopLiveTick>,
+) -> Result<(), String> {
+    let recorded_at = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|value| value.as_secs() as i64)
+        .unwrap_or(0);
+    let transaction = connection
+        .unchecked_transaction()
+        .map_err(|error| error.to_string())?;
+    let mut statement = transaction
+        .prepare(
+            "
+            INSERT INTO desktop_live_ticks
+                (stream_id, instrument_key, timestamp, open, high, low, close, volume, recorded_at)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+            ON CONFLICT(stream_id, instrument_key, timestamp) DO UPDATE SET
+                open = excluded.open,
+                high = excluded.high,
+                low = excluded.low,
+                close = excluded.close,
+                volume = excluded.volume,
+                recorded_at = excluded.recorded_at
+            ",
+        )
+        .map_err(|error| error.to_string())?;
+    for tick in ticks {
+        statement
+            .execute(rusqlite::params![
+                stream_id,
+                instrument_key,
+                tick.timestamp,
+                tick.open,
+                tick.high,
+                tick.low,
+                tick.close,
+                tick.volume,
+                recorded_at,
+            ])
+            .map_err(|error| error.to_string())?;
+    }
+    drop(statement);
+    transaction.commit().map_err(|error| error.to_string())
+}
+
 #[tauri::command]
 fn desktop_live_ticks(
     app: tauri::AppHandle,
@@ -1506,6 +1567,7 @@ pub fn run() {
             pending_offline_mutations,
             acknowledge_offline_mutation,
             record_desktop_live_tick,
+            record_desktop_live_ticks,
             desktop_live_ticks,
             clear_desktop_live_ticks,
             host_snapshot,
@@ -1671,5 +1733,27 @@ mod tests {
         )
         .unwrap()
         .is_empty());
+    }
+
+    #[test]
+    fn desktop_live_tick_batch_upsert_keeps_each_second_once() {
+        let connection = rusqlite::Connection::open_in_memory().unwrap();
+        ensure_cache_schema(&connection).unwrap();
+        record_desktop_live_ticks_in_connection(
+            &connection,
+            "stream-1".into(),
+            "instrument-1".into(),
+            vec![
+                DesktopLiveTick { timestamp: 100, open: 1.0, high: 2.0, low: 0.5, close: 1.5, volume: None },
+                DesktopLiveTick { timestamp: 101, open: 2.0, high: 3.0, low: 1.5, close: 2.5, volume: None },
+                DesktopLiveTick { timestamp: 100, open: 1.0, high: 4.0, low: 0.5, close: 3.5, volume: None },
+            ],
+        )
+        .unwrap();
+
+        let ticks = desktop_live_ticks_in_connection(&connection, "stream-1".into(), "instrument-1".into(), None).unwrap();
+        assert_eq!(ticks.len(), 2);
+        assert_eq!(ticks[0].high, 4.0);
+        assert_eq!(ticks[0].close, 3.5);
     }
 }

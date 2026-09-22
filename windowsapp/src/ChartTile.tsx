@@ -39,6 +39,7 @@ const reportChartDiagnostic = (kind: string, payload: Record<string, unknown>) =
 }
 const overlayName = (tool: string) => tool === 'Trend' ? 'segment' : tool === 'Horizontal' ? 'horizontalStraightLine' : tool === 'Fib Retracement' ? 'fibonacciLine' : tool
 const drawingPoints = (drawing: PersistedDrawing) => drawing.points.map(point => ({ timestamp: point.timestamp * 1000, value: point.price }))
+const canonicalInstrumentKey = (instrument: Record<string, unknown>) => JSON.stringify(Object.fromEntries(Object.entries(instrument).sort(([left], [right]) => left.localeCompare(right))))
 const orderPrice = (order: DesktopOrder) => order.order_type === 'LIMIT' ? order.limit_price : order.trigger_price
 const orderLineLabel = (order: DesktopOrder, position?: DesktopPosition | null, settings?: DesktopTradingSettings | null, sessionCapital = 0) => {
   const qty = compactQty(order.quantity)
@@ -73,6 +74,9 @@ export function ChartTile({ symbol, interval, supportedIntervals, onIntervalChan
   const lastDrawingCommandRef = useRef(0)
   const lastDrawingActionRef = useRef(0)
   const drawingModeRef = useRef<DrawingMode>(drawingMode)
+  const drawingOverlayIdsRef = useRef<Set<string>>(new Set())
+  const drawingsRef = useRef<LocalDrawing[]>([])
+  const createPersistedOverlayRef = useRef<(record: DrawingRecord) => void>(() => undefined)
   const [drawings, setDrawings] = useState<LocalDrawing[]>([])
   const [selected, setSelected] = useState<string | null>(null)
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null)
@@ -89,6 +93,8 @@ export function ChartTile({ symbol, interval, supportedIntervals, onIntervalChan
   const tradingEnabledRef = useRef(tradingEnabled)
   const onChartOrderActionRef = useRef(onChartOrderAction)
   const lastPointerRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 })
+  const drawingInstrumentKey = canonicalInstrumentKey(instrument)
+  useEffect(() => { drawingsRef.current = drawings }, [drawings])
   useEffect(() => { pricePickActionRef.current = pricePickAction; onPricePickRef.current = onPricePick; tradingEnabledRef.current = tradingEnabled; onChartOrderActionRef.current = onChartOrderAction }, [pricePickAction, onPricePick, tradingEnabled, onChartOrderAction])
   const fitChart = () => {
     const chart = chartRef.current
@@ -136,6 +142,15 @@ export function ChartTile({ symbol, interval, supportedIntervals, onIntervalChan
         getBars: ({ callback }) => callback(candlesRef.current.map(candle => ({ timestamp: candle.timestamp * 1000, open: candle.open, high: candle.high, low: candle.low, close: candle.close }))),
         subscribeBar: ({ callback }) => { subscribeBarRef.current = callback },
         unsubscribeBar: () => { subscribeBarRef.current = null },
+      })
+      // KLineCharts recreates its canvas for interval changes. Re-apply the
+      // already loaded persisted drawings locally; this is not a backend
+      // reload, so changing interval or mode cannot duplicate requests.
+      queueMicrotask(() => {
+        if (chartRef.current !== chart) return
+        drawingsRef.current
+          .filter(drawing => drawing.backendId && drawing.revision !== undefined)
+          .forEach(drawing => createPersistedOverlayRef.current({ drawing_id: drawing.backendId!, revision: drawing.revision!, drawing: drawing.drawing }))
       })
       reportChartDiagnostic('chart_init_success', { symbol, interval, candle_count: candlesRef.current.length })
     } catch (error) {
@@ -241,6 +256,8 @@ export function ChartTile({ symbol, interval, supportedIntervals, onIntervalChan
   }
   const createPersistedOverlay = (record: DrawingRecord) => {
     const style = record.drawing.style ?? {}
+    chartRef.current?.removeOverlay({ id: record.drawing_id })
+    drawingOverlayIdsRef.current.delete(record.drawing_id)
     const id = chartRef.current?.createOverlay({
       id: record.drawing_id,
       name: overlayName(record.drawing.tool),
@@ -250,28 +267,32 @@ export function ChartTile({ symbol, interval, supportedIntervals, onIntervalChan
       visible: record.drawing.visible !== false,
       styles: { line: { color: style.color ?? settings.drawingLineColor, size: style.width ?? settings.drawingLineWidth, style: 'solid', dashedValue: [2, 2] }, polygon: { color: style.fillColor ?? withOpacity(settings.drawingFillColor, style.fillOpacity ?? settings.drawingFillOpacity) }, rect: { color: style.fillColor ?? withOpacity(settings.drawingFillColor, style.fillOpacity ?? settings.drawingFillOpacity) }, circle: { color: style.fillColor ?? withOpacity(settings.drawingFillColor, style.fillOpacity ?? settings.drawingFillOpacity) } },
       onSelected: (event: any) => setSelected(event.overlay.id),
-      onRemoved: (event: any) => setDrawings(current => current.filter(drawing => drawing.id !== event.overlay.id)),
+      onRemoved: (event: any) => { drawingOverlayIdsRef.current.delete(event.overlay.id); setDrawings(current => current.filter(drawing => drawing.id !== event.overlay.id)) },
     } as any)
     if (typeof id !== 'string') return
+    drawingOverlayIdsRef.current.add(id)
     setDrawings(current => current.some(item => item.id === id) ? current : [...current, { id, backendId: record.drawing_id, revision: record.revision, drawing: record.drawing, locked: Boolean(record.drawing.locked), hidden: record.drawing.visible === false }])
   }
+  createPersistedOverlayRef.current = createPersistedOverlay
   useEffect(() => {
     if (!chartRef.current || !hasNativeHost) return
     let cancelled = false
-    const encoded = encodeURIComponent(JSON.stringify(instrument))
+    const encoded = encodeURIComponent(drawingInstrumentKey)
     void invoke<{ drawings: DrawingRecord[] }>('desktop_drawing_request', { baseUrl, path: `drawings?instrument=${encoded}`, method: 'GET', body: {} }).then(value => {
       if (cancelled) return
+      for (const id of drawingOverlayIdsRef.current) chartRef.current?.removeOverlay({ id })
+      drawingOverlayIdsRef.current.clear()
       setDrawings([])
       value.drawings.forEach(createPersistedOverlay)
     }).catch(() => undefined)
     return () => { cancelled = true }
-  }, [baseUrl, JSON.stringify(instrument), symbol, interval])
+  }, [baseUrl, drawingInstrumentKey])
   useEffect(() => {
     const shortcuts = (event: KeyboardEvent) => {
       if (event.key === 'Escape') { setContextMenu(null); if (pricePickAction) onPricePick?.(NaN) }
       if ((event.key === 'Delete' || event.key === 'Backspace') && selectedOrderId !== null) { const order = openOrders.find(item => item.order_id === selectedOrderId); if (order) onOrderCancel?.(order); setSelectedOrderId(null); return }
-      if ((event.key === 'Delete' || event.key === 'Backspace') && selected !== null) { const drawing = drawings.find(item => item.id === selected); if (drawing?.backendId && drawing.revision) void persistDrawing(`drawings/${drawing.backendId}`, 'DELETE', drawing.drawing, drawing.revision); chartRef.current?.removeOverlay({ id: selected }); setDrawings(current => current.filter(item => item.id !== selected)); setSelected(null) }
-      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z') setDrawings(current => { const drawing = current[current.length - 1]; if (drawing) chartRef.current?.removeOverlay({ id: drawing.id }); setSelected(null); return current.slice(0, -1) })
+      if ((event.key === 'Delete' || event.key === 'Backspace') && selected !== null) { const drawing = drawings.find(item => item.id === selected); if (drawing?.backendId && drawing.revision) void persistDrawing(`drawings/${drawing.backendId}`, 'DELETE', drawing.drawing, drawing.revision); chartRef.current?.removeOverlay({ id: selected }); drawingOverlayIdsRef.current.delete(selected); setDrawings(current => current.filter(item => item.id !== selected)); setSelected(null) }
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z') setDrawings(current => { const drawing = current[current.length - 1]; if (drawing) { chartRef.current?.removeOverlay({ id: drawing.id }); drawingOverlayIdsRef.current.delete(drawing.id) }; setSelected(null); return current.slice(0, -1) })
     }
     window.addEventListener('keydown', shortcuts)
     return () => window.removeEventListener('keydown', shortcuts)
@@ -289,9 +310,10 @@ export function ChartTile({ symbol, interval, supportedIntervals, onIntervalChan
       styles: { line: { color: lineColor, size: lineWidth, style: 'solid', dashedValue: [2, 2] }, polygon: { color: fillColor }, rect: { color: fillColor }, circle: { color: fillColor } },
       onDrawEnd: event => { const points = event.overlay.points.map(point => ({ timestamp: Math.floor(Number(point.timestamp) / 1000), price: Number(point.value) })); const drawing = { tool: nextTool, points, style: { color: lineColor, width: lineWidth, fillColor, fillOpacity: settings.drawingFillOpacity }, visible: true, locked: false }; if (points.length && typeof event.overlay.id === 'string') void persistDrawing('drawings', 'POST', drawing).then(record => { if (!record) return; setDrawings(current => current.map(item => item.id === event.overlay.id ? { ...item, backendId: record.drawing_id, revision: record.revision, drawing: record.drawing } : item)) }); onDrawingComplete(commandId, nextTool); if (drawingModeRef.current === 'repeat') window.setTimeout(() => addDrawing(nextTool, commandId), 0) },
       onSelected: event => setSelected(event.overlay.id),
-      onRemoved: event => setDrawings(current => current.filter(drawing => drawing.id !== event.overlay.id)),
+      onRemoved: event => { drawingOverlayIdsRef.current.delete(event.overlay.id); setDrawings(current => current.filter(drawing => drawing.id !== event.overlay.id)) },
     })
     if (typeof id !== 'string') return
+    drawingOverlayIdsRef.current.add(id)
     setDrawings(current => [...current, { id, drawing: { tool: nextTool, points: [], style: { color: lineColor, width: lineWidth, fillColor, fillOpacity: settings.drawingFillOpacity }, visible: true, locked: false }, locked: false, hidden: false }]); setSelected(id)
   }
   const updateSelected = (update: (drawing: LocalDrawing) => LocalDrawing) => setDrawings(current => current.map(drawing => { if (drawing.id !== selected) return drawing; const next = update(drawing); const persisted = { ...next.drawing, locked: next.locked, visible: !next.hidden }; chartRef.current?.overrideOverlay({ id: next.id, lock: next.locked, visible: !next.hidden }); if (next.backendId && next.revision) void persistDrawing(`drawings/${next.backendId}`, 'PUT', persisted, next.revision).then(record => { if (record) setDrawings(items => items.map(item => item.id === next.id ? { ...item, revision: record.revision, drawing: record.drawing } : item)) }); return { ...next, drawing: persisted } }))
@@ -303,7 +325,7 @@ export function ChartTile({ symbol, interval, supportedIntervals, onIntervalChan
   useEffect(() => {
     if (!active || !drawingAction || drawingAction.id === lastDrawingActionRef.current || selected === null) return
     lastDrawingActionRef.current = drawingAction.id
-    if (drawingAction.action === 'delete') { const drawing = drawings.find(item => item.id === selected); if (drawing?.backendId && drawing.revision) void persistDrawing(`drawings/${drawing.backendId}`, 'DELETE', drawing.drawing, drawing.revision); chartRef.current?.removeOverlay({ id: selected }); setDrawings(current => current.filter(drawing => drawing.id !== selected)); setSelected(null) }
+    if (drawingAction.action === 'delete') { const drawing = drawings.find(item => item.id === selected); if (drawing?.backendId && drawing.revision) void persistDrawing(`drawings/${drawing.backendId}`, 'DELETE', drawing.drawing, drawing.revision); chartRef.current?.removeOverlay({ id: selected }); drawingOverlayIdsRef.current.delete(selected); setDrawings(current => current.filter(drawing => drawing.id !== selected)); setSelected(null) }
     if (drawingAction.action === 'hide') updateSelected(drawing => ({ ...drawing, hidden: !drawing.hidden }))
     if (drawingAction.action === 'lock') updateSelected(drawing => ({ ...drawing, locked: !drawing.locked }))
   }, [active, drawingAction, selected, drawings])
