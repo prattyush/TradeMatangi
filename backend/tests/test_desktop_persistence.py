@@ -1,4 +1,5 @@
 from unittest.mock import patch
+from decimal import Decimal
 
 from app.services import desktop_persistence_service as persistence
 
@@ -53,6 +54,7 @@ def test_drawings_are_filtered_by_canonical_instrument():
 
     assert len(drawings) == 1
     assert drawings[0]["drawing"]["tool"] == "Horizontal"
+    assert drawings[0]["drawing"]["points"][0]["price"] == Decimal("24000.0")
     assert drawings[0]["instrument"] == equity()
 
 
@@ -72,5 +74,6 @@ def test_deleted_drawing_is_excluded_from_reload():
         deleted_records = persistence.list_drawings("user-1", equity(), include_deleted=True)
 
     assert deleted["deleted"] is True
+    assert deleted["drawing"]["points"][0]["price"] == Decimal("24000.0")
     assert visible == []
     assert len(deleted_records) == 1
