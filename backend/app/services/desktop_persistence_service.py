@@ -129,7 +129,7 @@ def list_drawings(user_id: str, instrument: dict, include_deleted: bool = False)
 def create_drawing(user_id: str, instrument: dict, drawing: dict, mutation_id: str | None) -> dict:
     validate_drawing(drawing)
     drawing_id = str(uuid.uuid4())
-    item = {"user_id": user_id, "record_id": drawing_id, "drawing_id": drawing_id, "instrument": instrument, "instrument_id": canonical_instrument_id(instrument), "drawing": drawing, "revision": 1, "mutation_id": mutation_id or str(uuid.uuid4()), "deleted": False, "updated_at": _now()}
+    item = {"user_id": user_id, "record_id": drawing_id, "drawing_id": drawing_id, "instrument": _dynamodb_safe(instrument), "instrument_id": canonical_instrument_id(instrument), "drawing": _dynamodb_safe(drawing), "revision": 1, "mutation_id": mutation_id or str(uuid.uuid4()), "deleted": False, "updated_at": _now()}
     _table(_DRAWINGS_TABLE).put_item(Item=item)
     return item
 
@@ -142,6 +142,6 @@ def update_drawing(user_id: str, drawing_id: str, drawing: dict, revision: int, 
         return None
     if existing["revision"] != revision:
         raise ValueError("revision_conflict")
-    item = {**existing, "drawing": drawing, "revision": revision + 1, "mutation_id": mutation_id, "deleted": deleted, "updated_at": _now()}
+    item = {**existing, "drawing": _dynamodb_safe(drawing), "revision": revision + 1, "mutation_id": mutation_id, "deleted": deleted, "updated_at": _now()}
     table.put_item(Item=item, ConditionExpression="revision = :revision", ExpressionAttributeValues={":revision": revision})
     return item
