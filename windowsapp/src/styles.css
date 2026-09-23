@@ -66,6 +66,15 @@ input { width: 160px; }
 .tiles-2-stacked { grid-template-columns: 1fr; grid-template-rows: minmax(0, 1fr) minmax(0, 1fr); }
 .tiles-3-wide-top { grid-template-columns: 1fr 1fr; grid-template-rows: minmax(0, 1fr) minmax(0, 1fr); }
 .tiles-3-wide-top .workspace-tile:first-child { grid-column: 1 / -1; }
+.tiles-4-one-three { grid-template-columns: repeat(3, minmax(0, 1fr)); grid-template-rows: minmax(0, 1fr) minmax(0, 1fr); }
+.tiles-4-one-three .workspace-tile:first-child { grid-column: 1 / -1; }
+.tiles-5-equal { grid-template-columns: repeat(6, minmax(0, 1fr)); grid-template-rows: minmax(0, 1fr) minmax(0, 1fr); }
+.tiles-5-equal .workspace-tile:nth-child(-n + 3) { grid-column: span 2; }
+.tiles-5-equal .workspace-tile:nth-child(n + 4) { grid-column: span 3; }
+.tiles-5-wide-right { grid-template-columns: repeat(4, minmax(0, 1fr)); grid-template-rows: minmax(0, 1fr) minmax(0, 1fr); }
+.tiles-5-wide-right .workspace-tile:first-child { grid-column: span 2; }
+.tiles-5-wide-right .workspace-tile:nth-child(2), .tiles-5-wide-right .workspace-tile:nth-child(3) { grid-column: span 1; }
+.tiles-5-wide-right .workspace-tile:nth-child(n + 4) { grid-column: span 2; }
 .has-maximized { grid-template-columns: 1fr; grid-template-rows: 1fr; }
 .has-maximized .workspace-tile:not(.is-maximized) { display: none; }
 .workspace-tile { min-height: 0; display: grid; grid-template-rows: minmax(0, 1fr) auto; overflow: hidden; border: 1px solid #293142; }
