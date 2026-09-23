@@ -119,6 +119,7 @@ export default function OrderPanel({
   const [ratio, setRatio] = useState<RatioKey>('l')
   const [slQty, setSlQty] = useState(1)
   const slQtyStep = instrumentType === 'options' ? Math.max(1, lotSize || 1) : 1
+  const slQtyMin = instrumentType === 'options' ? slQtyStep : 1
   const [placing, setPlacing] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -179,9 +180,12 @@ export default function OrderPanel({
       const coveredQty = openOrders
         .filter(o => (o.is_stoploss || o.order_type === 'LIMIT') && o.side === exitSide && (o.right ?? null) === activeRight && o.status === 'PENDING')
         .reduce((sum, o) => sum + o.quantity, 0)
-      setSlQty(Math.max(1, position.quantity - coveredQty))
+      const uncoveredQty = Math.max(0, position.quantity - coveredQty)
+      setSlQty(instrumentType === 'options'
+        ? Math.floor(uncoveredQty / slQtyStep) * slQtyStep
+        : Math.max(1, uncoveredQty))
     }
-  }, [orderType, position.side, position.quantity, openOrders, activeRight])
+  }, [orderType, position.side, position.quantity, openOrders, activeRight, instrumentType, slQtyStep])
 
   useEffect(() => {
     if (orderType === 'STOPLOSS' && !hasPosition) setOrderType('TARGET')
@@ -251,8 +255,10 @@ export default function OrderPanel({
     }
     if (orderType === 'STOPLOSS') {
       const maxQty = position.quantity
-      if (slQty < 1 || slQty > maxQty) {
-        setError(`SL quantity must be 1–${maxQty}`)
+      if (slQty < slQtyMin || slQty > maxQty || (instrumentType === 'options' && slQty % slQtyStep !== 0)) {
+        setError(instrumentType === 'options'
+          ? `SL quantity must be a multiple of ${slQtyStep} and not exceed ${maxQty}`
+          : `SL quantity must be 1–${maxQty}`)
         return
       }
     }
@@ -1225,15 +1231,27 @@ export default function OrderPanel({
       {orderType === 'STOPLOSS' ? (
         <div>
           <div style={{ fontSize: 11, color: '#8b949e', marginBottom: 3 }}>
-            SL Quantity (max {position.quantity})
+            SL Quantity (max {position.quantity}{instrumentType === 'options' ? `, lot ${slQtyStep}` : ''})
           </div>
           <input
             type="number"
             value={slQty}
-            min={1}
+            min={slQtyMin}
             max={position.quantity}
             step={slQtyStep}
-            onChange={e => setSlQty(Math.min(position.quantity, Math.max(1, parseInt(e.target.value) || 1)))}
+            onChange={e => {
+              const parsed = parseInt(e.target.value, 10)
+              if (!Number.isFinite(parsed)) {
+                setSlQty(slQtyMin)
+                return
+              }
+              if (instrumentType === 'options') {
+                const lots = Math.max(1, Math.floor(parsed / slQtyStep))
+                setSlQty(Math.min(position.quantity, lots * slQtyStep))
+              } else {
+                setSlQty(Math.min(position.quantity, Math.max(1, parsed)))
+              }
+            }}
             disabled={!isActive}
             style={{
               width: '100%', padding: '5px 8px', background: '#0d1117',

@@ -108,16 +108,29 @@ class ReplayEventQueue:
         self._dropped: int = 0
         self._maxsize = maxsize
         self._next_id = 1
+        self.owner_id = "-"
+        self.phase = "initializing"
+        self._last_drop_log_at = 0.0
 
     def put_nowait(self, item: str) -> None:
         if self._closed:
             return
         if len(self._dq) == self._maxsize:
             self._dropped += 1
-            if self._dropped % 100 == 1:
+            now = time.monotonic()
+            # This is a bounded reconnect history, not the consumer queue.
+            # During a healthy live session it naturally retains the most
+            # recent 12k events and discards older ones indefinitely.
+            if self._dropped == 1 or now - self._last_drop_log_at >= 60:
+                self._last_drop_log_at = now
                 logger.warning(
-                    "ReplayEventQueue dropped %d events (maxsize=%d)",
-                    self._dropped, self._maxsize,
+                    "ReplayEventQueue retention rolling owner=%s phase=%s dropped_total=%d "
+                    "maxsize=%d buffer_first_id=%s buffer_last_id=%s queue_size=%d "
+                    "reason=live_events_exceed_reconnect_history",
+                    self.owner_id, self.phase, self._dropped, self._maxsize,
+                    self._dq[0][0] if self._dq else "-",
+                    self._dq[-1][0] if self._dq else "-",
+                    len(self._dq),
                 )
         event_id = self._next_id
         self._next_id += 1
@@ -138,6 +151,12 @@ class ReplayEventQueue:
         """Return the first event after last_event_id, waiting for new data if needed."""
         cursor = last_event_id or 0
         while True:
+            if cursor and self._dq and self._dq[0][0] > cursor + 1:
+                logger.warning(
+                    "ReplayEventQueue event gap owner=%s requested_after=%s "
+                    "available_first_id=%s available_last_id=%s dropped=%s",
+                    self.owner_id, cursor, self._dq[0][0], self._dq[-1][0], self._dropped,
+                )
             for event_id, item in self._dq:
                 if event_id > cursor:
                     return event_id, item
@@ -248,6 +267,9 @@ class SimulationSession:
     guardrail_maxsize_value: float = 0.0
     # Auto-close at end of day (15:09)
     _auto_closed: bool = field(default=False, init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        self.queue.owner_id = self.session_id
 
 
 # Registry of active sessions
@@ -1278,6 +1300,7 @@ async def _run_paper_session(session: SimulationSession) -> None:
       on session.queue for SSE delivery — exactly as _run_session does.
     """
     session.state = SimulationState.RUNNING
+    session.queue.phase = "phase1_fast_replay"
     phase1_started = time.monotonic()
     logger.info(
         "paper_phase1_started session_id=%s resumed=%s symbol=%s instrument_type=%s "
@@ -1477,6 +1500,7 @@ async def _run_paper_session(session: SimulationSession) -> None:
             )
 
         # ── Phase 2: live streaming ────────────────────────────────────────────
+        session.queue.phase = "phase2_stream_setup"
         loop = asyncio.get_running_loop()
 
         # Determine streaming source from admin config (default: kite)
@@ -1671,6 +1695,7 @@ async def _run_paper_session(session: SimulationSession) -> None:
                     return
 
         # ── Phase 3: consume live ticks indefinitely ──────────────────────────
+        session.queue.phase = "phase3_live_stream"
         logger.info("paper_phase3_waiting session_id=%s source=%s", session.session_id, stream_source)
         _phase3_tick_count = 0
         _phase3_first_received = False

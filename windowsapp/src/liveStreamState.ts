@@ -17,6 +17,11 @@ const isCandle = (value: unknown): value is Candle => {
 
 export const applyLiveStreamPayloadToSnapshot = (current: LiveSnapshot | null, payload: unknown): LiveSnapshot | null => {
   if (isLiveSnapshot(payload)) return payload
+  if (payload && typeof payload === 'object' && (payload as { type?: unknown }).type === 'batch' && Array.isArray((payload as { events?: unknown[] }).events)) {
+    return (payload as { events: unknown[] }).events.reduce<LiveSnapshot | null>(
+      (snapshot, event) => applyLiveStreamPayloadToSnapshot(snapshot, event), current,
+    )
+  }
   if (!isLiveStreamEvent(payload)) return current
   if (payload.type === 'snapshot' && isLiveSnapshot(payload.payload)) return payload.payload
   if (payload.type !== 'candle' || !isCandle(payload.payload)) return current

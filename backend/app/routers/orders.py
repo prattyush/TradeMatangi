@@ -147,6 +147,16 @@ async def place_order(req: PlaceOrderRequest):
     # Resolve lot_size: 1 for equity; actual lot size for options
     lot_size = LOT_SIZES.get(session.symbol, 1) if session.instrument_type == "options" else 1
 
+    # Brokers require option quantities to be complete lots.  Enforce this at
+    # the API boundary for stop-loss exits as well, so clients cannot bypass
+    # the website control and submit quantities such as 1 or 66 contracts.
+    if session.instrument_type == "options" and req.order_type == OrderType.STOPLOSS:
+        if req.quantity is not None and (req.quantity < lot_size or req.quantity % lot_size != 0):
+            raise HTTPException(
+                status_code=400,
+                detail=f"{session.symbol} option stop-loss quantity must be a positive multiple of {lot_size}",
+            )
+
     # Resolve quantity: either from funds_ratio_pct (FundsRatio mode) or explicit quantity
     if req.funds_ratio_pct is not None:
         if req.funds_ratio_pct <= 0 or req.funds_ratio_pct > 1:
