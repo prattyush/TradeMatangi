@@ -1163,6 +1163,7 @@ struct LatestState {
 struct NativeStreamState {
     last_event_id: u64,
     latest_payload: serde_json::Value,
+    pending_payloads: Vec<serde_json::Value>,
     connection: String,
     abort: AbortHandle,
 }
@@ -1196,6 +1197,7 @@ impl HostState {
             NativeStreamState {
                 last_event_id: 0,
                 latest_payload: serde_json::Value::Null,
+                pending_payloads: Vec::new(),
                 connection: "reconnecting".into(),
                 abort,
             },
@@ -1216,23 +1218,48 @@ impl HostState {
         if let Some(stream) = self.0.lock().expect("host state lock").streams.get_mut(key) {
             if event_id >= stream.last_event_id {
                 stream.last_event_id = event_id;
-                stream.latest_payload = payload;
+                stream.latest_payload = payload.clone();
+                stream.pending_payloads.push(payload);
+                if stream.pending_payloads.len() > 1024 {
+                    let remove = stream.pending_payloads.len() - 1024;
+                    stream.pending_payloads.drain(..remove);
+                }
             }
         }
     }
     fn stream_snapshot(&self, key: &str) -> DesktopStreamSnapshot {
-        let state = self.0.lock().expect("host state lock");
-        let stream = state.streams.get(key);
+        let mut state = self.0.lock().expect("host state lock");
+        let Some(stream) = state.streams.get_mut(key) else {
+            return DesktopStreamSnapshot {
+                key: key.into(),
+                last_event_id: 0,
+                latest_payload: serde_json::Value::Null,
+                connection: "offline".into(),
+            };
+        };
+        let latest_payload = if stream.pending_payloads.len() > 1 {
+            let events = std::mem::take(&mut stream.pending_payloads);
+            serde_json::json!({"type": "batch", "events": events})
+        } else if stream.pending_payloads.len() == 1 {
+            stream.pending_payloads.pop().unwrap_or_else(|| stream.latest_payload.clone())
+        } else {
+            stream.latest_payload.clone()
+        };
         DesktopStreamSnapshot {
             key: key.into(),
-            last_event_id: stream.map(|value| value.last_event_id).unwrap_or(0),
-            latest_payload: stream
-                .map(|value| value.latest_payload.clone())
-                .unwrap_or(serde_json::Value::Null),
-            connection: stream
-                .map(|value| value.connection.clone())
-                .unwrap_or_else(|| "offline".into()),
+            last_event_id: stream.last_event_id,
+            latest_payload,
+            connection: stream.connection.clone(),
         }
+    }
+    fn stream_cursor(&self, key: &str) -> u64 {
+        self.0
+            .lock()
+            .expect("host state lock")
+            .streams
+            .get(key)
+            .map(|value| value.last_event_id)
+            .unwrap_or(0)
     }
     fn set_tokens(&self, tokens: TokenBundle) {
         let expires_at = SystemTime::now() + Duration::from_secs(tokens.expires_in);
@@ -1403,7 +1430,7 @@ async fn start_desktop_stream(
                 .get(desktop_api_url(&base_url, &events_path))
                 .bearer_auth(token)
                 .header("Accept", "text/event-stream");
-            let event_id = stream_host.stream_snapshot(&stream_key).last_event_id;
+            let event_id = stream_host.stream_cursor(&stream_key);
             if event_id > 0 {
                 request = request.header("Last-Event-ID", event_id.to_string());
             }
@@ -1426,7 +1453,7 @@ async fn start_desktop_stream(
                             let frame = buffer[..end].to_string();
                             buffer = buffer[end + 2..].to_string();
                             let (id, event_name, data) = parse_sse_frame(&frame);
-                            let event_id = id.unwrap_or_else(|| stream_host.stream_snapshot(&stream_key).last_event_id);
+                            let event_id = id.unwrap_or_else(|| stream_host.stream_cursor(&stream_key));
                             if let Some(data) = data {
                                 if let Ok(payload) = serde_json::from_str::<serde_json::Value>(&data) {
                                     if payload.get("type").and_then(|value| value.as_str()) == Some("candle") {

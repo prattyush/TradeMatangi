@@ -271,16 +271,16 @@ class TestBulkUpdateSLEndpoint:
         session = _make_session()
         session.instrument_type = "options"
         with patch("app.routers.orders.sim_svc.get_session", return_value=session), \
-             patch("app.routers.orders.trading_service.get_position", return_value=_make_position("LONG", 2)):
+             patch("app.routers.orders.trading_service.get_position", return_value=_make_position("LONG", 130)):
             async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
                 # Place one CE SL and one PE SL
                 await client.post("/api/orders", json={
                     "session_id": SESSION, "side": "SELL", "order_type": "STOPLOSS",
-                    "trigger_price": 95.0, "quantity": 1, "is_stoploss": True, "right": "CE",
+                    "trigger_price": 95.0, "quantity": 65, "is_stoploss": True, "right": "CE",
                 })
                 await client.post("/api/orders", json={
                     "session_id": SESSION, "side": "SELL", "order_type": "STOPLOSS",
-                    "trigger_price": 96.0, "quantity": 1, "is_stoploss": True, "right": "PE",
+                    "trigger_price": 96.0, "quantity": 65, "is_stoploss": True, "right": "PE",
                 })
 
                 # Bulk update only CE to 98.0
@@ -294,6 +294,24 @@ class TestBulkUpdateSLEndpoint:
         assert len(data["orders"]) == 1
         assert data["orders"][0]["right"] == "CE"
         assert data["orders"][0]["trigger_price"] == 98.0
+
+    async def test_option_stoploss_requires_complete_lot(self):
+        session = _make_session()
+        session.instrument_type = "options"
+        with patch("app.routers.orders.sim_svc.get_session", return_value=session):
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+                invalid = await client.post("/api/orders", json={
+                    "session_id": SESSION, "side": "SELL", "order_type": "STOPLOSS",
+                    "trigger_price": 95.0, "quantity": 66, "is_stoploss": True, "right": "CE",
+                })
+                valid = await client.post("/api/orders", json={
+                    "session_id": SESSION, "side": "SELL", "order_type": "STOPLOSS",
+                    "trigger_price": 95.0, "quantity": 65, "is_stoploss": True, "right": "CE",
+                })
+
+        assert invalid.status_code == 400
+        assert "multiple of 65" in invalid.json()["detail"]
+        assert valid.status_code == 200
 
     async def test_bulk_update_updates_stoploss_orders_only(self):
         session = _make_session()
