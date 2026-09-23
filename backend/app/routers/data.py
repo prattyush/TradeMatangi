@@ -4,7 +4,7 @@ import asyncio
 import logging
 import re
 import pandas as pd
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 
 from app.models.schemas import (
     HistoricalDataResponse,
@@ -175,6 +175,7 @@ async def get_pre_session(
 
 @router.get("/options-historical", response_model=HistoricalDataResponse)
 async def get_options_historical(
+    request: Request,
     symbol: str = Query(...),
     date: str = Query(...),
     strike: int = Query(...),
@@ -193,6 +194,14 @@ async def get_options_historical(
         raise HTTPException(status_code=400, detail=f"Unsupported symbol: {symbol}")
     if right.upper() not in ("CE", "PE"):
         raise HTTPException(status_code=400, detail="right must be CE or PE")
+
+    logger.info(
+        "options_history_request client=%s symbol=%s right=%s strike=%s expiry=%s "
+        "date=%s interval=%s historical_days=%s request_id=%s",
+        request.client.host if request.client else "-",
+        symbol, right.upper(), strike, expiry, date, interval_minutes,
+        historical_days, request.headers.get("x-request-id", "-"),
+    )
 
     from app.services.options_service import fetch_options_historical, load_options_dataframe
     from app.services.broker_service import BreezeTokenError
@@ -242,6 +251,12 @@ async def get_options_historical(
             detail=f"Options data not found for {symbol} {right.upper()} {strike}",
         )
 
+    logger.info(
+        "options_history_response symbol=%s right=%s strike=%s expiry=%s "
+        "requested_date=%s loaded_dates=%s candles=%s",
+        symbol, right.upper(), strike, expiry, date, ",".join(loaded_dates),
+        len(all_candles),
+    )
     return HistoricalDataResponse(
         symbol=f"{symbol}-{right.upper()}-{strike}",
         dates=loaded_dates,

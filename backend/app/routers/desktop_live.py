@@ -1,6 +1,7 @@
 """Sprint 4 chart-only live routes, separate from trading sessions."""
 import asyncio
 import json
+import logging
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from fastapi.responses import StreamingResponse
@@ -12,6 +13,7 @@ from app.services import desktop_live_service as live
 from app.services.desktop_persistence_service import canonical_instrument_id
 
 router = APIRouter(prefix="/api/desktop/v1/live", tags=["desktop"])
+logger = logging.getLogger(__name__)
 
 
 class LiveTile(BaseModel):
@@ -109,6 +111,7 @@ async def refresh_live(stream_id: str, user_id: str = Depends(get_desktop_user_i
     stream = live.get(user_id, stream_id)
     if not stream:
         raise HTTPException(status_code=404, detail="Live stream was not found")
+    logger.info("desktop_live_refresh_request stream_id=%s user_id=%s", stream_id, user_id)
     await live.refresh(stream)
     return live.snapshot(stream)
 

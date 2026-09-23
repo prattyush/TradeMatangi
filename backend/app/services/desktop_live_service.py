@@ -2,12 +2,15 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 import uuid
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime
 from zoneinfo import ZoneInfo
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -28,6 +31,7 @@ class DesktopStream:
     tile_tasks: dict[str, asyncio.Task] = field(default_factory=dict)
     tile_locks: dict[str, asyncio.Lock] = field(default_factory=dict)
     history_cache: dict[str, list[dict]] = field(default_factory=dict)
+    subscriber_drops: dict[int, int] = field(default_factory=dict)
 
 
 _streams: dict[str, DesktopStream] = {}
@@ -221,6 +225,10 @@ async def _load_current_date_seconds(tile: dict) -> list[dict]:
 
 async def _seed(stream: DesktopStream, tile: dict) -> None:
     """Load initial history and report a provider error only for this tile."""
+    logger.info(
+        "desktop_live_seed stream_id=%s tile_id=%s instrument=%s interval=%s reason=seed_or_reconfigure",
+        stream.stream_id, tile.get("tile_id"), tile.get("instrument"), tile.get("interval_minutes"),
+    )
     try:
         key = _history_cache_key(tile)
         if key not in stream.history_cache:
@@ -307,6 +315,10 @@ async def activate(stream: DesktopStream) -> None:
 async def refresh(stream: DesktopStream) -> None:
     """Refresh authoritative chart bars and today's raw second OHLC per tile."""
     tiles = list(stream.tiles)
+    logger.info(
+        "desktop_live_refresh stream_id=%s tile_count=%s tiles=%s reason=explicit_refresh",
+        stream.stream_id, len(tiles), ",".join(str(tile.get("tile_id")) for tile in tiles),
+    )
     results = await asyncio.gather(
         *(asyncio.gather(_load_history(tile), _load_current_date_seconds(tile)) for tile in tiles),
         return_exceptions=True,
@@ -328,6 +340,7 @@ async def refresh(stream: DesktopStream) -> None:
             tile["availability"] = "available"
             tile.pop("reason", None)
     await publish(stream, "snapshot", "screen", snapshot(stream))
+    logger.info("desktop_live_refresh_complete stream_id=%s tile_count=%s", stream.stream_id, len(tiles))
 
 
 async def publish(stream: DesktopStream, event_type: str, tile_id: str, payload: dict) -> dict:
@@ -336,7 +349,29 @@ async def publish(stream: DesktopStream, event_type: str, tile_id: str, payload:
     event = {"version": 1, "stream_id": stream.stream_id, "generation": stream.generation, "event_id": stream.event_id, "timestamp": int(time.time()), "type": event_type, "tile_id": tile_id, "payload": payload}
     stream.events.append(event)
     for subscriber in list(stream.subscribers):
-        await subscriber.put(event)
+        # A downstream SSE socket must not suspend one tile's consumer task.
+        # The desktop keeps the latest event, while stream.events remains the
+        # reconnect history for clients that need to catch up.
+        try:
+            subscriber.put_nowait(event)
+        except asyncio.QueueFull:
+            try:
+                subscriber.get_nowait()
+            except asyncio.QueueEmpty:
+                pass
+            try:
+                subscriber.put_nowait(event)
+            except asyncio.QueueFull:
+                continue
+            key = id(subscriber)
+            dropped = stream.subscriber_drops.get(key, 0) + 1
+            stream.subscriber_drops[key] = dropped
+            if dropped == 1 or dropped % 100 == 0:
+                logger.warning(
+                    "desktop_live_sse_consumer_lag stream_id=%s tile_id=%s "
+                    "dropped=%d subscriber_queue=%d reason=slow_downstream_reader",
+                    stream.stream_id, tile_id, dropped, subscriber.qsize(),
+                )
     return event
 
 

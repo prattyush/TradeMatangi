@@ -26,9 +26,11 @@ async def _event_generator(session_id: str, last_event_id: int | None):
         yield "data: {\"type\":\"error\",\"message\":\"Session not found\"}\n\n"
         return
 
-    logger.debug(
-        "sse_connected session_id=%s last_event_id=%s state=%s",
-        session_id, last_event_id if last_event_id is not None else "-", session.state,
+    logger.info(
+        "sse_connected session_id=%s connection_type=%s last_event_id=%s state=%s",
+        session_id,
+        "reconnect" if last_event_id is not None else "initial",
+        last_event_id if last_event_id is not None else "-", session.state,
     )
     cursor = last_event_id
     sent = 0
@@ -52,7 +54,7 @@ async def _event_generator(session_id: str, last_event_id: int | None):
             # Heartbeat to keep connection alive through proxies
             yield ": heartbeat\n\n"
         except asyncio.CancelledError:
-            logger.debug("sse_disconnected session_id=%s events_sent=%d", session_id, sent)
+            logger.info("sse_disconnected session_id=%s events_sent=%d", session_id, sent)
             break
 
 
