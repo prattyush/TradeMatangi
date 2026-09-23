@@ -17,7 +17,7 @@ interface Screen { id: string; persistedId?: string; revision?: number; name: st
 interface PersistedScreenState { id?: string; layout?: Layout; tiles?: TileConfig[]; indicators?: Record<string, string[]>; activeToolTileId?: string }
 interface DesktopScreenRecord { screen_id: string; name: string; state: PersistedScreenState; revision: number; order: number; active?: boolean }
 interface ReplaySnapshot { run_id: string; event_id: number; cursor: number; state: string; mode: string; bar_index: number; interval_seconds: number; tile_states: Array<{ tile_id: string; availability: string; candle?: Candle }> }
-interface ChartSettings { background: string; textColor: string; gridColor: string; gridOpacity: number; gridStyle: 'solid' | 'dashed'; gridSize: number; movingAverageType: 'MA' | 'EMA'; movingAveragePeriods: string; liveProvider: 'breeze'; horizontalLineColor: string; horizontalLineWidth: number; trendLineColor: string; trendLineWidth: number; drawingLineColor: string; drawingLineWidth: number; drawingFillColor: string; drawingFillOpacity: number }
+interface ChartSettings { background: string; textColor: string; gridColor: string; gridOpacity: number; gridStyle: 'solid' | 'dashed'; gridSize: number; movingAverageType: 'MA' | 'EMA'; movingAveragePeriods: string; showChartInfo: boolean; liveProvider: 'breeze'; horizontalLineColor: string; horizontalLineWidth: number; trendLineColor: string; trendLineWidth: number; drawingLineColor: string; drawingLineWidth: number; drawingFillColor: string; drawingFillOpacity: number }
 interface TileSwap { dir: string; label: string; onClick: () => void }
 interface DesktopStreamSnapshot<T> { key: string; last_event_id: number; latest_payload: T | null; connection: 'connected' | 'reconnecting' | 'offline' | 'authentication_required' }
 interface DesktopRoundTrip { index: number; right: string | null; strike?: number | null; expiry?: string | null; entry_trades: Array<Record<string, unknown>>; exit_trades: Array<Record<string, unknown>>; pnl: number }
@@ -55,7 +55,7 @@ const historyCache = new Map<string, Promise<Candle[]>>()
 type Api = <T,>(path: string, params?: URLSearchParams) => Promise<T>
 const GOOGLE_CLIENT_ID = '249337992826-jm174i5bqdhr4bfqpmip44gnnp4eo2eh.apps.googleusercontent.com'
 const fallbackCatalogue: Instrument[] = [{ symbol: 'NIFTY', display_name: 'NIFTY 50', exchange: 'NSE', chart_type: 'index', option_eligible: true, supported_intervals: [1, 3, 5, 15, 30, 60] }]
-const defaultChartSettings: ChartSettings = { background: '#151a23', textColor: '#aeb8ca', gridColor: '#ffffff', gridOpacity: 0.12, gridStyle: 'solid', gridSize: 1, movingAverageType: 'MA', movingAveragePeriods: '5,10,20', liveProvider: 'breeze', horizontalLineColor: '#facc15', horizontalLineWidth: 2, trendLineColor: '#60a5fa', trendLineWidth: 2, drawingLineColor: '#60a5fa', drawingLineWidth: 2, drawingFillColor: '#60a5fa', drawingFillOpacity: 0.16 }
+const defaultChartSettings: ChartSettings = { background: '#151a23', textColor: '#aeb8ca', gridColor: '#ffffff', gridOpacity: 0.12, gridStyle: 'solid', gridSize: 1, movingAverageType: 'MA', movingAveragePeriods: '5,10,20', showChartInfo: true, liveProvider: 'breeze', horizontalLineColor: '#facc15', horizontalLineWidth: 2, trendLineColor: '#60a5fa', trendLineWidth: 2, drawingLineColor: '#60a5fa', drawingLineWidth: 2, drawingFillColor: '#60a5fa', drawingFillOpacity: 0.16 }
 const noIndicators: string[] = []
 const newTile = (): TileConfig => ({ id: crypto.randomUUID(), kind: 'spot', symbol: 'NIFTY', interval: '3', tradingDate: '2026-05-06', expiry: '', strike: '', right: 'CE' })
 const newScreen = (number: number): Screen => ({ id: crypto.randomUUID(), name: `Screen ${number}`, layout: '1', tiles: [newTile()] })
@@ -270,7 +270,7 @@ function ChartSettingsModal({ settings, tradingSettings, onSave, onSaveTradingSe
   const [draft, setDraft] = useState(settings)
   const [tradingDraft, setTradingDraft] = useState(tradingSettings)
   useEffect(() => setTradingDraft(tradingSettings), [tradingSettings])
-  return <div className="modal-backdrop"><section className="instrument-modal" role="dialog" aria-modal="true" aria-label="Chart display settings"><header><strong>Settings</strong><button onClick={onClose}>×</button></header><div className="settings-scroll"><section className="settings-section"><strong>Chart display</strong><div className="picker-fields"><label>Background<input type="color" value={draft.background} onChange={event => setDraft({ ...draft, background: event.target.value })} /></label><label>Text color<input type="color" value={draft.textColor} onChange={event => setDraft({ ...draft, textColor: event.target.value })} /></label><label>Grid color<input type="color" value={draft.gridColor} onChange={event => setDraft({ ...draft, gridColor: event.target.value })} /></label><label>Grid opacity <input type="range" min="0" max="1" step="0.02" value={draft.gridOpacity} onChange={event => setDraft({ ...draft, gridOpacity: Number(event.target.value) })} />{Math.round(draft.gridOpacity * 100)}%</label><label>Grid style<select value={draft.gridStyle} onChange={event => setDraft({ ...draft, gridStyle: event.target.value as ChartSettings['gridStyle'] })}><option value="solid">Solid</option><option value="dashed">Dashed</option></select></label><label>Grid thickness<select value={draft.gridSize} onChange={event => setDraft({ ...draft, gridSize: Number(event.target.value) })}><option value="1">1px</option><option value="2">2px</option></select></label><label>Moving average<select value={draft.movingAverageType} onChange={event => setDraft({ ...draft, movingAverageType: event.target.value as ChartSettings['movingAverageType'] })}><option value="MA">Simple MA</option><option value="EMA">Exponential MA</option></select></label><label>MA/EMA periods<input value={draft.movingAveragePeriods} onChange={event => setDraft({ ...draft, movingAveragePeriods: event.target.value.replace(/[^0-9,]/g, '') })} placeholder="5,10,20" /></label><label>Horizontal line color<input type="color" value={draft.horizontalLineColor} onChange={event => setDraft({ ...draft, horizontalLineColor: event.target.value })} /></label><label>Horizontal line width<select value={draft.horizontalLineWidth} onChange={event => setDraft({ ...draft, horizontalLineWidth: Number(event.target.value) })}><option value="1">1px</option><option value="2">2px</option><option value="3">3px</option><option value="4">4px</option></select></label><label>Trend line color<input type="color" value={draft.trendLineColor} onChange={event => setDraft({ ...draft, trendLineColor: event.target.value })} /></label><label>Trend line width<select value={draft.trendLineWidth} onChange={event => setDraft({ ...draft, trendLineWidth: Number(event.target.value) })}><option value="1">1px</option><option value="2">2px</option><option value="3">3px</option><option value="4">4px</option></select></label><label>Other drawing line<input type="color" value={draft.drawingLineColor} onChange={event => setDraft({ ...draft, drawingLineColor: event.target.value })} /></label><label>Other drawing width<select value={draft.drawingLineWidth} onChange={event => setDraft({ ...draft, drawingLineWidth: Number(event.target.value) })}><option value="1">1px</option><option value="2">2px</option><option value="3">3px</option><option value="4">4px</option></select></label><label>Shape fill color<input type="color" value={draft.drawingFillColor} onChange={event => setDraft({ ...draft, drawingFillColor: event.target.value })} /></label><label>Shape fill opacity <input type="range" min="0" max="0.8" step="0.02" value={draft.drawingFillOpacity} onChange={event => setDraft({ ...draft, drawingFillOpacity: Number(event.target.value) })} />{Math.round(draft.drawingFillOpacity * 100)}%</label></div></section>{tradingDraft && <section className="settings-section trading-settings-section"><strong>Trading</strong><div className="picker-fields"><label><span><input type="checkbox" checked={tradingDraft.desktop_hide_chart_labels} onChange={event => setTradingDraft({ ...tradingDraft, desktop_hide_chart_labels: event.target.checked })} /> Hide chart labels</span></label><label>Size<select value={tradingDraft.desktop_order_size_mode} onChange={event => setTradingDraft({ ...tradingDraft, desktop_order_size_mode: event.target.value as DesktopTradingSnapshot['settings']['desktop_order_size_mode'] })}><option value="quantity">Quantity</option><option value="funds_ratio">Funds ratio</option><option value="risk_ratio">Risk ratio</option></select></label><label>P&amp;L<select value={tradingDraft.desktop_pnl_display_mode} onChange={event => setTradingDraft({ ...tradingDraft, desktop_pnl_display_mode: event.target.value as DesktopTradingSnapshot['settings']['desktop_pnl_display_mode'] })}><option value="currency">Currency</option><option value="percent">Percent</option></select></label><label><span><input type="checkbox" checked={tradingDraft.desktop_confirm_flatten} onChange={event => setTradingDraft({ ...tradingDraft, desktop_confirm_flatten: event.target.checked })} /> Confirm Flatten</span></label></div></section>}</div><footer><button onClick={onClose}>Cancel</button><button className="selected" onClick={() => { onSave(draft); if (tradingDraft) onSaveTradingSettings({ ...tradingDraft }); onClose() }}>Save settings</button></footer></section></div>
+  return <div className="modal-backdrop"><section className="instrument-modal" role="dialog" aria-modal="true" aria-label="Chart display settings"><header><strong>Settings</strong><button onClick={onClose}>×</button></header><div className="settings-scroll"><section className="settings-section"><strong>Chart display</strong><div className="picker-fields"><label>Background<input type="color" value={draft.background} onChange={event => setDraft({ ...draft, background: event.target.value })} /></label><label>Text color<input type="color" value={draft.textColor} onChange={event => setDraft({ ...draft, textColor: event.target.value })} /></label><label>Grid color<input type="color" value={draft.gridColor} onChange={event => setDraft({ ...draft, gridColor: event.target.value })} /></label><label>Grid opacity <input type="range" min="0" max="1" step="0.02" value={draft.gridOpacity} onChange={event => setDraft({ ...draft, gridOpacity: Number(event.target.value) })} />{Math.round(draft.gridOpacity * 100)}%</label><label>Grid style<select value={draft.gridStyle} onChange={event => setDraft({ ...draft, gridStyle: event.target.value as ChartSettings['gridStyle'] })}><option value="solid">Solid</option><option value="dashed">Dashed</option></select></label><label>Grid thickness<select value={draft.gridSize} onChange={event => setDraft({ ...draft, gridSize: Number(event.target.value) })}><option value="1">1px</option><option value="2">2px</option></select></label><label>Moving average<select value={draft.movingAverageType} onChange={event => setDraft({ ...draft, movingAverageType: event.target.value as ChartSettings['movingAverageType'] })}><option value="MA">Simple MA</option><option value="EMA">Exponential MA</option></select></label><label>MA/EMA periods<input value={draft.movingAveragePeriods} onChange={event => setDraft({ ...draft, movingAveragePeriods: event.target.value.replace(/[^0-9,]/g, '') })} placeholder="5,10,20" /></label><label>Horizontal line color<input type="color" value={draft.horizontalLineColor} onChange={event => setDraft({ ...draft, horizontalLineColor: event.target.value })} /></label><label>Horizontal line width<select value={draft.horizontalLineWidth} onChange={event => setDraft({ ...draft, horizontalLineWidth: Number(event.target.value) })}><option value="1">1px</option><option value="2">2px</option><option value="3">3px</option><option value="4">4px</option></select></label><label>Trend line color<input type="color" value={draft.trendLineColor} onChange={event => setDraft({ ...draft, trendLineColor: event.target.value })} /></label><label>Trend line width<select value={draft.trendLineWidth} onChange={event => setDraft({ ...draft, trendLineWidth: Number(event.target.value) })}><option value="1">1px</option><option value="2">2px</option><option value="3">3px</option><option value="4">4px</option></select></label><label>Other drawing line<input type="color" value={draft.drawingLineColor} onChange={event => setDraft({ ...draft, drawingLineColor: event.target.value })} /></label><label>Other drawing width<select value={draft.drawingLineWidth} onChange={event => setDraft({ ...draft, drawingLineWidth: Number(event.target.value) })}><option value="1">1px</option><option value="2">2px</option><option value="3">3px</option><option value="4">4px</option></select></label><label>Shape fill color<input type="color" value={draft.drawingFillColor} onChange={event => setDraft({ ...draft, drawingFillColor: event.target.value })} /></label><label>Shape fill opacity <input type="range" min="0" max="0.8" step="0.02" value={draft.drawingFillOpacity} onChange={event => setDraft({ ...draft, drawingFillOpacity: Number(event.target.value) })} />{Math.round(draft.drawingFillOpacity * 100)}%</label></div><label><span><input type="checkbox" checked={draft.showChartInfo} onChange={event => setDraft({ ...draft, showChartInfo: event.target.checked })} /> Show OHLC and indicator information</span></label></section>{tradingDraft && <section className="settings-section trading-settings-section"><strong>Trading</strong><div className="picker-fields"><label><span><input type="checkbox" checked={tradingDraft.desktop_hide_chart_labels} onChange={event => setTradingDraft({ ...tradingDraft, desktop_hide_chart_labels: event.target.checked })} /> Hide chart labels</span></label><label>Size<select value={tradingDraft.desktop_order_size_mode} onChange={event => setTradingDraft({ ...tradingDraft, desktop_order_size_mode: event.target.value as DesktopTradingSnapshot['settings']['desktop_order_size_mode'] })}><option value="quantity">Quantity</option><option value="funds_ratio">Funds ratio</option><option value="risk_ratio">Risk ratio</option></select></label><label>P&amp;L<select value={tradingDraft.desktop_pnl_display_mode} onChange={event => setTradingDraft({ ...tradingDraft, desktop_pnl_display_mode: event.target.value as DesktopTradingSnapshot['settings']['desktop_pnl_display_mode'] })}><option value="currency">Currency</option><option value="percent">Percent</option></select></label><label><span><input type="checkbox" checked={tradingDraft.desktop_confirm_flatten} onChange={event => setTradingDraft({ ...tradingDraft, desktop_confirm_flatten: event.target.checked })} /> Confirm Flatten</span></label></div></section>}</div><footer><button onClick={onClose}>Cancel</button><button className="selected" onClick={() => { onSave(draft); if (tradingDraft) onSaveTradingSettings({ ...tradingDraft }); onClose() }}>Save settings</button></footer></section></div>
 }
 
 function DesktopTile({ config, catalogue, connection, api, settings, serverUrl, drawingRequest, onDrawingError, replayCursor, replayRunId, replayCandle, replayAttached, liveTile, liveTicks, onLiveTick, onConfigure, onMaximize, onIntervalChange, maximized, active, indicators, drawingCommand, drawingAction, drawingMode, onDrawingComplete, onActivate, tradingSnapshot, pricePickAction, onPricePick, onOrderDrag, onOrderCancel, onOrderConvertRequest, onChartOrderAction, onStrategyDrag, swapTargets }: { config: TileConfig; catalogue: Instrument[]; connection: string; api: Api; settings: ChartSettings; serverUrl: string; drawingRequest: (path: string, method: 'GET' | 'POST' | 'PUT' | 'DELETE', body?: Record<string, unknown>) => Promise<unknown>; onDrawingError?: (error: unknown) => void; replayCursor?: number; replayRunId?: string; replayCandle?: Candle; replayAttached?: boolean; liveTile?: LiveTileState; liveTicks: Candle[]; onLiveTick: (key: string, tick: Candle) => void; onConfigure: () => void; onMaximize: () => void; onIntervalChange: (interval: string) => void; maximized: boolean; active: boolean; indicators: string[]; drawingCommand: DrawingCommand | null; drawingAction: DrawingAction | null; drawingMode: DrawingMode; onDrawingComplete: (commandId: number, tool: string) => void; onActivate: () => void; tradingSnapshot?: DesktopTradingSnapshot | null; pricePickAction?: PricePickAction | null; onPricePick?: (price: number) => void; onOrderDrag?: (order: DesktopOrder, price: number) => void; onOrderCancel?: (order: DesktopOrder) => void; onOrderConvertRequest?: (order: DesktopOrder, target: ConversionTarget) => void; onChartOrderAction?: (tile: TileConfig, action: OrderAction, price: number, anchor: { x: number; y: number }) => void; onStrategyDrag?: (strategyId: string, price: number) => void; swapTargets?: TileSwap[] }) {
@@ -310,6 +310,7 @@ export default function App() {
   const replayPollInFlight = useRef(false)
   const labelMetadataRequestIdRef = useRef(0)
   const tradingErrorTimerRef = useRef<number | null>(null)
+  const liveErrorTimerRef = useRef<number | null>(null)
   const screensLoadedRef = useRef(false)
   const screenSaveTimerRef = useRef<number | null>(null)
   const lastScreenPayloadRef = useRef('')
@@ -332,6 +333,24 @@ export default function App() {
   }, [])
   useEffect(() => () => {
     if (tradingErrorTimerRef.current !== null) window.clearTimeout(tradingErrorTimerRef.current)
+    if (liveErrorTimerRef.current !== null) window.clearTimeout(liveErrorTimerRef.current)
+  }, [])
+  const clearLiveError = useCallback(() => {
+    if (liveErrorTimerRef.current !== null) window.clearTimeout(liveErrorTimerRef.current)
+    liveErrorTimerRef.current = null
+    setLiveError('')
+  }, [])
+  const reportLiveError = useCallback((error: unknown) => {
+    setLiveError(String(error))
+    // Keep one dismissal deadline for a burst of repeated polling failures;
+    // otherwise a failed live snapshot every second would keep the popup open
+    // forever by continually restarting its timeout.
+    if (liveErrorTimerRef.current === null) {
+      liveErrorTimerRef.current = window.setTimeout(() => {
+        liveErrorTimerRef.current = null
+        setLiveError('')
+      }, 10_000)
+    }
   }, [])
   const clearLiveTickCache = (streamId?: string) => {
     setLiveTickCache({})
@@ -339,12 +358,12 @@ export default function App() {
       void invoke('clear_desktop_live_ticks', { streamId }).catch(error => recordRendererDiagnostic('live_tick_clear_error', { live_stream_id: streamId, error: String(error) }))
     }
   }
-  const setLiveSnapshot = (snapshot: LiveSnapshot | null) => { activeLiveSnapshot = snapshot; setLive(snapshot); if (snapshot) setLiveError('') }
+  const setLiveSnapshot = (snapshot: LiveSnapshot | null) => { activeLiveSnapshot = snapshot; setLive(snapshot); if (snapshot) clearLiveError() }
   const updateLiveSnapshot = (updater: (snapshot: LiveSnapshot | null) => LiveSnapshot | null) => {
     setLive(current => {
       const next = updater(current)
       activeLiveSnapshot = next
-      if (next) setLiveError('')
+      if (next) clearLiveError()
       return next
     })
   }
@@ -609,12 +628,12 @@ export default function App() {
   const applyLiveStreamPayload = (payload: unknown) => updateLiveSnapshot(current => applyLiveStreamPayloadToSnapshot(current, payload))
   const liveTile = (tile: TileConfig) => { const item = catalogue.find(entry => entry.symbol === tile.symbol) ?? fallbackCatalogue[0]; const instrument = tile.kind === 'option' ? { kind: 'option', exchange: item.exchange, underlying: tile.symbol, expiry: tile.expiry, strike: Number(tile.strike), right: tile.right } : { kind: item.chart_type ?? 'equity', exchange: item.exchange, symbol: tile.symbol }; return { tile_id: tile.id, instrument, interval_minutes: Number(tile.interval) } }
   const liveTiles = () => activeScreen.tiles.map(liveTile)
-  const startLive = async () => { try { setLiveError(''); clearLiveTickCache(); const next = await liveRequest('start', 'POST', { tiles: liveTiles() }); setLiveSnapshot(next); await startNativeStream(`live:${next.stream_id}`, `live/${next.stream_id}/events`, `live/${next.stream_id}/snapshot`) } catch (error) { setLiveError(String(error)) } }
-  const stopLive = async () => { if (!live) return; try { const streamId = live.stream_id; stopNativeStream(`live:${streamId}`); await liveRequest(`${streamId}/stop`, 'POST'); setLiveSnapshot(null); clearLiveTickCache(streamId) } catch (error) { setLiveError(String(error)) } }
+  const startLive = async () => { try { clearLiveError(); clearLiveTickCache(); const next = await liveRequest('start', 'POST', { tiles: liveTiles() }); setLiveSnapshot(next); await startNativeStream(`live:${next.stream_id}`, `live/${next.stream_id}/events`, `live/${next.stream_id}/snapshot`) } catch (error) { reportLiveError(error) } }
+  const stopLive = async () => { if (!live) return; try { const streamId = live.stream_id; stopNativeStream(`live:${streamId}`); await liveRequest(`${streamId}/stop`, 'POST'); setLiveSnapshot(null); clearLiveTickCache(streamId) } catch (error) { reportLiveError(error) } }
   const refreshLive = async () => {
     if (!live) return
     try {
-      setLiveError('')
+      clearLiveError()
       const refreshed = await liveRequest(`${live.stream_id}/refresh`, 'POST')
       const reconciledByInstrument: Record<string, Candle[]> = {}
       for (const tile of refreshed.tiles) {
@@ -646,7 +665,7 @@ export default function App() {
       setLiveTickCache(current => ({ ...current, ...reconciledByInstrument }))
       setLiveSnapshot(refreshed)
     } catch (error) {
-      setLiveError(String(error))
+      reportLiveError(error)
     }
   }
   useEffect(() => {
@@ -671,7 +690,7 @@ export default function App() {
         }
         if (!cancelled) setLiveSnapshot(snapshot)
       } catch (error) {
-        if (!cancelled) setLiveError(String(error))
+        if (!cancelled) reportLiveError(error)
       }
     }
     void sync()
@@ -681,13 +700,13 @@ export default function App() {
     if (!live) return
     const timer = window.setInterval(() => {
       if (hasNativeHost) {
-        void readNativeStream<unknown>(`live:${live.stream_id}`).then(applyLiveStreamPayload).catch(error => setLiveError(String(error)))
+        void readNativeStream<unknown>(`live:${live.stream_id}`).then(applyLiveStreamPayload).catch(reportLiveError)
       } else {
-        void liveRequest(`${live.stream_id}/snapshot`, 'GET').then(setLiveSnapshot).catch(error => setLiveError(String(error)))
+        void liveRequest(`${live.stream_id}/snapshot`, 'GET').then(setLiveSnapshot).catch(reportLiveError)
       }
     }, 1000)
     return () => window.clearInterval(timer)
-  }, [live?.stream_id, hasNativeHost, serverUrl])
+  }, [live?.stream_id, hasNativeHost, serverUrl, reportLiveError])
   useEffect(() => { if (mode === 'Live' && !live && connection === 'connected') void startLive() }, [mode])
   useEffect(() => { if (mode !== 'Live' && live) void stopLive() }, [mode])
   useEffect(() => { if (connection === 'authentication_required') clearLiveTickCache() }, [connection])
