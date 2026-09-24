@@ -2443,8 +2443,8 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
                 const updated = await api.convertOrder(sim.sessionId!, orderId, newOrderType, price)
                 sim.handleOrderConverted(updated.order_id, updated.order_type, updated.trigger_price, updated.limit_price, updated.is_stoploss)
               }}
-              onUpdateOrder={(orderId, triggerPrice, limitPrice) =>
-                sim.updateOrder(orderId, triggerPrice, limitPrice, targetDeviationPct)
+              onUpdateOrder={(orderId, triggerPrice, limitPrice, quantity) =>
+                sim.updateOrder(orderId, triggerPrice, limitPrice, targetDeviationPct, quantity)
               }
               onRequestPricePick={orderId => {
                 setPricePickOrderId(orderId)

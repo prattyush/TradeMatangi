@@ -556,9 +556,10 @@ export function useSimulation() {
     triggerPrice: number | undefined,
     limitPrice: number | undefined,
     targetDeviationPct?: number,
+    quantity?: number,
   ) => {
     if (!state.sessionId) return
-    const updated = await api.updateOrder(state.sessionId, orderId, triggerPrice, limitPrice, targetDeviationPct)
+    const updated = await api.updateOrder(state.sessionId, orderId, triggerPrice, limitPrice, targetDeviationPct, quantity)
     setState(s => ({
       ...s,
       openOrders: s.openOrders.map(o => o.order_id === orderId ? updated : o),

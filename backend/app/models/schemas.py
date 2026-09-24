@@ -256,6 +256,7 @@ class PlaceOrderRequest(BaseModel):
 class UpdateOrderRequest(BaseModel):
     trigger_price: float | None = None    # new trigger price (TARGET / STOPLOSS)
     limit_price: float | None = None      # new limit price (LIMIT orders)
+    quantity: int | None = Field(default=None, ge=1)  # new quantity for pending STOPLOSS orders
     target_deviation_pct: float = 0.01   # deviation for recomputing TARGET limit from new trigger
 
 
