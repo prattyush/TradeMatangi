@@ -41,6 +41,34 @@ def _get_closing_orders(session, right: str | None) -> list[Order]:
     ]
 
 
+def _stoploss_available_quantity(
+    session,
+    right: str | None,
+    strike: int | None,
+    expiry: str | None,
+    exclude_order_id: str | None = None,
+) -> tuple[int, int]:
+    """Return available closing quantity and current position quantity for a contract."""
+    position = trading_service.get_position(
+        session.session_id, session.symbol, right=right, strike=strike, expiry=expiry,
+    )
+    if position.side == "FLAT" or position.quantity <= 0:
+        return 0, 0
+    exit_side = TradeSide.SELL if position.side == "LONG" else TradeSide.BUY
+    covered = sum(
+        order.quantity
+        for order in order_service.get_open_orders(session.session_id)
+        if order.order_id != exclude_order_id
+        and order.status == order_service.OrderStatus.PENDING
+        and order.side == exit_side
+        and (order.right or None) == right
+        and (order.strike if order.strike is not None else None) == strike
+        and (order.expiry if order.expiry is not None else None) == expiry
+        and (order.is_stoploss or order.order_type in (OrderType.STOPLOSS, OrderType.LIMIT))
+    )
+    return max(0, position.quantity - covered), position.quantity
+
+
 def _sync_kotak_after_convert(session, order: Order, new_order_type: OrderType) -> None:
     if session.session_type != "real":
         return
@@ -639,41 +667,61 @@ async def update_order(order_id: str, req: UpdateOrderRequest, session_id: str =
     session = sim_svc.get_session(session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
-    if req.trigger_price is None and req.limit_price is None:
-        raise HTTPException(status_code=400, detail="Provide trigger_price or limit_price to update")
+    existing = order_service.get_order(session_id, order_id)
+    if existing is None or existing.status != order_service.OrderStatus.PENDING:
+        raise HTTPException(status_code=404, detail="Order not found or not pending")
+    if req.trigger_price is None and req.limit_price is None and req.quantity is None:
+        raise HTTPException(status_code=400, detail="Provide trigger_price, limit_price, or quantity to update")
+    if req.quantity is not None:
+        if not (existing.is_stoploss or existing.order_type == OrderType.STOPLOSS):
+            raise HTTPException(status_code=400, detail="Quantity can only be updated for pending stop-loss orders")
+        lot_size = LOT_SIZES.get(session.symbol, 1) if session.instrument_type == "options" else 1
+        if req.quantity < lot_size or req.quantity % lot_size != 0:
+            raise HTTPException(status_code=400, detail=f"Stop-loss quantity must be a positive multiple of {lot_size}")
+        available, position_quantity = _stoploss_available_quantity(
+            session, existing.right, existing.strike, existing.expiry, exclude_order_id=order_id,
+        )
+        if req.quantity > available:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Stop-loss quantity exceeds available uncovered position ({available} of {position_quantity})",
+            )
+
+    # Kotak has to accept a real stop-loss change before local state changes.
+    # Otherwise a rejected broker edit leaves the UI reporting a quantity or
+    # trigger that is no longer protected at the broker.
+    if (
+        session.session_type == "real"
+        and existing.kotak_order_id
+        and existing.order_type == OrderType.STOPLOSS
+    ):
+        try:
+            from app.services.kotak_service import get_service as get_kotak
+            from app.config import KOTAK_SLIPPAGE_PCT
+            new_trigger = req.trigger_price if req.trigger_price is not None else existing.trigger_price
+            new_quantity = req.quantity if req.quantity is not None else existing.quantity
+            if existing.side == TradeSide.BUY:
+                kotak_limit = round(new_trigger * (1 + KOTAK_SLIPPAGE_PCT), 2)
+            else:
+                kotak_limit = round(new_trigger * (1 - KOTAK_SLIPPAGE_PCT), 2)
+            get_kotak().modify_sl_order(existing.kotak_order_id, new_trigger, kotak_limit, new_quantity)
+        except Exception as exc:
+            logger.warning(
+                "Kotak rejected SL update (order %s kotak_id %s): %s",
+                order_id, existing.kotak_order_id, exc,
+            )
+            raise HTTPException(status_code=502, detail="Broker rejected stop-loss update") from exc
+
     order = order_service.update_order(
         session_id=session_id,
         order_id=order_id,
         trading_date=session.date,
         trigger_price=req.trigger_price,
         limit_price=req.limit_price,
+        quantity=req.quantity,
         target_deviation_pct=req.target_deviation_pct,
     )
     if order is None:
         raise HTTPException(status_code=404, detail="Order not found or not pending")
-
-    # For real sessions: STOPLOSS orders are placed directly on Kotak as SL orders.
-    # Forward price changes to Kotak so the broker-side order stays in sync.
-    # TARGET orders are held locally until triggered, so no Kotak call is needed.
-    if (
-        session.session_type == "real"
-        and order.kotak_order_id
-        and order.order_type == OrderType.STOPLOSS
-    ):
-        try:
-            from app.services.kotak_service import get_service as get_kotak, KotakError
-            from app.config import KOTAK_SLIPPAGE_PCT
-            import logging as _log
-            new_trigger = order.trigger_price
-            if order.side == TradeSide.BUY:
-                kotak_limit = round(new_trigger * (1 + KOTAK_SLIPPAGE_PCT), 2)
-            else:
-                kotak_limit = round(new_trigger * (1 - KOTAK_SLIPPAGE_PCT), 2)
-            get_kotak().modify_sl_order(order.kotak_order_id, new_trigger, kotak_limit, order.quantity)
-        except Exception as exc:
-            logger.warning(
-                "Failed to forward SL price change to Kotak (order %s kotak_id %s): %s",
-                order_id, order.kotak_order_id, exc,
-            )
 
     return order

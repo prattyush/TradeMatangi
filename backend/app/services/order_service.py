@@ -299,9 +299,10 @@ def update_order(
     trading_date: str,
     trigger_price: float | None = None,
     limit_price: float | None = None,
+    quantity: int | None = None,
     target_deviation_pct: float = _TARGET_DEVIATION,
 ) -> Order | None:
-    """Update trigger/limit price of a PENDING order. Handles wallet re-reservation for BUY orders."""
+    """Update price and/or quantity of a PENDING order; handle BUY wallet re-reservation."""
     order = _orders.get(session_id, {}).get(order_id)
     if order is None or order.status != OrderStatus.PENDING:
         return None
@@ -338,6 +339,9 @@ def update_order(
     elif order.order_type == OrderType.STOPLOSS and trigger_price is not None:
         order.trigger_price = trigger_price
         order.limit_price = trigger_price
+
+    if quantity is not None:
+        order.quantity = quantity
 
     _write_order_to_db(order)
     return order

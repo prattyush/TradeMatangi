@@ -1016,11 +1016,13 @@ const api = {
     triggerPrice?: number,
     limitPrice?: number,
     targetDeviationPct?: number,
+    quantity?: number,
   ): Promise<Order> {
     const body: Record<string, unknown> = {}
     if (triggerPrice !== undefined) body.trigger_price = triggerPrice
     if (limitPrice !== undefined) body.limit_price = limitPrice
     if (targetDeviationPct !== undefined) body.target_deviation_pct = targetDeviationPct
+    if (quantity !== undefined) body.quantity = quantity
     const res = await fetch(`${BACKEND_URL}/api/orders/${order_id}?session_id=${session_id}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json', ..._authHeaders() },
