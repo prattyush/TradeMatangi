@@ -24,7 +24,7 @@ interface Props {
   ) => Promise<void>
   onCancelOrder: (orderId: string) => Promise<void>
   onConvertOrder?: (orderId: string, newOrderType: 'TARGET' | 'LIMIT' | 'STOPLOSS', price?: number) => Promise<void>
-  onUpdateOrder: (orderId: string, triggerPrice?: number, limitPrice?: number) => Promise<void>
+  onUpdateOrder: (orderId: string, triggerPrice?: number, limitPrice?: number, quantity?: number) => Promise<void>
   // Price-pick from chart
   onRequestPricePick: (orderId: string) => void
   injectedEditPrice: { orderId: string; price: number } | null
@@ -117,9 +117,10 @@ export default function OrderPanel({
   const [price, setPrice] = useState('')
   const [quantity, setQuantity] = useState(1)
   const [ratio, setRatio] = useState<RatioKey>('l')
-  const [slQty, setSlQty] = useState(1)
+  const [slQty, setSlQty] = useState('1')
   const slQtyStep = instrumentType === 'options' ? Math.max(1, lotSize || 1) : 1
   const slQtyMin = instrumentType === 'options' ? slQtyStep : 1
+  const parsedSlQty = slQty.trim() === '' ? NaN : Number(slQty)
   const [placing, setPlacing] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -163,6 +164,7 @@ export default function OrderPanel({
   const [editingOrderId, setEditingOrderId] = useState<string | null>(null)
   const [pendingConversion, setPendingConversion] = useState<'TARGET' | 'LIMIT' | 'STOPLOSS' | null>(null)
   const [editPrice, setEditPrice] = useState('')
+  const [editQty, setEditQty] = useState('')
   const [updating, setUpdating] = useState(false)
   const [editError, setEditError] = useState<string | null>(null)
 
@@ -170,22 +172,22 @@ export default function OrderPanel({
   const hasPosition = position.side !== 'FLAT'
   const parsedPrice = parseFloat(price)
   const deviation = targetDeviationPct  // fraction
+  const slCoveredQty = openOrders
+    .filter(o => isClosingOrderForPosition(o, position, activeRight) && (o.is_stoploss || o.order_type === 'LIMIT'))
+    .reduce((sum, o) => sum + o.quantity, 0)
+  const slAvailableQty = Math.max(0, position.quantity - slCoveredQty)
 
   // When SL tab selected, lock side to opposite of position; default qty = uncovered portion
   useEffect(() => {
     if (orderType === 'STOPLOSS') {
-      const exitSide = position.side === 'LONG' ? 'SELL' : 'BUY'
       if (position.side === 'LONG') setSide('SELL')
       else if (position.side === 'SHORT') setSide('BUY')
-      const coveredQty = openOrders
-        .filter(o => (o.is_stoploss || o.order_type === 'LIMIT') && o.side === exitSide && (o.right ?? null) === activeRight && o.status === 'PENDING')
-        .reduce((sum, o) => sum + o.quantity, 0)
-      const uncoveredQty = Math.max(0, position.quantity - coveredQty)
-      setSlQty(instrumentType === 'options'
+      const uncoveredQty = slAvailableQty
+      setSlQty(String(instrumentType === 'options'
         ? Math.floor(uncoveredQty / slQtyStep) * slQtyStep
-        : Math.max(1, uncoveredQty))
+        : uncoveredQty))
     }
-  }, [orderType, position.side, position.quantity, openOrders, activeRight, instrumentType, slQtyStep])
+  }, [orderType, position.side, position.quantity, openOrders, activeRight, instrumentType, slQtyStep, slAvailableQty])
 
   useEffect(() => {
     if (orderType === 'STOPLOSS' && !hasPosition) setOrderType('TARGET')
@@ -254,8 +256,8 @@ export default function OrderPanel({
       return
     }
     if (orderType === 'STOPLOSS') {
-      const maxQty = position.quantity
-      if (slQty < slQtyMin || slQty > maxQty || (instrumentType === 'options' && slQty % slQtyStep !== 0)) {
+      const maxQty = slAvailableQty
+      if (!Number.isInteger(parsedSlQty) || parsedSlQty < slQtyMin || parsedSlQty > maxQty || (instrumentType === 'options' && parsedSlQty % slQtyStep !== 0)) {
         setError(instrumentType === 'options'
           ? `SL quantity must be a multiple of ${slQtyStep} and not exceed ${maxQty}`
           : `SL quantity must be 1–${maxQty}`)
@@ -280,7 +282,7 @@ export default function OrderPanel({
           await onPlaceOrder(side, 'LIMIT', mktPrice, quantity, { ...entrySlOpts })
         }
       } else if (orderType === 'STOPLOSS') {
-        await onPlaceOrder(side, 'STOPLOSS', parsedPrice, slQty, { is_stoploss: true })
+        await onPlaceOrder(side, 'STOPLOSS', parsedPrice, parsedSlQty, { is_stoploss: true })
       } else if (sizingMode === 'riskRatio') {
         const riskPct = riskRatios[ratio]
         await onPlaceOrder(side, orderType, parsedPrice, null, {
@@ -308,7 +310,7 @@ export default function OrderPanel({
           side,
           orderType: orderType === 'MARKET' ? 'LIMIT' : orderType,
           price: orderType === 'MARKET' ? (side === 'BUY' ? currentPrice * 1.01 : currentPrice * 0.99) : parsedPrice,
-          quantity: orderType === 'STOPLOSS' ? slQty : quantity,
+          quantity: orderType === 'STOPLOSS' ? parsedSlQty : quantity,
           fundsRatioPct: sizingMode === 'fundsRatio' ? ratioPct : sizingMode === 'riskRatio' ? riskRatios[ratio] / 100 : undefined,
         },
       })
@@ -330,12 +332,14 @@ export default function OrderPanel({
     const currentVal = order.order_type === 'LIMIT' ? order.limit_price : order.trigger_price
     setEditingOrderId(order.order_id)
     setEditPrice(currentVal.toFixed(2))
+    setEditQty(order.is_stoploss || order.order_type === 'STOPLOSS' ? String(order.quantity) : '')
     setEditError(null)
   }
 
   const cancelEdit = () => {
     setEditingOrderId(null)
     setEditPrice('')
+    setEditQty('')
     setEditError(null)
     setPendingConversion(null)
   }
@@ -346,15 +350,26 @@ export default function OrderPanel({
       setEditError('Enter a valid price')
       return
     }
+    const quantityEditable = order.is_stoploss || order.order_type === 'STOPLOSS'
+    const nextQty = editQty.trim() === '' ? NaN : Number(editQty)
+    const coveredElsewhere = openOrders
+      .filter(item => item.order_id !== order.order_id && isClosingOrderForPosition(item, position, activeRight) && (item.is_stoploss || item.order_type === 'LIMIT'))
+      .reduce((sum, item) => sum + item.quantity, 0)
+    const maxQty = Math.max(0, position.quantity - coveredElsewhere)
+    if (quantityEditable && (!Number.isInteger(nextQty) || nextQty < slQtyMin || nextQty > maxQty || (instrumentType === 'options' && nextQty % slQtyStep !== 0))) {
+      setEditError(`SL quantity must be ${slQtyMin}–${maxQty}${instrumentType === 'options' ? ` in lots of ${slQtyStep}` : ''}`)
+      return
+    }
     setUpdating(true)
     setEditError(null)
     try {
       if (pendingConversion && onConvertOrder) {
+        if (quantityEditable) await onUpdateOrder(order.order_id, undefined, undefined, nextQty)
         await onConvertOrder(order.order_id, pendingConversion, p)
       } else if (order.order_type === 'LIMIT') {
-        await onUpdateOrder(order.order_id, undefined, p)
+        await onUpdateOrder(order.order_id, undefined, p, quantityEditable ? nextQty : undefined)
       } else {
-        await onUpdateOrder(order.order_id, p, undefined)
+        await onUpdateOrder(order.order_id, p, undefined, quantityEditable ? nextQty : undefined)
       }
       onSnapshotEvent?.({
         type: pendingConversion ? 'order_converted' : 'order_edited',
@@ -365,6 +380,7 @@ export default function OrderPanel({
       })
       setEditingOrderId(null)
       setEditPrice('')
+      setEditQty('')
       setPendingConversion(null)
     } catch (e) {
       setEditError(e instanceof Error ? e.message : 'Update failed')
@@ -1231,27 +1247,15 @@ export default function OrderPanel({
       {orderType === 'STOPLOSS' ? (
         <div>
           <div style={{ fontSize: 11, color: '#8b949e', marginBottom: 3 }}>
-            SL Quantity (max {position.quantity}{instrumentType === 'options' ? `, lot ${slQtyStep}` : ''})
+            SL Quantity (max {slAvailableQty}{instrumentType === 'options' ? `, lot ${slQtyStep}` : ''})
           </div>
           <input
             type="number"
             value={slQty}
-            min={slQtyMin}
-            max={position.quantity}
+            min={0}
+            max={slAvailableQty}
             step={slQtyStep}
-            onChange={e => {
-              const parsed = parseInt(e.target.value, 10)
-              if (!Number.isFinite(parsed)) {
-                setSlQty(slQtyMin)
-                return
-              }
-              if (instrumentType === 'options') {
-                const lots = Math.max(1, Math.floor(parsed / slQtyStep))
-                setSlQty(Math.min(position.quantity, lots * slQtyStep))
-              } else {
-                setSlQty(Math.min(position.quantity, Math.max(1, parsed)))
-              }
-            }}
+            onChange={e => setSlQty(e.target.value)}
             disabled={!isActive}
             style={{
               width: '100%', padding: '5px 8px', background: '#0d1117',
@@ -1259,12 +1263,13 @@ export default function OrderPanel({
               color: '#e6edf3', fontSize: 13, boxSizing: 'border-box',
             }}
           />
+          <div style={{ fontSize: 9, color: '#484f58', marginTop: 3 }}>0 means no SL order. Positive options quantities use lot size {slQtyStep}.</div>
           {/* Split hint for large index options SL orders */}
           {instrumentType === 'options' && (() => {
             const sym = position.symbol?.toUpperCase() ?? ''
             const maxPerOrder = sym.startsWith('NIFTY') ? 1800 : sym.startsWith('SENSEX') ? 1000 : sym.startsWith('BANKNIFTY') ? 900 : null
-            if (!maxPerOrder || slQty <= maxPerOrder) return null
-            const n = Math.ceil(slQty / maxPerOrder)
+            if (!maxPerOrder || !Number.isFinite(parsedSlQty) || parsedSlQty <= maxPerOrder) return null
+            const n = Math.ceil(parsedSlQty / maxPerOrder)
             return (
               <div style={{ fontSize: 9, color: '#8b949e', marginTop: 3 }}>
                 Will create {n} orders (max {maxPerOrder}/order)
@@ -1384,7 +1389,7 @@ export default function OrderPanel({
       )}
 
       <button
-        disabled={!isActive || placing}
+        disabled={!isActive || placing || (orderType === 'STOPLOSS' && (!Number.isInteger(parsedSlQty) || parsedSlQty < slQtyMin))}
         onClick={handlePlace}
         style={{
           padding: '7px 0',
@@ -1601,6 +1606,17 @@ export default function OrderPanel({
                           </button>
                         )}
                       </div>
+                      {(order.is_stoploss || order.order_type === 'STOPLOSS') && (() => {
+                        const coveredElsewhere = openOrders
+                          .filter(item => item.order_id !== order.order_id && isClosingOrderForPosition(item, position, activeRight) && (item.is_stoploss || item.order_type === 'LIMIT'))
+                          .reduce((sum, item) => sum + item.quantity, 0)
+                        const maxQty = Math.max(0, position.quantity - coveredElsewhere)
+                        return <label style={{ display: 'flex', alignItems: 'center', gap: 6, color: '#8b949e', fontSize: 10 }}>
+                          SL Qty
+                          <input type="number" min={slQtyMin} max={maxQty} step={slQtyStep} value={editQty} onChange={e => setEditQty(e.target.value)} style={{ width: 90, padding: '4px 6px', background: '#0d1117', border: '1px solid #388bfd', borderRadius: 4, color: '#e6edf3', fontSize: 12 }} />
+                          <span>max {maxQty}{instrumentType === 'options' ? ` · lot ${slQtyStep}` : ''}</span>
+                        </label>
+                      })()}
                       {order.order_type === 'TARGET' && editPrice && !isNaN(parseFloat(editPrice)) && (
                         <div style={{ fontSize: 10, color: '#484f58' }}>
                           New limit: {
