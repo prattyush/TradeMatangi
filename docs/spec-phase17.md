@@ -44,6 +44,10 @@ Implemented:
   category/strategy is saved after exit. Label round trips use the full option
   contract identity so same-right strikes do not collide.
 - Desktop fills are available through the existing website Analysis Trades/Trade History surface for the same user.
+- Stop-loss quantity controls are shared between website and desktop: the website SL form can be cleared or set to zero to skip placing an SL, while pending SL quantities can be edited. Desktop selected SL lines expose the same quantity edit behavior.
+- Stop-loss quantity changes use a step of `1` for equity and the contract lot size for options. New or edited quantities cannot exceed the uncovered position after other pending closing SL/LIMIT orders are accounted for.
+- Desktop stop-loss labels include the order quantity with projected P&L, and selected-line actions use compact `L`, `SL`, and delete (`×`) controls.
+- Real-session stop-loss edits update the broker-side Kotak order before local state is changed; broker rejection leaves the local order unchanged.
 - No separate Order Book tab or Analysis UI was added; “order book” in the implementation means the existing trade/order history data path and is not a new user-facing Analysis surface.
 - This specification was updated alongside the implementation, including the assumptions and known streaming limitation below.
 
@@ -115,9 +119,23 @@ Use a chart-first cockpit layout:
 Order lines:
 
 - Pending LIMIT/TARGET/STOPLOSS orders appear as horizontal chart lines.
-- Labels show side/type plus quantity or projected P&L, e.g. `BL 13K`, `SL -1.2%`, `T +2.4%`.
+- Labels show side/type plus quantity or projected P&L, e.g. `BL 13K`, `SL 65 -1.2%`, `T +2.4%`.
+- Stop-loss labels always include the active order quantity alongside projected P&L.
 - Dragging a line previews locally and sends exactly one backend update on drag end.
 - Delete/Backspace cancels the selected line.
+
+Selected stop-loss line controls:
+
+- The quantity field can be edited directly and changed with the mouse wheel.
+- Equity quantities change in steps of `1`; option quantities change in steps of the contract lot size.
+- The maximum quantity is the open position quantity minus other pending closing-side SL/LIMIT quantities for the same contract. The existing selected stop-loss is excluded from this calculation so it can be resized upward when uncovered quantity is available.
+- `L` converts the selected order to a limit order, `SL` converts it to a stop-loss, and `×` deletes it. Each control has an accessible tooltip/label.
+
+Website stop-loss controls:
+
+- The new SL quantity field preserves blank and zero while editing. Zero skips order placement; a positive quantity is required to submit an SL.
+- Pending stop-loss orders expose editable quantity in the order editor. Deleting an existing pending SL remains a separate cancel action.
+- Website and desktop use the shared quantity update endpoint and the same uncovered-position and lot-size validation.
 
 Two-step selected-line conversion:
 
@@ -199,7 +217,9 @@ Manual:
 - Start Stepwise options session.
 - Place orders from chart right-click.
 - Drag SL/TARGET/LIMIT lines and confirm backend state changes.
-- Convert selected SL to LIMIT by selecting action then clicking chart price.
+- Convert selected SL to LIMIT by selecting `L` then clicking chart price.
+- Select a stop-loss line, edit its quantity directly or by scrolling, and verify equity step size, option lot-size step, and uncovered-position limits.
+- Verify the selected stop-loss line shows quantity plus projected P&L in currency and percent modes.
 - Bulk convert all closing orders to SL/LIMIT from chart right-click.
 - Run Flatten with and without existing stoploss orders.
 - Verify chart reaction remains fast during repeated Next Bar presses.
