@@ -1,12 +1,13 @@
 
-## Phase 18 — Desktop Live Paper Trading and Browse Live Streaming
+## Phase 18 — Desktop Paper Trading and Browse Live Streaming
 
+### Requirement
 
-Requirement
-1. Enable support of Paper Trading in Desktop App with all features as present in Replay Trading in Desktop App.
-2. Live Symbols, Suggestion to approach:-
-   a) Convert Live into Paper Trading Session.
-   b) The Live ability to stream any symbol is a required feature, thus shift it to browse. So, user can either go live on per symbol/chart or he can switch the entire browse mode into a current Live Mode functionality. Use whichever seems better, free to choose. Browse Mode won't have trading options, whether live or not live.
+1. Enable Paper Trading in the Desktop App with all features currently present in Desktop Replay/Stepwise Trading.
+2. Preserve the ability to stream any live symbol in the desktop chart workspace.
+   - Convert the current top-level Desktop Live mode into Paper Trading.
+   - Move chart-only live streaming into Browse so users can live-monitor symbols without trading controls.
+   - Browse mode must remain read-only whether live streaming is enabled or disabled.
 
 ### Status
 
@@ -14,138 +15,181 @@ Planned.
 
 ### Summary
 
-Phase 18 adds two related desktop capabilities:
+Phase 18 separates two concepts that are currently mixed together in the desktop app:
 
-1. Browse screens can display live market data for their configured symbols without becoming trading sessions.
-2. Desktop Live mode becomes a one-underlying live paper-trading session with orders, fills, positions, strategies, wallet, P&L, and trade history.
+- **Paper mode** is a live paper-trading cockpit. It reuses the existing backend paper-trading engine and the Phase 17 desktop trading facade, so the desktop gets the same order, position, strategy, wallet, P&L, trade-history, and chart-order features already available in Desktop Replay/Stepwise trading.
+- **Browse live** is chart-only live streaming inside Browse. It lets one or more Browse screens stream their configured symbols without creating a trading session or showing any trading controls.
 
-The intended workflow is to paper trade one symbol in Desktop Live mode while monitoring other symbols through live-enabled Browse screens or the existing website.
+The intended workflow is: paper trade one underlying in Desktop Paper mode while monitoring other live symbols through Browse screens or the website.
 
 Real broker order placement from the desktop remains out of scope for this phase.
 
-### Browse Live Streaming
+### Product Decisions
 
-Each persisted Browse screen must support an independent `live_enabled` setting.
+- Rename the top-level desktop mode from `Live` to `Paper`.
+- Remove the old meaning of top-level `Live` as chart-only streaming.
+- Add a per-screen Browse live toggle, persisted with each desktop screen.
+- Keep Browse live screen-scoped, not app-global. Each enabled screen owns its own stream lifecycle.
+- Paper sessions are anchored to exactly one underlying symbol and one trading date.
+- Same-underlying option tiles may be attached to the Paper session.
+- Cross-underlying edits in an active Paper session are rejected in both backend and UI.
+- A desktop Paper start attaches to an already-running compatible website paper session for the same user instead of silently creating a duplicate.
+- Detaching or closing the desktop Paper view stops desktop event consumption only. Explicit Stop ends the backend paper session.
+- Browse live and Paper trading streams must be independent; stopping or reconnecting one must not disturb the other.
 
-When enabled:
+### Backend Plan
 
-- The screen streams all currently configured equity and option tiles.
-- Historical candles remain visible and incoming ticks are merged using the existing interval aggregation and reconciliation rules.
-- Browse remains read-only; it must not expose or modify orders, positions, strategies, wallet, or P&L.
-- Multiple Browse screens may stream different symbol sets at the same time.
-- The live switch is available only for the current trading date. Historical dates show a clear explanation that live data is for the current market date.
-- The stream supports reconnect, bounded event replay, stream reset, provider errors, backend restart, and authoritative snapshot recovery.
-- Stopping one Browse stream does not stop any other screen or paper session.
+Generalize the existing authenticated desktop trading facade under `/api/desktop/v1/trading` instead of creating a second desktop paper API.
 
-### Desktop Live Paper Trading
+Required changes:
 
-Desktop Live mode must create or attach to a live paper-trading session.
+- Extend `DesktopTradingStartRequest.desktop_mode` from `stepwise | replay` to `stepwise | replay | paper`.
+- For `desktop_mode=paper`, start or attach using `session_type=paper`, `stepwise=false`, and the existing paper `SimulationSession` engine.
+- Return `desktop_mode="paper"` and `source="desktop_paper"` in desktop trading snapshots.
+- Extend `/candidate` and `/active` to find compatible active Paper sessions and existing Paper records.
+- Reuse existing desktop trading endpoints for Paper:
+  - snapshot
+  - attach option contract
+  - place, update, cancel, convert, and bulk-convert orders
+  - start, update, cancel, and cancel-all strategies
+  - wallet read/reset where applicable
+  - flatten
+  - trade history, positions, P&L, and settings
+- Add an authenticated desktop event endpoint, e.g. `GET /api/desktop/v1/trading/{session_id}/events`, backed by the session replay queue.
+  - Require desktop identity and user ownership.
+  - Support monotonic event IDs, `Last-Event-ID`, bounded replay, heartbeats, reconnect, and snapshot fallback after gaps.
+  - Keep `/api/stream/{session_id}` behavior for the website; desktop must not depend on unauthenticated session streams.
+- Preserve the existing paper engine for fills, tick handling, wallet accounting, guardrails, strategies, session resume, and provider selection. Do not build a parallel simulator.
+- Keep real-trading endpoints, broker order placement, and broker credentials unavailable to Desktop Paper.
+- Keep `/api/desktop/v1/live` as chart-only Browse live infrastructure.
+  - It remains read-only and must not import or mutate trading state.
+  - It should continue to provide start, snapshot, stop, tile configure/remove, refresh, and events for screen-level tile streams.
+  - Multiple streams for the same user must coexist.
+  - Provider fan-out should be reused or improved so Browse live and Paper do not create unnecessary duplicate broker connections.
 
-Session rules:
+Session and contract rules:
 
-- A paper session is anchored to exactly one underlying symbol and trading date.
-- Same-underlying option tiles, including CE and PE contracts, may be attached.
-- Changing an active paper screen to another underlying is rejected with guidance to use another screen or session.
-- A desktop start request for an already-running compatible website paper session attaches to that session rather than silently creating a duplicate.
-- Detaching the desktop view stops desktop event consumption only; it does not stop the backend paper session.
-- Ending the paper session is an explicit stop action.
+- Paper starts from the active chart's underlying context.
+- Option/index sessions use the same ATM/expiry resolution rules as existing paper trading.
+- Attached option contracts use full identity: `symbol + expiry + strike + right`.
+- A single active Paper session cannot switch to another underlying. The response should tell the user to use another screen/session.
+- Same-right strike switching must respect the existing risk rule: do not switch away from a contract that has open position, pending orders, or active strategy risk.
 
-The Desktop Live UI must expose:
+### Desktop Frontend Plan
 
-- Live chart ticks and candle aggregation.
-- Paper order placement, update, cancellation, and conversion.
-- Order/fill markers and order-line updates.
-- Positions, average entry, quantity, wallet, realized/unrealized P&L, and trade history.
-- Paper strategies and strategy lifecycle controls supported by the existing backend.
-- Connection, session, broker-feed, and reconciliation errors.
+Update the Windows desktop app around a clear mode model:
 
-### Backend Requirements
+- Replace `Browse | Live | Replay | Stepwise` with `Browse | Paper | Replay | Stepwise`.
+- Update shared contracts so `RunState.mode` and mode predicates include `paper` and do not treat `live` as a trading mode.
+- Treat `Paper`, `Replay`, and `Stepwise` as desktop trading modes for the left rail, chart order lines, strategy controls, wallet, P&L, flatten, and trade history.
+- Treat Browse live as a property of a Browse screen, not as `mode=Live`.
 
-Extend the authenticated desktop API with paper-session operations for:
+Browse live behavior:
 
-- Start or attach to a paper session.
-- Find a compatible active session.
-- Fetch an authoritative paper snapshot.
-- Stop a paper session.
-- Place, update, cancel, and convert orders.
-- Start, update, and cancel supported strategies.
-- Read wallet, positions, trades, and P&L.
-- Subscribe to authenticated paper-session events.
+- Persist `live_enabled` in each screen's saved state.
+- Store live snapshots, tick caches, stream keys, errors, and native stream subscriptions by screen id.
+- Starting Browse live starts a stream for the current screen's tiles.
+- Editing tiles on an enabled Browse live screen updates only that screen's stream.
+- Disabling Browse live or closing a screen stops only that screen's stream.
+- Switching to Paper/Replay/Stepwise must not accidentally stop Browse live streams on other screens.
+- Historical Browse dates cannot start live streaming. Show a clear message that live data is available only for the current market date.
+- Browse live charts use existing historical candles plus live tick aggregation/reconciliation. Trading controls, wallet, P&L, strategies, flatten, order markers, and order actions remain hidden.
 
-Implementation requirements:
+Paper behavior:
 
-- Reuse the existing backend paper-trading engine for fills, order state, wallet accounting, strategies, guardrails, and P&L. Do not create a second paper simulator.
-- Add authenticated desktop event streaming with monotonic event IDs, `Last-Event-ID` resume, bounded replay, and snapshot fallback.
-- Enforce authenticated user ownership on every desktop paper endpoint and event stream.
-- Enforce the one-underlying rule at the backend boundary, not only in the UI.
-- Keep real-trading endpoints and broker credentials unavailable to this feature.
-- Reuse or introduce provider-level fan-out so Browse-live and paper sessions do not create unnecessary duplicate broker connections.
-- Preserve backend authority when the desktop is minimized, disconnected, restarted, or reattached.
+- Starting Paper calls the desktop trading facade with `desktop_mode=paper`.
+- The frontend checks for a compatible active/existing Paper session before starting and offers attach/continue/start-clean choices consistent with Stepwise/Replay flows.
+- Paper subscribes to authenticated desktop trading events and keeps an authoritative snapshot polling or recovery path.
+- Paper chart candles merge historical baseline data with live paper ticks.
+- Paper order/fill markers, order lines, positions, wallet, P&L, strategies, and trade history use the same desktop state model as Replay/Stepwise.
+- Active Paper sessions lock the instrument picker date and underlying. Same-underlying option tiles can be attached; cross-underlying edits show guidance before the backend rejects them.
+- The Paper session indicator must distinguish:
+  - new desktop-owned session
+  - attached/shared website session
+  - broker feed reconnect/error
+  - auth/session expiry
 
-### Frontend Requirements
+Native stream handling:
 
-- Keep Browse-live state separate from Desktop Live paper-session state.
-- Persist screen-level `live_enabled` state without introducing a global active-screen write that lets concurrent windows overwrite one another.
-- Display separate connection/session indicators for Browse-live and Paper mode.
-- Preserve independent stream lifecycles when switching screens or modes.
-- Show the one-underlying restriction before starting a paper session and when editing its tiles.
-- Do not show trading controls in Browse-live mode.
-- Normalize paper-session snapshots and events into the desktop chart/order/position state model.
+- Use distinct native stream keys for Browse live and Paper trading, for example `browse-live:{screen_id}:{stream_id}` and `paper:{session_id}`.
+- Token refresh/auth expiry must not corrupt screen state. On authentication failure, stop affected streams, keep persisted screen configuration, and ask the user to sign in again.
+- Backend restart should surface a recoverable error and allow users to reattach/start again without losing persisted screens.
 
-### Concurrent Workflow
+### Concurrent Workflow Requirements
 
 The implementation must support:
 
-- Paper trading one symbol in Desktop Live mode while live-monitoring other symbols in Browse.
-- Using the existing website concurrently with the desktop and attaching to the same compatible paper session.
-- Running multiple Browse-live screens with different symbol sets.
-- Closing or disconnecting one Browse screen while the paper session and other screens continue.
-- Token refresh, authentication expiry, network loss, backend restart, and provider reconnect without cross-screen state corruption.
+- Paper trading one symbol in Desktop Paper while live-monitoring other symbols in Browse.
+- Multiple Browse screens streaming different symbol sets at the same time.
+- One Browse screen being closed, disabled, reconfigured, or reconnected without stopping other Browse screens or the Paper session.
+- The website and desktop attaching to the same compatible Paper session for the same user.
+- Desktop minimize/restore, token refresh, auth expiry, network loss, backend restart, provider reconnect, and stream reset without cross-screen state corruption.
 
 ### Acceptance Criteria
 
-- A Browse screen can enable live data for its configured symbols without exposing trading controls.
+- Desktop mode switch shows `Browse`, `Paper`, `Replay`, and `Stepwise`; the old top-level `Live` trading/chart mode is removed.
+- Browse screens can enable live data for their configured symbols without exposing trading controls.
 - Two Browse screens can stream different symbol sets simultaneously.
-- Desktop Live can run a one-symbol paper session and display order, fill, position, strategy, wallet, P&L, and trade-history updates.
-- Desktop can attach to a compatible paper session started by the website.
-- Cross-underlying edits are rejected for an active paper session.
-- Browse-live and paper streams remain independent and do not lose or duplicate events during reconnect.
-- Explicitly stopping a paper session ends it; detaching a desktop view does not.
-- Windows testing covers two monitors, minimize/restore, network loss, backend restart, token refresh, and closing one screen.
+- Paper can start from desktop, attach to a compatible website Paper session, and display live chart ticks.
+- Paper exposes the same practical desktop trading feature set as Replay/Stepwise:
+  - chart order entry
+  - order placement, update, cancellation, conversion, and bulk conversion
+  - order and fill markers
+  - draggable order and strategy lines
+  - positions and average entry
+  - wallet, realized/unrealized P&L, and day P&L
+  - strategy lifecycle controls
+  - flatten
+  - trade history
+- Cross-underlying edits are rejected for an active Paper session.
+- Explicit Stop ends a desktop-owned Paper session. Detach/close only stops desktop consumption for attached/shared sessions.
+- Browse live and Paper streams recover independently from reconnect, stream reset, token refresh, and backend restart.
+- Real broker order placement is not exposed from Desktop Paper.
 
 ### Test Plan
 
 Backend:
 
-- Browse live start/stop is user-scoped and read-only.
-- Multiple live streams can coexist for one user with different tiles.
-- Paper start, attach, snapshot, stop, order, strategy, wallet, and event endpoints enforce desktop identity.
-- Existing website paper sessions can be discovered and attached.
-- Cross-symbol paper changes are rejected.
-- Paper event replay and snapshot recovery restore the authoritative state.
-- Browse-live and paper subscriptions do not create uncontrolled duplicate provider connections.
-- Another user cannot read or mutate a Browse stream or paper session.
+- Desktop Paper start maps to `session_type=paper` and uses the existing paper engine.
+- Paper start/attach/candidate/active/snapshot/stop enforce desktop auth and user ownership.
+- Existing website Paper sessions can be discovered and attached.
+- Desktop Paper event stream supports `Last-Event-ID`, bounded replay, heartbeats, gap reset, and snapshot recovery.
+- Another user cannot read, stream, or mutate a Paper session.
+- Paper order, strategy, wallet, position, P&L, flatten, and contract attach endpoints work through `/api/desktop/v1/trading`.
+- Cross-underlying Paper changes are rejected.
+- Browse live start/stop/configure/refresh/events remain user-scoped and read-only.
+- Multiple Browse live streams can coexist for one user with different tiles.
+- Browse live and Paper subscriptions do not create uncontrolled duplicate provider connections.
 
-Desktop:
+Desktop unit/integration:
 
-- `live_enabled` screen state persists and restores correctly.
-- Browse-live does not render trading controls.
-- Browse-live and Paper mode transitions start and stop only their own streams.
-- Paper snapshots update charts, orders, positions, wallet, P&L, and strategies.
-- One-underlying validation prevents invalid paper screen edits.
+- Mode labels and mode predicates handle `Paper` correctly.
+- Per-screen `live_enabled` state persists and restores.
+- Browse live stream state is keyed by screen id, not a single global `live` snapshot.
+- Browse live does not render trading controls or mutate trading state.
+- Browse live tile edits affect only that screen's stream.
+- Paper snapshots/events update candles, orders, fills, positions, wallet, P&L, strategies, and trade history.
+- One-underlying validation prevents invalid Paper screen edits.
+- Paper attach/shared-session status is visible.
 - Reconnect, stream reset, token expiry, and snapshot reconciliation preserve state.
 - TypeScript build and desktop unit tests pass.
 
 Manual Windows validation:
 
-- Enable Browse-live for two screens with different symbols.
-- Paper trade one symbol in Desktop Live while monitoring the other screens.
-- Attach the desktop to a paper session started in the website.
-- Minimize and restore windows, disconnect/reconnect the network, restart the backend, and refresh authentication.
-- Close one Browse screen and confirm other streams and the paper session continue.
+- Enable Browse live on two screens with different symbols.
+- Start Desktop Paper for one symbol while both Browse screens continue streaming.
+- Place/update/cancel/convert Paper orders from chart controls.
+- Start/cancel Paper strategies and verify strategy lines/events.
+- Attach the desktop to a Paper session started in the website.
+- Minimize and restore windows.
+- Disconnect/reconnect network.
+- Restart backend and reattach/recover.
+- Refresh authentication.
+- Close one Browse screen and confirm other Browse streams and the Paper session continue.
 
 ### Scope and Effort
 
-- Browse-live streaming only: approximately 3–5 engineering days.
-- Full Phase 18 implementation: approximately 10–15 engineering days, including Windows and provider testing.
+- Browse live screen-scoping and UI migration: approximately 3-5 engineering days.
+- Desktop Paper trading with authenticated events and Replay/Stepwise feature parity: approximately 7-10 engineering days.
+- Full Phase 18 with Windows/provider validation: approximately 10-15 engineering days.
 - Real broker trading from the desktop is a later phase.
