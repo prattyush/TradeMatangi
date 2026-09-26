@@ -15,7 +15,10 @@
 
 ### Status
 
-Completion implementation is in place on dev. The latest review fixes are also in
+Core Phase 18 functionality is implemented on dev, but the phase is not yet
+complete or signed off. The 2026-09-26 code comparison identified ownership and
+startup concerns, plus outstanding database concurrency and Windows/provider
+acceptance validation, detailed below. The latest review fixes are also in
 place: Desktop Paper explicit entry stop-loss orders now work without depending
 on the global auto-SL setting, watcher-created Paper stop-loss orders preserve
 Paper ledger/source metadata for retry-safe recovery, attached website-owned
@@ -26,8 +29,9 @@ acceptance validation remains outstanding.
 ### Agreed completion plan — desktop equity long and short
 
 The September 2026 review originally identified the desktop equity, Paper safety,
-and screen/pop-out gaps below. The implementation now addresses these items on
-`dev`; the stage list remains here as the acceptance baseline. Automated checks
+and screen/pop-out gaps below. The implementation addresses the main capabilities
+on `dev`; remaining concerns must be resolved or explicitly accepted before
+completion. The stage list remains here as the acceptance baseline. Automated checks
 alone do not replace Windows/provider acceptance testing.
 
 #### Stage 1 — single-screen equity readiness
@@ -133,7 +137,41 @@ Implemented so far:
 - Regression coverage exists for equity 20% margin reservation on the session ledger and mixed equity/options order identity inside an equity-anchored desktop session.
 - Regression coverage exists for website 5x equity funds-ratio sizing and same-price leveraged equity round-trip wallet restoration.
 
-Remaining validation and deferred work:
+#### Remaining concerns from code comparison — 2026-09-26
+
+> **Completion callout:** Core trading, wallet, screen, and pop-out functionality
+> exists in code. Phase 18 remains open pending the concerns and acceptance checks
+> below. Automated tests do not establish Windows or live-provider acceptance.
+
+- **Paper attachment ownership:** `windowsapp/src/App.tsx` determines
+  `sharedTradingSession` from candidate attachment. However,
+  `backend/app/routers/simulation.py::start_with_paper_claim()` can return an
+  existing compatible session from the start request itself. This path can
+  treat an attachment as owned and offer Stop instead of Detach. Return an
+  explicit created/attached result and use it for client ownership decisions.
+  Test a session appearing between candidate lookup and start, including a
+  website-owned session. Snapshot `owned`, derived from `desktop_origin`, does
+  not prove that the requesting screen owns the session.
+- **Paper startup failure recovery:** the renderer creates the backend session
+  before starting chart/live/native streams and records local trading state
+  afterward. A stream startup failure can leave a running backend session with
+  no local run reference. Retain the returned session immediately and support
+  retry/reattach, or safely clean up a newly created session. Never stop an
+  existing shared session as failure cleanup. Test live-start and native-stream
+  failures separately.
+- **Database concurrency validation:** `backend/tests/test_phase18_paper_wallet.py`
+  uses Moto, with sequential overspending and duplicate-start checks. Required
+  simultaneous-worker tests against DynamoDB Local remain outstanding. Exercise
+  competing reservations/starts, receipt retries, stale caches, durable reset
+  locks, and engine lease takeover; verify balances, persisted orders, and that
+  only one engine remains active.
+- **Manual acceptance:** execute the long/short × Paper/Replay/Stepwise × sizing
+  matrix, mixed equity/options and order lifecycle checks, Windows/two-monitor
+  pop-out tests, authentication/network/backend recovery, and live-provider
+  checks below. Website capital display and sizing also need running-backend
+  checks; Real trading requires broker-session validation.
+
+Remaining native validation and agreed deferred work:
 
 - Run the Windows/live-provider regression checklist below, including multiple monitors and authenticated reconnects. Linux unit tests do not validate WebView focus, native close events, monitor placement, or broker availability.
 - Browser fallback continues snapshot polling; adding a header-capable browser SSE transport is deferred.
@@ -215,7 +253,7 @@ Backend files touched in the current partial implementation:
   - For leveraged equity sessions, the response can also include margin/buying-power diagnostics: `session_capital`, `margin_used`, `available_margin`, `buying_power`, `exposure`, and `margin_rate`.
 - `backend/app/routers/simulation.py`
   - Paper sessions now use `wallet_ledger_id = paper:{date}`.
-  - This is only the ledger-id foundation for a shared Paper wallet. Date-level reset locking and atomic cross-session reservation protection are still outstanding.
+  - Persistent first-start reset locking and transactional wallet/order movements are implemented in `paper_wallet.py`. Concurrent-worker validation against DynamoDB Local remains outstanding; focused wallet coverage currently uses Moto.
 - `backend/app/models/schemas.py`
   - `Order` has reservation metadata fields for margin rate and ledger identity.
   - `WalletResponse` has optional margin/buying-power fields; existing clients can continue reading `balance` only.
@@ -273,7 +311,7 @@ Complicated points and callouts:
 - Important implementation learning: options-anchored Paper sessions used the legacy CE/PE tick path, which did not populate the desktop `contract_quotes` registry. Chart market orders depend on that registry, so Paper options must enrich every option tick with full contract identity before order placement and P&L use it.
 - Pop-out support now opens native child windows that render the assigned screen id only, persists geometry best effort, and lets the main window focus or bring back popped screens.
 - `check_orders()` still supports legacy full-notional SELL credit by default, but simulation/real loops now call it with `settle_wallet=false` and then use `trading.settle_wallet_for_trade()` for margin-aware settlement.
-- Any future persistence/resume work must ensure reservation metadata is loaded back into `Order` objects from DynamoDB. The model can hold it, and writes include it, but restore paths should be checked before relying on resumed pending orders with non-1.0 margin rates.
+- Paper recovery restores orders through `order_service.reload_paper_orders()` using `Order.model_validate(record)`, preserving reservation margin rate and ledger identity and repairing recorded fills. This restore path is implemented; backend-restart acceptance must still verify complete session/order/wallet recovery.
 - **Callout:** per-screen backend ownership is still coarse. The backend can reject Stop for website-owned/shared Paper sessions with no desktop origin, but it cannot distinguish two desktop windows attached to the same desktop-owned session without a future per-screen owner token.
 - Potential issue: real broker reconciliation resets/syncs wallet from Kotak funds. That remains authoritative for real sessions and can override local margin-display state after out-of-band broker activity.
 - Existing focused verification after this partial implementation:
