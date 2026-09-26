@@ -939,6 +939,11 @@ export function useSimulation() {
     }))
   }, [])
 
+  const refreshOpenOrders = useCallback(async (sessionId: string) => {
+    const orders = await api.getOrders(sessionId)
+    setState(s => s.sessionId === sessionId ? { ...s, openOrders: orders, walletRefreshKey: s.walletRefreshKey + 1 } : s)
+  }, [])
+
   // ── In-session trade labeling ───────────────────────────────────────────────
   // Per-leg net-qty snapshot — detect non-zero → 0 transitions to identify
   // completed round-trips. Works for ALL session types (sim/paper/real/stepwise).
@@ -1026,6 +1031,7 @@ export function useSimulation() {
     placeOrder,
     updateOrder,
     bulkUpdateOrders,
+    refreshOpenOrders,
     cancelOrder,
     handleOrderFilled,
     handleOrderCancelled,

@@ -16,6 +16,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
+from app.routers.orders import MissingStoplossRequest
 from app.dependencies import get_desktop_user_id
 from app.config import EQUITY_MIS_MARGIN_RATE, LOT_SIZES
 from app.models.schemas import (
@@ -959,6 +960,18 @@ async def place_order(session_id: str, req: PlaceOrderRequest, user_id: str = De
         req.expiry = contract["expiry"]
     from app.routers.orders import place_order as web_place_order
     return await web_place_order(req)
+
+
+@router.post("/{session_id}/fill-missing-stoploss")
+async def fill_missing_stoploss(session_id: str, req: MissingStoplossRequest, user_id: str = Depends(get_desktop_user_id)):
+    session = _require_session(session_id, user_id)
+    req.session_id = session_id
+    if req.right:
+        contract = _require_registered_contract(session, req.right.upper(), req.strike, req.expiry)
+        req.right, req.strike, req.expiry = contract["right"], contract["strike"], contract["expiry"]
+        _refresh_contract_quotes(session)
+    from app.routers.orders import fill_missing_stoploss as shared_fill
+    return await shared_fill(req, user_id)
 
 
 @router.post("/{session_id}/chart-orders", response_model=Order)

@@ -701,7 +701,10 @@ async fn desktop_option_historical_page(
 }
 
 #[tauri::command]
-fn open_screen_window(app: tauri::AppHandle, screen_id: String) -> Result<(), String> {
+async fn open_screen_window(app: tauri::AppHandle, window: tauri::WebviewWindow,
+    host: tauri::State<'_, HostState>, screen_id: String, handoff_token: String) -> Result<(), String> {
+    if window.label() != "main" { return Err("Only the main window can pop out screens".into()); }
+    let host = host.inner().clone();
     let label = format!("screen:{screen_id}");
     if let Some(window) = app.get_webview_window(&label) {
         window.set_focus().map_err(|error| error.to_string())?;
@@ -710,10 +713,30 @@ fn open_screen_window(app: tauri::AppHandle, screen_id: String) -> Result<(), St
     if !screen_id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
         return Err("Invalid screen id".into());
     }
+    if handoff_token.is_empty() || !handoff_token.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
+        return Err("Invalid handoff token".into());
+    }
     let geometry_path = screen_geometry_path(&app, &screen_id)?;
+    host.0.lock().map_err(|e| e.to_string())?.screen_windows.insert(screen_id.clone(), ScreenWindowState { token: handoff_token.clone(), ready: false });
+    diagnostic_log(&format!("screen opening id={screen_id} token={handoff_token}"));
+    // Arm the deadline before WebView creation, which can itself be delayed.
+    let timeout_host = host.clone();
+    let timeout_app = app.clone();
+    let timeout_id = screen_id.clone();
+    let timeout_token = handoff_token.clone();
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(Duration::from_secs(15)).await;
+        let pending = timeout_host.0.lock().ok().and_then(|s| s.screen_windows.get(&timeout_id).cloned())
+            .map(|s| s.token == timeout_token && !s.ready).unwrap_or(false);
+        if pending {
+            timeout_host.release_screen(&timeout_id, &timeout_token);
+            if let Some(child) = timeout_app.get_webview_window(&format!("screen:{timeout_id}")) { let _ = child.destroy(); }
+            diagnostic_log(&format!("screen startup deadline id={timeout_id}"));
+        }
+    });
     let geometry = fs::read(&geometry_path).ok()
         .and_then(|bytes| serde_json::from_slice::<ScreenGeometry>(&bytes).ok());
-    let url = WebviewUrl::App(format!("?screen_id={screen_id}").into());
+    let url = WebviewUrl::App(format!("index.html?screen_id={screen_id}&handoff_token={handoff_token}").into());
     let mut builder = WebviewWindowBuilder::new(&app, label, url)
         .title(format!("Trade Matangi - {screen_id}"))
         .inner_size(1280.0, 800.0)
@@ -730,11 +753,19 @@ fn open_screen_window(app: tauri::AppHandle, screen_id: String) -> Result<(), St
         if on_monitor { builder = builder.position(saved.x as f64 / scale, saved.y as f64 / scale); }
         builder = builder.maximized(saved.maximized);
     }
-    let window = builder
-        .build()
-        .map_err(|error| error.to_string())?;
+    let window = match builder.build() {
+        Ok(window) => window,
+        Err(error) => { host.release_screen(&screen_id, &handoff_token); return Err(error.to_string()); }
+    };
     let observed = window.clone();
+    let event_host = host.clone();
+    let event_id = screen_id.clone();
+    let event_token = handoff_token.clone();
     window.on_window_event(move |event| {
+        if matches!(event, tauri::WindowEvent::Destroyed) { event_host.release_screen(&event_id, &event_token); }
+        if matches!(event, tauri::WindowEvent::CloseRequested { .. }) {
+            schedule_window_close(&observed, event_host.clone());
+        }
         if matches!(event, tauri::WindowEvent::Moved(_) | tauri::WindowEvent::Resized(_) | tauri::WindowEvent::CloseRequested { .. }) {
             if let (Ok(position), Ok(size), Ok(scale), Ok(maximized)) = (observed.outer_position(), observed.inner_size(), observed.scale_factor(), observed.is_maximized()) {
                 // Preserve the normal bounds while maximized/minimized.
@@ -751,7 +782,54 @@ fn open_screen_window(app: tauri::AppHandle, screen_id: String) -> Result<(), St
             }
         }
     });
+    for _ in 0..150 {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let state = host.0.lock().map_err(|e| e.to_string())?.screen_windows.get(&screen_id).cloned();
+        match state {
+            Some(state) if state.token == handoff_token && state.ready => return Ok(()),
+            Some(state) if state.token == handoff_token => {},
+            _ => { let _ = window.destroy(); return Err("Screen handoff cancelled or startup timed out".into()); },
+        }
+    }
+    host.release_screen(&screen_id, &handoff_token);
+    let _ = window.destroy();
+    diagnostic_log(&format!("screen handoff timeout id={screen_id}"));
+    Err("Child window did not become ready; screen remains in the main window".into())
+}
+
+#[tauri::command]
+fn ready_screen_window(window: tauri::WebviewWindow, host: tauri::State<HostState>, screen_id: String, handoff_token: String) -> Result<(), String> {
+    if window.label() != format!("screen:{screen_id}") { return Err("Wrong screen window".into()); }
+    host.acknowledge_screen(&screen_id, &handoff_token, window.label())?;
+    diagnostic_log(&format!("screen ready id={screen_id} token={handoff_token}"));
     Ok(())
+}
+
+#[tauri::command]
+fn cancel_screen_handoff(app: tauri::AppHandle, window: tauri::WebviewWindow, host: tauri::State<HostState>, screen_id: String, handoff_token: String) -> Result<(), String> {
+    if window.label() != "main" { return Err("Only main can cancel handoff".into()); }
+    let matches = host.0.lock().map_err(|e| e.to_string())?.screen_windows.get(&screen_id).map(|s| s.token == handoff_token && !s.ready).unwrap_or(false);
+    if matches {
+        host.release_screen(&screen_id, &handoff_token);
+        if let Some(child) = app.get_webview_window(&format!("screen:{screen_id}")) { let _ = child.destroy(); }
+    }
+    Ok(())
+}
+
+fn schedule_window_close(window: &tauri::WebviewWindow, host: HostState) {
+    let window = window.clone();
+    let screen_id = window.label().strip_prefix("screen:").map(str::to_string);
+    let close_token = screen_id.as_ref().and_then(|id| host.0.lock().ok()?.screen_windows.get(id).map(|s| s.token.clone()));
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(Duration::from_secs(5)).await;
+        if let Some(id) = screen_id {
+            let current = host.0.lock().ok().and_then(|s| s.screen_windows.get(&id).map(|s| s.token.clone()));
+            if current != close_token { return; }
+        }
+        diagnostic_log(&format!("window close deadline label={}", window.label()));
+        host.stop_window_streams(window.label());
+        let _ = window.destroy();
+    });
 }
 
 #[derive(Serialize, Deserialize)]
@@ -764,7 +842,8 @@ fn screen_geometry_path(app: &tauri::AppHandle, screen_id: &str) -> Result<PathB
 }
 
 #[tauri::command]
-fn finish_window_close(window: tauri::WebviewWindow) -> Result<(), String> {
+fn finish_window_close(window: tauri::WebviewWindow, host: tauri::State<HostState>) -> Result<(), String> {
+    host.stop_window_streams(window.label());
     window.destroy().map_err(|error| error.to_string())
 }
 
@@ -775,8 +854,8 @@ fn focus_main_window(app: tauri::AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn list_screen_windows(app: tauri::AppHandle) -> Vec<String> {
-    app.webview_windows().keys().filter_map(|label| label.strip_prefix("screen:").map(str::to_owned)).collect()
+fn list_screen_windows(host: tauri::State<HostState>) -> Vec<String> {
+    host.0.lock().expect("host state lock").screen_windows.iter().filter(|(_, state)| state.ready).map(|(id, _)| id.clone()).collect()
 }
 
 #[tauri::command]
@@ -789,7 +868,7 @@ fn focus_screen_window(app: tauri::AppHandle, screen_id: String) -> Result<(), S
 }
 
 #[tauri::command]
-fn close_screen_window(app: tauri::AppHandle, screen_id: String) -> Result<(), String> {
+async fn close_screen_window(app: tauri::AppHandle, screen_id: String) -> Result<(), String> {
     let label = format!("screen:{screen_id}");
     if let Some(window) = app.get_webview_window(&label) {
         window.close().map_err(|error| error.to_string())?;
@@ -833,12 +912,19 @@ async fn save_desktop_chart_settings(
 
 #[tauri::command]
 async fn desktop_replay_request(
+    window: tauri::WebviewWindow,
+    screen_id: Option<String>,
     base_url: String,
     path: String,
     method: String,
     body: serde_json::Value,
     host: tauri::State<'_, HostState>,
 ) -> Result<serde_json::Value, String> {
+    if method != "GET" {
+        if let Some(id) = &screen_id {
+            if !host.owns_stream(window.label(), &format!("replay:{id}:request")) { return Err("Screen belongs to another window".into()); }
+        }
+    }
     let token = host.access_token(&base_url).await?;
     let url = format!(
         "{}/api/desktop/v1/replay/{}",
@@ -870,12 +956,19 @@ async fn desktop_replay_request(
 
 #[tauri::command]
 async fn desktop_live_request(
+    window: tauri::WebviewWindow,
+    screen_id: Option<String>,
     base_url: String,
     path: String,
     method: String,
     body: serde_json::Value,
     host: tauri::State<'_, HostState>,
 ) -> Result<serde_json::Value, String> {
+    if method != "GET" {
+        if let Some(id) = &screen_id {
+            if !host.owns_stream(window.label(), &format!("live:{id}:request")) { return Err("Screen belongs to another window".into()); }
+        }
+    }
     let token = host.access_token(&base_url).await?;
     let url = format!(
         "{}/api/desktop/v1/live/{}",
@@ -906,19 +999,36 @@ async fn desktop_live_request(
 
 #[tauri::command]
 async fn desktop_drawing_request(
+    window: tauri::WebviewWindow,
+    screen_id: Option<String>,
     base_url: String,
     path: String,
     method: String,
     body: serde_json::Value,
     host: tauri::State<'_, HostState>,
 ) -> Result<serde_json::Value, String> {
-    let token = host.access_token(&base_url).await?;
+    if method != "GET" {
+        if let Some(id) = &screen_id {
+            if !host.owns_stream(window.label(), &format!("screen:{id}:request")) { return Err("Screen belongs to another window".into()); }
+        }
+    }
+    let is_screen_request = path.trim_start_matches('/').starts_with("screens");
+    if is_screen_request && (method == "POST" || method == "PUT") {
+        if let Some(id) = body.get("state").and_then(|s| s.get("id")).and_then(|s| s.as_str()) {
+            if !host.owns_stream(window.label(), &format!("screen:{id}:save")) { return Err("Screen belongs to another window".into()); }
+        }
+    }
+    let token = if is_screen_request {
+        tokio::time::timeout(Duration::from_secs(4), host.access_token(&base_url)).await.map_err(|_| "Screen authentication timed out")??
+    } else { host.access_token(&base_url).await? };
     let url = format!(
         "{}/api/desktop/v1/{}",
         base_url.trim_end_matches('/'),
         path.trim_start_matches('/')
     );
-    let client = reqwest::Client::new();
+    let client = if is_screen_request {
+        reqwest::Client::builder().timeout(Duration::from_secs(4)).build().map_err(|e| e.to_string())?
+    } else { reqwest::Client::new() };
     let request = match method.as_str() {
         "GET" => client.get(url),
         "POST" => client.post(url).json(&body),
@@ -1246,6 +1356,9 @@ impl Default for HostState {
     }
 }
 
+#[derive(Clone)]
+struct ScreenWindowState { token: String, ready: bool }
+
 #[derive(Default)]
 struct LatestState {
     last_event_id: u64,
@@ -1255,6 +1368,7 @@ struct LatestState {
     pending_google_token: Option<String>,
     token_expires_at: Option<SystemTime>,
     streams: HashMap<String, NativeStreamState>,
+    screen_windows: HashMap<String, ScreenWindowState>,
 }
 
 struct NativeStreamState {
@@ -1266,6 +1380,40 @@ struct NativeStreamState {
 }
 
 impl HostState {
+    fn acknowledge_screen(&self, id: &str, token: &str, label: &str) -> Result<(), String> {
+        if label != format!("screen:{id}") { return Err("Wrong screen window".into()); }
+        let mut state = self.0.lock().map_err(|e| e.to_string())?;
+        let entry = state.screen_windows.get_mut(id).ok_or("Screen handoff expired")?;
+        if entry.token != token { return Err("Obsolete screen handoff".into()); }
+        entry.ready = true;
+        Ok(())
+    }
+    fn owns_stream_in(state: &LatestState, label: &str, key: &str) -> bool {
+        let Some(id) = key.split(':').nth(1) else { return label == "main"; };
+        match state.screen_windows.get(id) {
+            Some(owner) if owner.ready => label == format!("screen:{id}"),
+            _ => label == "main",
+        }
+    }
+    fn owns_stream(&self, label: &str, key: &str) -> bool {
+        Self::owns_stream_in(&self.0.lock().expect("host state lock"), label, key)
+    }
+    fn release_screen(&self, id: &str, token: &str) {
+        let mut state = self.0.lock().expect("host state lock");
+        if state.screen_windows.get(id).map(|s| s.token.as_str()) != Some(token) { return; }
+        let was_ready = state.screen_windows.remove(id).map(|s| s.ready).unwrap_or(false);
+        if was_ready {
+            let keys: Vec<_> = state.streams.keys().filter(|key| key.split(':').nth(1) == Some(id)).cloned().collect();
+            for key in keys { if let Some(stream) = state.streams.remove(&key) { stream.abort.abort(); } }
+        }
+        diagnostic_log(&format!("screen released id={id} token={token}"));
+    }
+    fn stop_window_streams(&self, label: &str) {
+        let mut state = self.0.lock().expect("host state lock");
+        let keys: Vec<_> = state.streams.keys().filter(|key| Self::owns_stream_in(&state, label, key)).cloned().collect();
+        for key in keys { if let Some(stream) = state.streams.remove(&key) { stream.abort.abort(); } }
+    }
+
     pub fn record(&self, event_id: u64, payload: String) {
         let mut state = self.0.lock().expect("host state lock");
         if event_id > state.last_event_id {
@@ -1284,8 +1432,9 @@ impl HostState {
     fn set_connection(&self, connection: &str) {
         self.0.lock().expect("host state lock").connection = connection.into();
     }
-    fn start_stream(&self, key: &str, abort: AbortHandle) {
+    fn start_stream(&self, key: &str, abort: AbortHandle, label: &str) -> Result<(), String> {
         let mut state = self.0.lock().expect("host state lock");
+        if !Self::owns_stream_in(&state, label, key) { abort.abort(); return Err("Screen belongs to another window".into()); }
         if let Some(existing) = state.streams.remove(key) {
             existing.abort.abort();
         }
@@ -1299,9 +1448,11 @@ impl HostState {
                 abort,
             },
         );
+        Ok(())
     }
-    fn stop_stream(&self, key: &str) {
+    fn stop_stream(&self, key: &str, label: &str) {
         let mut state = self.0.lock().expect("host state lock");
+        if !Self::owns_stream_in(&state, label, key) { return; }
         if let Some(existing) = state.streams.remove(key) {
             existing.abort.abort();
         }
@@ -1324,15 +1475,16 @@ impl HostState {
             }
         }
     }
-    fn stream_snapshot(&self, key: &str) -> DesktopStreamSnapshot {
+    fn stream_snapshot(&self, key: &str, label: &str) -> Result<DesktopStreamSnapshot, String> {
         let mut state = self.0.lock().expect("host state lock");
+        if !Self::owns_stream_in(&state, label, key) { return Err("Screen belongs to another window".into()); }
         let Some(stream) = state.streams.get_mut(key) else {
-            return DesktopStreamSnapshot {
+            return Ok(DesktopStreamSnapshot {
                 key: key.into(),
                 last_event_id: 0,
                 latest_payload: serde_json::Value::Null,
                 connection: "offline".into(),
-            };
+            });
         };
         let latest_payload = if stream.pending_payloads.len() > 1 {
             let events = std::mem::take(&mut stream.pending_payloads);
@@ -1342,12 +1494,12 @@ impl HostState {
         } else {
             stream.latest_payload.clone()
         };
-        DesktopStreamSnapshot {
+        Ok(DesktopStreamSnapshot {
             key: key.into(),
             last_event_id: stream.last_event_id,
             latest_payload,
             connection: stream.connection.clone(),
-        }
+        })
     }
     fn stream_cursor(&self, key: &str) -> u64 {
         self.0
@@ -1427,11 +1579,8 @@ fn host_snapshot(host: tauri::State<HostState>) -> HostSnapshot {
 }
 
 #[tauri::command]
-fn desktop_stream_snapshot(
-    key: String,
-    host: tauri::State<HostState>,
-) -> DesktopStreamSnapshot {
-    host.stream_snapshot(&key)
+fn desktop_stream_snapshot(window: tauri::WebviewWindow, key: String, host: tauri::State<HostState>) -> Result<DesktopStreamSnapshot, String> {
+    host.stream_snapshot(&key, window.label())
 }
 
 /// The WebView uses this for renderer-side failures and chart-operation
@@ -1443,8 +1592,8 @@ fn record_desktop_renderer_diagnostic(kind: String, payload: serde_json::Value) 
 }
 
 #[tauri::command]
-fn stop_desktop_stream(key: String, host: tauri::State<HostState>) {
-    host.stop_stream(&key);
+fn stop_desktop_stream(window: tauri::WebviewWindow, key: String, host: tauri::State<HostState>) {
+    host.stop_stream(&key, window.label());
 }
 
 fn desktop_api_url(base_url: &str, path: &str) -> String {
@@ -1497,6 +1646,7 @@ fn parse_sse_frame(frame: &str) -> (Option<u64>, Option<String>, Option<String>)
 
 #[tauri::command]
 async fn start_desktop_stream(
+    window: tauri::WebviewWindow,
     base_url: String,
     key: String,
     events_path: String,
@@ -1504,6 +1654,7 @@ async fn start_desktop_stream(
     host: tauri::State<'_, HostState>,
 ) -> Result<(), String> {
     let host = host.inner().clone();
+    if !host.owns_stream(window.label(), &key) { return Err("Screen belongs to another window".into()); }
     let stream_host = host.clone();
     let stream_key = key.clone();
     let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
@@ -1611,7 +1762,7 @@ async fn start_desktop_stream(
             backoff = (backoff * 2).min(30);
         }
     });
-    host.start_stream(&key, task.abort_handle());
+    host.start_stream(&key, task.abort_handle(), window.label())?;
     let _ = ready_tx.send(());
     Ok(())
 }
@@ -1671,6 +1822,11 @@ async fn start_sse_subscription(
 pub fn run() {
     tauri::Builder::default()
         .manage(HostState::default())
+        .on_window_event(|window, event| {
+            if window.label() == "main" && matches!(event, tauri::WindowEvent::CloseRequested { .. }) {
+                if let Some(webview) = window.app_handle().get_webview_window(window.label()) { schedule_window_close(&webview, window.state::<HostState>().inner().clone()); }
+            }
+        })
         .invoke_handler(tauri::generate_handler![
             save_desktop_tokens,
             clear_desktop_tokens,
@@ -1686,6 +1842,8 @@ pub fn run() {
             desktop_replay_request,
             desktop_live_request,
             open_screen_window,
+            ready_screen_window,
+            cancel_screen_handoff,
             list_screen_windows,
             focus_main_window,
             finish_window_close,
@@ -1885,5 +2043,64 @@ mod tests {
         assert_eq!(ticks.len(), 2);
         assert_eq!(ticks[0].high, 4.0);
         assert_eq!(ticks[0].close, 3.5);
+    }
+}
+
+#[cfg(test)]
+mod screen_window_tests {
+    use super::*;
+    fn opening(host: &HostState, id: &str, token: &str) {
+        host.0.lock().unwrap().screen_windows.insert(id.into(), ScreenWindowState { token: token.into(), ready: false });
+    }
+    #[test]
+    fn child_existence_does_not_transfer_stream_ownership() {
+        let host = HostState::default();
+        opening(&host, "two", "attempt");
+        assert!(host.owns_stream("main", "replay:two:run"));
+        assert!(!host.owns_stream("screen:two", "replay:two:run"));
+        host.acknowledge_screen("two", "attempt", "screen:two").unwrap();
+        assert!(!host.owns_stream("main", "replay:two:run"));
+        assert!(host.owns_stream("screen:two", "replay:two:run"));
+        assert!(host.owns_stream("main", "browse-live:one:live"));
+    }
+    #[test]
+    fn wrong_window_and_late_ready_are_rejected() {
+        let host = HostState::default();
+        opening(&host, "two", "new");
+        assert!(host.acknowledge_screen("two", "old", "screen:two").is_err());
+        assert!(host.acknowledge_screen("two", "new", "main").is_err());
+        assert!(host.acknowledge_screen("two", "new", "screen:one").is_err());
+        host.release_screen("two", "new");
+        assert!(host.acknowledge_screen("two", "new", "screen:two").is_err());
+        assert!(host.owns_stream("main", "replay:two:run"));
+    }
+    #[test]
+    fn obsolete_close_cannot_release_new_window() {
+        let host = HostState::default();
+        opening(&host, "two", "new");
+        host.acknowledge_screen("two", "new", "screen:two").unwrap();
+        host.release_screen("two", "old");
+        assert!(host.owns_stream("screen:two", "replay:two:run"));
+    }
+    #[test]
+    fn child_close_aborts_only_its_streams() {
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let _guard = runtime.enter();
+        let host = HostState::default();
+        opening(&host, "two", "new");
+        host.acknowledge_screen("two", "new", "screen:two").unwrap();
+        let first = tokio::spawn(std::future::pending::<()>());
+        let second = tokio::spawn(std::future::pending::<()>());
+        host.start_stream("browse-live:one:live", first.abort_handle(), "main").unwrap();
+        host.start_stream("replay:two:run", second.abort_handle(), "screen:two").unwrap();
+        host.stop_stream("replay:two:run", "main");
+        assert!(host.stream_snapshot("replay:two:run", "main").is_err());
+        assert!(host.0.lock().unwrap().streams.contains_key("replay:two:run"));
+        host.release_screen("two", "new");
+        let state = host.0.lock().unwrap();
+        assert!(state.streams.contains_key("browse-live:one:live"));
+        assert!(!state.streams.contains_key("replay:two:run"));
+        drop(state);
+        first.abort();
     }
 }

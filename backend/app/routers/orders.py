@@ -1,6 +1,10 @@
+import asyncio
+import time
 import json
 import logging
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Depends
+from pydantic import BaseModel, Field
+from app.dependencies import get_request_user_id
 from app.models.schemas import Order, OrderType, TradeSide, PlaceOrderRequest, UpdateOrderRequest, BulkUpdateSLRequest, ConvertOrderRequest, BulkConvertRequest
 from app.services import order_service, simulation as sim_svc, trading as trading_service
 from app.services.wallet_service import InsufficientFundsError, get_balance, get_ledger_balance
@@ -91,7 +95,7 @@ def _stoploss_available_quantity(
         and (order.right or None) == right
         and (order.strike if order.strike is not None else None) == strike
         and (order.expiry if order.expiry is not None else None) == expiry
-        and (order.is_stoploss or order.order_type in (OrderType.STOPLOSS, OrderType.LIMIT))
+        and (order.is_stoploss or order.order_type in (OrderType.STOPLOSS, OrderType.LIMIT, OrderType.TARGET))
     )
     return max(0, position.quantity - covered), position.quantity
 
@@ -134,6 +138,83 @@ def _sync_kotak_after_convert(session, order: Order, new_order_type: OrderType) 
                 logger.warning(
                     "convert_order %s: Kotak SL registration failed: %s", order.order_id, exc,
                 )
+
+
+class MissingStoplossRequest(BaseModel):
+    session_id: str
+    trigger_price: float = Field(gt=0, allow_inf_nan=False)
+    request_id: str = Field(min_length=1, max_length=100)
+    right: str | None = None
+    strike: int | None = None
+    expiry: str | None = None
+
+
+@router.post("/fill-missing-stoploss")
+async def fill_missing_stoploss(req: MissingStoplossRequest, user_id: str = Depends(get_request_user_id)):
+    session = sim_svc.get_session(req.session_id)
+    if not session or session.user_id != user_id:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if session.state == sim_svc.SimulationState.ENDED:
+        raise HTTPException(status_code=409, detail="Session has ended")
+    if getattr(session, "paper_lease_lost", False) or (getattr(session, "paper_engine_token", None) and time.monotonic() >= getattr(session, "paper_engine_valid_until", 0)):
+        raise HTTPException(status_code=409, detail="Session engine ownership expired; reattach")
+    right = req.right.upper() if req.right else None
+    if right not in (None, "CE", "PE") or (right is None and session.instrument_type == "options"):
+        raise HTTPException(status_code=400, detail="Select a traded equity or option chart")
+    strike = (req.strike if req.strike is not None else session.strike_ce if right == "CE" else session.strike_pe) if right else None
+    expiry = (req.expiry or session.expiry) if right else None
+    if right and (strike is None or not expiry):
+        raise HTTPException(status_code=400, detail="Full option identity is required")
+    lock = getattr(session, "missing_stoploss_lock", None)
+    if lock is None:
+        lock = session.missing_stoploss_lock = asyncio.Lock()
+    async with lock:
+        group = "missing-sl:" + req.request_id
+        existing = [o for o in order_service.get_all_orders(session.session_id) if o.group_id == group]
+        if existing:
+            if any((o.right, o.strike, o.expiry, o.trigger_price) != (right, strike, expiry, req.trigger_price) for o in existing):
+                raise HTTPException(status_code=409, detail="Stop-loss request identity reused with different parameters")
+            if any(o.status == order_service.OrderStatus.CANCELLED for o in existing):
+                raise HTTPException(status_code=409, detail="Previous stop-loss request was cancelled or rejected; refresh and select SL again")
+            return {"orders": existing, "quantity": sum(o.quantity for o in existing)}
+        position = trading_service.get_position(session.session_id, session.symbol, right=right, strike=strike, expiry=expiry)
+        available, _ = _stoploss_available_quantity(session, right, strike, expiry)
+        if available <= 0:
+            raise HTTPException(status_code=409, detail="Position is flat or already fully covered by exit orders")
+        price = float(session.last_price or 0)
+        if right:
+            key = f"{session.symbol}:{expiry}:{strike}:{right}"
+            quote = getattr(session, "desktop_contract_quotes", {}).get(key)
+            if quote:
+                price = float(quote.get("price", 0))
+            elif strike == (session.strike_ce if right == "CE" else session.strike_pe) and expiry == session.expiry:
+                price = float(session.last_price_ce if right == "CE" else session.last_price_pe)
+            else:
+                price = 0
+        if price <= 0:
+            raise HTTPException(status_code=409, detail="No authoritative price available for this chart")
+        if (position.side == "LONG" and req.trigger_price >= price) or (position.side == "SHORT" and req.trigger_price <= price):
+            raise HTTPException(status_code=400, detail="Long stop must be below current price; short stop above current price")
+        lot_size = LOT_SIZES.get(session.symbol, 1) if right else 1
+        if available % lot_size:
+            raise HTTPException(status_code=409, detail="Uncovered option quantity must be complete lots")
+        created = []
+        # Submit each chunk through the full route so every Real broker error is
+        # surfaced, rather than relying on the legacy best-effort extra chunks.
+        chunks = [available]
+        if right:
+            capacity = (order_service.get_max_contracts(session.symbol) // lot_size) * lot_size
+            if capacity < lot_size:
+                raise HTTPException(status_code=409, detail="Broker order capacity is smaller than one option lot")
+            chunks = [min(capacity, available - offset) for offset in range(0, available, capacity)]
+        for quantity in chunks:
+            order = await place_order(PlaceOrderRequest(session_id=session.session_id,
+                side=TradeSide.SELL if position.side == "LONG" else TradeSide.BUY,
+                order_type=OrderType.STOPLOSS, trigger_price=req.trigger_price,
+                quantity=quantity, is_stoploss=True, right=right, strike=strike,
+                expiry=expiry, group_id=group))
+            created.append(order)
+        return {"orders": created, "quantity": sum(o.quantity for o in created)}
 
 
 @router.post("", response_model=Order)
@@ -359,12 +440,12 @@ async def place_order(req: PlaceOrderRequest):
 
         try:
             kotak_svc = get_kotak()
-            if session.instrument_type == "options":
+            if order.right:
                 kotak_order_id = kotak_svc.place_options_sl_order(
                     symbol=session.symbol,
                     right=order.right,
                     strike=order.strike if order.strike is not None else session.strike,
-                    expiry=session.expiry,
+                    expiry=order.expiry or session.expiry,
                     side="B" if req.side == TradeSide.BUY else "S",
                     qty=quantity,
                     trigger_price=trigger,
@@ -497,6 +578,7 @@ async def place_order(req: PlaceOrderRequest):
             "is_stoploss": order.is_stoploss,
             "right": order.right,
             "strike": order.strike,
+            "expiry": order.expiry,
         }))
     except Exception:
         pass
@@ -520,6 +602,7 @@ async def place_order(req: PlaceOrderRequest):
                     right=order_right,
                     strike=order_strike,
                     expiry=order_expiry,
+                    group_id=req.group_id,
                     user_id=session.user_id,
                     margin_rate=order_margin_rate,
                     source=_desktop_order_source(session),
