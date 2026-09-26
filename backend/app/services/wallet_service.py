@@ -121,6 +121,9 @@ def _ensure_ledger_table() -> None:
 
 def get_or_init_ledger(user_id: str, date: str, ledger_id: str, ledger_kind: str = "sim") -> float:
     """Ledger-aware facade. First use copies the legacy balance, preserving history."""
+    if ledger_id.startswith("paper:"):
+        from app.services.paper_wallet import balance
+        return balance(user_id, date)
     key = (user_id, ledger_id)
     if key in _ledgers:
         return _ledgers[key]
@@ -157,7 +160,10 @@ def get_ledger_balance(user_id: str, date: str, ledger_id: str, ledger_kind: str
     return get_or_init_ledger(user_id, date, ledger_id, ledger_kind)
 
 
-def debit_ledger(user_id: str, amount: float, date: str, ledger_id: str, ledger_kind: str = "sim") -> float:
+def debit_ledger(user_id: str, amount: float, date: str, ledger_id: str, ledger_kind: str = "sim", operation_id: str | None = None, allow_negative: bool = False, order=None) -> float:
+    if ledger_id.startswith("paper:"):
+        from app.services.paper_wallet import move
+        return move(user_id, date, -max(amount, 0), operation_id, allow_negative, order)
     balance = get_or_init_ledger(user_id, date, ledger_id, ledger_kind)
     if amount > balance:
         raise InsufficientFundsError(balance, amount)
@@ -167,7 +173,10 @@ def debit_ledger(user_id: str, amount: float, date: str, ledger_id: str, ledger_
     return balance
 
 
-def credit_ledger(user_id: str, amount: float, date: str, ledger_id: str, ledger_kind: str = "sim") -> float:
+def credit_ledger(user_id: str, amount: float, date: str, ledger_id: str, ledger_kind: str = "sim", operation_id: str | None = None, order=None) -> float:
+    if ledger_id.startswith("paper:"):
+        from app.services.paper_wallet import move
+        return move(user_id, date, max(amount, 0), operation_id, order=order)
     balance = get_or_init_ledger(user_id, date, ledger_id, ledger_kind) + max(amount, 0)
     _ledgers[(user_id, ledger_id)] = balance
     _write_ledger(user_id, date, ledger_id, ledger_kind, balance)
@@ -175,6 +184,9 @@ def credit_ledger(user_id: str, amount: float, date: str, ledger_id: str, ledger
 
 
 def reset_ledger(user_id: str, date: str, ledger_id: str, amount: float, ledger_kind: str = "real") -> float:
+    if ledger_id.startswith("paper:"):
+        from app.services.paper_wallet import reset
+        return reset(user_id, date, amount)
     _ledgers[(user_id, ledger_id)] = amount
     _write_ledger(user_id, date, ledger_id, ledger_kind, amount)
     return amount
@@ -214,12 +226,37 @@ def recalculate_sim_ledger_for_date(user_id: str, date: str) -> float:
             trade_resp = trades_table.query(KeyConditionExpression=Key("session_id").eq(sid))
             trades.extend(trade_resp.get("Items", []))
         trades.sort(key=lambda item: int(item.get("timestamp", 0)))
+        from collections import deque
+        from app.config import EQUITY_MIS_MARGIN_RATE
+        anchors = {item["session_id"]: item.get("instrument_type", "equity") for item in sessions}
+        lots = {}
         for trade in trades:
-            amount = float(trade.get("price", 0)) * int(trade.get("quantity", 0))
-            if trade.get("side") == "BUY":
-                balance -= amount
-            elif trade.get("side") == "SELL":
-                balance += amount
+            price = float(trade.get("price", 0))
+            qty = int(trade.get("quantity", 0))
+            sid = trade.get("session_id")
+            if anchors.get(sid) != "equity" or trade.get("right"):
+                amount = price * qty
+                balance += amount if trade.get("side") == "SELL" else -amount
+                continue
+            key = (sid, trade.get("symbol"))
+            queue = lots.setdefault(key, deque())
+            side = trade.get("side")
+            while qty and queue and queue[0][0] != side:
+                entry_side, entry_price, entry_qty = queue[0]
+                matched = min(qty, entry_qty)
+                pnl = (price - entry_price) * matched * (1 if entry_side == "BUY" else -1)
+                balance += entry_price * matched * EQUITY_MIS_MARGIN_RATE + pnl
+                qty -= matched
+                if matched == entry_qty:
+                    queue.popleft()
+                else:
+                    queue[0] = (entry_side, entry_price, entry_qty - matched)
+            if qty:
+                balance -= price * qty * EQUITY_MIS_MARGIN_RATE
+                queue.append((side, price, qty))
+        from app.services import order_service
+        for session in sessions:
+            balance -= sum(order.reserved_amount for order in order_service.get_open_orders(session["session_id"]))
     except Exception:
         logger.exception("Could not recalculate sim ledger user=%s date=%s", user_id, date)
     reset(user_id, date, balance)

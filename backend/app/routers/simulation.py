@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import time
 from datetime import datetime, timezone
 from typing import Callable
 from fastapi import APIRouter, Depends, HTTPException
@@ -214,9 +215,78 @@ def _soft_ensure(fn: Callable[[], None]) -> None:
 
 
 @router.post("/start", response_model=SimulationStartResponse)
-async def start_simulation(
+async def start_simulation(req: SimulationStartRequest, user_id: str = Depends(get_request_user_id)):
+    return await start_with_paper_claim(req, user_id)
+
+
+async def start_with_paper_claim(req, user_id, *, desktop_independent=False):
+    if req.session_type != "paper":
+        return await _start_simulation(req, user_id, desktop_independent=desktop_independent)
+    from app.services import paper_wallet
+    if req.group_id:
+        from app.services import session_group_service
+        group = session_group_service.get_group(req.group_id, user_id)
+        if not group:
+            raise HTTPException(status_code=404, detail="Session group not found")
+        req.date = group["date"]
+    active = next((session for session in sim_svc._sessions.values()
+        if session.user_id == user_id and session.date == req.date and session.symbol == req.symbol
+        and session.session_type == "paper" and session.state != SimulationState.ENDED), None)
+    if active:
+        if active.instrument_type != req.instrument_type:
+            raise HTTPException(status_code=409, detail=f"Existing Paper session {active.session_id} has a different anchor; attach a compatible screen")
+        paper_wallet.lock(user_id, req.date)
+        return _session_response(active)
+    token, existing_id = paper_wallet.claim_session(user_id, req.date, req.symbol)
+    prepared_session = None
+    started = False
+    try:
+        record = None
+        if existing_id:
+            from app.services.db import get_dynamodb_resource
+            record = get_dynamodb_resource().Table("Sessions").get_item(Key={"session_id": existing_id}, ConsistentRead=True).get("Item")
+            if record and record.get("instrument_type") != req.instrument_type:
+                raise HTTPException(status_code=409, detail=f"Paper session {existing_id} uses a different anchor; use that session")
+        result = await _start_simulation(req, user_id, desktop_independent=desktop_independent, paper_record=record, defer_paper_start=True)
+        session = sim_svc.get_session(result.session_id)
+        prepared_session = session
+        sim_svc._upsert_session_to_db(session, strict=True)
+        paper_wallet.lock(user_id, req.date)
+        paper_wallet.finish_session_claim(user_id, req.date, req.symbol, token, result.session_id)
+        session = sim_svc.get_session(result.session_id)
+        session.paper_engine_token = token
+        session.paper_engine_valid_until = time.monotonic() + 40
+        sim_svc.start_session(session)
+        started = True
+        session.paper_engine_task = asyncio.create_task(_renew_paper_engine(session))
+        return result
+    except Exception:
+        if prepared_session is not None and not started:
+            sim_svc._sessions.pop(prepared_session.session_id, None)
+        try:
+            paper_wallet.finish_session_claim(user_id, req.date, req.symbol, token)
+        except Exception:
+            logger.exception("Paper claim cleanup failed")
+        raise
+
+
+async def _renew_paper_engine(session):
+    from app.services import paper_wallet
+    while session.state != SimulationState.ENDED:
+        await asyncio.sleep(10)
+        try:
+            paper_wallet.renew_engine(session.user_id, session.date, session.symbol, session.paper_engine_token)
+            session.paper_engine_valid_until = time.monotonic() + 40
+        except Exception:
+            session.paper_lease_lost = True
+            sim_svc.stop_session(session)
+            return
+
+
+async def _start_simulation(
     req: SimulationStartRequest,
     user_id: str = Depends(get_request_user_id),
+    *, desktop_independent: bool = False, paper_record: dict | None = None, defer_paper_start: bool = False,
 ):
     internal_session_type = req.session_type
     is_stepwise = (req.session_type == "stepwise")
@@ -239,7 +309,7 @@ async def start_simulation(
             groups.update_clock(group, state="ended")
             raise HTTPException(status_code=410, detail="Session group has ended. Start a new session.")
         req.date = group["date"]
-        if req.override:
+        if req.override and not is_paper:
             _delete_existing_context_sessions(user_id, req.date, internal_session_type, req.symbol, req.instrument_type)
             for member in list(group.get("members", [])):
                 if (member.get("symbol") == req.symbol and
@@ -253,10 +323,13 @@ async def start_simulation(
                 strategy_interval_secs=req.strategy_interval_secs, symbol=req.symbol, instrument_type=req.instrument_type)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
-    elif active_group:
+    elif active_group and not desktop_independent:
         raise HTTPException(status_code=409, detail="You already have an active session group. Use Add Session to add a member.")
     else:
         group = groups.create_group(user_id, req.date, internal_session_type, req.speed, req.strategy_interval_secs)
+        if desktop_independent:
+            group["desktop_independent"] = True
+            groups._save(group)
 
     # Group fields are locked values, never values supplied by a later tab.
     req.date = group["date"]
@@ -338,13 +411,13 @@ async def start_simulation(
     # under the same session_id after a reconnect.
     # For sim: if the user restarts with new params (start_time, speed, OTM), stop the
     # old session and create a fresh one — the user wants a new practice run, not a resume.
-    existing_record = sim_svc.find_session_by_context(
+    existing_record = paper_record or sim_svc.find_session_by_context(
         user_id, req.symbol, req.date, internal_session_type, req.instrument_type
     )
     if existing_record:
         existing_session_id = existing_record["session_id"]
         active = sim_svc.get_session(existing_session_id)
-        if req.override:
+        if req.override and not is_paper:
             _delete_existing_context_sessions(user_id, req.date, internal_session_type, req.symbol, req.instrument_type)
             existing_record = None
         # For sim and stepwise sessions: stop the old one and create fresh with new params
@@ -393,7 +466,16 @@ async def start_simulation(
                     )
                 except Exception as exc:
                     logger.warning("start_simulation: Kotak wallet sync on resume failed: %s", exc)
-            sim_svc.start_session(session)
+            if desktop_independent and not session.group_id:
+                session.desktop_created = True
+            session.group_id = group["group_id"]
+            if session.session_id not in group["member_session_ids"]:
+                groups.add_member(group, {"session_id": session.session_id, "symbol": session.symbol, "session_type": session.session_type, "instrument_type": session.instrument_type, "session_alias": session.session_alias})
+            if is_paper:
+                from app.services.paper_wallet import lock
+                lock(user_id, req.date)
+            if not (is_paper and defer_paper_start):
+                sim_svc.start_session(session)
             logger.info(
                 "paper_session_resume_started session_id=%s strike=%s strike_ce=%s strike_pe=%s "
                 "expiry=%s right=%s",
@@ -422,10 +504,15 @@ async def start_simulation(
         session_alias=req.session_alias,
         wallet_ledger_id=(f"paper:{req.date}" if internal_session_type == "paper" else f"real:{req.date}" if internal_session_type == "real" else f"sim:{req.date}"),
     )
+    session.desktop_created = desktop_independent
     groups.add_member(group, {"session_id": session.session_id, "symbol": session.symbol,
         "session_type": session.session_type, "instrument_type": session.instrument_type,
         "session_alias": session.session_alias})
-    sim_svc.start_session(session)
+    if is_paper:
+        from app.services.paper_wallet import lock
+        lock(user_id, req.date)
+    if not (is_paper and defer_paper_start):
+        sim_svc.start_session(session)
     return _session_response(session, group)
 
 

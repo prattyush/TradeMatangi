@@ -2045,7 +2045,7 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
                   </div>
                   <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 10 }}>
                     Limits total capital tied up in open positions to a % of session capital or an exact rupee value.
-                    A new trade is rejected if it would push capital-in-use above the limit.
+                    Equity capital usage follows the capital allocation selected for longs and shorts. A new trade is rejected if it would push capital-in-use above the limit.
                   </div>
                   <div style={{ display: 'flex', gap: 16, marginBottom: 10 }}>
                     <label style={{ fontSize: 12, color: '#e6edf3', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4 }}>

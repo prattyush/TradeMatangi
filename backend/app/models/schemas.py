@@ -213,6 +213,7 @@ class Order(BaseModel):
     filled_at: int | None = None
     filled_price: float | None = None
     reserved_amount: float = 0.0  # wallet amount debited on BUY placement; 0 for SELL
+    reservation_revision: int = 0
     reservation_margin_rate: float = 1.0  # multiplier used to compute reserved_amount
     wallet_ledger_id: str | None = None   # ledger debited for reserved_amount, if ledger-scoped
     wallet_ledger_kind: str | None = None
@@ -301,6 +302,7 @@ class WalletResponse(BaseModel):
     user_id: str
     date: str
     balance: float
+    capital_balance: float | None = None
     session_capital: float | None = None
     margin_used: float | None = None
     available_margin: float | None = None

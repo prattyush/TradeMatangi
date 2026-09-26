@@ -31,6 +31,7 @@ def _session_wallet_metrics(session, balance: float) -> dict:
         available_margin = max(0.0, balance)
         return {
             "session_capital": session.session_capital,
+            "capital_balance": round(balance + margin_used, 2),
             "margin_used": round(margin_used, 2),
             "available_margin": round(available_margin, 2),
             "buying_power": round(available_margin / EQUITY_MIS_MARGIN_RATE, 2),
@@ -66,5 +67,9 @@ async def reset_wallet(
     date: str = Query(..., description="YYYY-MM-DD"),
     user_id: str = Depends(get_request_user_id),
 ):
+    from app.services import simulation, paper_wallet
+    if any(session.user_id == user_id and session.date == date and session.session_type == "paper" for session in simulation._sessions.values()) or paper_wallet.locked(user_id, date):
+        raise HTTPException(status_code=409, detail="Paper wallet is locked after the first session starts")
+    paper_wallet.reset(user_id, date, req.amount)
     balance = wallet_service.reset(user_id, date, req.amount)
     return WalletResponse(user_id=user_id, date=date, balance=balance)

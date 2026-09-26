@@ -15,7 +15,96 @@
 
 ### Status
 
-In progress.
+Completion implementation is in place on dev. The latest review fixes are also in
+place: Desktop Paper explicit entry stop-loss orders now work without depending
+on the global auto-SL setting, watcher-created Paper stop-loss orders preserve
+Paper ledger/source metadata for retry-safe recovery, attached website-owned
+Paper sessions are protected from the desktop Stop endpoint, and the stale
+website/pop-out status notes have been reconciled. Windows/live-provider
+acceptance validation remains outstanding.
+
+### Agreed completion plan — desktop equity long and short
+
+The September 2026 review originally identified the desktop equity, Paper safety,
+and screen/pop-out gaps below. The implementation now addresses these items on
+`dev`; the stage list remains here as the acceptance baseline. Automated checks
+alone do not replace Windows/provider acceptance testing.
+
+#### Stage 1 — single-screen equity readiness
+
+- Enable right-click Buy / Long and Sell / Short on the session underlying in
+  Paper, Replay and Stepwise. Equity exposes both directions regardless of the
+  option `longOnly` preference; Browse remains read-only.
+- Support editable whole-share quantity, capital-percentage sizing and
+  stop-loss risk-percentage sizing for market-style, limit, target and AutoStop
+  entries. Equity uses `right=null`; options retain complete contract identity.
+- Capital allocation reserves 20% actual capital and permits 5x notional.
+  Risk allocation is `session_capital * risk_fraction / stop_distance`, rounded
+  down; reject zero-share results instead of forcing a share beyond the budget.
+  Long stops must be below entry and short stops above it.
+- Explain capital % as margin allocation and risk % as modeled loss against
+  session capital. Existing wallet/P&L displays remain sufficient.
+- Resolve sizing and lot validation from each traded instrument, including
+  options attached to equity sessions, rather than the anchor instrument.
+- Gate live candles by screen mode so live state cannot override Replay or
+  Stepwise. Paper historical caching is best-effort; unsuccessful live contract
+  subscription must not appear as successful attachment.
+
+#### Stage 2 — margin and Paper safety
+
+- Reserve 20% margin for the opening part of long and short equity orders;
+  closes require no fresh margin and reversals reserve only the opening part.
+- Preserve/release reservations through update, conversion, cancellation,
+  fills, strategies, flatten, stop and recovery. Full price movement determines
+  P&L; closing releases entry margin plus realized P&L.
+- Make Paper initialization and wallet changes authoritative with conditional
+  DynamoDB operations and retry identities. Persistence failure cannot silently
+  accept spending. Persist the date's first-start lock, including after stop or
+  restart, and enforce it from desktop and website reset paths.
+- Select wallets by requested mode and reconstruct historical equity ledgers
+  with margin-aware cash flows. Preserve historical-date Replay/Stepwise wallet
+  sharing and existing session-capital initialization.
+- Enforce one active Paper session per user/date/underlying, including concurrent
+  starts and differing anchor types. Attach compatible existing sessions or
+  explain conflicts. Independent desktop runs must coexist without inheriting
+  an unrelated group's clock/date; website groups retain existing behavior.
+- Expose ownership: Stop ends owned sessions; Detach stops consumption of shared
+  sessions.
+
+#### Stage 3 — screens and native windows
+
+- Key mode, run/session references, ownership, snapshots, errors, tickets, ticks
+  and stream lifecycle by screen. Persist mode and Browse `live_enabled`, and
+  rediscover saved session references through authenticated endpoints.
+- Share Paper wallets by user/date but isolate session orders, positions, P&L
+  and clocks. Propagate wallet changes to other screens using that ledger.
+- Scope Browse streams/reconciliation to the screen; closing/reconfiguring one
+  screen must not stop others. Extend contracts with instrument lot size,
+  ownership and wallet-lock status without breaking older clients.
+- Child windows consume `screen_id` and render only that screen. Coordinate
+  exclusive editing, focus, bring-back and close handoff; preserve saved screens
+  on child close. Persist geometry with best-effort monitor restoration.
+- Handle auth expiry, reconnect, stream resets and backend restart without
+  routing events to another screen/session. Retain native SSE/recovery snapshots
+  and browser polling fallback.
+
+#### Required regression and acceptance coverage
+
+- Exercise long/short × Paper/Replay/Stepwise × quantity/capital %/risk %, including
+  right-click visibility, payload identity, invalid stops, zero-share sizing,
+  insufficient margin, short reservations, partial closes and reversals.
+- At 100,000 capital, 24% allocation permits 120,000 exposure using 24,000 margin;
+  4.5% risk must model no more than 4,500 loss, subject to available margin.
+- Cover update/convert/cancel, AutoStop, flatten, end-of-day cleanup, mixed
+  equity/options lots/quotes/markers/strategies and wallet reconstruction.
+- Exercise concurrent reservations and duplicate starts against DynamoDB Local,
+  retries/stale caches, durable locks, website attachment, concurrent screens,
+  historical-to-live switching and pop-out ownership.
+- Finish with Windows/two-monitor/provider testing, auth/network reconnect and
+  minimize/restore. Detailed manual regression steps will accompany implementation.
+
+Development is on `dev`; PRs target `dev`, and merging to `main` stays manual.
+Additional margin dashboards and richer Paper status UI remain deferred.
 
 ### Implementation Progress
 
@@ -44,30 +133,25 @@ Implemented so far:
 - Regression coverage exists for equity 20% margin reservation on the session ledger and mixed equity/options order identity inside an equity-anchored desktop session.
 - Regression coverage exists for website 5x equity funds-ratio sizing and same-price leveraged equity round-trip wallet restoration.
 
-Remaining work:
+Remaining validation and deferred work:
 
-- P2 review finding: live chart subscriptions can override Replay candles after switching modes. Gate live chart rendering by mode, including the shared live snapshot fallback, so historical runs always display historical candles.
-- P2 review finding: Paper option attachment currently requires a successful historical data fetch. Make historical caching best-effort for Paper so a historical-provider failure does not prevent a valid live contract subscription.
-- Persist Browse live as a per-screen `live_enabled` state, with live snapshots, tick caches, stream keys, errors, and native subscriptions keyed by screen id. The current implementation is usable from Browse but still uses one active workspace live stream rather than a restored per-screen live lifecycle.
-- Fully remove Paper snapshot polling in browser/non-native fallback if a header-capable browser SSE transport is added. Native Windows now uses the authenticated desktop trading event endpoint; browser fallback remains snapshot polling by design.
-- P2: Add stronger Paper session status indicators and explicit attach/detach wording. The current UI can attach to an active compatible Paper session and stops only owned sessions, but owner/shared semantics are still minimal. This UI improvement is deferred; correct ownership and stop/detach behavior remain required.
-- Replace the current minimal pop-out action with full screen ownership semantics:
-  - render only the assigned screen in the child window
-  - mark popped screens as opened externally in the main window
-  - offer focus/bring-back actions
-  - prevent simultaneous editing from two visible windows
-  - detach on child-window close without deleting the saved screen
-- Persist and restore child-window size, position, maximized state, and best-effort monitor placement.
-- Add backend date-level Paper wallet lock semantics so reset/change is allowed only before the first Paper session for that user/date starts, and remains blocked even after sessions stop.
-- Harden shared Paper wallet concurrency with atomic reservation/update protection across multiple active Paper sessions.
-- Enforce the complete Paper uniqueness/attach policy for active user/date/underlying sessions and compatible website sessions.
-- Finish desktop-specific equity buying-power validation across chart orders, updates, conversion, flatten, and close-out.
-- Update risk-sizing helper text so it clearly states that stop-loss loss is measured against wallet/session capital.
-- Add broader backend, desktop integration, and Windows manual validation for Paper options, multi-session Paper, Browse live, and pop-out workflows.
+- Run the Windows/live-provider regression checklist below, including multiple monitors and authenticated reconnects. Linux unit tests do not validate WebView focus, native close events, monitor placement, or broker availability.
+- Browser fallback continues snapshot polling; adding a header-capable browser SSE transport is deferred.
+- Stronger Paper attach/status wording and additional margin dashboards remain deferred as agreed.
+- **Callout:** The backend can block Stop for website-owned/shared Paper sessions that have no desktop origin. It does not yet carry a per-screen owner token, so it cannot distinguish two desktop windows attached to the same desktop-owned session purely server-side; that finer ownership guard remains a future API hardening item.
+
+Implemented completion requirements:
+
+- Equity right-click BUY and SELL entries, share quantities, editable capital/risk percentages, direction-aware stop validation, and 20% opening-margin reservation on both sides.
+- Independent screen controllers and mode-gated live candles; per-screen persisted live/run state and stream keys.
+- Paper date wallet lock, atomic wallet/order reservations and refunds, durable operation receipts, compatible-session claims and engine leases, and fill recovery.
+- Assigned-screen pop-outs, focus/bring-back actions, saved geometry, and native close waiting for the latest screen save.
+- Paper contract attachment tolerates unavailable historical caching while requiring a successful live subscription.
+- Desktop Paper entry stop-loss automation now treats `desktop_paper` as an explicit desktop SL source and carries Paper ledger metadata onto generated stop-loss orders.
 
 ### Current Implementation Notes
 
-- Scope clarification: the existing desktop wallet/P&L display is accepted. Additional desktop margin-used, available-margin, buying-power, exposure, and risk-amount displays are not required for Phase 18. Backend margin accounting, sizing, and validation remain required, and existing website displays are unchanged. Stronger Paper attachment/status wording is a deferred P2 UI improvement.
+- Scope clarification: the existing desktop wallet/P&L display is accepted. Additional desktop margin-used, available-margin, buying-power, exposure, and risk-amount displays are not required for Phase 18. Backend margin accounting, sizing, and validation remain required. The website equity wallet now shows one Capital value and hides leverage diagnostics from the UI, while keeping backend leverage and MaxSize validation. Stronger Paper attachment/status wording is a deferred P2 UI improvement.
 - Fixed the subsequent snapshot review P1/P2: native Paper tick updates preserve authoritative realised day P&L and commissions, applying only open-position mark changes; position P&L includes backend-equivalent exit charges. Trading snapshots now carry `event_cursor` and SSE events carry `event_id`, so buffered events already included in a recovery snapshot and obsolete recovery snapshots cannot overwrite newer renderer state. Added renderer regression coverage for closed profits, long/short options, equity with options, same-second buffered events, duplicate events, and stale recovery responses. Native Windows/live-provider validation remains outstanding.
 - Fixed Desktop Paper P1 review findings: base live option subscriptions retain their original strike/expiry identity; switched contracts receive separate subscriptions, and old base ticks cannot be attributed to the newly selected strike. Paper starts use today's IST market date, with backend rejection of historical dates. Mode changes require stopping/detaching the active run and clear ended-session state. Live tile reconciliation now runs in Paper as well as Browse so instrument changes update chart subscriptions.
 - Implemented the authenticated desktop trading event endpoint. It reuses the existing per-session replay queue rather than adding a parallel Paper event bus, so fills, ticks, order events, broker errors, and session-ended events stay in the same ordering as the simulation engine. Initial connections receive a full snapshot, reconnects resume after `Last-Event-ID`, and stale reconnect cursors or active-stream queue gaps receive a `stream_reset` snapshot.
@@ -148,8 +232,8 @@ Frontend files touched in the website leverage implementation:
 - `frontend/src/services/api.ts`
   - `WalletResponse` includes optional margin/buying-power diagnostics.
 - `frontend/src/components/WalletWidget.tsx`
-  - Continues to show actual wallet balance as the primary value.
-  - Shows compact `5x BP` and `Exposure` values when the backend provides leveraged equity fields.
+  - Shows a single `Capital` value for leveraged equity sessions by adding committed equity margin back to the free wallet balance.
+  - Hides buying-power, exposure, and margin diagnostics from the UI; those values remain backend-only validation data.
 - `frontend/src/components/OrderPanel.tsx`
   - Renames funds-ratio label from "Capital Ratio" to "Capital Used".
   - Adds an equity hint that 5x buying power affects quantity while wallet usage remains the selected percentage.
@@ -159,8 +243,8 @@ Desktop files touched in the current partial implementation:
 - `windowsapp/src-tauri/src/lib.rs`
   - Adds native commands `open_screen_window`, `focus_screen_window`, and `close_screen_window`.
   - Child windows use stable labels formatted as `screen:{screen_id}`.
-  - The current child route is `?screen_id=...`; full renderer-side child-window isolation is not implemented yet.
-  - Current behavior opens or focuses a native window, but does not yet persist/restore window geometry or enforce one visible owner for a screen.
+  - Child routes use `?screen_id=...`; the renderer consumes the assigned screen id so the child renders only that screen.
+  - Native windows persist/restore geometry best-effort and the main window offers focus/bring-back ownership controls.
 - `windowsapp/src/App.tsx`
   - Replaces the old top-level `Live` mode with `Paper`.
   - Browse now owns chart-only live stream controls and remains read-only.
@@ -172,13 +256,10 @@ Desktop files touched in the current partial implementation:
 
 Complicated points and callouts:
 
-- Website equity leverage is implemented for Replay (`sim`), Stepwise, Paper, and Real order paths. Desktop Windows validation remains outstanding; broader desktop margin/buying-power display is not required.
-- Not implemented yet for this website 5x leverage requirement:
-  - Atomic shared-wallet reservation protection across multiple active Paper sessions. Current ledger writes can still race under true simultaneous order placement.
-  - DynamoDB restore/hydration audit for pending leveraged orders. The model writes margin metadata, but resumed pending orders must be checked to ensure `reservation_margin_rate`, `wallet_ledger_id`, and `wallet_ledger_kind` are restored before relying on long-lived pending leveraged orders after backend restart.
+- Website equity leverage is implemented for Replay (`sim`), Stepwise, Paper, and Real order paths. Desktop Windows/live-provider validation remains outstanding; broader desktop margin/buying-power display is not required.
+- Remaining validation for the website 5x leverage requirement:
   - Full real-broker reconciliation semantics for leveraged local wallet display. Kotak fund sync remains authoritative and may overwrite local margin-display state after manual/out-of-band broker activity.
   - Broad end-to-end manual validation in live Real trading. The code paths are wired for Kotak callbacks, but this needs careful broker-session validation before treating it as production-proven.
-  - Full-suite test run completion. Focused leverage/order/frontend checks passed, but the broader `test_order_service/test_trading` runs were interrupted because they were very slow in this environment.
 - Existing session-start wallet/session-capital logic is intentionally unchanged. The wallet value used for sizing and P&L remains whatever the session already captures at start/resume today.
 - `balance` is actual wallet capital, not leveraged exposure. Leverage affects allowed quantity/notional and required margin only.
 - Funds-ratio means actual capital usage. Example: 24% funds usage on equity reserves 24% of the wallet and can create 120% notional exposure.
@@ -186,18 +267,14 @@ Complicated points and callouts:
 - P&L amount is full share quantity times price movement. P&L percentage remains `P&L / session_capital`, not `P&L / exposure`.
 - Same-price leveraged equity round trips must restore actual wallet capital. This is why close settlement credits released entry margin plus realized P&L instead of full SELL notional.
 - Mixed equity/options sessions must make margin decisions per order, not per session. A session anchored to equity can still place option orders; those option orders must keep lot sizing, premium funding, and option identity exactly as existing option sessions do.
-- Paper shared wallet support currently has the correct date-scoped ledger id, but does not yet have:
-  - a date-level "started/locked" marker
-  - backend reset rejection after first start
-  - atomic reservation protection for simultaneous orders from multiple Paper sessions
-- The desktop Paper backend can start via the facade and the Windows UI now has a usable single-screen Paper run mode for options. It now has authenticated native Paper trading events, but still lacks persisted per-screen Paper/live stream lifecycle ownership, stronger attach/detach status, and full shared-wallet lock semantics.
-- Browse live is now reachable from Browse instead of top-level Live, but it is not yet persisted/restored as a per-screen `live_enabled` lifecycle.
+- Paper shared wallet support uses the date-scoped `paper:{date}` ledger, persistent first-start lock, backend reset rejection after first start, conditional wallet/order movements, durable receipts, and engine leases.
+- The desktop Paper backend can start via the facade and the Windows UI now has a usable Paper run mode with authenticated native Paper trading events, persisted per-screen Paper/live stream lifecycle, screen-scoped streams, and shared-wallet lock semantics. Stronger attach/detach status wording remains a deferred UI polish item.
+- Browse live is reachable from Browse and persisted/restored as a per-screen `live_enabled` lifecycle.
 - Important implementation learning: options-anchored Paper sessions used the legacy CE/PE tick path, which did not populate the desktop `contract_quotes` registry. Chart market orders depend on that registry, so Paper options must enrich every option tick with full contract identity before order placement and P&L use it.
-- Pop-out support is currently a native window primitive plus a button. It is not yet a completed multi-window workspace because the child window does not yet render only one assigned screen or coordinate edit ownership with the main window.
+- Pop-out support now opens native child windows that render the assigned screen id only, persists geometry best effort, and lets the main window focus or bring back popped screens.
 - `check_orders()` still supports legacy full-notional SELL credit by default, but simulation/real loops now call it with `settle_wallet=false` and then use `trading.settle_wallet_for_trade()` for margin-aware settlement.
 - Any future persistence/resume work must ensure reservation metadata is loaded back into `Order` objects from DynamoDB. The model can hold it, and writes include it, but restore paths should be checked before relying on resumed pending orders with non-1.0 margin rates.
-- Potential issue: if pending orders are restored from DynamoDB without `reservation_margin_rate` and ledger identity, resumed leveraged BUY orders may settle as full-notional orders. Restore/hydration paths should be audited before relying on long-lived pending leveraged orders across backend restarts.
-- Potential issue: shared Paper wallet updates are still in-memory/ordinary ledger writes; true atomic cross-session over-reservation protection remains outstanding for multiple active Paper sessions.
+- **Callout:** per-screen backend ownership is still coarse. The backend can reject Stop for website-owned/shared Paper sessions with no desktop origin, but it cannot distinguish two desktop windows attached to the same desktop-owned session without a future per-screen owner token.
 - Potential issue: real broker reconciliation resets/syncs wallet from Kotak funds. That remains authoritative for real sessions and can override local margin-display state after out-of-band broker activity.
 - Existing focused verification after this partial implementation:
   - `~/venvs/tradematangi/bin/python -m pytest backend/tests/test_equity_leverage.py backend/tests/test_sprint2_funds_ratio_stoploss.py::TestComputeFundsRatioQuantity backend/tests/test_order_service.py::TestSLWalletCredit backend/tests/test_order_service.py::TestCancelAllPendingOrders -q`
@@ -210,6 +287,10 @@ Complicated points and callouts:
   - `cd windowsapp && node node_modules/typescript/bin/tsc --noEmit`
   - `AWS_MAX_ATTEMPTS=1 ~/venvs/tradematangi/bin/python -m pytest backend/tests/test_equity_leverage.py backend/tests/test_desktop_trading.py -q --tb=short --show-capture=no`
   - `AWS_MAX_ATTEMPTS=1 ~/venvs/tradematangi/bin/python -m py_compile backend/app/services/simulation.py backend/app/routers/desktop_trading.py`
+- Latest review-fix validation:
+  - `AWS_MAX_ATTEMPTS=1 python /tmp/phase18-run-tests.py backend/tests/test_desktop_trading.py backend/tests/test_equity_leverage.py backend/tests/test_phase18_paper_wallet.py`: **105 passed**
+  - `AWS_MAX_ATTEMPTS=1 python /tmp/phase18-run-tests.py backend/tests/test_order_service.py backend/tests/test_desktop_trading.py`: **69 passed**
+  - `git diff --check`: passed
 
 ### Summary
 
@@ -500,3 +581,53 @@ Manual Windows validation:
 - Multi-window screen support: approximately 3-4 engineering days.
 - Full Phase 18 with Windows/provider validation: approximately 16-24 engineering days.
 - Real broker trading from the desktop is a later phase.
+
+## Completion regression checklist
+
+Use a development account and known equity data. Run historical checks on a date with complete 3-minute bars; run Paper checks during market hours with the live provider connected. Record symbol, date, entry/exit prices, wallet balances, and any errors. Native checks require the Windows desktop build.
+
+1. **Browse baseline:** open equity and option tiles, change intervals/layouts, add drawings and indicators, and reload. Confirm saved configuration returns, drawings still work, and Browse offers no trading entry controls. Enable live for today's IST date; historical dates must reject live start.
+2. **Equity entries in every trading mode:** repeat in Paper, Replay, and Stepwise. Right-click the equity chart and confirm both BUY and SELL entries appear regardless of the options short preference. Place a long, close it, then place a short and cover it. Check share quantities, signed position, trade markers, commissions, realised P&L, and wallet restoration. Stepwise must advance only on Next bar; Replay pause/resume/speed must retain their existing behavior.
+3. **Capital sizing:** set a known wallet (for example ₹100,000 before starting) and L/M/H to 10/20/30%. At a ₹200 reference entry, 10% capital with 20% margin allows 250 shares (₹10,000 margin, ₹50,000 notional). Check BUY and SELL using the actual order price and rounding. Repeat with an explicit share quantity and confirm it is not multiplied by an option lot size.
+4. **Risk sizing:** with ₹100,000 capital, 1% risk and a ₹4 stop distance allow 250 shares before buying-power limits. Test long stop below entry and short stop above entry; reject reversed/equal stops. Repeat with insufficient funds and sub-share budgets; equity must reject rather than force one share. Inspect the resulting stop order after entry fills.
+5. **Order lifecycle:** for both sides, place pending orders, drag price, change quantity, convert LIMIT/TARGET/STOPLOSS, cancel, partially close, reverse, and flatten. Check opening margin changes exactly once; closing shares require no new opening margin and reversal reserves only the excess. Failed increases must preserve the existing order and balance. Check target-profit, lock-profit, and AutoStop on an equity position.
+6. **Existing options behavior:** use an options-anchored session and a same-underlying option tile in an equity session. Confirm CE/PE contract identity, expiry/strike switching, lot presets, full-premium reservation, configured option short visibility, stop/target strategies, trade labels, and round trips. Explicit option quantities must be whole lots. A historical-cache failure alone must not prevent Paper attachment; a live-subscription failure must leave the prior contract intact.
+7. **Wallet isolation and locks:** reset Paper before the first session and confirm success. Start Paper and try reset from desktop and website; both must reject. Stop all sessions and restart the backend; reset must remain blocked for that user/date. Replay/Stepwise must retain their existing shared historical-date wallet behavior and must not spend the Paper ledger.
+8. **Concurrent screens:** run different Paper underlyings on two screens with the shared date wallet. Submit orders whose combined margin exceeds the balance; only affordable reservations succeed. Cancel and verify one refund and consistent balances on both screens. Start the same underlying in a second screen and verify compatible attachment without another engine. Attach a website-owned Paper session and detach desktop; the website session must keep running.
+9. **Pop-out handoff:** run Paper, Replay, Stepwise, and Browse on separate screens; switching tabs must leave other screens running. Pop out a screen; only it appears in the child and main offers Focus/Bring back. Change layout/indicators then immediately close the child; reopen/bring back and verify the latest settings and run survive. Close the child without deleting its screen or stopping its backend run. Move/resize/maximize across monitors and reopen; disconnect a monitor and verify accessible placement. Close one screen and confirm the others continue.
+10. **Recovery and mode isolation:** disconnect/reconnect network, expire/re-authenticate the token, and restart the backend. Confirm no duplicated fills/refunds, pending orders and completed trades recover, and stale snapshots do not overwrite newer state. After a lease expires, a former engine must not continue trading. Switch from live Browse to historical Replay/Stepwise after stopping/detaching as required; candles must remain historical. Restart the desktop and confirm per-screen live settings and runs recover or show an actionable restart/reattach error.
+
+Automated implementation validation (2026-09-26):
+
+- Backend full suite: **839 passed, 12 failed**. These 12 failures were also reproduced against the unmodified dev application: registration, three historical-data endpoints, duplicate live-tile routing, deleted-drawing reload, three options start validations, two pattern OHLC tests, and active-session tab restore. The baseline had two additional options quantity failures now corrected to use valid lot quantities.
+- Focused backend equity/order/Paper wallet/session-resume/desktop-trading suite: **133 tests passed**, including atomic order reservations/refunds, expired engine leases, and settlement retries.
+- Desktop: **33 tests passed**, TypeScript checks and Vite production build passed. Vite reports the existing large-bundle advisory.
+- Native Rust: **8 tests passed** using the offline build.
+- The backend API tests needed a temporary runner that caps selector waits at 20 ms because this sandbox blocks the event-loop wakeup socket. This changes only the test runner, not application code.
+
+Windows/live-provider steps remain manual until executed on the target environment.
+
+### Website equity leverage / MaxSize follow-up
+
+Capital percentage is a margin allocation: with ₹100,000 session capital, 15% allocates ₹15,000 opening margin and supports a ₹75,000 equity position at 5× leverage. Apply leverage once when computing shares. Risk percentage uses unleveraged session capital divided by stop distance; P&L continues to use the full share quantity and price movement.
+
+The website MaxSize check previously compared full equity notional with an unleveraged capital limit, wrongly treating this example as 75% capital usage. MaxSize now counts 20% opening margin for both long and short equity, using the same margin rule as sizing and settlement. Options continue to count full premium. Percentage and rupee limits use this same capital-usage measure. Pure exits remain permitted when usage already exceeds a lowered limit; reversals must satisfy the new limit. Only the targeted contract's capital is released in the estimate, preserving other option contracts and equity positions.
+
+Website regression steps:
+
+1. Start an equity session with ₹100,000 capital, MaxSize enabled at 20%, and capital sizing set to 15%. At a ₹100 order price, SELL from flat must create 750 shares and reserve ₹15,000, leaving ₹85,000 available. Repeat BUY from flat in a fresh session. With market-style LIMIT orders, use the submitted limit price when verifying shares and reserved margin.
+2. Repeat with MaxSize set to an exact ₹20,000. The 15% order must succeed; a 25% allocation must fail with MAXSIZE, leaving the order list and wallet unchanged.
+3. Fill the entry and cover/close at the same price. Margin must return once, and the position must flatten. Repeat with profitable and losing exits; P&L must use all 750 shares, with existing commissions reported as before.
+4. Set 1% risk and a ₹4 stop distance on a ₹100 entry. Expect 250 shares and ₹5,000 margin, rather than multiplying the risk-sized shares by five. Repeat long and short with the stop on the correct side.
+5. Add to an existing position and confirm MaxSize counts existing margin plus the proposed addition. Lower MaxSize below current usage and verify partial/full exits are allowed; a reversal opening a position above the limit is rejected.
+6. Repeat in website Replay/Stepwise and Paper; test existing CE/PE options positions and an equity session containing options. Closing one contract must retain all other contracts' capital usage, and options must retain full-premium accounting.
+
+Automated coverage includes website order and direct-trade routes, both equity directions, percentage/value limits, risk sizing, pure exits/reversals, mixed contracts, and invalid/sub-share allocations.
+
+Follow-up validation: **120 focused backend tests passed**; the full backend run completed with **868 passed and the same 12 existing failures** documented above. The website TypeScript/Vite production build passed. Manual website/provider checks above remain to be executed against a running backend.
+
+### Website capital display preference
+
+The website equity wallet displays one **Capital** figure, adding committed equity funds back to the free wallet balance. Placing or filling an equity entry must not appear to reduce capital merely because funds were reserved; closing trades changes capital according to the existing wallet settlement. Hide the 5× buying-power and exposure display, and do not add available/used-margin figures. Keep leverage, margin reservation, sizing, and MaxSize calculations in the backend. Non-equity wallet display retains its existing balance behavior.
+
+Manual check: with ₹100,000 capital, place and fill a 15% equity long or short. The website must still display Capital ₹100,000 and no buying-power/exposure figures. Cancel a pending entry and verify capital remains ₹100,000. Close a 750-share position with a ₹10 favourable move; capital must show the resulting ₹107,500 wallet settlement. Repeat an adverse move and verify the loss reduces capital. P&L/commissions retain their existing separate reporting.

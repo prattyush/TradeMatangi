@@ -89,7 +89,7 @@ def get_group(group_id: str, user_id: str) -> dict | None:
 
 
 def get_active_group(user_id: str) -> dict | None:
-    cached = [g for g in _groups.values() if g.get("user_id") == user_id and g.get("state") != "ended"]
+    cached = [g for g in _groups.values() if g.get("user_id") == user_id and g.get("state") != "ended" and not g.get("desktop_independent")]
     if cached:
         return max(cached, key=lambda g: g.get("updated_at", 0))
     try:
@@ -99,7 +99,7 @@ def get_active_group(user_id: str) -> dict | None:
         items = get_dynamodb_resource().Table(TABLE).query(
             IndexName="UserIdIndex", KeyConditionExpression=Key("user_id").eq(user_id)
         ).get("Items", [])
-        active = [_normalise(x) for x in items if x.get("state") != "ended"]
+        active = [_normalise(x) for x in items if x.get("state") != "ended" and not x.get("desktop_independent")]
         for group in active:
             _groups[group["group_id"]] = group
         return max(active, key=lambda g: g.get("updated_at", 0), default=None)

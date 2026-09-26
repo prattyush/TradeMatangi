@@ -249,6 +249,7 @@ export interface WalletResponse {
   user_id: string
   date: string
   balance: number
+  capital_balance?: number | null
   session_capital?: number | null
   margin_used?: number | null
   available_margin?: number | null

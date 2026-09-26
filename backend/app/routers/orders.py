@@ -215,6 +215,11 @@ async def place_order(req: PlaceOrderRequest):
     # Equity intraday sessions reserve 20% margin while P&L remains full-notional.
     order_margin_rate = EQUITY_MIS_MARGIN_RATE if _uses_equity_intraday_margin(session, order_right) else 1.0
 
+    if req.entry_sl_price is not None and not req.is_stoploss and req.order_type != OrderType.STOPLOSS:
+        entry = req.limit_price if req.order_type == OrderType.LIMIT else req.trigger_price
+        if req.entry_sl_price <= 0 or (req.side == TradeSide.BUY and req.entry_sl_price >= entry) or (req.side == TradeSide.SELL and req.entry_sl_price <= entry):
+            raise HTTPException(status_code=400, detail="Long stop must be below entry; short stop must be above entry")
+
     # Resolve quantity: either from funds_ratio_pct (FundsRatio mode) or explicit quantity
     if req.funds_ratio_pct is not None:
         if req.funds_ratio_pct <= 0 or req.funds_ratio_pct > 1:
@@ -236,6 +241,8 @@ async def place_order(req: PlaceOrderRequest):
             )
         except InsufficientFundsError as exc:
             raise HTTPException(status_code=402, detail=str(exc))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
     elif req.risk_pct is not None or req.risk_ratio_pct is not None:
         if req.risk_pct is not None:
             if req.risk_pct <= 0 or req.risk_pct > 100:
@@ -285,10 +292,13 @@ async def place_order(req: PlaceOrderRequest):
             raise HTTPException(status_code=400, detail="quantity must be at least 1")
         quantity = req.quantity
 
+    if order_right is not None and (quantity < lot_size or quantity % lot_size):
+        raise HTTPException(status_code=400, detail=f"Option quantity must be a positive multiple of {lot_size}")
+
     # Auto-split large options orders that exceed per-symbol max contracts limit.
     # qty_chunks[0] goes through the existing full code path below.
     # Any additional chunks are created afterwards using the same parameters.
-    if session.instrument_type == "options" and req.is_stoploss:
+    if order_right is not None and req.is_stoploss:
         qty_chunks = order_service.split_quantity(session.symbol, quantity)
         quantity = qty_chunks[0]  # first chunk processed by existing code
     else:
@@ -298,7 +308,7 @@ async def place_order(req: PlaceOrderRequest):
         from app.services.guardrail_service import check_maxsize
         maxsize_price = req.limit_price if req.order_type == OrderType.LIMIT else req.trigger_price
         if maxsize_price is not None and maxsize_price > 0:
-            blocked, reason = check_maxsize(session, maxsize_price, quantity, req.side.value)
+            blocked, reason = check_maxsize(session, maxsize_price, quantity, req.side.value, right=order_right, strike=order_strike, expiry=order_expiry)
             if blocked:
                 raise HTTPException(status_code=403, detail=reason)
 
@@ -721,7 +731,7 @@ async def update_order(order_id: str, req: UpdateOrderRequest, session_id: str =
     if req.quantity is not None:
         if not (existing.is_stoploss or existing.order_type == OrderType.STOPLOSS):
             raise HTTPException(status_code=400, detail="Quantity can only be updated for pending stop-loss orders")
-        lot_size = LOT_SIZES.get(session.symbol, 1) if session.instrument_type == "options" else 1
+        lot_size = LOT_SIZES.get(session.symbol, 1) if existing.right else 1
         if req.quantity < lot_size or req.quantity % lot_size != 0:
             raise HTTPException(status_code=400, detail=f"Stop-loss quantity must be a positive multiple of {lot_size}")
         available, position_quantity = _stoploss_available_quantity(

@@ -707,13 +707,76 @@ fn open_screen_window(app: tauri::AppHandle, screen_id: String) -> Result<(), St
         window.set_focus().map_err(|error| error.to_string())?;
         return Ok(());
     }
+    if !screen_id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
+        return Err("Invalid screen id".into());
+    }
+    let geometry_path = screen_geometry_path(&app, &screen_id)?;
+    let geometry = fs::read(&geometry_path).ok()
+        .and_then(|bytes| serde_json::from_slice::<ScreenGeometry>(&bytes).ok());
     let url = WebviewUrl::App(format!("?screen_id={screen_id}").into());
-    WebviewWindowBuilder::new(&app, label, url)
+    let mut builder = WebviewWindowBuilder::new(&app, label, url)
         .title(format!("Trade Matangi - {screen_id}"))
         .inner_size(1280.0, 800.0)
+        .min_inner_size(960.0, 640.0);
+    if let Some(saved) = &geometry {
+        let scale = saved.scale.max(0.1);
+        builder = builder.inner_size((saved.width as f64 / scale).max(960.0), (saved.height as f64 / scale).max(640.0));
+        let on_monitor = app.get_webview_window("main")
+            .and_then(|main| main.available_monitors().ok())
+            .map(|monitors| monitors.iter().any(|monitor| {
+                let p = monitor.position(); let size = monitor.size();
+                saved.x >= p.x && saved.y >= p.y && saved.x < p.x + size.width as i32 && saved.y < p.y + size.height as i32
+            })).unwrap_or(false);
+        if on_monitor { builder = builder.position(saved.x as f64 / scale, saved.y as f64 / scale); }
+        builder = builder.maximized(saved.maximized);
+    }
+    let window = builder
         .build()
         .map_err(|error| error.to_string())?;
+    let observed = window.clone();
+    window.on_window_event(move |event| {
+        if matches!(event, tauri::WindowEvent::Moved(_) | tauri::WindowEvent::Resized(_) | tauri::WindowEvent::CloseRequested { .. }) {
+            if let (Ok(position), Ok(size), Ok(scale), Ok(maximized)) = (observed.outer_position(), observed.inner_size(), observed.scale_factor(), observed.is_maximized()) {
+                // Preserve the normal bounds while maximized/minimized.
+                if size.width == 0 || size.height == 0 { return; }
+                let previous = fs::read(&geometry_path).ok().and_then(|bytes| serde_json::from_slice::<ScreenGeometry>(&bytes).ok());
+                let saved = if maximized {
+                    previous.map(|old| ScreenGeometry { maximized: true, ..old })
+                } else {
+                    Some(ScreenGeometry { x: position.x, y: position.y, width: size.width, height: size.height, scale, maximized })
+                };
+                if let Some(saved) = saved {
+                    if let Ok(bytes) = serde_json::to_vec(&saved) { let _ = fs::write(&geometry_path, bytes); }
+                }
+            }
+        }
+    });
     Ok(())
+}
+
+#[derive(Serialize, Deserialize)]
+struct ScreenGeometry { x: i32, y: i32, width: u32, height: u32, scale: f64, maximized: bool }
+
+fn screen_geometry_path(app: &tauri::AppHandle, screen_id: &str) -> Result<PathBuf, String> {
+    let directory = app.path().app_data_dir().map_err(|error| error.to_string())?.join("screen-windows");
+    fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
+    Ok(directory.join(format!("{screen_id}.json")))
+}
+
+#[tauri::command]
+fn finish_window_close(window: tauri::WebviewWindow) -> Result<(), String> {
+    window.destroy().map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn focus_main_window(app: tauri::AppHandle) -> Result<(), String> {
+    let window = app.get_webview_window("main").ok_or("Main window is unavailable")?;
+    window.set_focus().map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn list_screen_windows(app: tauri::AppHandle) -> Vec<String> {
+    app.webview_windows().keys().filter_map(|label| label.strip_prefix("screen:").map(str::to_owned)).collect()
 }
 
 #[tauri::command]
@@ -1623,6 +1686,9 @@ pub fn run() {
             desktop_replay_request,
             desktop_live_request,
             open_screen_window,
+            list_screen_windows,
+            focus_main_window,
+            finish_window_close,
             focus_screen_window,
             close_screen_window,
             desktop_drawing_request,
