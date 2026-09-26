@@ -1279,8 +1279,13 @@ export default function OrderPanel({
         </div>
       ) : sizingMode === 'fundsRatio' ? (
         <div>
-          <div style={{ fontSize: 11, color: '#8b949e', marginBottom: 3 }}>Capital Ratio</div>
+          <div style={{ fontSize: 11, color: '#8b949e', marginBottom: 3 }}>Capital Used</div>
           {ratioButtons}
+          {instrumentType === 'equity' && (
+            <div style={{ fontSize: 9, color: '#484f58', marginTop: 3 }}>
+              Equity uses 5x buying power; wallet usage stays at the selected %
+            </div>
+          )}
         </div>
       ) : sizingMode === 'riskRatio' ? (
         <div>

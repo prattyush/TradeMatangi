@@ -249,6 +249,12 @@ export interface WalletResponse {
   user_id: string
   date: string
   balance: number
+  session_capital?: number | null
+  margin_used?: number | null
+  available_margin?: number | null
+  buying_power?: number | null
+  exposure?: number | null
+  margin_rate?: number | null
 }
 
 // Pattern Library types

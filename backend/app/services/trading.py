@@ -16,6 +16,95 @@ logger = logging.getLogger(__name__)
 _trades: dict[str, list[Trade]] = {}
 
 
+def _uses_equity_intraday_margin(session, right: str | None = None) -> bool:
+    return (
+        right is None
+        and getattr(session, "instrument_type", None) == "equity"
+        and getattr(session, "session_type", None) in ("sim", "stepwise", "paper", "real")
+    )
+
+
+def _wallet_debit(session, amount: float) -> None:
+    from app.services import wallet_service
+    ledger_id = getattr(session, "wallet_ledger_id", "")
+    if ledger_id:
+        ledger_kind = "paper" if session.session_type == "paper" else "real" if session.session_type == "real" else "sim"
+        wallet_service.debit_ledger(session.user_id, round(amount, 2), session.date, ledger_id, ledger_kind)
+    else:
+        wallet_service.debit(session.user_id, round(amount, 2), session.date)
+
+
+def _wallet_credit(session, amount: float) -> None:
+    from app.services import wallet_service
+    ledger_id = getattr(session, "wallet_ledger_id", "")
+    if ledger_id:
+        ledger_kind = "paper" if session.session_type == "paper" else "real" if session.session_type == "real" else "sim"
+        wallet_service.credit_ledger(session.user_id, round(amount, 2), session.date, ledger_id, ledger_kind)
+    else:
+        wallet_service.credit(session.user_id, round(amount, 2), session.date)
+
+
+def settle_wallet_for_trade(
+    session,
+    side: TradeSide,
+    price: float,
+    quantity: int,
+    right: str | None = None,
+    strike: int | None = None,
+    expiry: str | None = None,
+    entry_reserved: bool = False,
+    reserved_amount: float = 0.0,
+) -> None:
+    """Apply wallet cash movement for a fill before recording the trade."""
+    if quantity <= 0 or price <= 0:
+        return
+
+    if not _uses_equity_intraday_margin(session, right):
+        amount = price * quantity
+        if side == TradeSide.BUY:
+            if not entry_reserved:
+                _wallet_debit(session, amount)
+            elif reserved_amount:
+                diff = amount - reserved_amount
+                if diff > 0:
+                    _wallet_debit(session, diff)
+                elif diff < 0:
+                    _wallet_credit(session, -diff)
+        else:
+            _wallet_credit(session, amount)
+        return
+
+    from app.config import EQUITY_MIS_MARGIN_RATE
+
+    margin_rate = EQUITY_MIS_MARGIN_RATE
+    _, buy_lots, sell_lots, _ = _open_position_lots(
+        session.session_id,
+        symbol=getattr(session, "symbol", None),
+        right=right,
+        strike=strike,
+        expiry=expiry,
+    )
+
+    # Match the same FIFO lots as get_position, including partial closes/reversals.
+    remaining = quantity
+    entry_value = 0.0
+    for entry_price, lot_quantity, _ in (buy_lots if side == TradeSide.SELL else sell_lots):
+        matched = min(remaining, lot_quantity)
+        entry_value += entry_price * matched
+        remaining -= matched
+        if remaining == 0:
+            break
+    closing_value = price * (quantity - remaining)
+    realized_pnl = closing_value - entry_value if side == TradeSide.SELL else entry_value - closing_value
+    cash_change = entry_value * margin_rate + realized_pnl - price * remaining * margin_rate
+    if entry_reserved:
+        cash_change += reserved_amount
+    if cash_change < 0:
+        _wallet_debit(session, -cash_change)
+    elif cash_change > 0:
+        _wallet_credit(session, cash_change)
+
+
 def ensure_session(session_id: str) -> None:
     if session_id not in _trades:
         _trades[session_id] = []
@@ -144,13 +233,13 @@ def get_trades(session_id: str) -> list[Trade]:
     return _trades.get(session_id, [])
 
 
-def get_position(
+def _open_position_lots(
     session_id: str,
     symbol: str | None = None,
     right: str | None = None,
     strike: int | None = None,
     expiry: str | None = None,
-) -> Position:
+):
     trades = _trades.get(session_id, [])
     if symbol is None:
         symbol = trades[0].symbol if trades else DEFAULT_SYMBOL
@@ -204,6 +293,17 @@ def get_position(
             if remaining > 0:
                 sell_queue.append((t.price, remaining, comm_per_unit))
 
+    return symbol, buy_queue, sell_queue, net_qty
+
+
+def get_position(
+    session_id: str,
+    symbol: str | None = None,
+    right: str | None = None,
+    strike: int | None = None,
+    expiry: str | None = None,
+) -> Position:
+    symbol, buy_queue, sell_queue, net_qty = _open_position_lots(session_id, symbol, right, strike, expiry)
     if net_qty > 0:
         side: Literal["LONG", "SHORT", "FLAT"] = "LONG"
         total_qty = sum(q for _, q, _ in buy_queue)

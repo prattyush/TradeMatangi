@@ -12,7 +12,7 @@ use std::{
     path::PathBuf,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
-use tauri::Manager;
+use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
 use tokio::task::AbortHandle;
 
 const CREDENTIAL_SERVICE: &str = "in.trade-matangi.desktop-charts";
@@ -698,6 +698,40 @@ async fn desktop_option_historical_page(
         host,
     )
     .await
+}
+
+#[tauri::command]
+fn open_screen_window(app: tauri::AppHandle, screen_id: String) -> Result<(), String> {
+    let label = format!("screen:{screen_id}");
+    if let Some(window) = app.get_webview_window(&label) {
+        window.set_focus().map_err(|error| error.to_string())?;
+        return Ok(());
+    }
+    let url = WebviewUrl::App(format!("?screen_id={screen_id}").into());
+    WebviewWindowBuilder::new(&app, label, url)
+        .title(format!("Trade Matangi - {screen_id}"))
+        .inner_size(1280.0, 800.0)
+        .build()
+        .map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+fn focus_screen_window(app: tauri::AppHandle, screen_id: String) -> Result<(), String> {
+    let label = format!("screen:{screen_id}");
+    let Some(window) = app.get_webview_window(&label) else {
+        return Err("Screen window is not open".into());
+    };
+    window.set_focus().map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn close_screen_window(app: tauri::AppHandle, screen_id: String) -> Result<(), String> {
+    let label = format!("screen:{screen_id}");
+    if let Some(window) = app.get_webview_window(&label) {
+        window.close().map_err(|error| error.to_string())?;
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -1588,6 +1622,9 @@ pub fn run() {
             save_desktop_chart_settings,
             desktop_replay_request,
             desktop_live_request,
+            open_screen_window,
+            focus_screen_window,
+            close_screen_window,
             desktop_drawing_request,
             desktop_logout,
             queue_offline_mutation,

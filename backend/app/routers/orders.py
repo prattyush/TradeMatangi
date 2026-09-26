@@ -3,7 +3,7 @@ import logging
 from fastapi import APIRouter, HTTPException, Query
 from app.models.schemas import Order, OrderType, TradeSide, PlaceOrderRequest, UpdateOrderRequest, BulkUpdateSLRequest, ConvertOrderRequest, BulkConvertRequest
 from app.services import order_service, simulation as sim_svc, trading as trading_service
-from app.services.wallet_service import InsufficientFundsError, get_balance
+from app.services.wallet_service import InsufficientFundsError, get_balance, get_ledger_balance
 from app.config import LOT_SIZES, EQUITY_MIS_MARGIN_RATE
 
 logger = logging.getLogger(__name__)
@@ -12,11 +12,38 @@ router = APIRouter(prefix="/api/orders", tags=["orders"])
 
 
 def _desktop_order_source(session) -> str | None:
+    if getattr(session, "desktop_mode", None) == "paper" or getattr(session, "desktop_origin", None) == "desktop_paper":
+        return "desktop_paper"
     if session.session_type == "stepwise":
         return "desktop_stepwise"
     if getattr(session, "desktop_origin", None) == "desktop_replay":
         return "desktop_replay"
     return None
+
+
+def _ledger_kind(session) -> str:
+    if session.session_type == "paper":
+        return "paper"
+    if session.session_type == "real":
+        return "real"
+    return "sim"
+
+
+def _wallet_balance_for_session(session) -> float:
+    ledger_id = getattr(session, "wallet_ledger_id", "")
+    if ledger_id:
+        return get_ledger_balance(session.user_id, session.date, ledger_id, _ledger_kind(session))
+    return get_balance(session.user_id, session.date)
+
+
+def _reservation_ledger_id(session) -> str | None:
+    return getattr(session, "wallet_ledger_id", "") or None
+
+
+def _uses_equity_intraday_margin(session, order_right: str | None = None) -> bool:
+    if order_right is not None or session.instrument_type != "equity":
+        return False
+    return session.session_type in ("sim", "stepwise", "paper", "real")
 
 
 def _is_closing_order_for_position(order: Order, position) -> bool:
@@ -136,7 +163,7 @@ async def place_order(req: PlaceOrderRequest):
     order_right: str | None = None
     order_strike: int | None = None
     order_expiry: str | None = None
-    if session.instrument_type == "options":
+    if session.instrument_type == "options" or req.right:
         order_right = req.right if req.right is not None else session.right
         if order_right is None:
             raise HTTPException(
@@ -148,7 +175,7 @@ async def place_order(req: PlaceOrderRequest):
 
     # Naked short margin check for options sessions
     if (
-        session.instrument_type == "options"
+        order_right is not None
         and req.side == TradeSide.SELL
         and not req.is_stoploss
         and req.order_type != OrderType.STOPLOSS
@@ -162,7 +189,7 @@ async def place_order(req: PlaceOrderRequest):
             if underlying_price is None:
                 underlying_price = session.last_price  # fallback
             margin = compute_short_margin(session.symbol, underlying_price)
-            current_wallet = get_balance(session.user_id, session.date)
+            current_wallet = _wallet_balance_for_session(session)
             if current_wallet < margin:
                 raise HTTPException(
                     status_code=402,
@@ -173,17 +200,20 @@ async def place_order(req: PlaceOrderRequest):
                 )
 
     # Resolve lot_size: 1 for equity; actual lot size for options
-    lot_size = LOT_SIZES.get(session.symbol, 1) if session.instrument_type == "options" else 1
+    lot_size = LOT_SIZES.get(session.symbol, 1) if order_right is not None else 1
 
     # Brokers require option quantities to be complete lots.  Enforce this at
     # the API boundary for stop-loss exits as well, so clients cannot bypass
     # the website control and submit quantities such as 1 or 66 contracts.
-    if session.instrument_type == "options" and req.order_type == OrderType.STOPLOSS:
+    if order_right is not None and req.order_type == OrderType.STOPLOSS:
         if req.quantity is not None and (req.quantity < lot_size or req.quantity % lot_size != 0):
             raise HTTPException(
                 status_code=400,
                 detail=f"{session.symbol} option stop-loss quantity must be a positive multiple of {lot_size}",
             )
+
+    # Equity intraday sessions reserve 20% margin while P&L remains full-notional.
+    order_margin_rate = EQUITY_MIS_MARGIN_RATE if _uses_equity_intraday_margin(session, order_right) else 1.0
 
     # Resolve quantity: either from funds_ratio_pct (FundsRatio mode) or explicit quantity
     if req.funds_ratio_pct is not None:
@@ -194,7 +224,7 @@ async def place_order(req: PlaceOrderRequest):
         if ratio_price is None or ratio_price <= 0:
             raise HTTPException(status_code=400, detail="A valid price is required for FundsRatio quantity computation")
         try:
-            current_wallet = get_balance(session.user_id, session.date)
+            current_wallet = _wallet_balance_for_session(session)
             quantity = order_service.compute_funds_ratio_quantity(
                 symbol=session.symbol,
                 price=ratio_price,
@@ -202,6 +232,7 @@ async def place_order(req: PlaceOrderRequest):
                 funds_ratio_pct=req.funds_ratio_pct,
                 current_wallet=current_wallet,
                 lot_size=lot_size,
+                margin_rate=order_margin_rate,
             )
         except InsufficientFundsError as exc:
             raise HTTPException(status_code=402, detail=str(exc))
@@ -234,7 +265,7 @@ async def place_order(req: PlaceOrderRequest):
                 sl_price = entry_price * (1 + default_sl_pct)
 
         try:
-            current_wallet = get_balance(session.user_id, session.date)
+            current_wallet = _wallet_balance_for_session(session)
             quantity = order_service.compute_risk_ratio_quantity(
                 symbol=session.symbol,
                 entry_price=entry_price,
@@ -243,6 +274,7 @@ async def place_order(req: PlaceOrderRequest):
                 risk_ratio_pct=risk_fraction,
                 current_wallet=current_wallet,
                 lot_size=lot_size,
+                margin_rate=order_margin_rate,
             )
         except InsufficientFundsError as exc:
             raise HTTPException(status_code=402, detail=str(exc))
@@ -252,10 +284,6 @@ async def place_order(req: PlaceOrderRequest):
         if req.quantity is None or req.quantity < 1:
             raise HTTPException(status_code=400, detail="quantity must be at least 1")
         quantity = req.quantity
-
-    # Real equity MIS: only 20% margin deducted from wallet for BUY orders.
-    is_real_equity = session.session_type == "real" and session.instrument_type == "equity"
-    order_margin_rate = EQUITY_MIS_MARGIN_RATE if is_real_equity else 1.0
 
     # Auto-split large options orders that exceed per-symbol max contracts limit.
     # qty_chunks[0] goes through the existing full code path below.
@@ -298,6 +326,8 @@ async def place_order(req: PlaceOrderRequest):
             quote_price=req.quote_price,
             quote_timestamp=req.quote_timestamp,
             quote_source=req.quote_source,
+            wallet_ledger_id=_reservation_ledger_id(session),
+            wallet_ledger_kind=_ledger_kind(session),
         )
     except InsufficientFundsError as exc:
         raise HTTPException(status_code=402, detail=str(exc))
@@ -308,7 +338,6 @@ async def place_order(req: PlaceOrderRequest):
         import asyncio
         from app.services.kotak_service import get_service as get_kotak, KotakError
         from app.services.order_service import get_order
-        from app.services import wallet_service
         from app.config import KOTAK_SLIPPAGE_PCT
 
         trigger = req.trigger_price  # already validated non-null above
@@ -346,7 +375,7 @@ async def place_order(req: PlaceOrderRequest):
 
             def _make_sl_fill_cb(ord_id: str, sess):
                 def on_fill(k_id: str, fill_side: str, fill_qty: int, fill_price: float):
-                    from app.services.trading import record_trade
+                    from app.services.trading import record_trade, settle_wallet_for_trade
                     o = get_order(sess.session_id, ord_id)
                     if o is None:
                         return
@@ -356,6 +385,17 @@ async def place_order(req: PlaceOrderRequest):
                     o.status = order_service.OrderStatus.FILLED
                     o.filled_price = fill_price
                     o.filled_at = int(sess.current_time) if sess.current_time else 0
+                    settle_wallet_for_trade(
+                        sess,
+                        o.side,
+                        fill_price,
+                        fill_qty,
+                        right=o.right,
+                        strike=o.strike if o.strike is not None else sess.strike,
+                        expiry=o.expiry if o.expiry is not None else sess.expiry,
+                        entry_reserved=o.side.value == "BUY" and o.reserved_amount > 0,
+                        reserved_amount=o.reserved_amount,
+                    )
                     record_trade(
                         session_id=sess.session_id,
                         side=o.side,
@@ -363,7 +403,7 @@ async def place_order(req: PlaceOrderRequest):
                         timestamp=o.filled_at,
                         quantity=fill_qty,
                         symbol=o.symbol,
-                        instrument_type=sess.instrument_type,
+                        instrument_type="options" if o.right else sess.instrument_type,
                         strike=o.strike if o.strike is not None else sess.strike,
                         expiry=o.expiry if o.expiry is not None else sess.expiry,
                         right=o.right,
@@ -372,8 +412,6 @@ async def place_order(req: PlaceOrderRequest):
                         session_type=sess.session_type,
                         source=o.source,
                     )
-                    if o.side.value == "SELL":
-                        wallet_service.credit(sess.user_id, round(fill_price * fill_qty, 2), sess.date)
                     evt = {
                         "type": "order_filled",
                         "order_id": ord_id,
@@ -406,6 +444,9 @@ async def place_order(req: PlaceOrderRequest):
                         ord_id, sess.session_id, reason,
                     )
                     o.status = OrderStatus.CANCELLED
+                    if o.side == TradeSide.BUY and o.reserved_amount > 0:
+                        order_service._credit_reservation(o, o.reserved_amount, sess.date)
+                        o.reserved_amount = 0.0
                     _write_order_to_db(o)
                     cancel_event = {"type": "order_cancelled", "order_id": ord_id}
                     error_event = {"type": "broker_error", "message": f"Kotak rejected SL order: {reason}"}
@@ -420,6 +461,9 @@ async def place_order(req: PlaceOrderRequest):
             order_service._write_order_to_db(order)
         except KotakError as exc:
             # Roll back the local order placement on Kotak failure
+            if order.status == order_service.OrderStatus.PENDING and order.side == TradeSide.BUY and order.reserved_amount > 0:
+                order_service._credit_reservation(order, order.reserved_amount, session.date)
+                order.reserved_amount = 0.0
             order.status = order_service.OrderStatus.CANCELLED
             order_service._write_order_to_db(order)
             raise HTTPException(status_code=502, detail=f"Kotak SL order failed: {exc}")
@@ -469,6 +513,8 @@ async def place_order(req: PlaceOrderRequest):
                     user_id=session.user_id,
                     margin_rate=order_margin_rate,
                     source=_desktop_order_source(session),
+                    wallet_ledger_id=_reservation_ledger_id(session),
+                    wallet_ledger_kind=_ledger_kind(session),
                 )
                 if session.session_type == "real" and req.order_type == OrderType.STOPLOSS:
                     from app.services.simulation import _register_kotak_sl_for_order

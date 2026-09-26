@@ -24,6 +24,10 @@ def _make_session(session_id: str = SESSION):
     session.state = SimulationState.RUNNING
     session.user_id = FIXED_USER_ID
     session.session_type = "sim"
+    session.wallet_ledger_id = ""
+    session.expiry = "2026-05-07"
+    session.strike = session.strike_ce = session.strike_pe = 24000
+    session.right = None
     session.instrument_type = "equity"
     session.guardrail_ban_active = False
     session.guardrail_block_until_bar = 0
