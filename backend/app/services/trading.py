@@ -24,22 +24,22 @@ def _uses_equity_intraday_margin(session, right: str | None = None) -> bool:
     )
 
 
-def _wallet_debit(session, amount: float) -> None:
+def _wallet_debit(session, amount: float, operation_id: str | None = None, allow_negative: bool = False, order=None) -> None:
     from app.services import wallet_service
     ledger_id = getattr(session, "wallet_ledger_id", "")
     if ledger_id:
         ledger_kind = "paper" if session.session_type == "paper" else "real" if session.session_type == "real" else "sim"
-        wallet_service.debit_ledger(session.user_id, round(amount, 2), session.date, ledger_id, ledger_kind)
+        wallet_service.debit_ledger(session.user_id, round(amount, 2), session.date, ledger_id, ledger_kind, operation_id=operation_id, allow_negative=allow_negative, order=order)
     else:
         wallet_service.debit(session.user_id, round(amount, 2), session.date)
 
 
-def _wallet_credit(session, amount: float) -> None:
+def _wallet_credit(session, amount: float, operation_id: str | None = None, order=None) -> None:
     from app.services import wallet_service
     ledger_id = getattr(session, "wallet_ledger_id", "")
     if ledger_id:
         ledger_kind = "paper" if session.session_type == "paper" else "real" if session.session_type == "real" else "sim"
-        wallet_service.credit_ledger(session.user_id, round(amount, 2), session.date, ledger_id, ledger_kind)
+        wallet_service.credit_ledger(session.user_id, round(amount, 2), session.date, ledger_id, ledger_kind, operation_id=operation_id, order=order)
     else:
         wallet_service.credit(session.user_id, round(amount, 2), session.date)
 
@@ -54,6 +54,8 @@ def settle_wallet_for_trade(
     expiry: str | None = None,
     entry_reserved: bool = False,
     reserved_amount: float = 0.0,
+    operation_id: str | None = None,
+    order=None,
 ) -> None:
     """Apply wallet cash movement for a fill before recording the trade."""
     if quantity <= 0 or price <= 0:
@@ -63,15 +65,18 @@ def settle_wallet_for_trade(
         amount = price * quantity
         if side == TradeSide.BUY:
             if not entry_reserved:
-                _wallet_debit(session, amount)
+                _wallet_debit(session, amount, operation_id, order=order)
             elif reserved_amount:
                 diff = amount - reserved_amount
                 if diff > 0:
-                    _wallet_debit(session, diff)
+                    _wallet_debit(session, diff, operation_id, order=order)
                 elif diff < 0:
-                    _wallet_credit(session, -diff)
+                    _wallet_credit(session, -diff, operation_id, order=order)
         else:
-            _wallet_credit(session, amount)
+            _wallet_credit(session, amount, operation_id, order=order)
+        if side == TradeSide.BUY and entry_reserved and reserved_amount == amount and order is not None and session.wallet_ledger_id.startswith("paper:"):
+            from app.services.paper_wallet import move
+            move(session.user_id, session.date, 0, operation_id, order=order)
         return
 
     from app.config import EQUITY_MIS_MARGIN_RATE
@@ -100,9 +105,12 @@ def settle_wallet_for_trade(
     if entry_reserved:
         cash_change += reserved_amount
     if cash_change < 0:
-        _wallet_debit(session, -cash_change)
+        _wallet_debit(session, -cash_change, operation_id, allow_negative=remaining == 0, order=order)
     elif cash_change > 0:
-        _wallet_credit(session, cash_change)
+        _wallet_credit(session, cash_change, operation_id, order=order)
+    elif order is not None and session.wallet_ledger_id.startswith("paper:"):
+        from app.services.paper_wallet import move
+        move(session.user_id, session.date, 0, operation_id, order=order)
 
 
 def ensure_session(session_id: str) -> None:
@@ -176,8 +184,13 @@ def record_trade(
     user_id: str = FIXED_USER_ID,
     session_type: str = "sim",
     source: str | None = None,
+    trade_id: str | None = None,
 ) -> Trade:
     ensure_session(session_id)
+    if trade_id:
+        existing = next((trade for trade in _trades[session_id] if trade.trade_id == trade_id), None)
+        if existing:
+            return existing
 
     # Automatically lookup underlying price if it is an options trade
     underlying_price = None
@@ -203,6 +216,7 @@ def record_trade(
                 logger.debug("Automatic underlying price lookup failed for %s at %s", symbol, timestamp)
 
     trade = Trade(
+        **({"trade_id": trade_id} if trade_id else {}),
         user_id=user_id,
         symbol=symbol,
         side=side,

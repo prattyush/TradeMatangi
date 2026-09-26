@@ -29,6 +29,7 @@ logger = logging.getLogger(__name__)
 
 _IST_OFFSET = 19800
 _AUTOSTOP_FALLBACK_SL_PCT = 0.25
+_DESKTOP_ENTRY_SOURCES = {"desktop_stepwise", "desktop_replay", "desktop_paper"}
 
 _pending_real_timers: dict[str, threading.Timer] = {}
 _timers_lock = threading.Lock()
@@ -50,7 +51,7 @@ def on_entry_filled(
     if order.entry_sl_price is None and not is_autostop:
         return
 
-    explicit_desktop_sl = getattr(order, "source", None) in ("desktop_stepwise", "desktop_replay")
+    explicit_desktop_sl = getattr(order, "source", None) in _DESKTOP_ENTRY_SOURCES
     if not explicit_desktop_sl and not is_autostop:
         try:
             from app.services.user_settings_service import get_settings
@@ -100,6 +101,8 @@ def _place_sl_immediately(order: Any, session: Any) -> None:
         from app.services.order_service import place_order
 
         ts = int(_time.time()) + _IST_OFFSET
+        ledger_id = getattr(session, "wallet_ledger_id", "")
+        ledger_kind = "paper" if getattr(session, "session_type", None) == "paper" else "real" if getattr(session, "session_type", None) == "real" else "sim"
         place_order(
             session_id=session.session_id,
             symbol=session.symbol,
@@ -115,6 +118,10 @@ def _place_sl_immediately(order: Any, session: Any) -> None:
             expiry=getattr(order, "expiry", None),
             group_id=getattr(order, "group_id", None),
             user_id=getattr(order, "user_id", "00000000-0000-0000-0000-000000000001"),
+            margin_rate=getattr(order, "reservation_margin_rate", 1.0),
+            source=getattr(order, "source", None),
+            wallet_ledger_id=ledger_id or None,
+            wallet_ledger_kind=ledger_kind if ledger_id else None,
         )
         logger.info(
             "EntryStoplossWatcher: placed SL %s qty=%d trigger=%.2f group=%s",

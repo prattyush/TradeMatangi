@@ -290,7 +290,7 @@ def _count_total_bars(symbol: str, date: str, start_time: str, interval_secs: in
     return len(slots)
 
 
-def _upsert_session_to_db(session: SimulationSession) -> None:
+def _upsert_session_to_db(session: SimulationSession, *, strict: bool = False) -> None:
     try:
         from app.services.db import get_dynamodb_resource
         table = get_dynamodb_resource().Table("Sessions")
@@ -322,6 +322,8 @@ def _upsert_session_to_db(session: SimulationSession) -> None:
             item["session_alias"] = session.session_alias
         if session.wallet_ledger_id:
             item["wallet_ledger_id"] = session.wallet_ledger_id
+        if getattr(session, "desktop_contracts", None):
+            item["desktop_contracts"] = session.desktop_contracts
         desktop_mode = getattr(session, "desktop_mode", None)
         if desktop_mode:
             item["desktop_mode"] = desktop_mode
@@ -345,6 +347,8 @@ def _upsert_session_to_db(session: SimulationSession) -> None:
         table.put_item(Item=item)
     except Exception:
         logger.exception("DynamoDB write failed for session %s", session.session_id)
+        if strict:
+            raise
 
 
 def get_session(session_id: str) -> Optional[SimulationSession]:
@@ -554,6 +558,9 @@ def rebuild_session_from_db(
         wallet_ledger_id=ledger_id,
         resumed_from_db=True,
     )
+    session.desktop_contracts = db_record.get("desktop_contracts", [])
+    session.desktop_mode = db_record.get("desktop_mode")
+    session.desktop_origin = db_record.get("desktop_origin")
     # Restore last-known tick state so orders can be placed immediately after
     # restart, without waiting for the first live tick to arrive.
     saved_current_time = db_record.get("current_time")
@@ -575,6 +582,9 @@ def rebuild_session_from_db(
     initialize_guardrails(session, user_id)
     from app.services import trading as trading_svc
     trading_svc.reload_trades_from_db(session_id)
+    if session_type == "paper" and ledger_id.startswith("paper:"):
+        from app.services.order_service import reload_paper_orders
+        reload_paper_orders(session)
     logger.info(
         "rebuild_session_from_db: resumed session %s for user=%s symbol=%s date=%s type=%s (%d trades restored)",
         session_id, user_id, symbol, date, session_type,
@@ -784,6 +794,11 @@ def _emit_tick_and_check_orders(
     from app.services.order_service import check_orders
     from app.services.trading import record_trade, settle_wallet_for_trade
 
+    if getattr(session, "paper_engine_token", None) and time.monotonic() >= getattr(session, "paper_engine_valid_until", 0):
+        session.paper_lease_lost = True
+        stop_session(session)
+        return []
+
     if tick_right and not tick.get("contract_key"):
         base_contract = session.paper_base_contracts.get(tick_right, {}) if session.paper_stream_source else {}
         tick_strike = tick.get("strike") or base_contract.get("strike") or (session.strike_ce if tick_right == "CE" else session.strike_pe)
@@ -855,18 +870,35 @@ def _emit_tick_and_check_orders(
     )
     fill_events = []
     for order in filled:
-        settle_wallet_for_trade(
-            session,
-            order.side,
-            order.filled_price,
-            order.quantity,
-            right=order.right,
-            strike=order.strike if order.strike is not None else session.strike,
-            expiry=order.expiry if order.expiry is not None else session.expiry,
-            entry_reserved=order.side.value == "BUY" and order.reserved_amount > 0,
-            reserved_amount=order.reserved_amount,
-        )
+        try:
+            settle_wallet_for_trade(
+                session,
+                order.side,
+                order.filled_price,
+                order.quantity,
+                right=order.right,
+                strike=order.strike if order.strike is not None else session.strike,
+                expiry=order.expiry if order.expiry is not None else session.expiry,
+                entry_reserved=order.reserved_amount > 0,
+                reserved_amount=order.reserved_amount,
+                operation_id=f"fill:{order.order_id}",
+                order=order,
+            )
+        except Exception as exc:
+            from app.services.wallet_service import InsufficientFundsError
+            order.status = OrderStatus.PENDING
+            if not (session.wallet_ledger_id or "").startswith("paper:"):
+                order.filled_at = None
+                order.filled_price = None
+            if isinstance(exc, InsufficientFundsError):
+                from app.services.order_service import cancel_order
+                cancel_order(session.session_id, order.order_id, session.date)
+                fill_events.append({"type": "order_cancelled", "order_id": order.order_id, "reason": str(exc)})
+            else:
+                logger.exception("Wallet settlement deferred for %s", order.order_id)
+            continue
         record_trade(
+            trade_id=order.order_id,
             session_id=session.session_id,
             side=order.side,
             price=order.filled_price,
@@ -2273,8 +2305,9 @@ def _register_kotak_sl_for_order(session: SimulationSession, order: Any, loop: A
             right=o.right,
             strike=o.strike if o.strike is not None else session.strike,
             expiry=session.expiry,
-            entry_reserved=o.side.value == "BUY" and o.reserved_amount > 0,
+            entry_reserved=o.reserved_amount > 0,
             reserved_amount=o.reserved_amount,
+            operation_id=f"fill:{o.order_id}",
         )
         record_trade(
             session_id=session.session_id,
@@ -2425,8 +2458,9 @@ def _emit_tick_and_check_orders_real(
                         right=o.right,
                         strike=o.strike if o.strike is not None else sess.strike,
                         expiry=sess.expiry,
-                        entry_reserved=o.side.value == "BUY" and o.reserved_amount > 0,
+                        entry_reserved=o.reserved_amount > 0,
                         reserved_amount=o.reserved_amount,
+            operation_id=f"fill:{o.order_id}",
                     )
                     record_trade(
                         session_id=sess.session_id,
@@ -2804,6 +2838,14 @@ def resume_session(session: SimulationSession) -> None:
 
 
 def stop_session(session: SimulationSession) -> None:
+    lease_task = getattr(session, "paper_engine_task", None)
+    if lease_task:
+        try:
+            current_task = asyncio.current_task()
+        except RuntimeError:
+            current_task = None
+        if lease_task is not current_task:
+            lease_task.cancel()
     session.state = SimulationState.ENDED
     session.resume_event.set()  # unblock if paused
     session.step_event.set()    # unblock if waiting for next-bar (stepwise)
@@ -2812,7 +2854,8 @@ def stop_session(session: SimulationSession) -> None:
     _stop_desktop_option_subscriptions(session)
     if session.task and not session.task.done():
         session.task.cancel()
-    _upsert_session_to_db(session)
+    if not getattr(session, "paper_lease_lost", False):
+        _upsert_session_to_db(session)
     _sessions.pop(session.session_id, None)
     # Stop live streaming for paper and real sessions
     if session.session_type in ("paper", "real"):
@@ -2866,7 +2909,8 @@ def stop_session(session: SimulationSession) -> None:
     # Cancel and clean up any running strategies
     try:
         from app.services import strategy_service
-        strategy_service.cancel_all(session.session_id)
+        if not getattr(session, "paper_lease_lost", False):
+            strategy_service.cancel_all(session.session_id)
         strategy_service.clear_session(session.session_id)
     except Exception as exc:
         logger.warning("Could not cancel strategies for session %s: %s", session.session_id, exc)
@@ -2875,7 +2919,7 @@ def stop_session(session: SimulationSession) -> None:
     # when session is restarted with a new session_id and old pending orders become invisible).
     try:
         from app.services import order_service
-        cancelled = order_service.cancel_all_pending_orders(session.session_id, session.date)
+        cancelled = 0 if getattr(session, "paper_lease_lost", False) else order_service.cancel_all_pending_orders(session.session_id, session.date)
         order_service.clear_session(session.session_id)
         if cancelled:
             logger.info(
@@ -2900,3 +2944,6 @@ def stop_session(session: SimulationSession) -> None:
                 "aihelper session-stop hook failed for %s (continuing): %s",
                 session.session_id, exc,
             )
+    if getattr(session, "paper_engine_token", None) and not getattr(session, "paper_lease_lost", False):
+        from app.services.paper_wallet import renew_engine
+        renew_engine(session.user_id, session.date, session.symbol, session.paper_engine_token, stop=True)

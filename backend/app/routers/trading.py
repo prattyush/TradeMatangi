@@ -158,6 +158,25 @@ def _place_kotak_direct(session, side: TradeSide, price: float, lot_size: int, r
     )
 
 
+def _direct_trade_quantity(session, right, price, funds_ratio_pct):
+    lot_size = LOT_SIZES.get(session.symbol, 1) if session.instrument_type == "options" else 1
+    if funds_ratio_pct is None:
+        return lot_size
+    if not 0 < funds_ratio_pct <= 1:
+        raise HTTPException(status_code=400, detail="funds_ratio_pct must be between 0 and 1")
+    try:
+        current_wallet = wallet_service.get_ledger_balance(session.user_id, session.date, session.wallet_ledger_id)
+        return order_service.compute_funds_ratio_quantity(
+            symbol=session.symbol, price=price, session_capital=session.session_capital,
+            funds_ratio_pct=funds_ratio_pct, current_wallet=current_wallet,
+            lot_size=lot_size, margin_rate=_margin_rate_for(session, right),
+        )
+    except InsufficientFundsError as exc:
+        raise HTTPException(status_code=402, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @router.post("/buy")
 async def buy(req: TradeRequest):
     session = sim_svc.get_session(req.session_id)
@@ -176,32 +195,17 @@ async def buy(req: TradeRequest):
     if price <= 0.0:
         raise HTTPException(status_code=400, detail="No valid price available yet")
 
-    lot_size = LOT_SIZES.get(session.symbol, 1) if session.instrument_type == "options" else 1
-    if req.funds_ratio_pct is not None:
-        current_wallet = wallet_service.get_ledger_balance(session.user_id, session.date, session.wallet_ledger_id)
-        quantity = order_service.compute_funds_ratio_quantity(
-            symbol=session.symbol,
-            price=price,
-            session_capital=session.session_capital,
-            funds_ratio_pct=req.funds_ratio_pct,
-            current_wallet=current_wallet,
-            lot_size=lot_size,
-            margin_rate=_margin_rate_for(session, right),
-        )
-        if quantity <= 0:
-            raise HTTPException(status_code=400, detail="Computed quantity is zero — insufficient funds or ratio too small")
-    else:
-        quantity = lot_size
+    quantity = _direct_trade_quantity(session, right, price, req.funds_ratio_pct)
 
     if session.session_type == "real":
         from app.services.guardrail_service import check_maxsize
-        blocked, reason = check_maxsize(session, price, quantity, "BUY")
+        blocked, reason = check_maxsize(session, price, quantity, "BUY", right=right, strike=_strike_for_right(session, right), expiry=session.expiry)
         if blocked:
             raise HTTPException(status_code=403, detail=reason)
         return _place_kotak_direct(session, TradeSide.BUY, price, quantity, right)
 
     from app.services.guardrail_service import check_maxsize
-    blocked, reason = check_maxsize(session, price, quantity, "BUY")
+    blocked, reason = check_maxsize(session, price, quantity, "BUY", right=right, strike=_strike_for_right(session, right), expiry=session.expiry)
     if blocked:
         raise HTTPException(status_code=403, detail=reason)
 
@@ -252,32 +256,17 @@ async def sell(req: TradeRequest):
     if price <= 0.0:
         raise HTTPException(status_code=400, detail="No valid price available yet")
 
-    lot_size = LOT_SIZES.get(session.symbol, 1) if session.instrument_type == "options" else 1
-    if req.funds_ratio_pct is not None:
-        current_wallet = wallet_service.get_ledger_balance(session.user_id, session.date, session.wallet_ledger_id)
-        quantity = order_service.compute_funds_ratio_quantity(
-            symbol=session.symbol,
-            price=price,
-            session_capital=session.session_capital,
-            funds_ratio_pct=req.funds_ratio_pct,
-            current_wallet=current_wallet,
-            lot_size=lot_size,
-            margin_rate=_margin_rate_for(session, right),
-        )
-        if quantity <= 0:
-            raise HTTPException(status_code=400, detail="Computed quantity is zero — insufficient funds or ratio too small")
-    else:
-        quantity = lot_size
+    quantity = _direct_trade_quantity(session, right, price, req.funds_ratio_pct)
 
     if session.session_type == "real":
         from app.services.guardrail_service import check_maxsize
-        blocked, reason = check_maxsize(session, price, quantity, "SELL")
+        blocked, reason = check_maxsize(session, price, quantity, "SELL", right=right, strike=_strike_for_right(session, right), expiry=session.expiry)
         if blocked:
             raise HTTPException(status_code=403, detail=reason)
         return _place_kotak_direct(session, TradeSide.SELL, price, quantity, right)
 
     from app.services.guardrail_service import check_maxsize
-    blocked, reason = check_maxsize(session, price, quantity, "SELL")
+    blocked, reason = check_maxsize(session, price, quantity, "SELL", right=right, strike=_strike_for_right(session, right), expiry=session.expiry)
     if blocked:
         raise HTTPException(status_code=403, detail=reason)
 
