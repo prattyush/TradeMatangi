@@ -50,7 +50,7 @@ Remaining work:
 - P2 review finding: Paper option attachment currently requires a successful historical data fetch. Make historical caching best-effort for Paper so a historical-provider failure does not prevent a valid live contract subscription.
 - Persist Browse live as a per-screen `live_enabled` state, with live snapshots, tick caches, stream keys, errors, and native subscriptions keyed by screen id. The current implementation is usable from Browse but still uses one active workspace live stream rather than a restored per-screen live lifecycle.
 - Fully remove Paper snapshot polling in browser/non-native fallback if a header-capable browser SSE transport is added. Native Windows now uses the authenticated desktop trading event endpoint; browser fallback remains snapshot polling by design.
-- Add stronger Paper session status indicators and explicit attach/detach wording. The current UI can attach to an active compatible Paper session and stops only owned sessions, but owner/shared semantics are still minimal.
+- P2: Add stronger Paper session status indicators and explicit attach/detach wording. The current UI can attach to an active compatible Paper session and stops only owned sessions, but owner/shared semantics are still minimal. This UI improvement is deferred; correct ownership and stop/detach behavior remain required.
 - Replace the current minimal pop-out action with full screen ownership semantics:
   - render only the assigned screen in the child window
   - mark popped screens as opened externally in the main window
@@ -61,13 +61,13 @@ Remaining work:
 - Add backend date-level Paper wallet lock semantics so reset/change is allowed only before the first Paper session for that user/date starts, and remains blocked even after sessions stop.
 - Harden shared Paper wallet concurrency with atomic reservation/update protection across multiple active Paper sessions.
 - Enforce the complete Paper uniqueness/attach policy for active user/date/underlying sessions and compatible website sessions.
-- Finish desktop-specific equity buying-power validation and display wiring across chart orders, updates, conversion, flatten, and close-out.
-- Broaden margin/buying-power frontend fields in the desktop app: wallet/session capital, margin used, available margin, effective 5x buying power, exposure, and risk amount.
+- Finish desktop-specific equity buying-power validation across chart orders, updates, conversion, flatten, and close-out.
 - Update risk-sizing helper text so it clearly states that stop-loss loss is measured against wallet/session capital.
 - Add broader backend, desktop integration, and Windows manual validation for Paper options, multi-session Paper, Browse live, and pop-out workflows.
 
 ### Current Implementation Notes
 
+- Scope clarification: the existing desktop wallet/P&L display is accepted. Additional desktop margin-used, available-margin, buying-power, exposure, and risk-amount displays are not required for Phase 18. Backend margin accounting, sizing, and validation remain required, and existing website displays are unchanged. Stronger Paper attachment/status wording is a deferred P2 UI improvement.
 - Fixed the subsequent snapshot review P1/P2: native Paper tick updates preserve authoritative realised day P&L and commissions, applying only open-position mark changes; position P&L includes backend-equivalent exit charges. Trading snapshots now carry `event_cursor` and SSE events carry `event_id`, so buffered events already included in a recovery snapshot and obsolete recovery snapshots cannot overwrite newer renderer state. Added renderer regression coverage for closed profits, long/short options, equity with options, same-second buffered events, duplicate events, and stale recovery responses. Native Windows/live-provider validation remains outstanding.
 - Fixed Desktop Paper P1 review findings: base live option subscriptions retain their original strike/expiry identity; switched contracts receive separate subscriptions, and old base ticks cannot be attributed to the newly selected strike. Paper starts use today's IST market date, with backend rejection of historical dates. Mode changes require stopping/detaching the active run and clear ended-session state. Live tile reconciliation now runs in Paper as well as Browse so instrument changes update chart subscriptions.
 - Implemented the authenticated desktop trading event endpoint. It reuses the existing per-session replay queue rather than adding a parallel Paper event bus, so fills, ticks, order events, broker errors, and session-ended events stay in the same ordering as the simulation engine. Initial connections receive a full snapshot, reconnects resume after `Last-Event-ID`, and stale reconnect cursors or active-stream queue gaps receive a `stream_reset` snapshot.
@@ -172,7 +172,7 @@ Desktop files touched in the current partial implementation:
 
 Complicated points and callouts:
 
-- Website equity leverage is implemented for Replay (`sim`), Stepwise, Paper, and Real order paths, but the desktop Phase 18 UI still needs broader margin/buying-power display and Windows validation.
+- Website equity leverage is implemented for Replay (`sim`), Stepwise, Paper, and Real order paths. Desktop Windows validation remains outstanding; broader desktop margin/buying-power display is not required.
 - Not implemented yet for this website 5x leverage requirement:
   - Atomic shared-wallet reservation protection across multiple active Paper sessions. Current ledger writes can still race under true simultaneous order placement.
   - DynamoDB restore/hydration audit for pending leveraged orders. The model writes margin metadata, but resumed pending orders must be checked to ensure `reservation_margin_rate`, `wallet_ledger_id`, and `wallet_ledger_kind` are restored before relying on long-lived pending leveraged orders after backend restart.
@@ -322,7 +322,7 @@ Update the Windows desktop app around a clear mode model:
 - Treat `Paper`, `Replay`, and `Stepwise` as desktop trading modes for the left rail, chart order lines, strategy controls, wallet/session capital, P&L, flatten, and trade history.
 - Treat Browse live as a property of a Browse screen, not as `mode=Live`.
 - Enable equity chart order entry in Paper, Replay, and Stepwise when the active session is equity anchored.
-- Show equity margin fields in trading modes: wallet/session capital, margin used, available margin, effective 5x buying power, exposure, and risk amount.
+- Keep the existing wallet/P&L display in desktop trading modes; additional equity margin/buying-power fields are not required.
 - Ensure risk percentage text says the loss is measured against wallet/session capital if stop loss hits.
 - Keep Paper multi-session state keyed by screen/session id, with the shared wallet reflected across all Paper sessions for the same date.
 - Keep Replay and Stepwise session state scoped to their own session/screen.
@@ -347,9 +347,9 @@ Paper behavior:
 - Paper chart candles merge historical baseline data with live paper ticks.
 - Paper order/fill markers, order lines, positions, wallet, P&L, strategies, and trade history use the same desktop state model as Replay/Stepwise.
 - Active Paper sessions lock the instrument picker date and underlying. Same-underlying option tiles can be attached; cross-underlying edits show guidance before the backend rejects them.
-- Show shared wallet balance, available cash/margin, buying power, margin used, and each session's exposure. Clearly display that equity Paper buying power is 5x while risk sizing and stop-loss risk are measured against the shared wallet.
+- Show shared wallet balance and session P&L using the existing display. Equity margin accounting and risk sizing remain backend requirements; additional margin/buying-power displays are not required.
 - Equity chart order entry is enabled in Paper. Option chart order entry remains available for attached same-underlying option tiles, using contract lot size and existing option controls.
-- The Paper session indicator must distinguish:
+- P2 (deferred UI improvement): enhance the Paper session indicator to distinguish:
   - new desktop-owned session
   - attached/shared website session
   - broker feed reconnect/error
@@ -462,11 +462,11 @@ Desktop unit/integration:
 - Browse live does not render trading controls or mutate trading state.
 - Browse live tile edits affect only that screen's stream.
 - Paper snapshots/events update candles, orders, fills, positions, wallet, P&L, strategies, and trade history.
-- Margin/buying-power display updates after equity orders and fills.
+- Existing wallet/P&L display updates after equity orders and fills; additional margin/buying-power display is out of scope.
 - Paper state, stream subscriptions, and order events are isolated per screen/session while wallet changes are reflected across all sessions for that date.
 - Replay and Stepwise trading state stays scoped to the active session/screen.
 - One-underlying validation prevents invalid simulated trading screen edits.
-- Paper attach/shared-session status is visible.
+- P2 (deferred): verify enhanced Paper attach/shared-session status and explicit stop/detach wording when implemented.
 - Pop-out opens the requested screen id and renders only that screen.
 - A popped screen cannot be edited simultaneously from two windows.
 - Browse live and trading stream keys remain screen/session scoped across windows.
