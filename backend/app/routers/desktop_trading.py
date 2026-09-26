@@ -14,6 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from app.dependencies import get_desktop_user_id
+from app.config import EQUITY_MIS_MARGIN_RATE
 from app.models.schemas import (
     CancelAllStrategiesRequest,
     ConvertOrderRequest,
@@ -84,9 +85,9 @@ class ChartOrderIntent(BaseModel):
     resolves the chart contract's quote and records the resulting proxy limit.
     """
     symbol: str
-    expiry: str
-    strike: int
-    right: str
+    expiry: str | None = None
+    strike: int | None = None
+    right: str | None = None
     side: TradeSide
     intent: str = Field(pattern="^(market|limit|target)$")
     price: float | None = Field(default=None, gt=0)
@@ -142,7 +143,7 @@ class DesktopTradeLabelRequest(BaseModel):
 
 
 class DesktopTradingStartRequest(SimulationStartRequest):
-    desktop_mode: str = Field(default="stepwise", pattern="^(stepwise|replay)$")
+    desktop_mode: str = Field(default="stepwise", pattern="^(stepwise|replay|paper)$")
     resume_bar_index: int | None = Field(default=None, ge=0)
 
 
@@ -153,7 +154,7 @@ def _active_desktop_session_for_date(user_id: str, date: str):
             continue
         if session.state == sim_svc.SimulationState.ENDED:
             continue
-        if _desktop_mode(session) in ("replay", "stepwise"):
+        if _desktop_mode(session) in ("paper", "replay", "stepwise"):
             return session
     return None
 
@@ -163,7 +164,10 @@ def _desktop_mode(session) -> str:
 
 
 def _desktop_source(session) -> str:
-    return "desktop_replay" if _desktop_mode(session) == "replay" else "desktop_stepwise"
+    mode = _desktop_mode(session)
+    if mode == "paper":
+        return "desktop_paper"
+    return "desktop_replay" if mode == "replay" else "desktop_stepwise"
 
 
 def _require_session(session_id: str, user_id: str):
@@ -365,7 +369,7 @@ def _strategy_response(instance) -> StrategyResponse:
 
 
 def _last_price_for_right(session, right: str | None, strike: int | None = None, expiry: str | None = None) -> float:
-    if session.instrument_type == "options":
+    if right is not None:
         contract = _get_registered_contract(session, right, strike, expiry)
         if contract:
             quote = _refresh_contract_quotes(session).get(contract["contract_key"])
@@ -417,23 +421,9 @@ def _day_pnl(session) -> float:
         net += trade.quantity * trade.price if trade.side == TradeSide.SELL else -trade.quantity * trade.price
         net -= trade.commission or 0
 
-    if session.instrument_type == "options":
-        contracts = _desktop_contracts(session)
-        if contracts:
-            for item in contracts:
-                position = _position_for(session, item["right"], item["strike"], item["expiry"])
-                price = _last_price_for_right(session, item["right"], item["strike"], item["expiry"])
-                if position.side != "FLAT" and price > 0:
-                    net += position.quantity * price if position.side == "LONG" else -position.quantity * price
-        else:
-            for right in ("CE", "PE"):
-                position = _position_for(session, right)
-                price = _last_price_for_right(session, right)
-                if position.side != "FLAT" and price > 0:
-                    net += position.quantity * price if position.side == "LONG" else -position.quantity * price
-    else:
-        position = _position_for(session, None)
-        price = _last_price_for_right(session, None)
+    for item in _position_targets(session):
+        position = _position_for(session, item["right"], item["strike"], item["expiry"])
+        price = _last_price_for_right(session, item["right"], item["strike"], item["expiry"])
         if position.side != "FLAT" and price > 0:
             net += position.quantity * price if position.side == "LONG" else -position.quantity * price
     return round(net, 2)
@@ -579,14 +569,17 @@ def _checkpoint_from_record(record: dict) -> dict:
     }
 
 
+def _position_targets(session) -> list[dict]:
+    targets = list(_desktop_contracts(session))
+    if session.instrument_type == "equity":
+        targets.insert(0, {"right": None, "strike": None, "expiry": None})
+    elif not targets:
+        targets = [{"right": right, "strike": session.strike_ce if right == "CE" else session.strike_pe, "expiry": session.expiry} for right in ("CE", "PE")]
+    return targets
+
+
 def _flatten_positions_for_stop(session, user_id: str) -> None:
-    targets = []
-    if session.instrument_type == "options" and _desktop_contracts(session):
-        targets = list(_desktop_contracts(session))
-    elif session.instrument_type == "options":
-        targets = [{"right": "CE", "strike": session.strike_ce, "expiry": session.expiry}, {"right": "PE", "strike": session.strike_pe, "expiry": session.expiry}]
-    else:
-        targets = [{"right": None, "strike": None, "expiry": None}]
+    targets = _position_targets(session)
     timestamp = int(session.current_time or 0)
     if timestamp <= 0:
         raise HTTPException(status_code=409, detail="Cannot stop cleanly before the trading clock has a valid time")
@@ -601,17 +594,14 @@ def _flatten_positions_for_stop(session, user_id: str) -> None:
         if price <= 0:
             raise HTTPException(status_code=409, detail=f"Cannot close {right or session.symbol} before a valid price is available")
         side = TradeSide.SELL if position.side == "LONG" else TradeSide.BUY
-        if side == TradeSide.SELL:
-            wallet_service.credit_ledger(user_id, price * position.quantity, session.date, session.wallet_ledger_id)
-        else:
-            wallet_service.debit_ledger(user_id, price * position.quantity, session.date, session.wallet_ledger_id)
+        trading_service.settle_wallet_for_trade(session, side, price, position.quantity, right=right, strike=strike, expiry=expiry)
         trading_service.record_trade(
             session.session_id,
             side,
             price=price,
             timestamp=timestamp,
             symbol=session.symbol,
-            instrument_type=session.instrument_type,
+            instrument_type="options" if right else session.instrument_type,
             strike=strike,
             expiry=expiry,
             right=right,
@@ -696,7 +686,10 @@ def _target_scope(session, right: str | None, strike: int | None, expiry: str | 
 
 @router.post("/start", response_model=DesktopTradingSnapshot, status_code=201)
 async def start_desktop_trading(req: DesktopTradingStartRequest, user_id: str = Depends(get_desktop_user_id)):
-    if req.desktop_mode == "replay":
+    if req.desktop_mode == "paper":
+        req.session_type = "paper"
+        req.stepwise = False
+    elif req.desktop_mode == "replay":
         req.session_type = "sim"
         req.stepwise = False
         req.speed = max(0.01, 1 / max(float(req.speed), 0.05))
@@ -723,10 +716,10 @@ async def candidate(
     symbol: str,
     date: str,
     instrument_type: str,
-    desktop_mode: str = Query(pattern="^(stepwise|replay)$"),
+    desktop_mode: str = Query(pattern="^(stepwise|replay|paper)$"),
     user_id: str = Depends(get_desktop_user_id),
 ):
-    session_type = "stepwise" if desktop_mode == "stepwise" else "sim"
+    session_type = "paper" if desktop_mode == "paper" else "stepwise" if desktop_mode == "stepwise" else "sim"
     for session in list(sim_svc._sessions.values()):
         if session.user_id != user_id or session.state == sim_svc.SimulationState.ENDED:
             continue
@@ -750,8 +743,6 @@ async def candidate(
 async def attach_contract(session_id: str, req: AttachContractRequest, user_id: str = Depends(get_desktop_user_id)):
     session = _require_session(session_id, user_id)
     contract = _normalise_contract(req)
-    if session.instrument_type != "options":
-        raise HTTPException(status_code=400, detail="This desktop trading session is not configured for options")
     if contract["symbol"] != session.symbol:
         raise HTTPException(status_code=400, detail=f"This desktop trading session is locked to {session.symbol}. Open another screen to use {contract['symbol']}.")
     if session.expiry and contract["expiry"] != session.expiry:
@@ -765,6 +756,11 @@ async def attach_contract(session_id: str, req: AttachContractRequest, user_id: 
     else:
         session.strike_pe = contract["strike"]
     _register_contract(session, contract)
+    if session.session_type == "paper" and getattr(session, "paper_stream_source", None):
+        try:
+            sim_svc.subscribe_desktop_option_contract(session, contract)
+        except Exception as exc:
+            raise HTTPException(status_code=503, detail=f"Could not subscribe to option contract: {exc}") from exc
     return _snapshot(session, user_id)
 
 
@@ -773,7 +769,7 @@ async def active_stepwise(
     symbol: str | None = Query(default=None),
     date: str | None = Query(default=None),
     instrument_type: str | None = Query(default=None),
-    desktop_mode: str | None = Query(default=None, pattern="^(stepwise|replay)$"),
+    desktop_mode: str | None = Query(default=None, pattern="^(stepwise|replay|paper)$"),
     user_id: str = Depends(get_desktop_user_id),
 ):
     for session in list(sim_svc._sessions.values()):
@@ -782,7 +778,7 @@ async def active_stepwise(
         mode = _desktop_mode(session)
         if desktop_mode and mode != desktop_mode:
             continue
-        if not desktop_mode and session.session_type != "stepwise":
+        if not desktop_mode and session.session_type not in ("paper", "stepwise"):
             continue
         if symbol and session.symbol != symbol:
             continue
@@ -831,7 +827,7 @@ async def next_bar(session_id: str, user_id: str = Depends(get_desktop_user_id))
 async def place_order(session_id: str, req: PlaceOrderRequest, user_id: str = Depends(get_desktop_user_id)):
     session = _require_session(session_id, user_id)
     req.session_id = session_id
-    if session.instrument_type == "options":
+    if session.instrument_type == "options" or req.right:
         right = req.right.upper() if req.right else None
         expiry = req.expiry or session.expiry
         strike = req.strike if req.strike is not None else (session.strike_ce if right == "CE" else session.strike_pe if right == "PE" else None)
@@ -845,14 +841,19 @@ async def place_order(session_id: str, req: PlaceOrderRequest, user_id: str = De
 
 @router.post("/{session_id}/chart-orders", response_model=Order)
 async def place_chart_order(session_id: str, intent: ChartOrderIntent, user_id: str = Depends(get_desktop_user_id)):
-    """Place an option-chart entry without trusting a frontend market price."""
+    """Place a chart entry without trusting a frontend market price."""
     session = _require_session(session_id, user_id)
-    if session.instrument_type != "options":
-        raise HTTPException(status_code=400, detail="Desktop chart entry is available only for option contracts")
-    contract = _require_registered_contract(session, intent.right.upper(), intent.strike, intent.expiry)
-    if intent.symbol != contract["symbol"]:
-        raise HTTPException(status_code=400, detail="Chart contract symbol does not match the attached contract")
-    quote = _refresh_contract_quotes(session).get(contract["contract_key"])
+    contract = None
+    quote = None
+    if intent.right:
+        contract = _require_registered_contract(session, intent.right.upper(), intent.strike, intent.expiry)
+        if intent.symbol != contract["symbol"]:
+            raise HTTPException(status_code=400, detail="Chart contract symbol does not match the attached contract")
+        quote = _refresh_contract_quotes(session).get(contract["contract_key"])
+    elif intent.symbol != session.symbol:
+        raise HTTPException(status_code=400, detail=f"This desktop trading session is locked to {session.symbol}. Open another screen to use {intent.symbol}.")
+    else:
+        quote = {"price": float(session.last_price or 0), "timestamp": int(session.current_time or 0), "source": "session_equity"}
     if intent.intent == "market":
         if not quote or float(quote.get("price", 0)) <= 0:
             raise HTTPException(status_code=409, detail="No authoritative quote is available for this chart contract")
@@ -878,11 +879,17 @@ async def place_chart_order(session_id: str, intent: ChartOrderIntent, user_id: 
         entry_sl_price=intent.entry_sl_price,
         group_id=intent.group_id,
         target_deviation_pct=intent.target_deviation_pct,
-        right=contract["right"], strike=contract["strike"], expiry=contract["expiry"],
         quote_price=quote_price,
         quote_timestamp=int(quote["timestamp"]) if quote else int(session.current_time or 0),
         quote_source=str(quote["source"]) if quote else "chart_selected",
+        right=contract["right"] if contract else None,
+        strike=contract["strike"] if contract else None,
+        expiry=contract["expiry"] if contract else None,
     )
+    if contract:
+        req.right = contract["right"]
+        req.strike = contract["strike"]
+        req.expiry = contract["expiry"]
     from app.routers.orders import place_order as web_place_order
     return await web_place_order(req)
 
@@ -959,7 +966,7 @@ async def start_strategy(session_id: str, req: StartStrategyRequest, user_id: st
     session = _require_session(session_id, user_id)
     req.session_id = session_id
     contract = None
-    if session.instrument_type == "options" and req.right:
+    if req.right:
         right = req.right.upper()
         strike = session.strike_ce if right == "CE" else session.strike_pe if right == "PE" else None
         contract = _require_registered_contract(session, right, strike, session.expiry)
@@ -1004,10 +1011,10 @@ async def update_strategy_price(session_id: str, strategy_id: str, req: UpdateSt
 @router.post("/{session_id}/flatten")
 async def flatten(session_id: str, req: FlattenRequest, user_id: str = Depends(get_desktop_user_id)):
     session = _require_session(session_id, user_id)
-    if session.instrument_type == "options" and req.right and req.strike is not None and req.expiry:
+    if req.right and req.strike is not None and req.expiry:
         targets = [_require_registered_contract(session, req.right.upper(), req.strike, req.expiry)]
-    elif session.instrument_type == "options" and req.right is None and _desktop_contracts(session):
-        targets = _desktop_contracts(session)
+    elif req.right is None:
+        targets = _position_targets(session)
     else:
         targets = [{"right": right, "strike": None, "expiry": None} for right in (["CE", "PE"] if session.instrument_type == "options" and req.right is None else [req.right])]
     result = {"converted": [], "created": [], "cancelled": []}
@@ -1045,6 +1052,10 @@ async def flatten(session_id: str, req: FlattenRequest, user_id: str = Depends(g
                 expiry=expiry if expiry is not None else session.expiry,
                 user_id=user_id,
                 source=_desktop_source(session),
+                is_stoploss=True,
+                margin_rate=EQUITY_MIS_MARGIN_RATE if right is None and session.instrument_type == "equity" else 1.0,
+                wallet_ledger_id=session.wallet_ledger_id,
+                wallet_ledger_kind="paper" if session.session_type == "paper" else "sim",
             )
             result["created"].append(created.model_dump(mode="json"))
             _emit_order_event(session, {

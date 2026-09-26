@@ -242,6 +242,8 @@ class SimulationSession:
     # True when FyersBroadcaster is the active streaming source for this session.
     # Used by stop_session() to call the correct unregister() method.
     fyers_streaming: bool = False
+    paper_stream_source: str | None = None
+    desktop_option_subscriptions: dict = field(default_factory=dict, repr=False)
     # AI Helper (Phase XI)
     ai_commands_active: bool = False
     # Per-right bar state for AI bar-close hook: {right → {slot, open, high, low, close, history}}
@@ -604,31 +606,34 @@ def _auto_close_positions_if_eod(
     if tick_time < auto_close_ts:
         return []
 
-    # Already auto-closed this session?
-    if getattr(session, '_auto_closed', False):
+    strike = tick.get("strike")
+    if strike is None and tick_right:
+        strike = session.strike_ce if tick_right == "CE" else session.strike_pe
+    expiry = tick.get("expiry", session.expiry) if tick_right else None
+    contract_key = (tick_right, strike, expiry)
+    closed_contracts = getattr(session, "_auto_closed_contracts", set())
+    if contract_key in closed_contracts:
         return []
+    closed_contracts.add(contract_key)
+    session._auto_closed_contracts = closed_contracts
     session._auto_closed = True
 
     fill_events = []
 
     # Determine which positions to check
-    if session.instrument_type == "options" and session.right is None:
-        # Dual-stream options: check CE and PE independently
-        rights_to_check = ["CE", "PE"]
-    else:
-        rights_to_check = [tick_right]
+    rights_to_check = [tick_right]
 
     for right in rights_to_check:
-        position = get_position(session.session_id, session.symbol, right)
+        position = get_position(session.session_id, session.symbol, right, strike, expiry)
         if position.side == "FLAT" or position.quantity == 0:
             continue
 
         # Cancel any existing open orders for this right first
         open_orders = get_open_orders(session.session_id)
         for order in open_orders:
-            if right is None or order.right == right:
+            if order.right == right and (not right or (order.strike == strike and order.expiry == expiry)):
                 from app.services.order_service import cancel_order
-                cancel_order(session.session_id, order.order_id)
+                cancel_order(session.session_id, order.order_id, session.date)
 
         # Create a market order to close the position
         if position.side == "LONG":
@@ -650,8 +655,11 @@ def _auto_close_positions_if_eod(
                 limit_price=tick_price,  # Will fill immediately at market
                 is_stoploss=True,  # Don't reserve wallet for closing orders
                 right=right,
-                strike=session.strike,
+                strike=strike,
+                expiry=expiry,
                 user_id=session.user_id,
+                wallet_ledger_id=session.wallet_ledger_id or None,
+                wallet_ledger_kind="paper" if session.session_type == "paper" else "sim",
             )
             logger.info(
                 "Auto-close: placed %s order for %s %s qty=%d at %.2f (session=%s)",
@@ -663,6 +671,105 @@ def _auto_close_positions_if_eod(
     return fill_events
 
 
+class _ContractTickQueue:
+    def __init__(self, session: SimulationSession, contract: dict):
+        self.session = session
+        self.contract = contract
+
+    def put_nowait(self, payload: dict) -> None:
+        if self.session.state != SimulationState.ENDED:
+            self.session.paper_tick_queue.put_nowait({**payload, **self.contract})
+
+
+def subscribe_desktop_option_contract(session: SimulationSession, contract: dict) -> None:
+    if session.instrument_type != "equity" or not session.paper_stream_source:
+        return
+    key = contract["contract_key"]
+    if key in session.desktop_option_subscriptions:
+        return
+    loop = asyncio.get_running_loop()
+    queue = _ContractTickQueue(session, dict(contract))
+    subscription_id = f"{session.session_id}:option:{key}"
+    source = session.paper_stream_source
+    manager = None
+    try:
+        if source == "kite":
+            from app.services import kite_service
+            manager = kite_service.get_broadcaster()
+            token = kite_service.fetch_options_instrument_token(session.symbol, contract["expiry"], contract["strike"], contract["right"])
+            manager.register(subscription_id, [token], [contract["right"]], queue, loop)
+        elif source == "kotak":
+            from app.services import kotak_service
+            manager = kotak_service.get_kotak_broadcaster()
+            token, exchange = kotak_service.fetch_kotak_options_instrument_token(session.symbol, contract["expiry"], contract["strike"], contract["right"])
+            manager.register(subscription_id, [token], [exchange], [contract["right"]], queue, loop)
+        elif source == "fyers":
+            from app.services import fyers_service
+            manager = fyers_service.get_fyers_broadcaster()
+            symbol = fyers_service._fyers_options_symbol(session.symbol, contract["expiry"], contract["strike"], contract["right"])
+            manager.register(subscription_id, [symbol], [contract["right"]], queue, loop)
+        elif source == "breeze":
+            from app.config import SUPPORTED_SYMBOLS
+            from app.services.breeze_service import BreezeStreamManager
+            info = SUPPORTED_SYMBOLS[session.symbol]
+            manager = BreezeStreamManager()
+            manager.start(queue, loop, [{
+                "exchange_code": info.get("options_exchange_code", "NFO"),
+                "stock_code": info.get("breeze_stock_code", session.symbol),
+                "product_type": "options",
+                "expiry_date": f"{contract['expiry']}T06:00:00.000Z",
+                "strike_price": str(contract["strike"]),
+                "right": "call" if contract["right"] == "CE" else "put",
+            }], session_id=subscription_id)
+        else:
+            raise ValueError(f"Unsupported Paper stream source: {source}")
+    except Exception:
+        if manager is not None:
+            if source == "breeze":
+                manager.stop()
+            else:
+                manager.unregister(subscription_id)
+        raise
+    session.desktop_option_subscriptions[key] = (source, manager, subscription_id)
+
+
+def _stop_desktop_option_subscriptions(session: SimulationSession) -> None:
+    for source, manager, subscription_id in list(session.desktop_option_subscriptions.values()):
+        try:
+            if source == "breeze":
+                manager.stop()
+            else:
+                manager.unregister(subscription_id)
+        except Exception:
+            logger.exception("Could not stop option subscription %s", subscription_id)
+    session.desktop_option_subscriptions.clear()
+    session.paper_stream_source = None
+
+
+def _emit_attached_option_ticks(session: SimulationSession, timestamp: int) -> list[dict]:
+    from app.services.options_service import options_iter_ticks
+    cache = getattr(session, "desktop_option_ticks_by_time", None)
+    if cache is None:
+        cache = {}
+        session.desktop_option_ticks_by_time = cache
+    events = []
+    for contract in getattr(session, "desktop_contracts", []):
+        active_strike = session.strike_ce if contract["right"] == "CE" else session.strike_pe
+        if contract["strike"] != active_strike:
+            continue
+        key = contract["contract_key"]
+        if key not in cache:
+            ticks = list(options_iter_ticks(session.symbol, session.date, contract["strike"], contract["expiry"], contract["right"], session.start_time))
+            cache[key] = {tick["time"]: tick for tick in ticks}
+            quote_cache = getattr(session, "desktop_contract_quote_ticks", {})
+            quote_cache[key] = ticks
+            session.desktop_contract_quote_ticks = quote_cache
+        tick = cache[key].get(timestamp)
+        if tick:
+            events.extend(_emit_tick_and_check_orders(session, {**tick, **contract}, contract["right"]))
+    return events
+
+
 def _emit_tick_and_check_orders(
     session: SimulationSession,
     tick: dict,
@@ -670,7 +777,20 @@ def _emit_tick_and_check_orders(
 ) -> list[dict]:
     """Put one tick on the queue and return fill events for any triggered orders."""
     from app.services.order_service import check_orders
-    from app.services.trading import record_trade
+    from app.services.trading import record_trade, settle_wallet_for_trade
+
+    if tick_right and tick.get("contract_key"):
+        registry = getattr(session, "desktop_contract_quotes", {})
+        registry[tick["contract_key"]] = {**tick, "price": tick["close"], "timestamp": tick["time"], "source": "live_paper" if session.paper_stream_source else "historical_stepwise"}
+        session.desktop_contract_quotes = registry
+        active_strike = session.strike_ce if tick_right == "CE" else session.strike_pe
+        if tick.get("strike") == active_strike:
+            if tick_right == "CE":
+                session.last_price_ce = tick["close"]
+            else:
+                session.last_price_pe = tick["close"]
+        else:
+            return []
 
     # Auto-close positions at end of day (15:09) for sim/paper/stepwise
     if session.session_type != "real":
@@ -706,14 +826,27 @@ def _emit_tick_and_check_orders(
         tick_strike = session.strike_ce or session.strike
     elif tick_right == "PE":
         tick_strike = session.strike_pe or session.strike
+    tick_strike = tick.get("strike", tick_strike)
     filled = check_orders(
         session.session_id, current_price, current_time, session.date,
         tick_right=tick_right,
         tick_strike=tick_strike,
-        tick_expiry=session.expiry if tick_right else None,
+        tick_expiry=tick.get("expiry", session.expiry) if tick_right else None,
+        settle_wallet=False,
     )
     fill_events = []
     for order in filled:
+        settle_wallet_for_trade(
+            session,
+            order.side,
+            order.filled_price,
+            order.quantity,
+            right=order.right,
+            strike=order.strike if order.strike is not None else session.strike,
+            expiry=order.expiry if order.expiry is not None else session.expiry,
+            entry_reserved=order.side.value == "BUY" and order.reserved_amount > 0,
+            reserved_amount=order.reserved_amount,
+        )
         record_trade(
             session_id=session.session_id,
             side=order.side,
@@ -721,7 +854,7 @@ def _emit_tick_and_check_orders(
             timestamp=order.filled_at,
             quantity=order.quantity,
             symbol=order.symbol,
-            instrument_type=session.instrument_type,
+            instrument_type="options" if order.right else session.instrument_type,
             strike=order.strike if order.strike is not None else session.strike,
             expiry=order.expiry if order.expiry is not None else session.expiry,
             right=order.right,
@@ -739,6 +872,8 @@ def _emit_tick_and_check_orders(
             "filled_price": order.filled_price,
             "filled_at": order.filled_at,
             "right": order.right,
+            "strike": order.strike,
+            "expiry": order.expiry,
         })
 
     # Strategy evaluation — snapshot open orders before/after so strategy-placed
@@ -807,6 +942,8 @@ def _emit_tick_and_check_orders(
         except RuntimeError:
             pass  # not in async context — shouldn't happen
 
+    if tick_right is None and session.instrument_type == "equity" and not session.paper_stream_source and getattr(session, "desktop_contracts", None):
+        fill_events.extend(_emit_attached_option_ticks(session, current_time))
     return fill_events
 
 
@@ -1695,6 +1832,9 @@ async def _run_paper_session(session: SimulationSession) -> None:
                     return
 
         # ── Phase 3: consume live ticks indefinitely ──────────────────────────
+        session.paper_stream_source = "breeze" if session.stream_manager is not None else stream_source
+        for contract in getattr(session, "desktop_contracts", []):
+            subscribe_desktop_option_contract(session, contract)
         session.queue.phase = "phase3_live_stream"
         logger.info("paper_phase3_waiting session_id=%s source=%s", session.session_id, stream_source)
         _phase3_tick_count = 0
@@ -1753,11 +1893,11 @@ async def _run_paper_session(session: SimulationSession) -> None:
             if tick_type != "tick":
                 continue
 
-            if tick_right == "CE":
+            if tick_right == "CE" and ("strike" not in payload or payload["strike"] == session.strike_ce):
                 session.last_price_ce = payload["close"]
-            elif tick_right == "PE":
+            elif tick_right == "PE" and ("strike" not in payload or payload["strike"] == session.strike_pe):
                 session.last_price_pe = payload["close"]
-            else:
+            elif tick_right is None:
                 session.last_price = payload["close"]
                 session.current_time = str(payload["time"])
 
@@ -1777,6 +1917,7 @@ async def _run_paper_session(session: SimulationSession) -> None:
     except Exception:
         logger.exception("_run_paper_session crashed for session %s", session.session_id)
     finally:
+        _stop_desktop_option_subscriptions(session)
         session.state = SimulationState.ENDED
         end_event = {"type": "session_ended"}
         try:
@@ -2054,8 +2195,8 @@ def _register_kotak_sl_for_order(session: SimulationSession, order: Any, loop: A
     Called by strategies in real sessions that need to place a broker-side SL immediately.
     """
     from app.services.kotak_service import get_service as get_kotak, KotakError
-    from app.services.trading import record_trade
-    from app.services import wallet_service, order_service
+    from app.services.trading import record_trade, settle_wallet_for_trade
+    from app.services import order_service
     from app.models.schemas import OrderStatus
     from app.config import KOTAK_SLIPPAGE_PCT
 
@@ -2097,6 +2238,17 @@ def _register_kotak_sl_for_order(session: SimulationSession, order: Any, loop: A
         o.status = OrderStatus.FILLED
         o.filled_price = fill_price
         o.filled_at = int(session.current_time) if session.current_time else 0
+        settle_wallet_for_trade(
+            session,
+            o.side,
+            fill_price,
+            fill_qty,
+            right=o.right,
+            strike=o.strike if o.strike is not None else session.strike,
+            expiry=session.expiry,
+            entry_reserved=o.side.value == "BUY" and o.reserved_amount > 0,
+            reserved_amount=o.reserved_amount,
+        )
         record_trade(
             session_id=session.session_id,
             side=o.side,
@@ -2104,7 +2256,7 @@ def _register_kotak_sl_for_order(session: SimulationSession, order: Any, loop: A
             timestamp=o.filled_at,
             quantity=fill_qty,
             symbol=o.symbol,
-            instrument_type=session.instrument_type,
+            instrument_type="options" if o.right else session.instrument_type,
             strike=o.strike if o.strike is not None else session.strike,
             expiry=session.expiry,
             right=o.right,
@@ -2112,8 +2264,6 @@ def _register_kotak_sl_for_order(session: SimulationSession, order: Any, loop: A
             user_id=session.user_id,
             session_type=session.session_type,
         )
-        if o.side.value == "SELL":
-            wallet_service.credit(session.user_id, round(fill_price * fill_qty, 2), session.date)
         evt = {
             "type": "order_filled",
             "order_id": order.order_id,
@@ -2165,7 +2315,7 @@ def _emit_tick_and_check_orders_real(
     Fills from Kotak arrive asynchronously via the order-feed WebSocket.
     """
     from app.services.order_service import check_orders
-    from app.services.trading import record_trade
+    from app.services.trading import record_trade, settle_wallet_for_trade
     from app.services.kotak_service import get_service as get_kotak, KotakError
     from app.config import KOTAK_SLIPPAGE_PCT
 
@@ -2179,6 +2329,7 @@ def _emit_tick_and_check_orders_real(
     triggered = check_orders(
         session.session_id, current_price, current_time, session.date,
         tick_right=tick_right,
+        settle_wallet=False,
     )
 
     fill_events: list[dict] = []
@@ -2226,7 +2377,6 @@ def _emit_tick_and_check_orders_real(
             def _make_fill_cb(ord_id: str, sess: SimulationSession):
                 def on_kotak_fill(kotak_id: str, fill_side: str, fill_qty: int, fill_price: float):
                     from app.services.order_service import get_order, _write_order_to_db
-                    from app.services import wallet_service
                     from app.models.schemas import OrderStatus
                     o = get_order(sess.session_id, ord_id)
                     if o is None:
@@ -2240,6 +2390,17 @@ def _emit_tick_and_check_orders_real(
                         o.filled_at = fill_ts
                         o.filled_price = fill_price
                     _write_order_to_db(o)
+                    settle_wallet_for_trade(
+                        sess,
+                        o.side,
+                        fill_price,
+                        fill_qty,
+                        right=o.right,
+                        strike=o.strike if o.strike is not None else sess.strike,
+                        expiry=sess.expiry,
+                        entry_reserved=o.side.value == "BUY" and o.reserved_amount > 0,
+                        reserved_amount=o.reserved_amount,
+                    )
                     record_trade(
                         session_id=sess.session_id,
                         side=o.side,
@@ -2247,7 +2408,7 @@ def _emit_tick_and_check_orders_real(
                         timestamp=fill_ts,
                         quantity=fill_qty,
                         symbol=o.symbol,
-                        instrument_type=sess.instrument_type,
+                        instrument_type="options" if o.right else sess.instrument_type,
                         strike=o.strike if o.strike is not None else sess.strike,
                         expiry=sess.expiry,
                         right=o.right,
@@ -2255,10 +2416,6 @@ def _emit_tick_and_check_orders_real(
                         user_id=sess.user_id,
                         session_type=sess.session_type,
                     )
-                    if o.side.value == "SELL":
-                        wallet_service.credit(sess.user_id, fill_price * fill_qty, sess.date)
-                    else:
-                        wallet_service.debit(sess.user_id, fill_price * fill_qty, sess.date)
                     if o.entry_sl_price is not None or o.is_autostop:
                         from app.services.entry_sl_watcher import on_entry_filled
                         on_entry_filled(o, sess, loop)
@@ -2284,7 +2441,7 @@ def _emit_tick_and_check_orders_real(
                 def on_reject(kotak_id: str, reason: str):
                     from app.services.order_service import get_order, _write_order_to_db
                     from app.models.schemas import OrderStatus
-                    from app.services import wallet_service
+                    from app.services import order_service
                     o = get_order(sess.session_id, ord_id)
                     if o is None:
                         return
@@ -2295,7 +2452,8 @@ def _emit_tick_and_check_orders_real(
                     o.status = OrderStatus.CANCELLED
                     # Credit back the upfront wallet reservation for BUY orders
                     if o.side.value == "BUY" and o.reserved_amount > 0:
-                        wallet_service.credit(o.user_id, o.reserved_amount, sess.date)
+                        order_service._credit_reservation(o, o.reserved_amount, sess.date)
+                        o.reserved_amount = 0.0
                     _write_order_to_db(o)
                     cancel_event = {"type": "order_cancelled", "order_id": ord_id}
                     error_event = {"type": "broker_error", "message": f"Kotak rejected order: {reason}"}
@@ -2318,8 +2476,11 @@ def _emit_tick_and_check_orders_real(
             order.status = OrderStatus.CANCELLED
             # Credit back reserved funds for BUY orders so wallet stays consistent.
             if order.side.value == "BUY" and order.reserved_amount > 0:
-                from app.services import wallet_service
-                wallet_service.credit(order.user_id, order.reserved_amount, session.date)
+                from app.services import order_service
+                order_service._credit_reservation(order, order.reserved_amount, session.date)
+                order.reserved_amount = 0.0
+            from app.services.order_service import _write_order_to_db
+            _write_order_to_db(order)
             # Notify frontend: remove from open orders, show error banner.
             cancel_event = {"type": "order_cancelled", "order_id": order.order_id}
             error_event = {"type": "broker_error", "message": f"Kotak order failed: {exc}"}
@@ -2621,6 +2782,7 @@ def stop_session(session: SimulationSession) -> None:
     session.step_event.set()    # unblock if waiting for next-bar (stepwise)
     session.queue.close()       # unblock any waiting SSE get() consumers
     session.paper_tick_queue.close()
+    _stop_desktop_option_subscriptions(session)
     if session.task and not session.task.done():
         session.task.cancel()
     _upsert_session_to_db(session)

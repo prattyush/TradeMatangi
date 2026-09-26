@@ -6,7 +6,7 @@ from starlette.routing import Match
 from unittest.mock import patch
 
 from app.main import app
-from app.models.schemas import ConvertOrderRequest, OrderStatus, OrderType, PlaceOrderRequest, SimulationState, StartStrategyRequest, StrategyType, TradeSide, WalletResetRequest
+from app.models.schemas import ConvertOrderRequest, OrderStatus, OrderType, PlaceOrderRequest, SimulationState, StartStrategyRequest, StrategyType, TradeSide, UpdateOrderRequest, WalletResetRequest
 from app.routers import desktop_trading
 from app.services import order_service, simulation as sim_svc, trading as trading_service, wallet_service
 
@@ -70,10 +70,36 @@ def _session():
     return session
 
 
+def _equity_session(session_id="desktop-equity-test", mode="stepwise"):
+    session = sim_svc.SimulationSession(
+        session_id=session_id,
+        symbol="TATPOW",
+        date="2026-05-06",
+        start_time="09:15:00",
+        speed=1,
+        user_id="desktop-user",
+        instrument_type="equity",
+        session_type="stepwise" if mode == "stepwise" else "sim",
+        stepwise=mode == "stepwise",
+        wallet_ledger_id="sim:2026-05-06",
+    )
+    session.state = SimulationState.RUNNING
+    session.current_time = "1778058900"
+    session.last_price = 100
+    session.session_capital = 150000
+    session.desktop_mode = mode
+    session.desktop_origin = f"desktop_{mode}"
+    sim_svc._sessions[session.session_id] = session
+    return session
+
+
 def _clear(session_id="desktop-stepwise-test"):
     sim_svc._sessions.pop(session_id, None)
+    sim_svc._sessions.pop("desktop-equity-test", None)
     order_service.clear_session(session_id)
+    order_service.clear_session("desktop-equity-test")
     trading_service.clear_session(session_id)
+    trading_service.clear_session("desktop-equity-test")
 
 
 @pytest.mark.parametrize("action", [
@@ -363,6 +389,78 @@ def test_desktop_order_requires_attached_option_contract(no_db):
 
     assert exc.value.status_code == 400
     assert exc.value.detail == "Option contract is not attached to this Stepwise session"
+    _clear()
+
+
+def test_desktop_equity_buy_orders_reserve_intraday_margin_on_session_ledger(no_db):
+    _clear()
+    session = _equity_session()
+
+    order = asyncio.run(desktop_trading.place_order(
+        session.session_id,
+        PlaceOrderRequest(
+            session_id=session.session_id,
+            side=TradeSide.BUY,
+            order_type=OrderType.LIMIT,
+            limit_price=100,
+            quantity=100,
+        ),
+        user_id="desktop-user",
+    ))
+
+    assert order.reserved_amount == pytest.approx(2000)
+    assert order.reservation_margin_rate == pytest.approx(0.20)
+    assert order.wallet_ledger_id == "sim:2026-05-06"
+    assert wallet_service.get_ledger_balance("desktop-user", "2026-05-06", "sim:2026-05-06") == pytest.approx(148000)
+
+    updated = asyncio.run(desktop_trading.update_order(
+        session.session_id,
+        order.order_id,
+        UpdateOrderRequest(limit_price=150),
+        user_id="desktop-user",
+    ))
+
+    assert updated.reserved_amount == pytest.approx(3000)
+    assert wallet_service.get_ledger_balance("desktop-user", "2026-05-06", "sim:2026-05-06") == pytest.approx(147000)
+
+    cancelled = asyncio.run(desktop_trading.cancel_order(session.session_id, order.order_id, user_id="desktop-user"))
+    assert cancelled.status == OrderStatus.CANCELLED
+    assert wallet_service.get_ledger_balance("desktop-user", "2026-05-06", "sim:2026-05-06") == pytest.approx(150000)
+    _clear()
+
+
+def test_equity_anchored_desktop_session_can_place_same_underlying_option_order(no_db):
+    _clear()
+    session = _equity_session()
+    with patch("app.routers.desktop_trading.simulation_router._ensure_options_data"):
+        asyncio.run(desktop_trading.attach_contract(
+            session.session_id,
+            desktop_trading.AttachContractRequest(symbol="TATPOW", expiry="2026-05-07", strike=400, right="CE"),
+            user_id="desktop-user",
+        ))
+
+    order = asyncio.run(desktop_trading.place_order(
+        session.session_id,
+        PlaceOrderRequest(
+            session_id=session.session_id,
+            side=TradeSide.BUY,
+            order_type=OrderType.LIMIT,
+            limit_price=10,
+            quantity=250,
+            right="CE",
+            strike=400,
+            expiry="2026-05-07",
+        ),
+        user_id="desktop-user",
+    ))
+
+    assert session.instrument_type == "equity"
+    assert order.right == "CE"
+    assert order.strike == 400
+    assert order.expiry == "2026-05-07"
+    assert order.reserved_amount == pytest.approx(2500)
+    assert order.reservation_margin_rate == pytest.approx(1.0)
+    assert wallet_service.get_ledger_balance("desktop-user", "2026-05-06", "sim:2026-05-06") == pytest.approx(147500)
     _clear()
 
 

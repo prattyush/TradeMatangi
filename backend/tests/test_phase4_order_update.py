@@ -181,6 +181,9 @@ def _make_session():
     session.date = DATE
     session.current_time = "1746518100"
     session.instrument_type = "equity"
+    session.session_type = "sim"
+    session.wallet_ledger_id = ""
+    session.guardrail_maxsize_enabled = False
     session.state = SimulationState.RUNNING
     session.user_id = FIXED_USER_ID
     session.guardrail_ban_active = False

@@ -420,7 +420,7 @@ async def start_simulation(
         stepwise=is_stepwise,
         group_id=group["group_id"],
         session_alias=req.session_alias,
-        wallet_ledger_id=(f"paper:{group['group_id']}" if internal_session_type == "paper" else f"real:{req.date}" if internal_session_type == "real" else f"sim:{req.date}"),
+        wallet_ledger_id=(f"paper:{req.date}" if internal_session_type == "paper" else f"real:{req.date}" if internal_session_type == "real" else f"sim:{req.date}"),
     )
     groups.add_member(group, {"session_id": session.session_id, "symbol": session.symbol,
         "session_type": session.session_type, "instrument_type": session.instrument_type,

@@ -44,6 +44,34 @@ def _session_strike(session, tick_right: str | None) -> int | None:
     return getattr(session, "strike", None)
 
 
+def _margin_rate_for_quantity(session, tick_right: str | None) -> float:
+    if (
+        tick_right is None
+        and getattr(session, "instrument_type", None) == "equity"
+        and getattr(session, "session_type", None) in ("sim", "stepwise", "paper", "real")
+    ):
+        from app.config import EQUITY_MIS_MARGIN_RATE
+        return EQUITY_MIS_MARGIN_RATE
+    return 1.0
+
+
+def _wallet_balance_for_quantity(session) -> float:
+    from app.services import wallet_service
+    ledger_id = getattr(session, "wallet_ledger_id", "")
+    if ledger_id:
+        ledger_kind = "paper" if session.session_type == "paper" else "real" if session.session_type == "real" else "sim"
+        return wallet_service.get_ledger_balance(session.user_id, session.date, ledger_id, ledger_kind)
+    return wallet_service.get_balance(session.user_id, session.date)
+
+
+def _wallet_ledger_kwargs(session) -> dict:
+    ledger_id = getattr(session, "wallet_ledger_id", "")
+    if not ledger_id:
+        return {}
+    ledger_kind = "paper" if session.session_type == "paper" else "real" if session.session_type == "real" else "sim"
+    return {"wallet_ledger_id": ledger_id, "wallet_ledger_kind": ledger_kind}
+
+
 def _ceil_tick(price: float) -> float:
     """Round price UP to the nearest ₹0.05 tick."""
     return round(math.ceil(round(price / _TICK_SIZE, 10)) * _TICK_SIZE, 2)
@@ -321,10 +349,9 @@ def _on_bar_close_autostop(
         if risk_ratio_pct is not None:
             try:
                 from app.services.order_service import compute_risk_ratio_quantity
-                from app.services.wallet_service import get_balance
                 from app.config import LOT_SIZES
                 lot_size = LOT_SIZES.get(session.symbol, 1) if tick_right else 1
-                current_wallet = get_balance(session.user_id, session.date)
+                current_wallet = _wallet_balance_for_quantity(session)
                 # Determine stoploss price for risk calculation
                 entry_sl_price = meta.get("entry_sl_price")
                 if entry_sl_price is None:
@@ -339,6 +366,7 @@ def _on_bar_close_autostop(
                     session.symbol, trigger_price, entry_sl_price,
                     session.session_capital, risk_ratio_pct, current_wallet,
                     lot_size=lot_size,
+                    margin_rate=_margin_rate_for_quantity(session, tick_right),
                 )
             except Exception as exc:
                 logger.warning("AutoStop %s: risk ratio quantity calc failed: %s", strategy.strategy_id, exc)
@@ -346,13 +374,13 @@ def _on_bar_close_autostop(
         elif funds_ratio_pct is not None:
             try:
                 from app.services.order_service import compute_funds_ratio_quantity
-                from app.services.wallet_service import get_balance
                 from app.config import LOT_SIZES
                 lot_size = LOT_SIZES.get(session.symbol, 1) if tick_right else 1
-                current_wallet = get_balance(session.user_id, session.date)
+                current_wallet = _wallet_balance_for_quantity(session)
                 quantity = compute_funds_ratio_quantity(
                     session.symbol, trigger_price, session.session_capital,
                     funds_ratio_pct, current_wallet, lot_size=lot_size,
+                    margin_rate=_margin_rate_for_quantity(session, tick_right),
                 )
             except Exception as exc:
                 logger.warning("AutoStop %s: quantity calc failed: %s", strategy.strategy_id, exc)
@@ -406,6 +434,8 @@ def _on_bar_close_autostop(
             group_id=group_id,
             source=desktop_source,
             is_autostop=True,
+            margin_rate=_margin_rate_for_quantity(session, tick_right),
+            **_wallet_ledger_kwargs(session),
         )
         logger.info(
             "AutoStop %s placed %s TARGET at %.2f for %s right=%s sl=%.2f",
