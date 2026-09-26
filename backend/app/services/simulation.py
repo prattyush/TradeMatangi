@@ -243,6 +243,7 @@ class SimulationSession:
     # Used by stop_session() to call the correct unregister() method.
     fyers_streaming: bool = False
     paper_stream_source: str | None = None
+    paper_base_contracts: dict[str, dict] = field(default_factory=dict)
     desktop_option_subscriptions: dict = field(default_factory=dict, repr=False)
     # AI Helper (Phase XI)
     ai_commands_active: bool = False
@@ -682,10 +683,14 @@ class _ContractTickQueue:
 
 
 def subscribe_desktop_option_contract(session: SimulationSession, contract: dict) -> None:
-    if session.instrument_type != "equity" or not session.paper_stream_source:
+    if not session.paper_stream_source:
         return
     key = contract["contract_key"]
     if key in session.desktop_option_subscriptions:
+        return
+    if session.paper_base_contracts.get(contract["right"]) == {
+        "strike": contract["strike"], "expiry": contract["expiry"],
+    }:
         return
     loop = asyncio.get_running_loop()
     queue = _ContractTickQueue(session, dict(contract))
@@ -778,6 +783,20 @@ def _emit_tick_and_check_orders(
     """Put one tick on the queue and return fill events for any triggered orders."""
     from app.services.order_service import check_orders
     from app.services.trading import record_trade, settle_wallet_for_trade
+
+    if tick_right and not tick.get("contract_key"):
+        base_contract = session.paper_base_contracts.get(tick_right, {}) if session.paper_stream_source else {}
+        tick_strike = tick.get("strike") or base_contract.get("strike") or (session.strike_ce if tick_right == "CE" else session.strike_pe)
+        tick_expiry = tick.get("expiry") or base_contract.get("expiry") or session.expiry
+        tick = {**tick, "strike": tick_strike, "expiry": tick_expiry}
+        for contract in getattr(session, "desktop_contracts", []):
+            if (
+                contract.get("right") == tick_right
+                and int(contract.get("strike") or 0) == int(tick_strike or 0)
+                and (contract.get("expiry") or "") == (tick_expiry or "")
+            ):
+                tick = {**tick, **contract}
+                break
 
     if tick_right and tick.get("contract_key"):
         registry = getattr(session, "desktop_contract_quotes", {})
@@ -1639,6 +1658,11 @@ async def _run_paper_session(session: SimulationSession) -> None:
         # ── Phase 2: live streaming ────────────────────────────────────────────
         session.queue.phase = "phase2_stream_setup"
         loop = asyncio.get_running_loop()
+        session.paper_base_contracts = {
+            right: {"strike": session.strike_ce or session.strike if right == "CE" else session.strike_pe or session.strike, "expiry": session.expiry}
+            for right in ("CE", "PE")
+            if session.instrument_type == "options" and session.right in (None, right)
+        }
 
         # Determine streaming source from admin config (default: kite)
         from app.services import token_service as _ts
@@ -1892,6 +1916,9 @@ async def _run_paper_session(session: SimulationSession) -> None:
                 continue
             if tick_type != "tick":
                 continue
+
+            if tick_right and not payload.get("contract_key"):
+                payload = {**session.paper_base_contracts.get(tick_right, {}), **payload}
 
             if tick_right == "CE" and ("strike" not in payload or payload["strike"] == session.strike_ce):
                 session.last_price_ce = payload["close"]

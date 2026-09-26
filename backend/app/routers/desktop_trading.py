@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
@@ -687,6 +688,8 @@ def _target_scope(session, right: str | None, strike: int | None, expiry: str | 
 @router.post("/start", response_model=DesktopTradingSnapshot, status_code=201)
 async def start_desktop_trading(req: DesktopTradingStartRequest, user_id: str = Depends(get_desktop_user_id)):
     if req.desktop_mode == "paper":
+        if req.date != datetime.now(ZoneInfo("Asia/Kolkata")).date().isoformat():
+            raise HTTPException(status_code=400, detail="Paper trading requires today's market date (IST)")
         req.session_type = "paper"
         req.stepwise = False
     elif req.desktop_mode == "replay":
@@ -1088,11 +1091,20 @@ async def wallet(session_id: str, user_id: str = Depends(get_desktop_user_id)):
 
 
 @router.get("/wallet")
-async def pre_session_wallet(date: str = Query(...), user_id: str = Depends(get_desktop_user_id)):
+async def pre_session_wallet(
+    date: str = Query(...),
+    desktop_mode: str = Query(default="replay", pattern="^(paper|replay|stepwise)$"),
+    user_id: str = Depends(get_desktop_user_id),
+):
     """Return the wallet balance that the next desktop run will use."""
     active = _active_desktop_session_for_date(user_id, date)
-    ledger_id = active.wallet_ledger_id if active else f"sim:{date}"
-    balance = wallet_service.get_ledger_balance(user_id, date, ledger_id, "sim")
+    if active:
+        ledger_id = active.wallet_ledger_id
+        ledger_kind = "paper" if active.session_type == "paper" else "sim"
+    else:
+        ledger_id = f"paper:{date}" if desktop_mode == "paper" else f"sim:{date}"
+        ledger_kind = "paper" if desktop_mode == "paper" else "sim"
+    balance = wallet_service.get_ledger_balance(user_id, date, ledger_id, ledger_kind)
     return {"user_id": user_id, "date": date, "balance": balance}
 
 
@@ -1100,13 +1112,17 @@ async def pre_session_wallet(date: str = Query(...), user_id: str = Depends(get_
 async def reset_pre_session_wallet(
     req: WalletResetRequest,
     date: str = Query(...),
+    desktop_mode: str = Query(default="replay", pattern="^(paper|replay|stepwise)$"),
     user_id: str = Depends(get_desktop_user_id),
 ):
-    """Set the wallet for the next desktop Replay/Stepwise run."""
+    """Set the wallet for the next desktop trading run."""
     if _active_desktop_session_for_date(user_id, date):
         raise HTTPException(status_code=409, detail="Wallet cannot be changed during an active desktop session")
-    wallet_service.reset(user_id, date, req.amount)
-    balance = wallet_service.reset_ledger(user_id, date, f"sim:{date}", req.amount, "sim")
+    ledger_id = f"paper:{date}" if desktop_mode == "paper" else f"sim:{date}"
+    ledger_kind = "paper" if desktop_mode == "paper" else "sim"
+    if desktop_mode != "paper":
+        wallet_service.reset(user_id, date, req.amount)
+    balance = wallet_service.reset_ledger(user_id, date, ledger_id, req.amount, ledger_kind)
     return {"user_id": user_id, "date": date, "balance": balance}
 
 

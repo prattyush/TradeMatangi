@@ -14,6 +14,37 @@ client = TestClient(app)
 HEADERS = {"X-User-Id": "desktop-user"}
 
 
+def test_paper_start_rejects_historical_date():
+    request = desktop_trading.DesktopTradingStartRequest(
+        symbol="NIFTY", date="2026-05-06", start_time="09:15:00", desktop_mode="paper",
+    )
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(desktop_trading.start_desktop_trading(request, "desktop-user"))
+    assert exc.value.status_code == 400
+
+
+def test_paper_switched_contract_subscribes_and_old_ticks_keep_identity(no_db):
+    session = _session()
+    session.session_type = "paper"
+    session.paper_stream_source = "kite"
+    session.paper_base_contracts = {"CE": {"strike": 24000, "expiry": session.expiry}}
+    session.strike_ce = 24100
+    contract = {"symbol": "NIFTY", "expiry": session.expiry, "strike": 24100,
+                "right": "CE", "contract_key": f"NIFTY:{session.expiry}:24100:CE"}
+    session.desktop_contracts.append(contract)
+    async def subscribe():
+        with patch("app.services.kite_service.fetch_options_instrument_token", return_value=123), \
+             patch("app.services.kite_service.get_broadcaster") as broadcaster:
+            sim_svc.subscribe_desktop_option_contract(session, contract)
+            broadcaster.return_value.register.assert_called_once()
+    asyncio.run(subscribe())
+    tick = {"close": 99, "time": int(session.current_time), "right": "CE"}
+    assert sim_svc._emit_tick_and_check_orders(session, tick, "CE") == []
+    assert session.desktop_contract_quotes[f"NIFTY:{session.expiry}:24000:CE"]["price"] == 99
+    assert contract["contract_key"] not in session.desktop_contract_quotes
+    assert session.last_price_ce == 100
+
+
 @pytest.fixture(autouse=True)
 def no_db():
     wallet_service._ledgers[("desktop-user", "sim:2026-05-06")] = 150000
