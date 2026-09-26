@@ -807,3 +807,48 @@ def test_chart_market_intent_uses_the_clicked_contract_quote(no_db, monkeypatch)
     assert order.quote_timestamp == 1778058900
     assert order.quote_source == "historical_stepwise"
     _clear()
+
+
+@pytest.mark.parametrize("mode", ["paper", "replay", "stepwise"])
+@pytest.mark.parametrize("side", [TradeSide.BUY, TradeSide.SELL])
+def test_desktop_chart_capital_sizing_applies_leverage_once_with_maxsize(mode, side):
+    session = _equity_session(session_id=f"desktop-sizing-{mode}-{side.value}", mode=mode)
+    if mode == "paper":
+        session.session_type = "paper"
+    session.session_capital = 100000
+    session.guardrail_maxsize_enabled = True
+    session.guardrail_maxsize_pct = 15
+    try:
+        order = asyncio.run(desktop_trading.place_chart_order(session.session_id,
+            desktop_trading.ChartOrderIntent(symbol=session.symbol, side=side,
+                intent="market", funds_ratio_pct=.15,
+                entry_sl_price=90 if side == TradeSide.BUY else 110),
+            user_id="desktop-user"))
+        price = 101 if side == TradeSide.BUY else 99
+        assert order.quantity == int(15000 / (.2 * price))
+        assert order.reserved_amount == pytest.approx(round(order.quantity * price * .2, 2))
+        assert order.reserved_amount <= 15000
+        assert order.reservation_margin_rate == .2
+    finally:
+        _clear(session.session_id)
+
+
+@pytest.mark.parametrize("side", [TradeSide.BUY, TradeSide.SELL])
+def test_desktop_chart_risk_sizing_can_legitimately_exceed_maxsize(side):
+    session = _equity_session(session_id=f"desktop-risk-maxsize-{side.value}")
+    session.session_capital = 100000
+    session.guardrail_maxsize_enabled = True
+    session.guardrail_maxsize_pct = 15
+    try:
+        with pytest.raises(HTTPException) as exc:
+            asyncio.run(desktop_trading.place_chart_order(session.session_id,
+                desktop_trading.ChartOrderIntent(symbol=session.symbol, side=side,
+                    intent="limit", price=100, risk_pct=1,
+                    entry_sl_price=99 if side == TradeSide.BUY else 101),
+                user_id="desktop-user"))
+        assert exc.value.status_code == 403
+        assert "20,000.00" in exc.value.detail
+        assert "15,000.00" in exc.value.detail
+        assert order_service.get_open_orders(session.session_id) == []
+    finally:
+        _clear(session.session_id)

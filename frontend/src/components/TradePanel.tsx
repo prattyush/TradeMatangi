@@ -13,6 +13,7 @@ interface Props {
   activeLabel?: string               // e.g. "NIFTY CE 24000"
   // P&L display mode
   pnlPctMode?: boolean
+  positionMarginRate?: number
   sessionCapital?: number
   sizingMode?: 'quantity' | 'fundsRatio' | 'riskRatio'
   // In-session trade labeling
@@ -37,7 +38,7 @@ function fmt(n: number) { return n.toFixed(2) }
 
 export default function TradePanel({
   sessionState, currentPrice, position, pnl, sessionPnl,
-  activeRight = null, activeLabel, pnlPctMode, sessionCapital, sizingMode,
+  activeRight = null, activeLabel, pnlPctMode, sessionCapital, sizingMode, positionMarginRate = 1,
   sessionId,
   pendingExitLabels = [],
   openLegs = [],
@@ -126,7 +127,7 @@ export default function TradePanel({
               <span>
                 <span style={{ color: '#e6edf3' }}>
                   {sessionCapital && sessionCapital > 0
-                    ? ((position.quantity * position.avg_entry_price / sessionCapital) * 100).toFixed(1)
+                    ? ((position.quantity * position.avg_entry_price * positionMarginRate / sessionCapital) * 100).toFixed(1)
                     : '—'}
                 </span>
                 <span style={{ color: '#484f58' }}>% wallet</span>
