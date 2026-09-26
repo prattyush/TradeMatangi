@@ -204,6 +204,7 @@ class SimulationSession:
     last_price_ce: float = 0.0        # CE price (dual-stream options only)
     last_price_pe: float = 0.0        # PE price (dual-stream options only)
     session_capital: float = 0.0      # wallet balance snapshotted at session start
+    desktop_sizing_settings: Optional[dict] = None  # frozen on first desktop start/attachment
     instrument_type: str = "equity"   # "equity" or "options"
     strike: Optional[int] = None       # options: ATM/reference strike
     expiry: Optional[str] = None       # options only (YYYY-MM-DD)
@@ -324,6 +325,11 @@ def _upsert_session_to_db(session: SimulationSession, *, strict: bool = False) -
             item["wallet_ledger_id"] = session.wallet_ledger_id
         if getattr(session, "desktop_contracts", None):
             item["desktop_contracts"] = session.desktop_contracts
+        if session.desktop_sizing_settings is not None:
+            item["desktop_sizing_settings"] = {
+                key: Decimal(str(value)) if isinstance(value, (float, int)) else value
+                for key, value in session.desktop_sizing_settings.items()
+            }
         desktop_mode = getattr(session, "desktop_mode", None)
         if desktop_mode:
             item["desktop_mode"] = desktop_mode
@@ -561,6 +567,11 @@ def rebuild_session_from_db(
     session.desktop_contracts = db_record.get("desktop_contracts", [])
     session.desktop_mode = db_record.get("desktop_mode")
     session.desktop_origin = db_record.get("desktop_origin")
+    saved_sizing = db_record.get("desktop_sizing_settings")
+    session.desktop_sizing_settings = ({
+        key: float(value) if isinstance(value, Decimal) else value
+        for key, value in saved_sizing.items()
+    } if saved_sizing is not None else None)
     # Restore last-known tick state so orders can be placed immediately after
     # restart, without waiting for the first live tick to arrive.
     saved_current_time = db_record.get("current_time")

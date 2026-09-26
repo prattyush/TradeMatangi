@@ -23,6 +23,7 @@ def clean(monkeypatch):
     sim_svc._sessions.pop(SESSION, None)
     wallet_service._wallets.clear()
     wallet_service._ledgers.clear()
+    monkeypatch.setattr("app.services.simulation._upsert_session_to_db", lambda *args, **kwargs: None)
     monkeypatch.setattr("app.services.order_service._write_order_to_db", lambda *args, **kwargs: None)
     monkeypatch.setattr("app.services.trading._write_trade_to_db", lambda *args, **kwargs: None)
     monkeypatch.setattr("app.services.wallet_service._write_wallet_to_db", lambda *args, **kwargs: None)

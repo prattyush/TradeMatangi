@@ -481,13 +481,34 @@ def _mark_open_trades(trades: list[dict]) -> list[dict]:
     return [{**trade, "is_open": trade.get("trade_id") in open_ids} for trade in trades]
 
 
+_SIZING_DEFAULTS = {
+    "desktop_order_size_mode": "quantity",
+    "funds_ratio_l_pct": 0.03, "funds_ratio_m_pct": 0.06, "funds_ratio_h_pct": 0.12,
+    "risk_ratio_l_pct": 1.0, "risk_ratio_m_pct": 2.0, "risk_ratio_h_pct": 4.0,
+}
+
+
+def _session_sizing_settings(session, settings: dict) -> dict:
+    if session.desktop_sizing_settings is None:
+        session.desktop_sizing_settings = {
+            key: settings.get(key, default) for key, default in _SIZING_DEFAULTS.items()
+        }
+        try:
+            sim_svc._upsert_session_to_db(session, strict=True)
+        except Exception as exc:
+            session.desktop_sizing_settings = None
+            raise HTTPException(status_code=503, detail="Unable to save session sizing settings; retry session attachment") from exc
+    return session.desktop_sizing_settings
+
+
 def _snapshot(session, user_id: str) -> DesktopTradingSnapshot:
     wallet = wallet_service.get_ledger_balance(user_id, session.date, session.wallet_ledger_id)
     strategies = [_strategy_response(item) for item in strategy_service.list_running(session.session_id)]
     day_pnl = _day_pnl(session)
     session_capital = float(session.session_capital or 0)
     pnl_pct = round((day_pnl / session_capital) * 100, 2) if session_capital > 0 else 0.0
-    settings = get_settings(user_id)
+    settings = dict(get_settings(user_id))
+    settings.update(_session_sizing_settings(session, settings))
     contracts = _desktop_contracts(session)
     quotes = _refresh_contract_quotes(session)
     positions_by_contract = {

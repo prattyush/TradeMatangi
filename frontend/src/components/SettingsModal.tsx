@@ -342,6 +342,7 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
 
   const [pnlPctMode, setPnlPctMode] = useState(loadPnlPctMode)
   const [tradingRocRatioMode, setTradingRocRatioMode] = useState<RocRatioMode>(loadTradingRocRatioMode)
+  const [sizingModeSaving, setSizingModeSaving] = useState(false)
   const [sizingMode, setSizingMode] = useState<SizingMode>(loadSizingMode)
   const [riskRatios, setRiskRatios] = useState<RiskRatios>(loadRiskRatios)
   const [riskRatioInputs, setRiskRatioInputs] = useState<{ l: string; m: string; h: string }>(() => {
@@ -607,7 +608,7 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
     onPnlPctModeChange?.(next)
   }
 
-  const saveRatios = () => {
+  const saveRatios = async () => {
     const l = parseFloat(ratioInputs.l)
     const m = parseFloat(ratioInputs.m)
     const h = parseFloat(ratioInputs.h)
@@ -615,18 +616,22 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
       setStatus('Ratios must be 1–100')
       return
     }
+    try {
+      await api.updateUserSettings({
+        funds_ratio_l_pct: l / 100,
+        funds_ratio_m_pct: m / 100,
+        funds_ratio_h_pct: h / 100,
+      })
+    } catch (error) {
+      setStatus(`Failed to save sizing presets: ${String(error)}`)
+      return
+    }
     setRatios({ l, m, h })
-    // Persist to backend so AI Helper can read the user-configured values
-    api.updateUserSettings({
-      funds_ratio_l_pct: l / 100,
-      funds_ratio_m_pct: m / 100,
-      funds_ratio_h_pct: h / 100,
-    }).catch(() => {})
     setStatus('Saved')
     setTimeout(() => setStatus(null), 2000)
   }
 
-  const saveRiskRatiosFn = () => {
+  const saveRiskRatiosFn = async () => {
     const l = parseFloat(riskRatioInputs.l)
     const m = parseFloat(riskRatioInputs.m)
     const h = parseFloat(riskRatioInputs.h)
@@ -634,12 +639,17 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
       setStatus('Risk ratios must be 1–100')
       return
     }
+    try {
+      await api.updateUserSettings({
+        risk_ratio_l_pct: l,
+        risk_ratio_m_pct: m,
+        risk_ratio_h_pct: h,
+      })
+    } catch (error) {
+      setStatus(`Failed to save sizing presets: ${String(error)}`)
+      return
+    }
     setRiskRatios({ l, m, h })
-    api.updateUserSettings({
-      risk_ratio_l_pct: l,
-      risk_ratio_m_pct: m,
-      risk_ratio_h_pct: h,
-    }).catch(() => {})
     setStatus('Saved')
     setTimeout(() => setStatus(null), 2000)
   }
@@ -1218,10 +1228,19 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
                 {(['quantity', 'fundsRatio', 'riskRatio'] as const).map(mode => (
                   <button
                     key={mode}
-                    onClick={() => {
-                      setSizingMode(mode)
-                      saveSizingMode(mode)
-                      api.updateUserSettings({ desktop_order_size_mode: mode === 'fundsRatio' ? 'funds_ratio' : mode === 'riskRatio' ? 'risk_ratio' : 'quantity' }).catch(() => {})
+                    disabled={sizingModeSaving}
+                    onClick={async () => {
+                      setSizingModeSaving(true)
+                      try {
+                        await api.updateUserSettings({ desktop_order_size_mode: mode === 'fundsRatio' ? 'funds_ratio' : mode === 'riskRatio' ? 'risk_ratio' : 'quantity' })
+                        setSizingMode(mode)
+                        saveSizingMode(mode)
+                        setStatus('Saved')
+                      } catch (error) {
+                        setStatus(`Failed to save sizing mode: ${String(error)}`)
+                      } finally {
+                        setSizingModeSaving(false)
+                      }
                     }}
                     style={{
                       flex: 1, padding: '6px 0', fontSize: 11, fontWeight: 600,
@@ -1231,7 +1250,7 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
                       transition: 'background 0.15s',
                     }}
                   >
-                    {mode === 'quantity' ? 'Quantity' : mode === 'fundsRatio' ? 'Funds %' : 'Risk %'}
+                    {mode === 'quantity' ? 'Quantity' : mode === 'fundsRatio' ? 'Capital %' : 'Risk %'}
                   </button>
                 ))}
               </div>
@@ -1244,6 +1263,7 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
               </div>
             </div>
 
+            {status && <div role="status" style={{ color: status.startsWith('Failed') ? '#f85149' : '#3fb950', marginTop: 8 }}>{status}</div>}
             {/* FundsRatio % settings */}
             {sizingMode === 'fundsRatio' && (
               <div style={{ borderTop: '1px solid #21262d', paddingTop: 16 }}>
