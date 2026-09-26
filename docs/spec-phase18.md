@@ -13,18 +13,145 @@
    - Browse mode must remain read-only whether live streaming is enabled or disabled.
 6. Allow a saved desktop screen to pop out into a separate native Tauri window for two-monitor workflows.
 
-### Status
+### Status — testing handoff (2026-09-26)
 
-Core Phase 18 functionality is implemented on dev, but the phase is not yet
-complete or signed off. The 2026-09-26 code comparison identified ownership and
-startup concerns, plus outstanding database concurrency and Windows/provider
-acceptance validation, detailed below. The latest review fixes are also in
-place: Desktop Paper explicit entry stop-loss orders now work without depending
-on the global auto-SL setting, watcher-created Paper stop-loss orders preserve
-Paper ledger/source metadata for retry-safe recovery, attached website-owned
-Paper sessions are protected from the desktop Stop endpoint, and the stale
-website/pop-out status notes have been reconciled. Windows/live-provider
-acceptance validation remains outstanding.
+**Core functionality and the latest fixes are implemented on `dev`; Phase 18 is
+still open for acceptance testing and the remaining concerns listed below.**
+This checkpoint is the current summary for a new conversation. Detailed sections
+later in this document preserve implementation history; older test counts are
+historical runs, not the latest totals.
+
+#### Latest implemented fixes
+
+| Area | Current behavior | Verification limit |
+| --- | --- | --- |
+| Equity sizing and MaxSize | Capital % allocates 20% opening margin with 5× exposure; MaxSize counts margin, including existing positions. Risk % uses stop distance without multiplying risk by five. | Website and desktop routes covered automatically; the reported desktop rejection still needs its exact settings/position reproduced. |
+| Position `% wallet` | Website and desktop use `quantity × average entry × 0.2 / session capital × 100` for equity longs/shorts. Options use full premium, including attached options. | TypeScript checks passed; verify the displayed values manually. |
+| Website Capital | One Capital value; buying-power/exposure/margin diagnostics are hidden. Backend margin accounting remains active. | Running-backend/manual display acceptance remains required. |
+| Desktop Paper entry SL | Explicit desktop SL works independently of global auto-SL preferences; generated stops keep Paper ledger/source metadata. | Backend regression tests passed. |
+| Missing-exit SL | Right-click **SL · quantity**, then click price. Counts pending opposite-side SL, limit, and target exits for the exact contract; server recalculates quantity and deduplicates requests. | Backend coverage passed; manual chart workflow remains required. |
+| Website Real missing-exit SL | Sends equity/options exits to Kotak, using actual contract expiry; whole-lot chunks and broker rejection handling are covered. | Broker calls are mocked in tests; live broker acceptance is not complete. |
+| Pop-out freeze | WebView creation is asynchronous, child uses explicit `index.html`, and ownership transfers only after assigned-screen readiness. Failed startup rolls back. | Native/state tests and build passed; reported Windows flow must be retested in a rebuilt app. |
+| Window close/recovery | Bounded save then automatic close, local recovery journal, ownership-safe stream cleanup, error UI. Window close leaves backend runs active. | Automated lifecycle tests passed; Windows X/Bring Back/recovery acceptance remains required. |
+
+#### Latest validation snapshot
+
+- **176 focused backend tests passed:** desktop trading, equity leverage, order
+  service, and maximum-contract tests, including the new SL/Real-path coverage.
+- **45 desktop tests passed**, desktop TypeScript checking and Vite production
+  build passed.
+- **12 native Rust tests passed** with the offline build, including window
+  readiness, obsolete tokens, and stream ownership/isolation.
+- Website TypeScript checking passed after the SL changes. The earlier website
+  production build passed for leverage/capital changes; it was not rerun after
+  the latest SL UI additions.
+- `git diff --check` passed. Vite retains the existing bundle-size advisory.
+- The latest recorded **full backend** run was **868 passed, 12 failed**; those
+  failures were reproduced on unmodified `dev`. The full suite has not been
+  rerun after the latest SL/pop-out work. Do not interpret the focused run as a
+  clean full-suite result.
+- No native Windows/WebView2, two-monitor, live-provider, or live Kotak acceptance
+  was performed in this environment. Database wallet tests use Moto, not actual
+  concurrent DynamoDB Local workers.
+
+#### Still open — do not lose these after clearing context
+
+1. **Paper attachment ownership race:** start can return an existing compatible
+   session even when candidate lookup did not attach one. The renderer can then
+   treat the session as owned and offer Stop instead of Detach. Propagate a
+   created/attached result and test the candidate-to-start race.
+2. **Paper start/stream failure recovery:** backend session creation precedes
+   local run-state assignment. A failed stream start can leave a running session
+   requiring rediscovery. This is separate from pop-out startup rollback and
+   remains unresolved.
+3. **Backend ownership is coarse:** native window handoff tokens protect local
+   screen/stream ownership, but are not backend per-screen owner tokens. The
+   backend blocks Stop for website-owned sessions without desktop origin; it
+   cannot distinguish all attachments to a desktop-owned session.
+4. **Concurrent database validation:** run simultaneous reservations/starts,
+   receipt retries, lease takeover, reset locking, and restart recovery against
+   DynamoDB Local with separate workers/clients.
+5. **Desktop MaxSize report:** ₹23,418.86 projected usage versus ₹14,246.25 limit
+   has not been reproduced with the user's settings. Record sizing mode and
+   selected percentage, session capital, existing positions, order quantity,
+   entry/stop prices, and active MaxSize mode/value before changing the math.
+6. **Manual acceptance:** Windows pop-out/close/reconnect, provider subscription
+   switching, website display, equity/options regression, and Real broker SL
+   submission/fill/rejection remain pending.
+
+Agreed deferred work: browser header-capable SSE, richer Paper attachment/status
+wording, and additional margin dashboards. Development remains on `dev`; PRs
+merge into `dev`, and merging to `main` is manual.
+
+#### Start testing here
+
+1. **Rebuild/relaunch the native desktop app first.** The pop-out fix changes
+   Rust commands as well as renderer code; refreshing only the UI or using an
+   old installed executable will not test it. Start the matching backend from
+   this checkout. Use a known historical dataset for Replay/Stepwise and an
+   available market feed for Paper/Real.
+2. **Retest the reported blocker:** screen 1 Browse, screen 2 Stepwise. Start,
+   advance a bar, pop out screen 2, advance in the child, switch back to Browse,
+   close the child via X, and reopen/Bring Back. Expect the same run/session,
+   cursor, positions, and orders, responsive navigation, and no blank windows.
+3. **Test close/failure paths:** change layout/indicators, disconnect the backend,
+   and click X. Closing should finish within five seconds; backend runs continue.
+   Reconnect and check journal recovery. Test Cancel pop-out, failed child startup,
+   rapid close/reopen, and two monitors. Detailed checklist is in the pop-out
+   freeze section below.
+4. **Check capital and `% wallet`:** ₹100,000 session capital, 750 shares at ₹100
+   gives ₹15,000 capital usage, 15.0% wallet, and ₹75,000 exposure. Repeat long
+   and short on both platforms; options with ₹15,000 premium still show 15.0%.
+   Existing positions also contribute to MaxSize. Risk sizing can legitimately
+   exceed a capital limit despite a small risk percentage.
+5. **Check missing-exit SL:** prepare 100 open shares, SL 40, limit exit 20,
+   target exit 10. Resize/cancel any auto-created entry SL before preparing this
+   fixture. Expect **SL · 30**, then a 30-share SELL stop below current price for
+   a long, or BUY stop above current price for a short. Verify full coverage,
+   Escape, invalid prices, changing coverage during price-pick, and retries.
+6. **Check exact option identity and Real:** repeat SL on separate CE/PE
+   strikes/expiries and a position requiring broker splitting. In website Real,
+   inspect actual broker order side/quantity/expiry/trigger, then fill/rejection
+   behavior. Local mocked tests alone do not validate this step.
+7. **Finish the broader regression matrix:** all three desktop trading modes,
+   all sizing methods, existing options behavior, conversion/drag/cancel,
+   strategies, partial exits/reversals, flatten, shared Paper wallet, auth/network
+   reconnect, backend restart, and mode isolation.
+
+For each failure, capture mode, screen/window, session/run IDs, instrument identity,
+prices/quantity/settings, exact steps, and the full error. For pop-outs include
+renderer/native diagnostic entries around opening, readiness, timeout, and close.
+Record PASS/FAIL and the tested build/commit in this document; do not mark Phase 18
+complete until the open concerns are resolved or explicitly accepted and required
+acceptance checks pass.
+
+#### Lessons learned
+
+- **Native unit tests cannot prove Windows WebView behavior.** The installed Tauri
+  source warns that synchronous WebView creation can deadlock on Windows; use
+  asynchronous commands and always retest the actual packaged app.
+- **Window existence is not readiness.** Use an assigned-screen bootstrap and a
+  token-based handoff; keep rollback and timeouts available while retaining the
+  main window's navigation.
+- **Cleanup belongs to the current owner.** Check native stream ownership under
+  the same lock as start/read/stop, and reject late acknowledgments and obsolete
+  close tokens. Apply this to mutating screen/replay/trading/live requests too.
+- **Saving must not trap closing.** Journal current state before saving, bound
+  remote waits, and provide a native deadline independent of renderer health.
+  Revision conflicts must preserve newer remote state and retain the local copy.
+- **Window close and trading Stop are different actions.** X closes local
+  consumption while the backend run continues; Stop ends an owned session and
+  Detach leaves a shared run active.
+- **Exposure, allocated capital, and risk are different quantities.** Apply
+  leverage once; calculate equity position wallet usage from entry margin, and
+  stop-distance risk from unleveraged session capital. A MaxSize rejection is
+  not automatically a leverage bug.
+- **Exit coverage must use exact contract identity and current server state.**
+  Count all pending closing order types, recalculate at submit, deduplicate
+  requests, split complete option lots, and surface partial broker failures.
+- **Local window tokens do not solve server attachment ownership.** Keep the
+  remaining Paper ownership/startup concerns explicit rather than treating the
+  pop-out fix as completion of every Phase 18 requirement.
 
 ### Agreed completion plan — desktop equity long and short
 
@@ -183,7 +310,7 @@ Implemented completion requirements:
 - Equity right-click BUY and SELL entries, share quantities, editable capital/risk percentages, direction-aware stop validation, and 20% opening-margin reservation on both sides.
 - Independent screen controllers and mode-gated live candles; per-screen persisted live/run state and stream keys.
 - Paper date wallet lock, atomic wallet/order reservations and refunds, durable operation receipts, compatible-session claims and engine leases, and fill recovery.
-- Assigned-screen pop-outs, focus/bring-back actions, saved geometry, and native close waiting for the latest screen save.
+- Assigned-screen pop-outs with readiness/rollback, focus/bring-back actions, saved geometry, and bounded automatic native close with revision-aware local recovery.
 - Paper contract attachment tolerates unavailable historical caching while requiring a successful live subscription.
 - Desktop Paper entry stop-loss automation now treats `desktop_paper` as an explicit desktop SL source and carries Paper ledger metadata onto generated stop-loss orders.
 
@@ -702,3 +829,110 @@ the guardrail limit by five or silently reduce risk-sized orders to hide this.
 The reported ₹23,418.86 versus ₹14,246.25 rejection needs the selected sizing
 mode/percentage, existing positions, and active MaxSize setting to determine
 whether it is expected or a runtime/session-state issue.
+
+### Right-click SL for missing exit coverage (2026-09-26)
+
+Implemented on website and desktop, including the website Real broker path.
+An open-position chart offers **SL · quantity**, where quantity is the position
+minus pending opposite-side SL, limit, and target exits for that exact contract.
+The action is disabled at zero coverage gap and absent for flat/Browse charts.
+Selecting it asks for a chart price; Escape cancels. It does not use entry sizing
+presets or change existing exits.
+
+The shared authenticated `POST /api/orders/fill-missing-stoploss` and desktop
+`POST /api/desktop/v1/trading/{session_id}/fill-missing-stoploss` accept session,
+option identity when applicable, trigger price, and request ID. The server
+recalculates coverage, chooses the exit direction, validates against the current
+contract quote, serializes submissions within the active session, and deduplicates
+request IDs through persisted order group identity. Paper lease loss is rejected.
+Orders preserve source/ledger metadata and require no new entry margin. Option
+chunks remain whole lots and each chunk passes through the full SL placement
+route. Real equity/options SLs are submitted to Kotak, including the order's
+actual expiry. Broker failures are surfaced; cancelled/rejected request IDs cannot
+be retried as successful protection. If some chunks succeed before a failure,
+refresh orders and select SL again for the remaining uncovered quantity.
+
+Manual acceptance:
+
+1. In website and desktop Paper/Replay/Stepwise, open 100 equity shares long,
+   create SL 40, limit exit 20, target exit 10, then select **SL · 30** and click
+   below the current price. Confirm exactly 30 SELL STOPLOSS shares are created.
+   Repeat short with a BUY stop above current price.
+2. Confirm fully covered positions disable the action, flat/Browse charts omit
+   it, and Escape cancels. Wrong-side/equal prices must show an error without
+   creating an order. Verify existing entry SL, conversion, drag, and cancellation.
+3. Change coverage or partially close while picking a price. Submission must use
+   the current gap. Double-click/retry must not create duplicate exits. Switching
+   charts, contracts, or sessions cancels the pending price pick.
+4. Repeat with CE/PE and different strikes/expiries; only the selected contract's
+   exits count. Test a position above the broker order cap and verify complete
+   lots in every chunk.
+5. In a configured website Real session, verify the broker order book receives
+   the correct symbol/contract, expiry, exit side, uncovered quantity, and trigger.
+   Verify fills update the remaining position. Broker rejection must remove
+   coverage and surface an error; refresh/select SL again to protect the gap.
+   This live broker acceptance step remains unexecuted in the local environment.
+
+Automated coverage includes missing SL across desktop modes and both directions,
+concurrent submissions, retries, full coverage, invalid prices, unavailable quotes,
+ended/unauthorized sessions, lease loss, and website Real equity broker submission,
+fill, rejection, option identity, and whole-lot splitting using mocked broker calls.
+
+### Desktop pop-out freeze fix (2026-09-26)
+
+Implemented the fix for Browse on screen 1 plus a running Stepwise session on
+screen 2 freezing when screen 2 is popped out. The previous native creation
+command was synchronous; the installed Tauri source explicitly documents that
+WebView creation in a synchronous command can deadlock on Windows. Creation now
+runs in an asynchronous command and loads `index.html` with the assigned screen
+and handoff token.
+
+Saved-screen discovery belongs to the shell. Children do not mount temporary
+controllers for unrelated screens. Opening a native window does not itself
+transfer ownership: the child restores its assigned screen and session/run
+references, then acknowledges readiness. Main controls for that screen stay
+locked during handoff while navigation and cancellation remain available. Failed
+startup or no readiness within 15 seconds destroys the child and restores main
+control. Render failures show recovery controls instead of an unexplained blank
+window. Late acknowledgments, cleanup, and old close callbacks cannot release a
+replacement window's ownership. Stream start/read/stop ownership is checked
+under the native state lock; local closing never calls backend Stop.
+
+Window X performs a bounded save attempt and closes automatically, as agreed.
+Renderer saving is capped at 4.5 seconds and a native 5-second close deadline
+covers a crashed renderer. Latest configuration/run references are journaled
+locally before saving. Recovery applies a journal only against the same backend
+revision; conflicting copies remain local rather than overwriting a newer save.
+Closing a child releases its local streams and main reloads the latest saved
+screen. Closing any window leaves backend trading sessions, orders, and positions
+running. Explicit Stop remains the operation that ends a session.
+
+Manual Windows acceptance (still required):
+
+1. Screen 1 Browse, screen 2 Stepwise: start and advance screen 2, pop it out,
+   then confirm only screen 2 appears in the child and screen 1 remains usable.
+   Advance another bar, close via X, and bring screen 2 back; verify the same
+   backend session/run, cursor, orders, positions, and ownership.
+2. Repeat pop-out/close/reopen in development and installed builds for Paper,
+   Replay, and Browse live. Test two monitors and restored geometry.
+3. Fail child startup, disconnect the backend during restoration, and cancel
+   handoff. The main window must regain control with an actionable error within
+   the timeout. A late child must not claim the screen afterward.
+4. Change layout/indicators and immediately close. Simulate a failed/hanging save:
+   X must still close within five seconds; reconnect and verify recovery of the
+   local copy when backend revision matches. Verify a newer remote revision is
+   not overwritten by an old journal.
+5. Close/reopen one child rapidly and verify old close deadlines cannot close or
+   stop the replacement child. Other screens' streams continue. Close the main
+   window and verify backend sessions continue through website/session discovery.
+
+Automated lifecycle coverage includes assigned-only child controllers, rollback,
+bounded save/close, revision-aware journal recovery, readiness ownership, rejected
+late/wrong-window acknowledgments, obsolete close tokens, and stream isolation.
+Native Windows/WebView2 and live-provider acceptance remain unverified locally.
+
+Validation for the pop-out fix: **45 desktop tests** and **12 native Rust tests**
+passed; desktop TypeScript checking and Vite production build passed. Vite retains
+the existing bundle-size advisory. `git diff --check` passed. These local checks
+exercise lifecycle/state logic; the Windows reproduction checklist above must
+be executed using a rebuilt desktop application before runtime sign-off.

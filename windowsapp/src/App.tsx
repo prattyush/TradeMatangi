@@ -1,3 +1,4 @@
+import { bounded, closeAfterSave, controlledScreens, SAVE_TIMEOUT_MS, journalKey, recoverState, type RecoveryJournal } from './windowLifecycle'
 import { equityEntryEnabled, entryQuantity, instrumentLotSize, validateEntryStop } from './tradingInstrument'
 import { useCallback, useEffect, useRef, useState, type Dispatch, type SetStateAction } from 'react'
 import { invoke } from '@tauri-apps/api/core'
@@ -36,7 +37,7 @@ interface DrawingAction { id: number; action: 'delete' | 'hide' | 'lock' }
 type DrawingMode = 'once' | 'repeat'
 type ConversionTarget = 'LIMIT' | 'STOPLOSS' | 'TARGET'
 type ChartOrderType = 'MARKET' | 'LIMIT' | 'TARGET' | 'AUTO_STOP'
-type OrderAction = 'USE_SL_BUY' | 'USE_SL_SELL' | 'BULK_LIMIT' | 'BULK_MOVE_SL' | 'START_TARGET_PROFIT' | 'START_LOCK_PROFIT' | 'START_AGGRESSIVE_SL' | 'START_BREAKEVEN' | 'START_UNDERLYING_TARGET' | 'START_UNDERLYING_SL'
+type OrderAction = 'FILL_MISSING_SL' | 'USE_SL_BUY' | 'USE_SL_SELL' | 'BULK_LIMIT' | 'BULK_MOVE_SL' | 'START_TARGET_PROFIT' | 'START_LOCK_PROFIT' | 'START_AGGRESSIVE_SL' | 'START_BREAKEVEN' | 'START_UNDERLYING_TARGET' | 'START_UNDERLYING_SL'
 interface TradeTicket { tile: TileConfig; side: 'BUY' | 'SELL'; slPrice: number; orderType: ChartOrderType | null; anchor: { x: number; y: number }; sizeKey?: string }
 interface UnderlyingStrategyTicket { strategyType: 'UnderlyingTargetProfit' | 'UnderlyingStoploss'; price: number; anchor: { x: number; y: number } }
 type PricePickAction = { orderId?: string; conversion?: ConversionTarget; ticket?: TradeTicket }
@@ -334,9 +335,9 @@ function DesktopTile({ config, catalogue, connection, api, settings, serverUrl, 
 type Connection = 'connected' | 'reconnecting' | 'offline' | 'authentication_required'
 interface ScreenControllerProps {
   screenId: string; screens: Screen[]; setScreens: Dispatch<SetStateAction<Screen[]>>
-  selectedId: string; selectScreen: (id: string) => void; loaded: boolean; onLoaded: () => void
+  selectedId: string; selectScreen: (id: string) => void; loaded: boolean
   registerSave: (id: string, save: (() => Promise<unknown>) | null) => void
-  initializer: boolean; external: string[]; assignedId: string | null
+  external: string[]; assignedId: string | null
   connection: Connection; setConnection: Dispatch<SetStateAction<Connection>>
   browserToken: string; setBrowserToken: Dispatch<SetStateAction<string>>
   serverUrl: string; setServerUrl: Dispatch<SetStateAction<string>>
@@ -356,8 +357,9 @@ export default function App() {
     let disposed = false
     const listener = getCurrentWindow().onCloseRequested(async event => {
       event.preventDefault()
-      try { await Promise.all([...saveHandlers.current.values()].map(save => save())); await invoke('finish_window_close') }
-      catch (error) { setCloseError(`Screen save failed; reconnect and retry closing: ${String(error)}`) }
+      await closeAfterSave(Promise.all([...saveHandlers.current.values()].map(save => Promise.resolve().then(save))),
+        () => invoke('finish_window_close'), error => setCloseError(`Closing with locally recovered settings: ${String(error)}`))
+        .catch(error => setCloseError(String(error)))
     })
     void listener.then(unlisten => { if (disposed) unlisten() })
     return () => { disposed = true; void listener.then(unlisten => unlisten()) }
@@ -384,15 +386,47 @@ export default function App() {
     const timer = window.setInterval(check, 5000)
     return () => { cancelled = true; window.clearInterval(timer) }
   }, [serverUrl])
+  const [loadError, setLoadError] = useState('')
+  const [loadAttempt, setLoadAttempt] = useState(0)
+  const discoveryInFlight = useRef(false)
+  useEffect(() => {
+    if (connection !== 'connected' || loaded || discoveryInFlight.current) return
+    let cancelled = false
+    discoveryInFlight.current = true
+    const discover = async () => {
+      const result = '__TAURI_INTERNALS__' in window
+        ? await invoke<{ screens: DesktopScreenRecord[] }>('desktop_drawing_request', { baseUrl: serverUrl, path: 'screens', method: 'GET', body: {} })
+        : await fetch(`${serverUrl.replace(/\/$/, '')}/api/desktop/v1/screens`, { headers: { Authorization: `Bearer ${browserToken}` } }).then(async response => { if (!response.ok) throw new Error(`Screen discovery failed (${response.status})`); return response.json() as Promise<{ screens: DesktopScreenRecord[] }> })
+      if (cancelled) return
+      const records = [...result.screens].sort((a, b) => a.order - b.order)
+      const restored = records.map(record => {
+        let journal: RecoveryJournal<PersistedScreenState> | null = null
+        try { journal = JSON.parse(localStorage.getItem(journalKey(serverUrl, record.state.id ?? record.screen_id)) ?? 'null') } catch { /* ignore invalid journal */ }
+        const state = recoverState(record.state, record.revision, journal)
+        return { id: state.id ?? record.screen_id, persistedId: record.screen_id, revision: record.revision, name: record.name, saved: state, layout: state.layout ?? '1', tiles: state.tiles?.length ? state.tiles : [newTile()] } as Screen
+      })
+      if (records.length) {
+        setScreens(restored)
+        const active = assignedId ? restored.find(screen => screen.id === assignedId || screen.persistedId === assignedId) : restored.find(screen => records.find(record => record.screen_id === screen.persistedId)?.active) ?? restored[0]
+        if (active) selectScreen(active.id)
+      }
+      setLoaded(true)
+      setLoadError('')
+    }
+    void discover().catch(error => { if (!cancelled) setLoadError(String(error)) }).finally(() => { discoveryInFlight.current = false })
+    return () => { cancelled = true; discoveryInFlight.current = false }
+  }, [connection, loaded, serverUrl, browserToken, loadAttempt, assignedId])
   const visibleId = screens.some(screen => screen.id === selectedId) ? selectedId : screens[0]?.id
   const assigned = screens.find(screen => screen.id === assignedId || screen.persistedId === assignedId)
-  const ownedScreens = assignedId && loaded ? (assigned ? [assigned] : []) : screens.filter(screen => !external.includes(screen.id))
+  const ownedScreens = controlledScreens(screens, assignedId, loaded, external)
   return <>
     {closeError && <p role="alert">{closeError}</p>}
+    {loadError && <main role="alert"><p>{loadError}</p><button onClick={() => setLoadAttempt(value => value + 1)}>Retry loading screens</button></main>}
+    {assignedId && !loaded && <main><p>{connection === 'authentication_required' ? 'Sign in in the main window to reconnect this screen.' : 'Loading popped-out screen…'}</p><button onClick={() => void invoke('focus_main_window')}>Main window</button></main>}
     {!assignedId && external.includes(visibleId) && <main><header><nav className="screen-tabs">{screens.map(screen => <button key={screen.id} onClick={() => selectScreen(screen.id)}>{screen.name}{external.includes(screen.id) ? ' ↗' : ''}</button>)}</nav><button onClick={() => void invoke('focus_screen_window', { screenId: visibleId })}>Focus window</button><button onClick={() => void invoke('close_screen_window', { screenId: visibleId })}>Bring back</button></header><p>This screen is open in another window.</p></main>}
     {assignedId && loaded && !assigned && <main><p>Saved screen not found. Return to the main window.</p></main>}
-    {ownedScreens.map((screen, index) => <div key={screen.id} style={{ display: assignedId || screen.id === visibleId ? 'contents' : 'none' }}>
-      <ScreenController registerSave={registerSave} screenId={screen.id} screens={screens} setScreens={setScreens} selectedId={visibleId} selectScreen={selectScreen} loaded={loaded} onLoaded={() => setLoaded(true)} initializer={index === 0} external={external} assignedId={assignedId} connection={connection} setConnection={setConnection} browserToken={browserToken} setBrowserToken={setBrowserToken} serverUrl={serverUrl} setServerUrl={setServerUrl} />
+    {ownedScreens.map(screen => <div key={screen.id} style={{ display: assignedId || screen.id === visibleId ? 'contents' : 'none' }}>
+      <ScreenController registerSave={registerSave} screenId={screen.id} screens={screens} setScreens={setScreens} selectedId={visibleId} selectScreen={selectScreen} loaded={loaded} external={external} assignedId={assignedId} connection={connection} setConnection={setConnection} browserToken={browserToken} setBrowserToken={setBrowserToken} serverUrl={serverUrl} setServerUrl={setServerUrl} />
     </div>)}
   </>
 }
@@ -402,7 +436,7 @@ function ScreenController(props: ScreenControllerProps) {
   const initial = screens.find(screen => screen.id === activeScreenId)?.saved
 
   const [email, setEmail] = useState('admin@tradematangi.com'), [password, setPassword] = useState('admin123'), [loginError, setLoginError] = useState(''), [mode, setMode] = useState<DesktopMode>(initial?.mode ?? 'Browse'), [catalogue, setCatalogue] = useState<Instrument[]>(fallbackCatalogue), [chartSettings, setChartSettings] = useState<ChartSettings>(defaultChartSettings), [showSettings, setShowSettings] = useState(false), [replay, setReplay] = useState<ReplaySnapshot | null>(null), [replayError, setReplayError] = useState(''), [runDate, setRunDate] = useState(initial?.run_date ?? screens.find(screen => screen.id === activeScreenId)?.tiles[0]?.tradingDate ?? paperMarketDate()), [runStartTime, setRunStartTime] = useState(initial?.start_time ?? '09:15'), [replaySpeed, setReplaySpeed] = useState(initial?.speed ?? '1'), [live, setLive] = useState<LiveSnapshot | null>(null), [liveError, setLiveError] = useState('')
-  const [trading, setTrading] = useState<DesktopTradingSnapshot | null>(null), [tradingError, setTradingError] = useState(''), [tradingNotice, setTradingNotice] = useState(''), [drawingError, setDrawingError] = useState(''), [pricePickAction, setPricePickAction] = useState<{ orderId?: string; conversion?: ConversionTarget; ticket?: TradeTicket } | null>(null), [tradeTicket, setTradeTicket] = useState<TradeTicket | null>(null), [underlyingStrategyTicket, setUnderlyingStrategyTicket] = useState<UnderlyingStrategyTicket | null>(null), [tradeLabelState, setTradeLabelState] = useState<DesktopTradeLabelState | null>(null), [labelMetadata, setLabelMetadata] = useState<DesktopLabelMetadata>(emptyLabelMetadata), [labelMetadataStatus, setLabelMetadataStatus] = useState<DesktopLabelMetadataStatus>('idle'), [labelMetadataError, setLabelMetadataError] = useState(''), [sharedTradingSession, setSharedTradingSession] = useState(false), [preStartWallet, setPreStartWallet] = useState<number | null>(null), [historicalStarting, setHistoricalStarting] = useState(false)
+  const [trading, setTrading] = useState<DesktopTradingSnapshot | null>(null), [tradingError, setTradingError] = useState(''), [tradingNotice, setTradingNotice] = useState(''), [drawingError, setDrawingError] = useState(''), [pricePickAction, setPricePickAction] = useState<{ orderId?: string; conversion?: ConversionTarget; ticket?: TradeTicket; missingSl?: { tile: TileConfig; requestId: string; quantity: number } } | null>(null), [tradeTicket, setTradeTicket] = useState<TradeTicket | null>(null), [underlyingStrategyTicket, setUnderlyingStrategyTicket] = useState<UnderlyingStrategyTicket | null>(null), [tradeLabelState, setTradeLabelState] = useState<DesktopTradeLabelState | null>(null), [labelMetadata, setLabelMetadata] = useState<DesktopLabelMetadata>(emptyLabelMetadata), [labelMetadataStatus, setLabelMetadataStatus] = useState<DesktopLabelMetadataStatus>('idle'), [labelMetadataError, setLabelMetadataError] = useState(''), [sharedTradingSession, setSharedTradingSession] = useState(false), [preStartWallet, setPreStartWallet] = useState<number | null>(null), [historicalStarting, setHistoricalStarting] = useState(false)
   const replayPollInFlight = useRef(false)
   const [restoredReady, setRestoredReady] = useState(!initial)
   const screenSaveQueueRef = useRef<Promise<unknown>>(Promise.resolve())
@@ -410,13 +444,15 @@ function ScreenController(props: ScreenControllerProps) {
   const [walletLocked, setWalletLocked] = useState(false)
   const [liveEnabled, setLiveEnabled] = useState(Boolean(initial?.live_enabled))
   const [handingOff, setHandingOff] = useState(false)
+  const handoffRef = useRef<string | null>(null)
+  const [childReady, setChildReady] = useState(!props.assignedId)
+  const [handoffError, setHandoffError] = useState('')
   const authenticatedRef = useRef(connection !== 'authentication_required')
   const tradingStreamEventRef = useRef<Record<string, number>>({})
   const tradingSnapshotRequiredRef = useRef<Record<string, boolean>>({})
   const labelMetadataRequestIdRef = useRef(0)
   const tradingErrorTimerRef = useRef<number | null>(null)
   const liveErrorTimerRef = useRef<number | null>(null)
-  const screensLoadedRef = useRef(false)
   const screenSaveTimerRef = useRef<number | null>(null)
   const lastScreenPayloadRef = useRef('')
   const [googleLoading, setGoogleLoading] = useState(false), [googleReady, setGoogleReady] = useState(false), [googleAccountName, setGoogleAccountName] = useState(''), [pendingGoogleToken, setPendingGoogleToken] = useState<string | null>(null)
@@ -523,28 +559,11 @@ function ScreenController(props: ScreenControllerProps) {
   useEffect(() => { if (connection !== 'connected') return; if (hasNativeHost) void invoke<{ settings: Partial<ChartSettings> }>('desktop_chart_settings', { baseUrl: serverUrl }).then(value => setChartSettings({ ...defaultChartSettings, ...value.settings })).catch(() => undefined); else void fetch(`${serverUrl.replace(/\/$/, '')}/api/desktop/v1/chart-settings`, { headers: { Authorization: `Bearer ${browserToken}` } }).then(response => response.ok ? response.json() as Promise<{ settings: Partial<ChartSettings> }> : Promise.reject()).then(value => setChartSettings({ ...defaultChartSettings, ...value.settings })).catch(() => undefined) }, [browserToken, connection, serverUrl])
   const activeScreen = screens.find(screen => screen.id === activeScreenId) ?? screens[0], pickerTile = activeScreen.tiles.find(tile => tile.id === pickerTileId)
   const activeToolTile = activeScreen.tiles.some(tile => tile.id === activeToolTileId) ? activeToolTileId : activeScreen.tiles[0]?.id
+  const activeTileIdentity = JSON.stringify(activeScreen.tiles.find(tile => tile.id === activeToolTile))
+  useEffect(() => { setPricePickAction(null) }, [trading?.session.session_id, activeToolTile, activeTileIdentity, mode])
+
   useEffect(() => {
-    if (connection !== 'connected' || props.loaded || !props.initializer || screensLoadedRef.current) return
-    void desktopRecordRequest<{ screens: DesktopScreenRecord[] }>('screens', 'GET').then(value => {
-      if (!value.screens.length) {
-        screensLoadedRef.current = true
-        props.onLoaded()
-        return
-      }
-      const ordered = [...value.screens].sort((left, right) => (left.order ?? 0) - (right.order ?? 0))
-      const restored = ordered.map(normalizeScreen)
-      const active = ordered.find(record => record.active) ?? ordered[0]
-      const activeState = active.state ?? {}
-      setScreens(restored)
-      setActiveScreenId(activeState.id ?? active.screen_id)
-      setTileIndicators(activeState.indicators ?? {})
-      setActiveToolTileId(activeState.activeToolTileId ?? restored[0]?.tiles[0]?.id ?? '')
-      screensLoadedRef.current = true
-      props.onLoaded()
-    }).catch(error => { setReplayError(String(error)) })
-  }, [connection, browserToken, serverUrl])
-  useEffect(() => {
-    if (connection !== 'connected' || !props.loaded || !restoredReady || !activeScreen) return
+    if (connection !== 'connected' || !props.loaded || !restoredReady || !activeScreen || !childReady || handingOff) return
     const payloadKey = JSON.stringify({ id: activeScreen.id, name: activeScreen.name, state: screenState(activeScreen), order: screens.findIndex(screen => screen.id === activeScreen.id) })
     if (payloadKey === lastScreenPayloadRef.current) return
     if (screenSaveTimerRef.current) window.clearTimeout(screenSaveTimerRef.current)
@@ -553,7 +572,7 @@ function ScreenController(props: ScreenControllerProps) {
       void persistCurrentScreen().catch(error => { lastScreenPayloadRef.current = ''; setReplayError(`Screen save failed: ${String(error)}`) })
     }, 700)
     return () => { if (screenSaveTimerRef.current) window.clearTimeout(screenSaveTimerRef.current) }
-  }, [screens, activeScreenId, tileIndicators, activeToolTile, connection, browserToken, serverUrl, mode, live?.stream_id, trading?.session.session_id, replay?.run_id, runDate, runStartTime, replaySpeed, sharedTradingSession, props.loaded, restoredReady, liveEnabled])
+  }, [screens, activeScreenId, tileIndicators, activeToolTile, connection, browserToken, serverUrl, mode, live?.stream_id, trading?.session.session_id, replay?.run_id, runDate, runStartTime, replaySpeed, sharedTradingSession, props.loaded, restoredReady, liveEnabled, childReady, handingOff])
   useEffect(() => { if (activeToolTile && activeToolTile !== activeToolTileId) setActiveToolTileId(activeToolTile) }, [activeToolTile, activeToolTileId])
   const selectedIndicators = tileIndicators[activeToolTile] ?? []
   const toggleIndicator = (name: string) => setTileIndicators(current => ({ ...current, [activeToolTile]: (current[activeToolTile] ?? []).includes(name) ? (current[activeToolTile] ?? []).filter(item => item !== name) : [...(current[activeToolTile] ?? []), name] }))
@@ -632,7 +651,7 @@ function ScreenController(props: ScreenControllerProps) {
   }
   const saveChartSettings = (settings: ChartSettings) => { setChartSettings(settings); setShowSettings(false); if (hasNativeHost) void invoke('save_desktop_chart_settings', { baseUrl: serverUrl, settings }); else void fetch(`${serverUrl.replace(/\/$/, '')}/api/desktop/v1/chart-settings`, { method: 'PUT', headers: { Authorization: `Bearer ${browserToken}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ settings }) }) }
   const replayRequest = async <T = ReplaySnapshot,>(path: string, method: 'GET' | 'POST' | 'PUT', body: Record<string, unknown> = {}): Promise<T> => {
-    if (hasNativeHost) return invoke<T>('desktop_replay_request', { baseUrl: serverUrl, path, method, body })
+    if (hasNativeHost) return invoke<T>('desktop_replay_request', { baseUrl: serverUrl, path, method, body, screenId: activeScreenId })
     const response = await fetch(`${serverUrl.replace(/\/$/, '')}/api/desktop/v1/replay/${path}`, { method, headers: { Authorization: `Bearer ${browserToken}`, 'Content-Type': 'application/json' }, body: method === 'GET' ? undefined : JSON.stringify(body) })
     if (!response.ok) {
       const detail = await response.text().catch(() => '')
@@ -640,9 +659,9 @@ function ScreenController(props: ScreenControllerProps) {
     }
     return response.json() as Promise<T>
   }
-  const liveRequest = async (path: string, method: 'GET' | 'POST' | 'PUT' | 'DELETE', body: Record<string, unknown> = {}): Promise<LiveSnapshot> => { if (hasNativeHost) return invoke<LiveSnapshot>('desktop_live_request', { baseUrl: serverUrl, path, method, body }); const response = await fetch(`${serverUrl.replace(/\/$/, '')}/api/desktop/v1/live/${path}`, { method, headers: { Authorization: `Bearer ${browserToken}`, 'Content-Type': 'application/json' }, body: method === 'GET' || method === 'DELETE' ? undefined : JSON.stringify(body) }); if (!response.ok) throw new Error(`Live request failed (${response.status})`); return response.json() as Promise<LiveSnapshot> }
+  const liveRequest = async (path: string, method: 'GET' | 'POST' | 'PUT' | 'DELETE', body: Record<string, unknown> = {}): Promise<LiveSnapshot> => { if (hasNativeHost) return invoke<LiveSnapshot>('desktop_live_request', { baseUrl: serverUrl, path, method, body, screenId: activeScreenId }); const response = await fetch(`${serverUrl.replace(/\/$/, '')}/api/desktop/v1/live/${path}`, { method, headers: { Authorization: `Bearer ${browserToken}`, 'Content-Type': 'application/json' }, body: method === 'GET' || method === 'DELETE' ? undefined : JSON.stringify(body) }); if (!response.ok) throw new Error(`Live request failed (${response.status})`); return response.json() as Promise<LiveSnapshot> }
   const desktopRecordRequest = async <T,>(path: string, method: 'GET' | 'POST' | 'PUT' | 'DELETE', body: Record<string, unknown> = {}): Promise<T> => {
-    if (hasNativeHost) return invoke<T>('desktop_drawing_request', { baseUrl: serverUrl, path, method, body })
+    if (hasNativeHost) return invoke<T>('desktop_drawing_request', { baseUrl: serverUrl, path, method, body, screenId: activeScreenId })
     const response = await fetch(`${serverUrl.replace(/\/$/, '')}/api/desktop/v1/${path}`, { method, headers: { Authorization: `Bearer ${browserToken}`, 'Content-Type': 'application/json' }, body: method === 'GET' ? undefined : JSON.stringify(body) })
     if (!response.ok) throw new Error(`Desktop record request failed (${response.status})`)
     return (response.status === 204 ? null : await response.json()) as T
@@ -650,7 +669,7 @@ function ScreenController(props: ScreenControllerProps) {
   const drawingRequest = useCallback((path: string, method: 'GET' | 'POST' | 'PUT' | 'DELETE', body: Record<string, unknown> = {}) => desktopRecordRequest(path, method, body), [browserToken, connection, hasNativeHost, serverUrl])
   const reportDrawingError = useCallback((error: unknown) => setDrawingError(`Drawing sync failed: ${String(error)}`), [])
   const desktopTradingRequest = async <T,>(path: string, method: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE', body: Record<string, unknown> = {}): Promise<T> => {
-    if (hasNativeHost) return invoke<T>('desktop_drawing_request', { baseUrl: serverUrl, path: `trading/${path}`, method, body })
+    if (hasNativeHost) return invoke<T>('desktop_drawing_request', { baseUrl: serverUrl, path: `trading/${path}`, method, body, screenId: activeScreenId })
     const response = await fetch(`${serverUrl.replace(/\/$/, '')}/api/desktop/v1/trading/${path}`, { method, headers: { Authorization: `Bearer ${browserToken}`, 'Content-Type': 'application/json' }, body: method === 'GET' ? undefined : JSON.stringify(body) })
     if (!response.ok) {
       const detail = await response.text().catch(() => '')
@@ -709,12 +728,16 @@ function ScreenController(props: ScreenControllerProps) {
   const persistCurrentScreen = () => {
     const state = screenState(activeScreen)
     const name = activeScreen.name
+    const mutationId = crypto.randomUUID()
+    const recoveryKey = journalKey(serverUrl, activeScreenId)
+    localStorage.setItem(recoveryKey, JSON.stringify({ state, revision: persistedScreenRef.current.revision, mutationId }))
     const order = screens.findIndex(screen => screen.id === activeScreenId)
     const save = screenSaveQueueRef.current.catch(() => undefined).then(async () => {
       const current = persistedScreenRef.current
-      const body = { name, state, order, mutation_id: crypto.randomUUID(), revision: current.revision }
+      const body = { name, state, order, mutation_id: mutationId, revision: current.revision }
       const record = await desktopRecordRequest<DesktopScreenRecord>(current.id ? `screens/${current.id}` : 'screens', current.id ? 'PUT' : 'POST', body)
       persistedScreenRef.current = { id: record.screen_id, revision: record.revision }
+      try { if (JSON.parse(localStorage.getItem(recoveryKey) ?? 'null')?.mutationId === mutationId) localStorage.removeItem(recoveryKey) } catch { /* keep recovery record */ }
       setScreens(items => items.map(screen => screen.id === activeScreenId ? { ...screen, persistedId: record.screen_id, revision: record.revision, saved: record.state } : screen))
       return record
     })
@@ -733,9 +756,12 @@ function ScreenController(props: ScreenControllerProps) {
       const record = records.screens.find(item => item.screen_id === activeScreen.persistedId || item.state.id === activeScreenId)
       if (cancelled) return
       if (!record) { setReplayError('Saved screen is unavailable'); setRestoredReady(true); return }
-      const saved = record.state
+      let recovery: RecoveryJournal<PersistedScreenState> | null = null
+      try { recovery = JSON.parse(localStorage.getItem(journalKey(serverUrl, activeScreenId)) ?? 'null') } catch { /* ignore invalid journal */ }
+      const saved = recoverState(record.state, record.revision, recovery)
+      if (recovery && recovery.revision !== record.revision) setReplayError('Newer saved screen found; unsaved recovery copy retained locally.')
       persistedScreenRef.current = { id: record.screen_id, revision: record.revision }
-      setScreens(items => items.map(screen => screen.id === activeScreenId ? normalizeScreen(record) : screen))
+      setScreens(items => items.map(screen => screen.id === activeScreenId ? normalizeScreen({ ...record, state: saved }) : screen))
       setMode(saved.mode ?? 'Browse')
       setRunDate(saved.run_date ?? record.state.tiles?.[0]?.tradingDate ?? paperMarketDate())
       setRunStartTime(saved.start_time ?? '09:15')
@@ -747,20 +773,20 @@ function ScreenController(props: ScreenControllerProps) {
           const snapshot = await desktopTradingRequest<DesktopTradingSnapshot>(`${saved.session_id}/snapshot`, 'GET')
           if (!cancelled) { setTrading(snapshot); setSharedTradingSession(!saved.owned || !snapshot.owned) }
           if (!cancelled && saved.mode === 'Paper') await startNativeStream(`paper:${activeScreenId}:${saved.session_id}`, `trading/${saved.session_id}/events`, `trading/${saved.session_id}/snapshot`)
-        } catch (error) { if (!cancelled) reportTradingError(`Session needs reattachment: ${String(error)}`) }
+        } catch (error) { if (!cancelled) { reportTradingError(`Session needs reattachment: ${String(error)}`); if (props.assignedId) setHandoffError(String(error)) } }
       }
       if (saved.run_id) {
         try {
           const snapshot = await replayRequest(`${saved.run_id}/snapshot`, 'GET')
           if (!cancelled) setReplay(snapshot)
           if (!cancelled) await startNativeStream(`replay:${activeScreenId}:${saved.run_id}`, `replay/${saved.run_id}/events`, `replay/${saved.run_id}/snapshot`)
-        } catch (error) { if (!cancelled) setReplayError(`Replay needs restart: ${String(error)}`) }
+        } catch (error) { if (!cancelled) { setReplayError(`Replay needs restart: ${String(error)}`); if (props.assignedId) setHandoffError(String(error)) } }
       }
       if (saved.live_enabled && (saved.mode === 'Browse' || saved.mode === 'Paper') && saved.tiles?.every(tile => tile.tradingDate === paperMarketDate())) {
         try {
           let snapshot: LiveSnapshot
           try { snapshot = saved.live_stream_id ? await liveRequest(`${saved.live_stream_id}/snapshot`, 'GET') : await liveRequest('start', 'POST', { tiles: saved.tiles.map(liveTile) }) }
-          catch (error) { if (!String(error).includes('(404)')) throw error; snapshot = await liveRequest('start', 'POST', { tiles: saved.tiles.map(liveTile) }) }
+          catch (error) { if (props.assignedId || !String(error).includes('(404)')) throw error; snapshot = await liveRequest('start', 'POST', { tiles: saved.tiles.map(liveTile) }) }
           if (!cancelled) {
             const ticks: Record<string, Candle[]> = {}
             for (const tile of snapshot.tiles) {
@@ -771,17 +797,31 @@ function ScreenController(props: ScreenControllerProps) {
             if (!cancelled) { setLiveTickCache(ticks); setLiveSnapshot(snapshot) }
           }
           if (!cancelled) await startNativeStream(`browse-live:${activeScreenId}:${snapshot.stream_id}`, `live/${snapshot.stream_id}/events`, `live/${snapshot.stream_id}/snapshot`)
-        } catch (error) { if (!cancelled) reportLiveError(`Live stream needs restart: ${String(error)}`) }
+        } catch (error) { if (!cancelled) { reportLiveError(`Live stream needs restart: ${String(error)}`); if (props.assignedId) setHandoffError(String(error)) } }
       }
       if (!cancelled) setRestoredReady(true)
     }
-    void restore().catch(error => { if (!cancelled) reportTradingError(error) })
+    void restore().catch(error => { if (!cancelled) { reportTradingError(error); setRestoredReady(true); setHandoffError(String(error)) } })
     return () => { cancelled = true }
   }, [props.loaded, connection, restoredReady])
   const startNativeStream = async (key: string, eventsPath: string, snapshotPath: string) => {
-    if (!hasNativeHost) return
+    if (!hasNativeHost || (props.assignedId && !childReady)) return
     await invoke('start_desktop_stream', { baseUrl: serverUrl, key, eventsPath, snapshotPath })
   }
+  useEffect(() => {
+    if (!props.assignedId || !props.loaded || !restoredReady || connection !== 'connected' || childReady || handoffError) return
+    const token = new URLSearchParams(window.location.search).get('handoff_token')
+    if (!token) { setHandoffError('Missing handoff identity; return to the main window.'); return }
+    let cancelled = false
+    void invoke('ready_screen_window', { screenId: props.assignedId, handoffToken: token }).then(() => { if (!cancelled) setChildReady(true) }).catch(error => setHandoffError(String(error)))
+    return () => { cancelled = true }
+  }, [props.assignedId, props.loaded, restoredReady, connection, childReady, handoffError])
+  useEffect(() => {
+    if (!props.assignedId || !childReady) return
+    if (live) void startNativeStream(`browse-live:${activeScreenId}:${live.stream_id}`, `live/${live.stream_id}/events`, `live/${live.stream_id}/snapshot`).catch(reportLiveError)
+    if (replay) void startNativeStream(`replay:${activeScreenId}:${replay.run_id}`, `replay/${replay.run_id}/events`, `replay/${replay.run_id}/snapshot`).catch(reportTradingError)
+    if (trading?.desktop_mode === 'paper') void startNativeStream(`paper:${activeScreenId}:${trading.session.session_id}`, `trading/${trading.session.session_id}/events`, `trading/${trading.session.session_id}/snapshot`).catch(reportTradingError)
+  }, [childReady])
   const stopNativeStream = (key: string) => {
     if (hasNativeHost) void invoke('stop_desktop_stream', { key })
   }
@@ -809,7 +849,7 @@ function ScreenController(props: ScreenControllerProps) {
     return snapshot?.latest_payload ?? null
   }
   const readNativeStreamState = async <T,>(key: string): Promise<DesktopStreamSnapshot<T> | null> => {
-    if (!hasNativeHost) return null
+    if (!hasNativeHost || (props.assignedId && !childReady)) return null
     const snapshot = await invoke<DesktopStreamSnapshot<T>>('desktop_stream_snapshot', { key })
     if (snapshot.connection === 'authentication_required') {
       setConnection('authentication_required')
@@ -863,7 +903,7 @@ function ScreenController(props: ScreenControllerProps) {
     }
   }
   useEffect(() => {
-    if ((mode !== 'Browse' && mode !== 'Paper') || !live) return
+    if ((mode !== 'Browse' && mode !== 'Paper') || !live || !childReady || handingOff) return
     let cancelled = false
     const sync = async () => {
       try {
@@ -889,7 +929,7 @@ function ScreenController(props: ScreenControllerProps) {
     }
     void sync()
     return () => { cancelled = true }
-  }, [mode, live?.stream_id, activeScreen.id, activeScreen.tiles])
+  }, [mode, live?.stream_id, activeScreen.id, activeScreen.tiles, childReady, handingOff])
   useEffect(() => {
     if (!live || connection === 'authentication_required') return
     const timer = window.setInterval(() => {
@@ -1285,6 +1325,23 @@ function ScreenController(props: ScreenControllerProps) {
   const completePricePick = async (price: number) => {
     if (!trading || !pricePickAction) return
     if (!Number.isFinite(price)) { setPricePickAction(null); return }
+    if (pricePickAction.missingSl) {
+      const pick = pricePickAction.missingSl
+      const sessionId = trading.session.session_id
+      try {
+        await desktopTradingRequest(`${sessionId}/fill-missing-stoploss`, 'POST', { session_id: sessionId, trigger_price: price, request_id: pick.requestId, ...contractPayloadForTile(pick.tile) })
+        const snapshot = await desktopTradingRequest<DesktopTradingSnapshot>(`${sessionId}/snapshot`, 'GET')
+        setTrading(current => current?.session.session_id === sessionId ? snapshot : current)
+        setPricePickAction(null)
+        clearTradingError()
+      } catch (error) {
+        const snapshot = await desktopTradingRequest<DesktopTradingSnapshot>(`${sessionId}/snapshot`, 'GET').catch(() => null)
+        if (snapshot) setTrading(current => current?.session.session_id === sessionId ? snapshot : current)
+        if (/409|502|404/.test(String(error))) setPricePickAction(null)
+        throw error
+      }
+      return
+    }
     if (pricePickAction.ticket) {
       await placeTicketOrder(pricePickAction.ticket, price)
       setPricePickAction(null)
@@ -1300,6 +1357,15 @@ function ScreenController(props: ScreenControllerProps) {
   const placeChartOrder = async (tile: TileConfig, action: OrderAction, price: number, anchor: { x: number; y: number }) => {
     if (!trading) return
     setTradingNotice('')
+    if (action === 'FILL_MISSING_SL') {
+      const position = positionForTile(tile, trading)
+      const payload = contractPayloadForTile(tile)
+      const covered = trading.open_orders.filter(o => o.status === 'PENDING' && o.side === (position?.side === 'LONG' ? 'SELL' : 'BUY') && (o.right ?? null) === (payload.right ?? null) && (!payload.right || (o.strike === payload.strike && o.expiry === payload.expiry))).reduce((sum, o) => sum + o.quantity, 0)
+      const quantity = Math.max(0, (position?.quantity ?? 0) - covered)
+      if (!quantity) throw new Error('Position is already fully covered')
+      setPricePickAction({ missingSl: { tile, quantity, requestId: crypto.randomUUID() } })
+      return
+    }
     if (action === 'START_UNDERLYING_TARGET' || action === 'START_UNDERLYING_SL') {
       setUnderlyingStrategyTicket({ strategyType: action === 'START_UNDERLYING_TARGET' ? 'UnderlyingTargetProfit' : 'UnderlyingStoploss', price, anchor })
       return
@@ -1450,17 +1516,31 @@ function ScreenController(props: ScreenControllerProps) {
       setReplayError('Pop-out windows are available in the native desktop app.')
       return
     }
+    let transferred = false
     try {
+      const token = crypto.randomUUID()
+      handoffRef.current = token
       setHandingOff(true)
       if (screenSaveTimerRef.current) window.clearTimeout(screenSaveTimerRef.current)
-      await persistCurrentScreen()
-      await invoke('open_screen_window', { screenId: activeScreen.id })
+      await bounded(persistCurrentScreen(), SAVE_TIMEOUT_MS)
+      if (handoffRef.current !== token) return
+      await bounded(invoke('open_screen_window', { screenId: activeScreen.id, handoffToken: token }), 16000)
+      transferred = true
     } catch (error) {
+      const token = handoffRef.current
+      if (token) void invoke('cancel_screen_handoff', { screenId: activeScreenId, handoffToken: token }).catch(() => {})
       setHandingOff(false)
       setReplayError(String(error))
-    }
+    } finally { if (!transferred) { handoffRef.current = null; setHandingOff(false) } }
   }
-  if (handingOff) return <main><p>Opening this screen in its own window…</p></main>
+  const cancelHandoff = async () => {
+    const token = handoffRef.current
+    handoffRef.current = null
+    setHandingOff(false)
+    if (token) await invoke('cancel_screen_handoff', { screenId: activeScreenId, handoffToken: token }).catch(reportTradingError)
+  }
+  if (handoffError && props.assignedId) return <main role="alert"><p>Unable to restore this screen: {handoffError}</p><button onClick={() => void invoke('focus_main_window')}>Main window</button></main>
+  if (handingOff) return <main><nav>{screens.map(screen => <button key={screen.id} onClick={() => setActiveScreenId(screen.id)}>{screen.name}</button>)}</nav><p>Opening this screen in its own window…</p><button onClick={() => void cancelHandoff()}>Cancel pop-out</button></main>
   if (!props.loaded && connection !== 'authentication_required') return <main><p>Loading saved screens… {replayError}</p></main>
   if (props.loaded && !restoredReady && connection !== 'authentication_required') return <main><p>Restoring screen… {tradingError || replayError}</p></main>
   if (props.assignedId && connection === 'authentication_required') return <main><p>Sign in in the main window to reconnect this screen.</p><button onClick={() => void invoke('focus_main_window')}>Main window</button></main>

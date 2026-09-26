@@ -852,3 +852,211 @@ def test_desktop_chart_risk_sizing_can_legitimately_exceed_maxsize(side):
         assert order_service.get_open_orders(session.session_id) == []
     finally:
         _clear(session.session_id)
+
+
+@pytest.mark.parametrize("mode", ["paper", "replay", "stepwise"])
+@pytest.mark.parametrize("side", [TradeSide.BUY, TradeSide.SELL])
+def test_missing_sl_fills_only_gap_and_deduplicates(mode, side):
+    from app.routers.orders import MissingStoplossRequest
+    session = _equity_session(session_id=f"missing-sl-{mode}-{side.value}", mode=mode)
+    if mode == "paper":
+        session.session_type = "paper"
+    closing = TradeSide.SELL if side == TradeSide.BUY else TradeSide.BUY
+    trading_service.record_trade(session.session_id, side, 100, 1778058900,
+        quantity=100, symbol=session.symbol, user_id=session.user_id)
+    for kind, quantity in [(OrderType.STOPLOSS, 40), (OrderType.LIMIT, 20), (OrderType.TARGET, 10)]:
+        order_service.place_order(session_id=session.session_id, symbol=session.symbol,
+            side=closing, order_type=kind, quantity=quantity, created_at=1778058900,
+            trading_date=session.date, trigger_price=90 if closing == TradeSide.SELL else 110,
+            limit_price=110 if closing == TradeSide.SELL else 90, user_id=session.user_id,
+            margin_rate=.2, wallet_ledger_id=session.wallet_ledger_id)
+    request = MissingStoplossRequest(session_id=session.session_id, request_id="retry",
+        trigger_price=90 if side == TradeSide.BUY else 110)
+    try:
+        result = asyncio.run(desktop_trading.fill_missing_stoploss(session.session_id, request, session.user_id))
+        assert result["quantity"] == 30
+        assert result["orders"][0].side == closing
+        assert result["orders"][0].is_stoploss
+        assert result["orders"][0].reserved_amount == 0
+        retry = asyncio.run(desktop_trading.fill_missing_stoploss(session.session_id, request, session.user_id))
+        assert retry["orders"][0].order_id == result["orders"][0].order_id
+        with pytest.raises(HTTPException) as exc:
+            asyncio.run(desktop_trading.fill_missing_stoploss(session.session_id,
+                request.model_copy(update={"request_id": "another"}), session.user_id))
+        assert exc.value.status_code == 409
+    finally:
+        _clear(session.session_id)
+
+
+def test_missing_sl_concurrent_requests_recheck_gap():
+    from app.routers.orders import MissingStoplossRequest
+    session = _equity_session(session_id="missing-sl-concurrent")
+    trading_service.record_trade(session.session_id, TradeSide.BUY, 100, 1778058900,
+        quantity=100, symbol=session.symbol, user_id=session.user_id)
+    async def submit():
+        return await asyncio.gather(*(desktop_trading.fill_missing_stoploss(session.session_id,
+            MissingStoplossRequest(session_id=session.session_id, request_id=str(i), trigger_price=90),
+            session.user_id) for i in range(2)), return_exceptions=True)
+    try:
+        results = asyncio.run(submit())
+        assert sum(isinstance(result, dict) for result in results) == 1
+        assert sum(o.quantity for o in order_service.get_open_orders(session.session_id)) == 100
+    finally:
+        _clear(session.session_id)
+
+
+@pytest.mark.parametrize("price", [100, 110])
+def test_missing_sl_rejects_wrong_side_and_other_user(price):
+    from app.routers.orders import MissingStoplossRequest
+    session = _equity_session(session_id="missing-sl-invalid")
+    trading_service.record_trade(session.session_id, TradeSide.BUY, 100, 1778058900,
+        quantity=100, symbol=session.symbol, user_id=session.user_id)
+    request = MissingStoplossRequest(session_id=session.session_id, request_id="invalid", trigger_price=price)
+    try:
+        with pytest.raises(HTTPException) as exc:
+            asyncio.run(desktop_trading.fill_missing_stoploss(session.session_id, request, session.user_id))
+        assert exc.value.status_code == 400
+        with pytest.raises(HTTPException) as exc:
+            asyncio.run(desktop_trading.fill_missing_stoploss(session.session_id, request, "other-user"))
+        assert exc.value.status_code == 404
+        assert order_service.get_open_orders(session.session_id) == []
+    finally:
+        _clear(session.session_id)
+
+
+@pytest.mark.parametrize("side", [TradeSide.BUY, TradeSide.SELL])
+def test_website_missing_sl_real_equity_submits_to_broker_and_fills(side):
+    from unittest.mock import Mock
+    from app.routers.orders import MissingStoplossRequest, fill_missing_stoploss
+    session = _equity_session(session_id=f"missing-sl-real-{side.value}")
+    session.session_type = "real"
+    closing = TradeSide.SELL if side == TradeSide.BUY else TradeSide.BUY
+    trading_service.record_trade(session.session_id, side, 100, 1778058900,
+        quantity=100, symbol=session.symbol, user_id=session.user_id)
+    order_service.place_order(session_id=session.session_id, symbol=session.symbol,
+        side=closing, order_type=OrderType.LIMIT, quantity=40, created_at=1778058900,
+        trading_date=session.date, limit_price=110, user_id=session.user_id, margin_rate=.2)
+    broker = Mock()
+    broker.place_sl_order.return_value = "broker-sl"
+    request = MissingStoplossRequest(session_id=session.session_id, request_id="real",
+        trigger_price=90 if side == TradeSide.BUY else 110)
+    try:
+        with patch("app.services.kotak_service.get_service", return_value=broker):
+            result = asyncio.run(fill_missing_stoploss(request, session.user_id))
+            assert result["quantity"] == 60
+            assert broker.place_sl_order.call_args.kwargs["qty"] == 60
+            assert broker.place_sl_order.call_args.kwargs["side"] == ("S" if side == TradeSide.BUY else "B")
+            assert result["orders"][0].kotak_order_id == "broker-sl"
+            asyncio.run(fill_missing_stoploss(request, session.user_id))
+            broker.place_sl_order.assert_called_once()
+            callback = broker.register_fill_callback.call_args.args[1]
+            callback("broker-sl", closing.value, 60, request.trigger_price)
+            assert trading_service.get_position(session.session_id, session.symbol).quantity == 40
+    finally:
+        _clear(session.session_id)
+
+
+def test_website_missing_sl_real_rejection_is_not_reported_as_protection():
+    from unittest.mock import Mock
+    from app.routers.orders import MissingStoplossRequest, fill_missing_stoploss
+    from app.services.kotak_service import KotakError
+    session = _equity_session(session_id="missing-sl-real-rejection")
+    session.session_type = "real"
+    trading_service.record_trade(session.session_id, TradeSide.BUY, 100, 1778058900,
+        quantity=100, symbol=session.symbol, user_id=session.user_id)
+    broker = Mock()
+    broker.place_sl_order.side_effect = KotakError("rejected")
+    request = MissingStoplossRequest(session_id=session.session_id, request_id="reject", trigger_price=90)
+    try:
+        with patch("app.services.kotak_service.get_service", return_value=broker):
+            with pytest.raises(HTTPException) as exc:
+                asyncio.run(fill_missing_stoploss(request, session.user_id))
+            assert exc.value.status_code == 502
+            assert order_service.get_open_orders(session.session_id) == []
+            with pytest.raises(HTTPException) as exc:
+                asyncio.run(fill_missing_stoploss(request, session.user_id))
+            assert exc.value.status_code == 409
+            broker.place_sl_order.assert_called_once()
+    finally:
+        _clear(session.session_id)
+
+
+def test_missing_sl_option_contract_isolation_and_real_broker_identity():
+    from unittest.mock import Mock
+    from app.routers.orders import MissingStoplossRequest, fill_missing_stoploss
+    session = _session()
+    session.session_type = "real"
+    expiry = "2026-05-14"
+    strike = 24100
+    session.desktop_contract_quotes = {f"NIFTY:{expiry}:{strike}:CE": {"price": 100}}
+    trading_service.record_trade(session.session_id, TradeSide.BUY, 100, 1778058900,
+        quantity=130, symbol=session.symbol, right="CE", strike=strike, expiry=expiry,
+        instrument_type="options", user_id=session.user_id)
+    order_service.place_order(session_id=session.session_id, symbol=session.symbol,
+        side=TradeSide.SELL, order_type=OrderType.LIMIT, quantity=65, created_at=1778058900,
+        trading_date=session.date, limit_price=110, right="CE", strike=strike,
+        expiry=expiry, user_id=session.user_id)
+    order_service.place_order(session_id=session.session_id, symbol=session.symbol,
+        side=TradeSide.SELL, order_type=OrderType.LIMIT, quantity=65, created_at=1778058900,
+        trading_date=session.date, limit_price=110, right="CE", strike=strike,
+        expiry=session.expiry, user_id=session.user_id)
+    broker = Mock()
+    broker.place_options_sl_order.return_value = "option-sl"
+    try:
+        with patch("app.services.kotak_service.get_service", return_value=broker):
+            result = asyncio.run(fill_missing_stoploss(MissingStoplossRequest(
+                session_id=session.session_id, request_id="contract", trigger_price=90,
+                right="CE", strike=strike, expiry=expiry), session.user_id))
+        assert result["quantity"] == 65
+        kwargs = broker.place_options_sl_order.call_args.kwargs
+        assert (kwargs["right"], kwargs["strike"], kwargs["expiry"], kwargs["qty"]) == ("CE", strike, expiry, 65)
+    finally:
+        _clear(session.session_id)
+
+
+def test_missing_sl_large_real_options_split_in_whole_lots():
+    from unittest.mock import Mock
+    from app.routers.orders import MissingStoplossRequest, fill_missing_stoploss
+    session = _session()
+    session.session_type = "real"
+    trading_service.record_trade(session.session_id, TradeSide.BUY, 100, 1778058900,
+        quantity=1950, symbol=session.symbol, right="CE", strike=session.strike_ce,
+        expiry=session.expiry, instrument_type="options", user_id=session.user_id)
+    broker = Mock()
+    broker.place_options_sl_order.side_effect = ["chunk-1", "chunk-2"]
+    request = MissingStoplossRequest(session_id=session.session_id, request_id="split",
+        trigger_price=90, right="CE", strike=session.strike_ce, expiry=session.expiry)
+    try:
+        with patch("app.services.kotak_service.get_service", return_value=broker):
+            result = asyncio.run(fill_missing_stoploss(request, session.user_id))
+            assert result["quantity"] == 1950
+            assert len(result["orders"]) == 2
+            assert all(o.quantity % 65 == 0 and o.quantity <= 1800 for o in result["orders"])
+            assert sum(call.kwargs["qty"] for call in broker.place_options_sl_order.call_args_list) == 1950
+            asyncio.run(fill_missing_stoploss(request, session.user_id))
+            assert broker.place_options_sl_order.call_count == 2
+    finally:
+        _clear(session.session_id)
+
+
+@pytest.mark.parametrize("state", ["flat", "ended", "no-quote", "lease-lost"])
+def test_missing_sl_rejects_unavailable_position_or_engine(state):
+    from app.routers.orders import MissingStoplossRequest, fill_missing_stoploss
+    session = _equity_session(session_id=f"missing-sl-state-{state}")
+    if state != "flat":
+        trading_service.record_trade(session.session_id, TradeSide.BUY, 100, 1778058900,
+            quantity=100, symbol=session.symbol, user_id=session.user_id)
+    if state == "ended":
+        session.state = SimulationState.ENDED
+    if state == "no-quote":
+        session.last_price = 0
+    if state == "lease-lost":
+        session.paper_lease_lost = True
+    try:
+        with pytest.raises(HTTPException) as exc:
+            asyncio.run(fill_missing_stoploss(MissingStoplossRequest(session_id=session.session_id,
+                request_id=state, trigger_price=90), session.user_id))
+        assert exc.value.status_code == 409
+        assert order_service.get_open_orders(session.session_id) == []
+    finally:
+        _clear(session.session_id)

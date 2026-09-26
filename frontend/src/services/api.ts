@@ -114,6 +114,7 @@ export interface Order {
   strike?: number | null // options strike; null for equity or old orders (backward-compat)
   entry_sl_price?: number | null  // auto-stoploss price set at entry time
   group_id?: string | null        // links entry order with auto-SL order
+  expiry?: string | null
 }
 
 export interface HistoricalDataResponse {
@@ -552,6 +553,7 @@ export interface Trade {
   commission: number   // exchange charges + brokerage, computed at record time
   // Frontend-only: NIFTY price snapshotted when a CE/PE trade lands in local state
   underlying_price?: number
+  expiry?: string | null
 }
 
 export interface Position {
@@ -964,6 +966,12 @@ const api = {
     if (right) url += `&right=${right}`
     const res = await fetch(url)
     if (!res.ok) throw new Error(`Get position failed: ${res.status}`)
+    return res.json()
+  },
+
+  async fillMissingStoploss(body: { session_id: string; trigger_price: number; request_id: string; right?: string; strike?: number; expiry?: string }): Promise<{ orders: Order[]; quantity: number }> {
+    const res = await fetch(`${BACKEND_URL}/api/orders/fill-missing-stoploss`, { method: 'POST', headers: { 'Content-Type': 'application/json', ..._authHeaders() }, body: JSON.stringify(body) })
+    if (!res.ok) throw Object.assign(new Error(await res.text()), { status: res.status })
     return res.json()
   },
 
