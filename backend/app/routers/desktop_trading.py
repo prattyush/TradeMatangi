@@ -7,11 +7,13 @@ of truth for Stepwise and desktop Replay trading.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from app.dependencies import get_desktop_user_id
@@ -37,10 +39,12 @@ from app.services.user_settings_service import get_settings, update_settings
 
 router = APIRouter(prefix="/api/desktop/v1/trading", tags=["desktop"])
 logger = logging.getLogger(__name__)
+HEARTBEAT_INTERVAL = 15
 
 
 class DesktopTradingSnapshot(BaseModel):
     version: int = 1
+    event_cursor: int = 0
     desktop_mode: str = "stepwise"
     source: str = "desktop_stepwise"
     session: SimulationStartResponse
@@ -176,6 +180,15 @@ def _require_session(session_id: str, user_id: str):
     if not session or session.user_id != user_id:
         raise HTTPException(status_code=404, detail="Session not found")
     return session
+
+
+def _parse_event_id(raw: str | None) -> int | None:
+    if raw in (None, ""):
+        return None
+    try:
+        return max(0, int(raw))
+    except (TypeError, ValueError):
+        return None
 
 
 def _session_response(session) -> SimulationStartResponse:
@@ -485,6 +498,7 @@ def _snapshot(session, user_id: str) -> DesktopTradingSnapshot:
     display_trades = session_trades + [item for item in historical_trades if str(item.get("trade_id")) not in known_trade_ids]
     display_trades.sort(key=lambda item: int(item.get("timestamp", 0)))
     return DesktopTradingSnapshot(
+        event_cursor=session.queue.latest_id(),
         desktop_mode=_desktop_mode(session),
         source=_desktop_source(session),
         session=_session_response(session),
@@ -643,6 +657,70 @@ def _emit_order_event(session, event: dict) -> None:
         pass
 
 
+def _event_type(payload: str) -> str:
+    try:
+        event = json.loads(payload)
+        value = event.get("type")
+        if isinstance(value, str) and value:
+            return value
+    except Exception:
+        pass
+    return "message"
+
+
+def _snapshot_event_payload(session, user_id: str) -> str:
+    return _snapshot(session, user_id).model_dump_json()
+
+
+async def _desktop_trading_event_source(session, user_id: str, last_event_id: int | None):
+    queue = session.queue
+    cursor = last_event_id
+    sent = 0
+
+    oldest_id = queue.oldest_id() if hasattr(queue, "oldest_id") else None
+    latest_id = queue.latest_id() if hasattr(queue, "latest_id") else 0
+    if cursor is not None and oldest_id is not None and cursor + 1 < oldest_id:
+        cursor = latest_id
+        yield (
+            f"id: {latest_id}\n"
+            "event: stream_reset\n"
+            f"data: {_snapshot_event_payload(session, user_id)}\n\n"
+        )
+    elif cursor is None:
+        cursor = latest_id
+        yield (
+            f"id: {latest_id}\n"
+            "event: snapshot\n"
+            f"data: {_snapshot_event_payload(session, user_id)}\n\n"
+        )
+
+    while True:
+        try:
+            next_event = await asyncio.wait_for(queue.get_after(cursor), timeout=HEARTBEAT_INTERVAL)
+            if next_event is None:
+                break
+            event_id, payload = next_event
+            if cursor is not None and event_id > cursor + 1:
+                cursor = queue.latest_id() if hasattr(queue, "latest_id") else event_id
+                yield (
+                    f"id: {cursor}\n"
+                    "event: stream_reset\n"
+                    f"data: {_snapshot_event_payload(session, user_id)}\n\n"
+                )
+                continue
+            cursor = event_id
+            sent += 1
+            event_payload = json.dumps({**json.loads(payload), "event_id": event_id})
+            yield f"id: {event_id}\nevent: {_event_type(payload)}\ndata: {event_payload}\n\n"
+            if '"type": "session_ended"' in payload or '"type":"session_ended"' in payload:
+                break
+        except asyncio.TimeoutError:
+            yield ": heartbeat\n\n"
+        except asyncio.CancelledError:
+            logger.info("desktop_trading_events_disconnected session_id=%s events_sent=%d", session.session_id, sent)
+            break
+
+
 def _emit_order_converted(session, order: Order) -> None:
     _emit_order_event(session, {
         "type": "order_converted",
@@ -796,6 +874,30 @@ async def active_stepwise(
 @router.get("/{session_id}/snapshot", response_model=DesktopTradingSnapshot)
 async def snapshot(session_id: str, user_id: str = Depends(get_desktop_user_id)):
     return _snapshot(_require_session(session_id, user_id), user_id)
+
+
+@router.get("/{session_id}/events")
+async def trading_events(
+    session_id: str,
+    last_event_id: int | None = Query(default=None),
+    last_event_id_header: str | None = Header(default=None, alias="Last-Event-ID"),
+    user_id: str = Depends(get_desktop_user_id),
+):
+    session = _require_session(session_id, user_id)
+    cursor = last_event_id if last_event_id is not None else _parse_event_id(last_event_id_header)
+    logger.info(
+        "desktop_trading_events_connected session_id=%s user_id=%s mode=%s last_event_id=%s",
+        session_id, user_id, _desktop_mode(session), cursor if cursor is not None else "-",
+    )
+    return StreamingResponse(
+        _desktop_trading_event_source(session, user_id, cursor),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
+    )
 
 
 @router.post("/{session_id}/stop")

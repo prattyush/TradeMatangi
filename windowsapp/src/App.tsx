@@ -6,6 +6,7 @@ import { shouldConsumeDrawingCommand } from './drawingState'
 import type { Candle, DesktopOrder, DesktopPosition, DesktopTrade, DesktopTradingSnapshot } from './contracts'
 import { aggregateLiveCandles, appendLiveTick, reconcileLiveTicks } from './liveCandles'
 import { applyLiveStreamPayloadToSnapshot, type LiveSnapshot, type LiveTileState } from './liveStreamState'
+import { acceptPaperSnapshot, applyPaperStreamEvent, isDesktopTradingSnapshot } from './paperTradingState'
 
 interface HistoricalPage { candles: Candle[]; available?: boolean; unavailable_reason?: string }
 interface Instrument { symbol: string; display_name: string; exchange: string; chart_type?: string; option_eligible: boolean; supported_intervals: number[] }
@@ -27,6 +28,7 @@ interface DesktopLabelMetadata { categories: string[]; strategies: string[]; ent
 type DesktopLabelMetadataStatus = 'idle' | 'loading' | 'ready' | 'error'
 const emptyLabelMetadata: DesktopLabelMetadata = { categories: [], strategies: [], entry_tags: [], exit_tags: [] }
 interface DesktopTradingCandidate { status: 'none' | 'active' | 'checkpoint' | 'existing'; active?: DesktopTradingSnapshot | null; checkpoint?: { current_time: number; current_bar_index: number; desktop_mode?: string } | null; existing_session_id?: string | null }
+type DesktopTradingStreamPayload = DesktopTradingSnapshot | Record<string, unknown> | null
 interface DrawingCommand { id: number; tool: string }
 interface DrawingAction { id: number; action: 'delete' | 'hide' | 'lock' }
 type DrawingMode = 'once' | 'repeat'
@@ -63,6 +65,8 @@ type Api = <T,>(path: string, params?: URLSearchParams) => Promise<T>
 const GOOGLE_CLIENT_ID = '249337992826-jm174i5bqdhr4bfqpmip44gnnp4eo2eh.apps.googleusercontent.com'
 const fallbackCatalogue: Instrument[] = [{ symbol: 'NIFTY', display_name: 'NIFTY 50', exchange: 'NSE', chart_type: 'index', option_eligible: true, supported_intervals: [1, 3, 5, 15, 30, 60] }]
 const defaultChartSettings: ChartSettings = { background: '#151a23', textColor: '#aeb8ca', gridColor: '#ffffff', gridOpacity: 0.12, gridStyle: 'solid', gridSize: 1, movingAverageType: 'MA', movingAveragePeriods: '5,10,20', showChartInfo: true, liveProvider: 'breeze', horizontalLineColor: '#facc15', horizontalLineWidth: 2, trendLineColor: '#60a5fa', trendLineWidth: 2, drawingLineColor: '#60a5fa', drawingLineWidth: 2, drawingFillColor: '#60a5fa', drawingFillOpacity: 0.16 }
+const PAPER_STREAM_POLL_MS = 500
+const PAPER_SNAPSHOT_RECONCILE_MS = 30000
 const noIndicators: string[] = []
 const newTile = (): TileConfig => ({ id: crypto.randomUUID(), kind: 'spot', symbol: 'NIFTY', interval: '3', tradingDate: '2026-05-06', expiry: '', strike: '', right: 'CE' })
 const newScreen = (number: number): Screen => ({ id: crypto.randomUUID(), name: `Screen ${number}`, layout: '1', tiles: [newTile()] })
@@ -141,6 +145,20 @@ const positionForTile = (tile: TileConfig, snapshot?: DesktopTradingSnapshot | n
   if (contractKey) return snapshot.positions_by_contract?.[contractKey] ?? null
   if (tile.kind === 'option') return snapshot.positions[tile.right as 'CE' | 'PE'] ?? null
   return snapshot.positions.equity ?? null
+}
+
+const paperStreamEvents = (payload: DesktopTradingStreamPayload): Record<string, unknown>[] => {
+  if (!payload || typeof payload !== 'object') return []
+  const maybeBatch = payload as { type?: unknown; events?: unknown }
+  if (maybeBatch.type === 'batch' && Array.isArray(maybeBatch.events)) {
+    return maybeBatch.events.filter((item): item is Record<string, unknown> => Boolean(item && typeof item === 'object'))
+  }
+  return [payload as Record<string, unknown>]
+}
+
+const paperEventNeedsSnapshot = (event: Record<string, unknown>): boolean => {
+  const type = typeof event.type === 'string' ? event.type : ''
+  return type !== 'tick' && type !== 'bar_paused'
 }
 
 function WorkspaceToolPanel({ tiles, activeTileId, setActiveTileId, activeTileLabel, activePosition, sessionCapital, indicators, toggleIndicator, clearIndicators, sendDrawing, sendDrawingAction, activeDrawingTool, drawingMode, setDrawingMode, tradeHistoryCount, onOpenTradeHistory, labelState, labelMetadata, labelMetadataStatus, labelMetadataError, onReloadLabelMetadata, onSaveTradeLabel, strategies, onCancelStrategy, onUpdateStrategyPrice }: { tiles: TileConfig[]; activeTileId: string; setActiveTileId: (tileId: string) => void; activeTileLabel: string; activePosition: DesktopPosition | null; sessionCapital: number; indicators: string[]; toggleIndicator: (name: string) => void; clearIndicators: () => void; sendDrawing: (tool: string) => void; sendDrawingAction: (action: DrawingAction['action']) => void; activeDrawingTool: string | null; drawingMode: DrawingMode; setDrawingMode: (mode: DrawingMode) => void; tradeHistoryCount: number; onOpenTradeHistory: () => void; labelState: DesktopTradeLabelState | null; labelMetadata: DesktopLabelMetadata; labelMetadataStatus: DesktopLabelMetadataStatus; labelMetadataError: string; onReloadLabelMetadata: () => void; onSaveTradeLabel: (roundTrip: DesktopRoundTrip, fields: Partial<DesktopTradeLabel>) => void; strategies: DesktopTradingSnapshot['strategies']; onCancelStrategy: (strategyId: string) => void; onUpdateStrategyPrice: (strategyId: string, currentPrice: number) => void }) {
@@ -315,6 +333,8 @@ export default function App() {
   const [serverUrl, setServerUrl] = useState(() => localStorage.getItem('desktop-server-url') ?? 'http://localhost:8700'), [email, setEmail] = useState('admin@tradematangi.com'), [password, setPassword] = useState('admin123'), [connection, setConnection] = useState<'connected' | 'reconnecting' | 'offline' | 'authentication_required'>('authentication_required'), [loginError, setLoginError] = useState(''), [browserToken, setBrowserToken] = useState(''), [mode, setMode] = useState<DesktopMode>('Browse'), [catalogue, setCatalogue] = useState<Instrument[]>(fallbackCatalogue), [screens, setScreens] = useState<Screen[]>([newScreen(1)]), [chartSettings, setChartSettings] = useState<ChartSettings>(defaultChartSettings), [showSettings, setShowSettings] = useState(false), [replay, setReplay] = useState<ReplaySnapshot | null>(null), [replayError, setReplayError] = useState(''), [runDate, setRunDate] = useState('2026-05-06'), [runStartTime, setRunStartTime] = useState('09:15'), [replaySpeed, setReplaySpeed] = useState('1'), [live, setLive] = useState<LiveSnapshot | null>(null), [liveError, setLiveError] = useState('')
   const [trading, setTrading] = useState<DesktopTradingSnapshot | null>(null), [tradingError, setTradingError] = useState(''), [tradingNotice, setTradingNotice] = useState(''), [drawingError, setDrawingError] = useState(''), [pricePickAction, setPricePickAction] = useState<{ orderId?: string; conversion?: ConversionTarget; ticket?: TradeTicket } | null>(null), [tradeTicket, setTradeTicket] = useState<TradeTicket | null>(null), [underlyingStrategyTicket, setUnderlyingStrategyTicket] = useState<UnderlyingStrategyTicket | null>(null), [tradeLabelState, setTradeLabelState] = useState<DesktopTradeLabelState | null>(null), [labelMetadata, setLabelMetadata] = useState<DesktopLabelMetadata>(emptyLabelMetadata), [labelMetadataStatus, setLabelMetadataStatus] = useState<DesktopLabelMetadataStatus>('idle'), [labelMetadataError, setLabelMetadataError] = useState(''), [sharedTradingSession, setSharedTradingSession] = useState(false), [preStartWallet, setPreStartWallet] = useState<number | null>(null), [historicalStarting, setHistoricalStarting] = useState(false)
   const replayPollInFlight = useRef(false)
+  const tradingStreamEventRef = useRef<Record<string, number>>({})
+  const tradingSnapshotRequiredRef = useRef<Record<string, boolean>>({})
   const labelMetadataRequestIdRef = useRef(0)
   const tradingErrorTimerRef = useRef<number | null>(null)
   const liveErrorTimerRef = useRef<number | null>(null)
@@ -622,6 +642,11 @@ export default function App() {
   }
   const readNativeStream = async <T,>(key: string): Promise<T | null> => {
     if (!hasNativeHost) return null
+    const snapshot = await readNativeStreamState<T>(key)
+    return snapshot?.latest_payload ?? null
+  }
+  const readNativeStreamState = async <T,>(key: string): Promise<DesktopStreamSnapshot<T> | null> => {
+    if (!hasNativeHost) return null
     const snapshot = await invoke<DesktopStreamSnapshot<T>>('desktop_stream_snapshot', { key })
     if (snapshot.connection === 'authentication_required') {
       setConnection('authentication_required')
@@ -630,7 +655,7 @@ export default function App() {
     }
     if (snapshot.connection === 'offline' || snapshot.connection === 'reconnecting') setConnection(snapshot.connection)
     else if (connection !== 'connected') setConnection('connected')
-    return snapshot.latest_payload
+    return snapshot
   }
   const applyLiveStreamPayload = (payload: unknown) => updateLiveSnapshot(current => applyLiveStreamPayloadToSnapshot(current, payload))
   const liveTile = (tile: TileConfig) => { const item = catalogue.find(entry => entry.symbol === tile.symbol) ?? fallbackCatalogue[0]; const instrument = tile.kind === 'option' ? { kind: 'option', exchange: item.exchange, underlying: tile.symbol, expiry: tile.expiry, strike: Number(tile.strike), right: tile.right } : { kind: item.chart_type ?? 'equity', exchange: item.exchange, symbol: tile.symbol }; return { tile_id: tile.id, instrument, interval_minutes: Number(tile.interval) } }
@@ -792,6 +817,10 @@ export default function App() {
       }
       if (mode === 'Paper') {
         if (!live) await startLive()
+        if (tradeSnapshot?.session.session_id) {
+          delete tradingSnapshotRequiredRef.current[`paper:${tradeSnapshot.session.session_id}`]
+          await startNativeStream(`paper:${tradeSnapshot.session.session_id}`, `trading/${tradeSnapshot.session.session_id}/events`, `trading/${tradeSnapshot.session.session_id}/snapshot`)
+        }
       } else {
         const attachedStartTime = attached?.current_time ? new Date(attached.current_time * 1000).toISOString().slice(11, 19) : replayStartTime
         const initialCursor = tradeSnapshot && tradeSnapshot.current_time > 0 ? tradeSnapshot.current_time : undefined
@@ -846,7 +875,11 @@ export default function App() {
   const stopPaper = async () => {
     if (!trading?.session.session_id) return
     try {
-      if (!sharedTradingSession) await desktopTradingRequest(`${trading.session.session_id}/stop`, 'POST')
+      const sessionId = trading.session.session_id
+      if (!sharedTradingSession) await desktopTradingRequest(`${sessionId}/stop`, 'POST')
+      stopNativeStream(`paper:${sessionId}`)
+      delete tradingStreamEventRef.current[`paper:${sessionId}`]
+      delete tradingSnapshotRequiredRef.current[`paper:${sessionId}`]
       setTrading(null)
       setSharedTradingSession(false)
       setTradeTicket(null)
@@ -863,6 +896,11 @@ export default function App() {
     if ((trading && trading.session.state !== 'ended') || (replay && replay.state !== 'stopped') || historicalStarting) {
       setTradingNotice('Stop or detach the current run before changing mode.')
       return
+    }
+    if (trading?.desktop_mode === 'paper') {
+      stopNativeStream(`paper:${trading.session.session_id}`)
+      delete tradingStreamEventRef.current[`paper:${trading.session.session_id}`]
+      delete tradingSnapshotRequiredRef.current[`paper:${trading.session.session_id}`]
     }
     setTrading(null)
     setSharedTradingSession(false)
@@ -919,13 +957,57 @@ export default function App() {
   useEffect(() => {
     if (!isTradingMode(mode) || !trading?.session.session_id) return
     const sessionId = trading.session.session_id
+    if (mode === 'Paper' && hasNativeHost) {
+      const key = `paper:${sessionId}`
+      let cancelled = false
+      let inFlight = false
+      let lastReconcileAt = 0
+      const timer = window.setInterval(() => {
+        if (inFlight) return
+        inFlight = true
+        void readNativeStreamState<DesktopTradingStreamPayload>(key)
+          .then(async stream => {
+            if (!stream || cancelled) return
+            const previousCursor = tradingStreamEventRef.current[key] ?? -1
+            const advanced = stream.last_event_id > previousCursor
+            let needsSnapshot = Boolean(tradingSnapshotRequiredRef.current[key])
+            const now = Date.now()
+            if (lastReconcileAt === 0 || now - lastReconcileAt >= PAPER_SNAPSHOT_RECONCILE_MS) needsSnapshot = true
+            if (advanced) {
+              const events = paperStreamEvents(stream.latest_payload)
+              for (const event of events) {
+                if (!isDesktopTradingSnapshot(event) && paperEventNeedsSnapshot(event)) needsSnapshot = true
+              }
+              setTrading(current => {
+                if (!current || current.session.session_id !== sessionId) return current
+                let next = current
+                for (const event of events) next = applyPaperStreamEvent(next, event)
+                return next
+              })
+            }
+            if (needsSnapshot) {
+              tradingSnapshotRequiredRef.current[key] = true
+              const snapshot = await desktopTradingRequest<DesktopTradingSnapshot>(`${sessionId}/snapshot`, 'GET')
+              if (cancelled || snapshot.session.session_id !== sessionId) return
+              setTrading(current => current?.session.session_id === sessionId ? acceptPaperSnapshot(current, snapshot) : current)
+              lastReconcileAt = Date.now()
+              delete tradingSnapshotRequiredRef.current[key]
+            }
+            if (advanced) tradingStreamEventRef.current[key] = stream.last_event_id
+            clearTradingError()
+          })
+          .catch(reportTradingError)
+          .finally(() => { inFlight = false })
+      }, PAPER_STREAM_POLL_MS)
+      return () => { cancelled = true; window.clearInterval(timer) }
+    }
     const timer = window.setInterval(() => {
       void desktopTradingRequest<DesktopTradingSnapshot>(`${sessionId}/snapshot`, 'GET')
         .then(snapshot => { if (snapshot.session.session_id === sessionId) setTrading(snapshot) })
         .catch(reportTradingError)
     }, 800)
     return () => window.clearInterval(timer)
-  }, [mode, trading?.session.session_id, serverUrl, browserToken])
+  }, [mode, trading?.session.session_id, serverUrl, browserToken, hasNativeHost])
   const contractPayloadForTile = (tile: TileConfig): Record<string, unknown> => tile.kind === 'option' ? { right: tile.right, strike: Number(tile.strike), expiry: tile.expiry } : { right: null }
   const ensureOptionContractAttached = async (tile: TileConfig) => {
     if (!trading || tile.kind !== 'option') return
@@ -1177,6 +1259,11 @@ export default function App() {
   const logoutDesktop = () => {
     if (live) stopNativeStream(`live:${live.stream_id}`)
     if (replay) stopNativeStream(`replay:${replay.run_id}`)
+    if (trading?.desktop_mode === 'paper') {
+      stopNativeStream(`paper:${trading.session.session_id}`)
+      delete tradingStreamEventRef.current[`paper:${trading.session.session_id}`]
+      delete tradingSnapshotRequiredRef.current[`paper:${trading.session.session_id}`]
+    }
     if (hasNativeHost) void invoke('desktop_logout', { baseUrl: serverUrl })
     setBrowserToken('')
     setLiveSnapshot(null)

@@ -1,17 +1,13 @@
 import pytest
 import asyncio
-from fastapi.testclient import TestClient
+import json
 from fastapi import HTTPException
 from starlette.routing import Match
 from unittest.mock import patch
 
-from app.main import app
 from app.models.schemas import ConvertOrderRequest, OrderStatus, OrderType, PlaceOrderRequest, SimulationState, StartStrategyRequest, StrategyType, TradeSide, UpdateOrderRequest, WalletResetRequest
 from app.routers import desktop_trading
 from app.services import order_service, simulation as sim_svc, trading as trading_service, wallet_service
-
-client = TestClient(app)
-HEADERS = {"X-User-Id": "desktop-user"}
 
 
 def test_paper_start_rejects_historical_date():
@@ -43,6 +39,81 @@ def test_paper_switched_contract_subscribes_and_old_ticks_keep_identity(no_db):
     assert session.desktop_contract_quotes[f"NIFTY:{session.expiry}:24000:CE"]["price"] == 99
     assert contract["contract_key"] not in session.desktop_contract_quotes
     assert session.last_price_ce == 100
+
+
+def test_desktop_trading_events_reject_other_user_session(no_db):
+    _clear()
+    session = _session()
+
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(desktop_trading.trading_events(session.session_id, user_id="other-user"))
+
+    assert exc.value.status_code == 404
+
+
+def test_desktop_trading_events_send_initial_snapshot(no_db):
+    _clear()
+    session = _session()
+
+    async def first_event():
+        source = desktop_trading._desktop_trading_event_source(session, "desktop-user", None)
+        return await source.__anext__()
+
+    frame = asyncio.run(first_event())
+
+    assert "event: snapshot" in frame
+    data = json.loads(frame.split("data: ", 1)[1].strip())
+    assert data["session"]["session_id"] == session.session_id
+    assert data["desktop_mode"] == "stepwise"
+    assert data["event_cursor"] == session.queue.latest_id()
+
+
+def test_desktop_trading_events_reset_with_snapshot_after_replay_gap(no_db):
+    _clear()
+    session = _session()
+    session.queue = sim_svc.ReplayEventQueue(maxsize=2)
+    session.queue.put_nowait(json.dumps({"type": "tick", "close": 1}))
+    session.queue.put_nowait(json.dumps({"type": "tick", "close": 2}))
+    session.queue.put_nowait(json.dumps({"type": "tick", "close": 3}))
+
+    async def first_event():
+        source = desktop_trading._desktop_trading_event_source(session, "desktop-user", 0)
+        return await source.__anext__()
+
+    frame = asyncio.run(first_event())
+
+    assert "id: 3" in frame
+    assert "event: stream_reset" in frame
+    data = json.loads(frame.split("data: ", 1)[1].strip())
+    assert data["session"]["session_id"] == session.session_id
+    assert data["event_cursor"] == 3
+
+
+def test_desktop_trading_events_reset_with_snapshot_after_active_gap(no_db):
+    _clear()
+    session = _session()
+    session.queue = sim_svc.ReplayEventQueue(maxsize=2)
+    session.queue.put_nowait(json.dumps({"type": "tick", "close": 1}))
+
+    async def second_event_after_gap():
+        source = desktop_trading._desktop_trading_event_source(session, "desktop-user", 0)
+        first = await source.__anext__()
+        session.queue.put_nowait(json.dumps({"type": "tick", "close": 2}))
+        session.queue.put_nowait(json.dumps({"type": "tick", "close": 3}))
+        session.queue.put_nowait(json.dumps({"type": "tick", "close": 4}))
+        second = await source.__anext__()
+        return first, second
+
+    first, second = asyncio.run(second_event_after_gap())
+
+    assert "id: 1" in first
+    assert "event: tick" in first
+    assert json.loads(first.split("data: ", 1)[1].strip())["event_id"] == 1
+    assert "id: 4" in second
+    assert "event: stream_reset" in second
+    data = json.loads(second.split("data: ", 1)[1].strip())
+    assert data["session"]["session_id"] == session.session_id
+    assert data["event_cursor"] == 4
 
 
 @pytest.fixture(autouse=True)

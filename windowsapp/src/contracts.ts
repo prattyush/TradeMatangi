@@ -73,6 +73,7 @@ export interface DesktopTradingSettings {
 
 export interface DesktopTradingSnapshot {
   version: number
+  event_cursor?: number
   desktop_mode?: 'stepwise' | 'replay' | string
   source?: 'desktop_stepwise' | 'desktop_replay' | string
   session: DesktopTradingSession

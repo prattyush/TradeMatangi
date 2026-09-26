@@ -35,7 +35,9 @@ Implemented so far:
 - Desktop Paper can subscribe newly attached option contracts after the Paper live stream has started. For options-anchored sessions, the base CE/PE stream remains the owner for the active contract and extra subscriptions are only used when an attached/switch contract is outside the active base stream.
 - The Windows desktop top-level mode selector now uses `Browse | Paper | Replay | Stepwise`.
 - Browse exposes chart-only live controls (`Start Live`, `Stop Live`, refresh) and does not show trading controls.
-- Paper exposes a single-screen trading start/stop flow, wallet/P&L/flatten controls, chart-order tools, trade labels, strategies, and periodic snapshot recovery through the existing desktop trading facade.
+- Paper exposes a single-screen trading start/stop flow, wallet/P&L/flatten controls, chart-order tools, trade labels, strategies, and snapshot recovery through the existing desktop trading facade.
+- Desktop trading now exposes an authenticated SSE endpoint at `/api/desktop/v1/trading/{session_id}/events`. It enforces desktop auth/session ownership, supports `Last-Event-ID`, bounded replay through the session event queue, heartbeat comments, initial snapshot events, and stream-reset snapshot fallback after reconnect gaps.
+- The Windows Paper view starts a native authenticated `paper:{session_id}` stream, applies tick/bar events incrementally, and fetches full authoritative snapshots only for initial/reset/recovery, state-changing trading events, and a slower reconciliation pass. Browser/non-native fallback still uses snapshot polling because browser `EventSource` cannot send the required desktop bearer header.
 - Desktop pre-session wallet read/reset can target the Paper date ledger (`paper:{date}`) instead of always using the historical simulation ledger (`sim:{date}`).
 - Tauri has native child-window commands for screen pop-out primitives: `open_screen_window(screen_id)`, `focus_screen_window(screen_id)`, and `close_screen_window(screen_id)`.
 - The desktop shell has a "Pop out screen" action that opens/focuses a child window in native builds.
@@ -47,7 +49,7 @@ Remaining work:
 - P2 review finding: live chart subscriptions can override Replay candles after switching modes. Gate live chart rendering by mode, including the shared live snapshot fallback, so historical runs always display historical candles.
 - P2 review finding: Paper option attachment currently requires a successful historical data fetch. Make historical caching best-effort for Paper so a historical-provider failure does not prevent a valid live contract subscription.
 - Persist Browse live as a per-screen `live_enabled` state, with live snapshots, tick caches, stream keys, errors, and native subscriptions keyed by screen id. The current implementation is usable from Browse but still uses one active workspace live stream rather than a restored per-screen live lifecycle.
-- Replace Desktop Paper snapshot polling with the authenticated desktop trading event endpoint. Paper currently works through start/stop plus 800 ms snapshot polling; the remaining event endpoint still needs `Last-Event-ID`, bounded replay, heartbeats, gap reset, and snapshot fallback.
+- Fully remove Paper snapshot polling in browser/non-native fallback if a header-capable browser SSE transport is added. Native Windows now uses the authenticated desktop trading event endpoint; browser fallback remains snapshot polling by design.
 - Add stronger Paper session status indicators and explicit attach/detach wording. The current UI can attach to an active compatible Paper session and stops only owned sessions, but owner/shared semantics are still minimal.
 - Replace the current minimal pop-out action with full screen ownership semantics:
   - render only the assigned screen in the child window
@@ -66,7 +68,11 @@ Remaining work:
 
 ### Current Implementation Notes
 
+- Fixed the subsequent snapshot review P1/P2: native Paper tick updates preserve authoritative realised day P&L and commissions, applying only open-position mark changes; position P&L includes backend-equivalent exit charges. Trading snapshots now carry `event_cursor` and SSE events carry `event_id`, so buffered events already included in a recovery snapshot and obsolete recovery snapshots cannot overwrite newer renderer state. Added renderer regression coverage for closed profits, long/short options, equity with options, same-second buffered events, duplicate events, and stale recovery responses. Native Windows/live-provider validation remains outstanding.
 - Fixed Desktop Paper P1 review findings: base live option subscriptions retain their original strike/expiry identity; switched contracts receive separate subscriptions, and old base ticks cannot be attributed to the newly selected strike. Paper starts use today's IST market date, with backend rejection of historical dates. Mode changes require stopping/detaching the active run and clear ended-session state. Live tile reconciliation now runs in Paper as well as Browse so instrument changes update chart subscriptions.
+- Implemented the authenticated desktop trading event endpoint. It reuses the existing per-session replay queue rather than adding a parallel Paper event bus, so fills, ticks, order events, broker errors, and session-ended events stay in the same ordering as the simulation engine. Initial connections receive a full snapshot, reconnects resume after `Last-Event-ID`, and stale reconnect cursors or active-stream queue gaps receive a `stream_reset` snapshot.
+- Wired Desktop Paper in the Windows renderer to start/stop a native `paper:{session_id}` stream. Native Paper now consumes tick/bar events directly for price/time/P&L movement, collapses native batches into at most one recovery snapshot, fetches full snapshots for state-changing trading events, and keeps a slower 30 second reconciliation snapshot for safety. This replaces the frequent Paper full-snapshot path in native builds; browser fallback still polls snapshots because authenticated SSE needs request headers.
+- Fixed Paper stream lifecycle/recovery edge cases found during review: failed Stop no longer stops the native stream before the backend session stop succeeds, failed snapshot recovery stays marked for retry, and obsolete/in-flight native recovery is serialized per session effect.
 - Added backend regression coverage for historical Paper date rejection and switched-contract subscription/old-tick identity. Native Windows/live-provider validation remains outstanding.
 Backend files touched in the current partial implementation:
 
@@ -82,6 +88,7 @@ Backend files touched in the current partial implementation:
     - option orders still require an attached contract and use contract quote lookup
   - `/wallet?desktop_mode=paper` reads the Paper date ledger (`paper:{date}`) when there is no active session.
   - `/wallet/reset?desktop_mode=paper` resets the Paper date ledger before an active desktop session starts.
+  - `/api/desktop/v1/trading/{session_id}/events` is authenticated with the desktop auth dependency and enforces user ownership before streaming. It emits full `snapshot`/`stream_reset` payloads for initial/gap recovery and raw ordered session events for incremental updates, including reset recovery if an already-connected reader falls behind the bounded queue.
 - `backend/app/routers/orders.py`
   - `_desktop_order_source()` recognizes `desktop_paper`.
   - `_wallet_balance_for_session()` reads the owning session ledger when available, so desktop simulated sessions do not accidentally size orders against the legacy date wallet.
@@ -131,6 +138,7 @@ Backend files touched in the current partial implementation:
 - `backend/tests/test_desktop_trading.py`
   - Added regression coverage for 20% equity margin reservation on the session ledger.
   - Added regression coverage for same-underlying option order identity and full-premium option reservation inside an equity-anchored desktop session.
+  - Added regression coverage for desktop trading event auth, initial snapshot delivery, and bounded replay gap reset.
 - `backend/tests/test_equity_leverage.py`
   - Added coverage that 24% funds-ratio equity sizing at 5x creates 120% notional exposure.
   - Added coverage that a same-price leveraged equity round trip restores the actual wallet.
@@ -156,11 +164,11 @@ Desktop files touched in the current partial implementation:
 - `windowsapp/src/App.tsx`
   - Replaces the old top-level `Live` mode with `Paper`.
   - Browse now owns chart-only live stream controls and remains read-only.
-  - Paper now starts the desktop trading facade directly, keeps the chart workspace on live candles, attaches option tiles as contracts, polls trading snapshots, and exposes the existing wallet/P&L/flatten/order/strategy controls.
+  - Paper now starts the desktop trading facade directly, keeps the chart workspace on live candles, attaches option tiles as contracts, consumes native trading events incrementally where available, and exposes the existing wallet/P&L/flatten/order/strategy controls.
   - Adds a "Pop out screen" button beside the existing screen actions.
   - In native builds it calls `open_screen_window`.
   - In browser/dev preview it shows a message that pop-out is native-only.
-  - The authenticated Paper trading event stream is still pending; the desktop currently uses snapshot polling for Paper state updates.
+  - The authenticated Paper trading event stream is implemented for native Windows builds; browser/non-native fallback still uses snapshot polling because authenticated SSE needs request headers.
 
 Complicated points and callouts:
 
@@ -182,7 +190,7 @@ Complicated points and callouts:
   - a date-level "started/locked" marker
   - backend reset rejection after first start
   - atomic reservation protection for simultaneous orders from multiple Paper sessions
-- The desktop Paper backend can start via the facade and the Windows UI now has a usable single-screen Paper run mode for options. It still lacks authenticated Paper trading events, per-screen Paper/live stream keys, stronger attach/detach status, and full shared-wallet lock semantics.
+- The desktop Paper backend can start via the facade and the Windows UI now has a usable single-screen Paper run mode for options. It now has authenticated native Paper trading events, but still lacks persisted per-screen Paper/live stream lifecycle ownership, stronger attach/detach status, and full shared-wallet lock semantics.
 - Browse live is now reachable from Browse instead of top-level Live, but it is not yet persisted/restored as a per-screen `live_enabled` lifecycle.
 - Important implementation learning: options-anchored Paper sessions used the legacy CE/PE tick path, which did not populate the desktop `contract_quotes` registry. Chart market orders depend on that registry, so Paper options must enrich every option tick with full contract identity before order placement and P&L use it.
 - Pop-out support is currently a native window primitive plus a button. It is not yet a completed multi-window workspace because the child window does not yet render only one assigned screen or coordinate edit ownership with the main window.
