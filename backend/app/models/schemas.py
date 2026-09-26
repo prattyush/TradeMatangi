@@ -213,6 +213,9 @@ class Order(BaseModel):
     filled_at: int | None = None
     filled_price: float | None = None
     reserved_amount: float = 0.0  # wallet amount debited on BUY placement; 0 for SELL
+    reservation_margin_rate: float = 1.0  # multiplier used to compute reserved_amount
+    wallet_ledger_id: str | None = None   # ledger debited for reserved_amount, if ledger-scoped
+    wallet_ledger_kind: str | None = None
     is_stoploss: bool = False      # SL orders skip all wallet debit/credit
     is_autostop: bool = False      # internal provenance for AutoStop entry fills
     right: str | None = None       # "CE" or "PE" for options orders; None for equity
@@ -298,6 +301,12 @@ class WalletResponse(BaseModel):
     user_id: str
     date: str
     balance: float
+    session_capital: float | None = None
+    margin_used: float | None = None
+    available_margin: float | None = None
+    buying_power: float | None = None
+    exposure: float | None = None
+    margin_rate: float | None = None
 
 
 class WalletResetRequest(BaseModel):

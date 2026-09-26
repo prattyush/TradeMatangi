@@ -51,6 +51,18 @@ def _strike_for_right(session, right: str | None) -> int | None:
     return session.strike
 
 
+def _uses_equity_intraday_margin(session, right: str | None = None) -> bool:
+    return (
+        right is None
+        and session.instrument_type == "equity"
+        and session.session_type in ("sim", "stepwise", "paper", "real")
+    )
+
+
+def _margin_rate_for(session, right: str | None = None) -> float:
+    return EQUITY_MIS_MARGIN_RATE if _uses_equity_intraday_margin(session, right) else 1.0
+
+
 def _place_kotak_direct(session, side: TradeSide, price: float, lot_size: int, right) -> JSONResponse:
     """Place an immediate buy/sell on Kotak as a limit order; fill arrives via SSE order_filled."""
     from app.services.kotak_service import get_service as get_kotak, KotakError
@@ -77,23 +89,15 @@ def _place_kotak_direct(session, side: TradeSide, price: float, lot_size: int, r
 
     def _make_cb(sess, trade_side: TradeSide, qty: int, rt):
         def on_fill(k_id: str, fill_side: str, fill_qty: int, fill_price: float):
-            # Equity MIS real sessions: only 20% margin is tied up per trade.
-            margin_rate = EQUITY_MIS_MARGIN_RATE if sess.instrument_type == "equity" else 1.0
-            if trade_side == TradeSide.BUY:
-                try:
-                    wallet_service.debit(
-                        sess.user_id,
-                        round(fill_price * fill_qty * margin_rate, 2),
-                        sess.date,
-                    )
-                except Exception:
-                    pass
-            else:
-                wallet_service.credit(
-                    sess.user_id,
-                    round(fill_price * fill_qty * margin_rate, 2),
-                    sess.date,
-                )
+            trading_svc.settle_wallet_for_trade(
+                sess,
+                trade_side,
+                fill_price,
+                fill_qty,
+                right=rt,
+                strike=_strike_for_right(sess, rt),
+                expiry=sess.expiry,
+            )
 
             trading_svc.record_trade(
                 sess.session_id, trade_side,
@@ -182,6 +186,7 @@ async def buy(req: TradeRequest):
             funds_ratio_pct=req.funds_ratio_pct,
             current_wallet=current_wallet,
             lot_size=lot_size,
+            margin_rate=_margin_rate_for(session, right),
         )
         if quantity <= 0:
             raise HTTPException(status_code=400, detail="Computed quantity is zero — insufficient funds or ratio too small")
@@ -200,24 +205,31 @@ async def buy(req: TradeRequest):
     if blocked:
         raise HTTPException(status_code=403, detail=reason)
 
+    timestamp = int(session.current_time)
     try:
-        wallet_service.debit_ledger(session.user_id, price * quantity, session.date, session.wallet_ledger_id)
+        trading_svc.settle_wallet_for_trade(
+            session,
+            TradeSide.BUY,
+            price,
+            quantity,
+            right=right,
+            strike=_strike_for_right(session, right),
+            expiry=session.expiry,
+        )
+        trade = trading_svc.record_trade(
+            req.session_id, TradeSide.BUY, price=price, timestamp=timestamp,
+            symbol=session.symbol,
+            instrument_type=session.instrument_type,
+            strike=_strike_for_right(session, right),
+            expiry=session.expiry,
+            right=right,
+            quantity=quantity,
+            brokerage_per_order=session.brokerage_per_order,
+            user_id=session.user_id,
+            session_type=session.session_type,
+        )
     except InsufficientFundsError as exc:
         raise HTTPException(status_code=402, detail=str(exc))
-
-    timestamp = int(session.current_time)
-    trade = trading_svc.record_trade(
-        req.session_id, TradeSide.BUY, price=price, timestamp=timestamp,
-        symbol=session.symbol,
-        instrument_type=session.instrument_type,
-        strike=_strike_for_right(session, right),
-        expiry=session.expiry,
-        right=right,
-        quantity=quantity,
-        brokerage_per_order=session.brokerage_per_order,
-        user_id=session.user_id,
-        session_type=session.session_type,
-    )
     _emit_trade_event(session, trade)
     return trade
 
@@ -250,6 +262,7 @@ async def sell(req: TradeRequest):
             funds_ratio_pct=req.funds_ratio_pct,
             current_wallet=current_wallet,
             lot_size=lot_size,
+            margin_rate=_margin_rate_for(session, right),
         )
         if quantity <= 0:
             raise HTTPException(status_code=400, detail="Computed quantity is zero — insufficient funds or ratio too small")
@@ -268,21 +281,31 @@ async def sell(req: TradeRequest):
     if blocked:
         raise HTTPException(status_code=403, detail=reason)
 
-    wallet_service.credit_ledger(session.user_id, price * quantity, session.date, session.wallet_ledger_id)
-
     timestamp = int(session.current_time)
-    trade = trading_svc.record_trade(
-        req.session_id, TradeSide.SELL, price=price, timestamp=timestamp,
-        symbol=session.symbol,
-        instrument_type=session.instrument_type,
-        strike=_strike_for_right(session, right),
-        expiry=session.expiry,
-        right=right,
-        quantity=quantity,
-        brokerage_per_order=session.brokerage_per_order,
-        user_id=session.user_id,
-        session_type=session.session_type,
-    )
+    try:
+        trading_svc.settle_wallet_for_trade(
+            session,
+            TradeSide.SELL,
+            price,
+            quantity,
+            right=right,
+            strike=_strike_for_right(session, right),
+            expiry=session.expiry,
+        )
+        trade = trading_svc.record_trade(
+            req.session_id, TradeSide.SELL, price=price, timestamp=timestamp,
+            symbol=session.symbol,
+            instrument_type=session.instrument_type,
+            strike=_strike_for_right(session, right),
+            expiry=session.expiry,
+            right=right,
+            quantity=quantity,
+            brokerage_per_order=session.brokerage_per_order,
+            user_id=session.user_id,
+            session_type=session.session_type,
+        )
+    except InsufficientFundsError as exc:
+        raise HTTPException(status_code=402, detail=str(exc))
     _emit_trade_event(session, trade)
     return trade
 

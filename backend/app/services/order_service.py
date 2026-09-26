@@ -66,6 +66,7 @@ def compute_funds_ratio_quantity(
     funds_ratio_pct: float,
     current_wallet: float,
     lot_size: int = 1,
+    margin_rate: float = 1.0,
 ) -> int:
     """
     Compute order quantity from a FundsRatio percentage of session capital.
@@ -74,23 +75,25 @@ def compute_funds_ratio_quantity(
     Raises InsufficientFundsError if wallet cannot afford even 1 unit/lot.
     """
     spend = session_capital * funds_ratio_pct
+    effective_margin_rate = margin_rate if margin_rate > 0 else 1.0
+    buying_power = spend / effective_margin_rate
 
     if lot_size > 1:
         unit_cost = price * lot_size
-        lots = int(spend / unit_cost)
+        lots = int(buying_power / unit_cost)
         if lots < 1:
-            if current_wallet >= unit_cost:
+            if current_wallet >= unit_cost * effective_margin_rate:
                 lots = 1
             else:
-                raise InsufficientFundsError(current_wallet, unit_cost)
+                raise InsufficientFundsError(current_wallet, unit_cost * effective_margin_rate)
         return lots * lot_size
     else:
-        qty = int(spend / price) if price > 0 else 0
+        qty = int(buying_power / price) if price > 0 else 0
         if qty < 1:
-            if current_wallet >= price:
+            if current_wallet >= price * effective_margin_rate:
                 qty = 1
             else:
-                raise InsufficientFundsError(current_wallet, price)
+                raise InsufficientFundsError(current_wallet, price * effective_margin_rate)
         return qty
 
 
@@ -102,6 +105,7 @@ def compute_risk_ratio_quantity(
     risk_ratio_pct: float,
     current_wallet: float,
     lot_size: int = 1,
+    margin_rate: float = 1.0,
 ) -> int:
     """
     Compute order quantity so that if price hits stoploss, the total loss
@@ -117,24 +121,25 @@ def compute_risk_ratio_quantity(
         raise ValueError("stoploss_price must differ from entry_price")
 
     risk_amount = session_capital * risk_ratio_pct
+    effective_margin_rate = margin_rate if margin_rate > 0 else 1.0
 
     if lot_size > 1:
         loss_per_lot = sl_distance * lot_size
         lots = int(risk_amount / loss_per_lot)
         if lots < 1:
             unit_cost = entry_price * lot_size
-            if current_wallet >= unit_cost:
+            if current_wallet >= unit_cost * effective_margin_rate:
                 lots = 1
             else:
-                raise InsufficientFundsError(current_wallet, unit_cost)
+                raise InsufficientFundsError(current_wallet, unit_cost * effective_margin_rate)
         return lots * lot_size
     else:
         qty = int(risk_amount / sl_distance)
         if qty < 1:
-            if current_wallet >= entry_price:
+            if current_wallet >= entry_price * effective_margin_rate:
                 qty = 1
             else:
-                raise InsufficientFundsError(current_wallet, entry_price)
+                raise InsufficientFundsError(current_wallet, entry_price * effective_margin_rate)
         return qty
 
 
@@ -161,6 +166,14 @@ def _write_order_to_db(order: Order) -> None:
             item["filled_at"] = order.filled_at
         if order.filled_price is not None:
             item["filled_price"] = Decimal(str(order.filled_price))
+        if order.reserved_amount:
+            item["reserved_amount"] = Decimal(str(order.reserved_amount))
+        if order.reservation_margin_rate != 1.0:
+            item["reservation_margin_rate"] = Decimal(str(order.reservation_margin_rate))
+        if order.wallet_ledger_id is not None:
+            item["wallet_ledger_id"] = order.wallet_ledger_id
+        if order.wallet_ledger_kind is not None:
+            item["wallet_ledger_kind"] = order.wallet_ledger_kind
         if order.right is not None:
             item["right"] = order.right
         if order.strike is not None:
@@ -208,6 +221,8 @@ def place_order(
     quote_price: float | None = None,
     quote_timestamp: int | None = None,
     quote_source: str | None = None,
+    wallet_ledger_id: str | None = None,
+    wallet_ledger_kind: str | None = None,
 ) -> Order:
     _ensure_session(session_id)
 
@@ -233,8 +248,11 @@ def place_order(
     reserved_amount = 0.0
     if side == TradeSide.BUY and not is_stoploss and order_type != OrderType.STOPLOSS:
         reserved_amount = round(quantity * actual_limit * margin_rate, 2)
-        from app.services.wallet_service import debit
-        debit(user_id, reserved_amount, trading_date)
+        from app.services import wallet_service
+        if wallet_ledger_id:
+            wallet_service.debit_ledger(user_id, reserved_amount, trading_date, wallet_ledger_id, wallet_ledger_kind or "sim")
+        else:
+            wallet_service.debit(user_id, reserved_amount, trading_date)
 
     order = Order(
         session_id=session_id,
@@ -248,6 +266,9 @@ def place_order(
         status=OrderStatus.PENDING,
         created_at=created_at,
         reserved_amount=reserved_amount,
+        reservation_margin_rate=margin_rate,
+        wallet_ledger_id=wallet_ledger_id,
+        wallet_ledger_kind=wallet_ledger_kind,
         is_stoploss=is_stoploss,
         is_autostop=is_autostop,
         right=right,
@@ -280,6 +301,35 @@ def get_order(session_id: str, order_id: str) -> Order | None:
     return _orders.get(session_id, {}).get(order_id)
 
 
+def _credit_reservation(order: Order, amount: float, trading_date: str) -> None:
+    from app.services import wallet_service
+    if order.wallet_ledger_id:
+        wallet_service.credit_ledger(order.user_id, amount, trading_date, order.wallet_ledger_id, order.wallet_ledger_kind or "sim")
+    else:
+        wallet_service.credit(order.user_id, amount, trading_date)
+
+
+def _debit_reservation(order: Order, amount: float, trading_date: str) -> None:
+    from app.services import wallet_service
+    if order.wallet_ledger_id:
+        wallet_service.debit_ledger(order.user_id, amount, trading_date, order.wallet_ledger_id, order.wallet_ledger_kind or "sim")
+    else:
+        wallet_service.debit(order.user_id, amount, trading_date)
+
+
+def _reservation_for(order: Order, price: float, quantity: int | None = None) -> float:
+    return round((quantity if quantity is not None else order.quantity) * price * order.reservation_margin_rate, 2)
+
+
+def _adjust_buy_reservation(order: Order, new_reserved: float, trading_date: str) -> None:
+    diff = round(new_reserved - order.reserved_amount, 2)
+    if diff > 0:
+        _debit_reservation(order, diff, trading_date)
+    elif diff < 0:
+        _credit_reservation(order, -diff, trading_date)
+    order.reserved_amount = new_reserved
+
+
 def cancel_order(session_id: str, order_id: str, trading_date: str) -> Order | None:
     order = _orders.get(session_id, {}).get(order_id)
     if order is None or order.status != OrderStatus.PENDING:
@@ -287,8 +337,7 @@ def cancel_order(session_id: str, order_id: str, trading_date: str) -> Order | N
     order.status = OrderStatus.CANCELLED
     # Credit back the reserved funds for cancelled regular BUY orders (not SL)
     if order.side == TradeSide.BUY and order.reserved_amount > 0 and not order.is_stoploss:
-        from app.services.wallet_service import credit
-        credit(order.user_id, order.reserved_amount, trading_date)
+        _credit_reservation(order, order.reserved_amount, trading_date)
     _write_order_to_db(order)
     return order
 
@@ -311,28 +360,14 @@ def update_order(
         new_trigger = trigger_price
         new_limit = _target_limit_price(order.side, trigger_price, target_deviation_pct)
         if order.side == TradeSide.BUY and not order.is_stoploss:
-            new_reserved = round(order.quantity * new_limit, 2)
-            diff = new_reserved - order.reserved_amount
-            from app.services.wallet_service import credit, debit
-            if diff > 0:
-                debit(order.user_id, diff, trading_date)
-            elif diff < 0:
-                credit(order.user_id, -diff, trading_date)
-            order.reserved_amount = new_reserved
+            _adjust_buy_reservation(order, _reservation_for(order, new_limit), trading_date)
         order.trigger_price = new_trigger
         order.limit_price = new_limit
 
     elif order.order_type == OrderType.LIMIT and limit_price is not None:
         new_limit = limit_price
         if order.side == TradeSide.BUY and not order.is_stoploss:
-            new_reserved = round(order.quantity * new_limit, 2)
-            diff = new_reserved - order.reserved_amount
-            from app.services.wallet_service import credit, debit
-            if diff > 0:
-                debit(order.user_id, diff, trading_date)
-            elif diff < 0:
-                credit(order.user_id, -diff, trading_date)
-            order.reserved_amount = new_reserved
+            _adjust_buy_reservation(order, _reservation_for(order, new_limit), trading_date)
         order.limit_price = new_limit
         order.trigger_price = new_limit
 
@@ -341,6 +376,8 @@ def update_order(
         order.limit_price = trigger_price
 
     if quantity is not None:
+        if order.side == TradeSide.BUY and not order.is_stoploss and order.order_type != OrderType.STOPLOSS:
+            _adjust_buy_reservation(order, _reservation_for(order, order.limit_price, quantity), trading_date)
         order.quantity = quantity
 
     _write_order_to_db(order)
@@ -367,7 +404,6 @@ def convert_order(
     old_type = order.order_type
     side = order.side
     qty = order.quantity
-    user_id = order.user_id
 
     # ── Resolve prices for the new type ──────────────────────────────────────
     if new_order_type == OrderType.LIMIT:
@@ -400,21 +436,12 @@ def convert_order(
             pass
         elif not was_sl and is_sl:
             # non-SL → SL BUY: release existing reservation
-            from app.services.wallet_service import credit
             if order.reserved_amount > 0:
-                credit(user_id, order.reserved_amount, trading_date)
+                _credit_reservation(order, order.reserved_amount, trading_date)
             order.reserved_amount = 0.0
         elif not was_sl and not is_sl:
             # TARGET ↔ LIMIT: adjust reservation to new limit price
-            new_reserved = round(qty * new_limit, 2)
-            diff = new_reserved - order.reserved_amount
-            if diff != 0:
-                from app.services.wallet_service import credit, debit
-                if diff > 0:
-                    debit(user_id, diff, trading_date)
-                elif diff < 0:
-                    credit(user_id, -diff, trading_date)
-            order.reserved_amount = new_reserved
+            _adjust_buy_reservation(order, _reservation_for(order, new_limit, qty), trading_date)
 
     # ── Apply the conversion ────────────────────────────────────────────────
     order.order_type = new_order_type
@@ -439,6 +466,7 @@ def check_orders(
     tick_right: str | None = None,
     tick_strike: int | None = None,
     tick_expiry: str | None = None,
+    settle_wallet: bool = True,
 ) -> list[Order]:
     """
     Evaluate PENDING orders against current_price and return newly FILLED ones.
@@ -488,9 +516,8 @@ def check_orders(
             # SL placement has no debit; the corresponding BUY already debited. Skipping
             # the credit here would permanently remove those funds from the wallet even
             # after the position is fully closed.
-            if order.side == TradeSide.SELL and trading_date:
-                from app.services.wallet_service import credit
-                credit(order.user_id, round(order.quantity * current_price, 2), trading_date)
+            if settle_wallet and order.side == TradeSide.SELL and trading_date:
+                _credit_reservation(order, round(order.quantity * current_price, 2), trading_date)
             _write_order_to_db(order)
             filled.append(order)
     return filled
