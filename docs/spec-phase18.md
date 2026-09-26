@@ -669,3 +669,36 @@ Follow-up validation: **120 focused backend tests passed**; the full backend run
 The website equity wallet displays one **Capital** figure, adding committed equity funds back to the free wallet balance. Placing or filling an equity entry must not appear to reduce capital merely because funds were reserved; closing trades changes capital according to the existing wallet settlement. Hide the 5× buying-power and exposure display, and do not add available/used-margin figures. Keep leverage, margin reservation, sizing, and MaxSize calculations in the backend. Non-equity wallet display retains its existing balance behavior.
 
 Manual check: with ₹100,000 capital, place and fill a 15% equity long or short. The website must still display Capital ₹100,000 and no buying-power/exposure figures. Cancel a pending entry and verify capital remains ₹100,000. Close a 750-share position with a ₹10 favourable move; capital must show the resulting ₹107,500 wallet settlement. Repeat an adverse move and verify the loss reduces capital. P&L/commissions retain their existing separate reporting.
+
+### Position wallet percentage display correction (2026-09-26)
+
+Website and desktop position panels now calculate equity wallet usage from entry
+margin: `quantity × average_entry_price × 0.2 / session_capital × 100`. Previously
+they displayed full notional exposure as wallet usage. Long and short equity
+positions use the same calculation; options retain full-premium usage, including
+options attached to equity sessions. Session capital remains the sizing/display
+denominator; this is position allocation, not P&L or remaining cash.
+
+Manual check: with ₹100,000 session capital, 750 shares at ₹100 must show 15.0%
+wallet for both long and short positions. Partially close half and expect 7.5%.
+Repeat in website and desktop Paper/Replay/Stepwise. Verify an option position
+with ₹15,000 entry premium still shows 15.0%, including an option tile attached
+to a desktop equity session.
+
+### Desktop sizing / MaxSize verification (2026-09-26)
+
+Desktop chart orders delegate to the shared website order route. Equity capital
+sizing applies 5× leverage once, and MaxSize checks 20% opening margin rather
+than full notional. Eight new regression cases cover long/short capital sizing
+through the desktop chart route in Paper/Replay/Stepwise, plus risk-sized orders
+that legitimately exceed MaxSize. The Paper cases verify sizing/guardrail logic
+with a test ledger; they do not validate Paper database concurrency.
+
+MaxSize is a total open-position capital limit. Existing positions contribute,
+and risk % controls stop-distance loss rather than capital allocation. Thus a
+1% risk budget on ₹100,000 with ₹100 entry and ₹1 stop distance sizes 1,000 shares,
+using ₹20,000 margin; a 15% MaxSize limit correctly rejects it. Do not multiply
+the guardrail limit by five or silently reduce risk-sized orders to hide this.
+The reported ₹23,418.86 versus ₹14,246.25 rejection needs the selected sizing
+mode/percentage, existing positions, and active MaxSize setting to determine
+whether it is expected or a runtime/session-state issue.

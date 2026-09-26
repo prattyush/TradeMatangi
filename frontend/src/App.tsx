@@ -2361,6 +2361,7 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
             activeLabel={activeLabel}
             pnlPctMode={pnlPctMode}
             sessionCapital={sim.sessionCapital}
+            positionMarginRate={instrumentType === 'equity' ? 0.2 : 1}
             sizingMode={sizingMode}
             sessionId={sim.sessionId}
             pendingExitLabels={sim.pendingExitLabels}
