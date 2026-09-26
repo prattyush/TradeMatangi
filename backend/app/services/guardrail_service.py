@@ -330,78 +330,60 @@ def _fifo_pnl(buy_queue: "deque", sell_queue: "deque") -> float:
 
 # ── MaxSize Guardrail ────────────────────────────────────────────────────────
 
+def _capital_margin_rate(session, right: str | None) -> float:
+    from app.config import EQUITY_MIS_MARGIN_RATE
+    from app.services.trading import _uses_equity_intraday_margin
+    return EQUITY_MIS_MARGIN_RATE if _uses_equity_intraday_margin(session, right) else 1.0
+
+
 def _get_capital_in_use(session: "SimulationSession") -> float:
-    """Sum avg_entry_price × quantity across all open positions in this session."""
-    from app.services.trading import get_position
+    """Opening margin for equity plus full premium for option positions."""
+    from app.services.trading import get_position, get_trades
 
     if session.instrument_type == "options":
-        if session.right is None:
-            # dual-stream: CE and PE tracked independently
-            rights: list[str | None] = ["CE", "PE"]
-        else:
-            rights = [session.right]
+        defaults = [session.right] if session.right else ["CE", "PE"]
     else:
-        rights = [None]
-
+        defaults = [None]
+    trades = get_trades(session.session_id)
+    contracts = {(trade.right, trade.strike, trade.expiry) if trade.right else (None, None, None)
+                 for trade in trades if trade.symbol == session.symbol}
+    # Keep empty/default panes in the lookup, but do not aggregate a right again
+    # when individual contracts for that right are already represented.
+    contracts.update((right, None, None) for right in defaults if not any(key[0] == right for key in contracts))
     total = 0.0
-    for right in rights:
-        pos = get_position(session.session_id, symbol=session.symbol, right=right)
+    for right, strike, expiry in contracts:
+        kwargs = {"strike": strike, "expiry": expiry} if strike is not None or expiry is not None else {}
+        pos = get_position(session.session_id, symbol=session.symbol, right=right, **kwargs)
         if pos.side != "FLAT" and pos.quantity > 0:
-            total += pos.avg_entry_price * pos.quantity
+            total += pos.avg_entry_price * pos.quantity * _capital_margin_rate(session, right)
     return total
 
 
 def _simulate_post_trade_capital(
-    session: "SimulationSession", price: float, quantity: int, side: str
+    session: "SimulationSession", price: float, quantity: int, side: str,
+    right: str | None = None, strike: int | None = None, expiry: str | None = None,
 ) -> float:
-    """
-    Estimate what total capital-in-use would be after executing this trade.
-    side is "BUY" or "SELL".
-    """
+    """Estimate margin/premium usage, closing only the targeted position first."""
     from app.services.trading import get_position
 
-    # Resolve which right this trade targets
-    if session.instrument_type == "options":
+    if right is None and session.instrument_type == "options":
         right = session.right or "CE"
-    else:
-        right = None
-
-    position = get_position(session.session_id, symbol=session.symbol, right=right)
+    kwargs = {"strike": strike, "expiry": expiry} if strike is not None or expiry is not None else {}
+    position = get_position(session.session_id, symbol=session.symbol, right=right, **kwargs)
     current_capital = _get_capital_in_use(session)
-    net_qty = position.quantity if position.side == "LONG" else -position.quantity
-
-    if side == "BUY":
-        if net_qty < 0:
-            # Currently SHORT — buy covers short first
-            if quantity <= abs(net_qty):
-                # Partially or fully covering short: capital decreases proportionally
-                post_capital = current_capital * (1 - quantity / abs(net_qty))
-            else:
-                # Reversing from SHORT to LONG: excess becomes new long
-                excess_qty = quantity - abs(net_qty)
-                post_capital = excess_qty * price
-        else:
-            # FLAT or adding to LONG
-            post_capital = current_capital + (price * quantity)
-    else:  # SELL
-        if net_qty > 0:
-            # Currently LONG — sell closes long first
-            if quantity <= net_qty:
-                # Partially closing long: capital decreases proportionally
-                post_capital = current_capital * (1 - quantity / net_qty)
-            else:
-                # Reversing from LONG to SHORT: excess becomes new short
-                excess_qty = quantity - net_qty
-                post_capital = excess_qty * price
-        else:
-            # FLAT or adding to SHORT
-            post_capital = current_capital + (price * quantity)
-
-    return post_capital
+    margin_rate = _capital_margin_rate(session, right)
+    closes_position = (side == "BUY" and position.side == "SHORT") or (side == "SELL" and position.side == "LONG")
+    if closes_position:
+        closed_qty = min(quantity, position.quantity)
+        released = position.avg_entry_price * closed_qty * margin_rate
+        opening = max(0, quantity - position.quantity) * price * margin_rate
+        return max(0.0, current_capital - released + opening)
+    return current_capital + price * quantity * margin_rate
 
 
 def check_maxsize(
-    session: "SimulationSession", price: float, quantity: int, side: str
+    session: "SimulationSession", price: float, quantity: int, side: str,
+    right: str | None = None, strike: int | None = None, expiry: str | None = None,
 ) -> tuple[bool, str]:
     """
     Check whether executing this trade would exceed the MaxSize limit.
@@ -410,7 +392,18 @@ def check_maxsize(
     if not session.guardrail_maxsize_enabled:
         return False, ""
 
-    post_capital = _simulate_post_trade_capital(session, price, quantity, side)
+    post_capital = _simulate_post_trade_capital(session, price, quantity, side, right, strike, expiry)
+    from app.services.trading import get_position
+    target_right = right
+    if target_right is None and session.instrument_type == "options":
+        target_right = session.right or "CE"
+    kwargs = {"strike": strike, "expiry": expiry} if strike is not None or expiry is not None else {}
+    position = get_position(session.session_id, symbol=session.symbol, right=target_right, **kwargs)
+    closes_position = (side == "BUY" and position.side == "SHORT") or (side == "SELL" and position.side == "LONG")
+    # Exits must remain possible after lowering the configured limit. Reversals
+    # open a new position and must still satisfy it, even if exposure decreases.
+    if closes_position and quantity <= position.quantity:
+        return False, ""
 
     if session.guardrail_maxsize_mode == "percentage":
         limit = (session.guardrail_maxsize_pct / 100.0) * session.session_capital

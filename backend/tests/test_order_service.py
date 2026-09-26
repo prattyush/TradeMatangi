@@ -287,3 +287,15 @@ class TestCancelAllPendingOrders:
         _buy_target(25000.0)  # still pending
         n = svc.cancel_all_pending_orders(SESSION, DATE)
         assert n == 1  # only the pending one
+
+
+def test_paper_settlement_retry_keeps_original_fill_identity():
+    from app.models.schemas import Order
+    order = Order(session_id=SESSION, user_id="paper-user", symbol="TATPOW", side=TradeSide.BUY, quantity=10, trigger_price=100, limit_price=101, created_at=1, wallet_ledger_id=f"paper:{DATE}")
+    svc._orders[SESSION] = {order.order_id: order}
+    assert svc.check_orders(SESSION, 100, 2, settle_wallet=False) == [order]
+    # The transaction may have committed while its response was lost. Retrying
+    # must use the same amount/receipt even if the next market tick has moved.
+    order.status = OrderStatus.PENDING
+    assert svc.check_orders(SESSION, 99, 3, settle_wallet=False) == [order]
+    assert (order.filled_price, order.filled_at) == (100, 2)

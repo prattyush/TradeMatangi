@@ -268,7 +268,7 @@ class TestNakedShortMarginCheck:
                 "side": "SELL",
                 "order_type": "LIMIT",
                 "limit_price": 150.0,
-                "quantity": 75,
+                "quantity": 65,
             })
         assert resp.status_code == 402
         assert "margin" in resp.json()["detail"].lower()
@@ -304,7 +304,7 @@ class TestNakedShortMarginCheck:
                 "side": "SELL",
                 "order_type": "LIMIT",
                 "limit_price": 150.0,
-                "quantity": 75,
+                "quantity": 65,
             })
         assert resp.status_code == 200
 
@@ -352,7 +352,7 @@ class TestNakedShortMarginCheck:
                 "side": "SELL",
                 "order_type": "LIMIT",
                 "limit_price": 150.0,
-                "quantity": 75,
+                "quantity": 65,
             })
         # No margin check since position is LONG
         assert resp.status_code == 200

@@ -548,7 +548,7 @@ def test_equity_anchored_desktop_session_can_place_same_underlying_option_order(
             side=TradeSide.BUY,
             order_type=OrderType.LIMIT,
             limit_price=10,
-            quantity=250,
+            quantity=2700,
             right="CE",
             strike=400,
             expiry="2026-05-07",
@@ -560,9 +560,9 @@ def test_equity_anchored_desktop_session_can_place_same_underlying_option_order(
     assert order.right == "CE"
     assert order.strike == 400
     assert order.expiry == "2026-05-07"
-    assert order.reserved_amount == pytest.approx(2500)
+    assert order.reserved_amount == pytest.approx(27000)
     assert order.reservation_margin_rate == pytest.approx(1.0)
-    assert wallet_service.get_ledger_balance("desktop-user", "2026-05-06", "sim:2026-05-06") == pytest.approx(147500)
+    assert wallet_service.get_ledger_balance("desktop-user", "2026-05-06", "sim:2026-05-06") == pytest.approx(123000)
     _clear()
 
 
@@ -602,6 +602,52 @@ def test_desktop_limit_entry_places_matching_stoploss_on_fill(no_db):
     assert sl.strike == 24000
     assert sl.expiry == "2026-05-07"
     _clear()
+
+
+def test_desktop_paper_entry_places_matching_stoploss_with_paper_ledger(no_db):
+    _clear("desktop-equity-test")
+    session = _equity_session(mode="paper")
+    session.session_type = "paper"
+    session.wallet_ledger_id = "paper:2026-05-06"
+    session.desktop_origin = "desktop_paper"
+    wallet_service._ledgers[("desktop-user", "paper:2026-05-06")] = 150000
+
+    with patch("app.services.paper_wallet.move") as paper_move, \
+         patch("app.services.user_settings_service.get_settings", side_effect=AssertionError("desktop Paper SL should not depend on the global auto-SL setting")):
+        order = order_service.place_order(
+            session_id=session.session_id,
+            symbol=session.symbol,
+            side=TradeSide.SELL,
+            order_type=OrderType.LIMIT,
+            quantity=100,
+            created_at=1778058900,
+            trading_date=session.date,
+            limit_price=100,
+            user_id=session.user_id,
+            margin_rate=.2,
+            entry_sl_price=106,
+            group_id="desktop-paper-sl",
+            source="desktop_paper",
+            wallet_ledger_id=session.wallet_ledger_id,
+            wallet_ledger_kind="paper",
+        )
+
+        sim_svc._emit_tick_and_check_orders(session, {"time": 1778058901, "open": 100, "high": 100, "low": 100, "close": 100}, None)
+
+    assert order.status == OrderStatus.FILLED
+    stoplosses = [item for item in order_service.get_open_orders(session.session_id) if item.is_stoploss]
+    assert len(stoplosses) == 1
+    sl = stoplosses[0]
+    assert sl.side == TradeSide.BUY
+    assert sl.trigger_price == 106
+    assert sl.group_id == "desktop-paper-sl"
+    assert sl.source == "desktop_paper"
+    assert sl.wallet_ledger_id == "paper:2026-05-06"
+    assert sl.wallet_ledger_kind == "paper"
+    assert sl.reservation_margin_rate == pytest.approx(.2)
+    assert paper_move.call_count >= 1
+    _clear("desktop-equity-test")
+    wallet_service._ledgers.pop(("desktop-user", "paper:2026-05-06"), None)
 
 
 def test_desktop_target_entry_places_matching_stoploss_on_fill(no_db):
@@ -684,6 +730,20 @@ def test_desktop_stop_removes_active_stepwise_session(no_db):
     assert response == {"status": "stopped"}
     assert active is None
     _clear()
+
+
+def test_desktop_stop_rejects_attached_website_owned_paper_session(no_db):
+    _clear("desktop-equity-test")
+    session = _equity_session(mode="paper")
+    session.session_type = "paper"
+    session.desktop_origin = None
+
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(desktop_trading.stop_stepwise(session.session_id, user_id="desktop-user"))
+
+    assert exc.value.status_code == 409
+    assert session.state == SimulationState.RUNNING
+    _clear("desktop-equity-test")
 
 
 def test_desktop_attached_contract_order_is_contract_scoped(no_db, monkeypatch):

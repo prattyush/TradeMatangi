@@ -17,7 +17,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from app.dependencies import get_desktop_user_id
-from app.config import EQUITY_MIS_MARGIN_RATE
+from app.config import EQUITY_MIS_MARGIN_RATE, LOT_SIZES
 from app.models.schemas import (
     CancelAllStrategiesRequest,
     ConvertOrderRequest,
@@ -63,6 +63,9 @@ class DesktopTradingSnapshot(BaseModel):
     wallet_balance: float
     pnl: dict
     settings: dict
+    option_lot_size: int = 1
+    owned: bool = False
+    wallet_locked: bool = False
 
 
 class DesktopTradingCandidate(BaseModel):
@@ -152,14 +155,14 @@ class DesktopTradingStartRequest(SimulationStartRequest):
     resume_bar_index: int | None = Field(default=None, ge=0)
 
 
-def _active_desktop_session_for_date(user_id: str, date: str):
+def _active_desktop_session_for_date(user_id: str, date: str, desktop_mode: str | None = None):
     """Return an active desktop Replay/Stepwise session for a date, if any."""
     for session in sim_svc._sessions.values():
         if session.user_id != user_id or session.date != date:
             continue
         if session.state == sim_svc.SimulationState.ENDED:
             continue
-        if _desktop_mode(session) in ("paper", "replay", "stepwise"):
+        if _desktop_mode(session) in ("paper", "replay", "stepwise") and (desktop_mode is None or _desktop_mode(session) == desktop_mode):
             return session
     return None
 
@@ -498,6 +501,9 @@ def _snapshot(session, user_id: str) -> DesktopTradingSnapshot:
     display_trades = session_trades + [item for item in historical_trades if str(item.get("trade_id")) not in known_trade_ids]
     display_trades.sort(key=lambda item: int(item.get("timestamp", 0)))
     return DesktopTradingSnapshot(
+        option_lot_size=LOT_SIZES.get(session.symbol, 1),
+        owned=bool(getattr(session, "desktop_origin", None)),
+        wallet_locked=session.session_type == "paper",
         event_cursor=session.queue.latest_id(),
         desktop_mode=_desktop_mode(session),
         source=_desktop_source(session),
@@ -778,10 +784,12 @@ async def start_desktop_trading(req: DesktopTradingStartRequest, user_id: str = 
         req.session_type = "stepwise"
         req.stepwise = True
     _seed_underlying_options_request(req)
-    session_response = await simulation_router.start_simulation(req, user_id)
+    session_response = await simulation_router.start_with_paper_claim(req, user_id, desktop_independent=True)
     session = _require_session(session_response.session_id, user_id)
     setattr(session, "desktop_mode", req.desktop_mode)
-    setattr(session, "desktop_origin", _desktop_source(session))
+    if getattr(session, "desktop_created", False):
+        setattr(session, "desktop_origin", _desktop_source(session))
+        sim_svc._upsert_session_to_db(session)
     if req.resume_bar_index is not None:
         session.current_bar_index = req.resume_bar_index
     if session.instrument_type == "options" and req.expiry:
@@ -804,7 +812,9 @@ async def candidate(
     for session in list(sim_svc._sessions.values()):
         if session.user_id != user_id or session.state == sim_svc.SimulationState.ENDED:
             continue
-        if session.symbol == symbol and session.date == date and session.instrument_type == instrument_type and _desktop_mode(session) == desktop_mode:
+        if session.symbol == symbol and session.date == date and _desktop_mode(session) == desktop_mode:
+            if session.instrument_type != instrument_type:
+                raise HTTPException(status_code=409, detail=f"Existing session {session.session_id} uses a different anchor instrument")
             return DesktopTradingCandidate(status="active", active=_snapshot(session, user_id))
     records = sim_svc.find_all_sessions_by_context(user_id, symbol, date, session_type, instrument_type)
     if not records:
@@ -828,20 +838,25 @@ async def attach_contract(session_id: str, req: AttachContractRequest, user_id: 
         raise HTTPException(status_code=400, detail=f"This desktop trading session is locked to {session.symbol}. Open another screen to use {contract['symbol']}.")
     if session.expiry and contract["expiry"] != session.expiry:
         raise HTTPException(status_code=400, detail=f"This desktop trading session is locked to expiry {session.expiry}")
-    if not session.expiry:
-        session.expiry = contract["expiry"]
     _assert_can_switch_active_right(session, contract)
-    simulation_router._ensure_options_data(session.symbol, session.date, contract["strike"], contract["expiry"], contract["right"])
-    if contract["right"] == "CE":
-        session.strike_ce = contract["strike"]
+    ensure = lambda: simulation_router._ensure_options_data(session.symbol, session.date, contract["strike"], contract["expiry"], contract["right"])
+    if session.session_type == "paper":
+        simulation_router._soft_ensure(ensure)
     else:
-        session.strike_pe = contract["strike"]
-    _register_contract(session, contract)
+        ensure()
     if session.session_type == "paper" and getattr(session, "paper_stream_source", None):
         try:
             sim_svc.subscribe_desktop_option_contract(session, contract)
         except Exception as exc:
             raise HTTPException(status_code=503, detail=f"Could not subscribe to option contract: {exc}") from exc
+    if contract["right"] == "CE":
+        session.strike_ce = contract["strike"]
+    else:
+        session.strike_pe = contract["strike"]
+    if not session.expiry:
+        session.expiry = contract["expiry"]
+    _register_contract(session, contract)
+    sim_svc._upsert_session_to_db(session)
     return _snapshot(session, user_id)
 
 
@@ -903,6 +918,8 @@ async def trading_events(
 @router.post("/{session_id}/stop")
 async def stop_stepwise(session_id: str, user_id: str = Depends(get_desktop_user_id)):
     session = _require_session(session_id, user_id)
+    if _desktop_mode(session) == "paper" and not getattr(session, "desktop_origin", None):
+        raise HTTPException(status_code=409, detail="Attached Paper sessions cannot be stopped from desktop; detach this screen instead")
     _flatten_positions_for_stop(session, user_id)
     _mark_desktop_checkpoint(session)
     sim_svc.stop_session(session)
@@ -971,6 +988,12 @@ async def place_chart_order(session_id: str, intent: ChartOrderIntent, user_id: 
         quote_price = float(intent.price)
         entry_price = float(intent.price)
         order_type = OrderType.LIMIT if intent.intent == "limit" else OrderType.TARGET
+
+    if intent.entry_sl_price is not None and (
+        (intent.side == TradeSide.BUY and intent.entry_sl_price >= quote_price)
+        or (intent.side == TradeSide.SELL and intent.entry_sl_price <= quote_price)
+    ):
+        raise HTTPException(status_code=400, detail="Long stop must be below chart entry; short stop must be above chart entry")
 
     req = PlaceOrderRequest(
         session_id=session_id,
@@ -1199,7 +1222,7 @@ async def pre_session_wallet(
     user_id: str = Depends(get_desktop_user_id),
 ):
     """Return the wallet balance that the next desktop run will use."""
-    active = _active_desktop_session_for_date(user_id, date)
+    active = _active_desktop_session_for_date(user_id, date, desktop_mode)
     if active:
         ledger_id = active.wallet_ledger_id
         ledger_kind = "paper" if active.session_type == "paper" else "sim"
@@ -1207,7 +1230,7 @@ async def pre_session_wallet(
         ledger_id = f"paper:{date}" if desktop_mode == "paper" else f"sim:{date}"
         ledger_kind = "paper" if desktop_mode == "paper" else "sim"
     balance = wallet_service.get_ledger_balance(user_id, date, ledger_id, ledger_kind)
-    return {"user_id": user_id, "date": date, "balance": balance}
+    return {"user_id": user_id, "date": date, "balance": balance, "locked": __import__("app.services.paper_wallet", fromlist=["locked"]).locked(user_id, date) if desktop_mode == "paper" else False}
 
 
 @router.post("/wallet/reset")
@@ -1218,14 +1241,14 @@ async def reset_pre_session_wallet(
     user_id: str = Depends(get_desktop_user_id),
 ):
     """Set the wallet for the next desktop trading run."""
-    if _active_desktop_session_for_date(user_id, date):
+    if _active_desktop_session_for_date(user_id, date, desktop_mode):
         raise HTTPException(status_code=409, detail="Wallet cannot be changed during an active desktop session")
     ledger_id = f"paper:{date}" if desktop_mode == "paper" else f"sim:{date}"
     ledger_kind = "paper" if desktop_mode == "paper" else "sim"
     if desktop_mode != "paper":
         wallet_service.reset(user_id, date, req.amount)
     balance = wallet_service.reset_ledger(user_id, date, ledger_id, req.amount, ledger_kind)
-    return {"user_id": user_id, "date": date, "balance": balance}
+    return {"user_id": user_id, "date": date, "balance": balance, "locked": __import__("app.services.paper_wallet", fromlist=["locked"]).locked(user_id, date) if desktop_mode == "paper" else False}
 
 
 @router.post("/{session_id}/wallet/reset")
@@ -1233,7 +1256,7 @@ async def reset_wallet(session_id: str, req: WalletResetRequest, user_id: str = 
     session = _require_session(session_id, user_id)
     if session.state != sim_svc.SimulationState.ENDED:
         raise HTTPException(status_code=409, detail="Wallet cannot be changed during an active desktop session")
-    balance = wallet_service.reset_ledger(user_id, session.date, session.wallet_ledger_id, req.amount, "sim")
+    balance = wallet_service.reset_ledger(user_id, session.date, session.wallet_ledger_id, req.amount, "paper" if session.session_type == "paper" else "sim")
     return {"user_id": user_id, "date": session.date, "balance": balance}
 
 

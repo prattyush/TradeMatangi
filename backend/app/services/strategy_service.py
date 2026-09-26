@@ -412,6 +412,15 @@ def _on_bar_close_autostop(
     if entry_sl_price is not None:
         group_id = str(_uuid.uuid4())
     try:
+        if entry_sl_price is not None and (entry_sl_price <= 0 or
+            (side == TradeSide.BUY and entry_sl_price >= trigger_price) or
+            (side == TradeSide.SELL and entry_sl_price <= trigger_price)):
+            raise ValueError("Long stop must be below entry; short stop must be above entry")
+        if tick_right:
+            from app.config import LOT_SIZES
+            lot_size = LOT_SIZES.get(session.symbol, 1)
+            if quantity < lot_size or quantity % lot_size:
+                raise ValueError("Option quantity must use complete lots")
         desktop_source = None
         if getattr(session, "session_type", None) == "stepwise":
             desktop_source = "desktop_stepwise"
