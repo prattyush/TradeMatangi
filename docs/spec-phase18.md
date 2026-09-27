@@ -21,6 +21,74 @@ This checkpoint is the current summary for a new conversation. Detailed sections
 later in this document preserve implementation history; older test counts are
 historical runs, not the latest totals.
 
+#### Session sizing preference correction (2026-09-26)
+
+Desktop Paper, Replay, and Stepwise sessions now capture the shared website
+sizing mode and Capital/Risk L/M/H presets once, at their initial desktop
+snapshot during start or attachment. The captured settings are saved with the
+trading session and returned in subsequent snapshots. Right-click **Use as SL**
+opens immediately using these settings, without a separate settings request.
+The same record is restored on resume/backend restart and used on reconnect,
+attachment and pop-out. Existing sessions without a record capture it once on
+first desktop access. A failed initial save returns an error and leaves capture
+retryable rather than silently accepting settings that cannot survive restart.
+
+> **Practical equity example:** With ₹100,000 session capital, Capital **12%**
+> allocates ₹12,000 and supports ₹60,000 equity exposure at 5× leverage.
+> At ₹100/share this is 600 shares for both long and short entries. Leverage
+> is applied once by the backend; the renderer sends `funds_ratio_pct=0.12`.
+> Existing affordability and MAXSIZE checks still apply to all capital in use.
+
+Sizing is fixed for the lifetime of the trading session, including resumed
+sessions. Website or desktop sizing preference changes apply to **new sessions**;
+the desktop Settings dialog explains this. Separate sessions can capture
+different preferences. Display settings remain independently configurable.
+M/L/T/AS tickets retain their session's captured sizing through price selection.
+Choices show **Capital 12%** or **Risk 4%**. The fill watcher creates the
+opposite-side SL for filled quantity using the selected stop price; unfilled
+entries do not create a stop. Options retain premium sizing and complete lots.
+Website sizing saves report errors and update local saved values only after a
+successful response.
+
+The optional persisted `desktop_sizing_settings` session field contains the
+existing sizing mode and six presets; the desktop snapshot shape is unchanged.
+There is no migration or new endpoint. Shared user settings remain defaults for
+new sessions, while the saved session record is authoritative for active ones.
+
+Verification: **153 targeted backend tests**, **49 desktop tests**, website and
+desktop TypeScript checks, and desktop production build passed. Website production
+build passed during the preceding settings-save correction; website code did not
+change in this follow-up. Large-chunk build warnings remain. Native Windows/live
+acceptance and the other Phase 18 concerns below remain open.
+
+Manual regression steps:
+
+1. Save website Capital % and a 12% preset **before starting** desktop Paper,
+   Replay, or Stepwise. Right-click Use as SL and confirm Capital 12% appears
+   immediately, without a `/settings/current` request.
+2. With ₹100,000 capital, test long and short equity entries at ₹100/share:
+   expect 600 shares and a matching opposite-side SL after filling. Repeat M/L/T
+   and AS; allow whole-share rounding for other prices. Cancel unfilled entries
+   and verify no SL appears. Check wrong-side stops and affordability/MAXSIZE.
+3. Change website sizing to Risk % and adjust capital presets during the session.
+   Its existing and newly opened tickets must retain Capital 12%. Start a **new**
+   session and confirm it captures the new settings. Repeat with Quantity and
+   options to verify whole shares, complete lots and premium sizing.
+4. Resume, reconnect, restart the backend and pop out/bring back the original
+   screen: it must retain the original captured settings. Two separate sessions
+   started with different settings must keep their own values.
+5. For an older session with no saved sizing record, attach once and verify it
+   captures current preferences. Change preferences and reattach: it must retain
+   the first capture. Simulate failure of the initial session-settings save,
+   restore persistence, and retry attachment.
+6. Verify desktop display settings still update during an active session, and
+   website sizing-save failures show an error without changing the saved choice.
+
+Lesson: capture sizing at the session boundary and persist it with that session.
+Shared user preferences are defaults for future sessions; reading them on every
+right-click or overwriting session sizing during snapshot refresh can change the
+meaning of the same percentage midway through practice.
+
 #### Latest implemented fixes
 
 | Area | Current behavior | Verification limit |

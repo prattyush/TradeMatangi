@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 from app.models.schemas import ConvertOrderRequest, OrderStatus, OrderType, PlaceOrderRequest, SimulationState, StartStrategyRequest, StrategyType, TradeSide, UpdateOrderRequest, WalletResetRequest
 from app.routers import desktop_trading
+from app.services.simulation import _upsert_session_to_db as persist_session
 from app.services import order_service, simulation as sim_svc, trading as trading_service, wallet_service
 
 
@@ -119,7 +120,8 @@ def test_desktop_trading_events_reset_with_snapshot_after_active_gap(no_db):
 @pytest.fixture(autouse=True)
 def no_db():
     wallet_service._ledgers[("desktop-user", "sim:2026-05-06")] = 150000
-    with patch("app.services.order_service._write_order_to_db"), \
+    with patch("app.services.simulation._upsert_session_to_db"), \
+         patch("app.services.order_service._write_order_to_db"), \
          patch("app.services.trading._write_trade_to_db"), \
          patch("app.services.wallet_service.debit"), \
          patch("app.services.wallet_service.credit"), \
@@ -811,23 +813,24 @@ def test_chart_market_intent_uses_the_clicked_contract_quote(no_db, monkeypatch)
 
 @pytest.mark.parametrize("mode", ["paper", "replay", "stepwise"])
 @pytest.mark.parametrize("side", [TradeSide.BUY, TradeSide.SELL])
-def test_desktop_chart_capital_sizing_applies_leverage_once_with_maxsize(mode, side):
+@pytest.mark.parametrize("allocation", [.12, .15])
+def test_desktop_chart_capital_sizing_applies_leverage_once_with_maxsize(mode, side, allocation):
     session = _equity_session(session_id=f"desktop-sizing-{mode}-{side.value}", mode=mode)
     if mode == "paper":
         session.session_type = "paper"
     session.session_capital = 100000
     session.guardrail_maxsize_enabled = True
-    session.guardrail_maxsize_pct = 15
+    session.guardrail_maxsize_pct = allocation * 100
     try:
         order = asyncio.run(desktop_trading.place_chart_order(session.session_id,
             desktop_trading.ChartOrderIntent(symbol=session.symbol, side=side,
-                intent="market", funds_ratio_pct=.15,
+                intent="market", funds_ratio_pct=allocation,
                 entry_sl_price=90 if side == TradeSide.BUY else 110),
             user_id="desktop-user"))
         price = 101 if side == TradeSide.BUY else 99
-        assert order.quantity == int(15000 / (.2 * price))
+        assert order.quantity == int((100000 * allocation) / (.2 * price))
         assert order.reserved_amount == pytest.approx(round(order.quantity * price * .2, 2))
-        assert order.reserved_amount <= 15000
+        assert order.reserved_amount <= allocation * 100000
         assert order.reservation_margin_rate == .2
     finally:
         _clear(session.session_id)
@@ -1058,5 +1061,92 @@ def test_missing_sl_rejects_unavailable_position_or_engine(state):
                 request_id=state, trigger_price=90), session.user_id))
         assert exc.value.status_code == 409
         assert order_service.get_open_orders(session.session_id) == []
+    finally:
+        _clear(session.session_id)
+
+
+@pytest.mark.parametrize("mode", ["paper", "replay", "stepwise"])
+@pytest.mark.parametrize("side", [TradeSide.BUY, TradeSide.SELL])
+def test_desktop_twelve_percent_equity_entry_creates_full_quantity_stop(no_db, mode, side):
+    session = _equity_session(session_id=f"desktop-capital-sl-{mode}-{side.value}", mode=mode)
+    session.session_capital = 100000
+    stop = 90 if side == TradeSide.BUY else 110
+    try:
+        order = asyncio.run(desktop_trading.place_chart_order(session.session_id,
+            desktop_trading.ChartOrderIntent(symbol=session.symbol, side=side,
+                intent="limit", price=100, funds_ratio_pct=.12, entry_sl_price=stop),
+            user_id="desktop-user"))
+        assert order.quantity == 600
+        assert order.reserved_amount == 12000
+        assert not any(item.is_stoploss for item in order_service.get_open_orders(session.session_id))
+        sim_svc._emit_tick_and_check_orders(session,
+            {"time": 1778058901, "open": 100, "high": 100, "low": 100, "close": 100}, None)
+        assert order.status == OrderStatus.FILLED
+        stops = [item for item in order_service.get_open_orders(session.session_id) if item.is_stoploss]
+        assert len(stops) == 1
+        assert stops[0].quantity == 600
+        assert stops[0].side == (TradeSide.SELL if side == TradeSide.BUY else TradeSide.BUY)
+        assert stops[0].trigger_price == stop
+        assert stops[0].reserved_amount == 0
+    finally:
+        _clear(session.session_id)
+
+
+@pytest.mark.parametrize("mode", ["paper", "replay", "stepwise"])
+def test_session_sizing_is_captured_once_and_display_settings_stay_live(mode):
+    session = _equity_session(session_id=f"sizing-freeze-{mode}", mode=mode)
+    initial = {**desktop_trading.get_settings(session.user_id), "desktop_order_size_mode": "funds_ratio"}
+    changed = {**initial, "desktop_order_size_mode": "risk_ratio", "funds_ratio_h_pct": .24,
+               "desktop_pnl_display_mode": "percent"}
+    try:
+        with patch.object(desktop_trading, "get_settings", return_value=initial), \
+             patch.object(sim_svc, "_upsert_session_to_db") as persist:
+            first = desktop_trading._snapshot(session, session.user_id)
+            persist.assert_called_once_with(session, strict=True)
+        with patch.object(desktop_trading, "get_settings", return_value=changed), \
+             patch.object(sim_svc, "_upsert_session_to_db") as persist:
+            later = desktop_trading._snapshot(session, session.user_id)
+            persist.assert_not_called()
+        assert first.settings["desktop_order_size_mode"] == later.settings["desktop_order_size_mode"] == "funds_ratio"
+        assert later.settings["funds_ratio_h_pct"] == .12
+        assert later.settings["desktop_pnl_display_mode"] == "percent"
+        other = _equity_session(session_id=f"new-sizing-{mode}", mode=mode)
+        with patch.object(desktop_trading, "get_settings", return_value=changed):
+            assert desktop_trading._snapshot(other, other.user_id).settings["desktop_order_size_mode"] == "risk_ratio"
+    finally:
+        _clear(session.session_id)
+        _clear(f"new-sizing-{mode}")
+
+
+def test_session_sizing_capture_failure_can_retry():
+    session = _equity_session(session_id="sizing-retry")
+    try:
+        with patch.object(sim_svc, "_upsert_session_to_db", side_effect=RuntimeError("offline")):
+            with pytest.raises(HTTPException) as exc:
+                desktop_trading._snapshot(session, session.user_id)
+            assert exc.value.status_code == 503
+            assert session.desktop_sizing_settings is None
+        desktop_trading._snapshot(session, session.user_id)
+        assert session.desktop_sizing_settings["desktop_order_size_mode"] == "quantity"
+    finally:
+        _clear(session.session_id)
+
+
+def test_session_sizing_survives_database_round_trip():
+    session = _equity_session(session_id="sizing-round-trip")
+    try:
+        desktop_trading._session_sizing_settings(session, {"desktop_order_size_mode": "funds_ratio"})
+        with patch("app.services.db.get_dynamodb_resource") as resource:
+            persist_session(session, strict=True)
+            record = resource.return_value.Table.return_value.put_item.call_args.kwargs["Item"]
+        assert str(record["desktop_sizing_settings"]["funds_ratio_h_pct"]) == "0.12"
+        with patch("app.services.guardrail_service.initialize_guardrails"), \
+             patch("app.services.trading.reload_trades_from_db"):
+            restored = sim_svc.rebuild_session_from_db(record, session.user_id)
+        assert restored.desktop_sizing_settings == session.desktop_sizing_settings
+        with patch.object(desktop_trading, "get_settings", return_value={"desktop_order_size_mode": "risk_ratio"}):
+            snapshot = desktop_trading._snapshot(restored, session.user_id)
+        assert snapshot.settings["desktop_order_size_mode"] == "funds_ratio"
+        assert snapshot.settings["funds_ratio_h_pct"] == .12
     finally:
         _clear(session.session_id)
