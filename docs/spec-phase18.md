@@ -21,6 +21,61 @@ This checkpoint is the current summary for a new conversation. Detailed sections
 later in this document preserve implementation history; older test counts are
 historical runs, not the latest totals.
 
+#### Trading snapshot frequency correction (2026-09-27)
+
+Native Desktop Paper, Replay and Stepwise now share the authenticated trading
+SSE consumer. The former Replay/Stepwise 800 ms trading snapshot timer is removed.
+The renderer reads the native event cache every 500 ms (local IPC, not HTTP),
+applies price/time/P&L ticks incrementally, and reconciles trading state every
+30 seconds or after state-changing events. Multiple events in a batch trigger
+at most one refresh, and simultaneous snapshot GETs from events/local actions
+share one in-flight request per screen/backend/session. Initial/action snapshots
+and Stepwise Next Bar responses reset the reconciliation deadline. Events already
+covered by their snapshot cursor do not trigger another GET.
+
+Trading stream lifecycle is shared across all modes: start/attachment/restoration,
+reconnect and pop-out use the same screen-scoped native consumer; stopping,
+detaching, switching, authentication loss and unmount clean it up. Transient
+connection changes leave the native reconnecting stream running. Browser/non-native
+fallback and an unavailable native event cache use a 30-second snapshot recovery
+path. Local trading actions retain their immediate authoritative refreshes;
+Stepwise uses the trading snapshot already returned by Next Bar. Recovery responses
+are session-scoped and cannot roll the current event cursor backwards.
+
+> This change reduces `/trading/{session_id}/snapshot` requests. Replay chart
+> `/replay/{run_id}/snapshot` polling remains separate: that path currently
+> synchronizes chart time with the trading session. It is intentionally retained
+> until a dedicated clock-event bridge is implemented. Paper shared-wallet refresh
+> also remains separate. No endpoint or persisted-data migration is required.
+
+Verification: **53 desktop tests**, **77 targeted backend trading/replay-event
+tests**, desktop TypeScript checking and production build passed. Tests cover the
+30-second deadline, Next Bar deadline reset, concurrent request coalescing,
+failed-request retry, session isolation and event-cursor refresh decisions.
+Native Windows request-count and reconnect acceptance remain manual.
+
+Manual checks:
+
+1. Rebuild/reload Desktop. Start an idle Stepwise session and inspect access logs
+   for `/trading/{session_id}/snapshot`: expect roughly one periodic GET every
+   30 seconds after initial attachment, rather than one every 800 ms.
+2. Advance several bars with and without fills. Quotes, P&L, orders and positions
+   must update from Next Bar; events already represented by that response should
+   not cause redundant GETs. Other state changes can legitimately refresh early.
+3. Run Replay with long/short equity and options, including SL/target/AutoStop
+   fills. Price and P&L movement must remain continuous and fills prompt. Keep the
+   distinction between trading and replay chart endpoints when counting requests.
+4. Repeat Paper regression checks, then run two screens, attach a shared session,
+   pop out/bring back, detach and stop. Confirm one active trading consumer per
+   controlled screen and no updates applied to the wrong session.
+5. Disconnect/reconnect and expire authentication. Confirm native recovery,
+   authoritative snapshots and cleanup still work; test browser fallback at the
+   slower interval while local actions/Stepwise responses remain immediate.
+
+Lesson: changing only a timer would delay trading updates. Reuse the event stream
+for responsive state changes, keep slower authoritative reconciliation, and reuse
+snapshots already returned by commands to avoid duplicate reads.
+
 #### Session sizing preference correction (2026-09-26)
 
 Desktop Paper, Replay, and Stepwise sessions now capture the shared website

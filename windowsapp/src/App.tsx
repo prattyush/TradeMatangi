@@ -1,3 +1,4 @@
+import { TradingRefresh, TRADING_RECONCILE_MS, eventNeedsTradingRefresh } from './tradingRefresh'
 import { bounded, closeAfterSave, controlledScreens, SAVE_TIMEOUT_MS, journalKey, recoverState, type RecoveryJournal } from './windowLifecycle'
 import { ticketSizingPayload, ticketSizingLabel } from './ticketSizing'
 import { equityEntryEnabled, entryQuantity, instrumentLotSize, validateEntryStop } from './tradingInstrument'
@@ -70,7 +71,6 @@ const GOOGLE_CLIENT_ID = '249337992826-jm174i5bqdhr4bfqpmip44gnnp4eo2eh.apps.goo
 const fallbackCatalogue: Instrument[] = [{ symbol: 'NIFTY', display_name: 'NIFTY 50', exchange: 'NSE', chart_type: 'index', option_eligible: true, supported_intervals: [1, 3, 5, 15, 30, 60] }]
 const defaultChartSettings: ChartSettings = { background: '#151a23', textColor: '#aeb8ca', gridColor: '#ffffff', gridOpacity: 0.12, gridStyle: 'solid', gridSize: 1, movingAverageType: 'MA', movingAveragePeriods: '5,10,20', showChartInfo: true, liveProvider: 'breeze', horizontalLineColor: '#facc15', horizontalLineWidth: 2, trendLineColor: '#60a5fa', trendLineWidth: 2, drawingLineColor: '#60a5fa', drawingLineWidth: 2, drawingFillColor: '#60a5fa', drawingFillOpacity: 0.16 }
 const PAPER_STREAM_POLL_MS = 500
-const PAPER_SNAPSHOT_RECONCILE_MS = 30000
 const noIndicators: string[] = []
 const newTile = (): TileConfig => ({ id: crypto.randomUUID(), kind: 'spot', symbol: 'NIFTY', interval: '3', tradingDate: '2026-05-06', expiry: '', strike: '', right: 'CE' })
 const newScreen = (number: number): Screen => ({ id: crypto.randomUUID(), name: `Screen ${number}`, layout: '1', tiles: [newTile()] })
@@ -160,10 +160,6 @@ const paperStreamEvents = (payload: DesktopTradingStreamPayload): Record<string,
   return [payload as Record<string, unknown>]
 }
 
-const paperEventNeedsSnapshot = (event: Record<string, unknown>): boolean => {
-  const type = typeof event.type === 'string' ? event.type : ''
-  return type !== 'tick' && type !== 'bar_paused'
-}
 
 function WorkspaceToolPanel({ tiles, activeTileId, setActiveTileId, activeTileLabel, activePosition, sessionCapital, positionMarginRate, indicators, toggleIndicator, clearIndicators, sendDrawing, sendDrawingAction, activeDrawingTool, drawingMode, setDrawingMode, tradeHistoryCount, onOpenTradeHistory, labelState, labelMetadata, labelMetadataStatus, labelMetadataError, onReloadLabelMetadata, onSaveTradeLabel, strategies, onCancelStrategy, onUpdateStrategyPrice }: { tiles: TileConfig[]; activeTileId: string; setActiveTileId: (tileId: string) => void; activeTileLabel: string; activePosition: DesktopPosition | null; sessionCapital: number; positionMarginRate: number; indicators: string[]; toggleIndicator: (name: string) => void; clearIndicators: () => void; sendDrawing: (tool: string) => void; sendDrawingAction: (action: DrawingAction['action']) => void; activeDrawingTool: string | null; drawingMode: DrawingMode; setDrawingMode: (mode: DrawingMode) => void; tradeHistoryCount: number; onOpenTradeHistory: () => void; labelState: DesktopTradeLabelState | null; labelMetadata: DesktopLabelMetadata; labelMetadataStatus: DesktopLabelMetadataStatus; labelMetadataError: string; onReloadLabelMetadata: () => void; onSaveTradeLabel: (roundTrip: DesktopRoundTrip, fields: Partial<DesktopTradeLabel>) => void; strategies: DesktopTradingSnapshot['strategies']; onCancelStrategy: (strategyId: string) => void; onUpdateStrategyPrice: (strategyId: string, currentPrice: number) => void }) {
   const hasPosition = Boolean(activePosition && activePosition.side !== 'FLAT' && activePosition.quantity > 0)
@@ -450,6 +446,9 @@ function ScreenController(props: ScreenControllerProps) {
   const [handoffError, setHandoffError] = useState('')
   const authenticatedRef = useRef(connection !== 'authentication_required')
   const tradingStreamEventRef = useRef<Record<string, number>>({})
+  const tradingRefreshRef = useRef(new TradingRefresh())
+  const tradingStateRef = useRef(trading)
+  tradingStateRef.current = trading
   const tradingSnapshotRequiredRef = useRef<Record<string, boolean>>({})
   const labelMetadataRequestIdRef = useRef(0)
   const tradingErrorTimerRef = useRef<number | null>(null)
@@ -669,7 +668,7 @@ function ScreenController(props: ScreenControllerProps) {
   }
   const drawingRequest = useCallback((path: string, method: 'GET' | 'POST' | 'PUT' | 'DELETE', body: Record<string, unknown> = {}) => desktopRecordRequest(path, method, body), [browserToken, connection, hasNativeHost, serverUrl])
   const reportDrawingError = useCallback((error: unknown) => setDrawingError(`Drawing sync failed: ${String(error)}`), [])
-  const desktopTradingRequest = async <T,>(path: string, method: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE', body: Record<string, unknown> = {}): Promise<T> => {
+  const rawDesktopTradingRequest = async <T,>(path: string, method: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE', body: Record<string, unknown> = {}): Promise<T> => {
     if (hasNativeHost) return invoke<T>('desktop_drawing_request', { baseUrl: serverUrl, path: `trading/${path}`, method, body, screenId: activeScreenId })
     const response = await fetch(`${serverUrl.replace(/\/$/, '')}/api/desktop/v1/trading/${path}`, { method, headers: { Authorization: `Bearer ${browserToken}`, 'Content-Type': 'application/json' }, body: method === 'GET' ? undefined : JSON.stringify(body) })
     if (!response.ok) {
@@ -677,6 +676,15 @@ function ScreenController(props: ScreenControllerProps) {
       throw new Error(`Trading request failed (${response.status})${detail ? `: ${detail.slice(0, 220)}` : ''}`)
     }
     return (response.status === 204 ? null : await response.json()) as T
+  }
+  const tradingRefreshKey = (sessionId: string) => `${serverUrl}:${browserToken}:${sessionId}`
+  const desktopTradingRequest = async <T,>(path: string, method: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE', body: Record<string, unknown> = {}): Promise<T> => {
+    if (method === 'GET' && /^[^/]+\/snapshot$/.test(path)) {
+      return tradingRefreshRef.current.request(tradingRefreshKey(path.split('/')[0]), () => rawDesktopTradingRequest<T>(path, method, body))
+    }
+    const result = await rawDesktopTradingRequest<T>(path, method, body)
+    if (isDesktopTradingSnapshot(result)) tradingRefreshRef.current.mark(tradingRefreshKey(result.session.session_id))
+    return result
   }
   const loadPreStartWallet = async (date: string) => {
     const wallet = await desktopTradingRequest<{ balance: number; locked?: boolean }>(`wallet?date=${encodeURIComponent(date)}&desktop_mode=${encodeURIComponent(mode.toLowerCase())}`, 'GET')
@@ -773,7 +781,6 @@ function ScreenController(props: ScreenControllerProps) {
         try {
           const snapshot = await desktopTradingRequest<DesktopTradingSnapshot>(`${saved.session_id}/snapshot`, 'GET')
           if (!cancelled) { setTrading(snapshot); setSharedTradingSession(!saved.owned || !snapshot.owned) }
-          if (!cancelled && saved.mode === 'Paper') await startNativeStream(`paper:${activeScreenId}:${saved.session_id}`, `trading/${saved.session_id}/events`, `trading/${saved.session_id}/snapshot`)
         } catch (error) { if (!cancelled) { reportTradingError(`Session needs reattachment: ${String(error)}`); if (props.assignedId) setHandoffError(String(error)) } }
       }
       if (saved.run_id) {
@@ -821,7 +828,6 @@ function ScreenController(props: ScreenControllerProps) {
     if (!props.assignedId || !childReady) return
     if (live) void startNativeStream(`browse-live:${activeScreenId}:${live.stream_id}`, `live/${live.stream_id}/events`, `live/${live.stream_id}/snapshot`).catch(reportLiveError)
     if (replay) void startNativeStream(`replay:${activeScreenId}:${replay.run_id}`, `replay/${replay.run_id}/events`, `replay/${replay.run_id}/snapshot`).catch(reportTradingError)
-    if (trading?.desktop_mode === 'paper') void startNativeStream(`paper:${activeScreenId}:${trading.session.session_id}`, `trading/${trading.session.session_id}/events`, `trading/${trading.session.session_id}/snapshot`).catch(reportTradingError)
   }, [childReady])
   const stopNativeStream = (key: string) => {
     if (hasNativeHost) void invoke('stop_desktop_stream', { key })
@@ -836,11 +842,10 @@ function ScreenController(props: ScreenControllerProps) {
       authenticatedRef.current = true
       if (live) void startNativeStream(`browse-live:${activeScreenId}:${live.stream_id}`, `live/${live.stream_id}/events`, `live/${live.stream_id}/snapshot`).catch(reportLiveError)
       if (replay) void startNativeStream(`replay:${activeScreenId}:${replay.run_id}`, `replay/${replay.run_id}/events`, `replay/${replay.run_id}/snapshot`).catch(reportTradingError)
-      if (trading?.desktop_mode === 'paper') {
+      if (trading?.session.session_id) {
         const key = `paper:${activeScreenId}:${trading.session.session_id}`
         delete tradingStreamEventRef.current[key]
         tradingSnapshotRequiredRef.current[key] = true
-        void startNativeStream(key, `trading/${trading.session.session_id}/events`, `trading/${trading.session.session_id}/snapshot`).catch(reportTradingError)
       }
     }
   }, [connection])
@@ -1022,7 +1027,6 @@ function ScreenController(props: ScreenControllerProps) {
         if (!live) await startLive(activeScreen.tiles.map(tile => ({ ...tile, tradingDate: date })))
         if (tradeSnapshot?.session.session_id) {
           delete tradingSnapshotRequiredRef.current[`paper:${activeScreenId}:${tradeSnapshot.session.session_id}`]
-          await startNativeStream(`paper:${activeScreenId}:${tradeSnapshot.session.session_id}`, `trading/${tradeSnapshot.session.session_id}/events`, `trading/${tradeSnapshot.session.session_id}/snapshot`)
         }
       } else {
         const attachedStartTime = attached?.current_time ? new Date(attached.current_time * 1000).toISOString().slice(11, 19) : replayStartTime
@@ -1067,6 +1071,7 @@ function ScreenController(props: ScreenControllerProps) {
       if (action === 'next-bar' && mode === 'Stepwise' && tradingSessionId) {
         const combined = await replayRequest<{ replay: ReplaySnapshot; trading: DesktopTradingSnapshot }>(`${replay.run_id}/next-bar`, 'POST', { trading_session_id: tradingSessionId })
         setReplay(combined.replay)
+        tradingRefreshRef.current.mark(tradingRefreshKey(combined.trading.session.session_id))
         setTrading(combined.trading)
         return
       }
@@ -1101,7 +1106,7 @@ function ScreenController(props: ScreenControllerProps) {
       setTradingNotice('Stop or detach the current run before changing mode.')
       return
     }
-    if (trading?.desktop_mode === 'paper') {
+    if (trading?.session.session_id) {
       stopNativeStream(`paper:${activeScreenId}:${trading.session.session_id}`)
       delete tradingStreamEventRef.current[`paper:${activeScreenId}:${trading.session.session_id}`]
       delete tradingSnapshotRequiredRef.current[`paper:${activeScreenId}:${trading.session.session_id}`]
@@ -1160,28 +1165,38 @@ function ScreenController(props: ScreenControllerProps) {
     return () => { cancelled = true; window.clearInterval(timer) }
   }, [replay?.run_id, replay?.state, hasNativeHost, serverUrl, mode, trading?.session.session_id, connection])
   useEffect(() => {
-    if (!isTradingMode(mode) || !trading?.session.session_id || connection === 'authentication_required') return
+    if (!hasNativeHost || !childReady || !isTradingMode(mode) || !trading?.session.session_id || connection === 'authentication_required') return
     const sessionId = trading.session.session_id
-    if (mode === 'Paper' && hasNativeHost) {
+    const key = `paper:${activeScreenId}:${sessionId}`
+    void startNativeStream(key, `trading/${sessionId}/events`, `trading/${sessionId}/snapshot`).catch(reportTradingError)
+    return () => { stopNativeStream(key); delete tradingStreamEventRef.current[key]; delete tradingSnapshotRequiredRef.current[key] }
+  }, [mode, trading?.session.session_id, hasNativeHost, childReady, connection === 'authentication_required', serverUrl, browserToken])
+  useEffect(() => {
+    if (!isTradingMode(mode) || !trading?.session.session_id || connection === 'authentication_required' || (props.assignedId && !childReady)) return
+    const sessionId = trading.session.session_id
+    if (hasNativeHost) {
       const key = `paper:${activeScreenId}:${sessionId}`
       let cancelled = false
       let inFlight = false
-      let lastReconcileAt = 0
+      const refreshKey = tradingRefreshKey(sessionId)
+      tradingRefreshRef.current.due(refreshKey)
       const timer = window.setInterval(() => {
         if (inFlight) return
         inFlight = true
         void readNativeStreamState<DesktopTradingStreamPayload>(key)
+          .catch(error => { if (!cancelled) reportTradingError(error); return null })
           .then(async stream => {
-            if (!stream || cancelled) return
+            if (cancelled) return
             const previousCursor = tradingStreamEventRef.current[key] ?? -1
-            const advanced = stream.last_event_id > previousCursor
+            const advanced = Boolean(stream && stream.last_event_id > previousCursor)
             let needsSnapshot = Boolean(tradingSnapshotRequiredRef.current[key])
             const now = Date.now()
-            if (lastReconcileAt === 0 || now - lastReconcileAt >= PAPER_SNAPSHOT_RECONCILE_MS) needsSnapshot = true
+            if (tradingRefreshRef.current.due(refreshKey, now)) needsSnapshot = true
             if (advanced) {
-              const events = paperStreamEvents(stream.latest_payload)
+              const events = paperStreamEvents(stream!.latest_payload)
               for (const event of events) {
-                if (!isDesktopTradingSnapshot(event) && paperEventNeedsSnapshot(event)) needsSnapshot = true
+                if (isDesktopTradingSnapshot(event)) tradingRefreshRef.current.mark(refreshKey)
+                else if (eventNeedsTradingRefresh(event, tradingStateRef.current?.event_cursor ?? -1)) needsSnapshot = true
               }
               setTrading(current => {
                 if (!current || current.session.session_id !== sessionId) return current
@@ -1195,10 +1210,9 @@ function ScreenController(props: ScreenControllerProps) {
               const snapshot = await desktopTradingRequest<DesktopTradingSnapshot>(`${sessionId}/snapshot`, 'GET')
               if (cancelled || snapshot.session.session_id !== sessionId) return
               setTrading(current => current?.session.session_id === sessionId ? acceptPaperSnapshot(current, snapshot) : current)
-              lastReconcileAt = Date.now()
               delete tradingSnapshotRequiredRef.current[key]
             }
-            if (advanced) tradingStreamEventRef.current[key] = stream.last_event_id
+            if (advanced) tradingStreamEventRef.current[key] = stream!.last_event_id
             clearTradingError()
           })
           .catch(reportTradingError)
@@ -1207,13 +1221,17 @@ function ScreenController(props: ScreenControllerProps) {
       return () => { cancelled = true; window.clearInterval(timer) }
     }
     let cancelled = false
+    let inFlight = false
     const timer = window.setInterval(() => {
+      if (inFlight) return
+      inFlight = true
       void desktopTradingRequest<DesktopTradingSnapshot>(`${sessionId}/snapshot`, 'GET')
-        .then(snapshot => { if (!cancelled && snapshot.session.session_id === sessionId) setTrading(current => current?.session.session_id === sessionId ? snapshot : current) })
+        .then(snapshot => { if (!cancelled && snapshot.session.session_id === sessionId) setTrading(current => current?.session.session_id === sessionId ? acceptPaperSnapshot(current, snapshot) : current) })
         .catch(reportTradingError)
-    }, 800)
+        .finally(() => { inFlight = false })
+    }, TRADING_RECONCILE_MS)
     return () => { cancelled = true; window.clearInterval(timer) }
-  }, [mode, trading?.session.session_id, serverUrl, browserToken, hasNativeHost, connection])
+  }, [mode, trading?.session.session_id, serverUrl, browserToken, hasNativeHost, connection, childReady])
   useEffect(() => {
     if (mode !== 'Paper' || !trading?.session.session_id || connection !== 'connected') return
     const sessionId = trading.session.session_id
@@ -1483,7 +1501,7 @@ function ScreenController(props: ScreenControllerProps) {
   const logoutDesktop = () => {
     if (live) stopNativeStream(`browse-live:${activeScreenId}:${live.stream_id}`)
     if (replay) stopNativeStream(`replay:${activeScreenId}:${replay.run_id}`)
-    if (trading?.desktop_mode === 'paper') {
+    if (trading?.session.session_id) {
       stopNativeStream(`paper:${activeScreenId}:${trading.session.session_id}`)
       delete tradingStreamEventRef.current[`paper:${activeScreenId}:${trading.session.session_id}`]
       delete tradingSnapshotRequiredRef.current[`paper:${activeScreenId}:${trading.session.session_id}`]
