@@ -38,6 +38,8 @@ def _current_bar_slot(session: "SimulationSession") -> int:
 
 def _emit_guardrail_event(session: "SimulationSession", guardrail_type: str, reason: str, until_bar: int = 0) -> None:
     """Push a guardrail_activated SSE event onto the session queue."""
+    session.guardrail_last_type = guardrail_type
+    session.guardrail_last_reason = reason
     event = {
         "type": "guardrail_activated",
         "guardrail_type": guardrail_type,

@@ -72,6 +72,7 @@ export interface DesktopTradingSettings {
 }
 
 export interface DesktopTradingSnapshot {
+  guardrails?: { type?: string; blocked: boolean; reason: string; ban_active: boolean; block_until_bar: number; settings: Record<string, unknown> }
   version: number
   option_lot_size?: number
   owned?: boolean
