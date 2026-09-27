@@ -22,3 +22,8 @@ export function ticketSizingLabel(settings: DesktopTradingSettings, key: string)
   const value = percentage(settings, key) * (capital ? 100 : 1)
   return `${capital ? 'Capital' : 'Risk'} ${Math.round(value * 100) / 100}%`
 }
+
+/** Change captured ticket settings only; shared settings stay unchanged. */
+export function switchTicketSizing<T extends { settings: DesktopTradingSettings; sizeKey?: string }>(ticket: T, mode: 'risk_ratio' | 'funds_ratio'): T {
+  return { ...ticket, sizeKey: undefined, settings: { ...ticket.settings, desktop_order_size_mode: mode } }
+}

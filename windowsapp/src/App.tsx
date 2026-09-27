@@ -3,7 +3,7 @@ import { GuardrailFields, guardrailFields } from './GuardrailSettings'
 import { ToolbarIcon } from './ToolbarIcon'
 import { TradingRefresh, TRADING_RECONCILE_MS, eventNeedsTradingRefresh } from './tradingRefresh'
 import { bounded, closeAfterSave, controlledScreens, SAVE_TIMEOUT_MS, journalKey, recoverState, type RecoveryJournal } from './windowLifecycle'
-import { ticketSizingPayload, ticketSizingLabel } from './ticketSizing'
+import { ticketSizingPayload, ticketSizingLabel, switchTicketSizing } from './ticketSizing'
 import { equityEntryEnabled, entryQuantity, instrumentLotSize, validateEntryStop } from './tradingInstrument'
 import { useCallback, useEffect, useRef, useState, type Dispatch, type SetStateAction } from 'react'
 import { invoke } from '@tauri-apps/api/core'
@@ -1614,13 +1614,18 @@ function ScreenController(props: ScreenControllerProps) {
       <span>Current {trading || preStartWallet !== null ? `₹${Math.round(trading?.wallet_balance ?? preStartWallet ?? 0).toLocaleString('en-IN')}` : '—'}</span>
       {trading || walletLocked ? <><small>{walletLocked ? 'Paper wallet is locked after the first session starts.' : 'Wallet cannot be changed during an active run.'}</small><div><button onClick={() => setWalletOpen(false)}>Close</button></div></> : <><label>Reset to<input type="number" min="0" value={walletAmount} onChange={event => setWalletAmount(event.target.value)} disabled={historicalStarting} /></label><div><button onClick={() => void resetWallet().catch(reportTradingError)} disabled={historicalStarting}>Reset</button><button onClick={() => setWalletOpen(false)}>Close</button></div></>}
     </div>}
-    {tradeTicket && <div className="trade-ticket" style={placeNearPoint(tradeTicket.anchor.x, tradeTicket.anchor.y, 260, 190)}>
+    {tradeTicket && <div className="trade-ticket trade-ticket-sizing" style={placeNearPoint(tradeTicket.anchor.x, tradeTicket.anchor.y, 280, 280)}>
       <header><strong>{tradeTicket.side} SL</strong><button onClick={() => { setTradeTicket(null); setPricePickAction(null) }}>x</button></header>
       <div className="ticket-row"><span>Stoploss</span><b>{tradeTicket.slPrice.toFixed(2)}</b></div>
+      {tradeTicket.settings.desktop_order_size_mode !== 'quantity' && <div className="ticket-sizing-toggle">
+        <span>Risk %</span>
+        <button type="button" role="switch" aria-label="Use Capital % instead of Risk % for this order" aria-checked={tradeTicket.settings.desktop_order_size_mode === 'funds_ratio'} onClick={() => setTradeTicket(switchTicketSizing(tradeTicket, tradeTicket.settings.desktop_order_size_mode === 'funds_ratio' ? 'risk_ratio' : 'funds_ratio'))}><span /></button>
+        <span>Capital %</span>
+      </div>}
       {tradeTicket.settings && <div className="ticket-picker">
         <div className="ticket-buttons">{(['MARKET', 'LIMIT', 'TARGET', 'AUTO_STOP'] as const).map(orderType => <button key={orderType} className={tradeTicket.orderType === orderType ? 'active' : ''} onClick={() => chooseTicketOrderType(orderType)}>{orderTypeLabel(orderType)}</button>)}</div>
         {tradeTicket?.settings?.desktop_order_size_mode === 'quantity' && <label>{tradeTicket.tile.kind === 'option' ? 'Lots' : 'Shares'}<input aria-label="Entry quantity" type="number" min="1" step="1" defaultValue="1" onChange={event => setTradeTicket({ ...tradeTicket, sizeKey: event.target.value })} /><button onClick={() => chooseTicketSize(tradeTicket.sizeKey ?? '1')}>Use quantity</button></label>}
-        <div className="ticket-buttons">{ticketSizeOptions().map(key => <button key={key} className={tradeTicket.sizeKey === key ? 'active' : ''} onClick={() => chooseTicketSize(key)}>{ticketSizeLabel(key)}</button>)}</div>
+        <div className="ticket-buttons">{ticketSizeOptions().map(key => <button key={key} className={tradeTicket.sizeKey === key ? 'active' : ''} onClick={() => chooseTicketSize(key)}>{tradeTicket.settings.desktop_order_size_mode === 'quantity' ? ticketSizeLabel(key) : <span className="ticket-size-label">{ticketSizeLabel(key).split(' ').map((part, index) => <span key={index}>{part}</span>)}</span>}</button>)}</div>
       </div>}
       {tradeTicket.settings && <div className="ticket-hint">{tradeTicket?.settings?.desktop_order_size_mode === 'risk_ratio' ? 'Risk % is modeled stop-loss loss against session capital.' : tradeTicket?.settings?.desktop_order_size_mode === 'funds_ratio' ? tradeTicket.tile.kind === 'spot' ? 'Capital % sizes equity at 5× exposure: 12% supports 60% of session capital.' : 'Capital % sizes option premium against session capital.' : tradeTicket.tile.kind === 'option' ? 'Quantity is in complete option lots.' : 'Quantity is in whole shares.'}</div>}
       <div className="ticket-hint">{tradeTicket.orderType === 'MARKET' ? `Uses chart quote ${paneCurrentPrice(tradeTicket.tile).toFixed(2)}; proxy set by server` : tradeTicket.orderType === 'AUTO_STOP' ? 'Uses selected SL and saved sizing' : tradeTicket.orderType ? 'Pick price' : 'Type + size'}</div>

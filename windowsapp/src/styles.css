@@ -194,3 +194,11 @@ input { width: 160px; }
 @media (max-width: 600px) { .settings-layout { flex-direction: column; } .settings-layout nav { flex-direction: row; flex-basis: auto; flex-wrap: wrap; } }
 .guardrail-ban-notice { position: fixed; z-index: 2000; bottom: 20px; right: 20px; max-width: min(400px, 90vw); }
 .guardrail-ban-notice .instrument-modal { width: auto; border-color: #f85149; }
+
+.ticket-sizing-toggle { display: flex; justify-content: center; align-items: center; gap: 8px; color: #d1d5db; font-size: .72rem; }
+.ticket-sizing-toggle button { width: 34px; min-width: 34px; height: 20px; padding: 2px; border-radius: 12px; background: #475569; }
+.ticket-sizing-toggle button span { display: block; width: 14px; height: 14px; border-radius: 50%; background: #fff; }
+.ticket-sizing-toggle button[aria-checked="true"] { background: #1d4ed8; }
+.ticket-sizing-toggle button[aria-checked="true"] span { transform: translateX(14px); }
+.ticket-size-label { display: flex; flex-direction: column; align-items: center; gap: 3px; }
+.trade-ticket-sizing { box-sizing: border-box; width: 280px; max-width: calc(100vw - 16px); max-height: calc(100vh - 64px); overflow-y: auto; }
