@@ -1150,3 +1150,80 @@ def test_session_sizing_survives_database_round_trip():
         assert snapshot.settings["funds_ratio_h_pct"] == .12
     finally:
         _clear(session.session_id)
+
+
+def test_desktop_block_snapshot_and_exact_expiry(no_db):
+    _clear()
+    session = _session()
+    result = asyncio.run(desktop_trading.desktop_block(session.session_id, session.user_id))
+    state = result['snapshot'].guardrails
+    assert state['blocked'] and state['type'] == 'BLOCK'
+    assert state['settings']['guardrail_block_bars'] == 3
+    session.current_time = str(result['until_bar'])
+    assert desktop_trading._guardrail_snapshot(session)['blocked']
+    session.current_time = str(result['until_bar'] + session.strategy_interval_secs)
+    assert not desktop_trading._guardrail_snapshot(session)['blocked']
+
+
+def test_desktop_block_rejects_other_user_and_ban(no_db):
+    _clear()
+    session = _session()
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(desktop_trading.desktop_block(session.session_id, 'other-user'))
+    assert exc.value.status_code == 404
+    session.guardrail_ban_active = True
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(desktop_trading.desktop_block(session.session_id, session.user_id))
+    assert exc.value.status_code == 409
+
+
+def test_guardrail_settings_shared_across_desktop_and_website():
+    from app.routers import guardrails
+    from app.models.schemas import GuardRailSettingsUpdateRequest
+    saved = {}
+    def update(user_id, values):
+        assert user_id == 'desktop-user'
+        saved.update(values)
+        return saved.copy()
+    with patch('app.services.user_settings_service.get_settings', side_effect=lambda user_id: saved.copy()), \
+         patch('app.services.user_settings_service.update_settings', side_effect=update):
+        asyncio.run(desktop_trading.desktop_save_guardrails(GuardRailSettingsUpdateRequest(guardrail_block_bars=7), 'desktop-user'))
+        assert guardrails.get_settings('desktop-user').guardrail_block_bars == 7
+        guardrails.update_settings(GuardRailSettingsUpdateRequest(guardrail_block_bars=2), 'desktop-user')
+        assert asyncio.run(desktop_trading.desktop_guardrail_settings('desktop-user')).guardrail_block_bars == 2
+    assert 'desktop_guardrail_block_bars' not in saved
+
+
+def test_desktop_snapshot_keeps_cooldown_identity(no_db):
+    from app.services.guardrail_service import _emit_guardrail_event
+    session = _session()
+    session.guardrail_block_until_bar = int(session.current_time) + 180
+    _emit_guardrail_event(session, 'COOLDOWN', 'COOLDOWN: consecutive losses', session.guardrail_block_until_bar)
+    state = desktop_trading._snapshot(session, session.user_id).guardrails
+    assert state['type'] == 'COOLDOWN'
+    assert state['reason'] == 'COOLDOWN: consecutive losses'
+
+
+@pytest.mark.parametrize('kind', ['equity', 'options'])
+@pytest.mark.parametrize('restriction', ['BLOCK', 'BAN', 'MAXSIZE'])
+def test_desktop_entries_use_shared_guardrail_checks(no_db, kind, restriction):
+    _clear()
+    session = _session() if kind == 'options' else _equity_session()
+    if restriction == 'BLOCK':
+        session.guardrail_block_until_bar = int(session.current_time) + 180
+    elif restriction == 'BAN':
+        session.guardrail_ban_active = True
+    else:
+        session.guardrail_maxsize_enabled = True
+        session.guardrail_maxsize_mode = 'value'
+        session.guardrail_maxsize_value = 1
+    intent = desktop_trading.ChartOrderIntent(
+        symbol=session.symbol, side=TradeSide.BUY, intent='limit', price=100, quantity=65,
+        right='CE' if kind == 'options' else None,
+        strike=24000 if kind == 'options' else None,
+        expiry=session.expiry if kind == 'options' else None,
+    )
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(desktop_trading.place_chart_order(session.session_id, intent, session.user_id))
+    assert restriction in exc.value.detail
+    assert exc.value.status_code == 403

@@ -20,6 +20,8 @@ from app.routers.orders import MissingStoplossRequest
 from app.dependencies import get_desktop_user_id
 from app.config import EQUITY_MIS_MARGIN_RATE, LOT_SIZES
 from app.models.schemas import (
+    GuardRailSettingsResponse,
+    GuardRailSettingsUpdateRequest,
     CancelAllStrategiesRequest,
     ConvertOrderRequest,
     Order,
@@ -67,6 +69,7 @@ class DesktopTradingSnapshot(BaseModel):
     option_lot_size: int = 1
     owned: bool = False
     wallet_locked: bool = False
+    guardrails: dict = {}
 
 
 class DesktopTradingCandidate(BaseModel):
@@ -558,6 +561,7 @@ def _snapshot(session, user_id: str) -> DesktopTradingSnapshot:
             "day": day_pnl,
             "day_pct": pnl_pct,
         },
+        guardrails=_guardrail_snapshot(session),
         settings={
             "desktop_hide_chart_labels": settings.get("desktop_hide_chart_labels", False),
             "desktop_order_size_mode": settings.get("desktop_order_size_mode", "quantity"),
@@ -1336,3 +1340,39 @@ async def get_desktop_settings(user_id: str = Depends(get_desktop_user_id)):
 @router.put("/settings/current")
 async def update_desktop_settings(req: DesktopSettingsUpdateRequest, user_id: str = Depends(get_desktop_user_id)):
     return update_settings(user_id, req.settings)
+
+
+def _guardrail_snapshot(session):
+    from app.services.guardrail_service import check_guardrails
+    blocked, reason = check_guardrails(session)
+    if blocked:
+        reason = getattr(session, "guardrail_last_reason", reason)
+    return {"blocked": blocked, "reason": reason,
+            "type": "BAN" if session.guardrail_ban_active else getattr(session, "guardrail_last_type", "BLOCK"),
+            "ban_active": session.guardrail_ban_active,
+            "block_until_bar": session.guardrail_block_until_bar,
+            "settings": GuardRailSettingsResponse(**{
+                key: getattr(session, key, field.default) for key, field in GuardRailSettingsResponse.model_fields.items()
+            }).model_dump()}
+
+
+@router.get("/guardrails/settings")
+async def desktop_guardrail_settings(user_id: str = Depends(get_desktop_user_id)):
+    from app.routers.guardrails import get_settings as shared_settings
+    return shared_settings(user_id)
+
+
+@router.put("/guardrails/settings")
+async def desktop_save_guardrails(req: GuardRailSettingsUpdateRequest, user_id: str = Depends(get_desktop_user_id)):
+    from app.routers.guardrails import update_settings as shared_update
+    return shared_update(req, user_id)
+
+
+@router.post("/{session_id}/guardrails/block")
+async def desktop_block(session_id: str, user_id: str = Depends(get_desktop_user_id)):
+    session = _require_session(session_id, user_id)
+    if session.guardrail_ban_active:
+        raise HTTPException(status_code=409, detail="BAN guardrail is already active")
+    from app.services.guardrail_service import trigger_block
+    reason, until_bar = trigger_block(session)
+    return {"reason": reason, "until_bar": until_bar, "snapshot": _snapshot(session, user_id)}
