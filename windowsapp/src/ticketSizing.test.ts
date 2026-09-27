@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { DesktopTradingSettings } from './contracts'
-import { ticketSizingLabel, ticketSizingPayload } from './ticketSizing'
+import { ticketSizingLabel, ticketSizingPayload, switchTicketSizing } from './ticketSizing'
 
 const settings = {
   desktop_order_size_mode: 'funds_ratio',
@@ -26,5 +26,25 @@ describe('shared ticket sizing', () => {
   it('rejects missing or invalid presets rather than silently using a different size', () => {
     expect(() => ticketSizingPayload(settings, '1', () => 1)).toThrow('preset')
     expect(() => ticketSizingPayload({ ...settings, funds_ratio_h_pct: 12 }, 'h', () => 1)).toThrow('percentage')
+  })
+})
+
+describe('one-off ticket mode', () => {
+  it('overrides presets without changing settings and resets the selection', () => {
+    const shared = { ...settings, desktop_order_size_mode: 'risk_ratio' as const }
+    const ticket = { settings: { ...shared }, sizeKey: 'h', orderType: 'LIMIT', slPrice: 90 }
+    const capital = switchTicketSizing(ticket, 'funds_ratio')
+    expect(capital.sizeKey).toBeUndefined()
+    expect(capital.orderType).toBe('LIMIT')
+    expect(capital.slPrice).toBe(90)
+    expect(ticketSizingPayload(capital.settings, 'h', () => 1)).toEqual(ticketSizingPayload(settings, 'h', () => 1))
+    expect(ticketSizingLabel(capital.settings, 'h')).toBe('Capital 12%')
+    expect(shared.desktop_order_size_mode).toBe('risk_ratio')
+    expect(ticket.sizeKey).toBe('h')
+    expect(ticketSizingPayload({ ...shared }, 'h', () => 1)).toEqual({ risk_pct: 4 })
+    const risk = switchTicketSizing({ ...capital, sizeKey: 'l' }, 'risk_ratio')
+    expect(risk.sizeKey).toBeUndefined()
+    expect(ticketSizingLabel(risk.settings, 'l')).toBe('Risk 1%')
+    expect(ticketSizingPayload(risk.settings, 'l', () => 1)).toEqual({ risk_pct: 1 })
   })
 })
