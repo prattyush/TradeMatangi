@@ -172,6 +172,32 @@ async def test_duplicate_live_tiles_reuse_cached_history(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_interval_switch_does_not_restore_an_older_live_baseline(monkeypatch):
+    current = tile("first", 3, [candle(0, 3)])
+    stream = live.DesktopStream(stream_id="stream", user_id="user", generation=1, tiles=[current])
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def load_history(request):
+        if request["interval_minutes"] == 1:
+            started.set()
+            await release.wait()
+        return [candle(0, request["interval_minutes"])]
+
+    monkeypatch.setattr(live, "_load_history", load_history)
+    old_load = asyncio.create_task(live.reconfigure_interval(stream, current, 1))
+    await started.wait()
+    assert current["candles"] == []
+    await live.reconfigure_interval(stream, current, 5)
+    release.set()
+    await old_load
+
+    assert current["interval_minutes"] == 5
+    assert current["candles"] == [candle(0, 5)]
+    assert current["availability"] == "available"
+
+
+@pytest.mark.asyncio
 async def test_duplicate_instrument_live_tiles_share_one_provider_route(monkeypatch):
     import app.services.breeze_service as breeze_service
 
