@@ -7,6 +7,7 @@ import { ticketSizingPayload, ticketSizingLabel, switchTicketSizing } from './ti
 import { entryUnavailableReason, equityEntryEnabled, entryQuantity, instrumentLotSize, validateEntryStop } from './tradingInstrument'
 import { useCallback, useEffect, useRef, useState, type Dispatch, type SetStateAction } from 'react'
 import { invoke } from '@tauri-apps/api/core'
+import { listen } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { ChartTile } from './ChartTile'
 import { replayCandles } from './chartState'
@@ -393,6 +394,7 @@ function DesktopTile({ config, catalogue, connection, api, settings, serverUrl, 
 }
 
 type Connection = 'connected' | 'reconnecting' | 'offline' | 'authentication_required'
+interface ConnectionSnapshot { connection: Connection; revision: number }
 interface ScreenControllerProps {
   screenId: string; screens: Screen[]; setScreens: Dispatch<SetStateAction<Screen[]>>
   selectedId: string; selectScreen: (id: string) => void; loaded: boolean
@@ -426,6 +428,7 @@ export default function App() {
     return () => { disposed = true; void listener.then(unlisten => unlisten()) }
   }, [])
   const [connection, setConnection] = useState<Connection>('authentication_required')
+  const connectionRevision = useRef(-1)
   const [browserToken, setBrowserToken] = useState('')
   const [serverUrl, setServerUrl] = useState(() => localStorage.getItem('desktop-server-url') ?? 'http://localhost:8700')
   useEffect(() => {
@@ -442,24 +445,24 @@ export default function App() {
     localStorage.setItem('desktop-server-url', serverUrl)
     if (!('__TAURI_INTERNALS__' in window)) return
     let cancelled = false
-    let inFlight = false
-    let failures = 0
-    const check = () => {
-      if (inFlight) return
-      inFlight = true
-      void invoke<Connection>('desktop_connection_state', { baseUrl: serverUrl })
-        .catch((): Connection => 'offline')
-        .then(state => {
-          if (cancelled) return
-          failures = state === 'offline' ? failures + 1 : 0
-          setConnection(current => state === 'offline' && failures < 2 && current === 'connected' ? current : state)
-        })
-        .finally(() => { inFlight = false })
+    let unlisten: (() => void) | undefined
+    const apply = (snapshot: ConnectionSnapshot) => {
+      if (cancelled || snapshot.revision < connectionRevision.current || !snapshot.connection) return
+      connectionRevision.current = snapshot.revision
+      setConnection(snapshot.connection)
     }
-    check()
-    const timer = window.setInterval(check, 5000)
-    return () => { cancelled = true; window.clearInterval(timer) }
-  }, [serverUrl])
+    void listen<ConnectionSnapshot>('desktop-connection-state', event => apply(event.payload))
+      .then(async stop => {
+        if (cancelled) { stop(); return }
+        unlisten = stop
+        const snapshot = assignedId
+          ? await invoke<ConnectionSnapshot>('desktop_connection_monitor_snapshot')
+          : await invoke<ConnectionSnapshot>('desktop_connection_monitor_start', { baseUrl: serverUrl })
+        apply(snapshot)
+      })
+      .catch(() => { if (!cancelled) setConnection('offline') })
+    return () => { cancelled = true; unlisten?.() }
+  }, [serverUrl, assignedId])
   const [loadError, setLoadError] = useState('')
   const [loadFailed, setLoadFailed] = useState(false)
   useDismissMessage(loadError, setLoadError, 10_000)
