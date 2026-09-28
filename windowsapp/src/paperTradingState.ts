@@ -12,8 +12,10 @@ export const acceptPaperSnapshot = (current: DesktopTradingSnapshot, incoming: D
 
 const round = (value: number) => Math.round(value * 100) / 100
 const mark = (position: DesktopPosition | undefined, price: number): number => {
-  if (!position || position.side === 'FLAT' || price <= 0) return 0
-  return position.quantity * price * (position.side === 'LONG' ? 1 : -1)
+  if (!position || position.side === 'FLAT') return 0
+  // An unquoted open contract is valued at entry, matching the backend day P&L.
+  const markPrice = price > 0 ? price : position.avg_entry_price
+  return position.quantity * markPrice * (position.side === 'LONG' ? 1 : -1)
 }
 
 const recalcPaperPnl = (previous: DesktopTradingSnapshot, next: DesktopTradingSnapshot): DesktopTradingSnapshot => {
