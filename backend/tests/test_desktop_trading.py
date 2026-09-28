@@ -401,6 +401,93 @@ def test_desktop_day_pnl_marks_open_short_at_current_contract_quote(no_db):
     _clear()
 
 
+def test_paper_option_pnl_uses_contract_prices_and_session_capital(no_db):
+    _clear()
+    session = _session()
+    session.session_type = "paper"
+    session.last_price = 24000
+    key = f"NIFTY:{session.expiry}:24000:CE"
+    session.desktop_contract_quotes = {key: {"price": 110, "timestamp": int(session.current_time), "source": "live_paper"}}
+    buy = trading_service.record_trade(
+        session_id=session.session_id, side=TradeSide.BUY, price=100,
+        timestamp=1778058900, quantity=65, symbol="NIFTY", instrument_type="options",
+        strike=24000, expiry=session.expiry, right="CE", user_id="desktop-user", session_type="paper",
+    )
+    expected_open = round((110 - 100) * 65 - buy.commission, 2)
+    assert desktop_trading._day_pnl(session) == expected_open
+    with patch("app.routers.desktop_trading._historical_context_trades", return_value=[]):
+        snapshot = desktop_trading._snapshot(session, "desktop-user")
+    assert snapshot.pnl["day"] == expected_open
+    assert snapshot.pnl["day_pct"] == round(expected_open / 150000 * 100, 2)
+
+    sell = trading_service.record_trade(
+        session_id=session.session_id, side=TradeSide.SELL, price=112,
+        timestamp=1778058960, quantity=65, symbol="NIFTY", instrument_type="options",
+        strike=24000, expiry=session.expiry, right="CE", user_id="desktop-user", session_type="paper",
+    )
+    expected_closed = round((112 - 100) * 65 - buy.commission - sell.commission, 2)
+    assert desktop_trading._day_pnl(session) == expected_closed
+    with patch("app.routers.desktop_trading._historical_context_trades", return_value=[]):
+        snapshot = desktop_trading._snapshot(session, "desktop-user")
+    assert snapshot.pnl["day"] == expected_closed
+    assert snapshot.pnl["day_pct"] == round(expected_closed / 150000 * 100, 2)
+    assert snapshot.trades[0]["price"] == 100
+    assert snapshot.trades[1]["price"] == 112
+    _clear()
+
+
+def test_paper_option_mark_does_not_fall_back_to_other_contract(no_db):
+    _clear()
+    session = _session()
+    session.session_type = "paper"
+    session.last_price = 24000
+    session.last_price_ce = 100
+    second = {"symbol": "NIFTY", "expiry": session.expiry, "strike": 24100,
+              "right": "CE", "contract_key": f"NIFTY:{session.expiry}:24100:CE"}
+    session.desktop_contracts.append(second)
+    trading_service.record_trade(
+        session_id=session.session_id, side=TradeSide.BUY, price=80,
+        timestamp=1778058900, quantity=65, symbol="NIFTY", instrument_type="options",
+        strike=24100, expiry=session.expiry, right="CE", user_id="desktop-user", session_type="paper",
+    )
+    assert desktop_trading._last_price_for_right(session, "CE", 24100, session.expiry) == 0
+    assert desktop_trading._day_pnl(session) == round(-trading_service.get_trades(session.session_id)[0].commission, 2)
+    _clear()
+
+
+def test_paper_trade_labels_follow_entry_and_exit(no_db):
+    _clear()
+    session = _session()
+    session.session_type = "paper"
+    trading_service.record_trade(
+        session_id=session.session_id, side=TradeSide.BUY, price=100,
+        timestamp=1778058900, quantity=65, symbol="NIFTY", instrument_type="options",
+        strike=24000, expiry=session.expiry, right="CE", user_id="desktop-user", session_type="paper",
+    )
+    with patch("app.services.trade_label_service.get_labels_for_session", return_value=[]):
+        state = asyncio.run(desktop_trading.trade_labels(session.session_id, "desktop-user"))
+    assert len(state["open"]) == 1
+    assert state["open"][0]["right"] == "CE"
+    assert state["open"][0]["index"] == 0
+    request = desktop_trading.DesktopTradeLabelRequest(round_trip_index=0, expected_strategy="Breakout")
+    with patch("app.services.trade_label_service.save_labels", return_value=[{"round_trip_index": 0, "expected_strategy": "Breakout"}]) as save, \
+         patch("app.services.trade_label_service.get_labels_for_session", return_value=[{"round_trip_index": 0, "expected_strategy": "Breakout"}]):
+        saved = asyncio.run(desktop_trading.save_trade_label(session.session_id, request, "desktop-user"))
+    save.assert_called_once()
+    assert saved["labels"][0]["expected_strategy"] == "Breakout"
+    trading_service.record_trade(
+        session_id=session.session_id, side=TradeSide.SELL, price=112,
+        timestamp=1778058960, quantity=65, symbol="NIFTY", instrument_type="options",
+        strike=24000, expiry=session.expiry, right="CE", user_id="desktop-user", session_type="paper",
+    )
+    with patch("app.services.trade_label_service.get_labels_for_session", return_value=[]):
+        closed = asyncio.run(desktop_trading.trade_labels(session.session_id, "desktop-user"))
+    assert closed["open"] == []
+    assert len(closed["completed"]) == 1
+    assert closed["completed"][0]["index"] == 0
+    _clear()
+
+
 def test_desktop_wallet_reset_is_blocked_for_active_session(no_db):
     _clear()
     session = _session()

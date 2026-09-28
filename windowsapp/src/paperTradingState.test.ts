@@ -42,6 +42,21 @@ describe('Paper trading incremental state', () => {
     expect(next.pnl.day).toBe(520)
   })
 
+  it('marks the first option quote from the entry premium, not zero or the underlying', () => {
+    const current = snapshot()
+    const position = { ...flat, side: 'LONG' as const, quantity: 50, avg_entry_price: 100, entry_commission: 2 }
+    current.positions.CE = position
+    current.positions_by_contract[key] = position
+    current.contract_quotes = {}
+    current.current_price_ce = 0
+    current.pnl.day = -2
+    current.pnl.day_pct = 0
+    const next = applyPaperStreamEvent(current, tick(11, 110))
+    expect(next.pnl.day).toBe(498)
+    expect(next.pnl.day_pct).toBe(0.5)
+    expect(next.current_price).toBe(24000)
+  })
+
   it('ignores ticks buffered before a recovery snapshot, including same-second ticks', () => {
     const recovered = { ...snapshot(), event_cursor: 20, current_price_ce: 110 }
     recovered.contract_quotes = { ...recovered.contract_quotes, [key]: { ...recovered.contract_quotes[key], price: 110 } }

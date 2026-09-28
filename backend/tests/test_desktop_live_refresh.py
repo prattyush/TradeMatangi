@@ -190,7 +190,7 @@ async def test_duplicate_instrument_live_tiles_share_one_provider_route(monkeypa
         def instrument_route_key(instrument):
             return f"{instrument['exchange_code']}:{instrument['stock_code']}"
 
-        def start(self, _queue, _loop, instruments, routes=None):
+        def start(self, _queue, _loop, instruments, routes=None, session_id=None):
             starts.append((instruments, routes))
 
         def stop(self):

@@ -396,10 +396,14 @@ def _last_price_for_right(session, right: str | None, strike: int | None = None,
             quote = _refresh_contract_quotes(session).get(contract["contract_key"])
             if quote:
                 return float(quote["price"])
+        active_strike = session.strike_ce if right == "CE" else session.strike_pe if right == "PE" else None
+        if (strike is not None and int(strike) != int(active_strike or 0)) or (expiry is not None and expiry != session.expiry):
+            return 0.0
         if right == "CE":
             return float(session.last_price_ce or 0)
         if right == "PE":
             return float(session.last_price_pe or 0)
+        return 0.0
     return float(session.last_price or 0)
 
 
@@ -445,8 +449,12 @@ def _day_pnl(session) -> float:
     for item in _position_targets(session):
         position = _position_for(session, item["right"], item["strike"], item["expiry"])
         price = _last_price_for_right(session, item["right"], item["strike"], item["expiry"])
-        if position.side != "FLAT" and price > 0:
-            net += position.quantity * price if position.side == "LONG" else -position.quantity * price
+        if position.side != "FLAT":
+            # An unquoted contract stays at its entry value until its own quote arrives.
+            # Marking it at zero would turn an open buy into a full loss (or an
+            # open short into a windfall) when another contract still has ticks.
+            mark_price = price if price > 0 else position.avg_entry_price
+            net += position.quantity * mark_price if position.side == "LONG" else -position.quantity * mark_price
     return round(net, 2)
 
 
@@ -668,9 +676,9 @@ def _mark_desktop_checkpoint(session) -> None:
 
 
 def _desktop_label_state(session) -> dict:
-    """Expose in-session, contract-aware label slots for desktop historical sessions."""
-    if session.session_type not in ("stepwise", "sim"):
-        raise HTTPException(status_code=409, detail="Trade labels are available only for desktop historical sessions")
+    """Expose in-session, contract-aware label slots for desktop trading sessions."""
+    if session.session_type not in ("stepwise", "sim", "paper"):
+        raise HTTPException(status_code=409, detail="Trade labels are unavailable for this desktop session")
     from app.services import trade_label_service
     trades = [trade.model_dump(mode="json") for trade in trading_service.get_trades(session.session_id)]
     completed, open_trips = trade_label_service.compute_round_trip_state(trades)
@@ -1326,7 +1334,7 @@ async def trade_label_metadata(user_id: str = Depends(get_desktop_user_id)):
 @router.post("/{session_id}/trade-labels")
 async def save_trade_label(session_id: str, req: DesktopTradeLabelRequest, user_id: str = Depends(get_desktop_user_id)):
     session = _require_session(session_id, user_id)
-    _desktop_label_state(session)  # validates Stepwise before writing
+    _desktop_label_state(session)  # validates the session before writing
     from app.services import trade_label_service
     saved = trade_label_service.save_labels(session_id, [req.model_dump()], user_id)
     return {"label": saved[0] if saved else None, **_desktop_label_state(session)}
