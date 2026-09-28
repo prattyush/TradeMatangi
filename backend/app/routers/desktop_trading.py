@@ -37,7 +37,7 @@ from app.models.schemas import (
     WalletResetRequest,
 )
 from app.routers import simulation as simulation_router
-from app.services import order_service, options_service, simulation as sim_svc, strategy_service, trading as trading_service, wallet_service
+from app.services import order_service, options_service, paper_wallet, simulation as sim_svc, strategy_service, trading as trading_service, wallet_service
 from app.services.user_settings_service import get_settings, update_settings
 
 router = APIRouter(prefix="/api/desktop/v1/trading", tags=["desktop"])
@@ -70,6 +70,9 @@ class DesktopTradingSnapshot(BaseModel):
     owned: bool = False
     wallet_locked: bool = False
     guardrails: dict = {}
+    paper_status: str | None = None
+    settlement_pending: bool = False
+    engine_generation: int | None = None
 
 
 class DesktopTradingCandidate(BaseModel):
@@ -77,6 +80,7 @@ class DesktopTradingCandidate(BaseModel):
     active: DesktopTradingSnapshot | None = None
     checkpoint: dict | None = None
     existing_session_id: str | None = None
+    stopped: DesktopTradingSnapshot | None = None
 
 
 class DesktopOptionContract(BaseModel):
@@ -109,6 +113,21 @@ class ChartOrderIntent(BaseModel):
     entry_sl_price: float | None = Field(default=None, gt=0)
     group_id: str | None = None
     target_deviation_pct: float = 0.01
+    live_stream_id: str | None = None
+    live_tile_id: str | None = None
+
+
+class LinkPaperLiveStreamRequest(BaseModel):
+    live_stream_id: str
+
+
+class DesktopStopRequest(BaseModel):
+    engine_generation: int | None = None
+
+
+class DesktopStartStrategyRequest(StartStrategyRequest):
+    strike: int | None = None
+    expiry: str | None = None
 
 
 class FlattenRequest(BaseModel):
@@ -187,6 +206,62 @@ def _require_session(session_id: str, user_id: str):
     if not session or session.user_id != user_id:
         raise HTTPException(status_code=404, detail="Session not found")
     return session
+
+
+def _saved_desktop_paper(session_id: str, user_id: str) -> tuple[dict, dict]:
+    from app.services.db import get_dynamodb_resource
+    record = get_dynamodb_resource().Table("Sessions").get_item(
+        Key={"session_id": session_id}, ConsistentRead=True).get("Item")
+    if not record or record.get("user_id") != user_id or record.get("desktop_origin") != "desktop_paper":
+        raise HTTPException(status_code=404, detail="Desktop Paper session not found")
+    claim = paper_wallet.session_claim(user_id, record["date"], record["symbol"])
+    if claim and claim.get("session_id") == session_id and not claim.get("desktop_owned"):
+        claim = paper_wallet.ensure_desktop_claim(user_id, record["date"], record["symbol"], session_id)
+    if not claim or claim.get("session_id") != session_id or not claim.get("desktop_owned"):
+        raise HTTPException(status_code=404, detail="Desktop Paper session not found")
+    return record, claim
+
+
+def _reconcile_saved_paper(record: dict, claim: dict) -> dict:
+    """Recover a dead engine and finish idempotent Stop cleanup."""
+    import time
+    session_id = record["session_id"]
+    user_id, date, symbol = record["user_id"], record["date"], record["symbol"]
+    if claim.get("session_status") == "running" and int(claim.get("engine_until") or 0) < int(time.time()):
+        claim = paper_wallet.stop_desktop_session(user_id, date, symbol, session_id)
+    if claim.get("session_status") != "stopped" or not claim.get("cleanup_pending"):
+        return claim
+    saved = sim_svc.rebuild_session_from_db(record, user_id, read_only=True)
+    order_service.cancel_all_pending_orders(session_id, date)
+    strategy_service.cancel_persisted_for_session(session_id)
+    paper_wallet.complete_desktop_cleanup(user_id, date, symbol, session_id)
+    logger.info("desktop_paper_cleanup_complete session_id=%s", session_id)
+    return paper_wallet.session_claim(user_id, date, symbol)
+
+
+def _saved_paper_snapshot(record: dict, user_id: str) -> DesktopTradingSnapshot:
+    from app.services import desktop_paper_eod
+    if desktop_paper_eod._due(record["date"]):
+        desktop_paper_eod.reconcile_session(record)
+    claim = paper_wallet.session_claim(user_id, record["date"], record["symbol"])
+    session = sim_svc.rebuild_session_from_db(record, user_id, read_only=True,
+        repair_fills=not claim or claim.get("session_status") != "running")
+    session.state = sim_svc.SimulationState.ENDED
+    snapshot = _snapshot(session, user_id)
+    snapshot.paper_status = claim.get("session_status") if claim else "stopped"
+    snapshot.settlement_pending = bool(claim and claim.get("settlement_pending"))
+    snapshot.engine_generation = int(claim.get("engine_generation") or 0) if claim else None
+    return snapshot
+
+
+def _readable_session(session_id: str, user_id: str):
+    active = sim_svc.get_session(session_id)
+    if active and active.user_id == user_id:
+        return active
+    record, claim = _saved_desktop_paper(session_id, user_id)
+    claim = _reconcile_saved_paper(record, claim)
+    return sim_svc.rebuild_session_from_db(record, user_id, read_only=True,
+        repair_fills=claim.get("session_status") != "running")
 
 
 def _parse_event_id(raw: str | None) -> int | None:
@@ -297,11 +372,55 @@ def _historical_contract_quote(session, contract: dict) -> dict | None:
 
 def _refresh_contract_quotes(session) -> dict[str, dict]:
     registry = _quote_registry(session)
+    linked_stream_id = getattr(session, "desktop_live_stream_id", None) if session.session_type == "paper" else None
     for contract in _desktop_contracts(session):
-        quote = _historical_contract_quote(session, contract) if session.session_type in ("stepwise", "sim") else registry.get(contract["contract_key"])
+        if linked_stream_id:
+            from app.services import desktop_live_service
+            quote = desktop_live_service.option_quote(session.user_id, linked_stream_id, contract["symbol"], contract["expiry"], contract["strike"], contract["right"])
+            if not quote and registry.get(contract["contract_key"], {}).get("source") != "desktop_live_chart":
+                registry.pop(contract["contract_key"], None)
+        else:
+            quote = _historical_contract_quote(session, contract) if session.session_type in ("stepwise", "sim") else registry.get(contract["contract_key"])
         if quote:
             registry[contract["contract_key"]] = {**contract, **quote}
+            if linked_stream_id and contract["strike"] == (session.strike_ce if contract["right"] == "CE" else session.strike_pe):
+                if contract["right"] == "CE":
+                    session.last_price_ce = float(quote["price"])
+                else:
+                    session.last_price_pe = float(quote["price"])
     return registry
+
+
+def _paper_chart_quote(session, intent: ChartOrderIntent, contract: dict, user_id: str) -> dict | None:
+    """Read the quote from the exact live chart that initiated a Paper order."""
+    from app.services import desktop_live_service
+
+    if not intent.live_stream_id or not intent.live_tile_id:
+        raise HTTPException(status_code=409, detail="Reconnect the live option chart before placing a Paper order")
+    stream = desktop_live_service.get(user_id, intent.live_stream_id)
+    if not stream or stream.stopped:
+        raise HTTPException(status_code=409, detail="Live option chart is unavailable; refresh it before trading")
+    tile = next((item for item in stream.tiles if item.get("tile_id") == intent.live_tile_id), None)
+    instrument = tile.get("instrument", {}) if tile else {}
+    if not tile or (
+        instrument.get("kind") != "option"
+        or instrument.get("underlying") != contract["symbol"]
+        or instrument.get("expiry") != contract["expiry"]
+        or int(instrument.get("strike") or 0) != contract["strike"]
+        or instrument.get("right") != contract["right"]
+    ):
+        raise HTTPException(status_code=409, detail="Live chart no longer matches the selected option contract")
+    if not tile.get("subscribed"):
+        raise HTTPException(status_code=409, detail="Live option chart is not subscribed; refresh it before trading")
+    quote = desktop_live_service.option_quote(user_id, intent.live_stream_id, contract["symbol"], contract["expiry"], contract["strike"], contract["right"], intent.live_tile_id)
+    session.desktop_live_stream_id = intent.live_stream_id
+    if not quote:
+        if intent.intent != "market":
+            return None
+        raise HTTPException(status_code=409, detail="No live premium is available for this option chart yet")
+    quote = {**contract, **quote}
+    logger.info("paper_chart_quote session_id=%s contract=%s stream_id=%s tile_id=%s provider_token=%s price=%.2f timestamp=%s source=%s", session.session_id, contract["contract_key"], intent.live_stream_id, intent.live_tile_id, quote.get("provider_token"), quote["price"], quote["timestamp"], quote["source"])
+    return quote
 
 
 def _has_open_contract_risk(session, contract: dict) -> bool:
@@ -396,6 +515,8 @@ def _last_price_for_right(session, right: str | None, strike: int | None = None,
             quote = _refresh_contract_quotes(session).get(contract["contract_key"])
             if quote:
                 return float(quote["price"])
+        if session.session_type == "paper" and getattr(session, "desktop_live_stream_id", None):
+            return 0.0
         active_strike = session.strike_ce if right == "CE" else session.strike_pe if right == "PE" else None
         if (strike is not None and int(strike) != int(active_strike or 0)) or (expiry is not None and expiry != session.expiry):
             return 0.0
@@ -505,6 +626,8 @@ def _session_sizing_settings(session, settings: dict) -> dict:
             key: settings.get(key, default) for key, default in _SIZING_DEFAULTS.items()
         }
         try:
+            if getattr(session, "desktop_read_only", False):
+                return session.desktop_sizing_settings
             sim_svc._upsert_session_to_db(session, strict=True)
         except Exception as exc:
             session.desktop_sizing_settings = None
@@ -537,6 +660,7 @@ def _snapshot(session, user_id: str) -> DesktopTradingSnapshot:
         option_lot_size=LOT_SIZES.get(session.symbol, 1),
         owned=bool(getattr(session, "desktop_origin", None)),
         wallet_locked=session.session_type == "paper",
+        engine_generation=getattr(session, "paper_engine_generation", None),
         event_cursor=session.queue.latest_id(),
         desktop_mode=_desktop_mode(session),
         source=_desktop_source(session),
@@ -552,16 +676,16 @@ def _snapshot(session, user_id: str) -> DesktopTradingSnapshot:
         strategies=strategies,
         positions={
             "equity": _position_for(session, None).model_dump(mode="json"),
-            "CE": _position_for(session, "CE").model_dump(mode="json"),
-            "PE": _position_for(session, "PE").model_dump(mode="json"),
+            "CE": _position_for(session, "CE", session.strike_ce, session.expiry).model_dump(mode="json"),
+            "PE": _position_for(session, "PE", session.strike_pe, session.expiry).model_dump(mode="json"),
         },
         contracts=contracts,
         positions_by_contract=positions_by_contract,
         wallet_balance=wallet,
         pnl={
             "equity": _position_pnl(session, None),
-            "ce": _position_pnl(session, "CE"),
-            "pe": _position_pnl(session, "PE"),
+            "ce": _position_pnl(session, "CE", session.strike_ce, session.expiry),
+            "pe": _position_pnl(session, "PE", session.strike_pe, session.expiry),
             "contracts": {
                 item["contract_key"]: _position_pnl(session, item["right"], item["strike"], item["expiry"])
                 for item in contracts
@@ -806,8 +930,11 @@ def _target_scope(session, right: str | None, strike: int | None, expiry: str | 
 @router.post("/start", response_model=DesktopTradingSnapshot, status_code=201)
 async def start_desktop_trading(req: DesktopTradingStartRequest, user_id: str = Depends(get_desktop_user_id)):
     if req.desktop_mode == "paper":
-        if req.date != datetime.now(ZoneInfo("Asia/Kolkata")).date().isoformat():
+        now = datetime.now(ZoneInfo("Asia/Kolkata"))
+        if req.date != now.date().isoformat():
             raise HTTPException(status_code=400, detail="Paper trading requires today's market date (IST)")
+        if now.strftime("%H:%M:%S") >= sim_svc._AUTO_CLOSE_TIME:
+            raise HTTPException(status_code=409, detail="Paper trading has closed for this date")
         req.session_type = "paper"
         req.stepwise = False
     elif req.desktop_mode == "replay":
@@ -831,7 +958,51 @@ async def start_desktop_trading(req: DesktopTradingStartRequest, user_id: str = 
             _register_contract(session, _normalise_contract(DesktopOptionContract(symbol=session.symbol, expiry=req.expiry, strike=req.strike_ce, right="CE")))
         if req.strike_pe is not None:
             _register_contract(session, _normalise_contract(DesktopOptionContract(symbol=session.symbol, expiry=req.expiry, strike=req.strike_pe, right="PE")))
+    logger.info("desktop_trading_started session_id=%s user_id=%s mode=%s state=%s", session.session_id, user_id, req.desktop_mode, session.state)
     return _snapshot(session, user_id)
+
+
+@router.post("/{session_id}/resume", response_model=DesktopTradingSnapshot)
+async def resume_desktop_paper(session_id: str, user_id: str = Depends(get_desktop_user_id)):
+    record, claim = _saved_desktop_paper(session_id, user_id)
+    now = datetime.now(ZoneInfo("Asia/Kolkata"))
+    # Multi-day Paper sessions can be supported later with a separate day rollover.
+    if record["date"] != now.date().isoformat() or now.strftime("%H:%M:%S") >= sim_svc._AUTO_CLOSE_TIME:
+        raise HTTPException(status_code=409, detail="Paper session can only resume before 15:09 IST on its trading date")
+    claim = _reconcile_saved_paper(record, claim)
+    if claim.get("session_status") != "stopped" or claim.get("cleanup_pending"):
+        raise HTTPException(status_code=409, detail="Paper session is active or Stop cleanup is incomplete")
+    request = DesktopTradingStartRequest(
+        symbol=record["symbol"], date=record["date"], start_time=record.get("start_time", "09:15:00"),
+        instrument_type=record.get("instrument_type", "equity"),
+        strike=int(record["strike"]) if record.get("strike") is not None else None,
+        strike_ce=int(record["strike_ce"]) if record.get("strike_ce") is not None else None,
+        strike_pe=int(record["strike_pe"]) if record.get("strike_pe") is not None else None,
+        expiry=record.get("expiry"), right=record.get("right"), desktop_mode="paper",
+        session_type="paper", stepwise=False,
+    )
+    result = await simulation_router.start_with_paper_claim(request, user_id,
+        desktop_independent=True, resume_session_id=session_id)
+    session = _require_session(result.session_id, user_id)
+    session.desktop_mode = "paper"
+    session.desktop_origin = "desktop_paper"
+    return _snapshot(session, user_id)
+
+
+@router.post("/{session_id}/live-stream")
+async def link_paper_live_stream(session_id: str, req: LinkPaperLiveStreamRequest, user_id: str = Depends(get_desktop_user_id)):
+    from app.services import desktop_live_service
+    session = _require_session(session_id, user_id)
+    if session.session_type != "paper" or session.state == sim_svc.SimulationState.ENDED:
+        raise HTTPException(status_code=409, detail="An active Paper session is required")
+    stream = desktop_live_service.get(user_id, req.live_stream_id)
+    if not stream or stream.stopped:
+        raise HTTPException(status_code=409, detail="Live chart stream is unavailable")
+    if not any((tile.get("instrument") or {}).get("underlying", (tile.get("instrument") or {}).get("symbol")) == session.symbol for tile in stream.tiles):
+        raise HTTPException(status_code=409, detail="Live charts do not match this Paper session")
+    session.desktop_live_stream_id = req.live_stream_id
+    logger.info("paper_live_stream_linked session_id=%s stream_id=%s", session_id, req.live_stream_id)
+    return {"session_id": session_id, "live_stream_id": req.live_stream_id}
 
 
 @router.get("/candidate", response_model=DesktopTradingCandidate)
@@ -842,6 +1013,27 @@ async def candidate(
     desktop_mode: str = Query(pattern="^(stepwise|replay|paper)$"),
     user_id: str = Depends(get_desktop_user_id),
 ):
+    if desktop_mode == "paper":
+        claim = paper_wallet.session_claim(user_id, date, symbol)
+        if claim and claim.get("session_id"):
+            try:
+                record, claim = _saved_desktop_paper(claim["session_id"], user_id)
+            except HTTPException as exc:
+                if exc.status_code != 404:
+                    raise
+                record = None
+            if record is None:
+                claim = None
+        if claim and claim.get("desktop_owned") and claim.get("session_id"):
+            if record.get("instrument_type") != instrument_type:
+                raise HTTPException(status_code=409, detail="Saved Paper session uses a different anchor instrument")
+            claim = _reconcile_saved_paper(record, claim)
+            if claim.get("session_status") in ("stopped", "settled"):
+                return DesktopTradingCandidate(status="stopped", existing_session_id=record["session_id"],
+                    stopped=_saved_paper_snapshot(record, user_id))
+            if claim.get("session_status") == "running" and sim_svc.get_session(record["session_id"]) is None:
+                return DesktopTradingCandidate(status="remote", existing_session_id=record["session_id"],
+                    stopped=_saved_paper_snapshot(record, user_id))
     session_type = "paper" if desktop_mode == "paper" else "stepwise" if desktop_mode == "stepwise" else "sim"
     for session in list(sim_svc._sessions.values()):
         if session.user_id != user_id or session.state == sim_svc.SimulationState.ENDED:
@@ -922,7 +1114,12 @@ async def active_stepwise(
 
 @router.get("/{session_id}/snapshot", response_model=DesktopTradingSnapshot)
 async def snapshot(session_id: str, user_id: str = Depends(get_desktop_user_id)):
-    return _snapshot(_require_session(session_id, user_id), user_id)
+    session = sim_svc.get_session(session_id)
+    if session and session.user_id == user_id and session.state != sim_svc.SimulationState.ENDED:
+        return _snapshot(session, user_id)
+    record, claim = _saved_desktop_paper(session_id, user_id)
+    claim = _reconcile_saved_paper(record, claim)
+    return _saved_paper_snapshot(record, user_id)
 
 
 @router.get("/{session_id}/events")
@@ -950,13 +1147,29 @@ async def trading_events(
 
 
 @router.post("/{session_id}/stop")
-async def stop_stepwise(session_id: str, user_id: str = Depends(get_desktop_user_id)):
-    session = _require_session(session_id, user_id)
+async def stop_stepwise(session_id: str, req: DesktopStopRequest | None = None, user_id: str = Depends(get_desktop_user_id)):
+    logger.info("desktop_trading_stop_requested session_id=%s user_id=%s", session_id, user_id)
+    session = sim_svc.get_session(session_id)
+    if not session or session.user_id != user_id:
+        record, claim = _saved_desktop_paper(session_id, user_id)
+        paper_wallet.stop_desktop_session(user_id, record["date"], record["symbol"], session_id,
+            expected_generation=req.engine_generation if req else None)
+        _reconcile_saved_paper(record, paper_wallet.session_claim(user_id, record["date"], record["symbol"]))
+        return {"status": "stopped"}
     if _desktop_mode(session) == "paper" and not getattr(session, "desktop_origin", None):
         raise HTTPException(status_code=409, detail="Attached Paper sessions cannot be stopped from desktop; detach this screen instead")
+    if getattr(session, "desktop_origin", None) == "desktop_paper":
+        _saved_desktop_paper(session_id, user_id)
+        paper_wallet.stop_desktop_session(user_id, session.date, session.symbol, session_id,
+            expected_generation=req.engine_generation if req else None)
+        sim_svc.stop_session(session)
+        record, claim = _saved_desktop_paper(session_id, user_id)
+        _reconcile_saved_paper(record, claim)
+        return {"status": "stopped"}
     _flatten_positions_for_stop(session, user_id)
     _mark_desktop_checkpoint(session)
     sim_svc.stop_session(session)
+    logger.info("desktop_trading_stopped session_id=%s user_id=%s", session_id, user_id)
     return {"status": "stopped"}
 
 
@@ -1017,7 +1230,7 @@ async def place_chart_order(session_id: str, intent: ChartOrderIntent, user_id: 
         contract = _require_registered_contract(session, intent.right.upper(), intent.strike, intent.expiry)
         if intent.symbol != contract["symbol"]:
             raise HTTPException(status_code=400, detail="Chart contract symbol does not match the attached contract")
-        quote = _refresh_contract_quotes(session).get(contract["contract_key"])
+        quote = _paper_chart_quote(session, intent, contract, user_id) if session.session_type == "paper" else _refresh_contract_quotes(session).get(contract["contract_key"])
     elif intent.symbol != session.symbol:
         raise HTTPException(status_code=400, detail=f"This desktop trading session is locked to {session.symbol}. Open another screen to use {intent.symbol}.")
     else:
@@ -1065,6 +1278,7 @@ async def place_chart_order(session_id: str, intent: ChartOrderIntent, user_id: 
         req.strike = contract["strike"]
         req.expiry = contract["expiry"]
     from app.routers.orders import place_order as web_place_order
+    logger.info("desktop_chart_order session_id=%s contract=%s intent=%s side=%s entry_price=%.2f quote_price=%.2f quote_source=%s quote_timestamp=%s", session_id, contract["contract_key"] if contract else session.symbol, intent.intent, intent.side.value, entry_price, quote_price, req.quote_source, req.quote_timestamp)
     return await web_place_order(req)
 
 
@@ -1136,14 +1350,20 @@ async def convert_order(session_id: str, order_id: str, req: ConvertOrderRequest
 
 
 @router.post("/{session_id}/strategies/start", response_model=StrategyResponse)
-async def start_strategy(session_id: str, req: StartStrategyRequest, user_id: str = Depends(get_desktop_user_id)):
+async def start_strategy(session_id: str, req: DesktopStartStrategyRequest, user_id: str = Depends(get_desktop_user_id)):
     session = _require_session(session_id, user_id)
     req.session_id = session_id
     contract = None
     if req.right:
         right = req.right.upper()
-        strike = session.strike_ce if right == "CE" else session.strike_pe if right == "PE" else None
-        contract = _require_registered_contract(session, right, strike, session.expiry)
+        requested_strike = getattr(req, "strike", None)
+        requested_expiry = getattr(req, "expiry", None)
+        strike = requested_strike if requested_strike is not None else session.strike_ce if right == "CE" else session.strike_pe if right == "PE" else None
+        contract = _require_registered_contract(session, right, strike, requested_expiry or session.expiry)
+        if requested_strike is not None and req.strategy_type.value in ("BreakEven", "AggressiveStoploss", "TargetProfit", "LockProfit", "UnderlyingTargetProfit", "UnderlyingStoploss"):
+            position = _position_for(session, right, contract["strike"], contract["expiry"])
+            if position.side == "FLAT":
+                raise HTTPException(status_code=400, detail=f"{req.strategy_type.value} requires an open position in {right} {contract['strike']}")
     from app.routers.strategies import start_strategy as web_start_strategy
     response = web_start_strategy(req, user_id=user_id)
     if contract:
@@ -1308,7 +1528,7 @@ async def reset_wallet(session_id: str, req: WalletResetRequest, user_id: str = 
 
 @router.get("/{session_id}/trade-labels")
 async def trade_labels(session_id: str, user_id: str = Depends(get_desktop_user_id)):
-    return _desktop_label_state(_require_session(session_id, user_id))
+    return _desktop_label_state(_readable_session(session_id, user_id))
 
 
 @router.get("/trade-labels/metadata", response_model=DesktopLabelMetadata)
@@ -1333,7 +1553,7 @@ async def trade_label_metadata(user_id: str = Depends(get_desktop_user_id)):
 
 @router.post("/{session_id}/trade-labels")
 async def save_trade_label(session_id: str, req: DesktopTradeLabelRequest, user_id: str = Depends(get_desktop_user_id)):
-    session = _require_session(session_id, user_id)
+    session = _readable_session(session_id, user_id)
     _desktop_label_state(session)  # validates the session before writing
     from app.services import trade_label_service
     saved = trade_label_service.save_labels(session_id, [req.model_dump()], user_id)

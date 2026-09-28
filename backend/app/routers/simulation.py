@@ -219,7 +219,7 @@ async def start_simulation(req: SimulationStartRequest, user_id: str = Depends(g
     return await start_with_paper_claim(req, user_id)
 
 
-async def start_with_paper_claim(req, user_id, *, desktop_independent=False):
+async def start_with_paper_claim(req, user_id, *, desktop_independent=False, resume_session_id=None):
     if req.session_type != "paper":
         return await _start_simulation(req, user_id, desktop_independent=desktop_independent)
     from app.services import paper_wallet
@@ -240,6 +240,7 @@ async def start_with_paper_claim(req, user_id, *, desktop_independent=False):
     token, existing_id = paper_wallet.claim_session(user_id, req.date, req.symbol)
     prepared_session = None
     started = False
+    claim_finished = False
     try:
         record = None
         if existing_id:
@@ -247,14 +248,34 @@ async def start_with_paper_claim(req, user_id, *, desktop_independent=False):
             record = get_dynamodb_resource().Table("Sessions").get_item(Key={"session_id": existing_id}, ConsistentRead=True).get("Item")
             if record and record.get("instrument_type") != req.instrument_type:
                 raise HTTPException(status_code=409, detail=f"Paper session {existing_id} uses a different anchor; use that session")
+            if record and record.get("desktop_origin") == "desktop_paper":
+                if resume_session_id != existing_id:
+                    raise HTTPException(status_code=409, detail=f"Resume desktop Paper session {existing_id} explicitly")
+            elif resume_session_id:
+                raise HTTPException(status_code=409, detail="This is not the selected desktop Paper session")
+        elif resume_session_id:
+            raise HTTPException(status_code=404, detail="Desktop Paper session not found")
         result = await _start_simulation(req, user_id, desktop_independent=desktop_independent, paper_record=record, defer_paper_start=True)
         session = sim_svc.get_session(result.session_id)
         prepared_session = session
+        if desktop_independent and getattr(req, "desktop_mode", None) == "paper" and getattr(session, "desktop_created", False):
+            session.desktop_mode = "paper"
+            session.desktop_origin = "desktop_paper"
+            if resume_session_id:
+                # Saved values are useful for stopped history, but they are not live execution quotes.
+                session.last_price = 0
+                session.last_price_ce = 0
+                session.last_price_pe = 0
+                session.desktop_contract_quotes = {}
         sim_svc._upsert_session_to_db(session, strict=True)
         paper_wallet.lock(user_id, req.date)
-        paper_wallet.finish_session_claim(user_id, req.date, req.symbol, token, result.session_id)
+        claim = paper_wallet.finish_session_claim(user_id, req.date, req.symbol, token, result.session_id,
+            desktop=getattr(session, "desktop_origin", None) == "desktop_paper")
+        claim_finished = True
         session = sim_svc.get_session(result.session_id)
         session.paper_engine_token = token
+        if claim and claim.get("desktop_owned"):
+            session.paper_engine_generation = int(claim.get("engine_generation") or 0)
         session.paper_engine_valid_until = time.monotonic() + 40
         sim_svc.start_session(session)
         started = True
@@ -262,11 +283,23 @@ async def start_with_paper_claim(req, user_id, *, desktop_independent=False):
         return result
     except Exception:
         if prepared_session is not None and not started:
+            if claim_finished and getattr(prepared_session, "desktop_origin", None) == "desktop_paper":
+                try:
+                    paper_wallet.stop_desktop_session(user_id, req.date, req.symbol, prepared_session.session_id)
+                    sim_svc.stop_session(prepared_session)
+                except Exception:
+                    logger.exception("Could not stop Paper engine after failed start")
+            elif claim_finished:
+                try:
+                    paper_wallet.renew_engine(user_id, req.date, req.symbol, token, stop=True)
+                except Exception:
+                    logger.exception("Could not release Paper engine after failed start")
             sim_svc._sessions.pop(prepared_session.session_id, None)
-        try:
-            paper_wallet.finish_session_claim(user_id, req.date, req.symbol, token)
-        except Exception:
-            logger.exception("Paper claim cleanup failed")
+        if not claim_finished:
+            try:
+                paper_wallet.finish_session_claim(user_id, req.date, req.symbol, token)
+            except Exception:
+                logger.exception("Paper claim cleanup failed")
         raise
 
 
@@ -274,10 +307,22 @@ async def _renew_paper_engine(session):
     from app.services import paper_wallet
     while session.state != SimulationState.ENDED:
         await asyncio.sleep(10)
+        if session.state == SimulationState.ENDED:
+            return
         try:
             paper_wallet.renew_engine(session.user_id, session.date, session.symbol, session.paper_engine_token)
             session.paper_engine_valid_until = time.monotonic() + 40
+        except HTTPException as exc:
+            if exc.status_code == 409:
+                logger.error("Paper session %s lost ownership: %s", session.session_id, exc.detail)
+                session.paper_lease_lost = True
+                sim_svc.stop_session(session)
+                return
+            logger.warning("Paper session %s lease renewal unavailable; retrying: %s", session.session_id, exc.detail)
         except Exception:
+            logger.exception("Paper session %s lease renewal failed; retrying", session.session_id)
+        if time.monotonic() >= session.paper_engine_valid_until:
+            logger.error("Paper session %s lease expired after renewal retries", session.session_id)
             session.paper_lease_lost = True
             sim_svc.stop_session(session)
             return
@@ -341,7 +386,8 @@ async def _start_simulation(
     if group["clock_family"] == "stepwise":
         req.strategy_interval_secs = int(group["strategy_interval_secs"])
 
-    _normalise_option_contract_request(req)
+    if not (paper_record and paper_record.get("desktop_origin") == "desktop_paper"):
+        _normalise_option_contract_request(req)
 
     if is_real:
         # Real trading: whitelist + Kotak auth + fund sync

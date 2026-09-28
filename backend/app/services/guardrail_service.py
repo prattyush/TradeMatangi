@@ -40,6 +40,9 @@ def _emit_guardrail_event(session: "SimulationSession", guardrail_type: str, rea
     """Push a guardrail_activated SSE event onto the session queue."""
     session.guardrail_last_type = guardrail_type
     session.guardrail_last_reason = reason
+    if getattr(session, "desktop_origin", None) == "desktop_paper":
+        from app.services.simulation import _upsert_session_to_db
+        _upsert_session_to_db(session, strict=True)
     event = {
         "type": "guardrail_activated",
         "guardrail_type": guardrail_type,

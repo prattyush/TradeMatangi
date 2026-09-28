@@ -15,6 +15,11 @@
 
 ### Status — testing handoff (2026-09-26)
 
+The [2026-09-28 desktop Paper follow-up](#desktop-paper-pricing-controls-and-durable-recovery-2026-09-28)
+records the later pricing, notification, and Stop/Resume changes. Earlier
+"still open" notes below are historical review notes; use the follow-up's
+remaining validation list for the current Paper lifecycle status.
+
 **Core functionality and the latest fixes are implemented on `dev`; Phase 18 is
 still open for acceptance testing and the remaining concerns listed below.**
 This checkpoint is the current summary for a new conversation. Detailed sections
@@ -1059,3 +1064,108 @@ passed; desktop TypeScript checking and Vite production build passed. Vite retai
 the existing bundle-size advisory. `git diff --check` passed. These local checks
 exercise lifecycle/state logic; the Windows reproduction checklist above must
 be executed using a rebuilt desktop application before runtime sign-off.
+
+### Desktop Paper pricing, controls, and durable recovery (2026-09-28)
+
+#### Why this follow-up was needed
+
+An order started from a NIFTY CE chart appeared with the NIFTY index price, and
+the CE/PE chart sometimes offered only an underlying action. The desktop Paper
+screen also lacked Browse's live refresh control, visible open orders and trade
+history, and Replay's strategy labeling. Stop could return `404 Session not found`
+while charts continued to stream. The connection label could alternate between
+connected and offline because the chart stream and in-memory trading engine were
+separate resources. A backend restart, feed failure, or expired engine lease
+could remove the engine from its process registry while the saved Paper identity
+and chart stream still existed. Frequent settings/drawings requests in the log
+were separate from the missing trading engine.
+
+#### Pricing and desktop interaction
+
+- Paper CE/PE Market intent reads the latest quote from the **exact live tile**
+  that supplied the action: symbol, expiry, strike, right, stream ID, and tile
+  ID. A missing or mismatched option quote rejects the order; an underlying
+  quote cannot substitute. The backend still represents a market-style request
+  as a protective LIMIT order, but its reference price comes from the option
+  premium. Limit and Target entries keep the selected chart price and contract.
+  The same contract identity is carried through order changes, fills, strategies,
+  stops, exits, P&L marks, and attached strikes. Existing orders are left intact;
+  a price that merely looks like an index level is not treated as proof of a bad
+  order.
+- For option Risk % sizing, quantity stays in whole lots. When one lot's loss
+  at the selected stop exceeds the budget, entry or AutoStop is rejected with a
+  clear reason instead of silently exceeding the chosen risk.
+- Provider ticks from Breeze, Kite, Fyers, and Kotak now carry a provider token
+  through the desktop live quote path. Logs include that token, contract, quote
+  source/time, and submitted price so a wrong-instrument feed can be traced.
+  The token is diagnostic metadata; it does not change the quoted price.
+- Paper now exposes **Refresh live charts** like Browse. Refresh retains ticks
+  received during history loading, retries failed subscriptions, and isolates a
+  failed tile from other tiles. The Paper trading panel shows open orders and
+  trade history, and the trade label flow offers the strategy fields used in
+  Replay. Stopped/remote session history remains readable; order actions are
+  hidden while the engine is not locally active.
+- Success notifications dismiss after 5 seconds; error and warning text after
+  10 seconds. A repeat of the same polling failure does not indefinitely extend
+  its banner. The saved-screen recovery copy stays in local storage after its
+  warning disappears, and dismissing a guardrail alert does not lift its trading
+  restriction. Loading and connection indicators remain state indicators.
+
+#### Durable Paper session and engine lifecycle
+
+The **Paper session ID and its trading record persist in DynamoDB**. The engine
+lease is a short-lived, replaceable child of that session. The lease still needs
+renewal to fence a crashed or isolated process: a long-lived engine permission
+would allow two processes to submit fills or wallet movements after a restart.
+The lease's expiry now makes the saved desktop Paper session *stopped and
+resumable* instead of losing its history. This applies to desktop-owned Paper;
+website-owned Paper behavior is left on its existing path.
+
+- The claim record identifies the session and tracks `running`, `stopped`, or
+  `settled`, the current engine token/generation, and pending cleanup. A Stop
+  request first fences the engine in DynamoDB, including when the process
+  receiving Stop has no local engine. A generation supplied by the desktop
+  prevents a delayed Stop from ending a newer Resume. Repeated Stop is safe.
+- Stop and unexpected engine loss preserve **filled open positions, trade
+  history, and the session ID**. Cleanup cancels pending orders and running
+  strategies and refunds reservations. A stopped snapshot can be viewed without
+  starting an engine. Resume explicitly selects that ID, restores trades,
+  orders, contracts, sizing, and guardrail state, and starts a new engine
+  generation. Saved quotes are cleared for live execution; a fresh matching
+  quote is required. Resume is allowed only on the same IST trading date before
+  15:09. Missed feed ticks are not replayed as fills.
+- Wallet movements and desktop Paper session/order/trade/strategy writes are
+  conditional on the engine claim. Cleanup writes are conditional on the stopped
+  parent. This prevents an old process from committing after Stop or a new
+  engine takeover. Operation receipts make retrying movements idempotent. A
+  saved guardrail ban is restored before the first Resume write so it cannot be
+  replaced by default state.
+- After 15:09 IST, stopped open positions are settled using a nearby historical
+  quote for each **exact** equity or option contract. The selected quote and
+  deterministic settlement IDs are persisted for retries. If a contract quote
+  is unavailable, that position remains open and settlement stays pending;
+  startup, periodic reconciliation, and saved-session views retry it. An old
+  session tick or underlying price is never used to settle an option.
+
+#### Verification and remaining acceptance
+
+Relevant backend trading/wallet/recovery tests passed (**109** before the final
+guardrail restore fix), and the focused guardrail regression passed afterward.
+The strategy suite passed **38** tests. Desktop unit tests passed **64** tests;
+TypeScript checking and the Vite production build passed. A later broad backend
+rerun showed no failures before it was interrupted during slow existing desktop
+cases, so it is not a completed full-suite result. Tests cover CE and PE live
+tile pricing, risk rejection, Stop without a local engine, reservation cleanup,
+same-ID Resume, guardrail restoration, exact-contract settlement, retry, and
+idempotency. DynamoDB behavior in these tests uses Moto.
+
+Before runtime sign-off, test on rebuilt Windows desktop with a live provider:
+three charts (NIFTY, CE, PE), Market/Limit/Target entry and exit flows, option
+premium pricing and P&L, 1.2% whole-lot risk, refresh, order/history/labels,
+and notifications. Stop, relaunch the backend, view stopped history, and Resume
+the same ID before 15:09; confirm open positions survive, pending orders are
+cancelled, and no duplicate fills or refunds occur. Repeat with two backend
+workers against DynamoDB Local or AWS to verify fencing and delayed Stop.
+Check a missing 15:09 contract quote leaves settlement pending until that exact
+quote becomes available. DDB outage handling and multi-day Resume remain outside
+this follow-up's scope.

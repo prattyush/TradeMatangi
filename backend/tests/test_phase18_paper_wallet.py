@@ -1,3 +1,6 @@
+import asyncio
+import time
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import boto3
@@ -119,3 +122,108 @@ def test_expired_engine_cannot_renew_before_another_worker_claims(database):
     with pytest.raises(HTTPException) as exc:
         paper_wallet.renew_engine(USER, DATE, "TATPOW", token)
     assert exc.value.status_code == 409
+
+
+def test_desktop_paper_stop_keeps_identity_and_fences_old_engine(database):
+    token, previous = paper_wallet.claim_session(USER, DATE, "NIFTY")
+    assert previous is None
+    paper_wallet.finish_session_claim(USER, DATE, "NIFTY", token, "desktop-session", desktop=True)
+    assert paper_wallet.move(USER, DATE, -100, "first-fill", engine=("desktop-session", "NIFTY", token)) == 99_900
+
+    first_generation = int(paper_wallet.session_claim(USER, DATE, "NIFTY")["engine_generation"])
+    stopped = paper_wallet.stop_desktop_session(USER, DATE, "NIFTY", "desktop-session",
+        expected_generation=first_generation)
+    assert stopped["session_status"] == "stopped"
+    assert stopped["session_id"] == "desktop-session"
+    with pytest.raises(HTTPException) as exc:
+        paper_wallet.move(USER, DATE, -100, "late-fill", engine=("desktop-session", "NIFTY", token))
+    assert exc.value.status_code == 409
+    assert paper_wallet.balance(USER, DATE) == 99_900
+
+    paper_wallet.complete_desktop_cleanup(USER, DATE, "NIFTY", "desktop-session")
+    assert paper_wallet.stop_desktop_session(USER, DATE, "NIFTY", "desktop-session")["cleanup_pending"] is False
+    resumed_token, previous = paper_wallet.claim_session(USER, DATE, "NIFTY")
+    assert previous == "desktop-session"
+    paper_wallet.finish_session_claim(USER, DATE, "NIFTY", resumed_token, previous, desktop=True)
+    with pytest.raises(HTTPException) as exc:
+        paper_wallet.stop_desktop_session(USER, DATE, "NIFTY", "desktop-session",
+            expected_generation=first_generation)
+    assert exc.value.status_code == 409
+    assert paper_wallet.session_claim(USER, DATE, "NIFTY")["session_status"] == "running"
+    with pytest.raises(HTTPException) as exc:
+        paper_wallet.move(USER, DATE, 100, "stale-cleanup", cleanup=("desktop-session", "NIFTY"))
+    assert exc.value.status_code == 409
+    assert paper_wallet.move(USER, DATE, -100, "new-fill", engine=("desktop-session", "NIFTY", resumed_token)) == 99_800
+    with pytest.raises(HTTPException):
+        paper_wallet.renew_engine(USER, DATE, "NIFTY", token)
+
+
+def test_desktop_paper_fenced_put_rejects_stale_session_write(database):
+    database.create_table(TableName="Sessions", KeySchema=[{"AttributeName": "session_id", "KeyType": "HASH"}],
+        AttributeDefinitions=[{"AttributeName": "session_id", "AttributeType": "S"}], BillingMode="PAY_PER_REQUEST")
+    token, _ = paper_wallet.claim_session(USER, DATE, "NIFTY")
+    paper_wallet.finish_session_claim(USER, DATE, "NIFTY", token, "desktop-session", desktop=True)
+    paper_wallet.fenced_put("Sessions", {"session_id": "desktop-session", "state": "running"},
+        user_id=USER, date=DATE, symbol="NIFTY", session_id="desktop-session", token=token)
+    paper_wallet.stop_desktop_session(USER, DATE, "NIFTY", "desktop-session")
+    with pytest.raises(HTTPException) as exc:
+        paper_wallet.fenced_put("Sessions", {"session_id": "desktop-session", "state": "running"},
+            user_id=USER, date=DATE, symbol="NIFTY", session_id="desktop-session", token=token)
+    assert exc.value.status_code == 409
+    assert database.Table("Sessions").get_item(Key={"session_id": "desktop-session"})["Item"]["state"] == "running"
+    paper_wallet.fenced_put("Sessions", {"session_id": "desktop-session", "state": "ended"},
+        user_id=USER, date=DATE, symbol="NIFTY", session_id="desktop-session", stopped=True)
+    assert database.Table("Sessions").get_item(Key={"session_id": "desktop-session"})["Item"]["state"] == "ended"
+
+
+def test_paper_engine_retries_transient_renewal_failure(monkeypatch):
+    from app.routers import simulation
+    from app.models.schemas import SimulationState
+
+    session = SimpleNamespace(session_id="paper-retry", user_id=USER, date=DATE, symbol="TATPOW",
+                              paper_engine_token="token", paper_engine_valid_until=time.monotonic() + 40,
+                              state=SimulationState.RUNNING)
+    attempts = []
+    sleeps = []
+
+    async def next_interval(_):
+        sleeps.append(None)
+        if len(sleeps) == 3:
+            session.state = SimulationState.ENDED
+
+    def renew(*_):
+        attempts.append(None)
+        if len(attempts) == 1:
+            raise HTTPException(status_code=503, detail="temporary storage failure")
+
+    monkeypatch.setattr(simulation.asyncio, "sleep", next_interval)
+    monkeypatch.setattr(paper_wallet, "renew_engine", renew)
+    monkeypatch.setattr(simulation.sim_svc, "stop_session", lambda _: pytest.fail("transient error stopped Paper"))
+
+    asyncio.run(simulation._renew_paper_engine(session))
+    assert len(attempts) == 2
+
+
+def test_paper_engine_stops_after_ownership_changes(monkeypatch):
+    from app.routers import simulation
+    from app.models.schemas import SimulationState
+
+    session = SimpleNamespace(session_id="paper-lost", user_id=USER, date=DATE, symbol="TATPOW",
+                              paper_engine_token="token", paper_engine_valid_until=time.monotonic() + 40,
+                              state=SimulationState.RUNNING)
+    stopped = []
+
+    async def next_interval(_):
+        return None
+
+    def stop(current):
+        stopped.append(current.session_id)
+        current.state = SimulationState.ENDED
+
+    monkeypatch.setattr(simulation.asyncio, "sleep", next_interval)
+    monkeypatch.setattr(paper_wallet, "renew_engine", lambda *_: (_ for _ in ()).throw(HTTPException(status_code=409, detail="owner changed")))
+    monkeypatch.setattr(simulation.sim_svc, "stop_session", stop)
+
+    asyncio.run(simulation._renew_paper_engine(session))
+    assert stopped == ["paper-lost"]
+    assert session.paper_lease_lost is True

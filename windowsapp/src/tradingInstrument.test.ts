@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { DesktopTradingSnapshot } from './contracts'
-import { entryQuantity, equityEntryEnabled, instrumentLotSize, validateEntryStop } from './tradingInstrument'
+import { entryUnavailableReason, entryQuantity, equityEntryEnabled, instrumentLotSize, validateEntryStop } from './tradingInstrument'
 
 const snapshot = { session: { symbol: 'TATPOW', instrument_type: 'equity', state: 'running', lot_size: 1 }, option_lot_size: 2700 } as DesktopTradingSnapshot
 
@@ -11,6 +11,14 @@ describe('desktop equity and attached option entry', () => {
     expect(equityEntryEnabled('spot', 'TATPOW', null)).toBe(false)
     expect(equityEntryEnabled('spot', 'TATPOW', { ...snapshot, session: { ...snapshot.session, instrument_type: 'options' } })).toBe(false)
     expect(equityEntryEnabled('spot', 'TATPOW', { ...snapshot, session: { ...snapshot.session, state: 'ended' } })).toBe(false)
+  })
+  it('allows CE and PE on a running NIFTY Paper screen and explains unavailable entry', () => {
+    const paper = { ...snapshot, session: { ...snapshot.session, symbol: 'NIFTY', instrument_type: 'options' as const, state: 'running' as const } }
+    expect(entryUnavailableReason('option', 'NIFTY', paper)).toBeNull()
+    expect(equityEntryEnabled('option', 'NIFTY', paper)).toBe(true)
+    expect(entryUnavailableReason('spot', 'NIFTY', paper)).toContain('CE or PE')
+    expect(entryUnavailableReason('option', 'NIFTY', { ...paper, session: { ...paper.session, state: 'ended' } })).toContain('ended')
+    expect(entryUnavailableReason('option', 'RELIND', paper)).toContain('NIFTY')
   })
   it('sizes attached options by their own lot size and equity by shares', () => {
     expect(instrumentLotSize('spot', snapshot)).toBe(1)

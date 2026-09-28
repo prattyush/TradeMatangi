@@ -709,7 +709,7 @@ class KiteBroadcaster:
                 session_map = dict(self._token_sessions.get(token, {}))
 
             for session_id, (queue, right, loop) in session_map.items():
-                payload = {**candle}
+                payload = {**candle, "provider_token": str(token)}
                 if right:
                     payload["right"] = right
                 try:

@@ -160,10 +160,10 @@ def get_ledger_balance(user_id: str, date: str, ledger_id: str, ledger_kind: str
     return get_or_init_ledger(user_id, date, ledger_id, ledger_kind)
 
 
-def debit_ledger(user_id: str, amount: float, date: str, ledger_id: str, ledger_kind: str = "sim", operation_id: str | None = None, allow_negative: bool = False, order=None) -> float:
+def debit_ledger(user_id: str, amount: float, date: str, ledger_id: str, ledger_kind: str = "sim", operation_id: str | None = None, allow_negative: bool = False, order=None, engine=None) -> float:
     if ledger_id.startswith("paper:"):
         from app.services.paper_wallet import move
-        return move(user_id, date, -max(amount, 0), operation_id, allow_negative, order)
+        return move(user_id, date, -max(amount, 0), operation_id, allow_negative, order, engine)
     balance = get_or_init_ledger(user_id, date, ledger_id, ledger_kind)
     if amount > balance:
         raise InsufficientFundsError(balance, amount)
@@ -173,10 +173,10 @@ def debit_ledger(user_id: str, amount: float, date: str, ledger_id: str, ledger_
     return balance
 
 
-def credit_ledger(user_id: str, amount: float, date: str, ledger_id: str, ledger_kind: str = "sim", operation_id: str | None = None, order=None) -> float:
+def credit_ledger(user_id: str, amount: float, date: str, ledger_id: str, ledger_kind: str = "sim", operation_id: str | None = None, order=None, engine=None, cleanup=None) -> float:
     if ledger_id.startswith("paper:"):
         from app.services.paper_wallet import move
-        return move(user_id, date, max(amount, 0), operation_id, order=order)
+        return move(user_id, date, max(amount, 0), operation_id, order=order, engine=engine, cleanup=cleanup)
     balance = get_or_init_ledger(user_id, date, ledger_id, ledger_kind) + max(amount, 0)
     _ledgers[(user_id, ledger_id)] = balance
     _write_ledger(user_id, date, ledger_id, ledger_kind, balance)

@@ -109,6 +109,7 @@ def compute_risk_ratio_quantity(
     current_wallet: float,
     lot_size: int = 1,
     margin_rate: float = 1.0,
+    strict_lot_risk: bool = False,
 ) -> int:
     """
     Compute order quantity so that if price hits stoploss, the total loss
@@ -130,6 +131,8 @@ def compute_risk_ratio_quantity(
         loss_per_lot = sl_distance * lot_size
         lots = int(risk_amount / loss_per_lot)
         if lots < 1:
+            if strict_lot_risk:
+                raise ValueError(f"Risk budget cannot cover one whole lot: one lot risks {loss_per_lot:.2f}, budget is {risk_amount:.2f}")
             unit_cost = entry_price * lot_size
             if current_wallet >= unit_cost * effective_margin_rate:
                 lots = 1
@@ -161,7 +164,7 @@ def _opening_quantity(session_id: str, symbol: str, side: TradeSide, quantity: i
     return max(0, quantity - max(0, closing - pending))
 
 
-def _write_order_to_db(order: Order) -> None:
+def _write_order_to_db(order: Order, *, strict: bool = False) -> None:
     try:
         from app.services.db import get_dynamodb_resource
         table = get_dynamodb_resource().Table("Orders")
@@ -211,9 +214,23 @@ def _write_order_to_db(order: Order) -> None:
             item["quote_timestamp"] = order.quote_timestamp
         if order.quote_source is not None:
             item["quote_source"] = order.quote_source
-        table.put_item(Item=item)
+        if order.source == "desktop_paper" and (order.wallet_ledger_id or "").startswith("paper:"):
+            from app.services import paper_wallet
+            context = paper_wallet.desktop_write_context(order.session_id, order.user_id,
+                order.wallet_ledger_id.removeprefix("paper:"), order.symbol)
+            if context is not None:
+                token, stopped = context
+                paper_wallet.fenced_put("Orders", item, user_id=order.user_id,
+                    date=order.wallet_ledger_id.removeprefix("paper:"), symbol=order.symbol,
+                    session_id=order.session_id, token=token, stopped=stopped)
+            else:
+                table.put_item(Item=item)
+        else:
+            table.put_item(Item=item)
     except Exception:
         logger.exception("DynamoDB write failed for order %s", order.order_id)
+        if strict or order.source == "desktop_paper":
+            raise
 
 
 def place_order(
@@ -308,7 +325,10 @@ def place_order(
     )
     if wallet_ledger_id and wallet_ledger_id.startswith("paper:"):
         from app.services import paper_wallet
-        paper_wallet.move(user_id, trading_date, -reserved_amount, f"order:{order_id}:reserve", order=order)
+        from app.services import simulation as sim_svc
+        session = sim_svc.get_session(session_id)
+        engine = (session_id, symbol, session.paper_engine_token) if session and getattr(session, "desktop_origin", None) == "desktop_paper" and getattr(session, "paper_engine_token", None) else None
+        paper_wallet.move(user_id, trading_date, -reserved_amount, f"order:{order_id}:reserve", order=order, engine=engine)
     _orders[session_id][order.order_id] = order
     _write_order_to_db(order)
     return order
@@ -331,16 +351,23 @@ def get_order(session_id: str, order_id: str) -> Order | None:
 
 def _credit_reservation(order: Order, amount: float, trading_date: str, persisted_order=None) -> None:
     from app.services import wallet_service
+    from app.services import simulation as sim_svc
+    session = sim_svc.get_session(order.session_id)
+    engine = (order.session_id, order.symbol, session.paper_engine_token) if session and getattr(session, "desktop_origin", None) == "desktop_paper" and getattr(session, "paper_engine_token", None) else None
+    cleanup = (order.session_id, order.symbol) if not session and order.source == "desktop_paper" and persisted_order is not None and persisted_order.status == OrderStatus.CANCELLED else None
     if order.wallet_ledger_id:
-        wallet_service.credit_ledger(order.user_id, amount, trading_date, order.wallet_ledger_id, order.wallet_ledger_kind or "sim", operation_id=f"order:{order.order_id}:adjust:{order.reservation_revision}", order=persisted_order)
+        wallet_service.credit_ledger(order.user_id, amount, trading_date, order.wallet_ledger_id, order.wallet_ledger_kind or "sim", operation_id=f"order:{order.order_id}:adjust:{order.reservation_revision}", order=persisted_order, engine=engine, cleanup=cleanup)
     else:
         wallet_service.credit(order.user_id, amount, trading_date)
 
 
 def _debit_reservation(order: Order, amount: float, trading_date: str, persisted_order=None) -> None:
     from app.services import wallet_service
+    from app.services import simulation as sim_svc
+    session = sim_svc.get_session(order.session_id)
+    engine = (order.session_id, order.symbol, session.paper_engine_token) if session and getattr(session, "desktop_origin", None) == "desktop_paper" and getattr(session, "paper_engine_token", None) else None
     if order.wallet_ledger_id:
-        wallet_service.debit_ledger(order.user_id, amount, trading_date, order.wallet_ledger_id, order.wallet_ledger_kind or "sim", operation_id=f"order:{order.order_id}:adjust:{order.reservation_revision}", order=persisted_order)
+        wallet_service.debit_ledger(order.user_id, amount, trading_date, order.wallet_ledger_id, order.wallet_ledger_kind or "sim", operation_id=f"order:{order.order_id}:adjust:{order.reservation_revision}", order=persisted_order, engine=engine)
     else:
         wallet_service.debit(order.user_id, amount, trading_date)
 
@@ -381,7 +408,7 @@ def cancel_order(session_id: str, order_id: str, trading_date: str) -> Order | N
             raise
         order.reserved_amount = 0.0
     order.status = OrderStatus.CANCELLED
-    _write_order_to_db(order)
+    _write_order_to_db(order, strict=order.source == "desktop_paper")
     return order
 
 
@@ -586,7 +613,7 @@ def clear_session(session_id: str) -> None:
     _orders.pop(session_id, None)
 
 
-def reload_paper_orders(session) -> None:
+def reload_paper_orders(session, *, repair_fills: bool = True) -> None:
     """Restore pending reservations and repair fills committed before trade persistence."""
     from app.services.db import get_dynamodb_resource
     from boto3.dynamodb.conditions import Key
@@ -604,7 +631,7 @@ def reload_paper_orders(session) -> None:
     for record in records:
         order = Order.model_validate(record)
         _orders[session.session_id][order.order_id] = order
-        if order.status == OrderStatus.FILLED and paper_wallet.fill_recorded(session.user_id, session.date, order.order_id):
+        if repair_fills and order.status == OrderStatus.FILLED and paper_wallet.fill_recorded(session.user_id, session.date, order.order_id):
             trading.record_trade(session.session_id, order.side, order.filled_price, order.filled_at,
                 quantity=order.quantity, symbol=order.symbol, right=order.right,
                 strike=order.strike, expiry=order.expiry, instrument_type="options" if order.right else "equity",
