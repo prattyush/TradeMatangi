@@ -83,8 +83,8 @@ def create(user_id: str, mode: str, date: str, cursor: int, interval_seconds: in
     if mode == "stepwise":
         run.bar_index = 1
     _runs[run.run_id] = run
-    if mode == "replay" and not trading_session_id:
-        run.task = asyncio.create_task(_clock(run))
+    if mode == "replay":
+        run.task = asyncio.create_task(_follow_trading_clock(run) if trading_session_id else _clock(run))
     return run
 
 
@@ -140,7 +140,9 @@ def snapshot(run: ReplayRun) -> dict:
 
 
 async def _emit(run: ReplayRun, event_type: str = "replay_state") -> None:
-    await events.publish(run.stream, event_type, "screen", snapshot(run))
+    payload = snapshot(run)
+    payload["event_id"] = run.stream.event_id + 1
+    await events.publish(run.stream, event_type, "screen", payload)
 
 
 async def _clock(run: ReplayRun) -> None:
@@ -152,6 +154,20 @@ async def _clock(run: ReplayRun) -> None:
                 await stop(run)
                 return
         await asyncio.sleep(max(0.01, 1 / max(run.speed, 0.05)))
+
+
+async def _follow_trading_clock(run: ReplayRun) -> None:
+    """Publish replay candles as the linked simulator advances its clock."""
+    previous = (run.cursor, run.state)
+    while run.state != "stopped":
+        _sync_from_trading(run)
+        current = (run.cursor, run.state)
+        if current != previous:
+            await _emit(run)
+            previous = current
+        if run.state == "stopped":
+            return
+        await asyncio.sleep(0.25)
 
 
 async def pause(run: ReplayRun) -> None:

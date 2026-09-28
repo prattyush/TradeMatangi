@@ -1,8 +1,12 @@
+import asyncio
+from types import SimpleNamespace
+
 import pytest
 from pydantic import ValidationError
 
 from app.routers import desktop_replay
 from app.services import desktop_replay_service as replay
+from app.services import simulation as sim_svc
 
 
 def test_replay_start_request_requires_a_positive_explicit_cursor():
@@ -95,3 +99,28 @@ async def test_replay_speed_update_changes_running_normal_replay():
         assert run.speed == 2
     finally:
         await replay.stop(run)
+
+
+@pytest.mark.asyncio
+async def test_linked_replay_stream_publishes_candle_when_trading_clock_advances(monkeypatch):
+    session = SimpleNamespace(current_time="100", state=SimpleNamespace(value="running"))
+    monkeypatch.setattr(sim_svc, "get_session", lambda _session_id: session)
+    run = replay.create(
+        "desktop-user", "replay", "2026-05-06", 100, 60, 1,
+        [{"tile_id": "tile-1", "instrument": {"kind": "index", "symbol": "NIFTY"}}],
+        {"tile-1": [{"time": 101, "open": 10, "high": 11, "low": 9, "close": 11}]},
+        trading_session_id="trading-1",
+    )
+    queue = asyncio.Queue()
+    run.stream.subscribers.append(queue)
+    try:
+        await asyncio.sleep(0)
+        session.current_time = "101"
+        event = await asyncio.wait_for(queue.get(), timeout=1)
+        assert event["type"] == "replay_state"
+        assert event["payload"]["event_id"] == event["event_id"]
+        assert event["payload"]["cursor"] == 101
+        assert event["payload"]["tile_states"][0]["candle"]["close"] == 11
+    finally:
+        run.task.cancel()
+        replay.forget(run)

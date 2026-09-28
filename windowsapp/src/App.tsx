@@ -28,6 +28,19 @@ interface Screen { id: string; persistedId?: string; revision?: number; name: st
 interface PersistedScreenState { id?: string; layout?: Layout; tiles?: TileConfig[]; indicators?: Record<string, string[]>; activeToolTileId?: string; mode?: DesktopMode; live_enabled?: boolean; session_id?: string; run_id?: string; live_stream_id?: string; owned?: boolean; run_date?: string; start_time?: string; speed?: string }
 interface DesktopScreenRecord { screen_id: string; name: string; state: PersistedScreenState; revision: number; order: number; active?: boolean }
 interface ReplaySnapshot { run_id: string; event_id: number; cursor: number; state: string; mode: string; bar_index: number; interval_seconds: number; tile_states: Array<{ tile_id: string; availability: string; interval_minutes?: number; candle?: Candle }> }
+const replaySnapshotFromStream = (value: unknown): ReplaySnapshot | null => {
+  if (!value || typeof value !== 'object') return null
+  const item = value as Record<string, unknown>
+  if (item.type === 'batch' && Array.isArray(item.events)) {
+    for (const event of [...item.events].reverse()) {
+      const snapshot = replaySnapshotFromStream(event)
+      if (snapshot) return snapshot
+    }
+    return null
+  }
+  if (typeof item.run_id === 'string' && typeof item.cursor === 'number' && Array.isArray(item.tile_states)) return item as unknown as ReplaySnapshot
+  return replaySnapshotFromStream(item.payload)
+}
 interface ChartSettings { background: string; textColor: string; gridColor: string; gridOpacity: number; gridStyle: 'solid' | 'dashed'; gridSize: number; movingAverageType: 'MA' | 'EMA'; movingAveragePeriods: string; showChartInfo: boolean; liveProvider: 'breeze'; horizontalLineColor: string; horizontalLineWidth: number; trendLineColor: string; trendLineWidth: number; drawingLineColor: string; drawingLineWidth: number; drawingFillColor: string; drawingFillOpacity: number }
 interface TileSwap { dir: string; label: string; onClick: () => void }
 interface DesktopStreamSnapshot<T> { key: string; last_event_id: number; latest_payload: T | null; connection: 'connected' | 'reconnecting' | 'offline' | 'authentication_required' }
@@ -1323,17 +1336,76 @@ function ScreenController(props: ScreenControllerProps) {
   useEffect(() => {
     if (!replay || replay.state === 'stopped' || connection === 'authentication_required') return
     const runId = replay.run_id
+    const acceptSnapshot = (value: unknown) => {
+      const next = replaySnapshotFromStream(value)
+      if (!next || next.run_id !== runId) return
+      setReplay(current => current?.run_id === runId && current.event_id > next.event_id ? current : next)
+      lastReplayPollError.current = ''
+      setReplayError('')
+    }
+    if (!hasNativeHost) {
+      const abort = new AbortController()
+      let cancelled = false
+      let eventId = replay.event_id
+      const connect = async () => {
+        let backoff = 1_000
+        while (!cancelled) {
+          try {
+            const response = await fetch(`${serverUrl.replace(/\/$/, '')}/api/desktop/v1/replay/${runId}/events?last_event_id=${eventId}`, { headers: { Authorization: `Bearer ${browserToken}`, Accept: 'text/event-stream' }, signal: abort.signal })
+            if (!response.ok) throw new Error(`Replay stream failed (${response.status})`)
+            if (!response.body) throw new Error('Replay stream has no body')
+            backoff = 1_000
+            const reader = response.body.getReader()
+            const decoder = new TextDecoder()
+            let buffer = ''
+            while (!cancelled) {
+              const { done, value } = await reader.read()
+              if (done) break
+              buffer = (buffer + decoder.decode(value, { stream: true })).replace(/\r\n/g, '\n')
+              let end = buffer.indexOf('\n\n')
+              while (end >= 0) {
+                const frame = buffer.slice(0, end)
+                buffer = buffer.slice(end + 2)
+                const data = frame.split('\n').filter(line => line.startsWith('data:')).map(line => line.slice(5).trimStart()).join('\n')
+                const id = frame.split('\n').find(line => line.startsWith('id:'))?.slice(3).trim()
+                if (id && Number.isFinite(Number(id))) eventId = Math.max(eventId, Number(id))
+                if (data) {
+                  try {
+                    const payload: unknown = JSON.parse(data)
+                    const snapshot = replaySnapshotFromStream(payload)
+                    if (snapshot) eventId = Math.max(eventId, snapshot.event_id)
+                    if (!cancelled) acceptSnapshot(payload)
+                  } catch (error) {
+                    if (!(error instanceof SyntaxError)) throw error
+                    const snapshot = await replayRequest(`${runId}/snapshot`, 'GET')
+                    if (!cancelled) acceptSnapshot(snapshot)
+                    eventId = Math.max(eventId, snapshot.event_id)
+                  }
+                }
+                end = buffer.indexOf('\n\n')
+              }
+            }
+          } catch (error) {
+            if (cancelled) return
+            const message = String(error)
+            if (message.includes('(401)')) { setReplay(null); setConnection('authentication_required'); setLoginError('Replay authentication expired; please sign in again.'); return }
+            if (message.includes('(404)')) { setReplay(null); setReplayError('Replay expired or the backend restarted; please start Replay again.'); return }
+            setReplayError('Replay stream unavailable; reconnecting…')
+          }
+          if (!cancelled) await new Promise(resolve => window.setTimeout(resolve, backoff))
+          backoff = Math.min(backoff * 2, 30_000)
+        }
+      }
+      void connect()
+      return () => { cancelled = true; abort.abort() }
+    }
     let cancelled = false
     const timer = window.setInterval(() => {
       if (replayPollInFlight.current) return
       replayPollInFlight.current = true
-      const request = hasNativeHost && !(mode === 'Replay' && trading?.session.session_id) ? readNativeStream<ReplaySnapshot>(`replay:${activeScreenId}:${runId}`) : replayRequest(`${runId}/snapshot`, 'GET')
-      void request
+      void readNativeStream<unknown>(`replay:${activeScreenId}:${runId}`)
         .then(next => {
-          if (cancelled || !next || next.run_id !== runId) return
-          setReplay(next)
-          lastReplayPollError.current = ''
-          setReplayError('')
+          if (!cancelled) acceptSnapshot(next)
         })
         .catch(error => {
           const message = String(error)
@@ -1355,7 +1427,7 @@ function ScreenController(props: ScreenControllerProps) {
         .finally(() => { replayPollInFlight.current = false })
     }, 500)
     return () => { cancelled = true; window.clearInterval(timer) }
-  }, [replay?.run_id, replay?.state, hasNativeHost, serverUrl, mode, trading?.session.session_id, connection])
+  }, [replay?.run_id, replay?.state, hasNativeHost, serverUrl, browserToken, connection])
   useEffect(() => {
     if (!hasNativeHost || !childReady || !isTradingMode(mode) || !trading?.session.session_id || trading.session.state === 'ended' || connection === 'authentication_required') return
     const sessionId = trading.session.session_id
