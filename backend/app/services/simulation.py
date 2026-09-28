@@ -325,6 +325,14 @@ def _upsert_session_to_db(session: SimulationSession, *, strict: bool = False) -
             item["wallet_ledger_id"] = session.wallet_ledger_id
         if getattr(session, "desktop_contracts", None):
             item["desktop_contracts"] = session.desktop_contracts
+        if getattr(session, "desktop_origin", None) == "desktop_paper" and getattr(session, "desktop_contract_quotes", None):
+            item["desktop_contract_quotes"] = {
+                key: {
+                    field: Decimal(str(value)) if isinstance(value, float) else value
+                    for field, value in quote.items() if value is not None
+                }
+                for key, quote in session.desktop_contract_quotes.items()
+            }
         if session.desktop_sizing_settings is not None:
             item["desktop_sizing_settings"] = {
                 key: Decimal(str(value)) if isinstance(value, (float, int)) else value
@@ -336,6 +344,15 @@ def _upsert_session_to_db(session: SimulationSession, *, strict: bool = False) -
         desktop_origin = getattr(session, "desktop_origin", None)
         if desktop_origin:
             item["desktop_origin"] = desktop_origin
+        if desktop_origin == "desktop_paper":
+            item["desktop_guardrail_state"] = {
+                "block_until_bar": int(session.guardrail_block_until_bar),
+                "ban_active": bool(session.guardrail_ban_active),
+                "consecutive_losses": int(session.guardrail_consecutive_losses),
+                "cooldown_trips_seen": int(session.guardrail_cooldown_trips_seen),
+                "last_type": str(getattr(session, "guardrail_last_type", "")),
+                "last_reason": str(getattr(session, "guardrail_last_reason", "")),
+            }
         if getattr(session, "desktop_checkpointed", False):
             item["desktop_checkpointed"] = True
             item["desktop_checkpoint_time"] = int(getattr(session, "desktop_checkpoint_time", 0) or 0)
@@ -350,7 +367,13 @@ def _upsert_session_to_db(session: SimulationSession, *, strict: bool = False) -
                 item["strike_ce"] = session.strike_ce
             if session.strike_pe is not None:
                 item["strike_pe"] = session.strike_pe
-        table.put_item(Item=item)
+        if getattr(session, "desktop_origin", None) == "desktop_paper" and getattr(session, "paper_engine_token", None):
+            from app.services import paper_wallet
+            paper_wallet.fenced_put("Sessions", item, user_id=session.user_id, date=session.date,
+                symbol=session.symbol, session_id=session.session_id,
+                token=session.paper_engine_token, stopped=session.state == SimulationState.ENDED)
+        else:
+            table.put_item(Item=item)
     except Exception:
         logger.exception("DynamoDB write failed for session %s", session.session_id)
         if strict:
@@ -505,6 +528,8 @@ def rebuild_session_from_db(
     strike_pe: Optional[int] = None,
     brokerage_per_order: float = 1.0,
     strategy_interval_secs: int = 180,
+    read_only: bool = False,
+    repair_fills: bool = True,
 ) -> SimulationSession:
     """Re-create a SimulationSession in memory from a DynamoDB record, reusing the same session_id.
 
@@ -565,6 +590,13 @@ def rebuild_session_from_db(
         resumed_from_db=True,
     )
     session.desktop_contracts = db_record.get("desktop_contracts", [])
+    session.desktop_contract_quotes = {
+        key: {
+            field: float(value) if isinstance(value, Decimal) else value
+            for field, value in quote.items()
+        }
+        for key, quote in db_record.get("desktop_contract_quotes", {}).items()
+    }
     session.desktop_mode = db_record.get("desktop_mode")
     session.desktop_origin = db_record.get("desktop_origin")
     saved_sizing = db_record.get("desktop_sizing_settings")
@@ -587,15 +619,31 @@ def rebuild_session_from_db(
     if saved_last_price_pe is not None:
         session.last_price_pe = float(saved_last_price_pe)
     session.resume_event.set()
-    _sessions[session_id] = session
-    _upsert_session_to_db(session)
-    from app.services.guardrail_service import initialize_guardrails
-    initialize_guardrails(session, user_id)
+    if not read_only:
+        from app.services.guardrail_service import initialize_guardrails
+        initialize_guardrails(session, user_id)
+    # Restore restrictions before any resume write. Otherwise the initial
+    # session upsert would replace a saved BAN/cooldown with default values.
+    if db_record.get("desktop_origin") == "desktop_paper":
+        guardrails = db_record.get("desktop_guardrail_state") or {}
+        session.guardrail_block_until_bar = int(guardrails.get("block_until_bar") or 0)
+        session.guardrail_ban_active = bool(guardrails.get("ban_active"))
+        session.guardrail_consecutive_losses = int(guardrails.get("consecutive_losses") or 0)
+        session.guardrail_cooldown_trips_seen = int(guardrails.get("cooldown_trips_seen") or 0)
+        session.guardrail_last_type = guardrails.get("last_type") or ""
+        session.guardrail_last_reason = guardrails.get("last_reason") or ""
+    if read_only:
+        session.state = SimulationState.ENDED
+        session.desktop_read_only = True
+    else:
+        _sessions[session_id] = session
+        _upsert_session_to_db(session)
     from app.services import trading as trading_svc
-    trading_svc.reload_trades_from_db(session_id)
+    trading_svc.reload_trades_from_db(session_id,
+        strict=db_record.get("desktop_origin") == "desktop_paper")
     if session_type == "paper" and ledger_id.startswith("paper:"):
         from app.services.order_service import reload_paper_orders
-        reload_paper_orders(session)
+        reload_paper_orders(session, repair_fills=repair_fills)
     logger.info(
         "rebuild_session_from_db: resumed session %s for user=%s symbol=%s date=%s type=%s (%d trades restored)",
         session_id, user_id, symbol, date, session_type,
@@ -803,6 +851,7 @@ def _emit_tick_and_check_orders(
 ) -> list[dict]:
     """Put one tick on the queue and return fill events for any triggered orders."""
     from app.services.order_service import check_orders
+    from app.models.schemas import OrderStatus
     from app.services.trading import record_trade, settle_wallet_for_trade
 
     if getattr(session, "paper_engine_token", None) and time.monotonic() >= getattr(session, "paper_engine_valid_until", 0):
@@ -824,9 +873,25 @@ def _emit_tick_and_check_orders(
                 tick = {**tick, **contract}
                 break
 
+    linked_stream_id = getattr(session, "desktop_live_stream_id", None) if session.session_type == "paper" else None
+    if tick_right and linked_stream_id:
+        from app.services import desktop_live_service
+        contract = next((item for item in getattr(session, "desktop_contracts", []) if item.get("contract_key") == tick.get("contract_key")), None)
+        if contract is None:
+            return []
+        chart_quote = desktop_live_service.option_quote(session.user_id, linked_stream_id, contract["symbol"], contract["expiry"], contract["strike"], contract["right"])
+        if chart_quote is None:
+            return []
+        logged = getattr(session, "_paper_quote_source_logged", set())
+        if contract["contract_key"] not in logged:
+            logger.info("paper_option_quote_source session_id=%s contract=%s engine_price=%s engine_token=%s chart_price=%s chart_token=%s chart_timestamp=%s", session.session_id, contract["contract_key"], tick.get("close"), tick.get("provider_token"), chart_quote["price"], chart_quote.get("provider_token"), chart_quote["timestamp"])
+            logged.add(contract["contract_key"])
+            session._paper_quote_source_logged = logged
+        tick = {**tick, **{key: chart_quote[key] for key in ("open", "high", "low", "close")}, "time": chart_quote["timestamp"], "source": chart_quote["source"], "provider_token": chart_quote.get("provider_token")}
+
     if tick_right and tick.get("contract_key"):
         registry = getattr(session, "desktop_contract_quotes", {})
-        registry[tick["contract_key"]] = {**tick, "price": tick["close"], "timestamp": tick["time"], "source": "live_paper" if session.paper_stream_source else "historical_stepwise"}
+        registry[tick["contract_key"]] = {**tick, "price": tick["close"], "timestamp": tick["time"], "source": tick.get("source") or ("live_paper" if session.paper_stream_source else "historical_stepwise")}
         session.desktop_contract_quotes = registry
         active_strike = session.strike_ce if tick_right == "CE" else session.strike_pe
         if tick.get("strike") == active_strike:
@@ -834,8 +899,6 @@ def _emit_tick_and_check_orders(
                 session.last_price_ce = tick["close"]
             else:
                 session.last_price_pe = tick["close"]
-        else:
-            return []
 
     # Auto-close positions at end of day (15:09) for sim/paper/stepwise
     if session.session_type != "real":
@@ -944,7 +1007,7 @@ def _emit_tick_and_check_orders(
     # order_cancelled events so the UI removes them immediately.
     try:
         from app.services import strategy_service
-        from app.services.order_service import get_open_orders, get_order, OrderStatus
+        from app.services.order_service import get_open_orders, get_order
         running_before = {s.strategy_id: s for s in strategy_service.list_running(session.session_id)}
         before_ids = {o.order_id for o in get_open_orders(session.session_id)}
 
@@ -1963,9 +2026,9 @@ async def _run_paper_session(session: SimulationSession) -> None:
             if tick_right and not payload.get("contract_key"):
                 payload = {**session.paper_base_contracts.get(tick_right, {}), **payload}
 
-            if tick_right == "CE" and ("strike" not in payload or payload["strike"] == session.strike_ce):
+            if tick_right == "CE" and not getattr(session, "desktop_live_stream_id", None) and ("strike" not in payload or payload["strike"] == session.strike_ce):
                 session.last_price_ce = payload["close"]
-            elif tick_right == "PE" and ("strike" not in payload or payload["strike"] == session.strike_pe):
+            elif tick_right == "PE" and not getattr(session, "desktop_live_stream_id", None) and ("strike" not in payload or payload["strike"] == session.strike_pe):
                 session.last_price_pe = payload["close"]
             elif tick_right is None:
                 session.last_price = payload["close"]
@@ -1987,6 +2050,9 @@ async def _run_paper_session(session: SimulationSession) -> None:
     except Exception:
         logger.exception("_run_paper_session crashed for session %s", session.session_id)
     finally:
+        unexpected_end = session.state != SimulationState.ENDED
+        if unexpected_end:
+            logger.error("Paper session %s ended unexpectedly during %s; releasing its engine", session.session_id, getattr(session.queue, "phase", "unknown"))
         _stop_desktop_option_subscriptions(session)
         session.state = SimulationState.ENDED
         end_event = {"type": "session_ended"}
@@ -1994,6 +2060,11 @@ async def _run_paper_session(session: SimulationSession) -> None:
             session.queue.put_nowait(json.dumps(end_event))
         except asyncio.QueueFull:
             pass
+        if unexpected_end:
+            try:
+                stop_session(session)
+            except Exception:
+                logger.exception("Paper session %s cleanup failed after unexpected end", session.session_id)
 
 
 async def _run_real_session(session: SimulationSession) -> None:
@@ -2849,12 +2920,28 @@ def resume_session(session: SimulationSession) -> None:
 
 
 def stop_session(session: SimulationSession) -> None:
+    logger.info("session_stop_begin session_id=%s type=%s lease_lost=%s", session.session_id, session.session_type, getattr(session, "paper_lease_lost", False))
+    desktop_paper = getattr(session, "desktop_origin", None) == "desktop_paper"
+    cleanup_owned = not getattr(session, "paper_lease_lost", False)
+    if desktop_paper:
+        from app.services import paper_wallet
+        try:
+            claim = paper_wallet.session_claim(session.user_id, session.date, session.symbol)
+            # A replaced engine must not cancel the new owner's orders.
+            cleanup_owned = bool(claim and claim.get("session_id") == session.session_id and
+                (claim.get("session_status") == "stopped" or
+                 (claim.get("session_status") == "running" and claim.get("engine_token") == getattr(session, "paper_engine_token", None))))
+            if cleanup_owned and claim.get("session_status") == "running":
+                paper_wallet.stop_desktop_session(session.user_id, session.date, session.symbol, session.session_id)
+        except Exception:
+            logger.exception("Could not persist desktop Paper stop for %s", session.session_id)
+            cleanup_owned = False
+    try:
+        current_task = asyncio.current_task()
+    except RuntimeError:
+        current_task = None
     lease_task = getattr(session, "paper_engine_task", None)
     if lease_task:
-        try:
-            current_task = asyncio.current_task()
-        except RuntimeError:
-            current_task = None
         if lease_task is not current_task:
             lease_task.cancel()
     session.state = SimulationState.ENDED
@@ -2863,11 +2950,12 @@ def stop_session(session: SimulationSession) -> None:
     session.queue.close()       # unblock any waiting SSE get() consumers
     session.paper_tick_queue.close()
     _stop_desktop_option_subscriptions(session)
-    if session.task and not session.task.done():
+    if session.task and session.task is not current_task and not session.task.done():
         session.task.cancel()
-    if not getattr(session, "paper_lease_lost", False):
+    if cleanup_owned:
         _upsert_session_to_db(session)
     _sessions.pop(session.session_id, None)
+    logger.info("session_removed_from_memory session_id=%s", session.session_id)
     # Stop live streaming for paper and real sessions
     if session.session_type in ("paper", "real"):
         if session.stream_manager is not None:
@@ -2920,7 +3008,7 @@ def stop_session(session: SimulationSession) -> None:
     # Cancel and clean up any running strategies
     try:
         from app.services import strategy_service
-        if not getattr(session, "paper_lease_lost", False):
+        if cleanup_owned:
             strategy_service.cancel_all(session.session_id)
         strategy_service.clear_session(session.session_id)
     except Exception as exc:
@@ -2930,7 +3018,7 @@ def stop_session(session: SimulationSession) -> None:
     # when session is restarted with a new session_id and old pending orders become invisible).
     try:
         from app.services import order_service
-        cancelled = 0 if getattr(session, "paper_lease_lost", False) else order_service.cancel_all_pending_orders(session.session_id, session.date)
+        cancelled = order_service.cancel_all_pending_orders(session.session_id, session.date) if cleanup_owned else 0
         order_service.clear_session(session.session_id)
         if cancelled:
             logger.info(
@@ -2955,6 +3043,6 @@ def stop_session(session: SimulationSession) -> None:
                 "aihelper session-stop hook failed for %s (continuing): %s",
                 session.session_id, exc,
             )
-    if getattr(session, "paper_engine_token", None) and not getattr(session, "paper_lease_lost", False):
+    if getattr(session, "paper_engine_token", None) and not desktop_paper and not getattr(session, "paper_lease_lost", False):
         from app.services.paper_wallet import renew_engine
         renew_engine(session.user_id, session.date, session.symbol, session.paper_engine_token, stop=True)

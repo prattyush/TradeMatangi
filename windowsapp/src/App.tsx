@@ -4,7 +4,7 @@ import { ToolbarIcon } from './ToolbarIcon'
 import { TradingRefresh, TRADING_RECONCILE_MS, eventNeedsTradingRefresh } from './tradingRefresh'
 import { bounded, closeAfterSave, controlledScreens, SAVE_TIMEOUT_MS, journalKey, recoverState, type RecoveryJournal } from './windowLifecycle'
 import { ticketSizingPayload, ticketSizingLabel, switchTicketSizing } from './ticketSizing'
-import { equityEntryEnabled, entryQuantity, instrumentLotSize, validateEntryStop } from './tradingInstrument'
+import { entryUnavailableReason, equityEntryEnabled, entryQuantity, instrumentLotSize, validateEntryStop } from './tradingInstrument'
 import { useCallback, useEffect, useRef, useState, type Dispatch, type SetStateAction } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
@@ -15,6 +15,7 @@ import type { Candle, DesktopOrder, DesktopPosition, DesktopTrade, DesktopTradin
 import { aggregateLiveCandles, appendLiveTick, reconcileLiveTicks } from './liveCandles'
 import { applyLiveStreamPayloadToSnapshot, type LiveSnapshot, type LiveTileState } from './liveStreamState'
 import { acceptPaperSnapshot, applyPaperStreamEvent, isDesktopTradingSnapshot } from './paperTradingState'
+import { shouldShowMessage, useDismissMessage } from './useDismissMessage'
 
 interface HistoricalPage { candles: Candle[]; available?: boolean; unavailable_reason?: string }
 interface Instrument { symbol: string; display_name: string; exchange: string; chart_type?: string; option_eligible: boolean; supported_intervals: number[] }
@@ -35,7 +36,7 @@ interface DesktopTradeLabelState { completed: DesktopRoundTrip[]; open: DesktopR
 interface DesktopLabelMetadata { categories: string[]; strategies: string[]; entry_tags: string[]; exit_tags: string[] }
 type DesktopLabelMetadataStatus = 'idle' | 'loading' | 'ready' | 'error'
 const emptyLabelMetadata: DesktopLabelMetadata = { categories: [], strategies: [], entry_tags: [], exit_tags: [] }
-interface DesktopTradingCandidate { status: 'none' | 'active' | 'checkpoint' | 'existing'; active?: DesktopTradingSnapshot | null; checkpoint?: { current_time: number; current_bar_index: number; desktop_mode?: string } | null; existing_session_id?: string | null }
+interface DesktopTradingCandidate { status: 'none' | 'active' | 'checkpoint' | 'existing' | 'stopped' | 'remote'; active?: DesktopTradingSnapshot | null; stopped?: DesktopTradingSnapshot | null; checkpoint?: { current_time: number; current_bar_index: number; desktop_mode?: string } | null; existing_session_id?: string | null }
 type DesktopTradingStreamPayload = DesktopTradingSnapshot | Record<string, unknown> | null
 interface DrawingCommand { id: number; tool: string }
 interface DrawingAction { id: number; action: 'delete' | 'hide' | 'lock' }
@@ -54,6 +55,7 @@ const paperMarketDate = () => {
   const part = (type: string) => parts.find(value => value.type === type)?.value
   return `${part('year')}-${part('month')}-${part('day')}`
 }
+const paperMarketTime = () => new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' }).format(new Date())
 declare global {
   interface Window {
     google?: {
@@ -74,7 +76,12 @@ const GOOGLE_CLIENT_ID = '249337992826-jm174i5bqdhr4bfqpmip44gnnp4eo2eh.apps.goo
 const fallbackCatalogue: Instrument[] = [{ symbol: 'NIFTY', display_name: 'NIFTY 50', exchange: 'NSE', chart_type: 'index', option_eligible: true, supported_intervals: [1, 3, 5, 15, 30, 60] }]
 const defaultChartSettings: ChartSettings = { background: '#151a23', textColor: '#aeb8ca', gridColor: '#ffffff', gridOpacity: 0.12, gridStyle: 'solid', gridSize: 1, movingAverageType: 'MA', movingAveragePeriods: '5,10,20', showChartInfo: true, liveProvider: 'breeze', horizontalLineColor: '#facc15', horizontalLineWidth: 2, trendLineColor: '#60a5fa', trendLineWidth: 2, drawingLineColor: '#60a5fa', drawingLineWidth: 2, drawingFillColor: '#60a5fa', drawingFillOpacity: 0.16 }
 const PAPER_STREAM_POLL_MS = 500
+const isMissingSession = (error: unknown) => /\(404(?:\s|\))/.test(String(error)) && /Session not found|Trading request failed/i.test(String(error))
+const isMissingLiveStream = (error: unknown) => /\(404(?:\s|\))/.test(String(error)) && /Live|desktop request/i.test(String(error))
 const noIndicators: string[] = []
+const reportOptionEntryDiagnostic = (payload: Record<string, unknown>) => {
+  if ('__TAURI_INTERNALS__' in window) void invoke('record_desktop_renderer_diagnostic', { kind: 'option_entry_unavailable', payload }).catch(() => undefined)
+}
 const newTile = (): TileConfig => ({ id: crypto.randomUUID(), kind: 'spot', symbol: 'NIFTY', interval: '3', tradingDate: '2026-05-06', expiry: '', strike: '', right: 'CE' })
 const newScreen = (number: number): Screen => ({ id: crypto.randomUUID(), name: `Screen ${number}`, layout: '1', tiles: [newTile()] })
 const mainIndicators = ['MA', 'EMA', 'BOLL_TV', 'VWAP', 'SuperTrend', 'Ichimoku', 'MA_Ribbon', 'HMA', 'PivotPoints']
@@ -164,12 +171,13 @@ const paperStreamEvents = (payload: DesktopTradingStreamPayload): Record<string,
 }
 
 
-function DesktopOpenOrders({ orders, onUpdate, onCancel }: { orders: DesktopOrder[]; onUpdate: (order: DesktopOrder, price: number, quantity: number) => Promise<void>; onCancel: (order: DesktopOrder) => Promise<void> }) {
+function DesktopOpenOrders({ orders, onUpdate, onCancel, readOnly = false }: { orders: DesktopOrder[]; onUpdate: (order: DesktopOrder, price: number, quantity: number) => Promise<void>; onCancel: (order: DesktopOrder) => Promise<void>; readOnly?: boolean }) {
   const [editing, setEditing] = useState<string | null>(null)
   const [price, setPrice] = useState('')
   const [quantity, setQuantity] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  useDismissMessage(error, setError, 10_000)
   const beginEdit = (order: DesktopOrder) => { setEditing(order.order_id); setPrice(String(order.order_type === 'LIMIT' ? order.limit_price : order.trigger_price)); setQuantity(String(order.quantity)); setError('') }
   const save = async (order: DesktopOrder) => {
     const nextPrice = Number(price), nextQuantity = Number(quantity)
@@ -181,10 +189,10 @@ function DesktopOpenOrders({ orders, onUpdate, onCancel }: { orders: DesktopOrde
     setBusy(true); setError('')
     try { await onCancel(order); if (editing === order.order_id) setEditing(null) } catch (cause) { setError(String(cause)) } finally { setBusy(false) }
   }
-  return <section className="desktop-open-orders"><strong>Open Orders ({orders.length})</strong>{orders.length === 0 && <span>No pending orders</span>}{orders.map(order => <div className="desktop-open-order" key={order.order_id}><span>{order.symbol}{order.strike ? ` ${order.strike}${order.right ?? ''}` : ''}</span><span>{order.side} · {order.is_stoploss ? 'SL' : order.order_type} · {order.quantity} @ {(order.order_type === 'LIMIT' ? order.limit_price : order.trigger_price).toFixed(2)}</span>{editing === order.order_id ? <div className="desktop-order-edit"><label>Price<input aria-label="Order price" type="number" min="0.01" step="0.05" value={price} onChange={event => setPrice(event.target.value)} /></label><label>Qty<input aria-label="Order quantity" type="number" min="1" step="1" value={quantity} onChange={event => setQuantity(event.target.value)} /></label><button disabled={busy} onClick={() => void save(order)}>Save</button><button disabled={busy} onClick={() => setEditing(null)}>Back</button></div> : <div className="desktop-order-actions"><button disabled={busy} onClick={() => beginEdit(order)}>Edit</button><button disabled={busy} onClick={() => void cancel(order)}>Cancel</button></div>}</div>)}{error && <small role="alert">{error}</small>}</section>
+  return <section className="desktop-open-orders"><strong>Open Orders ({orders.length})</strong>{orders.length === 0 && <span>No pending orders</span>}{orders.map(order => <div className="desktop-open-order" key={order.order_id}><span>{order.symbol}{order.strike ? ` ${order.strike}${order.right ?? ''}` : ''}</span><span>{order.side} · {order.is_stoploss ? 'SL' : order.order_type} · {order.quantity} @ {(order.order_type === 'LIMIT' ? order.limit_price : order.trigger_price).toFixed(2)}</span>{!readOnly && (editing === order.order_id ? <div className="desktop-order-edit"><label>Price<input aria-label="Order price" type="number" min="0.01" step="0.05" value={price} onChange={event => setPrice(event.target.value)} /></label><label>Qty<input aria-label="Order quantity" type="number" min="1" step="1" value={quantity} onChange={event => setQuantity(event.target.value)} /></label><button disabled={busy} onClick={() => void save(order)}>Save</button><button disabled={busy} onClick={() => setEditing(null)}>Back</button></div> : <div className="desktop-order-actions"><button disabled={busy} onClick={() => beginEdit(order)}>Edit</button><button disabled={busy} onClick={() => void cancel(order)}>Cancel</button></div>)}</div>)}{error && <small role="alert">{error}</small>}</section>
 }
 
-function WorkspaceToolPanel({ tiles, activeTileId, setActiveTileId, activeTileLabel, activePosition, sessionCapital, positionMarginRate, indicators, toggleIndicator, clearIndicators, sendDrawing, sendDrawingAction, activeDrawingTool, drawingMode, setDrawingMode, tradeHistoryCount, onOpenTradeHistory, labelState, labelMetadata, labelMetadataStatus, labelMetadataError, onReloadLabelMetadata, onSaveTradeLabel, strategies, onCancelStrategy, onUpdateStrategyPrice, tradingActive, openOrders, onUpdateOrder, onCancelOrder }: { tiles: TileConfig[]; activeTileId: string; setActiveTileId: (tileId: string) => void; activeTileLabel: string; activePosition: DesktopPosition | null; sessionCapital: number; positionMarginRate: number; indicators: string[]; toggleIndicator: (name: string) => void; clearIndicators: () => void; sendDrawing: (tool: string) => void; sendDrawingAction: (action: DrawingAction['action']) => void; activeDrawingTool: string | null; drawingMode: DrawingMode; setDrawingMode: (mode: DrawingMode) => void; tradeHistoryCount: number; onOpenTradeHistory: () => void; labelState: DesktopTradeLabelState | null; labelMetadata: DesktopLabelMetadata; labelMetadataStatus: DesktopLabelMetadataStatus; labelMetadataError: string; onReloadLabelMetadata: () => void; onSaveTradeLabel: (roundTrip: DesktopRoundTrip, fields: Partial<DesktopTradeLabel>) => void; strategies: DesktopTradingSnapshot['strategies']; onCancelStrategy: (strategyId: string) => void; onUpdateStrategyPrice: (strategyId: string, currentPrice: number) => void; tradingActive: boolean; openOrders: DesktopOrder[]; onUpdateOrder: (order: DesktopOrder, price: number, quantity: number) => Promise<void>; onCancelOrder: (order: DesktopOrder) => Promise<void> }) {
+function WorkspaceToolPanel({ tiles, activeTileId, setActiveTileId, activeTileLabel, activePosition, sessionCapital, positionMarginRate, indicators, toggleIndicator, clearIndicators, sendDrawing, sendDrawingAction, activeDrawingTool, drawingMode, setDrawingMode, tradeHistoryCount, onOpenTradeHistory, labelState, labelMetadata, labelMetadataStatus, labelMetadataError, onReloadLabelMetadata, onSaveTradeLabel, strategies, onCancelStrategy, onUpdateStrategyPrice, tradingActive, ordersReadOnly, openOrders, onUpdateOrder, onCancelOrder }: { tiles: TileConfig[]; activeTileId: string; setActiveTileId: (tileId: string) => void; activeTileLabel: string; activePosition: DesktopPosition | null; sessionCapital: number; positionMarginRate: number; indicators: string[]; toggleIndicator: (name: string) => void; clearIndicators: () => void; sendDrawing: (tool: string) => void; sendDrawingAction: (action: DrawingAction['action']) => void; activeDrawingTool: string | null; drawingMode: DrawingMode; setDrawingMode: (mode: DrawingMode) => void; tradeHistoryCount: number; onOpenTradeHistory: () => void; labelState: DesktopTradeLabelState | null; labelMetadata: DesktopLabelMetadata; labelMetadataStatus: DesktopLabelMetadataStatus; labelMetadataError: string; onReloadLabelMetadata: () => void; onSaveTradeLabel: (roundTrip: DesktopRoundTrip, fields: Partial<DesktopTradeLabel>) => void; strategies: DesktopTradingSnapshot['strategies']; onCancelStrategy: (strategyId: string) => void; onUpdateStrategyPrice: (strategyId: string, currentPrice: number) => void; tradingActive: boolean; ordersReadOnly: boolean; openOrders: DesktopOrder[]; onUpdateOrder: (order: DesktopOrder, price: number, quantity: number) => Promise<void>; onCancelOrder: (order: DesktopOrder) => Promise<void> }) {
   const hasPosition = Boolean(activePosition && activePosition.side !== 'FLAT' && activePosition.quantity > 0)
   const walletPct = hasPosition && sessionCapital > 0 ? (activePosition!.quantity * activePosition!.avg_entry_price * positionMarginRate / sessionCapital) * 100 : null
   return <aside className="tool-panel" aria-label="Chart tools">
@@ -193,7 +201,7 @@ function WorkspaceToolPanel({ tiles, activeTileId, setActiveTileId, activeTileLa
     <section><strong>Draw</strong><div className="segmented"><button className={drawingMode === 'once' ? 'active' : ''} aria-pressed={drawingMode === 'once'} onClick={() => setDrawingMode('once')}>Once</button><button className={drawingMode === 'repeat' ? 'active' : ''} aria-pressed={drawingMode === 'repeat'} onClick={() => setDrawingMode('repeat')}>Repeat</button></div><div className="tool-grid icon-tool-grid">{drawingTools.map(item => <button key={item.tool} className={`tool-icon ${activeDrawingTool === item.tool ? 'active' : ''}`} aria-label={item.label} aria-pressed={activeDrawingTool === item.tool} data-tooltip={item.label} title={item.label} onClick={() => sendDrawing(item.tool)}>{item.icon}</button>)}</div><div className="tool-actions icon-actions"><button className="tool-icon" aria-label="Lock selected drawing" data-tooltip="Lock selected drawing" title="Lock selected drawing" onClick={() => sendDrawingAction('lock')}>🔒</button><button className="tool-icon" aria-label="Hide selected drawing" data-tooltip="Hide selected drawing" title="Hide selected drawing" onClick={() => sendDrawingAction('hide')}>◌</button><button className="tool-icon" aria-label="Delete selected drawing" data-tooltip="Delete selected drawing" title="Delete selected drawing" onClick={() => sendDrawingAction('delete')}>⌫</button></div></section>
     <section><strong>Main indicators</strong><div className="tool-grid">{mainIndicators.map(name => <button key={name} className={indicators.includes(name) ? 'active' : ''} onClick={() => toggleIndicator(name)}>{name.replace('_TV', '').replace('_Ribbon', ' Ribbon')}</button>)}</div></section>
     <section><strong>Sub indicators</strong><div className="tool-grid">{subIndicators.map(name => <button key={name} className={indicators.includes(name) ? 'active' : ''} onClick={() => toggleIndicator(name)}>{name.replace('_TV', '')}</button>)}</div></section>
-    {tradingActive && <section><strong>Trading</strong><button className="panel-clear history-tool-button" title="Trade history" aria-label="Trade history" onClick={onOpenTradeHistory}>History {tradeHistoryCount ? `(${tradeHistoryCount})` : ''}</button><DesktopOpenOrders orders={openOrders} onUpdate={onUpdateOrder} onCancel={onCancelOrder} />{labelState && <DesktopLabelPanel state={labelState} metadata={labelMetadata} metadataStatus={labelMetadataStatus} metadataError={labelMetadataError} onReloadMetadata={onReloadLabelMetadata} onSave={onSaveTradeLabel} />}{strategies.length > 0 && <div className="desktop-strategy-list"><strong>Running strategies</strong>{strategies.map(strategy => <div className="desktop-strategy-row" key={strategy.strategy_id}><span>{strategy.strategy_type} {strategy.right ?? ''}{strategy.strike ? ` ${strategy.strike}` : ''}{strategy.price ? ` @${strategy.price.toFixed(2)}` : ''}</span>{strategy.price !== undefined && strategy.price !== null && <button onClick={() => onUpdateStrategyPrice(strategy.strategy_id, strategy.price ?? 0)}>Move</button>}<button onClick={() => onCancelStrategy(strategy.strategy_id)}>Cancel</button></div>)}</div>}</section>}
+    {tradingActive && <section><strong>Trading</strong><button className="panel-clear history-tool-button" title="Trade history" aria-label="Trade history" onClick={onOpenTradeHistory}>History {tradeHistoryCount ? `(${tradeHistoryCount})` : ''}</button><DesktopOpenOrders orders={openOrders} readOnly={ordersReadOnly} onUpdate={onUpdateOrder} onCancel={onCancelOrder} />{labelState && <DesktopLabelPanel state={labelState} metadata={labelMetadata} metadataStatus={labelMetadataStatus} metadataError={labelMetadataError} onReloadMetadata={onReloadLabelMetadata} onSave={onSaveTradeLabel} />}{strategies.length > 0 && <div className="desktop-strategy-list"><strong>Running strategies</strong>{strategies.map(strategy => <div className="desktop-strategy-row" key={strategy.strategy_id}><span>{strategy.strategy_type} {strategy.right ?? ''}{strategy.strike ? ` ${strategy.strike}` : ''}{strategy.price ? ` @${strategy.price.toFixed(2)}` : ''}</span>{strategy.price !== undefined && strategy.price !== null && <button onClick={() => onUpdateStrategyPrice(strategy.strategy_id, strategy.price ?? 0)}>Move</button>}<button onClick={() => onCancelStrategy(strategy.strategy_id)}>Cancel</button></div>)}</div>}</section>}
     <button className="panel-clear" disabled={!indicators.length} onClick={clearIndicators}>Clear indicators</button>
   </aside>
 }
@@ -286,6 +294,9 @@ function InstrumentPicker({ initial, lockedTradingDate, catalogue, api, onSave, 
   const [metadata, setMetadata] = useState<OptionMetadata | null>(null)
   const [openingPrice, setOpeningPrice] = useState<number | null>(null)
   const [error, setError] = useState('')
+  const [availabilityNotice, setAvailabilityNotice] = useState('')
+  useDismissMessage(error, setError, 10_000)
+  useDismissMessage(availabilityNotice, setAvailabilityNotice, 10_000)
   const instrument = catalogue.find(item => item.symbol === draft.symbol) ?? fallbackCatalogue[0]
   useEffect(() => {
     if (lockedTradingDate) setDraft(current => ({ ...current, tradingDate: lockedTradingDate, expiry: '', strike: '' }))
@@ -297,6 +308,7 @@ function InstrumentPicker({ initial, lockedTradingDate, catalogue, api, onSave, 
     void Promise.all([api<OptionMetadata>('metadata', new URLSearchParams({ symbol: draft.symbol, as_of_date: draft.tradingDate })), api<HistoricalPage>('history', params)]).then(([nextMetadata, page]) => {
       if (!active) return
       setMetadata(nextMetadata)
+      setAvailabilityNotice(nextMetadata.available ? '' : nextMetadata.unavailable_reason ?? 'Option data unavailable')
       const opening = page.candles.find(candle => new Date(candle.timestamp * 1000).toISOString().slice(0, 10) === draft.tradingDate)?.open ?? page.candles[0]?.open ?? null
       setOpeningPrice(opening)
       const gap = nextMetadata.strike_interval
@@ -311,7 +323,7 @@ function InstrumentPicker({ initial, lockedTradingDate, catalogue, api, onSave, 
   // Keep the opening-price strike centered while exposing five additional
   // strikes on both sides for desktop option-chart selection.
   const strikes = baseStrike ? Array.from({ length: 31 }, (_, index) => baseStrike + (index - 15) * gap).filter(value => value > 0) : []
-  return <div className="modal-backdrop" role="presentation"><section className="instrument-modal" role="dialog" aria-modal="true" aria-label="Select chart instrument"><header><strong>Select instrument</strong><button onClick={onClose}>×</button></header><div className="picker-fields"><label>Type<select value={draft.kind} onChange={event => setDraft({ ...draft, kind: event.target.value as TileConfig['kind'], expiry: '', strike: '' })}><option value="spot">Equity / index</option><option value="option" disabled={!instrument.option_eligible}>Option</option></select></label><label>Symbol<select value={draft.symbol} onChange={event => setDraft({ ...draft, symbol: event.target.value, expiry: '', strike: '' })}>{catalogue.map(item => <option key={item.symbol} value={item.symbol}>{item.display_name}</option>)}</select></label><label>{lockedTradingDate ? 'Session date' : 'Browse date'}<input type="date" value={draft.tradingDate} disabled={Boolean(lockedTradingDate)} onChange={event => setDraft({ ...draft, tradingDate: event.target.value, expiry: '', strike: '' })} /></label>{draft.kind === 'option' && <><label>Expiry<select value={draft.expiry} onChange={event => setDraft({ ...draft, expiry: event.target.value })} disabled={!metadata?.available}>{metadata?.expiries.map(value => <option key={value} value={value}>{value}</option>)}</select></label><label>Underlying open<input value={openingPrice ?? 'Loading…'} readOnly /></label><label>Strike<select value={draft.strike} onChange={event => setDraft({ ...draft, strike: event.target.value })} disabled={!strikes.length}>{strikes.map(value => <option key={value} value={value}>{value}</option>)}</select></label><label>Right<select value={draft.right} onChange={event => setDraft({ ...draft, right: event.target.value })}>{metadata?.rights.map(value => <option key={value} value={value}>{value}</option>)}</select></label></>}</div>{metadata && !metadata.available && <p className="tile-notice">{metadata.unavailable_reason}</p>}{error && <p className="tile-notice">{error}</p>}<footer><button onClick={onClose}>Cancel</button><button className="selected" disabled={draft.kind === 'option' && (!draft.expiry || !draft.strike || !metadata?.available)} onClick={() => void onSave(draft)}>Apply to chart</button></footer></section></div>
+  return <div className="modal-backdrop" role="presentation"><section className="instrument-modal" role="dialog" aria-modal="true" aria-label="Select chart instrument"><header><strong>Select instrument</strong><button onClick={onClose}>×</button></header><div className="picker-fields"><label>Type<select value={draft.kind} onChange={event => setDraft({ ...draft, kind: event.target.value as TileConfig['kind'], expiry: '', strike: '' })}><option value="spot">Equity / index</option><option value="option" disabled={!instrument.option_eligible}>Option</option></select></label><label>Symbol<select value={draft.symbol} onChange={event => setDraft({ ...draft, symbol: event.target.value, expiry: '', strike: '' })}>{catalogue.map(item => <option key={item.symbol} value={item.symbol}>{item.display_name}</option>)}</select></label><label>{lockedTradingDate ? 'Session date' : 'Browse date'}<input type="date" value={draft.tradingDate} disabled={Boolean(lockedTradingDate)} onChange={event => setDraft({ ...draft, tradingDate: event.target.value, expiry: '', strike: '' })} /></label>{draft.kind === 'option' && <><label>Expiry<select value={draft.expiry} onChange={event => setDraft({ ...draft, expiry: event.target.value })} disabled={!metadata?.available}>{metadata?.expiries.map(value => <option key={value} value={value}>{value}</option>)}</select></label><label>Underlying open<input value={openingPrice ?? 'Loading…'} readOnly /></label><label>Strike<select value={draft.strike} onChange={event => setDraft({ ...draft, strike: event.target.value })} disabled={!strikes.length}>{strikes.map(value => <option key={value} value={value}>{value}</option>)}</select></label><label>Right<select value={draft.right} onChange={event => setDraft({ ...draft, right: event.target.value })}>{metadata?.rights.map(value => <option key={value} value={value}>{value}</option>)}</select></label></>}</div>{availabilityNotice && <p className="tile-notice">{availabilityNotice}</p>}{error && <p className="tile-notice">{error}</p>}<footer><button onClick={onClose}>Cancel</button><button className="selected" disabled={draft.kind === 'option' && (!draft.expiry || !draft.strike || !metadata?.available)} onClick={() => void onSave(draft)}>Apply to chart</button></footer></section></div>
 }
 
 function ChartSettingsModal({ settings, tradingSettings, onSave, onSaveTradingSettings, loadSettings, loadChartSettings, saveGuardrails, onClose }: { loadSettings: () => Promise<Record<string, unknown>>; loadChartSettings: () => Promise<ChartSettings>; saveGuardrails: (settings: Record<string, unknown>) => Promise<Record<string, unknown>>; settings: ChartSettings; tradingSettings: DesktopTradingSnapshot['settings'] | null; onSave: (settings: ChartSettings) => Promise<void>; onSaveTradingSettings: (settings: Record<string, unknown>) => Promise<Record<string, unknown>>; onClose: () => void }) {
@@ -319,11 +331,12 @@ function ChartSettingsModal({ settings, tradingSettings, onSave, onSaveTradingSe
   const [tradingDraft, setTradingDraft] = useState(tradingSettings)
   const [tab, setTab] = useState('Drawing & Display')
   const [guardrailDraft, setGuardrailDraft] = useState<Record<string, unknown>>({})
-  const [loading, setLoading] = useState(true), [saving, setSaving] = useState(false), [status, setStatus] = useState('')
+  const [loading, setLoading] = useState(true), [saving, setSaving] = useState(false), [status, setStatus] = useState(''), [loadFailed, setLoadFailed] = useState(false)
+  useDismissMessage(status, setStatus, status === 'Settings saved' ? 5_000 : 10_000)
   const load = async () => {
-    setLoading(true); setStatus('')
-    try { const [user, chart] = await Promise.all([loadSettings(), loadChartSettings()]); setDraft(chart); setTradingDraft(user as unknown as DesktopTradingSnapshot['settings']); setGuardrailDraft(user); setLoading(false) }
-    catch (error) { setStatus(String(error)) }
+    setLoading(true); setLoadFailed(false); setStatus('')
+    try { const [user, chart] = await Promise.all([loadSettings(), loadChartSettings()]); setDraft(chart); setTradingDraft(user as unknown as DesktopTradingSnapshot['settings']); setGuardrailDraft(user); setLoading(false); setLoadFailed(false) }
+    catch (error) { setLoadFailed(true); setStatus(String(error)) }
   }
   useEffect(() => { void load() }, [])
   const save = async () => {
@@ -341,7 +354,7 @@ function ChartSettingsModal({ settings, tradingSettings, onSave, onSaveTradingSe
       setStatus('Settings saved')
     } catch (error) { setStatus(String(error)) } finally { setSaving(false) }
   }
-  return <div className="modal-backdrop"><section className="instrument-modal desktop-settings-modal" role="dialog" aria-modal="true" aria-label="Chart display settings"><header><strong>Settings</strong><button onClick={onClose}>×</button></header><form onSubmit={event => { event.preventDefault(); void save() }}><div className="settings-layout"><nav role="tablist" aria-label="Settings sections">{['Drawing & Display', 'Trading', 'GuardRails'].map(name => <button type="button" role="tab" aria-selected={tab === name} className={tab === name ? 'selected' : ''} key={name} onClick={() => setTab(name)}>{name}</button>)}</nav><fieldset disabled={loading || saving} className="settings-scroll"><section hidden={tab !== 'Drawing & Display'} className="settings-section"><strong>Chart display</strong><div className="picker-fields"><label>Background<input type="color" value={draft.background} onChange={event => setDraft({ ...draft, background: event.target.value })} /></label><label>Text color<input type="color" value={draft.textColor} onChange={event => setDraft({ ...draft, textColor: event.target.value })} /></label><label>Grid color<input type="color" value={draft.gridColor} onChange={event => setDraft({ ...draft, gridColor: event.target.value })} /></label><label>Grid opacity <input type="range" min="0" max="1" step="0.02" value={draft.gridOpacity} onChange={event => setDraft({ ...draft, gridOpacity: Number(event.target.value) })} />{Math.round(draft.gridOpacity * 100)}%</label><label>Grid style<select value={draft.gridStyle} onChange={event => setDraft({ ...draft, gridStyle: event.target.value as ChartSettings['gridStyle'] })}><option value="solid">Solid</option><option value="dashed">Dashed</option></select></label><label>Grid thickness<select value={draft.gridSize} onChange={event => setDraft({ ...draft, gridSize: Number(event.target.value) })}><option value="1">1px</option><option value="2">2px</option></select></label><label>Moving average<select value={draft.movingAverageType} onChange={event => setDraft({ ...draft, movingAverageType: event.target.value as ChartSettings['movingAverageType'] })}><option value="MA">Simple MA</option><option value="EMA">Exponential MA</option></select></label><label>MA/EMA periods<input value={draft.movingAveragePeriods} onChange={event => setDraft({ ...draft, movingAveragePeriods: event.target.value.replace(/[^0-9,]/g, '') })} placeholder="5,10,20" /></label><label>Horizontal line color<input type="color" value={draft.horizontalLineColor} onChange={event => setDraft({ ...draft, horizontalLineColor: event.target.value })} /></label><label>Horizontal line width<select value={draft.horizontalLineWidth} onChange={event => setDraft({ ...draft, horizontalLineWidth: Number(event.target.value) })}><option value="1">1px</option><option value="2">2px</option><option value="3">3px</option><option value="4">4px</option></select></label><label>Trend line color<input type="color" value={draft.trendLineColor} onChange={event => setDraft({ ...draft, trendLineColor: event.target.value })} /></label><label>Trend line width<select value={draft.trendLineWidth} onChange={event => setDraft({ ...draft, trendLineWidth: Number(event.target.value) })}><option value="1">1px</option><option value="2">2px</option><option value="3">3px</option><option value="4">4px</option></select></label><label>Other drawing line<input type="color" value={draft.drawingLineColor} onChange={event => setDraft({ ...draft, drawingLineColor: event.target.value })} /></label><label>Other drawing width<select value={draft.drawingLineWidth} onChange={event => setDraft({ ...draft, drawingLineWidth: Number(event.target.value) })}><option value="1">1px</option><option value="2">2px</option><option value="3">3px</option><option value="4">4px</option></select></label><label>Shape fill color<input type="color" value={draft.drawingFillColor} onChange={event => setDraft({ ...draft, drawingFillColor: event.target.value })} /></label><label>Shape fill opacity <input type="range" min="0" max="0.8" step="0.02" value={draft.drawingFillOpacity} onChange={event => setDraft({ ...draft, drawingFillOpacity: Number(event.target.value) })} />{Math.round(draft.drawingFillOpacity * 100)}%</label></div><label><span><input type="checkbox" checked={draft.showChartInfo} onChange={event => setDraft({ ...draft, showChartInfo: event.target.checked })} /> Show OHLC and indicator information</span></label></section>{tradingDraft && <section hidden={tab !== 'Trading'} className="settings-section trading-settings-section"><strong>Trading</strong><p>Sizing is fixed for this session. Changes apply to new sessions.</p><div className="picker-fields"><label><span><input type="checkbox" checked={tradingDraft.desktop_hide_chart_labels} onChange={event => setTradingDraft({ ...tradingDraft, desktop_hide_chart_labels: event.target.checked })} /> Hide chart labels</span></label><label>Size<select value={tradingDraft.desktop_order_size_mode} onChange={event => setTradingDraft({ ...tradingDraft, desktop_order_size_mode: event.target.value as DesktopTradingSnapshot['settings']['desktop_order_size_mode'] })}><option value="quantity">Quantity</option><option value="funds_ratio">Funds ratio</option><option value="risk_ratio">Risk ratio</option></select></label>{tradingDraft.desktop_order_size_mode !== 'quantity' && (['l', 'm', 'h'] as const).map(size => { const field = (tradingDraft.desktop_order_size_mode === 'funds_ratio' ? `funds_ratio_${size}_pct` : `risk_ratio_${size}_pct`) as keyof DesktopTradingSnapshot['settings']; const fraction = tradingDraft.desktop_order_size_mode === 'funds_ratio'; return <label key={size}>{fraction ? 'Capital' : 'Risk'} {size.toUpperCase()} %<input type="number" min="0.01" max="100" step="0.1" value={Number(tradingDraft[field]) * (fraction ? 100 : 1)} onChange={event => { const value = Number(event.target.value); if (value > 0 && value <= 100) setTradingDraft({ ...tradingDraft, [field]: fraction ? value / 100 : value }) }} /></label> })}<label>P&amp;L<select value={tradingDraft.desktop_pnl_display_mode} onChange={event => setTradingDraft({ ...tradingDraft, desktop_pnl_display_mode: event.target.value as DesktopTradingSnapshot['settings']['desktop_pnl_display_mode'] })}><option value="currency">Currency</option><option value="percent">Percent</option></select></label><label><span><input type="checkbox" checked={tradingDraft.desktop_confirm_flatten} onChange={event => setTradingDraft({ ...tradingDraft, desktop_confirm_flatten: event.target.checked })} /> Confirm Flatten</span></label></div></section>}{tab === 'GuardRails' && <GuardrailFields draft={guardrailDraft} onChange={setGuardrailDraft} />}</fieldset></div>{loading && <p>Loading settings…</p>}{status && <p role="status">{status}</p>}{loading && status && <button type="button" onClick={() => void load()}>Retry</button>}<footer><button type="button" onClick={onClose}>Close</button><button type="submit" className="selected" disabled={loading || saving}>{saving ? 'Saving…' : 'Save settings'}</button></footer></form></section></div>
+  return <div className="modal-backdrop"><section className="instrument-modal desktop-settings-modal" role="dialog" aria-modal="true" aria-label="Chart display settings"><header><strong>Settings</strong><button onClick={onClose}>×</button></header><form onSubmit={event => { event.preventDefault(); void save() }}><div className="settings-layout"><nav role="tablist" aria-label="Settings sections">{['Drawing & Display', 'Trading', 'GuardRails'].map(name => <button type="button" role="tab" aria-selected={tab === name} className={tab === name ? 'selected' : ''} key={name} onClick={() => setTab(name)}>{name}</button>)}</nav><fieldset disabled={loading || saving} className="settings-scroll"><section hidden={tab !== 'Drawing & Display'} className="settings-section"><strong>Chart display</strong><div className="picker-fields"><label>Background<input type="color" value={draft.background} onChange={event => setDraft({ ...draft, background: event.target.value })} /></label><label>Text color<input type="color" value={draft.textColor} onChange={event => setDraft({ ...draft, textColor: event.target.value })} /></label><label>Grid color<input type="color" value={draft.gridColor} onChange={event => setDraft({ ...draft, gridColor: event.target.value })} /></label><label>Grid opacity <input type="range" min="0" max="1" step="0.02" value={draft.gridOpacity} onChange={event => setDraft({ ...draft, gridOpacity: Number(event.target.value) })} />{Math.round(draft.gridOpacity * 100)}%</label><label>Grid style<select value={draft.gridStyle} onChange={event => setDraft({ ...draft, gridStyle: event.target.value as ChartSettings['gridStyle'] })}><option value="solid">Solid</option><option value="dashed">Dashed</option></select></label><label>Grid thickness<select value={draft.gridSize} onChange={event => setDraft({ ...draft, gridSize: Number(event.target.value) })}><option value="1">1px</option><option value="2">2px</option></select></label><label>Moving average<select value={draft.movingAverageType} onChange={event => setDraft({ ...draft, movingAverageType: event.target.value as ChartSettings['movingAverageType'] })}><option value="MA">Simple MA</option><option value="EMA">Exponential MA</option></select></label><label>MA/EMA periods<input value={draft.movingAveragePeriods} onChange={event => setDraft({ ...draft, movingAveragePeriods: event.target.value.replace(/[^0-9,]/g, '') })} placeholder="5,10,20" /></label><label>Horizontal line color<input type="color" value={draft.horizontalLineColor} onChange={event => setDraft({ ...draft, horizontalLineColor: event.target.value })} /></label><label>Horizontal line width<select value={draft.horizontalLineWidth} onChange={event => setDraft({ ...draft, horizontalLineWidth: Number(event.target.value) })}><option value="1">1px</option><option value="2">2px</option><option value="3">3px</option><option value="4">4px</option></select></label><label>Trend line color<input type="color" value={draft.trendLineColor} onChange={event => setDraft({ ...draft, trendLineColor: event.target.value })} /></label><label>Trend line width<select value={draft.trendLineWidth} onChange={event => setDraft({ ...draft, trendLineWidth: Number(event.target.value) })}><option value="1">1px</option><option value="2">2px</option><option value="3">3px</option><option value="4">4px</option></select></label><label>Other drawing line<input type="color" value={draft.drawingLineColor} onChange={event => setDraft({ ...draft, drawingLineColor: event.target.value })} /></label><label>Other drawing width<select value={draft.drawingLineWidth} onChange={event => setDraft({ ...draft, drawingLineWidth: Number(event.target.value) })}><option value="1">1px</option><option value="2">2px</option><option value="3">3px</option><option value="4">4px</option></select></label><label>Shape fill color<input type="color" value={draft.drawingFillColor} onChange={event => setDraft({ ...draft, drawingFillColor: event.target.value })} /></label><label>Shape fill opacity <input type="range" min="0" max="0.8" step="0.02" value={draft.drawingFillOpacity} onChange={event => setDraft({ ...draft, drawingFillOpacity: Number(event.target.value) })} />{Math.round(draft.drawingFillOpacity * 100)}%</label></div><label><span><input type="checkbox" checked={draft.showChartInfo} onChange={event => setDraft({ ...draft, showChartInfo: event.target.checked })} /> Show OHLC and indicator information</span></label></section>{tradingDraft && <section hidden={tab !== 'Trading'} className="settings-section trading-settings-section"><strong>Trading</strong><p>Sizing is fixed for this session. Changes apply to new sessions.</p><div className="picker-fields"><label><span><input type="checkbox" checked={tradingDraft.desktop_hide_chart_labels} onChange={event => setTradingDraft({ ...tradingDraft, desktop_hide_chart_labels: event.target.checked })} /> Hide chart labels</span></label><label>Size<select value={tradingDraft.desktop_order_size_mode} onChange={event => setTradingDraft({ ...tradingDraft, desktop_order_size_mode: event.target.value as DesktopTradingSnapshot['settings']['desktop_order_size_mode'] })}><option value="quantity">Quantity</option><option value="funds_ratio">Funds ratio</option><option value="risk_ratio">Risk ratio</option></select></label>{tradingDraft.desktop_order_size_mode !== 'quantity' && (['l', 'm', 'h'] as const).map(size => { const field = (tradingDraft.desktop_order_size_mode === 'funds_ratio' ? `funds_ratio_${size}_pct` : `risk_ratio_${size}_pct`) as keyof DesktopTradingSnapshot['settings']; const fraction = tradingDraft.desktop_order_size_mode === 'funds_ratio'; return <label key={size}>{fraction ? 'Capital' : 'Risk'} {size.toUpperCase()} %<input type="number" min="0.01" max="100" step="0.1" value={Number(tradingDraft[field]) * (fraction ? 100 : 1)} onChange={event => { const value = Number(event.target.value); if (value > 0 && value <= 100) setTradingDraft({ ...tradingDraft, [field]: fraction ? value / 100 : value }) }} /></label> })}<label>P&amp;L<select value={tradingDraft.desktop_pnl_display_mode} onChange={event => setTradingDraft({ ...tradingDraft, desktop_pnl_display_mode: event.target.value as DesktopTradingSnapshot['settings']['desktop_pnl_display_mode'] })}><option value="currency">Currency</option><option value="percent">Percent</option></select></label><label><span><input type="checkbox" checked={tradingDraft.desktop_confirm_flatten} onChange={event => setTradingDraft({ ...tradingDraft, desktop_confirm_flatten: event.target.checked })} /> Confirm Flatten</span></label></div></section>}{tab === 'GuardRails' && <GuardrailFields draft={guardrailDraft} onChange={setGuardrailDraft} />}</fieldset></div>{loading && <p>Loading settings…</p>}{status && <p role="status">{status}</p>}{loading && loadFailed && <button type="button" onClick={() => void load()}>Retry</button>}<footer><button type="button" onClick={onClose}>Close</button><button type="submit" className="selected" disabled={loading || saving}>{saving ? 'Saving…' : 'Save settings'}</button></footer></form></section></div>
 }
 
 function DesktopTile({ config, catalogue, connection, api, settings, serverUrl, drawingRequest, onDrawingError, replayCursor, replayRunId, replayCandle, replayAttached, liveTile, liveTicks, onLiveTick, onConfigure, onMaximize, onIntervalChange, maximized, active, indicators, drawingCommand, drawingAction, drawingMode, onDrawingComplete, onActivate, tradingSnapshot, pricePickAction, onPricePick, onOrderDrag, onOrderCancel, onOrderConvertRequest, onOrderQuantityUpdate, onChartOrderAction, onStrategyDrag, swapTargets }: { config: TileConfig; catalogue: Instrument[]; connection: string; api: Api; settings: ChartSettings; serverUrl: string; drawingRequest: (path: string, method: 'GET' | 'POST' | 'PUT' | 'DELETE', body?: Record<string, unknown>) => Promise<unknown>; onDrawingError?: (error: unknown) => void; replayCursor?: number; replayRunId?: string; replayCandle?: Candle; replayAttached?: boolean; liveTile?: LiveTileState; liveTicks: Candle[]; onLiveTick: (key: string, tick: Candle) => void; onConfigure: () => void; onMaximize: () => void; onIntervalChange: (interval: string) => void; maximized: boolean; active: boolean; indicators: string[]; drawingCommand: DrawingCommand | null; drawingAction: DrawingAction | null; drawingMode: DrawingMode; onDrawingComplete: (commandId: number, tool: string) => void; onActivate: () => void; tradingSnapshot?: DesktopTradingSnapshot | null; pricePickAction?: PricePickAction | null; onPricePick?: (price: number) => void; onOrderDrag?: (order: DesktopOrder, price: number) => void; onOrderCancel?: (order: DesktopOrder) => void; onOrderConvertRequest?: (order: DesktopOrder, target: ConversionTarget) => void; onOrderQuantityUpdate?: (order: DesktopOrder, quantity: number) => Promise<void>; onChartOrderAction?: (tile: TileConfig, action: OrderAction, price: number, anchor: { x: number; y: number }) => void; onStrategyDrag?: (strategyId: string, price: number) => void; swapTargets?: TileSwap[] }) {
@@ -372,7 +385,11 @@ function DesktopTile({ config, catalogue, connection, api, settings, serverUrl, 
   })
   const tilePosition: DesktopPosition | null = tileContractKey ? tradingSnapshot?.positions_by_contract?.[tileContractKey] ?? null : tileRight ? tradingSnapshot?.positions[tileRight] ?? null : tradingSnapshot?.positions.equity ?? null
   const tileStrategies = (tradingSnapshot?.strategies ?? []).filter(strategy => tileContractKey ? strategy.contract_key === tileContractKey : strategy.strategy_type.startsWith('Underlying'))
-  return <div className={`workspace-tile ${maximized ? 'is-maximized' : ''}`}><ChartTile symbol={label} interval={`${config.interval}m`} supportedIntervals={catalogueInstrument.supported_intervals} onIntervalChange={onIntervalChange} candles={visibleCandles} loading={subscribedTile ? false : loading || replaySyncing} message={subscribedTile && subscribedTile.availability !== 'available' ? (subscribedTile.reason ?? subscribedTile.availability) : replaySyncing ? 'Attaching to replay...' : status} settings={settings} isReplaying={Boolean(replayCursor)} isLive={Boolean(subscribedTile)} replayDatasetKey={replayDatasetKey} instrument={chartInstrument} baseUrl={serverUrl} drawingRequest={drawingRequest} onDrawingError={onDrawingError} onConfigure={onConfigure} onMaximize={onMaximize} maximized={maximized} active={active} indicators={indicators} drawingCommand={drawingCommand} drawingAction={drawingAction} drawingMode={drawingMode} onDrawingComplete={onDrawingComplete} onActivate={onActivate} trades={tradingSnapshot?.trades ?? []} openOrders={tileOrders} strategies={tileStrategies} position={tilePosition} sessionCapital={tradingSnapshot?.session.session_capital ?? 0} lotSize={instrumentLotSize(config.kind, tradingSnapshot)} tradingSettings={tradingSnapshot?.settings ?? null} tradingEnabled={Boolean(tradingSnapshot)} orderEntryEnabled={equityEntryEnabled(config.kind, config.symbol, tradingSnapshot)} shortEntryEnabled={config.kind === 'spot' && tradingSnapshot?.session.instrument_type === 'equity'} underlyingStrategyEnabled={Boolean(tradingSnapshot) && config.kind === 'spot' && tradingSnapshot?.session.instrument_type === 'options'} pricePickAction={pricePickAction} onPricePick={onPricePick} onOrderDrag={onOrderDrag} onStrategyDrag={onStrategyDrag} onOrderCancel={onOrderCancel} onOrderConvertRequest={onOrderConvertRequest} onOrderQuantityUpdate={onOrderQuantityUpdate} onChartOrderAction={(action, price, anchor) => onChartOrderAction?.(config, action, price, anchor)} swapTargets={swapTargets} /></div>
+  const entryReason = entryUnavailableReason(config.kind, config.symbol, tradingSnapshot)
+  useEffect(() => {
+    if (config.kind === 'option' && tradingSnapshot && entryReason) reportOptionEntryDiagnostic({ tile_id: config.id, contract_key: tileContractKey, session_id: tradingSnapshot.session.session_id, session_state: tradingSnapshot.session.state, session_symbol: tradingSnapshot.session.symbol, reason: entryReason })
+  }, [config.id, config.kind, tileContractKey, tradingSnapshot?.session.session_id, tradingSnapshot?.session.state, tradingSnapshot?.session.symbol, entryReason])
+  return <div className={`workspace-tile ${maximized ? 'is-maximized' : ''}`}><ChartTile symbol={label} interval={`${config.interval}m`} supportedIntervals={catalogueInstrument.supported_intervals} onIntervalChange={onIntervalChange} candles={visibleCandles} loading={subscribedTile ? false : loading || replaySyncing} message={subscribedTile && subscribedTile.availability !== 'available' ? (subscribedTile.reason ?? subscribedTile.availability) : replaySyncing ? 'Attaching to replay...' : status} settings={settings} isReplaying={Boolean(replayCursor)} isLive={Boolean(subscribedTile)} replayDatasetKey={replayDatasetKey} instrument={chartInstrument} baseUrl={serverUrl} drawingRequest={drawingRequest} onDrawingError={onDrawingError} onConfigure={onConfigure} onMaximize={onMaximize} maximized={maximized} active={active} indicators={indicators} drawingCommand={drawingCommand} drawingAction={drawingAction} drawingMode={drawingMode} onDrawingComplete={onDrawingComplete} onActivate={onActivate} trades={tradingSnapshot?.trades ?? []} openOrders={tileOrders} strategies={tileStrategies} position={tilePosition} sessionCapital={tradingSnapshot?.session.session_capital ?? 0} lotSize={instrumentLotSize(config.kind, tradingSnapshot)} tradingSettings={tradingSnapshot?.settings ?? null} tradingEnabled={Boolean(tradingSnapshot)} orderEntryEnabled={equityEntryEnabled(config.kind, config.symbol, tradingSnapshot)} entryUnavailableReason={entryReason} shortEntryEnabled={config.kind === 'spot' && tradingSnapshot?.session.instrument_type === 'equity'} underlyingStrategyEnabled={Boolean(tradingSnapshot) && config.kind === 'spot' && tradingSnapshot?.session.instrument_type === 'options'} pricePickAction={pricePickAction} onPricePick={onPricePick} onOrderDrag={onOrderDrag} onStrategyDrag={onStrategyDrag} onOrderCancel={onOrderCancel} onOrderConvertRequest={onOrderConvertRequest} onOrderQuantityUpdate={onOrderQuantityUpdate} onChartOrderAction={(action, price, anchor) => onChartOrderAction?.(config, action, price, anchor)} swapTargets={swapTargets} /></div>
 }
 
 type Connection = 'connected' | 'reconnecting' | 'offline' | 'authentication_required'
@@ -395,6 +412,7 @@ export default function App() {
   const saveHandlers = useRef(new Map<string, () => Promise<unknown>>())
   const registerSave = useCallback((id: string, save: (() => Promise<unknown>) | null) => { if (save) saveHandlers.current.set(id, save); else saveHandlers.current.delete(id) }, [])
   const [closeError, setCloseError] = useState('')
+  useDismissMessage(closeError, setCloseError, 10_000)
   useEffect(() => {
     if (!('__TAURI_INTERNALS__' in window)) return
     let disposed = false
@@ -424,12 +442,27 @@ export default function App() {
     localStorage.setItem('desktop-server-url', serverUrl)
     if (!('__TAURI_INTERNALS__' in window)) return
     let cancelled = false
-    const check = () => void invoke<Connection>('desktop_connection_state', { baseUrl: serverUrl }).then(state => { if (!cancelled) setConnection(state) }).catch(() => { if (!cancelled) setConnection('offline') })
+    let inFlight = false
+    let failures = 0
+    const check = () => {
+      if (inFlight) return
+      inFlight = true
+      void invoke<Connection>('desktop_connection_state', { baseUrl: serverUrl })
+        .catch((): Connection => 'offline')
+        .then(state => {
+          if (cancelled) return
+          failures = state === 'offline' ? failures + 1 : 0
+          setConnection(current => state === 'offline' && failures < 2 && current === 'connected' ? current : state)
+        })
+        .finally(() => { inFlight = false })
+    }
     check()
     const timer = window.setInterval(check, 5000)
     return () => { cancelled = true; window.clearInterval(timer) }
   }, [serverUrl])
   const [loadError, setLoadError] = useState('')
+  const [loadFailed, setLoadFailed] = useState(false)
+  useDismissMessage(loadError, setLoadError, 10_000)
   const [loadAttempt, setLoadAttempt] = useState(0)
   const discoveryInFlight = useRef(false)
   useEffect(() => {
@@ -454,9 +487,10 @@ export default function App() {
         if (active) selectScreen(active.id)
       }
       setLoaded(true)
+      setLoadFailed(false)
       setLoadError('')
     }
-    void discover().catch(error => { if (!cancelled) setLoadError(String(error)) }).finally(() => { discoveryInFlight.current = false })
+    void discover().catch(error => { if (!cancelled) { setLoadFailed(true); setLoadError(String(error)) } }).finally(() => { discoveryInFlight.current = false })
     return () => { cancelled = true; discoveryInFlight.current = false }
   }, [connection, loaded, serverUrl, browserToken, loadAttempt, assignedId])
   const visibleId = screens.some(screen => screen.id === selectedId) ? selectedId : screens[0]?.id
@@ -464,7 +498,7 @@ export default function App() {
   const ownedScreens = controlledScreens(screens, assignedId, loaded, external)
   return <>
     {closeError && <p role="alert">{closeError}</p>}
-    {loadError && <main role="alert"><p>{loadError}</p><button onClick={() => setLoadAttempt(value => value + 1)}>Retry loading screens</button></main>}
+    {loadFailed && <main role="alert">{loadError && <p>{loadError}</p>}<button onClick={() => setLoadAttempt(value => value + 1)}>Retry loading screens</button></main>}
     {assignedId && !loaded && <main><p>{connection === 'authentication_required' ? 'Sign in in the main window to reconnect this screen.' : 'Loading popped-out screen…'}</p><button onClick={() => void invoke('focus_main_window')}>Main window</button></main>}
     {!assignedId && external.includes(visibleId) && <main><header><nav className="screen-tabs">{screens.map(screen => <button key={screen.id} onClick={() => selectScreen(screen.id)}>{screen.name}{external.includes(screen.id) ? ' ↗' : ''}</button>)}</nav><button onClick={() => void invoke('focus_screen_window', { screenId: visibleId })}>Focus window</button><button onClick={() => void invoke('close_screen_window', { screenId: visibleId })}>Bring back</button></header><p>This screen is open in another window.</p></main>}
     {assignedId && loaded && !assigned && <main><p>Saved screen not found. Return to the main window.</p></main>}
@@ -479,8 +513,17 @@ function ScreenController(props: ScreenControllerProps) {
   const initial = screens.find(screen => screen.id === activeScreenId)?.saved
 
   const [email, setEmail] = useState('admin@tradematangi.com'), [password, setPassword] = useState('admin123'), [loginError, setLoginError] = useState(''), [mode, setMode] = useState<DesktopMode>(initial?.mode ?? 'Browse'), [catalogue, setCatalogue] = useState<Instrument[]>(fallbackCatalogue), [chartSettings, setChartSettings] = useState<ChartSettings>(defaultChartSettings), [showSettings, setShowSettings] = useState(false), [replay, setReplay] = useState<ReplaySnapshot | null>(null), [replayError, setReplayError] = useState(''), [runDate, setRunDate] = useState(initial?.run_date ?? screens.find(screen => screen.id === activeScreenId)?.tiles[0]?.tradingDate ?? paperMarketDate()), [runStartTime, setRunStartTime] = useState(initial?.start_time ?? '09:15'), [replaySpeed, setReplaySpeed] = useState(initial?.speed ?? '1'), [live, setLive] = useState<LiveSnapshot | null>(null), [liveError, setLiveError] = useState('')
-  const [trading, setTrading] = useState<DesktopTradingSnapshot | null>(null), [tradingError, setTradingError] = useState(''), [tradingNotice, setTradingNotice] = useState(''), [drawingError, setDrawingError] = useState(''), [pricePickAction, setPricePickAction] = useState<{ orderId?: string; conversion?: ConversionTarget; ticket?: TradeTicket; missingSl?: { tile: TileConfig; requestId: string; quantity: number } } | null>(null), [tradeTicket, setTradeTicket] = useState<TradeTicket | null>(null), [underlyingStrategyTicket, setUnderlyingStrategyTicket] = useState<UnderlyingStrategyTicket | null>(null), [tradeLabelState, setTradeLabelState] = useState<DesktopTradeLabelState | null>(null), [labelMetadata, setLabelMetadata] = useState<DesktopLabelMetadata>(emptyLabelMetadata), [labelMetadataStatus, setLabelMetadataStatus] = useState<DesktopLabelMetadataStatus>('idle'), [labelMetadataError, setLabelMetadataError] = useState(''), [sharedTradingSession, setSharedTradingSession] = useState(false), [preStartWallet, setPreStartWallet] = useState<number | null>(null), [historicalStarting, setHistoricalStarting] = useState(false)
+  const [trading, setTrading] = useState<DesktopTradingSnapshot | null>(null), [tradingError, setTradingError] = useState(''), [strategyError, setStrategyError] = useState(''), [tradingNotice, setTradingNotice] = useState(''), [drawingError, setDrawingError] = useState(''), [pricePickAction, setPricePickAction] = useState<{ orderId?: string; conversion?: ConversionTarget; ticket?: TradeTicket; missingSl?: { tile: TileConfig; requestId: string; quantity: number } } | null>(null), [tradeTicket, setTradeTicket] = useState<TradeTicket | null>(null), [underlyingStrategyTicket, setUnderlyingStrategyTicket] = useState<UnderlyingStrategyTicket | null>(null), [tradeLabelState, setTradeLabelState] = useState<DesktopTradeLabelState | null>(null), [labelMetadata, setLabelMetadata] = useState<DesktopLabelMetadata>(emptyLabelMetadata), [labelMetadataStatus, setLabelMetadataStatus] = useState<DesktopLabelMetadataStatus>('idle'), [labelMetadataError, setLabelMetadataError] = useState(''), [sharedTradingSession, setSharedTradingSession] = useState(false), [preStartWallet, setPreStartWallet] = useState<number | null>(null), [historicalStarting, setHistoricalStarting] = useState(false)
+  useDismissMessage(loginError, setLoginError, 10_000)
+  useDismissMessage(replayError, setReplayError, 10_000)
+  useDismissMessage(tradingError, setTradingError, 10_000)
+  useDismissMessage(strategyError, setStrategyError, 10_000)
+  useDismissMessage(liveError, setLiveError, 10_000)
+  useDismissMessage(drawingError, setDrawingError, 10_000)
+  useDismissMessage(labelMetadataError, setLabelMetadataError, 10_000)
+  useDismissMessage(tradingNotice, setTradingNotice, 5_000)
   const replayPollInFlight = useRef(false)
+  const lastReplayPollError = useRef('')
   const [restoredReady, setRestoredReady] = useState(!initial)
   const screenSaveQueueRef = useRef<Promise<unknown>>(Promise.resolve())
   const persistedScreenRef = useRef({ id: screens.find(screen => screen.id === activeScreenId)?.persistedId, revision: screens.find(screen => screen.id === activeScreenId)?.revision })
@@ -490,6 +533,9 @@ function ScreenController(props: ScreenControllerProps) {
   const handoffRef = useRef<string | null>(null)
   const [childReady, setChildReady] = useState(!props.assignedId)
   const [handoffError, setHandoffError] = useState('')
+  const [handoffFailed, setHandoffFailed] = useState(false)
+  useDismissMessage(handoffError, setHandoffError, 10_000)
+  useEffect(() => { if (handoffError) setHandoffFailed(true) }, [handoffError])
   const authenticatedRef = useRef(connection !== 'authentication_required')
   const tradingStreamEventRef = useRef<Record<string, number>>({})
   const tradingRefreshRef = useRef(new TradingRefresh())
@@ -497,8 +543,8 @@ function ScreenController(props: ScreenControllerProps) {
   tradingStateRef.current = trading
   const tradingSnapshotRequiredRef = useRef<Record<string, boolean>>({})
   const labelMetadataRequestIdRef = useRef(0)
-  const tradingErrorTimerRef = useRef<number | null>(null)
-  const liveErrorTimerRef = useRef<number | null>(null)
+  const lastTradingErrorRef = useRef('')
+  const lastLiveErrorRef = useRef('')
   const screenSaveTimerRef = useRef<number | null>(null)
   const lastScreenPayloadRef = useRef('')
   const [googleLoading, setGoogleLoading] = useState(false), [googleReady, setGoogleReady] = useState(false), [googleAccountName, setGoogleAccountName] = useState(''), [pendingGoogleToken, setPendingGoogleToken] = useState<string | null>(null)
@@ -506,8 +552,7 @@ function ScreenController(props: ScreenControllerProps) {
   const [pickerTileId, setPickerTileId] = useState<string | null>(null), [maximizedTileId, setMaximizedTileId] = useState<string | null>(null)
   const [activeToolTileId, setActiveToolTileId] = useState(initial?.activeToolTileId ?? screens.find(screen => screen.id === activeScreenId)?.tiles[0]?.id ?? ''), [toolPanelOpen, setToolPanelOpen] = useState(true), [tileIndicators, setTileIndicators] = useState<Record<string, string[]>>(initial?.indicators ?? {}), [drawingCommand, setDrawingCommand] = useState<DrawingCommand | null>(null), [drawingAction, setDrawingAction] = useState<DrawingAction | null>(null), [drawingMode, setDrawingMode] = useState<DrawingMode>('once'), [activeDrawingTool, setActiveDrawingTool] = useState<string | null>(null), [liveTickCache, setLiveTickCache] = useState<Record<string, Candle[]>>({})
   const clearTradingError = useCallback(() => {
-    if (tradingErrorTimerRef.current !== null) window.clearTimeout(tradingErrorTimerRef.current)
-    tradingErrorTimerRef.current = null
+    lastTradingErrorRef.current = ''
     setTradingError('')
   }, [])
   const [guardrailPopup, setGuardrailPopup] = useState<{ type: string; reason: string } | null>(null)
@@ -520,36 +565,28 @@ function ScreenController(props: ScreenControllerProps) {
     guardrailSeen.current = key
     if (!trading) setGuardrailPopup(null)
   }, [trading?.session.session_id, trading?.guardrails])
+  useEffect(() => {
+    if (!guardrailPopup) return
+    const timer = window.setTimeout(() => setGuardrailPopup(null), 10_000)
+    return () => window.clearTimeout(timer)
+  }, [guardrailPopup])
   const reportTradingError = useCallback((error: unknown) => {
-    if (tradingErrorTimerRef.current !== null) window.clearTimeout(tradingErrorTimerRef.current)
     const feedback = parseGuardrailError(error)
     if (feedback) { setGuardrailPopup(feedback); return }
-    setTradingError(String(error))
-    tradingErrorTimerRef.current = window.setTimeout(() => {
-      tradingErrorTimerRef.current = null
-      setTradingError('')
-    }, 10_000)
-  }, [])
-  useEffect(() => () => {
-    if (tradingErrorTimerRef.current !== null) window.clearTimeout(tradingErrorTimerRef.current)
-    if (liveErrorTimerRef.current !== null) window.clearTimeout(liveErrorTimerRef.current)
+    const message = String(error)
+    if (!shouldShowMessage(lastTradingErrorRef.current, message)) return
+    lastTradingErrorRef.current = message
+    setTradingError(message)
   }, [])
   const clearLiveError = useCallback(() => {
-    if (liveErrorTimerRef.current !== null) window.clearTimeout(liveErrorTimerRef.current)
-    liveErrorTimerRef.current = null
+    lastLiveErrorRef.current = ''
     setLiveError('')
   }, [])
   const reportLiveError = useCallback((error: unknown) => {
-    setLiveError(String(error))
-    // Keep one dismissal deadline for a burst of repeated polling failures;
-    // otherwise a failed live snapshot every second would keep the popup open
-    // forever by continually restarting its timeout.
-    if (liveErrorTimerRef.current === null) {
-      liveErrorTimerRef.current = window.setTimeout(() => {
-        liveErrorTimerRef.current = null
-        setLiveError('')
-      }, 10_000)
-    }
+    const message = String(error)
+    if (!shouldShowMessage(lastLiveErrorRef.current, message)) return
+    lastLiveErrorRef.current = message
+    setLiveError(message)
   }, [])
   const clearLiveTickCache = (streamId?: string) => {
     setLiveTickCache({})
@@ -614,7 +651,18 @@ function ScreenController(props: ScreenControllerProps) {
   }, [serverUrl, hasNativeHost, props.selectedId])
 
   useEffect(() => { if (connection === 'connected') void api<Catalogue>('catalogue').then(value => setCatalogue(value.instruments)).catch(() => undefined) }, [browserToken, connection, serverUrl])
-  useEffect(() => { if (connection !== 'connected') return; if (hasNativeHost) void invoke<{ settings: Partial<ChartSettings> }>('desktop_chart_settings', { baseUrl: serverUrl }).then(value => setChartSettings({ ...defaultChartSettings, ...value.settings })).catch(() => undefined); else void fetch(`${serverUrl.replace(/\/$/, '')}/api/desktop/v1/chart-settings`, { headers: { Authorization: `Bearer ${browserToken}` } }).then(response => response.ok ? response.json() as Promise<{ settings: Partial<ChartSettings> }> : Promise.reject()).then(value => setChartSettings({ ...defaultChartSettings, ...value.settings })).catch(() => undefined) }, [browserToken, connection, serverUrl])
+  const chartSettingsLoadedFor = useRef('')
+  useEffect(() => {
+    if (connection !== 'connected') {
+      if (connection === 'offline' || connection === 'authentication_required') chartSettingsLoadedFor.current = ''
+      return
+    }
+    const identity = `${serverUrl}:${browserToken}`
+    if (chartSettingsLoadedFor.current === identity) return
+    chartSettingsLoadedFor.current = identity
+    if (hasNativeHost) void invoke<{ settings: Partial<ChartSettings> }>('desktop_chart_settings', { baseUrl: serverUrl }).then(value => setChartSettings({ ...defaultChartSettings, ...value.settings })).catch(() => { chartSettingsLoadedFor.current = '' })
+    else void fetch(`${serverUrl.replace(/\/$/, '')}/api/desktop/v1/chart-settings`, { headers: { Authorization: `Bearer ${browserToken}` } }).then(response => response.ok ? response.json() as Promise<{ settings: Partial<ChartSettings> }> : Promise.reject()).then(value => setChartSettings({ ...defaultChartSettings, ...value.settings })).catch(() => { chartSettingsLoadedFor.current = '' })
+  }, [browserToken, connection, serverUrl, hasNativeHost])
   const activeScreen = screens.find(screen => screen.id === activeScreenId) ?? screens[0], pickerTile = activeScreen.tiles.find(tile => tile.id === pickerTileId)
   const activeToolTile = activeScreen.tiles.some(tile => tile.id === activeToolTileId) ? activeToolTileId : activeScreen.tiles[0]?.id
   const activeTileIdentity = JSON.stringify(activeScreen.tiles.find(tile => tile.id === activeToolTile))
@@ -699,7 +747,7 @@ function ScreenController(props: ScreenControllerProps) {
   const moveScreen = (direction: -1 | 1) => setScreens(current => { const index = current.findIndex(screen => screen.id === activeScreenId); const target = index + direction; if (index < 0 || target < 0 || target >= current.length) return current; const next = [...current]; [next[index], next[target]] = [next[target], next[index]]; return next })
   const closeScreen = async () => {
     if (screens.length <= 1) return
-    if (trading) { if (mode === 'Paper') await stopPaper(); else await replayAction('stop', true) }
+    if (trading) { if (mode === 'Paper') { if (!await stopPaper()) return } else await replayAction('stop', true) }
     if (live) await stopLive()
     const closing = activeScreen
     setScreens(current => current.filter(screen => screen.id !== closing.id))
@@ -728,7 +776,7 @@ function ScreenController(props: ScreenControllerProps) {
     if (!response.ok) throw new Error(`Desktop record request failed (${response.status})`)
     return (response.status === 204 ? null : await response.json()) as T
   }
-  const drawingRequest = useCallback((path: string, method: 'GET' | 'POST' | 'PUT' | 'DELETE', body: Record<string, unknown> = {}) => desktopRecordRequest(path, method, body), [browserToken, connection, hasNativeHost, serverUrl])
+  const drawingRequest = useCallback((path: string, method: 'GET' | 'POST' | 'PUT' | 'DELETE', body: Record<string, unknown> = {}) => desktopRecordRequest(path, method, body), [activeScreenId, browserToken, hasNativeHost, serverUrl])
   const reportDrawingError = useCallback((error: unknown) => setDrawingError(`Drawing sync failed: ${String(error)}`), [])
   const rawDesktopTradingRequest = async <T,>(path: string, method: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE', body: Record<string, unknown> = {}): Promise<T> => {
     if (hasNativeHost) return invoke<T>('desktop_drawing_request', { baseUrl: serverUrl, path: `trading/${path}`, method, body, screenId: activeScreenId })
@@ -842,7 +890,7 @@ function ScreenController(props: ScreenControllerProps) {
       if (saved.session_id) {
         try {
           const snapshot = await desktopTradingRequest<DesktopTradingSnapshot>(`${saved.session_id}/snapshot`, 'GET')
-          if (!cancelled) { setTrading(snapshot); setSharedTradingSession(!saved.owned || !snapshot.owned) }
+          if (!cancelled) { setTrading(snapshot); setSharedTradingSession(snapshot.source === 'desktop_paper' ? !snapshot.owned : !saved.owned || !snapshot.owned) }
         } catch (error) { if (!cancelled) { reportTradingError(`Session needs reattachment: ${String(error)}`); if (props.assignedId) setHandoffError(String(error)) } }
       }
       if (saved.run_id) {
@@ -879,7 +927,7 @@ function ScreenController(props: ScreenControllerProps) {
     await invoke('start_desktop_stream', { baseUrl: serverUrl, key, eventsPath, snapshotPath })
   }
   useEffect(() => {
-    if (!props.assignedId || !props.loaded || !restoredReady || connection !== 'connected' || childReady || handoffError) return
+    if (!props.assignedId || !props.loaded || !restoredReady || connection !== 'connected' || childReady || handoffFailed) return
     const token = new URLSearchParams(window.location.search).get('handoff_token')
     if (!token) { setHandoffError('Missing handoff identity; return to the main window.'); return }
     let cancelled = false
@@ -924,14 +972,14 @@ function ScreenController(props: ScreenControllerProps) {
       setLoginError('Desktop session expired; please sign in again.')
       return null
     }
-    if (snapshot.connection === 'offline' || snapshot.connection === 'reconnecting') setConnection(snapshot.connection)
-    else if (connection !== 'connected') setConnection('connected')
+    // A single chart or trading feed can reconnect while the API remains healthy.
+    // Only the API capability probe owns the app-wide connection state.
     return snapshot
   }
   const applyLiveStreamPayload = (payload: unknown) => updateLiveSnapshot(current => applyLiveStreamPayloadToSnapshot(current, payload))
   const liveTile = (tile: TileConfig) => { const item = catalogue.find(entry => entry.symbol === tile.symbol) ?? fallbackCatalogue[0]; const instrument = tile.kind === 'option' ? { kind: 'option', exchange: item.exchange, underlying: tile.symbol, expiry: tile.expiry, strike: Number(tile.strike), right: tile.right } : { kind: item.chart_type ?? 'equity', exchange: item.exchange, symbol: tile.symbol }; return { tile_id: tile.id, instrument, interval_minutes: Number(tile.interval) } }
-    const startLive = async (tilesOverride?: TileConfig[]) => { try { const tiles = tilesOverride ?? activeScreen.tiles; if (tiles.some(tile => tile.tradingDate !== paperMarketDate())) throw new Error('Live data requires today’s market date for every tile'); clearLiveError(); clearLiveTickCache(); const next = await liveRequest('start', 'POST', { tiles: tiles.map(liveTile) }); setLiveEnabled(true); setLiveSnapshot(next); await startNativeStream(`browse-live:${activeScreenId}:${next.stream_id}`, `live/${next.stream_id}/events`, `live/${next.stream_id}/snapshot`) } catch (error) { reportLiveError(error) } }
-  const stopLive = async () => { if (!live) return; try { const streamId = live.stream_id; await liveRequest(`${streamId}/stop`, 'POST'); stopNativeStream(`browse-live:${activeScreenId}:${streamId}`); setLiveEnabled(false); setLiveSnapshot(null); clearLiveTickCache(streamId) } catch (error) { reportLiveError(error) } }
+    const startLive = async (tilesOverride?: TileConfig[], keepTickCache = false) => { try { const tiles = tilesOverride ?? activeScreen.tiles; if (tiles.some(tile => tile.tradingDate !== paperMarketDate())) throw new Error('Live data requires today’s market date for every tile'); clearLiveError(); if (!keepTickCache) clearLiveTickCache(); const next = await liveRequest('start', 'POST', { tiles: tiles.map(liveTile) }); setLiveEnabled(true); setLiveSnapshot(next); if (keepTickCache && hasNativeHost) await Promise.all(Object.entries(liveTickCache).map(([instrumentKey, ticks]) => invoke('record_desktop_live_ticks', { streamId: next.stream_id, instrumentKey, ticks }).catch(error => recordRendererDiagnostic('live_tick_reconcile_persist_error', { instrument_key: instrumentKey, live_stream_id: next.stream_id, error: String(error) })))); await startNativeStream(`browse-live:${activeScreenId}:${next.stream_id}`, `live/${next.stream_id}/events`, `live/${next.stream_id}/snapshot`) } catch (error) { reportLiveError(error) } }
+  const stopLive = async () => { if (!live) return; const streamId = live.stream_id; try { await liveRequest(`${streamId}/stop`, 'POST') } catch (error) { if (!isMissingLiveStream(error)) { reportLiveError(error); return } } stopNativeStream(`browse-live:${activeScreenId}:${streamId}`); setLiveEnabled(false); setLiveSnapshot(null); clearLiveTickCache(streamId) }
   const refreshLive = async () => {
     if (!live) return
     try {
@@ -1000,14 +1048,56 @@ function ScreenController(props: ScreenControllerProps) {
   }, [mode, live?.stream_id, activeScreen.id, activeScreen.tiles, childReady, handingOff])
   useEffect(() => {
     if (!live || connection === 'authentication_required') return
+    let cancelled = false
+    let inFlight = false
+    let lastHealthCheck = 0
+    let lastProviderRetry = 0
     const timer = window.setInterval(() => {
+      if (inFlight) return
+      inFlight = true
       if (hasNativeHost) {
-        void readNativeStream<unknown>(`browse-live:${activeScreenId}:${live.stream_id}`).then(applyLiveStreamPayload).catch(reportLiveError)
+        void readNativeStreamState<unknown>(`browse-live:${activeScreenId}:${live.stream_id}`)
+          .then(async stream => {
+            if (cancelled) return
+            if (stream?.connection === 'connected') applyLiveStreamPayload(stream.latest_payload)
+            if (Date.now() - lastHealthCheck < 15_000 || connection !== 'connected') return
+            lastHealthCheck = Date.now()
+            try {
+              let snapshot = await liveRequest(`${live.stream_id}/snapshot`, 'GET')
+              if (snapshot.tiles.some(tile => tile.availability === 'provider_error') && Date.now() - lastProviderRetry >= 30_000) {
+                lastProviderRetry = Date.now()
+                snapshot = await liveRequest(`${live.stream_id}/refresh`, 'POST')
+              }
+              if (!cancelled) {
+                setLive(current => current?.stream_id === snapshot.stream_id && current.event_id > snapshot.event_id ? current : snapshot)
+                clearLiveError()
+              }
+            } catch (error) {
+              if (cancelled) return
+              if (isMissingLiveStream(error)) {
+                stopNativeStream(`browse-live:${activeScreenId}:${live.stream_id}`)
+                await startLive(undefined, true)
+              } else reportLiveError(error)
+            }
+          })
+          .catch(error => { if (!cancelled) reportLiveError(error) })
+          .finally(() => { inFlight = false })
       } else {
-        void liveRequest(`${live.stream_id}/snapshot`, 'GET').then(setLiveSnapshot).catch(reportLiveError)
+        void liveRequest(`${live.stream_id}/snapshot`, 'GET').then(async current => {
+          let snapshot = current
+          if (current.tiles.some(tile => tile.availability === 'provider_error') && Date.now() - lastProviderRetry >= 30_000) {
+            lastProviderRetry = Date.now()
+            snapshot = await liveRequest(`${live.stream_id}/refresh`, 'POST')
+          }
+          if (!cancelled) setLiveSnapshot(snapshot)
+        }).catch(error => {
+          if (cancelled) return
+          if (isMissingLiveStream(error)) void startLive(undefined, true)
+          else reportLiveError(error)
+        }).finally(() => { inFlight = false })
       }
     }, 1000)
-    return () => window.clearInterval(timer)
+    return () => { cancelled = true; window.clearInterval(timer) }
   }, [live?.stream_id, hasNativeHost, serverUrl, reportLiveError, connection])
   useEffect(() => { if (connection === 'authentication_required') clearLiveTickCache() }, [connection])
   useEffect(() => { const onKeyDown = (event: KeyboardEvent) => { if ((mode !== 'Browse' && mode !== 'Paper') || !live || (!props.assignedId && props.selectedId !== activeScreenId)) return; if (event.key === 'F5') { event.preventDefault(); void refreshLive() } }; window.addEventListener('keydown', onKeyDown); return () => window.removeEventListener('keydown', onKeyDown) }, [live?.stream_id, mode, props.selectedId])
@@ -1043,6 +1133,7 @@ function ScreenController(props: ScreenControllerProps) {
       const backendInterval = Math.min(...activeScreen.tiles.map(tile => Number(tile.interval)))
       const startBody = isTradingMode(mode) ? tradingStartBody(date) : null
       let attached: DesktopTradingSnapshot | null = null
+      let resumeSessionId: string | null = null
       let replayStartTime = `${runStartTime}:00`
       let initialBarIndex: number | undefined
       if (startBody) {
@@ -1054,6 +1145,18 @@ function ScreenController(props: ScreenControllerProps) {
           } else {
             return
           }
+        } else if (mode === 'Paper' && candidate.status === 'remote' && candidate.stopped) {
+          setTrading(candidate.stopped)
+          setTradingNotice('Paper engine is running on another backend worker. You can view its saved history or press Stop here.')
+          return
+        } else if (mode === 'Paper' && candidate.status === 'stopped' && candidate.stopped && candidate.existing_session_id) {
+          setTrading(candidate.stopped)
+          if (candidate.stopped.paper_status === 'settled' || date !== paperMarketDate() || paperMarketTime() >= '15:09:00') {
+            setTradingNotice('Paper session is closed for trading. Its saved positions and history remain available.')
+            return
+          }
+          if (!window.confirm(`Resume Paper session ${candidate.existing_session_id} with its saved positions and history?`)) return
+          resumeSessionId = candidate.existing_session_id
         } else if (candidate.status === 'checkpoint' && candidate.checkpoint?.current_time) {
           const checkpointTime = new Date(candidate.checkpoint.current_time * 1000).toISOString().slice(11, 19)
           const selectedCursor = Math.floor(new Date(`${date}T${runStartTime}:00Z`).getTime() / 1000)
@@ -1083,7 +1186,9 @@ function ScreenController(props: ScreenControllerProps) {
       }
       let tradeSnapshot: DesktopTradingSnapshot | null = attached
       if (startBody && !tradeSnapshot) {
-        tradeSnapshot = await desktopTradingRequest<DesktopTradingSnapshot>('start', 'POST', startBody)
+        tradeSnapshot = resumeSessionId
+          ? await desktopTradingRequest<DesktopTradingSnapshot>(`${resumeSessionId}/resume`, 'POST')
+          : await desktopTradingRequest<DesktopTradingSnapshot>('start', 'POST', startBody)
       }
       if (mode === 'Paper') {
         if (!live) await startLive(activeScreen.tiles.map(tile => ({ ...tile, tradingDate: date })))
@@ -1142,23 +1247,40 @@ function ScreenController(props: ScreenControllerProps) {
       setReplay(next)
     } catch (error) { setReplayError(String(error)); if (isHistoricalTradingMode(mode)) reportTradingError(error); if (throwOnError) throw error }
   }
-  const stopPaper = async () => {
-    if (!trading?.session.session_id) return
+  const clearPaperSession = (sessionId: string) => {
+    const key = `paper:${activeScreenId}:${sessionId}`
+    stopNativeStream(key)
+    delete tradingStreamEventRef.current[key]
+    delete tradingSnapshotRequiredRef.current[key]
+    setTrading(current => current?.session.session_id === sessionId ? null : current)
+    setSharedTradingSession(false)
+    setTradeTicket(null)
+    setPricePickAction(null)
+    setTradeHistoryOpen(false)
+  }
+  const stopPaper = async (): Promise<boolean> => {
+    if (!trading?.session.session_id) return true
+    const sessionId = trading.session.session_id
+    let missingSession = false
     try {
-      const sessionId = trading.session.session_id
-      if (!sharedTradingSession) await desktopTradingRequest(`${sessionId}/stop`, 'POST')
-      stopNativeStream(`paper:${activeScreenId}:${sessionId}`)
-      delete tradingStreamEventRef.current[`paper:${activeScreenId}:${sessionId}`]
-      delete tradingSnapshotRequiredRef.current[`paper:${activeScreenId}:${sessionId}`]
-      setTrading(null)
-      setSharedTradingSession(false)
-      setTradeTicket(null)
-      setPricePickAction(null)
-      clearTradingError()
+      if (!sharedTradingSession) await desktopTradingRequest(`${sessionId}/stop`, 'POST',
+        trading.engine_generation == null ? {} : { engine_generation: trading.engine_generation })
+    } catch (error) {
+      if (!isMissingSession(error)) { reportTradingError(error); return false }
+      missingSession = true
+    }
+    stopNativeStream(`paper:${activeScreenId}:${sessionId}`)
+    try {
+      if (sharedTradingSession || missingSession) clearPaperSession(sessionId)
+      else setTrading(await desktopTradingRequest<DesktopTradingSnapshot>(`${sessionId}/snapshot`, 'GET'))
     } catch (error) {
       reportTradingError(error)
-      throw error
+      return false
     }
+    await stopLive()
+    clearTradingError()
+    setTradingNotice(sharedTradingSession ? 'Detached from Paper session.' : 'Paper session stopped.')
+    return true
   }
   const updateReplaySpeed = (value: string) => { setReplaySpeed(value); if (replay && replay.mode === 'replay' && replay.state !== 'stopped') void replayRequest(`${replay.run_id}/speed`, 'POST', { speed: Number(value) }).then(setReplay).catch(error => setReplayError(String(error))) }
   const replayTile = (tile: TileConfig) => { const item = catalogue.find(entry => entry.symbol === tile.symbol) ?? fallbackCatalogue[0]; const instrument = tile.kind === 'option' ? { kind: 'option', exchange: item.exchange, underlying: tile.symbol, expiry: tile.expiry, strike: Number(tile.strike), right: tile.right } : { kind: item.chart_type ?? 'equity', exchange: item.exchange, symbol: tile.symbol }; return { tile_id: tile.id, instrument } }
@@ -1207,6 +1329,7 @@ function ScreenController(props: ScreenControllerProps) {
         .then(next => {
           if (cancelled || !next || next.run_id !== runId) return
           setReplay(next)
+          lastReplayPollError.current = ''
           setReplayError('')
         })
         .catch(error => {
@@ -1219,7 +1342,11 @@ function ScreenController(props: ScreenControllerProps) {
             setReplay(null)
             setReplayError('Replay expired or the backend restarted; please start Replay again.')
           } else {
-            setReplayError('Replay update unavailable; retrying…')
+            const notice = 'Replay update unavailable; retrying…'
+            if (lastReplayPollError.current !== notice) {
+              lastReplayPollError.current = notice
+              setReplayError(notice)
+            }
           }
         })
         .finally(() => { replayPollInFlight.current = false })
@@ -1227,16 +1354,20 @@ function ScreenController(props: ScreenControllerProps) {
     return () => { cancelled = true; window.clearInterval(timer) }
   }, [replay?.run_id, replay?.state, hasNativeHost, serverUrl, mode, trading?.session.session_id, connection])
   useEffect(() => {
-    if (!hasNativeHost || !childReady || !isTradingMode(mode) || !trading?.session.session_id || connection === 'authentication_required') return
+    if (!hasNativeHost || !childReady || !isTradingMode(mode) || !trading?.session.session_id || trading.session.state === 'ended' || connection === 'authentication_required') return
     const sessionId = trading.session.session_id
     const key = `paper:${activeScreenId}:${sessionId}`
     void startNativeStream(key, `trading/${sessionId}/events`, `trading/${sessionId}/snapshot`).catch(reportTradingError)
     return () => { stopNativeStream(key); delete tradingStreamEventRef.current[key]; delete tradingSnapshotRequiredRef.current[key] }
-  }, [mode, trading?.session.session_id, hasNativeHost, childReady, connection === 'authentication_required', serverUrl, browserToken])
+  }, [mode, trading?.session.session_id, trading?.session.state, hasNativeHost, childReady, connection === 'authentication_required', serverUrl, browserToken])
+  useEffect(() => {
+    if (mode !== 'Paper' || !trading?.session.session_id || trading.session.state === 'ended' || !live?.stream_id) return
+    void desktopTradingRequest(`${trading.session.session_id}/live-stream`, 'POST', { live_stream_id: live.stream_id }).catch(reportTradingError)
+  }, [mode, trading?.session.session_id, trading?.session.state, live?.stream_id])
   useEffect(() => {
     if (!isTradingMode(mode) || !trading?.session.session_id || connection === 'authentication_required' || (props.assignedId && !childReady)) return
     const sessionId = trading.session.session_id
-    if (hasNativeHost) {
+    if (hasNativeHost && trading.session.state !== 'ended') {
       const key = `paper:${activeScreenId}:${sessionId}`
       let cancelled = false
       let inFlight = false
@@ -1256,8 +1387,12 @@ function ScreenController(props: ScreenControllerProps) {
             if (tradingRefreshRef.current.due(refreshKey, now)) needsSnapshot = true
             if (advanced) {
               const events = paperStreamEvents(stream!.latest_payload)
+              if (mode === 'Paper' && events.some(event => event.type === 'session_ended')) {
+                needsSnapshot = true
+              }
               for (const event of events) {
                 if (event.type === 'guardrail_activated' && Number(event.event_id) > previousCursor) setGuardrailPopup({ type: String(event.guardrail_type), reason: String(event.reason) })
+                if (event.type === 'strategy_rejected' && Number(event.event_id) > previousCursor) setStrategyError(`AutoStop rejected: ${String(event.reason)}`)
                 if (isDesktopTradingSnapshot(event)) tradingRefreshRef.current.mark(refreshKey)
                 else if (eventNeedsTradingRefresh(event, tradingStateRef.current?.event_cursor ?? -1)) needsSnapshot = true
               }
@@ -1272,13 +1407,23 @@ function ScreenController(props: ScreenControllerProps) {
               tradingSnapshotRequiredRef.current[key] = true
               const snapshot = await desktopTradingRequest<DesktopTradingSnapshot>(`${sessionId}/snapshot`, 'GET')
               if (cancelled || snapshot.session.session_id !== sessionId) return
+              if (mode === 'Paper' && snapshot.session.state === 'ended') {
+                setTrading(snapshot)
+                setTradingNotice('Paper engine stopped. Saved positions and history remain available.')
+                return
+              }
               setTrading(current => current?.session.session_id === sessionId ? acceptPaperSnapshot(current, snapshot) : current)
               delete tradingSnapshotRequiredRef.current[key]
             }
             if (advanced) tradingStreamEventRef.current[key] = stream!.last_event_id
             clearTradingError()
           })
-          .catch(reportTradingError)
+          .catch(error => {
+            if (cancelled) return
+            if (mode === 'Paper' && isMissingSession(error)) {
+              reportTradingError('Paper engine is unavailable; saved session will be retried.')
+            } else reportTradingError(error)
+          })
           .finally(() => { inFlight = false })
       }, PAPER_STREAM_POLL_MS)
       return () => { cancelled = true; window.clearInterval(timer) }
@@ -1289,14 +1434,24 @@ function ScreenController(props: ScreenControllerProps) {
       if (inFlight) return
       inFlight = true
       void desktopTradingRequest<DesktopTradingSnapshot>(`${sessionId}/snapshot`, 'GET')
-        .then(snapshot => { if (!cancelled && snapshot.session.session_id === sessionId) setTrading(current => current?.session.session_id === sessionId ? acceptPaperSnapshot(current, snapshot) : current) })
-        .catch(reportTradingError)
+        .then(snapshot => {
+          if (cancelled || snapshot.session.session_id !== sessionId) return
+          if (mode === 'Paper' && snapshot.session.state === 'ended') {
+            setTrading(snapshot)
+          } else setTrading(current => current?.session.session_id === sessionId ? acceptPaperSnapshot(current, snapshot) : current)
+        })
+        .catch(error => {
+          if (cancelled) return
+          if (mode === 'Paper' && isMissingSession(error)) {
+            reportTradingError('Paper session is temporarily unavailable; retrying saved history.')
+          } else reportTradingError(error)
+        })
         .finally(() => { inFlight = false })
-    }, TRADING_RECONCILE_MS)
+    }, mode === 'Paper' && trading.session.state === 'ended' ? 30_000 : TRADING_RECONCILE_MS)
     return () => { cancelled = true; window.clearInterval(timer) }
-  }, [mode, trading?.session.session_id, serverUrl, browserToken, hasNativeHost, connection, childReady])
+  }, [mode, trading?.session.session_id, trading?.session.state, serverUrl, browserToken, hasNativeHost, connection, childReady])
   useEffect(() => {
-    if (mode !== 'Paper' || !trading?.session.session_id || connection !== 'connected') return
+    if (mode !== 'Paper' || !trading?.session.session_id || trading.session.state === 'ended' || connection !== 'connected') return
     const sessionId = trading.session.session_id
     let cancelled = false
     const timer = window.setInterval(() => {
@@ -1305,7 +1460,7 @@ function ScreenController(props: ScreenControllerProps) {
       }).catch(reportTradingError)
     }, 2000)
     return () => { cancelled = true; window.clearInterval(timer) }
-  }, [mode, trading?.session.session_id, connection])
+  }, [mode, trading?.session.session_id, trading?.session.state, connection])
   const contractPayloadForTile = (tile: TileConfig): Record<string, unknown> => tile.kind === 'option' ? { right: tile.right, strike: Number(tile.strike), expiry: tile.expiry } : { right: null }
   const ensureOptionContractAttached = async (tile: TileConfig) => {
     if (!trading || tile.kind !== 'option') return
@@ -1318,6 +1473,14 @@ function ScreenController(props: ScreenControllerProps) {
   const paneCurrentPrice = (tile: TileConfig) => {
     if (!trading) return 0
     if (tile.kind === 'option') {
+      if (mode === 'Paper') {
+        const chartTile = live?.tiles.find(item => item.tile_id === tile.id)
+        const instrument = chartTile?.instrument
+        if (instrument?.kind === 'option' && instrument.underlying === tile.symbol && instrument.expiry === tile.expiry && Number(instrument.strike) === Number(tile.strike) && instrument.right === tile.right) {
+          return Number(chartTile?.latest_tick?.close ?? 0)
+        }
+        return 0
+      }
       const key = contractKeyForTile(tile)
       const quote = key ? trading.contract_quotes?.[key]?.price : 0
       if (quote && quote > 0) return quote
@@ -1333,12 +1496,14 @@ function ScreenController(props: ScreenControllerProps) {
     return ticketSizingPayload(ticket.settings, ticket.sizeKey, () => entryQuantity(ticket.tile.kind, ticket.sizeKey!, trading))
   }
 
-  const startDesktopStrategy = async (strategyType: 'AutoStop' | 'BreakEven' | 'TargetProfit' | 'LockProfit' | 'AggressiveStoploss' | 'UnderlyingTargetProfit' | 'UnderlyingStoploss', right: 'CE' | 'PE' | null, price?: number, ticket?: TradeTicket) => {
+  const startDesktopStrategy = async (strategyType: 'AutoStop' | 'BreakEven' | 'TargetProfit' | 'LockProfit' | 'AggressiveStoploss' | 'UnderlyingTargetProfit' | 'UnderlyingStoploss', right: 'CE' | 'PE' | null, price?: number, ticket?: TradeTicket, chartTile?: TileConfig) => {
     if (!trading) return
     // The desktop route scopes the URL by session, but it delegates to the
     // shared strategy request model which also requires session_id in its
     // validated request body.
     const body: Record<string, unknown> = { session_id: trading.session.session_id, strategy_type: strategyType, ...(right ? { right } : {}) }
+    const optionTile = ticket?.tile.kind === 'option' ? ticket.tile : chartTile?.kind === 'option' ? chartTile : null
+    if (optionTile) { body.strike = Number(optionTile.strike); body.expiry = optionTile.expiry }
     if ((strategyType === 'TargetProfit' || strategyType === 'UnderlyingTargetProfit') && price !== undefined) body.target_profit_value = price
     if (strategyType === 'LockProfit' && price !== undefined) body.lock_profit_value = price
     if (strategyType === 'UnderlyingStoploss' && price !== undefined) body.underlying_sl_price = price
@@ -1358,6 +1523,7 @@ function ScreenController(props: ScreenControllerProps) {
     if (!trading || !ticket.sizeKey || !ticket.orderType || !ticket.settings) return
     if (ticket.sessionId !== trading.session.session_id) throw new Error('Entry ticket belongs to a different session')
     if (!equityEntryEnabled(ticket.tile.kind, ticket.tile.symbol, trading)) throw new Error('Entry requires the active session underlying')
+    if (mode === 'Paper' && ticket.tile.kind === 'option' && ticket.orderType === 'MARKET' && paneCurrentPrice(ticket.tile) <= 0) throw new Error('No live premium is available for this option chart yet')
     if (entryPrice !== undefined || ticket.orderType === 'MARKET') validateEntryStop(ticket.side, entryPrice ?? paneCurrentPrice(ticket.tile), ticket.slPrice)
     if (ticket.orderType === 'AUTO_STOP') {
       await startDesktopStrategy('AutoStop', ticket.tile.kind === 'option' ? ticket.tile.right as 'CE' | 'PE' : null, ticket.slPrice, ticket)
@@ -1375,6 +1541,11 @@ function ScreenController(props: ScreenControllerProps) {
       target_deviation_pct: trading.settings.target_deviation_pct,
       ...contractPayloadForTile(ticket.tile),
       ...sizePayload(ticket),
+    }
+    if (mode === 'Paper' && ticket.tile.kind === 'option') {
+      if (!live) throw new Error('Live option chart is unavailable; refresh it before trading')
+      body.live_stream_id = live.stream_id
+      body.live_tile_id = ticket.tile.id
     }
     if (intent !== 'market') body.price = entryPrice
     await desktopTradingRequest<DesktopOrder>(`${trading.session.session_id}/chart-orders`, 'POST', body)
@@ -1460,17 +1631,17 @@ function ScreenController(props: ScreenControllerProps) {
       return
     }
     if (action === 'START_TARGET_PROFIT' || action === 'START_LOCK_PROFIT') {
-      await startDesktopStrategy(action === 'START_TARGET_PROFIT' ? 'TargetProfit' : 'LockProfit', tile.kind === 'option' ? tile.right as 'CE' | 'PE' : null, price)
+      await startDesktopStrategy(action === 'START_TARGET_PROFIT' ? 'TargetProfit' : 'LockProfit', tile.kind === 'option' ? tile.right as 'CE' | 'PE' : null, price, undefined, tile)
       return
     }
     if (action === 'START_AGGRESSIVE_SL') {
       const right = tile.kind === 'option' ? tile.right as 'CE' | 'PE' : null
-      await startDesktopStrategy('AggressiveStoploss', right)
+      await startDesktopStrategy('AggressiveStoploss', right, undefined, undefined, tile)
       return
     }
     if (action === 'START_BREAKEVEN') {
       const right = tile.kind === 'option' ? tile.right as 'CE' | 'PE' : null
-      await startDesktopStrategy('BreakEven', right)
+      await startDesktopStrategy('BreakEven', right, undefined, undefined, tile)
       return
     }
     const contractPayload = contractPayloadForTile(tile)
@@ -1622,7 +1793,7 @@ function ScreenController(props: ScreenControllerProps) {
     setHandingOff(false)
     if (token) await invoke('cancel_screen_handoff', { screenId: activeScreenId, handoffToken: token }).catch(reportTradingError)
   }
-  if (handoffError && props.assignedId) return <main role="alert"><p>Unable to restore this screen: {handoffError}</p><button onClick={() => void invoke('focus_main_window')}>Main window</button></main>
+  if (handoffFailed && props.assignedId) return <main role="alert">{handoffError && <p>Unable to restore this screen: {handoffError}</p>}<button onClick={() => void invoke('focus_main_window')}>Main window</button></main>
   if (handingOff) return <main><nav>{screens.map(screen => <button key={screen.id} onClick={() => setActiveScreenId(screen.id)}>{screen.name}</button>)}</nav><p>Opening this screen in its own window…</p><button onClick={() => void cancelHandoff()}>Cancel pop-out</button></main>
   if (!props.loaded && connection !== 'authentication_required') return <main><p>Loading saved screens… {replayError}</p></main>
   if (props.loaded && !restoredReady && connection !== 'authentication_required') return <main><p>Restoring screen… {tradingError || replayError}</p></main>
@@ -1635,13 +1806,13 @@ function ScreenController(props: ScreenControllerProps) {
       {!props.assignedId && <span className="screen-actions"><button className="icon-button" title="Rename screen" aria-label="Rename screen" onClick={renameScreen}>✎</button><button className="icon-button" title="Duplicate screen" aria-label="Duplicate screen" onClick={duplicateScreen}>⧉</button><button className="icon-button" title="Pop out screen" aria-label="Pop out screen" onClick={() => void popOutScreen()}>⇱</button><button className="icon-button" title="Move screen left" aria-label="Move screen left" onClick={() => moveScreen(-1)}>‹</button><button className="icon-button" title="Move screen right" aria-label="Move screen right" onClick={() => moveScreen(1)}>›</button><button className="icon-button" title="Close screen" aria-label="Close screen" disabled={screens.length <= 1} onClick={() => void closeScreen().catch(reportTradingError)}>×</button></span>}
       {(['Browse', 'Paper', 'Replay', 'Stepwise'] as const).map(value => <button className={mode === value ? 'selected mode-button' : 'mode-button'} onClick={() => switchMode(value)} key={value} title={value === 'Paper' ? 'Live' : value} aria-label={value === 'Paper' ? 'Live' : value}><ToolbarIcon name={value} /></button>)}
       {mode === 'Browse' && <span className="run-controls live-controls"><button onClick={() => void (live ? stopLive() : startLive())}>{live ? 'Stop Live' : 'Start Live'}</button><button className="icon-button" title="Refresh live charts" aria-label="Refresh live charts" onClick={refreshLive} disabled={!live}><ToolbarIcon name="Refresh" /></button></span>}
-      {mode === 'Paper' && <span className="run-controls"><label>Date <input type="date" value={runDate} onChange={event => setRunDate(event.target.value)} disabled={Boolean(historicalStarting || trading)} /></label><label>Start <input type="time" value={runStartTime} onChange={event => setRunStartTime(event.target.value)} disabled={Boolean(historicalStarting || trading)} step="60" /></label>{!trading ? <button className="run-start" onClick={startRun} disabled={historicalStarting}>{historicalStarting ? 'Starting…' : 'Start'}</button> : <button className="run-stop" onClick={() => void stopPaper().catch(reportTradingError)}>{sharedTradingSession ? 'Detach' : 'Stop'}</button>}<button className="icon-button" title="Refresh live charts" aria-label="Refresh live charts" onClick={refreshLive} disabled={!live}><ToolbarIcon name="Refresh" /></button></span>}
+      {mode === 'Paper' && <span className="run-controls"><label>Date <input type="date" value={runDate} onChange={event => setRunDate(event.target.value)} disabled={Boolean(historicalStarting || (trading && trading.session.state !== 'ended'))} /></label><label>Start <input type="time" value={runStartTime} onChange={event => setRunStartTime(event.target.value)} disabled={Boolean(historicalStarting || (trading && trading.session.state !== 'ended'))} step="60" /></label>{!trading || (trading.session.state === 'ended' && trading.paper_status !== 'running') ? <button className="run-start" onClick={startRun} disabled={Boolean(historicalStarting || (trading && (trading.session.date !== paperMarketDate() || paperMarketTime() >= '15:09:00' || trading.paper_status === 'settled')))}>{historicalStarting ? 'Starting…' : trading?.paper_status === 'settled' || (trading && (trading.session.date !== paperMarketDate() || paperMarketTime() >= '15:09:00')) ? 'Closed' : trading?.paper_status === 'stopped' ? 'Resume' : 'Start'}</button> : <button className="run-stop" onClick={() => void stopPaper()}>{sharedTradingSession ? 'Detach' : 'Stop'}</button>}{trading?.settlement_pending && <small role="status">Close settlement pending an exact contract quote</small>}<button className="icon-button" title="Refresh live charts" aria-label="Refresh live charts" onClick={refreshLive} disabled={!live}><ToolbarIcon name="Refresh" /></button></span>}
       {(mode === 'Replay' || mode === 'Stepwise') && <span className="run-controls"><label>Date <input type="date" value={runDate} onChange={event => setRunDate(event.target.value)} disabled={Boolean(historicalStarting || (replay && replay.state !== 'stopped'))} /></label><label>Start <input type="time" value={runStartTime} onChange={event => setRunStartTime(event.target.value)} disabled={Boolean(historicalStarting || (replay && replay.state !== 'stopped'))} step="60" /></label>{mode === 'Replay' && <label>Speed <select value={replaySpeed} onChange={event => updateReplaySpeed(event.target.value)} disabled={historicalStarting}><option value="0.25">0.25×</option><option value="0.5">0.5×</option><option value="1">1×</option><option value="1.1">1.1×</option><option value="1.25">1.25×</option><option value="1.5">1.5×</option><option value="2">2×</option><option value="5">5×</option><option value="10">10×</option></select></label>}{!replay || replay.state === 'stopped' ? <button className="run-start" onClick={startRun} disabled={historicalStarting}>{historicalStarting ? 'Starting…' : 'Start'}</button> : <>{mode === 'Replay' && <button className="run-pause" onClick={() => replayAction(replay.state === 'paused' ? 'resume' : 'pause')}>{replay.state === 'paused' ? 'Resume' : 'Pause'}</button>}{mode === 'Stepwise' && <button className="run-next" onClick={() => replayAction('next-bar')}>Next bar</button>}<button className="run-stop" onClick={() => replayAction('stop')}>Stop</button><small>{replay.bar_index} · {new Date(replay.cursor * 1000).toISOString().slice(11, 19)}</small></>}</span>}
       {isTradingMode(mode) && <><span className={`trading-pill session-indicator ${sharedTradingSession ? 'good' : ''}`} title={sharedTradingSession ? 'Shared session' : 'This screen session'} aria-label={sharedTradingSession ? 'Shared session' : 'This screen session'}>{trading ? (sharedTradingSession ? '⇄' : '▣') : '◌'}</span><button className="trading-pill good wallet-button" onClick={() => { setWalletAmount(String(Math.round(trading?.wallet_balance ?? preStartWallet ?? 0))); setWalletOpen(value => !value) }}>Wallet {preStartWallet === null && !trading ? '—' : `₹${Math.round(trading?.wallet_balance ?? preStartWallet ?? 0).toLocaleString('en-IN')}`}</button>{trading && <><span className={`trading-pill ${trading.pnl.day >= 0 ? 'good' : 'bad'}`}>P&L {trading.settings.desktop_pnl_display_mode === 'percent' ? `${trading.pnl.day_pct.toFixed(2)}%` : `₹${Math.round(trading.pnl.day).toLocaleString('en-IN')}`}</span><button className="flatten-button icon-button" title="Flatten" aria-label="Flatten" onClick={() => void flattenTrading().catch(reportTradingError)}><ToolbarIcon name="Flatten" /></button><button className="block-button icon-button" title="Block trading" aria-label="Block trading" disabled={blockPending || trading.guardrails?.ban_active} onClick={() => void blockTrading()}><ToolbarIcon name="Block" /></button></>}</>}
       <label className="layout-control">Layout <select value={activeScreen.layout} onChange={event => setLayout(event.target.value as Layout)}><option value="1">1 chart</option><option value="2-side">2 side-by-side</option><option value="2-stacked">2 stacked</option><option value="3-wide-top">3 wide-top</option><option value="4-grid">4 grid</option><option value="4-one-three">4 panes — 1+3</option><option value="5-equal">5 panes — Equal</option><option value="5-wide-right">5 panes — Wide R</option></select></label>
       <button className="icon-button" title="Chart settings" aria-label="Chart settings" onClick={() => setShowSettings(true)}>⚙</button><span className={`connection ${connection}`}>● {connection}</span><button onClick={logoutDesktop}>Log out</button>
     </header>
-    {(replayError || liveError || tradingError || drawingError) && <p className="run-error">{replayError || liveError || tradingError || drawingError}</p>}
+    {(strategyError || replayError || liveError || tradingError || drawingError) && <p className="run-error">{strategyError || replayError || liveError || tradingError || drawingError}</p>}
     {!tradingError && tradingNotice && <p className="run-notice">{tradingNotice}</p>}
     {walletOpen && isTradingMode(mode) && <div className="wallet-popover">
       <strong>Wallet</strong>
@@ -1671,7 +1842,7 @@ function ScreenController(props: ScreenControllerProps) {
       <div className="ticket-buttons"><button onClick={() => { const picker = underlyingStrategyTicket; void startDesktopStrategy(picker.strategyType, 'CE', picker.price).then(() => setUnderlyingStrategyTicket(null)).catch(reportTradingError) }}>CE</button><button onClick={() => { const picker = underlyingStrategyTicket; void startDesktopStrategy(picker.strategyType, 'PE', picker.price).then(() => setUnderlyingStrategyTicket(null)).catch(reportTradingError) }}>PE</button></div>
     </div>}
     <section className={`workspace-shell ${toolPanelOpen ? '' : 'tools-collapsed'}`}>
-      {toolPanelOpen && <WorkspaceToolPanel tiles={activeScreen.tiles} activeTileId={activeToolTile} setActiveTileId={setActiveToolTileId} activeTileLabel={(() => { const tile = activeScreen.tiles.find(item => item.id === activeToolTile) ?? activeScreen.tiles[0]; return tile?.kind === 'option' ? `${tile.symbol} ${tile.strike}${tile.right}` : tile?.symbol ?? 'Chart' })()} activePosition={isTradingMode(mode) ? positionForTile(activeScreen.tiles.find(item => item.id === activeToolTile) ?? activeScreen.tiles[0], trading) : null} sessionCapital={trading?.session.session_capital ?? 0} positionMarginRate={trading?.session.instrument_type === 'equity' && (activeScreen.tiles.find(item => item.id === activeToolTile) ?? activeScreen.tiles[0])?.kind !== 'option' ? 0.2 : 1} indicators={selectedIndicators} toggleIndicator={toggleIndicator} clearIndicators={clearIndicators} sendDrawing={sendDrawing} sendDrawingAction={sendDrawingAction} activeDrawingTool={activeDrawingTool} drawingMode={drawingMode} setDrawingMode={setDrawingMode} tradeHistoryCount={trading?.trades.length ?? 0} onOpenTradeHistory={() => setTradeHistoryOpen(true)} tradingActive={Boolean(trading)} openOrders={trading?.open_orders ?? []} onUpdateOrder={updateListedOrder} onCancelOrder={cancelOrderLine} labelState={isTradingMode(mode) ? tradeLabelState : null} labelMetadata={labelMetadata} labelMetadataStatus={labelMetadataStatus} labelMetadataError={labelMetadataError} onReloadLabelMetadata={() => void loadLabelMetadata()} onSaveTradeLabel={saveTradeLabel} strategies={isTradingMode(mode) ? trading?.strategies ?? [] : []} onCancelStrategy={cancelDesktopStrategy} onUpdateStrategyPrice={requestDesktopStrategyPrice} />}
+      {toolPanelOpen && <WorkspaceToolPanel tiles={activeScreen.tiles} activeTileId={activeToolTile} setActiveTileId={setActiveToolTileId} activeTileLabel={(() => { const tile = activeScreen.tiles.find(item => item.id === activeToolTile) ?? activeScreen.tiles[0]; return tile?.kind === 'option' ? `${tile.symbol} ${tile.strike}${tile.right}` : tile?.symbol ?? 'Chart' })()} activePosition={isTradingMode(mode) ? positionForTile(activeScreen.tiles.find(item => item.id === activeToolTile) ?? activeScreen.tiles[0], trading) : null} sessionCapital={trading?.session.session_capital ?? 0} positionMarginRate={trading?.session.instrument_type === 'equity' && (activeScreen.tiles.find(item => item.id === activeToolTile) ?? activeScreen.tiles[0])?.kind !== 'option' ? 0.2 : 1} indicators={selectedIndicators} toggleIndicator={toggleIndicator} clearIndicators={clearIndicators} sendDrawing={sendDrawing} sendDrawingAction={sendDrawingAction} activeDrawingTool={activeDrawingTool} drawingMode={drawingMode} setDrawingMode={setDrawingMode} tradeHistoryCount={trading?.trades.length ?? 0} onOpenTradeHistory={() => setTradeHistoryOpen(true)} tradingActive={Boolean(trading)} ordersReadOnly={trading?.session.state === 'ended'} openOrders={trading?.open_orders ?? []} onUpdateOrder={updateListedOrder} onCancelOrder={cancelOrderLine} labelState={isTradingMode(mode) ? tradeLabelState : null} labelMetadata={labelMetadata} labelMetadataStatus={labelMetadataStatus} labelMetadataError={labelMetadataError} onReloadLabelMetadata={() => void loadLabelMetadata()} onSaveTradeLabel={saveTradeLabel} strategies={isTradingMode(mode) ? trading?.strategies ?? [] : []} onCancelStrategy={cancelDesktopStrategy} onUpdateStrategyPrice={requestDesktopStrategyPrice} />}
       <section className={`tile-grid tiles-${activeScreen.layout} ${maximizedTileId ? 'has-maximized' : ''}`}>{activeScreen.tiles.map((tile, tileIndex) => { const state = replay?.tile_states.find(item => item.tile_id === tile.id); const liveState = (mode === 'Browse' || mode === 'Paper') ? live?.tiles.find(item => item.tile_id === tile.id) : undefined; const cacheKey = liveState?.instrument ? canonicalKey(liveState.instrument) : instrumentKeyForTile(tile, catalogue); return <DesktopTile key={tile.id} config={tile} catalogue={catalogue} connection={connection} api={api} settings={chartSettings} serverUrl={serverUrl} drawingRequest={drawingRequest} onDrawingError={reportDrawingError} replayCursor={replay?.cursor} replayRunId={replay?.run_id} replayCandle={state?.candle} replayAttached={Boolean(state)} liveTile={liveState} liveTicks={liveTickCache[cacheKey] ?? []} onLiveTick={onLiveTick} maximized={maximizedTileId === tile.id} active={activeToolTile === tile.id} indicators={tileIndicators[tile.id] ?? noIndicators} drawingCommand={drawingCommand} drawingAction={drawingAction} drawingMode={drawingMode} onDrawingComplete={onDrawingComplete} onActivate={() => setActiveToolTileId(tile.id)} onConfigure={() => setPickerTileId(tile.id)} onMaximize={() => setMaximizedTileId(current => current === tile.id ? null : tile.id)} onIntervalChange={interval => saveTile({ ...tile, interval })} tradingSnapshot={isTradingMode(mode) ? trading : null} pricePickAction={activeToolTile === tile.id ? pricePickAction : null} onPricePick={price => void completePricePick(price).catch(error => { setTradingNotice(''); reportTradingError(error) })} onOrderDrag={updateOrderLine} onStrategyDrag={updateDesktopStrategyPrice} onOrderCancel={cancelOrderLine} onOrderConvertRequest={requestOrderConvert} onOrderQuantityUpdate={updateOrderQuantity} onChartOrderAction={(tileForAction, action, price, anchor) => void placeChartOrder(tileForAction, action, price, anchor).catch(error => { setTradingNotice(''); reportTradingError(error) })} swapTargets={swapTargetsForLayout(activeScreen.layout, tileIndex).map(target => ({ dir: target.dir, label: target.label, onClick: () => swapTiles(tileIndex, target.target) }))} />})}</section>
     </section>
     {tradeHistoryOpen && <TradeHistoryModal trades={trading?.trades ?? []} roundTrips={[...(tradeLabelState?.open ?? []), ...(tradeLabelState?.completed ?? [])]} labels={tradeLabelState?.labels ?? []} sessionCapital={trading?.session.session_capital ?? 0} onClose={() => setTradeHistoryOpen(false)} />}

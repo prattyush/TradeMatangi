@@ -231,3 +231,32 @@ async def test_refresh_provider_failure_isolated_to_that_tile(monkeypatch):
     assert bad["availability"] == "provider_error"
     assert bad["reason"] == "provider unavailable"
     assert bad["subscribed"] is True
+
+
+@pytest.mark.asyncio
+async def test_refresh_retries_failed_live_subscription(monkeypatch):
+    current = tile("failed", 1, [candle(60, 1)])
+    current["availability"] = "provider_error"
+    current["subscribed"] = False
+    stream = live.DesktopStream(stream_id="stream", user_id="user", generation=1, tiles=[current])
+    attempts = []
+
+    async def activate(_stream):
+        attempts.append(None)
+        current["subscribed"] = True
+
+    async def load_history(_tile):
+        return [candle(60, 2)]
+
+    async def load_seconds(_tile):
+        return [candle(60, 2)]
+
+    monkeypatch.setattr(live, "activate", activate)
+    monkeypatch.setattr(live, "_load_history", load_history)
+    monkeypatch.setattr(live, "_load_current_date_seconds", load_seconds)
+
+    await live.refresh(stream)
+
+    assert attempts == [None]
+    assert current["subscribed"] is True
+    assert current["availability"] == "available"

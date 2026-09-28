@@ -1,8 +1,15 @@
 import type { DesktopTradingSnapshot } from './contracts'
 
+export function entryUnavailableReason(kind: string, symbol: string, snapshot?: DesktopTradingSnapshot | null): string | null {
+  if (!snapshot) return 'Start a trading session to place orders'
+  if (snapshot.session.state === 'ended') return 'Trading session ended; press Start to trade again'
+  if (symbol !== snapshot.session.symbol) return `This session trades ${snapshot.session.symbol}`
+  if (kind !== 'option' && snapshot.session.instrument_type !== 'equity') return 'Use a CE or PE chart to place option orders'
+  return null
+}
+
 export function equityEntryEnabled(kind: string, symbol: string, snapshot?: DesktopTradingSnapshot | null): boolean {
-  return Boolean(snapshot && snapshot.session.state !== 'ended' && symbol === snapshot.session.symbol &&
-    (kind === 'option' || snapshot.session.instrument_type === 'equity'))
+  return entryUnavailableReason(kind, symbol, snapshot) === null
 }
 
 export function instrumentLotSize(kind: string, snapshot?: DesktopTradingSnapshot | null): number {

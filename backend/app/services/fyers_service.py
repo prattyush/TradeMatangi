@@ -359,7 +359,7 @@ class FyersBroadcaster:
             session_map = dict(self._symbol_sessions.get(symbol, {}))
 
         for session_id, (queue, right, loop) in session_map.items():
-            payload = {**candle}
+            payload = {**candle, "provider_token": symbol}
             if right:
                 payload["right"] = right
             try:

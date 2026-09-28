@@ -35,13 +35,28 @@ logger = logging.getLogger(__name__)
 _TICK_SIZE = 0.05  # NSE/BSE minimum price increment
 
 
-def _session_strike(session, tick_right: str | None) -> int | None:
+def _session_strike(session, tick_right: str | None, strategy=None) -> int | None:
     """Return the correct strike for the given tick right, using per-right strike when available."""
+    if tick_right and strategy and strategy.metadata.get("desktop_strike") is not None:
+        return int(strategy.metadata["desktop_strike"])
     if tick_right == "CE":
         return getattr(session, "strike_ce", None) or getattr(session, "strike", None)
     if tick_right == "PE":
         return getattr(session, "strike_pe", None) or getattr(session, "strike", None)
     return getattr(session, "strike", None)
+
+
+def _strategy_expiry(strategy, session, tick_right: str | None) -> str | None:
+    return (strategy.metadata.get("desktop_expiry") or getattr(session, "expiry", None)) if tick_right else None
+
+
+def _strategy_position(strategy, session, tick_right: str | None):
+    from app.services.trading import get_position
+    if not strategy.metadata.get("desktop_contract_key"):
+        return get_position(session.session_id, session.symbol, tick_right)
+    return get_position(session.session_id, session.symbol, tick_right,
+        strike=_session_strike(session, tick_right, strategy) if tick_right else None,
+        expiry=_strategy_expiry(strategy, session, tick_right))
 
 
 def _margin_rate_for_quantity(session, tick_right: str | None) -> float:
@@ -118,6 +133,7 @@ _registry: dict[str, list[StrategyInstance]] = {}
 # ── Persistence ──────────────────────────────────────────────────────────────
 
 def _write_strategy_to_db(strategy: StrategyInstance) -> None:
+    session = None
     try:
         from app.services.db import get_dynamodb_resource
         table = get_dynamodb_resource().Table("Strategies")
@@ -139,9 +155,19 @@ def _write_strategy_to_db(strategy: StrategyInstance) -> None:
             else:
                 db_meta[k] = v
         item["metadata"] = db_meta
-        table.put_item(Item=item)
+        from app.services import simulation as sim_svc
+        session = sim_svc.get_session(strategy.session_id)
+        if session and getattr(session, "desktop_origin", None) == "desktop_paper" and strategy.status != StrategyStatus.CANCELLED:
+            from app.services import paper_wallet
+            paper_wallet.fenced_put("Strategies", item, user_id=strategy.user_id,
+                date=session.date, symbol=session.symbol, session_id=session.session_id,
+                token=getattr(session, "paper_engine_token", None))
+        else:
+            table.put_item(Item=item)
     except Exception:
         logger.exception("DynamoDB write failed for strategy %s", strategy.strategy_id)
+        if session and getattr(session, "desktop_origin", None) == "desktop_paper" and strategy.status != StrategyStatus.CANCELLED:
+            raise
 
 
 # ── Registry management ───────────────────────────────────────────────────────
@@ -162,7 +188,11 @@ def start_strategy(session, strategy_type: str, right: str | None, metadata: dic
         metadata=metadata,
     )
     _registry.setdefault(session.session_id, []).append(strategy)
-    _write_strategy_to_db(strategy)
+    try:
+        _write_strategy_to_db(strategy)
+    except Exception:
+        _registry[session.session_id].remove(strategy)
+        raise
     return strategy
 
 
@@ -175,6 +205,37 @@ def cancel_all(session_id: str) -> int:
             _write_strategy_to_db(s)
             count += 1
     _registry[session_id] = []
+    return count
+
+
+def cancel_persisted_for_session(session_id: str) -> int:
+    """Cancel strategies left RUNNING in storage after an engine/process disappears."""
+    from app.services.db import get_dynamodb_resource
+    from boto3.dynamodb.conditions import Key
+    table = get_dynamodb_resource().Table("Strategies")
+    params = {"KeyConditionExpression": Key("session_id").eq(session_id), "ConsistentRead": True}
+    count = 0
+    while True:
+        page = table.query(**params)
+        for item in page.get("Items", []):
+            if item.get("status") != "RUNNING":
+                continue
+            try:
+                table.update_item(Key={"session_id": session_id, "strategy_id": item["strategy_id"]},
+                    UpdateExpression="SET #status = :cancelled",
+                    ConditionExpression="#status = :running",
+                    ExpressionAttributeNames={"#status": "status"},
+                    ExpressionAttributeValues={":cancelled": "CANCELLED", ":running": "RUNNING"})
+                count += 1
+            except Exception as exc:
+                from botocore.exceptions import ClientError
+                if isinstance(exc, ClientError) and exc.response["Error"]["Code"] == "ConditionalCheckFailedException":
+                    continue
+                raise
+        if not page.get("LastEvaluatedKey"):
+            break
+        params["ExclusiveStartKey"] = page["LastEvaluatedKey"]
+    clear_session(session_id)
     return count
 
 
@@ -253,6 +314,9 @@ def on_tick(session, tick: dict, tick_right: str | None, loop=None) -> None:
 
         # Only evaluate this strategy when the tick's right matches the strategy's right
         if strategy.right != tick_right:
+            continue
+        target_contract = strategy.metadata.get("desktop_contract_key")
+        if target_contract and target_contract != tick.get("contract_key"):
             continue
 
         # ── Bar OHLC tracking ──────────────────────────────────────────────
@@ -367,7 +431,17 @@ def _on_bar_close_autostop(
                     session.session_capital, risk_ratio_pct, current_wallet,
                     lot_size=lot_size,
                     margin_rate=_margin_rate_for_quantity(session, tick_right),
+                    strict_lot_risk=session.session_type == "paper" and tick_right is not None,
                 )
+            except ValueError as exc:
+                if session.session_type == "paper" and tick_right and "Risk budget cannot cover one whole lot" in str(exc):
+                    import json
+                    strategy.status = StrategyStatus.COMPLETED
+                    strategy.metadata["rejection_reason"] = str(exc)
+                    _write_strategy_to_db(strategy)
+                    session.queue.put_nowait(json.dumps({"type": "strategy_rejected", "strategy_id": strategy.strategy_id, "reason": str(exc)}))
+                logger.warning("AutoStop %s: risk ratio quantity calc failed: %s", strategy.strategy_id, exc)
+                return
             except Exception as exc:
                 logger.warning("AutoStop %s: risk ratio quantity calc failed: %s", strategy.strategy_id, exc)
                 return
@@ -390,12 +464,7 @@ def _on_bar_close_autostop(
             return
 
     # Resolve per-right strike so trade markers appear on the correct options pane
-    if tick_right == "CE":
-        order_strike = getattr(session, "strike_ce", None) or getattr(session, "strike", None)
-    elif tick_right == "PE":
-        order_strike = getattr(session, "strike_pe", None) or getattr(session, "strike", None)
-    else:
-        order_strike = None
+    order_strike = _session_strike(session, tick_right, strategy) if tick_right else None
 
     from app.services.guardrail_service import check_guardrails
     blocked, reason = check_guardrails(session)
@@ -437,7 +506,7 @@ def _on_bar_close_autostop(
             trigger_price=trigger_price,
             right=tick_right,
             strike=order_strike,
-            expiry=getattr(session, "expiry", None),
+            expiry=_strategy_expiry(strategy, session, tick_right),
             user_id=session.user_id,
             entry_sl_price=entry_sl_price,
             group_id=group_id,
@@ -460,12 +529,13 @@ def _on_bar_close_autostop(
     _write_strategy_to_db(strategy)
 
 
-def _find_open_exit_orders(session_id: str, exit_side, tick_right: str | None) -> list:
+def _find_open_exit_orders(session_id: str, exit_side, tick_right: str | None, strategy=None) -> list:
     """Return all pending orders that could close a position: matching side and right."""
     from app.services.order_service import get_open_orders
     return [
         o for o in get_open_orders(session_id)
         if o.side == exit_side and o.right == tick_right
+        and (not strategy or strategy.metadata.get("desktop_strike") is None or (o.strike == int(strategy.metadata["desktop_strike"]) and o.expiry == strategy.metadata.get("desktop_expiry")))
     ]
 
 
@@ -514,7 +584,7 @@ def _on_bar_close_aggressive_sl(
     from app.models.schemas import TradeSide, OrderType
     from app.services.order_service import place_order
 
-    position = get_position(session.session_id, session.symbol, tick_right)
+    position = _strategy_position(strategy, session, tick_right)
     if position.side == "FLAT":
         strategy.status = StrategyStatus.COMPLETED
         _write_strategy_to_db(strategy)
@@ -537,7 +607,7 @@ def _on_bar_close_aggressive_sl(
         sl_side = TradeSide.BUY
 
     # Find all open exit orders matching side and right (handles multiple SL orders)
-    exit_orders = _find_open_exit_orders(session.session_id, sl_side, tick_right)
+    exit_orders = _find_open_exit_orders(session.session_id, sl_side, tick_right, strategy)
 
     if exit_orders:
         for order in exit_orders:
@@ -562,6 +632,8 @@ def _on_bar_close_aggressive_sl(
                 trading_date=session.date,
                 trigger_price=sl_price,
                 right=tick_right,
+                strike=_session_strike(session, tick_right, strategy) if tick_right else None,
+                    expiry=_strategy_expiry(strategy, session, tick_right),
                 user_id=session.user_id,
             )
             if is_real:
@@ -680,7 +752,8 @@ def _cancel_exit_and_place_limit(
                 trading_date=session.date,
                 limit_price=limit_price,
                 right=tick_right,
-                strike=_session_strike(session, tick_right),
+                strike=_session_strike(session, tick_right, strategy),
+                expiry=_strategy_expiry(strategy, session, tick_right),
                 user_id=session.user_id,
             )
             logger.info(
@@ -703,7 +776,7 @@ def _on_tick_breakeven(
     from app.models.schemas import TradeSide, OrderType
     from app.services.order_service import place_order
 
-    position = get_position(session.session_id, session.symbol, tick_right)
+    position = _strategy_position(strategy, session, tick_right)
 
     if position.side == "FLAT":
         strategy.status = StrategyStatus.COMPLETED
@@ -743,7 +816,7 @@ def _on_tick_breakeven(
         return
 
     exit_side = TradeSide.SELL if position.side == "LONG" else TradeSide.BUY
-    exit_orders = _find_open_exit_orders(session.session_id, exit_side, tick_right)
+    exit_orders = _find_open_exit_orders(session.session_id, exit_side, tick_right, strategy)
 
     if breakeven_mode == "limit_order":
         # Cancel existing SL orders and place an immediate LIMIT order at new_sl_price
@@ -783,7 +856,8 @@ def _on_tick_breakeven(
                     trading_date=session.date,
                     trigger_price=new_sl_price,
                     right=tick_right,
-                    strike=_session_strike(session, tick_right),
+                    strike=_session_strike(session, tick_right, strategy),
+                    expiry=_strategy_expiry(strategy, session, tick_right),
                     user_id=session.user_id,
                 )
                 if is_real:
@@ -817,7 +891,7 @@ def _on_tick_target_profit(
     from app.models.schemas import TradeSide, OrderType
     from app.services.order_service import place_order
 
-    position = get_position(session.session_id, session.symbol, tick_right)
+    position = _strategy_position(strategy, session, tick_right)
 
     if position.side == "FLAT":
         strategy.status = StrategyStatus.COMPLETED
@@ -853,7 +927,7 @@ def _on_tick_target_profit(
         return
 
     exit_side = TradeSide.SELL if position.side == "LONG" else TradeSide.BUY
-    exit_orders = _find_open_exit_orders(session.session_id, exit_side, tick_right)
+    exit_orders = _find_open_exit_orders(session.session_id, exit_side, tick_right, strategy)
 
     if exit_orders:
         _cancel_exit_and_place_limit(
@@ -874,7 +948,8 @@ def _on_tick_target_profit(
                 trading_date=session.date,
                 limit_price=target_price,
                 right=tick_right,
-                strike=_session_strike(session, tick_right),
+                strike=_session_strike(session, tick_right, strategy),
+                expiry=_strategy_expiry(strategy, session, tick_right),
                 user_id=session.user_id,
             )
             logger.info(
@@ -913,7 +988,7 @@ def _on_tick_lock_profit(
     from app.services.trading import get_position
     from app.models.schemas import TradeSide
 
-    position = get_position(session.session_id, session.symbol, tick_right)
+    position = _strategy_position(strategy, session, tick_right)
     if position.side == "FLAT":
         return
 
@@ -932,7 +1007,7 @@ def _on_tick_lock_profit(
         new_sl_price = _ceil_tick(lock_price + _main_buffer(lock_price))
         exit_side = TradeSide.BUY
 
-    exit_orders = _find_open_exit_orders(session.session_id, exit_side, tick_right)
+    exit_orders = _find_open_exit_orders(session.session_id, exit_side, tick_right, strategy)
 
     if exit_orders:
         for order in exit_orders:
@@ -958,7 +1033,8 @@ def _on_tick_lock_profit(
                 trading_date=session.date,
                 trigger_price=new_sl_price,
                 right=tick_right,
-                strike=_session_strike(session, tick_right),
+                strike=_session_strike(session, tick_right, strategy),
+                expiry=_strategy_expiry(strategy, session, tick_right),
                 user_id=session.user_id,
             )
             if is_real:
@@ -1005,7 +1081,7 @@ def _on_tick_underlying_target_profit(
     from app.models.schemas import TradeSide, OrderType
     from app.services.order_service import place_order
 
-    position = get_position(session.session_id, session.symbol, tick_right)
+    position = _strategy_position(strategy, session, tick_right)
     if position.side == "FLAT":
         strategy.status = StrategyStatus.COMPLETED
         _write_strategy_to_db(strategy)
@@ -1045,7 +1121,7 @@ def _on_tick_underlying_target_profit(
         new_sl = _ceil_tick(current_price + tick_buffer)
         exit_side = TradeSide.BUY
 
-    exit_orders = _find_open_exit_orders(session.session_id, exit_side, tick_right)
+    exit_orders = _find_open_exit_orders(session.session_id, exit_side, tick_right, strategy)
 
     if exit_orders:
         for order in exit_orders:
@@ -1071,7 +1147,8 @@ def _on_tick_underlying_target_profit(
                 trading_date=session.date,
                 trigger_price=new_sl,
                 right=tick_right,
-                strike=_session_strike(session, tick_right),
+                strike=_session_strike(session, tick_right, strategy),
+                expiry=_strategy_expiry(strategy, session, tick_right),
                 user_id=session.user_id,
             )
             if is_real:
@@ -1130,7 +1207,7 @@ def _on_tick_underlying_stoploss(
     from app.models.schemas import TradeSide, OrderType
     from app.services.order_service import place_order
 
-    position = get_position(session.session_id, session.symbol, tick_right)
+    position = _strategy_position(strategy, session, tick_right)
     if position.side == "FLAT":
         strategy.status = StrategyStatus.COMPLETED
         _write_strategy_to_db(strategy)
@@ -1168,7 +1245,7 @@ def _on_tick_underlying_stoploss(
         new_sl = _ceil_tick(current_price + tick_buffer)
         exit_side = TradeSide.BUY
 
-    exit_orders = _find_open_exit_orders(session.session_id, exit_side, tick_right)
+    exit_orders = _find_open_exit_orders(session.session_id, exit_side, tick_right, strategy)
 
     if exit_orders:
         for order in exit_orders:
@@ -1193,7 +1270,8 @@ def _on_tick_underlying_stoploss(
                 trading_date=session.date,
                 trigger_price=new_sl,
                 right=tick_right,
-                strike=_session_strike(session, tick_right),
+                strike=_session_strike(session, tick_right, strategy),
+                expiry=_strategy_expiry(strategy, session, tick_right),
                 user_id=session.user_id,
             )
             if is_real:

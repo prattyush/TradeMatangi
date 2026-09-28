@@ -6,7 +6,7 @@ const flat: DesktopPosition = { symbol: 'NIFTY', side: 'FLAT', quantity: 0, avg_
 const key = 'NIFTY:2026-10-01:24000:CE'
 const snapshot = (): DesktopTradingSnapshot => ({
   version: 1, event_cursor: 10,
-  session: { session_id: 'paper-1', symbol: 'NIFTY', session_capital: 100000, brokerage_per_order: 1, instrument_type: 'options' } as DesktopTradingSnapshot['session'],
+  session: { session_id: 'paper-1', symbol: 'NIFTY', expiry: '2026-10-01', strike_ce: 24000, strike_pe: 24000, session_capital: 100000, brokerage_per_order: 1, instrument_type: 'options' } as DesktopTradingSnapshot['session'],
   current_time: 100, current_bar_index: 0, current_price: 24000, current_price_ce: 100, current_price_pe: 90,
   positions: { equity: flat, CE: flat, PE: flat }, positions_by_contract: {},
   contract_quotes: { [key]: { symbol: 'NIFTY', expiry: '2026-10-01', strike: 24000, right: 'CE', contract_key: key, price: 100, timestamp: 100, source: 'live_paper' } },
@@ -77,5 +77,11 @@ describe('Paper trading incremental state', () => {
 
   it('does not rewind the shared clock on a later event with an older contract timestamp', () => {
     expect(applyPaperStreamEvent(snapshot(), tick(11, 105, 99)).current_time).toBe(100)
+  })
+
+  it('keeps the primary CE price when an attached CE strike ticks', () => {
+    const next = applyPaperStreamEvent(snapshot(), { ...tick(11, 150), contract_key: 'NIFTY:2026-10-01:24100:CE', strike: 24100 })
+    expect(next.current_price_ce).toBe(100)
+    expect(next.contract_quotes['NIFTY:2026-10-01:24100:CE'].price).toBe(150)
   })
 })

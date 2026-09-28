@@ -363,6 +363,7 @@ async def place_order(req: PlaceOrderRequest):
                 current_wallet=current_wallet,
                 lot_size=lot_size,
                 margin_rate=order_margin_rate,
+                strict_lot_risk=session.session_type == "paper" and order_right is not None,
             )
         except InsufficientFundsError as exc:
             raise HTTPException(status_code=402, detail=str(exc))

@@ -1,6 +1,7 @@
 import logging
 import logging.handlers
 import sys
+import asyncio
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -51,8 +52,17 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     from app.services.user_service import seed_user
+    from app.services.desktop_paper_eod import reconciliation_loop
     seed_user()
-    yield
+    paper_reconciler = asyncio.create_task(reconciliation_loop())
+    try:
+        yield
+    finally:
+        paper_reconciler.cancel()
+        try:
+            await paper_reconciler
+        except asyncio.CancelledError:
+            pass
 
 
 app = FastAPI(
