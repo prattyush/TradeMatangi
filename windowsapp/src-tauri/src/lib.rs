@@ -12,8 +12,9 @@ use std::{
     path::PathBuf,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
-use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
+use tauri::{Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 use tokio::task::AbortHandle;
+use tokio::sync::Notify;
 
 const CREDENTIAL_SERVICE: &str = "in.trade-matangi.desktop-charts";
 const CREDENTIAL_ACCOUNT: &str = "desktop-session";
@@ -87,6 +88,14 @@ pub struct TokenBundle {
 }
 
 const TOKEN_REFRESH_SKEW: Duration = Duration::from_secs(60);
+const CONNECTION_CHECK_INTERVAL: Duration = Duration::from_secs(15);
+const CONNECTION_STATE_EVENT: &str = "desktop-connection-state";
+
+#[derive(Clone, Serialize)]
+struct ConnectionSnapshot {
+    connection: String,
+    revision: u64,
+}
 
 #[derive(Serialize)]
 pub struct QueuedMutation {
@@ -519,6 +528,7 @@ fn clear_desktop_tokens() -> Result<(), String> {
 
 #[tauri::command]
 async fn desktop_login(
+    app: tauri::AppHandle,
     base_url: String,
     email: String,
     password: String,
@@ -527,12 +537,13 @@ async fn desktop_login(
     let tokens = authenticate(&base_url, &email, &password).await?;
     persist_desktop_tokens(&tokens)?;
     host.set_tokens(tokens);
-    host.set_connection("connected");
+    host.transition_monitor(&app, "connected");
     Ok(())
 }
 
 #[tauri::command]
 async fn desktop_google_login(
+    app: tauri::AppHandle,
     base_url: String,
     account_name: Option<String>,
     host: tauri::State<'_, HostState>,
@@ -557,24 +568,19 @@ async fn desktop_google_login(
     };
     persist_desktop_tokens(&tokens)?;
     host.set_tokens(tokens);
-    host.set_connection("connected");
+    host.transition_monitor(&app, "connected");
     Ok(())
 }
 
-#[tauri::command]
-async fn desktop_connection_state(
-    base_url: String,
-    host: tauri::State<'_, HostState>,
-) -> Result<String, String> {
-    let host = host.inner().clone();
+async fn probe_desktop_connection(base_url: &str, host: &HostState) -> (String, bool) {
     let token = match host.access_token(&base_url).await {
         Ok(token) => token,
-        Err(_) => return Ok("authentication_required".into()),
+        Err(_) => return ("authentication_required".into(), !host.has_tokens_in_memory()),
     };
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(3))
-        .build()
-        .map_err(|error| error.to_string())?;
+    let client = match reqwest::Client::builder().timeout(Duration::from_secs(3)).build() {
+        Ok(client) => client,
+        Err(_) => return ("offline".into(), false),
+    };
     let result = client
         .get(format!(
             "{}/api/desktop/v1/capabilities",
@@ -598,8 +604,50 @@ async fn desktop_connection_state(
             "offline"
         }
     };
-    host.set_connection(state);
-    Ok(state.into())
+    (state.into(), state == "authentication_required")
+}
+
+#[tauri::command]
+fn desktop_connection_monitor_start(
+    app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
+    base_url: String,
+    host: tauri::State<'_, HostState>,
+) -> Result<ConnectionSnapshot, String> {
+    if window.label() != "main" { return Err("Only the main window can configure the connection monitor".into()); }
+    let host = host.inner().clone();
+    let (start, changed, changed_snapshot) = host.configure_monitor(base_url);
+    if let Some(snapshot) = changed_snapshot { let _ = app.emit(CONNECTION_STATE_EVENT, snapshot); }
+    if start {
+        let monitor_host = host.clone();
+        tauri::async_runtime::spawn(async move {
+            let mut auth_suspended = false;
+            let mut first_check = true;
+            loop {
+                if !first_check {
+                    let changed = tokio::time::timeout(CONNECTION_CHECK_INTERVAL, monitor_host.2.notified()).await.is_ok();
+                    if auth_suspended && !changed { continue; }
+                }
+                first_check = false;
+                let (url, generation) = {
+                    let state = monitor_host.0.lock().expect("host state lock");
+                    (state.monitor_url.clone(), state.monitor_generation)
+                };
+                let Some(url) = url else { continue; };
+                let (result, suspend) = probe_desktop_connection(&url, &monitor_host).await;
+                auth_suspended = suspend;
+                monitor_host.apply_probe_result(&app, generation, &result);
+            }
+        });
+    } else if changed {
+        host.2.notify_one();
+    }
+    Ok(host.connection_snapshot())
+}
+
+#[tauri::command]
+fn desktop_connection_monitor_snapshot(host: tauri::State<HostState>) -> ConnectionSnapshot {
+    host.connection_snapshot()
 }
 
 #[tauri::command]
@@ -1084,9 +1132,13 @@ async fn desktop_drawing_request(
 }
 
 #[tauri::command]
-async fn desktop_logout(base_url: String, host: tauri::State<'_, HostState>) -> Result<(), String> {
-    if let Ok(tokens) = host.token() {
-        let result = reqwest::Client::new()
+async fn desktop_logout(app: tauri::AppHandle, base_url: String, host: tauri::State<'_, HostState>) -> Result<(), String> {
+    let tokens = host.token().ok();
+    clear_desktop_tokens()?;
+    host.clear_tokens();
+    host.transition_monitor(&app, "authentication_required");
+    if let Some(tokens) = tokens {
+        let result = reqwest::Client::builder().timeout(Duration::from_secs(3)).build().map_err(|error| error.to_string())?
             .post(format!("{}/api/auth/desktop/logout", base_url.trim_end_matches('/')))
             .json(&serde_json::json!({ "refresh_token": tokens.refresh_token }))
             .send()
@@ -1095,9 +1147,6 @@ async fn desktop_logout(base_url: String, host: tauri::State<'_, HostState>) -> 
             diagnostic_log(&format!("desktop logout revoke failed: {error}"));
         }
     }
-    clear_desktop_tokens()?;
-    host.clear_tokens();
-    host.set_connection("authentication_required");
     Ok(())
 }
 
@@ -1362,11 +1411,11 @@ fn clear_desktop_live_ticks(app: tauri::AppHandle, stream_id: String) -> Result<
 
 /// Durable native state: it continues receiving stream events with no WebView listener.
 #[derive(Clone)]
-pub struct HostState(Arc<Mutex<LatestState>>, Arc<tokio::sync::Mutex<()>>);
+pub struct HostState(Arc<Mutex<LatestState>>, Arc<tokio::sync::Mutex<()>>, Arc<Notify>);
 
 impl Default for HostState {
     fn default() -> Self {
-        Self(Arc::new(Mutex::new(LatestState::default())), Arc::new(tokio::sync::Mutex::new(())))
+        Self(Arc::new(Mutex::new(LatestState::default())), Arc::new(tokio::sync::Mutex::new(())), Arc::new(Notify::new()))
     }
 }
 
@@ -1378,6 +1427,11 @@ struct LatestState {
     last_event_id: u64,
     latest_payload: String,
     connection: String,
+    connection_revision: u64,
+    monitor_url: Option<String>,
+    monitor_generation: u64,
+    monitor_failures: u8,
+    monitor_started: bool,
     tokens: Option<TokenBundle>,
     pending_google_token: Option<String>,
     token_expires_at: Option<SystemTime>,
@@ -1394,6 +1448,27 @@ struct NativeStreamState {
 }
 
 impl HostState {
+    fn configure_monitor(&self, base_url: String) -> (bool, bool, Option<ConnectionSnapshot>) {
+        let mut state = self.0.lock().expect("host state lock");
+        let changed = state.monitor_url.as_deref() != Some(base_url.as_str());
+        let mut snapshot = None;
+        if changed {
+            state.monitor_url = Some(base_url);
+            state.monitor_generation += 1;
+            state.monitor_failures = 0;
+            if !state.connection.is_empty() && state.connection != "authentication_required" && state.connection != "reconnecting" {
+                state.connection = "reconnecting".into();
+                state.connection_revision += 1;
+                snapshot = Some(ConnectionSnapshot { connection: state.connection.clone(), revision: state.connection_revision });
+            }
+        }
+        let start = !state.monitor_started;
+        state.monitor_started = true;
+        (start, changed, snapshot)
+    }
+    fn has_tokens_in_memory(&self) -> bool {
+        self.0.lock().expect("host state lock").tokens.is_some()
+    }
     fn acknowledge_screen(&self, id: &str, token: &str, label: &str) -> Result<(), String> {
         if label != format!("screen:{id}") { return Err("Wrong screen window".into()); }
         let mut state = self.0.lock().map_err(|e| e.to_string())?;
@@ -1443,8 +1518,52 @@ impl HostState {
             connection: state.connection.clone(),
         }
     }
-    fn set_connection(&self, connection: &str) {
-        self.0.lock().expect("host state lock").connection = connection.into();
+    fn connection_snapshot(&self) -> ConnectionSnapshot {
+        let state = self.0.lock().expect("host state lock");
+        ConnectionSnapshot { connection: state.connection.clone(), revision: state.connection_revision }
+    }
+    fn set_connection(&self, connection: &str) -> Option<ConnectionSnapshot> {
+        let mut state = self.0.lock().expect("host state lock");
+        if state.connection == connection { return None; }
+        state.connection = connection.into();
+        state.connection_revision += 1;
+        Some(ConnectionSnapshot { connection: state.connection.clone(), revision: state.connection_revision })
+    }
+    fn transition_monitor(&self, app: &tauri::AppHandle, connection: &str) {
+        let mut state = self.0.lock().expect("host state lock");
+        state.monitor_generation += 1;
+        state.monitor_failures = 0;
+        let snapshot = if state.connection != connection {
+            state.connection = connection.into();
+            state.connection_revision += 1;
+            Some(ConnectionSnapshot { connection: state.connection.clone(), revision: state.connection_revision })
+        } else { None };
+        let monitor_started = state.monitor_started;
+        drop(state);
+        if let Some(snapshot) = snapshot { let _ = app.emit(CONNECTION_STATE_EVENT, snapshot); }
+        if monitor_started { self.2.notify_one(); }
+    }
+    fn apply_probe_result(&self, app: &tauri::AppHandle, generation: u64, result: &str) {
+        if let Some(snapshot) = self.record_probe_result(generation, result) {
+            let _ = app.emit(CONNECTION_STATE_EVENT, snapshot);
+        }
+    }
+    fn record_probe_result(&self, generation: u64, result: &str) -> Option<ConnectionSnapshot> {
+        let snapshot = {
+            let mut state = self.0.lock().expect("host state lock");
+            if state.monitor_generation != generation { return None; }
+            if result == "offline" {
+                state.monitor_failures = state.monitor_failures.saturating_add(1);
+                if state.connection == "connected" && state.monitor_failures < 2 { return None; }
+            } else {
+                state.monitor_failures = 0;
+            }
+            if state.connection == result { return None; }
+            state.connection = result.into();
+            state.connection_revision += 1;
+            ConnectionSnapshot { connection: state.connection.clone(), revision: state.connection_revision }
+        };
+        Some(snapshot)
     }
     fn start_stream(&self, key: &str, abort: AbortHandle, label: &str) -> Result<(), String> {
         let mut state = self.0.lock().expect("host state lock");
@@ -1792,7 +1911,7 @@ async fn start_sse_subscription(
         let client = reqwest::Client::new();
         let mut backoff = 1_u64;
         loop {
-            host.set_connection("reconnecting");
+            let _ = host.set_connection("reconnecting");
             let mut request = client
                 .get(&url)
                 .bearer_auth(&access_token)
@@ -1803,7 +1922,7 @@ async fn start_sse_subscription(
             }
             match request.send().await {
                 Ok(response) if response.status().is_success() => {
-                    host.set_connection("connected");
+                    let _ = host.set_connection("connected");
                     backoff = 1;
                     let mut stream = response.bytes_stream();
                     let mut buffer = String::new();
@@ -1823,7 +1942,7 @@ async fn start_sse_subscription(
                         }
                     }
                 }
-                _ => host.set_connection("offline"),
+                _ => { let _ = host.set_connection("offline"); }
             }
             tokio::time::sleep(std::time::Duration::from_secs(backoff)).await;
             backoff = (backoff * 2).min(30);
@@ -1846,7 +1965,8 @@ pub fn run() {
             clear_desktop_tokens,
             desktop_login,
             desktop_google_login,
-            desktop_connection_state,
+            desktop_connection_monitor_start,
+            desktop_connection_monitor_snapshot,
             desktop_historical_page,
             desktop_catalogue,
             desktop_option_metadata,
@@ -2057,6 +2177,39 @@ mod tests {
         assert_eq!(ticks.len(), 2);
         assert_eq!(ticks[0].high, 4.0);
         assert_eq!(ticks[0].close, 3.5);
+    }
+}
+
+#[cfg(test)]
+mod connection_monitor_tests {
+    use super::*;
+
+    #[test]
+    fn monitor_is_shared_and_url_change_invalidates_old_results() {
+        let host = HostState::default();
+        let (start, changed, _) = host.configure_monitor("http://first".into());
+        assert!(start && changed);
+        let (start, changed, _) = host.configure_monitor("http://first".into());
+        assert!(!start && !changed);
+        let old_generation = host.0.lock().unwrap().monitor_generation;
+        let _ = host.set_connection("connected");
+        let (start, changed, _) = host.configure_monitor("http://second".into());
+        assert!(!start && changed);
+        assert!(host.record_probe_result(old_generation, "connected").is_none());
+        assert_eq!(host.connection_snapshot().connection, "reconnecting");
+    }
+
+    #[test]
+    fn connected_state_needs_two_failures_and_recovers_on_success() {
+        let host = HostState::default();
+        host.configure_monitor("http://server".into());
+        let generation = host.0.lock().unwrap().monitor_generation;
+        host.set_connection("connected");
+        assert!(host.record_probe_result(generation, "offline").is_none());
+        assert_eq!(host.connection_snapshot().connection, "connected");
+        assert_eq!(host.record_probe_result(generation, "offline").unwrap().connection, "offline");
+        assert_eq!(host.record_probe_result(generation, "connected").unwrap().connection, "connected");
+        assert_eq!(host.record_probe_result(generation, "authentication_required").unwrap().connection, "authentication_required");
     }
 }
 
