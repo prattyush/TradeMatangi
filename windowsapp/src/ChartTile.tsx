@@ -6,6 +6,7 @@ import { registerExtensions } from 'react-klinecharts-ui/extensions'
 import type { Candle, DesktopOrder, DesktopPosition, DesktopStrategy, DesktopTrade, DesktopTradingSettings } from './contracts'
 import { formatCandleCloseCountdown } from './liveCountdown'
 import { buildTradeMarkers } from './tradeMarkers'
+import { targetProfitLabel } from './targetProfitLabel'
 
 interface ChartSettings { background: string; textColor: string; gridColor: string; gridOpacity: number; gridStyle: 'solid' | 'dashed'; gridSize: number; movingAverageType: 'MA' | 'EMA'; movingAveragePeriods: string; showChartInfo: boolean; horizontalLineColor: string; horizontalLineWidth: number; trendLineColor: string; trendLineWidth: number; drawingLineColor: string; drawingLineWidth: number; drawingFillColor: string; drawingFillOpacity: number }
 const withOpacity = (hex: string, opacity: number) => `${hex}${Math.round(opacity * 255).toString(16).padStart(2, '0')}`
@@ -418,10 +419,17 @@ export function ChartTile({ symbol, interval, supportedIntervals, onIntervalChan
     }
     for (const strategy of strategies) {
       if (typeof strategy.price !== 'number' || !Number.isFinite(strategy.price)) continue
+      const projectedLabel = targetProfitLabel(strategy, position, tradingSettings, sessionCapital)
+      if (projectedLabel) {
+        const pixel = pointToPixel(timestamp, strategy.price)
+        if (pixel && typeof pixel.y === 'number') {
+          nextLabels.push({ key: strategy.strategy_id, x: Math.max(8, (element.current?.clientWidth ?? 0) - 122), y: pixel.y, text: projectedLabel, color: projectedLabel.startsWith('TP -') ? '#ef4444' : '#22c55e' })
+        }
+      }
       const id = chart.createOverlay({
         name: 'horizontalStraightLine', paneId: 'candle_pane', points: [{ timestamp, value: strategy.price }],
         styles: { line: { color: '#f59e0b', size: 2, style: 'dashed', dashedValue: [3, 3] } },
-        extendData: { strategyId: strategy.strategy_id, label: `${strategy.strategy_type} @ ${strategy.price.toFixed(2)}` },
+        extendData: { strategyId: strategy.strategy_id, label: projectedLabel ?? `${strategy.strategy_type} @ ${strategy.price.toFixed(2)}` },
         onPressedMoveEnd: (event: any) => {
           const value = event.overlay.points[0]?.value
           if (typeof value === 'number' && Number.isFinite(value)) onStrategyDrag?.(strategy.strategy_id, Number(value.toFixed(2)))

@@ -17,6 +17,31 @@ def test_replay_start_request_requires_a_positive_explicit_cursor():
         desktop_replay.StartReplayRequest.model_validate({**payload, "initial_cursor": 0})
 
 
+def test_replay_snapshot_uses_each_tiles_selected_interval_after_switch():
+    source = [
+        {"time": minute * 60, "open": minute, "high": minute, "low": minute, "close": minute}
+        for minute in range(6)
+    ]
+    tiles = [
+        {"tile_id": interval, "instrument": {"kind": "index", "symbol": "NIFTY"}, "interval_minutes": int(interval)}
+        for interval in ("1", "3", "5")
+    ]
+    run = replay.create("desktop-user", "stepwise", "2026-05-06", 0, 180, 1, tiles, {tile["tile_id"]: source for tile in tiles})
+    try:
+        run.cursor = 2 * 60 + 30
+        current = {tile["tile_id"]: tile for tile in replay.snapshot(run)["tile_states"]}
+        assert {key: value["candle"]["timestamp"] for key, value in current.items()} == {"1": 120, "3": 0, "5": 0}
+        assert {key: value["interval_minutes"] for key, value in current.items()} == {"1": 1, "3": 3, "5": 5}
+
+        replay.sync_tiles(run, [{**tile, "interval_minutes": 1} if tile["tile_id"] == "3" else tile for tile in tiles])
+        switched = {tile["tile_id"]: tile for tile in replay.snapshot(run)["tile_states"]}
+        assert switched["3"]["candle"]["timestamp"] == 120
+        assert run.interval_seconds == 180
+        assert run.tile_candles["3"] is source
+    finally:
+        replay.forget(run)
+
+
 @pytest.mark.asyncio
 async def test_replay_events_emit_authoritative_snapshot_and_stop_event():
     run = replay.create(

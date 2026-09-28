@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { aggregateLiveCandles, appendLiveTick, mergeHistoryWithLiveTicks, recentLiveTicks, reconcileLiveTicks } from './liveCandles'
+import { aggregateLiveCandles, aggregateLiveTileCandles, appendLiveTick, mergeHistoryWithLiveTicks, recentLiveTicks, reconcileLiveTicks } from './liveCandles'
 
 const candle = (timestamp: number, close: number) => ({ timestamp, open: close, high: close, low: close, close })
 
@@ -15,6 +15,16 @@ describe('desktop live candle aggregation', () => {
     const history = [candle(9 * 3600 + 15 * 60, 90)]
     const candles = aggregateLiveCandles(history, ticks, 5)
     expect(candles[candles.length - 1]).toEqual({ timestamp: 9 * 3600 + 20 * 60, open: 100, high: 104, low: 100, close: 104 })
+  })
+
+  it('does not display an old three-minute baseline as one-minute candles', () => {
+    const history = [candle(9 * 3600 + 24 * 60, 90)]
+    const ticks = [candle(9 * 3600 + 25 * 60 + 10, 100)]
+    expect(aggregateLiveTileCandles(history, ticks, 1, 3)).toEqual([candle(9 * 3600 + 25 * 60, 100)])
+    expect(aggregateLiveTileCandles([candle(9 * 3600 + 24 * 60, 95)], ticks, 1, 1)).toEqual([
+      candle(9 * 3600 + 24 * 60, 95),
+      candle(9 * 3600 + 25 * 60, 100),
+    ])
   })
 
   it('deduplicates ticks without capping the desktop session cache', () => {

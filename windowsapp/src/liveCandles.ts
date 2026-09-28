@@ -33,6 +33,10 @@ export const aggregateLiveCandles = (history: Candle[], ticks: Candle[], interva
   return [...byTimestamp.values()].sort((left, right) => left.timestamp - right.timestamp)
 }
 
+/** An interval switch must not interpret bars from the old interval as new bars. */
+export const aggregateLiveTileCandles = (history: Candle[], ticks: Candle[], selectedIntervalMinutes: number, baselineIntervalMinutes?: number): Candle[] =>
+  aggregateLiveCandles(baselineIntervalMinutes === selectedIntervalMinutes ? history : [], ticks, selectedIntervalMinutes)
+
 export const recentLiveTicks = (ticks: Candle[], now: number, seconds = RECENT_LIVE_TICK_SECONDS): Candle[] =>
   ticks.filter(tick => tick.timestamp >= now - seconds)
 
