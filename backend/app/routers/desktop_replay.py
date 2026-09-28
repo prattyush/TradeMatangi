@@ -21,6 +21,7 @@ logger = logging.getLogger(__name__)
 class ReplayTile(BaseModel):
     tile_id: str
     instrument: dict
+    interval_minutes: int | None = Field(default=None, ge=1, le=60)
 
 
 class StartReplayRequest(BaseModel):

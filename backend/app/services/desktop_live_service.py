@@ -30,6 +30,7 @@ class DesktopStream:
     tile_queues: dict[str, asyncio.Queue] = field(default_factory=dict)
     tile_tasks: dict[str, asyncio.Task] = field(default_factory=dict)
     tile_locks: dict[str, asyncio.Lock] = field(default_factory=dict)
+    tile_history_generations: dict[str, int] = field(default_factory=dict)
     history_cache: dict[str, list[dict]] = field(default_factory=dict)
     subscriber_drops: dict[int, int] = field(default_factory=dict)
 
@@ -100,6 +101,7 @@ def _history_cache_key(tile: dict) -> str:
 
 async def deactivate_tile(stream: DesktopStream, tile_id: str) -> None:
     """Stop the provider subscription owned by one tile before replacing it."""
+    stream.tile_history_generations[tile_id] = stream.tile_history_generations.get(tile_id, 0) + 1
     task = stream.tile_tasks.pop(tile_id, None)
     if task:
         task.cancel()
@@ -244,21 +246,28 @@ async def _load_current_date_seconds(tile: dict) -> list[dict]:
 
 async def _seed(stream: DesktopStream, tile: dict) -> None:
     """Load initial history and report a provider error only for this tile."""
+    requested = tile.copy()
+    history_generation = stream.tile_history_generations.get(tile["tile_id"], 0)
     logger.info(
         "desktop_live_seed stream_id=%s tile_id=%s instrument=%s interval=%s reason=seed_or_reconfigure",
         stream.stream_id, tile.get("tile_id"), tile.get("instrument"), tile.get("interval_minutes"),
     )
     try:
-        key = _history_cache_key(tile)
+        key = _history_cache_key(requested)
         if key not in stream.history_cache:
-            stream.history_cache[key] = await _load_history(tile)
+            stream.history_cache[key] = await _load_history(requested)
         candles = [candle.copy() for candle in stream.history_cache[key]]
     except Exception as error:
         async with _tile_lock(stream, tile["tile_id"]):
-            tile["availability"] = "provider_error"
-            tile["reason"] = str(error)
+            if (stream.tile_history_generations.get(tile["tile_id"], 0) == history_generation
+                and tile.get("interval_minutes") == requested["interval_minutes"] and tile.get("instrument") == requested["instrument"]):
+                tile["availability"] = "provider_error"
+                tile["reason"] = str(error)
         return
     async with _tile_lock(stream, tile["tile_id"]):
+        if (stream.tile_history_generations.get(tile["tile_id"], 0) != history_generation
+            or tile.get("interval_minutes") != requested["interval_minutes"] or tile.get("instrument") != requested["instrument"]):
+            return
         tile["candles"] = candles
         tile["availability"] = "available"
         tile.pop("reason", None)
@@ -281,7 +290,11 @@ async def _consume(stream: DesktopStream, tile: dict, queue: asyncio.Queue) -> N
 async def reconfigure_interval(stream: DesktopStream, tile: dict, interval_minutes: int) -> None:
     """Reload one tile's history without disturbing its raw-tick route."""
     async with _tile_lock(stream, tile["tile_id"]):
+        stream.tile_history_generations[tile["tile_id"]] = stream.tile_history_generations.get(tile["tile_id"], 0) + 1
         tile["interval_minutes"] = interval_minutes
+        tile["candles"] = []
+        tile["availability"] = "pending_subscription"
+        tile.pop("reason", None)
     await _seed(stream, tile)
 
 
@@ -344,17 +357,22 @@ async def activate(stream: DesktopStream) -> None:
 async def refresh(stream: DesktopStream) -> None:
     """Refresh authoritative chart bars and today's raw second OHLC per tile."""
     tiles = list(stream.tiles)
+    requests = [tile.copy() for tile in tiles]
+    generations = [stream.tile_history_generations.get(tile["tile_id"], 0) for tile in tiles]
     retry_subscription = any(tile.get("availability") == "provider_error" or (tile.get("availability") == "available" and not tile.get("subscribed")) for tile in tiles)
     logger.info(
         "desktop_live_refresh stream_id=%s tile_count=%s tiles=%s reason=explicit_refresh",
         stream.stream_id, len(tiles), ",".join(str(tile.get("tile_id")) for tile in tiles),
     )
     results = await asyncio.gather(
-        *(asyncio.gather(_load_history(tile), _load_current_date_seconds(tile)) for tile in tiles),
+        *(asyncio.gather(_load_history(request), _load_current_date_seconds(request)) for request in requests),
         return_exceptions=True,
     )
-    for tile, result in zip(tiles, results):
+    for tile, request, generation, result in zip(tiles, requests, generations, results):
         async with _tile_lock(stream, tile["tile_id"]):
+            if (stream.tile_history_generations.get(tile["tile_id"], 0) != generation
+                or tile.get("interval_minutes") != request["interval_minutes"] or tile.get("instrument") != request["instrument"]):
+                continue
             if isinstance(result, Exception):
                 # The existing stream/task and candle cache stay usable.
                 tile["availability"] = "provider_error"
