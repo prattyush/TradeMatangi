@@ -29,7 +29,8 @@ def _wallet_debit(session, amount: float, operation_id: str | None = None, allow
     ledger_id = getattr(session, "wallet_ledger_id", "")
     if ledger_id:
         ledger_kind = "paper" if session.session_type == "paper" else "real" if session.session_type == "real" else "sim"
-        wallet_service.debit_ledger(session.user_id, round(amount, 2), session.date, ledger_id, ledger_kind, operation_id=operation_id, allow_negative=allow_negative, order=order)
+        engine = (session.session_id, session.symbol, session.paper_engine_token) if getattr(session, "desktop_origin", None) == "desktop_paper" and getattr(session, "paper_engine_token", None) and not getattr(session, "desktop_read_only", False) else None
+        wallet_service.debit_ledger(session.user_id, round(amount, 2), session.date, ledger_id, ledger_kind, operation_id=operation_id, allow_negative=allow_negative, order=order, engine=engine)
     else:
         wallet_service.debit(session.user_id, round(amount, 2), session.date)
 
@@ -39,7 +40,8 @@ def _wallet_credit(session, amount: float, operation_id: str | None = None, orde
     ledger_id = getattr(session, "wallet_ledger_id", "")
     if ledger_id:
         ledger_kind = "paper" if session.session_type == "paper" else "real" if session.session_type == "real" else "sim"
-        wallet_service.credit_ledger(session.user_id, round(amount, 2), session.date, ledger_id, ledger_kind, operation_id=operation_id, order=order)
+        engine = (session.session_id, session.symbol, session.paper_engine_token) if getattr(session, "desktop_origin", None) == "desktop_paper" and getattr(session, "paper_engine_token", None) and not getattr(session, "desktop_read_only", False) else None
+        wallet_service.credit_ledger(session.user_id, round(amount, 2), session.date, ledger_id, ledger_kind, operation_id=operation_id, order=order, engine=engine)
     else:
         wallet_service.credit(session.user_id, round(amount, 2), session.date)
 
@@ -65,7 +67,9 @@ def settle_wallet_for_trade(
         amount = price * quantity
         if side == TradeSide.BUY:
             if not entry_reserved:
-                _wallet_debit(session, amount, operation_id, order=order)
+                closing_short_at_eod = bool(getattr(session, "desktop_read_only", False) and
+                    get_position(session.session_id, session.symbol, right, strike, expiry).side == "SHORT")
+                _wallet_debit(session, amount, operation_id, allow_negative=closing_short_at_eod, order=order)
             elif reserved_amount:
                 diff = amount - reserved_amount
                 if diff > 0:
@@ -76,7 +80,8 @@ def settle_wallet_for_trade(
             _wallet_credit(session, amount, operation_id, order=order)
         if side == TradeSide.BUY and entry_reserved and reserved_amount == amount and order is not None and session.wallet_ledger_id.startswith("paper:"):
             from app.services.paper_wallet import move
-            move(session.user_id, session.date, 0, operation_id, order=order)
+            engine = (session.session_id, session.symbol, session.paper_engine_token) if getattr(session, "desktop_origin", None) == "desktop_paper" and getattr(session, "paper_engine_token", None) else None
+            move(session.user_id, session.date, 0, operation_id, order=order, engine=engine)
         return
 
     from app.config import EQUITY_MIS_MARGIN_RATE
@@ -110,7 +115,8 @@ def settle_wallet_for_trade(
         _wallet_credit(session, cash_change, operation_id, order=order)
     elif order is not None and session.wallet_ledger_id.startswith("paper:"):
         from app.services.paper_wallet import move
-        move(session.user_id, session.date, 0, operation_id, order=order)
+        engine = (session.session_id, session.symbol, session.paper_engine_token) if getattr(session, "desktop_origin", None) == "desktop_paper" and getattr(session, "paper_engine_token", None) else None
+        move(session.user_id, session.date, 0, operation_id, order=order, engine=engine)
 
 
 def ensure_session(session_id: str) -> None:
@@ -164,9 +170,23 @@ def _write_trade_to_db(trade: Trade) -> None:
             if trade.right is not None:
                 item["right"] = trade.right
         item["session_type"] = trade.session_type
-        table.put_item(Item=item)
+        if trade.source == "desktop_paper":
+            from datetime import datetime, timezone
+            from app.services import paper_wallet
+            date = datetime.fromtimestamp(trade.timestamp, tz=timezone.utc).date().isoformat()
+            context = paper_wallet.desktop_write_context(trade.session_id, trade.user_id, date, trade.symbol)
+            if context is not None:
+                token, stopped = context
+                paper_wallet.fenced_put("Trades", item, user_id=trade.user_id, date=date,
+                    symbol=trade.symbol, session_id=trade.session_id, token=token, stopped=stopped)
+            else:
+                table.put_item(Item=item)
+        else:
+            table.put_item(Item=item)
     except Exception:
         logger.exception("DynamoDB write failed for trade %s", trade.trade_id)
+        if trade.source == "desktop_paper":
+            raise
 
 
 def record_trade(
@@ -234,7 +254,11 @@ def record_trade(
         underlying_price=underlying_price,
     )
     _trades[session_id].append(trade)
-    _write_trade_to_db(trade)
+    try:
+        _write_trade_to_db(trade)
+    except Exception:
+        _trades[session_id].remove(trade)
+        raise
     try:
         from app.services.guardrail_service import on_trade_record
         on_trade_record(session_id)
@@ -346,15 +370,28 @@ def clear_session(session_id: str) -> None:
     _trades.pop(session_id, None)
 
 
-def reload_trades_from_db(session_id: str) -> None:
+def reload_trades_from_db(session_id: str, *, strict: bool = False) -> None:
     """Repopulate in-memory _trades from DynamoDB when a paper/real session is resumed.
 
     Called by rebuild_session_from_db so that position checks, trade history,
     and Day P&L all reflect trades taken in earlier restarts of the same session.
     """
     try:
-        from app.services.analysis_service import get_trades_for_session
-        raw = get_trades_for_session(session_id)
+        if strict:
+            from app.services.db import get_dynamodb_resource
+            from boto3.dynamodb.conditions import Key
+            table = get_dynamodb_resource().Table("Trades")
+            params = {"KeyConditionExpression": Key("session_id").eq(session_id), "ConsistentRead": True}
+            raw = []
+            while True:
+                page = table.query(**params)
+                raw.extend(page.get("Items", []))
+                if not page.get("LastEvaluatedKey"):
+                    break
+                params["ExclusiveStartKey"] = page["LastEvaluatedKey"]
+        else:
+            from app.services.analysis_service import get_trades_for_session
+            raw = get_trades_for_session(session_id)
         trades: list[Trade] = []
         for item in raw:
             try:
@@ -378,8 +415,12 @@ def reload_trades_from_db(session_id: str) -> None:
                 ))
             except Exception:
                 logger.warning("Skipping malformed trade during reload for session %s: %s", session_id, item)
+                if strict:
+                    raise
         _trades[session_id] = trades
         logger.info("reload_trades_from_db: loaded %d trades for session %s", len(trades), session_id)
     except Exception:
         logger.exception("reload_trades_from_db failed for session %s", session_id)
+        if strict:
+            raise
         _trades[session_id] = []

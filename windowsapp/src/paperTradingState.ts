@@ -66,8 +66,11 @@ export const applyPaperStreamEvent = (snapshot: DesktopTradingSnapshot, event: R
     current_time: Number.isFinite(time) ? Math.max(time, snapshot.current_time) : snapshot.current_time,
   }
   if (Number.isFinite(price)) {
-    if (right === 'CE') next = { ...next, current_price_ce: price }
-    else if (right === 'PE') next = { ...next, current_price_pe: price }
+    const strike = Number(event.strike)
+    const expiry = String(event.expiry ?? '')
+    const primaryOption = !contractKey || (Number.isFinite(strike) && strike === (right === 'CE' ? snapshot.session.strike_ce : snapshot.session.strike_pe) && expiry === snapshot.session.expiry)
+    if (right === 'CE' && primaryOption) next = { ...next, current_price_ce: price }
+    else if (right === 'PE' && primaryOption) next = { ...next, current_price_pe: price }
     else next = { ...next, current_price: price }
   }
   if (contractKey && Number.isFinite(price)) {

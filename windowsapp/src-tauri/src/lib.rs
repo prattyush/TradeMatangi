@@ -571,7 +571,11 @@ async fn desktop_connection_state(
         Ok(token) => token,
         Err(_) => return Ok("authentication_required".into()),
     };
-    let result = reqwest::Client::new()
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(3))
+        .build()
+        .map_err(|error| error.to_string())?;
+    let result = client
         .get(format!(
             "{}/api/desktop/v1/capabilities",
             base_url.trim_end_matches('/')
@@ -582,7 +586,17 @@ async fn desktop_connection_state(
     let state = match result {
         Ok(response) if response.status().is_success() => "connected",
         Ok(response) if response.status().as_u16() == 401 => "authentication_required",
-        _ => "offline",
+        Ok(response) => {
+            diagnostic_log(&format!("desktop capability probe HTTP status={}", response.status().as_u16()));
+            "offline"
+        }
+        Err(error) => {
+            diagnostic_log(&format!(
+                "desktop capability probe transport failure timeout={} connect={} request={}",
+                error.is_timeout(), error.is_connect(), error.is_request(),
+            ));
+            "offline"
+        }
     };
     host.set_connection(state);
     Ok(state.into())

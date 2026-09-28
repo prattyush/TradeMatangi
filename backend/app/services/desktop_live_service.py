@@ -48,6 +48,25 @@ def get(user_id: str, stream_id: str) -> DesktopStream | None:
     return stream if stream and stream.user_id == user_id else None
 
 
+def option_quote(user_id: str, stream_id: str, symbol: str, expiry: str, strike: int, right: str, tile_id: str | None = None) -> dict | None:
+    """The latest provider tick for one exact option in a user-owned chart stream."""
+    stream = get(user_id, stream_id)
+    if not stream or stream.stopped:
+        return None
+    for tile in stream.tiles:
+        instrument = tile.get("instrument") or {}
+        if tile_id is not None and tile.get("tile_id") != tile_id:
+            continue
+        if (instrument.get("kind") != "option" or instrument.get("underlying") != symbol
+            or instrument.get("expiry") != expiry or int(instrument.get("strike") or 0) != strike
+            or instrument.get("right") != right or not tile.get("subscribed")):
+            continue
+        tick = tile.get("latest_tick")
+        if tick and float(tick.get("close") or 0) > 0:
+            return {"price": float(tick["close"]), "timestamp": int(tick["timestamp"]), "source": "desktop_live_chart", "tile_id": tile["tile_id"], "open": tick["open"], "high": tick["high"], "low": tick["low"], "close": tick["close"], "provider_token": tick.get("provider_token")}
+    return None
+
+
 def stop(user_id: str, stream_id: str) -> bool:
     stream = get(user_id, stream_id)
     if not stream:
@@ -250,6 +269,8 @@ async def _consume(stream: DesktopStream, tile: dict, queue: asyncio.Queue) -> N
     while not stream.stopped:
         tick = await queue.get()
         latest_tick = {"timestamp": int(tick["time"]), "open": tick["open"], "high": tick["high"], "low": tick["low"], "close": tick["close"]}
+        if tick.get("provider_token"):
+            latest_tick["provider_token"] = tick["provider_token"]
         async with _tile_lock(stream, tile["tile_id"]):
             tile["latest_tick"] = latest_tick
             tile["availability"] = "available"
@@ -286,9 +307,11 @@ async def activate(stream: DesktopStream) -> None:
     active_tiles = [tile for tile in stream.tiles if tile.get("subscribed") and tile.get("availability") == "available"]
     if not active_tiles:
         return
+    manager = None
     try:
         if stream.manager:
             stream.manager.stop()
+            stream.manager = None
         manager = BreezeStreamManager()
         routes: dict[str, list[asyncio.Queue]] = {}
         instruments_by_route: dict[str, dict] = {}
@@ -307,7 +330,13 @@ async def activate(stream: DesktopStream) -> None:
         stream.manager = manager
         stream.managers = [manager]
     except Exception as error:
+        if manager:
+            try:
+                manager.stop()
+            except Exception:
+                logger.exception("desktop live provider cleanup failed stream_id=%s", stream.stream_id)
         for tile in active_tiles:
+            tile["subscribed"] = False
             tile["availability"] = "provider_error"
             tile["reason"] = str(error)
 
@@ -315,6 +344,7 @@ async def activate(stream: DesktopStream) -> None:
 async def refresh(stream: DesktopStream) -> None:
     """Refresh authoritative chart bars and today's raw second OHLC per tile."""
     tiles = list(stream.tiles)
+    retry_subscription = any(tile.get("availability") == "provider_error" or (tile.get("availability") == "available" and not tile.get("subscribed")) for tile in tiles)
     logger.info(
         "desktop_live_refresh stream_id=%s tile_count=%s tiles=%s reason=explicit_refresh",
         stream.stream_id, len(tiles), ",".join(str(tile.get("tile_id")) for tile in tiles),
@@ -339,6 +369,8 @@ async def refresh(stream: DesktopStream) -> None:
             tile["current_date_seconds"] = current_date_seconds
             tile["availability"] = "available"
             tile.pop("reason", None)
+    if retry_subscription:
+        await activate(stream)
     await publish(stream, "snapshot", "screen", snapshot(stream))
     logger.info("desktop_live_refresh_complete stream_id=%s tile_count=%s", stream.stream_id, len(tiles))
 

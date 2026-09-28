@@ -574,6 +574,7 @@ class BreezeStreamManager:
                     )
 
                 payload = {**candle}
+                payload["provider_token"] = scrip_code
                 if right:
                     payload["right"] = right
                 if self._route_queues:

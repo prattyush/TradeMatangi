@@ -1462,7 +1462,7 @@ class KotakBroadcaster:
         )
 
         for sid, (queue, right, loop) in session_entries.items():
-            tick_payload = {**completed, "right": right}
+            tick_payload = {**completed, "right": right, "provider_token": token}
             try:
                 loop.call_soon_threadsafe(queue.put_nowait, tick_payload)
             except Exception as exc:

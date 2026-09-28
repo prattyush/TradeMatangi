@@ -8,7 +8,7 @@ from unittest.mock import patch
 from app.models.schemas import ConvertOrderRequest, OrderStatus, OrderType, PlaceOrderRequest, SimulationState, StartStrategyRequest, StrategyType, TradeSide, UpdateOrderRequest, WalletResetRequest
 from app.routers import desktop_trading
 from app.services.simulation import _upsert_session_to_db as persist_session
-from app.services import order_service, simulation as sim_svc, trading as trading_service, wallet_service
+from app.services import desktop_live_service, order_service, simulation as sim_svc, strategy_service, trading as trading_service, wallet_service
 
 
 def test_paper_start_rejects_historical_date():
@@ -236,6 +236,53 @@ def test_desktop_strategy_start_forwards_chart_price_and_contract_right(no_db, s
     assert forwarded.session_id == session.session_id
     assert forwarded.right == "CE"
     assert getattr(forwarded, field) == price
+
+
+def test_attached_option_strategy_tracks_only_its_contract(no_db):
+    _clear()
+    session = _session()
+    contract = {"symbol": "NIFTY", "expiry": session.expiry, "strike": 24100,
+                "right": "CE", "contract_key": f"NIFTY:{session.expiry}:24100:CE"}
+    session.desktop_contracts.append(contract)
+    request = desktop_trading.DesktopStartStrategyRequest(
+        session_id=session.session_id, strategy_type=StrategyType.AUTO_STOP,
+        right="CE", strike=24100, expiry=session.expiry, quantity=65,
+    )
+    try:
+        with patch("app.services.strategy_service._write_strategy_to_db"):
+            response = asyncio.run(desktop_trading.start_strategy(session.session_id, request, user_id=session.user_id))
+        strategy = next(item for item in strategy_service.list_running(session.session_id) if item.strategy_id == response.strategy_id)
+        assert strategy.metadata["desktop_contract_key"] == contract["contract_key"]
+        assert strategy.metadata["desktop_strike"] == 24100
+        primary = {"time": 1778058900, "open": 100, "high": 100, "low": 100, "close": 100,
+                   "contract_key": f"NIFTY:{session.expiry}:24000:CE"}
+        strategy_service.on_tick(session, primary, "CE")
+        assert strategy._last_bar_slot is None
+        strategy_service.on_tick(session, {**primary, "contract_key": contract["contract_key"], "close": 150}, "CE")
+        assert strategy._last_bar_slot == 1778058900
+        assert strategy._bar_close == 150
+    finally:
+        strategy_service._registry.pop(session.session_id, None)
+        _clear()
+
+
+def test_paper_autostop_rejects_overbudget_lot_with_reason(no_db):
+    _clear()
+    session = _session()
+    session.session_type = "paper"
+    strategy = strategy_service.StrategyInstance(
+        strategy_id="risk-autostop", session_id=session.session_id, user_id=session.user_id,
+        strategy_type="AutoStop", symbol=session.symbol, right="CE",
+        status=strategy_service.StrategyStatus.RUNNING,
+        metadata={"direction": "BUY", "risk_ratio_pct": 0.012, "entry_sl_price": 50},
+    )
+    with patch("app.services.strategy_service._write_strategy_to_db"), patch("app.services.strategy_service._wallet_balance_for_quantity", return_value=150000):
+        strategy_service._on_bar_close_autostop(strategy, session,
+            {"open": 100, "high": 100, "low": 90, "close": 95}, "CE", 1778058900)
+    assert strategy.status == strategy_service.StrategyStatus.COMPLETED
+    assert "one whole lot" in strategy.metadata["rejection_reason"]
+    assert "one whole lot" in json.loads(session.queue.get_nowait())["reason"]
+    _clear()
 
 
 def test_desktop_bulk_convert_uses_clicked_price_for_closing_orders(no_db):
@@ -896,6 +943,64 @@ def test_chart_market_intent_uses_the_clicked_contract_quote(no_db, monkeypatch)
     assert order.quote_timestamp == 1778058900
     assert order.quote_source == "historical_stepwise"
     _clear()
+
+
+@pytest.mark.parametrize("right,premium,stop", [("CE", 100, 80), ("PE", 120, 100)])
+def test_paper_market_uses_exact_live_option_tile_not_underlying_quote(right, premium, stop):
+    _clear()
+    session = _session()
+    session.session_type = "paper"
+    session.desktop_mode = "paper"
+    session.desktop_origin = "desktop_paper"
+    session.last_price = 22836.95
+    contract = {"symbol": "NIFTY", "expiry": session.expiry, "strike": 22950, "right": right,
+                "contract_key": f"NIFTY:{session.expiry}:22950:{right}"}
+    session.desktop_contracts.append(contract)
+    session.desktop_contract_quotes = {}
+    session.desktop_contract_quotes[contract["contract_key"]] = {"price": 22836.95, "timestamp": int(session.current_time), "source": "live_paper"}
+    tiles = [{"tile_id": "spot", "instrument": {"kind": "index", "symbol": "NIFTY"}, "subscribed": True},
+             {"tile_id": "ce", "instrument": {"kind": "option", "underlying": "NIFTY", "expiry": session.expiry, "strike": 22950, "right": "CE"}, "subscribed": True,
+              "latest_tick": {"timestamp": 1778058901, "open": 100, "high": 100, "low": 100, "close": 100}},
+             {"tile_id": "pe", "instrument": {"kind": "option", "underlying": "NIFTY", "expiry": session.expiry, "strike": 22950, "right": "PE"}, "subscribed": True,
+              "latest_tick": {"timestamp": 1778058901, "open": 120, "high": 120, "low": 120, "close": 120}}]
+    stream = desktop_live_service.start(session.user_id, tiles)
+    try:
+        with patch("app.routers.orders.get_ledger_balance", return_value=150000), patch("app.services.paper_wallet.move"):
+            order = asyncio.run(desktop_trading.place_chart_order(session.session_id,
+                desktop_trading.ChartOrderIntent(symbol="NIFTY", expiry=session.expiry, strike=22950, right=right,
+                    side=TradeSide.BUY, intent="market", risk_pct=1.2, entry_sl_price=stop,
+                    live_stream_id=stream.stream_id, live_tile_id=right.lower()), user_id=session.user_id))
+        assert order.quote_price == premium
+        assert order.limit_price == round(premium * 1.01, 2)
+        assert order.quote_source == "desktop_live_chart"
+        assert order.quantity == 65
+        assert desktop_trading._last_price_for_right(session, right, 22950, session.expiry) == premium
+        with patch("app.routers.desktop_trading._historical_context_trades", return_value=[]):
+            assert desktop_trading._snapshot(session, session.user_id).contract_quotes[contract["contract_key"]]["price"] == premium
+        captured = {}
+        with patch("app.services.simulation._auto_close_positions_if_eod"), patch("app.services.order_service.check_orders", side_effect=lambda *args, **kwargs: captured.update(price=args[1]) or []):
+            sim_svc._emit_tick_and_check_orders(session, {"type": "tick", "time": 1778058902, "open": 22836.95, "high": 22836.95, "low": 22836.95, "close": 22836.95, **contract}, right)
+        assert captured["price"] == premium
+        other_tile = "pe" if right == "CE" else "ce"
+        with pytest.raises(HTTPException, match="Live chart no longer matches"):
+            asyncio.run(desktop_trading.place_chart_order(session.session_id,
+                desktop_trading.ChartOrderIntent(symbol="NIFTY", expiry=session.expiry, strike=22950, right=right,
+                    side=TradeSide.BUY, intent="market", quantity=65,
+                    live_stream_id=stream.stream_id, live_tile_id=other_tile), user_id=session.user_id))
+        with patch("app.routers.orders.get_ledger_balance", return_value=150000):
+            with pytest.raises(HTTPException, match="one whole lot"):
+                asyncio.run(desktop_trading.place_chart_order(session.session_id,
+                    desktop_trading.ChartOrderIntent(symbol="NIFTY", expiry=session.expiry, strike=22950, right=right,
+                        side=TradeSide.BUY, intent="market", risk_pct=1.2, entry_sl_price=10,
+                        live_stream_id=stream.stream_id, live_tile_id=right.lower()), user_id=session.user_id))
+    finally:
+        desktop_live_service.stop(session.user_id, stream.stream_id)
+        _clear()
+
+
+def test_paper_option_risk_rejects_lot_over_budget():
+    with pytest.raises(ValueError, match="one whole lot"):
+        order_service.compute_risk_ratio_quantity("NIFTY", 100, 70, 100000, .012, 100000, lot_size=65, strict_lot_risk=True)
 
 
 @pytest.mark.parametrize("mode", ["paper", "replay", "stepwise"])
