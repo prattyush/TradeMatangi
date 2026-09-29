@@ -244,6 +244,7 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
   const [pnlPctMode, setPnlPctMode] = useState(loadPnlPctMode)
   const [tradingRocRatioMode, setTradingRocRatioMode] = useState<RocRatioMode>(loadTradingRocRatioMode)
   const [runningStrategies, setRunningStrategies] = useState<StrategyResponse[]>([])
+  const strategySyncVersionRef = useRef(0)
   const [brokerError, setBrokerError] = useState<string | null>(null)
   const [isRealTradingUser, setIsRealTradingUser] = useState(false)
   const [guardrailPopup, setGuardrailPopup] = useState<{ type: 'BLOCK' | 'COOLDOWN' | 'BAN'; reason: string } | null>(null)
@@ -1203,6 +1204,23 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
     return Array.from(new Set(ids.filter(Boolean))).sort()
   }, [sim.group, sim.sessionId])
 
+  const refreshRunningStrategies = useCallback(async (sessionId: string) => {
+    const version = ++strategySyncVersionRef.current
+    try {
+      const strategies = await api.listStrategies(sessionId)
+      if (version === strategySyncVersionRef.current) setRunningStrategies(strategies)
+    } catch { /* Keep the current list if reconciliation fails. */ }
+  }, [])
+
+  const activeStrategySessionId = sim.sessionState === 'running' || sim.sessionState === 'paused'
+    ? sim.sessionId : null
+
+  useEffect(() => {
+    setRunningStrategies([])
+    if (activeStrategySessionId) void refreshRunningStrategies(activeStrategySessionId)
+    return () => { strategySyncVersionRef.current++ }
+  }, [activeStrategySessionId, refreshRunningStrategies])
+
   // ── SSE at app level ─────────────────────────────────────────────────────────
   const handleSSEMessage = useCallback((event: Record<string, unknown>) => {
     const eventSessionId = typeof event.session_id === 'string' ? event.session_id : sim.sessionId ?? undefined
@@ -1243,6 +1261,7 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
     } else if (event.type === 'order_converted') {
       sim.handleOrderConverted(event.order_id as string, event.new_order_type as string, event.trigger_price as number, event.limit_price as number, event.is_stoploss as boolean)
     } else if (event.type === 'strategy_completed') {
+      strategySyncVersionRef.current++
       setRunningStrategies(prev => prev.filter(s => s.strategy_id !== (event.strategy_id as string)))
     } else if (event.type === 'broker_error') {
       setBrokerError(event.message as string)
@@ -1274,8 +1293,9 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
   const handleSSEReconnect = useCallback((sessionId?: string) => {
     if (sessionId && sessionId !== sim.sessionId) return
     sim.refreshSessionData()
+    if (sim.sessionId) void refreshRunningStrategies(sim.sessionId)
     setPanes(prev => prev.map(p => ({ ...p, reloadKey: (p.reloadKey ?? 0) + 1 })))
-  }, [sim.refreshSessionData, sim.sessionId])
+  }, [sim.refreshSessionData, sim.sessionId, refreshRunningStrategies])
 
   useMultiSSE(streamSessionIds, handleSSEMessage, handleSSEReconnect)
 
@@ -1388,25 +1408,32 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
       underlying_sl_price: opts.underlyingSlPrice as number | undefined,
     })
     setRunningStrategies(prev => [...prev, resp])
+    strategySyncVersionRef.current++
   }, [sim.sessionId, autostopTriggerType, autostopDeviationPct, breakevenMode, targetProfitBufferTicks, aggrSlOnlyInProfit])
 
   const handleCancelAllStrategies = useCallback(async () => {
     if (!sim.sessionId) return
     await api.cancelAllStrategies(sim.sessionId)
+    strategySyncVersionRef.current++
     setRunningStrategies([])
   }, [sim.sessionId])
 
   const handleCancelStrategy = useCallback(async (strategyId: string) => {
     if (!sim.sessionId) return
     await api.cancelStrategy(strategyId, sim.sessionId)
+    strategySyncVersionRef.current++
     setRunningStrategies(prev => prev.filter(s => s.strategy_id !== strategyId))
   }, [sim.sessionId])
 
   const handleUpdateStrategyPrice = useCallback(async (strategyId: string, price: number) => {
     if (!sim.sessionId) return
     await api.updateStrategyPrice(strategyId, sim.sessionId, price)
+    strategySyncVersionRef.current++
     setRunningStrategies(prev => prev.map(s =>
-      s.strategy_id === strategyId ? { ...s, triggered: false } : s
+      s.strategy_id === strategyId
+        ? { ...s, triggered: false, ...(s.strategy_type === 'TargetProfit'
+          ? { target_profit_value: price, target_profit_is_pct: false } : {}) }
+        : s
     ))
   }, [sim.sessionId])
 
@@ -1542,7 +1569,7 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
             strategy_type: 'TargetProfit',
             target_profit_value: price,
             right: right ?? undefined,
-          }).then(resp => { setRunningStrategies(prev => [...prev, resp]) }).catch(() => {})
+          }).then(resp => { strategySyncVersionRef.current++; setRunningStrategies(prev => [...prev, resp]) }).catch(() => {})
         }
       },
       {
@@ -1553,7 +1580,7 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
             strategy_type: 'LockProfit',
             lock_profit_value: price,
             right: right ?? undefined,
-          }).then(resp => { setRunningStrategies(prev => [...prev, resp]) }).catch(() => {})
+          }).then(resp => { strategySyncVersionRef.current++; setRunningStrategies(prev => [...prev, resp]) }).catch(() => {})
         }
       },
     ]
@@ -1569,7 +1596,7 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
               session_id: sim.sessionId!,
               strategy_type: 'AggressiveStoploss',
               right: right ?? undefined,
-            }).then(resp => { setRunningStrategies(prev => [...prev, resp]) }).catch(() => {})
+            }).then(resp => { strategySyncVersionRef.current++; setRunningStrategies(prev => [...prev, resp]) }).catch(() => {})
           }
         })
       }
@@ -1577,17 +1604,21 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
 
     // Underlying-only strategies (equity pane in options sessions)
     if (paneType === 'equity' && instrumentType === 'options') {
-      stratActions.push(
-        {
-          label: 'Underlying Target',
+      for (const targetRight of (['CE', 'PE'] as const)) {
+        if ((targetRight === 'CE' ? sim.positionCE : sim.positionPE).side === 'FLAT') continue
+        stratActions.push({
+          label: `Underlying Target (${targetRight})`,
           onClick: () => {
             api.startStrategy({
               session_id: sim.sessionId!,
               strategy_type: 'UnderlyingTargetProfit',
               target_profit_value: price,
-            }).then(resp => { setRunningStrategies(prev => [...prev, resp]) }).catch(() => {})
-          }
-        },
+              right: targetRight,
+            }).then(resp => { strategySyncVersionRef.current++; setRunningStrategies(prev => [...prev, resp]) }).catch(() => {})
+          },
+        })
+      }
+      stratActions.push(
         {
           label: 'Underlying SL',
           onClick: () => {
@@ -1595,7 +1626,7 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
               session_id: sim.sessionId!,
               strategy_type: 'UnderlyingStoploss',
               underlying_sl_price: price,
-            }).then(resp => { setRunningStrategies(prev => [...prev, resp]) }).catch(() => {})
+            }).then(resp => { strategySyncVersionRef.current++; setRunningStrategies(prev => [...prev, resp]) }).catch(() => {})
           }
         },
       )
@@ -1739,6 +1770,14 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
           }}
           trades={draft ? [] : getTradesForPane(pane)}
           openOrders={draft ? [] : getOrdersForPane(pane)}
+          targetProfitStrategies={runningStrategies}
+          strategyPaneActive={!draft && (sim.sessionState === 'running' || sim.sessionState === 'paused') && (
+            pane.type === 'equity' || (pane.expiry === sim.sessionExpiry &&
+              pane.strike === (pane.right === 'CE' ? sim.sessionStrikeCE : sim.sessionStrikePE))
+          )}
+          strategyPosition={pane.type === 'equity' ? sim.position : pane.right === 'CE' ? sim.positionCE : sim.positionPE}
+          strategyPositionCE={sim.positionCE}
+          strategyPositionPE={sim.positionPE}
           onPriceSelect={((missingSlPick?.paneId === pane.id && missingSlPick.sessionId === sim.sessionId) || pricePickOrderId || tpPickActive || utpPickActive || lpPickActive || contextMenuOrderPick)
             ? (price) => {
                 setActivePaneId(pane.id)

@@ -176,6 +176,8 @@ export interface StrategyResponse {
   right: string | null
   status: string
   triggered: boolean
+  target_profit_value?: number | null
+  target_profit_is_pct?: boolean
 }
 
 export interface StartStrategyRequest {

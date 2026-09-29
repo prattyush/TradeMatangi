@@ -10,7 +10,7 @@ import {
   IPriceLine,
   LineStyle,
 } from 'lightweight-charts'
-import api, { OHLCCandle, TickEvent, BarCandle, Trade, Order, Position } from '../services/api'
+import api, { OHLCCandle, TickEvent, BarCandle, Trade, Order, Position, StrategyResponse } from '../services/api'
 import {
   computeOptionsRocComparison,
   IndicatorCandle,
@@ -48,6 +48,11 @@ interface Props {
   trades?: Trade[]
   // Open order price lines
   openOrders?: Order[]
+  targetProfitStrategies?: StrategyResponse[]
+  strategyPosition?: Position
+  strategyPositionCE?: Position
+  strategyPositionPE?: Position
+  strategyPaneActive?: boolean
   // Price-pick mode: when non-null, a chart click calls this instead of draw mode
   onPriceSelect?: ((price: number) => void) | null
   pricePickLabel?: string
@@ -242,6 +247,27 @@ function formatProjectedPnl(pnl: number, pnlPctMode?: boolean, sessionCapital?: 
   return `${pnl >= 0 ? '+' : ''}${Math.round(pnl)}`
 }
 
+function targetProfitLinePrice(strategy: StrategyResponse, position?: Position, sessionCapital?: number): number | null {
+  const value = strategy.target_profit_value
+  if (value == null || !Number.isFinite(value) || value <= 0) return null
+  let price = value
+  if (strategy.target_profit_is_pct) {
+    if (!position || position.side === 'FLAT' || position.quantity <= 0 || !sessionCapital || sessionCapital <= 0) return null
+    const targetPnl = value / 100 * sessionCapital
+    price = position.avg_entry_price + (position.side === 'LONG' ? 1 : -1) * targetPnl / position.quantity
+  }
+  // Keep the displayed level aligned with the backend's ₹0.05 trigger tick.
+  return Math.round(Math.ceil(Math.round(price / 0.05 * 1e10) / 1e10) * 0.05 * 100) / 100
+}
+
+function targetProfitLineLabel(strategy: StrategyResponse, price: number, position?: Position, pnlPctMode?: boolean, sessionCapital?: number): string {
+  if (!pnlPctMode) return `TP ${price.toFixed(2)}`
+  if (strategy.target_profit_is_pct) return `TP +${strategy.target_profit_value}%`
+  if (!position || position.side === 'FLAT' || position.quantity <= 0 || !sessionCapital || sessionCapital <= 0) return `TP ${price.toFixed(2)}`
+  const pnl = (position.side === 'LONG' ? 1 : -1) * (price - position.avg_entry_price) * position.quantity
+  return `TP ${formatProjectedPnl(pnl, true, sessionCapital)}`
+}
+
 function orderLineTypeLabel(order: Order): string {
   if (order.is_stoploss || order.order_type === 'STOPLOSS') return 'SL'
   return order.order_type === 'LIMIT' ? 'L' : 'T'
@@ -400,6 +426,11 @@ export default function Chart({
   isActive = false, onActivate,
   trades = [],
   openOrders,
+  targetProfitStrategies,
+  strategyPosition,
+  strategyPositionCE,
+  strategyPositionPE,
+  strategyPaneActive = false,
   onPriceSelect = null,
   pricePickLabel,
   onContextMenu,
@@ -439,6 +470,7 @@ export default function Chart({
   const ignoreNextClickRef = useRef(false)
   const tradeMarkerPool = useRef<ISeriesApi<'Line'>[]>([])
   const orderPriceLinesRef = useRef<Map<string, IPriceLine>>(new Map())
+  const strategyPriceLinesRef = useRef<Map<string, IPriceLine>>(new Map())
   const onPriceSelectRef = useRef<((price: number) => void) | null>(null)
   const onContextMenuRef = useRef(onContextMenu)
   const onCandlesChangeRef = useRef(onCandlesChange)
@@ -789,6 +821,7 @@ export default function Chart({
       container.removeEventListener('contextmenu', handleContextMenu)
       tradeMarkerPool.current = []
       orderPriceLinesRef.current.clear()
+      strategyPriceLinesRef.current.clear()
       chart.remove()
     }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
@@ -1207,6 +1240,48 @@ export default function Chart({
       } catch { /* disposed */ }
     }
   }, [openOrders, paneType, right, position, pnlPctMode, sessionCapital])
+
+  // Running profit strategies use their own lines, separate from pending orders.
+  useEffect(() => {
+    const series = seriesRef.current
+    if (!series) return
+
+    for (const line of strategyPriceLinesRef.current.values()) {
+      try { series.removePriceLine(line) } catch { /* disposed */ }
+    }
+    strategyPriceLinesRef.current.clear()
+
+    if (!strategyPaneActive) return
+    for (const strategy of targetProfitStrategies ?? []) {
+      if (strategy.status !== 'RUNNING' || strategy.symbol !== symbol) continue
+      const isUnderlyingTarget = strategy.strategy_type === 'UnderlyingTargetProfit'
+      if (isUnderlyingTarget) {
+        if (paneType !== 'equity' || (strategy.right !== 'CE' && strategy.right !== 'PE')) continue
+      } else if (strategy.strategy_type !== 'TargetProfit' ||
+          (paneType === 'equity' ? strategy.right != null : strategy.right !== right)) {
+        continue
+      }
+
+      const position = isUnderlyingTarget
+        ? (strategy.right === 'CE' ? strategyPositionCE : strategyPositionPE)
+        : strategyPosition
+      // The target has no purpose once its option/equity position is fully closed.
+      if (!position || position.side === 'FLAT' || position.quantity <= 0) continue
+      const price = isUnderlyingTarget ? strategy.target_profit_value : targetProfitLinePrice(strategy, position, sessionCapital)
+      if (typeof price !== 'number' || !Number.isFinite(price) || price <= 0) continue
+      try {
+        const line = series.createPriceLine({
+          price, color: '#f59e0b', lineWidth: 1,
+          lineStyle: LineStyle.Dashed,
+          axisLabelVisible: true,
+          title: isUnderlyingTarget
+            ? `UT ${strategy.right} ${price.toFixed(2)}`
+            : targetProfitLineLabel(strategy, price, position, pnlPctMode, sessionCapital),
+        })
+        strategyPriceLinesRef.current.set(strategy.strategy_id, line)
+      } catch { /* disposed */ }
+    }
+  }, [targetProfitStrategies, strategyPosition, strategyPositionCE, strategyPositionPE, strategyPaneActive, paneType, right, symbol, pnlPctMode, sessionCapital])
 
   const enterDrawMode = useCallback((mode: DrawMode) => {
     setDrawDropdownOpen(false)
