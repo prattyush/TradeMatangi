@@ -1238,7 +1238,7 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
       if (p.fundsRatioPct != null) opts.funds_ratio_pct = p.fundsRatioPct
       if (p.riskRatioPct != null) opts.risk_pct = p.riskRatioPct
       if (p.orderType === 'TARGET') opts.target_deviation_pct = targetDeviationPct
-      sim.placeOrder(p.side, p.orderType, price, p.quantity, opts as Parameters<typeof sim.placeOrder>[4]).catch(() => {})
+      sim.placeOrder(p.side, p.orderType, price, p.quantity, opts as Parameters<typeof sim.placeOrder>[4]).catch(error => setBrokerError(String(error)))
       setContextMenuOrderPick(null)
     } else if (pricePickOrderId) {
       setInjectedEditPrice({ orderId: pricePickOrderId, price })
@@ -1323,7 +1323,7 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
       if (fundsRatioPct != null) opts.funds_ratio_pct = fundsRatioPct
       if (riskRatioPct != null) opts.risk_pct = riskRatioPct
       if (ticket.right) opts.right = ticket.right
-      sim.placeOrder(ticket.side, 'LIMIT', marketablePrice, quantity, opts as Parameters<typeof sim.placeOrder>[4]).catch(() => {})
+      sim.placeOrder(ticket.side, 'LIMIT', marketablePrice, quantity, opts as Parameters<typeof sim.placeOrder>[4]).catch(error => setBrokerError(String(error)))
     } else if (ticket.orderType === 'AUTO_STOP') {
       api.startStrategy({
         session_id: sim.sessionId,
@@ -1333,7 +1333,7 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
         risk_ratio_pct: riskRatioPct != null ? riskRatioPct / 100 : undefined,
         funds_ratio_pct: fundsRatioPct,
         quantity: quantity ?? undefined,
-      }).catch(() => {})
+      }).catch(error => setBrokerError(String(error)))
     } else {
       setContextMenuOrderPick({ side: ticket.side, orderType: ticket.orderType, slPrice: ticket.price, quantity, fundsRatioPct, riskRatioPct, right: ticket.right })
     }
@@ -2455,6 +2455,8 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
               fundsRatios={fundsRatios}
               riskRatios={riskRatios}
               defaultSlPct={defaultSlPct}
+              sessionCapital={sim.sessionCapital}
+              sessionType={sim.sessionType}
               targetDeviationPct={targetDeviationPct}
               instrumentType={instrumentType}
               lotSize={sim.lotSize}
@@ -2563,7 +2565,7 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
       }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}><strong style={{ fontSize: 13 }}>Use as SL</strong><button aria-label="Close order ticket" onClick={() => setContextMenuEntryTicket(null)} style={{ border: 0, background: 'transparent', color: '#8b949e', cursor: 'pointer' }}>×</button></div>
         <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 10 }}>SL ₹{contextMenuEntryTicket.price.toFixed(2)}</div>
-        {!contextMenuEntryTicket.side ? <><div style={{ fontSize: 12, marginBottom: 7 }}>Choose direction</div><div style={{ display: 'flex', gap: 6 }}><button onClick={() => setContextMenuEntryTicket(ticket => ticket ? { ...ticket, side: 'BUY' } : ticket)}>Buy</button><button onClick={() => setContextMenuEntryTicket(ticket => ticket ? { ...ticket, side: 'SELL' } : ticket)}>Sell</button></div></> : !contextMenuEntryTicket.orderType ? <><div style={{ fontSize: 12, marginBottom: 7 }}>{contextMenuEntryTicket.side === 'BUY' ? 'Buy' : 'Sell'} entry type</div><div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>{([['MARKET', 'Market'], ['LIMIT', 'Limit'], ['AUTO_STOP', 'AutoStop'], ['TARGET', 'Target']] as const).map(([orderType, label]) => <button key={orderType} onClick={() => setContextMenuEntryTicket(ticket => ticket ? { ...ticket, orderType } : ticket)}>{label}</button>)}</div></> : <><div style={{ fontSize: 12, marginBottom: 7 }}>Choose saved size</div><div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>{sizingMode === 'quantity' ? [1, 2, 3, 5, 10].map(quantity => <button key={quantity} onClick={() => submitContextMenuEntry(contextMenuEntryTicket, quantity)}>{quantity}</button>) : (['l', 'm', 'h'] as const).map(key => { const value = sizingMode === 'riskRatio' ? riskRatios[key] : fundsRatios[key]; return <button key={key} onClick={() => submitContextMenuEntry(contextMenuEntryTicket, null, sizingMode === 'fundsRatio' ? value / 100 : undefined, sizingMode === 'riskRatio' ? value : undefined)}>{sizingMode === 'riskRatio' ? `Risk ${value}%` : `${key.toUpperCase()} · ${value}%`}</button> })}</div><button onClick={() => setContextMenuEntryTicket(ticket => ticket ? { ...ticket, orderType: undefined } : ticket)} style={{ marginTop: 9 }}>Back</button></>}
+        {!contextMenuEntryTicket.side ? <><div style={{ fontSize: 12, marginBottom: 7 }}>Choose direction</div><div style={{ display: 'flex', gap: 6 }}><button onClick={() => setContextMenuEntryTicket(ticket => ticket ? { ...ticket, side: 'BUY' } : ticket)}>Buy</button><button onClick={() => setContextMenuEntryTicket(ticket => ticket ? { ...ticket, side: 'SELL' } : ticket)}>Sell</button></div></> : !contextMenuEntryTicket.orderType ? <><div style={{ fontSize: 12, marginBottom: 7 }}>{contextMenuEntryTicket.side === 'BUY' ? 'Buy' : 'Sell'} entry type</div><div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>{([['MARKET', 'Market'], ['LIMIT', 'Limit'], ['AUTO_STOP', 'AutoStop'], ['TARGET', 'Target']] as const).map(([orderType, label]) => <button key={orderType} onClick={() => setContextMenuEntryTicket(ticket => ticket ? { ...ticket, orderType } : ticket)}>{label}</button>)}</div></> : <><div style={{ fontSize: 12, marginBottom: 7 }}>Choose saved size</div><div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>{sizingMode === 'quantity' ? [1, 2, 3, 5, 10].map(quantity => <button key={quantity} onClick={() => submitContextMenuEntry(contextMenuEntryTicket, quantity)}>{quantity}</button>) : (['l', 'm', 'h'] as const).map(key => { const value = sizingMode === 'riskRatio' ? riskRatios[key] : fundsRatios[key]; return <button key={key} onClick={() => submitContextMenuEntry(contextMenuEntryTicket, null, sizingMode === 'fundsRatio' ? value / 100 : undefined, sizingMode === 'riskRatio' ? value : undefined)}>{sizingMode === 'riskRatio' ? `Risk ${value}%` : `${key.toUpperCase()} · ${value}%`}</button> })}</div>{sizingMode === 'riskRatio' && ['paper', 'sim', 'stepwise'].includes(sim.sessionType) && <div style={{ fontSize: 10, color: '#f0883e', marginTop: 6 }}>Minimum one {instrumentType === 'options' ? 'lot' : 'share'} is placed if funded, even above selected Risk %.</div>}<button onClick={() => setContextMenuEntryTicket(ticket => ticket ? { ...ticket, orderType: undefined } : ticket)} style={{ marginTop: 9 }}>Back</button></>}
       </div>}
     </div>
   )

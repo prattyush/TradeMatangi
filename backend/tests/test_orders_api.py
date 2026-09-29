@@ -7,6 +7,9 @@ from unittest.mock import patch, MagicMock
 from httpx import AsyncClient, ASGITransport
 
 from app.main import app
+from app.routers import orders
+from app.config import LOT_SIZES
+from app.models.schemas import OrderType, PlaceOrderRequest, TradeSide
 from app.models.schemas import Position, SimulationState
 from app.services import order_service
 
@@ -122,6 +125,34 @@ class TestPlaceTargetOrderEndpoint:
 
 @pytest.mark.asyncio
 class TestPlaceLimitOrderEndpoint:
+    async def test_paper_risk_uses_minimum_option_lot_when_budget_is_smaller(self):
+        session = _make_session()
+        session.session_type = "paper"
+        session.instrument_type = "options"
+        session.session_capital = 23400
+        with patch("app.routers.orders.sim_svc.get_session", return_value=session), \
+             patch("app.routers.orders._wallet_balance_for_session", return_value=100000), \
+             patch("app.routers.orders.order_service.place_order") as place:
+            await orders.place_order(PlaceOrderRequest(
+                session_id=SESSION, side=TradeSide.BUY, order_type=OrderType.LIMIT,
+                limit_price=101, entry_sl_price=84.25, risk_pct=1, right="CE",
+            ))
+        assert place.call_args.kwargs["quantity"] == LOT_SIZES["NIFTY"]
+
+    async def test_paper_risk_uses_one_equity_share_when_budget_is_smaller(self):
+        session = _make_session()
+        session.session_type = "paper"
+        session.symbol = "TATPOW"
+        session.session_capital = 23400
+        with patch("app.routers.orders.sim_svc.get_session", return_value=session), \
+             patch("app.routers.orders._wallet_balance_for_session", return_value=100000), \
+             patch("app.routers.orders.order_service.place_order") as place:
+            await orders.place_order(PlaceOrderRequest(
+                session_id=SESSION, side=TradeSide.BUY, order_type=OrderType.LIMIT,
+                limit_price=100, entry_sl_price=50, risk_pct=.01,
+            ))
+        assert place.call_args.kwargs["quantity"] == 1
+
     async def test_place_buy_limit(self):
         with patch("app.routers.orders.sim_svc.get_session", return_value=_make_session()):
             async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:

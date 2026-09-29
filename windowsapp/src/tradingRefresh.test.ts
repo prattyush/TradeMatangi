@@ -36,6 +36,8 @@ describe('trading snapshot reconciliation', () => {
     expect(eventNeedsTradingRefresh({ type: 'bar_paused', event_id: 6 }, 5)).toBe(false)
     expect(eventNeedsTradingRefresh({ type: 'order_filled', event_id: 5 }, 5)).toBe(false)
     expect(eventNeedsTradingRefresh({ type: 'order_filled', event_id: 6 }, 5)).toBe(true)
+    expect(eventNeedsTradingRefresh({ type: 'order_filled', event_id: 6, trade: {}, position: {}, pnl: {} }, 5)).toBe(false)
+    expect(eventNeedsTradingRefresh({ type: 'order_placed', event_id: 7 }, 5)).toBe(false)
     expect(eventNeedsTradingRefresh({ type: 'stream_reset' }, 5)).toBe(true)
   })
 })

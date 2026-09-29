@@ -848,6 +848,7 @@ def _emit_tick_and_check_orders(
     session: SimulationSession,
     tick: dict,
     tick_right: Optional[str],
+    only_order_id: str | None = None,
 ) -> list[dict]:
     """Put one tick on the queue and return fill events for any triggered orders."""
     from app.services.order_service import check_orders
@@ -941,9 +942,13 @@ def _emit_tick_and_check_orders(
         tick_strike=tick_strike,
         tick_expiry=tick.get("expiry", session.expiry) if tick_right else None,
         settle_wallet=False,
+        only_order_id=only_order_id,
     )
     fill_events = []
     for order in filled:
+        fill_started = time.monotonic()
+        if getattr(session, "desktop_origin", None) == "desktop_paper" or order.source == "desktop_paper":
+            logger.info("desktop_paper_fill_triggered session_id=%s order_id=%s tick_time=%s", session.session_id, order.order_id, current_time)
         try:
             settle_wallet_for_trade(
                 session,
@@ -971,7 +976,7 @@ def _emit_tick_and_check_orders(
             else:
                 logger.exception("Wallet settlement deferred for %s", order.order_id)
             continue
-        record_trade(
+        trade = record_trade(
             trade_id=order.order_id,
             session_id=session.session_id,
             side=order.side,
@@ -988,7 +993,7 @@ def _emit_tick_and_check_orders(
             session_type=session.session_type,
             source=order.source,
         )
-        fill_events.append({
+        fill_event = {
             "type": "order_filled",
             "order_id": order.order_id,
             "side": order.side.value,
@@ -999,7 +1004,33 @@ def _emit_tick_and_check_orders(
             "right": order.right,
             "strike": order.strike,
             "expiry": order.expiry,
-        })
+        }
+        if getattr(session, "desktop_origin", None) == "desktop_paper" or order.source == "desktop_paper":
+            # The desktop can render a committed fill without a full trading snapshot.
+            from app.routers.desktop_trading import _day_pnl, _mark_open_trades, _position_for, _position_pnl
+            from app.services.trading import get_trades
+            contract_key = f"{order.symbol}:{order.expiry}:{order.strike}:{order.right}" if order.right else None
+            day_pnl = _day_pnl(session)
+            capital = float(session.session_capital or 0)
+            fill_event.update({
+                "committed_at_ms": int(time.time() * 1000),
+                "trade": trade.model_dump(mode="json"),
+                "contract_key": contract_key,
+                "position": _position_for(session, order.right, order.strike, order.expiry).model_dump(mode="json"),
+                "open_trade_ids": [item["trade_id"] for item in _mark_open_trades([item.model_dump(mode="json") for item in get_trades(session.session_id)]) if item["is_open"]],
+                "pnl": {
+                    "equity": _position_pnl(session, None),
+                    "ce": _position_pnl(session, "CE", session.strike_ce, session.expiry),
+                    "pe": _position_pnl(session, "PE", session.strike_pe, session.expiry),
+                    "contracts": {item["contract_key"]: _position_pnl(session, item["right"], item["strike"], item["expiry"]) for item in getattr(session, "desktop_contracts", [])},
+                    "day": day_pnl,
+                    "day_pct": round(day_pnl / capital * 100, 2) if capital > 0 else 0,
+                },
+            })
+            session.queue.put_nowait(json.dumps(fill_event))
+            logger.info("desktop_paper_fill_queued session_id=%s order_id=%s elapsed_ms=%.1f event_id=%s", session.session_id, order.order_id, (time.monotonic() - fill_started) * 1000, session.queue.latest_id())
+        else:
+            fill_events.append(fill_event)
 
     # Strategy evaluation — snapshot open orders before/after so strategy-placed
     # orders (e.g. AutoStop TARGET) are surfaced to the frontend via order_placed events,
@@ -1049,6 +1080,7 @@ def _emit_tick_and_check_orders(
                     "is_autostop": new_order.is_autostop,
                     "right": new_order.right,
                     "strike": new_order.strike,
+                    "expiry": new_order.expiry,
                     "entry_sl_price": new_order.entry_sl_price,
                     "group_id": new_order.group_id,
                 })

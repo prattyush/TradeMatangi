@@ -117,6 +117,7 @@ pub struct DesktopStreamSnapshot {
     last_event_id: u64,
     latest_payload: serde_json::Value,
     connection: String,
+    events_dropped: bool,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -1443,6 +1444,7 @@ struct NativeStreamState {
     last_event_id: u64,
     latest_payload: serde_json::Value,
     pending_payloads: Vec<serde_json::Value>,
+    events_dropped: bool,
     connection: String,
     abort: AbortHandle,
 }
@@ -1577,6 +1579,7 @@ impl HostState {
                 last_event_id: 0,
                 latest_payload: serde_json::Value::Null,
                 pending_payloads: Vec::new(),
+                events_dropped: false,
                 connection: "reconnecting".into(),
                 abort,
             },
@@ -1604,6 +1607,7 @@ impl HostState {
                 if stream.pending_payloads.len() > 1024 {
                     let remove = stream.pending_payloads.len() - 1024;
                     stream.pending_payloads.drain(..remove);
+                    stream.events_dropped = true;
                 }
             }
         }
@@ -1617,6 +1621,7 @@ impl HostState {
                 last_event_id: 0,
                 latest_payload: serde_json::Value::Null,
                 connection: "offline".into(),
+                events_dropped: false,
             });
         };
         let latest_payload = if stream.pending_payloads.len() > 1 {
@@ -1627,11 +1632,13 @@ impl HostState {
         } else {
             stream.latest_payload.clone()
         };
+        let events_dropped = std::mem::take(&mut stream.events_dropped);
         Ok(DesktopStreamSnapshot {
             key: key.into(),
             last_event_id: stream.last_event_id,
             latest_payload,
             connection: stream.connection.clone(),
+            events_dropped,
         })
     }
     fn stream_cursor(&self, key: &str) -> u64 {
@@ -2218,6 +2225,20 @@ mod screen_window_tests {
     use super::*;
     fn opening(host: &HostState, id: &str, token: &str) {
         host.0.lock().unwrap().screen_windows.insert(id.into(), ScreenWindowState { token: token.into(), ready: false });
+    }
+    #[test]
+    fn stream_reports_buffer_loss_once_for_snapshot_recovery() {
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let _guard = runtime.enter();
+        let host = HostState::default();
+        let task = tokio::spawn(std::future::pending::<()>());
+        host.start_stream("paper:one:session", task.abort_handle(), "main").unwrap();
+        for id in 1..=1025 {
+            host.record_stream("paper:one:session", id, serde_json::json!({"type": "tick", "event_id": id}));
+        }
+        assert!(host.stream_snapshot("paper:one:session", "main").unwrap().events_dropped);
+        assert!(!host.stream_snapshot("paper:one:session", "main").unwrap().events_dropped);
+        task.abort();
     }
     #[test]
     fn child_existence_does_not_transfer_stream_ownership() {

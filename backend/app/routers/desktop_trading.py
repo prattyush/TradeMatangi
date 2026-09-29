@@ -1279,7 +1279,22 @@ async def place_chart_order(session_id: str, intent: ChartOrderIntent, user_id: 
         req.expiry = contract["expiry"]
     from app.routers.orders import place_order as web_place_order
     logger.info("desktop_chart_order session_id=%s contract=%s intent=%s side=%s entry_price=%.2f quote_price=%.2f quote_source=%s quote_timestamp=%s", session_id, contract["contract_key"] if contract else session.symbol, intent.intent, intent.side.value, entry_price, quote_price, req.quote_source, req.quote_timestamp)
-    return await web_place_order(req)
+    order = await web_place_order(req)
+    if session.session_type == "paper" and intent.intent == "market":
+        # The placement quote is authoritative for this chart order. Restrict the
+        # immediate check to the new order so unrelated limits and stops still
+        # execute only on their own incoming ticks.
+        timestamp = int(quote["timestamp"])
+        tick = {
+            "type": "tick", "time": timestamp, "close": quote_price,
+            "open": quote_price, "high": quote_price, "low": quote_price,
+            "source": quote["source"], "right": contract["right"] if contract else None,
+            **(contract or {}),
+        }
+        for event in sim_svc._emit_tick_and_check_orders(session, tick, contract["right"] if contract else None, only_order_id=order.order_id):
+            session.queue.put_nowait(json.dumps(event))
+        logger.info("desktop_paper_market_checked session_id=%s order_id=%s status=%s quote_timestamp=%s", session_id, order.order_id, order.status.value, timestamp)
+    return order
 
 
 @router.patch("/{session_id}/orders/bulk-convert")
@@ -1470,13 +1485,14 @@ async def flatten(session_id: str, req: FlattenRequest, user_id: str = Depends(g
                 "is_stoploss": created.is_stoploss,
                 "right": created.right,
                 "strike": created.strike,
+                "expiry": created.expiry,
             })
     result["snapshot"] = _snapshot(session, user_id).model_dump(mode="json")
     return result
 
 
 @router.get("/{session_id}/wallet")
-async def wallet(session_id: str, user_id: str = Depends(get_desktop_user_id)):
+def wallet(session_id: str, user_id: str = Depends(get_desktop_user_id)):
     session = _require_session(session_id, user_id)
     return {"user_id": user_id, "date": session.date, "balance": wallet_service.get_ledger_balance(user_id, session.date, session.wallet_ledger_id)}
 
