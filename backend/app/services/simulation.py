@@ -23,6 +23,13 @@ from app.config import FIXED_USER_ID
 logger = logging.getLogger(__name__)
 
 
+def _json_decimal(value: object) -> int | float:
+    """Encode DynamoDB numbers in tick events without losing integer fields."""
+    if isinstance(value, Decimal):
+        return int(value) if value == value.to_integral_value() else float(value)
+    raise TypeError(f"Object of type {type(value).__name__} is not JSON serializable")
+
+
 # ── Ring-buffer async queue ───────────────────────────────────────────────────
 
 class RingQueue:
@@ -589,7 +596,10 @@ def rebuild_session_from_db(
         wallet_ledger_id=ledger_id,
         resumed_from_db=True,
     )
-    session.desktop_contracts = db_record.get("desktop_contracts", [])
+    session.desktop_contracts = [
+        {**contract, "strike": int(contract["strike"])} if isinstance(contract.get("strike"), Decimal) else contract
+        for contract in db_record.get("desktop_contracts", [])
+    ]
     session.desktop_contract_quotes = {
         key: {
             field: float(value) if isinstance(value, Decimal) else value
@@ -905,7 +915,7 @@ def _emit_tick_and_check_orders(
     if session.session_type != "real":
         _auto_close_positions_if_eod(session, tick, tick_right)
 
-    session.queue.put_nowait(json.dumps({**tick, "session_id": session.session_id}))
+    session.queue.put_nowait(json.dumps({**tick, "session_id": session.session_id}, default=_json_decimal))
     if not getattr(session, "_first_tick_forwarded_logged", False):
         session._first_tick_forwarded_logged = True
         logger.debug(
@@ -1027,7 +1037,7 @@ def _emit_tick_and_check_orders(
                     "day_pct": round(day_pnl / capital * 100, 2) if capital > 0 else 0,
                 },
             })
-            session.queue.put_nowait(json.dumps(fill_event))
+            session.queue.put_nowait(json.dumps(fill_event, default=_json_decimal))
             logger.info("desktop_paper_fill_queued session_id=%s order_id=%s elapsed_ms=%.1f event_id=%s", session.session_id, order.order_id, (time.monotonic() - fill_started) * 1000, session.queue.latest_id())
         else:
             fill_events.append(fill_event)
