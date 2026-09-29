@@ -281,6 +281,20 @@ def update_strategy_price(session_id: str, strategy_id: str, price: float) -> bo
     return False
 
 
+def update_target_profit(session_id: str, strategy_id: str, value: float, is_pct: bool) -> bool:
+    """Update and re-arm a running TargetProfit strategy."""
+    for strategy in _registry.get(session_id, []):
+        if (strategy.strategy_id == strategy_id
+                and strategy.strategy_type == "TargetProfit"
+                and strategy.status == StrategyStatus.RUNNING):
+            strategy.metadata["target_profit_value"] = value
+            strategy.metadata["target_profit_is_pct"] = is_pct
+            strategy.metadata["triggered"] = False
+            _write_strategy_to_db(strategy)
+            return True
+    return False
+
+
 def list_running(session_id: str) -> list[StrategyInstance]:
     return [s for s in _registry.get(session_id, []) if s.status == StrategyStatus.RUNNING]
 

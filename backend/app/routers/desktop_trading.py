@@ -34,6 +34,7 @@ from app.models.schemas import (
     TradeSide,
     UpdateOrderRequest,
     UpdateStrategyPriceRequest,
+    UpdateTargetProfitRequest,
     WalletResetRequest,
 )
 from app.routers import simulation as simulation_router
@@ -513,6 +514,11 @@ def _strategy_response(instance) -> StrategyResponse:
         status=instance.status.value,
         triggered=bool(instance.metadata.get("triggered", False)),
         price=price,
+        target_profit_value=(float(metadata["target_profit_value"])
+                             if instance.strategy_type == "TargetProfit" and metadata.get("target_profit_value") is not None
+                             else None),
+        target_profit_is_pct=(bool(metadata.get("target_profit_is_pct", False))
+                              if instance.strategy_type == "TargetProfit" else False),
         strike=instance.metadata.get("desktop_strike"),
         expiry=instance.metadata.get("desktop_expiry"),
         contract_key=instance.metadata.get("desktop_contract_key"),
@@ -1426,6 +1432,22 @@ async def update_strategy_price(session_id: str, strategy_id: str, req: UpdateSt
     req.session_id = session_id
     from app.routers.strategies import update_strategy_price as web_update_price
     return web_update_price(strategy_id, req, user_id=user_id)
+
+
+@router.patch("/{session_id}/strategies/{strategy_id}/target-profit")
+async def update_target_profit(session_id: str, strategy_id: str, req: UpdateTargetProfitRequest, user_id: str = Depends(get_desktop_user_id)):
+    _require_session(session_id, user_id)
+    req.session_id = session_id
+    found = strategy_service.update_target_profit(
+        session_id, strategy_id, req.target_profit_value, req.target_profit_is_pct
+    )
+    if not found:
+        raise HTTPException(status_code=404, detail="TargetProfit strategy not found or not running")
+    return {
+        "updated": strategy_id,
+        "target_profit_value": req.target_profit_value,
+        "target_profit_is_pct": req.target_profit_is_pct,
+    }
 
 
 @router.post("/{session_id}/flatten")
