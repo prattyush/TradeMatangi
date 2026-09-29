@@ -1,4 +1,4 @@
-import type { DesktopPosition, DesktopTradingSnapshot } from './contracts'
+import type { DesktopOrder, DesktopPosition, DesktopTrade, DesktopTradingSnapshot } from './contracts'
 
 export const isDesktopTradingSnapshot = (payload: unknown): payload is DesktopTradingSnapshot => {
   const value = payload as DesktopTradingSnapshot | null
@@ -48,6 +48,46 @@ export const applyPaperStreamEvent = (snapshot: DesktopTradingSnapshot, event: R
   if (isDesktopTradingSnapshot(event)) return acceptPaperSnapshot(snapshot, event)
   const eventId = Number(event.event_id)
   if (Number.isFinite(eventId) && eventId <= (snapshot.event_cursor ?? -1)) return snapshot
+  const cursor = Number.isFinite(eventId) ? eventId : snapshot.event_cursor
+  const orderId = typeof event.order_id === 'string' ? event.order_id : ''
+  if (event.type === 'order_placed' && orderId && event.status === 'PENDING') {
+    if (snapshot.open_orders.some(order => order.order_id === orderId) || snapshot.trades.some(trade => trade.trade_id === orderId)) return { ...snapshot, event_cursor: cursor }
+    return { ...snapshot, event_cursor: cursor, open_orders: [...snapshot.open_orders, event as unknown as DesktopOrder] }
+  }
+  if (event.type === 'order_cancelled' && orderId) {
+    return { ...snapshot, event_cursor: cursor, open_orders: snapshot.open_orders.filter(order => order.order_id !== orderId) }
+  }
+  if (event.type === 'order_converted' && orderId) {
+    return { ...snapshot, event_cursor: cursor, open_orders: snapshot.open_orders.map(order => order.order_id === orderId ? {
+      ...order,
+      order_type: String(event.new_order_type ?? order.order_type) as DesktopOrder['order_type'],
+      trigger_price: Number(event.trigger_price ?? order.trigger_price),
+      limit_price: Number(event.limit_price ?? order.limit_price),
+      is_stoploss: Boolean(event.is_stoploss ?? order.is_stoploss),
+    } : order) }
+  }
+  if (event.type === 'strategy_completed' && typeof event.strategy_id === 'string') {
+    return { ...snapshot, event_cursor: cursor, strategies: snapshot.strategies.filter(item => item.strategy_id !== event.strategy_id) }
+  }
+  if (event.type === 'order_filled' && orderId && event.trade && event.position && event.pnl) {
+    const trade = event.trade as DesktopTrade
+    const position = event.position as DesktopPosition
+    const right = event.right === 'CE' || event.right === 'PE' ? event.right : null
+    const contractKey = typeof event.contract_key === 'string' ? event.contract_key : ''
+    const primaryContract = !right || (Number(event.strike) === (right === 'CE' ? snapshot.session.strike_ce : snapshot.session.strike_pe) && String(event.expiry ?? '') === snapshot.session.expiry)
+    const openTradeIds = Array.isArray(event.open_trade_ids) ? new Set(event.open_trade_ids.map(String)) : null
+    const trades = snapshot.trades.some(item => item.trade_id === trade.trade_id) ? snapshot.trades : [...snapshot.trades, trade]
+    return {
+      ...snapshot,
+      event_cursor: cursor,
+      current_time: Math.max(snapshot.current_time, Number(event.filled_at) || 0),
+      open_orders: snapshot.open_orders.filter(order => order.order_id !== orderId),
+      trades: openTradeIds ? trades.map(item => item.session_id === snapshot.session.session_id ? { ...item, is_open: openTradeIds.has(item.trade_id) } : item) : trades,
+      positions: primaryContract ? { ...snapshot.positions, [right ?? 'equity']: position } : snapshot.positions,
+      positions_by_contract: contractKey ? { ...snapshot.positions_by_contract, [contractKey]: position } : snapshot.positions_by_contract,
+      pnl: event.pnl as DesktopTradingSnapshot['pnl'],
+    }
+  }
   if (event.type === 'bar_paused') {
     const barIndex = Number(event.bar_index)
     return Number.isFinite(barIndex) ? { ...snapshot, current_bar_index: barIndex, event_cursor: Number.isFinite(eventId) ? eventId : snapshot.event_cursor } : snapshot

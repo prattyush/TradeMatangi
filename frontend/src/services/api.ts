@@ -1021,7 +1021,10 @@ const api = {
       const data = await res.json().catch(() => ({}))
       throw new Error(data.detail || `Place order failed: ${res.status}`)
     }
-    if (!res.ok) throw new Error(`Place order failed: ${res.status}`)
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}))
+      throw new Error(typeof data.detail === 'string' ? data.detail : `Place order failed: ${res.status}`)
+    }
     return res.json()
   },
 

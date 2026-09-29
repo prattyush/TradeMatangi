@@ -9,6 +9,7 @@ from app.models.schemas import ConvertOrderRequest, OrderStatus, OrderType, Plac
 from app.routers import desktop_trading
 from app.services.simulation import _upsert_session_to_db as persist_session
 from app.services import desktop_live_service, order_service, simulation as sim_svc, strategy_service, trading as trading_service, wallet_service
+from app.services.wallet_service import InsufficientFundsError
 
 
 def test_paper_start_rejects_historical_date():
@@ -266,7 +267,7 @@ def test_attached_option_strategy_tracks_only_its_contract(no_db):
         _clear()
 
 
-def test_paper_autostop_rejects_overbudget_lot_with_reason(no_db):
+def test_paper_autostop_places_minimum_lot_over_risk_budget(no_db):
     _clear()
     session = _session()
     session.session_type = "paper"
@@ -280,8 +281,7 @@ def test_paper_autostop_rejects_overbudget_lot_with_reason(no_db):
         strategy_service._on_bar_close_autostop(strategy, session,
             {"open": 100, "high": 100, "low": 90, "close": 95}, "CE", 1778058900)
     assert strategy.status == strategy_service.StrategyStatus.COMPLETED
-    assert "one whole lot" in strategy.metadata["rejection_reason"]
-    assert "one whole lot" in json.loads(session.queue.get_nowait())["reason"]
+    assert order_service.get_open_orders(session.session_id)[0].quantity == 65
     _clear()
 
 
@@ -541,7 +541,7 @@ def test_desktop_wallet_reset_is_blocked_for_active_session(no_db):
 
     with pytest.raises(HTTPException) as exc:
         asyncio.run(desktop_trading.reset_wallet(session.session_id, WalletResetRequest(amount=123456), user_id="desktop-user"))
-    current = asyncio.run(desktop_trading.wallet(session.session_id, user_id="desktop-user"))
+    current = desktop_trading.wallet(session.session_id, user_id="desktop-user")
 
     assert exc.value.status_code == 409
     assert current["balance"] == 150000
@@ -974,6 +974,12 @@ def test_paper_market_uses_exact_live_option_tile_not_underlying_quote(right, pr
         assert order.limit_price == round(premium * 1.01, 2)
         assert order.quote_source == "desktop_live_chart"
         assert order.quantity == 65
+        assert order.status == OrderStatus.FILLED
+        fill_events = [json.loads(payload) for _, payload in session.queue._dq if json.loads(payload).get("type") == "order_filled"]
+        assert fill_events[-1]["trade"]["trade_id"] == order.order_id
+        assert fill_events[-1]["position"]["quantity"] == order.quantity
+        assert fill_events[-1]["open_trade_ids"] == [order.order_id]
+        assert fill_events[-1]["pnl"]["day"] == desktop_trading._day_pnl(session)
         assert desktop_trading._last_price_for_right(session, right, 22950, session.expiry) == premium
         with patch("app.routers.desktop_trading._historical_context_trades", return_value=[]):
             assert desktop_trading._snapshot(session, session.user_id).contract_quotes[contract["contract_key"]]["price"] == premium
@@ -987,20 +993,83 @@ def test_paper_market_uses_exact_live_option_tile_not_underlying_quote(right, pr
                 desktop_trading.ChartOrderIntent(symbol="NIFTY", expiry=session.expiry, strike=22950, right=right,
                     side=TradeSide.BUY, intent="market", quantity=65,
                     live_stream_id=stream.stream_id, live_tile_id=other_tile), user_id=session.user_id))
-        with patch("app.routers.orders.get_ledger_balance", return_value=150000):
-            with pytest.raises(HTTPException, match="one whole lot"):
-                asyncio.run(desktop_trading.place_chart_order(session.session_id,
-                    desktop_trading.ChartOrderIntent(symbol="NIFTY", expiry=session.expiry, strike=22950, right=right,
-                        side=TradeSide.BUY, intent="market", risk_pct=1.2, entry_sl_price=10,
-                        live_stream_id=stream.stream_id, live_tile_id=right.lower()), user_id=session.user_id))
+        with patch("app.routers.orders.get_ledger_balance", return_value=150000), patch("app.services.paper_wallet.move"):
+            minimum = asyncio.run(desktop_trading.place_chart_order(session.session_id,
+                desktop_trading.ChartOrderIntent(symbol="NIFTY", expiry=session.expiry, strike=22950, right=right,
+                    side=TradeSide.BUY, intent="market", risk_pct=1.2, entry_sl_price=10,
+                    live_stream_id=stream.stream_id, live_tile_id=right.lower()), user_id=session.user_id))
+        assert minimum.quantity == 65
     finally:
         desktop_live_service.stop(session.user_id, stream.stream_id)
         _clear()
 
 
-def test_paper_option_risk_rejects_lot_over_budget():
-    with pytest.raises(ValueError, match="one whole lot"):
-        order_service.compute_risk_ratio_quantity("NIFTY", 100, 70, 100000, .012, 100000, lot_size=65, strict_lot_risk=True)
+def test_paper_option_risk_uses_one_lot_over_budget_when_funded():
+    assert order_service.compute_risk_ratio_quantity("NIFTY", 100, 70, 100000, .012, 100000, lot_size=65) == 65
+    with pytest.raises(InsufficientFundsError):
+        order_service.compute_risk_ratio_quantity("NIFTY", 100, 70, 100000, .012, 6000, lot_size=65)
+
+
+@pytest.mark.parametrize("order_type,price,trigger", [
+    (OrderType.STOPLOSS, 85, 90),
+    (OrderType.LIMIT, 115, 110),
+])
+def test_desktop_paper_exit_tick_emits_committed_fill_state(order_type, price, trigger):
+    _clear()
+    session = _session()
+    session.session_type = "paper"
+    trading_service.record_trade(session.session_id, TradeSide.BUY, 100, int(session.current_time),
+        quantity=65, symbol=session.symbol, right="CE", strike=session.strike_ce,
+        expiry=session.expiry, instrument_type="options", user_id=session.user_id)
+    order = order_service.place_order(session.session_id, session.symbol, TradeSide.SELL,
+        order_type, 65, int(session.current_time), session.date,
+        trigger_price=trigger if order_type == OrderType.STOPLOSS else None,
+        limit_price=trigger if order_type == OrderType.LIMIT else None,
+        right="CE", strike=session.strike_ce, expiry=session.expiry,
+        user_id=session.user_id, source="desktop_paper", wallet_ledger_id=session.wallet_ledger_id)
+    try:
+        sim_svc._emit_tick_and_check_orders(session,
+            {"type": "tick", "time": int(session.current_time) + 1, "open": price, "high": price,
+             "low": price, "close": price, "right": "CE", **session.desktop_contracts[0]}, "CE")
+        assert order.status == OrderStatus.FILLED
+        fills = [json.loads(payload) for _, payload in session.queue._dq if json.loads(payload).get("type") == "order_filled"]
+        assert len(fills) == 1
+        assert fills[0]["order_id"] == order.order_id
+        assert fills[0]["trade"]["price"] == price
+        assert fills[0]["position"]["side"] == "FLAT"
+        assert fills[0]["pnl"]["day"] == desktop_trading._day_pnl(session)
+    finally:
+        _clear()
+
+
+def test_desktop_paper_equity_risk_uses_one_share_over_budget(no_db):
+    session = _equity_session(mode="paper")
+    session.session_type = "paper"
+    session.session_capital = 23400
+    try:
+        order = asyncio.run(desktop_trading.place_chart_order(session.session_id,
+            desktop_trading.ChartOrderIntent(symbol=session.symbol, side=TradeSide.BUY,
+                intent="market", risk_pct=.01, entry_sl_price=50),
+            user_id=session.user_id))
+        assert order.quantity == 1
+    finally:
+        _clear(session.session_id)
+
+
+def test_paper_market_immediate_check_does_not_fill_other_pending_limits(no_db):
+    session = _equity_session(mode="paper")
+    session.session_type = "paper"
+    older = order_service.place_order(session.session_id, session.symbol, TradeSide.BUY,
+        OrderType.LIMIT, 1, int(session.current_time), session.date, limit_price=101,
+        user_id=session.user_id, wallet_ledger_id=session.wallet_ledger_id)
+    try:
+        market = asyncio.run(desktop_trading.place_chart_order(session.session_id,
+            desktop_trading.ChartOrderIntent(symbol=session.symbol, side=TradeSide.BUY,
+                intent="market", quantity=1, entry_sl_price=90), user_id=session.user_id))
+        assert market.status == OrderStatus.FILLED
+        assert older.status == OrderStatus.PENDING
+    finally:
+        _clear(session.session_id)
 
 
 @pytest.mark.parametrize("mode", ["paper", "replay", "stepwise"])

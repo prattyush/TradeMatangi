@@ -591,9 +591,8 @@ export function useSimulation() {
     } catch (err) {
       if (err instanceof InsufficientFundsError) {
         setState(s => ({ ...s, orderError: err.message }))
-      } else {
-        throw err
       }
+      throw err
     }
   }, [state.sessionId])
 

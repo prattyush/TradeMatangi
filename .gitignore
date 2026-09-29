@@ -39,3 +39,7 @@ backend.log
 
 # Database
 *.db
+
+# Other Files
+*.exe
+*.zip

@@ -43,7 +43,7 @@ const replaySnapshotFromStream = (value: unknown): ReplaySnapshot | null => {
 }
 interface ChartSettings { background: string; textColor: string; gridColor: string; gridOpacity: number; gridStyle: 'solid' | 'dashed'; gridSize: number; movingAverageType: 'MA' | 'EMA'; movingAveragePeriods: string; showChartInfo: boolean; liveProvider: 'breeze'; horizontalLineColor: string; horizontalLineWidth: number; trendLineColor: string; trendLineWidth: number; drawingLineColor: string; drawingLineWidth: number; drawingFillColor: string; drawingFillOpacity: number }
 interface TileSwap { dir: string; label: string; onClick: () => void }
-interface DesktopStreamSnapshot<T> { key: string; last_event_id: number; latest_payload: T | null; connection: 'connected' | 'reconnecting' | 'offline' | 'authentication_required' }
+interface DesktopStreamSnapshot<T> { key: string; last_event_id: number; latest_payload: T | null; connection: 'connected' | 'reconnecting' | 'offline' | 'authentication_required'; events_dropped?: boolean }
 interface DesktopRoundTrip { index: number; right: string | null; strike?: number | null; expiry?: string | null; entry_trades: Array<Record<string, unknown>>; exit_trades: Array<Record<string, unknown>>; pnl: number }
 interface DesktopTradeLabel { round_trip_index: number; expected_category: string; expected_strategy: string; actual_category: string; actual_strategy: string; entry_tag: string; exit_tag: string }
 interface DesktopTradeLabelState { completed: DesktopRoundTrip[]; open: DesktopRoundTrip[]; labels: DesktopTradeLabel[] }
@@ -1457,17 +1457,24 @@ function ScreenController(props: ScreenControllerProps) {
             if (cancelled) return
             const previousCursor = tradingStreamEventRef.current[key] ?? -1
             const advanced = Boolean(stream && stream.last_event_id > previousCursor)
-            let needsSnapshot = Boolean(tradingSnapshotRequiredRef.current[key])
-            const now = Date.now()
-            if (tradingRefreshRef.current.due(refreshKey, now)) needsSnapshot = true
+            let needsSnapshot = Boolean(tradingSnapshotRequiredRef.current[key]) || Boolean(stream?.events_dropped)
+            if (mode !== 'Paper' && tradingRefreshRef.current.due(refreshKey)) needsSnapshot = true
             if (advanced) {
               const events = paperStreamEvents(stream!.latest_payload)
+              let expectedCursor = previousCursor
               if (mode === 'Paper' && events.some(event => event.type === 'session_ended')) {
                 needsSnapshot = true
               }
               for (const event of events) {
+                if (isDesktopTradingSnapshot(event)) expectedCursor = Math.max(expectedCursor, event.event_cursor ?? 0)
+                else if (Number.isFinite(Number(event.event_id))) {
+                  const eventId = Number(event.event_id)
+                  if (expectedCursor >= 0 && eventId > expectedCursor + 1) needsSnapshot = true
+                  expectedCursor = Math.max(expectedCursor, eventId)
+                }
                 if (event.type === 'guardrail_activated' && Number(event.event_id) > previousCursor) setGuardrailPopup({ type: String(event.guardrail_type), reason: String(event.reason) })
                 if (event.type === 'strategy_rejected' && Number(event.event_id) > previousCursor) setStrategyError(`AutoStop rejected: ${String(event.reason)}`)
+                if (event.type === 'order_filled') recordRendererDiagnostic('paper_fill_received', { session_id: sessionId, order_id: event.order_id, event_id: event.event_id, committed_at_ms: event.committed_at_ms, received_at_ms: Date.now() })
                 if (isDesktopTradingSnapshot(event)) tradingRefreshRef.current.mark(refreshKey)
                 else if (eventNeedsTradingRefresh(event, tradingStateRef.current?.event_cursor ?? -1)) needsSnapshot = true
               }
@@ -1502,6 +1509,59 @@ function ScreenController(props: ScreenControllerProps) {
           .finally(() => { inFlight = false })
       }, PAPER_STREAM_POLL_MS)
       return () => { cancelled = true; window.clearInterval(timer) }
+    }
+    if (mode === 'Paper' && trading.session.state !== 'ended') {
+      const abort = new AbortController()
+      let cancelled = false
+      let cursor = tradingStateRef.current?.event_cursor ?? 0
+      const connect = async () => {
+        let backoff = 1_000
+        while (!cancelled) {
+          try {
+            const response = await fetch(`${serverUrl.replace(/\/$/, '')}/api/desktop/v1/trading/${sessionId}/events?last_event_id=${cursor}`, {
+              headers: { Authorization: `Bearer ${browserToken}`, Accept: 'text/event-stream' }, signal: abort.signal,
+            })
+            if (!response.ok || !response.body) throw new Error(`Paper stream failed (${response.status})`)
+            backoff = 1_000
+            const reader = response.body.getReader()
+            const decoder = new TextDecoder()
+            let buffer = ''
+            while (!cancelled) {
+              const { done, value } = await reader.read()
+              if (done) break
+              buffer = (buffer + decoder.decode(value, { stream: true })).replace(/\r\n/g, '\n')
+              let end = buffer.indexOf('\n\n')
+              while (end >= 0) {
+                const frame = buffer.slice(0, end)
+                buffer = buffer.slice(end + 2)
+                const data = frame.split('\n').filter(line => line.startsWith('data:')).map(line => line.slice(5).trimStart()).join('\n')
+                const idText = frame.split('\n').find(line => line.startsWith('id:'))?.slice(3).trim()
+                if (data) {
+                  const event = JSON.parse(data) as Record<string, unknown>
+                  const nextId = idText ? Number(idText) : Number(event.event_id)
+                  const gap = Number.isFinite(nextId) && cursor > 0 && nextId > cursor + 1 && !isDesktopTradingSnapshot(event)
+                  if (Number.isFinite(nextId)) cursor = Math.max(cursor, nextId)
+                  if (gap || (!isDesktopTradingSnapshot(event) && eventNeedsTradingRefresh(event, tradingStateRef.current?.event_cursor ?? -1))) {
+                    const snapshot = await desktopTradingRequest<DesktopTradingSnapshot>(`${sessionId}/snapshot`, 'GET')
+                    cursor = Math.max(cursor, snapshot.event_cursor ?? 0)
+                    if (!cancelled) setTrading(current => current?.session.session_id === sessionId ? acceptPaperSnapshot(current, snapshot) : current)
+                  }
+                  if (!cancelled) setTrading(current => current?.session.session_id === sessionId ? applyPaperStreamEvent(current, event) : current)
+                  if (event.type === 'session_ended' && !cancelled) setTradingNotice('Paper engine stopped. Saved positions and history remain available.')
+                }
+                end = buffer.indexOf('\n\n')
+              }
+            }
+          } catch (error) {
+            if (cancelled) return
+            reportTradingError(error)
+          }
+          if (!cancelled) await new Promise(resolve => window.setTimeout(resolve, backoff))
+          backoff = Math.min(backoff * 2, 30_000)
+        }
+      }
+      void connect()
+      return () => { cancelled = true; abort.abort() }
     }
     let cancelled = false
     let inFlight = false
@@ -1624,8 +1684,10 @@ function ScreenController(props: ScreenControllerProps) {
     }
     if (intent !== 'market') body.price = entryPrice
     await desktopTradingRequest<DesktopOrder>(`${trading.session.session_id}/chart-orders`, 'POST', body)
-    const snapshot = await desktopTradingRequest<DesktopTradingSnapshot>(`${trading.session.session_id}/snapshot`, 'GET')
-    setTrading(snapshot)
+    if (mode !== 'Paper') {
+      const snapshot = await desktopTradingRequest<DesktopTradingSnapshot>(`${trading.session.session_id}/snapshot`, 'GET')
+      setTrading(snapshot)
+    }
     clearTradingError()
     setTradeTicket(null)
     setPricePickAction(null)
@@ -1907,7 +1969,7 @@ function ScreenController(props: ScreenControllerProps) {
         {tradeTicket?.settings?.desktop_order_size_mode === 'quantity' && <label>{tradeTicket.tile.kind === 'option' ? 'Lots' : 'Shares'}<input aria-label="Entry quantity" type="number" min="1" step="1" defaultValue="1" onChange={event => setTradeTicket({ ...tradeTicket, sizeKey: event.target.value })} /><button onClick={() => chooseTicketSize(tradeTicket.sizeKey ?? '1')}>Use quantity</button></label>}
         <div className="ticket-buttons">{ticketSizeOptions().map(key => <button key={key} className={tradeTicket.sizeKey === key ? 'active' : ''} onClick={() => chooseTicketSize(key)}>{tradeTicket.settings.desktop_order_size_mode === 'quantity' ? ticketSizeLabel(key) : <span className="ticket-size-label">{ticketSizeLabel(key).split(' ').map((part, index) => <span key={index}>{part}</span>)}</span>}</button>)}</div>
       </div>}
-      {tradeTicket.settings && <div className="ticket-hint">{tradeTicket?.settings?.desktop_order_size_mode === 'risk_ratio' ? 'Risk % is modeled stop-loss loss against session capital.' : tradeTicket?.settings?.desktop_order_size_mode === 'funds_ratio' ? tradeTicket.tile.kind === 'spot' ? 'Capital % sizes equity at 5× exposure: 12% supports 60% of session capital.' : 'Capital % sizes option premium against session capital.' : tradeTicket.tile.kind === 'option' ? 'Quantity is in complete option lots.' : 'Quantity is in whole shares.'}</div>}
+      {tradeTicket.settings && <div className="ticket-hint">{tradeTicket?.settings?.desktop_order_size_mode === 'risk_ratio' ? `Risk % models stop-loss loss against session capital. At least one ${tradeTicket.tile.kind === 'option' ? 'lot' : 'share'} is placed if funded, even above that risk %. ` : tradeTicket?.settings?.desktop_order_size_mode === 'funds_ratio' ? tradeTicket.tile.kind === 'spot' ? 'Capital % sizes equity at 5× exposure: 12% supports 60% of session capital.' : 'Capital % sizes option premium against session capital.' : tradeTicket.tile.kind === 'option' ? 'Quantity is in complete option lots.' : 'Quantity is in whole shares.'}</div>}
       <div className="ticket-hint">{tradeTicket.orderType === 'MARKET' ? `Uses chart quote ${paneCurrentPrice(tradeTicket.tile).toFixed(2)}; proxy set by server` : tradeTicket.orderType === 'AUTO_STOP' ? 'Uses selected SL and saved sizing' : tradeTicket.orderType ? 'Pick price' : 'Type + size'}</div>
     </div>}
     {underlyingStrategyTicket && <div className="trade-ticket" style={placeNearPoint(underlyingStrategyTicket.anchor.x, underlyingStrategyTicket.anchor.y, 260, 150)}>
