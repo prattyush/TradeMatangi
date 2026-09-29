@@ -487,8 +487,12 @@ async def _start_simulation(
                 existing_session_id, user_id, req.symbol, req.date, req.instrument_type,
                 req.strike, req.strike_ce, req.strike_pe,
             )
-            req_ce = req.strike_ce if req.strike_ce is not None else req.strike
-            req_pe = req.strike_pe if req.strike_pe is not None else req.strike
+            # A website paper restart must keep the contracts selected in the
+            # previous session. SessionControls may send freshly computed ATM
+            # strikes even though the user did not request a contract change.
+            website_paper = is_paper and existing_record.get("desktop_origin") != "desktop_paper"
+            req_ce = None if website_paper else (req.strike_ce if req.strike_ce is not None else req.strike)
+            req_pe = None if website_paper else (req.strike_pe if req.strike_pe is not None else req.strike)
             session = sim_svc.rebuild_session_from_db(
                 existing_record,
                 user_id=user_id,
@@ -644,30 +648,70 @@ async def update_pane_strike(session_id: str, req: UpdatePaneStrikeRequest):
             session.symbol, session.date, req.strike, session.expiry, req.right.upper()
         ))
 
-    if req.right.upper() == "CE":
+    right = req.right.upper()
+    old_strike = session.strike_ce if right == "CE" else session.strike_pe
+    old_price = session.last_price_ce if right == "CE" else session.last_price_pe
+    if right == "CE":
         session.strike_ce = req.strike
     else:
         session.strike_pe = req.strike
 
-    # For paper/real sessions: re-subscribe KiteBroadcaster to the new strike's token
-    if session.session_type in ("paper", "real"):
+    website_paper = session.session_type == "paper" and getattr(session, "desktop_origin", None) != "desktop_paper"
+    if website_paper:
+        try:
+            if not session.paper_base_contracts:
+                # Phase 1 has not registered a live source yet. Phase 2 will
+                # subscribe using the updated strikes.
+                pass
+            elif session.fyers_streaming:
+                from app.services.fyers_service import get_fyers_broadcaster, resolve_fyers_symbols
+                broadcaster = get_fyers_broadcaster()
+                broadcaster.unregister(session_id)
+                symbols, rights = resolve_fyers_symbols(session)
+                broadcaster.register(session_id, symbols, rights, session.paper_tick_queue, loop)
+            elif session.breeze_streaming and session.stream_manager is not None:
+                from app.services.breeze_service import BreezeStreamManager
+                new_manager = BreezeStreamManager()
+                new_manager.start(session.paper_tick_queue, loop, sim_svc._build_breeze_instruments(session), session_id=session_id)
+                session.stream_manager.stop()
+                session.stream_manager = new_manager
+            elif session.kotak_streaming:
+                from app.services.kotak_service import fetch_kotak_options_instrument_token, get_kotak_broadcaster
+                token, exchange = await loop.run_in_executor(None, lambda: fetch_kotak_options_instrument_token(session.symbol, session.expiry, req.strike, right))
+                get_kotak_broadcaster().update_session_right(session_id, right, token, exchange, session.paper_tick_queue, loop)
+            else:
+                from app.services import kite_service
+                new_token = await loop.run_in_executor(None, lambda: kite_service.fetch_options_instrument_token(session.symbol, session.expiry, req.strike, right))
+                kite_service.get_broadcaster().update_session_right(session_id, right, new_token, session.paper_tick_queue, loop)
+        except Exception as exc:
+            if right == "CE":
+                session.strike_ce = old_strike
+                session.last_price_ce = old_price
+            else:
+                session.strike_pe = old_strike
+                session.last_price_pe = old_price
+            if session.fyers_streaming:
+                try:
+                    symbols, rights = resolve_fyers_symbols(session)
+                    broadcaster.register(session_id, symbols, rights, session.paper_tick_queue, loop)
+                except Exception:
+                    logger.exception("Unable to restore previous Fyers subscription for %s", session_id)
+            logger.exception("update_pane_strike: website paper re-subscribe failed for %s %s", session_id, right)
+            raise HTTPException(status_code=502, detail="Unable to stream the selected option contract") from exc
+        if right == "CE":
+            session.last_price_ce = 0
+        else:
+            session.last_price_pe = 0
+        session.paper_base_contracts[right] = {"strike": req.strike, "expiry": session.expiry}
+        sim_svc._upsert_session_to_db(session)
+    elif session.session_type in ("paper", "real"):
+        # Keep non-website subscription behavior unchanged.
         try:
             from app.services import kite_service
-            new_token = await loop.run_in_executor(
-                None,
-                lambda: kite_service.fetch_options_instrument_token(
-                    session.symbol, session.expiry, req.strike, req.right.upper()
-                ),
-            )
-            kite_service.get_broadcaster().update_session_right(
-                session.session_id, req.right.upper(), new_token,
-                session.paper_tick_queue, loop,
-            )
+            new_token = await loop.run_in_executor(None, lambda: kite_service.fetch_options_instrument_token(session.symbol, session.expiry, req.strike, right))
+            kite_service.get_broadcaster().update_session_right(session_id, right, new_token, session.paper_tick_queue, loop)
         except Exception as exc:
-            logger.warning(
-                "update_pane_strike: Kite re-subscribe failed for session %s right=%s: %s",
-                session_id, req.right.upper(), exc,
-            )
+            logger.warning("update_pane_strike: Kite re-subscribe failed for session %s right=%s: %s", session_id, right, exc)
 
     return {"session_id": session_id, "right": req.right.upper(), "strike": req.strike}
 

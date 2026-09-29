@@ -13,7 +13,7 @@ import SessionSwitcher from './components/SessionSwitcher'
 import GuardRailPopup from './components/GuardRailPopup'
 import PatternAlertToast, { PatternAlert } from './components/PatternAlertToast'
 import SettingsModal, { loadFundsRatios, loadTargetDeviationPct, loadBrokeragePerOrder, loadStrategyIntervalSecs, loadAutostopTriggerType, loadAutostopDeviationPct, loadHistoricalDays, loadPnlPctMode, loadBreakevenMode, loadTargetProfitBufferTicks, loadAggrSlOnlyInProfit, loadAutoStartEventSnapshots, loadStepwiseLabelingPopupEnabled, loadLabelingModeByType, loadTradingRocRatioMode, FundsRatios, SizingMode, RiskRatios, loadSizingMode, loadRiskRatios, loadDefaultSlPct } from './components/SettingsModal'
-import { StrategyResponse, StartStrategyRequest, Order } from './services/api'
+import { StrategyResponse, StartStrategyRequest, Order, OpenOptionContract } from './services/api'
 import LoginScreen from './components/LoginScreen'
 import TradeAnalysis from './components/TradeAnalysis'
 import StepwiseLabelPopup from './components/StepwiseLabelPopup'
@@ -24,6 +24,7 @@ import { useRecording } from './hooks/useRecording'
 import { useSnapshot } from './hooks/useSnapshot'
 import api, { OHLCCandle } from './services/api'
 import { IndicatorCandle, RocRatioMode } from './indicators/optionsRoc'
+import { selectPaperResumePanes } from './paperResume'
 
 const FIXED_USER = { userId: 'abc12300-0000-0000-0000-000000000001', username: 'abc123' }
 
@@ -80,7 +81,7 @@ interface DraftWorkspace {
 
 type ContextMenuEntryOrderType = 'MARKET' | 'AUTO_STOP' | 'TARGET' | 'LIMIT'
 interface ContextMenuEntryTicket {
-  x: number; y: number; price: number; right?: 'CE' | 'PE'
+  x: number; y: number; price: number; right?: 'CE' | 'PE'; strike?: number; expiry?: string
   side: 'BUY' | 'SELL' | null
   orderType?: ContextMenuEntryOrderType
 }
@@ -220,6 +221,7 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
     }
   })
   const workspaceRestoredRef = useRef(false)
+  const workspaceReadySessionRef = useRef<string | null>(null)
   const { recordingState, recordingError, startRecording, pauseRecording, resumeRecording, stopRecording } = useRecording()
   const simRef = useRef(sim)
   // Keep simRef in sync with latest sim state for useSnapshot
@@ -322,7 +324,7 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
   }, [])
   const [contextMenuOrderPick, setContextMenuOrderPick] = useState<{
     side: 'BUY' | 'SELL'; orderType: 'TARGET' | 'LIMIT'; slPrice: number;
-    quantity: number | null; fundsRatioPct?: number; riskRatioPct?: number; right?: string;
+    quantity: number | null; fundsRatioPct?: number; riskRatioPct?: number; right?: string; strike?: number; expiry?: string;
   } | null>(null)
   const [contextMenuEntryTicket, setContextMenuEntryTicket] = useState<ContextMenuEntryTicket | null>(null)
   const contextMenuEntryTicketRef = useRef<HTMLDivElement>(null)
@@ -449,6 +451,7 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
 
   // ── Pane state ──────────────────────────────────────────────────────────────
   const [panes, setPanes] = useState<PaneConfig[]>(DEFAULT_EQUITY_PANES)
+  const [openOptionContracts, setOpenOptionContracts] = useState<OpenOptionContract[]>([])
   const [layoutPreset, setLayoutPreset] = useState<LayoutPreset>(2)
   const [activePaneId, setActivePaneId] = useState<number | null>(1)
   useEffect(() => { setMissingSlPick(null) }, [sim.sessionId, activePaneId, panes])
@@ -487,11 +490,12 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
         const saved = raw ? JSON.parse(raw) as WorkspaceSnapshot : {}
 
         let attached = false
-        const group = await sim.restoreActiveGroup().catch(() => null)
-        if (group) {
+        let attachedSession = await sim.restoreActiveGroup().catch(() => null)
+        if (attachedSession) {
           attached = true
         } else if (saved.sessionId) {
-          attached = !!(await sim.attachToActiveSession(saved.sessionId).catch(() => null))
+          attachedSession = await sim.attachToActiveSession(saved.sessionId).catch(() => null)
+          attached = !!attachedSession
         }
 
         if (!attached) {
@@ -506,12 +510,15 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
         if (typeof saved.sessionControlsVisible === 'boolean') {
           setSessionControlsVisible(saved.sessionControlsVisible)
         }
-        if (isLayoutPreset(saved.layoutPreset)) setLayoutPreset(saved.layoutPreset)
-        if (typeof saved.activePaneId === 'number' || saved.activePaneId === null) setActivePaneId(saved.activePaneId)
-        if (typeof saved.maximizedPaneId === 'number' || saved.maximizedPaneId === null) setMaximizedPaneId(saved.maximizedPaneId)
-        if (saved.instrumentType === 'equity' || saved.instrumentType === 'options') setInstrumentType(saved.instrumentType)
-        if (saved.optionsReady !== undefined) setOptionsReady(saved.optionsReady)
-        if (Array.isArray(saved.panes) && saved.panes.length > 0) {
+        // Paper option panes are restored per session below, after the actual
+        // attached session and its open contracts are known.
+        const paperOptions = attachedSession?.session_type === 'paper' && attachedSession.instrument_type === 'options'
+        if (!paperOptions && isLayoutPreset(saved.layoutPreset)) setLayoutPreset(saved.layoutPreset)
+        if (!paperOptions && (typeof saved.activePaneId === 'number' || saved.activePaneId === null)) setActivePaneId(saved.activePaneId)
+        if (!paperOptions && (typeof saved.maximizedPaneId === 'number' || saved.maximizedPaneId === null)) setMaximizedPaneId(saved.maximizedPaneId)
+        if (!paperOptions && (saved.instrumentType === 'equity' || saved.instrumentType === 'options')) setInstrumentType(saved.instrumentType)
+        if (!paperOptions && saved.optionsReady !== undefined) setOptionsReady(saved.optionsReady)
+        if (!paperOptions && Array.isArray(saved.panes) && saved.panes.length > 0) {
           const restoredPanes = saved.panes.filter(p => typeof p.id === 'number' && (p.type === 'equity' || p.type === 'options'))
           if (restoredPanes.length > 0) {
             nextPaneId = Math.max(nextPaneId, ...restoredPanes.map(p => p.id + 1))
@@ -531,6 +538,8 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
 
   useEffect(() => {
     if (!workspaceRestoredRef.current) return
+    if (addingSession) return
+    if (sim.sessionId && sim.sessionType === 'paper' && sim.sessionInstrumentType === 'options' && workspaceReadySessionRef.current !== sim.sessionId) return
     const view: WorkspaceView = showPatternLibrary
       ? 'patterns'
       : showChartStructures
@@ -551,11 +560,99 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
       sessionControlsVisible,
     }
     localStorage.setItem(workspaceStorageKey, JSON.stringify(snapshot))
+    if (sim.sessionId && sim.sessionType === 'paper' && sim.sessionInstrumentType === 'options' && workspaceReadySessionRef.current === sim.sessionId) {
+      localStorage.setItem(`${workspaceStorageKey}:paper:${sim.sessionId}`, JSON.stringify(snapshot))
+    }
   }, [
     workspaceStorageKey, showPatternLibrary, showChartStructures, showAnalysis,
-    sim.sessionId, panes, layoutPreset, activePaneId, maximizedPaneId,
-    instrumentType, optionsReady, sessionControlsVisible,
+    sim.sessionId, sim.sessionType, sim.sessionInstrumentType, panes, layoutPreset, activePaneId, maximizedPaneId,
+    instrumentType, optionsReady, sessionControlsVisible, addingSession,
   ])
+
+  useEffect(() => {
+    if (!sim.sessionId || sim.sessionType !== 'paper' || sim.sessionInstrumentType !== 'options') {
+      workspaceReadySessionRef.current = null
+      setOpenOptionContracts([])
+      return
+    }
+    const sessionId = sim.sessionId
+    workspaceReadySessionRef.current = null
+    let cancelled = false
+    const restore = async () => {
+      let positions: OpenOptionContract[]
+      try {
+        positions = await api.getOpenOptionContracts(sessionId)
+      } catch (error) {
+        if (!cancelled) setBrokerError(`Could not restore open option positions: ${String(error)}`)
+        return
+      }
+      if (cancelled) return
+      setOpenOptionContracts(positions)
+      let saved: WorkspaceSnapshot | null = null
+      try {
+        const raw = localStorage.getItem(`${workspaceStorageKey}:paper:${sessionId}`)
+        if (raw) saved = JSON.parse(raw) as WorkspaceSnapshot
+        else {
+          const legacy = localStorage.getItem(workspaceStorageKey)
+          const candidate = legacy ? JSON.parse(legacy) as WorkspaceSnapshot : null
+          if (candidate?.sessionId === sessionId) saved = candidate
+        }
+      } catch { /* use backend contracts */ }
+      const expiry = sim.sessionExpiry
+      const ceStrike = sim.sessionStrikeCE
+      const peStrike = sim.sessionStrikePE
+      const defaults: PaneConfig[] = [{ id: 1, type: 'equity', intervalMinutes: 3 }]
+      if (expiry && ceStrike != null) defaults.push(makeOptionsPane('CE', ceStrike, expiry))
+      if (expiry && peStrike != null) defaults.push(makeOptionsPane('PE', peStrike, expiry))
+      const base = Array.isArray(saved?.panes)
+        ? saved.panes.filter(p => typeof p.id === 'number' && (p.type === 'equity' || p.type === 'options'))
+        : defaults
+      const { panes: restored, chosen } = selectPaperResumePanes(
+        base, positions, { CE: ceStrike, PE: peStrike, expiry },
+        (right, strike, contractExpiry) => makeOptionsPane(right, strike, contractExpiry),
+      )
+      if (cancelled) return
+      nextPaneId = Math.max(nextPaneId, ...restored.map(p => p.id + 1))
+      setPanes(restored)
+      setInstrumentType('options')
+      const savedLayout = isLayoutPreset(saved?.layoutPreset) ? saved.layoutPreset : 3
+      const layoutCapacity = savedLayout >= 5 ? 5 : savedLayout
+      setLayoutPreset(layoutCapacity >= restored.length ? savedLayout : Math.min(5, restored.length) as LayoutPreset)
+      setActivePaneId(restored.some(p => p.id === saved?.activePaneId) ? saved!.activePaneId! : null)
+      setMaximizedPaneId(restored.some(p => p.id === saved?.maximizedPaneId) ? saved!.maximizedPaneId! : null)
+      if (expiry && ceStrike != null && peStrike != null) {
+        setOptionsReady({ strike: sim.sessionStrike ?? ceStrike, ceStrike: chosen.CE?.strike ?? ceStrike,
+          peStrike: chosen.PE?.strike ?? peStrike, expiry, atmStrike: sim.sessionStrike ?? ceStrike, underlyingPrice: 0 })
+      }
+      for (const right of ['CE', 'PE'] as const) {
+        const target = chosen[right]
+        const current = right === 'CE' ? ceStrike : peStrike
+        if (target && target.strike != null && target.strike !== current) {
+          try {
+            await api.updatePaneStrike(sessionId, right, target.strike)
+            if (!cancelled) sim.updateSessionStrike(right, target.strike)
+          } catch (error) {
+            if (!cancelled) setBrokerError(`Could not restore live ${right} contract: ${String(error)}`)
+          }
+        }
+      }
+      if (!cancelled) {
+        workspaceReadySessionRef.current = sessionId
+        setPanes(current => [...current])
+      }
+    }
+    void restore()
+    return () => { cancelled = true }
+  }, [sim.sessionId, sim.sessionType, sim.sessionInstrumentType, workspaceStorageKey]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (!sim.sessionId || sim.sessionType !== 'paper' || sim.sessionInstrumentType !== 'options' || sim.trades.length === 0) return
+    let cancelled = false
+    void api.getOpenOptionContracts(sim.sessionId).then(positions => {
+      if (!cancelled) setOpenOptionContracts(positions)
+    }).catch(() => {})
+    return () => { cancelled = true }
+  }, [sim.sessionId, sim.sessionType, sim.sessionInstrumentType, sim.trades.length])
 
   useEffect(() => {
     localStorage.setItem(chartRangeStorageKey, JSON.stringify(chartRanges))
@@ -647,6 +744,7 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
 
   useEffect(() => {
     if (!sim.sessionId || addingSession) return
+    if (sim.sessionType === 'paper' && sim.sessionInstrumentType === 'options') return
     applyWorkspaceForSessionConfig({
       instrument_type: sim.sessionInstrumentType,
       strike: sim.sessionStrike,
@@ -661,6 +759,7 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
     sim.sessionExpiry,
     sim.sessionStrikeCE,
     sim.sessionStrikePE,
+    sim.sessionType,
     addingSession,
     applyWorkspaceForSessionConfig,
   ])
@@ -1038,6 +1137,8 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
   // Price shown in TradePanel = active contract price (or equity)
   const tradePanelPrice = (() => {
     if (instrumentType === 'options') {
+      if (sim.sessionType === 'paper' && activePane?.type === 'options' &&
+          (activePane.expiry !== sim.sessionExpiry || activePane.strike !== (activePane.right === 'CE' ? sim.sessionStrikeCE : sim.sessionStrikePE))) return 0
       if (activeRight === 'CE') return sim.currentPriceCE
       if (activeRight === 'PE') return sim.currentPricePE
       return sim.currentPrice  // underlying pane selected — show index price
@@ -1048,6 +1149,10 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
   // Position shown in TradePanel
   const tradePanelPosition = (() => {
     if (instrumentType === 'options') {
+      if (sim.sessionType === 'paper' && sim.sessionInstrumentType === 'options' && activePane?.type === 'options') {
+        return openOptionContracts.find(p => p.right === activePane.right && p.strike === activePane.strike && p.expiry === activePane.expiry)?.position
+          ?? { symbol: sim.symbol, quantity: 0, avg_entry_price: 0, side: 'FLAT' as const, entry_commission: 0 }
+      }
       if (activeRight === 'CE') return sim.positionCE
       if (activeRight === 'PE') return sim.positionPE
       return { symbol: sim.symbol, quantity: 0, avg_entry_price: 0, side: 'FLAT' as const, entry_commission: 0 }
@@ -1073,6 +1178,7 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
   // strike receives no live ticks and shows history only.
   const getTickForPane = useCallback((pane: PaneConfig) => {
     if (pane.type === 'equity') return sim.latestEquityTick
+    if (pane.expiry !== sim.sessionExpiry) return null
     if (pane.right === 'CE') {
       if (sim.sessionStrikeCE !== null && pane.strike !== sim.sessionStrikeCE) return null
       return sim.latestCETick
@@ -1082,14 +1188,15 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
       return sim.latestPETick
     }
     return null
-  }, [sim.latestEquityTick, sim.latestCETick, sim.latestPETick, sim.sessionStrikeCE, sim.sessionStrikePE])
+  }, [sim.latestEquityTick, sim.latestCETick, sim.latestPETick, sim.sessionStrikeCE, sim.sessionStrikePE, sim.sessionExpiry])
 
   const getCompletedBarForPane = useCallback((pane: PaneConfig) => {
     if (pane.type === 'equity') return sim.lastCompletedBarEquity
+    if (pane.expiry !== sim.sessionExpiry) return null
     if (pane.right === 'CE') return sim.sessionStrikeCE !== null && pane.strike === sim.sessionStrikeCE ? sim.lastCompletedBarCE : null
     if (pane.right === 'PE') return sim.sessionStrikePE !== null && pane.strike === sim.sessionStrikePE ? sim.lastCompletedBarPE : null
     return null
-  }, [sim.lastCompletedBarEquity, sim.lastCompletedBarCE, sim.lastCompletedBarPE, sim.sessionStrikeCE, sim.sessionStrikePE])
+  }, [sim.lastCompletedBarEquity, sim.lastCompletedBarCE, sim.lastCompletedBarPE, sim.sessionStrikeCE, sim.sessionStrikePE, sim.sessionExpiry])
 
   const streamSessionIds = useMemo(() => {
     const ids = sim.group?.members.map(m => m.session_id) ?? (sim.sessionId ? [sim.sessionId] : [])
@@ -1230,11 +1337,18 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
       setLpPickActive(false)
     } else if (contextMenuOrderPick) {
       const p = contextMenuOrderPick
+      if (sim.sessionType === 'paper' && p.right &&
+          (p.strike !== (p.right === 'CE' ? sim.sessionStrikeCE : sim.sessionStrikePE) || p.expiry !== sim.sessionExpiry)) {
+        setBrokerError('Select a live option contract before placing an order')
+        setContextMenuOrderPick(null)
+        return
+      }
       const opts: Record<string, unknown> = {
         entry_sl_price: p.slPrice,
         group_id: crypto.randomUUID(),
       }
       if (p.right) opts.right = p.right
+      if (sim.sessionType === 'paper' && p.right) { opts.strike = p.strike; opts.expiry = p.expiry }
       if (p.fundsRatioPct != null) opts.funds_ratio_pct = p.fundsRatioPct
       if (p.riskRatioPct != null) opts.risk_pct = p.riskRatioPct
       if (p.orderType === 'TARGET') opts.target_deviation_pct = targetDeviationPct
@@ -1244,7 +1358,7 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
       setInjectedEditPrice({ orderId: pricePickOrderId, price })
       setPricePickOrderId(null)
     }
-  }, [missingSlPick, sim.refreshOpenOrders, pricePickOrderId, tpPickActive, utpPickActive, lpPickActive, contextMenuOrderPick, targetDeviationPct, sim.placeOrder])
+  }, [missingSlPick, sim.refreshOpenOrders, pricePickOrderId, tpPickActive, utpPickActive, lpPickActive, contextMenuOrderPick, targetDeviationPct, sim.placeOrder, sim.sessionType, sim.sessionStrikeCE, sim.sessionStrikePE, sim.sessionExpiry])
 
   // ── Strategy callbacks ────────────────────────────────────────────────────────
   const handleStartStrategy = useCallback(async (
@@ -1316,6 +1430,11 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
 
   const submitContextMenuEntry = useCallback((ticket: ContextMenuEntryTicket, quantity: number | null, fundsRatioPct?: number, riskRatioPct?: number) => {
     if (!sim.sessionId || !ticket.side || !ticket.orderType) return
+    if (sim.sessionType === 'paper' && ticket.right &&
+        (ticket.strike !== (ticket.right === 'CE' ? sim.sessionStrikeCE : sim.sessionStrikePE) || ticket.expiry !== sim.sessionExpiry)) {
+      setBrokerError('Select a live option contract before placing an order')
+      return
+    }
     if (ticket.orderType === 'MARKET') {
       const panePrice = ticket.right === 'CE' ? (sim.currentPriceCE || sim.currentPrice) : ticket.right === 'PE' ? (sim.currentPricePE || sim.currentPrice) : sim.currentPrice
       const marketablePrice = ticket.side === 'BUY' ? panePrice * 1.01 : panePrice * 0.99
@@ -1323,6 +1442,7 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
       if (fundsRatioPct != null) opts.funds_ratio_pct = fundsRatioPct
       if (riskRatioPct != null) opts.risk_pct = riskRatioPct
       if (ticket.right) opts.right = ticket.right
+      if (sim.sessionType === 'paper' && ticket.right) { opts.strike = ticket.strike; opts.expiry = ticket.expiry }
       sim.placeOrder(ticket.side, 'LIMIT', marketablePrice, quantity, opts as Parameters<typeof sim.placeOrder>[4]).catch(error => setBrokerError(String(error)))
     } else if (ticket.orderType === 'AUTO_STOP') {
       api.startStrategy({
@@ -1335,10 +1455,10 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
         quantity: quantity ?? undefined,
       }).catch(error => setBrokerError(String(error)))
     } else {
-      setContextMenuOrderPick({ side: ticket.side, orderType: ticket.orderType, slPrice: ticket.price, quantity, fundsRatioPct, riskRatioPct, right: ticket.right })
+      setContextMenuOrderPick({ side: ticket.side, orderType: ticket.orderType, slPrice: ticket.price, quantity, fundsRatioPct, riskRatioPct, right: ticket.right, strike: ticket.strike, expiry: ticket.expiry })
     }
     setContextMenuEntryTicket(null)
-  }, [sim.sessionId, sim.currentPrice, sim.currentPriceCE, sim.currentPricePE, sim.placeOrder])
+  }, [sim.sessionId, sim.sessionType, sim.sessionStrikeCE, sim.sessionStrikePE, sim.sessionExpiry, sim.currentPrice, sim.currentPriceCE, sim.currentPricePE, sim.placeOrder])
 
   // ── Context menu handler ───────────────────────────────────────────────────
   const handleChartContextMenu = useCallback((price: number, screenX: number, screenY: number, ctx: {
@@ -1379,7 +1499,8 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
 
     actions.push({
       label: `Use as SL @ ${price.toFixed(2)}`,
-      onClick: () => setContextMenuEntryTicket({ x: contextMenu.x, y: contextMenu.y, price, right, side: slMode === 'both' ? null : 'BUY' }),
+      onClick: () => setContextMenuEntryTicket({ x: contextMenu.x, y: contextMenu.y, price, right,
+        strike: pane?.strike, expiry: pane?.expiry, side: slMode === 'both' ? null : 'BUY' }),
     })
 
     // Shift SL to here
@@ -1505,10 +1626,14 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
 
   const getPositionForPane = useCallback((pane: PaneConfig) => {
     if (pane.type === 'equity') return sim.position
+    if (sim.sessionType === 'paper' && sim.sessionInstrumentType === 'options') {
+      return openOptionContracts.find(p => p.right === pane.right && p.strike === pane.strike && p.expiry === pane.expiry)?.position
+        ?? { symbol: sim.symbol, quantity: 0, avg_entry_price: 0, side: 'FLAT' as const, entry_commission: 0 }
+    }
     if (pane.right === 'CE') return sim.positionCE
     if (pane.right === 'PE') return sim.positionPE
     return sim.position
-  }, [sim.position, sim.positionCE, sim.positionPE])
+  }, [sim.position, sim.positionCE, sim.positionPE, sim.sessionType, sim.sessionInstrumentType, sim.symbol, openOptionContracts])
 
   const getPnlForPane = useCallback((pane: PaneConfig) => {
     if (pane.type === 'equity') {
@@ -2432,6 +2557,17 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
               </div>
               {combinedPnlOpen && !idle && (
                 <div style={{ marginTop: 6, display: 'flex', flexDirection: 'column', gap: 3 }}>
+                  {sim.sessionType === 'paper' && sim.sessionInstrumentType === 'options' ? (
+                    openOptionContracts.length > 0
+                      ? openOptionContracts.map(contract => (
+                        <div key={`${contract.right}:${contract.strike}:${contract.expiry}`} style={{ color: '#8b949e', fontSize: 11 }}>
+                          {contract.right} {contract.strike} · {contract.expiry}: <span style={{ color: '#e6edf3' }}>
+                            {contract.position.side} {contract.position.quantity}
+                          </span>
+                        </div>
+                      ))
+                      : <div style={{ color: '#8b949e', fontSize: 11 }}>No open option positions</div>
+                  ) : <>
                   <div style={{ color: '#8b949e', fontSize: 11 }}>
                     CE pos: <span style={{ color: '#e6edf3' }}>{sim.positionCE.side}</span>
                     {sim.positionCE.side !== 'FLAT' && ` ${sim.positionCE.quantity}`}
@@ -2440,6 +2576,7 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
                     PE pos: <span style={{ color: '#e6edf3' }}>{sim.positionPE.side}</span>
                     {sim.positionPE.side !== 'FLAT' && ` ${sim.positionPE.quantity}`}
                   </div>
+                  </>}
                 </div>
               )}
             </div>
@@ -2470,11 +2607,20 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
               targetProfitBufferTicks={targetProfitBufferTicks}
               aggrSlOnlyInProfit={aggrSlOnlyInProfit}
               onPlaceOrder={(side, orderType, price, quantity, opts) =>
-                sim.placeOrder(side, orderType, price, quantity, {
-                  ...opts,
-                  ...(tradingActiveRight ? { right: tradingActiveRight } : {}),
-                  target_deviation_pct: targetDeviationPct,
-                })
+                {
+                  if (sim.sessionType === 'paper' && activePane?.type === 'options' &&
+                      (activePane.strike !== (activePane.right === 'CE' ? sim.sessionStrikeCE : sim.sessionStrikePE)
+                        || activePane.expiry !== sim.sessionExpiry)) {
+                    return Promise.reject(new Error('Select a live option contract before placing an order'))
+                  }
+                  return sim.placeOrder(side, orderType, price, quantity, {
+                    ...opts,
+                    ...(tradingActiveRight ? { right: tradingActiveRight } : {}),
+                    ...(sim.sessionType === 'paper' && activePane?.type === 'options'
+                      ? { strike: activePane.strike, expiry: activePane.expiry } : {}),
+                    target_deviation_pct: targetDeviationPct,
+                  })
+                }
               }
               onCancelOrder={sim.cancelOrder}
               onConvertOrder={async (orderId, newOrderType, price) => {

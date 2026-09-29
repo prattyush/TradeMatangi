@@ -244,7 +244,7 @@ export function useSimulation() {
     const response = await api.getActiveSimulation(selected)
     await activateSession(response)
     setState(s => ({ ...s, groupId: group.group_id, group }))
-    return group
+    return response
   }, [activateSession])
 
   const selectGroupMember = useCallback(async (sessionId: string) => {
@@ -572,7 +572,7 @@ export function useSimulation() {
     orderType: 'TARGET' | 'LIMIT' | 'STOPLOSS',
     price: number,
     quantity: number | null,
-    opts: { is_stoploss?: boolean; funds_ratio_pct?: number; risk_pct?: number; right?: string; target_deviation_pct?: number } = {},
+    opts: { is_stoploss?: boolean; funds_ratio_pct?: number; risk_pct?: number; risk_ratio_pct?: number; right?: string; strike?: number; expiry?: string; target_deviation_pct?: number; entry_sl_price?: number; group_id?: string } = {},
   ) => {
     if (!state.sessionId) return
     try {

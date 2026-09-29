@@ -564,6 +564,14 @@ export interface Position {
   entry_commission: number  // sum of commissions for the currently-open lots (FIFO-apportioned)
 }
 
+export interface OpenOptionContract {
+  right: 'CE' | 'PE'
+  strike: number
+  expiry: string
+  position: Position
+  last_opened_at: number
+}
+
 export interface PriceAtResponse {
   symbol: string
   date: string
@@ -961,11 +969,19 @@ const api = {
     return res.json()
   },
 
-  async getPosition(session_id: string, right?: string): Promise<Position> {
+  async getPosition(session_id: string, right?: string, strike?: number, expiry?: string): Promise<Position> {
     let url = `${BACKEND_URL}/api/trades/position?session_id=${session_id}`
     if (right) url += `&right=${right}`
+    if (strike != null) url += `&strike=${strike}`
+    if (expiry) url += `&expiry=${encodeURIComponent(expiry)}`
     const res = await fetch(url)
     if (!res.ok) throw new Error(`Get position failed: ${res.status}`)
+    return res.json()
+  },
+
+  async getOpenOptionContracts(session_id: string): Promise<OpenOptionContract[]> {
+    const res = await fetch(`${BACKEND_URL}/api/trades/open-option-contracts?session_id=${encodeURIComponent(session_id)}`, { headers: _authHeaders() })
+    if (!res.ok) throw new Error(`Get open option contracts failed: ${res.status}`)
     return res.json()
   },
 
@@ -981,7 +997,7 @@ const api = {
     order_type: 'TARGET' | 'LIMIT' | 'STOPLOSS',
     price: number,
     quantityOrRatio: number | null,
-    opts: { is_stoploss?: boolean; funds_ratio_pct?: number; risk_pct?: number; risk_ratio_pct?: number; right?: string; target_deviation_pct?: number; entry_sl_price?: number; group_id?: string } = {},
+    opts: { is_stoploss?: boolean; funds_ratio_pct?: number; risk_pct?: number; risk_ratio_pct?: number; right?: string; strike?: number; expiry?: string; target_deviation_pct?: number; entry_sl_price?: number; group_id?: string } = {},
   ): Promise<Order> {
     const { target_deviation_pct, entry_sl_price, group_id, ...restOpts } = opts
     const body: Record<string, unknown> = { session_id, side, order_type, ...restOpts }
