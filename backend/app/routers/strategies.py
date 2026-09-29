@@ -167,6 +167,8 @@ def start_strategy(req: StartStrategyRequest, user_id: str = Depends(get_request
         right=instance.right,
         status=instance.status.value,
         triggered=bool(instance.metadata.get("triggered", False)),
+        target_profit_value=instance.metadata.get("target_profit_value"),
+        target_profit_is_pct=bool(instance.metadata.get("target_profit_is_pct", False)),
     )
 
 
@@ -220,6 +222,8 @@ def list_strategies(session_id: str, user_id: str = Depends(get_request_user_id)
             right=s.right,
             status=s.status.value,
             triggered=bool(s.metadata.get("triggered", False)),
+            target_profit_value=s.metadata.get("target_profit_value"),
+            target_profit_is_pct=bool(s.metadata.get("target_profit_is_pct", False)),
         )
         for s in running
     ]

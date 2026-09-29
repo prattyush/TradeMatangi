@@ -45,6 +45,7 @@ export interface DesktopStrategy {
   strategy_id: string; strategy_type: string; symbol: string
   right: 'CE' | 'PE' | null; status: string; triggered: boolean
   price?: number | null; strike?: number | null; expiry?: string | null; contract_key?: string | null
+  target_profit_value?: number | null; target_profit_is_pct?: boolean
 }
 
 export interface DesktopTradingSession {
