@@ -24,14 +24,20 @@ def database(monkeypatch):
         monkeypatch.setattr("app.services.db.get_dynamodb_client", lambda: client)
         monkeypatch.setattr(wallet_service, "get_or_init_wallet", lambda *args: 100_000)
         for name, hash_key, range_key in (("Sessions", "session_id", None),
-            ("Orders", "session_id", "order_id"), ("Trades", "session_id", "trade_id"),
-            ("Strategies", "session_id", "strategy_id")):
+            ("Orders", "session_id", "order_id"), ("Trades", "session_id", "trade_id")):
             names = [hash_key] + ([range_key] if range_key else [])
             resource.create_table(TableName=name,
                 KeySchema=[{"AttributeName": hash_key, "KeyType": "HASH"}] +
                     ([{"AttributeName": range_key, "KeyType": "RANGE"}] if range_key else []),
                 AttributeDefinitions=[{"AttributeName": value, "AttributeType": "S"} for value in names],
                 BillingMode="PAY_PER_REQUEST")
+        resource.create_table(TableName="Strategies",
+            KeySchema=[{"AttributeName": "strategy_id", "KeyType": "HASH"}],
+            AttributeDefinitions=[{"AttributeName": "strategy_id", "AttributeType": "S"},
+                {"AttributeName": "session_id", "AttributeType": "S"}],
+            GlobalSecondaryIndexes=[{"IndexName": "SessionIdIndex",
+                "KeySchema": [{"AttributeName": "session_id", "KeyType": "HASH"}],
+                "Projection": {"ProjectionType": "ALL"}}], BillingMode="PAY_PER_REQUEST")
         yield resource
     simulation._sessions.clear()
     order_service._orders.clear()
@@ -57,6 +63,8 @@ def test_stop_without_local_engine_preserves_position_and_cancels_pending_order(
         "price": Decimal("100"), "timestamp": 1790673000, "instrument_type": "options",
         "strike": 22950, "expiry": "2026-09-29", "right": "CE", "commission": Decimal("1"),
         "session_type": "paper", "source": "desktop_paper"})
+    database.Table("Strategies").put_item(Item={"strategy_id": "auto-stop", "session_id": session_id,
+        "user_id": user, "symbol": symbol, "status": "RUNNING"})
     pending = Order(session_id=session_id, user_id=user, symbol=symbol, side=TradeSide.BUY,
         quantity=65, trigger_price=90, limit_price=90, created_at=1790673001,
         reserved_amount=5850, wallet_ledger_id=f"paper:{date}", wallet_ledger_kind="paper",
@@ -70,7 +78,40 @@ def test_stop_without_local_engine_preserves_position_and_cancels_pending_order(
     assert saved["status"] == OrderStatus.CANCELLED.value
     assert paper_wallet.balance(user, date) == 100_000
     assert len(database.Table("Trades").query(KeyConditionExpression=Key("session_id").eq(session_id))["Items"]) == 1
+    assert database.Table("Strategies").get_item(Key={"strategy_id": "auto-stop"})["Item"]["status"] == "CANCELLED"
     assert paper_wallet.session_claim(user, date, symbol)["cleanup_pending"] is False
+    candidate = asyncio.run(desktop_trading.candidate(symbol, date, "options", desktop_mode="paper", user_id=user))
+    assert candidate.status == "stopped"
+    assert candidate.stopped.cleanup_pending is False
+
+
+def test_stop_remains_stopped_when_cleanup_fails_then_retries(database, monkeypatch, caplog):
+    user, date, symbol, session_id = "desktop-user", "2026-09-28", "NIFTY", "cleanup-retry"
+    monkeypatch.setattr(desktop_paper_eod, "_due", lambda _: False)
+    paper_wallet.read(user, date)
+    token, _ = paper_wallet.claim_session(user, date, symbol)
+    paper_wallet.finish_session_claim(user, date, symbol, token, session_id, desktop=True)
+    database.Table("Sessions").put_item(Item={"session_id": session_id, "user_id": user,
+        "date": date, "symbol": symbol, "start_time": "09:15:00", "speed": Decimal("1"),
+        "state": "running", "session_capital": Decimal("100000"), "instrument_type": "equity",
+        "session_type": "paper", "wallet_ledger_id": f"paper:{date}",
+        "desktop_origin": "desktop_paper", "desktop_mode": "paper"})
+    cancel = order_service.cancel_all_pending_orders
+
+    def fail_cleanup(*args):
+        raise RuntimeError("temporary cleanup failure")
+
+    monkeypatch.setattr(order_service, "cancel_all_pending_orders", fail_cleanup)
+    assert asyncio.run(desktop_trading.stop_stepwise(session_id, user_id=user)) == {"status": "stopped"}
+    assert paper_wallet.session_claim(user, date, symbol)["cleanup_pending"] is True
+    stopped = asyncio.run(desktop_trading.snapshot(session_id, user_id=user))
+    assert stopped.session.state == simulation.SimulationState.ENDED
+    assert stopped.cleanup_pending is True
+    assert "desktop_paper_cleanup_failed session_id=cleanup-retry" in caplog.text
+
+    monkeypatch.setattr(order_service, "cancel_all_pending_orders", cancel)
+    assert asyncio.run(desktop_trading.stop_stepwise(session_id, user_id=user)) == {"status": "stopped"}
+    assert asyncio.run(desktop_trading.snapshot(session_id, user_id=user)).cleanup_pending is False
 
 
 def test_stopped_session_settles_each_option_once_when_close_quotes_arrive(database, monkeypatch):
