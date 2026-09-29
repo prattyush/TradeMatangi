@@ -14,6 +14,8 @@ interface Props {
   fundsRatios: FundsRatios
   riskRatios: { l: number; m: number; h: number }
   defaultSlPct: number
+  sessionCapital: number
+  sessionType: string
   targetDeviationPct: number   // fraction e.g. 0.01 for 1%
   onPlaceOrder: (
     side: 'BUY' | 'SELL',
@@ -84,7 +86,7 @@ function isClosingOrderForPosition(order: Order, position: Position, activeRight
 
 export default function OrderPanel({
   sessionState, currentPrice, openOrders, position,
-  sizingMode, fundsRatios, riskRatios, defaultSlPct: _defaultSlPct, targetDeviationPct,
+  sizingMode, fundsRatios, riskRatios, defaultSlPct, sessionCapital, sessionType, targetDeviationPct,
   onPlaceOrder, onCancelOrder, onConvertOrder, onUpdateOrder,
   onRequestPricePick, injectedEditPrice,
   onRequestTpPick,
@@ -243,6 +245,16 @@ export default function OrderPanel({
     : null
 
   const ratioPct = fundsRatios[ratio] / 100
+  const riskEntryPrice = orderType === 'MARKET'
+    ? (side === 'BUY' ? currentPrice * 1.01 : currentPrice * 0.99)
+    : parsedPrice
+  const riskStopDistance = slOnEntry && Number.isFinite(parsedEntrySl) && parsedEntrySl > 0
+    ? Math.abs(riskEntryPrice - parsedEntrySl)
+    : riskEntryPrice * defaultSlPct
+  const minimumRisk = riskStopDistance * (instrumentType === 'options' ? Math.max(1, lotSize || 1) : 1)
+  const selectedRiskBudget = sessionCapital * riskRatios[ratio] / 100
+  const minimumExceedsRisk = ['paper', 'sim', 'stepwise'].includes(sessionType) && sizingMode === 'riskRatio' && orderType !== 'STOPLOSS'
+    && Number.isFinite(minimumRisk) && minimumRisk > selectedRiskBudget && selectedRiskBudget > 0
 
   const handlePlace = async () => {
     if (orderType === 'STRAT') return
@@ -261,6 +273,19 @@ export default function OrderPanel({
         setError(instrumentType === 'options'
           ? `SL quantity must be a multiple of ${slQtyStep} and not exceed ${maxQty}`
           : `SL quantity must be 1–${maxQty}`)
+        return
+      }
+    }
+    if (slOnEntry && orderType !== 'STOPLOSS') {
+      if (!Number.isFinite(parsedEntrySl) || parsedEntrySl <= 0) {
+        setError('Enter a valid stoploss price')
+        return
+      }
+      const entryPrice = orderType === 'MARKET'
+        ? (side === 'BUY' ? currentPrice * 1.01 : currentPrice * 0.99)
+        : parsedPrice
+      if ((side === 'BUY' && parsedEntrySl >= entryPrice) || (side === 'SELL' && parsedEntrySl <= entryPrice)) {
+        setError(side === 'BUY' ? 'Long stop must be below entry price' : 'Short stop must be above entry price')
         return
       }
     }
@@ -1308,6 +1333,11 @@ export default function OrderPanel({
               </button>
             ))}
           </div>
+          {minimumExceedsRisk && (
+            <div style={{ fontSize: 10, color: '#f0883e', marginTop: 4 }}>
+              Minimum {instrumentType === 'options' ? 'one lot' : 'one share'} risks ₹{minimumRisk.toFixed(2)} at this stop, above the selected ₹{selectedRiskBudget.toFixed(2)} risk budget. The minimum quantity will be placed if funds and other checks allow it.
+            </div>
+          )}
         </div>
       ) : (
         <div>

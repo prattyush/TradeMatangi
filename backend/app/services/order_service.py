@@ -109,11 +109,12 @@ def compute_risk_ratio_quantity(
     current_wallet: float,
     lot_size: int = 1,
     margin_rate: float = 1.0,
-    strict_lot_risk: bool = False,
+    allow_minimum_share_over_risk: bool = False,
 ) -> int:
     """
-    Compute order quantity so that if price hits stoploss, the total loss
-    equals risk_ratio_pct of session_capital.
+    Target a loss of risk_ratio_pct of session_capital at the stoploss.
+    When the budget is smaller than one tradable unit, use one funded lot;
+    callers can also allow one funded share for margin-backed equity.
 
     Formula:
         risk_amount = session_capital * risk_ratio_pct
@@ -131,8 +132,6 @@ def compute_risk_ratio_quantity(
         loss_per_lot = sl_distance * lot_size
         lots = int(risk_amount / loss_per_lot)
         if lots < 1:
-            if strict_lot_risk:
-                raise ValueError(f"Risk budget cannot cover one whole lot: one lot risks {loss_per_lot:.2f}, budget is {risk_amount:.2f}")
             unit_cost = entry_price * lot_size
             if current_wallet >= unit_cost * effective_margin_rate:
                 lots = 1
@@ -142,7 +141,7 @@ def compute_risk_ratio_quantity(
     else:
         qty = int(risk_amount / sl_distance)
         if qty < 1:
-            if margin_rate < 1:
+            if margin_rate < 1 and not allow_minimum_share_over_risk:
                 raise ValueError("Risk budget cannot fund one whole share")
             if current_wallet >= entry_price * effective_margin_rate:
                 qty = 1
@@ -542,6 +541,7 @@ def check_orders(
     tick_strike: int | None = None,
     tick_expiry: str | None = None,
     settle_wallet: bool = True,
+    only_order_id: str | None = None,
 ) -> list[Order]:
     """
     Evaluate PENDING orders against current_price and return newly FILLED ones.
@@ -555,6 +555,8 @@ def check_orders(
     """
     filled: list[Order] = []
     for order in _orders.get(session_id, {}).values():
+        if only_order_id is not None and order.order_id != only_order_id:
+            continue
         if order.status != OrderStatus.PENDING:
             continue
         # Skip orders placed directly on Kotak broker; fills arrive via order-feed WebSocket.

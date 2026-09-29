@@ -431,15 +431,9 @@ def _on_bar_close_autostop(
                     session.session_capital, risk_ratio_pct, current_wallet,
                     lot_size=lot_size,
                     margin_rate=_margin_rate_for_quantity(session, tick_right),
-                    strict_lot_risk=session.session_type == "paper" and tick_right is not None,
+                    allow_minimum_share_over_risk=session.session_type in ("paper", "sim", "stepwise"),
                 )
             except ValueError as exc:
-                if session.session_type == "paper" and tick_right and "Risk budget cannot cover one whole lot" in str(exc):
-                    import json
-                    strategy.status = StrategyStatus.COMPLETED
-                    strategy.metadata["rejection_reason"] = str(exc)
-                    _write_strategy_to_db(strategy)
-                    session.queue.put_nowait(json.dumps({"type": "strategy_rejected", "strategy_id": strategy.strategy_id, "reason": str(exc)}))
                 logger.warning("AutoStop %s: risk ratio quantity calc failed: %s", strategy.strategy_id, exc)
                 return
             except Exception as exc:

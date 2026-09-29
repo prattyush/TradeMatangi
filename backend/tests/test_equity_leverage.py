@@ -407,6 +407,7 @@ def test_close_reserves_no_fresh_margin_and_reversal_only_reserves_opening_part(
 def test_equity_risk_never_forces_an_unaffordable_share():
     with pytest.raises(ValueError, match="Risk budget"):
         order_service.compute_risk_ratio_quantity("TATPOW", 100, 50, 100, .045, 100, margin_rate=.2)
+    assert order_service.compute_risk_ratio_quantity("TATPOW", 100, 50, 100, .045, 100, margin_rate=.2, allow_minimum_share_over_risk=True) == 1
     assert order_service.compute_risk_ratio_quantity("TATPOW", 100, 99, 100_000, .045, 100_000, margin_rate=.2) == 4500
     assert order_service.compute_funds_ratio_quantity("TATPOW", 100, 100_000, .24, 100_000, margin_rate=.2) == 1200
 

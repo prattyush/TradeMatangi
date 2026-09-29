@@ -17,6 +17,39 @@ const snapshot = (): DesktopTradingSnapshot => ({
 const tick = (eventId: number, price: number, time = 101) => ({ type: 'tick', event_id: eventId, close: price, time, right: 'CE', contract_key: key, strike: 24000, expiry: '2026-10-01' })
 
 describe('Paper trading incremental state', () => {
+  it('applies a committed fill to orders, markers, position, and P&L without a snapshot', () => {
+    const current = snapshot()
+    current.open_orders = [{ order_id: 'order-1', session_id: 'paper-1', user_id: 'u', symbol: 'NIFTY', side: 'BUY', order_type: 'LIMIT', quantity: 50, trigger_price: 0, limit_price: 101, status: 'PENDING', created_at: 100, is_stoploss: false, right: 'CE', strike: 24000, expiry: '2026-10-01' }]
+    const position = { ...flat, side: 'LONG' as const, quantity: 50, avg_entry_price: 100 }
+    const event = {
+      type: 'order_filled', event_id: 11, order_id: 'order-1', right: 'CE', strike: 24000, expiry: '2026-10-01', contract_key: key, filled_at: 101,
+      trade: { trade_id: 'order-1', session_id: 'paper-1', symbol: 'NIFTY', side: 'BUY', quantity: 50, price: 100, timestamp: 101, right: 'CE', strike: 24000, expiry: '2026-10-01' },
+      position, open_trade_ids: ['order-1'], pnl: { equity: 0, ce: -2, pe: 0, contracts: { [key]: -2 }, day: 498, day_pct: 0.498 },
+    }
+    const filled = applyPaperStreamEvent(current, event)
+    expect(filled.open_orders).toHaveLength(0)
+    expect(filled.trades).toMatchObject([{ trade_id: 'order-1', is_open: true }])
+    expect(filled.positions_by_contract[key]).toEqual(position)
+    expect(filled.positions.CE).toEqual(position)
+    expect(filled.pnl.day).toBe(498)
+    expect(applyPaperStreamEvent(filled, event)).toBe(filled)
+    expect(applyPaperStreamEvent(filled, { type: 'order_placed', event_id: 10, ...current.open_orders[0] })).toBe(filled)
+  })
+
+  it('keeps the primary option position when a secondary strike fills', () => {
+    const current = snapshot()
+    const secondary = 'NIFTY:2026-10-01:24100:CE'
+    const position = { ...flat, side: 'LONG' as const, quantity: 50, avg_entry_price: 80 }
+    const next = applyPaperStreamEvent(current, {
+      type: 'order_filled', event_id: 11, order_id: 'secondary', right: 'CE', strike: 24100,
+      expiry: '2026-10-01', contract_key: secondary, filled_at: 101,
+      trade: { trade_id: 'secondary', session_id: 'paper-1', symbol: 'NIFTY', side: 'BUY', quantity: 50, price: 80, timestamp: 101 },
+      position, open_trade_ids: ['secondary'], pnl: current.pnl,
+    })
+    expect(next.positions.CE).toBe(current.positions.CE)
+    expect(next.positions_by_contract[secondary]).toEqual(position)
+  })
+
   it('preserves realized profit after all positions close', () => {
     expect(applyPaperStreamEvent(snapshot(), tick(11, 105)).pnl.day).toBe(500)
   })
