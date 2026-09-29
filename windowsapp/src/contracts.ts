@@ -73,6 +73,7 @@ export interface DesktopTradingSettings {
 
 export interface DesktopTradingSnapshot {
   paper_status?: 'running' | 'stopped' | 'settled' | null
+  cleanup_pending?: boolean
   settlement_pending?: boolean
   engine_generation?: number | null
   guardrails?: { type?: string; blocked: boolean; reason: string; ban_active: boolean; block_until_bar: number; settings: Record<string, unknown> }

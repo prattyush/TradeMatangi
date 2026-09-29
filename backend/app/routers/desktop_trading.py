@@ -71,6 +71,7 @@ class DesktopTradingSnapshot(BaseModel):
     wallet_locked: bool = False
     guardrails: dict = {}
     paper_status: str | None = None
+    cleanup_pending: bool = False
     settlement_pending: bool = False
     engine_generation: int | None = None
 
@@ -231,10 +232,19 @@ def _reconcile_saved_paper(record: dict, claim: dict) -> dict:
         claim = paper_wallet.stop_desktop_session(user_id, date, symbol, session_id)
     if claim.get("session_status") != "stopped" or not claim.get("cleanup_pending"):
         return claim
-    saved = sim_svc.rebuild_session_from_db(record, user_id, read_only=True)
-    order_service.cancel_all_pending_orders(session_id, date)
-    strategy_service.cancel_persisted_for_session(session_id)
-    paper_wallet.complete_desktop_cleanup(user_id, date, symbol, session_id)
+    try:
+        sim_svc.rebuild_session_from_db(record, user_id, read_only=True)
+        order_service.cancel_all_pending_orders(session_id, date)
+        strategy_service.cancel_persisted_for_session(session_id)
+        paper_wallet.complete_desktop_cleanup(user_id, date, symbol, session_id)
+    except Exception:
+        # The engine is already fenced. Keep cleanup_pending so the next saved
+        # snapshot or Stop can retry without turning a successful Stop into 500.
+        logger.exception("desktop_paper_cleanup_failed session_id=%s", session_id)
+        current = paper_wallet.session_claim(user_id, date, symbol)
+        if current and current.get("session_id") == session_id and current.get("session_status") == "stopped":
+            return current
+        raise
     logger.info("desktop_paper_cleanup_complete session_id=%s", session_id)
     return paper_wallet.session_claim(user_id, date, symbol)
 
@@ -249,6 +259,7 @@ def _saved_paper_snapshot(record: dict, user_id: str) -> DesktopTradingSnapshot:
     session.state = sim_svc.SimulationState.ENDED
     snapshot = _snapshot(session, user_id)
     snapshot.paper_status = claim.get("session_status") if claim else "stopped"
+    snapshot.cleanup_pending = bool(claim and claim.get("cleanup_pending"))
     snapshot.settlement_pending = bool(claim and claim.get("settlement_pending"))
     snapshot.engine_generation = int(claim.get("engine_generation") or 0) if claim else None
     return snapshot

@@ -213,7 +213,7 @@ def cancel_persisted_for_session(session_id: str) -> int:
     from app.services.db import get_dynamodb_resource
     from boto3.dynamodb.conditions import Key
     table = get_dynamodb_resource().Table("Strategies")
-    params = {"KeyConditionExpression": Key("session_id").eq(session_id), "ConsistentRead": True}
+    params = {"IndexName": "SessionIdIndex", "KeyConditionExpression": Key("session_id").eq(session_id)}
     count = 0
     while True:
         page = table.query(**params)
@@ -221,11 +221,11 @@ def cancel_persisted_for_session(session_id: str) -> int:
             if item.get("status") != "RUNNING":
                 continue
             try:
-                table.update_item(Key={"session_id": session_id, "strategy_id": item["strategy_id"]},
+                table.update_item(Key={"strategy_id": item["strategy_id"]},
                     UpdateExpression="SET #status = :cancelled",
-                    ConditionExpression="#status = :running",
+                    ConditionExpression="#status = :running AND session_id = :session",
                     ExpressionAttributeNames={"#status": "status"},
-                    ExpressionAttributeValues={":cancelled": "CANCELLED", ":running": "RUNNING"})
+                    ExpressionAttributeValues={":cancelled": "CANCELLED", ":running": "RUNNING", ":session": session_id})
                 count += 1
             except Exception as exc:
                 from botocore.exceptions import ClientError
