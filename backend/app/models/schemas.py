@@ -414,6 +414,12 @@ class UpdateStrategyPriceRequest(BaseModel):
     price: float
 
 
+class UpdateTargetProfitRequest(BaseModel):
+    session_id: str
+    target_profit_value: float = Field(gt=0)
+    target_profit_is_pct: bool = True
+
+
 class BulkUpdateSLRequest(BaseModel):
     session_id: str
     trigger_price: float
@@ -435,6 +441,8 @@ class StrategyResponse(BaseModel):
     status: str
     triggered: bool = False    # True once LockProfit (or TargetProfit) has fired
     price: float | None = None
+    target_profit_value: float | None = None
+    target_profit_is_pct: bool = False
     # Optional desktop contract identity. Legacy and website strategies do not
     # carry these fields, but desktop overlays must not conflate CE/PE strikes.
     strike: int | None = None
