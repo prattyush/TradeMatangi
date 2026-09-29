@@ -1,4 +1,5 @@
 import asyncio
+import json
 from decimal import Decimal
 from datetime import datetime
 from types import SimpleNamespace
@@ -112,6 +113,36 @@ def test_stop_remains_stopped_when_cleanup_fails_then_retries(database, monkeypa
     monkeypatch.setattr(order_service, "cancel_all_pending_orders", cancel)
     assert asyncio.run(desktop_trading.stop_stepwise(session_id, user_id=user)) == {"status": "stopped"}
     assert asyncio.run(desktop_trading.snapshot(session_id, user_id=user)).cleanup_pending is False
+
+
+def test_resumed_paper_option_tick_serializes_saved_contract_numbers(database, monkeypatch):
+    user, date, symbol, session_id = "desktop-user", "2026-09-29", "NIFTY", "resumed-tick"
+    contract = {"symbol": symbol, "expiry": date, "strike": Decimal("22750"),
+        "right": "CE", "contract_key": f"{symbol}:{date}:22750:CE"}
+    record = {"session_id": session_id, "user_id": user, "date": date,
+        "symbol": symbol, "start_time": "09:15:00", "speed": Decimal("1"),
+        "state": "ended", "session_capital": Decimal("100000"),
+        "instrument_type": "options", "session_type": "paper",
+        "wallet_ledger_id": f"paper:{date}", "desktop_origin": "desktop_paper",
+        "desktop_mode": "paper", "strike": Decimal("22700"),
+        "strike_ce": Decimal("22750"), "strike_pe": Decimal("22500"),
+        "expiry": date, "desktop_contracts": [contract]}
+    paper_wallet.read(user, date)
+    session = simulation.rebuild_session_from_db(record, user, read_only=True)
+    assert session.desktop_contracts[0]["strike"] == 22750
+    assert type(session.desktop_contracts[0]["strike"]) is int
+    session.paper_stream_source = "breeze"
+    session.paper_base_contracts = {"CE": {"strike": 22750, "expiry": date}}
+    monkeypatch.setattr(simulation, "_auto_close_positions_if_eod", lambda *args: [])
+
+    simulation._emit_tick_and_check_orders(session, {"time": 1790676000,
+        "open": 23.4, "high": 23.4, "low": 23.4, "close": 23.4,
+        "volume": Decimal("1.5")}, "CE")
+
+    tick = json.loads(session.queue.get_nowait())
+    assert tick["strike"] == 22750
+    assert tick["volume"] == 1.5
+    assert tick["session_id"] == session_id
 
 
 def test_stopped_session_settles_each_option_once_when_close_quotes_arrive(database, monkeypatch):

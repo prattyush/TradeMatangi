@@ -738,7 +738,7 @@ function ScreenController(props: ScreenControllerProps) {
     }))
   }, [activeScreenId])
   const saveTile = async (tile: TileConfig) => {
-    if (isTradingMode(mode) && trading) {
+    if (isTradingMode(mode) && trading && trading.session.state !== 'ended') {
       if (tile.symbol !== trading.session.symbol) {
         reportTradingError(`This ${mode} session is locked to ${trading.session.symbol}. Open another screen to view or trade ${tile.symbol}.`)
         return
