@@ -341,10 +341,42 @@ async def get_trades(session_id: str = Query(...)):
     return trading_svc.get_trades(session_id)
 
 
+@router.get("/open-option-contracts")
+async def get_open_option_contracts(
+    session_id: str = Query(...), user_id: str = Depends(get_request_user_id),
+):
+    """Open website paper positions, keyed by their actual option contract."""
+    session = sim_svc.get_session(session_id)
+    if not session or session.user_id != user_id:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if session.session_type != "paper" or session.instrument_type != "options" or getattr(session, "desktop_origin", None) == "desktop_paper":
+        return []
+    trades = trading_svc.get_trades(session_id)
+    keys = {(t.right, t.strike, t.expiry) for t in trades
+            if t.symbol == session.symbol and t.right in ("CE", "PE") and t.strike is not None and t.expiry}
+    result = []
+    for right, strike, expiry in keys:
+        position = trading_svc.get_position(
+            session_id, symbol=session.symbol, right=right, strike=strike,
+            expiry=expiry, exact_contract=True,
+        )
+        if position.side == "FLAT" or position.quantity <= 0:
+            continue
+        opening_side = TradeSide.BUY if position.side == "LONG" else TradeSide.SELL
+        latest = max((t.timestamp for t in trades if
+                      (t.right, t.strike, t.expiry) == (right, strike, expiry)
+                      and t.side == opening_side), default=0)
+        result.append({"right": right, "strike": strike, "expiry": expiry,
+                       "position": position.model_dump(mode="json"), "last_opened_at": latest})
+    return sorted(result, key=lambda item: (item["last_opened_at"], item["expiry"], item["strike"]))
+
+
 @router.get("/position", response_model=Position)
-async def get_position(session_id: str = Query(...), right: str | None = Query(default=None)):
+async def get_position(session_id: str = Query(...), right: str | None = Query(default=None),
+                       strike: int | None = Query(default=None), expiry: str | None = Query(default=None)):
     session = sim_svc.get_session(session_id)
     symbol = session.symbol if session else None
     # Resolve effective right: explicit param > session.right (Sprint 3 compat)
     effective_right = right if right is not None else (session.right if session else None)
-    return trading_svc.get_position(session_id, symbol=symbol, right=effective_right)
+    return trading_svc.get_position(session_id, symbol=symbol, right=effective_right,
+                                    strike=strike, expiry=expiry, exact_contract=strike is not None and expiry is not None)

@@ -277,6 +277,7 @@ def _open_position_lots(
     right: str | None = None,
     strike: int | None = None,
     expiry: str | None = None,
+    exact_contract: bool = False,
 ):
     trades = _trades.get(session_id, [])
     if symbol is None:
@@ -286,9 +287,15 @@ def _open_position_lots(
     # right=None matches equity trades (those with right=None on the trade record).
     symbol_trades = [t for t in trades if t.symbol == symbol and t.right == right]
     if right is not None and strike is not None:
-        symbol_trades = [t for t in symbol_trades if t.strike is None or int(t.strike) == int(strike)]
+        if exact_contract:
+            symbol_trades = [t for t in symbol_trades if t.strike is not None and int(t.strike) == int(strike)]
+        else:
+            symbol_trades = [t for t in symbol_trades if t.strike is None or int(t.strike) == int(strike)]
     if right is not None and expiry is not None:
-        symbol_trades = [t for t in symbol_trades if t.expiry is None or t.expiry == expiry]
+        if exact_contract:
+            symbol_trades = [t for t in symbol_trades if t.expiry == expiry]
+        else:
+            symbol_trades = [t for t in symbol_trades if t.expiry is None or t.expiry == expiry]
 
     # FIFO matching: only lots that are still open contribute to avg_entry and entry_commission.
     # Without FIFO, a closed trade followed by a new entry would dilute avg_entry
@@ -340,8 +347,9 @@ def get_position(
     right: str | None = None,
     strike: int | None = None,
     expiry: str | None = None,
+    exact_contract: bool = False,
 ) -> Position:
-    symbol, buy_queue, sell_queue, net_qty = _open_position_lots(session_id, symbol, right, strike, expiry)
+    symbol, buy_queue, sell_queue, net_qty = _open_position_lots(session_id, symbol, right, strike, expiry, exact_contract)
     if net_qty > 0:
         side: Literal["LONG", "SHORT", "FLAT"] = "LONG"
         total_qty = sum(q for _, q, _ in buy_queue)
