@@ -11,7 +11,7 @@ import {
   LineStyle,
 } from 'lightweight-charts'
 import api, { OHLCCandle, TickEvent, BarCandle, Trade, Order, Position, StrategyResponse } from '../services/api'
-import { positionPnlLevels, type PositionPnlLevel } from '../indicators/positionPnlLevels'
+import { positionPnlLevels, projectedTotalPnlPctAtTarget, type PositionPnlLevel } from '../indicators/positionPnlLevels'
 import {
   computeOptionsRocComparison,
   IndicatorCandle,
@@ -81,6 +81,7 @@ interface Props {
   pnlPctMode?: boolean
   sessionCapital?: number
   brokeragePerOrder?: number
+  aggregatePnl?: number
   positionLevelsMatch?: boolean
   pnl?: number
   onCandlesChange?: (candles: IndicatorCandle[]) => void
@@ -263,12 +264,17 @@ function targetProfitLinePrice(strategy: StrategyResponse, position?: Position, 
   return Math.round(Math.ceil(Math.round(price / 0.05 * 1e10) / 1e10) * 0.05 * 100) / 100
 }
 
-function targetProfitLineLabel(strategy: StrategyResponse, price: number, position?: Position, pnlPctMode?: boolean, sessionCapital?: number): string {
+function targetProfitLineLabel(strategy: StrategyResponse, price: number, position?: Position, pnlPctMode?: boolean, sessionCapital?: number, aggregatePnl?: number, currentPrice?: number, brokeragePerOrder = 0): string {
   if (!pnlPctMode) return `TP ${price.toFixed(2)}`
-  if (strategy.target_profit_is_pct) return `TP +${strategy.target_profit_value}%`
   if (!position || position.side === 'FLAT' || position.quantity <= 0 || !sessionCapital || sessionCapital <= 0) return `TP ${price.toFixed(2)}`
-  const pnl = (position.side === 'LONG' ? 1 : -1) * (price - position.avg_entry_price) * position.quantity
-  return `TP ${formatProjectedPnl(pnl, true, sessionCapital)}`
+  const positionPct = strategy.target_profit_is_pct
+    ? `+${strategy.target_profit_value}%`
+    : formatProjectedPnl((position.side === 'LONG' ? 1 : -1) * (price - position.avg_entry_price) * position.quantity, true, sessionCapital)
+  const totalPct = aggregatePnl !== undefined && currentPrice !== undefined
+    ? projectedTotalPnlPctAtTarget(position, currentPrice, price, aggregatePnl, sessionCapital, brokeragePerOrder)
+    : null
+  const totalLabel = totalPct === null ? '' : ` / ${totalPct >= 0 ? '+' : ''}${totalPct.toFixed(1)}%`
+  return `TP ${positionPct}${totalLabel}`
 }
 
 function orderLineTypeLabel(order: Order): string {
@@ -449,6 +455,7 @@ export default function Chart({
   pnlPctMode,
   sessionCapital,
   brokeragePerOrder = 0,
+  aggregatePnl,
   positionLevelsMatch = true,
   pnl = 0,
   onCandlesChange,
@@ -1284,12 +1291,12 @@ export default function Chart({
           axisLabelVisible: true,
           title: isUnderlyingTarget
             ? `UT ${strategy.right} ${price.toFixed(2)}`
-            : targetProfitLineLabel(strategy, price, position, pnlPctMode, sessionCapital),
+            : targetProfitLineLabel(strategy, price, position, pnlPctMode, sessionCapital, aggregatePnl, latestTick?.close ?? liveWindowRef.current?.close, brokeragePerOrder),
         })
         strategyPriceLinesRef.current.set(strategy.strategy_id, line)
       } catch { /* disposed */ }
     }
-  }, [targetProfitStrategies, strategyPosition, strategyPositionCE, strategyPositionPE, strategyPaneActive, paneType, right, symbol, pnlPctMode, sessionCapital])
+  }, [targetProfitStrategies, strategyPosition, strategyPositionCE, strategyPositionPE, strategyPaneActive, paneType, right, symbol, pnlPctMode, sessionCapital, aggregatePnl, latestTick?.close, brokeragePerOrder])
 
   const enterDrawMode = useCallback((mode: DrawMode) => {
     setDrawDropdownOpen(false)
@@ -1467,7 +1474,7 @@ export default function Chart({
       const x = Math.max(0, Math.min(viewportWidth - segmentWidth, center - segmentWidth / 2))
       setPositionLevelGeometry(positionLevels.flatMap(level => {
         const y = series.priceToCoordinate(level.price)
-        return y !== null && y >= 0 && y <= chartHeight ? [{ ...level, x, y, width: segmentWidth, labelLeft: x < 110 }] : []
+        return y !== null && y >= 0 && y <= chartHeight ? [{ ...level, x, y, width: segmentWidth, labelLeft: true }] : []
       }))
     }
     update()

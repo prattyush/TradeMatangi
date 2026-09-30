@@ -23,11 +23,19 @@ export function projectedPositionPnl(position: LevelPosition, price: number, bro
   return direction * position.quantity * (price - position.avg_entry_price) - position.entry_commission - exitCommission
 }
 
+export function projectedTotalPnlPctAtTarget(position: LevelPosition, currentPrice: number, targetPrice: number, totalPnl: number, sessionCapital: number, brokeragePerOrder: number): number | null {
+  const direction = position.side === 'LONG' ? 1 : position.side === 'SHORT' ? -1 : 0
+  if (!direction || position.quantity <= 0 || !Number.isFinite(currentPrice) || currentPrice <= 0 || !Number.isFinite(targetPrice) || targetPrice <= 0 || !Number.isFinite(totalPnl) || !Number.isFinite(sessionCapital) || sessionCapital <= 0 || !Number.isFinite(brokeragePerOrder) || brokeragePerOrder < 0) return null
+  const exitRate = direction === 1 ? (0.0625 + 1.18 * 0.06) / 100 : 0.006803 / 100
+  const exitCommission = Math.round((targetPrice * position.quantity * exitRate + brokeragePerOrder) * 10000) / 10000
+  return (totalPnl + direction * position.quantity * (targetPrice - currentPrice) - exitCommission) / sessionCapital * 100
+}
+
 export function positionPnlLevels(position: LevelPosition | null | undefined, sessionCapital: number, brokeragePerOrder: number): PositionPnlLevel[] {
   if (!position || position.side === 'FLAT' || !Number.isFinite(position.quantity) || position.quantity <= 0 || !Number.isFinite(position.avg_entry_price) || position.avg_entry_price <= 0 || !Number.isFinite(position.entry_commission) || !Number.isFinite(sessionCapital) || sessionCapital <= 0 || !Number.isFinite(brokeragePerOrder) || brokeragePerOrder < 0) return []
   const direction = position.side === 'LONG' ? 1 : -1
   const exitRate = direction === 1 ? (0.0625 + 1.18 * 0.06) / 100 : 0.006803 / 100
-  const levels: PositionPnlLevel[] = [{ key: 'entry', label: `Avg entry ${position.avg_entry_price.toFixed(2)}`, price: position.avg_entry_price, color: '#e6edf3' }]
+  const levels: PositionPnlLevel[] = [{ key: 'entry', label: 'Avg entry', price: position.avg_entry_price, color: '#e6edf3' }]
   for (const target of POSITION_PNL_TARGETS) {
     const targetPnl = target / 100 * sessionCapital
     // Solve the linear fee model, then search adjacent paise to account for backend fee rounding.
@@ -44,7 +52,7 @@ export function positionPnlLevels(position: LevelPosition | null | undefined, se
       return error < bestError ? paise : best
     }, candidates[0])
     const price = bestPaise / 100
-    levels.push({ key: String(target), label: `${target > 0 ? '+' : ''}${target}%  ${price.toFixed(2)}`, price, color: target > 0 ? '#22c55e' : '#ef4444' })
+    levels.push({ key: String(target), label: `${target > 0 ? '+' : ''}${target}%`, price, color: target > 0 ? '#22c55e' : '#ef4444' })
   }
   return levels
 }
