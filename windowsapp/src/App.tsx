@@ -17,6 +17,8 @@ import { aggregateLiveTileCandles, appendLiveTick, reconcileLiveTicks } from './
 import { applyLiveStreamPayloadToSnapshot, type LiveSnapshot, type LiveTileState } from './liveStreamState'
 import { acceptPaperSnapshot, applyPaperStreamEvent, isDesktopTradingSnapshot } from './paperTradingState'
 import { shouldShowMessage, useDismissMessage } from './useDismissMessage'
+import { mergeScreenDraft, type ScreenDraft } from './screenConflict'
+import { enqueueScreenSave, saveScreenRecord } from './screenSave'
 
 interface HistoricalPage { candles: Candle[]; available?: boolean; unavailable_reason?: string }
 interface Instrument { symbol: string; display_name: string; exchange: string; chart_type?: string; option_eligible: boolean; supported_intervals: number[] }
@@ -25,7 +27,7 @@ interface OptionMetadata { expiries: string[]; strike_interval: number; rights: 
 interface TileConfig { id: string; kind: 'spot' | 'option'; symbol: string; interval: string; tradingDate: string; expiry: string; strike: string; right: string }
 type Layout = '1' | '2-side' | '2-stacked' | '3-wide-top' | '4-grid' | '4-one-three' | '5-equal' | '5-wide-right'
 interface Screen { id: string; persistedId?: string; revision?: number; name: string; tiles: TileConfig[]; layout: Layout; saved?: PersistedScreenState }
-interface PersistedScreenState { id?: string; layout?: Layout; tiles?: TileConfig[]; indicators?: Record<string, string[]>; activeToolTileId?: string; mode?: DesktopMode; live_enabled?: boolean; session_id?: string; run_id?: string; live_stream_id?: string; owned?: boolean; run_date?: string; start_time?: string; speed?: string }
+interface PersistedScreenState extends Record<string, unknown> { id?: string; layout?: Layout; tiles?: TileConfig[]; indicators?: Record<string, string[]>; activeToolTileId?: string; mode?: DesktopMode; live_enabled?: boolean; session_id?: string; run_id?: string; live_stream_id?: string; owned?: boolean; run_date?: string; start_time?: string; speed?: string }
 interface DesktopScreenRecord { screen_id: string; name: string; state: PersistedScreenState; revision: number; order: number; active?: boolean }
 interface ReplaySnapshot { run_id: string; event_id: number; cursor: number; state: string; mode: string; bar_index: number; interval_seconds: number; tile_states: Array<{ tile_id: string; availability: string; interval_minutes?: number; candle?: Candle }> }
 const replaySnapshotFromStream = (value: unknown): ReplaySnapshot | null => {
@@ -547,7 +549,8 @@ function ScreenController(props: ScreenControllerProps) {
   const lastReplayPollError = useRef('')
   const [restoredReady, setRestoredReady] = useState(!initial)
   const screenSaveQueueRef = useRef<Promise<unknown>>(Promise.resolve())
-  const persistedScreenRef = useRef({ id: screens.find(screen => screen.id === activeScreenId)?.persistedId, revision: screens.find(screen => screen.id === activeScreenId)?.revision })
+  const persistedScreenRef = useRef<DesktopScreenRecord | null>(null)
+  const currentScreenDraftRef = useRef<ScreenDraft | null>(null)
   const [walletLocked, setWalletLocked] = useState(false)
   const [liveEnabled, setLiveEnabled] = useState(Boolean(initial?.live_enabled))
   const [handingOff, setHandingOff] = useState(false)
@@ -794,7 +797,10 @@ function ScreenController(props: ScreenControllerProps) {
   const desktopRecordRequest = async <T,>(path: string, method: 'GET' | 'POST' | 'PUT' | 'DELETE', body: Record<string, unknown> = {}): Promise<T> => {
     if (hasNativeHost) return invoke<T>('desktop_drawing_request', { baseUrl: serverUrl, path, method, body, screenId: activeScreenId })
     const response = await fetch(`${serverUrl.replace(/\/$/, '')}/api/desktop/v1/${path}`, { method, headers: { Authorization: `Bearer ${browserToken}`, 'Content-Type': 'application/json' }, body: method === 'GET' ? undefined : JSON.stringify(body) })
-    if (!response.ok) throw new Error(`Desktop record request failed (${response.status})`)
+    if (!response.ok) {
+      const detail = await response.text().catch(() => '')
+      throw new Error(`Desktop record request failed (${response.status})${detail ? `: ${detail.slice(0, 500)}` : ''}`)
+    }
     return (response.status === 204 ? null : await response.json()) as T
   }
   const drawingRequest = useCallback((path: string, method: 'GET' | 'POST' | 'PUT' | 'DELETE', body: Record<string, unknown> = {}) => desktopRecordRequest(path, method, body), [activeScreenId, browserToken, hasNativeHost, serverUrl])
@@ -865,20 +871,67 @@ function ScreenController(props: ScreenControllerProps) {
   }, [mode, trading?.session.session_id])
   const screenState = (screen: Screen): PersistedScreenState => ({ id: screen.id, layout: screen.layout, tiles: screen.tiles, indicators: tileIndicators, activeToolTileId: activeToolTile, mode, live_enabled: liveEnabled, live_stream_id: live?.stream_id, session_id: trading?.session.session_id, run_id: replay?.state !== 'stopped' ? replay?.run_id : undefined, owned: Boolean(trading && !sharedTradingSession), run_date: runDate, start_time: runStartTime, speed: replaySpeed })
   const normalizeScreen = (record: DesktopScreenRecord): Screen => ({ id: record.state?.id ?? record.screen_id, persistedId: record.screen_id, revision: record.revision, name: record.name, saved: record.state, layout: record.state?.layout ?? '1', tiles: record.state?.tiles?.length ? record.state.tiles : [newTile()] })
+  const recordDraft = (record: DesktopScreenRecord): ScreenDraft => ({ state: record.state as Record<string, unknown>, name: record.name, order: record.order })
+  currentScreenDraftRef.current = { state: screenState(activeScreen) as Record<string, unknown>, name: activeScreen.name, order: screens.findIndex(screen => screen.id === activeScreenId) }
+  const applySavedScreen = (draft: ScreenDraft, record: DesktopScreenRecord) => {
+    const state = draft.state as PersistedScreenState
+    setScreens(items => {
+      const index = items.findIndex(screen => screen.id === activeScreenId)
+      if (index < 0) return items
+      const updated = { ...items[index], name: draft.name, layout: state.layout ?? items[index].layout, tiles: state.tiles?.length ? state.tiles : items[index].tiles, persistedId: record.screen_id, revision: record.revision, saved: record.state }
+      const result = [...items]
+      result.splice(index, 1)
+      result.splice(Math.max(0, Math.min(draft.order, result.length)), 0, updated)
+      return result
+    })
+    setTileIndicators(state.indicators ?? {})
+    if (state.activeToolTileId) setActiveToolTileId(state.activeToolTileId)
+    if (state.mode) setMode(state.mode)
+    if (state.run_date) setRunDate(state.run_date)
+    if (state.start_time) setRunStartTime(state.start_time)
+    if (state.speed) setReplaySpeed(state.speed)
+    if (state.live_enabled !== undefined) setLiveEnabled(state.live_enabled)
+  }
+  const isRevisionConflict = (error: unknown) => {
+    const message = String(error)
+    return message.includes('(409') || message.includes('revision_conflict') || message.includes('Record was changed by another screen')
+  }
   const persistCurrentScreen = () => {
-    const state = screenState(activeScreen)
-    const name = activeScreen.name
-    const mutationId = crypto.randomUUID()
     const recoveryKey = journalKey(serverUrl, activeScreenId)
-    localStorage.setItem(recoveryKey, JSON.stringify({ state, revision: persistedScreenRef.current.revision, mutationId }))
-    const order = screens.findIndex(screen => screen.id === activeScreenId)
-    const save = screenSaveQueueRef.current.catch(() => undefined).then(async () => {
-      const current = persistedScreenRef.current
-      const body = { name, state, order, mutation_id: mutationId, revision: current.revision }
-      const record = await desktopRecordRequest<DesktopScreenRecord>(current.id ? `screens/${current.id}` : 'screens', current.id ? 'PUT' : 'POST', body)
-      persistedScreenRef.current = { id: record.screen_id, revision: record.revision }
-      try { if (JSON.parse(localStorage.getItem(recoveryKey) ?? 'null')?.mutationId === mutationId) localStorage.removeItem(recoveryKey) } catch { /* keep recovery record */ }
-      setScreens(items => items.map(screen => screen.id === activeScreenId ? { ...screen, persistedId: record.screen_id, revision: record.revision, saved: record.state } : screen))
+    const mutationId = crypto.randomUUID()
+    const queued = currentScreenDraftRef.current
+    if (queued) localStorage.setItem(recoveryKey, JSON.stringify({ state: queued.state, revision: persistedScreenRef.current?.revision, mutationId }))
+    const save = enqueueScreenSave(screenSaveQueueRef.current, async () => {
+      const base = persistedScreenRef.current
+      const submitted = currentScreenDraftRef.current
+      if (!submitted) throw new Error('Screen is not ready to save')
+      try {
+        if (JSON.parse(localStorage.getItem(recoveryKey) ?? 'null')?.mutationId === mutationId) {
+          localStorage.setItem(recoveryKey, JSON.stringify({ state: submitted.state, revision: base?.revision, mutationId }))
+        }
+      } catch { /* retain an existing recovery record */ }
+      const record = await saveScreenRecord(base ? { ...base, ...recordDraft(base) } : null, submitted, mutationId, {
+        write: (id, revision, draft, idempotencyKey) => desktopRecordRequest<DesktopScreenRecord>(id ? `screens/${id}` : 'screens', id ? 'PUT' : 'POST', { ...draft, mutation_id: idempotencyKey, revision }),
+        read: id => desktopRecordRequest<DesktopScreenRecord>(`screens/${id}`, 'GET'),
+        isConflict: isRevisionConflict,
+      })
+      const latest = currentScreenDraftRef.current ?? submitted
+      const reconciled = mergeScreenDraft(submitted, latest, recordDraft(record), true)
+      persistedScreenRef.current = record
+      currentScreenDraftRef.current = reconciled.draft
+      if (JSON.stringify(reconciled.draft) === JSON.stringify(recordDraft(record))) {
+        lastScreenPayloadRef.current = JSON.stringify({ id: activeScreenId, name: record.name, state: record.state, order: record.order })
+      }
+      applySavedScreen(reconciled.draft, record)
+      try {
+        const pending = JSON.parse(localStorage.getItem(recoveryKey) ?? 'null') as RecoveryJournal<PersistedScreenState> | null
+        if (pending?.mutationId) {
+          const unsavedState = JSON.stringify(reconciled.draft.state) !== JSON.stringify(record.state)
+          if (unsavedState || pending.mutationId !== mutationId) {
+            localStorage.setItem(recoveryKey, JSON.stringify({ state: reconciled.draft.state, revision: record.revision, mutationId: pending.mutationId }))
+          } else localStorage.removeItem(recoveryKey)
+        }
+      } catch { /* keep recovery record */ }
       return record
     })
     screenSaveQueueRef.current = save
@@ -900,7 +953,7 @@ function ScreenController(props: ScreenControllerProps) {
       try { recovery = JSON.parse(localStorage.getItem(journalKey(serverUrl, activeScreenId)) ?? 'null') } catch { /* ignore invalid journal */ }
       const saved = recoverState(record.state, record.revision, recovery)
       if (recovery && recovery.revision !== record.revision) setReplayError('Newer saved screen found; unsaved recovery copy retained locally.')
-      persistedScreenRef.current = { id: record.screen_id, revision: record.revision }
+      persistedScreenRef.current = record
       setScreens(items => items.map(screen => screen.id === activeScreenId ? normalizeScreen({ ...record, state: saved }) : screen))
       setMode(saved.mode ?? 'Browse')
       setRunDate(saved.run_date ?? record.state.tiles?.[0]?.tradingDate ?? paperMarketDate())
