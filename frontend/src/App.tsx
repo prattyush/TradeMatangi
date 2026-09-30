@@ -1791,9 +1791,15 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
           isMaximized={isMaximized}
           swapTargets={swapTargets.length > 0 ? swapTargets : undefined}
           position={draft ? undefined : getPositionForPane(pane)}
+          positionLevelsMatch={!draft && (pane.type === 'equity'
+            ? sim.sessionInstrumentType === 'equity'
+            : sim.sessionType === 'paper' && sim.sessionInstrumentType === 'options'
+              ? true
+              : pane.expiry === sim.sessionExpiry && pane.strike === (pane.right === 'CE' ? sim.sessionStrikeCE : sim.sessionStrikePE))}
           pnl={draft ? 0 : getPnlForPane(pane)}
           pnlPctMode={pnlPctMode}
           sessionCapital={draft ? 0 : sim.sessionCapital}
+          brokeragePerOrder={sim.brokeragePerOrder}
           onIntervalChange={(minutes) => handlePaneIntervalChange(pane.id, minutes)}
           onCandlesChange={draft ? undefined : (candles) => handlePaneCandlesChange(pane.id, candles)}
           ratioCandles={draft ? null : getRatioCandlesForPane(pane)}

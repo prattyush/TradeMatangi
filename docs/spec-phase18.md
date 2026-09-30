@@ -1065,6 +1065,92 @@ the existing bundle-size advisory. `git diff --check` passed. These local checks
 exercise lifecycle/state logic; the Windows reproduction checklist above must
 be executed using a rebuilt desktop application before runtime sign-off.
 
+### Saved-screen conflict reconciliation
+
+#### Why this needed fixing
+
+Desktop saves the screen configuration and its run references so the workspace
+can recover after a restart, reconnect, or pop-out. A save is also triggered by
+changes such as entering Paper, attaching to a Paper session, or changing the
+screen layout. The screen record uses a monotonically increasing `revision` to
+prevent an old renderer from replacing a newer saved record. If another window
+or client saves between a renderer's read and write, the backend correctly
+returns `409 Conflict`.
+
+The conflict concerned the saved screen record, not the Paper order operation.
+However, because Paper startup updates the saved `session_id` and triggers a
+screen save, the error could appear while entering or trading Paper. Blindly
+accepting the latest timestamp would hide the error but could restore an obsolete
+`session_id` or `run_id`, losing the screen's link to its active Paper/Replay
+session. Revision checks therefore remain important; the client now reconciles
+safe screen edits while requiring explicit recovery for competing lifecycle
+changes.
+
+#### Resolution and behavior
+
+- The renderer serializes saves. Each queued save reads the current screen draft
+  and last server-confirmed record together when execution begins. A failed
+  request or retry does not advance that confirmed base or revision.
+- On a revision conflict, the renderer fetches the individual screen record
+  through `GET /api/desktop/v1/screens/{screen_id}`. The backend reads that
+  DynamoDB item with `ConsistentRead=True`, so reconciliation starts from the
+  current record rather than a potentially stale list query.
+- Three-way reconciliation preserves independent edits to layout, tile
+  configuration, indicators, active tile, speed, screen name, and screen order.
+  Tiles merge by stable tile ID. Independent additions and edits are retained;
+  incompatible edits to the same tile or conflicting tile reorders are surfaced
+  as conflicts.
+- Paper/Replay lifecycle references, mode, ownership, and run date/time remain
+  protected. A competing change to these fields is not silently merged; the
+  local recovery journal remains available for reconciliation.
+- After a successful write, the UI adopts accepted remote name/order/state and
+  keeps newer local edits made while the request was in flight. A successful
+  merge updates the recovery journal revision; it is cleared only when no newer
+  local state remains.
+- DynamoDB conditional-write races are normalized to the same revision-conflict
+  response as a detected stale revision. This covers the race between the
+  backend's initial revision check and its conditional write.
+
+#### Verification and acceptance
+
+Desktop TypeScript checking passed and the Windows desktop suite passed **83
+tests**. New tests cover independent edits, indicator and tile merging, tile
+reorder conflicts, lifecycle conflicts, edits during an in-flight save, queued
+saves sampling the current base/draft, and a failed retry followed by a fresh
+conflict check. Three targeted backend persistence tests passed, covering the
+consistent read and normalized conditional-write conflict. The full persistence
+test file still has one unrelated existing failure: its drawing deletion test
+passes a `Decimal` price to a validator that accepts only `int` or `float`.
+
+Manual Windows acceptance is still needed: use two windows on the same saved
+screen; make independent and competing tile/layout edits; rename/reorder from
+both windows; start or attach Paper while the other window saves; and edit while
+a save is in flight. Confirm independent edits combine, conflicts preserve the
+local recovery copy, no stale screen replaces a Paper/Replay session reference,
+and restart/Bring Back restores the latest confirmed screen. Include backend
+reconnect and a delayed save response to exercise retry and journal recovery.
+
+#### Lessons learned
+
+- A 409 shown during a trading workflow may come from a related persistence
+  request rather than the trade request itself. Trace the exact endpoint and
+  record before attributing it to the trading engine.
+- Optimistic concurrency is still needed for full-record writes. Timestamp
+  last-write-wins can silently restore stale Paper or Replay identifiers, and
+  client clocks or delayed requests make client timestamps unreliable.
+- A merge base must travel with its revision. Capturing a state before queueing
+  but reading its revision later compares different versions and can cause
+  false conflicts or unsafe overwrites.
+- Do not advance the confirmed revision until the corresponding write succeeds.
+  A failed retry must leave the next save forced through another remote read and
+  merge.
+- A successful server response does not mean the renderer stayed unchanged
+  during the request. Reconcile the response with the current UI draft before
+  applying it, and keep any newer unsaved state in the recovery journal.
+- Strongly consistent single-record reads are useful at conflict boundaries;
+  a general list query may not be fresh enough immediately after a competing
+  write.
+
 ### Desktop Paper pricing, controls, and durable recovery (2026-09-28)
 
 #### Why this follow-up was needed
