@@ -59,6 +59,14 @@ async def create_screen(req: ScreenWrite, user_id: str = Depends(get_desktop_use
     return persistence.create_screen(user_id, req.name, req.state, req.mutation_id, req.order, req.active)
 
 
+@router.get("/screens/{screen_id}")
+async def get_screen(screen_id: str, user_id: str = Depends(get_desktop_user_id)):
+    record = persistence.get_screen(user_id, screen_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="Screen was not found")
+    return record
+
+
 @router.put("/screens/{screen_id}")
 async def update_screen(screen_id: str, req: ScreenWrite, user_id: str = Depends(get_desktop_user_id)):
     if req.revision is None or req.mutation_id is None:

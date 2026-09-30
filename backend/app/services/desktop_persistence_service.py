@@ -8,6 +8,7 @@ from decimal import Decimal
 from datetime import datetime, timezone
 
 from boto3.dynamodb.conditions import Key
+from botocore.exceptions import ClientError
 
 _SCREENS_TABLE = "DesktopScreens"
 _DRAWINGS_TABLE = "DesktopDrawings"
@@ -78,6 +79,12 @@ def list_screens(user_id: str) -> list[dict]:
     return sorted(records, key=lambda item: (item.get("order", 0), item["screen_id"]))
 
 
+def get_screen(user_id: str, screen_id: str) -> dict | None:
+    return _table(_SCREENS_TABLE).get_item(
+        Key={"user_id": user_id, "record_id": screen_id}, ConsistentRead=True
+    ).get("Item")
+
+
 def create_screen(user_id: str, name: str, state: dict, mutation_id: str | None, order: int = 0, active: bool = False) -> dict:
     screen_id = str(uuid.uuid4())
     item = {"user_id": user_id, "record_id": screen_id, "screen_id": screen_id, "name": name, "state": state, "order": order, "active": active, "revision": 1, "mutation_id": mutation_id or str(uuid.uuid4()), "updated_at": _now()}
@@ -93,7 +100,12 @@ def update_screen(user_id: str, screen_id: str, name: str, state: dict, revision
     if existing["revision"] != revision:
         raise ValueError("revision_conflict")
     item = {**existing, "name": name, "state": state, "order": order, "active": active, "revision": revision + 1, "mutation_id": mutation_id, "updated_at": _now()}
-    table.put_item(Item=item, ConditionExpression="revision = :revision", ExpressionAttributeValues={":revision": revision})
+    try:
+        table.put_item(Item=item, ConditionExpression="revision = :revision", ExpressionAttributeValues={":revision": revision})
+    except ClientError as error:
+        if error.response.get("Error", {}).get("Code") == "ConditionalCheckFailedException":
+            raise ValueError("revision_conflict") from error
+        raise
     return item
 
 
