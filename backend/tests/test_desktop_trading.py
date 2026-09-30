@@ -128,6 +128,7 @@ def no_db():
          patch("app.services.wallet_service.credit"), \
          patch("app.services.wallet_service._ensure_ledger_table"), \
          patch("app.services.wallet_service._write_ledger"), \
+         patch("app.routers.desktop_trading._historical_context_trades", return_value=[]), \
          patch("app.routers.desktop_trading.get_settings", return_value={
              "desktop_hide_chart_labels": False,
              "desktop_order_size_mode": "quantity",
@@ -1014,31 +1015,110 @@ def test_paper_option_risk_uses_one_lot_over_budget_when_funded():
     (OrderType.STOPLOSS, 85, 90),
     (OrderType.LIMIT, 115, 110),
 ])
-def test_desktop_paper_exit_tick_emits_committed_fill_state(order_type, price, trigger):
+@pytest.mark.parametrize("mode", ["paper", "replay", "stepwise"])
+@pytest.mark.parametrize("right", ["CE", "PE"])
+@pytest.mark.parametrize("entry_side", [TradeSide.BUY, TradeSide.SELL])
+@pytest.mark.parametrize("entry_quantity", [65, 130])
+def test_desktop_exit_tick_emits_committed_fill_state(order_type, price, trigger, mode, right, entry_side, entry_quantity):
     _clear()
     session = _session()
-    session.session_type = "paper"
-    trading_service.record_trade(session.session_id, TradeSide.BUY, 100, int(session.current_time),
-        quantity=65, symbol=session.symbol, right="CE", strike=session.strike_ce,
+    session.session_type = "sim" if mode == "replay" else mode
+    session.desktop_origin = f"desktop_{mode}"
+    contract = {**session.desktop_contracts[0], "right": right,
+                "contract_key": f"NIFTY:{session.expiry}:{session.strike_ce}:{right}"}
+    session.desktop_contracts = [contract]
+    if entry_side == TradeSide.SELL:
+        price, trigger = 200 - price, 200 - trigger
+    trading_service.record_trade(session.session_id, entry_side, 100, int(session.current_time),
+        quantity=entry_quantity, symbol=session.symbol, right=right, strike=session.strike_ce,
         expiry=session.expiry, instrument_type="options", user_id=session.user_id)
-    order = order_service.place_order(session.session_id, session.symbol, TradeSide.SELL,
+    exit_side = TradeSide.SELL if entry_side == TradeSide.BUY else TradeSide.BUY
+    order = order_service.place_order(session.session_id, session.symbol, exit_side,
         order_type, 65, int(session.current_time), session.date,
         trigger_price=trigger if order_type == OrderType.STOPLOSS else None,
         limit_price=trigger if order_type == OrderType.LIMIT else None,
-        right="CE", strike=session.strike_ce, expiry=session.expiry,
-        user_id=session.user_id, source="desktop_paper", wallet_ledger_id=session.wallet_ledger_id)
+        right=right, strike=session.strike_ce, expiry=session.expiry,
+        user_id=session.user_id, source=f"desktop_{mode}", wallet_ledger_id=session.wallet_ledger_id)
     try:
-        sim_svc._emit_tick_and_check_orders(session,
-            {"type": "tick", "time": int(session.current_time) + 1, "open": price, "high": price,
-             "low": price, "close": price, "right": "CE", **session.desktop_contracts[0]}, "CE")
+        with patch("app.routers.desktop_trading._snapshot", side_effect=AssertionError("Fill must not fetch a full snapshot")):
+            returned = sim_svc._emit_tick_and_check_orders(session,
+                {"type": "tick", "time": int(session.current_time) + 1, "open": price, "high": price,
+                 "low": price, "close": price, "right": right, **contract}, right)
+        assert not any(event.get("type") == "order_filled" for event in returned)
         assert order.status == OrderStatus.FILLED
         fills = [json.loads(payload) for _, payload in session.queue._dq if json.loads(payload).get("type") == "order_filled"]
         assert len(fills) == 1
         assert fills[0]["order_id"] == order.order_id
         assert fills[0]["trade"]["price"] == price
-        assert fills[0]["position"]["side"] == "FLAT"
+        assert fills[0]["position"]["quantity"] == entry_quantity - 65
+        assert fills[0]["position"]["side"] == ("FLAT" if entry_quantity == 65 else "LONG" if entry_side == TradeSide.BUY else "SHORT")
+        assert fills[0]["contract_key"] == contract["contract_key"]
+        assert fills[0]["committed_at_ms"] > 0
         assert fills[0]["pnl"]["day"] == desktop_trading._day_pnl(session)
+        if mode != "paper":
+            assert fills[0]["wallet_balance"] == wallet_service.get_ledger_balance(session.user_id, session.date, session.wallet_ledger_id)
     finally:
+        _clear()
+
+
+def test_desktop_replay_failed_settlement_emits_no_committed_fill():
+    _clear()
+    session = _session()
+    session.desktop_origin = "desktop_replay"
+    order = order_service.place_order(session.session_id, session.symbol, TradeSide.BUY,
+        OrderType.LIMIT, 65, int(session.current_time), session.date, limit_price=110,
+        right="CE", strike=session.strike_ce, expiry=session.expiry,
+        user_id=session.user_id, source="desktop_replay", wallet_ledger_id=session.wallet_ledger_id)
+    try:
+        with patch("app.services.trading.settle_wallet_for_trade", side_effect=RuntimeError("Settlement unavailable")):
+            returned = sim_svc._emit_tick_and_check_orders(session,
+                {"type": "tick", "time": int(session.current_time) + 1, "open": 100, "high": 100,
+                 "low": 100, "close": 100, **session.desktop_contracts[0]}, "CE")
+        assert order.status == OrderStatus.PENDING
+        assert not trading_service.get_trades(session.session_id)
+        assert not any(event.get("type") == "order_filled" for event in returned)
+        assert not any(json.loads(payload).get("type") == "order_filled" for _, payload in session.queue._dq)
+    finally:
+        _clear()
+
+
+def test_desktop_replay_take_profit_replaces_stop_then_emits_complete_fill():
+    _clear()
+    session = _session()
+    session.session_type = "sim"
+    session.desktop_origin = "desktop_replay"
+    trading_service.record_trade(session.session_id, TradeSide.BUY, 100, int(session.current_time),
+        quantity=65, symbol=session.symbol, right="CE", strike=session.strike_ce,
+        expiry=session.expiry, instrument_type="options", user_id=session.user_id)
+    stop = order_service.place_order(session.session_id, session.symbol, TradeSide.SELL,
+        OrderType.STOPLOSS, 65, int(session.current_time), session.date, trigger_price=90,
+        right="CE", strike=session.strike_ce, expiry=session.expiry,
+        user_id=session.user_id, source="desktop_replay", wallet_ledger_id=session.wallet_ledger_id)
+    try:
+        with patch("app.services.strategy_service._write_strategy_to_db"):
+            strategy = strategy_service.start_strategy(session, "TargetProfit", "CE", {
+                "target_profit_value": 110, "target_profit_is_pct": False,
+            })
+            tick = {"type": "tick", "time": int(session.current_time) + 1, "open": 111,
+                    "high": 111, "low": 111, "close": 111, **session.desktop_contracts[0]}
+            events = sim_svc._emit_tick_and_check_orders(session, tick, "CE")
+            assert stop.status == OrderStatus.CANCELLED
+            assert {event["type"] for event in events} >= {"order_cancelled", "order_placed", "strategy_completed"}
+            assert next(event for event in events if event["type"] == "strategy_completed")["strategy_id"] == strategy.strategy_id
+            replacement = next(event for event in events if event["type"] == "order_placed")
+            assert replacement["order_type"] == "LIMIT"
+            assert replacement["limit_price"] == 110
+            for event in events:
+                session.queue.put_nowait(json.dumps(event))
+            sim_svc._emit_tick_and_check_orders(session, {**tick, "time": tick["time"] + 1}, "CE")
+        fills = [json.loads(payload) for _, payload in session.queue._dq if json.loads(payload).get("type") == "order_filled"]
+        assert len(fills) == 1
+        assert fills[0]["order_id"] == replacement["order_id"]
+        assert fills[0]["position"]["side"] == "FLAT"
+        assert fills[0]["trade"]["trade_id"] == replacement["order_id"]
+        assert not order_service.get_open_orders(session.session_id)
+    finally:
+        strategy_service._registry.pop(session.session_id, None)
         _clear()
 
 

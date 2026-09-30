@@ -1784,6 +1784,12 @@ fn parse_sse_frame(frame: &str) -> (Option<u64>, Option<String>, Option<String>)
     (id, event, data)
 }
 
+fn trading_event_wakes_renderer(key: &str, payload: &serde_json::Value) -> bool {
+    // Chart replay and quote ticks stay batched; committed trading changes wake
+    // only the owning renderer, which drains the ordered native event buffer.
+    key.starts_with("paper:") && payload.get("type").and_then(|value| value.as_str()) != Some("tick")
+}
+
 #[tauri::command]
 async fn start_desktop_stream(
     window: tauri::WebviewWindow,
@@ -1797,6 +1803,8 @@ async fn start_desktop_stream(
     if !host.owns_stream(window.label(), &key) { return Err("Screen belongs to another window".into()); }
     let stream_host = host.clone();
     let stream_key = key.clone();
+    let stream_app = window.app_handle().clone();
+    let stream_label = window.label().to_string();
     let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
     let task = tokio::spawn(async move {
         let _ = ready_rx.await;
@@ -1857,7 +1865,13 @@ async fn start_desktop_stream(
                                             "type": payload.get("type"),
                                         }));
                                     }
+                                    let wake = trading_event_wakes_renderer(&stream_key, &payload);
                                     stream_host.record_stream(&stream_key, event_id, payload);
+                                    if wake && stream_host.owns_stream(&stream_label, &stream_key) {
+                                        let _ = stream_app.emit_to(stream_label.as_str(), "desktop-trading-events-available", serde_json::json!({
+                                            "key": &stream_key, "event_id": event_id,
+                                        }));
+                                    }
                                 } else {
                                     live_diagnostic("native_sse_parse_failed", &serde_json::json!({
                                         "stream_key": &stream_key,
@@ -1874,6 +1888,11 @@ async fn start_desktop_stream(
                                             "bytes": snapshot.to_string().len(),
                                         }));
                                         stream_host.record_stream(&stream_key, event_id, snapshot);
+                                        if stream_key.starts_with("paper:") && stream_host.owns_stream(&stream_label, &stream_key) {
+                                            let _ = stream_app.emit_to(stream_label.as_str(), "desktop-trading-events-available", serde_json::json!({
+                                                "key": &stream_key, "event_id": event_id,
+                                            }));
+                                        }
                                     } else {
                                         live_diagnostic("native_snapshot_recovery_failed", &serde_json::json!({
                                             "stream_key": &stream_key,
@@ -2223,6 +2242,19 @@ mod connection_monitor_tests {
 #[cfg(test)]
 mod screen_window_tests {
     use super::*;
+    #[test]
+    fn trading_wakeups_exclude_quote_ticks_and_chart_only_streams() {
+        let tick = serde_json::json!({"type": "tick"});
+        let fill = serde_json::json!({"type": "order_filled"});
+        assert!(!trading_event_wakes_renderer("paper:one:session", &tick));
+        assert!(!trading_event_wakes_renderer("replay:one:run", &fill));
+        assert!(trading_event_wakes_renderer("paper:one:session", &fill));
+        for event in ["order_cancelled", "order_placed", "order_converted", "strategy_completed", "session_ended", "bar_paused"] {
+            assert!(trading_event_wakes_renderer("paper:one:session", &serde_json::json!({"type": event})));
+        }
+        assert!(trading_event_wakes_renderer("paper:one:session", &serde_json::json!({"session": {"session_id": "session"}})));
+    }
+
     fn opening(host: &HostState, id: &str, token: &str) {
         host.0.lock().unwrap().screen_windows.insert(id.into(), ScreenWindowState { token: token.into(), ready: false });
     }

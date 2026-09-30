@@ -86,13 +86,19 @@ export const applyPaperStreamEvent = (snapshot: DesktopTradingSnapshot, event: R
       positions: primaryContract ? { ...snapshot.positions, [right ?? 'equity']: position } : snapshot.positions,
       positions_by_contract: contractKey ? { ...snapshot.positions_by_contract, [contractKey]: position } : snapshot.positions_by_contract,
       pnl: event.pnl as DesktopTradingSnapshot['pnl'],
+      wallet_balance: typeof event.wallet_balance === 'number' ? event.wallet_balance : snapshot.wallet_balance,
     }
+  }
+  if (event.type === 'order_filled' && orderId) {
+    // Legacy servers omit committed position data. Hide the executed order now;
+    // the stream coordinator recovers positions and P&L in the background.
+    return { ...snapshot, event_cursor: cursor, open_orders: snapshot.open_orders.filter(order => order.order_id !== orderId) }
   }
   if (event.type === 'bar_paused') {
     const barIndex = Number(event.bar_index)
     return Number.isFinite(barIndex) ? { ...snapshot, current_bar_index: barIndex, event_cursor: Number.isFinite(eventId) ? eventId : snapshot.event_cursor } : snapshot
   }
-  if (event.type !== 'tick') return snapshot
+  if (event.type !== 'tick') return { ...snapshot, event_cursor: cursor }
   const price = Number(event.close)
   const time = Number(event.time)
   const right = typeof event.right === 'string' ? event.right.toUpperCase() : null

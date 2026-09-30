@@ -1255,3 +1255,65 @@ workers against DynamoDB Local or AWS to verify fencing and delayed Stop.
 Check a missing 15:09 contract quote leaves settlement pending until that exact
 quote becomes available. DDB outage handling and multi-day Resume remain outside
 this follow-up's scope.
+
+### Desktop replay order-update latency correction
+
+Replay previously received small `order_filled` events while only Paper received
+the committed trade, position, open trade IDs, and P&L. The Desktop reducer could
+not remove a replay order from those events and waited for a full snapshot. The
+website removed the order immediately and refreshed positions asynchronously.
+Native Desktop also waited for its 500 ms polling timer and stopped reading
+events during snapshot recovery; browser Replay used 30-second snapshot polling.
+This left a filled stop-loss visible as if it were still pending, delayed the
+position/P&L change, and could leave the wallet display stale while the replay
+continued. Recovery requests also delayed later order events behind a slow
+snapshot response.
+
+- All Desktop trading modes now emit one complete fill event after settlement
+  and trade recording. No full snapshot or historical-session lookup is needed
+  to build that event. Existing website consumers remain compatible with the
+  additional fields. Legacy incomplete fills hide the executed order immediately
+  and recover the remaining state asynchronously. Historical fills also carry
+  their cached settled wallet balance; live Paper retains its wallet polling.
+- Native trading changes notify only the owning window to drain its existing
+  ordered event buffer. Quote ticks retain 500 ms batching, and polling remains
+  available for missed notifications. Listener registration precedes stream
+  startup; native startup and cleanup are serialized per stream key.
+- Browser Paper, Replay, and Stepwise use authenticated fetch-based SSE. Stream
+  consumption continues during snapshot requests. Both transports retain
+  independent 30-second reconciliation and bounded recovery retries.
+- A bounded event journal replays events newer than a recovered snapshot's
+  cursor. Snapshots that cannot cover a known gap or journal overflow are retried
+  rather than rolling back prices or resurrecting orders. Session cleanup ignores
+  obsolete responses and removes listeners and retry timers.
+- Chart order and strategy lines retain their overlay identities. Changed lines
+  are updated, completed lines are removed, and floating labels refresh without
+  rebuilding every overlay. Diagnostics correlate fill receipt/application,
+  recovery duration, and overlay removal using renderer monotonic timestamps.
+
+Regression coverage includes CE/PE, long/short positions, partial/full exits,
+failed settlement, the take-profit cancel/replace/next-tick-fill sequence,
+duplicate events, delayed or failed recovery, missing events, journal overflow,
+native wakeup serialization and window isolation, and split browser SSE frames.
+
+For take-profit, the strategy event sequence remains ordered: cancel superseded
+exit orders, publish the replacement limit order and strategy completion, then
+publish its fill when a later replay tick executes it. The UI can therefore
+remove the old stop and show the replacement immediately without changing the
+strategy's trigger buffer or fill timing. Fill events are emitted only after
+wallet settlement and trade recording succeed; failed settlement does not
+announce a committed fill.
+
+The main lesson is to keep authoritative trading changes independent of both
+quote batching and snapshot recovery. Faster delivery must still preserve event
+ordering and snapshot cursor coverage. Take-profit trigger buffers and execution
+timing are unchanged. Before runtime sign-off, rebuild Windows Desktop and check
+normal and accelerated replay: target native receipt-to-state application below
+100 ms and receipt-to-visible order removal below 200 ms under normal load.
+These are acceptance targets, not measured Windows latency results.
+
+Verification in WSL: the Desktop backend suite passed **144** tests, the Desktop
+client suite passed **100** tests, TypeScript checking passed, and the native
+Rust library suite passed **16** tests. The final wallet update also passed its
+affected client and backend reruns. A broader simulation/stepwise backend rerun
+was stopped during slow existing tests; it is not a completed full-backend result.
