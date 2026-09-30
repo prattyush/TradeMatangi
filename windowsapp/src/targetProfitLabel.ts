@@ -1,4 +1,5 @@
 import type { DesktopPosition, DesktopStrategy, DesktopTradingSettings } from './contracts'
+import { projectedTotalPnlPctAtTarget } from './positionPnlLevels'
 
 /** Resolve a percentage target to the equivalent NSE tick-aligned chart price. */
 export function targetProfitLinePrice(
@@ -24,14 +25,25 @@ export function targetProfitLabel(
   position: DesktopPosition | null,
   settings: DesktopTradingSettings | null,
   sessionCapital: number,
+  targetPrice: number | null = typeof strategy.price === 'number' ? strategy.price : null,
+  currentPrice?: number,
+  totalPnl?: number,
+  brokeragePerOrder = 1,
 ): string | null {
   if (strategy.strategy_type !== 'TargetProfit' || settings?.desktop_pnl_display_mode !== 'percent') return null
   if (!position || position.side === 'FLAT' || position.quantity <= 0 || sessionCapital <= 0) return null
   if (strategy.target_profit_is_pct && typeof strategy.target_profit_value === 'number') {
-    return `TP +${strategy.target_profit_value.toFixed(1)}%`
+    const totalPct = targetPrice !== null && currentPrice !== undefined && totalPnl !== undefined
+      ? projectedTotalPnlPctAtTarget(position, currentPrice, targetPrice, totalPnl, sessionCapital, brokeragePerOrder)
+      : null
+    return `TP +${strategy.target_profit_value.toFixed(1)}%${totalPct === null ? '' : ` / ${totalPct >= 0 ? '+' : ''}${totalPct.toFixed(1)}%`}`
   }
-  if (typeof strategy.price !== 'number' || !Number.isFinite(strategy.price)) return null
+  if (targetPrice === null || !Number.isFinite(targetPrice)) return null
   const direction = position.side === 'LONG' ? 1 : -1
-  const pnl = direction * (strategy.price - position.avg_entry_price) * position.quantity
-  return `TP ${pnl >= 0 ? '+' : ''}${((pnl / sessionCapital) * 100).toFixed(1)}%`
+  const pnl = direction * (targetPrice - position.avg_entry_price) * position.quantity
+  const positionPct = `${pnl >= 0 ? '+' : ''}${((pnl / sessionCapital) * 100).toFixed(1)}%`
+  const totalPct = currentPrice !== undefined && totalPnl !== undefined
+    ? projectedTotalPnlPctAtTarget(position, currentPrice, targetPrice, totalPnl, sessionCapital, brokeragePerOrder)
+    : null
+  return `TP ${positionPct}${totalPct === null ? '' : ` / ${totalPct >= 0 ? '+' : ''}${totalPct.toFixed(1)}%`}`
 }

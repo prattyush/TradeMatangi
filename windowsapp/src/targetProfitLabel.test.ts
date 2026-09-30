@@ -12,6 +12,11 @@ describe('take profit line P&L', () => {
     expect(targetProfitLabel({ ...strategy, price: 80 }, long, settings, 100_000)).toBe('TP -1.3%')
   })
 
+  it('appends projected total P&L including earlier realized results and exit charges', () => {
+    expect(targetProfitLabel(strategy, long, settings, 100_000, 120, 100, 5_000, 1)).toBe('TP +1.3% / +6.3%')
+    expect(targetProfitLabel({ ...strategy, price: 80 }, { ...long, side: 'SHORT' }, settings, 100_000, 80, 100, -5_000, 1)).toBe('TP +1.3% / -3.7%')
+  })
+
   it('uses short position direction and changes with the position', () => {
     const short = { ...long, side: 'SHORT' as const, quantity: 100 }
     expect(targetProfitLabel({ ...strategy, price: 80 }, short, settings, 100_000)).toBe('TP +2.0%')

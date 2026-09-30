@@ -1800,6 +1800,7 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
           pnlPctMode={pnlPctMode}
           sessionCapital={draft ? 0 : sim.sessionCapital}
           brokeragePerOrder={sim.brokeragePerOrder}
+          aggregatePnl={draft ? undefined : totalDayPnl}
           onIntervalChange={(minutes) => handlePaneIntervalChange(pane.id, minutes)}
           onCandlesChange={draft ? undefined : (candles) => handlePaneCandlesChange(pane.id, candles)}
           ratioCandles={draft ? null : getRatioCandlesForPane(pane)}

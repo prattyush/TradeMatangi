@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { positionPnlLevels, projectedPositionPnl } from './positionPnlLevels'
-import { positionPnlLevels as websiteLevels } from '../../frontend/src/indicators/positionPnlLevels'
+import { positionPnlLevels as websiteLevels, projectedTotalPnlPctAtTarget as websiteTotalAtTarget } from '../../frontend/src/indicators/positionPnlLevels'
+import { projectedTotalPnlPctAtTarget } from './positionPnlLevels'
 
 describe('position P&L levels', () => {
   for (const side of ['LONG', 'SHORT'] as const) {
@@ -9,6 +10,8 @@ describe('position P&L levels', () => {
       const levels = positionPnlLevels(position, 100000, 2)
       expect(levels).toHaveLength(9)
       expect(levels[0].price).toBe(200)
+      expect(levels[0].label).toBe('Avg entry')
+      expect(levels.slice(1).map(level => level.label)).toEqual(['-4.5%', '-3%', '-2%', '-1%', '+1%', '+2%', '+3%', '+4.5%'])
       expect(projectedPositionPnl(position, 200, 2)).toBeLessThan(0)
       for (const level of levels.slice(1)) {
         const target = Number(level.key) / 100 * 100000
@@ -35,5 +38,14 @@ describe('position P&L levels', () => {
     const short = { ...long, side: 'SHORT' as const }
     expect(projectedPositionPnl(long, 200, 2)).toBeCloseTo(-19.33, 4)
     expect(projectedPositionPnl(short, 200, 2)).toBeCloseTo(-6.6803, 4)
+  })
+
+  it('projects total P&L at the target without double-counting the current position mark', () => {
+    const position = { side: 'LONG' as const, quantity: 10, avg_entry_price: 100, entry_commission: 2 }
+    const desktop = projectedTotalPnlPctAtTarget(position, 110, 120, 500, 10000, 1)
+    const website = websiteTotalAtTarget(position, 110, 120, 500, 10000, 1)
+    expect(desktop).toBeCloseTo(5.974, 2)
+    expect(website).toBe(desktop)
+    expect(projectedTotalPnlPctAtTarget(position, 110, 120, 500, 0, 1)).toBeNull()
   })
 })
