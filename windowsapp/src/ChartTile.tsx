@@ -8,6 +8,7 @@ import { formatCandleCloseCountdown } from './liveCountdown'
 import { buildTradeMarkers } from './tradeMarkers'
 import { targetProfitLabel, targetProfitLinePrice } from './targetProfitLabel'
 import { positionPnlLevels, type PositionPnlLevel } from './positionPnlLevels'
+import { TradingOverlayRegistry } from './tradingOverlays'
 
 interface ChartSettings { background: string; textColor: string; gridColor: string; gridOpacity: number; gridStyle: 'solid' | 'dashed'; gridSize: number; movingAverageType: 'MA' | 'EMA'; movingAveragePeriods: string; showChartInfo: boolean; horizontalLineColor: string; horizontalLineWidth: number; trendLineColor: string; trendLineWidth: number; drawingLineColor: string; drawingLineWidth: number; drawingFillColor: string; drawingFillOpacity: number }
 const withOpacity = (hex: string, opacity: number) => `${hex}${Math.round(opacity * 255).toString(16).padStart(2, '0')}`
@@ -121,8 +122,9 @@ export function ChartTile({ symbol, interval, supportedIntervals, onIntervalChan
   const [pnlLabel, setPnlLabel] = useState<FloatingLabel | null>(null)
   const [clock, setClock] = useState(() => Date.now())
   const indicatorKey = indicators.join('|')
-  const orderOverlayIdsRef = useRef<Map<string, string>>(new Map())
-  const strategyOverlayIdsRef = useRef<Map<string, string>>(new Map())
+  const tradingOverlaysRef = useRef(new TradingOverlayRegistry())
+  const tradingOverlayInputsRef = useRef({ openOrders, strategies, position, sessionCapital, onOrderDrag, onStrategyDrag })
+  tradingOverlayInputsRef.current = { openOrders, strategies, position, sessionCapital, onOrderDrag, onStrategyDrag }
   const tradeMarkerOverlayIdsRef = useRef<Set<string>>(new Set())
   const pricePickActionRef = useRef(pricePickAction)
   const onPricePickRef = useRef(onPricePick)
@@ -247,6 +249,7 @@ export function ChartTile({ symbol, interval, supportedIntervals, onIntervalChan
     return () => {
       container.removeEventListener('mousedown', rememberPointer); container.removeEventListener('click', pickPrice); container.removeEventListener('contextmenu', openContext)
       subscribeBarRef.current = null; renderedCandlesRef.current = []; chartRef.current = null
+      tradingOverlaysRef.current.reset()
       try { dispose(element.current!) ; reportChartDiagnostic('chart_dispose_success', { symbol, interval }) }
       catch (error) { reportChartDiagnostic('chart_dispose_error', { symbol, interval, error: String(error), stack: error instanceof Error ? error.stack : undefined }) }
     }
@@ -444,10 +447,7 @@ export function ChartTile({ symbol, interval, supportedIntervals, onIntervalChan
   useEffect(() => {
     const chart = chartRef.current
     if (!chart) return
-    for (const id of orderOverlayIdsRef.current.values()) chart.removeOverlay({ id })
-    orderOverlayIdsRef.current.clear()
-    for (const id of strategyOverlayIdsRef.current.values()) chart.removeOverlay({ id })
-    strategyOverlayIdsRef.current.clear()
+    const retained = new Set<string>()
     const rendered = renderedCandlesRef.current
     const currentCandles = candlesRef.current
     const lastRendered = rendered.length ? rendered[rendered.length - 1] : undefined
@@ -465,7 +465,9 @@ export function ChartTile({ symbol, interval, supportedIntervals, onIntervalChan
       const label = orderLineLabel(order, position, tradingSettings, sessionCapital)
       const pixel = pointToPixel(timestamp, price)
       if (pixel && typeof pixel.y === 'number') nextLabels.push({ key: order.order_id, x: Math.max(8, (element.current?.clientWidth ?? 0) - 122), y: pixel.y, text: label, color })
-      const id = chart.createOverlay({
+      const overlayKey = `order:${order.order_id}`
+      retained.add(overlayKey)
+      tradingOverlaysRef.current.upsert(chart, overlayKey, {
         name: 'horizontalStraightLine',
         paneId: 'candle_pane',
         points: [{ timestamp, value: price }],
@@ -475,10 +477,11 @@ export function ChartTile({ symbol, interval, supportedIntervals, onIntervalChan
         onDeselected: () => { setSelectedOrderId(current => current === order.order_id ? null : current); setSelectedOrderAnchor(null) },
         onPressedMoveEnd: (event: any) => {
           const value = event.overlay.points[0]?.value
-          if (typeof value === 'number' && Number.isFinite(value)) onOrderDrag?.(order, Number(value.toFixed(2)))
+          const inputs = tradingOverlayInputsRef.current
+          const latest = inputs.openOrders.find(item => item.order_id === order.order_id)
+          if (latest && typeof value === 'number' && Number.isFinite(value)) inputs.onOrderDrag?.(latest, Number(value.toFixed(2)))
         },
       } as any)
-      if (typeof id === 'string') orderOverlayIdsRef.current.set(order.order_id, id)
     }
     for (const strategy of strategies) {
       const price = strategy.strategy_type === 'TargetProfit'
@@ -493,40 +496,40 @@ export function ChartTile({ symbol, interval, supportedIntervals, onIntervalChan
           nextLabels.push({ key: strategy.strategy_id, x: Math.max(8, (element.current?.clientWidth ?? 0) - 122), y: pixel.y, text: projectedLabel, color: projectedLabel.startsWith('TP -') ? '#ef4444' : '#22c55e' })
         }
       }
-      const id = chart.createOverlay({
+      const overlayKey = `strategy:${strategy.strategy_id}`
+      retained.add(overlayKey)
+      tradingOverlaysRef.current.upsert(chart, overlayKey, {
         name: 'horizontalStraightLine', paneId: 'candle_pane', points: [{ timestamp, value: price }],
         styles: { line: { color: selectedLine ? '#fbbf24' : '#f59e0b', size: selectedLine ? 3 : 2, style: 'dashed', dashedValue: [3, 3] } },
         extendData: { strategyId: strategy.strategy_id, label: projectedLabel ?? `${strategy.strategy_type} @ ${price.toFixed(2)}` },
         onSelected: () => {
-          if (strategy.strategy_type !== 'TargetProfit') return
+          const inputs = tradingOverlayInputsRef.current
+          const latest = inputs.strategies.find(item => item.strategy_id === strategy.strategy_id)
+          if (latest?.strategy_type !== 'TargetProfit') return
           setSelectedOrderId(null)
           setSelectedOrderAnchor(null)
           setSelectedStrategyId(strategy.strategy_id)
           setSelectedStrategyAnchor(lastPointerRef.current)
           setTargetProfitPctError('')
-          const existingPct = strategy.target_profit_is_pct ? strategy.target_profit_value : undefined
-          const direction = position?.side === 'LONG' ? 1 : position?.side === 'SHORT' ? -1 : 0
-          const impliedPct = position && direction && position.quantity > 0 && sessionCapital > 0
-            ? direction * (price - position.avg_entry_price) * position.quantity / sessionCapital * 100
+          const existingPct = latest.target_profit_is_pct ? latest.target_profit_value : undefined
+          const currentPosition = inputs.position
+          const direction = currentPosition?.side === 'LONG' ? 1 : currentPosition?.side === 'SHORT' ? -1 : 0
+          const currentPrice = targetProfitLinePrice(latest, currentPosition, inputs.sessionCapital) ?? price
+          const impliedPct = currentPosition && direction && currentPosition.quantity > 0 && inputs.sessionCapital > 0
+            ? direction * (currentPrice - currentPosition.avg_entry_price) * currentPosition.quantity / inputs.sessionCapital * 100
             : 0
           const initialPct = typeof existingPct === 'number' ? existingPct : impliedPct > 0 ? Number(impliedPct.toFixed(1)) : ''
           setTargetProfitPctDraft(String(initialPct))
         },
         onPressedMoveEnd: (event: any) => {
           const value = event.overlay.points[0]?.value
-          if (typeof value === 'number' && Number.isFinite(value)) onStrategyDrag?.(strategy.strategy_id, Number(value.toFixed(2)))
+          if (typeof value === 'number' && Number.isFinite(value)) tradingOverlayInputsRef.current.onStrategyDrag?.(strategy.strategy_id, Number(value.toFixed(2)))
         },
       } as any)
-      if (typeof id === 'string') strategyOverlayIdsRef.current.set(strategy.strategy_id, id)
     }
+    const removed = tradingOverlaysRef.current.prune(chart, retained)
+    if (removed.length) reportChartDiagnostic('trading_overlays_removed', { instrument: drawingInstrumentKey, keys: removed, removed_at_ms: Date.now(), renderer_time_ms: performance.now() })
     setFloatingLabels(nextLabels)
-    return () => {
-      for (const id of orderOverlayIdsRef.current.values()) chart.removeOverlay({ id })
-      orderOverlayIdsRef.current.clear()
-      for (const id of strategyOverlayIdsRef.current.values()) chart.removeOverlay({ id })
-      strategyOverlayIdsRef.current.clear()
-      setFloatingLabels([])
-    }
   }, [openOrders, strategies, selectedOrderId, selectedStrategyId, position, tradingSettings, sessionCapital, aggregatePnl, positionMarkPrice, brokeragePerOrder, symbol, interval, candles, onOrderDrag, onStrategyDrag])
   useEffect(() => {
     const chart = chartRef.current

@@ -1,7 +1,8 @@
 import { parseGuardrailError } from './guardrailFeedback'
 import { GuardrailFields, guardrailFields } from './GuardrailSettings'
 import { ToolbarIcon } from './ToolbarIcon'
-import { TradingRefresh, TRADING_RECONCILE_MS, eventNeedsTradingRefresh } from './tradingRefresh'
+import { TradingRefresh, TRADING_RECONCILE_MS } from './tradingRefresh'
+import { TradingSseDecoder, TradingStreamController, TradingStreamDrain, TradingStreamLifecycle } from './tradingStream'
 import { bounded, closeAfterSave, controlledScreens, SAVE_TIMEOUT_MS, journalKey, recoverState, type RecoveryJournal } from './windowLifecycle'
 import { ticketSizingPayload, ticketSizingLabel, switchTicketSizing } from './ticketSizing'
 import { entryUnavailableReason, equityEntryEnabled, entryQuantity, instrumentLotSize, validateEntryStop } from './tradingInstrument'
@@ -15,7 +16,7 @@ import { shouldConsumeDrawingCommand } from './drawingState'
 import type { Candle, DesktopOrder, DesktopPosition, DesktopTrade, DesktopTradingSnapshot } from './contracts'
 import { aggregateLiveTileCandles, appendLiveTick, reconcileLiveTicks } from './liveCandles'
 import { applyLiveStreamPayloadToSnapshot, type LiveSnapshot, type LiveTileState } from './liveStreamState'
-import { acceptPaperSnapshot, applyPaperStreamEvent, isDesktopTradingSnapshot } from './paperTradingState'
+import { isDesktopTradingSnapshot } from './paperTradingState'
 import { shouldShowMessage, useDismissMessage } from './useDismissMessage'
 import { mergeScreenDraft, type ScreenDraft } from './screenConflict'
 import { enqueueScreenSave, saveScreenRecord } from './screenSave'
@@ -575,6 +576,7 @@ function ScreenController(props: ScreenControllerProps) {
   const authenticatedRef = useRef(connection !== 'authentication_required')
   const tradingStreamEventRef = useRef<Record<string, number>>({})
   const tradingRefreshRef = useRef(new TradingRefresh())
+  const tradingStreamLifecycleRef = useRef(new TradingStreamLifecycle())
   const tradingStateRef = useRef(trading)
   tradingStateRef.current = trading
   const tradingSnapshotRequiredRef = useRef<Record<string, boolean>>({})
@@ -1508,162 +1510,129 @@ function ScreenController(props: ScreenControllerProps) {
     return () => { cancelled = true; window.clearInterval(timer) }
   }, [replay?.run_id, replay?.state, hasNativeHost, serverUrl, browserToken, connection])
   useEffect(() => {
-    if (!hasNativeHost || !childReady || !isTradingMode(mode) || !trading?.session.session_id || trading.session.state === 'ended' || connection === 'authentication_required') return
-    const sessionId = trading.session.session_id
-    const key = `paper:${activeScreenId}:${sessionId}`
-    void startNativeStream(key, `trading/${sessionId}/events`, `trading/${sessionId}/snapshot`).catch(reportTradingError)
-    return () => { stopNativeStream(key); delete tradingStreamEventRef.current[key]; delete tradingSnapshotRequiredRef.current[key] }
-  }, [mode, trading?.session.session_id, trading?.session.state, hasNativeHost, childReady, connection === 'authentication_required', serverUrl, browserToken])
-  useEffect(() => {
     if (mode !== 'Paper' || !trading?.session.session_id || trading.session.state === 'ended' || !live?.stream_id) return
     void desktopTradingRequest(`${trading.session.session_id}/live-stream`, 'POST', { live_stream_id: live.stream_id }).catch(reportTradingError)
   }, [mode, trading?.session.session_id, trading?.session.state, live?.stream_id])
   useEffect(() => {
     if (!isTradingMode(mode) || !trading?.session.session_id || connection === 'authentication_required' || (props.assignedId && !childReady)) return
     const sessionId = trading.session.session_id
-    if (hasNativeHost && trading.session.state !== 'ended') {
-      const key = `paper:${activeScreenId}:${sessionId}`
-      let cancelled = false
-      let inFlight = false
-      const refreshKey = tradingRefreshKey(sessionId)
-      tradingRefreshRef.current.due(refreshKey)
-      const timer = window.setInterval(() => {
-        if (inFlight) return
-        inFlight = true
-        void readNativeStreamState<DesktopTradingStreamPayload>(key)
-          .catch(error => { if (!cancelled) reportTradingError(error); return null })
-          .then(async stream => {
-            if (cancelled) return
-            const previousCursor = tradingStreamEventRef.current[key] ?? -1
-            const advanced = Boolean(stream && stream.last_event_id > previousCursor)
-            let needsSnapshot = Boolean(tradingSnapshotRequiredRef.current[key]) || Boolean(stream?.events_dropped)
-            if (mode !== 'Paper' && tradingRefreshRef.current.due(refreshKey)) needsSnapshot = true
-            if (advanced) {
-              const events = paperStreamEvents(stream!.latest_payload)
-              let expectedCursor = previousCursor
-              if (mode === 'Paper' && events.some(event => event.type === 'session_ended')) {
-                needsSnapshot = true
-              }
-              for (const event of events) {
-                if (isDesktopTradingSnapshot(event)) expectedCursor = Math.max(expectedCursor, event.event_cursor ?? 0)
-                else if (Number.isFinite(Number(event.event_id))) {
-                  const eventId = Number(event.event_id)
-                  if (expectedCursor >= 0 && eventId > expectedCursor + 1) needsSnapshot = true
-                  expectedCursor = Math.max(expectedCursor, eventId)
-                }
-                if (event.type === 'guardrail_activated' && Number(event.event_id) > previousCursor) setGuardrailPopup({ type: String(event.guardrail_type), reason: String(event.reason) })
-                if (event.type === 'strategy_rejected' && Number(event.event_id) > previousCursor) setStrategyError(`AutoStop rejected: ${String(event.reason)}`)
-                if (event.type === 'order_filled') recordRendererDiagnostic('paper_fill_received', { session_id: sessionId, order_id: event.order_id, event_id: event.event_id, committed_at_ms: event.committed_at_ms, received_at_ms: Date.now() })
-                if (isDesktopTradingSnapshot(event)) tradingRefreshRef.current.mark(refreshKey)
-                else if (eventNeedsTradingRefresh(event, tradingStateRef.current?.event_cursor ?? -1)) needsSnapshot = true
-              }
-              setTrading(current => {
-                if (!current || current.session.session_id !== sessionId) return current
-                let next = current
-                for (const event of events) next = applyPaperStreamEvent(next, event)
-                return next
-              })
-            }
-            if (needsSnapshot) {
-              tradingSnapshotRequiredRef.current[key] = true
-              const snapshot = await desktopTradingRequest<DesktopTradingSnapshot>(`${sessionId}/snapshot`, 'GET')
-              if (cancelled || snapshot.session.session_id !== sessionId) return
-              if (mode === 'Paper' && snapshot.session.state === 'ended') {
-                setTrading(snapshot)
-                setTradingNotice('Paper engine stopped. Saved positions and history remain available.')
-                return
-              }
-              setTrading(current => current?.session.session_id === sessionId ? acceptPaperSnapshot(current, snapshot) : current)
-              delete tradingSnapshotRequiredRef.current[key]
-            }
-            if (advanced) tradingStreamEventRef.current[key] = stream!.last_event_id
-            clearTradingError()
-          })
-          .catch(error => {
-            if (cancelled) return
-            if (mode === 'Paper' && isMissingSession(error)) {
-              reportTradingError('Paper engine is unavailable; saved session will be retried.')
-            } else reportTradingError(error)
-          })
-          .finally(() => { inFlight = false })
-      }, PAPER_STREAM_POLL_MS)
-      return () => { cancelled = true; window.clearInterval(timer) }
+    const key = `paper:${activeScreenId}:${sessionId}`
+    let cancelled = false
+    const controller = new TradingStreamController({
+      current: () => tradingStateRef.current?.session.session_id === sessionId ? tradingStateRef.current : null,
+      publish: snapshot => {
+        if (cancelled || tradingStateRef.current?.session.session_id !== sessionId) return
+        tradingStateRef.current = snapshot
+        setTrading(current => current?.session.session_id === sessionId ? snapshot : current)
+      },
+      fetchSnapshot: () => desktopTradingRequest<DesktopTradingSnapshot>(`${sessionId}/snapshot`, 'GET'),
+      onError: error => { if (!cancelled) reportTradingError(error) },
+      onRecovery: elapsedMs => {
+        tradingRefreshRef.current.mark(tradingRefreshKey(sessionId))
+        recordRendererDiagnostic('trading_snapshot_reconciled', { session_id: sessionId, elapsed_ms: elapsedMs })
+      },
+    })
+    const receive = (events: Record<string, unknown>[], gap = false) => {
+      if (cancelled) return
+      const started = performance.now()
+      const previousCursor = tradingStateRef.current?.event_cursor ?? -1
+      for (const event of events) {
+        if (Number(event.event_id) <= previousCursor) continue
+        if (event.type === 'guardrail_activated') setGuardrailPopup({ type: String(event.guardrail_type), reason: String(event.reason) })
+        if (event.type === 'strategy_rejected') setStrategyError(`AutoStop rejected: ${String(event.reason)}`)
+        if (event.type === 'order_filled') recordRendererDiagnostic('trading_fill_received', { session_id: sessionId, order_id: event.order_id, event_id: event.event_id, committed_at_ms: event.committed_at_ms, received_at_ms: Date.now(), renderer_time_ms: started })
+        if (isDesktopTradingSnapshot(event)) tradingRefreshRef.current.mark(tradingRefreshKey(sessionId))
+        if (mode === 'Paper' && event.type === 'session_ended') setTradingNotice('Paper engine stopped. Saved positions and history remain available.')
+      }
+      controller.receive(events, gap)
+      for (const event of events) {
+        if (event.type === 'order_filled' && Number(event.event_id) > previousCursor) recordRendererDiagnostic('trading_fill_applied', { session_id: sessionId, order_id: event.order_id, event_id: event.event_id, elapsed_ms: performance.now() - started })
+      }
+      clearTradingError()
     }
-    if (mode === 'Paper' && trading.session.state !== 'ended') {
-      const abort = new AbortController()
-      let cancelled = false
-      let cursor = tradingStateRef.current?.event_cursor ?? 0
-      const connect = async () => {
-        let backoff = 1_000
-        while (!cancelled) {
+    const reconcileTimer = window.setInterval(() => controller.recover(), TRADING_RECONCILE_MS)
+    if (trading.session.state === 'ended') {
+      return () => { cancelled = true; controller.stop(); window.clearInterval(reconcileTimer) }
+    }
+    if (hasNativeHost) {
+      const drain = new TradingStreamDrain(async () => {
+        const stream = await readNativeStreamState<DesktopTradingStreamPayload>(key)
+        if (cancelled || !stream) return
+        const previousCursor = tradingStreamEventRef.current[key] ?? -1
+        if (stream.last_event_id > previousCursor || stream.events_dropped || tradingSnapshotRequiredRef.current[key]) {
+          const recover = Boolean(stream.events_dropped || tradingSnapshotRequiredRef.current[key])
+          delete tradingSnapshotRequiredRef.current[key]
+          receive(paperStreamEvents(stream.latest_payload), recover)
+          tradingStreamEventRef.current[key] = stream.last_event_id
+        }
+      }, reportTradingError)
+      let unlisten: (() => void) | undefined
+      // Listen before SSE starts; drain again afterward to cover startup races.
+      const start = async () => {
+        try {
+          unlisten = await listen<{ key: string; event_id: number }>('desktop-trading-events-available', event => {
+            if (event.payload.key === key) void drain.wake()
+          })
+        } catch (error) { if (!cancelled) reportTradingError(error) }
+        if (cancelled) { unlisten?.(); return }
+        await tradingStreamLifecycleRef.current.run(key, async () => {
+          if (cancelled) return
+          await startNativeStream(key, `trading/${sessionId}/events`, `trading/${sessionId}/snapshot`)
+          if (!cancelled) await drain.wake()
+        })
+      }
+      void start().catch(error => { if (!cancelled) reportTradingError(error) })
+      const pollTimer = window.setInterval(() => { void drain.wake() }, PAPER_STREAM_POLL_MS)
+      return () => {
+        cancelled = true
+        controller.stop()
+        drain.stop()
+        unlisten?.()
+        void tradingStreamLifecycleRef.current.run(key, async () => {
+          await invoke('stop_desktop_stream', { key })
+        }).catch(reportTradingError)
+        delete tradingStreamEventRef.current[key]
+        window.clearInterval(pollTimer)
+        window.clearInterval(reconcileTimer)
+      }
+    }
+    const abort = new AbortController()
+    let cursor = tradingStateRef.current?.event_cursor ?? 0
+    const connect = async () => {
+      let backoff = 1_000
+      while (!cancelled) {
+        try {
+          const response = await fetch(`${serverUrl.replace(/\/$/, '')}/api/desktop/v1/trading/${sessionId}/events?last_event_id=${cursor}`, {
+            headers: { Authorization: `Bearer ${browserToken}`, Accept: 'text/event-stream' }, signal: abort.signal,
+          })
+          if (!response.ok || !response.body) throw new Error(`Trading stream failed (${response.status})`)
+          backoff = 1_000
+          const reader = response.body.getReader()
+          const decoder = new TradingSseDecoder((event, id) => {
+            const nextId = id ?? Number(event.event_id)
+            const gap = Number.isFinite(nextId) && nextId > cursor + 1 && !isDesktopTradingSnapshot(event)
+            if (Number.isFinite(nextId)) cursor = Math.max(cursor, nextId)
+            if (isDesktopTradingSnapshot(event)) cursor = Math.max(cursor, event.event_cursor ?? 0)
+            receive([!isDesktopTradingSnapshot(event) && Number.isFinite(nextId) ? { ...event, event_id: nextId } : event], gap)
+          }, () => controller.recover())
           try {
-            const response = await fetch(`${serverUrl.replace(/\/$/, '')}/api/desktop/v1/trading/${sessionId}/events?last_event_id=${cursor}`, {
-              headers: { Authorization: `Bearer ${browserToken}`, Accept: 'text/event-stream' }, signal: abort.signal,
-            })
-            if (!response.ok || !response.body) throw new Error(`Paper stream failed (${response.status})`)
-            backoff = 1_000
-            const reader = response.body.getReader()
-            const decoder = new TextDecoder()
-            let buffer = ''
             while (!cancelled) {
               const { done, value } = await reader.read()
               if (done) break
-              buffer = (buffer + decoder.decode(value, { stream: true })).replace(/\r\n/g, '\n')
-              let end = buffer.indexOf('\n\n')
-              while (end >= 0) {
-                const frame = buffer.slice(0, end)
-                buffer = buffer.slice(end + 2)
-                const data = frame.split('\n').filter(line => line.startsWith('data:')).map(line => line.slice(5).trimStart()).join('\n')
-                const idText = frame.split('\n').find(line => line.startsWith('id:'))?.slice(3).trim()
-                if (data) {
-                  const event = JSON.parse(data) as Record<string, unknown>
-                  const nextId = idText ? Number(idText) : Number(event.event_id)
-                  const gap = Number.isFinite(nextId) && cursor > 0 && nextId > cursor + 1 && !isDesktopTradingSnapshot(event)
-                  if (Number.isFinite(nextId)) cursor = Math.max(cursor, nextId)
-                  if (gap || (!isDesktopTradingSnapshot(event) && eventNeedsTradingRefresh(event, tradingStateRef.current?.event_cursor ?? -1))) {
-                    const snapshot = await desktopTradingRequest<DesktopTradingSnapshot>(`${sessionId}/snapshot`, 'GET')
-                    cursor = Math.max(cursor, snapshot.event_cursor ?? 0)
-                    if (!cancelled) setTrading(current => current?.session.session_id === sessionId ? acceptPaperSnapshot(current, snapshot) : current)
-                  }
-                  if (!cancelled) setTrading(current => current?.session.session_id === sessionId ? applyPaperStreamEvent(current, event) : current)
-                  if (event.type === 'session_ended' && !cancelled) setTradingNotice('Paper engine stopped. Saved positions and history remain available.')
-                }
-                end = buffer.indexOf('\n\n')
-              }
+              decoder.push(value)
             }
-          } catch (error) {
-            if (cancelled) return
-            reportTradingError(error)
-          }
-          if (!cancelled) await new Promise(resolve => window.setTimeout(resolve, backoff))
-          backoff = Math.min(backoff * 2, 30_000)
-        }
-      }
-      void connect()
-      return () => { cancelled = true; abort.abort() }
-    }
-    let cancelled = false
-    let inFlight = false
-    const timer = window.setInterval(() => {
-      if (inFlight) return
-      inFlight = true
-      void desktopTradingRequest<DesktopTradingSnapshot>(`${sessionId}/snapshot`, 'GET')
-        .then(snapshot => {
-          if (cancelled || snapshot.session.session_id !== sessionId) return
-          if (mode === 'Paper' && snapshot.session.state === 'ended') {
-            setTrading(snapshot)
-          } else setTrading(current => current?.session.session_id === sessionId ? acceptPaperSnapshot(current, snapshot) : current)
-        })
-        .catch(error => {
+          } finally { await reader.cancel().catch(() => undefined); reader.releaseLock() }
+        } catch (error) {
           if (cancelled) return
-          if (mode === 'Paper' && isMissingSession(error)) {
-            reportTradingError('Paper session is temporarily unavailable; retrying saved history.')
-          } else reportTradingError(error)
-        })
-        .finally(() => { inFlight = false })
-    }, mode === 'Paper' && trading.session.state === 'ended' ? 30_000 : TRADING_RECONCILE_MS)
-    return () => { cancelled = true; window.clearInterval(timer) }
-  }, [mode, trading?.session.session_id, trading?.session.state, serverUrl, browserToken, hasNativeHost, connection, childReady])
+          reportTradingError(error)
+        }
+        if (!cancelled) await new Promise(resolve => window.setTimeout(resolve, backoff))
+        backoff = Math.min(backoff * 2, 30_000)
+      }
+    }
+    void connect()
+    return () => { cancelled = true; abort.abort(); controller.stop(); window.clearInterval(reconcileTimer) }
+  }, [mode, trading?.session.session_id, trading?.session.state, serverUrl, browserToken, hasNativeHost, connection, childReady, activeScreenId])
   useEffect(() => {
     if (mode !== 'Paper' || !trading?.session.session_id || trading.session.state === 'ended' || connection !== 'connected') return
     const sessionId = trading.session.session_id

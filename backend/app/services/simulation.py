@@ -955,10 +955,11 @@ def _emit_tick_and_check_orders(
         only_order_id=only_order_id,
     )
     fill_events = []
+    desktop_sources = {"desktop_paper", "desktop_replay", "desktop_stepwise"}
     for order in filled:
         fill_started = time.monotonic()
-        if getattr(session, "desktop_origin", None) == "desktop_paper" or order.source == "desktop_paper":
-            logger.info("desktop_paper_fill_triggered session_id=%s order_id=%s tick_time=%s", session.session_id, order.order_id, current_time)
+        if getattr(session, "desktop_origin", None) in desktop_sources or order.source in desktop_sources:
+            logger.info("desktop_fill_triggered session_id=%s order_id=%s tick_time=%s", session.session_id, order.order_id, current_time)
         try:
             settle_wallet_for_trade(
                 session,
@@ -1015,8 +1016,8 @@ def _emit_tick_and_check_orders(
             "strike": order.strike,
             "expiry": order.expiry,
         }
-        if getattr(session, "desktop_origin", None) == "desktop_paper" or order.source == "desktop_paper":
-            # The desktop can render a committed fill without a full trading snapshot.
+        if getattr(session, "desktop_origin", None) in desktop_sources or order.source in desktop_sources:
+            # All desktop modes can render a committed fill without a snapshot.
             from app.routers.desktop_trading import _day_pnl, _mark_open_trades, _position_for, _position_pnl
             from app.services.trading import get_trades
             contract_key = f"{order.symbol}:{order.expiry}:{order.strike}:{order.right}" if order.right else None
@@ -1037,8 +1038,14 @@ def _emit_tick_and_check_orders(
                     "day_pct": round(day_pnl / capital * 100, 2) if capital > 0 else 0,
                 },
             })
+            if session.wallet_ledger_id and not session.wallet_ledger_id.startswith("paper:"):
+                # Historical settlement has already updated this cached ledger.
+                # Preserve prompt wallet updates without a full snapshot or an
+                # additional distributed Paper-wallet read on the fill path.
+                from app.services.wallet_service import get_ledger_balance
+                fill_event["wallet_balance"] = get_ledger_balance(session.user_id, session.date, session.wallet_ledger_id)
             session.queue.put_nowait(json.dumps(fill_event, default=_json_decimal))
-            logger.info("desktop_paper_fill_queued session_id=%s order_id=%s elapsed_ms=%.1f event_id=%s", session.session_id, order.order_id, (time.monotonic() - fill_started) * 1000, session.queue.latest_id())
+            logger.info("desktop_fill_queued session_id=%s order_id=%s elapsed_ms=%.1f event_id=%s", session.session_id, order.order_id, (time.monotonic() - fill_started) * 1000, session.queue.latest_id())
         else:
             fill_events.append(fill_event)
 
