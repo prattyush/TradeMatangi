@@ -11,6 +11,7 @@ import {
   LineStyle,
 } from 'lightweight-charts'
 import api, { OHLCCandle, TickEvent, BarCandle, Trade, Order, Position, StrategyResponse } from '../services/api'
+import { positionPnlLevels, type PositionPnlLevel } from '../indicators/positionPnlLevels'
 import {
   computeOptionsRocComparison,
   IndicatorCandle,
@@ -79,6 +80,8 @@ interface Props {
   position?: Position
   pnlPctMode?: boolean
   sessionCapital?: number
+  brokeragePerOrder?: number
+  positionLevelsMatch?: boolean
   pnl?: number
   onCandlesChange?: (candles: IndicatorCandle[]) => void
   ratioCandles?: {
@@ -445,6 +448,8 @@ export default function Chart({
   position,
   pnlPctMode,
   sessionCapital,
+  brokeragePerOrder = 0,
+  positionLevelsMatch = true,
   pnl = 0,
   onCandlesChange,
   ratioCandles = null,
@@ -462,6 +467,7 @@ export default function Chart({
   const lastEma9Ref = useRef<number | null>(null)
   const lastEma21Ref = useRef<number | null>(null)
   const candleTimesRef = useRef<number[]>([])
+  const positionLevelFallbackRef = useRef<{ key: string; time: number } | null>(null)
   const latestTickRef = useRef(latestTick)
   const currentSimTimeRef = useRef(currentSimTime)
   const drawModeRef = useRef<DrawMode>('none')
@@ -487,6 +493,8 @@ export default function Chart({
   const [activeRatioIndicators, setActiveRatioIndicators] = useState<RocComparisonKey[]>([])
   const [expandedRatioIndicator, setExpandedRatioIndicator] = useState<RocComparisonKey | null>(null)
   const [indicatorDropdownOpen, setIndicatorDropdownOpen] = useState(false)
+  const [showPositionLevels, setShowPositionLevels] = useState(false)
+  const [positionLevelGeometry, setPositionLevelGeometry] = useState<Array<PositionPnlLevel & { x: number; y: number; width: number; labelLeft: boolean }>>([])
   const [chartVisibleRange, setChartVisibleRange] = useState<{ from: Time; to: Time } | null>(null)
   const [drawMode, setDrawMode] = useState<DrawMode>('none')
   const [drawStep, setDrawStep] = useState(0)
@@ -1421,7 +1429,62 @@ export default function Chart({
     setActiveRatioIndicators(prev => prev.includes(key) ? prev.filter(k => k !== key) : [...prev, key])
     if (expandedRatioIndicator === key) setExpandedRatioIndicator(null)
   }
-  const indicatorButtonActive = showEma || activeRatioIndicators.length > 0
+  const indicatorButtonActive = showEma || activeRatioIndicators.length > 0 || showPositionLevels
+
+  const positionLevels = useMemo(() => showPositionLevels && positionLevelsMatch
+    ? positionPnlLevels(position, sessionCapital ?? 0, brokeragePerOrder)
+    : [], [showPositionLevels, positionLevelsMatch, position?.side, position?.quantity, position?.avg_entry_price, position?.entry_commission, sessionCapital, brokeragePerOrder])
+  const positionAnchorTime = useMemo(() => {
+    const matching = trades.filter(trade => paneType === 'options'
+      ? trade.right === right && trade.strike === strike && (!trade.expiry || trade.expiry === expiry)
+      : !trade.right)
+    const last = matching.reduce((latest, trade) => Math.max(latest, trade.timestamp), 0)
+    return last > 0 ? Math.floor(last / intervalSecs) * intervalSecs : null
+  }, [trades, paneType, right, strike, expiry, intervalSecs])
+  useEffect(() => {
+    const chart = chartRef.current
+    const series = seriesRef.current
+    const container = containerRef.current
+    if (!chart || !series || !container || !positionLevels.length) {
+      positionLevelFallbackRef.current = null
+      setPositionLevelGeometry([])
+      return
+    }
+    const fallbackKey = `${position?.side}:${position?.quantity}:${position?.avg_entry_price}:${position?.entry_commission}`
+    if (positionAnchorTime === null && positionLevelFallbackRef.current?.key !== fallbackKey) {
+      const fallbackTime = candleTimesRef.current[candleTimesRef.current.length - 1] ?? latestTick?.time ?? currentSimTime
+      if (fallbackTime) positionLevelFallbackRef.current = { key: fallbackKey, time: Math.floor(fallbackTime / intervalSecs) * intervalSecs }
+    }
+    const anchorTime = positionAnchorTime ?? positionLevelFallbackRef.current?.time
+    if (anchorTime === undefined) { setPositionLevelGeometry([]); return }
+    let active = true
+    const update = () => {
+      if (!active) return
+      const center = chart.timeScale().timeToCoordinate(anchorTime as Time)
+      const viewportWidth = container.clientWidth
+      if (center === null) { setPositionLevelGeometry([]); return }
+      const segmentWidth = Math.min(viewportWidth, Math.max(1, chart.timeScale().options().barSpacing) * 5)
+      const x = Math.max(0, Math.min(viewportWidth - segmentWidth, center - segmentWidth / 2))
+      setPositionLevelGeometry(positionLevels.flatMap(level => {
+        const y = series.priceToCoordinate(level.price)
+        return y !== null && y >= 0 && y <= chartHeight ? [{ ...level, x, y, width: segmentWidth, labelLeft: x < 110 }] : []
+      }))
+    }
+    update()
+    const rangeUpdate = () => requestAnimationFrame(update)
+    chart.timeScale().subscribeVisibleLogicalRangeChange(rangeUpdate)
+    const observer = new ResizeObserver(rangeUpdate)
+    observer.observe(container)
+    container.addEventListener('wheel', rangeUpdate)
+    container.addEventListener('mouseup', rangeUpdate)
+    return () => {
+      active = false
+      chart.timeScale().unsubscribeVisibleLogicalRangeChange(rangeUpdate)
+      observer.disconnect()
+      container.removeEventListener('wheel', rangeUpdate)
+      container.removeEventListener('mouseup', rangeUpdate)
+    }
+  }, [positionLevels, positionAnchorTime, chartHeight, chartVisibleRange, positionAnchorTime === null ? latestTick?.time : null, positionAnchorTime === null ? currentSimTime : null, intervalSecs])
 
   return (
     <div
@@ -1472,6 +1535,10 @@ export default function Chart({
                   onChange={() => setShowEma(v => !v)}
                 />
                 <span>EMA 9/21</span>
+              </label>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', cursor: 'pointer', fontSize: 11, color: showPositionLevels ? '#f0883e' : '#e6edf3' }}>
+                <input type="checkbox" checked={showPositionLevels} onChange={() => setShowPositionLevels(value => !value)} />
+                <span>Position P&amp;L levels</span>
               </label>
               {ratioCandles && indicatorKeysForPane(paneType, right).length > 0 && (
                 <>
@@ -1657,10 +1724,14 @@ export default function Chart({
         )}
       </div>
 
-      <div
-        ref={containerRef}
-        style={{ width: '100%', cursor: (drawMode !== 'none' || onPriceSelect) ? 'crosshair' : 'default' }}
-      />
+      <div style={{ position: 'relative', width: '100%', height: chartHeight }}>
+        <div ref={containerRef} style={{ width: '100%', cursor: (drawMode !== 'none' || onPriceSelect) ? 'crosshair' : 'default' }} />
+        <div aria-hidden="true" style={{ position: 'absolute', inset: 0, pointerEvents: 'none', overflow: 'hidden' }}>
+          {positionLevelGeometry.map(level => <div key={level.key} style={{ position: 'absolute', left: level.x, top: level.y, width: level.width, borderTop: `1px solid ${level.color}` }}>
+            <span style={{ position: 'absolute', left: level.labelLeft ? 0 : undefined, right: level.labelLeft ? undefined : 0, bottom: 2, fontSize: 10, lineHeight: '12px', color: level.color, background: '#0d1117', whiteSpace: 'nowrap' }}>{level.label}</span>
+          </div>)}
+        </div>
+      </div>
 
       {ratioPanelsVisible && (
         <div style={{
