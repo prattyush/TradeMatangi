@@ -1362,6 +1362,30 @@ website TypeScript checking, Vite production build and `git diff --check` passed
 The backend tests used the temporary selector polling runner described above. The
 build retained its existing bundle-size warning; no live broker orders were submitted.
 
+### Chart context menu follow-up
+
+- **Desktop Take Profit:** the Half/Full actions and `target_profit_size` request
+  handling were already present. The parent menu used `.context-submenu`, which
+  inherited `display: none` from an older flyout rule. Separate `.profit-size-menu`
+  styling keeps the parent visible and reveals only its Half/Full flyout on hover
+  or keyboard focus. The flyout opens left when there is insufficient room on the
+  right. The same repair restores the underlying target Half/Full submenu.
+- **Website sizing:** right-click → **Use as SL** now includes the desktop-style
+  **Risk % / Capital %** switch when percentage sizing is enabled. The ticket
+  starts with the saved sizing mode, then keeps its selection locally. Switching
+  changes the displayed presets and the sizing submitted for Market, Limit,
+  Target and AutoStop entries without modifying the user's saved default.
+  Quantity mode retains its existing quantity controls, matching desktop behavior.
+- **Validation:** both clients passed TypeScript checks and Vite production builds;
+  23 backend take-profit tests and 9 desktop sizing/target-label tests passed.
+  Existing bundle-size warnings remain. Native desktop interaction and broker
+  acceptance were not exercised by these automated checks.
+
+Lesson: sharing a class name between a submenu parent and a hidden flyout can
+silently hide the entire action despite correct request handling. Keep each
+element's styling distinct. Per-order sizing choices belong on the ticket so a
+temporary override does not alter other entry controls or future orders.
+
 ## Original requirements
 
 # Improvements
