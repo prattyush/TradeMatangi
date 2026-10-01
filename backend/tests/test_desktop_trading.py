@@ -984,7 +984,7 @@ def test_paper_market_uses_exact_live_option_tile_not_underlying_quote(right, pr
             handle = await hub.subscribe(tile["instrument"], tile["tile_id"], group, asyncio.Queue())
             stream.feed_handles[tile["tile_id"]] = handle
             tick = tile["latest_tick"]
-            hub.deliver(handle.key, {**tick, "time": tick["timestamp"], "type": "tick"})
+            hub.deliver(handle.key, {**tick, "time": tick["timestamp"], "type": "tick", "right": tile["instrument"]["right"]})
     asyncio.run(attach())
     try:
         with patch("app.routers.orders.get_ledger_balance", return_value=150000), patch("app.services.paper_wallet.move"):

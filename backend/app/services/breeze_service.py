@@ -517,7 +517,12 @@ class BreezeStreamManager:
                     instrument for instrument in self._instruments
                     if instrument.get("product_type") != "options"
                 ]
-                if not right and equity_instruments:
+                if not right:
+                    # The shared callback includes index ticks even for an
+                    # option-only manager. Never forward an unowned cash tick
+                    # for the hub to relabel as that manager's option contract.
+                    if not equity_instruments:
+                        continue
                     tick_exch = str(tick.get("exchange", ""))
                     tick_stock = str(tick.get("stock_code", ""))
                     name_lower = str(name).lower()

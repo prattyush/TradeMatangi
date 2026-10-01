@@ -23,9 +23,9 @@ Order routing in real sessions:
 Options trading symbol format (Kotak / NSE-BSE convention):
   Monthly expiry (last weekday occurrence of month): {BASE}{YY}{MON3}{STRIKE}{RIGHT}
     e.g. NIFTY26MAY23500PE, SENSEX26MAY76000CE
-  Weekly non-monthly: {BASE}{YY}{M_DIGITS}{DD}{STRIKE}{RIGHT}
+  Weekly non-monthly: {BASE}{YY}{M}{DD}{STRIKE}{RIGHT}
     e.g. NIFTY2660223500PE (June-2), SENSEX2660476000CE (June-4)
-    Month Jan-Sep = single digit; Oct-Dec = two digits (10/11/12).
+    Month Jan-Sep = single digit; Oct-Dec = O/N/D.
 """
 from __future__ import annotations
 
@@ -75,7 +75,7 @@ def _build_options_trading_symbol(base: str, expiry: str, strike: int, right: st
 
     Monthly expiry  → {BASE}{YY}{MON3}{STRIKE}{RIGHT}  e.g. NIFTY26MAY23500PE
     Weekly non-monthly → {BASE}{YY}{M}{DD}{STRIKE}{RIGHT}  e.g. NIFTY2660223500PE
-    Oct/Nov/Dec month part uses two digits (10/11/12).
+    Oct/Nov/Dec month codes are O/N/D.
     """
     expiry_dt = datetime.strptime(expiry, "%Y-%m-%d").date()
     yy = expiry_dt.strftime("%y")          # "26"
@@ -84,7 +84,8 @@ def _build_options_trading_symbol(base: str, expiry: str, strike: int, right: st
     else:
         m = expiry_dt.month
         dd = expiry_dt.strftime("%d")                   # "02", "14", …
-        month_part = f"{m}{dd}"                         # "602", "1001", …
+        month_code = {10: "O", 11: "N", 12: "D"}.get(m, str(m))
+        month_part = f"{month_code}{dd}"                # "602", "O01", …
     return f"{base}{yy}{month_part}{strike}{right}"
 
 

@@ -327,4 +327,7 @@ async def check_real_trading_access(
         (info and info.get("is_admin"))
         or real_trading_service.is_whitelisted_user(user_id)
     )
+    reason = "admin" if info and info.get("is_admin") else (
+        "whitelisted" if has_access else "user_missing" if not info else "not_whitelisted")
+    logger.debug("real_trading_access_check user_id=%s has_access=%s reason=%s", user_id, has_access, reason)
     return {"has_access": has_access}

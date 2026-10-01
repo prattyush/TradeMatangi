@@ -243,6 +243,8 @@ class MarketDataHub:
         feed = self.feeds.get(key)
         if not feed:
             return
+        if tick.get("type") == "tick" and not self._accept_tick(key, feed, tick):
+            return
         if tick.get("type") == "tick" and not feed["first_tick"]:
             feed["first_tick"] = True
             logger.info("market_data_first_tick provider=%s instrument=%s token=%s time=%s consumers=%d", *key, tick.get("provider_token"), tick.get("time"), len(feed["consumers"]))
@@ -265,6 +267,34 @@ class MarketDataHub:
         for group, previous in groups.values():
             if group.status() != previous:
                 self.publish_status(group)
+
+    def _accept_tick(self, key, feed, tick):
+        """Validate adapter identity before caching or adding contract metadata."""
+        instrument = feed["instrument"]
+        expected_right = instrument.get("right")
+        reason = None
+        if expected_right:
+            if tick.get("right") != expected_right:
+                reason = "option_right_mismatch"
+            elif "strike" in tick:
+                try:
+                    if float(tick["strike"]) != instrument["strike"]:
+                        reason = "option_strike_mismatch"
+                except (TypeError, ValueError):
+                    reason = "option_strike_invalid"
+            if reason is None and "expiry" in tick and tick["expiry"] != instrument["expiry"]:
+                reason = "option_expiry_mismatch"
+        elif tick.get("right"):
+            reason = "underlying_received_option"
+        if reason is None:
+            return True
+        rejected = feed["rejected_ticks"] = feed.get("rejected_ticks", 0) + 1
+        now = time.monotonic()
+        if rejected == 1 or now - feed.get("last_rejection_log", now) >= 60:
+            feed["last_rejection_log"] = now
+            logger.warning("market_data_identity_rejected provider=%s instrument=%s reason=%s token=%s right=%s strike=%s expiry=%s rejected=%d",
+                *key, reason, tick.get("provider_token"), tick.get("right"), tick.get("strike"), tick.get("expiry"), rejected)
+        return False
 
     def _enqueue(self, handle, payload):
         """Use each consumer's queue policy for both live and staged delivery."""

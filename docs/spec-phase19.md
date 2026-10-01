@@ -650,6 +650,171 @@ engine failure needs a different durable-state policy from a user-requested Stop
 Chart selection and persisted trading intent should be resolved independently so
 flat sides can adopt a new selection without rewriting existing orders.
 
+## Website real-trading permission refresh — 2026-10-01
+
+Google and password login both resolve a stored Users record. Real-trading
+whitelist checks use its normalized email, independent of login method; Google
+login to an existing email reuses the same user ID. Tests confirm Admin grant,
+access dependency checks, and revocation for password login, a fresh Google
+account, and Google login to an existing password account.
+
+The website previously checked permission only on mount. An Admin grant after
+that check left the already-open page showing no REAL option. Failed HTTP checks
+were converted to `has_access: false` and silently swallowed, so temporary server
+failures could also hide the option for the rest of the page lifetime. This is a
+confirmed code defect; the affected deployed account's exact cause has not been
+confirmed from production records.
+
+Implemented refresh on identity change, window focus, and visible-tab activation,
+with duplicate in-flight checks suppressed and cleanup preventing old responses
+from updating a replaced account. HTTP failures now raise `ApiError` and retry
+after five seconds; one console warning is emitted per failure episode. A
+successful false response remains a genuine denied-access result. Backend
+whitelist lookups use consistent reads so recent grants/revocations are visible
+immediately. The access endpoint emits a DEBUG decision with user ID, access
+result, and reason (`admin`, `whitelisted`, `user_missing`, `not_whitelisted`).
+There is no per-tick permission check or log.
+
+Verification: three mocked-DynamoDB identity/grant/revocation integration cases,
+nine existing whitelist-service tests, and three website API tests passed;
+website TypeScript and production build passed. The identity integration tests
+call the actual route functions and access dependency with mocked Google token
+verification and durable database writes; they do not call broker APIs.
+
+Operationally, the REAL toggle requires today's IST date and an exact matching
+email entry in Admin. After deployment, returning to the affected tab refreshes
+permission. If access remains denied, the debug decision and stored email/whitelist
+entry distinguish missing identity from an unmatched entry. Entries are currently
+added one email at a time. No authentication provider or broker order execution
+behavior was changed.
+
+## Desktop Windows build dependency isolation — 2026-10-01
+
+The Windows packaging workflow installs dependencies only in `windowsapp`, then
+Tauri runs `npm run build`. The desktop TypeScript configuration included every
+file under `src`, including `websitePositionPnlPrimitive.test.ts`. That test
+imports the website primitive, whose type imports require the website's
+`lightweight-charts` installation. CI therefore failed with TS2307 and cascading
+implicit-any/unknown-type errors. Local builds with both applications' dependencies
+installed hid this problem.
+
+The production desktop TypeScript configuration now excludes `*.test.ts` and
+`*.test.tsx`. Runtime desktop code still receives strict type checking; Vitest
+continues discovering the tests independently. The desktop application acquires
+no website chart dependency. Verification includes a successful production build
+in an isolated temporary desktop checkout with only desktop node_modules and no
+sibling website checkout. The complete renderer suite also runs separately. The
+native Windows installer itself is verified by the Windows CI workflow.
+
+Lesson: cross-application regression tests must not expand a production package's
+compile graph into sibling applications. Verify dependency isolation as well as a
+build in a developer workspace containing all installed packages.
+
+## SENSEX contamination of option live feeds — 2026-10-01
+
+### Reproduction and cause
+
+Website Paper charts displayed correct history after reload, then alternated
+between genuine option premiums (for example PE at ₹30–₹50) and SENSEX values
+near ₹71,000. A regression using the real Breeze manager, multiplexer callback,
+provider adapter, hub, and concrete session queues reproduced the failure in
+Paper and real feed configurations. One underlying candle generated four
+observations for a session tracking the index, CE, PE, and a supplemental option.
+The existing twelve Breeze callback tests passed while these two new isolation
+cases failed.
+
+The Breeze callback intentionally fans out raw ticks to all managers. The cash
+filter previously ran only when a manager contained cash subscriptions. An
+option-only manager therefore accepted an index tick, aggregated it under a
+cash route, and forwarded it to its option feed. The hub then attached that
+subscription's CE/PE, strike, and expiry, disguising an index price as a correctly
+identified option candle. The website routed it by that right. Its candle
+aggregator retained the maximum high, so a later correct premium could not remove
+the corrupt high. Reloading the chart corrected its historical baseline briefly
+but did not repair live routing.
+
+The same observation reached backend quote storage and order/strategy evaluation.
+This establishes a potential execution impact; no production fills were inspected
+or established as affected during this repair.
+
+### Implementation
+
+- Breeze now requires every non-option observation to match a cash/index
+  subscription owned by that manager. Option-only and empty managers discard cash
+  observations before candle aggregation, accepted-tick accounting, or delivery.
+  Mixed managers continue routing both asset types. Exact option ScripCode
+  ownership and contradictory-right rejection remain in place, including BFO
+  payloads that omit right/strike.
+- The hub validates adapter candle identity before quote updates, first-tick
+  logging, connection-state changes, metadata attachment, and delivery. Option
+  candles require the expected CE/PE right; supplied strike/expiry must match.
+  Underlying feeds reject candles carrying an option right. This covers normal
+  delivery and events buffered during startup/handover. Control messages retain
+  their existing behavior. All supported adapters already label option candles;
+  regression mocks now provide that same identity.
+- Unexpected hub identity rejection logs `market_data_identity_rejected` with
+  provider, instrument, reason, raw identity, and cumulative rejected count. The
+  first rejection logs immediately, followed by at most one warning per feed per
+  minute. Normal filtering of other managers' raw callbacks adds no per-tick log.
+- No price limits, HTTP/SSE schema changes, chart workarounds, separate broker
+  connections, or changes to durable trades/orders were introduced.
+
+### Verification and recovery
+
+489 backend regression tests passed across Breeze, shared feeds, actual Paper and
+real startup tasks, simulation/resume, order/strategy processing, and desktop
+integration. The website production build and isolated desktop production build
+also passed, with the existing bundle-size warnings.
+
+New coverage includes raw interleaved SENSEX/CE/PE callbacks, a PE premium of ₹40,
+shared feeds across two users, supplemental contracts, cash-only/option-only/mixed/
+empty managers, unknown ScripCodes and contradictory rights, adapter identity
+rejection for all four providers, throttled diagnostics, and staged startup and
+handover. Full session-loop tests verify fifteen correctly routed SSE candles,
+correct cached primary premiums, and the prices seen by order/strategy callbacks.
+Broker SDK access, security-master resolution, historical fetches, and execution
+callbacks are mocked; tests issue no external broker request or actual order.
+Valid high-priced options remain accepted, proving there is no price heuristic.
+
+After backend deployment/restart, restart affected live sessions to discard old
+accumulators, quotes, queued observations, and replay buffers; reload charts from
+historical data. A market-hours check must confirm that no index-valued candles
+reappear in options, including after repeated reloads. Durable trades, pending
+orders, reservations, and strategy intent retain their existing recovery policy.
+Previously affected fills are not automatically reversed or rewritten; inspecting
+production records is a separate read-only investigation. Deployment and native
+Windows installer verification were not performed here.
+
+### Lessons
+
+An adapter's subscription identity must not substitute for validating the incoming
+observation: attaching correct contract labels can conceal an incorrectly routed
+price. A shared SDK callback requires ownership checks for cash ticks as well as
+options. Tests must drive actual raw callback fan-out through the adapter/hub,
+include mixed asset types, and interleave ticks while candles accumulate. Chart
+reload and backend cache fixes cannot compensate for incorrect feed routing.
+
+## Kotak weekly option month encoding — 2026-10-01
+
+The user confirmed the live Kotak symbol for SENSEX, expiry 2026-10-01,
+strike 71200 PE as `SENSEX26O0171200PE`. The formatter previously encoded
+October numerically as `10`, generating `SENSEX26100171200PE` and causing
+invalid-symbol errors. Its existing October/December unit tests also asserted
+that incorrect convention.
+
+The shared formatter now uses `O`, `N`, and `D` for October, November, and
+December weekly contracts. January–September retain numeric month codes;
+monthly contracts retain their three-letter month code. Both real option order
+placement and streaming token lookup use this formatter. SENSEX continues to use
+`bse_fo`. This repair changes symbol encoding only; expiry classification and
+instrument-master resolution design remain unchanged.
+
+Regression coverage verifies the user-confirmed October symbol, weekly November
+and December, monthly final-quarter symbols, the exact symbol sent by limit and
+stop-loss placement, and streaming token resolution against a mocked Kotak master.
+All broker order calls are mocked; no actual order is placed. Deploy/restart the
+backend to activate the formatter correction.
+
 ## Original requirements
 
 # Improvements

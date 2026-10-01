@@ -62,7 +62,7 @@ class TestRealTradingService:
         )
         with patch("app.services.db.get_dynamodb_resource", return_value=mock_resource):
             real_trading_service.is_whitelisted_email("  USER@EXAMPLE.COM  ")
-        mock_table.get_item.assert_called_once_with(Key={"email": "user@example.com"})
+        mock_table.get_item.assert_called_once_with(Key={"email": "user@example.com"}, ConsistentRead=True)
 
     def test_get_whitelist_returns_items(self):
         from app.services import real_trading_service
@@ -412,15 +412,21 @@ class TestOptionsSymbolConstruction:
         # June 4, 2026 is Thursday but NOT last Thursday of June → SENSEX2660476000CE
         assert self._sym("SENSEX", "2026-06-04", 76000, "CE", symbol="BSESEN") == "SENSEX2660476000CE"
 
-    def test_october_weekly_two_digit_month(self):
-        # October 1, 2026 is a weekly; month=10 (two digits) → NIFTY261001XXXX
+    def test_october_weekly_letter_month(self):
         result = self._sym("NIFTY", "2026-10-01", 24000, "CE")
-        assert result == "NIFTY261001" + "24000CE"
+        assert result == "NIFTY26O0124000CE"
 
-    def test_december_weekly_two_digit_month(self):
-        # Dec 3, 2026 → month=12, day=03 → NIFTY261203XXXXX
+    def test_december_weekly_letter_month(self):
         result = self._sym("NIFTY", "2026-12-03", 23000, "PE")
-        assert result == "NIFTY261203" + "23000PE"
+        assert result == "NIFTY26D0323000PE"
+
+    @pytest.mark.parametrize("expiry,code", [("2026-10-01", "O01"), ("2026-11-05", "N05"), ("2026-12-03", "D03")])
+    def test_sensex_weekly_final_quarter_month_codes(self, expiry, code):
+        assert self._sym("SENSEX", expiry, 71200, "PE", symbol="BSESEN") == f"SENSEX26{code}71200PE"
+
+    @pytest.mark.parametrize("expiry,month", [("2026-10-29", "OCT"), ("2026-11-26", "NOV"), ("2026-12-31", "DEC")])
+    def test_sensex_monthly_final_quarter_keeps_three_letter_month(self, expiry, month):
+        assert self._sym("SENSEX", expiry, 71200, "PE", symbol="BSESEN") == f"SENSEX26{month}71200PE"
 
     def test_resolve_options_symbol_nifty(self):
         """KotakNeoService._resolve_options_symbol returns correct symbol and exchange."""
@@ -635,3 +641,25 @@ class TestReconcileOpenOrders:
         assert len(data["open_orders"]) == 1
         assert data["open_orders"][0]["status"] == "open"
         assert "wallet_balance" in data  # new field from wallet sync
+
+
+@pytest.mark.parametrize("order_kind", ["limit", "stoploss"])
+def test_october_sensex_order_uses_confirmed_kotak_symbol(order_kind):
+    from app.services.kotak_service import KotakNeoService
+    service, broker = KotakNeoService(), MagicMock()
+    broker.place_order.return_value = {"nOrdNo": "MOCK-ORDER"}
+    contract = dict(symbol="BSESEN", right="PE", strike=71200, expiry="2026-10-01", side="B", qty=20)
+    with patch.object(service, "_get_client", return_value=broker):
+        if order_kind == "limit":
+            assert service.place_options_limit_order(**contract, price=40) == "MOCK-ORDER"
+        else:
+            assert service.place_options_sl_order(**contract, trigger_price=40, limit_price=41) == "MOCK-ORDER"
+    assert broker.place_order.call_args.kwargs["trading_symbol"] == "SENSEX26O0171200PE"
+    assert broker.place_order.call_args.kwargs["exchange_segment"] == "bse_fo"
+
+
+def test_october_sensex_streaming_token_lookup_uses_confirmed_symbol():
+    from app.services.kotak_service import fetch_kotak_options_instrument_token
+    master = [{"symbol": "SENSEX26O0171200PE", "exchange": "bse_fo", "instrument_token": "123456"}]
+    with patch("app.services.kotak_service._get_kotak_instruments", return_value=master):
+        assert fetch_kotak_options_instrument_token("BSESEN", "2026-10-01", 71200, "PE") == ("123456", "bse_fo")
