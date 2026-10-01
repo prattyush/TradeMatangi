@@ -23,7 +23,9 @@ from app.config import LOT_SIZES
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/simulation", tags=["simulation"])
+from app.services.historical_data_service import historical_request_scope
+
+router = APIRouter(prefix="/api/simulation", tags=["simulation"], dependencies=[Depends(historical_request_scope)])
 
 
 def _session_response(session, group=None) -> SimulationStartResponse:
@@ -402,13 +404,16 @@ async def _start_simulation(
         if not kotak_svc.is_authenticated():
             raise HTTPException(status_code=401, detail="Kotak login required. Please authenticate via /api/kotak/login before starting a real session.")
         try:
-            funds = kotak_svc.get_funds()
+            funds = await asyncio.to_thread(kotak_svc.get_funds)
             from app.services import wallet_service
-            wallet_service.reset(user_id, req.date, funds)
+            await asyncio.to_thread(wallet_service.sync_real_funds, user_id, req.date, funds, reason="start")
         except KotakError as exc:
             raise HTTPException(status_code=502, detail=f"Could not fetch Kotak funds: {exc}")
+        except Exception:
+            logger.exception("Could not save real-session broker funds user_id=%s", user_id)
+            raise HTTPException(status_code=503, detail="Could not save broker funds for real session")
 
-    # Paper and real sessions use best-effort data caching — Kite streams live ticks
+    # Paper/real history is best effort; the independent live provider supplies ticks
     use_soft_ensure = is_paper or is_real
 
     if req.instrument_type == "options":
@@ -420,25 +425,25 @@ async def _start_simulation(
         if req.right is not None and req.right.upper() not in ("CE", "PE"):
             raise HTTPException(status_code=400, detail="right must be 'CE', 'PE', or null (dual-stream)")
         if use_soft_ensure:
-            _soft_ensure(lambda: _ensure_session_data(req.symbol, req.date))
+            await asyncio.to_thread(_soft_ensure, lambda: _ensure_session_data(req.symbol, req.date))
             ce_strike = req.strike_ce if req.strike_ce is not None else req.strike
             pe_strike = req.strike_pe if req.strike_pe is not None else req.strike
             if req.right:
-                _soft_ensure(lambda: _ensure_options_data(req.symbol, req.date, ce_strike if req.right.upper() == "CE" else pe_strike, req.expiry, req.right))
+                await asyncio.to_thread(_soft_ensure, lambda: _ensure_options_data(req.symbol, req.date, ce_strike if req.right.upper() == "CE" else pe_strike, req.expiry, req.right))
             else:
-                _soft_ensure(lambda: _ensure_options_data(req.symbol, req.date, ce_strike, req.expiry, "CE"))
-                _soft_ensure(lambda: _ensure_options_data(req.symbol, req.date, pe_strike, req.expiry, "PE"))
+                await asyncio.to_thread(_soft_ensure, lambda: _ensure_options_data(req.symbol, req.date, ce_strike, req.expiry, "CE"))
+                await asyncio.to_thread(_soft_ensure, lambda: _ensure_options_data(req.symbol, req.date, pe_strike, req.expiry, "PE"))
         else:
-            _ensure_session_data(req.symbol, req.date)  # always cache equity data too (for margin checks)
+            await asyncio.to_thread(_ensure_session_data, req.symbol, req.date)  # always cache equity data too (for margin checks)
             # Dual-stream: cache CE at strike_ce, PE at strike_pe (fall back to strike for both)
             ce_strike = req.strike_ce if req.strike_ce is not None else req.strike
             pe_strike = req.strike_pe if req.strike_pe is not None else req.strike
             if req.right:
                 strike_for_right = ce_strike if req.right.upper() == "CE" else pe_strike
-                _ensure_options_data(req.symbol, req.date, strike_for_right, req.expiry, req.right)
+                await asyncio.to_thread(_ensure_options_data, req.symbol, req.date, strike_for_right, req.expiry, req.right)
             else:
-                _ensure_options_data(req.symbol, req.date, ce_strike, req.expiry, "CE")
-                _ensure_options_data(req.symbol, req.date, pe_strike, req.expiry, "PE")
+                await asyncio.to_thread(_ensure_options_data, req.symbol, req.date, ce_strike, req.expiry, "CE")
+                await asyncio.to_thread(_ensure_options_data, req.symbol, req.date, pe_strike, req.expiry, "PE")
     elif req.instrument_type == "equity":
         if SUPPORTED_SYMBOLS.get(req.symbol, {}).get("options_only"):
             raise HTTPException(
@@ -446,9 +451,9 @@ async def _start_simulation(
                 detail=f"{req.symbol} is an index — only options sessions are supported",
             )
         if use_soft_ensure:
-            _soft_ensure(lambda: _ensure_session_data(req.symbol, req.date))
+            await asyncio.to_thread(_soft_ensure, lambda: _ensure_session_data(req.symbol, req.date))
         else:
-            _ensure_session_data(req.symbol, req.date)
+            await asyncio.to_thread(_ensure_session_data, req.symbol, req.date)
     else:
         raise HTTPException(status_code=400, detail="instrument_type must be 'equity' or 'options'")
 
@@ -477,6 +482,10 @@ async def _start_simulation(
         elif active:
             # Paper/real: already running in memory — return it (idempotent start)
             logger.info("start_simulation: returning already-active session %s", existing_session_id)
+            if is_real:
+                active.wallet_ledger_id = f"real:{req.date}"
+                active.session_capital = funds
+                sim_svc._upsert_session_to_db(active, strict=True)
             return _session_response(active, group)
         else:
             # Paper/real: session exists in DB but not in memory — rebuild and resume.
@@ -490,6 +499,8 @@ async def _start_simulation(
             website_paper = is_paper and existing_record.get("desktop_origin") != "desktop_paper"
             req_ce = req.strike_ce if req.strike_ce is not None else req.strike
             req_pe = req.strike_pe if req.strike_pe is not None else req.strike
+            if is_real:
+                existing_record = {**existing_record, "wallet_ledger_id": f"real:{req.date}"}
             session = sim_svc.rebuild_session_from_db(
                 existing_record,
                 user_id=user_id,
@@ -507,21 +518,9 @@ async def _start_simulation(
                 except Exception:
                     sim_svc.stop_session(session, preserve_trading_state=True)
                     raise
-            # For real trading: re-sync wallet from broker so balance reflects any trades
-            # that happened at the broker while the session was down.
             if is_real:
-                try:
-                    from app.services.kotak_service import get_service as get_kotak, KotakError
-                    funds = get_kotak().get_funds()
-                    from app.services import wallet_service
-                    wallet_service.reset(user_id, req.date, funds)
-                    session.session_capital = funds
-                    logger.info(
-                        "start_simulation: real session resume — wallet synced from Kotak: %.2f",
-                        funds,
-                    )
-                except Exception as exc:
-                    logger.warning("start_simulation: Kotak wallet sync on resume failed: %s", exc)
+                session.session_capital = funds
+                sim_svc._upsert_session_to_db(session, strict=True)
             if desktop_independent and not session.group_id:
                 session.desktop_created = True
             session.group_id = group["group_id"]

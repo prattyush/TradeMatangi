@@ -1802,6 +1802,12 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
           right={pane.right as 'CE' | 'PE' | undefined}
           liveFromTs={pane.liveFromTs}
           reloadKey={pane.reloadKey ?? 0}
+          onManualRefresh={!draft && sim.sessionType === 'real' && sim.sessionId ? () => {
+            const sessionId = sim.sessionId!
+            void api.refreshRealWallet(sessionId)
+              .then(() => sim.incrementWalletRefreshKey())
+              .catch(error => setBrokerError(String(error)))
+          } : undefined}
           currentSimTime={draft ? null : (sim.latestEquityTick?.time ?? null)}
           isActive={pane.id === activePaneId}
           onActivate={() => {
@@ -2548,7 +2554,7 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
       )}
 
       {/* Broker error banner (paper trading) */}
-      {liveFeed && <div role="status" style={{ fontSize: 11, color: '#8b949e', padding: '3px 12px' }}>Feed {liveFeed.actual_provider ?? liveFeed.selected_provider} · {liveFeed.connection}{liveFeed.actual_provider && liveFeed.actual_provider !== liveFeed.selected_provider ? ` (fallback from ${liveFeed.selected_provider})` : ''}</div>}
+      {liveFeed && sim.sessionType !== 'real' && <div role="status" style={{ fontSize: 11, color: '#8b949e', padding: '3px 12px' }}>Feed {liveFeed.actual_provider ?? liveFeed.selected_provider} · {liveFeed.connection}{liveFeed.actual_provider && liveFeed.actual_provider !== liveFeed.selected_provider ? ` (fallback from ${liveFeed.selected_provider})` : ''}</div>}
       {brokerError && (
         <div style={{
           background: '#3d1c1c', border: '1px solid #f85149', color: '#f85149',
@@ -2755,6 +2761,10 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
                 sim.fetchAndUpdatePosition(),  // also bumps walletRefreshKey
               ])
               sim.setTrades(trades)
+              if (result.wallet_error) {
+                setBrokerError(result.wallet_error)
+                return
+              }
               const openCount = result.open_orders?.length ?? 0
               if (result.reconciled > 0 || openCount > 0) {
                 const parts: string[] = []

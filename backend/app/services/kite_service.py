@@ -229,8 +229,8 @@ def _kite_1min_df_from_records(records: list[dict]) -> "pd.DataFrame":
 
 def fetch_kite_1min(symbol: str, date: str) -> "pd.DataFrame":
     """
-    Fetch Kite 1-minute equity OHLC for paper-session gap-filling.
-    NOT used for simulation replay — simulation always uses Breeze 1-second data.
+    Fetch native Kite 1-minute OHLC for the today-only historical policy.
+    Past-date replay is always supplied by Breeze.
 
     Cache: data/ohlcdata/{SYMBOL}-{DD-MM-YYYY}-kite1m.parquet
       - Past days: cached permanently (complete day, no re-fetch).
@@ -241,10 +241,10 @@ def fetch_kite_1min(symbol: str, date: str) -> "pd.DataFrame":
     """
     import os
     import pandas as pd
-    from datetime import date as _date
-    from app.config import OHLCDATA_DIR, MARKET_OPEN, MARKET_CLOSE, get_market_close, get_market_close
+    from app.config import OHLCDATA_DIR, MARKET_OPEN, get_market_close
 
-    is_today = date == _date.today().strftime("%Y-%m-%d")
+    from app.services.historical_data_service import is_today as _is_today
+    is_today = _is_today(date)
     y, m, d = date.split("-")
     OHLCDATA_DIR.mkdir(parents=True, exist_ok=True)
     cache_path = OHLCDATA_DIR / f"{symbol}-{d}-{m}-{y}-kite1m.parquet"
@@ -302,16 +302,16 @@ def fetch_kite_1min(symbol: str, date: str) -> "pd.DataFrame":
 
 def fetch_kite_1min_options(symbol: str, date: str, strike: int, expiry: str, right: str) -> "pd.DataFrame":
     """
-    Fetch Kite 1-minute options OHLC for paper-session gap-filling.
+    Fetch native Kite 1-minute options OHLC for today's historical policy.
     Cache: data/ohlcdata/{SYMBOL}-{CE|PE}-{STRIKE}-{EXPIRY_COMPACT}-{DD-MM-YYYY}-kite1m.parquet
     Same caching rules as fetch_kite_1min.
     """
     import os
     import pandas as pd
-    from datetime import date as _date
-    from app.config import OHLCDATA_DIR, MARKET_OPEN, MARKET_CLOSE
+    from app.config import OHLCDATA_DIR, MARKET_OPEN, get_market_close
 
-    is_today = date == _date.today().strftime("%Y-%m-%d")
+    from app.services.historical_data_service import is_today as _is_today
+    is_today = _is_today(date)
     y, m, d = date.split("-")
     expiry_compact = expiry.replace("-", "")
     OHLCDATA_DIR.mkdir(parents=True, exist_ok=True)

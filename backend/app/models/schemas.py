@@ -302,6 +302,7 @@ class ExpiryResponse(BaseModel):
 
 
 class WalletResponse(BaseModel):
+    broker_funds_updated_at: int | None = None
     user_id: str
     date: str
     balance: float

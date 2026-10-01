@@ -285,22 +285,22 @@ def test_paper_option_subscription_routes_identity_and_cleans_up(monkeypatch, so
     order = order_service.place_order(SESSION, session.symbol, TradeSide.BUY, OrderType.LIMIT, 2700,
         1778058900, DATE, limit_price=10, user_id=USER, wallet_ledger_id=LEDGER,
         right="CE", strike=400, expiry=contract["expiry"], wallet_ledger_kind="paper")
-    if source == "kite":
-        monkeypatch.setattr("app.services.kite_service.get_broadcaster", lambda: provider)
-        monkeypatch.setattr("app.services.kite_service.fetch_options_instrument_token", lambda *args: 123)
-    elif source == "kotak":
-        monkeypatch.setattr("app.services.kotak_service.get_kotak_broadcaster", lambda: provider)
-        monkeypatch.setattr("app.services.kotak_service.fetch_kotak_options_instrument_token", lambda *args: ("123", "nse_fo"))
-    elif source == "fyers":
-        monkeypatch.setattr("app.services.fyers_service.get_fyers_broadcaster", lambda: provider)
-        monkeypatch.setattr("app.services.fyers_service._fyers_options_symbol", lambda *args: "option-symbol")
-    else:
-        monkeypatch.setattr("app.services.breeze_service.BreezeStreamManager", lambda: provider)
+    from app.services import market_data
+    deliveries = []
+    class Adapter:
+        async def open(self, selected, instrument, delivery, loop):
+            assert selected == source
+            assert instrument["right"] == "CE" and instrument["strike"] == 400
+            deliveries.append(delivery)
+            return provider.stop
+    hub = market_data.MarketDataHub(Adapter())
+    monkeypatch.setattr(market_data, "get_hub", lambda: hub)
     async def subscribe_and_receive():
+        task = sim_svc.subscribe_desktop_option_contract(session, contract)
         sim_svc.subscribe_desktop_option_contract(session, contract)
-        sim_svc.subscribe_desktop_option_contract(session, contract)
-        queue = provider.start.call_args.args[0] if source == "breeze" else provider.register.call_args.args[-2]
-        queue.put_nowait(_tick(10))
+        await task
+        assert len(deliveries) == 1
+        deliveries[0].put_nowait(_tick(10))
         return await session.paper_tick_queue.get()
     payload = asyncio.run(subscribe_and_receive())
     assert payload["contract_key"] == contract["contract_key"]
@@ -309,16 +309,11 @@ def test_paper_option_subscription_routes_identity_and_cleans_up(monkeypatch, so
     assert order.status == OrderStatus.FILLED
     assert trading_service.get_trades(SESSION)[0].instrument_type == "options"
     assert desktop_trading._last_price_for_right(session, "CE", 400, contract["expiry"]) == 10
-    if source == "breeze":
-        provider.start.assert_called_once()
-    else:
-        provider.register.assert_called_once()
     sim_svc._stop_desktop_option_subscriptions(session)
     assert session.desktop_option_subscriptions == {}
-    if source == "breeze":
-        provider.stop.assert_called_once()
-    else:
-        provider.unregister.assert_called_once()
+    provider.stop.assert_called_once()
+    assert not hub.feeds
+
 
 
 def test_eod_closes_mixed_positions_using_each_contract_tick(monkeypatch):

@@ -51,7 +51,7 @@ def get_token(sk: str) -> str | None:
         return None
 
 
-def set_token(sk: str, value: str) -> None:
+def set_token(sk: str, value: str, *, strict: bool = False) -> None:
     """Store a token in DynamoDB with an updated_at timestamp."""
     _ensure_table()
     try:
@@ -65,6 +65,8 @@ def set_token(sk: str, value: str) -> None:
         })
     except Exception:
         logger.exception("Failed to set token %s", sk)
+        if strict:
+            raise
 
 
 def get_tokens_masked() -> dict[str, str | None]:

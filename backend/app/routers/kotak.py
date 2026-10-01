@@ -261,19 +261,6 @@ async def kotak_reconcile(
         )
         reconciled += 1
 
-    # ── Wallet sync: reset to Kotak's actual net balance ─────────────────────
-    # This corrects any drift caused by external trades or missed callbacks.
-    wallet_balance: float | None = None
-    try:
-        wallet_balance = kotak_svc.get_funds()
-        wallet_service.reset(session.user_id, session.date, wallet_balance)
-        logger.info(
-            "Reconcile: wallet synced from Kotak for user %s date %s: ₹%.2f",
-            session.user_id, session.date, wallet_balance,
-        )
-    except KotakError as exc:
-        logger.warning("Reconcile: wallet sync from Kotak failed: %s", exc)
-
     # ── Pass 3: cancel local PENDING orders whose broker-side order was cancelled/rejected ──
     # Covers the case where modify_sl_to_limit_order() caused Kotak to cancel the SL order
     # (transitional state) so the local order never gets cleared without explicit reconcile.
@@ -298,6 +285,22 @@ async def kotak_reconcile(
             order_id, k_id, ko.get("status"),
         )
 
+    # ── Wallet sync: reset to Kotak's actual net balance ─────────────────────
+    # This corrects any drift caused by external trades or missed callbacks.
+    wallet_balance: float | None = None
+    wallet_error: str | None = None
+    try:
+        wallet_balance = kotak_svc.get_funds()
+        wallet_service.sync_real_funds(session.user_id, session.date, wallet_balance, reason="reconcile")
+        logger.info(
+            "Reconcile: wallet synced from Kotak for user %s date %s: ₹%.2f",
+            session.user_id, session.date, wallet_balance,
+        )
+    except Exception as exc:
+        wallet_balance = None
+        wallet_error = f"Could not refresh Kotak wallet: {exc}"
+        logger.warning("Reconcile: wallet sync from Kotak failed: %s", exc)
+
     # Collect currently open/pending Kotak orders for informational display
     open_kotak_orders = [
         ko for ko in kotak_orders
@@ -307,6 +310,7 @@ async def kotak_reconcile(
         "reconciled": reconciled,
         "open_orders": open_kotak_orders,
         "wallet_balance": wallet_balance,
+        "wallet_error": wallet_error,
     }
 
 

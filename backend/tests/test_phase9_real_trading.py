@@ -277,6 +277,11 @@ class TestKotakLogin:
 # ── check_orders skips Kotak-managed orders ───────────────────────────────────
 
 class TestCheckOrdersSkipsKotak:
+    @pytest.fixture(autouse=True)
+    def no_order_db(self):
+        with patch("app.services.order_service._write_order_to_db"):
+            yield
+
     def test_kotak_order_not_triggered_locally(self):
         from app.services import order_service
         from app.models.schemas import OrderType, TradeSide, OrderStatus
@@ -337,6 +342,13 @@ class TestCheckOrdersSkipsKotak:
 # ── Real session startup guards ───────────────────────────────────────────────
 
 class TestRealSessionStartup:
+    @pytest.fixture(autouse=True)
+    def isolated_groups(self):
+        # Startup now resolves groups before broker-access guards.
+        with patch("app.services.session_group_service.get_active_group", return_value=None), \
+             patch("app.services.session_group_service._save"):
+            yield
+
     def test_non_whitelisted_user_gets_403(self):
         with patch("app.services.user_service.get_user_info",
                    return_value={"is_admin": False}), \
@@ -629,7 +641,7 @@ class TestReconcileOpenOrders:
              patch("app.services.real_trading_service.is_whitelisted_user", return_value=True), \
              patch("app.services.user_service.get_user_info", return_value={"is_admin": True}), \
              patch("app.services.simulation.get_session", return_value=mock_session), \
-             patch("app.services.wallet_service.reset"):
+             patch("app.services.wallet_service.sync_real_funds"):
             resp = client.post(
                 "/api/kotak/reconcile?session_id=sess_test",
                 headers=ADMIN_HEADERS,

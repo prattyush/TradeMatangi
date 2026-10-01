@@ -1,3 +1,4 @@
+import { rememberChartData } from '../services/chartDataCache'
 import { useEffect, useRef, useState, useCallback, useMemo } from 'react'
 import {
   createChart,
@@ -70,6 +71,7 @@ interface Props {
   // For mid-session panes: timestamp from which live ticks begin (candles before this are history)
   liveFromTs?: number
   // Increment to trigger a manual data reload (fixes phantom candle after strike change)
+  onManualRefresh?: () => void
   reloadKey?: number
   // Interval change callback — parent updates pane intervalMinutes
   onIntervalChange?: (minutes: number) => void
@@ -123,31 +125,8 @@ const CANDLE_INTERVAL_SECS = (m: number) => m * 60
 const RATIO_PANEL_HEIGHT_RATIO = 0.18
 const RATIO_PANEL_EXPANDED_HEIGHT_RATIO = 0.25
 const MIN_RATIO_PANEL_HEIGHT = 90
-const CHART_DATA_CACHE_MAX = 80
 const RECENT_LIVE_TICK_SECONDS = 15 * 60
 
-const chartDataCache = new Map<string, Promise<OHLCCandle[]>>()
-
-function rememberChartData(key: string, loader: () => Promise<OHLCCandle[]>, forceRefresh = false): Promise<OHLCCandle[]> {
-  if (!forceRefresh) {
-    const cached = chartDataCache.get(key)
-    if (cached) return cached.then(candles => candles.map(c => ({ ...c })))
-  }
-
-  const promise = loader()
-    .then(candles => candles.map(c => ({ ...c })))
-    .catch(err => {
-      chartDataCache.delete(key)
-      throw err
-    })
-
-  chartDataCache.set(key, promise)
-  if (chartDataCache.size > CHART_DATA_CACHE_MAX) {
-    const oldest = chartDataCache.keys().next().value
-    if (oldest) chartDataCache.delete(oldest)
-  }
-  return promise.then(candles => candles.map(c => ({ ...c })))
-}
 
 function historicalCacheKey(symbol: string, tradingDate: string, intervalMinutes: number, historicalDays?: number) {
   return `hist:${symbol}:${tradingDate}:${intervalMinutes}:${historicalDays ?? ''}`
@@ -449,6 +428,7 @@ export default function Chart({
   swapTargets,
   liveFromTs,
   reloadKey = 0,
+  onManualRefresh,
   onIntervalChange,
   historicalDays,
   currentSimTime,
@@ -902,7 +882,7 @@ export default function Chart({
           preSessionTime
             ? rememberChartData(
                 `${preSessionCacheKey(symbol, tradingDate, preSessionTime, intervalMinutes)}:reload:${effectiveReloadKey}`,
-                () => api.getPreSession(symbol, tradingDate, preSessionTime, intervalMinutes),
+                () => api.getPreSession(symbol, tradingDate, preSessionTime, intervalMinutes, localReloadKey > 0),
               )
             : Promise.resolve([]),
         ])
@@ -976,7 +956,7 @@ export default function Chart({
     let cancelled = false
     rememberChartData(
       `${optionsCacheKey(symbol, tradingDate, strike, expiry, right, intervalMinutes, historicalDays)}:reload:${effectiveReloadKey}`,
-      () => api.getOptionsHistorical(symbol, tradingDate, strike, expiry, right, intervalMinutes, historicalDays).then(res => res.candles),
+      () => api.getOptionsHistorical(symbol, tradingDate, strike, expiry, right, intervalMinutes, historicalDays, localReloadKey > 0).then(res => res.candles),
     )
       .then((candles) => {
         if (cancelled) return
@@ -1346,12 +1326,13 @@ export default function Chart({
   // ── Reload handler — re-fetches historical data for the current pane ────────
   const handleReload = useCallback((e: React.MouseEvent) => {
     e.stopPropagation()
+    onManualRefresh?.()
     setLocalReloadKey(k => k + 1)
     liveWindowRef.current = null
     lastEma9Ref.current = null
     lastEma21Ref.current = null
     candleTimesRef.current = []
-  }, [])
+  }, [onManualRefresh])
 
   const [pnlCoord, setPnlCoord] = useState<{ x: number; y: number } | null>(null)
 

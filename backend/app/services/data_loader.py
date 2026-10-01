@@ -43,7 +43,7 @@ def pickle_path(symbol: str, date: str) -> Path:
     return DATA_DIR / f"{symbol}-{d}-{m}-{y}.pickle"
 
 
-def load_dataframe(symbol: str, date: str) -> pd.DataFrame:
+def _load_breeze_dataframe(symbol: str, date: str) -> pd.DataFrame:
     """
     Load second-level OHLC data for the given symbol and date.
 
@@ -212,3 +212,10 @@ def iter_ticks(
             "low": round(float(row["low"]), 2),
             "close": round(float(row["close"]), 2),
         }
+
+
+def load_dataframe(symbol: str, date: str) -> pd.DataFrame:
+    from app.services.historical_data_service import is_today, load_history
+    if is_today(date):
+        return load_history(symbol, date).frame
+    return _load_breeze_dataframe(symbol, date)

@@ -148,10 +148,13 @@ def _write_ledger(user_id: str, date: str, ledger_id: str, ledger_kind: str, bal
         _ensure_ledger_table()
         from app.services.db import get_dynamodb_resource
         import time
-        get_dynamodb_resource().Table(_LEDGER_TABLE).put_item(Item={
-            "user_id": user_id, "ledger_id": ledger_id, "date": date, "ledger_kind": ledger_kind,
-            "current_balance": Decimal(str(round(balance, 2))), "updated_at": int(time.time() * 1000),
-        })
+        get_dynamodb_resource().Table(_LEDGER_TABLE).update_item(
+            Key={"user_id": user_id, "ledger_id": ledger_id},
+            UpdateExpression="SET #date = :date, ledger_kind = :kind, current_balance = :balance, updated_at = :updated",
+            ExpressionAttributeNames={"#date": "date"},
+            ExpressionAttributeValues={":date": date, ":kind": ledger_kind,
+                ":balance": Decimal(str(round(balance, 2))), ":updated": int(time.time() * 1000)},
+        )
     except Exception:
         logger.exception("DynamoDB ledger write failed user=%s ledger=%s", user_id, ledger_id)
 
@@ -315,3 +318,41 @@ def delete_entry(user_id: str, date: str) -> None:
         logger.info("Deleted wallet entry for user=%s date=%s", user_id, date)
     except Exception:
         logger.exception("DynamoDB wallet delete failed for user=%s date=%s", user_id, date)
+
+
+# Broker snapshots are deliberately separate from locally reserved cash.
+def sync_real_funds(user_id: str, date: str, amount: float, *, reason: str) -> float:
+    import math
+    import time
+    if not math.isfinite(amount):
+        raise ValueError("Broker funds must be finite")
+    ledger_id = f"real:{date}"
+    updated_at = int(time.time() * 1000)
+    _ensure_ledger_table()
+    from app.services.db import get_dynamodb_resource
+    # Persist first: a failed write must not advertise a successful sync.
+    get_dynamodb_resource().Table(_LEDGER_TABLE).update_item(
+        Key={"user_id": user_id, "ledger_id": ledger_id},
+        UpdateExpression="SET #date = :date, ledger_kind = :kind, current_balance = :balance, "
+                         "broker_balance = :balance, broker_funds_updated_at = :updated, updated_at = :updated",
+        ExpressionAttributeNames={"#date": "date"},
+        ExpressionAttributeValues={":date": date, ":kind": "real",
+            ":balance": Decimal(str(amount)), ":updated": updated_at},
+    )
+    _ledgers[(user_id, ledger_id)] = amount
+    logger.info("real_funds_synced user_id=%s ledger=%s reason=%s", user_id, ledger_id, reason)
+    return amount
+
+
+def get_real_funds_snapshot(user_id: str, date: str) -> tuple[float, int]:
+    key = (user_id, f"real:{date}")
+    # Read consistently so another worker's explicit refresh is visible here.
+    from app.services.db import get_dynamodb_resource
+    item = get_dynamodb_resource().Table(_LEDGER_TABLE).get_item(
+        Key={"user_id": key[0], "ledger_id": key[1]}, ConsistentRead=True,
+    ).get("Item", {})
+    if "broker_balance" not in item:
+        # Legacy real ledgers have no authoritative broker snapshot.
+        raise ValueError("Real wallet needs a broker refresh")
+    snapshot = (float(item["broker_balance"]), int(item["broker_funds_updated_at"]))
+    return snapshot

@@ -4,7 +4,7 @@ import asyncio
 import logging
 import re
 import pandas as pd
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from app.models.schemas import (
     HistoricalDataResponse,
@@ -28,7 +28,9 @@ from app.utils import prior_trading_days
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/data", tags=["data"])
+from app.services.historical_data_service import historical_request_scope
+
+router = APIRouter(prefix="/api/data", tags=["data"], dependencies=[Depends(historical_request_scope)])
 
 
 def _ensure_data(symbol: str, date: str) -> None:
@@ -105,8 +107,8 @@ async def get_historical(
 
     for date in prior_dates:
         try:
-            _ensure_data(symbol, date)
-            df = load_dataframe(symbol, date)
+            await asyncio.to_thread(_ensure_data, symbol, date)
+            df = await asyncio.to_thread(load_dataframe, symbol, date)
             candles = resample_to_candles(df, interval_minutes)
             records = candles_to_records(candles)
             all_candles.extend(OHLCCandle(**r) for r in records)
@@ -155,10 +157,10 @@ async def get_pre_session(
     if len(start_time) == 5:
         start_time = start_time + ":00"
 
-    _ensure_data(symbol, trading_date)
+    await asyncio.to_thread(_ensure_data, symbol, trading_date)
 
     try:
-        candles = pre_session_candles(symbol, trading_date, start_time, interval_minutes)
+        candles = await asyncio.to_thread(pre_session_candles, symbol, trading_date, start_time, interval_minutes)
     except FileNotFoundError:
         raise HTTPException(
             status_code=404,
@@ -230,7 +232,7 @@ async def get_options_historical(
                 fetch_options_historical,
                 symbol, prior_date, strike, expiry, right.upper(),
             )
-            df = load_options_dataframe(symbol, prior_date, strike, expiry, right.upper())
+            df = await asyncio.to_thread(load_options_dataframe, symbol, prior_date, strike, expiry, right.upper())
             candles = resample_to_candles(df, interval_minutes)
             records = candles_to_records(candles)
             all_candles.extend(OHLCCandle(**r) for r in records)
@@ -283,10 +285,10 @@ async def get_price_at(
     if len(time) == 5:
         time = time + ":00"
 
-    _ensure_data(symbol, date)
+    await asyncio.to_thread(_ensure_data, symbol, date)
 
     try:
-        df = load_dataframe(symbol, date)
+        df = await asyncio.to_thread(load_dataframe, symbol, date)
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail=f"Data not found for {symbol} on {date}")
 

@@ -575,7 +575,7 @@ def rebuild_session_from_db(
     effective_ce = strike_ce if strike_ce is not None else (int(db_ce_raw) if db_ce_raw is not None else strike)
     effective_pe = strike_pe if strike_pe is not None else (int(db_pe_raw) if db_pe_raw is not None else strike)
 
-    ledger_id = db_record.get("wallet_ledger_id") or f"sim:{date}"
+    ledger_id = f"real:{date}" if session_type == "real" else (db_record.get("wallet_ledger_id") or f"sim:{date}")
     ledger_kind = "paper" if session_type == "paper" else ("real" if session_type == "real" else "sim")
     session_capital = wallet_service.get_ledger_balance(user_id, date, ledger_id, ledger_kind)
 
@@ -1479,15 +1479,15 @@ def _build_breeze_instruments(session: SimulationSession) -> list[dict]:
     return instruments
 
 
-def _kite_1min_gap_ticks(symbol: str, date: str, after_ts: int) -> list[dict]:
+def _historical_gap_ticks(symbol: str, date: str, after_ts: int) -> list[dict]:
     """
-    Return Kite 1-min equity ticks for timestamps strictly after `after_ts`
+    Return configured historical equity ticks for timestamps strictly after `after_ts`
     (IST-as-UTC Unix). Non-fatal: returns [] on any error.
     """
     try:
         import pandas as pd
-        from app.services.kite_service import fetch_kite_1min
-        df = fetch_kite_1min(symbol, date)
+        from app.services.historical_data_service import load_history
+        df = load_history(symbol, date).frame
         if df.empty:
             return []
         if df.index.tzinfo is None:
@@ -1506,21 +1506,21 @@ def _kite_1min_gap_ticks(symbol: str, date: str, after_ts: int) -> list[dict]:
             for ts, row in gap.iterrows()
         ]
     except Exception as exc:
-        logger.warning("Kite 1-min equity gap-fill failed for %s %s: %s", symbol, date, exc)
+        logger.warning("Configured historical equity gap-fill failed for %s %s: %s", symbol, date, exc)
         return []
 
 
-def _kite_1min_gap_options_ticks(
+def _historical_gap_options_ticks(
     symbol: str, date: str, strike: int, expiry: str, right: str, after_ts: int
 ) -> list[dict]:
     """
-    Return Kite 1-min options ticks for timestamps strictly after `after_ts`.
+    Return configured historical options ticks for timestamps strictly after `after_ts`.
     Non-fatal: returns [] on any error.
     """
     try:
         import pandas as pd
-        from app.services.kite_service import fetch_kite_1min_options
-        df = fetch_kite_1min_options(symbol, date, strike, expiry, right)
+        from app.services.historical_data_service import load_history
+        df = load_history(symbol, date, strike, expiry, right).frame
         if df.empty:
             return []
         if df.index.tzinfo is None:
@@ -1540,7 +1540,7 @@ def _kite_1min_gap_options_ticks(
             for ts, row in gap.iterrows()
         ]
     except Exception as exc:
-        logger.warning("Kite 1-min options gap-fill failed for %s %s %s: %s", symbol, date, right, exc)
+        logger.warning("Configured historical options gap-fill failed for %s %s %s: %s", symbol, date, right, exc)
         return []
 
 
@@ -1640,15 +1640,18 @@ async def _run_paper_session(session: SimulationSession) -> None:
     Paper trading session loop.
 
     Phase 1 — Fast pre-session replay:
-      Fetch today's Breeze historical data (up to last available second), then
+      Fetch today's configured historical data (up to last available second), then
       replay all ticks at near-instant speed so the chart is populated on connect.
 
     Phase 2 — Live streaming:
-      Register with KiteBroadcaster (or fall back to BreezeStreamManager).
-      The broadcaster pushes 1-second OHLC dicts into session.paper_tick_queue.
+      Register with the shared MarketDataHub and its selected live provider.
+      The feed pushes live OHLC dicts into session.paper_tick_queue.
       This loop reads those dicts, evaluates orders/strategies, and puts ticks
       on session.queue for SSE delivery — exactly as _run_session does.
     """
+    # Background engines must not retain their originating HTTP request cache.
+    from app.services.historical_data_service import detach_historical_operation, historical_operation
+    detach_historical_operation()
     session.state = SimulationState.RUNNING
     session.queue.phase = "phase1_fast_replay"
     phase1_started = time.monotonic()
@@ -1672,186 +1675,187 @@ async def _run_paper_session(session: SimulationSession) -> None:
         await start_session_feed(session)
         session.paper_stream_source = None  # history is presentation, not a live quote
         await session.queue.put(json.dumps({"type": "feed_status", **session.market_feed_group.status()}))
-        # ── Phase 1: fast-replay historical data for today ────────────────────
-        logger.info("Paper session %s: Phase 1 — fetching today's data for %s %s",
-                    session.session_id, session.symbol, session.date)
-        try:
-            from app.services.broker_service import fetch_historical
-            await asyncio.to_thread(fetch_historical, session.symbol, session.date)
-            logger.info("Paper session %s: Phase 1 — equity data ready", session.session_id)
-        except Exception as exc:
-            logger.warning("Paper session %s: could not pre-fetch today's data: %s", session.session_id, exc)
-
-        # Track the last Breeze tick timestamp so we know where the gap starts.
-        _last_breeze_ts: int = 0
-
-        # Dual-stream options pre-replay
-        if session.instrument_type == "options" and session.strike and session.expiry and session.right is None:
-            from app.services.options_service import fetch_options_historical, options_iter_ticks
-            ce_strike = session.strike_ce or session.strike
-            pe_strike = session.strike_pe or session.strike
-            logger.info("Paper session %s: Phase 1 — loading CE/PE tick dicts (strike CE=%s PE=%s expiry=%s)",
-                        session.session_id, ce_strike, pe_strike, session.expiry)
-            # Ensure today's parquet is available before loading ticks (defensive — soft_ensure
-            # in the router already runs but may have been swallowed or used a different strike)
+        with historical_operation():
+            # ── Phase 1: fast-replay historical data for today ────────────────────
+            logger.info("Paper session %s: Phase 1 — fetching today's data for %s %s",
+                        session.session_id, session.symbol, session.date)
             try:
-                await asyncio.to_thread(fetch_options_historical, session.symbol, session.date, ce_strike, session.expiry, "CE")
-                await asyncio.to_thread(fetch_options_historical, session.symbol, session.date, pe_strike, session.expiry, "PE")
+                from app.services.broker_service import fetch_historical
+                await asyncio.to_thread(fetch_historical, session.symbol, session.date)
+                logger.info("Paper session %s: Phase 1 — equity data ready", session.session_id)
             except Exception as exc:
-                logger.warning("Paper session %s: Phase 1 options pre-fetch failed: %s", session.session_id, exc)
-            try:
-                ce_by_time = {t["time"]: t for t in options_iter_ticks(
-                    session.symbol, session.date, ce_strike, session.expiry, "CE", session.start_time
-                )}
-                pe_by_time = {t["time"]: t for t in options_iter_ticks(
-                    session.symbol, session.date, pe_strike, session.expiry, "PE", session.start_time
-                )}
-            except Exception as exc:
-                logger.error("Paper session %s: Phase 1 — options tick load failed: %s", session.session_id, exc)
-                ce_by_time = {}
-                pe_by_time = {}
-            logger.info("Paper session %s: Phase 1 — CE ticks=%d PE ticks=%d",
-                        session.session_id, len(ce_by_time), len(pe_by_time))
-            try:
-                for eq_tick in iter_ticks(session.symbol, session.date, session.start_time):
-                    if session.state == SimulationState.ENDED:
-                        break
-                    session.last_price = eq_tick["close"]
-                    ts = eq_tick["time"]
-                    _last_breeze_ts = ts
-                    fill_events = _emit_tick_and_check_orders(session, eq_tick, None)
-                    if ts in ce_by_time:
-                        ce_tick = {**ce_by_time[ts], "right": "CE"}
-                        session.last_price_ce = ce_tick["close"]
-                        fill_events += _emit_tick_and_check_orders(session, ce_tick, "CE")
-                    if ts in pe_by_time:
-                        pe_tick = {**pe_by_time[ts], "right": "PE"}
-                        session.last_price_pe = pe_tick["close"]
-                        fill_events += _emit_tick_and_check_orders(session, pe_tick, "PE")
-                    for fe in fill_events:
-                        try:
-                            session.queue.put_nowait(json.dumps(fe))
-                        except asyncio.QueueFull:
-                            pass
-                    await asyncio.sleep(0.001)
-            except Exception as exc:
-                logger.warning("Paper session %s: Phase 1 options pre-replay failed: %s", session.session_id, exc)
+                logger.warning("Paper session %s: could not pre-fetch today's data: %s", session.session_id, exc)
 
-            # Kite 1-min gap-fill for the period between last Breeze data and now
-            if _last_breeze_ts > 0 and session.state != SimulationState.ENDED:
-                eq_gap = _kite_1min_gap_ticks(session.symbol, session.date, _last_breeze_ts)
-                ce_gap = _kite_1min_gap_options_ticks(session.symbol, session.date, ce_strike, session.expiry, "CE", _last_breeze_ts)
-                pe_gap = _kite_1min_gap_options_ticks(session.symbol, session.date, pe_strike, session.expiry, "PE", _last_breeze_ts)
-                logger.info("Paper session %s: Kite 1-min gap-fill — eq=%d CE=%d PE=%d",
-                            session.session_id, len(eq_gap), len(ce_gap), len(pe_gap))
-                for tick in eq_gap:
-                    if session.state == SimulationState.ENDED: break
-                    session.last_price = tick["close"]
-                    session.current_time = str(tick["time"])
-                    _last_breeze_ts = tick["time"]
-                    for fe in _emit_tick_and_check_orders(session, tick, None):
-                        try: session.queue.put_nowait(json.dumps(fe))
-                        except asyncio.QueueFull: pass
-                    await asyncio.sleep(0.001)
-                for tick in ce_gap:
-                    if session.state == SimulationState.ENDED: break
-                    session.last_price_ce = tick["close"]
-                    for fe in _emit_tick_and_check_orders(session, tick, "CE"):
-                        try: session.queue.put_nowait(json.dumps(fe))
-                        except asyncio.QueueFull: pass
-                    await asyncio.sleep(0.001)
-                for tick in pe_gap:
-                    if session.state == SimulationState.ENDED: break
-                    session.last_price_pe = tick["close"]
-                    for fe in _emit_tick_and_check_orders(session, tick, "PE"):
-                        try: session.queue.put_nowait(json.dumps(fe))
-                        except asyncio.QueueFull: pass
-                    await asyncio.sleep(0.001)
+            # Track the last Breeze tick timestamp so we know where the gap starts.
+            _last_historical_ts: int = 0
 
-        elif session.instrument_type == "options" and session.strike and session.expiry and session.right:
-            from app.services.options_service import options_iter_ticks
-            try:
-                for tick in options_iter_ticks(
-                    session.symbol, session.date, session.strike,
-                    session.expiry, session.right, session.start_time,
-                ):
-                    if session.state == SimulationState.ENDED:
-                        break
-                    session.last_price = tick["close"]
-                    _last_breeze_ts = tick["time"]
-                    fill_events = _emit_tick_and_check_orders(session, tick, session.right)
-                    for fe in fill_events:
-                        try:
-                            session.queue.put_nowait(json.dumps(fe))
-                        except asyncio.QueueFull:
-                            pass
-                    await asyncio.sleep(0.001)
-            except Exception as exc:
-                logger.warning("Paper session %s: Phase 1 single-right pre-replay failed: %s", session.session_id, exc)
+            # Dual-stream options pre-replay
+            if session.instrument_type == "options" and session.strike and session.expiry and session.right is None:
+                from app.services.options_service import fetch_options_historical, options_iter_ticks
+                ce_strike = session.strike_ce or session.strike
+                pe_strike = session.strike_pe or session.strike
+                logger.info("Paper session %s: Phase 1 — loading CE/PE tick dicts (strike CE=%s PE=%s expiry=%s)",
+                            session.session_id, ce_strike, pe_strike, session.expiry)
+                # Ensure today's parquet is available before loading ticks (defensive — soft_ensure
+                # in the router already runs but may have been swallowed or used a different strike)
+                try:
+                    await asyncio.to_thread(fetch_options_historical, session.symbol, session.date, ce_strike, session.expiry, "CE")
+                    await asyncio.to_thread(fetch_options_historical, session.symbol, session.date, pe_strike, session.expiry, "PE")
+                except Exception as exc:
+                    logger.warning("Paper session %s: Phase 1 options pre-fetch failed: %s", session.session_id, exc)
+                try:
+                    ce_by_time = {t["time"]: t for t in options_iter_ticks(
+                        session.symbol, session.date, ce_strike, session.expiry, "CE", session.start_time
+                    )}
+                    pe_by_time = {t["time"]: t for t in options_iter_ticks(
+                        session.symbol, session.date, pe_strike, session.expiry, "PE", session.start_time
+                    )}
+                except Exception as exc:
+                    logger.error("Paper session %s: Phase 1 — options tick load failed: %s", session.session_id, exc)
+                    ce_by_time = {}
+                    pe_by_time = {}
+                logger.info("Paper session %s: Phase 1 — CE ticks=%d PE ticks=%d",
+                            session.session_id, len(ce_by_time), len(pe_by_time))
+                try:
+                    for eq_tick in iter_ticks(session.symbol, session.date, session.start_time):
+                        if session.state == SimulationState.ENDED:
+                            break
+                        session.last_price = eq_tick["close"]
+                        ts = eq_tick["time"]
+                        _last_historical_ts = ts
+                        fill_events = _emit_tick_and_check_orders(session, eq_tick, None)
+                        if ts in ce_by_time:
+                            ce_tick = {**ce_by_time[ts], "right": "CE"}
+                            session.last_price_ce = ce_tick["close"]
+                            fill_events += _emit_tick_and_check_orders(session, ce_tick, "CE")
+                        if ts in pe_by_time:
+                            pe_tick = {**pe_by_time[ts], "right": "PE"}
+                            session.last_price_pe = pe_tick["close"]
+                            fill_events += _emit_tick_and_check_orders(session, pe_tick, "PE")
+                        for fe in fill_events:
+                            try:
+                                session.queue.put_nowait(json.dumps(fe))
+                            except asyncio.QueueFull:
+                                pass
+                        await asyncio.sleep(0.001)
+                except Exception as exc:
+                    logger.warning("Paper session %s: Phase 1 options pre-replay failed: %s", session.session_id, exc)
 
-            # Kite 1-min equity gap-fill (single-right options; equity not replayed in this branch)
-            if _last_breeze_ts > 0 and session.state != SimulationState.ENDED:
-                for tick in _kite_1min_gap_ticks(session.symbol, session.date, _last_breeze_ts):
-                    if session.state == SimulationState.ENDED: break
-                    session.last_price = tick["close"]
-                    session.current_time = str(tick["time"])
-                    for fe in _emit_tick_and_check_orders(session, tick, None):
-                        try: session.queue.put_nowait(json.dumps(fe))
-                        except asyncio.QueueFull: pass
-                    await asyncio.sleep(0.001)
+                # Configured historical gap-fill for the period between last Breeze data and now
+                if _last_historical_ts > 0 and session.state != SimulationState.ENDED:
+                    eq_gap = _historical_gap_ticks(session.symbol, session.date, _last_historical_ts)
+                    ce_gap = _historical_gap_options_ticks(session.symbol, session.date, ce_strike, session.expiry, "CE", _last_historical_ts)
+                    pe_gap = _historical_gap_options_ticks(session.symbol, session.date, pe_strike, session.expiry, "PE", _last_historical_ts)
+                    logger.info("Paper session %s: Configured historical gap-fill — eq=%d CE=%d PE=%d",
+                                session.session_id, len(eq_gap), len(ce_gap), len(pe_gap))
+                    for tick in eq_gap:
+                        if session.state == SimulationState.ENDED: break
+                        session.last_price = tick["close"]
+                        session.current_time = str(tick["time"])
+                        _last_historical_ts = tick["time"]
+                        for fe in _emit_tick_and_check_orders(session, tick, None):
+                            try: session.queue.put_nowait(json.dumps(fe))
+                            except asyncio.QueueFull: pass
+                        await asyncio.sleep(0.001)
+                    for tick in ce_gap:
+                        if session.state == SimulationState.ENDED: break
+                        session.last_price_ce = tick["close"]
+                        for fe in _emit_tick_and_check_orders(session, tick, "CE"):
+                            try: session.queue.put_nowait(json.dumps(fe))
+                            except asyncio.QueueFull: pass
+                        await asyncio.sleep(0.001)
+                    for tick in pe_gap:
+                        if session.state == SimulationState.ENDED: break
+                        session.last_price_pe = tick["close"]
+                        for fe in _emit_tick_and_check_orders(session, tick, "PE"):
+                            try: session.queue.put_nowait(json.dumps(fe))
+                            except asyncio.QueueFull: pass
+                        await asyncio.sleep(0.001)
 
-        else:
-            pre_replay_count = 0
-            logger.info("Paper session %s: Phase 1 — equity pre-replay from %s",
-                        session.session_id, session.start_time)
-            try:
-                for tick in iter_ticks(session.symbol, session.date, session.start_time):
-                    if session.state == SimulationState.ENDED:
-                        break
-                    session.last_price = tick["close"]
-                    session.current_time = str(tick["time"])
-                    _last_breeze_ts = tick["time"]
-                    fill_events = _emit_tick_and_check_orders(session, tick, None)
-                    for fe in fill_events:
-                        try:
-                            session.queue.put_nowait(json.dumps(fe))
-                        except asyncio.QueueFull:
-                            pass
-                    await asyncio.sleep(0.001)
-                    pre_replay_count += 1
-            except Exception as exc:
-                logger.warning("Paper session %s: Phase 1 pre-replay failed: %s", session.session_id, exc)
-            logger.info("Paper session %s: Phase 1 — pre-replay done, %d ticks sent",
-                        session.session_id, pre_replay_count)
+            elif session.instrument_type == "options" and session.strike and session.expiry and session.right:
+                from app.services.options_service import options_iter_ticks
+                try:
+                    for tick in options_iter_ticks(
+                        session.symbol, session.date, session.strike,
+                        session.expiry, session.right, session.start_time,
+                    ):
+                        if session.state == SimulationState.ENDED:
+                            break
+                        session.last_price = tick["close"]
+                        _last_historical_ts = tick["time"]
+                        fill_events = _emit_tick_and_check_orders(session, tick, session.right)
+                        for fe in fill_events:
+                            try:
+                                session.queue.put_nowait(json.dumps(fe))
+                            except asyncio.QueueFull:
+                                pass
+                        await asyncio.sleep(0.001)
+                except Exception as exc:
+                    logger.warning("Paper session %s: Phase 1 single-right pre-replay failed: %s", session.session_id, exc)
 
-            # Kite 1-min gap-fill for equity
-            if _last_breeze_ts > 0 and session.state != SimulationState.ENDED:
-                gap_ticks = _kite_1min_gap_ticks(session.symbol, session.date, _last_breeze_ts)
-                if gap_ticks:
-                    logger.info("Paper session %s: Kite 1-min equity gap-fill — %d ticks",
-                                session.session_id, len(gap_ticks))
-                for tick in gap_ticks:
-                    if session.state == SimulationState.ENDED: break
-                    session.last_price = tick["close"]
-                    session.current_time = str(tick["time"])
-                    for fe in _emit_tick_and_check_orders(session, tick, None):
-                        try: session.queue.put_nowait(json.dumps(fe))
-                        except asyncio.QueueFull: pass
-                    await asyncio.sleep(0.001)
+                # Configured historical equity gap-fill (single-right options; equity not replayed in this branch)
+                if _last_historical_ts > 0 and session.state != SimulationState.ENDED:
+                    for tick in _historical_gap_ticks(session.symbol, session.date, _last_historical_ts):
+                        if session.state == SimulationState.ENDED: break
+                        session.last_price = tick["close"]
+                        session.current_time = str(tick["time"])
+                        for fe in _emit_tick_and_check_orders(session, tick, None):
+                            try: session.queue.put_nowait(json.dumps(fe))
+                            except asyncio.QueueFull: pass
+                        await asyncio.sleep(0.001)
 
-        if session.state == SimulationState.ENDED:
-            return
+            else:
+                pre_replay_count = 0
+                logger.info("Paper session %s: Phase 1 — equity pre-replay from %s",
+                            session.session_id, session.start_time)
+                try:
+                    for tick in iter_ticks(session.symbol, session.date, session.start_time):
+                        if session.state == SimulationState.ENDED:
+                            break
+                        session.last_price = tick["close"]
+                        session.current_time = str(tick["time"])
+                        _last_historical_ts = tick["time"]
+                        fill_events = _emit_tick_and_check_orders(session, tick, None)
+                        for fe in fill_events:
+                            try:
+                                session.queue.put_nowait(json.dumps(fe))
+                            except asyncio.QueueFull:
+                                pass
+                        await asyncio.sleep(0.001)
+                        pre_replay_count += 1
+                except Exception as exc:
+                    logger.warning("Paper session %s: Phase 1 pre-replay failed: %s", session.session_id, exc)
+                logger.info("Paper session %s: Phase 1 — pre-replay done, %d ticks sent",
+                            session.session_id, pre_replay_count)
 
-        logger.info(
-            "paper_phase1_completed session_id=%s resumed=%s duration_seconds=%.3f last_historical_ts=%s",
-            session.session_id, session.resumed_from_db, time.monotonic() - phase1_started,
-            _last_breeze_ts or "-",
-        )
-        if time.monotonic() - phase1_started >= 30:
-            logger.warning(
-                "paper_phase1_slow session_id=%s duration_seconds=%.3f",
-                session.session_id, time.monotonic() - phase1_started,
+                # Configured historical gap-fill for equity
+                if _last_historical_ts > 0 and session.state != SimulationState.ENDED:
+                    gap_ticks = _historical_gap_ticks(session.symbol, session.date, _last_historical_ts)
+                    if gap_ticks:
+                        logger.info("Paper session %s: Configured historical equity gap-fill — %d ticks",
+                                    session.session_id, len(gap_ticks))
+                    for tick in gap_ticks:
+                        if session.state == SimulationState.ENDED: break
+                        session.last_price = tick["close"]
+                        session.current_time = str(tick["time"])
+                        for fe in _emit_tick_and_check_orders(session, tick, None):
+                            try: session.queue.put_nowait(json.dumps(fe))
+                            except asyncio.QueueFull: pass
+                        await asyncio.sleep(0.001)
+
+            if session.state == SimulationState.ENDED:
+                return
+
+            logger.info(
+                "paper_phase1_completed session_id=%s resumed=%s duration_seconds=%.3f last_historical_ts=%s",
+                session.session_id, session.resumed_from_db, time.monotonic() - phase1_started,
+                _last_historical_ts or "-",
             )
+            if time.monotonic() - phase1_started >= 30:
+                logger.warning(
+                    "paper_phase1_slow session_id=%s duration_seconds=%.3f",
+                    session.session_id, time.monotonic() - phase1_started,
+                )
 
         # Live subscription ownership is shared across website and desktop.
         session.paper_base_contracts = {
@@ -1985,11 +1989,14 @@ async def _run_paper_session(session: SimulationSession) -> None:
 
 async def _run_real_session(session: SimulationSession) -> None:
     """
-    Real trading session: uses the same Kite tick-stream infrastructure as
+    Real trading session: uses the same shared live-feed infrastructure as
     paper trading for chart data, but order execution goes to Kotak Neo.
     The wallet is pre-synced from Kotak at session start (handled in the router).
     Limit/Target triggered fills are forwarded to Kotak after local detection.
     """
+    # Background engines must not retain their originating HTTP request cache.
+    from app.services.historical_data_service import detach_historical_operation, historical_operation
+    detach_historical_operation()
     session.state = SimulationState.RUNNING
     loop = asyncio.get_running_loop()
 
@@ -2006,50 +2013,51 @@ async def _run_real_session(session: SimulationSession) -> None:
         await start_session_feed(session)
         session.paper_stream_source = None  # history is presentation, not a live quote
         await session.queue.put(json.dumps({"type": "feed_status", **session.market_feed_group.status()}))
-        # Phase 1: fast-replay today's historical data (same as paper)
-        logger.info("Real session %s: Phase 1 — fetching today's data for %s",
-                    session.session_id, session.symbol)
-        try:
-            from app.services.broker_service import fetch_historical
-            await asyncio.to_thread(fetch_historical, session.symbol, session.date)
-        except Exception as exc:
-            logger.warning("Real session %s: could not pre-fetch today's data: %s", session.session_id, exc)
+        with historical_operation():
+            # Phase 1: fast-replay today's historical data (same as paper)
+            logger.info("Real session %s: Phase 1 — fetching today's data for %s",
+                        session.session_id, session.symbol)
+            try:
+                from app.services.broker_service import fetch_historical
+                await asyncio.to_thread(fetch_historical, session.symbol, session.date)
+            except Exception as exc:
+                logger.warning("Real session %s: could not pre-fetch today's data: %s", session.session_id, exc)
 
-        _last_breeze_ts: int = 0
-        try:
-            from app.services.data_loader import iter_ticks
-            for tick in iter_ticks(session.symbol, session.date, session.start_time):
-                if session.state == SimulationState.ENDED:
-                    break
-                session.last_price = tick["close"]
-                session.current_time = str(tick["time"])
-                _last_breeze_ts = tick["time"]
-                fill_events = _emit_tick_and_check_orders_real(session, tick, None, loop)
-                for fe in fill_events:
-                    try:
-                        session.queue.put_nowait(json.dumps(fe))
-                    except asyncio.QueueFull:
-                        pass
-                await asyncio.sleep(0.001)
-        except Exception as exc:
-            logger.warning("Real session %s: Phase 1 pre-replay failed: %s", session.session_id, exc)
+            _last_historical_ts: int = 0
+            try:
+                from app.services.data_loader import iter_ticks
+                for tick in iter_ticks(session.symbol, session.date, session.start_time):
+                    if session.state == SimulationState.ENDED:
+                        break
+                    session.last_price = tick["close"]
+                    session.current_time = str(tick["time"])
+                    _last_historical_ts = tick["time"]
+                    fill_events = _emit_tick_and_check_orders_real(session, tick, None, loop)
+                    for fe in fill_events:
+                        try:
+                            session.queue.put_nowait(json.dumps(fe))
+                        except asyncio.QueueFull:
+                            pass
+                    await asyncio.sleep(0.001)
+            except Exception as exc:
+                logger.warning("Real session %s: Phase 1 pre-replay failed: %s", session.session_id, exc)
 
-        # Kite 1-min gap fill
-        if _last_breeze_ts > 0 and session.state != SimulationState.ENDED:
-            for tick in _kite_1min_gap_ticks(session.symbol, session.date, _last_breeze_ts):
-                if session.state == SimulationState.ENDED:
-                    break
-                session.last_price = tick["close"]
-                session.current_time = str(tick["time"])
-                for fe in _emit_tick_and_check_orders_real(session, tick, None, loop):
-                    try:
-                        session.queue.put_nowait(json.dumps(fe))
-                    except asyncio.QueueFull:
-                        pass
-                await asyncio.sleep(0.001)
+            # Configured historical gap fill
+            if _last_historical_ts > 0 and session.state != SimulationState.ENDED:
+                for tick in _historical_gap_ticks(session.symbol, session.date, _last_historical_ts):
+                    if session.state == SimulationState.ENDED:
+                        break
+                    session.last_price = tick["close"]
+                    session.current_time = str(tick["time"])
+                    for fe in _emit_tick_and_check_orders_real(session, tick, None, loop):
+                        try:
+                            session.queue.put_nowait(json.dumps(fe))
+                        except asyncio.QueueFull:
+                            pass
+                    await asyncio.sleep(0.001)
 
-        if session.state == SimulationState.ENDED:
-            return
+            if session.state == SimulationState.ENDED:
+                return
 
         session.paper_stream_source = session.market_feed_group.actual
         # Phase 3: consume live ticks
@@ -2513,7 +2521,7 @@ def _backfill_bar_history(
     Returns up to _AI_MAX_BARS completed candles, oldest-first, in the same
     ISO-string time format used by the live closed_bar entries.
 
-    For paper/real sessions: fetches from Kite 1-min API (up to current IST
+    For paper/real sessions: fetches from the configured historical provider (up to current IST
     time) so bars that arrived via live streaming after session start are
     included. For simulation: reads the local Breeze parquet file.
 
@@ -2532,8 +2540,8 @@ def _backfill_bar_history(
 
         if right is None:
             if is_live:
-                from app.services.kite_service import fetch_kite_1min
-                df = fetch_kite_1min(session.symbol, session.date)
+                from app.services.historical_data_service import load_history
+                df = load_history(session.symbol, session.date).frame
             else:
                 from app.services.data_loader import load_dataframe
                 df = load_dataframe(session.symbol, session.date)
@@ -2542,8 +2550,8 @@ def _backfill_bar_history(
             if not strike or not session.expiry:
                 return []
             if is_live:
-                from app.services.kite_service import fetch_kite_1min_options
-                df = fetch_kite_1min_options(session.symbol, session.date, strike, session.expiry, right)
+                from app.services.historical_data_service import load_history
+                df = load_history(session.symbol, session.date, strike, session.expiry, right).frame
             else:
                 from app.services.options_service import load_options_dataframe
                 df = load_options_dataframe(session.symbol, session.date, strike, session.expiry, right)

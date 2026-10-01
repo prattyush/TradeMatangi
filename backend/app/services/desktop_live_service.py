@@ -215,32 +215,34 @@ def _completed_current_candles(frame, interval_minutes: int) -> list[dict]:
 
 async def _load_history(tile: dict) -> list[dict]:
     """Fetch chart history without changing in-memory live tile state."""
-    instrument, interval = tile["instrument"], tile["interval_minutes"]
-    today = datetime.now(ZoneInfo("Asia/Kolkata")).date().isoformat()
-    from app.services.data_loader import candles_to_records, resample_to_candles
-    from app.utils import prior_trading_days
-    dates = prior_trading_days(today, 5) + [today]
-    candles: list[dict] = []
-    if instrument.get("kind") == "option":
-        from app.services.options_service import fetch_options_historical, load_options_dataframe
-        for day in (day for day in dates if day <= instrument["expiry"]):
-            await asyncio.to_thread(fetch_options_historical, instrument["underlying"], day, int(instrument["strike"]), instrument["expiry"], instrument["right"])
-            frame = await asyncio.to_thread(load_options_dataframe, instrument["underlying"], day, int(instrument["strike"]), instrument["expiry"], instrument["right"])
-            if day == today:
-                candles.extend(_completed_current_candles(frame, interval))
-            else:
-                candles.extend({"timestamp": row["time"], "open": row["open"], "high": row["high"], "low": row["low"], "close": row["close"]} for row in candles_to_records(resample_to_candles(frame, interval)))
-    else:
-        from app.routers.data import _ensure_data
-        from app.services.data_loader import load_dataframe
-        for day in dates:
-            await asyncio.to_thread(_ensure_data, instrument["symbol"], day)
-            frame = await asyncio.to_thread(load_dataframe, instrument["symbol"], day)
-            if day == today:
-                candles.extend(_completed_current_candles(frame, interval))
-            else:
-                candles.extend({"timestamp": row["time"], "open": row["open"], "high": row["high"], "low": row["low"], "close": row["close"]} for row in candles_to_records(resample_to_candles(frame, interval)))
-    return sorted({candle["timestamp"]: candle for candle in candles}.values(), key=lambda candle: candle["timestamp"])
+    from app.services.historical_data_service import historical_operation
+    with historical_operation():
+        instrument, interval = tile["instrument"], tile["interval_minutes"]
+        today = datetime.now(ZoneInfo("Asia/Kolkata")).date().isoformat()
+        from app.services.data_loader import candles_to_records, resample_to_candles
+        from app.utils import prior_trading_days
+        dates = prior_trading_days(today, 5) + [today]
+        candles: list[dict] = []
+        if instrument.get("kind") == "option":
+            from app.services.options_service import fetch_options_historical, load_options_dataframe
+            for day in (day for day in dates if day <= instrument["expiry"]):
+                await asyncio.to_thread(fetch_options_historical, instrument["underlying"], day, int(instrument["strike"]), instrument["expiry"], instrument["right"])
+                frame = await asyncio.to_thread(load_options_dataframe, instrument["underlying"], day, int(instrument["strike"]), instrument["expiry"], instrument["right"])
+                if day == today:
+                    candles.extend(_completed_current_candles(frame, interval))
+                else:
+                    candles.extend({"timestamp": row["time"], "open": row["open"], "high": row["high"], "low": row["low"], "close": row["close"]} for row in candles_to_records(resample_to_candles(frame, interval)))
+        else:
+            from app.routers.data import _ensure_data
+            from app.services.data_loader import load_dataframe
+            for day in dates:
+                await asyncio.to_thread(_ensure_data, instrument["symbol"], day)
+                frame = await asyncio.to_thread(load_dataframe, instrument["symbol"], day)
+                if day == today:
+                    candles.extend(_completed_current_candles(frame, interval))
+                else:
+                    candles.extend({"timestamp": row["time"], "open": row["open"], "high": row["high"], "low": row["low"], "close": row["close"]} for row in candles_to_records(resample_to_candles(frame, interval)))
+        return sorted({candle["timestamp"]: candle for candle in candles}.values(), key=lambda candle: candle["timestamp"])
 
 
 async def _load_current_date_seconds(tile: dict) -> list[dict]:
@@ -250,32 +252,34 @@ async def _load_current_date_seconds(tile: dict) -> list[dict]:
     reconcile today's raw provider data with seconds the desktop has already
     received from the stream.  Do not expose raw seconds for previous dates.
     """
-    instrument = tile["instrument"]
-    today = datetime.now(ZoneInfo("Asia/Kolkata")).date().isoformat()
-    from app.services.data_loader import candles_to_records, has_native_second_cadence
+    from app.services.historical_data_service import historical_operation
+    with historical_operation():
+        instrument = tile["instrument"]
+        today = datetime.now(ZoneInfo("Asia/Kolkata")).date().isoformat()
+        from app.services.data_loader import candles_to_records, has_native_second_cadence
 
-    if instrument.get("kind") == "option":
-        if today > instrument["expiry"]:
+        if instrument.get("kind") == "option":
+            if today > instrument["expiry"]:
+                return []
+            from app.services.options_service import fetch_options_historical, load_options_dataframe
+            await asyncio.to_thread(fetch_options_historical, instrument["underlying"], today, int(instrument["strike"]), instrument["expiry"], instrument["right"])
+            frame = await asyncio.to_thread(load_options_dataframe, instrument["underlying"], today, int(instrument["strike"]), instrument["expiry"], instrument["right"])
+        else:
+            from app.routers.data import _ensure_data
+            from app.services.data_loader import load_dataframe
+            await asyncio.to_thread(_ensure_data, instrument["symbol"], today)
+            frame = await asyncio.to_thread(load_dataframe, instrument["symbol"], today)
+
+        # A provider can fall back to minute (or larger) bars. Those bars are
+        # already represented by the normal chart-candle baseline, but must never
+        # be labelled as raw seconds or copied into the desktop tick cache.
+        if not has_native_second_cadence(frame):
             return []
-        from app.services.options_service import fetch_options_historical, load_options_dataframe
-        await asyncio.to_thread(fetch_options_historical, instrument["underlying"], today, int(instrument["strike"]), instrument["expiry"], instrument["right"])
-        frame = await asyncio.to_thread(load_options_dataframe, instrument["underlying"], today, int(instrument["strike"]), instrument["expiry"], instrument["right"])
-    else:
-        from app.routers.data import _ensure_data
-        from app.services.data_loader import load_dataframe
-        await asyncio.to_thread(_ensure_data, instrument["symbol"], today)
-        frame = await asyncio.to_thread(load_dataframe, instrument["symbol"], today)
 
-    # A provider can fall back to minute (or larger) bars. Those bars are
-    # already represented by the normal chart-candle baseline, but must never
-    # be labelled as raw seconds or copied into the desktop tick cache.
-    if not has_native_second_cadence(frame):
-        return []
-
-    return [
-        {"timestamp": row["time"], "open": row["open"], "high": row["high"], "low": row["low"], "close": row["close"]}
-        for row in candles_to_records(frame)
-    ]
+        return [
+            {"timestamp": row["time"], "open": row["open"], "high": row["high"], "low": row["low"], "close": row["close"]}
+            for row in candles_to_records(frame)
+        ]
 
 
 async def _seed(stream: DesktopStream, tile: dict) -> None:
@@ -381,41 +385,43 @@ async def activate(stream: DesktopStream) -> None:
 
 async def refresh(stream: DesktopStream) -> None:
     """Refresh authoritative chart bars and today's raw second OHLC per tile."""
-    tiles = list(stream.tiles)
-    requests = [tile.copy() for tile in tiles]
-    generations = [stream.tile_history_generations.get(tile["tile_id"], 0) for tile in tiles]
-    retry_subscription = any(tile.get("availability") == "provider_error" or (tile.get("availability") == "available" and not tile.get("subscribed")) for tile in tiles)
-    logger.info(
-        "desktop_live_refresh stream_id=%s tile_count=%s tiles=%s reason=explicit_refresh",
-        stream.stream_id, len(tiles), ",".join(str(tile.get("tile_id")) for tile in tiles),
-    )
-    results = await asyncio.gather(
-        *(asyncio.gather(_load_history(request), _load_current_date_seconds(request)) for request in requests),
-        return_exceptions=True,
-    )
-    for tile, request, generation, result in zip(tiles, requests, generations, results):
-        async with _tile_lock(stream, tile["tile_id"]):
-            if (stream.tile_history_generations.get(tile["tile_id"], 0) != generation
-                or tile.get("interval_minutes") != request["interval_minutes"] or tile.get("instrument") != request["instrument"]):
-                continue
-            if isinstance(result, Exception):
-                # The existing stream/task and candle cache stay usable.
-                tile["availability"] = "provider_error"
-                tile["reason"] = str(result)
-                continue
-            candles, current_date_seconds = result
-            # The refresh response is the chart baseline.  The desktop then
-            # layers its locally received seconds that the provider has not
-            # reached yet, without ever replacing timestamps the provider did
-            # return.
-            tile["candles"] = candles
-            tile["current_date_seconds"] = current_date_seconds
-            tile["availability"] = "available"
-            tile.pop("reason", None)
-    if retry_subscription:
-        await activate(stream)
-    await publish(stream, "snapshot", "screen", snapshot(stream))
-    logger.info("desktop_live_refresh_complete stream_id=%s tile_count=%s", stream.stream_id, len(tiles))
+    from app.services.historical_data_service import historical_operation
+    with historical_operation(force_refresh=True):
+        tiles = list(stream.tiles)
+        requests = [tile.copy() for tile in tiles]
+        generations = [stream.tile_history_generations.get(tile["tile_id"], 0) for tile in tiles]
+        retry_subscription = any(tile.get("availability") == "provider_error" or (tile.get("availability") == "available" and not tile.get("subscribed")) for tile in tiles)
+        logger.info(
+            "desktop_live_refresh stream_id=%s tile_count=%s tiles=%s reason=explicit_refresh",
+            stream.stream_id, len(tiles), ",".join(str(tile.get("tile_id")) for tile in tiles),
+        )
+        results = await asyncio.gather(
+            *(asyncio.gather(_load_history(request), _load_current_date_seconds(request)) for request in requests),
+            return_exceptions=True,
+        )
+        for tile, request, generation, result in zip(tiles, requests, generations, results):
+            async with _tile_lock(stream, tile["tile_id"]):
+                if (stream.tile_history_generations.get(tile["tile_id"], 0) != generation
+                    or tile.get("interval_minutes") != request["interval_minutes"] or tile.get("instrument") != request["instrument"]):
+                    continue
+                if isinstance(result, Exception):
+                    # The existing stream/task and candle cache stay usable.
+                    tile["availability"] = "provider_error"
+                    tile["reason"] = str(result)
+                    continue
+                candles, current_date_seconds = result
+                # The refresh response is the chart baseline.  The desktop then
+                # layers its locally received seconds that the provider has not
+                # reached yet, without ever replacing timestamps the provider did
+                # return.
+                tile["candles"] = candles
+                tile["current_date_seconds"] = current_date_seconds
+                tile["availability"] = "available"
+                tile.pop("reason", None)
+        if retry_subscription:
+            await activate(stream)
+        await publish(stream, "snapshot", "screen", snapshot(stream))
+        logger.info("desktop_live_refresh_complete stream_id=%s tile_count=%s", stream.stream_id, len(tiles))
 
 
 async def publish(stream: DesktopStream, event_type: str, tile_id: str, payload: dict) -> dict:

@@ -11,8 +11,13 @@ from httpx import AsyncClient, ASGITransport
 from app.main import app
 
 
-def make_ist_df(n_seconds: int = 600, base_price: float = 24200.0) -> pd.DataFrame:
-    start = pd.Timestamp("2026-05-06 09:15:00")
+@pytest.fixture(autouse=True)
+def isolated_parquet_root(tmp_path, monkeypatch):
+    monkeypatch.setattr("app.services.data_loader.OHLCDATA_DIR", tmp_path / "ohlcdata")
+
+
+def make_ist_df(n_seconds: int = 600, base_price: float = 24200.0, date: str = "2026-05-06") -> pd.DataFrame:
+    start = pd.Timestamp(f"{date} 09:15:00")
     idx = pd.date_range(start, periods=n_seconds, freq="s")
     rng = np.random.default_rng(42)
     return pd.DataFrame(
@@ -30,7 +35,7 @@ def make_ist_df(n_seconds: int = 600, base_price: float = 24200.0) -> pd.DataFra
 def write_pickle(tmp_path, symbol: str, date: str, n: int = 600):
     y, m, d = date.split("-")
     path = tmp_path / f"{symbol}-{d}-{m}-{y}.pickle"
-    make_ist_df(n).to_pickle(path)
+    make_ist_df(n, date=date).to_pickle(path)
     return path
 
 
