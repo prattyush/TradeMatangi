@@ -794,6 +794,27 @@ options. Tests must drive actual raw callback fan-out through the adapter/hub,
 include mixed asset types, and interleave ticks while candles accumulate. Chart
 reload and backend cache fixes cannot compensate for incorrect feed routing.
 
+## Kotak weekly option month encoding — 2026-10-01
+
+The user confirmed the live Kotak symbol for SENSEX, expiry 2026-10-01,
+strike 71200 PE as `SENSEX26O0171200PE`. The formatter previously encoded
+October numerically as `10`, generating `SENSEX26100171200PE` and causing
+invalid-symbol errors. Its existing October/December unit tests also asserted
+that incorrect convention.
+
+The shared formatter now uses `O`, `N`, and `D` for October, November, and
+December weekly contracts. January–September retain numeric month codes;
+monthly contracts retain their three-letter month code. Both real option order
+placement and streaming token lookup use this formatter. SENSEX continues to use
+`bse_fo`. This repair changes symbol encoding only; expiry classification and
+instrument-master resolution design remain unchanged.
+
+Regression coverage verifies the user-confirmed October symbol, weekly November
+and December, monthly final-quarter symbols, the exact symbol sent by limit and
+stop-loss placement, and streaming token resolution against a mocked Kotak master.
+All broker order calls are mocked; no actual order is placed. Deploy/restart the
+backend to activate the formatter correction.
+
 ## Original requirements
 
 # Improvements
