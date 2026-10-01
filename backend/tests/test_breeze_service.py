@@ -254,6 +254,7 @@ class TestBreezeStreamManagerOnTicks:
         # Manually wire up internals (bypass ws_connect)
         mgr._breeze = True
         mgr._queue = queue
+        mgr._instruments = [{"exchange_code": "NSE", "stock_code": "NIFTY", "product_type": "cash"}]
         mgr._loop = loop
 
         # Seed accumulator using Breeze's stock_name ("NIFTY 50") as key
@@ -264,7 +265,7 @@ class TestBreezeStreamManagerOnTicks:
         acc.high = 24205.0
         acc.low = 24199.0
         acc.close = 24204.0
-        mgr._accumulators["NIFTY 50_EQ"] = acc
+        mgr._accumulators[mgr.instrument_route_key(mgr._instruments[0])] = acc
 
         # Send tick using real Breeze field names
         mgr._on_ticks([{**_BREEZE_EQ_TICK, "last": 24210.00}])
@@ -287,6 +288,7 @@ class TestBreezeStreamManagerOnTicks:
         queue = asyncio.Queue()
         mgr._breeze = True
         mgr._queue = queue
+        mgr._instruments = [{"exchange_code": "NSE", "stock_code": "NIFTY", "product_type": "cash"}]
         mgr._loop = asyncio.get_running_loop()
 
         # First tick for "NIFTY 50_EQ" — should NOT produce a candle
@@ -301,13 +303,14 @@ class TestBreezeStreamManagerOnTicks:
         queue = asyncio.Queue()
         mgr._breeze = True
         mgr._queue = queue
+        mgr._instruments = [{"exchange_code": "NSE", "stock_code": "NIFTY", "product_type": "cash"}]
         mgr._loop = asyncio.get_running_loop()
 
         from app.services.breeze_service import _OHLCAccumulator
         acc = _OHLCAccumulator()
         acc.current_second = 1000
         acc.open = acc.high = acc.low = acc.close = 24200.0
-        mgr._accumulators["NIFTY 50_EQ"] = acc
+        mgr._accumulators[mgr.instrument_route_key(mgr._instruments[0])] = acc
 
         import json
         mgr._on_ticks(json.dumps([{**_BREEZE_EQ_TICK, "last": 24210.00}]))
@@ -322,13 +325,14 @@ class TestBreezeStreamManagerOnTicks:
         queue = asyncio.Queue()
         mgr._breeze = True
         mgr._queue = queue
+        mgr._instruments = [{"exchange_code": "NSE", "stock_code": "NIFTY", "product_type": "cash"}]
         mgr._loop = asyncio.get_running_loop()
 
         from app.services.breeze_service import _OHLCAccumulator
         acc = _OHLCAccumulator()
         acc.current_second = 1000
         acc.open = acc.high = acc.low = acc.close = 24200.0
-        mgr._accumulators["NIFTY 50_EQ"] = acc
+        mgr._accumulators[mgr.instrument_route_key(mgr._instruments[0])] = acc
 
         mgr._on_ticks({**_BREEZE_EQ_TICK, "last": 24210.00})
 
@@ -508,3 +512,36 @@ class TestBreezeStreamManagerOnTicks:
 
         assert first_queue.qsize() == 1
         assert second_queue.qsize() == 0
+
+
+@pytest.mark.parametrize("layout", ["cash", "option", "mixed", "empty"])
+def test_shared_callback_accepts_only_owned_instruments_before_aggregation(layout):
+    from types import SimpleNamespace
+    mgr = BreezeStreamManager()
+    mgr._queue = asyncio.Queue()
+    mgr._loop = SimpleNamespace(call_soon_threadsafe=lambda fn, *args: fn(*args))
+    cash = {"exchange_code": "BSE", "stock_code": "BSESEN", "product_type": "cash"}
+    option = {"exchange_code": "BFO", "stock_code": "BSESEN", "product_type": "options",
+              "expiry_date": "2026-10-01", "strike_price": "71900", "right": "put"}
+    mgr._instruments = [cash] if layout == "cash" else [option] if layout == "option" else [cash, option] if layout == "mixed" else []
+    if option in mgr._instruments:
+        mgr._option_scrip_map["owned-pe"] = (71900, "PE")
+        mgr._option_scrip_routes["owned-pe"] = mgr.instrument_route_key(option)
+    raw_ticks = [
+        {"symbol": "1!sensex", "stock_name": "SENSEX", "exchange": "BSE", "last": 72500},
+        {"symbol": "1!nifty", "stock_name": "NIFTY 50", "exchange": "NSE Equity", "last": 22500},
+        {"symbol": "4.1!unknown-option", "OI": 100, "right": "PE", "last": 55},
+        {"symbol": "4.1!owned-pe", "OI": 100, "right": "CE", "last": 99},
+        {"symbol": "4.1!owned-pe", "OI": 100, "last": 40},
+    ]
+    with patch("app.services.breeze_service._time.time", return_value=1000) as clock:
+        mgr._on_ticks(raw_ticks)
+        clock.return_value = 1001
+        mgr._on_ticks(raw_ticks)
+    observed = []
+    while not mgr._queue.empty():
+        observed.append(mgr._queue.get_nowait())
+    expected = {(None, 72500)} if layout == "cash" else {("PE", 40)} if layout == "option" else {(None, 72500), ("PE", 40)} if layout == "mixed" else set()
+    assert {(tick.get("right"), tick["close"]) for tick in observed} == expected
+    assert len(mgr._accumulators) == len(expected)
+    assert mgr._accepted_tick_count == len(expected) * 2

@@ -63,7 +63,7 @@ async def test_real_engine_queue_starts_and_delivers_exact_contract(source, resu
     assert isinstance(s.paper_tick_queue, simulation.RingQueue)
     assert len(feed.handles) == 3
     ce = next(h for h in feed.handles if hub.feeds[h.key]["instrument"].get("right") == "CE")
-    adapter.deliveries[ce.key].put_nowait(tick())
+    adapter.deliveries[ce.key].put_nowait({**tick(), "right": "CE"})
     payload = await asyncio.wait_for(s.paper_tick_queue.get(), 1)
     assert (payload["provider"], payload["right"], payload["strike"], payload["expiry"]) == (source, "CE", 72900, s.expiry)
     feed.stop()
@@ -159,7 +159,7 @@ async def test_session_task_reaches_live_phase_and_sse_replay_buffer(resumed, se
             await asyncio.wait_for(wait_phase(), 2)
             assert simulation.get_session(s.session_id) is s
             handle = s.stream_manager.handles[1]
-            adapter.deliveries[handle.key].put_nowait(tick())
+            adapter.deliveries[handle.key].put_nowait({**tick(), "right": "CE"})
             await asyncio.wait_for(received.wait(), 1)
             assert not task.done() and s.state == simulation.SimulationState.RUNNING
             assert any(json.loads(payload).get("type") == "tick" for _, payload in s.queue._dq)

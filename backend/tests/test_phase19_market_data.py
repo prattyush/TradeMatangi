@@ -34,7 +34,7 @@ async def test_shared_instrument_across_users_and_independent_release():
     a, b = await asyncio.gather(hub.subscribe(OPTION, "website:user-a", group, first),
                                hub.subscribe({**OPTION, "exchange": "NFO", "strike": "25000"}, "desktop:user-b", FeedGroup("kite"), second))
     assert len(adapter.opened) == 1
-    tick = {"type": "tick", "time": 100, "open": 10, "high": 12, "low": 9, "close": 11}
+    tick = {"type": "tick", "right": "CE", "time": 100, "open": 10, "high": 12, "low": 9, "close": 11}
     adapter.deliveries[a.key].put_nowait(tick)
     assert first.get_nowait()["close"] == second.get_nowait()["close"] == 11
     a.close()
@@ -52,7 +52,7 @@ async def test_exact_expiry_and_strike_routing():
     a, b = asyncio.Queue(), asyncio.Queue()
     first = await hub.subscribe(OPTION, "a", FeedGroup("kite"), a)
     await hub.subscribe({**OPTION, "strike": 25100}, "b", FeedGroup("kite"), b)
-    adapter.deliveries[first.key].put_nowait({"type": "tick", "time": 1, "close": 100})
+    adapter.deliveries[first.key].put_nowait({"type": "tick", "right": "CE", "time": 1, "close": 100})
     assert a.get_nowait()["strike"] == 25000
     assert b.empty()
     hub.shutdown()
@@ -270,7 +270,7 @@ async def test_handover_keeps_history_but_requires_current_quote(monkeypatch):
     args = ("user", stream.stream_id, "NIFTY", OPTION["expiry"], 25000, "CE")
     assert live.option_quote(*args) is None
     assert tile["latest_tick"]["close"] == 40
-    hub.deliver(handle.key, {"type": "tick", "time": 2, "open": 41, "high": 41, "low": 41, "close": 41})
+    hub.deliver(handle.key, {"type": "tick", "right": "CE", "time": 2, "open": 41, "high": 41, "low": 41, "close": 41})
     assert live.option_quote(*args)["price"] == 41
     live.stop("user", stream.stream_id)
 
@@ -313,4 +313,102 @@ async def test_failed_bundle_cannot_deliver_candidate_ticks_to_engine(monkeypatc
     handle = feed.handles[0]
     hub.deliver(handle.key, {"type": "tick", "time": 2, "close": 100})
     assert queue.get_nowait()["provider"] == "breeze"
+    feed.stop()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("source", ["breeze", "kite", "fyers", "kotak"])
+@pytest.mark.parametrize("identity", [
+    {}, {"right": "PE"}, {"right": "CE", "strike": 25001},
+    {"right": "CE", "strike": "invalid"}, {"right": "CE", "strike": None},
+    {"right": "CE", "expiry": "2026-10-13"}, {"right": "CE", "expiry": None},
+])
+async def test_invalid_option_identity_never_updates_quote_status_or_consumers(source, identity):
+    hub, queue = MarketDataHub(FakeAdapter()), asyncio.Queue()
+    group = FeedGroup(source)
+    handle = await hub.subscribe(OPTION, "engine", group, queue)
+    group.connection, group.reason = "reconnecting", "waiting for valid data"
+    before = group.status().copy()
+    hub.deliver(handle.key, {"type": "tick", "time": 1, "close": 72500, **identity})
+    assert queue.empty() and handle.key not in hub.quotes
+    assert not hub.feeds[handle.key]["first_tick"]
+    assert group.status() == before
+    hub.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_underlying_rejects_option_candle_and_control_messages_still_flow():
+    hub, queue = MarketDataHub(FakeAdapter()), asyncio.Queue()
+    handle = await hub.subscribe(EQUITY, "engine", FeedGroup("breeze"), queue)
+    hub.deliver(handle.key, {"type": "tick", "right": "PE", "time": 1, "close": 40})
+    assert queue.empty() and handle.key not in hub.quotes
+    hub.deliver(handle.key, {"type": "feed_status", "connection": "connected"})
+    assert queue.get_nowait()["type"] == "feed_status"
+    hub.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_valid_large_option_price_is_accepted_without_price_heuristics():
+    hub, queue = MarketDataHub(FakeAdapter()), asyncio.Queue()
+    handle = await hub.subscribe(OPTION, "engine", FeedGroup("breeze"), queue)
+    hub.deliver(handle.key, {"type": "tick", "right": "CE", "strike": "25000.0",
+                             "expiry": OPTION["expiry"], "time": 1, "close": 72500})
+    assert queue.get_nowait()["close"] == 72500
+    assert hub.quotes[handle.key]["close"] == 72500
+    hub.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_identity_rejection_warning_is_throttled_per_feed(monkeypatch, caplog):
+    from app.services import market_data
+    hub = MarketDataHub(FakeAdapter())
+    handle = await hub.subscribe(OPTION, "engine", FeedGroup("breeze"), asyncio.Queue())
+    now = [100.0]
+    monkeypatch.setattr(market_data.time, "monotonic", lambda: now[0])
+    for _ in range(100):
+        hub.deliver(handle.key, {"type": "tick", "time": 1, "close": 72500})
+    assert sum("market_data_identity_rejected" in record.message for record in caplog.records) == 1
+    now[0] += 60
+    hub.deliver(handle.key, {"type": "tick", "time": 1, "close": 72500})
+    assert sum("market_data_identity_rejected" in record.message for record in caplog.records) == 2
+    assert hub.feeds[handle.key]["rejected_ticks"] == 101
+    hub.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_startup_and_handover_stage_only_valid_instrument_candles(monkeypatch):
+    from app.services import market_data, simulation
+    class EmittingAdapter(FakeAdapter):
+        def __init__(self):
+            super().__init__()
+            self.emitted = set()
+        async def open(self, source, instrument, delivery, loop):
+            close = await super().open(source, instrument, delivery, loop)
+            for key, feed in list(hub.feeds.items()):
+                if key[0] != source or key in self.emitted:
+                    continue
+                self.emitted.add(key)
+                right = feed["instrument"].get("right")
+                bad = {"right": "CE"} if not right else {}
+                hub.deliver(key, {"type": "tick", "time": 1, "close": 999, **bad})
+                hub.deliver(key, {"type": "tick", "time": 2, "close": 40 if right else 72500, "right": right})
+            return close
+    hub = MarketDataHub(EmittingAdapter())
+    monkeypatch.setattr(market_data, "get_hub", lambda: hub)
+    s = simulation.SimulationSession(session_id="staged", symbol="BSESEN", date="2026-10-01",
+        start_time="09:15:00", speed=1, session_type="paper", instrument_type="options",
+        strike=72900, strike_ce=72900, strike_pe=71900, expiry="2026-10-01")
+    feed = market_data.SessionFeed(s, FeedGroup("breeze"))
+    await feed.start()
+    for handover in (False, True):
+        if handover:
+            await hub.rebind(feed.group, target="kite")
+        events = []
+        while not s.paper_tick_queue.empty():
+            events.append(s.paper_tick_queue.get_nowait())
+        ticks = [event for event in events if event["type"] == "tick"]
+        assert {(event.get("right"), event["close"]) for event in ticks} == {(None, 72500), ("CE", 40)}
+        assert all(event["provider"] == ("kite" if handover else "breeze") for event in ticks)
+        assert all(event["feed_generation"] == feed.group.generation for event in ticks)
+        assert all(quote["close"] != 999 for quote in hub.quotes.values())
     feed.stop()

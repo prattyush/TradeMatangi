@@ -710,6 +710,90 @@ Lesson: cross-application regression tests must not expand a production package'
 compile graph into sibling applications. Verify dependency isolation as well as a
 build in a developer workspace containing all installed packages.
 
+## SENSEX contamination of option live feeds — 2026-10-01
+
+### Reproduction and cause
+
+Website Paper charts displayed correct history after reload, then alternated
+between genuine option premiums (for example PE at ₹30–₹50) and SENSEX values
+near ₹71,000. A regression using the real Breeze manager, multiplexer callback,
+provider adapter, hub, and concrete session queues reproduced the failure in
+Paper and real feed configurations. One underlying candle generated four
+observations for a session tracking the index, CE, PE, and a supplemental option.
+The existing twelve Breeze callback tests passed while these two new isolation
+cases failed.
+
+The Breeze callback intentionally fans out raw ticks to all managers. The cash
+filter previously ran only when a manager contained cash subscriptions. An
+option-only manager therefore accepted an index tick, aggregated it under a
+cash route, and forwarded it to its option feed. The hub then attached that
+subscription's CE/PE, strike, and expiry, disguising an index price as a correctly
+identified option candle. The website routed it by that right. Its candle
+aggregator retained the maximum high, so a later correct premium could not remove
+the corrupt high. Reloading the chart corrected its historical baseline briefly
+but did not repair live routing.
+
+The same observation reached backend quote storage and order/strategy evaluation.
+This establishes a potential execution impact; no production fills were inspected
+or established as affected during this repair.
+
+### Implementation
+
+- Breeze now requires every non-option observation to match a cash/index
+  subscription owned by that manager. Option-only and empty managers discard cash
+  observations before candle aggregation, accepted-tick accounting, or delivery.
+  Mixed managers continue routing both asset types. Exact option ScripCode
+  ownership and contradictory-right rejection remain in place, including BFO
+  payloads that omit right/strike.
+- The hub validates adapter candle identity before quote updates, first-tick
+  logging, connection-state changes, metadata attachment, and delivery. Option
+  candles require the expected CE/PE right; supplied strike/expiry must match.
+  Underlying feeds reject candles carrying an option right. This covers normal
+  delivery and events buffered during startup/handover. Control messages retain
+  their existing behavior. All supported adapters already label option candles;
+  regression mocks now provide that same identity.
+- Unexpected hub identity rejection logs `market_data_identity_rejected` with
+  provider, instrument, reason, raw identity, and cumulative rejected count. The
+  first rejection logs immediately, followed by at most one warning per feed per
+  minute. Normal filtering of other managers' raw callbacks adds no per-tick log.
+- No price limits, HTTP/SSE schema changes, chart workarounds, separate broker
+  connections, or changes to durable trades/orders were introduced.
+
+### Verification and recovery
+
+489 backend regression tests passed across Breeze, shared feeds, actual Paper and
+real startup tasks, simulation/resume, order/strategy processing, and desktop
+integration. The website production build and isolated desktop production build
+also passed, with the existing bundle-size warnings.
+
+New coverage includes raw interleaved SENSEX/CE/PE callbacks, a PE premium of ₹40,
+shared feeds across two users, supplemental contracts, cash-only/option-only/mixed/
+empty managers, unknown ScripCodes and contradictory rights, adapter identity
+rejection for all four providers, throttled diagnostics, and staged startup and
+handover. Full session-loop tests verify fifteen correctly routed SSE candles,
+correct cached primary premiums, and the prices seen by order/strategy callbacks.
+Broker SDK access, security-master resolution, historical fetches, and execution
+callbacks are mocked; tests issue no external broker request or actual order.
+Valid high-priced options remain accepted, proving there is no price heuristic.
+
+After backend deployment/restart, restart affected live sessions to discard old
+accumulators, quotes, queued observations, and replay buffers; reload charts from
+historical data. A market-hours check must confirm that no index-valued candles
+reappear in options, including after repeated reloads. Durable trades, pending
+orders, reservations, and strategy intent retain their existing recovery policy.
+Previously affected fills are not automatically reversed or rewritten; inspecting
+production records is a separate read-only investigation. Deployment and native
+Windows installer verification were not performed here.
+
+### Lessons
+
+An adapter's subscription identity must not substitute for validating the incoming
+observation: attaching correct contract labels can conceal an incorrectly routed
+price. A shared SDK callback requires ownership checks for cash ticks as well as
+options. Tests must drive actual raw callback fan-out through the adapter/hub,
+include mixed asset types, and interleave ticks while candles accumulate. Chart
+reload and backend cache fixes cannot compensate for incorrect feed routing.
+
 ## Original requirements
 
 # Improvements
