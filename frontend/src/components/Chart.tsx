@@ -265,8 +265,8 @@ function targetProfitLinePrice(strategy: StrategyResponse, position?: Position, 
 }
 
 function targetProfitLineLabel(strategy: StrategyResponse, price: number, position?: Position, pnlPctMode?: boolean, sessionCapital?: number, aggregatePnl?: number, currentPrice?: number, brokeragePerOrder = 0): string {
-  if (!pnlPctMode) return `TP ${price.toFixed(2)}`
-  if (!position || position.side === 'FLAT' || position.quantity <= 0 || !sessionCapital || sessionCapital <= 0) return `TP ${price.toFixed(2)}`
+  if (!pnlPctMode) return `TP ${strategy.target_profit_size === 'half' ? 'Half' : 'Full'} ${price.toFixed(2)}`
+  if (!position || position.side === 'FLAT' || position.quantity <= 0 || !sessionCapital || sessionCapital <= 0) return `TP ${strategy.target_profit_size === 'half' ? 'Half' : 'Full'} ${price.toFixed(2)}`
   const positionPct = strategy.target_profit_is_pct
     ? `+${strategy.target_profit_value}%`
     : formatProjectedPnl((position.side === 'LONG' ? 1 : -1) * (price - position.avg_entry_price) * position.quantity, true, sessionCapital)
@@ -274,7 +274,7 @@ function targetProfitLineLabel(strategy: StrategyResponse, price: number, positi
     ? projectedTotalPnlPctAtTarget(position, currentPrice, price, aggregatePnl, sessionCapital, brokeragePerOrder)
     : null
   const totalLabel = totalPct === null ? '' : ` / ${totalPct >= 0 ? '+' : ''}${totalPct.toFixed(1)}%`
-  return `TP ${positionPct}${totalLabel}`
+  return `TP ${strategy.target_profit_size === 'half' ? 'Half' : 'Full'} ${positionPct}${totalLabel}`
 }
 
 function orderLineTypeLabel(order: Order): string {
@@ -1290,7 +1290,7 @@ export default function Chart({
           lineStyle: LineStyle.Dashed,
           axisLabelVisible: true,
           title: isUnderlyingTarget
-            ? `UT ${strategy.right} ${price.toFixed(2)}`
+            ? `UT ${strategy.right} ${strategy.target_profit_size === 'half' ? 'Half' : 'Full'} ${price.toFixed(2)}`
             : targetProfitLineLabel(strategy, price, position, pnlPctMode, sessionCapital, aggregatePnl, latestTick?.close ?? liveWindowRef.current?.close, brokeragePerOrder),
         })
         strategyPriceLinesRef.current.set(strategy.strategy_id, line)

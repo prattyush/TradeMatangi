@@ -50,7 +50,10 @@ export const applyPaperStreamEvent = (snapshot: DesktopTradingSnapshot, event: R
   if (Number.isFinite(eventId) && eventId <= (snapshot.event_cursor ?? -1)) return snapshot
   const cursor = Number.isFinite(eventId) ? eventId : snapshot.event_cursor
   const orderId = typeof event.order_id === 'string' ? event.order_id : ''
-  if (event.type === 'order_placed' && orderId && event.status === 'PENDING') {
+  if ((event.type === 'order_placed' || event.type === 'order_updated') && orderId && event.status === 'PENDING') {
+    if (event.type === 'order_updated' && snapshot.open_orders.some(order => order.order_id === orderId)) {
+      return { ...snapshot, event_cursor: cursor, open_orders: snapshot.open_orders.map(order => order.order_id === orderId ? { ...order, ...event } as DesktopOrder : order) }
+    }
     if (snapshot.open_orders.some(order => order.order_id === orderId) || snapshot.trades.some(trade => trade.trade_id === orderId)) return { ...snapshot, event_cursor: cursor }
     return { ...snapshot, event_cursor: cursor, open_orders: [...snapshot.open_orders, event as unknown as DesktopOrder] }
   }

@@ -264,6 +264,10 @@ def record_trade(
         on_trade_record(session_id)
     except Exception:
         logger.debug("guardrail on_trade_record skipped for session %s", session_id)
+    from app.services.order_service import request_exit_reconciliation
+    from datetime import datetime, timezone
+    request_exit_reconciliation(session_id, symbol, right, strike, expiry,
+                                datetime.fromtimestamp(timestamp, timezone.utc).date().isoformat())
     return trade
 
 

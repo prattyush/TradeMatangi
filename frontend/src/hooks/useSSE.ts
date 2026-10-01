@@ -35,7 +35,8 @@ export function useSSE(sessionId: string | null, onMessage: SSECallback, onRecon
       try {
         if (e.lastEventId) lastEventIdRef.current = e.lastEventId
         const data = JSON.parse(e.data) as Record<string, unknown>
-        onMessage(data)
+        if (data.type === 'stream_reset') onReconnect?.()
+        else onMessage(data)
         retryDelay.current = 1000 // reset backoff on success
       } catch {
         // ignore malformed events
@@ -134,7 +135,8 @@ export function useMultiSSE(sessionIds: string[], onMessage: SSECallback, onReco
       try {
         if (e.lastEventId) conn.lastEventId = e.lastEventId
         const data = JSON.parse(e.data) as Record<string, unknown>
-        onMessageRef.current(data)
+        if (data.type === 'stream_reset') onReconnectRef.current?.(sessionId)
+        else onMessageRef.current(data)
         conn.retryDelay = 1000
       } catch {
         // ignore malformed events

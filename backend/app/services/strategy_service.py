@@ -132,7 +132,7 @@ _registry: dict[str, list[StrategyInstance]] = {}
 
 # ── Persistence ──────────────────────────────────────────────────────────────
 
-def _write_strategy_to_db(strategy: StrategyInstance) -> None:
+def _write_strategy_to_db(strategy: StrategyInstance, *, strict: bool = False) -> None:
     session = None
     try:
         from app.services.db import get_dynamodb_resource
@@ -165,9 +165,9 @@ def _write_strategy_to_db(strategy: StrategyInstance) -> None:
         else:
             table.put_item(Item=item)
     except Exception:
-        logger.exception("DynamoDB write failed for strategy %s", strategy.strategy_id)
-        if session and getattr(session, "desktop_origin", None) == "desktop_paper" and strategy.status != StrategyStatus.CANCELLED:
+        if strict or (session and getattr(session, "desktop_origin", None) == "desktop_paper" and strategy.status != StrategyStatus.CANCELLED):
             raise
+        logger.exception("DynamoDB write failed for strategy %s", strategy.strategy_id)
 
 
 # ── Registry management ───────────────────────────────────────────────────────
@@ -297,6 +297,207 @@ def update_target_profit(session_id: str, strategy_id: str, value: float, is_pct
 
 def list_running(session_id: str) -> list[StrategyInstance]:
     return [s for s in _registry.get(session_id, []) if s.status == StrategyStatus.RUNNING]
+
+
+def update_target_profit_size(session_id: str, strategy_id: str, size: str) -> bool:
+    if size not in ("full", "half"):
+        raise ValueError("Size must be full or half")
+    for strategy in list_running(session_id):
+        if (strategy.strategy_id == strategy_id
+                and strategy.strategy_type in ("TargetProfit", "UnderlyingTargetProfit")
+                and not strategy.metadata.get("half_action_order_ids")):
+            previous = strategy.metadata.get("target_profit_size", "full")
+            strategy.metadata["target_profit_size"] = size
+            try:
+                _write_strategy_to_db(strategy, strict=True)
+            except Exception:
+                strategy.metadata["target_profit_size"] = previous
+                raise
+            return True
+    return False
+
+
+def target_profit_quantity(quantity: int, lot_size: int, size: str) -> int:
+    if quantity <= 0:
+        return 0
+    if size == "full":
+        return quantity
+    return min(quantity, max(1, (quantity // lot_size) // 2) * lot_size)
+
+
+def _apply_half_exit(strategy, session, position, price, right, ts, underlying=False, loop=None):
+    """Split only the selected quantity; existing remainder keeps its protection.
+
+    Committed action IDs make a later retry skip chunks already applied. Broker
+    acknowledgement precedes local quantity/type changes.
+    """
+    from app.config import LOT_SIZES
+    from app.models.schemas import TradeSide, OrderType
+    from app.services import order_service as orders
+    lot = LOT_SIZES.get(session.symbol, 1) if right else 1
+    quantity = min(position.quantity, int(strategy.metadata.get("half_selected_quantity", target_profit_quantity(position.quantity, lot, "half"))))
+    if not strategy.metadata.get("half_action_started"):
+        logger.info("take_profit_half_allocated strategy=%s session=%s right=%s strike=%s expiry=%s position_qty=%d selected_qty=%d lot_size=%d", strategy.strategy_id, session.session_id, right, _session_strike(session, right, strategy), _strategy_expiry(strategy, session, right), position.quantity, quantity, lot)
+        strategy.metadata["half_action_started"] = True
+        strategy.metadata["half_selected_quantity"] = quantity
+    exit_side = TradeSide.SELL if position.side == "LONG" else TradeSide.BUY
+    applied = strategy.metadata.setdefault("half_action_order_ids", [])
+    already = sum(o.quantity for oid in applied if (o := orders.get_order(session.session_id, oid)))
+    remaining = max(0, quantity - already)
+    is_real = session.session_type == "real"
+
+    def mark(order, role="remainder"):
+        order.exit_allocation_id = strategy.strategy_id
+        order.exit_position_side = position.side
+        order.exit_allocation_role = role
+        orders._write_order_to_db(order, strict=True)
+
+    def place(qty, action_id):
+        kind = OrderType.STOPLOSS if underlying and is_real else OrderType.TARGET if underlying else OrderType.LIMIT
+        kwargs = {"trigger_price": price} if underlying else {"limit_price": price}
+        order = orders.place_order(session_id=session.session_id, symbol=session.symbol,
+            side=exit_side, order_type=kind, quantity=qty, created_at=ts,
+            trading_date=session.date, right=right, strike=_session_strike(session, right, strategy) if right else None,
+            expiry=_strategy_expiry(strategy, session, right), user_id=session.user_id,
+            source=getattr(session, "desktop_origin", None), is_stoploss=True,
+            order_id=action_id, exit_allocation_id=strategy.strategy_id,
+            exit_position_side=position.side, exit_allocation_role="action",
+            **_wallet_ledger_kwargs(session), **kwargs)
+        if underlying and is_real:
+            try:
+                from app.services.simulation import _register_kotak_sl_for_order
+                _register_kotak_sl_for_order(session, order, loop)
+            except Exception:
+                if not order.kotak_order_id:
+                    orders.cancel_order(session.session_id, order.order_id, session.date)
+                raise
+        mark(order, "action")
+        return order
+
+    try:
+        # A prepared chunk survives restart before protection is resized.
+        _write_strategy_to_db(strategy, strict=True)
+        intent = strategy.metadata.get("half_pending_chunk")
+        if intent:
+            action = orders.get_order(session.session_id, intent["action_id"])
+            if action and action.exit_allocation_role == "action" and action.status.value != "CANCELLED":
+                orders._write_order_to_db(action, strict=True)
+                if action.order_id not in applied:
+                    applied.append(action.order_id)
+            elif intent.get("remainder_id"):
+                if action:
+                    orders._write_order_to_db(action, strict=True)
+                remainder = orders.get_order(session.session_id, intent["remainder_id"])
+                if remainder:
+                    restored = min(int(intent["original_quantity"]), position.quantity)
+                    if remainder.kotak_order_id and is_real:
+                        from app.services.kotak_service import get_service
+                        get_service().modify_sl_order(remainder.kotak_order_id, remainder.trigger_price, remainder.limit_price, restored)
+                    orders.update_order(session.session_id, remainder.order_id, session.date, quantity=restored)
+                    orders._write_order_to_db(remainder, strict=True)
+            remaining = max(0, quantity - sum(o.quantity for oid in applied if (o := orders.get_order(session.session_id, oid))))
+        matching = sorted(_find_open_exit_orders(session.session_id, exit_side, right, strategy), key=lambda o: (o.created_at, o.order_id))
+        if right:
+            matching = [o for o in matching if o.strike == _session_strike(session, right, strategy)
+                        and o.expiry == _strategy_expiry(strategy, session, right)]
+        for order in matching:
+            mark(order, "action" if order.order_id in applied else "remainder")
+        # Existing protection may still reflect the position before a manual
+        # reduction. Trim that excess before allocating the selected half.
+        available = position.quantity
+        current = []
+        for order in matching:
+            allowed = min(order.quantity, available)
+            available -= allowed
+            if allowed < order.quantity:
+                broker_id = getattr(order, "kotak_order_id", None)
+                if broker_id and is_real:
+                    from app.services.kotak_service import get_service
+                    broker = get_service()
+                    if not allowed:
+                        broker.cancel_order(broker_id)
+                    elif order.order_type == OrderType.LIMIT:
+                        broker.modify_sl_to_limit_order(broker_id, order.limit_price, allowed)
+                    else:
+                        broker.modify_sl_order(broker_id, order.trigger_price, order.limit_price, allowed)
+                if allowed:
+                    orders.update_order(session.session_id, order.order_id, session.date, quantity=allowed)
+                else:
+                    orders.cancel_order(session.session_id, order.order_id, session.date)
+            if allowed:
+                current.append(order)
+        matching = current
+        for order in matching:
+            if not remaining:
+                break
+            if order.order_id in applied:
+                continue
+            selected = min(remaining, order.quantity)
+            old_quantity = order.quantity
+            broker_id = getattr(order, "kotak_order_id", None)
+            if selected == old_quantity:
+                strategy.metadata["half_pending_chunk"] = {"action_id": order.order_id, "selected_quantity": selected}
+                _write_strategy_to_db(strategy, strict=True)
+                if broker_id and is_real and not underlying:
+                    from app.services.kotak_service import get_service
+                    get_service().modify_sl_to_limit_order(broker_id, price, selected)
+                if underlying:
+                    _update_exit_order_price(session, order, price)
+                else:
+                    orders.convert_order(session.session_id, order.order_id, OrderType.LIMIT, session.date, price)
+                    orders.update_order(session.session_id, order.order_id, session.date, limit_price=price)
+                mark(order, "action")
+                action = order
+            else:
+                import uuid
+                action_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"half:{strategy.strategy_id}:{order.order_id}"))
+                strategy.metadata["half_pending_chunk"] = {"action_id": action_id, "remainder_id": order.order_id,
+                    "original_quantity": old_quantity, "selected_quantity": selected}
+                _write_strategy_to_db(strategy, strict=True)
+                try:
+                    if broker_id and is_real:
+                        from app.services.kotak_service import get_service
+                        get_service().modify_sl_order(broker_id, order.trigger_price, order.limit_price, old_quantity - selected)
+                    orders.update_order(session.session_id, order.order_id, session.date, quantity=old_quantity - selected)
+                    mark(order)
+                    action = place(selected, action_id)
+                except Exception:
+                    action = orders.get_order(session.session_id, action_id)
+                    if action and action.kotak_order_id:
+                        # Acknowledged broker actions remain tracked for reconciliation.
+                        if action_id not in applied:
+                            applied.append(action_id)
+                        raise
+                    if action:
+                        orders.cancel_order(session.session_id, action_id, session.date)
+                        orders._write_order_to_db(action, strict=True)
+                    if broker_id and is_real:
+                        get_service().modify_sl_order(broker_id, order.trigger_price, order.limit_price, old_quantity)
+                    orders.update_order(session.session_id, order.order_id, session.date, quantity=old_quantity)
+                    orders._write_order_to_db(order, strict=True)
+                    raise
+            applied.append(action.order_id)
+            _write_strategy_to_db(strategy, strict=True)
+            remaining -= selected
+        if remaining:
+            import uuid
+            action_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"half:{strategy.strategy_id}:unprotected"))
+            strategy.metadata["half_pending_chunk"] = {"action_id": action_id, "selected_quantity": remaining}
+            _write_strategy_to_db(strategy, strict=True)
+            action = place(remaining, action_id)
+            applied.append(action.order_id)
+            _write_strategy_to_db(strategy, strict=True)
+        strategy.status = StrategyStatus.COMPLETED
+        _write_strategy_to_db(strategy, strict=True)
+        logger.info("take_profit_half_completed strategy=%s session=%s action_orders=%s", strategy.strategy_id, session.session_id, applied)
+    except Exception as exc:
+        strategy.status = StrategyStatus.RUNNING
+        import time
+        now = time.monotonic()
+        if not hasattr(strategy, "_last_half_error_log") or now - strategy._last_half_error_log >= 60:
+            strategy._last_half_error_log = now
+            logger.exception("take_profit_half_deferred strategy=%s session=%s applied=%s", strategy.strategy_id, session.session_id, applied)
+            session.queue.put_nowait(__import__("json").dumps({"type": "broker_error", "message": f"Half take profit failed: {exc}"}))
 
 
 def clear_session(session_id: str) -> None:
@@ -571,6 +772,7 @@ def _update_exit_order_price(session, order, new_price: float) -> None:
             )
         except Exception as exc:
             logger.warning("Failed to modify Kotak SL %s: %s", order.kotak_order_id, exc)
+            raise
 
     if order.order_type in (OrderType.TARGET, OrderType.STOPLOSS):
         update_order(session_id=session.session_id, order_id=order.order_id,
@@ -934,6 +1136,9 @@ def _on_tick_target_profit(
     if not triggered:
         return
 
+    if meta.get("target_profit_size", "full") == "half":
+        _apply_half_exit(strategy, session, position, target_price, tick_right, current_ts, loop=loop)
+        return
     exit_side = TradeSide.SELL if position.side == "LONG" else TradeSide.BUY
     exit_orders = _find_open_exit_orders(session.session_id, exit_side, tick_right, strategy)
 
@@ -1129,6 +1334,9 @@ def _on_tick_underlying_target_profit(
         new_sl = _ceil_tick(current_price + tick_buffer)
         exit_side = TradeSide.BUY
 
+    if meta.get("target_profit_size", "full") == "half":
+        _apply_half_exit(strategy, session, position, new_sl, tick_right, current_ts, underlying=True, loop=loop)
+        return
     exit_orders = _find_open_exit_orders(session.session_id, exit_side, tick_right, strategy)
 
     if exit_orders:

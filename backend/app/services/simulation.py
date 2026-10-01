@@ -774,53 +774,36 @@ def subscribe_desktop_option_contract(session: SimulationSession, contract: dict
     loop = asyncio.get_running_loop()
     queue = _ContractTickQueue(session, dict(contract))
     subscription_id = f"{session.session_id}:option:{key}"
-    source = session.paper_stream_source
-    manager = None
-    try:
-        if source == "kite":
-            from app.services import kite_service
-            manager = kite_service.get_broadcaster()
-            token = kite_service.fetch_options_instrument_token(session.symbol, contract["expiry"], contract["strike"], contract["right"])
-            manager.register(subscription_id, [token], [contract["right"]], queue, loop)
-        elif source == "kotak":
-            from app.services import kotak_service
-            manager = kotak_service.get_kotak_broadcaster()
-            token, exchange = kotak_service.fetch_kotak_options_instrument_token(session.symbol, contract["expiry"], contract["strike"], contract["right"])
-            manager.register(subscription_id, [token], [exchange], [contract["right"]], queue, loop)
-        elif source == "fyers":
-            from app.services import fyers_service
-            manager = fyers_service.get_fyers_broadcaster()
-            symbol = fyers_service._fyers_options_symbol(session.symbol, contract["expiry"], contract["strike"], contract["right"])
-            manager.register(subscription_id, [symbol], [contract["right"]], queue, loop)
-        elif source == "breeze":
-            from app.config import SUPPORTED_SYMBOLS
-            from app.services.breeze_service import BreezeStreamManager
-            info = SUPPORTED_SYMBOLS[session.symbol]
-            manager = BreezeStreamManager()
-            manager.start(queue, loop, [{
-                "exchange_code": info.get("options_exchange_code", "NFO"),
-                "stock_code": info.get("breeze_stock_code", session.symbol),
-                "product_type": "options",
-                "expiry_date": f"{contract['expiry']}T06:00:00.000Z",
-                "strike_price": str(contract["strike"]),
-                "right": "call" if contract["right"] == "CE" else "put",
-            }], session_id=subscription_id)
-        else:
-            raise ValueError(f"Unsupported Paper stream source: {source}")
-    except Exception:
-        if manager is not None:
-            if source == "breeze":
-                manager.stop()
+    from app.config import SUPPORTED_SYMBOLS
+    from app.services.market_data import FeedGroup, get_hub
+    if getattr(session, "market_feed_group", None) is None:
+        session.market_feed_group = FeedGroup(session.paper_stream_source, session.session_type == "real")
+    instrument = {"kind": "option", "exchange": SUPPORTED_SYMBOLS[session.symbol]["options_exchange_code"],
+                  "underlying": session.symbol, "expiry": contract["expiry"],
+                  "strike": int(contract["strike"]), "right": contract["right"]}
+    async def attach():
+        try:
+            handle = await get_hub().subscribe(instrument, subscription_id, session.market_feed_group, queue)
+            if session.state == SimulationState.ENDED:
+                handle.close()
             else:
-                manager.unregister(subscription_id)
-        raise
-    session.desktop_option_subscriptions[key] = (source, manager, subscription_id)
+                session.desktop_option_subscriptions[key] = ("hub", handle, subscription_id)
+        except Exception as exc:
+            session.desktop_option_subscriptions.pop(key, None)
+            session.queue.put_nowait(json.dumps({"type": "broker_error", "message": str(exc)}))
+    task = loop.create_task(attach())
+    session.desktop_option_subscriptions[key] = ("pending", task, subscription_id)
+    return task
 
 
 def _stop_desktop_option_subscriptions(session: SimulationSession) -> None:
     for source, manager, subscription_id in list(session.desktop_option_subscriptions.values()):
         try:
-            if source == "breeze":
+            if source == "pending":
+                manager.cancel()
+            elif source == "hub":
+                manager.close()
+            elif source == "breeze":
                 manager.stop()
             else:
                 manager.unregister(subscription_id)
@@ -870,6 +853,11 @@ def _emit_tick_and_check_orders(
         stop_session(session)
         return []
 
+    if not tick.get("provider"):
+        history_key = (tick_right, tick.get("strike") or (session.strike_ce if tick_right == "CE" else session.strike_pe if tick_right == "PE" else None), tick.get("expiry", session.expiry) if tick_right else None)
+        marks = getattr(session, "_history_watermarks", {})
+        marks[history_key] = max(marks.get(history_key, 0), int(tick["time"]))
+        session._history_watermarks = marks
     if tick_right and not tick.get("contract_key"):
         base_contract = session.paper_base_contracts.get(tick_right, {}) if session.paper_stream_source else {}
         tick_strike = tick.get("strike") or base_contract.get("strike") or (session.strike_ce if tick_right == "CE" else session.strike_pe)
@@ -885,7 +873,7 @@ def _emit_tick_and_check_orders(
                 break
 
     linked_stream_id = getattr(session, "desktop_live_stream_id", None) if session.session_type == "paper" else None
-    if tick_right and linked_stream_id:
+    if tick_right and linked_stream_id and getattr(session, "market_feed_group", None) is None:
         from app.services import desktop_live_service
         contract = next((item for item in getattr(session, "desktop_contracts", []) if item.get("contract_key") == tick.get("contract_key")), None)
         if contract is None:
@@ -911,8 +899,10 @@ def _emit_tick_and_check_orders(
             else:
                 session.last_price_pe = tick["close"]
 
-    # Auto-close positions at end of day (15:09) for sim/paper/stepwise
-    if session.session_type != "real":
+    history_presentation = (session.session_type == "paper" and getattr(session, "market_feed_group", None)
+                            and not session.paper_stream_source and not tick.get("provider"))
+    # Auto-close only on observations evaluated by the engine, not chart backfill.
+    if session.session_type != "real" and not history_presentation:
         _auto_close_positions_if_eod(session, tick, tick_right)
 
     session.queue.put_nowait(json.dumps({**tick, "session_id": session.session_id}, default=_json_decimal))
@@ -922,6 +912,9 @@ def _emit_tick_and_check_orders(
             "paper_tick_forwarded_to_sse session_id=%s right=%s time=%s",
             session.session_id, tick_right or "EQ", tick.get("time"),
         )
+
+    if history_presentation:
+        return []
 
     current_time = tick["time"]
     # A grouped replay has one durable clock.  Each member may have different
@@ -1057,7 +1050,8 @@ def _emit_tick_and_check_orders(
         from app.services import strategy_service
         from app.services.order_service import get_open_orders, get_order
         running_before = {s.strategy_id: s for s in strategy_service.list_running(session.session_id)}
-        before_ids = {o.order_id for o in get_open_orders(session.session_id)}
+        before_orders = {o.order_id: (o.quantity, o.trigger_price, o.limit_price, o.order_type, o.is_stoploss) for o in get_open_orders(session.session_id)}
+        before_ids = set(before_orders)
 
         # Auto-stoploss-on-entry: place SL orders for filled entries.
         # Must run AFTER before_ids snapshot so the diff captures new SL orders,
@@ -1101,6 +1095,9 @@ def _emit_tick_and_check_orders(
                     "entry_sl_price": new_order.entry_sl_price,
                     "group_id": new_order.group_id,
                 })
+        for changed in after_open_orders:
+            if changed.order_id in before_orders and before_orders[changed.order_id] != (changed.quantity, changed.trigger_price, changed.limit_price, changed.order_type, changed.is_stoploss):
+                fill_events.append({"type": "order_updated", **changed.model_dump(mode="json")})
         # Emit completion events for strategies that just finished
         running_after_ids = {s.strategy_id for s in strategy_service.list_running(session.session_id)}
         for sid, strat in running_before.items():
@@ -1629,12 +1626,16 @@ async def _run_paper_session(session: SimulationSession) -> None:
     await session.queue.put(json.dumps(start_event))
 
     try:
+        from app.services.market_data import start_session_feed
+        await start_session_feed(session)
+        session.paper_stream_source = None  # history is presentation, not a live quote
+        await session.queue.put(json.dumps({"type": "feed_status", **session.market_feed_group.status()}))
         # ── Phase 1: fast-replay historical data for today ────────────────────
         logger.info("Paper session %s: Phase 1 — fetching today's data for %s %s",
                     session.session_id, session.symbol, session.date)
         try:
             from app.services.broker_service import fetch_historical
-            fetch_historical(session.symbol, session.date)
+            await asyncio.to_thread(fetch_historical, session.symbol, session.date)
             logger.info("Paper session %s: Phase 1 — equity data ready", session.session_id)
         except Exception as exc:
             logger.warning("Paper session %s: could not pre-fetch today's data: %s", session.session_id, exc)
@@ -1652,8 +1653,8 @@ async def _run_paper_session(session: SimulationSession) -> None:
             # Ensure today's parquet is available before loading ticks (defensive — soft_ensure
             # in the router already runs but may have been swallowed or used a different strike)
             try:
-                fetch_options_historical(session.symbol, session.date, ce_strike, session.expiry, "CE")
-                fetch_options_historical(session.symbol, session.date, pe_strike, session.expiry, "PE")
+                await asyncio.to_thread(fetch_options_historical, session.symbol, session.date, ce_strike, session.expiry, "CE")
+                await asyncio.to_thread(fetch_options_historical, session.symbol, session.date, pe_strike, session.expiry, "PE")
             except Exception as exc:
                 logger.warning("Paper session %s: Phase 1 options pre-fetch failed: %s", session.session_id, exc)
             try:
@@ -1810,210 +1811,18 @@ async def _run_paper_session(session: SimulationSession) -> None:
                 session.session_id, time.monotonic() - phase1_started,
             )
 
-        # ── Phase 2: live streaming ────────────────────────────────────────────
-        session.queue.phase = "phase2_stream_setup"
-        loop = asyncio.get_running_loop()
+        # Live subscription ownership is shared across website and desktop.
         session.paper_base_contracts = {
             right: {"strike": session.strike_ce or session.strike if right == "CE" else session.strike_pe or session.strike, "expiry": session.expiry}
-            for right in ("CE", "PE")
-            if session.instrument_type == "options" and session.right in (None, right)
+            for right in ("CE", "PE") if session.instrument_type == "options" and session.right in (None, right)
         }
-
-        # Determine streaming source from admin config (default: kite)
-        from app.services import token_service as _ts
-        stream_source = _ts.get_token("live_stream_source") or "kite"
-        logger.info(
-            "paper_phase2_source_selected session_id=%s resumed=%s source=%s",
-            session.session_id, session.resumed_from_db, stream_source,
-        )
-
-        # ── Fyers streaming path ───────────────────────────────────────────────
-        if stream_source == "fyers":
-            logger.info(
-                "Paper session %s: attempting Fyers live streaming …",
-                session.session_id,
-            )
-            try:
-                from app.services.fyers_service import (
-                    get_fyers_broadcaster,
-                    resolve_fyers_symbols,
-                )
-                symbols, rights = resolve_fyers_symbols(session)
-                get_fyers_broadcaster().register(
-                    session.session_id, symbols, rights,
-                    session.paper_tick_queue, loop,
-                )
-                session.fyers_streaming = True
-                logger.info(
-                    "Paper session %s: Fyers live streaming active (%d symbols)",
-                    session.session_id, len(symbols),
-                )
-            except Exception as fyers_exc:
-                warn_msg = (
-                    f"Fyers streaming failed ({fyers_exc}). "
-                    f"Falling back to Breeze for live data."
-                )
-                logger.warning("Paper session %s: %s", session.session_id, warn_msg)
-                try:
-                    session.queue.put_nowait(json.dumps({
-                        "type": "broker_error", "message": warn_msg,
-                    }))
-                except asyncio.QueueFull:
-                    pass
-                stream_source = "breeze"  # fall through to Breeze
-
-        # ── Breeze streaming path ──────────────────────────────────────────────
-        if stream_source == "breeze":
-            logger.info(
-                "Paper session %s: attempting ICICI Breeze live streaming …",
-                session.session_id,
-            )
-            try:
-                from app.services.breeze_service import BreezeStreamManager
-                instruments = _build_breeze_instruments(session)
-                manager = BreezeStreamManager()
-                manager.start(session.paper_tick_queue, loop, instruments, session_id=session.session_id)
-                session.stream_manager = manager
-                session.breeze_streaming = True
-                logger.info(
-                    "Paper session %s: Breeze live streaming active",
-                    session.session_id,
-                )
-            except Exception as breeze_exc:
-                warn_msg = (
-                    f"ICICI Breeze streaming failed ({breeze_exc}). "
-                    f"Falling back to Kite for live data."
-                )
-                logger.warning("Paper session %s: %s", session.session_id, warn_msg)
-                try:
-                    session.queue.put_nowait(json.dumps({
-                        "type": "broker_error", "message": warn_msg,
-                    }))
-                except asyncio.QueueFull:
-                    pass
-                stream_source = "kite"  # fall through to Kite
-
-        # ── Kotak streaming path ──────────────────────────────────────────────
-        if stream_source == "kotak":
-            logger.info(
-                "Paper session %s: attempting Kotak Neo live streaming …",
-                session.session_id,
-            )
-            try:
-                ok = await _setup_kotak_streaming(session, loop)
-                if ok:
-                    logger.info(
-                        "Paper session %s: Kotak Neo live streaming active",
-                        session.session_id,
-                    )
-                else:
-                    # Kotak not authenticated — fall through to Kite
-                    warn_msg = (
-                        "Kotak Neo not authenticated. "
-                        "Falling back to Kite for live data."
-                    )
-                    logger.warning("Paper session %s: %s", session.session_id, warn_msg)
-                    try:
-                        session.queue.put_nowait(json.dumps({
-                            "type": "broker_error", "message": warn_msg,
-                        }))
-                    except asyncio.QueueFull:
-                        pass
-                    stream_source = "kite"  # fall through
-            except Exception as kotak_exc:
-                warn_msg = (
-                    f"Kotak Neo streaming failed ({kotak_exc}). "
-                    f"Falling back to Kite for live data."
-                )
-                logger.warning("Paper session %s: %s", session.session_id, warn_msg)
-                try:
-                    session.queue.put_nowait(json.dumps({
-                        "type": "broker_error", "message": warn_msg,
-                    }))
-                except asyncio.QueueFull:
-                    pass
-                stream_source = "kite"  # fall through
-
-        # ── Kite streaming path (also reached as Kotak fallback) ──────────────
-        if stream_source == "kite":
-            try:
-                from app.services import kite_service
-                tokens: list[int] = []
-                rights: list[str | None] = []
-
-                eq_exchange, eq_token = kite_service.fetch_equity_instrument_token(session.symbol)
-                tokens.append(eq_token)
-                rights.append(None)
-
-                if session.instrument_type == "options" and session.expiry:
-                    ce_strike = session.strike_ce or session.strike
-                    pe_strike = session.strike_pe or session.strike
-                    if session.right in (None, "CE") and ce_strike:
-                        ce_token = kite_service.fetch_options_instrument_token(
-                            session.symbol, session.expiry, ce_strike, "CE"
-                        )
-                        tokens.append(ce_token)
-                        rights.append("CE")
-                    if session.right in (None, "PE") and pe_strike:
-                        pe_token = kite_service.fetch_options_instrument_token(
-                            session.symbol, session.expiry, pe_strike, "PE"
-                        )
-                        tokens.append(pe_token)
-                        rights.append("PE")
-
-                kite_service.get_broadcaster().register(
-                    session.session_id, tokens, rights,
-                    session.paper_tick_queue, loop,
-                )
-                logger.info(
-                    "Paper session %s: Kite live streaming started (%d tokens)",
-                    session.session_id, len(tokens),
-                )
-
-            except Exception as kite_exc:
-                # Kite unavailable — emit error and try Breeze fallback
-                err_msg = (
-                    f"Kite unavailable ({kite_exc}). "
-                    f"Switching to ICICIDirect for live data."
-                )
-                logger.warning("Paper session %s: %s", session.session_id, err_msg)
-                try:
-                    session.queue.put_nowait(json.dumps({"type": "broker_error", "message": err_msg}))
-                except asyncio.QueueFull:
-                    pass
-
-                try:
-                    from app.services.breeze_service import BreezeStreamManager
-                    instruments = _build_breeze_instruments(session)
-                    manager = BreezeStreamManager()
-                    manager.start(session.paper_tick_queue, loop, instruments, session_id=session.session_id)
-                    session.stream_manager = manager
-                    logger.info(
-                        "Paper session %s: Breeze fallback streaming started",
-                        session.session_id,
-                    )
-                except Exception as be:
-                    both_err = {
-                        "type": "broker_error",
-                        "message": (
-                            f"Both Kite and ICICIDirect unavailable. "
-                            f"Cannot stream live data: {be}"
-                        ),
-                    }
-                    try:
-                        session.queue.put_nowait(json.dumps(both_err))
-                    except asyncio.QueueFull:
-                        pass
-                    logger.error(
-                        "Paper session %s: all streaming sources failed: %s",
-                        session.session_id, be,
-                    )
-                    return
-
-        # ── Phase 3: consume live ticks indefinitely ──────────────────────────
-        session.paper_stream_source = "breeze" if session.stream_manager is not None else stream_source
+        stream_source = session.market_feed_group.actual
+        session.paper_stream_source = stream_source
+        loop = asyncio.get_running_loop()
         for contract in getattr(session, "desktop_contracts", []):
-            subscribe_desktop_option_contract(session, contract)
+            task = subscribe_desktop_option_contract(session, contract)
+            if task:
+                await task
         session.queue.phase = "phase3_live_stream"
         logger.info("paper_phase3_waiting session_id=%s source=%s", session.session_id, stream_source)
         _phase3_tick_count = 0
@@ -2046,11 +1855,23 @@ async def _run_paper_session(session: SimulationSession) -> None:
                     "paper_tick_queue_first_received session_id=%s source=%s right=%s time=%s",
                     session.session_id, stream_source, payload.get("right"), payload.get("time"),
                 )
-            if _phase3_tick_count <= 3 or _phase3_tick_count % 60 == 0:
-                logger.info("Paper session %s: Phase 3 tick #%d received: time=%s close=%s right=%s",
-                            session.session_id, _phase3_tick_count,
-                            payload.get("time"), payload.get("close"), payload.get("right"))
 
+            if payload.get("type") == "tick" and payload.get("provider") and (payload["provider"] != session.market_feed_group.actual or payload.get("feed_generation", session.market_feed_group.generation) != session.market_feed_group.generation):
+                continue
+            watermarks = getattr(session, "_live_watermarks", {})
+            instrument_id = payload.get("instrument_id", payload.get("right") or "equity")
+            if payload.get("type") == "tick":
+                history_key = (payload.get("right"), payload.get("strike"), payload.get("expiry"))
+                history_time = getattr(session, "_history_watermarks", {}).get(history_key, 0)
+                if int(payload["time"]) <= max(history_time, watermarks.get(instrument_id, 0)):
+                    continue
+                watermarks[instrument_id] = int(payload["time"])
+                session._live_watermarks = watermarks
+            status = session.market_feed_group.status()
+            if status != getattr(session, "_last_feed_status", None):
+                session._last_feed_status = status
+                session.queue.put_nowait(json.dumps({"type": "feed_status", "session_id": session.session_id, **status}))
+            session.paper_stream_source = session.market_feed_group.actual
             tick_right: str | None = payload.get("right")
             tick_type = payload.get("type", "tick")
             # Drop live ticks past market close (SEBI 15:15 effective 03 Aug 2026)
@@ -2064,6 +1885,8 @@ async def _run_paper_session(session: SimulationSession) -> None:
             if tick_type == "broker_error":
                 # Forward connection-lost / reconnect-failed messages to the SSE stream.
                 error_event = {"type": "broker_error", "message": payload.get("message", "Kite connection lost")}
+                if payload.get("stream_gap"):
+                    session.queue.put_nowait(json.dumps({"type": "stream_reset", "session_id": session.session_id}))
                 try:
                     session.queue.put_nowait(json.dumps(error_event))
                 except asyncio.QueueFull:
@@ -2103,6 +1926,8 @@ async def _run_paper_session(session: SimulationSession) -> None:
         if unexpected_end:
             logger.error("Paper session %s ended unexpectedly during %s; releasing its engine", session.session_id, getattr(session.queue, "phase", "unknown"))
         _stop_desktop_option_subscriptions(session)
+        if session.stream_manager is not None:
+            session.stream_manager.stop()
         session.state = SimulationState.ENDED
         end_event = {"type": "session_ended"}
         try:
@@ -2135,12 +1960,16 @@ async def _run_real_session(session: SimulationSession) -> None:
     await session.queue.put(json.dumps(start_event))
 
     try:
+        from app.services.market_data import start_session_feed
+        await start_session_feed(session)
+        session.paper_stream_source = None  # history is presentation, not a live quote
+        await session.queue.put(json.dumps({"type": "feed_status", **session.market_feed_group.status()}))
         # Phase 1: fast-replay today's historical data (same as paper)
         logger.info("Real session %s: Phase 1 — fetching today's data for %s",
                     session.session_id, session.symbol)
         try:
             from app.services.broker_service import fetch_historical
-            fetch_historical(session.symbol, session.date)
+            await asyncio.to_thread(fetch_historical, session.symbol, session.date)
         except Exception as exc:
             logger.warning("Real session %s: could not pre-fetch today's data: %s", session.session_id, exc)
 
@@ -2180,149 +2009,7 @@ async def _run_real_session(session: SimulationSession) -> None:
         if session.state == SimulationState.ENDED:
             return
 
-        # Phase 2: live streaming — Kotak Neo or Kite based on admin setting
-        from app.services import token_service as _ts_real
-        real_stream_source = _ts_real.get_token("live_stream_source") or "kite"
-        logger.info(
-            "Real session %s: Phase 2 — live streaming source=%s",
-            session.session_id, real_stream_source,
-        )
-
-        # Fyers streaming path for real sessions
-        if real_stream_source == "fyers":
-            logger.info(
-                "Real session %s: attempting Fyers live streaming …",
-                session.session_id,
-            )
-            try:
-                from app.services.fyers_service import (
-                    get_fyers_broadcaster,
-                    resolve_fyers_symbols,
-                )
-                symbols, rights = resolve_fyers_symbols(session)
-                get_fyers_broadcaster().register(
-                    session.session_id, symbols, rights,
-                    session.paper_tick_queue, loop,
-                )
-                session.fyers_streaming = True
-                logger.info(
-                    "Real session %s: Fyers live streaming active (%d symbols)",
-                    session.session_id, len(symbols),
-                )
-            except Exception as fyers_exc:
-                warn_msg = (
-                    f"Fyers streaming failed ({fyers_exc}). "
-                    f"Falling back to Breeze for live data."
-                )
-                logger.warning("Real session %s: %s", session.session_id, warn_msg)
-                try:
-                    session.queue.put_nowait(json.dumps({
-                        "type": "broker_error", "message": warn_msg,
-                    }))
-                except asyncio.QueueFull:
-                    pass
-                real_stream_source = "breeze"  # fall through to Breeze
-
-        # Breeze streaming path for real sessions
-        if real_stream_source == "breeze":
-            logger.info(
-                "Real session %s: attempting ICICI Breeze live streaming …",
-                session.session_id,
-            )
-            try:
-                from app.services.breeze_service import BreezeStreamManager
-                instruments = _build_breeze_instruments(session)
-                manager = BreezeStreamManager()
-                manager.start(session.paper_tick_queue, loop, instruments, session_id=session.session_id)
-                session.stream_manager = manager
-                session.breeze_streaming = True
-                logger.info(
-                    "Real session %s: Breeze live streaming active",
-                    session.session_id,
-                )
-            except Exception as breeze_exc:
-                warn_msg = (
-                    f"ICICI Breeze streaming failed ({breeze_exc}). "
-                    f"Falling back to Kite for live data."
-                )
-                logger.warning("Real session %s: %s", session.session_id, warn_msg)
-                try:
-                    session.queue.put_nowait(json.dumps({
-                        "type": "broker_error", "message": warn_msg,
-                    }))
-                except asyncio.QueueFull:
-                    pass
-                real_stream_source = "kite"  # fall through to Kite
-
-        # Kotak streaming path for real sessions
-        if real_stream_source == "kotak":
-            logger.info(
-                "Real session %s: attempting Kotak Neo live streaming …",
-                session.session_id,
-            )
-            try:
-                ok = await _setup_kotak_streaming(session, loop)
-                if ok:
-                    logger.info(
-                        "Real session %s: Kotak Neo live streaming active",
-                        session.session_id,
-                    )
-                else:
-                    warn_msg = (
-                        "Kotak Neo not authenticated for live streaming. "
-                        "Falling back to Kite."
-                    )
-                    logger.warning(
-                        "Real session %s: %s", session.session_id, warn_msg,
-                    )
-                    try:
-                        session.queue.put_nowait(json.dumps({
-                            "type": "broker_error", "message": warn_msg,
-                        }))
-                    except asyncio.QueueFull:
-                        pass
-                    real_stream_source = "kite"
-            except Exception as kotak_exc:
-                warn_msg = (
-                    f"Kotak Neo streaming failed ({kotak_exc}). Falling back to Kite."
-                )
-                logger.warning(
-                    "Real session %s: %s", session.session_id, warn_msg,
-                )
-                try:
-                    session.queue.put_nowait(json.dumps({
-                        "type": "broker_error", "message": warn_msg,
-                    }))
-                except asyncio.QueueFull:
-                    pass
-                real_stream_source = "kite"
-
-        # Kite streaming path (also reached as Kotak fallback)
-        if real_stream_source == "kite":
-            try:
-                from app.services import kite_service
-                eq_exchange, eq_token = kite_service.fetch_equity_instrument_token(session.symbol)
-                kite_service.get_broadcaster().register(
-                    session.session_id, [eq_token], [None],
-                    session.paper_tick_queue, loop,
-                )
-                logger.info(
-                    "Real session %s: Kite live streaming started",
-                    session.session_id,
-                )
-            except Exception as exc:
-                logger.warning(
-                    "Real session %s: Kite unavailable — %s", session.session_id, exc,
-                )
-                error_event = {
-                    "type": "broker_error",
-                    "message": f"Kite unavailable: {exc}",
-                }
-                try:
-                    session.queue.put_nowait(json.dumps(error_event))
-                except asyncio.QueueFull:
-                    pass
-
+        session.paper_stream_source = session.market_feed_group.actual
         # Phase 3: consume live ticks
         logger.info("Real session %s: Phase 3 — consuming live ticks", session.session_id)
         while session.state != SimulationState.ENDED:
@@ -2338,6 +2025,9 @@ async def _run_real_session(session: SimulationSession) -> None:
                 break
 
             tick_type = payload.get("type", "tick")
+            if tick_type == "feed_status":
+                session.queue.put_nowait(json.dumps({"type": "feed_status", "session_id": session.session_id, **session.market_feed_group.status()}))
+                continue
             # Drop live ticks past market close (SEBI 15:15 effective 03 Aug 2026)
             tick_time = payload.get("time")
             if tick_time and tick_type == "tick":
@@ -2348,6 +2038,8 @@ async def _run_real_session(session: SimulationSession) -> None:
                     continue
             if tick_type == "broker_error":
                 error_event = {"type": "broker_error", "message": payload.get("message", "")}
+                if payload.get("stream_gap"):
+                    session.queue.put_nowait(json.dumps({"type": "stream_reset", "session_id": session.session_id}))
                 try:
                     session.queue.put_nowait(json.dumps(error_event))
                 except asyncio.QueueFull:
@@ -2356,10 +2048,25 @@ async def _run_real_session(session: SimulationSession) -> None:
             if tick_type != "tick":
                 continue
 
-            session.last_price = payload["close"]
+            if payload.get("provider") != session.market_feed_group.actual or payload.get("feed_generation", session.market_feed_group.generation) != session.market_feed_group.generation:
+                continue
+            history_key = (payload.get("right"), payload.get("strike"), payload.get("expiry"))
+            instrument_id = payload.get("instrument_id", payload.get("right") or "equity")
+            watermarks = getattr(session, "_live_watermarks", {})
+            if int(payload["time"]) <= max(getattr(session, "_history_watermarks", {}).get(history_key, 0), watermarks.get(instrument_id, 0)):
+                continue
+            watermarks[instrument_id] = int(payload["time"])
+            session._live_watermarks = watermarks
+            tick_right = payload.get("right")
+            if tick_right == "CE":
+                session.last_price_ce = payload["close"]
+            elif tick_right == "PE":
+                session.last_price_pe = payload["close"]
+            else:
+                session.last_price = payload["close"]
             session.current_time = str(payload["time"])
 
-            fill_events = _emit_tick_and_check_orders_real(session, payload, None, loop)
+            fill_events = _emit_tick_and_check_orders_real(session, payload, tick_right, loop)
             for fe in fill_events:
                 try:
                     session.queue.put_nowait(json.dumps(fe))
@@ -2371,6 +2078,8 @@ async def _run_real_session(session: SimulationSession) -> None:
     except Exception:
         logger.exception("_run_real_session crashed for session %s", session.session_id)
     finally:
+        if session.stream_manager is not None:
+            session.stream_manager.stop()
         session.state = SimulationState.ENDED
         end_event = {"type": "session_ended"}
         try:
@@ -2402,7 +2111,7 @@ def _register_kotak_sl_for_order(session: SimulationSession, order: Any, loop: A
             symbol=session.symbol,
             right=order.right,
             strike=order.strike if order.strike is not None else session.strike,
-            expiry=session.expiry,
+            expiry=order.expiry or session.expiry,
             side="B" if order.side.value == "BUY" else "S",
             qty=order.quantity,
             trigger_price=trigger,
@@ -2435,7 +2144,7 @@ def _register_kotak_sl_for_order(session: SimulationSession, order: Any, loop: A
             fill_qty,
             right=o.right,
             strike=o.strike if o.strike is not None else session.strike,
-            expiry=session.expiry,
+            expiry=o.expiry or session.expiry,
             entry_reserved=o.reserved_amount > 0,
             reserved_amount=o.reserved_amount,
             operation_id=f"fill:{o.order_id}",
@@ -2449,7 +2158,7 @@ def _register_kotak_sl_for_order(session: SimulationSession, order: Any, loop: A
             symbol=o.symbol,
             instrument_type="options" if o.right else session.instrument_type,
             strike=o.strike if o.strike is not None else session.strike,
-            expiry=session.expiry,
+            expiry=o.expiry or session.expiry,
             right=o.right,
             brokerage_per_order=session.brokerage_per_order,
             user_id=session.user_id,
@@ -2509,17 +2218,27 @@ def _emit_tick_and_check_orders_real(
     from app.services.trading import record_trade, settle_wallet_for_trade
     from app.services.kotak_service import get_service as get_kotak, KotakError
     from app.config import KOTAK_SLIPPAGE_PCT
+    from app.models.schemas import OrderType
 
     try:
         session.queue.put_nowait(json.dumps({**tick, "session_id": session.session_id}))
     except asyncio.QueueFull:
         logger.warning("Queue full, dropping tick for real session %s", session.session_id)
 
+    if getattr(session, "market_feed_group", None) and not tick.get("provider"):
+        key = (tick_right, tick.get("strike"), tick.get("expiry"))
+        marks = getattr(session, "_history_watermarks", {})
+        marks[key] = max(marks.get(key, 0), int(tick["time"]))
+        session._history_watermarks = marks
+        return []
+
     current_time = tick["time"]
     current_price = tick["close"]
     triggered = check_orders(
         session.session_id, current_price, current_time, session.date,
         tick_right=tick_right,
+        tick_strike=tick.get("strike"),
+        tick_expiry=tick.get("expiry"),
         settle_wallet=False,
     )
 
@@ -2529,7 +2248,7 @@ def _emit_tick_and_check_orders_real(
     for order in triggered:
         # SL orders placed on Kotak at creation time; fill comes via WebSocket.
         # For LIMIT/TARGET, forward to Kotak now as a market-ish limit order.
-        if order.is_stoploss or (order.kotak_order_id and order.kotak_order_id in session.kotak_order_map.values()):
+        if order.order_type == OrderType.STOPLOSS or (order.kotak_order_id and order.kotak_order_id in session.kotak_order_map.values()):
             # Already placed on Kotak — the fill will arrive via order-feed WebSocket.
             continue
 
@@ -2547,7 +2266,7 @@ def _emit_tick_and_check_orders_real(
                     symbol=session.symbol,
                     right=order.right,
                     strike=order.strike if order.strike is not None else session.strike,
-                    expiry=session.expiry,
+                    expiry=order.expiry or session.expiry,
                     side=side_code,
                     qty=order.quantity,
                     price=kotak_price,
@@ -2588,7 +2307,7 @@ def _emit_tick_and_check_orders_real(
                         fill_qty,
                         right=o.right,
                         strike=o.strike if o.strike is not None else sess.strike,
-                        expiry=sess.expiry,
+                        expiry=o.expiry or sess.expiry,
                         entry_reserved=o.reserved_amount > 0,
                         reserved_amount=o.reserved_amount,
             operation_id=f"fill:{o.order_id}",
@@ -2602,7 +2321,7 @@ def _emit_tick_and_check_orders_real(
                         symbol=o.symbol,
                         instrument_type="options" if o.right else sess.instrument_type,
                         strike=o.strike if o.strike is not None else sess.strike,
-                        expiry=sess.expiry,
+                        expiry=o.expiry or sess.expiry,
                         right=o.right,
                         brokerage_per_order=sess.brokerage_per_order,
                         user_id=sess.user_id,

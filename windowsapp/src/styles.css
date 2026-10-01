@@ -134,7 +134,7 @@ input { width: 160px; }
 .wallet-popover input { background: #0f172a; border: 1px solid #334155; color: #e5e7eb; border-radius: 4px; padding: 6px; }
 .wallet-popover div { display: flex; gap: 6px; justify-content: flex-end; }
 .history-tool-button { text-align: left; }
-.desktop-open-orders { display: grid; gap: 5px; margin-top: 8px; padding-top: 8px; border-top: 1px solid #293142; color: #cbd5e1; font-size: .68rem; }
+.desktop-open-orders { display: grid; gap: 5px; margin-top: 8px; padding-top: 8px; border-top: 1px solid #293142; color: #cbd5e1; font-size: .625rem; }
 .desktop-open-orders > strong { color: #dbeafe; text-transform: uppercase; letter-spacing: .04em; }
 .desktop-open-order { display: grid; gap: 4px; padding: 6px; border: 1px solid #293142; border-radius: 4px; background: #0f1420; }
 .desktop-open-order > span:first-child { color: #93c5fd; font-weight: 700; }
@@ -220,3 +220,8 @@ input { width: 160px; }
 .ticket-sizing-toggle button[aria-checked="true"] span { transform: translateX(14px); }
 .ticket-size-label { display: flex; flex-direction: column; align-items: center; gap: 3px; }
 .trade-ticket-sizing { box-sizing: border-box; width: 280px; max-width: calc(100vw - 16px); max-height: calc(100vh - 64px); overflow-y: auto; }
+
+.context-submenu { position: relative; }
+.context-submenu > button { width: 100%; text-align: left; }
+.context-submenu > div { display: none; position: absolute; right: 100%; top: 0; min-width: 90px; background: #161b22; border: 1px solid #334155; padding: 4px; }
+.context-submenu:hover > div, .context-submenu:focus-within > div { display: grid; }

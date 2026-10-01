@@ -177,6 +177,7 @@ export interface StrategyResponse {
   status: string
   triggered: boolean
   target_profit_value?: number | null
+  target_profit_size?: 'full' | 'half'
   target_profit_is_pct?: boolean
 }
 
@@ -192,6 +193,7 @@ export interface StartStrategyRequest {
   autostop_deviation_pct?: number
   only_in_profit?: boolean
   target_profit_value?: number
+  target_profit_size?: 'full' | 'half'
   target_profit_is_pct?: boolean
   target_profit_buffer_ticks?: number
   breakeven_mode?: 'shift_sl' | 'limit_order'
@@ -1130,7 +1132,11 @@ const api = {
 
   getSSEUrl(session_id: string, lastEventId?: string | null): string {
     const base = `${BACKEND_URL}/api/stream/${session_id}`
-    return lastEventId ? `${base}?last_event_id=${encodeURIComponent(lastEventId)}` : base
+    const params = new URLSearchParams()
+    const userId = _authHeaders()['X-User-Id']
+    if (userId) params.set('user_id', userId)
+    if (lastEventId) params.set('last_event_id', lastEventId)
+    return `${base}${params.size ? `?${params}` : ''}`
   },
 
   // ── Auth ───────────────────────────────────────────────────────────────────
@@ -1357,6 +1363,14 @@ const api = {
       body: JSON.stringify({ session_id }),
     })
     if (!res.ok) throw new Error(`Cancel strategy failed: ${res.status}`)
+  },
+
+  async updateStrategySize(strategy_id: string, session_id: string, target_profit_size: 'full' | 'half'): Promise<void> {
+    const res = await fetch(`${BACKEND_URL}/api/strategies/${strategy_id}/size`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json', ..._authHeaders() },
+      body: JSON.stringify({ session_id, target_profit_size }),
+    })
+    if (!res.ok) { const data = await res.json().catch(() => ({})); throw new Error(data.detail || `Update strategy size failed: ${res.status}`) }
   },
 
   async updateStrategyPrice(strategy_id: string, session_id: string, price: number): Promise<void> {

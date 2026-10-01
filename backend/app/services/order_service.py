@@ -10,6 +10,7 @@ STOPLOSS: same trigger logic as TARGET; limit = trigger (no deviation).
 """
 from __future__ import annotations
 
+import threading
 import logging
 import math
 import uuid
@@ -201,6 +202,10 @@ def _write_order_to_db(order: Order, *, strict: bool = False) -> None:
             item["strike"] = order.strike
         if order.expiry is not None:
             item["expiry"] = order.expiry
+        if order.exit_allocation_id is not None:
+            item["exit_allocation_id"] = order.exit_allocation_id
+            item["exit_position_side"] = order.exit_position_side
+            item["exit_allocation_role"] = order.exit_allocation_role
         if order.source is not None:
             item["source"] = order.source
         if order.entry_sl_price is not None:
@@ -227,9 +232,9 @@ def _write_order_to_db(order: Order, *, strict: bool = False) -> None:
         else:
             table.put_item(Item=item)
     except Exception:
-        logger.exception("DynamoDB write failed for order %s", order.order_id)
         if strict or order.source == "desktop_paper":
             raise
+        logger.exception("DynamoDB write failed for order %s", order.order_id)
 
 
 def place_order(
@@ -258,9 +263,17 @@ def place_order(
     quote_source: str | None = None,
     wallet_ledger_id: str | None = None,
     wallet_ledger_kind: str | None = None,
+    order_id: str | None = None,
+    exit_allocation_id: str | None = None,
+    exit_position_side: str | None = None,
+    exit_allocation_role: str | None = None,
 ) -> Order:
     _ensure_session(session_id)
-    order_id = str(uuid.uuid4())
+    order_id = order_id or str(uuid.uuid4())
+    existing = _orders[session_id].get(order_id)
+    if existing and existing.status != OrderStatus.CANCELLED:
+        _write_order_to_db(existing, strict=True)
+        return existing
 
     if order_type == OrderType.TARGET:
         if trigger_price is None:
@@ -321,6 +334,9 @@ def place_order(
         quote_price=quote_price,
         quote_timestamp=quote_timestamp,
         quote_source=quote_source,
+        exit_allocation_id=exit_allocation_id,
+        exit_position_side=exit_position_side,
+        exit_allocation_role=exit_allocation_role,
     )
     if wallet_ledger_id and wallet_ledger_id.startswith("paper:"):
         from app.services import paper_wallet
@@ -329,7 +345,7 @@ def place_order(
         engine = (session_id, symbol, session.paper_engine_token) if session and getattr(session, "desktop_origin", None) == "desktop_paper" and getattr(session, "paper_engine_token", None) else None
         paper_wallet.move(user_id, trading_date, -reserved_amount, f"order:{order_id}:reserve", order=order, engine=engine)
     _orders[session_id][order.order_id] = order
-    _write_order_to_db(order)
+    _write_order_to_db(order, strict=bool(exit_allocation_id))
     return order
 
 
@@ -587,6 +603,19 @@ def check_orders(
 
         retrying_paper_fill = (order.wallet_ledger_id or "").startswith("paper:") and order.filled_price is not None
         if triggered or retrying_paper_fill:
+            if order.exit_allocation_id:
+                from app.services.trading import get_position
+                position = get_position(session_id, order.symbol, order.right, strike=order.strike, expiry=order.expiry)
+                key = (order.symbol, order.right, order.strike, order.expiry)
+                # Count every earlier fill in this batch, including manual exits.
+                prior = sum(item.quantity if item.side == order.side else -item.quantity for item in filled
+                            if (item.symbol, item.right, item.strike, item.expiry) == key)
+                available = max(0, position.quantity - prior) if position.side == order.exit_position_side else 0
+                if available <= 0:
+                    cancel_order(session_id, order.order_id, trading_date)
+                    continue
+                if order.quantity > available:
+                    update_order(session_id, order.order_id, trading_date, quantity=available)
             order.status = OrderStatus.FILLED
             if not retrying_paper_fill:
                 order.filled_at = current_time
@@ -609,6 +638,60 @@ def cancel_all_pending_orders(session_id: str, trading_date: str) -> int:
     for order in pending:
         cancel_order(session_id, order.order_id, trading_date)
     return len(pending)
+
+
+# Broker calls release the GIL; serialize competing trade/retry reconciliation.
+_exit_reconciliation_locks: dict[tuple, threading.RLock] = {}
+
+
+def reconcile_allocated_exits(session_id: str, symbol: str, right, strike, expiry, trading_date: str) -> None:
+    key = (session_id, symbol, right, strike, expiry)
+    lock = _exit_reconciliation_locks.setdefault(key, threading.RLock())
+    with lock:
+        _reconcile_allocated_exits(session_id, symbol, right, strike, expiry, trading_date)
+
+
+def _reconcile_allocated_exits(session_id: str, symbol: str, right, strike, expiry, trading_date: str) -> None:
+    """Cap a split exit's aggregate quantity after a committed position change."""
+    from app.services.trading import get_position
+    # Repair a local write failure even when an acknowledged cancellation has
+    # already removed the order from the pending registry.
+    for order in get_all_orders(session_id):
+        if order.exit_allocation_id and (order.symbol, order.right, order.strike, order.expiry) == (symbol, right, strike, expiry):
+            _write_order_to_db(order, strict=True)
+    pending = [o for o in get_open_orders(session_id) if o.exit_allocation_id
+               and (o.symbol, o.right, o.strike, o.expiry) == (symbol, right, strike, expiry)]
+    if not pending:
+        return
+    position = get_position(session_id, symbol, right, strike=strike, expiry=expiry)
+    available = position.quantity
+    for order in sorted(pending, key=lambda o: (o.created_at, o.order_id)):
+        quantity = min(order.quantity, available) if position.side == order.exit_position_side else 0
+        available -= quantity
+        if quantity == order.quantity:
+            continue
+        if order.kotak_order_id:
+            from app.services.kotak_service import get_service
+            broker = get_service()
+            if not quantity:
+                broker.cancel_order(order.kotak_order_id)
+            elif order.order_type == OrderType.LIMIT:
+                broker.modify_sl_to_limit_order(order.kotak_order_id, order.limit_price, quantity)
+            else:
+                broker.modify_sl_order(order.kotak_order_id, order.trigger_price, order.limit_price, quantity)
+        if quantity:
+            update_order(session_id, order.order_id, trading_date, quantity=quantity)
+        else:
+            cancel_order(session_id, order.order_id, trading_date)
+        _write_order_to_db(order, strict=True)
+        logger.info("take_profit_exit_reconciled session=%s order=%s quantity=%d", session_id, order.order_id, quantity)
+        from app.services.simulation import get_session
+        session = get_session(session_id)
+        if session:
+            import json
+            payload = order.model_dump(mode="json")
+            payload["type"] = "order_updated" if quantity else "order_cancelled"
+            session.queue.put_nowait(json.dumps(payload))
 
 
 def clear_session(session_id: str) -> None:
@@ -639,3 +722,47 @@ def reload_paper_orders(session, *, repair_fills: bool = True) -> None:
                 strike=order.strike, expiry=order.expiry, instrument_type="options" if order.right else "equity",
                 brokerage_per_order=session.brokerage_per_order, user_id=session.user_id,
                 session_type="paper", source=order.source, trade_id=order.order_id)
+    for symbol, right, strike, expiry in {(o.symbol, o.right, o.strike, o.expiry)
+            for o in get_open_orders(session.session_id) if o.exit_allocation_id}:
+        request_exit_reconciliation(session.session_id, symbol, right, strike, expiry, session.date)
+
+
+# Contract-scoped retries also work during market closure: no tick is required.
+_exit_retries: dict[tuple, dict] = {}
+
+
+def request_exit_reconciliation(session_id, symbol, right, strike, expiry, trading_date):
+    import time
+    key = (session_id, symbol, right, strike, expiry, trading_date)
+    try:
+        reconcile_allocated_exits(*key)
+        _exit_retries.pop(key, None)
+    except Exception:
+        previous = _exit_retries.get(key)
+        state = dict(previous) if previous else {"attempt": 0, "next": time.monotonic() + 5, "logged": None}
+        _exit_retries[key] = state
+        if state["logged"] is None or time.monotonic() - state["logged"] >= 60:
+            state["logged"] = time.monotonic()
+            logger.exception("take_profit_exit_reconciliation_deferred session=%s symbol=%s right=%s strike=%s expiry=%s", *key[:5])
+
+
+async def exit_reconciliation_loop():
+    import asyncio
+    import time
+    while True:
+        await asyncio.sleep(1)
+        for key, state in list(_exit_retries.items()):
+            if time.monotonic() < state["next"]:
+                continue
+            try:
+                await asyncio.to_thread(reconcile_allocated_exits, *key)
+            except Exception:
+                state["attempt"] += 1
+                state["next"] = time.monotonic() + min(30, 5 * 2 ** min(state["attempt"], 3))
+                if state["logged"] is None or time.monotonic() - state["logged"] >= 60:
+                    state["logged"] = time.monotonic()
+                    logger.exception("take_profit_exit_reconciliation_retry session=%s symbol=%s right=%s strike=%s expiry=%s", *key[:5])
+            else:
+                # A concurrent position change may have installed a fresh retry.
+                if _exit_retries.get(key) is state:
+                    _exit_retries.pop(key, None)

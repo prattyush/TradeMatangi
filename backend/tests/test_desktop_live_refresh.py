@@ -199,38 +199,34 @@ async def test_interval_switch_does_not_restore_an_older_live_baseline(monkeypat
 
 @pytest.mark.asyncio
 async def test_duplicate_instrument_live_tiles_share_one_provider_route(monkeypatch):
-    import app.services.breeze_service as breeze_service
-
+    from app.services import market_data
     first = tile("first", 3, [candle(180, 100)])
     second = tile("second", 5, [candle(0, 90)])
     stream = live.DesktopStream(stream_id="stream", user_id="user", generation=1, tiles=[first, second])
     first.pop("subscribed")
     second.pop("subscribed")
     starts = []
-
     async def seed(_stream, current):
         current["availability"] = "available"
-
-    class FakeManager:
-        @staticmethod
-        def instrument_route_key(instrument):
-            return f"{instrument['exchange_code']}:{instrument['stock_code']}"
-
-        def start(self, _queue, _loop, instruments, routes=None, session_id=None):
-            starts.append((instruments, routes))
-
-        def stop(self):
-            pass
-
+    class FakeAdapter:
+        async def open(self, source, instrument, delivery, loop):
+            starts.append((source, instrument, delivery))
+            return lambda: None
+    hub = market_data.MarketDataHub(FakeAdapter())
     monkeypatch.setattr(live, "_seed", seed)
-    monkeypatch.setattr(breeze_service, "BreezeStreamManager", FakeManager)
-
+    monkeypatch.setattr(market_data, "get_hub", lambda: hub)
+    stream.feed_group = market_data.FeedGroup("kite")
     await live.activate(stream)
-
-    instruments, routes = starts[0]
-    assert len(instruments) == 1
-    route_queues = next(iter(routes.values()))
-    assert route_queues == [stream.tile_queues["first"], stream.tile_queues["second"]]
+    assert len(starts) == 1
+    assert len(next(iter(hub.feeds.values()))["consumers"]) == 2
+    starts[0][2].put_nowait({"type": "tick", "time": 100, "open": 10, "high": 10, "low": 10, "close": 10})
+    await asyncio.sleep(0)
+    assert first["latest_tick"]["close"] == second["latest_tick"]["close"] == 10
+    stream.stopped = True
+    for task in stream.tasks:
+        task.cancel()
+    await asyncio.gather(*stream.tasks, return_exceptions=True)
+    hub.shutdown()
 
 
 @pytest.mark.asyncio
