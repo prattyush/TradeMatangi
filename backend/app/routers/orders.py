@@ -61,14 +61,9 @@ def _is_closing_order_for_position(order: Order, position) -> bool:
 
 
 def _get_closing_orders(session, right: str | None) -> list[Order]:
-    position = trading_service.get_position(session.session_id, session.symbol, right=right)
-    if position.side == "FLAT" or position.quantity <= 0:
-        return []
-
     return [
-        order
-        for order in order_service.get_open_orders(session.session_id)
-        if (order.right or None) == right and _is_closing_order_for_position(order, position)
+        order for order in order_service.get_open_orders(session.session_id)
+        if (order.right or None) == right and sim_svc._is_position_exit(session, order)
     ]
 
 
@@ -101,43 +96,21 @@ def _stoploss_available_quantity(
 
 
 def _sync_kotak_after_convert(session, order: Order, new_order_type: OrderType) -> None:
-    if session.session_type != "real":
-        return
+    from app.services.broker_order_service import sync_order_edit
+    from app.services.kotak_service import KotakError
+    try:
+        sync_order_edit(session, order, new_order_type)
+    except KotakError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
-    if new_order_type == OrderType.LIMIT and order.kotak_order_id:
-        try:
-            from app.services.kotak_service import get_service as get_kotak
-            get_kotak().modify_sl_to_limit_order(
-                order.kotak_order_id, order.limit_price, order.quantity,
-            )
-        except Exception as exc:
-            logger.warning(
-                "convert_order %s: Kotak SL→LIMIT failed: %s", order.order_id, exc,
-            )
-    elif new_order_type == OrderType.STOPLOSS:
-        if order.kotak_order_id:
-            try:
-                from app.services.kotak_service import get_service as get_kotak
-                from app.config import KOTAK_SLIPPAGE_PCT
-                trigger = order.trigger_price
-                if order.side == TradeSide.BUY:
-                    kotak_limit = round(trigger * (1 + KOTAK_SLIPPAGE_PCT), 2)
-                else:
-                    kotak_limit = round(trigger * (1 - KOTAK_SLIPPAGE_PCT), 2)
-                get_kotak().modify_sl_order(order.kotak_order_id, trigger, kotak_limit, order.quantity)
-            except Exception as exc:
-                logger.warning(
-                    "convert_order %s: Kotak SL modify failed: %s", order.order_id, exc,
-                )
-        else:
-            try:
-                import asyncio
-                from app.services.simulation import _register_kotak_sl_for_order
-                _register_kotak_sl_for_order(session, order, asyncio.get_event_loop())
-            except Exception as exc:
-                logger.warning(
-                    "convert_order %s: Kotak SL registration failed: %s", order.order_id, exc,
-                )
+
+def _convert_with_broker(session, order, new_type, price=None):
+    from app.services.broker_order_service import convert_order
+    from app.services.kotak_service import KotakError
+    try:
+        return convert_order(session, order, new_type, price)
+    except KotakError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
 class MissingStoplossRequest(BaseModel):
@@ -220,6 +193,8 @@ async def fill_missing_stoploss(req: MissingStoplossRequest, user_id: str = Depe
 @router.post("", response_model=Order)
 async def place_order(req: PlaceOrderRequest):
     session = sim_svc.get_session(req.session_id)
+    if session and session.session_type == "real" and getattr(session, "broker_refresh_events", None) is not None:
+        raise HTTPException(status_code=409, detail="Broker refresh is in progress; retry shortly")
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
     if session.current_time is None:
@@ -380,7 +355,10 @@ async def place_order(req: PlaceOrderRequest):
     # Auto-split large options orders that exceed per-symbol max contracts limit.
     # qty_chunks[0] goes through the existing full code path below.
     # Any additional chunks are created afterwards using the same parameters.
-    if order_right is not None and req.is_stoploss:
+    from types import SimpleNamespace
+    is_real_exit = session.session_type == "real" and sim_svc._is_position_exit(session,
+        SimpleNamespace(side=req.side, right=order_right, strike=order_strike, expiry=order_expiry))
+    if order_right is not None and (req.is_stoploss or (is_real_exit and req.order_type in (OrderType.STOPLOSS, OrderType.LIMIT))):
         qty_chunks = order_service.split_quantity(session.symbol, quantity)
         quantity = qty_chunks[0]  # first chunk processed by existing code
     else:
@@ -424,141 +402,26 @@ async def place_order(req: PlaceOrderRequest):
     except InsufficientFundsError as exc:
         raise HTTPException(status_code=402, detail=str(exc))
 
-    # For real sessions: SL orders go directly to Kotak as SL-M orders.
-    # LIMIT/TARGET stay local and are forwarded to Kotak when triggered.
-    if session.session_type == "real" and req.order_type == OrderType.STOPLOSS:
-        import asyncio
-        from app.services.kotak_service import get_service as get_kotak, KotakError
-        from app.services.order_service import get_order
-        from app.config import KOTAK_SLIPPAGE_PCT
-
-        trigger = req.trigger_price  # already validated non-null above
-        # SL-M: limit slightly worse than trigger to ensure fill
-        if req.side == TradeSide.BUY:
-            kotak_limit = round(trigger * (1 + KOTAK_SLIPPAGE_PCT), 2)
-        else:
-            kotak_limit = round(trigger * (1 - KOTAK_SLIPPAGE_PCT), 2)
-
+    if req.execute_immediately and session.session_type == "real":
+        if order.order_type != OrderType.LIMIT:
+            order_service.cancel_order(session.session_id, order.order_id, session.date)
+            raise HTTPException(status_code=400, detail="Immediate execution requires a marketable LIMIT")
         try:
-            kotak_svc = get_kotak()
-            if order.right:
-                kotak_order_id = kotak_svc.place_options_sl_order(
-                    symbol=session.symbol,
-                    right=order.right,
-                    strike=order.strike if order.strike is not None else session.strike,
-                    expiry=order.expiry or session.expiry,
-                    side="B" if req.side == TradeSide.BUY else "S",
-                    qty=quantity,
-                    trigger_price=trigger,
-                    limit_price=kotak_limit,
-                )
-            else:
-                kotak_order_id = kotak_svc.place_sl_order(
-                    symbol=session.symbol,
-                    side="B" if req.side == TradeSide.BUY else "S",
-                    qty=quantity,
-                    trigger_price=trigger,
-                    limit_price=kotak_limit,
-                )
-            order.kotak_order_id = kotak_order_id
-            session.kotak_order_map[order.order_id] = kotak_order_id
+            from app.services.broker_order_service import submit_immediate
+            submit_immediate(session, order, asyncio.get_running_loop())
+        except Exception as exc:
+            if not order.kotak_order_id:
+                order_service.cancel_order(session.session_id, order.order_id, session.date)
+            raise HTTPException(status_code=502, detail=f"Broker placement failed: {exc}") from exc
 
-            loop = asyncio.get_event_loop()
-
-            def _make_sl_fill_cb(ord_id: str, sess):
-                def on_fill(k_id: str, fill_side: str, fill_qty: int, fill_price: float):
-                    from app.services.trading import record_trade, settle_wallet_for_trade
-                    o = get_order(sess.session_id, ord_id)
-                    if o is None:
-                        return
-                    if o.kotak_fill_confirmed:
-                        return  # already recorded by a prior callback or reconcile call
-                    o.kotak_fill_confirmed = True
-                    o.status = order_service.OrderStatus.FILLED
-                    o.filled_price = fill_price
-                    o.filled_at = int(sess.current_time) if sess.current_time else 0
-                    settle_wallet_for_trade(
-                        sess,
-                        o.side,
-                        fill_price,
-                        fill_qty,
-                        right=o.right,
-                        strike=o.strike if o.strike is not None else sess.strike,
-                        expiry=o.expiry if o.expiry is not None else sess.expiry,
-                        entry_reserved=o.side.value == "BUY" and o.reserved_amount > 0,
-                        reserved_amount=o.reserved_amount,
-                    )
-                    record_trade(
-                        session_id=sess.session_id,
-                        side=o.side,
-                        price=fill_price,
-                        timestamp=o.filled_at,
-                        quantity=fill_qty,
-                        symbol=o.symbol,
-                        instrument_type="options" if o.right else sess.instrument_type,
-                        strike=o.strike if o.strike is not None else sess.strike,
-                        expiry=o.expiry if o.expiry is not None else sess.expiry,
-                        right=o.right,
-                        brokerage_per_order=sess.brokerage_per_order,
-                        user_id=sess.user_id,
-                        session_type=sess.session_type,
-                        source=o.source,
-                    )
-                    evt = {
-                        "type": "order_filled",
-                        "order_id": ord_id,
-                        "side": o.side.value,
-                        "quantity": fill_qty,
-                        "trigger_price": o.trigger_price,
-                        "filled_price": fill_price,
-                        "filled_at": o.filled_at,
-                        "right": o.right,
-                    }
-                    try:
-                        sess.queue.put_nowait(__import__("json").dumps(evt))
-                    except Exception:
-                        pass
-                return on_fill
-
-            kotak_svc.register_fill_callback(kotak_order_id, _make_sl_fill_cb(order.order_id, session), loop)
-
-            def _make_sl_reject_cb(ord_id: str, sess):
-                def on_reject(kotak_id: str, reason: str):
-                    import logging as _log
-                    import json as _json
-                    from app.services.order_service import get_order, _write_order_to_db
-                    from app.models.schemas import OrderStatus
-                    o = get_order(sess.session_id, ord_id)
-                    if o is None:
-                        return
-                    _log.getLogger(__name__).warning(
-                        "Kotak rejected SL order %s for session %s: %s",
-                        ord_id, sess.session_id, reason,
-                    )
-                    o.status = OrderStatus.CANCELLED
-                    if o.side == TradeSide.BUY and o.reserved_amount > 0:
-                        order_service._credit_reservation(o, o.reserved_amount, sess.date)
-                        o.reserved_amount = 0.0
-                    _write_order_to_db(o)
-                    cancel_event = {"type": "order_cancelled", "order_id": ord_id}
-                    error_event = {"type": "broker_error", "message": f"Kotak rejected SL order: {reason}"}
-                    for evt in (cancel_event, error_event):
-                        try:
-                            sess.queue.put_nowait(_json.dumps(evt))
-                        except Exception:
-                            pass
-                return on_reject
-
-            kotak_svc.register_reject_callback(kotak_order_id, _make_sl_reject_cb(order.order_id, session), loop)
-            order_service._write_order_to_db(order)
-        except KotakError as exc:
-            # Roll back the local order placement on Kotak failure
-            if order.status == order_service.OrderStatus.PENDING and order.side == TradeSide.BUY and order.reserved_amount > 0:
-                order_service._credit_reservation(order, order.reserved_amount, session.date)
-                order.reserved_amount = 0.0
-            order.status = order_service.OrderStatus.CANCELLED
-            order_service._write_order_to_db(order)
-            raise HTTPException(status_code=502, detail=f"Kotak SL order failed: {exc}")
+    # Resting exits are broker-backed; new position orders are local triggers.
+    if session.session_type == "real" and order.order_type in (OrderType.STOPLOSS, OrderType.LIMIT):
+        try:
+            sim_svc._register_kotak_sl_for_order(session, order, asyncio.get_running_loop())
+        except Exception as exc:
+            order_service.cancel_order(session.session_id, order.order_id, session.date)
+            logger.warning("broker_exit_place_failed session=%s order=%s: %s", session.session_id, order.order_id, exc)
+            raise HTTPException(status_code=502, detail=f"Broker exit placement failed: {exc}") from exc
 
     try:
         session.queue.put_nowait(json.dumps({
@@ -589,6 +452,7 @@ async def place_order(req: PlaceOrderRequest):
         import asyncio as _asyncio
         _loop = _asyncio.get_event_loop()
         for extra_qty in qty_chunks[1:]:
+            extra_order = None
             try:
                 extra_order = order_service.place_order(
                     session_id=req.session_id,
@@ -599,6 +463,8 @@ async def place_order(req: PlaceOrderRequest):
                     created_at=int(session.current_time),
                     trading_date=session.date,
                     trigger_price=req.trigger_price,
+                    limit_price=req.limit_price,
+                    entry_sl_price=req.entry_sl_price,
                     is_stoploss=req.is_stoploss,
                     right=order_right,
                     strike=order_strike,
@@ -610,7 +476,7 @@ async def place_order(req: PlaceOrderRequest):
                     wallet_ledger_id=_reservation_ledger_id(session),
                     wallet_ledger_kind=_ledger_kind(session),
                 )
-                if session.session_type == "real" and req.order_type == OrderType.STOPLOSS:
+                if session.session_type == "real" and req.order_type in (OrderType.STOPLOSS, OrderType.LIMIT):
                     from app.services.simulation import _register_kotak_sl_for_order
                     _register_kotak_sl_for_order(session, extra_order, _loop)
                 try:
@@ -637,7 +503,10 @@ async def place_order(req: PlaceOrderRequest):
                 except Exception:
                     pass
             except Exception as exc:
-                logger.warning("Auto-split SL order (qty=%d) failed: %s", extra_qty, exc)
+                if extra_order and not extra_order.kotak_order_id:
+                    order_service.cancel_order(session.session_id, extra_order.order_id, session.date)
+                logger.warning("broker_split_exit_failed session=%s quantity=%d: %s", session.session_id, extra_qty, exc)
+                session.queue.put_nowait(json.dumps({"type": "broker_error", "message": f"Additional exit chunk ({extra_qty}) failed: {exc}"}))
 
     return order
 
@@ -652,18 +521,21 @@ async def get_orders(session_id: str = Query(...), open_only: bool = Query(defau
 @router.delete("/{order_id}", response_model=Order)
 async def cancel_order(order_id: str, session_id: str = Query(...)):
     session = sim_svc.get_session(session_id)
+    if session and session.session_type == "real" and getattr(session, "broker_refresh_events", None) is not None:
+        raise HTTPException(status_code=409, detail="Broker refresh is in progress; retry shortly")
     trading_date = session.date if session else ""
-    order = order_service.cancel_order(session_id, order_id, trading_date)
-    if order is None:
+    existing = order_service.get_order(session_id, order_id)
+    if existing is None or existing.status != order_service.OrderStatus.PENDING:
         raise HTTPException(status_code=404, detail="Order not found or already closed")
-    # Cancel the Kotak-side order if this was placed directly on Kotak
-    if order.kotak_order_id:
+    if existing.kotak_order_id:
         try:
-            from app.services.kotak_service import get_service as get_kotak, KotakError
-            get_kotak().cancel_order(order.kotak_order_id)
-            get_kotak().deregister_fill_callback(order.kotak_order_id)
-        except Exception:
-            pass  # best-effort; local cancel already recorded
+            from app.services.kotak_service import get_service as get_kotak
+            get_kotak().cancel_order(existing.kotak_order_id)
+        except Exception as exc:
+            logger.warning("broker_order_cancel_failed order=%s: %s", order_id, exc)
+            raise HTTPException(status_code=502, detail=f"Broker rejected cancellation: {exc}") from exc
+    order = order_service.cancel_order(session_id, order_id, trading_date)
+
     return order
 
 
@@ -696,30 +568,9 @@ async def bulk_update_sl_route(req: BulkUpdateSLRequest):
             if order.order_type == OrderType.LIMIT
             else {"trigger_price": req.trigger_price}
         )
-        updated_order = order_service.update_order(
-            session_id=req.session_id,
-            order_id=order.order_id,
-            trading_date=session.date,
-            **update_kwargs,
-        )
+        updated_order = await update_order(order.order_id, UpdateOrderRequest(**update_kwargs), session_id=req.session_id)
         if updated_order:
             updated_orders.append(updated_order)
-
-        # Forward to Kotak for real sessions
-        if session.session_type == "real" and getattr(order, "kotak_order_id", None):
-            try:
-                from app.services.kotak_service import get_service as get_kotak
-                from app.config import KOTAK_SLIPPAGE_PCT
-                if order.side == TradeSide.BUY:
-                    kotak_limit = round(req.trigger_price * (1 + KOTAK_SLIPPAGE_PCT), 2)
-                else:
-                    kotak_limit = round(req.trigger_price * (1 - KOTAK_SLIPPAGE_PCT), 2)
-                get_kotak().modify_sl_order(order.kotak_order_id, req.trigger_price, kotak_limit, order.quantity)
-            except Exception as exc:
-                logger.warning(
-                    "bulk_update_sl: failed to update Kotak SL %s: %s",
-                    order.kotak_order_id, exc,
-                )
 
     return {"updated": len(updated_orders), "orders": updated_orders}
 
@@ -739,28 +590,8 @@ async def bulk_convert_route(req: BulkConvertRequest):
 
     converted_orders = []
     for order in target_orders:
-        if order.order_type == req.new_order_type and req.price is not None:
-            update_kwargs = (
-                {"limit_price": req.price}
-                if order.order_type == OrderType.LIMIT
-                else {"trigger_price": req.price}
-            )
-            converted = order_service.update_order(
-                session_id=req.session_id,
-                order_id=order.order_id,
-                trading_date=session.date,
-                **update_kwargs,
-            )
-        else:
-            converted = order_service.convert_order(
-                session_id=req.session_id,
-                order_id=order.order_id,
-                new_order_type=req.new_order_type,
-                trading_date=session.date,
-                price=req.price,
-            )
+        converted = _convert_with_broker(session, order, req.new_order_type, req.price)
         if converted:
-            _sync_kotak_after_convert(session, converted, req.new_order_type)
             converted_orders.append(converted)
 
     return {"converted": len(converted_orders), "orders": converted_orders}
@@ -773,18 +604,10 @@ async def convert_order(order_id: str, req: ConvertOrderRequest):
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
 
-    order = order_service.convert_order(
-        session_id=req.session_id,
-        order_id=order_id,
-        new_order_type=req.new_order_type,
-        trading_date=session.date,
-        price=req.price,
-    )
-    if order is None:
+    existing = order_service.get_order(req.session_id, order_id)
+    if existing is None or existing.status != order_service.OrderStatus.PENDING:
         raise HTTPException(status_code=404, detail="Order not found or not pending")
-
-    # ── Kotak real-trading integration ──────────────────────────────────────
-    _sync_kotak_after_convert(session, order, req.new_order_type)
+    order = _convert_with_broker(session, existing, req.new_order_type, req.price)
 
     # Emit SSE event so the frontend updates the order in-place
     try:
@@ -813,7 +636,7 @@ async def update_order(order_id: str, req: UpdateOrderRequest, session_id: str =
         raise HTTPException(status_code=404, detail="Order not found or not pending")
     if req.trigger_price is None and req.limit_price is None and req.quantity is None:
         raise HTTPException(status_code=400, detail="Provide trigger_price, limit_price, or quantity to update")
-    if req.quantity is not None:
+    if req.quantity is not None and req.quantity != existing.quantity:
         if not (existing.is_stoploss or existing.order_type == OrderType.STOPLOSS):
             raise HTTPException(status_code=400, detail="Quantity can only be updated for pending stop-loss orders")
         lot_size = LOT_SIZES.get(session.symbol, 1) if existing.right else 1
@@ -828,30 +651,12 @@ async def update_order(order_id: str, req: UpdateOrderRequest, session_id: str =
                 detail=f"Stop-loss quantity exceeds available uncovered position ({available} of {position_quantity})",
             )
 
-    # Kotak has to accept a real stop-loss change before local state changes.
-    # Otherwise a rejected broker edit leaves the UI reporting a quantity or
-    # trigger that is no longer protected at the broker.
-    if (
-        session.session_type == "real"
-        and existing.kotak_order_id
-        and existing.order_type == OrderType.STOPLOSS
-    ):
-        try:
-            from app.services.kotak_service import get_service as get_kotak
-            from app.config import KOTAK_SLIPPAGE_PCT
-            new_trigger = req.trigger_price if req.trigger_price is not None else existing.trigger_price
-            new_quantity = req.quantity if req.quantity is not None else existing.quantity
-            if existing.side == TradeSide.BUY:
-                kotak_limit = round(new_trigger * (1 + KOTAK_SLIPPAGE_PCT), 2)
-            else:
-                kotak_limit = round(new_trigger * (1 - KOTAK_SLIPPAGE_PCT), 2)
-            get_kotak().modify_sl_order(existing.kotak_order_id, new_trigger, kotak_limit, new_quantity)
-        except Exception as exc:
-            logger.warning(
-                "Kotak rejected SL update (order %s kotak_id %s): %s",
-                order_id, existing.kotak_order_id, exc,
-            )
-            raise HTTPException(status_code=502, detail="Broker rejected stop-loss update") from exc
+    candidate = existing.model_copy(deep=True)
+    for name in ("trigger_price", "limit_price", "quantity"):
+        value = getattr(req, name)
+        if value is not None:
+            setattr(candidate, name, value)
+    _sync_kotak_after_convert(session, candidate, candidate.order_type)
 
     order = order_service.update_order(
         session_id=session_id,
@@ -865,4 +670,7 @@ async def update_order(order_id: str, req: UpdateOrderRequest, session_id: str =
     if order is None:
         raise HTTPException(status_code=404, detail="Order not found or not pending")
 
+    order.kotak_order_id = candidate.kotak_order_id
+    order.execution_role = candidate.execution_role
+    order_service._write_order_to_db(order)
     return order

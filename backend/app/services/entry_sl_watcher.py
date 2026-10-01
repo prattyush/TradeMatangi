@@ -52,7 +52,7 @@ def on_entry_filled(
         return
 
     explicit_desktop_sl = getattr(order, "source", None) in _DESKTOP_ENTRY_SOURCES
-    if not explicit_desktop_sl and not is_autostop:
+    if getattr(session, "session_type", None) != "real" and not explicit_desktop_sl and not is_autostop:
         try:
             from app.services.user_settings_service import get_settings
             settings = get_settings(order.user_id)
@@ -78,6 +78,9 @@ def on_entry_filled(
 
 def _place_sl_immediately(order: Any, session: Any) -> None:
     from app.models.schemas import TradeSide, OrderType
+    if getattr(session, "session_type", None) == "real":
+        _place_real_protection(order, session)
+        return
 
     side_value = getattr(order.side, "value", order.side)
     sl_side = TradeSide.SELL if side_value == TradeSide.BUY.value else TradeSide.BUY
@@ -135,42 +138,81 @@ def _place_sl_immediately(order: Any, session: Any) -> None:
         )
 
 
-def _schedule_delayed_sl(
-    order: Any, session: Any, delay_sec: float, loop: Any = None,
-) -> None:
-    group_id = getattr(order, "group_id", None)
-    if group_id is None:
-        _place_sl_immediately(order, session)
-        return
+def _schedule_delayed_sl(order, session, delay_sec, loop=None):
+    import asyncio
+    if loop is None:
+        loop = asyncio.get_running_loop()
+    group_id = getattr(order, "group_id", None) or order.order_id
+    key = f"{session.session_id}:{group_id}"
+    _cancel_pending_timer(key)
 
-    _cancel_pending_timer(group_id)
+    def fire():
+        _cancel_pending_timer(key)
+        if not loop.is_closed():
+            loop.call_soon_threadsafe(_place_sl_immediately, order, session)
 
-    def _fire():
-        try:
-            _cancel_pending_timer(group_id)
-            total_qty = _get_group_filled_qty(order.session_id, group_id)
-            if total_qty == 0:
-                logger.info(
-                    "EntryStoplossWatcher: timer fired for group=%s but no filled qty found",
-                    group_id,
-                )
-                return
-            order.quantity = total_qty
-            _place_sl_immediately(order, session)
-        except Exception as exc:
-            logger.warning(
-                "EntryStoplossWatcher: delayed SL placement failed for group=%s: %s",
-                group_id, exc,
-            )
-
-    timer = threading.Timer(delay_sec, _fire)
+    timer = threading.Timer(max(0, float(delay_sec)), fire)
+    timer.daemon = True
     with _timers_lock:
-        _pending_real_timers[group_id] = timer
+        _pending_real_timers[key] = timer
     timer.start()
-    logger.info(
-        "EntryStoplossWatcher: scheduled SL in %.0fs for group=%s (qty so far=%d)",
-        delay_sec, group_id, order.quantity,
-    )
+
+
+def _place_real_protection(order, session):
+    import asyncio
+    import json
+    import uuid
+    from app.models.schemas import TradeSide, OrderType, OrderStatus
+    from app.services import order_service, simulation, trading
+    if getattr(session, "broker_refresh_events", None) is not None:
+        _schedule_delayed_sl(order, session, 1, asyncio.get_running_loop())
+        return
+    group = order.group_id or order.order_id
+    entries = [o for o in order_service.get_all_orders(session.session_id)
+               if (o.group_id or o.order_id) == group and o.execution_role != "exit"
+               and (o.right, o.strike, o.expiry, o.side) == (order.right, order.strike, order.expiry, order.side)]
+    quantity = sum(o.broker_filled_quantity or (o.quantity if o.kotak_fill_confirmed else 0) for o in entries)
+    if not quantity:
+        return
+    position = trading.get_position(session.session_id, session.symbol, order.right, order.strike, order.expiry)
+    exit_side = TradeSide.SELL if order.side == TradeSide.BUY else TradeSide.BUY
+    if position.side != ("LONG" if exit_side == TradeSide.SELL else "SHORT"):
+        return
+    held = position.quantity
+    protected = sum(max(0, o.quantity - o.broker_filled_quantity) for o in order_service.get_open_orders(session.session_id)
+                    if o.execution_role == "exit" and o.kotak_order_id and o.side == exit_side
+                    and (o.right, o.strike, o.expiry) == (order.right, order.strike, order.expiry))
+    quantity = max(0, min(quantity, held) - protected)
+    if not quantity:
+        return
+    sl_price = order.entry_sl_price
+    if sl_price is None:
+        sl_price = round(order.filled_price * (1 - _AUTOSTOP_FALLBACK_SL_PCT if order.side == TradeSide.BUY else 1 + _AUTOSTOP_FALLBACK_SL_PCT), 2)
+    chunks = order_service.split_quantity(session.symbol, quantity) if order.right else [quantity]
+    for index, chunk in enumerate(chunks):
+        identifier = str(uuid.uuid5(uuid.NAMESPACE_URL, f"protection:{session.session_id}:{group}:{protected}:{index}"))
+        existing = order_service.get_order(session.session_id, identifier)
+        if existing and existing.kotak_order_id:
+            continue
+        protective = existing
+        try:
+            if protective is None or protective.status == OrderStatus.CANCELLED:
+                protective = order_service.place_order(session_id=session.session_id, symbol=session.symbol,
+                    side=exit_side, order_type=OrderType.STOPLOSS, quantity=chunk,
+                    created_at=int(session.current_time or 0), trading_date=session.date, trigger_price=sl_price,
+                    is_stoploss=True, right=order.right, strike=order.strike, expiry=order.expiry,
+                    group_id=order.group_id, user_id=session.user_id, source="entry_protection", order_id=identifier,
+                    wallet_ledger_id=getattr(session, "wallet_ledger_id", None), wallet_ledger_kind="real")
+            simulation._register_kotak_sl_for_order(session, protective, asyncio.get_running_loop())
+            session.queue.put_nowait(json.dumps({"type": "order_placed", **protective.model_dump(mode="json")}))
+            logger.info("entry_protection_placed session=%s entry=%s order=%s quantity=%d", session.session_id, order.order_id, identifier, chunk)
+        except Exception as exc:
+            if protective and not protective.kotak_order_id:
+                order_service.cancel_order(session.session_id, protective.order_id, session.date)
+            session.queue.put_nowait(json.dumps({"type": "broker_error", "message": f"Entry filled, but broker stoploss placement failed: {exc}"}))
+            logger.warning("entry_protection_failed session=%s entry=%s: %s", session.session_id, order.order_id, exc)
+            # Retain entry intent. Refresh/restart and subsequent fills retry uncovered quantity.
+            return
 
 
 def _get_group_filled_qty(session_id: str, group_id: str) -> int:
@@ -183,4 +225,7 @@ def _get_group_filled_qty(session_id: str, group_id: str) -> int:
 
 
 def cancel_pending_for_group(group_id: str) -> None:
-    _cancel_pending_timer(group_id)
+    with _timers_lock:
+        keys = [key for key in _pending_real_timers if key == group_id or key.endswith(":" + group_id)]
+    for key in keys:
+        _cancel_pending_timer(key)

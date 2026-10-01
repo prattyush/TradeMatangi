@@ -22,7 +22,7 @@ interface Props {
     orderType: 'TARGET' | 'LIMIT' | 'STOPLOSS',
     price: number,
     quantity: number | null,
-    opts: { is_stoploss?: boolean; funds_ratio_pct?: number; risk_pct?: number; risk_ratio_pct?: number; target_deviation_pct?: number; entry_sl_price?: number; group_id?: string },
+    opts: { execute_immediately?: boolean; is_stoploss?: boolean; funds_ratio_pct?: number; risk_pct?: number; risk_ratio_pct?: number; target_deviation_pct?: number; entry_sl_price?: number; group_id?: string },
   ) => Promise<void>
   onCancelOrder: (orderId: string) => Promise<void>
   onConvertOrder?: (orderId: string, newOrderType: 'TARGET' | 'LIMIT' | 'STOPLOSS', price?: number) => Promise<void>
@@ -296,9 +296,9 @@ export default function OrderPanel({
     setError(null)
     setPlacing(true)
     // Build auto-stoploss opts for TARGET / LIMIT / MARKET orders
-    const entrySlOpts = (orderType === 'TARGET' || orderType === 'LIMIT' || (orderType === 'MARKET' && slOnEntry && !isNaN(parsedEntrySl) && parsedEntrySl > 0))
+    const entrySlOpts = { execute_immediately: sessionType === 'real' && orderType === 'MARKET', ...((orderType === 'TARGET' || orderType === 'LIMIT' || (orderType === 'MARKET' && slOnEntry && !isNaN(parsedEntrySl) && parsedEntrySl > 0))
       ? { entry_sl_price: slOnEntry && !isNaN(parsedEntrySl) && parsedEntrySl > 0 ? parsedEntrySl : undefined, group_id: crypto.randomUUID() }
-      : {}
+      : {}) }
     try {
       if (orderType === 'MARKET') {
         const mktPrice = side === 'BUY' ? currentPrice * 1.01 : currentPrice * 0.99
@@ -381,11 +381,12 @@ export default function OrderPanel({
     }
     const quantityEditable = order.is_stoploss || order.order_type === 'STOPLOSS'
     const nextQty = editQty.trim() === '' ? NaN : Number(editQty)
+    const quantityChanged = quantityEditable && nextQty !== order.quantity
     const coveredElsewhere = openOrders
       .filter(item => item.order_id !== order.order_id && isClosingOrderForPosition(item, position, activeRight) && (item.is_stoploss || item.order_type === 'LIMIT'))
       .reduce((sum, item) => sum + item.quantity, 0)
     const maxQty = Math.max(0, position.quantity - coveredElsewhere)
-    if (quantityEditable && (!Number.isInteger(nextQty) || nextQty < slQtyMin || nextQty > maxQty || (instrumentType === 'options' && nextQty % slQtyStep !== 0))) {
+    if (quantityChanged && (!Number.isInteger(nextQty) || nextQty < slQtyMin || nextQty > maxQty || (instrumentType === 'options' && nextQty % slQtyStep !== 0))) {
       setEditError(`SL quantity must be ${slQtyMin}–${maxQty}${instrumentType === 'options' ? ` in lots of ${slQtyStep}` : ''}`)
       return
     }
@@ -393,12 +394,12 @@ export default function OrderPanel({
     setEditError(null)
     try {
       if (pendingConversion && onConvertOrder) {
-        if (quantityEditable) await onUpdateOrder(order.order_id, undefined, undefined, nextQty)
+        if (quantityChanged) await onUpdateOrder(order.order_id, undefined, undefined, nextQty)
         await onConvertOrder(order.order_id, pendingConversion, p)
       } else if (order.order_type === 'LIMIT') {
-        await onUpdateOrder(order.order_id, undefined, p, quantityEditable ? nextQty : undefined)
+        await onUpdateOrder(order.order_id, undefined, p, quantityChanged ? nextQty : undefined)
       } else {
-        await onUpdateOrder(order.order_id, p, undefined, quantityEditable ? nextQty : undefined)
+        await onUpdateOrder(order.order_id, p, undefined, quantityChanged ? nextQty : undefined)
       }
       onSnapshotEvent?.({
         type: pendingConversion ? 'order_converted' : 'order_edited',

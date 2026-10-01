@@ -38,6 +38,7 @@ def get_sessions_for_user(
         )
         items = resp.get("Items", [])
 
+        items = [s for s in items if not s.get("broker_projection_owner") or s["broker_projection_owner"] == s["session_id"]]
         if symbol:
             items = [s for s in items if s.get("symbol") == symbol]
         if start_date:
@@ -56,8 +57,12 @@ def get_sessions_for_user(
 
 
 def get_trades_for_session(session_id: str) -> list[dict]:
-    """Return all trades for a session from DynamoDB."""
+    """Return all trades for a session, resolving committed broker revisions."""
     try:
+        from app.services.real_broker_state import read_projection
+        projected = read_projection(session_id)
+        if projected is not None:
+            return projected
         from app.services.db import get_dynamodb_resource
         from boto3.dynamodb.conditions import Key
         table = get_dynamodb_resource().Table("Trades")

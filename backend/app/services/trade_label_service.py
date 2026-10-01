@@ -253,6 +253,11 @@ def save_labels(session_id: str, labels: list[dict], user_id: str) -> list[dict]
             "created_at": created_at,
             "updated_at": now,
         }
+        if session_type == "real":
+            from app.services.real_broker_state import _links
+            revision = _links.get(session_id, {}).get("revision")
+            if revision:
+                item["broker_snapshot_revision"] = revision
         table.put_item(Item=item)
         saved.append(item)
 
@@ -267,6 +272,15 @@ def get_labels_for_session(session_id: str) -> list[dict]:
             KeyConditionExpression="session_id = :sid",
             ExpressionAttributeValues={":sid": session_id},
         )
+        from app.services.real_broker_state import projected_labels, _links
+        real_labels = any(row.get("session_type") == "real" for row in resp.get("Items", []))
+        projected = projected_labels(session_id) if real_labels or session_id in _links else None
+        if projected is not None:
+            revision = _links.get(session_id, {}).get("revision")
+            current = [r for r in resp.get("Items", []) if revision and r.get("broker_snapshot_revision") == revision]
+            by_index = {int(r["round_trip_index"]): r for r in projected}
+            by_index.update({int(r["round_trip_index"]): r for r in current})
+            return [_serialize_label(item) for item in by_index.values()]
         return [_serialize_label(item) for item in resp.get("Items", [])]
     except Exception:
         logger.exception("Failed to get labels for session %s", session_id)
@@ -278,7 +292,11 @@ def update_label(session_id: str, round_trip_index: int, label_data: dict) -> di
     now = datetime.now(timezone.utc).isoformat()
     table = _table()
 
-    existing = table.get_item(Key={"session_id": session_id, "round_trip_index": round_trip_index}).get("Item")
+    from app.services.real_broker_state import projected_labels, _links, encode
+    raw = table.get_item(Key={"session_id": session_id, "round_trip_index": round_trip_index}).get("Item")
+    projected = projected_labels(session_id) if session_id in _links or (raw and raw.get("session_type") == "real") else None
+    existing = (next((r for r in get_labels_for_session(session_id) if r["round_trip_index"] == round_trip_index), None)
+                if projected is not None else raw)
     if not existing:
         return None
 
@@ -289,7 +307,9 @@ def update_label(session_id: str, round_trip_index: int, label_data: dict) -> di
             updates[field] = str(label_data[field])
 
     item = {**existing, **updates, "updated_at": now}
-    table.put_item(Item=item)
+    if projected is not None:
+        item["broker_snapshot_revision"] = _links.get(session_id, {}).get("revision")
+    table.put_item(Item=encode(item))
     return _serialize_label(item)
 
 
@@ -297,6 +317,11 @@ def delete_label(session_id: str, round_trip_index: int) -> None:
     """Delete a single label."""
     table = _table()
     table.delete_item(Key={"session_id": session_id, "round_trip_index": round_trip_index})
+    from app.services.real_broker_state import active_partition
+    partition = active_partition(session_id)
+    if partition:
+        from app.services.db import get_dynamodb_resource
+        get_dynamodb_resource().Table("Orders").delete_item(Key={"session_id": partition, "order_id": f"label:{round_trip_index}"})
 
 
 def list_entry_tags(user_id: str) -> list[str]:
@@ -370,6 +395,23 @@ def get_stats(
             )
 
         labels = resp.get("Items", [])
+        from app.services.real_broker_state import link_for
+        canonical, owners = [], set()
+        for label in labels:
+            if label.get("session_type") != "real":
+                canonical.append(label)
+                continue
+            link = link_for(label["session_id"])
+            if not link:
+                canonical.append(label)
+                continue
+            from app.services.db import get_dynamodb_resource
+            manifest = get_dynamodb_resource().Table("Sessions").get_item(Key={"session_id": link["projection_id"]}, ConsistentRead=True).get("Item", {})
+            owner = manifest.get("owner_session_id")
+            if owner and owner not in owners:
+                owners.add(owner)
+                canonical.extend(get_labels_for_session(owner))
+        labels = canonical
 
         if symbol:
             labels = [l for l in labels if l.get("symbol") == symbol]

@@ -395,7 +395,7 @@ def _apply_half_exit(strategy, session, position, price, right, ts, underlying=F
             order_id=action_id, exit_allocation_id=strategy.strategy_id,
             exit_position_side=position.side, exit_allocation_role="action",
             **_wallet_ledger_kwargs(session), **kwargs)
-        if underlying and is_real:
+        if is_real:
             try:
                 from app.services.simulation import _register_kotak_sl_for_order
                 _register_kotak_sl_for_order(session, order, loop)
@@ -424,7 +424,7 @@ def _apply_half_exit(strategy, session, position, price, right, ts, underlying=F
                     restored = min(int(intent["original_quantity"]), position.quantity)
                     if remainder.kotak_order_id and is_real:
                         from app.services.kotak_service import get_service
-                        get_service().modify_sl_order(remainder.kotak_order_id, remainder.trigger_price, remainder.limit_price, restored)
+                        _sync_broker_quantity(session, remainder, restored)
                     orders.update_order(session.session_id, remainder.order_id, session.date, quantity=restored)
                     orders._write_order_to_db(remainder, strict=True)
             remaining = max(0, quantity - sum(o.quantity for oid in applied if (o := orders.get_order(session.session_id, oid))))
@@ -470,11 +470,11 @@ def _apply_half_exit(strategy, session, position, price, right, ts, underlying=F
             if selected == old_quantity:
                 strategy.metadata["half_pending_chunk"] = {"action_id": order.order_id, "selected_quantity": selected}
                 _write_strategy_to_db(strategy, strict=True)
-                if broker_id and is_real and not underlying:
-                    from app.services.kotak_service import get_service
-                    get_service().modify_sl_to_limit_order(broker_id, price, selected)
                 if underlying:
                     _update_exit_order_price(session, order, price)
+                elif is_real:
+                    from app.services.broker_order_service import convert_order as _convert_with_broker
+                    _convert_with_broker(session, order, OrderType.LIMIT, price)
                 else:
                     orders.convert_order(session.session_id, order.order_id, OrderType.LIMIT, session.date, price)
                     orders.update_order(session.session_id, order.order_id, session.date, limit_price=price)
@@ -489,7 +489,7 @@ def _apply_half_exit(strategy, session, position, price, right, ts, underlying=F
                 try:
                     if broker_id and is_real:
                         from app.services.kotak_service import get_service
-                        get_service().modify_sl_order(broker_id, order.trigger_price, order.limit_price, old_quantity - selected)
+                        _sync_broker_quantity(session, order, old_quantity - selected)
                     orders.update_order(session.session_id, order.order_id, session.date, quantity=old_quantity - selected)
                     mark(order)
                     action = place(selected, action_id)
@@ -504,7 +504,7 @@ def _apply_half_exit(strategy, session, position, price, right, ts, underlying=F
                         orders.cancel_order(session.session_id, action_id, session.date)
                         orders._write_order_to_db(action, strict=True)
                     if broker_id and is_real:
-                        get_service().modify_sl_order(broker_id, order.trigger_price, order.limit_price, old_quantity)
+                        _sync_broker_quantity(session, order, old_quantity)
                     orders.update_order(session.session_id, order.order_id, session.date, quantity=old_quantity)
                     orders._write_order_to_db(order, strict=True)
                     raise
@@ -788,23 +788,16 @@ def _update_exit_order_price(session, order, new_price: float) -> None:
     from app.services.order_service import update_order
     from app.models.schemas import OrderType
 
-    # For real sessions with a Kotak-placed SL: update the broker-side order too.
-    if getattr(session, "session_type", "sim") == "real" and getattr(order, "kotak_order_id", None):
-        try:
-            from app.services.kotak_service import get_service as get_kotak, KotakError
-            from app.config import KOTAK_SLIPPAGE_PCT
-            if order.side.value == "BUY":
-                kotak_limit = round(new_price * (1 + KOTAK_SLIPPAGE_PCT), 2)
-            else:
-                kotak_limit = round(new_price * (1 - KOTAK_SLIPPAGE_PCT), 2)
-            get_kotak().modify_sl_order(order.kotak_order_id, new_price, kotak_limit, order.quantity)
-            logger.info(
-                "Modified Kotak SL %s to trigger=%.2f limit=%.2f",
-                order.kotak_order_id, new_price, kotak_limit,
-            )
-        except Exception as exc:
-            logger.warning("Failed to modify Kotak SL %s: %s", order.kotak_order_id, exc)
-            raise
+    if getattr(session, "session_type", "sim") == "real":
+        from app.services.broker_order_service import sync_order_edit
+        candidate = order.model_copy(deep=True)
+        if order.order_type == OrderType.LIMIT:
+            candidate.limit_price = new_price
+        else:
+            candidate.trigger_price = new_price
+        sync_order_edit(session, candidate, candidate.order_type)
+        order.kotak_order_id = candidate.kotak_order_id
+        order.execution_role = candidate.execution_role
 
     if order.order_type in (OrderType.TARGET, OrderType.STOPLOSS):
         update_order(session_id=session.session_id, order_id=order.order_id,
@@ -917,93 +910,32 @@ def _cancel_exit_and_place_limit(
     current_ts: int,
     loop=None,
 ) -> None:
-    """
-    Cancel existing exit orders and place a new LIMIT order at limit_price.
-
-    For real sessions with a Kotak SL order:
-      1. Try to atomically modify SL → LIMIT via modify_sl_to_limit_order().
-         On success the local order type + price are updated in-place; no new order placed.
-      2. If that fails (API error), fall back to cancel the Kotak SL + re-place as Kotak LIMIT.
-    For sim/paper: cancel local orders + place a local LIMIT order.
-    """
-    from app.services.order_service import cancel_order, place_order, update_order
+    """Replace exits with limits; broker rejection preserves existing protection."""
+    from app.services import order_service as orders
     from app.models.schemas import OrderType
-
-    is_real = getattr(session, "session_type", "sim") == "real" and loop is not None
-    need_new_order = True  # set to False when atomic modify succeeds for all orders
-
-    if exit_orders:
-        need_new_order = False  # assume orders will be converted; flip back if fallback needed
+    is_real = getattr(session, "session_type", "sim") == "real"
+    if is_real and exit_orders:
+        from app.services.broker_order_service import convert_order as _convert_with_broker
         for order in exit_orders:
-            kotak_id = getattr(order, "kotak_order_id", None)
-            if is_real and kotak_id:
-                # Preferred: atomic SL → LIMIT (no window without broker-side protection)
-                try:
-                    from app.services.kotak_service import get_service as get_kotak
-                    get_kotak().modify_sl_to_limit_order(kotak_id, limit_price, order.quantity)
-                    # Update local order to reflect the new type/price
-                    update_order(
-                        session_id=session.session_id,
-                        order_id=order.order_id,
-                        trading_date=session.date,
-                        limit_price=limit_price,
-                    )
-                    order.order_type = OrderType.LIMIT
-                    order.limit_price = limit_price
-                    logger.info(
-                        "Strategy %s: atomically converted Kotak SL %s → LIMIT at %.2f",
-                        strategy.strategy_id, kotak_id, limit_price,
-                    )
-                    continue  # this order is handled; move to next
-                except Exception as exc:
-                    logger.warning(
-                        "Strategy %s: modify_sl_to_limit failed (%s) — cancel+re-place fallback",
-                        strategy.strategy_id, exc,
-                    )
-                    # Cancel broker-side SL
-                    try:
-                        get_kotak().cancel_order(kotak_id)
-                    except Exception as k_exc:
-                        logger.warning(
-                            "Strategy %s: Kotak cancel_order %s failed: %s",
-                            strategy.strategy_id, kotak_id, k_exc,
-                        )
-
-            # Cancel local order (reached for sim/paper or after real-trading fallback)
-            try:
-                cancel_order(session.session_id, order.order_id, session.date)
-            except Exception as exc:
-                logger.warning(
-                    "Strategy %s: cancel_order %s failed: %s",
-                    strategy.strategy_id, order.order_id, exc,
-                )
-            need_new_order = True  # at least one order was cancelled → place replacement
-
-    if need_new_order:
-        # Place a local LIMIT order.  For sim/paper the tick engine fills it directly.
-        # For real sessions, _emit_tick_and_check_orders_real forwards it to Kotak on
-        # the next tick when the LIMIT triggers (price has already passed the target).
+            _convert_with_broker(session, order, OrderType.LIMIT, limit_price)
+        return
+    for order in exit_orders:
+        orders.cancel_order(session.session_id, order.order_id, session.date)
+    order = orders.place_order(session_id=session.session_id, symbol=session.symbol,
+        side=exit_side, order_type=OrderType.LIMIT, quantity=quantity,
+        created_at=current_ts, trading_date=session.date, limit_price=limit_price,
+        right=tick_right, strike=_session_strike(session, tick_right, strategy),
+        expiry=_strategy_expiry(strategy, session, tick_right), user_id=session.user_id,
+        **_wallet_ledger_kwargs(session))
+    if is_real:
+        from app.services.simulation import _register_kotak_sl_for_order
         try:
-            place_order(
-                session_id=session.session_id,
-                symbol=session.symbol,
-                side=exit_side,
-                order_type=OrderType.LIMIT,
-                quantity=quantity,
-                created_at=current_ts,
-                trading_date=session.date,
-                limit_price=limit_price,
-                right=tick_right,
-                strike=_session_strike(session, tick_right, strategy),
-                expiry=_strategy_expiry(strategy, session, tick_right),
-                user_id=session.user_id,
-            )
-            logger.info(
-                "Strategy %s: placed new LIMIT %s at %.2f for %s right=%s",
-                strategy.strategy_id, exit_side.value, limit_price, session.symbol, tick_right,
-            )
-        except Exception as exc:
-            logger.warning("Strategy %s: place LIMIT order failed: %s", strategy.strategy_id, exc)
+            _register_kotak_sl_for_order(session, order, loop)
+        except Exception:
+            if not order.kotak_order_id:
+                orders.cancel_order(session.session_id, order.order_id, session.date)
+            raise
+    logger.info("strategy_exit_limit_placed strategy=%s order=%s", strategy.strategy_id, order.order_id)
 
 
 def _on_tick_breakeven(
@@ -1174,36 +1106,8 @@ def _on_tick_target_profit(
     exit_side = TradeSide.SELL if position.side == "LONG" else TradeSide.BUY
     exit_orders = _find_open_exit_orders(session.session_id, exit_side, tick_right, strategy)
 
-    if exit_orders:
-        _cancel_exit_and_place_limit(
-            strategy, session, exit_orders, exit_side,
-            target_price, position.quantity, tick_right, current_ts, loop,
-        )
-    else:
-        # No existing exit order — place new LIMIT order directly.
-        # Real sessions: forwarded to Kotak on next tick via _emit_tick_and_check_orders_real.
-        try:
-            place_order(
-                session_id=session.session_id,
-                symbol=session.symbol,
-                side=exit_side,
-                order_type=OrderType.LIMIT,
-                quantity=position.quantity,
-                created_at=current_ts,
-                trading_date=session.date,
-                limit_price=target_price,
-                right=tick_right,
-                strike=_session_strike(session, tick_right, strategy),
-                expiry=_strategy_expiry(strategy, session, tick_right),
-                user_id=session.user_id,
-            )
-            logger.info(
-                "TargetProfit %s: placed new LIMIT %s at %.2f for %s right=%s",
-                strategy.strategy_id, exit_side.value, target_price, session.symbol, tick_right,
-            )
-        except Exception as exc:
-            logger.warning("TargetProfit %s: place LIMIT failed: %s", strategy.strategy_id, exc)
-            return
+    _cancel_exit_and_place_limit(strategy, session, exit_orders, exit_side,
+        target_price, position.quantity, tick_right, current_ts, loop)
 
     strategy.status = StrategyStatus.COMPLETED
     _write_strategy_to_db(strategy)
@@ -1552,3 +1456,12 @@ def _on_tick_underlying_stoploss(
         strategy.strategy_id, underlying_price, sl_price,
         new_sl, tick_right,
     )
+
+
+def _sync_broker_quantity(session, order, quantity):
+    from app.services.broker_order_service import sync_order_edit
+    candidate = order.model_copy(deep=True)
+    candidate.quantity = quantity
+    sync_order_edit(session, candidate, candidate.order_type)
+    order.kotak_order_id = candidate.kotak_order_id
+    order.execution_role = candidate.execution_role

@@ -30,6 +30,7 @@ _TARGET_DEVIATION = 0.01  # 1% buffer for stop-limit orders
 
 def get_max_contracts(symbol: str) -> int:
     """Return max contracts per order for the given symbol; unlimited for others."""
+    symbol = "SENSEX" if symbol.upper() == "BSESEN" else symbol
     for prefix, limit in MAX_CONTRACTS_PER_ORDER.items():
         if symbol.upper().startswith(prefix):
             return limit
@@ -164,6 +165,16 @@ def _opening_quantity(session_id: str, symbol: str, side: TradeSide, quantity: i
     return max(0, quantity - max(0, closing - pending))
 
 
+def _real_opening_quantity(order) -> int:
+    """Reserve entry capital only for the part that increases an exact real position."""
+    from app.services.trading import get_position
+    position = get_position(order.session_id, order.symbol, right=order.right,
+                            strike=order.strike, expiry=order.expiry)
+    opposite = "SHORT" if order.side == TradeSide.BUY else "LONG"
+    closing = position.quantity if position.side == opposite else 0
+    return max(0, order.quantity - closing)
+
+
 def _write_order_to_db(order: Order, *, strict: bool = False) -> None:
     try:
         from app.services.db import get_dynamodb_resource
@@ -184,6 +195,19 @@ def _write_order_to_db(order: Order, *, strict: bool = False) -> None:
             "is_stoploss": order.is_stoploss,
             "is_autostop": order.is_autostop,
         }
+        from app.services import simulation
+        session = simulation.get_session(order.session_id)
+        if session and session.session_type == "real":
+            from app.services.real_broker_state import active_partition
+            item["session_id"] = active_partition(order.session_id) or order.session_id
+        for name in ("execution_role", "broker_product", "broker_exchange", "broker_filled_quantity", "broker_filled_value"):
+            value = getattr(order, name)
+            if value is not None:
+                item[name] = Decimal(str(value)) if isinstance(value, float) else value
+        if order.kotak_order_id:
+            item["kotak_order_id"] = order.kotak_order_id
+        if order.kotak_fill_confirmed:
+            item["kotak_fill_confirmed"] = True
         if order.filled_at is not None:
             item["filled_at"] = order.filled_at
         if order.filled_price is not None:
@@ -298,6 +322,10 @@ def place_order(
     equity_margin = margin_rate < 1 and right is None
     if (side == TradeSide.BUY or equity_margin) and not is_stoploss and order_type != OrderType.STOPLOSS:
         reserve_quantity = _opening_quantity(session_id, symbol, side, quantity) if equity_margin else quantity
+        if wallet_ledger_kind == "real":
+            from types import SimpleNamespace
+            reserve_quantity = _real_opening_quantity(SimpleNamespace(session_id=session_id,
+                symbol=symbol, side=side, quantity=quantity, right=right, strike=strike, expiry=expiry))
         reserved_amount = round(reserve_quantity * actual_limit * margin_rate, 2)
         from app.services import wallet_service
         if wallet_ledger_id and wallet_ledger_id.startswith("paper:"):
@@ -389,7 +417,9 @@ def _debit_reservation(order: Order, amount: float, trading_date: str, persisted
 
 def _reservation_for(order: Order, price: float, quantity: int | None = None) -> float:
     qty = quantity if quantity is not None else order.quantity
-    if order.right is None and order.reservation_margin_rate < 1:
+    if order.wallet_ledger_kind == "real":
+        qty = _real_opening_quantity(order.model_copy(update={"quantity": qty}))
+    elif order.right is None and order.reservation_margin_rate < 1:
         qty = _opening_quantity(order.session_id, order.symbol, order.side, qty, order.order_id)
     return round(qty * price * order.reservation_margin_rate, 2)
 

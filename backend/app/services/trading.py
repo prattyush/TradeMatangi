@@ -170,6 +170,13 @@ def _write_trade_to_db(trade: Trade) -> None:
             if trade.right is not None:
                 item["right"] = trade.right
         item["session_type"] = trade.session_type
+        for field in ("kotak_order_id", "broker_account_id", "broker_exchange", "broker_execution_ids"):
+            value = getattr(trade, field)
+            if value:
+                item[field] = value
+        if trade.session_type == "real":
+            from app.services.real_broker_state import active_partition
+            item["session_id"] = active_partition(trade.session_id) or trade.session_id
         if trade.source == "desktop_paper":
             from datetime import datetime, timezone
             from app.services import paper_wallet
@@ -205,11 +212,18 @@ def record_trade(
     session_type: str = "sim",
     source: str | None = None,
     trade_id: str | None = None,
+    kotak_order_id: str | None = None,
+    cumulative: bool = False,
 ) -> Trade:
     ensure_session(session_id)
     if trade_id:
-        existing = next((trade for trade in _trades[session_id] if trade.trade_id == trade_id), None)
+        existing = next((trade for trade in _trades[session_id]
+                         if trade.trade_id == trade_id or (kotak_order_id and trade.kotak_order_id == kotak_order_id)), None)
         if existing:
+            if cumulative and quantity > existing.quantity:
+                existing.quantity, existing.price = quantity, price
+                existing.commission = compute_commission(side, price, quantity, brokerage_per_order)
+                _write_trade_to_db(existing)
             return existing
 
     # Automatically lookup underlying price if it is an options trade
@@ -251,6 +265,7 @@ def record_trade(
         commission=compute_commission(side, price, quantity, brokerage_per_order),
         session_type=session_type,
         source=source,
+        kotak_order_id=kotak_order_id,
         underlying_price=underlying_price,
     )
     _trades[session_id].append(trade)
@@ -353,6 +368,18 @@ def get_position(
     expiry: str | None = None,
     exact_contract: bool = False,
 ) -> Position:
+    from app.services.simulation import get_session
+    session = get_session(session_id)
+    facts = getattr(session, "broker_positions", None)
+    if session and session.session_type == "real" and facts is not None:
+        matches = [p for p in facts if p.get("right") == right
+                   and (strike is None or p.get("strike") == strike)
+                   and (expiry is None or p.get("expiry") == expiry)]
+        signed = sum(int(p["quantity"]) * (1 if p["side"] == "LONG" else -1 if p["side"] == "SHORT" else 0) for p in matches)
+        same = [p for p in matches if p["side"] == ("LONG" if signed > 0 else "SHORT")]
+        quantity = sum(int(p["quantity"]) for p in same)
+        avg = sum(float(p["avg_entry_price"]) * int(p["quantity"]) for p in same) / quantity if quantity else 0
+        return Position(symbol=symbol or session.symbol, side="LONG" if signed > 0 else "SHORT" if signed < 0 else "FLAT", quantity=abs(signed), avg_entry_price=avg if signed else 0)
     symbol, buy_queue, sell_queue, net_qty = _open_position_lots(session_id, symbol, right, strike, expiry, exact_contract)
     if net_qty > 0:
         side: Literal["LONG", "SHORT", "FLAT"] = "LONG"
@@ -423,6 +450,10 @@ def reload_trades_from_db(session_id: str, *, strict: bool = False) -> None:
                     commission=float(item.get("commission", 0)),
                     session_type=str(item.get("session_type", "sim")),
                     source=item.get("source"),
+                    kotak_order_id=item.get("kotak_order_id"),
+                    broker_account_id=item.get("broker_account_id"),
+                    broker_exchange=item.get("broker_exchange"),
+                    broker_execution_ids=item.get("broker_execution_ids", []),
                     underlying_price=float(item.get("underlying_price")) if item.get("underlying_price") is not None else None,
                 ))
             except Exception:

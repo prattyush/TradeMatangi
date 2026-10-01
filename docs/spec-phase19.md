@@ -1000,6 +1000,368 @@ external broker balance change, and Kite live ticks with Breeze today/history.
 Also verify the inverse today selection, checkbox-enabled fallback, desktop raw
 seconds remaining empty for minute history, and unchanged past-date replay.
 
+## Real broker orders, authoritative refresh and entry protection — 2026-10-01
+
+### Reported issues and evidence
+
+The following five issues form one implementation effort. Broker execution state,
+application entry intents, and chart feed state must have separate ownership.
+
+| Issue | Observed behaviour | Required outcome |
+|---|---|---|
+| 1. Resting exits and conversions | LIMIT exits wait for local ticks; failed SL-to-LIMIT conversion can leave UI and broker disagreeing; desktop bulk conversion bypasses the broker | Closing LIMIT/STOPLOSS orders rest at Kotak immediately; conversions change the actual broker order; new-entry LIMIT/TARGET orders remain local until triggered |
+| 2. Trade History refresh | Broker-side SL edits do not update the chart/order panel; normal open orders produce a warning | Refresh replaces today's selected-underlying/equity broker state, including open/closed orders, executions, positions and account funds |
+| 3. Stoploss edits | Price edits can resend an unchanged quantity and fail position-coverage checks; LIMIT edits can use the SL broker method | Price-only edits retain quantity without rechecking unchanged coverage; actual order type determines broker modification; real rejection details are visible |
+| 4. Duplicate history | Refresh appends earlier executions with the refresh time and the current chart strike | One stable row per broker order, exact contracts, actual first-fill time, cumulative filled quantity and weighted average price; broker-authoritative rebuild repairs today's duplicates |
+| 5. Use as SL | Explicit website SL can be skipped by the general auto-SL setting; delayed watcher creates a local-only SL | Explicit SL intent survives entry placement and fills; after the configured accumulation delay, confirmed filled quantity receives actual broker protection |
+
+The user's example has PE BUY 20 at 38.60 at 13:53:27 and PE SELL 20 at
+40.40 at 13:54:53, both at strike 71100. Refresh produces equivalent rows at
+14:46:06 with strike 71500. This is evidence of refresh-time timestamping and
+contract approximation, not a second user trade. CE rows appearing in the same
+refresh must be checked against broker executions rather than assumed invalid.
+
+### User decisions and boundaries
+
+- **Broker is the source of truth for today.** Real Trade History refresh is an
+  overwrite/rebuild operation, not an append-only attempt to discover missing fills.
+- **Scope is the underlying, not the visible option contract.** A BSESEN options
+  session includes SENSEX CE/PE contracts at every traded strike and expiry. An
+  equity session includes that equity. Unrelated underlyings are excluded.
+- **One displayed trade row per broker order.** Aggregate execution quantities
+  and weighted prices, use first execution time, and retain execution identities
+  for analysis/debugging. Do not charge per-order brokerage once per partial fill.
+- **Keep the configured SL delay.** It allows large-order fills and delayed
+  broker events to accumulate. Do not replace it with immediate-per-fill SLs.
+- **Wallet remains account-wide.** Underlying filtering applies to trading state,
+  not Kotak's actual available funds. Paper/simulation wallets remain independent.
+- **New entries are application intents.** Pending entry LIMIT/TARGET orders are
+  local until triggered. Explicit Market actions submit broker execution now.
+- **Existing intent metadata survives refresh.** Preserve entry SL, group,
+  source and contract identity when importing broker facts.
+- Desktop real-trading product enablement remains deferred. Existing desktop
+  order command paths must nevertheless share the website's broker behaviour.
+- Earlier dates, Paper/replay records and their execution semantics are outside
+  this repair. Existing today-only historical-provider and shared-streaming
+  policies remain independent of Kotak order execution.
+
+### Architecture and state ownership
+
+| State | Owner | Application responsibility |
+|---|---|---|
+| Untriggered entry LIMIT/TARGET and requested entry SL | Application | Persist intent; trigger execution only from eligible live observations; retain exact contract and grouping |
+| Accepted broker order type, prices, quantities, product and status | Kotak | Import broker facts; modify/cancel with broker acknowledgement before publishing local success |
+| Executions and current real positions | Kotak | Normalize exact identities/timestamps; rebuild today and process live updates idempotently |
+| Displayed real wallet | Kotak limits snapshot | Refresh explicitly and persist independently of Paper/local reservations |
+| Historical candles and live quotes | Historical facade and MarketDataHub | Provide presentation/trigger data; never reconstruct broker fills from candles |
+
+Use the shared broker-order service for website, desktop, strategies, flatten and
+entry protection. Keep transport-specific HTTP errors in routers. Preserve the
+existing broker SDK service rather than creating another client for each action.
+Persist entry/exit intent so a temporarily stale local position cannot cause an
+accepted broker order to be silently cancelled or reclassified.
+
+Maintain a single broker-day projection per user, broker account, date,
+underlying and instrument type, referenced by real sessions. Reuse the existing
+DynamoDB infrastructure and analysis trade format. Broker order IDs plus account
+and exchange form stable order identity; execution IDs distinguish partial fills.
+Separate snapshot staging/publication from active reads so persistence failure
+cannot expose a half-written replacement. Archive replaced local history before
+first repair. Referencing one projection prevents duplicate copies of a broker
+trade across restarts or successive sessions for the same day/underlying.
+
+Refresh must preserve local pending entries while replacing broker-managed state.
+It must not infer actual contract identity from current CE/PE pane settings, nor
+submit an untriggered entry as a side effect of reconciliation. Unknown metadata
+must be resolved from broker/instrument-master facts; it must not be guessed.
+
+### Sprint R1 — Broker exit routing and edits
+
+**Status: implemented; broker/Windows native acceptance remains external.**
+
+1. Route closing LIMIT and STOPLOSS placement immediately to Kotak, using the
+   exact contract and existing tick/slippage rules. Keep entry LIMIT/TARGET local.
+2. Modify SL-to-LIMIT using broker type `L` and a cleared trigger. Modify
+   LIMIT-to-SL using `SL` and the configured protective limit offset.
+3. Update broker first, then publish local state. Preserve previous local state
+   and report the actual rejection when modification/cancellation fails.
+4. Cover single/bulk website and desktop edits, chart dragging, flatten, full/half
+   take-profit, strategy price updates, resizing and rollback. No replacement
+   order may be submitted after a failed cancellation.
+5. Persist broker IDs and protection intent; restore order maps and callbacks
+   after resume. Track a replacement broker ID if modification returns one.
+6. Skip local tick execution for broker-managed exits. Recheck position coverage
+   for changed quantities rather than an unchanged quantity in a price edit.
+
+**Implemented:** shared broker-first conversion/edit service; immediate closing
+LIMIT/SL placement; website/desktop single and bulk commands; broker-first
+cancellation; exact-contract classification; quantity-only strategy resize and
+rollback; actual LIMIT versus SL strategy modification; persisted broker IDs,
+entry/exit roles, cumulative fill fields and restart callback restoration.
+Broker replacement IDs are retained when returned by modification. A delayed
+callback for an old broker ID cannot mutate a converted/replaced application order.
+SENSEX freeze splitting recognizes the application's `BSESEN` symbol; additional
+exit chunks retain LIMIT prices and report placement failures visibly.
+
+### Sprint R2 — Authoritative today refresh and duplicate repair
+
+**Status: implemented; validated broker snapshots replace today’s scoped state.**
+
+1. Fetch broker order report, execution/trade report, positions and funds in
+   worker threads. Validate successful empty reports separately from malformed
+   responses or SDK/API errors.
+2. Filter by selected underlying/equity across all appropriate option contracts.
+   Resolve exchange, right, strike and expiry from broker/master facts.
+3. Group deduplicated executions by broker order. Rebuild quantities, weighted
+   price, first-fill time and analysis-compatible trades; never use refresh time
+   or current chart strike as a substitute.
+4. Stage the replacement broker-day projection, archive old today's local rows,
+   persist it strictly, then publish the active revision. Earlier dates and
+   non-real records remain intact. Repeated refresh must produce the same result.
+5. Preserve application pending entries and entry-SL/group metadata. Import
+   broker-side open-order edits, completions, cancellations and rejections.
+6. Serialize refresh publication with fill handling. Buffer events received
+   during report loading and apply them idempotently so a new fill is not erased
+   by an older fetched snapshot.
+7. Rebuild current contract positions/P&L and sync account funds. A funds error
+   preserves the last successful wallet and is reported explicitly.
+8. Remap labels only where execution membership is unambiguous; archive unmatched
+   labels rather than assigning them to a different rebuilt round trip.
+
+`POST /api/kotak/reconcile?session_id=...` returns one authoritative snapshot:
+scoped broker orders, normalized trades, contract positions, local pending
+entries, wallet result, snapshot revision and synchronization time. Keep legacy
+response fields compatible. Optional broker identity fields extend existing trade
+and order types; historical/Paper records must continue loading without them.
+
+The website applies that snapshot coherently to Trade History, open-order
+panels/lines, positions, P&L and wallet. Successful refresh clears previous broker
+errors. Normal open orders are not warnings. The broker-order view shows open,
+completed, cancelled and rejected orders for the selected underlying/equity.
+Switching sessions during a refresh must not publish the old session's response
+into the new one.
+
+**Implemented:** broker order/execution/position report normalization; all-strike
+and expiry filtering for the active underlying; stable per-broker-order trades;
+first execution time and weighted fill prices; strict archive/staged persistence;
+revision publication after durable session links; snapshot-aware analysis/resume
+readers; preservation of local entry intent; deferred/idempotent fill handling;
+actual contract positions including carry; account funds synchronization; and one
+website state update for history, positions, orders and wallet refresh.
+Labels are remapped only through uniquely identified entry/exit memberships;
+unmatched/conflicting annotations stay archived. Label edits and statistics read
+canonical broker-day labels instead of assigning obsolete round-trip indices.
+The previous append-based reconciliation route has been replaced.
+
+### Sprint R3 — Delayed broker stoploss after entry fills
+
+**Status: implemented; configured delayed broker protection is retained.**
+
+1. Honor explicitly selected Use as SL independently of the general automatic-SL
+   toggle. Capture exact contract, SL price and grouping at entry creation.
+2. Process confirmed partial/cumulative fill quantities rather than requested
+   order quantity. Reset the configured group timer as confirmed fills accumulate.
+3. At expiry, protect remaining confirmed position quantity, subtract existing
+   closing coverage, and split quantities according to broker limits.
+4. Execute delayed mutations on the session event loop. Do not mutate the
+   original entry order quantity to hold a group aggregate.
+5. Submit actual Kotak SL-limit orders, persist their identities and emit order
+   events. Repeated callbacks/timers/refresh/restart must not create extra SLs.
+6. Exclude exit fills from entry-group totals. Recover requested protection after
+   missed callbacks/restart without protecting an already closed position.
+7. Surface protection failure and retain its intent for retry/reconciliation.
+   Never display a local-only stoploss as confirmed broker protection.
+8. Unify direct Buy/Sell and chart-entry fill recording, broker identities and
+   requested protection; direct option trades use the options placement API.
+
+The repaired real-mode watcher honors explicit SL selection even when the global
+auto-SL toggle is off. Timers are scoped by session/group and dispatch mutations
+onto the event loop. Confirmed entry quantities exclude exit orders; the original
+entry quantity remains intact. Existing broker exit coverage is subtracted before
+placing split protective SLs. Failed placement preserves intent, reports a broker
+error and cancels unsubmitted local protection; subsequent confirmed fills,
+refresh or resume retry uncovered quantity. There is no per-tick retry loop.
+
+Market buttons explicitly request immediate submission of a marketable broker
+LIMIT, while ordinary new-entry LIMIT/TARGET orders retain local trigger behavior.
+Direct Buy/Sell uses the same persisted broker callback handler, and direct option
+orders use the options API with the contract captured at placement.
+
+### Sprint R4 — Regression, diagnostics, documentation and acceptance
+
+**Status: implemented; 609 related backend regressions and both frontend builds pass. Live/native acceptance remains external.**
+
+| Area | Required scenarios |
+|---|---|
+| Broker exits | Long sell/short cover, equity/options, exact contracts, SL/LIMIT conversions, broker rejection, cancellation failure, no duplicate local execution |
+| Shared commands | Website/desktop single/bulk edit, drag, flatten, strategy full/half take-profit, resize and rollback |
+| Refresh | Manual broker SL edits, all strikes/expiries, other-underlying exclusion, successful empty report, malformed/API error, wallet failure |
+| History repair | Supplied PE 71100/71500 duplicate example, actual execution times, one row per order, weighted partial fills, repeated refresh and restart |
+| Concurrency | Fill before registration, duplicate events, partial/final fills, refresh during fill, multiple users/sessions, session switch during refresh |
+| Entry protection | Explicit Use as SL with auto-SL off, configured delay, accumulated/split fills, prior coverage, closed position, failure and restart recovery |
+| Persistence/analysis | Failure before publication, archive/rebuild consistency, canonical day ownership, label preservation/remapping, Paper/past-date records intact |
+
+The earlier 21-test command-path checkpoint and the previous phase's 652-test
+wallet/history result are historical checkpoints. Final results for this repair
+are recorded below after the current implementation checks finish.
+
+Market-hours acceptance must verify real Kotak order types/prices, a broker-window
+edit reflected by refresh, repeat-refresh idempotency, original PE strike/time,
+configured delayed protection and actual funds with Paper separation. Automated
+checks use mocked broker reports and callbacks; they do not place real orders or
+establish native Windows installer acceptance.
+
+Use lifecycle logs for placement, edit/cancel rejection, snapshot revision/counts,
+protection scheduling/results and resume restoration. Avoid tick-level logging,
+repeated full broker reports, or secret/account credential dumps. One refresh
+summary should identify orders/executions imported, duplicates replaced, revision
+and funds success without dumping the complete account history.
+
+### Lessons learned and design review
+
+- Chart lines do not establish broker protection. A locally pending exit and an
+  accepted broker order are different states and must be represented explicitly.
+- Broker acceptance must precede local success for edits. Logging and swallowing
+  modification errors makes an apparently successful UI action misleading.
+- A function named for stoploss can silently damage LIMIT behaviour when reused
+  for resizing or bulk edits. Dispatch by actual broker order type everywhere.
+- Normal open orders are successful broker state, not refresh errors. Diagnostics
+  should distinguish imported facts from operational failures.
+- An in-memory order map is insufficient identity. Direct trades, callbacks,
+  refresh and restart need the same persisted broker-order identity.
+- The current pane's strike is presentation state, not an execution identifier.
+  Refreshing after a strike switch must not relabel earlier trades.
+- Refresh time is not execution time. Replacing it corrupts chronology, FIFO
+  matching, round-trip analysis, labels and P&L.
+- Adding an in-memory “already reconciled” set cannot repair duplicates after
+  restart. Stable broker identities and an authoritative today projection are
+  required.
+- A snapshot overwrite must preserve pending entry intent. Those orders are
+  deliberately absent from the broker until their trigger fires.
+- A timer is not a broker execution mechanism. Delayed protection must use the
+  same registration/persistence/events as manually placed real exits.
+- Confirmed filled quantity is not requested quantity. Grouping must accumulate
+  entry fills while excluding exit fills and avoid modifying original order facts.
+- Application analysis annotations may depend on row/round-trip order. Rebuild
+  must reconcile them explicitly rather than silently attach labels to new rows.
+- Event-loop publication, strict snapshot persistence and bounded lifecycle logs
+  provide useful reliability without introducing another queue service, database,
+  per-client broker connection, or broad new approval flow.
+
+### Rollout and status maintenance
+
+Finish the four sprints on `dev`; merging to main remains manual. Deploy backend
+and website together because refresh gains an authoritative response and new
+identity fields. Today repair runs only after a validated broker response and a
+successful archive/staged write. A failed broker read must never be interpreted
+as authorization to erase history. Existing records load with optional fields,
+and the configured delayed-SL preference remains unchanged.
+
+### Implementation details and operational behavior
+
+- `broker_order_service.py` owns broker-first edits, immediate marketable LIMITs
+  and common cumulative-fill/rejection callbacks. Accepted broker IDs, roles,
+  filled quantity/value and entry SL intent are persisted on application orders.
+- `broker_reports.py` separates report parsing, IST chart timestamps, underlying
+  scope and exact option contract identity. Weekly `SENSEX26O0171200PE` resolves
+  to expiry 2026-10-01, strike 71200, PE. Monthly contracts require actual broker
+  expiry/master metadata; the current chart expiry is never substituted.
+- `real_broker_state.py` stages a broker day in existing Sessions/Trades/Orders
+  tables. Its scope is user, opaque broker UCC identity, date, underlying and
+  instrument type. A manifest selects one complete revision. Session aliases
+  share that day; analysis lists its owner once. Other accounts' established
+  projections are not relinked to a newly configured broker account.
+- Original trades/labels remain available in archive partitions. Executions,
+  broker reports and positions are retained beside application orders. Snapshot
+  trade rows retain standard analysis fields plus optional broker identities.
+  Subsequent real fills and edits persist into the active revision; restart
+  restores trades, order maps, positions and requested entry protection.
+- Report calls and snapshot writes run in workers; publication and delayed
+  protection run on the event loop. Order mutation/trigger processing pauses
+  briefly during refresh. Broker callbacks received during it are buffered and
+  reconciled against cumulative broker quantities after publication.
+- Invalid/API-failed reports return 502. Archive/staging/link failure returns 503
+  without advancing the manifest. A valid empty report is authoritative. Funds
+  failure preserves the last wallet value and accompanies the valid snapshot
+  with `wallet_error`. Normal resting orders are informational, not errors.
+- Website refresh consumes the response directly and SSE `broker_snapshot` uses
+  the same state update. Session checks prevent a response for a previous session
+  from updating the newly selected session. Cumulative live trade events replace
+  their existing row rather than appending a second partial-fill row.
+- Stopping a real session preserves broker-managed order state; it does not claim
+  that broker protection was cancelled by local cleanup. Resume reconnects its
+  callbacks. Desktop real-trading product enablement remains deferred.
+
+Additional lessons from implementation: normalize and validate individual report
+rows before treating a report as an empty day; clearing an SL's broker trigger is
+part of a real LIMIT conversion; delayed cancellation events need broker-ID
+identity checks; freeze sizing must translate canonical app symbols; and imported
+broker exits must contribute to protection coverage. Funds are account-wide while
+trade/position reconciliation is scoped to the selected underlying.
+
+Refresh serialization is currently within the owning backend process, matching
+the existing in-memory session architecture. A future deployment allowing two
+workers to own the same live session needs distributed revision/ownership
+coordination. Archived revisions currently have no automatic retention cleanup.
+Broker symbols whose exact expiry cannot be resolved fail visibly rather than
+being assigned the selected chart contract. These are explicit operating limits,
+not a change to Paper/replay semantics.
+
+### Final validation for this repair
+
+| Check | Final result |
+|---|---|
+| Related backend regressions | **609 passed**, one existing warning; 21 modules covering broker repair, wallet/history/streams, orders, strategies, analysis, labels, desktop and Paper behavior |
+| Focused new repair coverage | 52 tests across `test_phase19_real_exit_orders.py` and `test_phase19_broker_snapshot.py`, included in the 609 |
+| Website TypeScript and Vite production build | Passed; existing large-bundle warning |
+| Windows frontend `npm run build` | Passed, including TypeScript and Vite; existing large-bundle warning |
+| Backend compilation and `git diff --check` | Passed |
+| Entire backend suite | Attempt stopped at four failures after 558 passes; no full-suite green result is claimed |
+| Native Windows installer and live Kotak acceptance | External checks; no real orders were submitted during automated validation |
+
+The full-suite failures were `test_auth.py::TestRegister::test_success` and
+three `test_options_api.py::TestOptionsSimulationStart` cases. Their fixtures
+reach an unmocked DynamoDB endpoint and/or `/mnt/d/data/dbfolder/ohlcdata`, which
+are unavailable/read-only in this workspace. Auth/options startup code was not
+changed by this repair. Run those checks with the project's database and data
+fixtures available before treating the complete repository suite as green.
+
+Tests used the project Python virtual environment, a temporary selector polling
+workaround for sandbox wakeups, and isolated DynamoDB Local configuration with
+one connection attempt. Production event-loop code was not altered for the test
+harness. Both frontend production builds were run locally; they do not validate
+native Tauri packaging or broker acceptance.
+
+A final concurrency lesson: independent order, execution and position reports
+can straddle a fill. Refresh compares cumulative execution quantities with the
+order report and, when available, position-report day-fill quantities. It retries
+the reports once when they disagree; a still-changing report preserves the last
+published revision and requests a later refresh. This avoids publishing newer
+positions beside older executions or counting a deferred fill twice. Execution
+identity includes broker order and exchange, so a reused execution number in a
+different order cannot discard another contract's trade.
+
+### Review follow-up: snapshot ownership and timestamp diagnostics
+
+The review's stale-session finding was partly covered already: the app-level SSE
+handler rejects events whose explicit session ID differs from the selected session.
+The remaining gap was its fallback for events without a session ID. Broker snapshots
+now require an explicit ID matching the latest selected session, and use that ID
+when updating both simulation state and the broker order panel. Unidentified snapshots
+are ignored. Focused frontend tests cover selection changes, no active session and
+missing/malformed IDs using Node's existing test support without new dependencies.
+
+Invalid broker timestamps now raise a contextual `ValueError` while preserving the
+original parser exception. Tests verify that broker date strings and timezone-aware
+ISO timestamps retain the project's IST wall-clock encoding. Lesson: evaluate review
+findings against earlier dispatch guards, and require source identity for events that
+replace a complete state snapshot rather than assigning them to the current selection.
+
+Follow-up validation: 2 frontend ownership tests and 54 focused backend tests passed;
+website TypeScript checking, Vite production build and `git diff --check` passed.
+The backend tests used the temporary selector polling runner described above. The
+build retained its existing bundle-size warning; no live broker orders were submitted.
+
 ## Original requirements
 
 # Improvements
@@ -1027,4 +1389,3 @@ It may happen that when take profit strategy (half) was triggered we had 4 lots 
 
 ## Desktop Client Open Orders
 1) Reduce the open orders text size in desktop client. It just for notification.
-

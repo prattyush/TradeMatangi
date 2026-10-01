@@ -64,98 +64,26 @@ def _margin_rate_for(session, right: str | None = None) -> float:
 
 
 def _place_kotak_direct(session, side: TradeSide, price: float, lot_size: int, right) -> JSONResponse:
-    """Place an immediate buy/sell on Kotak as a limit order; fill arrives via SSE order_filled."""
-    from app.services.kotak_service import get_service as get_kotak, KotakError
-
-    if side == TradeSide.BUY:
-        kotak_price = round(price * (1 + KOTAK_SLIPPAGE_PCT), 2)
-        side_code = "B"
-    else:
-        kotak_price = round(price * (1 - KOTAK_SLIPPAGE_PCT), 2)
-        side_code = "S"
-
+    """Place an immediate, tracked marketable LIMIT with exact contract identity."""
+    from app.services import order_service
+    from app.services.broker_order_service import submit_immediate
+    from app.models.schemas import Order, OrderType
+    if getattr(session, "broker_refresh_events", None) is not None:
+        raise HTTPException(status_code=409, detail="Broker refresh is in progress; retry shortly")
+    factor = 1 + KOTAK_SLIPPAGE_PCT if side == TradeSide.BUY else 1 - KOTAK_SLIPPAGE_PCT
+    order = Order(session_id=session.session_id, user_id=session.user_id, symbol=session.symbol,
+        side=side, order_type=OrderType.LIMIT, quantity=lot_size, limit_price=round(price * factor, 2),
+        trigger_price=price, created_at=int(session.current_time or 0), right=right,
+        strike=_strike_for_right(session, right), expiry=session.expiry if right else None,
+        source="direct_market", wallet_ledger_kind="real", wallet_ledger_id=session.wallet_ledger_id or None)
+    order_service._orders.setdefault(session.session_id, {})[order.order_id] = order
     try:
-        kotak_svc = get_kotak()
-        kotak_order_id = kotak_svc.place_limit_order(
-            symbol=session.symbol,
-            side=side_code,
-            qty=lot_size,
-            price=kotak_price,
-        )
-    except KotakError as exc:
-        raise HTTPException(status_code=502, detail=str(exc))
-
-    loop = asyncio.get_event_loop()
-
-    def _make_cb(sess, trade_side: TradeSide, qty: int, rt):
-        def on_fill(k_id: str, fill_side: str, fill_qty: int, fill_price: float):
-            trading_svc.settle_wallet_for_trade(
-                sess,
-                trade_side,
-                fill_price,
-                fill_qty,
-                right=rt,
-                strike=_strike_for_right(sess, rt),
-                expiry=sess.expiry,
-            )
-
-            trading_svc.record_trade(
-                sess.session_id, trade_side,
-                price=fill_price,
-                timestamp=int(sess.current_time) if sess.current_time else 0,
-                symbol=sess.symbol,
-                instrument_type=sess.instrument_type,
-                strike=_strike_for_right(sess, rt),
-                expiry=sess.expiry,
-                right=rt,
-                quantity=fill_qty,
-                brokerage_per_order=sess.brokerage_per_order,
-                user_id=sess.user_id,
-                session_type=sess.session_type,
-            )
-            evt = {
-                "type": "order_filled",
-                "order_id": f"direct_{k_id}",
-                "side": trade_side.value,
-                "quantity": fill_qty,
-                "trigger_price": fill_price,
-                "filled_price": fill_price,
-                "filled_at": int(sess.current_time) if sess.current_time else 0,
-                "right": rt,
-            }
-            try:
-                sess.queue.put_nowait(json.dumps(evt))
-            except Exception:
-                pass
-
-        return on_fill
-
-    kotak_svc.register_fill_callback(
-        kotak_order_id, _make_cb(session, side, lot_size, right), loop
-    )
-
-    def _make_direct_reject_cb(sess):
-        def on_reject(kotak_id: str, reason: str):
-            import logging as _log
-            import json as _json
-            _log.getLogger(__name__).warning(
-                "Kotak rejected direct order %s for session %s: %s",
-                kotak_id, sess.session_id, reason,
-            )
-            error_event = {"type": "broker_error", "message": f"Kotak rejected order: {reason}"}
-            try:
-                sess.queue.put_nowait(_json.dumps(error_event))
-            except Exception:
-                pass
-        return on_reject
-
-    kotak_svc.register_reject_callback(
-        kotak_order_id, _make_direct_reject_cb(session), loop
-    )
-    return JSONResponse(
-        status_code=202,
-        content={"status": "broker_pending", "kotak_order_id": kotak_order_id},
-    )
+        submit_immediate(session, order, asyncio.get_running_loop())
+    except Exception as exc:
+        if not order.kotak_order_id:
+            order_service._orders[session.session_id].pop(order.order_id, None)
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return JSONResponse(status_code=202, content={"status": "broker_pending", "kotak_order_id": order.kotak_order_id})
 
 
 def _direct_trade_quantity(session, right, price, funds_ratio_pct):
