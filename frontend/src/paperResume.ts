@@ -32,7 +32,9 @@ export function selectPaperResumePanes<T extends PaperPane>(
       ?? existing[existing.length - 1]
     const target = open
       ? { ...(preferred ?? makePane(right, open.strike, open.expiry)), right, strike: open.strike, expiry: open.expiry } as T
-      : preferred
+      : preferred && streamed[right] != null && streamed.expiry
+        ? { ...preferred, strike: streamed[right], expiry: streamed.expiry } as T
+        : preferred
     const firstIndex = panes.findIndex(p => p.type === 'options' && p.right === right)
     for (let i = panes.length - 1; i >= 0; i--) {
       if (panes[i].type === 'options' && panes[i].right === right) panes.splice(i, 1)

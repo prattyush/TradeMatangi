@@ -46,6 +46,13 @@ class RingQueue:
         self._dropped: int = 0
         self._maxsize = maxsize
 
+    @property
+    def maxsize(self) -> int:
+        return self._maxsize
+
+    def full(self) -> bool:
+        return len(self._dq) >= self._maxsize
+
     def put_nowait(self, item: str) -> None:
         """Push an item; oldest is silently dropped when the buffer is full."""
         if self._closed:
@@ -662,6 +669,34 @@ def rebuild_session_from_db(
     return session
 
 
+def resolve_website_paper_resume_contracts(session: SimulationSession) -> None:
+    """Open positions win per side; flat sides keep the requested selection."""
+    from app.services import trading, order_service
+    positions = trading.get_open_option_contracts(session.session_id, session.symbol)
+    for right in ("CE", "PE"):
+        candidates = [item for item in positions if item["right"] == right]
+        if candidates:
+            chosen = max(candidates, key=lambda item: (item["last_opened_at"], item["strike"]))
+            setattr(session, f"strike_{right.lower()}", chosen["strike"])
+        # Persisted display prices are not current-feed execution quotes.
+        setattr(session, f"last_price_{right.lower()}", 0.0)
+    contracts = {(item["right"], item["strike"], item["expiry"]) for item in positions}
+    contracts.update((order.right, order.strike, order.expiry)
+        for order in order_service.get_open_orders(session.session_id)
+        if order.right in ("CE", "PE") and order.strike is not None and order.expiry)
+    session.desktop_contracts = list(getattr(session, "desktop_contracts", []))
+    existing = {item["contract_key"] for item in session.desktop_contracts}
+    for right, strike, expiry in sorted(contracts):
+        key = f"{session.symbol}:{expiry}:{strike}:{right}"
+        if key not in existing:
+            session.desktop_contracts.append({"symbol": session.symbol, "right": right,
+                "strike": strike, "expiry": expiry, "contract_key": key})
+            existing.add(key)
+    logger.info("paper_resume_contracts_selected session_id=%s strike_ce=%s strike_pe=%s open_contracts=%d tracked_contracts=%d",
+        session.session_id, session.strike_ce, session.strike_pe, len(positions), len(contracts))
+    _upsert_session_to_db(session)
+
+
 # ── Auto-close positions at end of day ────────────────────────────────────────
 
 _AUTO_CLOSE_TIME = "15:09:00"
@@ -755,6 +790,13 @@ class _ContractTickQueue:
     def __init__(self, session: SimulationSession, contract: dict):
         self.session = session
         self.contract = contract
+
+    @property
+    def maxsize(self) -> int:
+        return self.session.paper_tick_queue.maxsize
+
+    def full(self) -> bool:
+        return self.session.paper_tick_queue.full()
 
     def put_nowait(self, payload: dict) -> None:
         if self.session.state != SimulationState.ENDED:
@@ -1936,7 +1978,7 @@ async def _run_paper_session(session: SimulationSession) -> None:
             pass
         if unexpected_end:
             try:
-                stop_session(session)
+                stop_session(session, preserve_trading_state=getattr(session, "desktop_origin", None) != "desktop_paper")
             except Exception:
                 logger.exception("Paper session %s cleanup failed after unexpected end", session.session_id)
 
@@ -2687,8 +2729,9 @@ def resume_session(session: SimulationSession) -> None:
         session.resume_event.set()
 
 
-def stop_session(session: SimulationSession) -> None:
-    logger.info("session_stop_begin session_id=%s type=%s lease_lost=%s", session.session_id, session.session_type, getattr(session, "paper_lease_lost", False))
+def stop_session(session: SimulationSession, *, preserve_trading_state: bool = False) -> None:
+    logger.info("session_stop_begin session_id=%s type=%s lease_lost=%s preserve_trading_state=%s",
+        session.session_id, session.session_type, getattr(session, "paper_lease_lost", False), preserve_trading_state)
     desktop_paper = getattr(session, "desktop_origin", None) == "desktop_paper"
     cleanup_owned = not getattr(session, "paper_lease_lost", False)
     if desktop_paper:
@@ -2776,7 +2819,7 @@ def stop_session(session: SimulationSession) -> None:
     # Cancel and clean up any running strategies
     try:
         from app.services import strategy_service
-        if cleanup_owned:
+        if cleanup_owned and not preserve_trading_state:
             strategy_service.cancel_all(session.session_id)
         strategy_service.clear_session(session.session_id)
     except Exception as exc:
@@ -2786,7 +2829,7 @@ def stop_session(session: SimulationSession) -> None:
     # when session is restarted with a new session_id and old pending orders become invisible).
     try:
         from app.services import order_service
-        cancelled = order_service.cancel_all_pending_orders(session.session_id, session.date) if cleanup_owned else 0
+        cancelled = order_service.cancel_all_pending_orders(session.session_id, session.date) if cleanup_owned and not preserve_trading_state else 0
         order_service.clear_session(session.session_id)
         if cancelled:
             logger.info(

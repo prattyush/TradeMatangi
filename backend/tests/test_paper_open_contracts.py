@@ -92,3 +92,55 @@ async def test_paper_strike_change_persists_and_discards_previous_quote():
     assert session.paper_base_contracts["PE"] == {"strike": 24100, "expiry": EXPIRY}
     broadcaster.return_value.update_session_right.assert_called_once()
     persist.assert_called_once_with(session)
+
+
+@pytest.mark.parametrize("open_right", [None, "CE", "PE"])
+def test_resume_uses_open_position_per_side_and_preserves_pending_contracts(open_right):
+    from app.services import simulation, order_service, strategy_service
+    from app.models.schemas import Order, OrderType
+    s = simulation.SimulationSession(session_id=SESSION, user_id=USER, symbol="NIFTY", date="2026-10-01",
+        start_time="09:15:00", speed=1, session_type="paper", instrument_type="options",
+        strike=24200, strike_ce=24200, strike_pe=24300, expiry=EXPIRY)
+    s.guardrail_ban_active = True
+    s.session_capital = 100000
+    originals = [trade(open_right, 24000, TradeSide.BUY, 100)] if open_right else []
+    # A closed older contract must not dictate either chart's selection.
+    originals += [trade("CE", 23900, TradeSide.BUY, 10), trade("CE", 23900, TradeSide.SELL, 20)]
+    service._trades[SESSION] = originals
+    pending = Order(order_id="keep-order", session_id=SESSION, user_id=USER, symbol="NIFTY", side=TradeSide.BUY,
+        quantity=65, order_type=OrderType.LIMIT, trigger_price=20, limit_price=20, created_at=30,
+        right="PE", strike=23800, expiry=EXPIRY, reserved_amount=1300)
+    order_service._orders[SESSION] = {pending.order_id: pending}
+    strategy_service._registry[SESSION] = [SimpleNamespace(strategy_id="keep-strategy", metadata={"progress": 2})]
+    try:
+        with patch.object(simulation, "_upsert_session_to_db") as persist:
+            simulation.resolve_website_paper_resume_contracts(s)
+        assert s.strike_ce == (24000 if open_right == "CE" else 24200)
+        assert s.strike_pe == (24000 if open_right == "PE" else 24300)
+        assert service.get_trades(SESSION) is originals
+        assert order_service.get_order(SESSION, pending.order_id) is pending
+        assert pending.strike == 23800 and pending.reserved_amount == 1300
+        assert strategy_service._registry[SESSION][0].metadata == {"progress": 2}
+        assert s.session_capital == 100000 and s.guardrail_ban_active
+        assert any(item["strike"] == 23800 for item in s.desktop_contracts)
+        persist.assert_called_once_with(s)
+    finally:
+        service.clear_session(SESSION)
+        order_service.clear_session(SESSION)
+        strategy_service.clear_session(SESSION)
+
+
+def test_resume_newest_open_contract_wins_and_tracks_all_other_positions():
+    from app.services import simulation, order_service
+    s = simulation.SimulationSession(session_id=SESSION, symbol="NIFTY", date="2026-10-01", start_time="09:15:00", speed=1,
+        session_type="paper", instrument_type="options", strike_ce=24200, strike_pe=24300, expiry=EXPIRY)
+    service._trades[SESSION] = [trade("PE", 24000, TradeSide.BUY, 100), trade("PE", 24100, TradeSide.SELL, 200)]
+    order_service._orders[SESSION] = {}
+    try:
+        with patch.object(simulation, "_upsert_session_to_db"):
+            simulation.resolve_website_paper_resume_contracts(s)
+        assert s.strike_pe == 24100 and s.strike_ce == 24200
+        assert {item["strike"] for item in s.desktop_contracts} == {24000, 24100}
+    finally:
+        service.clear_session(SESSION)
+        order_service.clear_session(SESSION)

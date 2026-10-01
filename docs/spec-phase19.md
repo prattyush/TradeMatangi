@@ -549,6 +549,107 @@ Lesson: chart-bound drawings should use the library's render lifecycle. React
 state changes alone do not describe every time/price transform change, and a
 missing chart timestamp should not erase otherwise valid price levels.
 
+## Website live-session regression repair — 2026-10-01
+
+### Incident and root cause
+
+Both an existing website Paper session and a fresh account returned repeated
+`sse_session_missing` messages while historical chart requests continued to
+succeed. The fresh account also reported `Get open option contracts failed: 404`.
+That endpoint requires an in-memory session; an empty position list would return
+success. These symptoms are consistent with the engine disappearing after Start.
+Historical parquet requests run independently and do not prove that live streaming
+is connected.
+
+The reproducible failure was introduced by the shared-streaming change
+(`48da1ce`): `SessionFeed.start()` read `paper_tick_queue.maxsize`, but the actual
+`SimulationSession` uses `RingQueue`, which lacked that public property. The
+resulting `AttributeError` occurred before opening a broker subscription. Paper
+error cleanup then removed the session from memory, causing SSE and position
+requests to return 404. Handover had the same assumption for `_ContractTickQueue`.
+The later website P&L renderer change (`22c46bd`) did not cause this queue failure.
+Website real trading uses the same feed startup and queue, so the queue repair
+also covers its chart streaming.
+
+### Completed implementation
+
+1. **Queue/startup/handover:** `RingQueue` and the supplemental contract queue now
+   expose `maxsize` and `full()`. Staged startup and provider-handover events use
+   the same enqueue helper as normal delivery. Ring buffers retain their existing
+   bounded, oldest-drop behavior; asyncio queues retain explicit overflow/gap
+   reporting. Broker fallback keeps exact instrument metadata and trading state.
+2. **Website Paper recovery:** unexpected engine termination releases runtime
+   resources and ownership while preserving durable pending orders, wallet
+   reservations, and running strategy intent. Explicit Stop keeps its existing
+   cancellation/refund behavior. Resume restores running strategies, including
+   progress metadata, with pagination and owner filtering. Failed restoration
+   cleans up the rebuilt runtime without cancelling durable trading intent.
+3. **Resume selections:** after restoring trades/orders, each side with an open
+   option position selects its actual strike. A flat side keeps the newly requested
+   strike. When several contracts are open on a side, the newest opening determines
+   its primary selection; other open contracts and exact pending-order contracts
+   remain tracked through supplemental subscriptions. Saved chart panes follow
+   these resolved selections. Removed panes stay removed unless needed for an open
+   position. Trades and orders retain their original strike, expiry, quantity,
+   reservation, and identity; display selections do not rewrite them. Old primary
+   CE/PE prices are cleared before live execution resumes. The existing single
+   primary-expiry model remains in place.
+4. **SSE lifecycle:** single-session and group hooks share a connection controller.
+   After a connection error, it probes the existing active-session endpoint. A
+   confirmed 404/410 ends retries, marks the member ended, retains its details,
+   and asks the user to start again. Transport errors and server failures continue
+   bounded retries. Cursor replay, reconnect reconciliation, and visibility
+   recovery remain supported. Revision fencing prevents late probes or timers
+   from reviving a closed/replaced connection. A normal `session_ended` event also
+   terminates the connection.
+5. **Diagnostics:** existing missing-session debug logs distinguish
+   `not_in_memory` from `ownership_mismatch`; the stop log records whether trading
+   state is preserved. A single resume-selection INFO event records resolved
+   strikes and tracked-contract counts. Startup exception traces, feed connection
+   events, and throttled overflow reporting remain available. No per-tick logging
+   was added.
+
+The Paper-specific restoration rules do not change real broker order execution
+or desktop resume policy. Shared queue fixes also benefit desktop feed handover.
+No desktop real-trading functionality was added.
+
+### Verification and operational follow-up
+
+- 426 backend tests passed across shared feeds, actual session startup queues,
+  simulation/resume, trading/orders/strategies, and desktop integration modules.
+- 21 additional Paper wallet and desktop recovery/end-of-day tests passed with
+  their own mocked database lifecycle.
+- 122 renderer tests passed, including nine new website SSE lifecycle cases.
+  The website pane-resume test file also passed.
+- Website production build and website/desktop TypeScript checks passed.
+- Startup tests exercise concrete `SimulationSession` queues with Breeze/Kite,
+  fresh/resumed Paper and real modes, fallback, handover, full buffers, live task
+  delivery, and the actual SSE response. Broker adapters and execution callbacks
+  are mocked; no real order or external broker request is issued. Mocked historical
+  fetches run inline in the test fixture to avoid this sandbox's executor-shutdown
+  hang; production thread behavior is unchanged.
+
+Deploy/restart the backend and publish the website bundle together, then start
+Paper again to rebuild an unavailable session. During market hours, confirm feed
+connection/subscription success, live-phase entry, and incoming chart updates.
+When markets are closed, a connected broker may legitimately supply no ticks.
+Previously cancelled orders/strategies are not automatically resurrected: the
+preservation change applies to future unexpected failures. Inspect existing order
+status before deciding whether to replace an order cancelled by the old cleanup.
+Live broker acceptance and deployment remain outstanding; these automated checks
+verify the application paths with controlled broker delivery.
+
+### Lessons learned
+
+Tests that substituted `asyncio.Queue` for every engine queue missed the production
+queue contract. Integration coverage now includes the real queue and session task,
+as well as supplemental queue wrappers. A successful Start response or history
+request is insufficient evidence that a background live engine survived startup.
+Transport retry policy needs an authoritative session-state probe, and unexpected
+engine failure needs a different durable-state policy from a user-requested Stop.
+Chart selection and persisted trading intent should be resolved independently so
+flat sides can adopt a new selection without rewriting existing orders.
+
 ## Original requirements
 
 # Improvements

@@ -196,6 +196,38 @@ def start_strategy(session, strategy_type: str, right: str | None, metadata: dic
     return strategy
 
 
+
+def reload_running_strategies(session_id: str, user_id: str) -> None:
+    """Restore durable strategy intent after a website Paper engine failure."""
+    from app.services.db import get_dynamodb_resource
+    from boto3.dynamodb.conditions import Key
+
+    def numbers(value):
+        if isinstance(value, Decimal):
+            return int(value) if value == value.to_integral_value() else float(value)
+        if isinstance(value, dict):
+            return {key: numbers(item) for key, item in value.items()}
+        if isinstance(value, list):
+            return [numbers(item) for item in value]
+        return value
+
+    table = get_dynamodb_resource().Table("Strategies")
+    params = {"IndexName": "SessionIdIndex", "KeyConditionExpression": Key("session_id").eq(session_id)}
+    restored = []
+    while True:
+        page = table.query(**params)
+        for item in page.get("Items", []):
+            if item.get("user_id") != user_id or item.get("status") != "RUNNING":
+                continue
+            restored.append(StrategyInstance(strategy_id=item["strategy_id"], session_id=session_id,
+                user_id=user_id, strategy_type=item["strategy_type"], symbol=item["symbol"],
+                right=item.get("right"), status=StrategyStatus.RUNNING, metadata=numbers(item.get("metadata", {}))))
+        if not page.get("LastEvaluatedKey"):
+            break
+        params["ExclusiveStartKey"] = page["LastEvaluatedKey"]
+    _registry[session_id] = restored
+
+
 def cancel_all(session_id: str) -> int:
     """Cancel all running strategies for a session. Returns number cancelled."""
     count = 0

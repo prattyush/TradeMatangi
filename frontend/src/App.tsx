@@ -1202,9 +1202,10 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
   }, [sim.lastCompletedBarEquity, sim.lastCompletedBarCE, sim.lastCompletedBarPE, sim.sessionStrikeCE, sim.sessionStrikePE, sim.sessionExpiry])
 
   const streamSessionIds = useMemo(() => {
-    const ids = sim.group?.members.map(m => m.session_id) ?? (sim.sessionId ? [sim.sessionId] : [])
+    const ids = sim.group?.members.filter(m => m.state !== 'ended').map(m => m.session_id)
+      ?? (sim.sessionId && sim.sessionState !== 'ended' ? [sim.sessionId] : [])
     return Array.from(new Set(ids.filter(Boolean))).sort()
-  }, [sim.group, sim.sessionId])
+  }, [sim.group, sim.sessionId, sim.sessionState])
 
   const refreshRunningStrategies = useCallback(async (sessionId: string) => {
     const version = ++strategySyncVersionRef.current
@@ -1305,7 +1306,15 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
     setPanes(prev => prev.map(p => ({ ...p, reloadKey: (p.reloadKey ?? 0) + 1 })))
   }, [sim.refreshSessionData, sim.sessionId, refreshRunningStrategies])
 
-  useMultiSSE(streamSessionIds, handleSSEMessage, handleSSEReconnect)
+  const handleSSEUnavailable = useCallback((sessionId: string) => {
+    sim.handleSessionEnded(sessionId)
+    if (sessionId === sim.sessionId) {
+      setBrokerError('Session is no longer active. Start the session again.')
+      setLiveFeed(null)
+    }
+  }, [sim.handleSessionEnded, sim.sessionId])
+
+  useMultiSSE(streamSessionIds, handleSSEMessage, handleSSEReconnect, handleSSEUnavailable)
 
   // Fetch round-trips and labels for trade history when session is active
   useEffect(() => {
