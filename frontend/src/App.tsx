@@ -347,9 +347,46 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
     if (!localStorage.getItem('user')) {
       localStorage.setItem('user', JSON.stringify(FIXED_USER))
     }
-    // Check real trading access on mount
-    api.checkRealTradingAccess().then(r => setIsRealTradingUser(r.has_access)).catch(() => {})
   }, [])
+
+  useEffect(() => {
+    let disposed = false
+    let checking = false
+    let failureReported = false
+    let retry: ReturnType<typeof setTimeout> | null = null
+    setIsRealTradingUser(false)
+    const refresh = async () => {
+      if (disposed || checking) return
+      checking = true
+      if (retry) clearTimeout(retry)
+      retry = null
+      try {
+        const result = await api.checkRealTradingAccess()
+        if (!disposed) {
+          setIsRealTradingUser(result.has_access)
+          failureReported = false
+        }
+      } catch (error) {
+        if (!disposed) {
+          if (!failureReported) console.warn('Could not refresh real trading access; will retry.', error)
+          failureReported = true
+          retry = setTimeout(() => { void refresh() }, 5000)
+        }
+      } finally {
+        checking = false
+      }
+    }
+    const visible = () => { if (document.visibilityState === 'visible') void refresh() }
+    void refresh()
+    window.addEventListener('focus', visible)
+    document.addEventListener('visibilitychange', visible)
+    return () => {
+      disposed = true
+      if (retry) clearTimeout(retry)
+      window.removeEventListener('focus', visible)
+      document.removeEventListener('visibilitychange', visible)
+    }
+  }, [authUser.userId])
 
   // Auto-show session controls when session ends/stops
   useEffect(() => {

@@ -86,7 +86,7 @@ def is_whitelisted_email(email: str) -> bool:
     email = email.strip().lower()
     try:
         from app.services.db import get_dynamodb_resource
-        resp = get_dynamodb_resource().Table(_TABLE).get_item(Key={"email": email})
+        resp = get_dynamodb_resource().Table(_TABLE).get_item(Key={"email": email}, ConsistentRead=True)
         return "Item" in resp
     except Exception:
         logger.exception("Failed to check whitelist for email %s", email)

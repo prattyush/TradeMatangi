@@ -62,7 +62,7 @@ class TestRealTradingService:
         )
         with patch("app.services.db.get_dynamodb_resource", return_value=mock_resource):
             real_trading_service.is_whitelisted_email("  USER@EXAMPLE.COM  ")
-        mock_table.get_item.assert_called_once_with(Key={"email": "user@example.com"})
+        mock_table.get_item.assert_called_once_with(Key={"email": "user@example.com"}, ConsistentRead=True)
 
     def test_get_whitelist_returns_items(self):
         from app.services import real_trading_service

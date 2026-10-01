@@ -650,6 +650,66 @@ engine failure needs a different durable-state policy from a user-requested Stop
 Chart selection and persisted trading intent should be resolved independently so
 flat sides can adopt a new selection without rewriting existing orders.
 
+## Website real-trading permission refresh — 2026-10-01
+
+Google and password login both resolve a stored Users record. Real-trading
+whitelist checks use its normalized email, independent of login method; Google
+login to an existing email reuses the same user ID. Tests confirm Admin grant,
+access dependency checks, and revocation for password login, a fresh Google
+account, and Google login to an existing password account.
+
+The website previously checked permission only on mount. An Admin grant after
+that check left the already-open page showing no REAL option. Failed HTTP checks
+were converted to `has_access: false` and silently swallowed, so temporary server
+failures could also hide the option for the rest of the page lifetime. This is a
+confirmed code defect; the affected deployed account's exact cause has not been
+confirmed from production records.
+
+Implemented refresh on identity change, window focus, and visible-tab activation,
+with duplicate in-flight checks suppressed and cleanup preventing old responses
+from updating a replaced account. HTTP failures now raise `ApiError` and retry
+after five seconds; one console warning is emitted per failure episode. A
+successful false response remains a genuine denied-access result. Backend
+whitelist lookups use consistent reads so recent grants/revocations are visible
+immediately. The access endpoint emits a DEBUG decision with user ID, access
+result, and reason (`admin`, `whitelisted`, `user_missing`, `not_whitelisted`).
+There is no per-tick permission check or log.
+
+Verification: three mocked-DynamoDB identity/grant/revocation integration cases,
+nine existing whitelist-service tests, and three website API tests passed;
+website TypeScript and production build passed. The identity integration tests
+call the actual route functions and access dependency with mocked Google token
+verification and durable database writes; they do not call broker APIs.
+
+Operationally, the REAL toggle requires today's IST date and an exact matching
+email entry in Admin. After deployment, returning to the affected tab refreshes
+permission. If access remains denied, the debug decision and stored email/whitelist
+entry distinguish missing identity from an unmatched entry. Entries are currently
+added one email at a time. No authentication provider or broker order execution
+behavior was changed.
+
+## Desktop Windows build dependency isolation — 2026-10-01
+
+The Windows packaging workflow installs dependencies only in `windowsapp`, then
+Tauri runs `npm run build`. The desktop TypeScript configuration included every
+file under `src`, including `websitePositionPnlPrimitive.test.ts`. That test
+imports the website primitive, whose type imports require the website's
+`lightweight-charts` installation. CI therefore failed with TS2307 and cascading
+implicit-any/unknown-type errors. Local builds with both applications' dependencies
+installed hid this problem.
+
+The production desktop TypeScript configuration now excludes `*.test.ts` and
+`*.test.tsx`. Runtime desktop code still receives strict type checking; Vitest
+continues discovering the tests independently. The desktop application acquires
+no website chart dependency. Verification includes a successful production build
+in an isolated temporary desktop checkout with only desktop node_modules and no
+sibling website checkout. The complete renderer suite also runs separately. The
+native Windows installer itself is verified by the Windows CI workflow.
+
+Lesson: cross-application regression tests must not expand a production package's
+compile graph into sibling applications. Verify dependency isolation as well as a
+build in a developer workspace containing all installed packages.
+
 ## Original requirements
 
 # Improvements

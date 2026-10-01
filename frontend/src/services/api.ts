@@ -1481,7 +1481,7 @@ const api = {
     const res = await fetch(`${BACKEND_URL}/api/kotak/check-access`, {
       headers: _authHeaders(),
     })
-    if (!res.ok) return { has_access: false }
+    if (!res.ok) throw new ApiError(`Real trading access check failed: ${res.status}`, res.status)
     return res.json()
   },
 
