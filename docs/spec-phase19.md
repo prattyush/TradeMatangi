@@ -511,6 +511,44 @@ and snapshot requests with intervening events/native batches.
 Automated acceptance remains exchange-independent. Windows interaction and live
 market/broker behavior still require the external acceptance checks above.
 
+## Website P&L indicator rendering follow-up — 2026-10-01
+
+The website's P&L level calculator and pane position/capital wiring were reviewed.
+The previous renderer used React DOM overlays with geometry calculated from
+chart coordinates in effects. It removed every level if the aligned fill time
+was absent from the chart time scale. Its updates also depended on React inputs,
+time-range notifications, and selected DOM events rather than the chart's price
+scale repaint. These paths can miss asynchronous history loads and price-scale
+changes when the trade anchor is already known.
+
+Lightweight Charts 4.2 supports this drawing through its native series primitives
+API. `PositionPnlPrimitive` now attaches to the candlestick series and draws the
+existing five-bar segments and labels directly on the chart canvas. Coordinates
+are calculated during drawing, after chart autoscaling; no extra price-scale
+events or DOM overlay state are needed. If a fill timestamp is missing, the
+nearest available candle anchors the segment until its actual candle arrives.
+No-trade fallback anchors remain stable while new candles arrive. The renderer
+uses the chart pane's actual media bounds rather than the container dimensions,
+so lines do not extend into the price/time axes. It detaches during chart cleanup.
+
+The financial calculation, target percentages, indicator toggle, and exact
+position filtering are unchanged. An open position with valid session capital is
+required. Off-screen price levels remain off-screen; the indicator does not
+stretch autoscale to include distant percentage targets.
+
+Eight regression tests exercise exact-price segments/labels, absent fill times,
+deferred history loads, price-scale redraws without a changed time range, stable
+fallback anchors, pane clipping, disable/detach cleanup, and repaint requests.
+They run alongside the existing financial-level tests in the renderer test
+harness. Verification: 113 renderer tests pass, website and desktop TypeScript
+checks and production builds pass, and `git diff --check` passes. Canvas tests
+use controlled chart transforms; interactive browser acceptance is still needed
+to confirm the reported screen/session visually.
+
+Lesson: chart-bound drawings should use the library's render lifecycle. React
+state changes alone do not describe every time/price transform change, and a
+missing chart timestamp should not erase otherwise valid price levels.
+
 ## Original requirements
 
 # Improvements
