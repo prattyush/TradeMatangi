@@ -222,6 +222,9 @@ class Order(BaseModel):
     right: str | None = None       # "CE" or "PE" for options orders; None for equity
     strike: int | None = None      # options strike price; None for equity
     expiry: str | None = None      # options expiry; None for equity
+    exit_allocation_id: str | None = None
+    exit_position_side: str | None = None
+    exit_allocation_role: str | None = None
     source: str | None = None      # e.g. "desktop_stepwise"
     kotak_order_id: str | None = None  # set for real-session orders placed on Kotak
     kotak_fill_confirmed: bool = False  # True once Kotak WebSocket or reconcile records the fill
@@ -396,6 +399,7 @@ class StartStrategyRequest(BaseModel):
     only_in_profit: bool = False          # skip SL update when close is at a loss
     # TargetProfit settings
     target_profit_value: float | None = None   # absolute price or % of capital
+    target_profit_size: Literal["full", "half"] = "full"
     target_profit_is_pct: bool = False         # True = % of session capital; False = absolute price
     target_profit_buffer_ticks: int = 3        # ticks past target to trigger (1–5)
     # Breakeven mode
@@ -420,6 +424,11 @@ class UpdateTargetProfitRequest(BaseModel):
     target_profit_is_pct: bool = True
 
 
+class UpdateTargetProfitSizeRequest(BaseModel):
+    session_id: str
+    target_profit_size: Literal["full", "half"]
+
+
 class BulkUpdateSLRequest(BaseModel):
     session_id: str
     trigger_price: float
@@ -442,6 +451,7 @@ class StrategyResponse(BaseModel):
     triggered: bool = False    # True once LockProfit (or TargetProfit) has fired
     price: float | None = None
     target_profit_value: float | None = None
+    target_profit_size: Literal["full", "half"] = "full"
     target_profit_is_pct: bool = False
     # Optional desktop contract identity. Legacy and website strategies do not
     # carry these fields, but desktop overlays must not conflate CE/PE strikes.

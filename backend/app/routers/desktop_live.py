@@ -141,7 +141,8 @@ async def live_events(
             cursor = last_event_id if last_event_id is not None else _event_id(last_event_id_header)
             reset, buffered = live.events_after(stream, cursor)
             if reset:
-                yield f"event: stream_reset\ndata: {json.dumps(live.snapshot(stream))}\n\n"
+                logger.warning("desktop_live_replay_gap stream_id=%s cursor=%s latest=%s", stream.stream_id, cursor, stream.event_id)
+                yield f"id: {stream.event_id}\nevent: stream_reset\ndata: {json.dumps(live.snapshot(stream))}\n\n"
             elif cursor is None:
                 yield f"id: {stream.event_id}\nevent: snapshot\ndata: {json.dumps(live.snapshot(stream))}\n\n"
             else:

@@ -245,6 +245,8 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
   const [tradingRocRatioMode, setTradingRocRatioMode] = useState<RocRatioMode>(loadTradingRocRatioMode)
   const [runningStrategies, setRunningStrategies] = useState<StrategyResponse[]>([])
   const strategySyncVersionRef = useRef(0)
+  const [liveFeed, setLiveFeed] = useState<{ selected_provider?: string; actual_provider?: string; connection?: string } | null>(null)
+  useEffect(() => setLiveFeed(null), [sim.sessionId])
   const [brokerError, setBrokerError] = useState<string | null>(null)
   const [isRealTradingUser, setIsRealTradingUser] = useState(false)
   const [guardrailPopup, setGuardrailPopup] = useState<{ type: 'BLOCK' | 'COOLDOWN' | 'BAN'; reason: string } | null>(null)
@@ -1263,6 +1265,12 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
     } else if (event.type === 'strategy_completed') {
       strategySyncVersionRef.current++
       setRunningStrategies(prev => prev.filter(s => s.strategy_id !== (event.strategy_id as string)))
+    } else if (event.type === 'feed_status') {
+      setLiveFeed(event)
+    } else if (event.type === 'strategy_updated') {
+      if (sim.sessionId) void refreshRunningStrategies(sim.sessionId)
+    } else if (event.type === 'order_updated') {
+      if (sim.sessionId) void sim.refreshOpenOrders(sim.sessionId)
     } else if (event.type === 'broker_error') {
       setBrokerError(event.message as string)
     } else if (event.type === 'new_trade') {
@@ -1401,6 +1409,7 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
       breakeven_mode: breakevenMode,
       target_profit_value: opts.targetProfitValue as number | undefined,
       target_profit_is_pct: (opts.targetProfitIsPct as boolean) ?? false,
+      target_profit_size: (opts.targetProfitSize as 'full' | 'half') ?? 'full',
       target_profit_buffer_ticks: targetProfitBufferTicks,
       lock_profit_value: opts.lockProfitValue as number | undefined,
       lock_profit_is_pct: (opts.lockProfitIsPct as boolean) ?? false,
@@ -1563,14 +1572,10 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
     const stratActions: ContextMenuAction[] = [
       {
         label: 'Target Profit',
-        onClick: () => {
-          api.startStrategy({
-            session_id: sim.sessionId!,
-            strategy_type: 'TargetProfit',
-            target_profit_value: price,
-            right: right ?? undefined,
-          }).then(resp => { strategySyncVersionRef.current++; setRunningStrategies(prev => [...prev, resp]) }).catch(() => {})
-        }
+        submenu: (['half', 'full'] as const).map(size => ({
+          label: size === 'half' ? 'Half' : 'Full',
+          onClick: () => { api.startStrategy({ session_id: sim.sessionId!, strategy_type: 'TargetProfit', target_profit_value: price, target_profit_size: size, right: right ?? undefined }).then(resp => { strategySyncVersionRef.current++; setRunningStrategies(prev => [...prev, resp]) }).catch(() => {}) },
+        })),
       },
       {
         label: 'Lock Profit',
@@ -1608,14 +1613,7 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
         if ((targetRight === 'CE' ? sim.positionCE : sim.positionPE).side === 'FLAT') continue
         stratActions.push({
           label: `Underlying Target (${targetRight})`,
-          onClick: () => {
-            api.startStrategy({
-              session_id: sim.sessionId!,
-              strategy_type: 'UnderlyingTargetProfit',
-              target_profit_value: price,
-              right: targetRight,
-            }).then(resp => { strategySyncVersionRef.current++; setRunningStrategies(prev => [...prev, resp]) }).catch(() => {})
-          },
+          submenu: (['half', 'full'] as const).map(size => ({ label: size === 'half' ? 'Half' : 'Full', onClick: () => { api.startStrategy({ session_id: sim.sessionId!, strategy_type: 'UnderlyingTargetProfit', target_profit_value: price, target_profit_size: size, right: targetRight }).then(resp => { strategySyncVersionRef.current++; setRunningStrategies(prev => [...prev, resp]) }).catch(() => {}) } })),
         })
       }
       stratActions.push(
@@ -2504,6 +2502,7 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
       )}
 
       {/* Broker error banner (paper trading) */}
+      {liveFeed && <div role="status" style={{ fontSize: 11, color: '#8b949e', padding: '3px 12px' }}>Feed {liveFeed.actual_provider ?? liveFeed.selected_provider} · {liveFeed.connection}{liveFeed.actual_provider && liveFeed.actual_provider !== liveFeed.selected_provider ? ` (fallback from ${liveFeed.selected_provider})` : ''}</div>}
       {brokerError && (
         <div style={{
           background: '#3d1c1c', border: '1px solid #f85149', color: '#f85149',
@@ -2690,6 +2689,7 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
               onStartStrategy={handleStartStrategy}
               onCancelAllStrategies={handleCancelAllStrategies}
               onCancelStrategy={handleCancelStrategy}
+              onUpdateStrategySize={async (id, size) => { if (!sim.sessionId) return; await api.updateStrategySize(id, sim.sessionId, size); strategySyncVersionRef.current++; setRunningStrategies(prev => prev.map(s => s.strategy_id === id ? { ...s, target_profit_size: size } : s)) }}
               onUpdateStrategyPrice={handleUpdateStrategyPrice}
               onBulkUpdateSL={handleBulkUpdateSL}
               onBulkConvert={handleBulkConvert}

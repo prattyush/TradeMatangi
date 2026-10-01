@@ -35,6 +35,7 @@ from app.models.schemas import (
     UpdateOrderRequest,
     UpdateStrategyPriceRequest,
     UpdateTargetProfitRequest,
+    UpdateTargetProfitSizeRequest,
     WalletResetRequest,
 )
 from app.routers import simulation as simulation_router
@@ -517,6 +518,7 @@ def _strategy_response(instance) -> StrategyResponse:
         target_profit_value=(float(metadata["target_profit_value"])
                              if instance.strategy_type == "TargetProfit" and metadata.get("target_profit_value") is not None
                              else None),
+        target_profit_size=metadata.get("target_profit_size", "full"),
         target_profit_is_pct=(bool(metadata.get("target_profit_is_pct", False))
                               if instance.strategy_type == "TargetProfit" else False),
         strike=instance.metadata.get("desktop_strike"),
@@ -1017,6 +1019,18 @@ async def link_paper_live_stream(session_id: str, req: LinkPaperLiveStreamReques
         raise HTTPException(status_code=409, detail="Live chart stream is unavailable")
     if not any((tile.get("instrument") or {}).get("underlying", (tile.get("instrument") or {}).get("symbol")) == session.symbol for tile in stream.tiles):
         raise HTTPException(status_code=409, detail="Live charts do not match this Paper session")
+    from app.services.market_data import get_hub
+    group = getattr(session, "market_feed_group", None)
+    if group and stream.feed_group and group is not stream.feed_group:
+        if group.actual and group.actual != stream.feed_group.actual:
+            await get_hub().rebind(stream.feed_group, target=group.actual)
+            if stream.feed_group.actual != group.actual:
+                raise HTTPException(status_code=503, detail="Unable to align chart and Paper providers")
+        for handle in stream.feed_handles.values():
+            handle.group = group
+        stream.feed_group = group
+    elif stream.feed_group:
+        session.market_feed_group = stream.feed_group
     session.desktop_live_stream_id = req.live_stream_id
     logger.info("paper_live_stream_linked session_id=%s stream_id=%s", session_id, req.live_stream_id)
     return {"session_id": session_id, "live_stream_id": req.live_stream_id}
@@ -1432,6 +1446,14 @@ async def update_strategy_price(session_id: str, strategy_id: str, req: UpdateSt
     req.session_id = session_id
     from app.routers.strategies import update_strategy_price as web_update_price
     return web_update_price(strategy_id, req, user_id=user_id)
+
+
+@router.patch("/{session_id}/strategies/{strategy_id}/size")
+async def update_strategy_size(session_id: str, strategy_id: str, req: UpdateTargetProfitSizeRequest, user_id: str = Depends(get_desktop_user_id)):
+    _require_session(session_id, user_id)
+    req.session_id = session_id
+    from app.routers.strategies import update_target_profit_size
+    return update_target_profit_size(strategy_id, req, user_id=user_id)
 
 
 @router.patch("/{session_id}/strategies/{strategy_id}/target-profit")

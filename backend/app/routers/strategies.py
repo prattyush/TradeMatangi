@@ -15,6 +15,7 @@ from app.models.schemas import (
     StrategyResponse,
     CancelAllStrategiesRequest,
     StrategyType,
+    UpdateTargetProfitSizeRequest,
 )
 from app.services import simulation as sim_svc
 from app.services import strategy_service
@@ -24,16 +25,16 @@ from app.dependencies import get_request_user_id
 router = APIRouter(prefix="/api/strategies", tags=["strategies"])
 
 
-def _session_or_404(session_id: str):
+def _session_or_404(session_id: str, user_id: str | None = None):
     session = sim_svc.get_session(session_id)
-    if not session:
+    if not session or (user_id is not None and session.user_id != user_id):
         raise HTTPException(status_code=404, detail="Session not found")
     return session
 
 
 @router.post("/start", response_model=StrategyResponse)
 def start_strategy(req: StartStrategyRequest, user_id: str = Depends(get_request_user_id)):
-    session = _session_or_404(req.session_id)
+    session = _session_or_404(req.session_id, user_id)
 
     right = req.right.upper() if req.right else None
 
@@ -124,6 +125,7 @@ def start_strategy(req: StartStrategyRequest, user_id: str = Depends(get_request
         "only_in_profit": req.only_in_profit,
         "breakeven_mode": req.breakeven_mode,
         "target_profit_value": req.target_profit_value,
+        "target_profit_size": req.target_profit_size,
         "target_profit_is_pct": req.target_profit_is_pct,
         "target_profit_buffer_ticks": max(1, min(5, req.target_profit_buffer_ticks)),
         "triggered": False,
@@ -168,6 +170,7 @@ def start_strategy(req: StartStrategyRequest, user_id: str = Depends(get_request
         status=instance.status.value,
         triggered=bool(instance.metadata.get("triggered", False)),
         target_profit_value=instance.metadata.get("target_profit_value"),
+        target_profit_size=instance.metadata.get("target_profit_size", "full"),
         target_profit_is_pct=bool(instance.metadata.get("target_profit_is_pct", False)),
     )
 
@@ -177,7 +180,7 @@ def cancel_all_strategies(
     req: CancelAllStrategiesRequest,
     user_id: str = Depends(get_request_user_id),
 ):
-    _session_or_404(req.session_id)
+    _session_or_404(req.session_id, user_id)
     count = strategy_service.cancel_all(req.session_id)
     return {"cancelled": count}
 
@@ -188,7 +191,7 @@ def cancel_strategy(
     req: CancelAllStrategiesRequest,
     user_id: str = Depends(get_request_user_id),
 ):
-    _session_or_404(req.session_id)
+    _session_or_404(req.session_id, user_id)
     found = strategy_service.cancel_strategy(req.session_id, strategy_id)
     if not found:
         raise HTTPException(status_code=404, detail="Strategy not found or not running")
@@ -201,7 +204,7 @@ def update_strategy_price(
     req: UpdateStrategyPriceRequest,
     user_id: str = Depends(get_request_user_id),
 ):
-    _session_or_404(req.session_id)
+    _session_or_404(req.session_id, user_id)
     if req.price <= 0:
         raise HTTPException(status_code=400, detail="price must be positive")
     found = strategy_service.update_strategy_price(req.session_id, strategy_id, req.price)
@@ -212,7 +215,7 @@ def update_strategy_price(
 
 @router.get("", response_model=list[StrategyResponse])
 def list_strategies(session_id: str, user_id: str = Depends(get_request_user_id)):
-    _session_or_404(session_id)
+    _session_or_404(session_id, user_id)
     running = strategy_service.list_running(session_id)
     return [
         StrategyResponse(
@@ -223,7 +226,17 @@ def list_strategies(session_id: str, user_id: str = Depends(get_request_user_id)
             status=s.status.value,
             triggered=bool(s.metadata.get("triggered", False)),
             target_profit_value=s.metadata.get("target_profit_value"),
+            target_profit_size=s.metadata.get("target_profit_size", "full"),
             target_profit_is_pct=bool(s.metadata.get("target_profit_is_pct", False)),
         )
         for s in running
     ]
+
+
+@router.patch("/{strategy_id}/size")
+def update_target_profit_size(strategy_id: str, req: UpdateTargetProfitSizeRequest, user_id: str = Depends(get_request_user_id)):
+    session = _session_or_404(req.session_id, user_id)
+    if not strategy_service.update_target_profit_size(session.session_id, strategy_id, req.target_profit_size):
+        raise HTTPException(status_code=404, detail="Take-profit strategy not found or no longer armed")
+    session.queue.put_nowait(__import__("json").dumps({"type": "strategy_updated", "strategy_id": strategy_id, "target_profit_size": req.target_profit_size}))
+    return {"updated": strategy_id, "target_profit_size": req.target_profit_size}

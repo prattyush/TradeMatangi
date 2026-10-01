@@ -70,7 +70,7 @@ def validate_drawing(drawing: dict) -> None:
     if not isinstance(points, list) or not points:
         raise ValueError("Drawing must contain canonical timestamp-price points")
     for point in points:
-        if not isinstance(point, dict) or not isinstance(point.get("timestamp"), int) or not isinstance(point.get("price"), (int, float)):
+        if not isinstance(point, dict) or not isinstance(point.get("timestamp"), int) or not isinstance(point.get("price"), (int, float, Decimal)):
             raise ValueError("Every drawing point requires integer timestamp and numeric price")
 
 

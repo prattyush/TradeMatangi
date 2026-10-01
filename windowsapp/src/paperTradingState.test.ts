@@ -17,6 +17,14 @@ const snapshot = (): DesktopTradingSnapshot => ({
 const tick = (eventId: number, price: number, time = 101) => ({ type: 'tick', event_id: eventId, close: price, time, right: 'CE', contract_key: key, strike: 24000, expiry: '2026-10-01' })
 
 describe('Paper trading incremental state', () => {
+  it('updates an existing split exit without duplicating its order', () => {
+    let current = snapshot()
+    current = applyPaperStreamEvent(current, { type: 'order_placed', event_id: 11, order_id: 'exit', status: 'PENDING', quantity: 100, trigger_price: 90 })
+    const next = applyPaperStreamEvent(current, { type: 'order_updated', event_id: 12, order_id: 'exit', status: 'PENDING', quantity: 50 })
+    expect(next.open_orders).toHaveLength(1)
+    expect(next.open_orders[0]).toMatchObject({ quantity: 50, trigger_price: 90 })
+  })
+
   it('applies a committed fill to orders, markers, position, and P&L without a snapshot', () => {
     const current = snapshot()
     current.open_orders = [{ order_id: 'order-1', session_id: 'paper-1', user_id: 'u', symbol: 'NIFTY', side: 'BUY', order_type: 'LIMIT', quantity: 50, trigger_price: 0, limit_price: 101, status: 'PENDING', created_at: 100, is_stoploss: false, right: 'CE', strike: 24000, expiry: '2026-10-01' }]

@@ -36,7 +36,7 @@ export function targetProfitLabel(
     const totalPct = targetPrice !== null && currentPrice !== undefined && totalPnl !== undefined
       ? projectedTotalPnlPctAtTarget(position, currentPrice, targetPrice, totalPnl, sessionCapital, brokeragePerOrder)
       : null
-    return `TP +${strategy.target_profit_value.toFixed(1)}%${totalPct === null ? '' : ` / ${totalPct >= 0 ? '+' : ''}${totalPct.toFixed(1)}%`}`
+    return `TP${strategy.target_profit_size ? ` ${strategy.target_profit_size === 'half' ? 'Half' : 'Full'}` : ''} +${strategy.target_profit_value.toFixed(1)}%${totalPct === null ? '' : ` / ${totalPct >= 0 ? '+' : ''}${totalPct.toFixed(1)}%`}`
   }
   if (targetPrice === null || !Number.isFinite(targetPrice)) return null
   const direction = position.side === 'LONG' ? 1 : -1
@@ -45,5 +45,5 @@ export function targetProfitLabel(
   const totalPct = currentPrice !== undefined && totalPnl !== undefined
     ? projectedTotalPnlPctAtTarget(position, currentPrice, targetPrice, totalPnl, sessionCapital, brokeragePerOrder)
     : null
-  return `TP ${positionPct}${totalPct === null ? '' : ` / ${totalPct >= 0 ? '+' : ''}${totalPct.toFixed(1)}%`}`
+  return `TP${strategy.target_profit_size ? ` ${strategy.target_profit_size === 'half' ? 'Half' : 'Full'}` : ''} ${positionPct}${totalPct === null ? '' : ` / ${totalPct >= 0 ? '+' : ''}${totalPct.toFixed(1)}%`}`
 }

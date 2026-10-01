@@ -81,10 +81,11 @@ Session loop (sim):
             if paused: await event.wait()
             _emit_tick_and_check_orders(session, tick)
 
-Session loop (paper/real) — two phases:
-        Phase 1 (replay): fast-replay Breeze historical data at asyncio.sleep(0.001)
-        Phase 2 (live):   subscribe to KiteBroadcaster; await session.paper_tick_queue.get()
-        Both phases call _emit_tick_and_check_orders() on each tick
+Session loop (paper/real, Phase 19):
+        Subscribe first: MarketDataHub SessionFeed → provider broadcaster
+        History: load off-loop; publish baseline without live fills
+        Live: await session.paper_tick_queue.get(); discard history overlap
+        Live observations call the appropriate Paper/Real tick evaluator
 
 _emit_tick_and_check_orders():
         ├── session.queue.put(tick_json)              → SSE delivery
@@ -94,7 +95,7 @@ _emit_tick_and_check_orders():
 
 stop_session():
         ├── cancel asyncio task
-        ├── unsubscribe from KiteBroadcaster / KotakBroadcaster
+        ├── release SessionFeed and exact-contract subscription handles
         ├── strategy_service.cancel_all(session_id)
         ├── session.queue.put({"type":"session_ended"})
         └── await POST :8701/hook/session/{id}/stop   ← synchronous, 2s timeout
@@ -279,3 +280,19 @@ bash scripts/start-backend-ec2.sh
 ```
 
 Log file: `$LOG_DIR/backend.log` (daily rotating, 14-day retention).
+
+
+## Phase 19 live-data boundary
+
+Website live engines and desktop chart tiles now subscribe through
+`services/market_data.py`. MarketDataHub shares exact provider/instrument feeds,
+reference-counts independent consumers and exposes quotes plus feed-group status.
+Existing provider broadcasters remain SDK adapters; Kite keeps one streaming
+connection for the configured credentials. REST/history clients are independent.
+Session SSE carries charts and trading events; desktop chart SSE carries chart
+state only. Both use replay/reset recovery. See `spec-phase19.md` for the design
+alternatives, fallback matrix, history handoff and authentication follow-up.
+
+This architecture remains process-local and requires one API worker. Extracting
+a feed worker later also requires session ownership and command/event routing;
+adding workers alone duplicates feeds and loses access to in-memory sessions.

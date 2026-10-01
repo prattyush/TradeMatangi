@@ -23,6 +23,6 @@ export function eventNeedsTradingRefresh(event: Record<string, unknown>, cursor:
   const eventId = Number(event.event_id)
   if (Number.isFinite(eventId) && eventId <= cursor) return false
   if (event.type === 'order_filled') return !(event.trade && event.position && event.pnl)
-  if (event.type === 'tick' || event.type === 'bar_paused' || event.type === 'order_placed' || event.type === 'order_cancelled' || event.type === 'order_converted' || event.type === 'strategy_completed') return false
+  if (event.type === 'tick' || event.type === 'bar_paused' || event.type === 'order_placed' || event.type === 'order_updated' || event.type === 'feed_status' || event.type === 'order_cancelled' || event.type === 'order_converted' || event.type === 'strategy_completed') return false
   return true
 }

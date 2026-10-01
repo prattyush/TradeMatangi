@@ -11,7 +11,8 @@ import {
   LineStyle,
 } from 'lightweight-charts'
 import api, { OHLCCandle, TickEvent, BarCandle, Trade, Order, Position, StrategyResponse } from '../services/api'
-import { positionPnlLevels, projectedTotalPnlPctAtTarget, type PositionPnlLevel } from '../indicators/positionPnlLevels'
+import { PositionPnlPrimitive } from '../indicators/positionPnlPrimitive'
+import { positionPnlLevels, projectedTotalPnlPctAtTarget } from '../indicators/positionPnlLevels'
 import {
   computeOptionsRocComparison,
   IndicatorCandle,
@@ -265,8 +266,8 @@ function targetProfitLinePrice(strategy: StrategyResponse, position?: Position, 
 }
 
 function targetProfitLineLabel(strategy: StrategyResponse, price: number, position?: Position, pnlPctMode?: boolean, sessionCapital?: number, aggregatePnl?: number, currentPrice?: number, brokeragePerOrder = 0): string {
-  if (!pnlPctMode) return `TP ${price.toFixed(2)}`
-  if (!position || position.side === 'FLAT' || position.quantity <= 0 || !sessionCapital || sessionCapital <= 0) return `TP ${price.toFixed(2)}`
+  if (!pnlPctMode) return `TP ${strategy.target_profit_size === 'half' ? 'Half' : 'Full'} ${price.toFixed(2)}`
+  if (!position || position.side === 'FLAT' || position.quantity <= 0 || !sessionCapital || sessionCapital <= 0) return `TP ${strategy.target_profit_size === 'half' ? 'Half' : 'Full'} ${price.toFixed(2)}`
   const positionPct = strategy.target_profit_is_pct
     ? `+${strategy.target_profit_value}%`
     : formatProjectedPnl((position.side === 'LONG' ? 1 : -1) * (price - position.avg_entry_price) * position.quantity, true, sessionCapital)
@@ -274,7 +275,7 @@ function targetProfitLineLabel(strategy: StrategyResponse, price: number, positi
     ? projectedTotalPnlPctAtTarget(position, currentPrice, price, aggregatePnl, sessionCapital, brokeragePerOrder)
     : null
   const totalLabel = totalPct === null ? '' : ` / ${totalPct >= 0 ? '+' : ''}${totalPct.toFixed(1)}%`
-  return `TP ${positionPct}${totalLabel}`
+  return `TP ${strategy.target_profit_size === 'half' ? 'Half' : 'Full'} ${positionPct}${totalLabel}`
 }
 
 function orderLineTypeLabel(order: Order): string {
@@ -474,7 +475,7 @@ export default function Chart({
   const lastEma9Ref = useRef<number | null>(null)
   const lastEma21Ref = useRef<number | null>(null)
   const candleTimesRef = useRef<number[]>([])
-  const positionLevelFallbackRef = useRef<{ key: string; time: number } | null>(null)
+  const positionPnlPrimitiveRef = useRef<PositionPnlPrimitive | null>(null)
   const latestTickRef = useRef(latestTick)
   const currentSimTimeRef = useRef(currentSimTime)
   const drawModeRef = useRef<DrawMode>('none')
@@ -501,7 +502,6 @@ export default function Chart({
   const [expandedRatioIndicator, setExpandedRatioIndicator] = useState<RocComparisonKey | null>(null)
   const [indicatorDropdownOpen, setIndicatorDropdownOpen] = useState(false)
   const [showPositionLevels, setShowPositionLevels] = useState(false)
-  const [positionLevelGeometry, setPositionLevelGeometry] = useState<Array<PositionPnlLevel & { x: number; y: number; width: number; labelLeft: boolean }>>([])
   const [chartVisibleRange, setChartVisibleRange] = useState<{ from: Time; to: Time } | null>(null)
   const [drawMode, setDrawMode] = useState<DrawMode>('none')
   const [drawStep, setDrawStep] = useState(0)
@@ -628,6 +628,9 @@ export default function Chart({
     const e21 = chart.addLineSeries({ color: '#79c0ff', lineWidth: 1, priceLineVisible: false, lastValueVisible: false })
     chartRef.current = chart
     seriesRef.current = series
+    const positionPnlPrimitive = new PositionPnlPrimitive()
+    series.attachPrimitive(positionPnlPrimitive)
+    positionPnlPrimitiveRef.current = positionPnlPrimitive
     ema9Ref.current = e9
     ema21Ref.current = e21
 
@@ -837,6 +840,8 @@ export default function Chart({
       tradeMarkerPool.current = []
       orderPriceLinesRef.current.clear()
       strategyPriceLinesRef.current.clear()
+      series.detachPrimitive(positionPnlPrimitive)
+      positionPnlPrimitiveRef.current = null
       chart.remove()
     }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
@@ -1290,7 +1295,7 @@ export default function Chart({
           lineStyle: LineStyle.Dashed,
           axisLabelVisible: true,
           title: isUnderlyingTarget
-            ? `UT ${strategy.right} ${price.toFixed(2)}`
+            ? `UT ${strategy.right} ${strategy.target_profit_size === 'half' ? 'Half' : 'Full'} ${price.toFixed(2)}`
             : targetProfitLineLabel(strategy, price, position, pnlPctMode, sessionCapital, aggregatePnl, latestTick?.close ?? liveWindowRef.current?.close, brokeragePerOrder),
         })
         strategyPriceLinesRef.current.set(strategy.strategy_id, line)
@@ -1449,49 +1454,12 @@ export default function Chart({
     return last > 0 ? Math.floor(last / intervalSecs) * intervalSecs : null
   }, [trades, paneType, right, strike, expiry, intervalSecs])
   useEffect(() => {
-    const chart = chartRef.current
-    const series = seriesRef.current
-    const container = containerRef.current
-    if (!chart || !series || !container || !positionLevels.length) {
-      positionLevelFallbackRef.current = null
-      setPositionLevelGeometry([])
-      return
-    }
-    const fallbackKey = `${position?.side}:${position?.quantity}:${position?.avg_entry_price}:${position?.entry_commission}`
-    if (positionAnchorTime === null && positionLevelFallbackRef.current?.key !== fallbackKey) {
-      const fallbackTime = candleTimesRef.current[candleTimesRef.current.length - 1] ?? latestTick?.time ?? currentSimTime
-      if (fallbackTime) positionLevelFallbackRef.current = { key: fallbackKey, time: Math.floor(fallbackTime / intervalSecs) * intervalSecs }
-    }
-    const anchorTime = positionAnchorTime ?? positionLevelFallbackRef.current?.time
-    if (anchorTime === undefined) { setPositionLevelGeometry([]); return }
-    let active = true
-    const update = () => {
-      if (!active) return
-      const center = chart.timeScale().timeToCoordinate(anchorTime as Time)
-      const viewportWidth = container.clientWidth
-      if (center === null) { setPositionLevelGeometry([]); return }
-      const segmentWidth = Math.min(viewportWidth, Math.max(1, chart.timeScale().options().barSpacing) * 5)
-      const x = Math.max(0, Math.min(viewportWidth - segmentWidth, center - segmentWidth / 2))
-      setPositionLevelGeometry(positionLevels.flatMap(level => {
-        const y = series.priceToCoordinate(level.price)
-        return y !== null && y >= 0 && y <= chartHeight ? [{ ...level, x, y, width: segmentWidth, labelLeft: true }] : []
-      }))
-    }
-    update()
-    const rangeUpdate = () => requestAnimationFrame(update)
-    chart.timeScale().subscribeVisibleLogicalRangeChange(rangeUpdate)
-    const observer = new ResizeObserver(rangeUpdate)
-    observer.observe(container)
-    container.addEventListener('wheel', rangeUpdate)
-    container.addEventListener('mouseup', rangeUpdate)
-    return () => {
-      active = false
-      chart.timeScale().unsubscribeVisibleLogicalRangeChange(rangeUpdate)
-      observer.disconnect()
-      container.removeEventListener('wheel', rangeUpdate)
-      container.removeEventListener('mouseup', rangeUpdate)
-    }
-  }, [positionLevels, positionAnchorTime, chartHeight, chartVisibleRange, positionAnchorTime === null ? latestTick?.time : null, positionAnchorTime === null ? currentSimTime : null, intervalSecs])
+    const fallbackTime = latestTick?.time ?? currentSimTime ?? null
+    positionPnlPrimitiveRef.current?.setLevels(
+      positionLevels, positionAnchorTime,
+      fallbackTime === null ? null : Math.floor(fallbackTime / intervalSecs) * intervalSecs,
+    )
+  }, [positionLevels, positionAnchorTime, latestTick?.time, currentSimTime, intervalSecs])
 
   return (
     <div
@@ -1733,11 +1701,6 @@ export default function Chart({
 
       <div style={{ position: 'relative', width: '100%', height: chartHeight }}>
         <div ref={containerRef} style={{ width: '100%', cursor: (drawMode !== 'none' || onPriceSelect) ? 'crosshair' : 'default' }} />
-        <div aria-hidden="true" style={{ position: 'absolute', inset: 0, pointerEvents: 'none', overflow: 'hidden' }}>
-          {positionLevelGeometry.map(level => <div key={level.key} style={{ position: 'absolute', left: level.x, top: level.y, width: level.width, borderTop: `1px solid ${level.color}` }}>
-            <span style={{ position: 'absolute', left: level.labelLeft ? 0 : undefined, right: level.labelLeft ? undefined : 0, bottom: 2, fontSize: 10, lineHeight: '12px', color: level.color, background: '#0d1117', whiteSpace: 'nowrap' }}>{level.label}</span>
-          </div>)}
-        </div>
       </div>
 
       {ratioPanelsVisible && (

@@ -427,12 +427,16 @@ class KiteBroadcaster:
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
+        self._start_lock = threading.Lock()
+        self._flush_task = None
+        self._flush_loop = None
         # instrument_token → {session_id: (queue, right, loop)}
         self._token_sessions: dict[int, dict[str, tuple]] = defaultdict(dict)
         # session_id → set[instrument_token]
         self._session_tokens: dict[str, set[int]] = defaultdict(set)
         # per-token OHLC accumulator
         self._accumulators: dict[int, _OHLCAccumulator] = defaultdict(_OHLCAccumulator)
+        self._finalized_seconds: dict[int, int] = {}
         self._ticker = None
         self._connected = False
         # Restart guard: only one 403-triggered restart timer allowed at a time.
@@ -460,10 +464,12 @@ class KiteBroadcaster:
                 self._session_tokens[session_id].add(token)
             new_tokens = list(tokens)
 
-        if self._ticker is None:
-            self._start(new_tokens)
-        elif self._connected:
-            self._subscribe_more(new_tokens)
+        with self._start_lock:
+            if self._ticker is None:
+                self._start(new_tokens)
+            elif self._connected:
+                self._subscribe_more(new_tokens)
+        loop.call_soon_threadsafe(self._ensure_flusher, loop)
         # else: ticker exists but _on_connect hasn't fired yet; it will subscribe
         # all tokens from _token_sessions once the handshake completes.
 
@@ -476,6 +482,8 @@ class KiteBroadcaster:
                 self._token_sessions[token].pop(session_id, None)
                 if not self._token_sessions[token]:
                     del self._token_sessions[token]
+                    self._accumulators.pop(token, None)
+                    self._finalized_seconds.pop(token, None)
                     orphaned.append(token)
 
             if orphaned and self._ticker:
@@ -495,6 +503,11 @@ class KiteBroadcaster:
                 # new session starts and replaces the ticker with a fresh one.
                 self._restart_generation += 1
                 self._restart_pending = False
+                if self._flush_task and self._flush_loop:
+                    self._flush_loop.call_soon_threadsafe(self._flush_task.cancel)
+                self._flush_task = None
+                self._accumulators.clear()
+                self._finalized_seconds.clear()
                 logger.info("KiteBroadcaster: no active sessions, ticker stopped")
 
     def update_session_right(
@@ -623,7 +636,7 @@ class KiteBroadcaster:
         payload = {"type": "broker_error", "message": message}
         for sid, (queue, loop) in entries.items():
             try:
-                loop.call_soon_threadsafe(queue.put_nowait, payload)
+                loop.call_soon_threadsafe(self._safe_put, queue, payload)
             except Exception:
                 pass
 
@@ -675,49 +688,89 @@ class KiteBroadcaster:
             except Exception as exc:
                 logger.error("KiteBroadcaster on_connect subscribe error: %s", exc)
 
-    def _on_ticks(self, ws, ticks) -> None:
-        # IST offset: our convention stores IST wall-clock times as fake-UTC
-        # (tz_localize("UTC") on IST naive datetimes).  Kite's exchange_timestamp
-        # is a naive datetime in UTC (from gmtime).  To match the convention we
-        # add 19800 s (5:30 h) so that "09:15 IST" maps to Unix-for-"09:15 UTC".
-        _IST_OFFSET = 19800
-        if not ticks:
-            return
-        if not getattr(self, '_ticks_logged', False):
-            logger.info("KiteBroadcaster: first tick batch received (%d ticks)", len(ticks))
-            self._ticks_logged = True
+    @staticmethod
+    def _safe_put(queue, payload):
+        try:
+            queue.put_nowait(payload)
+        except asyncio.QueueFull:
+            now = _time.monotonic()
+            if now - getattr(queue, "_kite_last_overflow_log", float("-inf")) >= 60:
+                queue._kite_last_overflow_log = now
+                logger.error("Kite consumer queue overflow")
+            queue.get_nowait()
+            queue.put_nowait({"type": "broker_error", "message": "Kite consumer queue overflow", "stream_gap": True})
 
-        for tick in ticks:
+    def _publish_candle(self, token, candle, sessions):
+        for session_id, (queue, right, loop) in sessions.items():
+            payload = {**candle, "provider_token": str(token)}
+            if right:
+                payload["right"] = right
+            try:
+                loop.call_soon_threadsafe(self._safe_put, queue, payload)
+            except RuntimeError:
+                logger.warning("Kite consumer loop closed session=%s", session_id)
+
+    def _ensure_flusher(self, loop):
+        if self._ticker is None:
+            return
+        if self._flush_task is not None and not self._flush_task.done():
+            return
+        self._flush_loop = loop
+        async def flush():
+            while True:
+                await asyncio.sleep(max(.01, 1 - (_time.time() % 1)))
+                self.flush_completed(int(_time.time()) + 19800)
+        self._flush_task = loop.create_task(flush())
+
+    def flush_completed(self, current_second):
+        completed = []
+        with self._lock:
+            for token, acc in self._accumulators.items():
+                if acc.current_second and acc.current_second < current_second:
+                    candle = {"type": "tick", "time": acc.current_second,
+                              "open": round(acc.open, 2), "high": round(acc.high, 2),
+                              "low": round(acc.low, 2), "close": round(acc.close, 2)}
+                    acc.current_second = 0
+                    self._finalized_seconds[token] = candle["time"]
+                    completed.append((token, candle, dict(self._token_sessions.get(token, {}))))
+        for token, candle, sessions in completed:
+            self._publish_candle(token, candle, sessions)
+
+    def _on_ticks(self, ws, ticks):
+        # LTP packets do not contain exchange timestamps. Receipt epoch is
+        # converted once to the established IST-as-UTC chart convention.
+        if ws is not None and self._ticker is not None and ws is not self._ticker:
+            return
+        for tick in ticks or []:
             token = tick.get("instrument_token")
-            if token is None:
-                continue
-            price = float(tick.get("last_price", 0.0))
-            if price == 0.0:
+            price = float(tick.get("last_price", 0))
+            if token is None or price <= 0:
                 continue
             ex_ts = tick.get("exchange_timestamp")
-            if ex_ts and isinstance(ex_ts, datetime):
-                # exchange_timestamp is naive UTC from kiteconnect gmtime — add IST offset
-                ts_second = int(ex_ts.timestamp()) + _IST_OFFSET
-            else:
-                ts_second = int(_time.time()) + _IST_OFFSET
-
-            candle = self._accumulators[token].update(price, ts_second)
-            if candle is None:
-                continue
-
+            ts_second = int(ex_ts.timestamp() if isinstance(ex_ts, datetime) else _time.time()) + 19800
             with self._lock:
-                session_map = dict(self._token_sessions.get(token, {}))
-
-            for session_id, (queue, right, loop) in session_map.items():
-                payload = {**candle, "provider_token": str(token)}
-                if right:
-                    payload["right"] = right
-                try:
-                    loop.call_soon_threadsafe(queue.put_nowait, payload)
-                except Exception as exc:
-                    logger.warning("Tick push failed for session %s: %s", session_id, exc)
+                if token not in self._token_sessions:
+                    continue
+                acc = self._accumulators[token]
+                if ts_second <= self._finalized_seconds.get(token, 0):
+                    continue
+                if acc.current_second and ts_second < acc.current_second:
+                    continue
+                candle = acc.update(price, ts_second)
+                if candle:
+                    self._finalized_seconds[token] = candle["time"]
+                sessions = dict(self._token_sessions.get(token, {}))
+            quote = {"type": "quote", "time": ts_second, "open": price, "high": price,
+                     "low": price, "close": price, "provider_token": str(token)}
+            for queue, _right, loop in sessions.values():
+                if hasattr(queue, "update_quote"):
+                    loop.call_soon_threadsafe(queue.update_quote, quote)
+            if candle:
+                self._publish_candle(token, candle, sessions)
 
     def _on_error(self, ws, code, reason) -> None:
+        if ws is not None and self._ticker is not None and ws is not self._ticker:
+            return
         logger.error("KiteTicker error — code=%s reason=%s", code, reason)
         # 403 on WebSocket upgrade = auth issue or concurrent connection limit.
         # kiteconnect keeps retrying with the same stale token; schedule a single
@@ -731,6 +784,8 @@ class KiteBroadcaster:
             threading.Timer(5.0, lambda: self._restart_with_fresh_creds(gen)).start()
 
     def _on_close(self, ws, code, reason) -> None:
+        if ws is not None and self._ticker is not None and ws is not self._ticker:
+            return
         logger.warning("KiteTicker closed — code=%s reason=%s", code, reason)
         self._connected = False
         self._notify_sessions_error(

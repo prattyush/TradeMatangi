@@ -659,7 +659,9 @@ async def update_pane_strike(session_id: str, req: UpdatePaneStrikeRequest):
     website_paper = session.session_type == "paper" and getattr(session, "desktop_origin", None) != "desktop_paper"
     if website_paper:
         try:
-            if not session.paper_base_contracts:
+            if hasattr(getattr(session, "stream_manager", None), "replace_right"):
+                await session.stream_manager.replace_right(right)
+            elif not session.paper_base_contracts:
                 # Phase 1 has not registered a live source yet. Phase 2 will
                 # subscribe using the updated strikes.
                 pass
@@ -704,6 +706,8 @@ async def update_pane_strike(session_id: str, req: UpdatePaneStrikeRequest):
             session.last_price_pe = 0
         session.paper_base_contracts[right] = {"strike": req.strike, "expiry": session.expiry}
         sim_svc._upsert_session_to_db(session)
+    elif hasattr(getattr(session, "stream_manager", None), "replace_right"):
+        await session.stream_manager.replace_right(req.right.upper())
     elif session.session_type in ("paper", "real"):
         # Keep non-website subscription behavior unchanged.
         try:

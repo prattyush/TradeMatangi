@@ -55,9 +55,18 @@ async def lifespan(app: FastAPI):
     from app.services.desktop_paper_eod import reconciliation_loop
     seed_user()
     paper_reconciler = asyncio.create_task(reconciliation_loop())
+    from app.services.order_service import exit_reconciliation_loop
+    exit_reconciler = asyncio.create_task(exit_reconciliation_loop())
     try:
         yield
     finally:
+        from app.services.market_data import get_hub
+        get_hub().shutdown()
+        exit_reconciler.cancel()
+        try:
+            await exit_reconciler
+        except asyncio.CancelledError:
+            pass
         paper_reconciler.cancel()
         try:
             await paper_reconciler

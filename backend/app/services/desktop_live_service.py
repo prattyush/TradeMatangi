@@ -30,9 +30,13 @@ class DesktopStream:
     tile_queues: dict[str, asyncio.Queue] = field(default_factory=dict)
     tile_tasks: dict[str, asyncio.Task] = field(default_factory=dict)
     tile_locks: dict[str, asyncio.Lock] = field(default_factory=dict)
+    tile_activation_locks: dict[str, asyncio.Lock] = field(default_factory=dict)
     tile_history_generations: dict[str, int] = field(default_factory=dict)
     history_cache: dict[str, list[dict]] = field(default_factory=dict)
     subscriber_drops: dict[int, int] = field(default_factory=dict)
+    observed_seconds: dict[str, deque] = field(default_factory=dict)
+    feed_group: object | None = None
+    feed_handles: dict[str, object] = field(default_factory=dict)
 
 
 _streams: dict[str, DesktopStream] = {}
@@ -62,7 +66,14 @@ def option_quote(user_id: str, stream_id: str, symbol: str, expiry: str, strike:
             or instrument.get("expiry") != expiry or int(instrument.get("strike") or 0) != strike
             or instrument.get("right") != right or not tile.get("subscribed")):
             continue
-        tick = tile.get("latest_tick")
+        # Display history survives handover; execution requires a current feed quote.
+        tick = None
+        handle = stream.feed_handles.get(tile["tile_id"])
+        if handle and not handle.closed and handle.group.connection == "connected":
+            from app.services.market_data import get_hub
+            quote = get_hub().quotes.get(handle.key)
+            if quote and quote.get("received_at", 0) >= handle.group.quote_after:
+                tick = {**quote, "timestamp": quote["time"]}
         if tick and float(tick.get("close") or 0) > 0:
             return {"price": float(tick["close"]), "timestamp": int(tick["timestamp"]), "source": "desktop_live_chart", "tile_id": tile["tile_id"], "open": tick["open"], "high": tick["high"], "low": tick["low"], "close": tick["close"], "provider_token": tick.get("provider_token")}
     return None
@@ -73,6 +84,9 @@ def stop(user_id: str, stream_id: str) -> bool:
     if not stream:
         return False
     stream.stopped = True
+    for handle in stream.feed_handles.values():
+        handle.close()
+    stream.feed_handles.clear()
     for task in stream.tasks:
         task.cancel()
     for manager in stream.managers:
@@ -106,6 +120,10 @@ async def deactivate_tile(stream: DesktopStream, tile_id: str) -> None:
     if task:
         task.cancel()
         stream.tasks = [item for item in stream.tasks if item is not task]
+    handle = stream.feed_handles.pop(tile_id, None)
+    if handle:
+        handle.close()
+    stream.observed_seconds.pop(tile_id, None)
     stream.tile_queues.pop(tile_id, None)
     stream.subscriptions.pop(tile_id, None)
     stream.tile_locks.pop(tile_id, None)
@@ -121,7 +139,23 @@ async def remove_tile(stream: DesktopStream, tile_id: str) -> bool:
 
 
 def snapshot(stream: DesktopStream) -> dict:
-    return {"version": 1, "stream_id": stream.stream_id, "generation": stream.generation, "event_id": stream.event_id, "timestamp": int(time.time()), "tiles": stream.tiles}
+    tiles = []
+    for tile in stream.tiles:
+        current = dict(tile)
+        seconds = {row["timestamp"]: row for row in stream.observed_seconds.get(tile["tile_id"], [])}
+        # Loaded history is authoritative for timestamps it covers.
+        seconds.update({row["timestamp"]: row for row in tile.get("current_date_seconds", [])})
+        if seconds:
+            current["current_date_seconds"] = sorted(seconds.values(), key=lambda row: row["timestamp"])
+        handle = stream.feed_handles.get(tile["tile_id"])
+        if handle:
+            from app.services.market_data import get_hub
+            quote = get_hub().quotes.get(handle.key)
+            current["quote_age_seconds"] = max(0, time.time() - quote["received_at"]) if quote else None
+        tiles.append(current)
+    return {"version": 1, "stream_id": stream.stream_id, "generation": stream.generation,
+            "event_id": stream.event_id, "timestamp": int(time.time()), "tiles": tiles,
+            "feed": stream.feed_group.status() if stream.feed_group else None}
 
 
 def _breeze_instrument(instrument: dict) -> dict:
@@ -274,9 +308,20 @@ async def _seed(stream: DesktopStream, tile: dict) -> None:
 
 
 async def _consume(stream: DesktopStream, tile: dict, queue: asyncio.Queue) -> None:
-    """Keep an interval-neutral latest Breeze second for one desktop tile."""
+    """Keep an interval-neutral latest provider second for one desktop tile."""
     while not stream.stopped:
         tick = await queue.get()
+        if tick.get("type") == "feed_status":
+            await publish(stream, "feed_status", tile["tile_id"], stream.feed_group.status())
+            continue
+        if tick.get("type") == "broker_error":
+            tile["availability"], tile["reason"] = "provider_error", tick.get("message")
+            await publish(stream, "feed_status", tile["tile_id"], stream.feed_group.status())
+            if tick.get("stream_gap"):
+                await publish(stream, "snapshot", None, snapshot(stream))
+            continue
+        if stream.feed_group and tick.get("provider") and (tick["provider"] != stream.feed_group.actual or tick.get("feed_generation", stream.feed_group.generation) != stream.feed_group.generation):
+            continue
         latest_tick = {"timestamp": int(tick["time"]), "open": tick["open"], "high": tick["high"], "low": tick["low"], "close": tick["close"]}
         if tick.get("provider_token"):
             latest_tick["provider_token"] = tick["provider_token"]
@@ -284,6 +329,7 @@ async def _consume(stream: DesktopStream, tile: dict, queue: asyncio.Queue) -> N
             tile["latest_tick"] = latest_tick
             tile["availability"] = "available"
             tile.pop("reason", None)
+        stream.observed_seconds.setdefault(tile["tile_id"], deque(maxlen=4096)).append(latest_tick)
         await publish(stream, "candle", tile["tile_id"], latest_tick)
 
 
@@ -300,58 +346,37 @@ async def reconfigure_interval(stream: DesktopStream, tile: dict, interval_minut
 
 async def activate(stream: DesktopStream) -> None:
     """Seed and subscribe each tile independently; one bad contract cannot stop peers."""
-    from app.services.breeze_service import BreezeStreamManager
-    loop = asyncio.get_running_loop()
-    for tile in stream.tiles:
-        if tile.get("availability") == "unavailable":
-            continue
-        if tile.get("subscribed"):
-            continue
-        await _seed(stream, tile)
-        if tile.get("availability") != "available":
-            continue
+    from app.services.market_data import FeedGroup, get_hub, selected_provider
+    if stream.feed_group is None:
+        stream.feed_group = FeedGroup(selected_provider())
+    async def activate_tile_locked(tile):
+        generation = stream.tile_history_generations.get(tile["tile_id"], 0)
+        if tile.get("availability") == "unavailable" or (tile.get("subscribed") and tile.get("availability") != "provider_error"):
+            return
         queue = stream.tile_queues.setdefault(tile["tile_id"], asyncio.Queue(maxsize=512))
         if tile["tile_id"] not in stream.tile_tasks:
             task = asyncio.create_task(_consume(stream, tile, queue))
             stream.tile_tasks[tile["tile_id"]] = task
             stream.tasks.append(task)
-        tile["subscribed"] = True
-
-    active_tiles = [tile for tile in stream.tiles if tile.get("subscribed") and tile.get("availability") == "available"]
-    if not active_tiles:
-        return
-    manager = None
-    try:
-        if stream.manager:
-            stream.manager.stop()
-            stream.manager = None
-        manager = BreezeStreamManager()
-        routes: dict[str, list[asyncio.Queue]] = {}
-        instruments_by_route: dict[str, dict] = {}
-        for tile in active_tiles:
-            instrument = _breeze_instrument(tile["instrument"])
-            route = BreezeStreamManager.instrument_route_key(instrument)
-            instruments_by_route.setdefault(route, instrument)
-            routes.setdefault(route, []).append(stream.tile_queues[tile["tile_id"]])
-        # The fallback queue is unused for routed desktop streams; keep it
-        # unbounded so an unexpected provider identity can never raise QueueFull
-        # in the event loop. Routed ticks are delivered only to their tile queue.
-        manager.start(
-            asyncio.Queue(), loop, list(instruments_by_route.values()),
-            routes=routes, session_id=f"desktop:{stream.stream_id}",
-        )
-        stream.manager = manager
-        stream.managers = [manager]
-    except Exception as error:
-        if manager:
-            try:
-                manager.stop()
-            except Exception:
-                logger.exception("desktop live provider cleanup failed stream_id=%s", stream.stream_id)
-        for tile in active_tiles:
+        try:
+            if tile["tile_id"] not in stream.feed_handles:
+                handle = await get_hub().subscribe(tile["instrument"], f"desktop:{stream.stream_id}:{tile['tile_id']}", stream.feed_group, queue)
+                if (stream.stopped or not any(item is tile for item in stream.tiles)
+                    or stream.tile_history_generations.get(tile["tile_id"], 0) != generation):
+                    handle.close()
+                    return
+                stream.feed_handles[tile["tile_id"]] = handle
+            tile["subscribed"] = True
+            await _seed(stream, tile)
+        except Exception as error:
             tile["subscribed"] = False
-            tile["availability"] = "provider_error"
-            tile["reason"] = str(error)
+            tile["availability"], tile["reason"] = "provider_error", str(error)
+    async def activate_tile(tile):
+        lock = stream.tile_activation_locks.setdefault(tile["tile_id"], asyncio.Lock())
+        async with lock:
+            if not stream.stopped and any(item is tile for item in stream.tiles):
+                await activate_tile_locked(tile)
+    await asyncio.gather(*(activate_tile(tile) for tile in stream.tiles))
 
 
 async def refresh(stream: DesktopStream) -> None:

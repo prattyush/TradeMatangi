@@ -31,11 +31,18 @@ def test_paper_switched_contract_subscribes_and_old_ticks_keep_identity(no_db):
                 "right": "CE", "contract_key": f"NIFTY:{session.expiry}:24100:CE"}
     session.desktop_contracts.append(contract)
     async def subscribe():
-        with patch("app.services.kite_service.fetch_options_instrument_token", return_value=123), \
-             patch("app.services.kite_service.get_broadcaster") as broadcaster:
-            sim_svc.subscribe_desktop_option_contract(session, contract)
-            broadcaster.return_value.register.assert_called_once()
+        from unittest.mock import AsyncMock, MagicMock
+        from app.services.market_data import FeedGroup
+        session.market_feed_group = FeedGroup("kite", actual="kite")
+        hub = MagicMock()
+        hub.subscribe = AsyncMock(return_value=MagicMock())
+        with patch("app.services.market_data.get_hub", return_value=hub):
+            await sim_svc.subscribe_desktop_option_contract(session, contract)
+            hub.subscribe.assert_awaited_once()
+            assert hub.subscribe.call_args.args[0]["strike"] == 24100
     asyncio.run(subscribe())
+    # This regression exercises the legacy chart-quote bridge independently.
+    del session.market_feed_group
     tick = {"close": 99, "time": int(session.current_time), "right": "CE"}
     assert sim_svc._emit_tick_and_check_orders(session, tick, "CE") == []
     assert session.desktop_contract_quotes[f"NIFTY:{session.expiry}:24000:CE"]["price"] == 99
@@ -947,7 +954,7 @@ def test_chart_market_intent_uses_the_clicked_contract_quote(no_db, monkeypatch)
 
 
 @pytest.mark.parametrize("right,premium,stop", [("CE", 100, 80), ("PE", 120, 100)])
-def test_paper_market_uses_exact_live_option_tile_not_underlying_quote(right, premium, stop):
+def test_paper_market_uses_exact_live_option_tile_not_underlying_quote(right, premium, stop, monkeypatch):
     _clear()
     session = _session()
     session.session_type = "paper"
@@ -965,6 +972,20 @@ def test_paper_market_uses_exact_live_option_tile_not_underlying_quote(right, pr
              {"tile_id": "pe", "instrument": {"kind": "option", "underlying": "NIFTY", "expiry": session.expiry, "strike": 22950, "right": "PE"}, "subscribed": True,
               "latest_tick": {"timestamp": 1778058901, "open": 120, "high": 120, "low": 120, "close": 120}}]
     stream = desktop_live_service.start(session.user_id, tiles)
+    from app.services import market_data
+    class Adapter:
+        async def open(self, *args):
+            return lambda: None
+    hub = market_data.MarketDataHub(Adapter())
+    monkeypatch.setattr(market_data, "get_hub", lambda: hub)
+    async def attach():
+        group = market_data.FeedGroup("kite")
+        for tile in tiles[1:]:
+            handle = await hub.subscribe(tile["instrument"], tile["tile_id"], group, asyncio.Queue())
+            stream.feed_handles[tile["tile_id"]] = handle
+            tick = tile["latest_tick"]
+            hub.deliver(handle.key, {**tick, "time": tick["timestamp"], "type": "tick"})
+    asyncio.run(attach())
     try:
         with patch("app.routers.orders.get_ledger_balance", return_value=150000), patch("app.services.paper_wallet.move"):
             order = asyncio.run(desktop_trading.place_chart_order(session.session_id,
