@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react'
-import { Trade } from '../services/api'
+import { Trade, BrokerOrder } from '../services/api'
 
 interface RoundTrip {
   index: number
@@ -22,6 +22,7 @@ interface Props {
   historicalTrades?: Trade[]
   sessionType?: string
   onRefresh?: () => Promise<void>
+  brokerOrders?: BrokerOrder[]
   roundTrips?: RoundTrip[]
   labels?: TradeLabel[]
   pnlPctMode?: boolean
@@ -63,7 +64,7 @@ const SEPARATOR_STYLE_EXPANDED: React.CSSProperties = {
   letterSpacing: '0.05em',
 }
 
-export default function TradeHistory({ trades, historicalTrades = [], sessionType, onRefresh, roundTrips = [], labels = [], pnlPctMode = false, sessionCapital = 0 }: Props) {
+export default function TradeHistory({ trades, historicalTrades = [], sessionType, onRefresh, brokerOrders, roundTrips = [], labels = [], pnlPctMode = false, sessionCapital = 0 }: Props) {
   const [expanded, setExpanded] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
 
@@ -183,6 +184,21 @@ export default function TradeHistory({ trades, historicalTrades = [], sessionTyp
           </div>
         )}
       </div>
+
+      {sessionType === 'real' && brokerOrders && (
+        <details style={{ background: '#161b22', border: '1px solid #30363d', borderRadius: 8, marginTop: 8, fontSize: 12 }}>
+          <summary style={{ cursor: 'pointer', padding: '10px 14px' }}>Kotak orders today ({brokerOrders.length})</summary>
+          <div style={{ maxHeight: 250, overflow: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', whiteSpace: 'nowrap' }}>
+              <thead><tr>{['Symbol', 'Side', 'Type', 'Status', 'Qty / Filled', 'Trigger', 'Limit', 'Fill'].map(label => <th key={label} style={{ padding: 6, textAlign: 'left', color: '#8b949e' }}>{label}</th>)}</tr></thead>
+              <tbody>{brokerOrders.map(order => <tr key={order.kotak_order_id} title={order.reject_reason || order.kotak_order_id} style={{ borderTop: '1px solid #30363d' }}>
+                <td style={{ padding: 6 }}>{order.symbol}</td><td>{order.side}</td><td>{order.order_type}</td><td>{order.status}</td>
+                <td>{order.quantity} / {order.filled_quantity}</td><td>{fmt(order.trigger_price)}</td><td>{fmt(order.limit_price)}</td><td>{fmt(order.filled_price)}</td>
+              </tr>)}</tbody>
+            </table>
+          </div>
+        </details>
+      )}
 
       {/* Expanded modal */}
       {expanded && (

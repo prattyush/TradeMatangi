@@ -117,6 +117,10 @@ class Trade(BaseModel):
     commission: float = 0.0  # computed at record time: exchange charges + brokerage
     session_type: str = "sim"  # "sim" or "paper" — inherited from parent session
     source: str | None = None  # e.g. "desktop_stepwise" for desktop-originated practice trades
+    kotak_order_id: str | None = None
+    broker_account_id: str | None = None
+    broker_exchange: str | None = None
+    broker_execution_ids: list[str] = Field(default_factory=list)
     underlying_price: float | None = None  # snapshotted underlying price at fill time
 
 
@@ -227,6 +231,11 @@ class Order(BaseModel):
     exit_allocation_role: str | None = None
     source: str | None = None      # e.g. "desktop_stepwise"
     kotak_order_id: str | None = None  # set for real-session orders placed on Kotak
+    execution_role: Literal["entry", "exit"] | None = None
+    broker_product: str | None = None
+    broker_exchange: str | None = None
+    broker_filled_quantity: int = 0
+    broker_filled_value: float = 0.0
     kotak_fill_confirmed: bool = False  # True once Kotak WebSocket or reconcile records the fill
     entry_sl_price: float | None = None  # auto-stoploss price set at entry time
     group_id: str | None = None          # links entry order with its auto-placed SL order
@@ -239,6 +248,7 @@ class Order(BaseModel):
 
 
 class PlaceOrderRequest(BaseModel):
+    execute_immediately: bool = False
     session_id: str
     side: TradeSide
     order_type: OrderType = OrderType.TARGET

@@ -1334,13 +1334,8 @@ async def bulk_convert(session_id: str, req: BulkChartConvertRequest, user_id: s
     right, strike, expiry = _target_scope(session, req.right, req.strike, req.expiry)
     converted: list[Order] = []
     for order in _closing_orders(session, right, strike, expiry):
-        updated = order_service.convert_order(
-            session_id=session_id,
-            order_id=order.order_id,
-            new_order_type=req.new_order_type,
-            trading_date=session.date,
-            price=req.price,
-        )
+        from app.routers.orders import _convert_with_broker
+        updated = _convert_with_broker(session, order, req.new_order_type, req.price)
         if updated:
             converted.append(updated)
             _emit_order_converted(session, updated)
@@ -1355,12 +1350,8 @@ async def bulk_update_sl(session_id: str, req: BulkChartUpdateSLRequest, user_id
     for order in _closing_orders(session, right, strike, expiry):
         if not order.is_stoploss:
             continue
-        result = order_service.update_order(
-            session_id=session_id,
-            order_id=order.order_id,
-            trading_date=session.date,
-            trigger_price=req.trigger_price,
-        )
+        from app.routers.orders import update_order as web_update_order
+        result = await web_update_order(order.order_id, UpdateOrderRequest(trigger_price=req.trigger_price), session_id=session_id)
         if result:
             updated.append(result)
             _emit_order_event(session, {
@@ -1497,7 +1488,8 @@ async def flatten(session_id: str, req: FlattenRequest, user_id: str = Depends(g
         closers = _closing_orders(session, right, strike, expiry)
         if closers:
             for order in closers:
-                converted = order_service.convert_order(session_id, order.order_id, OrderType.LIMIT, session.date, emergency_price)
+                from app.routers.orders import _convert_with_broker
+                converted = _convert_with_broker(session, order, OrderType.LIMIT, emergency_price)
                 if converted:
                     result["converted"].append(converted.model_dump(mode="json"))
                     _emit_order_converted(session, converted)
@@ -1519,8 +1511,14 @@ async def flatten(session_id: str, req: FlattenRequest, user_id: str = Depends(g
                 is_stoploss=True,
                 margin_rate=EQUITY_MIS_MARGIN_RATE if right is None and session.instrument_type == "equity" else 1.0,
                 wallet_ledger_id=session.wallet_ledger_id,
-                wallet_ledger_kind="paper" if session.session_type == "paper" else "sim",
+                wallet_ledger_kind="paper" if session.session_type == "paper" else "real" if session.session_type == "real" else "sim",
             )
+            if session.session_type == "real":
+                try:
+                    sim_svc._register_kotak_sl_for_order(session, created, asyncio.get_running_loop())
+                except Exception as exc:
+                    order_service.cancel_order(session_id, created.order_id, session.date)
+                    raise HTTPException(status_code=502, detail=f"Broker exit placement failed: {exc}") from exc
             result["created"].append(created.model_dump(mode="json"))
             _emit_order_event(session, {
                 "type": "order_placed",

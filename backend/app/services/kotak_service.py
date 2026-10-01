@@ -171,6 +171,9 @@ def _load_kotak_master_from_api() -> list[dict]:
                         "exchange": exchange,
                         "name": name,
                         "instrument_type": inst_type,
+                        "expiry": row.get("pExpiryDate") or row.get("expiry") or row.get("expDt") or "",
+                        "strike": row.get("dStrikePrice") or row.get("stkPrc") or "",
+                        "right": row.get("pOptionType") or row.get("optTp") or "",
                     })
                     count += 1
             logger.info(
@@ -599,6 +602,8 @@ class KotakNeoService:
                 disclosed_quantity="0",
             )
             self._check_api_response(resp)
+            data = resp.get("data", resp) if isinstance(resp, dict) else {}
+            return str(data.get("nOrdNo") or data.get("order_id") or kotak_order_id) if isinstance(data, dict) else kotak_order_id
         except KotakError:
             raise
         except Exception as exc:
@@ -627,6 +632,8 @@ class KotakNeoService:
                 disclosed_quantity="0",
             )
             self._check_api_response(resp)
+            data = resp.get("data", resp) if isinstance(resp, dict) else {}
+            return str(data.get("nOrdNo") or data.get("order_id") or kotak_order_id) if isinstance(data, dict) else kotak_order_id
         except KotakError:
             raise
         except Exception as exc:
@@ -636,7 +643,8 @@ class KotakNeoService:
         """Cancel an open order on Kotak."""
         client = self._get_client()
         try:
-            client.cancel_order(order_id=kotak_order_id)
+            resp = client.cancel_order(order_id=kotak_order_id)
+            self._check_api_response(resp)
         except Exception as exc:
             raise KotakError(str(exc)) from exc
 
@@ -663,50 +671,58 @@ class KotakNeoService:
     @staticmethod
     def _normalize_order(raw: dict) -> dict:
         """Convert a raw Kotak order dict to a stable, UI-friendly shape."""
-        status_raw = (
-            str(raw.get("ordSt") or raw.get("stat") or "").lower()
-        )
-        side_code = str(raw.get("trnsTp", "B")).upper()
-        price_type = str(raw.get("prcTp", "L")).upper()
-        order_type_map = {"L": "LIMIT", "MKT": "MARKET", "SL": "SL", "SL-M": "SL-M"}
-        return {
-            "kotak_order_id": str(raw.get("nOrdNo", "")),
-            "status": status_raw,
-            "side": "BUY" if side_code == "B" else "SELL",
-            "symbol": str(raw.get("trdSym") or raw.get("sym") or ""),
-            "exchange": str(raw.get("exSeg", "")),
-            "quantity": int(raw.get("qty") or 0),
-            "filled_quantity": int(raw.get("fldQty") or raw.get("flQty") or 0),
-            "limit_price": float(raw.get("prc") or 0),
-            "trigger_price": float(raw.get("trgPrc") or 0),
-            "filled_price": float(raw.get("avgPrc") or raw.get("flPrc") or 0),
-            "order_type": order_type_map.get(price_type, price_type),
-            "order_time": str(raw.get("ordDtTm") or raw.get("ordEntTm") or ""),
-            "product": str(raw.get("prod", "")),
-            "reject_reason": str(
-                raw.get("rejRsn") or raw.get("rjRsn") or raw.get("rejectionReason") or ""
-            ),
-        }
+        from app.services.broker_reports import normalize_order
+        return normalize_order(raw)
 
-    def get_order_history(self) -> list[dict]:
-        """Return today's orders from Kotak normalized to a stable dict shape."""
-        client = self._get_client()
+    def _report(self, method: str) -> list[dict]:
+        """A failed/malformed report must never become an authoritative empty day."""
         try:
-            resp = client.order_report()
+            resp = getattr(self._get_client(), method)()
             self._check_api_response(resp)
             if isinstance(resp, list):
-                raw_list = resp
-            elif isinstance(resp, dict):
-                raw_list = resp.get("data", [])
-                if not isinstance(raw_list, list):
-                    raw_list = []
+                data = resp
+            elif isinstance(resp, dict) and isinstance(resp.get("data"), list):
+                data = resp["data"]
             else:
-                raw_list = []
-            return [self._normalize_order(o) for o in raw_list if isinstance(o, dict)]
+                raise KotakError(f"Malformed Kotak {method} response")
+            if any(not isinstance(row, dict) for row in data):
+                raise KotakError(f"Malformed Kotak {method} record")
+            return data
         except KotakError:
             raise
         except Exception as exc:
             raise KotakError(str(exc)) from exc
+
+    def get_order_history(self) -> list[dict]:
+        try:
+            rows = [self._normalize_order(row) for row in self._report("order_report")]
+            if any(not row["kotak_order_id"] or not row["symbol"] or not row["status"] or row["quantity"] <= 0 for row in rows):
+                raise KotakError("Malformed Kotak order report identity or quantity")
+            return rows
+        except ValueError as exc:
+            raise KotakError(str(exc)) from exc
+
+    def get_trade_history(self) -> list[dict]:
+        from app.services.broker_reports import normalize_execution
+        try:
+            return [normalize_execution(row) for row in self._report("trade_report")]
+        except ValueError as exc:
+            raise KotakError(str(exc)) from exc
+
+    def get_positions(self) -> list[dict]:
+        rows = self._report("positions")
+        for row in rows:
+            if not (row.get("trdSym") or row.get("symbol") or row.get("sym")) or not any(k in row for k in ("netQty", "net_quantity", "cfBuyQty", "flBuyQty", "cfSellQty", "flSellQty")):
+                raise KotakError("Malformed Kotak position identity or quantity")
+        return rows
+
+    def account_identity(self) -> str:
+        # Stable opaque identity; never return credentials in diagnostics or responses.
+        import hashlib
+        ucc = _read_kotak_credentials()["ucc"]
+        if not ucc:
+            raise KotakError("Kotak account identity is missing")
+        return hashlib.sha256(ucc.encode()).hexdigest()[:16]
 
     # ── Fill callbacks ────────────────────────────────────────────────────────
 
@@ -725,8 +741,7 @@ class KotakNeoService:
         """
         with self._lock:
             pending = self._pending_fills.pop(kotak_order_id, None)
-            if pending is None:
-                self._fill_callbacks[kotak_order_id] = (callback, loop)
+            self._fill_callbacks[kotak_order_id] = (callback, loop)
 
         if pending is not None:
             p_side, p_qty, p_price = pending
@@ -891,18 +906,21 @@ class KotakNeoService:
                 order_id = str(order_data.get("nOrdNo", ""))
                 order_status = str(order_data.get("ordSt", "")).lower()
 
-                if order_status in ("complete", "filled"):
+                cumulative_qty = int(float(order_data.get("fldQty") or order_data.get("flQty") or 0))
+                if order_status in ("complete", "filled") or cumulative_qty > 0:
                     avg_prc = order_data.get("avgPrc", "0") or "0"
-                    qty_str = order_data.get("qty", "0") or "0"
+                    qty_str = cumulative_qty or order_data.get("qty", "0") or "0"
                     side_code = order_data.get("trnsTp", "B")
 
                     filled_price = float(avg_prc)
                     qty = int(qty_str)
-                    side = "BUY" if side_code == "B" else "SELL"
+                    side = "BUY" if side_code in ("B", "BUY") else "SELL"
 
                     with self._lock:
-                        entry = self._fill_callbacks.pop(order_id, None)
-                        self._reject_callbacks.pop(order_id, None)
+                        entry = self._fill_callbacks.get(order_id)
+                        if order_status in ("complete", "filled"):
+                            self._fill_callbacks.pop(order_id, None)
+                            self._reject_callbacks.pop(order_id, None)
 
                     if entry is None:
                         # Fill arrived before register_fill_callback was called.
@@ -923,7 +941,7 @@ class KotakNeoService:
                     )
                     loop.call_soon_threadsafe(callback, order_id, side, qty, filled_price)
 
-                elif order_status in ("rejected", "cancelled"):
+                if order_status in ("rejected", "cancelled"):
                     reject_reason = (
                         order_data.get("rejRsn")
                         or order_data.get("rjRsn")
@@ -981,8 +999,8 @@ class KotakNeoService:
         """
         if not isinstance(resp, dict):
             return
-        if resp.get("stat") == "Not_Ok" or resp.get("errMsg"):
-            err_msg = resp.get("errMsg") or "unknown error"
+        if str(resp.get("stat", "")).lower() in ("not_ok", "not ok", "error", "failed") or resp.get("errMsg") or resp.get("Error"):
+            err_msg = resp.get("errMsg") or resp.get("Error") or "unknown error"
             st_code = resp.get("stCode")
             if st_code == 100008:
                 # Session expired — force re-authentication

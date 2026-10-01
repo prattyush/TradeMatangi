@@ -12,7 +12,7 @@ Covers:
 - Real session startup guards (whitelist + Kotak auth)
 """
 import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch, MagicMock, AsyncMock
 from fastapi.testclient import TestClient
 
 from app.main import app
@@ -542,15 +542,14 @@ class TestStrategySLModification:
 
     def test_update_exit_order_price_calls_modify_in_real_session(self):
         from app.services.strategy_service import _update_exit_order_price
-        from app.models.schemas import OrderType, TradeSide, OrderStatus
+        from app.models.schemas import Order, OrderType, TradeSide, OrderStatus
 
-        order = MagicMock()
-        order.order_id = "ord_sl_1"
-        order.side.value = "SELL"
-        order.order_type = OrderType.STOPLOSS
-        order.kotak_order_id = "KOTAK_ORD_001"
+        order = Order(order_id="ord_sl_1", session_id="sess_real", user_id=FIXED_USER_ID,
+            symbol="NIFTY", side=TradeSide.SELL, order_type=OrderType.STOPLOSS, quantity=65,
+            trigger_price=149, limit_price=150, created_at=1, kotak_order_id='KOTAK_ORD_001')
 
         session = MagicMock()
+        session.broker_refresh_events = None
         session.session_type = "real"
         session.session_id = "sess_real"
         session.date = "2026-05-26"
@@ -568,15 +567,14 @@ class TestStrategySLModification:
 
     def test_update_exit_order_price_no_kotak_id_skips_modify(self):
         from app.services.strategy_service import _update_exit_order_price
-        from app.models.schemas import OrderType
+        from app.models.schemas import Order, OrderType, TradeSide
 
-        order = MagicMock()
-        order.order_id = "ord_local"
-        order.side.value = "SELL"
-        order.order_type = OrderType.TARGET
-        order.kotak_order_id = None
+        order = Order(order_id="ord_local", session_id="sess_real", user_id=FIXED_USER_ID,
+            symbol="NIFTY", side=TradeSide.SELL, order_type=OrderType.TARGET, quantity=65,
+            trigger_price=149, limit_price=150, created_at=1, kotak_order_id=None)
 
         session = MagicMock()
+        session.broker_refresh_events = None
         session.session_type = "real"
         session.session_id = "sess_real"
         session.date = "2026-05-26"
@@ -590,15 +588,14 @@ class TestStrategySLModification:
 
     def test_update_exit_order_price_sim_session_skips_modify(self):
         from app.services.strategy_service import _update_exit_order_price
-        from app.models.schemas import OrderType
+        from app.models.schemas import Order, OrderType, TradeSide
 
-        order = MagicMock()
-        order.order_id = "ord_sim"
-        order.side.value = "SELL"
-        order.order_type = OrderType.STOPLOSS
-        order.kotak_order_id = "KOTAK_123"
+        order = Order(order_id="ord_sim", session_id="sess_real", user_id=FIXED_USER_ID,
+            symbol="NIFTY", side=TradeSide.SELL, order_type=OrderType.STOPLOSS, quantity=65,
+            trigger_price=149, limit_price=150, created_at=1, kotak_order_id='KOTAK_123')
 
         session = MagicMock()
+        session.broker_refresh_events = None
         session.session_type = "sim"   # not real
         session.session_id = "sess_sim"
         session.date = "2026-05-26"
@@ -641,12 +638,14 @@ class TestReconcileOpenOrders:
              patch("app.services.real_trading_service.is_whitelisted_user", return_value=True), \
              patch("app.services.user_service.get_user_info", return_value={"is_admin": True}), \
              patch("app.services.simulation.get_session", return_value=mock_session), \
-             patch("app.services.wallet_service.sync_real_funds"):
+             patch("app.services.real_broker_state.refresh", new_callable=AsyncMock,
+                   return_value={"orders": kotak_orders, "open_orders": [kotak_orders[1]], "wallet_balance": 50000.0}) as refresh:
             resp = client.post(
                 "/api/kotak/reconcile?session_id=sess_test",
                 headers=ADMIN_HEADERS,
             )
 
+        refresh.assert_awaited_once_with(mock_session, mock_kotak_svc)
         assert resp.status_code == 200
         data = resp.json()
         assert "open_orders" in data

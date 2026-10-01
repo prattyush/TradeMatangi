@@ -13,7 +13,7 @@ import SessionSwitcher from './components/SessionSwitcher'
 import GuardRailPopup from './components/GuardRailPopup'
 import PatternAlertToast, { PatternAlert } from './components/PatternAlertToast'
 import SettingsModal, { loadFundsRatios, loadTargetDeviationPct, loadBrokeragePerOrder, loadStrategyIntervalSecs, loadAutostopTriggerType, loadAutostopDeviationPct, loadHistoricalDays, loadPnlPctMode, loadBreakevenMode, loadTargetProfitBufferTicks, loadAggrSlOnlyInProfit, loadAutoStartEventSnapshots, loadStepwiseLabelingPopupEnabled, loadLabelingModeByType, loadTradingRocRatioMode, FundsRatios, SizingMode, RiskRatios, loadSizingMode, loadRiskRatios, loadDefaultSlPct } from './components/SettingsModal'
-import { StrategyResponse, StartStrategyRequest, Order, OpenOptionContract } from './services/api'
+import { StrategyResponse, StartStrategyRequest, Order, OpenOptionContract, BrokerOrder } from './services/api'
 import LoginScreen from './components/LoginScreen'
 import TradeAnalysis from './components/TradeAnalysis'
 import StepwiseLabelPopup from './components/StepwiseLabelPopup'
@@ -25,6 +25,7 @@ import { useSnapshot } from './hooks/useSnapshot'
 import api, { OHLCCandle } from './services/api'
 import { IndicatorCandle, RocRatioMode } from './indicators/optionsRoc'
 import { selectPaperResumePanes } from './paperResume'
+import { brokerSnapshotSessionId } from './brokerSnapshot'
 
 const FIXED_USER = { userId: 'abc12300-0000-0000-0000-000000000001', username: 'abc123' }
 
@@ -247,6 +248,7 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
   const strategySyncVersionRef = useRef(0)
   const [liveFeed, setLiveFeed] = useState<{ selected_provider?: string; actual_provider?: string; connection?: string } | null>(null)
   useEffect(() => setLiveFeed(null), [sim.sessionId])
+  const [brokerOrdersSnapshot, setBrokerOrdersSnapshot] = useState<{ sessionId: string; orders: BrokerOrder[] } | null>(null)
   const [brokerError, setBrokerError] = useState<string | null>(null)
   const [isRealTradingUser, setIsRealTradingUser] = useState(false)
   const [guardrailPopup, setGuardrailPopup] = useState<{ type: 'BLOCK' | 'COOLDOWN' | 'BAN'; reason: string } | null>(null)
@@ -1309,6 +1311,14 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
       if (sim.sessionId) void refreshRunningStrategies(sim.sessionId)
     } else if (event.type === 'order_updated') {
       if (sim.sessionId) void sim.refreshOpenOrders(sim.sessionId)
+    } else if (event.type === 'broker_snapshot') {
+      const snapshotSessionId = brokerSnapshotSessionId(event, simRef.current.sessionId)
+      if (snapshotSessionId) {
+        const snapshot = event as unknown as import('./services/api').BrokerSnapshot
+        sim.applyBrokerSnapshot(snapshotSessionId, snapshot)
+        setBrokerOrdersSnapshot({ sessionId: snapshotSessionId, orders: snapshot.orders })
+        setBrokerError(snapshot.wallet_error ?? null)
+      }
     } else if (event.type === 'broker_error') {
       setBrokerError(event.message as string)
     } else if (event.type === 'new_trade') {
@@ -1334,7 +1344,7 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
       const peBar = mkCandle(event.bar_open_pe, event.bar_high_pe, event.bar_low_pe, event.bar_close_pe, event.bar_time)
       sim.handleBarPaused(event.bar_index as number, event.total_bars as number, eqBar, ceBar, peBar, eventSessionId)
     }
-  }, [sim.sessionId, sim.setLatestTick, sim.handleSessionEnded, sim.handleOrderFilled, sim.handleOrderCancelled, sim.addOpenOrder, sim.addTradeFromSSE, sim.handleBarPaused, setGuardrailPopup, setRunningStrategies, captureSnapshot])
+  }, [sim.sessionId, sim.applyBrokerSnapshot, sim.setLatestTick, sim.handleSessionEnded, sim.handleOrderFilled, sim.handleOrderCancelled, sim.addOpenOrder, sim.addTradeFromSSE, sim.handleBarPaused, setGuardrailPopup, setRunningStrategies, captureSnapshot])
 
   const handleSSEReconnect = useCallback((sessionId?: string) => {
     if (sessionId && sessionId !== sim.sessionId) return
@@ -2753,24 +2763,17 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
             trades={sim.trades}
             historicalTrades={sim.historicalTrades}
             sessionType={sim.sessionType}
+            brokerOrders={brokerOrdersSnapshot?.sessionId === sim.sessionId ? brokerOrdersSnapshot.orders : undefined}
             onRefresh={sim.sessionId ? async () => {
-              const result = await api.reconcileKotakOrders(sim.sessionId!)
-              // Fetch trades and positions in parallel so P&L recalculates correctly.
-              const [trades] = await Promise.all([
-                api.getTrades(sim.sessionId!),
-                sim.fetchAndUpdatePosition(),  // also bumps walletRefreshKey
-              ])
-              sim.setTrades(trades)
-              if (result.wallet_error) {
-                setBrokerError(result.wallet_error)
-                return
-              }
-              const openCount = result.open_orders?.length ?? 0
-              if (result.reconciled > 0 || openCount > 0) {
-                const parts: string[] = []
-                if (result.reconciled > 0) parts.push(`${result.reconciled} fill(s) reconciled`)
-                if (openCount > 0) parts.push(`${openCount} order(s) still open on Kotak`)
-                setBrokerError(parts.join(' — '))
+              const sessionId = sim.sessionId!
+              try {
+                const result = await api.reconcileKotakOrders(sessionId)
+                if (simRef.current.sessionId !== sessionId) return
+                sim.applyBrokerSnapshot(sessionId, result)
+                setBrokerOrdersSnapshot({ sessionId, orders: result.orders })
+                setBrokerError(result.wallet_error ?? null)
+              } catch (error) {
+                if (simRef.current.sessionId === sessionId) setBrokerError(error instanceof Error ? error.message : String(error))
               }
             } : undefined}
             roundTrips={roundTrips}

@@ -574,7 +574,7 @@ export function useSimulation() {
     orderType: 'TARGET' | 'LIMIT' | 'STOPLOSS',
     price: number,
     quantity: number | null,
-    opts: { is_stoploss?: boolean; funds_ratio_pct?: number; risk_pct?: number; risk_ratio_pct?: number; right?: string; strike?: number; expiry?: string; target_deviation_pct?: number; entry_sl_price?: number; group_id?: string } = {},
+    opts: { execute_immediately?: boolean; is_stoploss?: boolean; funds_ratio_pct?: number; risk_pct?: number; risk_ratio_pct?: number; right?: string; strike?: number; expiry?: string; target_deviation_pct?: number; entry_sl_price?: number; group_id?: string } = {},
   ) => {
     if (!state.sessionId) return
     try {
@@ -851,6 +851,25 @@ export function useSimulation() {
     await api.nextBar(state.sessionId)
   }, [state.sessionId, state.stepwise])
 
+  const applyBrokerSnapshot = useCallback((sessionId: string, snapshot: import('../services/api').BrokerSnapshot) => {
+    setState(s => {
+      if (s.sessionId !== sessionId || s.sessionType !== 'real') return s
+      const findPosition = (right: string | null, strike: number | null) => {
+        const matches = snapshot.positions.filter(p => p.right === right
+          && (right === null || (p.strike === strike && p.expiry === s.sessionExpiry)))
+        const net = matches.reduce((n, p) => n + p.quantity * (p.side === 'LONG' ? 1 : p.side === 'SHORT' ? -1 : 0), 0)
+        const side = net > 0 ? 'LONG' : net < 0 ? 'SHORT' : 'FLAT'
+        const same = matches.filter(p => p.side === side)
+        const qty = same.reduce((n, p) => n + p.quantity, 0)
+        return { ...FLAT_POSITION(s.symbol), side, quantity: Math.abs(net),
+          avg_entry_price: qty ? same.reduce((n, p) => n + p.quantity * p.avg_entry_price, 0) / qty : 0 } as Position
+      }
+      return { ...s, trades: snapshot.trades, historicalTrades: [], openOrders: snapshot.application_orders,
+        position: findPosition(null, null), positionCE: findPosition('CE', s.sessionStrikeCE),
+        positionPE: findPosition('PE', s.sessionStrikePE), walletRefreshKey: s.walletRefreshKey + 1 }
+    })
+  }, [])
+
   const setTrades = useCallback((trades: Trade[]) => {
     const equityTick = latestEquityTickRef.current
     setState(s => {
@@ -872,7 +891,7 @@ export function useSimulation() {
       api.getPosition(state.sessionId, 'CE'),
       api.getPosition(state.sessionId, 'PE'),
     ])
-    setState(s => ({
+    setState(s => s.sessionId !== state.sessionId ? s : ({
       ...s,
       position: posEq,
       positionCE: posCE,
@@ -889,7 +908,12 @@ export function useSimulation() {
     // Use addTradeAndDetectLabels which handles both adding the trade AND running
     // RT open/close detection in the same setState (avoids race with position update).
     setState(s => {
-      if (s.trades.some(t => t.trade_id === trade.trade_id)) return s
+      if (trade.session_id !== s.sessionId) return s
+      const existing = s.trades.find(t => t.trade_id === trade.trade_id)
+      if (existing) {
+        if (s.sessionType !== 'real' || trade.quantity <= existing.quantity) return s
+        return { ...s, trades: s.trades.map(t => t.trade_id === trade.trade_id ? trade : t) }
+      }
       // Delegate to addTradeAndDetectLabels logic inline to keep it atomic
       const updatedTrades = [...s.trades, trade]
       if (!s.sessionId) return { ...s, trades: updatedTrades }
@@ -921,7 +945,7 @@ export function useSimulation() {
       right === 'PE' ? api.getPosition(state.sessionId, 'PE') : Promise.resolve(null),
       (!right) ? api.getPosition(state.sessionId) : Promise.resolve(null),
     ])
-    setState(s => ({
+    setState(s => s.sessionId !== trade.session_id ? s : ({
       ...s,
       walletRefreshKey: s.walletRefreshKey + 1,
       ...(posCE ? { positionCE: posCE } : {}),
@@ -1041,6 +1065,7 @@ export function useSimulation() {
     clearOrderError,
     incrementWalletRefreshKey,
     setTrades,
+    applyBrokerSnapshot,
     addTradeFromSSE,
     fetchAndUpdatePosition,
     handleBarPaused,

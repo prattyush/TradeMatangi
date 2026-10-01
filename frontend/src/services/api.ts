@@ -254,6 +254,37 @@ export interface SessionGroupResponse {
   members: SessionGroupMember[]
 }
 
+export interface BrokerSnapshot {
+  reconciled: number
+  updated: number
+  imported: number
+  orders: BrokerOrder[]
+  open_orders: BrokerOrder[]
+  trades: Trade[]
+  positions: (Position & { right: string | null; strike: number | null; expiry: string | null })[]
+  application_orders: Order[]
+  snapshot_revision: string
+  wallet_balance: number | null
+  wallet_error?: string | null
+}
+
+export interface BrokerOrder {
+  kotak_order_id: string
+  status: string
+  side: string
+  symbol: string
+  exchange: string
+  quantity: number
+  filled_quantity: number
+  limit_price: number
+  trigger_price: number
+  filled_price: number
+  order_type: string
+  order_time: string
+  product: string
+  reject_reason: string
+}
+
 export interface WalletResponse {
   broker_funds_updated_at?: number | null
   user_id: string
@@ -1009,7 +1040,7 @@ const api = {
     order_type: 'TARGET' | 'LIMIT' | 'STOPLOSS',
     price: number,
     quantityOrRatio: number | null,
-    opts: { is_stoploss?: boolean; funds_ratio_pct?: number; risk_pct?: number; risk_ratio_pct?: number; right?: string; strike?: number; expiry?: string; target_deviation_pct?: number; entry_sl_price?: number; group_id?: string } = {},
+    opts: { execute_immediately?: boolean; is_stoploss?: boolean; funds_ratio_pct?: number; risk_pct?: number; risk_ratio_pct?: number; right?: string; strike?: number; expiry?: string; target_deviation_pct?: number; entry_sl_price?: number; group_id?: string } = {},
   ): Promise<Order> {
     const { target_deviation_pct, entry_sl_price, group_id, ...restOpts } = opts
     const body: Record<string, unknown> = { session_id, side, order_type, ...restOpts }
@@ -1074,7 +1105,10 @@ const api = {
       headers: { 'Content-Type': 'application/json', ..._authHeaders() },
       body: JSON.stringify(body),
     })
-    if (!res.ok) throw new Error(`Update order failed: ${res.status}`)
+    if (!res.ok) {
+      const error = await res.json().catch(() => ({}))
+      throw new Error(typeof error.detail === 'string' ? error.detail : `Update order failed: ${res.status}`)
+    }
     return res.json()
   },
 
@@ -1086,7 +1120,10 @@ const api = {
       headers: { 'Content-Type': 'application/json', ..._authHeaders() },
       body: JSON.stringify(body),
     })
-    if (!res.ok) throw new Error(`Convert order failed: ${res.status}`)
+    if (!res.ok) {
+      const error = await res.json().catch(() => ({}))
+      throw new Error(typeof error.detail === 'string' ? error.detail : `Convert order failed: ${res.status}`)
+    }
     return res.json()
   },
 
@@ -1136,7 +1173,10 @@ const api = {
     })
     // 404 means the order was already filled or cancelled (SSE race) — treat as success
     if (res.status === 404) return null
-    if (!res.ok) throw new Error(`Cancel order failed: ${res.status}`)
+    if (!res.ok) {
+      const error = await res.json().catch(() => ({}))
+      throw new Error(typeof error.detail === 'string' ? error.detail : `Cancel order failed: ${res.status}`)
+    }
     return res.json()
   },
 
@@ -1410,7 +1450,10 @@ const api = {
       headers: { 'Content-Type': 'application/json', ..._authHeaders() },
       body: JSON.stringify({ session_id, trigger_price, right }),
     })
-    if (!res.ok) throw new Error(`Bulk SL update failed: ${res.status}`)
+    if (!res.ok) {
+      const error = await res.json().catch(() => ({}))
+      throw new Error(typeof error.detail === 'string' ? error.detail : `Bulk SL update failed: ${res.status}`)
+    }
     return res.json()
   },
 
@@ -1420,7 +1463,10 @@ const api = {
       headers: { 'Content-Type': 'application/json', ..._authHeaders() },
       body: JSON.stringify({ session_id, new_order_type, right, price: price ?? null }),
     })
-    if (!res.ok) throw new Error(`Bulk convert failed: ${res.status}`)
+    if (!res.ok) {
+      const error = await res.json().catch(() => ({}))
+      throw new Error(typeof error.detail === 'string' ? error.detail : `Bulk convert failed: ${res.status}`)
+    }
     return res.json()
   },
 
@@ -1483,12 +1529,15 @@ const api = {
     return res.json()
   },
 
-  async reconcileKotakOrders(sessionId: string): Promise<{ reconciled: number; open_orders: unknown[]; wallet_balance: number | null; wallet_error?: string | null }> {
+  async reconcileKotakOrders(sessionId: string): Promise<BrokerSnapshot> {
     const res = await fetch(
       `${BACKEND_URL}/api/kotak/reconcile?session_id=${sessionId}`,
       { method: 'POST', headers: _authHeaders() }
     )
-    if (!res.ok) throw new Error(`Kotak reconcile failed: ${res.status}`)
+    if (!res.ok) {
+      const error = await res.json().catch(() => ({}))
+      throw new Error(typeof error.detail === 'string' ? error.detail : `Kotak reconcile failed: ${res.status}`)
+    }
     return res.json()
   },
 
