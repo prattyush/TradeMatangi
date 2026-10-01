@@ -815,6 +815,191 @@ stop-loss placement, and streaming token resolution against a mocked Kotak maste
 All broker order calls are mocked; no actual order is placed. Deploy/restart the
 backend to activate the formatter correction.
 
+## Kotak funds and independent historical providers — 2026-10-01
+
+### Final requirements
+
+Real Trading displays the broker's available funds; Paper Trading retains its
+independent date-scoped wallet. Fetch fresh Kotak funds on every accepted Start
+or restart, reconciliation, website chart-toolbar refresh, and real trade-history
+refresh. There is no periodic broker polling and no funds request per tick or
+ordinary wallet read. Later manual refreshes do not change starting session
+capital; the next Start captures a new starting capital.
+
+The historical setting applies **only to today's date in Asia/Kolkata**:
+
+| Data | Policy |
+|---|---|
+| Earlier dates, including replay/stepwise and chart context | Breeze only; never fall back to Kite |
+| Today | Admin-selected Breeze or Kite |
+| Today, selected provider cannot supply usable history | Try the other provider only with the fallback checkbox enabled |
+| Live streaming | Existing streaming setting and its separate fallback policy |
+
+The defaults are Breeze and fallback disabled. The earlier live-provider fallback
+table in this document remains a streaming policy, not a historical policy.
+Desktop real trading remains deferred. Desktop Paper/chart-only refresh does not
+fetch real-account funds.
+
+### Sprint W — Broker funds and wallet separation: implemented
+
+**Root cause.** Real Start updated the legacy wallet with `reset()`, but the
+session/widget read `real:<date>`. An already-created real ledger could retain
+zero. Saved-session resume fetched funds a second time, updated only session
+capital, and swallowed failure. Reconciliation had the same ledger mismatch.
+Equity wallet display additionally added estimated local margin to available
+cash, producing a number that was not the broker's funds amount.
+
+**Implemented behaviour.** Kotak `limits().Net` is fetched once for each accepted
+Start. A valid zero or negative amount is preserved; absent, empty, nonnumeric,
+boolean, NaN, and infinite values fail rather than becoming zero. New sessions,
+active-session reuse, and saved-session rebuilding all use the fetched amount
+and canonical `real:<date>` ledger. Saved legacy real records are normalised on
+resume. Broker-fetch failure returns 502; persistence failure returns 503.
+Neither failure resets the Paper/simulation wallet.
+
+The real ledger now stores `broker_balance` and `broker_funds_updated_at` alongside
+`current_balance`. The latter continues serving existing local reservations and
+settlement accounting; it is not used as the displayed broker balance. Ledger
+updates preserve the additional snapshot fields. Real wallet GET reads the
+snapshot consistently from DynamoDB so another worker's explicit refresh is
+visible. It does not fetch Kotak, copy Paper funds, or add estimated margin.
+A legacy real ledger without a snapshot requests an explicit refresh rather than
+showing an unrelated default balance.
+
+`POST /api/wallet/refresh?session_id=...` validates session ownership and Real type,
+fetches Kotak, persists the snapshot/local mirror, and returns `WalletResponse`.
+That response adds optional `broker_funds_updated_at`; existing Paper/simulation
+response fields remain compatible. Reconciliation synchronises funds after local
+fill/cancellation processing and reports a `wallet_error` if the sync fails.
+
+The website chart refresh invokes this endpoint only for real sessions. The
+trade-history refresh uses the existing reconciliation operation, which already
+fetches funds. Failed refreshes preserve the last successful snapshot and show an
+error. The widget binds its displayed value to date/session context, preventing a
+previous real balance from flashing in Paper Trading. The real-session
+`Feed <provider> · connected` status line was removed from the website; underlying
+feed-status handling and error events remain available.
+
+### Sprint H — Today-only historical selection: implemented
+
+Admin Settings contains **Today's Historical Data**, with Breeze/Kite selection
+and an unchecked-by-default fallback checkbox. Help text explicitly states that
+past dates always use Breeze for one-second replay. GET/PUT
+`/api/admin/historical-source` are admin-only and use this payload:
+
+```json
+{"source":"breeze","allow_fallback":false}
+```
+
+Both values are persisted atomically as JSON under the existing BrokerTokens
+`historical_data_policy` key. A failed save returns an error instead of reporting
+success. No new database table, infrastructure, or live-stream reconnect is
+introduced. Worker policy caching is bounded to ten seconds; an in-flight
+historical operation retains its captured policy. Saving settings invalidates
+that worker's historical result cache and the website chart cache. Website chart
+results also expire after ten seconds, avoiding indefinite reuse of another
+provider's today baseline.
+
+`historical_data_service` owns policy resolution, provider adaptation, request
+coalescing, short-lived dataframe caching, source/cadence metadata, and optional
+fallback. It reuses the existing Breeze and Kite SDK integration. Results include
+the actual provider and dataframe, not merely a filename that a later loader
+might interpret as Breeze. Cache keys include instrument/contract/date, policy,
+and data root. Breeze's existing parquet/legacy-pickle files remain distinct from
+Kite's `-kite1m.parquet` files.
+
+Normal today reads retain the existing Breeze file freshness policy (ten minutes)
+and coalesce immediate fetch/load calls. Explicit website and desktop chart
+refresh bypasses today's file TTL using `force_refresh`; paired consumers share
+one result. With fallback enabled, fresh alternate data is preferred to unusable
+or stale selected-provider data. If no fresh provider succeeds, usable cached
+today data can remain as a stale presentation baseline. Disabled fallback never
+reads the other provider's cache or calls its historical API. Past-date failures
+never trigger Kite history. Missing history remains best effort for live-session
+initialization; it does not convert cached data into an executable live quote.
+
+### Sprint I — Website/desktop integration: implemented
+
+The existing public equity/options fetch and dataframe entry points now dispatch
+today requests through the historical service, while past reads retain the
+Breeze path. This covers website charts/pre-session data/underlying historical
+price lookup, session historical initialization, native-cadence tick iteration,
+desktop initial history, and desktop live-chart refresh. Current-price option
+strike discovery retains its existing Breeze quote helper when Breeze is selected;
+quotes are separate from historical loading. With Kite selected, its historical
+price lookup uses the configured service rather than a Breeze parquet shortcut.
+
+Unconditional Kite gap-fill and live strategy/AI-history calls were replaced by
+configured historical loading. Selecting Kite streaming therefore does not
+implicitly select Kite history. Request scopes keep policy and actual results
+consistent across fetch/read pairs and worker-thread calls. Long-lived engines
+release the originating HTTP scope and retain a history scope only during startup;
+later strategy backfills can see newer data. Desktop refresh shares a scope across
+its concurrent chart/raw-second requests.
+
+Kite candles retain their native minute timestamps and OHLC values. They are not
+forward-filled into artificial seconds and never enter the desktop raw-second
+cache. Breeze past-date one-second replay, IST-as-UTC chart timestamps, aligned
+candle boundaries, history-only order suppression, buffered ticks, and the
+existing handover/watermark logic remain in place.
+
+Blocking historical fetch/read work in chart and startup routes now runs in
+worker threads. Breeze client authentication is serialised so simultaneous
+history workers initialise one shared authenticated client rather than repeatedly
+calling `generate_session()` and invalidating an existing live connection.
+
+### Diagnostics and lessons
+
+`real_funds_synced` records user/ledger/reason once per explicit synchronisation.
+`historical_policy_updated` records policy changes. `historical_fallback` and
+`historical_stale_cache` identify provider decisions and are throttled per
+instrument/policy to one warning per minute. No new logs occur per live tick or
+candle.
+
+Lessons from implementation:
+
+- Broker snapshots and locally reserved cash have different meanings. Persist
+  both explicitly; displaying a locally reconstructed number as broker funds
+  conceals reconciliation drift.
+- Resetting a legacy wallet does not synchronise an independent session ledger.
+  Startup, resume, widget reads, and reconciliation must use the same identity.
+- Provider selection must govern hidden gap/strategy loaders as well as chart
+  endpoints. Source-separated files alone do not prevent a later reader from
+  selecting the wrong file.
+- Cadence is part of data provenance. A minute bar contains a minute's OHLC;
+  repeating it every second does not produce valid second-level replay.
+- An HTTP request cache must not survive for the lifetime of a background engine.
+  Otherwise a seemingly helpful fetch/read optimisation freezes future backfill.
+- Moving SDK calls into threads requires protecting shared authentication
+  initialization, not creating additional broker clients.
+- Test fixtures must isolate data roots and ledger storage. Older tests assumed
+  synchronous direct-provider registration; shared-hub subscriptions must be
+  awaited and checked through the hub. These fixtures were updated accordingly.
+
+### Validation and rollout
+
+652 backend regression tests passed across the new wallet/history suites, Kotak
+startup/symbol/reconciliation, shared feeds, real/Paper startup tasks, Breeze/Kite,
+historical data APIs/loaders, simulation, leverage, take-profit, desktop live
+refresh/trading, and Paper wallet/recovery/end-of-day. This includes 58 new
+wallet/history cases. Frontend TypeScript checking, website production assets,
+and desktop frontend type/production builds passed. The existing bundle-size
+warnings, one dateutil deprecation, and two pre-existing pytest asyncio-mark
+warnings remain. Automated broker access and orders are mocked; there is no
+claim of live-broker or native Windows installer acceptance. The sandbox's threaded test-client wakeup issue is handled only in a
+temporary test runner with bounded selector waits; production event loops are not
+modified. Older tests' unmocked DB calls and external data-root assumptions were
+replaced with isolated fixtures.
+
+Deploy/restart the backend and website together. No bulk wallet migration is
+required: real Start or explicit refresh creates the broker snapshot and real
+resume repairs legacy ledger identity. Settings missing from storage use the
+Breeze/unchecked defaults. Market-hours acceptance should verify ₹900 on initial
+Start/restart, Paper balance unchanged, chart/trade-history refresh after an
+external broker balance change, and Kite live ticks with Breeze today/history.
+Also verify the inverse today selection, checkbox-enabled fallback, desktop raw
+seconds remaining empty for minute history, and unchanged past-date replay.
+
 ## Original requirements
 
 # Improvements

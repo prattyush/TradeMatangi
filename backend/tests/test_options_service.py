@@ -476,6 +476,14 @@ class TestFetchOptionsDay:
 # ---------------------------------------------------------------------------
 
 class TestFetchOptionsHistorical:
+    @pytest.fixture(autouse=True)
+    def default_history_policy(self, monkeypatch):
+        from app.services import historical_data_service as history
+        history._results.clear()
+        monkeypatch.setattr(history, "get_policy", lambda: history.HistoricalPolicy())
+        yield
+        history._results.clear()
+
     def _make_full_day_df(self, date: str) -> pd.DataFrame:
         idx = pd.date_range(
             start=f"{date} 09:15:00", end=f"{date} 15:29:59", freq="1s"
@@ -502,7 +510,7 @@ class TestFetchOptionsHistorical:
         max_active = 0
         guard = threading.Lock()
 
-        def fake_fetch(*_args):
+        def fake_fetch(*_args, **_kwargs):
             nonlocal active, max_active
             with guard:
                 active += 1

@@ -12,7 +12,9 @@ function formatINR(amount: number): string {
 }
 
 export default function WalletWidget({ date, refreshKey, sessionId }: Props) {
-  const [wallet, setWallet] = useState<WalletResponse | null>(null)
+  const [snapshot, setSnapshot] = useState<{ context: string; wallet: WalletResponse } | null>(null)
+  const context = `${date}:${sessionId ?? ''}`
+  const wallet = snapshot?.context === context ? snapshot.wallet : null
   const [loading, setLoading] = useState(false)
 
   useEffect(() => {
@@ -20,11 +22,11 @@ export default function WalletWidget({ date, refreshKey, sessionId }: Props) {
     let cancelled = false
     setLoading(true)
     api.getWallet(date, sessionId)
-      .then(w => { if (!cancelled) setWallet(w) })
+      .then(w => { if (!cancelled) setSnapshot({ context, wallet: w }) })
       .catch(() => {/* backend may not be running */})
       .finally(() => { if (!cancelled) setLoading(false) })
     return () => { cancelled = true }
-  }, [date, refreshKey, sessionId])
+  }, [date, refreshKey, sessionId, context])
 
   const balance = wallet?.capital_balance ?? wallet?.balance ?? null
   const color = balance !== null && balance < 0 ? '#f85149' : '#3fb950'

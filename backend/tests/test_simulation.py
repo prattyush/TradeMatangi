@@ -4,6 +4,7 @@ import pytest
 import pandas as pd
 import numpy as np
 from unittest.mock import patch
+from types import SimpleNamespace
 
 from app.services import simulation as sim
 from app.models.schemas import SimulationState
@@ -33,7 +34,9 @@ def clean_sessions():
 def no_wallet():
     with patch("app.services.wallet_service.get_balance", return_value=150_000.0), \
          patch("app.services.wallet_service._write_wallet_to_db"), \
-         patch("app.services.simulation._upsert_session_to_db"):
+         patch("app.services.simulation._upsert_session_to_db"), \
+         patch("app.services.wallet_service.get_ledger_balance", return_value=150_000.0), \
+         patch("app.services.guardrail_service.initialize_guardrails"):
         yield
 
 
@@ -171,15 +174,15 @@ class TestBackfillBarHistory:
 
         assert result == []
 
-    def test_paper_equity_uses_kite_1min(self):
-        """Paper session equity backfill calls fetch_kite_1min, not load_dataframe."""
+    def test_paper_equity_uses_configured_history(self):
+        """Paper session equity backfill uses the shared historical policy."""
         date = "2026-05-06"
         df = self._make_df(date, 360)
         slot_ts = int(pd.Timestamp(f"{date} 09:21:00", tz="UTC").timestamp())
 
         session = sim.create_session("NIFTY", date, "09:15:00", 1.0, session_type="paper")
 
-        with patch("app.services.kite_service.fetch_kite_1min", return_value=df) as mock_kite, \
+        with patch("app.services.historical_data_service.load_history", return_value=SimpleNamespace(frame=df)) as mock_kite, \
              patch("app.services.data_loader.load_dataframe") as mock_breeze:
             result = sim._backfill_bar_history(session, None, slot_ts)
 
@@ -187,8 +190,8 @@ class TestBackfillBarHistory:
         mock_breeze.assert_not_called()
         assert len(result) == 2
 
-    def test_real_options_uses_kite_1min_options(self):
-        """Real session options backfill calls fetch_kite_1min_options, not load_options_dataframe."""
+    def test_real_options_uses_configured_history(self):
+        """Real session options backfill uses the shared historical policy."""
         date = "2026-05-06"
         df = self._make_df(date, 360)
         slot_ts = int(pd.Timestamp(f"{date} 09:21:00", tz="UTC").timestamp())
@@ -205,9 +208,9 @@ class TestBackfillBarHistory:
 
         def fake_kite_options(symbol, date_, strike, expiry, right):
             captured.update({"strike": strike, "right": right})
-            return df
+            return SimpleNamespace(frame=df)
 
-        with patch("app.services.kite_service.fetch_kite_1min_options", fake_kite_options), \
+        with patch("app.services.historical_data_service.load_history", fake_kite_options), \
              patch("app.services.options_service.load_options_dataframe") as mock_breeze:
             result = sim._backfill_bar_history(session, "PE", slot_ts)
 
@@ -219,14 +222,14 @@ class TestBackfillBarHistory:
     def test_paper_backfill_includes_live_bars_up_to_slot(self):
         """Paper backfill with data beyond session start time returns bars up to slot."""
         date = "2026-05-06"
-        # 55 minutes of 1-second data: 09:15 to 10:10 — simulates Kite returning live data
+        # 55 minutes of 1-second data: 09:15 to 10:10 — simulates a provider returning recent data
         df = self._make_df(date, 55 * 60)
         # User registers command at 10:07; first bar close at 10:09 (slot = 10:06)
         slot_ts = int(pd.Timestamp(f"{date} 10:06:00", tz="UTC").timestamp())
 
         session = sim.create_session("NIFTY", date, "09:15:00", 1.0, session_type="paper")
 
-        with patch("app.services.kite_service.fetch_kite_1min", return_value=df):
+        with patch("app.services.historical_data_service.load_history", return_value=SimpleNamespace(frame=df)):
             result = sim._backfill_bar_history(session, None, slot_ts)
 
         # 09:15–10:06 = 51 min = 17 completed 3-min candles; capped at _AI_MAX_BARS (15)

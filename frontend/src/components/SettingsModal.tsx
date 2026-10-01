@@ -1,3 +1,4 @@
+import { clearChartDataCache } from '../services/chartDataCache'
 import { Fragment, useState, useEffect, useRef } from 'react'
 import api from '../services/api'
 import KotakTOTPModal from './KotakTOTPModal'
@@ -433,6 +434,10 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
   // Admin section — live streaming source
   const [streamSource, setStreamSource] = useState<'fyers' | 'kite' | 'kotak' | 'breeze'>('kite')
 
+  const [historicalSource, setHistoricalSource] = useState<'breeze' | 'kite'>('breeze')
+  const [historicalFallback, setHistoricalFallback] = useState(false)
+  const [historicalSaving, setHistoricalSaving] = useState(false)
+
   // Real trading whitelist (admin)
   const [whitelistOpen, setWhitelistOpen] = useState(false)
   const [whitelist, setWhitelist] = useState<{ email: string; added_at?: string }[]>([])
@@ -580,6 +585,8 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
           setFyersRefreshMasked(t.fyers_refresh)
         }).catch(() => {})
         api.getStreamSource().then(r => setStreamSource(r.source)).catch(() => {})
+        api.getHistoricalSource().then(r => { setHistoricalSource(r.source); setHistoricalFallback(r.allow_fallback) })
+          .catch(() => setStatus('Could not load historical settings'))
       }
 
       // Load Kotak status for real trading users
@@ -806,6 +813,20 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
     } catch {
       setStatus('Failed to save tokens')
     }
+  }
+
+  const saveHistoricalSource = async (source: 'breeze' | 'kite', fallback: boolean) => {
+    setHistoricalSaving(true)
+    try {
+      const saved = await api.setHistoricalSource(source, fallback)
+      clearChartDataCache()
+      setHistoricalSource(saved.source)
+      setHistoricalFallback(saved.allow_fallback)
+      setStatus("Today's historical settings saved")
+      setTimeout(() => setStatus(null), 2500)
+    } catch (error) {
+      setStatus(String(error))
+    } finally { setHistoricalSaving(false) }
   }
 
   const saveStreamSource = async (src: 'fyers' | 'kite' | 'kotak' | 'breeze') => {
@@ -2231,6 +2252,26 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
                     <div style={{ fontSize: 11, color: '#484f58' }}>
                       Tokens rotate daily. DDB values override accesskeys.ini.
                     </div>
+                  </div>
+                </div>
+
+                <div style={{ borderTop: '1px solid #21262d', paddingTop: 16 }}>
+                  <div style={{ fontSize: 12, color: '#f0883e', fontWeight: 600, marginBottom: 10 }}>
+                    TODAY’S HISTORICAL DATA
+                  </div>
+                  <select value={historicalSource} disabled={historicalSaving}
+                    onChange={e => void saveHistoricalSource(e.target.value as 'breeze' | 'kite', historicalFallback)}
+                    style={{ background: '#161b22', color: '#c9d1d9', border: '1px solid #30363d', borderRadius: 6, padding: '6px 10px' }}>
+                    <option value="breeze">ICICI Breeze (1 second)</option>
+                    <option value="kite">Kite (1 minute)</option>
+                  </select>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, marginTop: 10 }}>
+                    <input type="checkbox" checked={historicalFallback} disabled={historicalSaving}
+                      onChange={e => void saveHistoricalSource(historicalSource, e.target.checked)} />
+                    Allow fallback to the other historical provider
+                  </label>
+                  <div style={{ fontSize: 11, color: '#8b949e', marginTop: 6 }}>
+                    Applies only to today’s historical data, independently of live streaming. Earlier dates always use Breeze for one-second replay.
                   </div>
                 </div>
 

@@ -12,6 +12,7 @@ from __future__ import annotations
 import configparser
 import logging
 import os
+import threading
 import pandas as pd
 from pathlib import Path
 
@@ -67,10 +68,11 @@ def _read_breeze_credentials() -> dict[str, str]:
 
 
 _cached_breeze = None
-_cached_breeze_creds: dict | None = None
+_cached_breeze_creds: tuple[str, str, str] | None = None
+_breeze_auth_lock = threading.Lock()
 
 
-def _get_breeze():
+def _get_breeze_unlocked():
     """Create and authenticate a BreezeConnect instance.
 
     Caches the instance by credential key so that multiple callers within the same
@@ -115,6 +117,12 @@ def _get_breeze():
     _cached_breeze = breeze
     _cached_breeze_creds = creds_key
     return breeze
+
+
+def _get_breeze():
+    """Share one authenticated client even when history workers initialise together."""
+    with _breeze_auth_lock:
+        return _get_breeze_unlocked()
 
 
 def _breeze_to_dataframe(records: list[dict]) -> pd.DataFrame:
@@ -194,7 +202,7 @@ def _fetch_day_paginated(breeze, sym_info: dict, date: str) -> list[dict]:
     return all_records
 
 
-def fetch_historical(symbol: str, date: str) -> Path:
+def _fetch_breeze_historical(symbol: str, date: str, *, force_refresh: bool = False) -> Path:
     """
     Ensure second-level OHLC data for symbol+date exists as a complete Parquet file
     in data/ohlcdata/.  Returns the parquet path.
@@ -214,8 +222,8 @@ def fetch_historical(symbol: str, date: str) -> Path:
         )
 
     import time as _time
-    from datetime import date as _date
-    is_today = date == _date.today().strftime("%Y-%m-%d")
+    from app.services.historical_data_service import is_today as _is_today
+    is_today = _is_today(date)
 
     _TODAY_CACHE_TTL = 600  # 10 minutes — re-fetch today's partial data after this
 
@@ -227,7 +235,7 @@ def fetch_historical(symbol: str, date: str) -> Path:
             if is_today:
                 age_secs = _time.time() - pq.stat().st_mtime
                 cached_df = pd.read_parquet(pq)
-                if len(cached_df) > 0 and age_secs < _TODAY_CACHE_TTL:
+                if len(cached_df) > 0 and age_secs < _TODAY_CACHE_TTL and not force_refresh:
                     logger.info(
                         "Parquet cache hit (partial today) for %s %s (%d rows, age %.0fs)",
                         symbol, date, len(cached_df), age_secs,
@@ -314,3 +322,10 @@ def fetch_historical(symbol: str, date: str) -> Path:
 
     logger.info("Saved %d rows to %s", len(df), pq)
     return pq
+
+
+def fetch_historical(symbol: str, date: str) -> Path:
+    from app.services.historical_data_service import is_today, load_history
+    if is_today(date):
+        return load_history(symbol, date).path
+    return _fetch_breeze_historical(symbol, date)

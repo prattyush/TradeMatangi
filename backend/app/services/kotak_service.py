@@ -648,9 +648,13 @@ class KotakNeoService:
         try:
             limits = client.limits()
             self._check_api_response(limits)
-            if isinstance(limits, dict):
-                return float(limits.get("Net", 0) or 0)
-            return 0.0
+            import math
+            if not isinstance(limits, dict) or limits.get("Net") in (None, "") or isinstance(limits.get("Net"), bool):
+                raise KotakError("Kotak limits response is missing available funds (Net)")
+            funds = float(limits["Net"])
+            if not math.isfinite(funds):
+                raise KotakError("Kotak limits response contains invalid available funds")
+            return funds
         except KotakError:
             raise
         except Exception as exc:

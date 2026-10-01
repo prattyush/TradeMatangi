@@ -255,6 +255,7 @@ export interface SessionGroupResponse {
 }
 
 export interface WalletResponse {
+  broker_funds_updated_at?: number | null
   user_id: string
   date: string
   balance: number
@@ -766,6 +767,7 @@ const api = {
     right: string,
     intervalMinutes?: number,
     historicalDays?: number,
+    forceRefresh = false,
   ): Promise<HistoricalDataResponse> {
     let url = `${BACKEND_URL}/api/data/options-historical`
       + `?symbol=${encodeURIComponent(symbol)}`
@@ -775,14 +777,16 @@ const api = {
       + `&right=${right}`
     if (intervalMinutes) url += `&interval_minutes=${intervalMinutes}`
     if (historicalDays) url += `&historical_days=${historicalDays}`
+    if (forceRefresh) url += '&force_refresh=true'
     const res = await fetch(url)
     if (!res.ok) throw new Error(`Options historical data fetch failed: ${res.status}`)
     return res.json()
   },
 
-  async getPreSession(symbol: string, tradingDate: string, startTime: string, intervalMinutes?: number): Promise<OHLCCandle[]> {
+  async getPreSession(symbol: string, tradingDate: string, startTime: string, intervalMinutes?: number, forceRefresh = false): Promise<OHLCCandle[]> {
     let url = `${BACKEND_URL}/api/data/pre-session?symbol=${encodeURIComponent(symbol)}&trading_date=${tradingDate}&start_time=${encodeURIComponent(startTime)}`
     if (intervalMinutes) url += `&interval_minutes=${intervalMinutes}`
+    if (forceRefresh) url += '&force_refresh=true'
     const res = await fetch(url)
     if (!res.ok) return []
     const data = await res.json()
@@ -1093,6 +1097,17 @@ const api = {
       headers: _authHeaders(),
     })
     if (!res.ok) throw new Error(`Wallet fetch failed: ${res.status}`)
+    return res.json()
+  },
+
+  async refreshRealWallet(sessionId: string): Promise<WalletResponse> {
+    const res = await fetch(`${BACKEND_URL}/api/wallet/refresh?session_id=${encodeURIComponent(sessionId)}`, {
+      method: 'POST', headers: _authHeaders(),
+    })
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}))
+      throw new Error(data.detail || `Broker wallet refresh failed: ${res.status}`)
+    }
     return res.json()
   },
 
@@ -1468,7 +1483,7 @@ const api = {
     return res.json()
   },
 
-  async reconcileKotakOrders(sessionId: string): Promise<{ reconciled: number; open_orders: unknown[]; wallet_balance: number | null }> {
+  async reconcileKotakOrders(sessionId: string): Promise<{ reconciled: number; open_orders: unknown[]; wallet_balance: number | null; wallet_error?: string | null }> {
     const res = await fetch(
       `${BACKEND_URL}/api/kotak/reconcile?session_id=${sessionId}`,
       { method: 'POST', headers: _authHeaders() }
@@ -1516,6 +1531,24 @@ const api = {
   },
 
   // ── Live streaming source (admin) ──────────────────────────────────────────
+
+  async getHistoricalSource(): Promise<{ source: 'breeze' | 'kite'; allow_fallback: boolean }> {
+    const res = await fetch(`${BACKEND_URL}/api/admin/historical-source`, { headers: _authHeaders() })
+    if (!res.ok) throw new Error(`Historical settings fetch failed: ${res.status}`)
+    return res.json()
+  },
+
+  async setHistoricalSource(source: 'breeze' | 'kite', allow_fallback: boolean): Promise<{ source: 'breeze' | 'kite'; allow_fallback: boolean }> {
+    const res = await fetch(`${BACKEND_URL}/api/admin/historical-source`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json', ..._authHeaders() },
+      body: JSON.stringify({ source, allow_fallback }),
+    })
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}))
+      throw new Error(data.detail || `Historical settings save failed: ${res.status}`)
+    }
+    return res.json()
+  },
 
   async getStreamSource(): Promise<{ source: 'fyers' | 'kite' | 'kotak' | 'breeze' }> {
     const res = await fetch(`${BACKEND_URL}/api/admin/stream-source`, {
