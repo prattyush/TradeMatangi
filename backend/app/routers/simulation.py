@@ -487,12 +487,9 @@ async def _start_simulation(
                 existing_session_id, user_id, req.symbol, req.date, req.instrument_type,
                 req.strike, req.strike_ce, req.strike_pe,
             )
-            # A website paper restart must keep the contracts selected in the
-            # previous session. SessionControls may send freshly computed ATM
-            # strikes even though the user did not request a contract change.
             website_paper = is_paper and existing_record.get("desktop_origin") != "desktop_paper"
-            req_ce = None if website_paper else (req.strike_ce if req.strike_ce is not None else req.strike)
-            req_pe = None if website_paper else (req.strike_pe if req.strike_pe is not None else req.strike)
+            req_ce = req.strike_ce if req.strike_ce is not None else req.strike
+            req_pe = req.strike_pe if req.strike_pe is not None else req.strike
             session = sim_svc.rebuild_session_from_db(
                 existing_record,
                 user_id=user_id,
@@ -501,6 +498,15 @@ async def _start_simulation(
                 brokerage_per_order=req.brokerage_per_order,
                 strategy_interval_secs=req.strategy_interval_secs,
             )
+            if website_paper:
+                try:
+                    from app.services.strategy_service import reload_running_strategies
+                    reload_running_strategies(session.session_id, session.user_id)
+                    if session.instrument_type == "options":
+                        sim_svc.resolve_website_paper_resume_contracts(session)
+                except Exception:
+                    sim_svc.stop_session(session, preserve_trading_state=True)
+                    raise
             # For real trading: re-sync wallet from broker so balance reflects any trades
             # that happened at the broker while the session was down.
             if is_real:

@@ -261,21 +261,25 @@ class MarketDataHub:
                 self._schedule_recovery(handle.group)
             elif tick.get("type") == "tick":
                 handle.group.connection, handle.group.reason = "connected", None
-            try:
-                handle.queue.put_nowait(payload)
-            except asyncio.QueueFull:
-                handle.dropped += 1
-                now = time.monotonic()
-                if handle.dropped == 1 or now - handle.last_drop_log >= 60:
-                    handle.last_drop_log = now
-                    logger.error("market_data_overflow consumer=%s instrument=%s dropped=%d", handle.consumer_id, key, handle.dropped)
-                # Make loss explicit. Consumers reconcile charts/state, never
-                # replay lost prices as executions.
-                handle.queue.get_nowait()
-                handle.queue.put_nowait({"type": "broker_error", "message": "Live data gap: consumer queue overflow", "stream_gap": True})
+            self._enqueue(handle, payload)
         for group, previous in groups.values():
             if group.status() != previous:
                 self.publish_status(group)
+
+    def _enqueue(self, handle, payload):
+        """Use each consumer's queue policy for both live and staged delivery."""
+        try:
+            handle.queue.put_nowait(payload)
+        except asyncio.QueueFull:
+            handle.dropped += 1
+            now = time.monotonic()
+            if handle.dropped == 1 or now - handle.last_drop_log >= 60:
+                handle.last_drop_log = now
+                logger.error("market_data_overflow consumer=%s instrument=%s dropped=%d", handle.consumer_id, handle.key, handle.dropped)
+            # Make loss explicit. Consumers reconcile charts/state, never
+            # replay lost prices as executions.
+            handle.queue.get_nowait()
+            handle.queue.put_nowait({"type": "broker_error", "message": "Live data gap: consumer queue overflow", "stream_gap": True})
 
     def _schedule_recovery(self, group):
         if id(group) in self.recovery_tasks:
@@ -346,8 +350,7 @@ class MarketDataHub:
                 if not old.closed:
                     while not replacement.queue.empty():
                         event = replacement.queue.get_nowait()
-                        if not old.queue.full():
-                            old.queue.put_nowait({**event, "feed_generation": group.generation})
+                        self._enqueue(old, {**event, "feed_generation": group.generation})
             return
         group.connection = "unavailable"
         self.publish_status(group)
@@ -414,8 +417,7 @@ class SessionFeed:
                 handle.queue = self.session.paper_tick_queue
             while not candidate_queue.empty():
                 event = candidate_queue.get_nowait()
-                if not self.session.paper_tick_queue.full():
-                    self.session.paper_tick_queue.put_nowait(event)
+                hub._enqueue(self.handles[0], event)
             break
         else:
             self.group.connection, self.group.reason = "unavailable", str(last_error)

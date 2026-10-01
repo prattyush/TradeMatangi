@@ -436,3 +436,25 @@ def reload_trades_from_db(session_id: str, *, strict: bool = False) -> None:
         if strict:
             raise
         _trades[session_id] = []
+
+
+def get_open_option_contracts(session_id: str, symbol: str) -> list[dict]:
+    """Exact-contract positions used by website resume and its positions API."""
+    trades = get_trades(session_id)
+    keys = {(t.right, t.strike, t.expiry) for t in trades
+            if t.symbol == symbol and t.right in ("CE", "PE") and t.strike is not None and t.expiry}
+    result = []
+    for right, strike, expiry in keys:
+        position = get_position(
+            session_id, symbol=symbol, right=right, strike=strike,
+            expiry=expiry, exact_contract=True,
+        )
+        if position.side == "FLAT" or position.quantity <= 0:
+            continue
+        opening_side = TradeSide.BUY if position.side == "LONG" else TradeSide.SELL
+        latest = max((t.timestamp for t in trades if
+                      (t.right, t.strike, t.expiry) == (right, strike, expiry)
+                      and t.side == opening_side), default=0)
+        result.append({"right": right, "strike": strike, "expiry": expiry,
+                       "position": position.model_dump(mode="json"), "last_opened_at": latest})
+    return sorted(result, key=lambda item: (item["last_opened_at"], item["expiry"], item["strike"]))

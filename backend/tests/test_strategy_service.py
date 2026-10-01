@@ -19,6 +19,37 @@ SESSION = "strat-test-session"
 USER_ID = "test-user-001"
 SYMBOL = "NIFTY"
 DATE = "2026-05-14"
+
+
+def test_reload_running_strategies_preserves_metadata_and_filters_owner():
+    from decimal import Decimal
+    table = MagicMock()
+    item = {"strategy_id": "restored", "session_id": SESSION, "user_id": USER_ID,
+            "strategy_type": "LockProfit", "symbol": SYMBOL, "right": "CE", "status": "RUNNING",
+            "metadata": {"triggered": True, "price": Decimal("120.5"), "progress": [Decimal("2")]}}
+    table.query.side_effect = [
+        {"Items": [item, {**item, "user_id": "other-user"}], "LastEvaluatedKey": {"strategy_id": "restored"}},
+        {"Items": [{**item, "strategy_id": "cancelled", "status": "CANCELLED"}]},
+    ]
+    resource = MagicMock()
+    resource.Table.return_value = table
+    with patch("app.services.db.get_dynamodb_resource", return_value=resource):
+        svc.reload_running_strategies(SESSION, USER_ID)
+    restored = svc.list_running(SESSION)
+    assert len(restored) == 1
+    assert restored[0].metadata == {"triggered": True, "price": 120.5, "progress": [2]}
+    assert table.query.call_args_list[1].kwargs["ExclusiveStartKey"] == {"strategy_id": "restored"}
+
+
+def test_failed_strategy_reload_does_not_replace_existing_registry():
+    table = MagicMock()
+    table.query.side_effect = RuntimeError("storage unavailable")
+    resource = MagicMock()
+    resource.Table.return_value = table
+    previous = svc._registry[SESSION] = [object()]
+    with patch("app.services.db.get_dynamodb_resource", return_value=resource), pytest.raises(RuntimeError):
+        svc.reload_running_strategies(SESSION, USER_ID)
+    assert svc._registry[SESSION] is previous
 INTERVAL = 180  # 3-minute bars
 
 # Base timestamp aligned to a 3-min slot boundary: 09:15:00 IST-as-UTC

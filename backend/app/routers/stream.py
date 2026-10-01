@@ -77,7 +77,8 @@ async def stream_session(
 ):
     session = sim_svc.get_session(session_id)
     if not session or session.user_id != (user_id or request_user_id):
-        logger.debug("sse_session_missing session_id=%s", session_id)
+        logger.debug("sse_session_missing session_id=%s reason=%s", session_id,
+                     "not_in_memory" if session is None else "ownership_mismatch")
         raise HTTPException(status_code=404, detail="Session not found")
     cursor = last_event_id if last_event_id is not None else _parse_event_id(last_event_id_header)
 

@@ -306,9 +306,11 @@ export function useSimulation() {
       sessionRuntimeRef.current[sid] = { ...sessionRuntimeRef.current[sid], sessionState: 'ended' }
     }
     setState(s => {
-      if (sid && sid !== s.sessionId) return s
+      const group = s.group ? { ...s.group, members: s.group.members.map(member =>
+        member.session_id === (sid ?? s.sessionId) ? { ...member, state: 'ended' as const } : member) } : s.group
+      if (sid && sid !== s.sessionId) return { ...s, group }
       return {
-        ...s, sessionState: 'ended', sseUrl: null,
+        ...s, group, sessionState: 'ended', sseUrl: null,
         latestEquityTick: null, latestCETick: null, latestPETick: null,
       }
     })

@@ -11,9 +11,9 @@ test('removed option charts remain removed without open positions', () => {
   assert.deepEqual(result.panes, [equity])
 })
 
-test('saved contract is restored when its side has no open position', () => {
+test('new selection replaces saved strike when its side has no open position', () => {
   const result = selectPaperResumePanes([equity, pane('PE', 24250)], [], streamed, pane)
-  assert.equal(result.chosen.PE.strike, 24250)
+  assert.equal(result.chosen.PE.strike, 24100)
   assert.equal(result.chosen.CE, undefined)
 })
 

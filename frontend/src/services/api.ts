@@ -1,5 +1,9 @@
 import { BACKEND_URL, AI_HELPER_URL } from '../config'
 
+export class ApiError extends Error {
+  constructor(message: string, public readonly status: number) { super(message); this.name = 'ApiError' }
+}
+
 function _authHeaders(): Record<string, string> {
   try {
     const stored = localStorage.getItem('auth_user')
@@ -837,7 +841,7 @@ const api = {
     })
     if (!res.ok) {
       const body = await res.json().catch(() => ({}))
-      throw new Error(body.detail || `Active simulation fetch failed: ${res.status}`)
+      throw new ApiError(body.detail || `Active simulation fetch failed: ${res.status}`, res.status)
     }
     return res.json()
   },
