@@ -3,7 +3,9 @@
 ## Agreed implementation scope
 
 Implement shared live streaming for website and desktop; Half / Full for
-TargetProfit and UnderlyingTargetProfit; smaller desktop open-order text.
+TargetProfit and UnderlyingTargetProfit; smaller desktop open-order text;
+AutoStop Limit entries in the website and desktop; website Day P&L units and
+Kotak day-start capital/adjusted wallet recovery.
 Desktop real trading is deferred. The original requests below are preserved.
 
 ## Sprints
@@ -14,6 +16,8 @@ Desktop real trading is deferred. The original requests below are preserved.
 4. Website live integration, history handoff and SSE recovery.
 5. Half / Full strategy sizing, exit allocation, APIs and both clients.
 6. Typography, regression verification and Windows acceptance.
+7. AutoStop Limit mode, ASL entry tickets, website checkbox and regressions.
+8. Website Day P&L formatting and Kotak account/day capital recovery.
 
 Implementation status and verification are recorded at the end of this document.
 
@@ -59,6 +63,262 @@ checks; automated verification does not submit broker orders.
   `dev`; feature-branch creation and PR submission could not be completed here.
 - Native desktop interaction, website click-through and real-broker acceptance
   still require manual validation.
+
+### AutoStop Limit implementation details
+
+**Shared API and persistence.** `StartStrategyRequest` accepts
+`autostop_order_type: Literal["TARGET", "LIMIT"] = "TARGET"`. The website
+request interface exposes the same optional field, and
+`DesktopStartStrategyRequest` inherits it. Both start routes use the shared
+strategy router, which stores the selected mode in strategy metadata. The
+service falls back to TARGET when restored metadata omits the field. Unknown
+request modes fail schema validation. The strategy type remains `AutoStop`;
+ASL does not introduce a second strategy identity or database schema.
+
+**Bar-close calculation.** The service first computes the existing target
+from the completed bar: high for BUY or low for SELL in bar mode, and close
+plus/minus the configured percentage in deviation mode. LIMIT reflects that
+unrounded price around the same completed bar's close, then rounds the result
+to two decimals. The first tick in the next bar triggers the calculation; its
+price does not replace the completed bar's close. A zero target gap produces a
+limit at the close. Nonfinite, nonpositive and rounded-to-zero entry prices
+place no order. This change retains existing price precision rather than
+introducing new exchange tick-size rounding.
+
+**Sizing and order lifecycle.** Funds-ratio and risk-ratio calculations receive
+the reflected entry price. When risk sizing needs a default stoploss, it also
+uses that entry price. Explicit BUY stops must be below the resulting entry;
+explicit SELL stops must be above it. LIMIT placement supplies `limit_price`,
+while TARGET continues to supply `trigger_price`. Orders retain `is_autostop`,
+entry stoploss/group metadata, contract identity and wallet/margin information,
+so existing fill and protection handling applies to both modes. Successful
+placement completes the strategy once; it does not wait for the entry to fill.
+Guardrail blocks, invalid calculations and placement failures preserve the
+existing RUNNING/retry behavior. Cancelling the running strategy prevents
+future placement; after placement, cancel the pending order through the normal
+order controls.
+
+**Website controls.** The AutoStop panel has a local, initially unchecked Limit
+checkbox, explanatory text and a Start AutoStop Limit label. Right-click entry
+selection offers AS and ASL; both proceed to saved sizing without entry-price
+picking. ASL has the full Auto Stop Order Limit tooltip/accessibility label.
+Right-click requests now carry the selected direction and current AutoStop
+trigger/deviation settings, making those settings consistent with the panel.
+The clicked chart price remains the requested entry stoploss, not the limit
+entry price. The existing server rule still forces options AutoStop to BUY.
+
+**Desktop controls.** ASL appears beside M/L/T/AS in the entry ticket and uses
+the same immediate submission path as AS once a size is selected. The start
+request carries LIMIT mode, selected side, stoploss and sizing plus the option
+tile's strike/expiry. The existing desktop strategy route binds it to the exact
+registered contract. The start notice identifies Auto stop limit. Desktop
+continues to use its existing bar trigger defaults; this feature adds no
+strategy-settings UI or native Rust changes.
+
+### AutoStop Limit lessons learned
+
+- Model the entry order kind as a per-start option on the shared strategy.
+  This keeps clients consistent and preserves cancellation, persistence and
+  compatibility with existing AutoStop sessions.
+- Transform the price before sizing and stoploss validation. Changing only the
+  submitted order price would size against the wrong entry and could accept a
+  stoploss on the wrong side of the actual trade.
+- Treat chart-clicked stoploss and bar-derived entry as different inputs. A
+  stoploss that is valid for the original target can be invalid for the reflected
+  limit and must be checked again when the bar closes.
+- Review every entry path when adding a strategy option. The website panel
+  already forwarded direction and trigger settings, while the right-click
+  path omitted them; AS/ASL now forwards those settings explicitly.
+- Preserve AutoStop provenance on LIMIT orders. Entry protection depends on
+  provenance and fill metadata, not just the TARGET order type. Regression
+  tests exercise fallback stoploss creation after a LIMIT fill.
+- Test completed-bar prices against different next-bar prices, and check
+  attached option contract identity. These catch premature placement and
+  accidental use of another chart's prices or contract.
+- Separate implementation evidence from acceptance evidence. TypeScript,
+  builds and backend tests do not establish native Windows interaction or
+  successful live broker execution. Existing dependency/bundle warnings are
+  recorded without claiming a full repository suite or broker acceptance.
+- Use isolated test configuration when local DynamoDB is unavailable. The
+  successful run restricted connection attempts; production database and
+  retry behavior were not changed to accommodate the test environment.
+
+### AutoStop Limit remaining acceptance and delivery
+
+- Website: verify checkbox on/off and AS/ASL tickets, BUY/SELL equity and CE/PE
+  options, each sizing mode, cancellation before bar close and the correct
+  pending order/price after it. Confirm AS still places the original TARGET.
+- Desktop: verify ASL with size-first and type-first ticket selections,
+  exact option contracts, chart/order visibility and stoploss protection after
+  fill in supported Paper, Replay and Stepwise flows.
+- Confirm invalid reflected entries and stops place no order and leave the
+  strategy available for cancellation or the existing next-bar retry.
+- Verify website real-broker LIMIT submission and fill/protection behavior in
+  the authorized broker acceptance environment. Desktop real trading remains
+  outside this feature's scope.
+- Automated results above are targeted regressions, not a full repository test
+  run. No migration, deployment or merge to main was performed. The read-only
+  Git constraint prevented feature-branch creation, commit and PR submission;
+  PR title/body were provided separately for delivery through the normal
+  reviewed workflow into `dev`.
+
+## Website Day P&L units and Kotak capital — implemented
+
+### Requirements and bug classification
+
+- **Website display bug:** the top Day P&L and previous-session contribution
+  ignored the P&L display setting. Both must show percentage of session capital
+  in percent mode, and amounts in currency mode.
+- **Kotak capital bug:** Start/restart/resume assigned current `limits().Net`
+  directly to session capital. Today's realized trading results and funds
+  committed to positions/orders could therefore change the sizing/P&L baseline
+  when returning to the same account later that day.
+- **Requested wallet behavior:** display a wallet excluding today's gross
+  realized P&L while retaining broker deductions for committed funds. Include
+  the whole account, external trades, other symbols, overnight positions and
+  pending broker reservations. Open long options use entry cost, not LTP.
+- Per the requirement, Kotak applies brokerage/fees after trading hours. Do not
+  subtract estimated commissions in capital recovery. Paper accounting and
+  desktop/Zerodha behavior remain unchanged.
+
+### Plan and implemented accounting
+
+The shared `real_accounting` service fetches the full Kotak limits report,
+account identity, today's executions and positions. It uses the account-wide
+reports rather than the selected chart's scoped trade history. Gross realized
+P&L uses chronological weighted-average cost matching, deduplicates executions
+by exchange/order/execution identity, and handles partial exits and reversals.
+Carry positions seed inventory from `cfBuyQty`/`cfSellQty` and the corresponding
+carry amount. Execution normalization retains the quoted-price multiplier and
+conversion factors; quantities remain in shares/contracts rather than being
+multiplied by lot size again. Unrealized price changes are not realized cash.
+
+| Value | Calculation / purpose |
+| --- | --- |
+| Raw available funds | Kotak `Net`; retained for affordability and local reservation accounting |
+| Gross realized day P&L | Account-wide matched execution profit/loss, before estimated fees |
+| Committed funds | Broker `MarginUsed`, covering position and pending-order deductions |
+| Recovered day-start capital | `Net - gross realized P&L + MarginUsed` |
+| Adjusted website wallet | `Net - gross realized P&L` |
+
+Example: opening capital ₹18,000, realized profit ₹1,200, no committed funds:
+Net is ₹19,200, recovered capital and adjusted wallet are ₹18,000. With ₹5,000
+committed, Net is ₹14,200, adjusted wallet is ₹13,000, and capital remains
+₹18,000. After a ₹1,200 loss with no commitment, raw Net is ₹16,800 while the
+P&L-excluded wallet is ₹18,000. Raw Net still limits affordability; adjusted
+wallet is a display value and never grants additional buying power.
+
+`MarginUsed` is treated as the aggregate commitment, including long-option
+premium and pending reservations. Do not separately add option cost, premium,
+full equity notional or a locally estimated margin on top of that field.
+This accounting relationship is an explicit broker acceptance assumption;
+Kotak documents the fields but not a complete balance identity. See the
+[Kotak limits reference](https://github.com/Kotak-Neo/Kotak-neo-api-v2/blob/main/docs/Limits.md).
+
+### Persistence, API and refresh integration
+
+- Atomically initialize `day_start_capital` with DynamoDB `if_not_exists` in an
+  existing WalletLedgers item keyed by user and `real-capital:<account>:<date>`.
+  The first valid recovery is reused across same-day sessions and processes;
+  another account/date has its own baseline. No table migration is required.
+- The canonical `real:<date>` ledger stores raw broker cash plus account ID,
+  recovered capital, adjusted display, gross realized P&L and committed funds.
+  Snapshot persistence precedes updating the local raw-cash mirror.
+- `WalletResponse` adds optional `display_balance`; `balance` keeps its raw
+  meaning. Broker snapshots add optional `session_capital` and
+  `wallet_display_balance`; their `wallet_balance` remains raw.
+- New sessions and saved resumes receive corrected capital before guardrail
+  initialization. Active Start reuses the baseline. Wallet reads can correct
+  legacy session capital from the saved snapshot without contacting Kotak.
+- Explicit wallet/chart refresh and trade-history reconciliation call the same
+  accounting service. Reconciliation reuses its account-wide executions and
+  positions; limits are fetched once. There is no periodic or per-tick polling.
+- Corrected capital is persisted to real sessions for the same user/date.
+  Website wallet callbacks and broker snapshots update only the matching active
+  real session; stale responses cannot replace another session's denominator.
+- Nonfinite/missing limits, unavailable carry cost, conflicting executions or
+  inconsistent reported quantities fail accounting without replacing the last
+  valid wallet snapshot. Broker/input errors return 502 on start/explicit
+  refresh; persistence errors return 503. Reconciliation preserves its valid
+  trade revision and reports a separate wallet error if funds accounting fails.
+
+### Website display implementation
+
+A tested formatter converts top Day P&L and the previous-session contribution
+using corrected session capital, preserving signs, two decimals and existing
+colors. Zero, negative or unavailable capital falls back to amounts rather than
+producing invalid percentages. The existing P&L numerator and estimated
+commission deductions are unchanged. The wallet widget prefers optional
+`display_balance`, then its existing capital/raw balance fallbacks, so Paper
+and legacy response shapes remain compatible. Paper currently includes realized
+trading results in its wallet; this requested Kotak presentation intentionally
+excludes those results.
+
+### Lessons learned
+
+- Available cash, P&L-excluded wallet display and day-start capital serve
+  different purposes. Giving them separate fields avoids changing order
+  affordability when improving the UI.
+- Broker Net is account-wide. Removing only one chart's P&L would yield a
+  capital baseline that changes when trading another underlying externally.
+- Read committed funds from the broker aggregate; adding option premium or
+  estimated equity margin again would recover the same money twice.
+- Carry exits require an entry-cost seed. Today's sell proceeds alone are not
+  realized profit, and unrealized movement must not enter cash recovery.
+- Preserve instrument conversion factors through normalization and deduplicate
+  executions before matching. Otherwise raw reports can produce incorrect
+  realized P&L even when their displayed trade list appears reasonable.
+- Persist the baseline once per account/day and propagate it into both server
+  sessions and website state. Correcting the database alone leaves percentage
+  labels and sizing denominators stale until a new session starts.
+- Initialize corrected capital before guardrails. Replacing it only after
+  session creation gives initialization code the wrong denominator.
+- Reject incomplete financial inputs instead of silently falling back to Net
+  or zero. Keep verified snapshots when broker reports or persistence fail.
+
+### Validation and remaining acceptance
+
+- **462 backend regressions passed** across real accounting, broker wallet and
+  snapshots, wallet/session resume/simulation, orders, real trading/protection,
+  strategies and desktop trading. The focused accounting/wallet/snapshot set
+  contained **70 passing tests**, included in the broader result. A final
+  focused run passed **72 tests** after adding browser-read capital correction
+  and cross-user/date/Paper isolation coverage.
+- **9 frontend tests passed** for P&L formatting, corrected-capital ownership,
+  broker snapshot ownership and Paper resume behavior. Website TypeScript and
+  Vite production build passed; the existing bundle-size warning remains.
+- Backend verification used the project venv, isolated DynamoDB Local settings
+  with one connection attempt, and a temporary bounded-selector test runner
+  for sandbox wakeups. Production event-loop behavior was not modified.
+  Existing dateutil and two simulation-test marker warnings remain.
+- No full repository suite, live broker execution or native Windows acceptance
+  is claimed. Manually verify Net/MarginUsed against a Kotak account with open
+  options and pending orders, percent/currency toggling, chart/history refresh,
+  browser reload and same-day restart. The assumption that MarginUsed includes
+  premium/reservations requires that broker acceptance check.
+- Intraday deposits/withdrawals, collateral revaluation and end-of-day fee
+  adjustments are outside recovery acceptance. Independent broker endpoints
+  are not an atomic financial snapshot; reported quantity mismatches request
+  a retry, but a limits change during report collection remains a broker
+  acceptance concern, particularly for the first baseline initialization.
+- Git metadata remains read-only. Changes are uncommitted on `dev`; feature
+  branch creation and PR submission are blocked in this workspace. No merge
+  to main or deployment was performed.
+
+### Dev pull / stash merge follow-up
+
+The pull's stash application conflicted only in this document: upstream had no
+content in the conflicted block, while the stash contained the AutoStop Limit
+implementation/lessons and Kotak capital/P&L sections. Retain those sections and
+remove the conflict markers. Settings review also found that loading the saved
+P&L unit from the backend updated the modal and localStorage but not the active
+website display; the same P&L callback now propagates that loaded setting to App.
+ASL remains per-entry, the panel Limit checkbox remains local, and existing
+sizing/strategy setting callbacks are retained.
+
+Git index writes remain blocked by the workspace's read-only `.git` mount.
+The document content is resolved, but Git's unmerged index entry must be marked
+resolved with `git add docs/spec-phase19.md` in a writable Git environment.
 
 ## Streaming architecture review
 
@@ -862,12 +1122,16 @@ backend to activate the formatter correction.
 
 ### Final requirements
 
-Real Trading displays the broker's available funds; Paper Trading retains its
-independent date-scoped wallet. Fetch fresh Kotak funds on every accepted Start
+Original Sprint W behavior displayed raw broker available funds. The later
+**Website Day P&L units and Kotak capital** fix supersedes that display and
+capital policy: raw funds still govern affordability, adjusted display excludes
+gross realized P&L, and a recovered account/day baseline supplies session capital.
+Paper Trading retains its independent date-scoped wallet. Fetch fresh Kotak funds on every accepted Start
 or restart, reconciliation, website chart-toolbar refresh, and real trade-history
 refresh. There is no periodic broker polling and no funds request per tick or
 ordinary wallet read. Later manual refreshes do not change starting session
-capital; the next Start captures a new starting capital.
+capital. The original policy that the next Start captures fresh Net as capital
+is superseded by the account/day baseline above.
 
 The historical setting applies **only to today's date in Asia/Kolkata**:
 

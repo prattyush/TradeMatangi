@@ -266,6 +266,8 @@ export interface BrokerSnapshot {
   application_orders: Order[]
   snapshot_revision: string
   wallet_balance: number | null
+  wallet_display_balance?: number | null
+  session_capital?: number | null
   wallet_error?: string | null
 }
 
@@ -287,6 +289,7 @@ export interface BrokerOrder {
 }
 
 export interface WalletResponse {
+  display_balance?: number | null
   broker_funds_updated_at?: number | null
   user_id: string
   date: string

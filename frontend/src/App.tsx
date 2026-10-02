@@ -1,3 +1,4 @@
+import { formatPnl } from './pnlFormat'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import React from 'react'
 import PatternLibrary from './pages/PatternLibrary'
@@ -1822,7 +1823,7 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
           onManualRefresh={!draft && sim.sessionType === 'real' && sim.sessionId ? () => {
             const sessionId = sim.sessionId!
             void api.refreshRealWallet(sessionId)
-              .then(() => sim.incrementWalletRefreshKey())
+              .then(wallet => { sim.applyWalletSnapshot(sessionId, wallet); sim.incrementWalletRefreshKey() })
               .catch(error => setBrokerError(String(error)))
           } : undefined}
           currentSimTime={draft ? null : (sim.latestEquityTick?.time ?? null)}
@@ -2098,11 +2099,11 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
               fontWeight: 700, fontVariantNumeric: 'tabular-nums',
               color: totalDayPnl > 0 ? '#26a641' : totalDayPnl < 0 ? '#f85149' : '#8b949e',
             }}>
-              {totalDayPnl >= 0 ? '+' : ''}{totalDayPnl.toFixed(2)}
+              {formatPnl(totalDayPnl, pnlPctMode, sim.sessionCapital)}
             </span>
             {sim.prevDayPnl !== 0 && (
               <span style={{ color: '#484f58', fontSize: 10, fontVariantNumeric: 'tabular-nums' }}>
-                (prev {sim.prevDayPnl >= 0 ? '+' : ''}{sim.prevDayPnl.toFixed(2)})
+                (prev {formatPnl(sim.prevDayPnl, pnlPctMode, sim.sessionCapital)})
               </span>
             )}
           </div>
@@ -2128,7 +2129,7 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
             BLOCK
           </button>
         )}
-        <WalletWidget date={sim.date} sessionId={sim.sessionId} refreshKey={sim.walletRefreshKey} />
+        <WalletWidget date={sim.date} sessionId={sim.sessionId} refreshKey={sim.walletRefreshKey} onWalletSnapshot={sim.applyWalletSnapshot} />
         <button
           onClick={() => setShowAnalysis(true)}
           title="Trade Analysis"

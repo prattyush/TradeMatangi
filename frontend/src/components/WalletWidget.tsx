@@ -5,13 +5,14 @@ interface Props {
   date: string
   refreshKey: number
   sessionId?: string | null
+  onWalletSnapshot?: (sessionId: string, wallet: WalletResponse) => void
 }
 
 function formatINR(amount: number): string {
   return '₹' + amount.toLocaleString('en-IN', { maximumFractionDigits: 0 })
 }
 
-export default function WalletWidget({ date, refreshKey, sessionId }: Props) {
+export default function WalletWidget({ date, refreshKey, sessionId, onWalletSnapshot }: Props) {
   const [snapshot, setSnapshot] = useState<{ context: string; wallet: WalletResponse } | null>(null)
   const context = `${date}:${sessionId ?? ''}`
   const wallet = snapshot?.context === context ? snapshot.wallet : null
@@ -22,13 +23,13 @@ export default function WalletWidget({ date, refreshKey, sessionId }: Props) {
     let cancelled = false
     setLoading(true)
     api.getWallet(date, sessionId)
-      .then(w => { if (!cancelled) setSnapshot({ context, wallet: w }) })
+      .then(w => { if (!cancelled) { setSnapshot({ context, wallet: w }); if (sessionId) onWalletSnapshot?.(sessionId, w) } })
       .catch(() => {/* backend may not be running */})
       .finally(() => { if (!cancelled) setLoading(false) })
     return () => { cancelled = true }
-  }, [date, refreshKey, sessionId, context])
+  }, [date, refreshKey, sessionId, context, onWalletSnapshot])
 
-  const balance = wallet?.capital_balance ?? wallet?.balance ?? null
+  const balance = wallet?.display_balance ?? wallet?.capital_balance ?? wallet?.balance ?? null
   const color = balance !== null && balance < 0 ? '#f85149' : '#3fb950'
 
   return (

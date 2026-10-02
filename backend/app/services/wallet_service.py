@@ -321,7 +321,7 @@ def delete_entry(user_id: str, date: str) -> None:
 
 
 # Broker snapshots are deliberately separate from locally reserved cash.
-def sync_real_funds(user_id: str, date: str, amount: float, *, reason: str) -> float:
+def sync_real_funds(user_id: str, date: str, amount: float, *, reason: str, accounting: dict | None = None) -> float:
     import math
     import time
     if not math.isfinite(amount):
@@ -330,14 +330,19 @@ def sync_real_funds(user_id: str, date: str, amount: float, *, reason: str) -> f
     updated_at = int(time.time() * 1000)
     _ensure_ledger_table()
     from app.services.db import get_dynamodb_resource
+    expression = "SET #date = :date, ledger_kind = :kind, current_balance = :balance, " \
+                 "broker_balance = :balance, broker_funds_updated_at = :updated, updated_at = :updated"
+    values = {":date": date, ":kind": "real", ":balance": Decimal(str(amount)), ":updated": updated_at}
+    if accounting is not None:
+        for name, value in accounting.items():
+            expression += f", {name} = :{name}"
+            values[":" + name] = Decimal(str(value)) if isinstance(value, (float, int)) else value
     # Persist first: a failed write must not advertise a successful sync.
     get_dynamodb_resource().Table(_LEDGER_TABLE).update_item(
         Key={"user_id": user_id, "ledger_id": ledger_id},
-        UpdateExpression="SET #date = :date, ledger_kind = :kind, current_balance = :balance, "
-                         "broker_balance = :balance, broker_funds_updated_at = :updated, updated_at = :updated",
+        UpdateExpression=expression,
         ExpressionAttributeNames={"#date": "date"},
-        ExpressionAttributeValues={":date": date, ":kind": "real",
-            ":balance": Decimal(str(amount)), ":updated": updated_at},
+        ExpressionAttributeValues=values,
     )
     _ledgers[(user_id, ledger_id)] = amount
     logger.info("real_funds_synced user_id=%s ledger=%s reason=%s", user_id, ledger_id, reason)
@@ -356,3 +361,44 @@ def get_real_funds_snapshot(user_id: str, date: str) -> tuple[float, int]:
         raise ValueError("Real wallet needs a broker refresh")
     snapshot = (float(item["broker_balance"]), int(item["broker_funds_updated_at"]))
     return snapshot
+
+
+def sync_real_account_funds(user_id, date, account, net, realized, committed, *, reason):
+    """Initialize account/day capital once; retain raw cash for order affordability."""
+    import math
+    candidate = round(net - realized + committed, 2)
+    display = round(net - realized, 2)
+    if not all(math.isfinite(value) for value in (net, realized, committed, candidate, display)):
+        raise ValueError("Invalid real accounting snapshot")
+    _ensure_ledger_table()
+    from app.services.db import get_dynamodb_resource
+    # Atomic initialization also works when another worker initializes the same day.
+    row = get_dynamodb_resource().Table(_LEDGER_TABLE).update_item(
+        Key={"user_id": user_id, "ledger_id": f"real-capital:{account}:{date}"},
+        UpdateExpression="SET #date = :date, ledger_kind = :kind, "
+                         "day_start_capital = if_not_exists(day_start_capital, :capital)",
+        ExpressionAttributeNames={"#date": "date"},
+        ExpressionAttributeValues={":date": date, ":kind": "real-capital", ":capital": Decimal(str(candidate))},
+        ReturnValues="ALL_NEW",
+    )["Attributes"]
+    capital = float(row["day_start_capital"])
+    if not math.isfinite(capital):
+        raise ValueError("Invalid saved real day-start capital")
+    accounting = {"broker_account_id": account, "day_start_capital": capital,
+                  "display_balance": display, "gross_realized_pnl": realized, "committed_funds": committed}
+    sync_real_funds(user_id, date, net, reason=reason, accounting=accounting)
+    return {"balance": net, "display_balance": display, "session_capital": capital}
+
+
+def get_real_wallet_snapshot(user_id, date):
+    from app.services.db import get_dynamodb_resource
+    item = get_dynamodb_resource().Table(_LEDGER_TABLE).get_item(
+        Key={"user_id": user_id, "ledger_id": f"real:{date}"}, ConsistentRead=True,
+    ).get("Item", {})
+    if "broker_balance" not in item:
+        raise ValueError("Real wallet needs a broker refresh")
+    result = {"balance": float(item["broker_balance"]),
+              "broker_funds_updated_at": int(item["broker_funds_updated_at"])}
+    if "display_balance" in item and "day_start_capital" in item:
+        result.update(display_balance=float(item["display_balance"]), session_capital=float(item["day_start_capital"]))
+    return result

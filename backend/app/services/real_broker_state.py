@@ -333,10 +333,14 @@ async def refresh(session, broker):
             for order in orders.values():
                 if order.broker_filled_quantity and (order.entry_sl_price is not None or order.is_autostop):
                     on_entry_filled(order, session, asyncio.get_running_loop())
-            wallet_balance, wallet_error = None, None
+            wallet_balance, wallet_error, wallet_display_balance = None, None, None
             try:
-                wallet_balance = await asyncio.to_thread(broker.get_funds)
-                await asyncio.to_thread(wallet_service.sync_real_funds, session.user_id, session.date, wallet_balance, reason="reconcile")
+                from app.services import real_accounting
+                account_wallet = await real_accounting.refresh(session.user_id, session.date, broker,
+                    reason="reconcile", executions=executions, positions=raw_positions)
+                real_accounting.apply_session_capital(session, account_wallet["session_capital"])
+                wallet_balance = account_wallet["balance"]
+                wallet_display_balance = account_wallet["display_balance"]
             except Exception as exc:
                 wallet_balance, wallet_error = None, f"Could not refresh Kotak wallet: {exc}"
                 logger.warning("broker_snapshot_wallet_failed session=%s: %s", session.session_id, exc)
@@ -348,7 +352,8 @@ async def refresh(session, broker):
                       "local_entry_orders": [o.model_dump(mode="json") for o in order_service.get_open_orders(session.session_id) if not o.kotak_order_id],
                       "application_orders": [o.model_dump(mode="json") for o in order_service.get_open_orders(session.session_id)],
                       "snapshot_revision": manifest["revision"], "synced_at": manifest["synced_at"],
-                      "wallet_balance": wallet_balance, "wallet_error": wallet_error}
+                      "wallet_balance": wallet_balance, "wallet_display_balance": wallet_display_balance,
+                      "session_capital": session.session_capital if wallet_error is None else None, "wallet_error": wallet_error}
             session.queue.put_nowait(json.dumps({"type": "broker_snapshot", "session_id": session.session_id, **result}))
             logger.info("broker_snapshot_published session=%s revision=%s orders=%d trades=%d deferred=%d wallet_ok=%s",
                         session.session_id, manifest["revision"], len(scoped_orders), len(current), len(events), wallet_error is None)

@@ -62,14 +62,17 @@ async def get_wallet(
             raise HTTPException(status_code=404, detail="Session not found")
         if session.session_type == "real":
             try:
-                balance, updated_at = await asyncio.to_thread(wallet_service.get_real_funds_snapshot, user_id, session.date)
+                snapshot = await asyncio.to_thread(wallet_service.get_real_wallet_snapshot, user_id, session.date)
+                if "session_capital" in snapshot:
+                    from app.services.real_accounting import apply_session_capital
+                    apply_session_capital(session, snapshot["session_capital"])
             except ValueError as exc:
                 raise HTTPException(status_code=409, detail=str(exc))
             except Exception:
                 logger.exception("Real wallet snapshot unavailable user_id=%s", user_id)
                 raise HTTPException(status_code=503, detail="Could not read broker wallet snapshot")
-            return WalletResponse(user_id=user_id, date=session.date, balance=balance,
-                session_capital=session.session_capital, broker_funds_updated_at=updated_at)
+            return WalletResponse(user_id=user_id, date=session.date,
+                **{"session_capital": session.session_capital, **snapshot})
         balance = wallet_service.get_ledger_balance(user_id, session.date, session.wallet_ledger_id)
         date = session.date
         return WalletResponse(user_id=user_id, date=date, balance=balance, **_session_wallet_metrics(session, balance))
@@ -105,13 +108,13 @@ async def refresh_real_wallet(
     if session.session_type != "real":
         raise HTTPException(status_code=400, detail="Broker funds refresh requires a real session")
     try:
-        funds = await asyncio.to_thread(get_service().get_funds)
-        await asyncio.to_thread(wallet_service.sync_real_funds, user_id, session.date, funds, reason="refresh")
+        from app.services import real_accounting
+        await real_accounting.refresh(user_id, session.date, get_service(), reason="refresh")
+        snapshot = await asyncio.to_thread(wallet_service.get_real_wallet_snapshot, user_id, session.date)
+        real_accounting.apply_session_capital(session, snapshot["session_capital"])
     except KotakError as exc:
         raise HTTPException(status_code=502, detail=f"Could not fetch Kotak funds: {exc}")
     except Exception:
         logger.exception("Could not persist real wallet refresh user_id=%s", user_id)
         raise HTTPException(status_code=503, detail="Could not save broker wallet refresh")
-    _, updated_at = await asyncio.to_thread(wallet_service.get_real_funds_snapshot, user_id, session.date)
-    return WalletResponse(user_id=user_id, date=session.date, balance=funds,
-        session_capital=session.session_capital, broker_funds_updated_at=updated_at)
+    return WalletResponse(user_id=user_id, date=session.date, **snapshot)

@@ -420,12 +420,14 @@ def create_session(
     group_id: str | None = None,
     session_alias: str | None = None,
     wallet_ledger_id: str | None = None,
+    starting_capital: float | None = None,
 ) -> SimulationSession:
     from app.services import wallet_service
     session_id = str(uuid.uuid4())
     ledger_id = wallet_ledger_id or f"sim:{date}"
     ledger_kind = "paper" if session_type == "paper" else ("real" if session_type == "real" else "sim")
-    session_capital = wallet_service.get_ledger_balance(user_id, date, ledger_id, ledger_kind)
+    session_capital = (starting_capital if starting_capital is not None else
+                       wallet_service.get_ledger_balance(user_id, date, ledger_id, ledger_kind))
     session = SimulationSession(
         session_id=session_id,
         symbol=symbol,
@@ -545,6 +547,7 @@ def rebuild_session_from_db(
     strike_pe: Optional[int] = None,
     brokerage_per_order: float = 1.0,
     strategy_interval_secs: int = 180,
+    starting_capital: float | None = None,
     read_only: bool = False,
     repair_fills: bool = True,
 ) -> SimulationSession:
@@ -580,7 +583,8 @@ def rebuild_session_from_db(
 
     ledger_id = f"real:{date}" if session_type == "real" else (db_record.get("wallet_ledger_id") or f"sim:{date}")
     ledger_kind = "paper" if session_type == "paper" else ("real" if session_type == "real" else "sim")
-    session_capital = wallet_service.get_ledger_balance(user_id, date, ledger_id, ledger_kind)
+    session_capital = (starting_capital if starting_capital is not None else
+                       wallet_service.get_ledger_balance(user_id, date, ledger_id, ledger_kind))
 
     session = SimulationSession(
         session_id=session_id,

@@ -2,7 +2,7 @@
 import asyncio
 import copy
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, AsyncMock
 import pytest
 from app.models.schemas import Order, OrderType, TradeSide, Position
 from app.services import broker_reports as reports, real_broker_state as state
@@ -49,7 +49,9 @@ def env(monkeypatch):
     db = SimpleNamespace(Table=lambda name: tables[name])
     monkeypatch.setattr('app.services.db.get_dynamodb_resource', lambda: db)
     monkeypatch.setattr(simulation, 'get_session', lambda sid: session if sid == session.session_id else None)
-    monkeypatch.setattr('app.services.wallet_service.sync_real_funds', MagicMock())
+    monkeypatch.setattr('app.services.real_accounting.refresh', AsyncMock(return_value={
+        'balance': 900, 'display_balance': 800, 'session_capital': 18000}))
+    monkeypatch.setattr(simulation, '_upsert_session_to_db', MagicMock())
     monkeypatch.setattr('app.services.guardrail_service.on_trade_record', MagicMock())
     monkeypatch.setattr(order_service, 'request_exit_reconciliation', MagicMock())
     tables['Sessions'].put_item(Item=dict(session_id=session.session_id, user_id=session.user_id, symbol=session.symbol,
@@ -115,6 +117,8 @@ async def test_refresh_replaces_duplicates_with_exact_execution_contract_and_tim
     assert row['commission'] == trading.compute_commission(TradeSide.BUY, 39.3, 40, s.brokerage_per_order)
     assert state.read_projection(s.session_id)[0]['trade_id'] == row['trade_id']
     assert second['wallet_balance'] == 900
+    assert second['wallet_display_balance'] == 800
+    assert second['session_capital'] == s.session_capital == 18000
 
 
 @pytest.mark.asyncio
@@ -176,7 +180,8 @@ async def test_link_failure_does_not_advance_manifest(env):
 @pytest.mark.asyncio
 async def test_wallet_failure_preserves_valid_snapshot(env):
     s, broker, _ = env
-    broker.get_funds.side_effect = RuntimeError('funds unavailable')
+    from app.services import real_accounting
+    real_accounting.refresh.side_effect = RuntimeError('funds unavailable')
     result = await state.refresh(s, broker)
     assert result['wallet_balance'] is None and result['wallet_error']
     assert result['snapshot_revision']
