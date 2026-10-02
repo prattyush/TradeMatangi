@@ -194,6 +194,7 @@ export interface StartStrategyRequest {
   risk_ratio_pct?: number
   direction?: 'BUY' | 'SELL'
   autostop_trigger_type?: 'bar' | 'deviation'
+  autostop_order_type?: 'TARGET' | 'LIMIT'
   autostop_deviation_pct?: number
   only_in_profit?: boolean
   target_profit_value?: number

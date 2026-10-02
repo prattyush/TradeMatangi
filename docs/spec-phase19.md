@@ -17,6 +17,49 @@ Desktop real trading is deferred. The original requests below are preserved.
 
 Implementation status and verification are recorded at the end of this document.
 
+## AutoStop Limit implementation plan — implemented
+
+- Extend AutoStop with `autostop_order_type` (`TARGET` / `LIMIT`), defaulting
+  to TARGET for old requests and restored strategies. Persist the mode in metadata.
+- At the existing bar-close event, compute the usual bar-high/low or percentage
+  target and reflect it: `limit = 2 * close - target`. BUY limits lie below the
+  close and SELL limits above it. Close 100 / BUY target 105 gives limit 95;
+  close 100 / SELL target 95 gives limit 105. Use existing two-decimal rounding.
+- Use the reflected price for sizing, stoploss validation and LIMIT placement.
+  Retain guardrails, wallet/margin rules, exact options contracts, fill events,
+  entry protection and completion after one successful placement. Invalid prices
+  place no order and use existing logging/retry behavior on later bar closes.
+- Both right-click entry tickets gain a separate **ASL** (Auto Stop Order Limit)
+  choice beside existing order choices. This supersedes the original submenu
+  request. AS stays TARGET; ASL uses LIMIT, with no entry-price picking step.
+- Website AutoStop right panel gains an initially unchecked **Limit** checkbox,
+  local to that panel. Right-click requests carry current trigger/deviation
+  settings and selected direction. Desktop keeps its current trigger defaults.
+- Verify both directions and calculation modes, sizing, invalid prices/stops,
+  guardrails, cancellation, one-shot placement, request defaults/validation,
+  persistence, desktop contract isolation and entry protection after fills.
+  Check both clients with TypeScript, production builds and ticket regressions.
+
+Implementation and validation results are recorded below. No data migration is
+required. Manual desktop interaction and live broker acceptance remain external
+checks; automated verification does not submit broker orders.
+
+### AutoStop Limit validation
+
+- Shared strategy and desktop backend regressions: **203 passed**, with the
+  existing dateutil deprecation warning. Coverage includes ASL price reflection,
+  sizing, defaults/validation, metadata reload, cancellation/guardrails, exact
+  desktop options contracts and fallback entry stoploss after LIMIT fills.
+- Website and desktop TypeScript checks and Vite production builds passed.
+  Existing bundle-size warnings remain. Desktop ticket sizing and target-label
+  regressions: **9 passed**.
+- Tests used isolated DynamoDB Local configuration with one connection attempt
+  to avoid unavailable local-service retries; no live broker orders were sent.
+- Git metadata is read-only in this workspace. Changes remain uncommitted on
+  `dev`; feature-branch creation and PR submission could not be completed here.
+- Native desktop interaction, website click-through and real-broker acceptance
+  still require manual validation.
+
 ## Streaming architecture review
 
 Before Phase 19, website Paper/Real selected the admin provider, registered a
@@ -1409,6 +1452,10 @@ or the take action on half of the position. For calculating half, maximum it to 
 In the website, the take profit strategy UI include an option to select half. In right click UI for website and desktop, when take profit strategy is selected give a sub menu of half or full. After a strategy is already triggered I can have an option to edit the strategy to select half size.
 
 It may happen that when take profit strategy (half) was triggered we had 4 lots and by the time it reaches the pricce, user had already exited 2 lots. In that case, exit only 1 lot, i.ee half of the current position size.
+
+
+## Auto Stop Order Limit Strategy
+In both website and desktop, can  you introduce a new strategy which is auuto stop order limit, or maybe just add another option in auto stop limit. Whether it is limit or not. What it will do, auto stop order is triggered when the bar closes aand places a target order, auto stop order limit will place a limit order but by exactly the same gap between the closing pricce of the bar - (expecteed target value - closing price of the bar). Idea is the strategy would place a limti ordder below the closing pricce of the bar by the same price diff that it would have placed the target value from closing price. It needs to be added to website, both right click and desktop right click. In right click include ASL as anoother option beside AS. For website, UI right panel, include a checkbox for limit.
 
 
 ## Desktop Client Open Orders

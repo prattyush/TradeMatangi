@@ -247,7 +247,8 @@ def test_desktop_strategy_start_forwards_chart_price_and_contract_right(no_db, s
     assert getattr(forwarded, field) == price
 
 
-def test_attached_option_strategy_tracks_only_its_contract(no_db):
+@pytest.mark.parametrize("order_mode", ["TARGET", "LIMIT"])
+def test_attached_option_strategy_tracks_only_its_contract(no_db, order_mode):
     _clear()
     session = _session()
     contract = {"symbol": "NIFTY", "expiry": session.expiry, "strike": 24100,
@@ -255,7 +256,7 @@ def test_attached_option_strategy_tracks_only_its_contract(no_db):
     session.desktop_contracts.append(contract)
     request = desktop_trading.DesktopStartStrategyRequest(
         session_id=session.session_id, strategy_type=StrategyType.AUTO_STOP,
-        right="CE", strike=24100, expiry=session.expiry, quantity=65,
+        right="CE", strike=24100, expiry=session.expiry, quantity=65, autostop_order_type=order_mode,
     )
     try:
         with patch("app.services.strategy_service._write_strategy_to_db"):
@@ -263,6 +264,7 @@ def test_attached_option_strategy_tracks_only_its_contract(no_db):
         strategy = next(item for item in strategy_service.list_running(session.session_id) if item.strategy_id == response.strategy_id)
         assert strategy.metadata["desktop_contract_key"] == contract["contract_key"]
         assert strategy.metadata["desktop_strike"] == 24100
+        assert strategy.metadata["autostop_order_type"] == order_mode
         primary = {"time": 1778058900, "open": 100, "high": 100, "low": 100, "close": 100,
                    "contract_key": f"NIFTY:{session.expiry}:24000:CE"}
         strategy_service.on_tick(session, primary, "CE")
@@ -270,6 +272,14 @@ def test_attached_option_strategy_tracks_only_its_contract(no_db):
         strategy_service.on_tick(session, {**primary, "contract_key": contract["contract_key"], "close": 150}, "CE")
         assert strategy._last_bar_slot == 1778058900
         assert strategy._bar_close == 150
+        with patch("app.services.strategy_service._write_strategy_to_db"):
+            strategy_service._on_bar_close_autostop(strategy, session,
+                {"high": 160, "low": 140, "close": 150}, "CE", 1778059080)
+        entry = order_service.get_open_orders(session.session_id)[0]
+        assert entry.order_type == OrderType(order_mode)
+        assert entry.trigger_price == (140 if order_mode == "LIMIT" else 160)
+        assert (entry.right, entry.strike, entry.expiry) == ("CE", 24100, session.expiry)
+        assert strategy.status == strategy_service.StrategyStatus.COMPLETED
     finally:
         strategy_service._registry.pop(session.session_id, None)
         _clear()
@@ -798,7 +808,8 @@ def test_desktop_target_entry_places_matching_stoploss_on_fill(no_db):
     _clear()
 
 
-def test_desktop_autostop_without_explicit_stoploss_uses_fill_price_fallback(no_db):
+@pytest.mark.parametrize("order_mode", [OrderType.TARGET, OrderType.LIMIT])
+def test_desktop_autostop_without_explicit_stoploss_uses_fill_price_fallback(no_db, order_mode):
     _clear()
     session = _session()
 
@@ -806,11 +817,11 @@ def test_desktop_autostop_without_explicit_stoploss_uses_fill_price_fallback(no_
         session_id=session.session_id,
         symbol=session.symbol,
         side=TradeSide.BUY,
-        order_type=OrderType.TARGET,
+        order_type=order_mode,
         quantity=65,
         created_at=1778058900,
         trading_date=session.date,
-        trigger_price=105,
+        **({"trigger_price": 105} if order_mode == OrderType.TARGET else {"limit_price": 107}),
         right="CE",
         strike=24000,
         expiry="2026-05-07",

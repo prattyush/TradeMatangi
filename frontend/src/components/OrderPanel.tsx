@@ -54,6 +54,7 @@ interface Props {
       fundsRatioPct?: number
       riskRatioPct?: number
       direction?: 'BUY' | 'SELL'
+      autostop_order_type?: 'TARGET' | 'LIMIT'
       onlyInProfit?: boolean
       targetProfitValue?: number
       targetProfitSize?: 'full' | 'half'
@@ -135,6 +136,7 @@ export default function OrderPanel({
   const parsedEntrySl = parseFloat(entrySlPrice)
 
   // AutoStop strategy SL-on-entry state (separate from trade-panel SL)
+  const [autostopLimit, setAutostopLimit] = useState(false)
   const [slOnEntryAuto, setSlOnEntryAuto] = useState(false)
   const [entrySlPriceAuto, setEntrySlPriceAuto] = useState('')
   const parsedEntrySlAuto = parseFloat(entrySlPriceAuto)
@@ -439,7 +441,8 @@ export default function OrderPanel({
         : sizingMode === 'fundsRatio'
         ? { fundsRatioPct: fundsRatios[stratRatio] / 100, direction }
         : { quantity: stratQty, direction }
-      let extraOpts: Record<string, unknown> = {}
+      let extraOpts: Record<string, unknown> = strategyType === 'AutoStop'
+        ? { autostop_order_type: autostopLimit ? 'LIMIT' : 'TARGET' } : {}
       if (strategyType === 'AutoStop' && slOnEntryAuto && !isNaN(parsedEntrySlAuto) && parsedEntrySlAuto > 0) {
         extraOpts.entry_sl_price = parsedEntrySlAuto
       }
@@ -732,6 +735,11 @@ export default function OrderPanel({
                   ))}
                 </div>
               )}
+              <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, marginBottom: 4 }}>
+                <input type="checkbox" checked={autostopLimit} onChange={e => setAutostopLimit(e.target.checked)} />
+                Limit
+              </label>
+              {autostopLimit && <div style={{ fontSize: 10, color: '#8b949e', marginBottom: 4 }}>At bar close, mirror the target gap to place a limit entry.</div>}
               <div style={{ fontSize: 9, color: '#484f58', marginBottom: 4 }}>
                 {autostopTriggerType === 'bar'
                   ? `Trigger: ${stratDirection === 'BUY' || instrumentType === 'options' ? 'bar high' : 'bar low'}`
@@ -781,7 +789,7 @@ export default function OrderPanel({
                   background: '#1f4d2e', color: '#56d364',
                 }}
               >
-                {stratLoading === 'AutoStop' ? 'Starting…' : '▶ Start AutoStop'}
+                {stratLoading === 'AutoStop' ? 'Starting…' : autostopLimit ? '▶ Start AutoStop Limit' : '▶ Start AutoStop'}
               </button>
             </div>
             )}
