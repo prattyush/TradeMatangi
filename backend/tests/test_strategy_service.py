@@ -21,12 +21,15 @@ SYMBOL = "NIFTY"
 DATE = "2026-05-14"
 
 
-def test_reload_running_strategies_preserves_metadata_and_filters_owner():
+@pytest.mark.parametrize("mode", [None, "LIMIT"])
+def test_reload_running_strategies_preserves_metadata_and_filters_owner(mode):
     from decimal import Decimal
     table = MagicMock()
     item = {"strategy_id": "restored", "session_id": SESSION, "user_id": USER_ID,
             "strategy_type": "LockProfit", "symbol": SYMBOL, "right": "CE", "status": "RUNNING",
             "metadata": {"triggered": True, "price": Decimal("120.5"), "progress": [Decimal("2")]}}
+    if mode is not None:
+        item["metadata"]["autostop_order_type"] = mode
     table.query.side_effect = [
         {"Items": [item, {**item, "user_id": "other-user"}], "LastEvaluatedKey": {"strategy_id": "restored"}},
         {"Items": [{**item, "strategy_id": "cancelled", "status": "CANCELLED"}]},
@@ -37,7 +40,10 @@ def test_reload_running_strategies_preserves_metadata_and_filters_owner():
         svc.reload_running_strategies(SESSION, USER_ID)
     restored = svc.list_running(SESSION)
     assert len(restored) == 1
-    assert restored[0].metadata == {"triggered": True, "price": 120.5, "progress": [2]}
+    expected = {"triggered": True, "price": 120.5, "progress": [2]}
+    if mode is not None:
+        expected["autostop_order_type"] = mode
+    assert restored[0].metadata == expected
     assert table.query.call_args_list[1].kwargs["ExclusiveStartKey"] == {"strategy_id": "restored"}
 
 
@@ -940,3 +946,92 @@ class TestLockProfit:
         running = svc.list_running(SESSION)
         assert len(running) == 1
         assert running[0].strategy_type == "AggressiveStoploss"
+
+
+class TestAutoStopLimit:
+    @pytest.mark.parametrize('direction,mode,expected', [
+        ('BUY', 'bar', 90), ('SELL', 'bar', 110),
+        ('BUY', 'deviation', 98), ('SELL', 'deviation', 102),
+    ])
+    def test_reflects_closed_bar_target_and_fires_once(self, direction, mode, expected):
+        session = _session()
+        strategy = svc.start_strategy(session, 'AutoStop', None, {
+            'direction': direction, 'quantity': 1, 'autostop_order_type': 'LIMIT',
+            'autostop_trigger_type': mode, 'autostop_deviation_pct': 2,
+        })
+        svc.on_tick(session, _tick(T0, h=110, l=90, c=100), None)
+        assert not order_service.get_open_orders(SESSION)
+        svc.on_tick(session, _tick(T1, h=150, l=70, c=130), None)
+        svc.on_tick(session, _tick(T2), None)
+        orders = order_service.get_open_orders(SESSION)
+        assert len(orders) == 1
+        assert orders[0].order_type == OrderType.LIMIT
+        assert orders[0].limit_price == pytest.approx(expected)
+        assert orders[0].side == TradeSide(direction)
+        assert orders[0].is_autostop
+        assert strategy.status == StrategyStatus.COMPLETED
+
+    @pytest.mark.parametrize('high', [100, 200, 210, float('nan'), float('inf')])
+    def test_zero_gap_and_invalid_reflection(self, high):
+        session = _session()
+        strategy = svc.start_strategy(session, 'AutoStop', None, {'quantity': 1, 'autostop_order_type': 'LIMIT'})
+        svc._on_bar_close_autostop(strategy, session, {'high': high, 'low': 90, 'close': 100}, None, T1)
+        orders = order_service.get_open_orders(SESSION)
+        if high == 100:
+            assert orders[0].limit_price == 100
+        else:
+            assert not orders
+            assert strategy.status == StrategyStatus.RUNNING
+
+    def test_stoploss_must_be_valid_at_reflected_entry(self):
+        session = _session()
+        strategy = svc.start_strategy(session, 'AutoStop', None, {
+            'quantity': 1, 'autostop_order_type': 'LIMIT', 'entry_sl_price': 95,
+        })
+        svc._on_bar_close_autostop(strategy, session, {'high': 110, 'low': 90, 'close': 100}, None, T1)
+        assert not order_service.get_open_orders(SESSION)
+        assert strategy.status == StrategyStatus.RUNNING
+
+    @pytest.mark.parametrize('sizing', ['funds_ratio_pct', 'risk_ratio_pct'])
+    def test_sizing_uses_reflected_entry(self, sizing):
+        session = _session()
+        session.session_type = 'sim'
+        strategy = svc.start_strategy(session, 'AutoStop', None, {
+            sizing: 0.01, 'autostop_order_type': 'LIMIT', 'entry_sl_price': 80,
+        })
+        function = 'compute_risk_ratio_quantity' if sizing == 'risk_ratio_pct' else 'compute_funds_ratio_quantity'
+        with patch('app.services.order_service.' + function, return_value=5) as compute, \
+             patch('app.services.strategy_service._wallet_balance_for_quantity', return_value=10000):
+            svc._on_bar_close_autostop(strategy, session, {'high': 110, 'low': 90, 'close': 100}, None, T1)
+        assert compute.call_args.args[1] == 90
+        order = order_service.get_open_orders(SESSION)[0]
+        assert order.quantity == 5
+        assert order.entry_sl_price == 80
+        assert order.group_id
+
+    def test_guardrail_and_cancel_prevent_limit_entry(self):
+        session = _session()
+        strategy = svc.start_strategy(session, 'AutoStop', None, {'quantity': 1, 'autostop_order_type': 'LIMIT'})
+        with patch('app.services.guardrail_service.check_guardrails', return_value=(True, 'blocked')):
+            svc._on_bar_close_autostop(strategy, session, {'high': 110, 'low': 90, 'close': 100}, None, T1)
+        assert not order_service.get_open_orders(SESSION)
+        svc.cancel_all(SESSION)
+        svc.on_tick(session, _tick(T0), None)
+        svc.on_tick(session, _tick(T1), None)
+        assert not order_service.get_open_orders(SESSION)
+
+    @pytest.mark.parametrize('mode', ['TARGET', 'LIMIT'])
+    def test_web_start_persists_mode(self, mode):
+        from app.models.schemas import StartStrategyRequest
+        from app.routers.strategies import start_strategy
+        request = StartStrategyRequest(session_id=SESSION, strategy_type='AutoStop', quantity=1, autostop_order_type=mode)
+        with patch('app.routers.strategies.sim_svc.get_session', return_value=_session()):
+            start_strategy(request, user_id=USER_ID)
+        assert svc.list_running(SESSION)[0].metadata['autostop_order_type'] == mode
+
+    def test_request_defaults_and_rejects_unknown_mode(self):
+        from app.models.schemas import StartStrategyRequest
+        from pydantic import ValidationError
+        assert StartStrategyRequest(session_id=SESSION, strategy_type='AutoStop').autostop_order_type == 'TARGET'
+        with pytest.raises(ValidationError):
+            StartStrategyRequest(session_id=SESSION, strategy_type='AutoStop', autostop_order_type='MARKET')

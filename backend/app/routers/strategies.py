@@ -119,6 +119,7 @@ def start_strategy(req: StartStrategyRequest, user_id: str = Depends(get_request
 
     # Build metadata from request
     metadata: dict = {
+        "autostop_order_type": req.autostop_order_type,
         "autostop_trigger_type": req.autostop_trigger_type,
         "autostop_deviation_pct": req.autostop_deviation_pct,
         "direction": direction,

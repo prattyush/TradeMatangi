@@ -404,6 +404,7 @@ class StartStrategyRequest(BaseModel):
     # Direction for AutoStop (equity only; options sessions always use BUY)
     direction: str = "BUY"               # "BUY" | "SELL"
     # AutoStop trigger settings
+    autostop_order_type: Literal["TARGET", "LIMIT"] = "TARGET"
     autostop_trigger_type: str = "bar"    # "bar" (high/low) | "deviation" (% from close)
     autostop_deviation_pct: float = 1.0   # % deviation from close (only when type=deviation)
     # AggressiveStoploss settings

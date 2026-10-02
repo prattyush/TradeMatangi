@@ -641,6 +641,9 @@ def _on_bar_close_autostop(
     trigger_type = meta.get("autostop_trigger_type", "bar")
     direction = meta.get("direction", "BUY")
 
+    from app.models.schemas import OrderType
+    order_type = OrderType(meta.get("autostop_order_type", "TARGET"))
+
     # Compute trigger price from closed bar
     if trigger_type == "bar":
         trigger_price = closed_ohlc["high"] if direction == "BUY" else closed_ohlc["low"]
@@ -650,7 +653,15 @@ def _on_bar_close_autostop(
             trigger_price = closed_ohlc["close"] * (1 + dev_pct / 100)
         else:
             trigger_price = closed_ohlc["close"] * (1 - dev_pct / 100)
+    if order_type == OrderType.LIMIT:
+        trigger_price = 2 * closed_ohlc["close"] - trigger_price
+    if not math.isfinite(trigger_price) or trigger_price <= 0:
+        logger.warning("AutoStop %s: invalid entry price %s", strategy.strategy_id, trigger_price)
+        return
     trigger_price = round(trigger_price, 2)
+    if trigger_price <= 0:
+        logger.warning("AutoStop %s: entry price rounds to zero", strategy.strategy_id)
+        return
 
     # Resolve quantity
     quantity = meta.get("quantity")
@@ -740,11 +751,11 @@ def _on_bar_close_autostop(
             session_id=session.session_id,
             symbol=session.symbol,
             side=side,
-            order_type=OrderType.TARGET,
+            order_type=order_type,
             quantity=quantity,
             created_at=current_ts,
             trading_date=session.date,
-            trigger_price=trigger_price,
+            **({"limit_price": trigger_price} if order_type == OrderType.LIMIT else {"trigger_price": trigger_price}),
             right=tick_right,
             strike=order_strike,
             expiry=_strategy_expiry(strategy, session, tick_right),
@@ -757,8 +768,8 @@ def _on_bar_close_autostop(
             **_wallet_ledger_kwargs(session),
         )
         logger.info(
-            "AutoStop %s placed %s TARGET at %.2f for %s right=%s sl=%.2f",
-            strategy.strategy_id, direction, trigger_price, session.symbol, tick_right,
+            "AutoStop %s placed %s %s at %.2f for %s right=%s sl=%.2f",
+            strategy.strategy_id, direction, order_type.value, trigger_price, session.symbol, tick_right,
             entry_sl_price if entry_sl_price else 0,
         )
     except Exception as exc:
