@@ -88,6 +88,8 @@ def normalize_execution(raw: dict) -> dict:
                   price=number(raw.get("flPrc") or raw.get("price") or raw.get("avgPrc")))
     if not result["execution_id"] or not result["kotak_order_id"] or result["quantity"] <= 0 or result["price"] <= 0:
         raise ValueError("Broker execution is missing identity, quantity or price")
+    from app.services.real_accounting import price_factor
+    result["price_factor"] = raw.get("price_factor", price_factor(raw))
     result["timestamp"] = wall_time(result["execution_time"])
     return result
 

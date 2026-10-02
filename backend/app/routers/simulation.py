@@ -404,9 +404,9 @@ async def _start_simulation(
         if not kotak_svc.is_authenticated():
             raise HTTPException(status_code=401, detail="Kotak login required. Please authenticate via /api/kotak/login before starting a real session.")
         try:
-            funds = await asyncio.to_thread(kotak_svc.get_funds)
-            from app.services import wallet_service
-            await asyncio.to_thread(wallet_service.sync_real_funds, user_id, req.date, funds, reason="start")
+            from app.services import real_accounting
+            account_wallet = await real_accounting.refresh(user_id, req.date, kotak_svc, reason="start")
+            funds = account_wallet["session_capital"]
         except KotakError as exc:
             raise HTTPException(status_code=502, detail=f"Could not fetch Kotak funds: {exc}")
         except Exception:
@@ -508,6 +508,7 @@ async def _start_simulation(
                 strike_pe=req_pe,
                 brokerage_per_order=req.brokerage_per_order,
                 strategy_interval_secs=req.strategy_interval_secs,
+                starting_capital=funds if is_real else None,
             )
             if website_paper:
                 try:
@@ -557,8 +558,12 @@ async def _start_simulation(
         stepwise=is_stepwise,
         group_id=group["group_id"],
         session_alias=req.session_alias,
+        starting_capital=funds if is_real else None,
         wallet_ledger_id=(f"paper:{req.date}" if internal_session_type == "paper" else f"real:{req.date}" if internal_session_type == "real" else f"sim:{req.date}"),
     )
+    if is_real:
+        session.session_capital = funds
+        sim_svc._upsert_session_to_db(session, strict=True)
     session.desktop_created = desktop_independent
     groups.add_member(group, {"session_id": session.session_id, "symbol": session.symbol,
         "session_type": session.session_type, "instrument_type": session.instrument_type,

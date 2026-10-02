@@ -1,4 +1,4 @@
-"""Real funds are broker snapshots, never Paper balances or synthetic capital."""
+"""Raw broker cash, adjusted display and recovered capital remain separate."""
 from unittest.mock import MagicMock
 import pytest
 from fastapi import HTTPException
@@ -19,7 +19,14 @@ def isolated(monkeypatch):
     def update(**kwargs):
         item = items.setdefault(tuple(kwargs["Key"].values()), dict(kwargs["Key"]))
         values = kwargs["ExpressionAttributeValues"]
-        item.update(date=values[":date"], ledger_kind=values[":kind"], current_balance=values[":balance"])
+        item.update(date=values[":date"], ledger_kind=values[":kind"])
+        if ":capital" in values:
+            item.setdefault("day_start_capital", values[":capital"])
+            return {"Attributes": dict(item)}
+        item["current_balance"] = values[":balance"]
+        for name in ("broker_account_id", "day_start_capital", "display_balance", "gross_realized_pnl", "committed_funds"):
+            if ":" + name in values:
+                item[name] = values[":" + name]
         if "broker_balance" in kwargs["UpdateExpression"]:
             item.update(broker_balance=values[":balance"], broker_funds_updated_at=values[":updated"])
     table.update_item.side_effect = update
@@ -28,6 +35,7 @@ def isolated(monkeypatch):
     resource.Table.return_value = table
     monkeypatch.setattr(wallet_service, "_ensure_ledger_table", lambda: None)
     monkeypatch.setattr("app.services.db.get_dynamodb_resource", lambda: resource)
+    monkeypatch.setattr(simulation, "_upsert_session_to_db", lambda *args, **kwargs: None)
     yield table
     wallet_service._wallets.clear()
     wallet_service._ledgers.clear()
@@ -89,7 +97,11 @@ async def test_real_get_uses_snapshot_without_margin_or_broker_call(monkeypatch)
 async def test_explicit_refresh_keeps_capital_and_paper_isolation(monkeypatch):
     s, broker = session(), MagicMock()
     monkeypatch.setattr(simulation, "get_session", lambda sid: s)
-    broker.get_funds.return_value = 750
+    wallet_service.sync_real_account_funds(USER, DATE, "account-a", 900, 0, 0, reason="start")
+    broker.get_limits.return_value = {"Net": 750, "MarginUsed": 150}
+    broker.account_identity.return_value = "account-a"
+    broker.get_trade_history.return_value = []
+    broker.get_positions.return_value = []
     monkeypatch.setattr(kotak_service, "get_service", lambda: broker)
     paper_balance = MagicMock(return_value=123000)
     monkeypatch.setattr("app.services.paper_wallet.balance", paper_balance)
@@ -100,14 +112,14 @@ async def test_explicit_refresh_keeps_capital_and_paper_isolation(monkeypatch):
     with pytest.raises(HTTPException) as error:
         await wallet.refresh_real_wallet(s.session_id, USER)
     assert error.value.status_code == 400
-    broker.get_funds.assert_called_once()
+    broker.get_limits.assert_called_once()
 
 @pytest.mark.asyncio
 async def test_refresh_failure_retains_snapshot(monkeypatch):
     s, broker = session(), MagicMock()
     monkeypatch.setattr(simulation, "get_session", lambda sid: s)
     wallet_service.sync_real_funds(USER, DATE, 900, reason="start")
-    broker.get_funds.side_effect = kotak_service.KotakError("token expired")
+    broker.get_limits.side_effect = kotak_service.KotakError("token expired")
     monkeypatch.setattr(kotak_service, "get_service", lambda: broker)
     with pytest.raises(HTTPException) as error:
         await wallet.refresh_real_wallet(s.session_id, USER)
@@ -141,14 +153,22 @@ async def test_each_real_start_fetches_once(branch, monkeypatch):
     wallet_service._wallets[(USER, DATE)] = 150000
     wallet_service._ledgers[(USER, f"real:{DATE}")] = 0
     broker = MagicMock()
-    broker.is_authenticated.return_value, broker.get_funds.return_value = True, 900
+    broker.is_authenticated.return_value = True
+    broker.account_identity.return_value = "account-a"
+    broker.get_limits.return_value = {"Net": 19200, "MarginUsed": 0}
+    from app.services.broker_reports import normalize_execution
+    broker.get_trade_history.return_value = [normalize_execution(dict(flId=identity, nOrdNo=identity,
+        fldQty=10, flPrc=price, trnsTp=side, trdSym="OTHER-EQ", exSeg="nse_cm",
+        flDt="01-Oct-2026", flTm=time)) for identity, price, side, time in [
+        ("buy", 100, "B", "09:30:00"), ("sell", 220, "S", "10:00:00")]]
+    broker.get_positions.return_value = []
     monkeypatch.setattr(kotak_service, "get_service", lambda: broker)
     result = await start_router._start_simulation(SimulationStartRequest(symbol="RELIANCE", date=DATE,
         start_time="09:15:00", speed=1, session_type="real"), USER)
-    assert result.session_capital == 900
+    assert result.session_capital == 18000
     assert result.wallet_ledger_id == f"real:{DATE}"
     assert wallet_service._wallets[(USER, DATE)] == 150000
-    broker.get_funds.assert_called_once()
+    broker.get_limits.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -170,3 +190,39 @@ async def test_legacy_real_wallet_never_falls_back_to_paper_balance(monkeypatch)
     with pytest.raises(HTTPException) as error:
         await wallet.get_wallet(DATE, s.session_id, USER)
     assert error.value.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_browser_wallet_read_corrects_legacy_capital_without_broker_fetch(monkeypatch):
+    s, broker = session(), MagicMock()
+    s.session_capital = 19200
+    monkeypatch.setattr(simulation, 'get_session', lambda sid: s)
+    monkeypatch.setattr(kotak_service, 'get_service', lambda: broker)
+    wallet_service.sync_real_account_funds(USER, DATE, 'account-a', 14200, 1200, 5000, reason='refresh')
+    result = await wallet.get_wallet(DATE, s.session_id, USER)
+    assert result.balance == 14200
+    assert result.display_balance == 13000
+    assert result.session_capital == s.session_capital == 18000
+    broker.get_limits.assert_not_called()
+    broker.get_trade_history.assert_not_called()
+
+
+def test_corrected_capital_updates_only_same_user_date_real_sessions(monkeypatch):
+    from app.services.real_accounting import apply_session_capital
+    original = session('capital-original')
+    sibling, other_owner, other_date, paper = [session(sid) for sid in ('sibling', 'owner', 'date', 'paper')]
+    other_owner.user_id = 'different-user'
+    other_date.date = '2026-10-02'
+    paper.session_type = 'paper'
+    for s in (original, sibling, other_owner, other_date, paper):
+        simulation._sessions[s.session_id] = s
+    persist = MagicMock()
+    monkeypatch.setattr(simulation, '_upsert_session_to_db', persist)
+    try:
+        apply_session_capital(original, 18000)
+        assert original.session_capital == sibling.session_capital == 18000
+        assert other_owner.session_capital == other_date.session_capital == paper.session_capital == 900
+        assert persist.call_count == 2
+    finally:
+        for s in (original, sibling, other_owner, other_date, paper):
+            simulation._sessions.pop(s.session_id, None)

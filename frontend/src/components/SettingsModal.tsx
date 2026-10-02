@@ -471,6 +471,7 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
           const percentMode = s.desktop_pnl_display_mode === 'percent'
           setPnlPctMode(percentMode)
           localStorage.setItem(PNL_PCT_MODE_KEY, String(percentMode))
+          onPnlPctModeChange?.(percentMode)
         }
         if (s.desktop_order_size_mode === 'quantity' || s.desktop_order_size_mode === 'funds_ratio' || s.desktop_order_size_mode === 'risk_ratio') {
           const mode = s.desktop_order_size_mode === 'funds_ratio' ? 'fundsRatio' : s.desktop_order_size_mode === 'risk_ratio' ? 'riskRatio' : 'quantity'

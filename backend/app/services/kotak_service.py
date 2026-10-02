@@ -651,7 +651,11 @@ class KotakNeoService:
     # ── Account data ─────────────────────────────────────────────────────────
 
     def get_funds(self) -> float:
-        """Return available funds (Net balance) from Kotak."""
+        """Return raw available funds; capital accounting uses the full limits report."""
+        return float(self.get_limits()["Net"])
+
+    def get_limits(self) -> dict:
+        """Return validated limits without discarding committed-funds information."""
         client = self._get_client()
         try:
             limits = client.limits()
@@ -662,7 +666,7 @@ class KotakNeoService:
             funds = float(limits["Net"])
             if not math.isfinite(funds):
                 raise KotakError("Kotak limits response contains invalid available funds")
-            return funds
+            return limits
         except KotakError:
             raise
         except Exception as exc:

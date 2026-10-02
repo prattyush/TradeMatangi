@@ -1,3 +1,4 @@
+import { refreshedSessionCapital } from '../brokerSnapshot'
 import { useState, useCallback, useRef } from 'react'
 import api, { Trade, Position, Order, TickEvent, BarCandle, InsufficientFundsError, SimulationStartResponse, SessionGroupResponse } from '../services/api'
 
@@ -864,10 +865,17 @@ export function useSimulation() {
         return { ...FLAT_POSITION(s.symbol), side, quantity: Math.abs(net),
           avg_entry_price: qty ? same.reduce((n, p) => n + p.quantity * p.avg_entry_price, 0) / qty : 0 } as Position
       }
-      return { ...s, trades: snapshot.trades, historicalTrades: [], openOrders: snapshot.application_orders,
+      return { ...s, sessionCapital: refreshedSessionCapital(s.sessionId, sessionId, s.sessionCapital, snapshot.session_capital),
+        trades: snapshot.trades, historicalTrades: [], openOrders: snapshot.application_orders,
         position: findPosition(null, null), positionCE: findPosition('CE', s.sessionStrikeCE),
         positionPE: findPosition('PE', s.sessionStrikePE), walletRefreshKey: s.walletRefreshKey + 1 }
     })
+  }, [])
+
+  const applyWalletSnapshot = useCallback((sessionId: string, wallet: import('../services/api').WalletResponse) => {
+    setState(s => s.sessionType !== 'real' || s.sessionId !== sessionId ? s : ({
+      ...s, sessionCapital: refreshedSessionCapital(s.sessionId, sessionId, s.sessionCapital, wallet.session_capital),
+    }))
   }, [])
 
   const setTrades = useCallback((trades: Trade[]) => {
@@ -1066,6 +1074,7 @@ export function useSimulation() {
     incrementWalletRefreshKey,
     setTrades,
     applyBrokerSnapshot,
+    applyWalletSnapshot,
     addTradeFromSSE,
     fetchAndUpdatePosition,
     handleBarPaused,
