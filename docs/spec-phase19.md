@@ -4,8 +4,8 @@
 
 The latest change is implemented and validated: website and desktop share a
 **1% Target / Market Limit Gap** and a **1.5% Stoploss Trigger-to-Limit Gap**.
-Delivery is through `feature/phase19-execution-gaps` into `dev`; review and merge
-are pending. See **Shared real execution limit gaps — 2026-10-04** below for the
+Delivery is through [PR #568](https://github.com/prattyush/TradeMatangi/pull/568),
+from `feature/phase19-execution-gaps` into `dev`; review and merge are pending. See **Shared real execution limit gaps — 2026-10-04** below for the
 implementation, validation, lessons and remaining manual acceptance. Older status
 entries document their original delivery conditions and are historical.
 
@@ -1710,7 +1710,8 @@ temporary override does not alter other entry controls or future orders.
 ### Status and delivery
 
 - Implementation is complete; the current change is delivered on
-  `feature/phase19-execution-gaps`, with a PR targeting `dev`. Review and merge
+  `feature/phase19-execution-gaps`, with
+  [PR #568](https://github.com/prattyush/TradeMatangi/pull/568) targeting `dev`. Review and merge
   into `dev` are pending; merging into `main` remains manual.
 - Automated validation passed: **505 targeted backend tests**, **131 desktop/client
   Vitest tests across 23 files**, both TypeScript checks and both production builds.
