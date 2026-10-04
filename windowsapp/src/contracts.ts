@@ -68,6 +68,7 @@ export interface DesktopTradingSettings {
   desktop_confirm_flatten: boolean
   context_menu_sl_mode: 'longOnly' | 'both'
   target_deviation_pct: number
+  stoploss_limit_gap_pct?: number
   funds_ratio_l_pct: number; funds_ratio_m_pct: number; funds_ratio_h_pct: number
   risk_ratio_l_pct: number; risk_ratio_m_pct: number; risk_ratio_h_pct: number
   default_sl_pct: number

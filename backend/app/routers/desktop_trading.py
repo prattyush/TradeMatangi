@@ -720,6 +720,7 @@ def _snapshot(session, user_id: str) -> DesktopTradingSnapshot:
             "desktop_confirm_flatten": settings.get("desktop_confirm_flatten", True),
             "context_menu_sl_mode": settings.get("context_menu_sl_mode", "longOnly"),
             "target_deviation_pct": settings.get("target_deviation_pct", 0.01),
+            "stoploss_limit_gap_pct": settings.get("stoploss_limit_gap_pct", 0.015),
             "funds_ratio_l_pct": settings.get("funds_ratio_l_pct", 0.03),
             "funds_ratio_m_pct": settings.get("funds_ratio_m_pct", 0.06),
             "funds_ratio_h_pct": settings.get("funds_ratio_h_pct", 0.12),
@@ -1270,7 +1271,8 @@ async def place_chart_order(session_id: str, intent: ChartOrderIntent, user_id: 
         if not quote or float(quote.get("price", 0)) <= 0:
             raise HTTPException(status_code=409, detail="No authoritative quote is available for this chart contract")
         quote_price = float(quote["price"])
-        entry_price = round(quote_price * (1.01 if intent.side == TradeSide.BUY else 0.99), 2)
+        from app.services.execution_price_service import limit_price
+        entry_price = limit_price(intent.side, quote_price, float(get_settings(user_id).get("target_deviation_pct", 0.01)))
         order_type = OrderType.LIMIT
     else:
         if intent.price is None:
@@ -1286,6 +1288,8 @@ async def place_chart_order(session_id: str, intent: ChartOrderIntent, user_id: 
         raise HTTPException(status_code=400, detail="Long stop must be below chart entry; short stop must be above chart entry")
 
     req = PlaceOrderRequest(
+        market_order=intent.intent == "market",
+        execute_immediately=intent.intent == "market" and session.session_type == "real",
         session_id=session_id,
         side=intent.side,
         order_type=order_type,
@@ -1484,13 +1488,20 @@ async def flatten(session_id: str, req: FlattenRequest, user_id: str = Depends(g
         price = _last_price_for_right(session, right, strike, expiry)
         if price <= 0:
             continue
-        emergency_price = round(price * (1 - req.emergency_offset_pct), 2) if exit_side == TradeSide.SELL else round(price * (1 + req.emergency_offset_pct), 2)
+        from app.services.execution_price_service import gap_for, limit_price
+        market_gap = gap_for(user_id) if session.session_type == "real" else req.emergency_offset_pct
+        emergency_price = limit_price(exit_side, price, market_gap) if session.session_type == "real" else round(price * (1 - market_gap if exit_side == TradeSide.SELL else 1 + market_gap), 2)
         closers = _closing_orders(session, right, strike, expiry)
         if closers:
             for order in closers:
                 from app.routers.orders import _convert_with_broker
                 converted = _convert_with_broker(session, order, OrderType.LIMIT, emergency_price)
                 if converted:
+                    if session.session_type == "real":
+                        converted.market_order = True
+                        converted.execution_gap_pct = market_gap
+                        converted.quote_price = price
+                        order_service._write_order_to_db(converted)
                     result["converted"].append(converted.model_dump(mode="json"))
                     _emit_order_converted(session, converted)
         else:
@@ -1503,6 +1514,8 @@ async def flatten(session_id: str, req: FlattenRequest, user_id: str = Depends(g
                 created_at=int(session.current_time) if session.current_time else 0,
                 trading_date=session.date,
                 limit_price=emergency_price,
+                market_order=session.session_type == "real",
+                quote_price=price,
                 right=right,
                 strike=strike if strike is not None else session.strike_ce if right == "CE" else session.strike_pe if right == "PE" else None,
                 expiry=expiry if expiry is not None else session.expiry,
@@ -1636,7 +1649,10 @@ async def get_desktop_settings(user_id: str = Depends(get_desktop_user_id)):
 
 @router.put("/settings/current")
 async def update_desktop_settings(req: DesktopSettingsUpdateRequest, user_id: str = Depends(get_desktop_user_id)):
-    return update_settings(user_id, req.settings)
+    try:
+        return update_settings(user_id, req.settings)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 def _guardrail_snapshot(session):

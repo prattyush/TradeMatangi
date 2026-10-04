@@ -149,6 +149,9 @@ export interface SimulationStartRequest {
 
 export interface UserSettingsResponse {
   historical_days: number
+  target_deviation_pct?: number
+  target_deviation_configured?: boolean
+  stoploss_limit_gap_pct?: number
   desktop_order_size_mode?: 'quantity' | 'funds_ratio' | 'risk_ratio'
   desktop_pnl_display_mode?: 'currency' | 'percent'
   funds_ratio_l_pct?: number
@@ -1044,8 +1047,10 @@ const api = {
     order_type: 'TARGET' | 'LIMIT' | 'STOPLOSS',
     price: number,
     quantityOrRatio: number | null,
-    opts: { execute_immediately?: boolean; is_stoploss?: boolean; funds_ratio_pct?: number; risk_pct?: number; risk_ratio_pct?: number; right?: string; strike?: number; expiry?: string; target_deviation_pct?: number; entry_sl_price?: number; group_id?: string } = {},
+    opts: { market_order?: boolean; execute_immediately?: boolean; is_stoploss?: boolean; funds_ratio_pct?: number; risk_pct?: number; risk_ratio_pct?: number; right?: string; strike?: number; expiry?: string; target_deviation_pct?: number; entry_sl_price?: number; group_id?: string } = {},
   ): Promise<Order> {
+    const settings = await api.getUserSettings()
+    opts = { ...opts, target_deviation_pct: settings.target_deviation_pct ?? 0.01 }
     const { target_deviation_pct, entry_sl_price, group_id, ...restOpts } = opts
     const body: Record<string, unknown> = { session_id, side, order_type, ...restOpts }
     if (order_type === 'LIMIT') {
@@ -1390,6 +1395,7 @@ const api = {
   // ── Strategies ─────────────────────────────────────────────────────────────
 
   async startStrategy(req: StartStrategyRequest): Promise<StrategyResponse> {
+    if (req.strategy_type === 'AutoStop') await api.getUserSettings()
     const res = await fetch(`${BACKEND_URL}/api/strategies/start`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ..._authHeaders() },
@@ -1480,8 +1486,22 @@ const api = {
     const res = await fetch(`${BACKEND_URL}/api/users/settings`, {
       headers: _authHeaders(),
     })
-    if (!res.ok) return { historical_days: 2 }
-    return res.json()
+    if (!res.ok) throw new Error(`Load user settings failed: ${res.status}`)
+    let settings: UserSettingsResponse = await res.json()
+    const legacy = localStorage.getItem('targetDeviationPct')
+    const legacyPct = legacy === null ? NaN : Number(legacy)
+    if (settings.target_deviation_configured === false && Number.isFinite(legacyPct) && legacyPct >= 0 && legacyPct <= 10) {
+      const migrated = await fetch(`${BACKEND_URL}/api/users/settings/target-gap-migration`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json', ..._authHeaders() },
+        body: JSON.stringify({ target_deviation_pct: legacyPct / 100 }),
+      })
+      if (!migrated.ok) throw new Error('Could not migrate saved target gap')
+      settings = await migrated.json()
+    }
+    // Cache only explicitly configured values; a default must not become a legacy override.
+    if (settings.target_deviation_configured) localStorage.setItem('targetDeviationPct', String((settings.target_deviation_pct ?? 0.01) * 100))
+    window.dispatchEvent(new CustomEvent("execution-gap-settings", { detail: settings }))
+    return settings
   },
 
   async updateUserSettings(settings: Partial<UserSettingsResponse>): Promise<UserSettingsResponse> {

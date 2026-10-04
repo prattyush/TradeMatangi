@@ -22,3 +22,10 @@ async def update_user_settings(
         return UserSettingsResponse(**updated)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.put("/settings/target-gap-migration", response_model=UserSettingsResponse)
+async def migrate_target_gap(req: UserSettingsUpdateRequest, user_id: str = Depends(get_request_user_id)):
+    if req.target_deviation_pct is None:
+        raise HTTPException(status_code=400, detail="target_deviation_pct is required")
+    return UserSettingsResponse(**user_settings_service.migrate_target_gap(user_id, req.target_deviation_pct))

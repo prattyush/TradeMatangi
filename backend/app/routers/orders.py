@@ -95,11 +95,11 @@ def _stoploss_available_quantity(
     return max(0, position.quantity - covered), position.quantity
 
 
-def _sync_kotak_after_convert(session, order: Order, new_order_type: OrderType) -> None:
+def _sync_kotak_after_convert(session, order: Order, new_order_type: OrderType, *, reprice: bool = False) -> None:
     from app.services.broker_order_service import sync_order_edit
     from app.services.kotak_service import KotakError
     try:
-        sync_order_edit(session, order, new_order_type)
+        sync_order_edit(session, order, new_order_type, reprice=reprice)
     except KotakError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
@@ -228,6 +228,27 @@ async def place_order(req: PlaceOrderRequest):
             )
         order_strike = req.strike if req.strike is not None else (session.strike_ce if order_right == "CE" else session.strike_pe)
         order_expiry = req.expiry if req.expiry is not None else session.expiry
+
+    if req.market_order:
+        if req.order_type != OrderType.LIMIT:
+            raise HTTPException(status_code=400, detail="Market execution requires a LIMIT order")
+        if session.session_type == "real":
+            from app.services.execution_price_service import gap_for, limit_price
+            # Read the exact contract quote on the server; do not trust a client price.
+            quote = (getattr(session, "desktop_contract_quotes", {}) or {}).get(
+                f"{session.symbol}:{order_expiry}:{order_strike}:{order_right}") if order_right else None
+            current = float(quote.get("price", 0)) if quote else (
+                session.last_price_ce if order_right == "CE" else session.last_price_pe if order_right == "PE" else session.last_price)
+            active_strike = session.strike_ce if order_right == "CE" else session.strike_pe if order_right == "PE" else None
+            if order_right and not quote and (order_strike != active_strike or order_expiry != session.expiry):
+                raise HTTPException(status_code=409, detail="No authoritative quote available for the selected contract")
+            import math
+            if not math.isfinite(current) or current <= 0:
+                raise HTTPException(status_code=409, detail="No authoritative market quote available")
+            req.quote_price = current
+            req.quote_timestamp = int(quote.get("timestamp", session.current_time)) if quote else int(session.current_time)
+            req.quote_source = str(quote.get("source", "server_quote")) if quote else "session_quote"
+            req.limit_price = limit_price(req.side, current, gap_for(session.user_id))
 
     # Naked short margin check for options sessions
     if (
@@ -396,6 +417,7 @@ async def place_order(req: PlaceOrderRequest):
             quote_price=req.quote_price,
             quote_timestamp=req.quote_timestamp,
             quote_source=req.quote_source,
+            market_order=req.market_order,
             wallet_ledger_id=_reservation_ledger_id(session),
             wallet_ledger_kind=_ledger_kind(session),
         )
@@ -473,6 +495,8 @@ async def place_order(req: PlaceOrderRequest):
                     user_id=session.user_id,
                     margin_rate=order_margin_rate,
                     source=_desktop_order_source(session),
+                    market_order=req.market_order,
+                    quote_price=req.quote_price,
                     wallet_ledger_id=_reservation_ledger_id(session),
                     wallet_ledger_kind=_ledger_kind(session),
                 )
@@ -651,12 +675,14 @@ async def update_order(order_id: str, req: UpdateOrderRequest, session_id: str =
                 detail=f"Stop-loss quantity exceeds available uncovered position ({available} of {position_quantity})",
             )
 
+    if existing.order_type != OrderType.LIMIT and req.limit_price is not None:
+        raise HTTPException(status_code=400, detail="Target and stoploss limits are calculated from their trigger")
     candidate = existing.model_copy(deep=True)
     for name in ("trigger_price", "limit_price", "quantity"):
         value = getattr(req, name)
         if value is not None:
             setattr(candidate, name, value)
-    _sync_kotak_after_convert(session, candidate, candidate.order_type)
+    _sync_kotak_after_convert(session, candidate, candidate.order_type, reprice=req.trigger_price is not None or req.limit_price is not None)
 
     order = order_service.update_order(
         session_id=session_id,
@@ -666,6 +692,7 @@ async def update_order(order_id: str, req: UpdateOrderRequest, session_id: str =
         limit_price=req.limit_price,
         quantity=req.quantity,
         target_deviation_pct=req.target_deviation_pct,
+        execution_gap_pct=candidate.execution_gap_pct,
     )
     if order is None:
         raise HTTPException(status_code=404, detail="Order not found or not pending")

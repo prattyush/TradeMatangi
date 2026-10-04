@@ -1,11 +1,12 @@
 """
 Order service: in-memory LIMIT, TARGET (stop-limit), and STOPLOSS orders with DynamoDB persistence.
 
-TARGET:   user supplies trigger_price; limit auto-set at 1% deviation.
+TARGET:   user supplies trigger_price; limit uses target deviation (account gap in real trading).
           BUY fills when price >= trigger; SELL fills when price <= trigger.
 LIMIT:    user supplies limit_price directly; no deviation.
           BUY fills when price <= limit; SELL fills when price >= limit.
-STOPLOSS: same trigger logic as TARGET; limit = trigger (no deviation).
+STOPLOSS: same trigger logic as TARGET; real limit uses the account stoploss gap.
+          Simulation/paper retain limit = trigger.
           No wallet debit on placement; no wallet credit on fill.
 """
 from __future__ import annotations
@@ -236,6 +237,9 @@ def _write_order_to_db(order: Order, *, strict: bool = False) -> None:
             item["entry_sl_price"] = Decimal(str(order.entry_sl_price))
         if order.group_id is not None:
             item["group_id"] = order.group_id
+        if order.execution_gap_pct is not None:
+            item["execution_gap_pct"] = Decimal(str(order.execution_gap_pct))
+        item["market_order"] = order.market_order
         if order.quote_price is not None:
             item["quote_price"] = Decimal(str(order.quote_price))
         if order.quote_timestamp is not None:
@@ -285,6 +289,7 @@ def place_order(
     quote_price: float | None = None,
     quote_timestamp: int | None = None,
     quote_source: str | None = None,
+    market_order: bool = False,
     wallet_ledger_id: str | None = None,
     wallet_ledger_kind: str | None = None,
     order_id: str | None = None,
@@ -299,22 +304,34 @@ def place_order(
         _write_order_to_db(existing, strict=True)
         return existing
 
+    from app.services import execution_price_service as execution
+    is_real = execution.real_session(session_id, wallet_ledger_kind)
+    execution_gap = None
+    if is_real and order_type in (OrderType.TARGET, OrderType.STOPLOSS):
+        execution_gap = execution.gap_for(user_id, order_type == OrderType.STOPLOSS)
+
     if order_type == OrderType.TARGET:
         if trigger_price is None:
             raise ValueError("trigger_price is required for TARGET orders")
         actual_trigger = trigger_price
-        actual_limit = _target_limit_price(side, trigger_price, target_deviation_pct)
+        actual_limit = execution.limit_price(side, trigger_price, execution_gap) if is_real else _target_limit_price(side, trigger_price, target_deviation_pct)
     elif order_type == OrderType.STOPLOSS:
         if trigger_price is None:
             raise ValueError("trigger_price is required for STOPLOSS orders")
         actual_trigger = trigger_price
-        actual_limit = trigger_price  # fill at market (no deviation for SL)
+        actual_limit = execution.limit_price(side, trigger_price, execution_gap) if is_real else trigger_price
         is_stoploss = True
     else:  # LIMIT
         if limit_price is None:
             raise ValueError("limit_price is required for LIMIT orders")
         actual_trigger = limit_price   # stored for schema consistency
         actual_limit = limit_price
+        if is_real and market_order:
+            if quote_price is None:
+                raise ValueError("Market execution requires an authoritative quote")
+            execution_gap = execution.gap_for(user_id)
+            actual_trigger = quote_price
+            actual_limit = execution.limit_price(side, quote_price, execution_gap)
 
     # SL orders never debit wallet; regular BUY orders reserve funds upfront.
     # margin_rate < 1.0 for equity MIS real sessions (20% margin).
@@ -362,6 +379,8 @@ def place_order(
         quote_price=quote_price,
         quote_timestamp=quote_timestamp,
         quote_source=quote_source,
+        execution_gap_pct=execution_gap,
+        market_order=market_order,
         exit_allocation_id=exit_allocation_id,
         exit_position_side=exit_position_side,
         exit_allocation_role=exit_allocation_role,
@@ -465,15 +484,22 @@ def update_order(
     limit_price: float | None = None,
     quantity: int | None = None,
     target_deviation_pct: float = _TARGET_DEVIATION,
+    execution_gap_pct: float | None = None,
 ) -> Order | None:
     """Update price and/or quantity of a PENDING order; handle BUY wallet re-reservation."""
     order = _orders.get(session_id, {}).get(order_id)
     if order is None or order.status != OrderStatus.PENDING:
         return None
 
+    from app.services import execution_price_service as execution
+    is_real = execution.real_session(session_id, order.wallet_ledger_kind)
+    gap = execution_gap_pct
+    if is_real and trigger_price is not None and order.order_type in (OrderType.TARGET, OrderType.STOPLOSS):
+        gap = gap if gap is not None else execution.gap_for(order.user_id, order.order_type == OrderType.STOPLOSS)
+
     if order.order_type == OrderType.TARGET and trigger_price is not None:
         new_trigger = trigger_price
-        new_limit = _target_limit_price(order.side, trigger_price, target_deviation_pct)
+        new_limit = execution.limit_price(order.side, trigger_price, gap) if is_real else _target_limit_price(order.side, trigger_price, target_deviation_pct)
         if (order.side == TradeSide.BUY or (order.right is None and order.reservation_margin_rate < 1)) and not order.is_stoploss:
             _adjust_buy_reservation(order, _reservation_for(order, new_limit), trading_date, {"trigger_price": new_trigger, "limit_price": new_limit})
         order.trigger_price = new_trigger
@@ -488,7 +514,13 @@ def update_order(
 
     elif order.order_type == OrderType.STOPLOSS and trigger_price is not None:
         order.trigger_price = trigger_price
-        order.limit_price = trigger_price
+        order.limit_price = execution.limit_price(order.side, trigger_price, gap) if is_real else trigger_price
+
+    if is_real and trigger_price is not None and order.order_type in (OrderType.TARGET, OrderType.STOPLOSS):
+        order.execution_gap_pct = gap
+    elif order.order_type == OrderType.LIMIT and limit_price is not None:
+        order.execution_gap_pct = None
+        order.market_order = False
 
     if quantity is not None:
         if (order.side == TradeSide.BUY or (order.right is None and order.reservation_margin_rate < 1)) and not order.is_stoploss and order.order_type != OrderType.STOPLOSS:
@@ -539,6 +571,12 @@ def convert_order(
     else:
         return None
 
+    from app.services import execution_price_service as execution
+    gap = None
+    if execution.real_session(session_id, order.wallet_ledger_kind) and new_order_type in (OrderType.TARGET, OrderType.STOPLOSS):
+        gap = execution.gap_for(order.user_id, new_order_type == OrderType.STOPLOSS)
+        new_limit = execution.limit_price(side, new_trigger, gap)
+
     # ── Wallet reservation ──────────────────────────────────────────────────
     # STOPLOSS orders have no reservation.  When converting to/from STOPLOSS,
     # we skip wallet changes because these are exit orders for existing positions.
@@ -564,6 +602,8 @@ def convert_order(
             _adjust_buy_reservation(order, _reservation_for(order, new_limit, qty), trading_date, {"order_type": new_order_type, "limit_price": new_limit, "trigger_price": new_trigger, "is_stoploss": new_is_sl})
 
     # ── Apply the conversion ────────────────────────────────────────────────
+    order.execution_gap_pct = gap
+    order.market_order = False
     order.order_type = new_order_type
     order.trigger_price = new_trigger
     order.limit_price = new_limit
