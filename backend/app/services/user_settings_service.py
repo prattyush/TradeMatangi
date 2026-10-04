@@ -47,6 +47,8 @@ DEFAULT_SETTINGS: dict = {
     "desktop_confirm_flatten": True,
     "context_menu_sl_mode": "longOnly",
     "target_deviation_pct": 0.01,
+    "target_deviation_configured": False,
+    "stoploss_limit_gap_pct": 0.015,
 }
 
 
@@ -126,6 +128,8 @@ def get_settings(user_id: str) -> dict:
             "desktop_confirm_flatten": bool(item.get("desktop_confirm_flatten", DEFAULT_SETTINGS["desktop_confirm_flatten"])),
             "context_menu_sl_mode": str(item.get("context_menu_sl_mode", DEFAULT_SETTINGS["context_menu_sl_mode"])),
             "target_deviation_pct": float(item.get("target_deviation_pct", DEFAULT_SETTINGS["target_deviation_pct"])),
+            "target_deviation_configured": bool(item.get("target_deviation_configured", "target_deviation_pct" in item)),
+            "stoploss_limit_gap_pct": float(item.get("stoploss_limit_gap_pct", 0.015)),
         }
     except Exception:
         logger.exception("Failed to get settings for user %s", user_id)
@@ -150,9 +154,19 @@ def _normalize_share_emails_value(value) -> str:
 
 def update_settings(user_id: str, settings: dict) -> dict:
     """Merge settings into the user's record and return the updated settings."""
+    import math
+    settings = dict(settings)
+    for key in ("target_deviation_pct", "stoploss_limit_gap_pct"):
+        if settings.get(key) is not None:
+            value = float(settings[key])
+            if not math.isfinite(value) or not 0 <= value <= 0.10:
+                raise ValueError("Execution gaps must be between 0 and 10%")
+            settings[key] = value
     _ensure_table()
     current = get_settings(user_id)
-    current.update({k: v for k, v in settings.items() if v is not None})
+    if settings.get("target_deviation_pct") is not None:
+        current["target_deviation_configured"] = True
+    current.update({k: v for k, v in settings.items() if v is not None and k != "target_deviation_configured"})
     shares_updated = "pattern_share_emails" in settings
     fine_shares_updated = "fine_structure_share_emails" in settings
     if shares_updated:
@@ -184,4 +198,25 @@ def update_settings(user_id: str, settings: dict) -> dict:
         raise
     except Exception:
         logger.exception("Failed to update settings for user %s", user_id)
+        raise
     return current
+
+
+def migrate_target_gap(user_id: str, gap: float) -> dict:
+    """Import a legacy browser value only if no target gap was explicitly saved."""
+    from app.services.db import get_dynamodb_resource
+    from botocore.exceptions import ClientError
+    from app.models.schemas import UserSettingsUpdateRequest
+    gap = UserSettingsUpdateRequest(target_deviation_pct=gap).target_deviation_pct
+    _ensure_table()
+    try:
+        get_dynamodb_resource().Table("UserSettings").update_item(
+            Key={"user_id": user_id},
+            UpdateExpression="SET target_deviation_pct = :gap, target_deviation_configured = :yes",
+            ConditionExpression="(attribute_not_exists(target_deviation_pct) AND attribute_not_exists(target_deviation_configured)) OR target_deviation_configured = :no",
+            ExpressionAttributeValues={":gap": Decimal(str(gap)), ":yes": True, ":no": False},
+        )
+    except ClientError as exc:
+        if exc.response["Error"]["Code"] != "ConditionalCheckFailedException":
+            raise
+    return get_settings(user_id)

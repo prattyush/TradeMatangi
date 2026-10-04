@@ -799,6 +799,7 @@ def _update_exit_order_price(session, order, new_price: float) -> None:
     from app.services.order_service import update_order
     from app.models.schemas import OrderType
 
+    effective_gap = None
     if getattr(session, "session_type", "sim") == "real":
         from app.services.broker_order_service import sync_order_edit
         candidate = order.model_copy(deep=True)
@@ -806,13 +807,14 @@ def _update_exit_order_price(session, order, new_price: float) -> None:
             candidate.limit_price = new_price
         else:
             candidate.trigger_price = new_price
-        sync_order_edit(session, candidate, candidate.order_type)
+        sync_order_edit(session, candidate, candidate.order_type, reprice=True)
         order.kotak_order_id = candidate.kotak_order_id
         order.execution_role = candidate.execution_role
+        effective_gap = candidate.execution_gap_pct
 
     if order.order_type in (OrderType.TARGET, OrderType.STOPLOSS):
         update_order(session_id=session.session_id, order_id=order.order_id,
-                     trading_date=session.date, trigger_price=new_price)
+                     trading_date=session.date, trigger_price=new_price, execution_gap_pct=effective_gap)
     else:  # LIMIT
         update_order(session_id=session.session_id, order_id=order.order_id,
                      trading_date=session.date, limit_price=new_price)

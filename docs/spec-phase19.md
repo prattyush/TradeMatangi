@@ -1,12 +1,23 @@
 # Phase 19 — Shared live market data and partial take profit
 
+## Current delivery status — shared execution gaps
+
+The latest change is implemented and validated: website and desktop share a
+**1% Target / Market Limit Gap** and a **1.5% Stoploss Trigger-to-Limit Gap**.
+Delivery is through [PR #568](https://github.com/prattyush/TradeMatangi/pull/568),
+from `feature/phase19-execution-gaps` into `dev`; review and merge are pending. See **Shared real execution limit gaps — 2026-10-04** below for the
+implementation, validation, lessons and remaining manual acceptance. Older status
+entries document their original delivery conditions and are historical.
+
 ## Agreed implementation scope
 
 Implement shared live streaming for website and desktop; Half / Full for
 TargetProfit and UnderlyingTargetProfit; smaller desktop open-order text;
 AutoStop Limit entries in the website and desktop; website Day P&L units and
-Kotak day-start capital/adjusted wallet recovery.
-Desktop real trading is deferred. The original requests below are preserved.
+Kotak day-start capital/adjusted wallet recovery; and shared Target / Market
+and Stoploss execution limit-gap settings. Desktop real trading was deferred
+in the initial scope; subsequent real-trading work is recorded later in this
+document. The original requests below are preserved.
 
 ## Sprints
 
@@ -18,6 +29,7 @@ Desktop real trading is deferred. The original requests below are preserved.
 6. Typography, regression verification and Windows acceptance.
 7. AutoStop Limit mode, ASL entry tickets, website checkbox and regressions.
 8. Website Day P&L formatting and Kotak account/day capital recovery.
+9. Shared website/desktop execution gaps, real broker price consistency and regressions.
 
 Implementation status and verification are recorded at the end of this document.
 
@@ -1692,6 +1704,109 @@ Lesson: sharing a class name between a submenu parent and a hidden flyout can
 silently hide the entire action despite correct request handling. Keep each
 element's styling distinct. Per-order sizing choices belong on the ticket so a
 temporary override does not alter other entry controls or future orders.
+
+## Shared real execution limit gaps — 2026-10-04
+
+### Status and delivery
+
+- Implementation is complete; the current change is delivered on
+  `feature/phase19-execution-gaps`, with
+  [PR #568](https://github.com/prattyush/TradeMatangi/pull/568) targeting `dev`. Review and merge
+  into `dev` are pending; merging into `main` remains manual.
+- Automated validation passed: **505 targeted backend tests**, **131 desktop/client
+  Vitest tests across 23 files**, both TypeScript checks and both production builds.
+  These counts describe this change's validation, not the entire backend suite.
+- Native Windows settings interaction, website click-through and live Kotak
+  submission/fill acceptance remain outstanding. No deployment or live broker
+  orders were performed for this change.
+
+### Implementation and compatibility
+
+Website and desktop Trading settings now share two per-user execution gaps:
+
+- **Target / Market Limit Gap**: `target_deviation_pct`, default `0.01` (1%).
+  TARGET uses its trigger as the base; market-style orders and real flattening
+  use the authoritative current contract quote.
+- **Stoploss Trigger-to-Limit Gap**: `stoploss_limit_gap_pct`, default `0.015`
+  (1.5%). Real STOPLOSS orders use their stoploss trigger as the base.
+
+Both inputs accept 0–10%, displayed as percentage points and stored as fractions.
+BUY limit = base × (1 + gap); SELL limit = base × (1 − gap), rounded to the broker
+price tick. Existing real execution uses Kotak's ₹0.05 tick. The calculation is
+broker-independent; this change does not add Kite real-order execution.
+
+The fixed Kotak 0.5% gap has been removed. Locally stored real target/stoploss
+limits are now the submitted broker limits, without another gap during forwarding.
+Market-style LIMIT requests carry explicit `market_order` intent; the server
+resolves the exact current quote and account setting. Direct market actions,
+website panel/right-click orders, desktop chart tickets, attached protection,
+strategy stoploss edits, and real flattening use these shared calculations.
+Explicit LIMIT prices, AutoStop Limit's reflected bar price, and simulation/paper
+stoploss fill behavior remain unchanged. AutoStop trigger deviation from the bar
+close is still a separate strategy setting.
+
+Orders persist `execution_gap_pct` and `market_order`. Settings saves do not edit
+pending orders. New orders and deliberate trigger edits use the latest setting;
+quantity-only edits, retries, restoration, and reconciliation retain existing
+prices. Broker acknowledgement precedes publication of edited local prices.
+
+Website settings load/save uses backend account settings. Existing backend target
+values are preserved; a legacy browser value is conditionally migrated through
+`PUT /api/users/settings/target-gap-migration` only when no target value was saved.
+The `target_deviation_configured` marker distinguishes new defaults from explicit
+settings. Database write failures propagate so the clients do not report a
+successful save. Desktop snapshots include both gaps and its Trading settings
+panel saves both through the existing settings endpoint.
+
+Regression coverage includes default/custom BUY/SELL payloads, zero gaps and
+rounding, exact option quote selection, target forwarding without a second gap,
+real flattening, broker edit rejection, pending price preservation, persistence,
+legacy migration, website settings refresh, and settings-save failures. Native
+Windows interaction and live broker execution require separate manual acceptance.
+
+Validation: 505 targeted backend tests passed; all 131 desktop/client Vitest tests
+passed (23 files), including six website settings/API regressions. Website and
+desktop TypeScript checks and production builds passed. Builds report bundle-size
+warnings; backend tests report the existing dateutil UTC deprecation warning.
+
+### Lessons learned
+
+- Calculate the limit once and store the price sent to the broker. A hidden broker
+  gap can override a TARGET setting or make a stoploss's displayed and submitted
+  prices disagree; forwarding must not add another percentage.
+- Distinguish market-style intent from an ordinary LIMIT order. Both use broker
+  limit execution, but only market-style actions should derive a price from the
+  current quote. This preserves explicit limits and AutoStop Limit reflections.
+- Inspect every execution entrypoint. Direct trades, panel/right-click tickets,
+  strategy edits, attached protection and desktop flattening had separate paths;
+  flattening's fixed 3% emergency gap also needed the shared real-market setting.
+- Use the exact contract's server quote. A CE/PE convenience price or renderer
+  quote can refer to another strike; contract identity must accompany execution.
+- Separate account preferences from pending order state. Settings affect new
+  orders and trigger edits; quantity-only edits and retries preserve the already
+  submitted limit. Persist the effective gap for restoration and auditability.
+- Preview broker edits on a copy and commit locally after acknowledgement. A
+  rejected modification must leave the existing trigger, limit and gap intact.
+- Preserve existing account values when importing browser preferences. A
+  conditional migration and explicit-configuration marker prevent stale browser
+  settings from replacing a saved backend value. Percentage inputs use points;
+  APIs and persistence use fractions.
+- Propagate database write failures. A successful-looking settings save that did
+  not persist would leave website, desktop and broker execution inconsistent.
+
+### Remaining acceptance
+
+- In website and native Windows Trading settings, verify defaults, custom values,
+  invalid-value feedback, save failure feedback and loading the same user's saved
+  values from the other client.
+- In the authorized real-trading acceptance environment, compare submitted broker
+  trigger/limit prices for BUY and SELL TARGET, market, stoploss and flatten actions,
+  including exact option contracts and strategy-created protection.
+- Confirm settings saves leave pending orders unchanged; trigger edits refresh the
+  configured gap while quantity-only edits preserve the submitted price.
+- Review the PR and merge into `dev` after review. No automatic merge into `dev`
+  or `main` is part of this delivery.
+
 
 ## Original requirements
 

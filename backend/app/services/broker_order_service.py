@@ -7,7 +7,7 @@ from app.services import order_service
 logger = logging.getLogger(__name__)
 
 
-def sync_order_edit(session, order: Order, new_order_type: OrderType) -> None:
+def sync_order_edit(session, order: Order, new_order_type: OrderType, *, reprice: bool = False) -> None:
     """Sync a proposed edit before publishing it locally; propagate broker failure."""
     if session.session_type != "real":
         return
@@ -16,7 +16,10 @@ def sync_order_edit(session, order: Order, new_order_type: OrderType) -> None:
         raise KotakError("Broker refresh is in progress; retry the edit shortly")
     from app.services.kotak_service import get_service as get_kotak, KotakError
     from app.services.simulation import _register_kotak_sl_for_order
-    from app.config import KOTAK_SLIPPAGE_PCT
+    from app.services.execution_price_service import reprice_trigger
+    previous = order_service.get_order(session.session_id, order.order_id)
+    if reprice or previous is None or previous.order_type != order.order_type or previous.trigger_price != order.trigger_price:
+        reprice_trigger(order)
     try:
         if order.kotak_order_id:
             broker = get_kotak()
@@ -25,9 +28,8 @@ def sync_order_edit(session, order: Order, new_order_type: OrderType) -> None:
             if new_order_type == OrderType.LIMIT:
                 replacement = broker.modify_sl_to_limit_order(order.kotak_order_id, order.limit_price, order.quantity)
             elif new_order_type == OrderType.STOPLOSS:
-                factor = 1 + KOTAK_SLIPPAGE_PCT if order.side == TradeSide.BUY else 1 - KOTAK_SLIPPAGE_PCT
                 replacement = broker.modify_sl_order(order.kotak_order_id, order.trigger_price,
-                                       round(order.trigger_price * factor, 2), order.quantity)
+                                       order.limit_price, order.quantity)
             else:
                 broker.cancel_order(order.kotak_order_id)
                 broker.deregister_fill_callback(order.kotak_order_id)
@@ -64,7 +66,7 @@ def convert_order(session, order, new_type, price=None):
         candidate.trigger_price = resolved
         candidate.limit_price = resolved
         candidate.is_stoploss = new_type == OrderType.STOPLOSS
-    sync_order_edit(session, candidate, new_type)
+    sync_order_edit(session, candidate, new_type, reprice=price is not None or new_type != order.order_type)
     if new_type == order.order_type:
         kwargs = {"limit_price": price} if new_type == OrderType.LIMIT else {"trigger_price": price}
         result = order_service.update_order(session.session_id, order.order_id, session.date, **kwargs) if price is not None else order
@@ -73,6 +75,10 @@ def convert_order(session, order, new_type, price=None):
     if result:
         result.kotak_order_id = candidate.kotak_order_id
         result.execution_role = candidate.execution_role
+        if session.session_type == "real":
+            result.limit_price = candidate.limit_price
+            result.execution_gap_pct = candidate.execution_gap_pct
+            result.market_order = candidate.market_order
         order_service._write_order_to_db(result)
     return result
 

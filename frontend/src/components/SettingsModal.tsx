@@ -365,6 +365,9 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
     return String(isNaN(stored) ? 1 : stored)
   })
 
+  const [stoplossGapInput, setStoplossGapInput] = useState("1.5")
+  const [gapSaving, setGapSaving] = useState(false)
+
   // Brokerage per order in rupees
   const [brokerageInput, setBrokerageInput] = useState<string>(() => {
     const v = parseFloat(localStorage.getItem(BROKERAGE_KEY) ?? '')
@@ -465,6 +468,10 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
     // Sync from backend on open
     if (open) {
       api.getUserSettings().then(s => {
+        const targetGap = s.target_deviation_pct ?? 0.01
+        setDeviationInput(String(targetGap * 100))
+        setStoplossGapInput(String((s.stoploss_limit_gap_pct ?? 0.015) * 100))
+        onTargetDeviationChange(targetGap)
         setHistoricalDays(s.historical_days)
         localStorage.setItem(HISTORICAL_DAYS_KEY, String(s.historical_days))
         if (s.desktop_pnl_display_mode === 'currency' || s.desktop_pnl_display_mode === 'percent') {
@@ -547,7 +554,7 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
           setContextMenuSLMode(s.context_menu_sl_mode)
           localStorage.setItem(CONTEXT_MENU_SL_MODE_KEY, s.context_menu_sl_mode)
         }
-      }).catch(() => {})
+      }).catch(error => setStatus(`Could not load trading settings: ${String(error)}`))
 
       api.getGuardRailSettings().then(s => {
         setGrBlockBarsInput(String(s.guardrail_block_bars))
@@ -674,16 +681,22 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
     setTimeout(() => setStatus(null), 2000)
   }
 
-  const saveDeviation = () => {
-    const pct = parseFloat(deviationInput)
-    if (isNaN(pct) || pct < 0 || pct > 10) {
-      setStatus('Deviation must be 0–10%')
+  const saveDeviation = async () => {
+    const pct = Number(deviationInput)
+    const slPct = Number(stoplossGapInput)
+    if (!deviationInput.trim() || !stoplossGapInput.trim() || !Number.isFinite(pct) || !Number.isFinite(slPct) || pct < 0 || pct > 10 || slPct < 0 || slPct > 10) {
+      setStatus('Limit gaps must be 0–10%')
       return
     }
-    localStorage.setItem(TARGET_DEVIATION_KEY, String(pct))
-    onTargetDeviationChange(pct / 100)
-    setStatus(`Deviation saved: ${pct}%`)
-    setTimeout(() => setStatus(null), 2000)
+    setGapSaving(true)
+    try {
+      const settings = await api.updateUserSettings({ target_deviation_pct: pct / 100, stoploss_limit_gap_pct: slPct / 100 })
+      const gap = settings.target_deviation_pct ?? pct / 100
+      localStorage.setItem(TARGET_DEVIATION_KEY, String(gap * 100))
+      onTargetDeviationChange(gap)
+      setStatus('Limit gaps saved')
+    } catch (error) { setStatus(String(error)) }
+    finally { setGapSaving(false) }
   }
 
   const saveStrategySettings = () => {
@@ -1410,38 +1423,18 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
               </div>
             )}
 
-            {/* TARGET Order Deviation */}
+            {/* Shared execution gaps */}
             <div style={{ borderTop: '1px solid #21262d', paddingTop: 16 }}>
-              <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 10, fontWeight: 600 }}>
-                TARGET ORDER DEVIATION
-              </div>
-              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                <input
-                  type="number"
-                  value={deviationInput}
-                  onChange={e => setDeviationInput(e.target.value)}
-                  min={0} max={10} step={0.1}
-                  style={{
-                    width: 80, padding: '5px 8px', background: '#0d1117',
-                    border: '1px solid #30363d', borderRadius: 6,
-                    color: '#e6edf3', fontSize: 13, textAlign: 'center',
-                  }}
-                />
-                <span style={{ fontSize: 12, color: '#8b949e' }}>%</span>
-                <button
-                  onClick={saveDeviation}
-                  style={{
-                    padding: '5px 12px', background: '#1f6feb',
-                    border: 'none', borderRadius: 6, color: '#fff',
-                    cursor: 'pointer', fontSize: 12,
-                  }}
-                >
-                  Save
-                </button>
-              </div>
-              <div style={{ fontSize: 11, color: '#484f58', marginTop: 6 }}>
-                Auto-limit = trigger ± {deviationInput || '1'}% for TARGET orders
-              </div>
+              {([
+                ['Target / Market Limit Gap', deviationInput, setDeviationInput],
+                ['Stoploss Trigger-to-Limit Gap', stoplossGapInput, setStoplossGapInput],
+              ] as const).map(([label, value, update]) => <label key={label} style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 10, color: '#8b949e', fontSize: 12 }}>
+                <span style={{ flex: 1 }}>{label}</span>
+                <input aria-label={`${label} percent`} type="number" value={value} onChange={e => update(e.target.value)} min={0} max={10} step={0.1}
+                  style={{ width: 80, padding: '5px 8px', background: '#0d1117', border: '1px solid #30363d', borderRadius: 6, color: '#e6edf3', textAlign: 'center' }} /> %
+              </label>)}
+              <div style={{ fontSize: 11, color: '#8b949e', marginBottom: 8 }}>BUY limit = base + gap; SELL limit = base − gap. Target and real stoploss use their trigger; market uses the current quote. Existing pending orders keep their prices until edited.</div>
+              <button disabled={gapSaving} onClick={() => void saveDeviation()} style={{ padding: '5px 12px', background: '#1f6feb', border: 'none', borderRadius: 6, color: '#fff', cursor: 'pointer' }}>{gapSaving ? 'Saving…' : 'Save limit gaps'}</button>
             </div>
 
             {/* Brokerage */}

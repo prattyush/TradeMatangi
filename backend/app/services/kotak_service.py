@@ -17,8 +17,8 @@ Credentials read from data/accesskeys.ini [kotakneo]:
 Order routing in real sessions:
   - STOPLOSS orders  → placed directly on Kotak as SL orders at placement time
   - LIMIT / TARGET   → simulated locally; on trigger → placed on Kotak as limit
-  - TradePanel BUY   → Kotak LIMIT at LTP × (1 + KOTAK_SLIPPAGE_PCT)
-  - TradePanel SELL  → Kotak LIMIT at LTP × (1 − KOTAK_SLIPPAGE_PCT)
+  - TradePanel BUY   → Kotak LIMIT at LTP × (1 + user target/market gap)
+  - TradePanel SELL  → Kotak LIMIT at LTP × (1 − user target/market gap)
 
 Options trading symbol format (Kotak / NSE-BSE convention):
   Monthly expiry (last weekday occurrence of month): {BASE}{YY}{MON3}{STRIKE}{RIGHT}
