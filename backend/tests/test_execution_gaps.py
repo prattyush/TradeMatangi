@@ -188,13 +188,14 @@ def test_gaps_persist_and_settings_save_failure_propagates(monkeypatch):
     monkeypatch.setattr('app.services.db.get_dynamodb_resource', lambda: resource)
     monkeypatch.setattr(user_settings_service, '_ensure_table', lambda: None)
     result = user_settings_service.update_settings('user', {'target_deviation_pct': .02, 'stoploss_limit_gap_pct': .03})
-    item = table.put_item.call_args.kwargs['Item']
+    write = table.update_item.call_args.kwargs
+    item = {key: write['ExpressionAttributeValues'][f':v{index}'] for index, key in enumerate(write['ExpressionAttributeNames'].values())}
     assert item['target_deviation_pct'] == Decimal('.02')
     assert item['stoploss_limit_gap_pct'] == Decimal('.03')
     assert result['target_deviation_configured']
     table.get_item.return_value = {'Item': item}
     assert user_settings_service.get_settings('user')['stoploss_limit_gap_pct'] == .03
-    table.put_item.side_effect = RuntimeError('database unavailable')
+    table.update_item.side_effect = RuntimeError('database unavailable')
     with pytest.raises(RuntimeError):
         user_settings_service.update_settings('user', {'stoploss_limit_gap_pct': .015})
 

@@ -110,7 +110,7 @@ def _history_cache_key(tile: dict) -> str:
         instrument = canonical_instrument_id(tile["instrument"])
     except (KeyError, ValueError):
         instrument = repr(sorted(tile["instrument"].items()))
-    return f"{instrument}:{today}:{tile['interval_minutes']}"
+    return f"{instrument}:{today}:{tile['interval_minutes']}:{tile.get('context_days', 5)}"
 
 
 async def deactivate_tile(stream: DesktopStream, tile_id: str) -> None:
@@ -221,7 +221,7 @@ async def _load_history(tile: dict) -> list[dict]:
         today = datetime.now(ZoneInfo("Asia/Kolkata")).date().isoformat()
         from app.services.data_loader import candles_to_records, resample_to_candles
         from app.utils import prior_trading_days
-        dates = prior_trading_days(today, 5) + [today]
+        dates = prior_trading_days(today, int(tile.get("context_days", 5))) + [today]
         candles: list[dict] = []
         if instrument.get("kind") == "option":
             from app.services.options_service import fetch_options_historical, load_options_dataframe

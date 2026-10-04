@@ -8,7 +8,7 @@ router = APIRouter(prefix="/api/users", tags=["users"])
 
 @router.get("/settings", response_model=UserSettingsResponse)
 async def get_user_settings(user_id: str = Depends(get_request_user_id)):
-    settings = user_settings_service.get_settings(user_id)
+    settings = user_settings_service.get_settings(user_id, strict=True)
     return UserSettingsResponse(**settings)
 
 
@@ -29,3 +29,8 @@ async def migrate_target_gap(req: UserSettingsUpdateRequest, user_id: str = Depe
     if req.target_deviation_pct is None:
         raise HTTPException(status_code=400, detail="target_deviation_pct is required")
     return UserSettingsResponse(**user_settings_service.migrate_target_gap(user_id, req.target_deviation_pct))
+
+
+@router.put("/settings/browser-migration", response_model=UserSettingsResponse)
+async def migrate_browser_settings(req: UserSettingsUpdateRequest, user_id: str = Depends(get_request_user_id)):
+    return UserSettingsResponse(**user_settings_service.migrate_browser_settings(user_id, req.model_dump(exclude_none=True)))

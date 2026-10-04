@@ -1,6 +1,6 @@
 import { clearChartDataCache } from '../services/chartDataCache'
-import { Fragment, useState, useEffect, useRef } from 'react'
-import api from '../services/api'
+import { Fragment, useState, useEffect } from 'react'
+import api, { type UserSettingsResponse } from '../services/api'
 import KotakTOTPModal from './KotakTOTPModal'
 import { RocRatioMode } from '../indicators/optionsRoc'
 
@@ -338,6 +338,10 @@ interface Props {
 
 export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessionActive, onWalletReset, onSizingModeChange, onTargetDeviationChange, onBrokerageChange, onStrategySettingsChange, onHistoricalDaysChange, onPnlPctModeChange, onGuardRailSettingsChange, onAutoStartSnapshotsChange, onStepwiseLabelingPopupChange, onLabelingModeChange, onTradingIndicatorSettingsChange }: Props) {
   const [open, setOpen] = useState(false)
+  const [settingsLoading, setSettingsLoading] = useState(false)
+  const [settingsLoadFailed, setSettingsLoadFailed] = useState(false)
+  const [preferenceSaving, setPreferenceSaving] = useState(false)
+  const [loadAttempt, setLoadAttempt] = useState(0)
   const [customAmount, setCustomAmount] = useState('')
   const [status, setStatus] = useState<string | null>(null)
 
@@ -432,7 +436,6 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
   const [kiteMasked, setKiteMasked] = useState<string | null>(null)
   const [fyersAccessMasked, setFyersAccessMasked] = useState<string | null>(null)
   const [fyersRefreshMasked, setFyersRefreshMasked] = useState<string | null>(null)
-  const adminLoadedRef = useRef(false)
 
   // Admin section — live streaming source
   const [streamSource, setStreamSource] = useState<'fyers' | 'kite' | 'kotak' | 'breeze'>('kite')
@@ -465,9 +468,39 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
       setPwOld(''); setPwNew(''); setPwConfirm(''); setPwVisible(false); setPwStatus(null)
       return
     }
-    // Sync from backend on open
-    if (open) {
-      api.getUserSettings().then(s => {
+    let active = true
+    setSettingsLoading(true); setSettingsLoadFailed(false); setStatus(null)
+    void (async () => {
+      try {
+        const [s, guardrails, tokens, stream, history, kotak, breeze] = await Promise.all([
+          api.getUserSettings(true), api.getGuardRailSettings(),
+          isAdmin ? api.getAdminTokens() : Promise.resolve(null),
+          isAdmin ? api.getStreamSource() : Promise.resolve(null),
+          isAdmin ? api.getHistoricalSource() : Promise.resolve(null),
+          isRealTradingUser || isAdmin ? api.kotakStatus().catch(error => { if (active) setStatus(`Could not load Kotak status: ${String(error)}`); return null }) : Promise.resolve(null),
+          isRealTradingUser || isAdmin ? api.breezeStatus().catch(error => { if (active) setStatus(`Could not load Breeze status: ${String(error)}`); return null }) : Promise.resolve(null),
+        ])
+        if (!active) return
+        setBrokerageInput(String(s.brokerage_per_order ?? 1))
+        onBrokerageChange(s.brokerage_per_order ?? 1)
+        const interval = s.strategy_interval_secs ?? 180
+        const trigger = s.autostop_trigger_type ?? 'bar'
+        const deviation = s.autostop_deviation_pct ?? 1
+        const breakeven = s.breakeven_mode ?? 'shift_sl'
+        const buffer = s.target_profit_buffer_ticks ?? 3
+        const profitOnly = s.aggr_sl_only_in_profit ?? false
+        setStratIntervalSecs(interval); setAutostopTriggerType(trigger); setAutostopDeviationPctInput(String(deviation))
+        setBreakevenMode(breakeven); setTargetProfitBufferTicks(buffer); setAggrSlOnlyInProfit(profitOnly)
+        onStrategySettingsChange(interval, trigger, deviation, breakeven, buffer, profitOnly)
+        setTradingRocRatioMode(s.trading_roc_ratio_mode ?? 'normalized')
+        onTradingIndicatorSettingsChange?.(s.trading_roc_ratio_mode ?? 'normalized')
+        setAutoStartSnapshots(s.auto_start_event_snapshots ?? false)
+        onAutoStartSnapshotsChange?.(s.auto_start_event_snapshots ?? false)
+        const labels = s.trade_labeling_mode_by_type ?? DEFAULT_LABELING_MODE_BY_TYPE
+        setLabelingModeByType(labels); onLabelingModeChange?.(labels)
+        setStepwiseLabelingPopup(labels.stepwise !== 'off'); onStepwiseLabelingPopupChange?.(labels.stepwise !== 'off')
+        onHistoricalDaysChange?.(s.historical_days)
+
         const targetGap = s.target_deviation_pct ?? 0.01
         setDeviationInput(String(targetGap * 100))
         setStoplossGapInput(String((s.stoploss_limit_gap_pct ?? 0.015) * 100))
@@ -554,58 +587,45 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
           setContextMenuSLMode(s.context_menu_sl_mode)
           localStorage.setItem(CONTEXT_MENU_SL_MODE_KEY, s.context_menu_sl_mode)
         }
-      }).catch(error => setStatus(`Could not load trading settings: ${String(error)}`))
+        {
+          const s = guardrails
+          setGrBlockBarsInput(String(s.guardrail_block_bars))
+          setGrCooldownBlockBarsInput(String(s.guardrail_cooldown_block_bars))
+          setGrCooldownLossesInput(String(s.guardrail_cooldown_losses))
+          setGrBanCapitalInput(String(s.guardrail_ban_capital_pct))
+          setGrBanLossTradeInput(String(s.guardrail_ban_loss_trade_pct))
+          setGrBanMinTradesInput(String(s.guardrail_ban_min_trades ?? 5))
+          setGrBanEnabled(s.guardrail_ban_enabled)
+          setGrCooldownEnabled(s.guardrail_cooldown_enabled)
+          localStorage.setItem(GUARDRAIL_BLOCK_BARS_KEY, String(s.guardrail_block_bars))
+          localStorage.setItem(GUARDRAIL_COOLDOWN_BLOCK_BARS_KEY, String(s.guardrail_cooldown_block_bars))
+          localStorage.setItem(GUARDRAIL_COOLDOWN_LOSSES_KEY, String(s.guardrail_cooldown_losses))
+          localStorage.setItem(GUARDRAIL_BAN_CAPITAL_PCT_KEY, String(s.guardrail_ban_capital_pct))
+          localStorage.setItem(GUARDRAIL_BAN_LOSS_TRADE_PCT_KEY, String(s.guardrail_ban_loss_trade_pct))
+          localStorage.setItem(GUARDRAIL_BAN_MIN_TRADES_KEY, String(s.guardrail_ban_min_trades ?? 5))
+          localStorage.setItem(GUARDRAIL_BAN_ENABLED_KEY, String(s.guardrail_ban_enabled))
+          localStorage.setItem(GUARDRAIL_COOLDOWN_ENABLED_KEY, String(s.guardrail_cooldown_enabled))
+          if (s.guardrail_maxsize_enabled !== undefined) setGrMaxSizeEnabled(s.guardrail_maxsize_enabled)
+          if (s.guardrail_maxsize_mode !== undefined) setGrMaxSizeMode(s.guardrail_maxsize_mode)
+          if (s.guardrail_maxsize_pct !== undefined) setGrMaxSizePctInput(String(s.guardrail_maxsize_pct))
+          if (s.guardrail_maxsize_value !== undefined) setGrMaxSizeValueInput(String(s.guardrail_maxsize_value))
+          localStorage.setItem(GUARDRAIL_MAXSIZE_ENABLED_KEY, String(s.guardrail_maxsize_enabled ?? ''))
+          localStorage.setItem(GUARDRAIL_MAXSIZE_MODE_KEY, s.guardrail_maxsize_mode ?? '')
+          localStorage.setItem(GUARDRAIL_MAXSIZE_PCT_KEY, String(s.guardrail_maxsize_pct ?? ''))
+          localStorage.setItem(GUARDRAIL_MAXSIZE_VALUE_KEY, String(s.guardrail_maxsize_value ?? ''))
+        }
+        onGuardRailSettingsChange?.({ blockBars: guardrails.guardrail_block_bars, cooldownBlockBars: guardrails.guardrail_cooldown_block_bars, cooldownLosses: guardrails.guardrail_cooldown_losses, banCapitalPct: guardrails.guardrail_ban_capital_pct, banLossTradePct: guardrails.guardrail_ban_loss_trade_pct, banMinTrades: guardrails.guardrail_ban_min_trades ?? 5, banEnabled: guardrails.guardrail_ban_enabled, cooldownEnabled: guardrails.guardrail_cooldown_enabled, maxSizeEnabled: guardrails.guardrail_maxsize_enabled ?? false, maxSizeMode: guardrails.guardrail_maxsize_mode ?? 'percentage', maxSizePct: guardrails.guardrail_maxsize_pct ?? 20, maxSizeValue: guardrails.guardrail_maxsize_value ?? 0 })
+        if (tokens) { setIciciMasked(tokens.icici_session); setKiteMasked(tokens.kite_access); setFyersAccessMasked(tokens.fyers_access); setFyersRefreshMasked(tokens.fyers_refresh) }
+        if (stream) setStreamSource(stream.source)
+        if (history) { setHistoricalSource(history.source); setHistoricalFallback(history.allow_fallback) }
+        if (kotak) setKotakAuthenticated(kotak.authenticated)
+        if (breeze) setBreezeAuthenticated(breeze.authenticated)
+      } catch (error) { if (active) { setSettingsLoadFailed(true); setStatus(`Could not load settings: ${String(error)}`) } }
+      finally { if (active) setSettingsLoading(false) }
+    })()
+    return () => { active = false }
+  }, [open, loadAttempt, isAdmin, isRealTradingUser])
 
-      api.getGuardRailSettings().then(s => {
-        setGrBlockBarsInput(String(s.guardrail_block_bars))
-        setGrCooldownBlockBarsInput(String(s.guardrail_cooldown_block_bars))
-        setGrCooldownLossesInput(String(s.guardrail_cooldown_losses))
-        setGrBanCapitalInput(String(s.guardrail_ban_capital_pct))
-        setGrBanLossTradeInput(String(s.guardrail_ban_loss_trade_pct))
-        setGrBanMinTradesInput(String(s.guardrail_ban_min_trades ?? 5))
-        setGrBanEnabled(s.guardrail_ban_enabled)
-        setGrCooldownEnabled(s.guardrail_cooldown_enabled)
-        localStorage.setItem(GUARDRAIL_BLOCK_BARS_KEY, String(s.guardrail_block_bars))
-        localStorage.setItem(GUARDRAIL_COOLDOWN_BLOCK_BARS_KEY, String(s.guardrail_cooldown_block_bars))
-        localStorage.setItem(GUARDRAIL_COOLDOWN_LOSSES_KEY, String(s.guardrail_cooldown_losses))
-        localStorage.setItem(GUARDRAIL_BAN_CAPITAL_PCT_KEY, String(s.guardrail_ban_capital_pct))
-        localStorage.setItem(GUARDRAIL_BAN_LOSS_TRADE_PCT_KEY, String(s.guardrail_ban_loss_trade_pct))
-        localStorage.setItem(GUARDRAIL_BAN_MIN_TRADES_KEY, String(s.guardrail_ban_min_trades ?? 5))
-        localStorage.setItem(GUARDRAIL_BAN_ENABLED_KEY, String(s.guardrail_ban_enabled))
-        localStorage.setItem(GUARDRAIL_COOLDOWN_ENABLED_KEY, String(s.guardrail_cooldown_enabled))
-      if (s.guardrail_maxsize_enabled !== undefined) setGrMaxSizeEnabled(s.guardrail_maxsize_enabled)
-      if (s.guardrail_maxsize_mode !== undefined) setGrMaxSizeMode(s.guardrail_maxsize_mode)
-      if (s.guardrail_maxsize_pct !== undefined) setGrMaxSizePctInput(String(s.guardrail_maxsize_pct))
-      if (s.guardrail_maxsize_value !== undefined) setGrMaxSizeValueInput(String(s.guardrail_maxsize_value))
-      localStorage.setItem(GUARDRAIL_MAXSIZE_ENABLED_KEY, String(s.guardrail_maxsize_enabled ?? ''))
-      localStorage.setItem(GUARDRAIL_MAXSIZE_MODE_KEY, s.guardrail_maxsize_mode ?? '')
-      localStorage.setItem(GUARDRAIL_MAXSIZE_PCT_KEY, String(s.guardrail_maxsize_pct ?? ''))
-      localStorage.setItem(GUARDRAIL_MAXSIZE_VALUE_KEY, String(s.guardrail_maxsize_value ?? ''))
-      }).catch(() => {})
-
-      // Load masked tokens and stream source on first open (admin only)
-      if (isAdmin && !adminLoadedRef.current) {
-        adminLoadedRef.current = true
-        api.getAdminTokens().then(t => {
-          setIciciMasked(t.icici_session)
-          setKiteMasked(t.kite_access)
-          setFyersAccessMasked(t.fyers_access)
-          setFyersRefreshMasked(t.fyers_refresh)
-        }).catch(() => {})
-        api.getStreamSource().then(r => setStreamSource(r.source)).catch(() => {})
-        api.getHistoricalSource().then(r => { setHistoricalSource(r.source); setHistoricalFallback(r.allow_fallback) })
-          .catch(() => setStatus('Could not load historical settings'))
-      }
-
-      // Load Kotak status for real trading users
-      if (isRealTradingUser || isAdmin) {
-        api.kotakStatus().then(s => setKotakAuthenticated(s.authenticated)).catch(() => setKotakAuthenticated(false))
-        api.breezeStatus().then(s => setBreezeAuthenticated(s.authenticated)).catch(() => setBreezeAuthenticated(false))
-      }
-    }
-  }, [open])
-
-  // Persist + notify parent whenever mode or ratios change
   useEffect(() => {
     saveSizingMode(sizingMode)
     localStorage.setItem(FUNDS_RATIOS_KEY, JSON.stringify(ratios))
@@ -615,12 +635,18 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
     onSizingModeChange(sizingMode, ratios, riskRatios, defaultSlPct)
   }, [sizingMode, ratios, riskRatios, defaultSlPct, contextMenuSLMode])
 
+  const savePreference = async (values: Partial<UserSettingsResponse>, apply: () => void) => {
+    setPreferenceSaving(true)
+    try { await api.updateUserSettings(values); apply() }
+    catch (error) { setStatus(`Could not save settings: ${String(error)}`) }
+    finally { setPreferenceSaving(false) }
+  }
+
   const togglePnlPctMode = () => {
     const next = !pnlPctMode
-    setPnlPctMode(next)
-    localStorage.setItem(PNL_PCT_MODE_KEY, String(next))
-    api.updateUserSettings({ desktop_pnl_display_mode: next ? 'percent' : 'currency' }).catch(() => {})
-    onPnlPctModeChange?.(next)
+    void savePreference({ desktop_pnl_display_mode: next ? 'percent' : 'currency' }, () => {
+      setPnlPctMode(next); localStorage.setItem(PNL_PCT_MODE_KEY, String(next)); onPnlPctModeChange?.(next)
+    })
   }
 
   const saveRatios = async () => {
@@ -669,14 +695,14 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
     setTimeout(() => setStatus(null), 2000)
   }
 
-  const saveDefaultSlPctFn = () => {
+  const saveDefaultSlPctFn = async () => {
     const v = parseFloat(defaultSlPctInput)
     if (isNaN(v) || v < 1 || v > 50) {
       setStatus('Default SL % must be 1–50')
       return
     }
+    try { await api.updateUserSettings({ default_sl_pct: v / 100 }) } catch (error) { setStatus(String(error)); return }
     setDefaultSlPct(v)
-    api.updateUserSettings({ default_sl_pct: v / 100 }).catch(() => {})
     setStatus(`Default SL saved: ${v}%`)
     setTimeout(() => setStatus(null), 2000)
   }
@@ -699,12 +725,14 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
     finally { setGapSaving(false) }
   }
 
-  const saveStrategySettings = () => {
+  const saveStrategySettings = async () => {
     const devPct = parseFloat(autostopDeviationPctInput)
     if (isNaN(devPct) || devPct < 0 || devPct > 20) {
       setStatus('Deviation must be 0–20%')
       return
     }
+    try { await api.updateUserSettings({ strategy_interval_secs: stratIntervalSecs as 120 | 180 | 300, autostop_trigger_type: autostopTriggerType, autostop_deviation_pct: devPct, breakeven_mode: breakevenMode, target_profit_buffer_ticks: targetProfitBufferTicks, aggr_sl_only_in_profit: aggrSlOnlyInProfit }) }
+    catch (error) { setStatus(String(error)); return }
     localStorage.setItem(STRATEGY_INTERVAL_KEY, String(stratIntervalSecs))
     localStorage.setItem(AUTOSTOP_TRIGGER_TYPE_KEY, autostopTriggerType)
     localStorage.setItem(AUTOSTOP_DEVIATION_PCT_KEY, String(devPct))
@@ -790,12 +818,13 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
     }
   }
 
-  const saveBrokerage = () => {
+  const saveBrokerage = async () => {
     const val = parseFloat(brokerageInput)
     if (isNaN(val) || val < 0) {
       setStatus('Brokerage must be ≥ 0')
       return
     }
+    try { await api.updateUserSettings({ brokerage_per_order: val }) } catch (error) { setStatus(String(error)); return }
     localStorage.setItem(BROKERAGE_KEY, String(val))
     onBrokerageChange(val)
     setStatus(`Brokerage saved: ₹${val}`)
@@ -904,6 +933,7 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
       <button
         onClick={() => setOpen(true)}
         title="Settings"
+        aria-label="Settings"
         style={{
           background: 'none', border: 'none', color: '#8b949e',
           cursor: 'pointer', fontSize: 16, lineHeight: 1, padding: '2px 4px',
@@ -921,7 +951,7 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
             zIndex: 1000,
           }}
         >
-          <div style={{
+          <div role="dialog" aria-modal="true" aria-label="Settings" style={{
             background: '#161b22', border: '1px solid #30363d', borderRadius: 10,
             padding: 24, width: 560, display: 'flex', flexDirection: 'column', gap: 16,
             maxHeight: '90vh', boxSizing: 'border-box',
@@ -930,6 +960,7 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <span style={{ fontSize: 15, fontWeight: 600, color: '#e6edf3' }}>Settings</span>
               <button
+                aria-label="Close settings"
                 onClick={() => setOpen(false)}
                 style={{ background: 'none', border: 'none', color: '#8b949e', cursor: 'pointer', fontSize: 16 }}
               >✕</button>
@@ -977,7 +1008,10 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
               ))}
             </div>
 
-            <div style={{ overflowY: 'auto', flex: 1 }}>
+            {settingsLoading && <p role="status">Loading settings…</p>}
+            {status && <p role="status">{status}</p>}
+            {settingsLoadFailed && <button onClick={() => setLoadAttempt(value => value + 1)}>Retry loading settings</button>}
+            <fieldset disabled={settingsLoading || settingsLoadFailed || preferenceSaving} style={{ overflowY: 'auto', flex: 1, border: 0, padding: 0, margin: 0, minWidth: 0 }}>
 
             {/* ── General tab content ── */}
             {activeTab === 'general' && <>
@@ -1029,11 +1063,12 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
                 <span style={{ fontSize: 12, color: '#8b949e' }}>days (1–5)</span>
                 <button
                   onClick={() => {
-                    localStorage.setItem(HISTORICAL_DAYS_KEY, String(historicalDays))
-                    api.updateUserSettings({ historical_days: historicalDays }).catch(() => {})
-                    onHistoricalDaysChange?.(historicalDays)
-                    setStatus(`Historical days saved: ${historicalDays}`)
-                    setTimeout(() => setStatus(null), 2000)
+                    void savePreference({ historical_days: historicalDays }, () => {
+                      localStorage.setItem(HISTORICAL_DAYS_KEY, String(historicalDays))
+                      onHistoricalDaysChange?.(historicalDays)
+                      setStatus(`Historical days saved: ${historicalDays}`)
+                      setTimeout(() => setStatus(null), 2000)
+                    })
                   }}
                   style={{
                     padding: '5px 12px', background: '#1f6feb',
@@ -1060,9 +1095,11 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
                     <button
                       key={mode}
                       onClick={() => {
-                        setTradingRocRatioMode(mode)
-                        localStorage.setItem(TRADING_ROC_RATIO_MODE_KEY, mode)
-                        onTradingIndicatorSettingsChange?.(mode)
+                        void savePreference({ trading_roc_ratio_mode: mode }, () => {
+                          setTradingRocRatioMode(mode)
+                          localStorage.setItem(TRADING_ROC_RATIO_MODE_KEY, mode)
+                          onTradingIndicatorSettingsChange?.(mode)
+                        })
                       }}
                       style={{
                         padding: '5px 12px', fontSize: 12, fontWeight: 600,
@@ -1090,9 +1127,10 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
                 <div
                   onClick={() => {
                     const next = !overrideSessionEnabled
-                    setOverrideSessionEnabled(next)
-                    localStorage.setItem(OVERRIDE_SESSION_ENABLED_KEY, String(next))
-                    api.updateUserSettings({ override_session_enabled: next }).catch(() => {})
+                    void savePreference({ override_session_enabled: next }, () => {
+                      setOverrideSessionEnabled(next)
+                      localStorage.setItem(OVERRIDE_SESSION_ENABLED_KEY, String(next))
+                    })
                   }}
                   style={{
                     width: 36, height: 20, borderRadius: 10,
@@ -1212,9 +1250,10 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
                     <button
                       key={opt.value}
                       onClick={() => {
-                        setMaxPriceMode(opt.value)
-                        localStorage.setItem(MAX_PRICE_MODE_KEY, opt.value)
-                        api.updateUserSettings({ max_price_mode: opt.value }).catch(() => {})
+                        void savePreference({ max_price_mode: opt.value }, () => {
+                          setMaxPriceMode(opt.value)
+                          localStorage.setItem(MAX_PRICE_MODE_KEY, opt.value)
+                        })
                       }}
                       style={{
                         padding: '5px 16px', fontSize: 12, fontWeight: 600,
@@ -1233,17 +1272,19 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                       <span style={{ fontSize: 11, color: '#8b949e' }}>CE max price:</span>
                       <ThresholdSelect value={maxPriceThresholdCE} onChange={v => {
-                        setMaxPriceThresholdCE(v)
-                        localStorage.setItem(MAX_PRICE_THRESHOLD_CE_KEY, String(v))
-                        api.updateUserSettings({ max_price_threshold_ce: v }).catch(() => {})
+                        void savePreference({ max_price_threshold_ce: v }, () => {
+                          setMaxPriceThresholdCE(v)
+                          localStorage.setItem(MAX_PRICE_THRESHOLD_CE_KEY, String(v))
+                        })
                       }} />
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                       <span style={{ fontSize: 11, color: '#8b949e' }}>PE max price:</span>
                       <ThresholdSelect value={maxPriceThresholdPE} onChange={v => {
-                        setMaxPriceThresholdPE(v)
-                        localStorage.setItem(MAX_PRICE_THRESHOLD_PE_KEY, String(v))
-                        api.updateUserSettings({ max_price_threshold_pe: v }).catch(() => {})
+                        void savePreference({ max_price_threshold_pe: v }, () => {
+                          setMaxPriceThresholdPE(v)
+                          localStorage.setItem(MAX_PRICE_THRESHOLD_PE_KEY, String(v))
+                        })
                       }} />
                     </div>
                   </div>
@@ -1482,9 +1523,10 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
                   <div
                     onClick={() => {
                       const next = !entryAutoSlEnabled
-                      setEntryAutoSlEnabled(next)
-                      localStorage.setItem(ENTRY_AUTO_SL_ENABLED_KEY, String(next))
-                      api.updateUserSettings({ entry_auto_sl_enabled: next }).catch(() => {})
+                      void savePreference({ entry_auto_sl_enabled: next }, () => {
+                        setEntryAutoSlEnabled(next)
+                        localStorage.setItem(ENTRY_AUTO_SL_ENABLED_KEY, String(next))
+                      })
                       if (!next) localStorage.removeItem(ENTRY_AUTO_SL_DELAY_KEY)
                     }}
                     style={{
@@ -1517,9 +1559,10 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
                       min={1} max={30}
                       onChange={e => {
                         const v = Math.min(30, Math.max(1, parseInt(e.target.value) || 3))
-                        setEntryAutoSlDelay(v)
-                        localStorage.setItem(ENTRY_AUTO_SL_DELAY_KEY, String(v))
-                        api.updateUserSettings({ entry_auto_sl_delay_sec: v }).catch(() => {})
+                        void savePreference({ entry_auto_sl_delay_sec: v }, () => {
+                          setEntryAutoSlDelay(v)
+                          localStorage.setItem(ENTRY_AUTO_SL_DELAY_KEY, String(v))
+                        })
                       }}
                       style={{
                         width: 48, padding: '3px 6px', background: '#0d1117',
@@ -1542,7 +1585,7 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
                 {([{ label: 'Long Only', value: 'longOnly' }, { label: 'Both Long & Short', value: 'both' }] as const).map(opt => (
                   <button
                     key={opt.value}
-                    onClick={() => setContextMenuSLMode(opt.value)}
+                    onClick={() => void savePreference({ context_menu_sl_mode: opt.value }, () => setContextMenuSLMode(opt.value))}
                     style={{
                       padding: '5px 16px', fontSize: 12, fontWeight: 600,
                       border: 'none', cursor: 'pointer',
@@ -1576,9 +1619,11 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
                       checked={autoStartSnapshots}
                       onChange={e => {
                         const val = e.target.checked
-                        setAutoStartSnapshots(val)
-                        localStorage.setItem(AUTO_START_SNAPSHOTS_KEY, String(val))
-                        onAutoStartSnapshotsChange?.(val)
+                        void savePreference({ auto_start_event_snapshots: val }, () => {
+                          setAutoStartSnapshots(val)
+                          localStorage.setItem(AUTO_START_SNAPSHOTS_KEY, String(val))
+                          onAutoStartSnapshotsChange?.(val)
+                        })
                       }}
                       style={{ width: 16, height: 16, accentColor: '#1f6feb' }}
                     />
@@ -1617,15 +1662,17 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
                                 checked={checked}
                                 onChange={() => {
                                   const next: LabelingModeByType = { ...labelingModeByType, [sessionType]: mode }
-                                  setLabelingModeByType(next)
-                                  saveLabelingModeByType(next)
-                                  onLabelingModeChange?.(next)
-                                  if (sessionType === 'stepwise') {
+                                  void savePreference({ trade_labeling_mode_by_type: next }, () => {
+                                    setLabelingModeByType(next)
+                                    saveLabelingModeByType(next)
+                                    onLabelingModeChange?.(next)
+                                    if (sessionType === 'stepwise') {
                                     const enabled = mode !== 'off'
                                     setStepwiseLabelingPopup(enabled)
                                     localStorage.setItem(STEPWISE_LABELING_POPUP_KEY, String(enabled))
                                     onStepwiseLabelingPopupChange?.(enabled)
-                                  }
+                                    }
+                                  })
                                 }}
                                 style={{ accentColor: '#1f6feb' }}
                               />
@@ -1645,8 +1692,9 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
                       <button
                         key={src}
                         onClick={() => {
-                          setAnalysisPriceSource(src)
-                          api.updateUserSettings({ analysis_price_source: src }).catch(() => {})
+                          void savePreference({ analysis_price_source: src }, () => {
+                            setAnalysisPriceSource(src)
+                          })
                         }}
                         style={{
                           padding: '5px 14px',
@@ -1673,8 +1721,9 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
                     <div
                       onClick={() => {
                         const next = !experimentalPatternsEnabled
-                        setExperimentalPatternsEnabled(next)
-                        api.updateUserSettings({ experimental_patterns_enabled: next }).catch(() => {})
+                        void savePreference({ experimental_patterns_enabled: next }, () => {
+                          setExperimentalPatternsEnabled(next)
+                        })
                       }}
                       style={{
                         width: 36, height: 20, borderRadius: 10,
@@ -2556,7 +2605,7 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
               </div>
             )}
 
-            </div>{/* end scrollable tab content */}
+            </fieldset>{/* end scrollable tab content */}
           </div>
         </div>
       )}

@@ -37,6 +37,7 @@ from app.models.schemas import (
     UpdateTargetProfitRequest,
     UpdateTargetProfitSizeRequest,
     WalletResetRequest,
+    UserSettingsUpdateRequest,
 )
 from app.routers import simulation as simulation_router
 from app.services import order_service, options_service, paper_wallet, simulation as sim_svc, strategy_service, trading as trading_service, wallet_service
@@ -156,7 +157,7 @@ class BulkChartUpdateSLRequest(BaseModel):
 
 
 class DesktopSettingsUpdateRequest(BaseModel):
-    settings: dict
+    settings: UserSettingsUpdateRequest
 
 
 class DesktopLabelMetadata(BaseModel):
@@ -1644,13 +1645,13 @@ async def save_trade_label(session_id: str, req: DesktopTradeLabelRequest, user_
 
 @router.get("/settings/current")
 async def get_desktop_settings(user_id: str = Depends(get_desktop_user_id)):
-    return get_settings(user_id)
+    return get_settings(user_id, strict=True)
 
 
 @router.put("/settings/current")
 async def update_desktop_settings(req: DesktopSettingsUpdateRequest, user_id: str = Depends(get_desktop_user_id)):
     try:
-        return update_settings(user_id, req.settings)
+        return update_settings(user_id, req.settings.model_dump(exclude_none=True))
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 

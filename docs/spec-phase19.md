@@ -1,8 +1,13 @@
 # Phase 19 — Shared live market data and partial take profit
 
-## Current delivery status — shared execution gaps
+## Current delivery status — shared settings
 
-The latest change is implemented and validated: website and desktop share a
+Desktop/website settings parity is implemented and validated on
+`feature/phase19-desktop-settings-sync`. See **Shared desktop and website settings
+— 2026-10-04** for scope, validation and remaining acceptance. Review and merge into
+`dev` are pending; merging into `main` remains manual.
+
+The prior execution-gap change is implemented and validated: website and desktop share a
 **1% Target / Market Limit Gap** and a **1.5% Stoploss Trigger-to-Limit Gap**.
 Delivery is through [PR #568](https://github.com/prattyush/TradeMatangi/pull/568),
 from `feature/phase19-execution-gaps` into `dev`; review and merge are pending. See **Shared real execution limit gaps — 2026-10-04** below for the
@@ -17,7 +22,9 @@ AutoStop Limit entries in the website and desktop; website Day P&L units and
 Kotak day-start capital/adjusted wallet recovery; and shared Target / Market
 and Stoploss execution limit-gap settings. Desktop real trading was deferred
 in the initial scope; subsequent real-trading work is recorded later in this
-document. The original requests below are preserved.
+document. Add backend-owned website/desktop settings parity, retaining desktop-only
+controls and including Admin/Profile actions. Missing desktop features and real
+trading enablement remain separate work. The original requests below are preserved.
 
 ## Sprints
 
@@ -30,6 +37,7 @@ document. The original requests below are preserved.
 7. AutoStop Limit mode, ASL entry tickets, website checkbox and regressions.
 8. Website Day P&L formatting and Kotak account/day capital recovery.
 9. Shared website/desktop execution gaps, real broker price consistency and regressions.
+10. Shared website/desktop settings, initial browser import, Admin/Profile actions and regressions.
 
 Implementation status and verification are recorded at the end of this document.
 
@@ -1807,6 +1815,81 @@ warnings; backend tests report the existing dateutil UTC deprecation warning.
 - Review the PR and merge into `dev` after review. No automatic merge into `dev`
   or `main` is part of this delivery.
 
+
+## Shared desktop and website settings — 2026-10-04
+
+### Scope and implementation
+
+Desktop now offers the website's General, Trading, Analytics, Strategies,
+GuardRails, Admin and Profile settings. Drawing/display controls, chart-label
+visibility and flatten confirmation remain desktop-only controls. The popup is
+up to 1,050px wide and 90vh tall, with scrollable contents and a fixed footer.
+Analytics, recording and automatic option-selection preferences can be configured
+in desktop for their existing website consumers; this does not add missing desktop
+features or enable desktop real trading.
+
+Common preferences are owned by the existing backend UserSettings record. Both
+settings windows fetch fresh values on every open, including Admin data; desktop
+also loads preferences after authentication. Website browser storage is a cache
+for existing consumers. No settings polling, SSE synchronization or conflict
+resolution service is introduced; the agreed assumption is one client in use at
+a time. Desktop chart settings continue using their existing backend storage.
+
+The existing user-settings contracts now include brokerage, strategy interval,
+AutoStop trigger/deviation, BreakEven mode, target-profit buffer, Aggressive SL
+profit-only mode, snapshots, labeling modes and indicator ratio mode. Default SL
+and fine-structure sharing are also included in the website response. Desktop
+updates retain the existing `settings` envelope and use the shared typed validation.
+Existing shared sizing/P&L field names and units remain compatible: capital ratios,
+stoploss defaults and execution gaps use fractions; risk and AutoStop deviation
+use percentage points. New risk saves record their units so values below 1% do
+not become legacy fractions; existing fractional records still normalize on load.
+
+`PUT /api/users/settings/browser-migration` imports actual, valid browser-only
+preferences using conditional per-field writes. Saved backend attributes always
+win, including desktop-first configuration. Subsequent saves update only changed
+attributes, so unrelated default values cannot prevent an initial import. Labeling
+updates preserve other session types. No new table or bulk database migration is
+required. Settings reads used by the UI fail visibly rather than displaying
+fallback defaults as successfully loaded preferences; save failures retain drafts.
+
+Desktop account actions use `/api/desktop/v1/settings/*` with desktop authentication,
+server-side admin/real-trading eligibility checks and the existing shared handlers.
+The native request command uses the existing token-refresh lifecycle and handles
+204 responses. Actions include masked broker-token updates, streaming and historical
+policy, whitelist management, broker status/Kotak TOTP login and password changes.
+Wallet reset retains the existing desktop wallet endpoint and restrictions. Tokens,
+TOTP and passwords are not stored as preferences.
+
+Desktop session startup uses saved brokerage and strategy interval independently
+of chart intervals. Existing strategies use the saved AS/ASL trigger, BreakEven,
+buffer and profit-only preferences. Historical-day settings apply to desktop chart
+context and newly started live streams. Existing sizing/GuardRails session timing
+and execution-gap rules remain: settings saves do not rewrite pending orders or
+running strategies. A successful preference save remains successful if a subsequent
+session snapshot refresh fails; the refresh failure is reported separately.
+
+### Validation and acceptance
+
+- **340 targeted backend tests passed**, covering shared persistence, import
+  precedence, partial updates, units, validation, permissions, wallet/order/
+  strategy compatibility and desktop live/replay behavior. This is not a full
+  repository suite result; the existing dateutil warning remains.
+- **143 desktop/client Vitest tests passed across 24 files**, including website
+  migration/cache behavior, save failures, desktop account transport and strategy
+  request mapping. Both TypeScript checks and production builds passed; existing
+  bundle-size warnings remain.
+- Native Rust compilation and **16 Rust unit tests passed** on Linux.
+- Headless Chrome checks with an isolated mocked backend passed for both settings
+  windows: sections, percentage display, saves, labeling, GuardRails preservation,
+  draft retention on failure, fresh reopen reads, admin visibility, load retry and
+  the desktop 960×640 layout. The website loaded desktop preferences and persisted
+  a strategy change back to the shared source. These checks submitted no broker
+  orders and changed no broker credentials.
+- Native Windows installer/interaction, live broker login/token handling and
+  authorized broker acceptance remain manual checks. No deployment or main merge
+  was performed. Delivery is on `feature/phase19-desktop-settings-sync`, targeting
+  `dev` for review; merging to main remains manual.
 
 ## Original requirements
 

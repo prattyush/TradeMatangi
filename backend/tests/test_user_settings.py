@@ -76,14 +76,14 @@ class TestUpdateSettings:
         with patch("app.services.db.get_dynamodb_resource", return_value=mock_resource):
             result = svc.update_settings("user-123", {"historical_days": 5})
         assert result["historical_days"] == 5
-        mock_table.put_item.assert_called_once()
+        mock_table.update_item.assert_called_once()
 
     def test_creates_when_not_found(self):
         mock_resource, mock_table = _mock_db(None)
         with patch("app.services.db.get_dynamodb_resource", return_value=mock_resource):
             result = svc.update_settings("user-123", {"historical_days": 3})
         assert result["historical_days"] == 3
-        mock_table.put_item.assert_called_once()
+        mock_table.update_item.assert_called_once()
 
     def test_merges_with_existing(self):
         existing = {"user_id": "user-123", "historical_days": 2}
@@ -100,7 +100,7 @@ class TestUpdateSettings:
             result = svc.update_settings("user-123", {"pattern_share_emails": "A@example.com, b@example.com"})
         assert result["pattern_share_emails"] == "a@example.com, b@example.com"
         mock_sync.assert_called_once_with("user-123", "a@example.com, b@example.com")
-        mock_table.put_item.assert_called_once()
+        mock_table.update_item.assert_called_once()
 
     def test_default_settings_constant(self):
         assert svc.DEFAULT_SETTINGS["historical_days"] == 2

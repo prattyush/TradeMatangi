@@ -80,7 +80,7 @@ def get_status(session_id: str):
 @router.get("/settings")
 def get_settings(user_id: str = Depends(get_request_user_id)):
     """Return guardrail settings for the current user."""
-    s = settings_svc.get_settings(user_id)
+    s = settings_svc.get_settings(user_id, strict=True)
     return GuardRailSettingsResponse(
         guardrail_block_bars=s.get("guardrail_block_bars", 3),
         guardrail_cooldown_block_bars=s.get("guardrail_cooldown_block_bars", 3),
