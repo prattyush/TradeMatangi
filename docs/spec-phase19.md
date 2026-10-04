@@ -3,7 +3,8 @@
 ## Current delivery status — shared settings
 
 Desktop/website settings parity is implemented and validated on
-`feature/phase19-desktop-settings-sync`. See **Shared desktop and website settings
+`feature/phase19-desktop-settings-sync`, delivered through
+[PR #570](https://github.com/prattyush/TradeMatangi/pull/570) into `dev`. See **Shared desktop and website settings
 — 2026-10-04** for scope, validation and remaining acceptance. Review and merge into
 `dev` are pending; merging into `main` remains manual.
 
@@ -1888,8 +1889,9 @@ session snapshot refresh fails; the refresh failure is reported separately.
   orders and changed no broker credentials.
 - Native Windows installer/interaction, live broker login/token handling and
   authorized broker acceptance remain manual checks. No deployment or main merge
-  was performed. Delivery is on `feature/phase19-desktop-settings-sync`, targeting
-  `dev` for review; merging to main remains manual.
+  was performed. Delivery is through [PR #570](https://github.com/prattyush/TradeMatangi/pull/570),
+  from `feature/phase19-desktop-settings-sync` into `dev`. Review and merge are
+  pending; merging to main remains manual.
 
 ## Original requirements
 
