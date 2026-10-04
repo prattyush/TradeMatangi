@@ -1,8 +1,14 @@
 # Phase 19 — Shared live market data and partial take profit
 
-## Current delivery status — shared execution gaps
+## Current delivery status — shared settings
 
-The latest change is implemented and validated: website and desktop share a
+Desktop/website settings parity is implemented and validated on
+`feature/phase19-desktop-settings-sync`, delivered through
+[PR #570](https://github.com/prattyush/TradeMatangi/pull/570) into `dev`. See **Shared desktop and website settings
+— 2026-10-04** for scope, validation and remaining acceptance. Review and merge into
+`dev` are pending; merging into `main` remains manual.
+
+The prior execution-gap change is implemented and validated: website and desktop share a
 **1% Target / Market Limit Gap** and a **1.5% Stoploss Trigger-to-Limit Gap**.
 Delivery is through [PR #568](https://github.com/prattyush/TradeMatangi/pull/568),
 from `feature/phase19-execution-gaps` into `dev`; review and merge are pending. See **Shared real execution limit gaps — 2026-10-04** below for the
@@ -17,7 +23,9 @@ AutoStop Limit entries in the website and desktop; website Day P&L units and
 Kotak day-start capital/adjusted wallet recovery; and shared Target / Market
 and Stoploss execution limit-gap settings. Desktop real trading was deferred
 in the initial scope; subsequent real-trading work is recorded later in this
-document. The original requests below are preserved.
+document. Add backend-owned website/desktop settings parity, retaining desktop-only
+controls and including Admin/Profile actions. Missing desktop features and real
+trading enablement remain separate work. The original requests below are preserved.
 
 ## Sprints
 
@@ -30,6 +38,7 @@ document. The original requests below are preserved.
 7. AutoStop Limit mode, ASL entry tickets, website checkbox and regressions.
 8. Website Day P&L formatting and Kotak account/day capital recovery.
 9. Shared website/desktop execution gaps, real broker price consistency and regressions.
+10. Shared website/desktop settings, initial browser import, Admin/Profile actions and regressions.
 
 Implementation status and verification are recorded at the end of this document.
 
@@ -1808,6 +1817,143 @@ warnings; backend tests report the existing dateutil UTC deprecation warning.
   or `main` is part of this delivery.
 
 
+## Shared desktop and website settings — 2026-10-04
+
+### Delivery status
+
+| Item | Status |
+|---|---|
+| Shared settings, desktop account actions and runtime consumers | Implemented |
+| Targeted backend/client tests, type checks and builds | Passed; scope and warnings below |
+| Mocked browser acceptance for both settings windows | Passed |
+| Native Windows interaction and authorized live broker acceptance | Pending manual verification |
+| [PR #570](https://github.com/prattyush/TradeMatangi/pull/570), targeting `dev` | Open; review and merge pending |
+| Deployment and merge to `main` | Not performed; main merge remains manual |
+
+This status applies to Desktop Client Settings. Desktop Client Continuous browse
+is a separate requirement and is not included in this delivery.
+
+### Scope and implementation
+
+Desktop now offers the website's General, Trading, Analytics, Strategies,
+GuardRails, Admin and Profile settings. Drawing/display controls, chart-label
+visibility and flatten confirmation remain desktop-only controls. The popup is
+up to 1,050px wide and 90vh tall, with scrollable contents and a fixed footer.
+Analytics, recording and automatic option-selection preferences can be configured
+in desktop for their existing website consumers; this does not add missing desktop
+features or enable desktop real trading.
+
+Common preferences are owned by the existing backend UserSettings record. Both
+settings windows fetch fresh values on every open, including Admin data; desktop
+also loads preferences after authentication. Website browser storage is a cache
+for existing consumers. No settings polling, SSE synchronization or conflict
+resolution service is introduced; the agreed assumption is one client in use at
+a time. Desktop chart settings continue using their existing backend storage.
+
+The existing user-settings contracts now include brokerage, strategy interval,
+AutoStop trigger/deviation, BreakEven mode, target-profit buffer, Aggressive SL
+profit-only mode, snapshots, labeling modes and indicator ratio mode. Default SL
+and fine-structure sharing are also included in the website response. Desktop
+updates retain the existing `settings` envelope and use the shared typed validation.
+Existing shared sizing/P&L field names and units remain compatible: capital ratios,
+stoploss defaults and execution gaps use fractions; risk and AutoStop deviation
+use percentage points. New risk saves record their units so values below 1% do
+not become legacy fractions; existing fractional records still normalize on load.
+
+`PUT /api/users/settings/browser-migration` imports actual, valid browser-only
+preferences using conditional per-field writes. Saved backend attributes always
+win, including desktop-first configuration. Subsequent saves update only changed
+attributes, so unrelated default values cannot prevent an initial import. Labeling
+updates preserve other session types. No new table or bulk database migration is
+required. Settings reads used by the UI fail visibly rather than displaying
+fallback defaults as successfully loaded preferences; save failures retain drafts.
+
+Desktop account actions use `/api/desktop/v1/settings/*` with desktop authentication,
+server-side admin/real-trading eligibility checks and the existing shared handlers.
+The native request command uses the existing token-refresh lifecycle and handles
+204 responses. Actions include masked broker-token updates, streaming and historical
+policy, whitelist management, broker status/Kotak TOTP login and password changes.
+Wallet reset retains the existing desktop wallet endpoint and restrictions. Browse
+uses the current-day Paper wallet, with the ledger/date shown beside the control. Tokens,
+TOTP and passwords are not stored as preferences.
+
+Desktop session startup uses saved brokerage and strategy interval independently
+of chart intervals. Existing strategies use the saved AS/ASL trigger, BreakEven,
+buffer and profit-only preferences. Historical-day settings apply to desktop chart
+context and newly started live streams. Existing sizing/GuardRails session timing
+and execution-gap rules remain: settings saves do not rewrite pending orders or
+running strategies. A successful preference save remains successful if a subsequent
+session snapshot refresh fails; the refresh failure is reported separately.
+
+### Choices and tradeoffs
+
+- **Backend ownership:** use the existing account settings record, with browser
+  storage as a cache. Fetch on every settings-window open under the agreed
+  one-client-at-a-time assumption; continuous synchronization is out of scope.
+- **Settings parity:** expose website preferences and account actions in desktop,
+  retain desktop drawing/display controls, and explain where a preference applies
+  to a website feature that desktop does not yet implement.
+- **Safe initial import:** import only valid browser attributes absent from the
+  backend. Save changed attributes and merge labeling by session type so defaults
+  and unrelated edits cannot erase existing preferences or block migration.
+- **Compatible contracts:** retain existing field names, units and the desktop
+  update envelope. Record risk units explicitly for new saves while supporting
+  legacy fractional values.
+- **Shared account behavior:** reuse existing handlers behind desktop-authenticated
+  routes and enforce permissions on the server. Keep credentials outside preference
+  storage and use the native token-refresh lifecycle.
+- **Runtime timing:** apply settings through existing session/strategy consumers;
+  preserve pending order prices and running strategy state. Distinguish a successful
+  save from a subsequent session-refresh failure.
+- **Wallet context:** show the actual ledger and date for reset. Browse uses the
+  current-day Paper wallet because Browse is not a wallet ledger.
+
+### Lessons learned
+
+- Check persistence, response schemas, UI controls and runtime consumers together.
+  Default SL and fine-structure sharing were stored but omitted from the website
+  response; exposing a control alone would not establish parity.
+- Writing a whole settings record materializes defaults for untouched fields.
+  That makes an absent attribute appear saved and defeats conditional browser
+  import. Partial writes preserve the distinction between absent and configured.
+- Value magnitude cannot reliably identify units: a valid risk below 1% resembles
+  a legacy fraction. Explicit units metadata avoids changing the user's meaning.
+- Nested settings need merge semantics. Updating one session type's labeling must
+  preserve labeling for the other session types.
+- Chart interval and strategy interval have different consumers. Shared settings
+  must reach strategy requests and session startup independently of chart controls.
+- Load failures must remain visible rather than appearing as default preferences.
+  Retain drafts on save failure, and report post-save refresh failures separately
+  so the UI accurately reflects what was persisted.
+- Account actions available outside trading sessions still need valid context.
+  Explicit wallet selection prevents Browse from being treated as a ledger.
+- Mocked browser checks and Linux native tests cover different boundaries. Neither
+  proves Windows packaging or live broker behavior; those acceptance checks remain
+  explicitly pending.
+
+### Validation and acceptance
+
+- **340 targeted backend tests passed**, covering shared persistence, import
+  precedence, partial updates, units, validation, permissions, wallet/order/
+  strategy compatibility and desktop live/replay behavior. This is not a full
+  repository suite result; the existing dateutil warning remains.
+- **144 desktop/client Vitest tests passed across 24 files**, including website
+  migration/cache behavior, save failures, desktop account transport and strategy
+  request mapping. Both TypeScript checks and production builds passed; existing
+  bundle-size warnings remain.
+- Native Rust compilation and **16 Rust unit tests passed** on Linux.
+- Headless Chrome checks with an isolated mocked backend passed for both settings
+  windows: sections, percentage display, saves, labeling, GuardRails preservation,
+  draft retention on failure, fresh reopen reads, admin visibility, load retry and
+  the desktop 960×640 layout. The website loaded desktop preferences and persisted
+  a strategy change back to the shared source. These checks submitted no broker
+  orders and changed no broker credentials.
+- Native Windows installer/interaction, live broker login/token handling and
+  authorized broker acceptance remain manual checks. No deployment or main merge
+  was performed. Delivery is through [PR #570](https://github.com/prattyush/TradeMatangi/pull/570),
+  from `feature/phase19-desktop-settings-sync` into `dev`. Review and merge are
+  pending; merging to main remains manual.
+
 ## Original requirements
 
 # Improvements
@@ -1839,3 +1985,31 @@ In both website and desktop, can  you introduce a new strategy which is auuto st
 
 ## Desktop Client Open Orders
 1) Reduce the open orders text size in desktop client. It just for notification.
+
+## Desktop Client Settings
+Can you make the change to make the settings of Website And Desktop Same. Basically include all settings of website into desktop.
+Desktop does have some extra settings like Drawing labels etc, Keep them only for desktop. Also include admin settings in desktop.
+If needed increase teh window size of desktop settings popup.
+
+## Desktop Client Continuous browse
+1) In desktop client, when going through charts for any mode (browse, live, replay, stepwise), and only for underlying charts, not for options or futures, if the user goes to the end of the chart on the left side, first candle drawn. The desktop client should automatically fetch the data for previous days, upto 14 Days. This helps in desktop only as, we have more memory compared to website, or if is possible in website as well, please go ahead and do it, but primary requirement is for destkop only, as the lines and drawings are saved which can come in handy. Further, 14 days helps to look into previous weekly high and low which is important. By 14 days I didn't mean 14 trading days, I meant 14 days which can include holidays.
+
+Include this feature for website, if it is simple otherwise leave it. When fetching and drawing on chart, you can fetch in buckets, like fetching 1 day at a time or 2 days at a time, till the user keeps going back and at max 14 days data is fetched. This is because for smaller intervals, user may not go to back 14 days, but for 15 mins, 14 days makes more sense. 
+
+2) Separate, requirement, do, handle the case in website, as website draws all the candles on the screen, when refreshed, which may become a lot for 1 min candle, so maybe when refreshed it can only shows x number of candles, 150 candles in the view and rest can be scroolled. This 150 candle apply to desktop as well, if possible, only for first draw or refresh etc. It is max 150 just on view not backend fetch data. Not sure the complication of this requirement.
+
+
+
+
+## Kotak Python Client
+
+Migraate to Kotak Python Client https://github.com/Kotak-Neo/kotak-neo-python/tree/main from v2.x version. 
+The previous version is on the verge of deprecation.
+
+Look into sections:-
+1) Trading APIs
+2) Market Data APIS
+3) Order Events APIs
+4) Authentication API's
+5) Any breaking changes, please feel free to ask user.
+

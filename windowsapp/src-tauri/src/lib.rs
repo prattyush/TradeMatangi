@@ -1061,6 +1061,39 @@ async fn desktop_live_request(
 }
 
 #[tauri::command]
+async fn desktop_settings_request(
+    base_url: String,
+    path: String,
+    method: String,
+    body: serde_json::Value,
+    host: tauri::State<'_, HostState>,
+) -> Result<serde_json::Value, String> {
+    // Account actions are independent of screen ownership. Keep this command
+    // within the authenticated settings API rather than allowing arbitrary URLs.
+    if path.starts_with('/') || path.split('/').any(|segment| segment == ".." || segment == ".") || path.contains('?') || path.contains('#') {
+        return Err("Invalid settings path".into());
+    }
+    let token = host.access_token(&base_url).await?;
+    let client = reqwest::Client::new();
+    let url = format!("{}/api/desktop/v1/settings/{}", base_url.trim_end_matches('/'), path);
+    let request = match method.as_str() {
+        "GET" => client.get(url),
+        "POST" => client.post(url).json(&body),
+        "PUT" => client.put(url).json(&body),
+        "DELETE" => client.delete(url),
+        _ => return Err("Unsupported settings request".into()),
+    };
+    let response = request.bearer_auth(token).send().await.map_err(|e| e.to_string())?;
+    let status = response.status();
+    if !status.is_success() {
+        let detail = response.text().await.unwrap_or_default();
+        return Err(format!("Settings request failed ({status}): {detail}"));
+    }
+    if status == reqwest::StatusCode::NO_CONTENT { return Ok(serde_json::Value::Null); }
+    response.json().await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 async fn desktop_drawing_request(
     window: tauri::WebviewWindow,
     screen_id: Option<String>,
@@ -2010,6 +2043,7 @@ pub fn run() {
             focus_screen_window,
             close_screen_window,
             desktop_drawing_request,
+            desktop_settings_request,
             desktop_logout,
             queue_offline_mutation,
             pending_offline_mutations,

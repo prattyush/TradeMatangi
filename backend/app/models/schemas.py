@@ -336,6 +336,18 @@ class WalletResetRequest(BaseModel):
 # ── User Settings ─────────────────────────────────────────────────────────────
 
 class UserSettingsResponse(BaseModel):
+    brokerage_per_order: float = 1.0
+    strategy_interval_secs: Literal[120, 180, 300] = 180
+    autostop_trigger_type: Literal["bar", "deviation"] = "bar"
+    autostop_deviation_pct: float = 1.0
+    breakeven_mode: Literal["shift_sl", "limit_order"] = "shift_sl"
+    target_profit_buffer_ticks: int = 3
+    aggr_sl_only_in_profit: bool = False
+    auto_start_event_snapshots: bool = False
+    trade_labeling_mode_by_type: dict[str, Literal["off", "popup", "button"]] = Field(default_factory=lambda: {"stepwise": "popup", "sim": "button", "paper": "button", "real": "button"})
+    trading_roc_ratio_mode: Literal["normalized", "raw"] = "normalized"
+    fine_structure_share_emails: str = ""
+    default_sl_pct: float = 0.20
     historical_days: int = 2
     funds_ratio_l_pct: float = 0.03
     funds_ratio_m_pct: float = 0.06
@@ -363,6 +375,18 @@ class UserSettingsResponse(BaseModel):
 
 
 class UserSettingsUpdateRequest(BaseModel):
+    brokerage_per_order: float | None = Field(default=None, ge=0, allow_inf_nan=False)
+    strategy_interval_secs: Literal[120, 180, 300] | None = None
+    autostop_trigger_type: Literal["bar", "deviation"] | None = None
+    autostop_deviation_pct: float | None = Field(default=None, ge=0, le=20, allow_inf_nan=False)
+    breakeven_mode: Literal["shift_sl", "limit_order"] | None = None
+    target_profit_buffer_ticks: int | None = Field(default=None, ge=1, le=5)
+    aggr_sl_only_in_profit: bool | None = None
+    auto_start_event_snapshots: bool | None = None
+    trade_labeling_mode_by_type: dict[Literal["stepwise", "sim", "paper", "real"], Literal["off", "popup", "button"]] | None = None
+    trading_roc_ratio_mode: Literal["normalized", "raw"] | None = None
+    fine_structure_share_emails: str | None = None
+    default_sl_pct: float | None = Field(default=None, ge=0.01, le=0.50, allow_inf_nan=False)
     historical_days: int | None = Field(default=None, ge=1, le=5)
     funds_ratio_l_pct: float | None = Field(default=None, ge=0.001, le=1.0)
     funds_ratio_m_pct: float | None = Field(default=None, ge=0.001, le=1.0)
@@ -370,14 +394,14 @@ class UserSettingsUpdateRequest(BaseModel):
     risk_ratio_l_pct: float | None = Field(default=None, gt=0.0, le=100.0)
     risk_ratio_m_pct: float | None = Field(default=None, gt=0.0, le=100.0)
     risk_ratio_h_pct: float | None = Field(default=None, gt=0.0, le=100.0)
-    analysis_price_source: str | None = None
+    analysis_price_source: Literal["options", "underlying"] | None = None
     experimental_patterns_enabled: bool | None = None
     pattern_share_emails: str | None = None
     entry_auto_sl_enabled: bool | None = None
     entry_auto_sl_delay_sec: int | None = Field(default=None, ge=1, le=30)
-    max_price_mode: str | None = None
-    max_price_threshold_ce: float | None = None
-    max_price_threshold_pe: float | None = None
+    max_price_mode: Literal["otm", "threshold"] | None = None
+    max_price_threshold_ce: float | None = Field(default=None, gt=0, allow_inf_nan=False)
+    max_price_threshold_pe: float | None = Field(default=None, gt=0, allow_inf_nan=False)
     override_session_enabled: bool | None = None
     desktop_hide_chart_labels: bool | None = None
     desktop_order_size_mode: Literal["quantity", "funds_ratio", "risk_ratio"] | None = None

@@ -9,6 +9,16 @@ from decimal import Decimal
 logger = logging.getLogger(__name__)
 
 DEFAULT_SETTINGS: dict = {
+    "brokerage_per_order": 1.0,
+    "strategy_interval_secs": 180,
+    "autostop_trigger_type": "bar",
+    "autostop_deviation_pct": 1.0,
+    "breakeven_mode": "shift_sl",
+    "target_profit_buffer_ticks": 3,
+    "aggr_sl_only_in_profit": False,
+    "auto_start_event_snapshots": False,
+    "trade_labeling_mode_by_type": {"stepwise": "popup", "sim": "button", "paper": "button", "real": "button"},
+    "trading_roc_ratio_mode": "normalized",
     "historical_days": 2,
     "guardrail_block_bars": 3,
     "guardrail_cooldown_block_bars": 3,
@@ -45,7 +55,6 @@ DEFAULT_SETTINGS: dict = {
     "desktop_order_size_mode": "quantity",
     "desktop_pnl_display_mode": "currency",
     "desktop_confirm_flatten": True,
-    "context_menu_sl_mode": "longOnly",
     "target_deviation_pct": 0.01,
     "target_deviation_configured": False,
     "stoploss_limit_gap_pct": 0.015,
@@ -81,59 +90,49 @@ def _risk_percentage(value, default: float) -> float:
     return parsed * 100 if 0 < parsed < 1 else parsed
 
 
-def get_settings(user_id: str) -> dict:
-    """Return user settings, falling back to defaults if not found."""
+def get_settings(user_id: str, *, strict: bool = False) -> dict:
+    """Load preferences; UI callers use strict reads to distinguish errors from defaults."""
+    from copy import deepcopy
     _ensure_table()
     try:
         from app.services.db import get_dynamodb_resource
-        table = get_dynamodb_resource().Table("UserSettings")
-        resp = table.get_item(Key={"user_id": user_id})
-        item = resp.get("Item")
-        if not item:
-            return dict(DEFAULT_SETTINGS)
-        return {
-            "historical_days": int(item.get("historical_days", DEFAULT_SETTINGS["historical_days"])),
-            "guardrail_block_bars": int(item.get("guardrail_block_bars", DEFAULT_SETTINGS["guardrail_block_bars"])),
-            "guardrail_cooldown_block_bars": int(item.get("guardrail_cooldown_block_bars", DEFAULT_SETTINGS["guardrail_cooldown_block_bars"])),
-            "guardrail_cooldown_losses": int(item.get("guardrail_cooldown_losses", DEFAULT_SETTINGS["guardrail_cooldown_losses"])),
-            "guardrail_ban_capital_pct": float(item.get("guardrail_ban_capital_pct", DEFAULT_SETTINGS["guardrail_ban_capital_pct"])),
-            "guardrail_ban_loss_trade_pct": float(item.get("guardrail_ban_loss_trade_pct", DEFAULT_SETTINGS["guardrail_ban_loss_trade_pct"])),
-            "guardrail_ban_min_trades": int(item.get("guardrail_ban_min_trades", DEFAULT_SETTINGS["guardrail_ban_min_trades"])),
-            "guardrail_ban_enabled": bool(item.get("guardrail_ban_enabled", DEFAULT_SETTINGS["guardrail_ban_enabled"])),
-            "guardrail_cooldown_enabled": bool(item.get("guardrail_cooldown_enabled", DEFAULT_SETTINGS["guardrail_cooldown_enabled"])),
-            "guardrail_maxsize_enabled": bool(item.get("guardrail_maxsize_enabled", DEFAULT_SETTINGS["guardrail_maxsize_enabled"])),
-            "guardrail_maxsize_mode": str(item.get("guardrail_maxsize_mode", DEFAULT_SETTINGS["guardrail_maxsize_mode"])),
-            "guardrail_maxsize_pct": float(item.get("guardrail_maxsize_pct", DEFAULT_SETTINGS["guardrail_maxsize_pct"])),
-            "guardrail_maxsize_value": float(item.get("guardrail_maxsize_value", DEFAULT_SETTINGS["guardrail_maxsize_value"])),
-            "funds_ratio_l_pct": float(item.get("funds_ratio_l_pct", DEFAULT_SETTINGS["funds_ratio_l_pct"])),
-            "funds_ratio_m_pct": float(item.get("funds_ratio_m_pct", DEFAULT_SETTINGS["funds_ratio_m_pct"])),
-            "funds_ratio_h_pct": float(item.get("funds_ratio_h_pct", DEFAULT_SETTINGS["funds_ratio_h_pct"])),
-            "risk_ratio_l_pct": _risk_percentage(item.get("risk_ratio_l_pct"), DEFAULT_SETTINGS["risk_ratio_l_pct"]),
-            "risk_ratio_m_pct": _risk_percentage(item.get("risk_ratio_m_pct"), DEFAULT_SETTINGS["risk_ratio_m_pct"]),
-            "risk_ratio_h_pct": _risk_percentage(item.get("risk_ratio_h_pct"), DEFAULT_SETTINGS["risk_ratio_h_pct"]),
-            "default_sl_pct": float(item.get("default_sl_pct", DEFAULT_SETTINGS["default_sl_pct"])),
-            "context_menu_sl_mode": str(item.get("context_menu_sl_mode", DEFAULT_SETTINGS["context_menu_sl_mode"])),
-            "analysis_price_source": str(item.get("analysis_price_source", DEFAULT_SETTINGS["analysis_price_source"])),
-            "experimental_patterns_enabled": bool(item.get("experimental_patterns_enabled", DEFAULT_SETTINGS["experimental_patterns_enabled"])),
-            "pattern_share_emails": _normalize_share_emails_value(item.get("pattern_share_emails", DEFAULT_SETTINGS["pattern_share_emails"])),
-            "entry_auto_sl_enabled": bool(item.get("entry_auto_sl_enabled", DEFAULT_SETTINGS["entry_auto_sl_enabled"])),
-            "entry_auto_sl_delay_sec": int(item.get("entry_auto_sl_delay_sec", DEFAULT_SETTINGS["entry_auto_sl_delay_sec"])),
-            "max_price_mode": str(item.get("max_price_mode", DEFAULT_SETTINGS["max_price_mode"])),
-            "max_price_threshold_ce": float(item.get("max_price_threshold_ce", DEFAULT_SETTINGS["max_price_threshold_ce"])),
-            "max_price_threshold_pe": float(item.get("max_price_threshold_pe", DEFAULT_SETTINGS["max_price_threshold_pe"])),
-            "override_session_enabled": bool(item.get("override_session_enabled", DEFAULT_SETTINGS["override_session_enabled"])),
-            "desktop_hide_chart_labels": bool(item.get("desktop_hide_chart_labels", DEFAULT_SETTINGS["desktop_hide_chart_labels"])),
-            "desktop_order_size_mode": str(item.get("desktop_order_size_mode", DEFAULT_SETTINGS["desktop_order_size_mode"])),
-            "desktop_pnl_display_mode": str(item.get("desktop_pnl_display_mode", DEFAULT_SETTINGS["desktop_pnl_display_mode"])),
-            "desktop_confirm_flatten": bool(item.get("desktop_confirm_flatten", DEFAULT_SETTINGS["desktop_confirm_flatten"])),
-            "context_menu_sl_mode": str(item.get("context_menu_sl_mode", DEFAULT_SETTINGS["context_menu_sl_mode"])),
-            "target_deviation_pct": float(item.get("target_deviation_pct", DEFAULT_SETTINGS["target_deviation_pct"])),
-            "target_deviation_configured": bool(item.get("target_deviation_configured", "target_deviation_pct" in item)),
-            "stoploss_limit_gap_pct": float(item.get("stoploss_limit_gap_pct", 0.015)),
-        }
+        item = get_dynamodb_resource().Table("UserSettings").get_item(
+            Key={"user_id": user_id}, ConsistentRead=True,
+        ).get("Item", {})
+        result = deepcopy(DEFAULT_SETTINGS)
+        for key, default in DEFAULT_SETTINGS.items():
+            if key not in item:
+                continue
+            value = item[key]
+            if isinstance(default, bool):
+                result[key] = bool(value)
+            elif isinstance(default, int):
+                result[key] = int(value)
+            elif isinstance(default, float):
+                result[key] = float(value)
+            elif isinstance(default, dict):
+                result[key] = {**default, **value}
+            else:
+                result[key] = value
+        for key in ("risk_ratio_l_pct", "risk_ratio_m_pct", "risk_ratio_h_pct"):
+            result[key] = float(item.get(key, DEFAULT_SETTINGS[key])) if item.get("risk_ratio_percentage_points") else _risk_percentage(item.get(key), DEFAULT_SETTINGS[key])
+        for key in ("pattern_share_emails", "fine_structure_share_emails"):
+            result[key] = _normalize_share_emails_value(result[key])
+        result["target_deviation_configured"] = bool(item.get("target_deviation_configured", "target_deviation_pct" in item))
+        return result
     except Exception:
         logger.exception("Failed to get settings for user %s", user_id)
-        return dict(DEFAULT_SETTINGS)
+        if strict:
+            raise
+        return deepcopy(DEFAULT_SETTINGS)
+
+
+def _dynamo_value(value):
+    if isinstance(value, float):
+        return Decimal(str(value))
+    if isinstance(value, dict):
+        return {key: _dynamo_value(item) for key, item in value.items()}
+    return value
 
 
 def _normalize_share_emails_value(value) -> str:
@@ -163,10 +162,13 @@ def update_settings(user_id: str, settings: dict) -> dict:
                 raise ValueError("Execution gaps must be between 0 and 10%")
             settings[key] = value
     _ensure_table()
-    current = get_settings(user_id)
+    current = get_settings(user_id, strict=True)
     if settings.get("target_deviation_pct") is not None:
         current["target_deviation_configured"] = True
-    current.update({k: v for k, v in settings.items() if v is not None and k != "target_deviation_configured"})
+    updates = {k: v for k, v in settings.items() if v is not None and k != "target_deviation_configured"}
+    if "trade_labeling_mode_by_type" in updates:
+        updates["trade_labeling_mode_by_type"] = {**current["trade_labeling_mode_by_type"], **updates["trade_labeling_mode_by_type"]}
+    current.update(updates)
     shares_updated = "pattern_share_emails" in settings
     fine_shares_updated = "fine_structure_share_emails" in settings
     if shares_updated:
@@ -190,10 +192,21 @@ def update_settings(user_id: str, settings: dict) -> dict:
                 logger.exception("Failed to sync fine structure shares, continuing")
         from app.services.db import get_dynamodb_resource
         table = get_dynamodb_resource().Table("UserSettings")
-        dynamo_item = {"user_id": user_id}
-        for k, v in current.items():
-            dynamo_item[k] = Decimal(str(v)) if isinstance(v, float) else v
-        table.put_item(Item=dynamo_item)
+        changed = {key: current[key] for key, value in settings.items() if value is not None and key != "target_deviation_configured"}
+        risk_keys = ("risk_ratio_l_pct", "risk_ratio_m_pct", "risk_ratio_h_pct")
+        if any(key in changed for key in risk_keys):
+            # Normalize legacy fractions once before recording new percentage-point values.
+            changed.update({key: current[key] for key in risk_keys})
+            changed["risk_ratio_percentage_points"] = True
+        if "target_deviation_pct" in changed:
+            changed["target_deviation_configured"] = True
+        if changed:
+            table.update_item(
+                Key={"user_id": user_id},
+                UpdateExpression="SET " + ", ".join(f"#k{i} = :v{i}" for i in range(len(changed))),
+                ExpressionAttributeNames={f"#k{i}": key for i, key in enumerate(changed)},
+                ExpressionAttributeValues={f":v{i}": _dynamo_value(value) for i, value in enumerate(changed.values())},
+            )
     except ValueError:
         raise
     except Exception:
@@ -219,4 +232,36 @@ def migrate_target_gap(user_id: str, gap: float) -> dict:
     except ClientError as exc:
         if exc.response["Error"]["Code"] != "ConditionalCheckFailedException":
             raise
-    return get_settings(user_id)
+    return get_settings(user_id, strict=True)
+
+
+LEGACY_BROWSER_FIELDS = frozenset({
+    "brokerage_per_order", "strategy_interval_secs", "autostop_trigger_type",
+    "autostop_deviation_pct", "breakeven_mode", "target_profit_buffer_ticks",
+    "aggr_sl_only_in_profit", "auto_start_event_snapshots",
+    "trade_labeling_mode_by_type", "trading_roc_ratio_mode",
+})
+
+
+def migrate_browser_settings(user_id: str, values: dict) -> dict:
+    """Import each browser preference once; an explicit backend save always wins."""
+    from botocore.exceptions import ClientError
+    from app.services.db import get_dynamodb_resource
+    from app.models.schemas import UserSettingsUpdateRequest
+    values = UserSettingsUpdateRequest(**values).model_dump(exclude_none=True)
+    _ensure_table()
+    table = get_dynamodb_resource().Table("UserSettings")
+    for key, value in values.items():
+        if key not in LEGACY_BROWSER_FIELDS:
+            continue
+        try:
+            table.update_item(
+                Key={"user_id": user_id}, UpdateExpression="SET #field = :value",
+                ConditionExpression="attribute_not_exists(#field)",
+                ExpressionAttributeNames={"#field": key},
+                ExpressionAttributeValues={":value": _dynamo_value(value)},
+            )
+        except ClientError as exc:
+            if exc.response["Error"]["Code"] != "ConditionalCheckFailedException":
+                raise
+    return get_settings(user_id, strict=True)

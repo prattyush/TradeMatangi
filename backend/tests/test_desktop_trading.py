@@ -1558,7 +1558,7 @@ def test_guardrail_settings_shared_across_desktop_and_website():
         assert user_id == 'desktop-user'
         saved.update(values)
         return saved.copy()
-    with patch('app.services.user_settings_service.get_settings', side_effect=lambda user_id: saved.copy()), \
+    with patch('app.services.user_settings_service.get_settings', side_effect=lambda user_id, **kwargs: saved.copy()), \
          patch('app.services.user_settings_service.update_settings', side_effect=update):
         asyncio.run(desktop_trading.desktop_save_guardrails(GuardRailSettingsUpdateRequest(guardrail_block_bars=7), 'desktop-user'))
         assert guardrails.get_settings('desktop-user').guardrail_block_bars == 7

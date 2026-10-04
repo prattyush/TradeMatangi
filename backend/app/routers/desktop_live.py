@@ -30,7 +30,7 @@ class ConfigureLiveRequest(BaseModel):
     tile: LiveTile
 
 
-def _tile_state(tile: LiveTile) -> dict:
+def _tile_state(tile: LiveTile, context_days: int = 5) -> dict:
     instrument = tile.instrument
     try:
         canonical_instrument_id(instrument)
@@ -39,7 +39,7 @@ def _tile_state(tile: LiveTile) -> dict:
     symbol = instrument.get("underlying") if instrument.get("kind") == "option" else instrument.get("symbol")
     if symbol not in SUPPORTED_SYMBOLS:
         return {"tile_id": tile.tile_id, "availability": "unavailable", "reason": "Instrument is not in the desktop catalogue"}
-    return {"tile_id": tile.tile_id, "availability": "pending_subscription", "instrument": instrument, "interval_minutes": tile.interval_minutes}
+    return {"tile_id": tile.tile_id, "availability": "pending_subscription", "instrument": instrument, "interval_minutes": tile.interval_minutes, "context_days": context_days}
 
 
 @router.post("/start", status_code=201)
@@ -47,7 +47,9 @@ async def start_live(req: StartLiveRequest, user_id: str = Depends(get_desktop_u
     tile_ids = [tile.tile_id for tile in req.tiles]
     if len(tile_ids) != len(set(tile_ids)):
         raise HTTPException(status_code=422, detail="Every live tile needs a unique tile_id")
-    stream = live.start(user_id, [_tile_state(tile) for tile in req.tiles])
+    from app.services.user_settings_service import get_settings
+    context_days = get_settings(user_id, strict=True)["historical_days"]
+    stream = live.start(user_id, [_tile_state(tile, context_days) for tile in req.tiles])
     await live.activate(stream)
     return live.snapshot(stream)
 
@@ -75,7 +77,8 @@ async def configure_live_tile(stream_id: str, tile_id: str, req: ConfigureLiveRe
         raise HTTPException(status_code=404, detail="Live stream was not found")
     if req.tile.tile_id != tile_id:
         raise HTTPException(status_code=422, detail="tile_id must match the route")
-    replacement = _tile_state(req.tile)
+    context_days = stream.tiles[0].get("context_days", 5) if stream.tiles else 5
+    replacement = _tile_state(req.tile, context_days)
     for index, tile in enumerate(stream.tiles):
         if tile["tile_id"] == tile_id:
             # Candle interval is a client-side aggregation concern in Live.
