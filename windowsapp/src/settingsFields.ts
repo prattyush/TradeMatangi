@@ -166,3 +166,17 @@ export function strategySettingsPayload(
     only_in_profit: settings.aggr_sl_only_in_profit
   }
 }
+
+export function settingsWalletContext(
+  mode: string,
+  runDate: string,
+  marketDate: string
+) {
+  const desktopMode = mode === 'Browse' ? 'paper' : mode.toLowerCase()
+  const date = desktopMode === 'paper' ? marketDate : runDate
+  return {
+    desktopMode,
+    date,
+    label: `${desktopMode === 'paper' ? 'Paper' : mode} wallet — ${date}`
+  }
+}

@@ -50,6 +50,7 @@ interface Props {
   accountRequest: AccountRequest
   resetWallet: (amount: number) => Promise<void>
   walletResetDisabled: boolean
+  walletResetContext?: string
   onClose: () => void
 }
 
@@ -167,6 +168,7 @@ export function DesktopSettingsModal({
   accountRequest,
   resetWallet,
   walletResetDisabled,
+  walletResetContext,
   onClose
 }: Props) {
   const [draft, setDraft] = useState(settings)
@@ -732,7 +734,7 @@ export function DesktopSettingsModal({
                   {tab === 'General' && (
                     <>
                       <section className="settings-section">
-                        <strong>Wallet</strong>
+                        <strong>{walletResetContext ?? 'Wallet'}</strong>
                         <label>
                           Reset amount (₹)
                           <input

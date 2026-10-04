@@ -8,7 +8,8 @@ import { accountSettingsRequest } from './desktopSettingsRequest'
 import {
   sectionSettings,
   sharedSettingsSections,
-  strategySettingsPayload
+  strategySettingsPayload,
+  settingsWalletContext
 } from './settingsFields'
 
 let values: Map<string, string>
@@ -274,4 +275,20 @@ it('uses saved strategy preferences without converting AutoStop percentage point
     target_profit_buffer_ticks: 5,
     only_in_profit: true
   })
+})
+
+it('uses the current-day Paper ledger in Browse and the selected ledger in trading modes', () => {
+  expect(settingsWalletContext('Browse', '2026-10-01', '2026-10-04')).toEqual({
+    desktopMode: 'paper',
+    date: '2026-10-04',
+    label: 'Paper wallet — 2026-10-04'
+  })
+  expect(settingsWalletContext('Replay', '2026-10-01', '2026-10-04')).toEqual({
+    desktopMode: 'replay',
+    date: '2026-10-01',
+    label: 'Replay wallet — 2026-10-01'
+  })
+  expect(settingsWalletContext('Paper', '2026-10-01', '2026-10-04').date).toBe(
+    '2026-10-04'
+  )
 })

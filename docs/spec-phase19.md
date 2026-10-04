@@ -1859,7 +1859,8 @@ server-side admin/real-trading eligibility checks and the existing shared handle
 The native request command uses the existing token-refresh lifecycle and handles
 204 responses. Actions include masked broker-token updates, streaming and historical
 policy, whitelist management, broker status/Kotak TOTP login and password changes.
-Wallet reset retains the existing desktop wallet endpoint and restrictions. Tokens,
+Wallet reset retains the existing desktop wallet endpoint and restrictions. Browse
+uses the current-day Paper wallet, with the ledger/date shown beside the control. Tokens,
 TOTP and passwords are not stored as preferences.
 
 Desktop session startup uses saved brokerage and strategy interval independently
@@ -1876,7 +1877,7 @@ session snapshot refresh fails; the refresh failure is reported separately.
   precedence, partial updates, units, validation, permissions, wallet/order/
   strategy compatibility and desktop live/replay behavior. This is not a full
   repository suite result; the existing dateutil warning remains.
-- **143 desktop/client Vitest tests passed across 24 files**, including website
+- **144 desktop/client Vitest tests passed across 24 files**, including website
   migration/cache behavior, save failures, desktop account transport and strategy
   request mapping. Both TypeScript checks and production builds passed; existing
   bundle-size warnings remain.
