@@ -8,7 +8,7 @@ from app.services import trading as trading_svc
 from app.services import simulation as sim_svc
 from app.services import wallet_service, order_service
 from app.services.wallet_service import InsufficientFundsError
-from app.config import LOT_SIZES, KOTAK_SLIPPAGE_PCT, EQUITY_MIS_MARGIN_RATE
+from app.config import LOT_SIZES, EQUITY_MIS_MARGIN_RATE
 from app.dependencies import get_request_user_id
 
 logger = logging.getLogger(__name__)
@@ -70,9 +70,11 @@ def _place_kotak_direct(session, side: TradeSide, price: float, lot_size: int, r
     from app.models.schemas import Order, OrderType
     if getattr(session, "broker_refresh_events", None) is not None:
         raise HTTPException(status_code=409, detail="Broker refresh is in progress; retry shortly")
-    factor = 1 + KOTAK_SLIPPAGE_PCT if side == TradeSide.BUY else 1 - KOTAK_SLIPPAGE_PCT
+    from app.services.execution_price_service import gap_for, limit_price
+    gap = gap_for(session.user_id)
     order = Order(session_id=session.session_id, user_id=session.user_id, symbol=session.symbol,
-        side=side, order_type=OrderType.LIMIT, quantity=lot_size, limit_price=round(price * factor, 2),
+        side=side, order_type=OrderType.LIMIT, quantity=lot_size, limit_price=limit_price(side, price, gap),
+        market_order=True, execution_gap_pct=gap, quote_price=price,
         trigger_price=price, created_at=int(session.current_time or 0), right=right,
         strike=_strike_for_right(session, right), expiry=session.expiry if right else None,
         source="direct_market", wallet_ledger_kind="real", wallet_ledger_id=session.wallet_ledger_id or None)

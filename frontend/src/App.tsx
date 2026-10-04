@@ -236,6 +236,18 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
   const [riskRatios, setRiskRatios] = useState<RiskRatios>(loadRiskRatios)
   const [defaultSlPct, setDefaultSlPct] = useState(loadDefaultSlPct)
   const [targetDeviationPct, setTargetDeviationPct] = useState(loadTargetDeviationPct)
+  useEffect(() => {
+    let disposed = false
+    const sync = (event: Event) => {
+      const gap = (event as CustomEvent<{ target_deviation_pct?: number }>).detail?.target_deviation_pct
+      if (!disposed && gap != null) setTargetDeviationPct(gap)
+    }
+    const refresh = () => { void api.getUserSettings().catch(error => console.warn('Could not load execution gaps', error)) }
+    window.addEventListener('execution-gap-settings', sync)
+    window.addEventListener('focus', refresh)
+    refresh()
+    return () => { disposed = true; window.removeEventListener('execution-gap-settings', sync); window.removeEventListener('focus', refresh) }
+  }, [authUser.userId])
   const [brokeragePerOrder, setBrokeragePerOrder] = useState(loadBrokeragePerOrder)
   const [stratIntervalSecs, setStratIntervalSecs] = useState(loadStrategyIntervalSecs)
   const [autostopTriggerType, setAutostopTriggerType] = useState(loadAutostopTriggerType)
@@ -1533,8 +1545,8 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
     }
     if (ticket.orderType === 'MARKET') {
       const panePrice = ticket.right === 'CE' ? (sim.currentPriceCE || sim.currentPrice) : ticket.right === 'PE' ? (sim.currentPricePE || sim.currentPrice) : sim.currentPrice
-      const marketablePrice = ticket.side === 'BUY' ? panePrice * 1.01 : panePrice * 0.99
-      const opts: Record<string, unknown> = { entry_sl_price: ticket.price, group_id: crypto.randomUUID() }
+      const marketablePrice = ticket.side === 'BUY' ? panePrice * (1 + targetDeviationPct) : panePrice * (1 - targetDeviationPct)
+      const opts: Record<string, unknown> = { market_order: true, execute_immediately: sim.sessionType === 'real', entry_sl_price: ticket.price, group_id: crypto.randomUUID() }
       if (fundsRatioPct != null) opts.funds_ratio_pct = fundsRatioPct
       if (riskRatioPct != null) opts.risk_pct = riskRatioPct
       if (ticket.right) opts.right = ticket.right
@@ -1558,7 +1570,7 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
       setContextMenuOrderPick({ side: ticket.side, orderType: ticket.orderType, slPrice: ticket.price, quantity, fundsRatioPct, riskRatioPct, right: ticket.right, strike: ticket.strike, expiry: ticket.expiry })
     }
     setContextMenuEntryTicket(null)
-  }, [sim.sessionId, sim.sessionType, sim.sessionStrikeCE, sim.sessionStrikePE, sim.sessionExpiry, sim.currentPrice, sim.currentPriceCE, sim.currentPricePE, sim.placeOrder, autostopTriggerType, autostopDeviationPct])
+  }, [sim.sessionId, sim.sessionType, sim.sessionStrikeCE, sim.sessionStrikePE, sim.sessionExpiry, sim.currentPrice, sim.currentPriceCE, sim.currentPricePE, sim.placeOrder, targetDeviationPct, autostopTriggerType, autostopDeviationPct])
 
   // ── Context menu handler ───────────────────────────────────────────────────
   const handleChartContextMenu = useCallback((price: number, screenX: number, screenY: number, ctx: {

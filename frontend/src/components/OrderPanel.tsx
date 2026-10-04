@@ -22,7 +22,7 @@ interface Props {
     orderType: 'TARGET' | 'LIMIT' | 'STOPLOSS',
     price: number,
     quantity: number | null,
-    opts: { execute_immediately?: boolean; is_stoploss?: boolean; funds_ratio_pct?: number; risk_pct?: number; risk_ratio_pct?: number; target_deviation_pct?: number; entry_sl_price?: number; group_id?: string },
+    opts: { market_order?: boolean; execute_immediately?: boolean; is_stoploss?: boolean; funds_ratio_pct?: number; risk_pct?: number; risk_ratio_pct?: number; target_deviation_pct?: number; entry_sl_price?: number; group_id?: string },
   ) => Promise<void>
   onCancelOrder: (orderId: string) => Promise<void>
   onConvertOrder?: (orderId: string, newOrderType: 'TARGET' | 'LIMIT' | 'STOPLOSS', price?: number) => Promise<void>
@@ -252,7 +252,7 @@ export default function OrderPanel({
 
   const ratioPct = fundsRatios[ratio] / 100
   const riskEntryPrice = orderType === 'MARKET'
-    ? (side === 'BUY' ? currentPrice * 1.01 : currentPrice * 0.99)
+    ? (side === 'BUY' ? currentPrice * (1 + deviation) : currentPrice * (1 - deviation))
     : parsedPrice
   const riskStopDistance = slOnEntry && Number.isFinite(parsedEntrySl) && parsedEntrySl > 0
     ? Math.abs(riskEntryPrice - parsedEntrySl)
@@ -288,7 +288,7 @@ export default function OrderPanel({
         return
       }
       const entryPrice = orderType === 'MARKET'
-        ? (side === 'BUY' ? currentPrice * 1.01 : currentPrice * 0.99)
+        ? (side === 'BUY' ? currentPrice * (1 + deviation) : currentPrice * (1 - deviation))
         : parsedPrice
       if ((side === 'BUY' && parsedEntrySl >= entryPrice) || (side === 'SELL' && parsedEntrySl <= entryPrice)) {
         setError(side === 'BUY' ? 'Long stop must be below entry price' : 'Short stop must be above entry price')
@@ -298,12 +298,12 @@ export default function OrderPanel({
     setError(null)
     setPlacing(true)
     // Build auto-stoploss opts for TARGET / LIMIT / MARKET orders
-    const entrySlOpts = { execute_immediately: sessionType === 'real' && orderType === 'MARKET', ...((orderType === 'TARGET' || orderType === 'LIMIT' || (orderType === 'MARKET' && slOnEntry && !isNaN(parsedEntrySl) && parsedEntrySl > 0))
+    const entrySlOpts = { market_order: orderType === 'MARKET', execute_immediately: sessionType === 'real' && orderType === 'MARKET', ...((orderType === 'TARGET' || orderType === 'LIMIT' || (orderType === 'MARKET' && slOnEntry && !isNaN(parsedEntrySl) && parsedEntrySl > 0))
       ? { entry_sl_price: slOnEntry && !isNaN(parsedEntrySl) && parsedEntrySl > 0 ? parsedEntrySl : undefined, group_id: crypto.randomUUID() }
       : {}) }
     try {
       if (orderType === 'MARKET') {
-        const mktPrice = side === 'BUY' ? currentPrice * 1.01 : currentPrice * 0.99
+        const mktPrice = side === 'BUY' ? currentPrice * (1 + deviation) : currentPrice * (1 - deviation)
         if (sizingMode === 'riskRatio') {
           const riskPct = riskRatios[ratio]
           await onPlaceOrder(side, 'LIMIT', mktPrice, null, { risk_pct: riskPct, ...entrySlOpts })
@@ -336,11 +336,11 @@ export default function OrderPanel({
       const rightTag = instrumentType === 'options' && activeRight ? ` ${activeRight}` : ''
       onSnapshotEvent?.({
         type: 'order_placed',
-        description: `${side} ${orderType === 'MARKET' ? 'LIMIT(Mkt)' : orderType} @ ${orderType === 'MARKET' ? (side === 'BUY' ? currentPrice * 1.01 : currentPrice * 0.99).toFixed(2) : parsedPrice.toFixed(2)}${rightTag}`,
+        description: `${side} ${orderType === 'MARKET' ? 'LIMIT(Mkt)' : orderType} @ ${orderType === 'MARKET' ? (side === 'BUY' ? currentPrice * (1 + deviation) : currentPrice * (1 - deviation)).toFixed(2) : parsedPrice.toFixed(2)}${rightTag}`,
         details: {
           side,
           orderType: orderType === 'MARKET' ? 'LIMIT' : orderType,
-          price: orderType === 'MARKET' ? (side === 'BUY' ? currentPrice * 1.01 : currentPrice * 0.99) : parsedPrice,
+          price: orderType === 'MARKET' ? (side === 'BUY' ? currentPrice * (1 + deviation) : currentPrice * (1 - deviation)) : parsedPrice,
           quantity: orderType === 'STOPLOSS' ? parsedSlQty : quantity,
           fundsRatioPct: sizingMode === 'fundsRatio' ? ratioPct : sizingMode === 'riskRatio' ? riskRatios[ratio] / 100 : undefined,
         },
@@ -1279,7 +1279,7 @@ export default function OrderPanel({
       {orderType === 'MARKET' && (
         <div style={{ fontSize: 10, color: '#484f58' }}>
           {currentPrice > 0
-            ? `Limit ${side === 'BUY' ? '≤' : '≥'} ${(side === 'BUY' ? currentPrice * 1.01 : currentPrice * 0.99).toFixed(2)} (1% ${side === 'BUY' ? 'above' : 'below'} ${currentPrice.toFixed(2)})`
+            ? `Limit ${side === 'BUY' ? '≤' : '≥'} ${(side === 'BUY' ? currentPrice * (1 + deviation) : currentPrice * (1 - deviation)).toFixed(2)} (${(deviation * 100).toFixed(2)}% ${side === 'BUY' ? 'above' : 'below'} ${currentPrice.toFixed(2)})`
             : 'Waiting for price data…'}
         </div>
       )}

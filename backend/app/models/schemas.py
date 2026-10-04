@@ -242,12 +242,15 @@ class Order(BaseModel):
     # The authoritative quote used to create a chart-originated order.  These
     # fields are intentionally optional so persisted and non-desktop orders
     # remain backwards compatible.
+    execution_gap_pct: float | None = None
+    market_order: bool = False
     quote_price: float | None = None
     quote_timestamp: int | None = None
     quote_source: str | None = None
 
 
 class PlaceOrderRequest(BaseModel):
+    market_order: bool = False  # LIMIT used as market-style execution; price resolved server-side
     execute_immediately: bool = False
     session_id: str
     side: TradeSide
@@ -355,6 +358,8 @@ class UserSettingsResponse(BaseModel):
     desktop_confirm_flatten: bool = True
     context_menu_sl_mode: Literal["longOnly", "both"] = "longOnly"
     target_deviation_pct: float = 0.01
+    target_deviation_configured: bool = False
+    stoploss_limit_gap_pct: float = 0.015
 
 
 class UserSettingsUpdateRequest(BaseModel):
@@ -379,7 +384,8 @@ class UserSettingsUpdateRequest(BaseModel):
     desktop_pnl_display_mode: Literal["currency", "percent"] | None = None
     desktop_confirm_flatten: bool | None = None
     context_menu_sl_mode: Literal["longOnly", "both"] | None = None
-    target_deviation_pct: float | None = Field(default=None, ge=0.0, le=0.10)
+    target_deviation_pct: float | None = Field(default=None, ge=0.0, le=0.10, allow_inf_nan=False)
+    stoploss_limit_gap_pct: float | None = Field(default=None, ge=0.0, le=0.10, allow_inf_nan=False)
 
 
 # ── Strategies ────────────────────────────────────────────────────────────────

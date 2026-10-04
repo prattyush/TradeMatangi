@@ -2170,7 +2170,6 @@ def _register_kotak_sl_for_order(session: SimulationSession, order: Any, loop: A
     from app.services.trading import record_trade, settle_wallet_for_trade
     from app.services import order_service
     from app.models.schemas import OrderStatus
-    from app.config import KOTAK_SLIPPAGE_PCT
 
     kotak_svc = get_kotak()
     from app.models.schemas import OrderType
@@ -2184,10 +2183,11 @@ def _register_kotak_sl_for_order(session: SimulationSession, order: Any, loop: A
         if not _is_position_exit(session, order):
             return  # Entry triggers remain local until live data triggers execution.
         trigger = order.trigger_price
-        if order.side.value == "BUY":
-            kotak_limit = round(trigger * (1 + KOTAK_SLIPPAGE_PCT), 2)
-        else:
-            kotak_limit = round(trigger * (1 - KOTAK_SLIPPAGE_PCT), 2)
+        # Legacy local protection is priced once on first broker submission.
+        if order.order_type == OrderType.STOPLOSS and order.execution_gap_pct is None:
+            from app.services.execution_price_service import reprice_trigger
+            reprice_trigger(order)
+        kotak_limit = order.limit_price
 
         side = "B" if order.side.value == "BUY" else "S"
         kwargs = dict(symbol=session.symbol, side=side, qty=order.quantity)
@@ -2235,7 +2235,6 @@ def _emit_tick_and_check_orders_real(
     if getattr(session, "broker_refresh_events", None) is not None:
         return []
     from app.services.kotak_service import get_service as get_kotak, KotakError
-    from app.config import KOTAK_SLIPPAGE_PCT
     from app.models.schemas import OrderType
 
     try:
@@ -2272,11 +2271,7 @@ def _emit_tick_and_check_orders_real(
 
         # Forward triggered LIMIT/TARGET to Kotak as limit order
         side_code = "B" if order.side.value == "BUY" else "S"
-        price = order.filled_price or current_price
-        if order.side.value == "BUY":
-            kotak_price = round(price * (1 + KOTAK_SLIPPAGE_PCT), 2)
-        else:
-            kotak_price = round(price * (1 - KOTAK_SLIPPAGE_PCT), 2)
+        kotak_price = order.limit_price
 
         try:
             if order.right and session.instrument_type == "options":
