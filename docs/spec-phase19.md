@@ -1819,6 +1819,20 @@ warnings; backend tests report the existing dateutil UTC deprecation warning.
 
 ## Shared desktop and website settings — 2026-10-04
 
+### Delivery status
+
+| Item | Status |
+|---|---|
+| Shared settings, desktop account actions and runtime consumers | Implemented |
+| Targeted backend/client tests, type checks and builds | Passed; scope and warnings below |
+| Mocked browser acceptance for both settings windows | Passed |
+| Native Windows interaction and authorized live broker acceptance | Pending manual verification |
+| [PR #570](https://github.com/prattyush/TradeMatangi/pull/570), targeting `dev` | Open; review and merge pending |
+| Deployment and merge to `main` | Not performed; main merge remains manual |
+
+This status applies to Desktop Client Settings. Desktop Client Continuous browse
+is a separate requirement and is not included in this delivery.
+
 ### Scope and implementation
 
 Desktop now offers the website's General, Trading, Analytics, Strategies,
@@ -1870,6 +1884,52 @@ context and newly started live streams. Existing sizing/GuardRails session timin
 and execution-gap rules remain: settings saves do not rewrite pending orders or
 running strategies. A successful preference save remains successful if a subsequent
 session snapshot refresh fails; the refresh failure is reported separately.
+
+### Choices and tradeoffs
+
+- **Backend ownership:** use the existing account settings record, with browser
+  storage as a cache. Fetch on every settings-window open under the agreed
+  one-client-at-a-time assumption; continuous synchronization is out of scope.
+- **Settings parity:** expose website preferences and account actions in desktop,
+  retain desktop drawing/display controls, and explain where a preference applies
+  to a website feature that desktop does not yet implement.
+- **Safe initial import:** import only valid browser attributes absent from the
+  backend. Save changed attributes and merge labeling by session type so defaults
+  and unrelated edits cannot erase existing preferences or block migration.
+- **Compatible contracts:** retain existing field names, units and the desktop
+  update envelope. Record risk units explicitly for new saves while supporting
+  legacy fractional values.
+- **Shared account behavior:** reuse existing handlers behind desktop-authenticated
+  routes and enforce permissions on the server. Keep credentials outside preference
+  storage and use the native token-refresh lifecycle.
+- **Runtime timing:** apply settings through existing session/strategy consumers;
+  preserve pending order prices and running strategy state. Distinguish a successful
+  save from a subsequent session-refresh failure.
+- **Wallet context:** show the actual ledger and date for reset. Browse uses the
+  current-day Paper wallet because Browse is not a wallet ledger.
+
+### Lessons learned
+
+- Check persistence, response schemas, UI controls and runtime consumers together.
+  Default SL and fine-structure sharing were stored but omitted from the website
+  response; exposing a control alone would not establish parity.
+- Writing a whole settings record materializes defaults for untouched fields.
+  That makes an absent attribute appear saved and defeats conditional browser
+  import. Partial writes preserve the distinction between absent and configured.
+- Value magnitude cannot reliably identify units: a valid risk below 1% resembles
+  a legacy fraction. Explicit units metadata avoids changing the user's meaning.
+- Nested settings need merge semantics. Updating one session type's labeling must
+  preserve labeling for the other session types.
+- Chart interval and strategy interval have different consumers. Shared settings
+  must reach strategy requests and session startup independently of chart controls.
+- Load failures must remain visible rather than appearing as default preferences.
+  Retain drafts on save failure, and report post-save refresh failures separately
+  so the UI accurately reflects what was persisted.
+- Account actions available outside trading sessions still need valid context.
+  Explicit wallet selection prevents Browse from being treated as a ledger.
+- Mocked browser checks and Linux native tests cover different boundaries. Neither
+  proves Windows packaging or live broker behavior; those acceptance checks remain
+  explicitly pending.
 
 ### Validation and acceptance
 
