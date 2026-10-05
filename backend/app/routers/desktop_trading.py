@@ -49,6 +49,8 @@ HEARTBEAT_INTERVAL = 15
 
 
 class DesktopTradingSnapshot(BaseModel):
+    broker_orders: list[dict] = Field(default_factory=list)
+    protection: list[dict] = Field(default_factory=list)
     version: int = 1
     event_cursor: int = 0
     desktop_mode: str = "stepwise"
@@ -685,6 +687,8 @@ def _snapshot(session, user_id: str) -> DesktopTradingSnapshot:
         desktop_mode=_desktop_mode(session),
         source=_desktop_source(session),
         session=_session_response(session),
+        broker_orders=getattr(session, "broker_orders_report", []) if session.session_type == "real" else [],
+        protection=getattr(session, "protection_status", []) if session.session_type == "real" else [],
         current_time=int(session.current_time or 0),
         current_bar_index=int(session.current_bar_index or 0),
         current_price=float(session.last_price or 0),
@@ -1153,6 +1157,16 @@ async def snapshot(session_id: str, user_id: str = Depends(get_desktop_user_id))
     record, claim = _saved_desktop_paper(session_id, user_id)
     claim = _reconcile_saved_paper(record, claim)
     return _saved_paper_snapshot(record, user_id)
+
+
+@router.post("/{session_id}/reconcile", response_model=DesktopTradingSnapshot)
+async def reconcile_real_orders(session_id: str, user_id: str = Depends(get_desktop_user_id)):
+    session = _require_session(session_id, user_id)
+    if session.session_type != "real":
+        raise HTTPException(status_code=400, detail="Broker order refresh requires a real session")
+    from app.routers.kotak import kotak_reconcile
+    await kotak_reconcile(session_id=session_id, user_id=user_id)
+    return _snapshot(session, user_id)
 
 
 @router.get("/{session_id}/events")

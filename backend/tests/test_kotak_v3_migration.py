@@ -152,6 +152,15 @@ def test_real_sdk_reports_and_master_keep_existing_shapes(broker):
     assert client.scrip_master(exchange_segment="nse_cm") == "https://broker.invalid/nse_cm-v1.csv"
 
 
+def test_protection_tag_and_exact_product_reach_real_sdk(broker):
+    service, _, requests, _ = broker
+    assert service.place_options_sl_order(symbol="BSESEN", right="PE", strike=71100,
+        expiry="2026-10-08", side="S", qty=40, trigger_price=30, limit_price=29.55,
+        tag="tmSLoperation", product="NRML") == "K1"
+    assert body(requests[0])["ig"] == "tmSLoperation"
+    assert body(requests[0])["pc"] == "NRML"
+
+
 def test_real_sdk_nonempty_account_reports_preserve_cash_units(broker):
     service, _, _, responses = broker
     row = {"nOrdNo": "K1", "trdSym": "NIFTY26MAY23500CE", "sym": "NIFTY", "exSeg": "nse_fo",
@@ -270,7 +279,7 @@ def test_replaced_login_generation_drops_old_messages(monkeypatch):
     service = ks.KotakNeoService()
     service._client, service._authenticated = MagicMock(), True
     captures = []
-    def bridge(client, order, market, expired):
+    def bridge(client, order, market, expired, **kwargs):
         captures.append((order, market, expired))
         return MagicMock()
     monkeypatch.setattr("app.services.kotak_stream.KotakFeedBridge", bridge)

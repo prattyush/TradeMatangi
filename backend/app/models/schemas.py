@@ -239,6 +239,12 @@ class Order(BaseModel):
     kotak_fill_confirmed: bool = False  # True once Kotak WebSocket or reconcile records the fill
     entry_sl_price: float | None = None  # auto-stoploss price set at entry time
     group_id: str | None = None          # links entry order with its auto-placed SL order
+    protection_enrolled: bool = False
+    protection_entry_allocations: dict[str, int] = Field(default_factory=dict)
+    protection_operation_id: str | None = None
+    broker_client_tag: str | None = None
+    protection_submission: Literal["submitting", "unknown", "accepted", "failed"] | None = None
+    protection_error: str | None = None
     # The authoritative quote used to create a chart-originated order.  These
     # fields are intentionally optional so persisted and non-desktop orders
     # remain backwards compatible.

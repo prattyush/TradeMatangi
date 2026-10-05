@@ -509,6 +509,8 @@ class KotakNeoService:
         qty: int,
         trigger_price: float,
         limit_price: float,
+        tag: str | None = None,
+        product: str = "MIS",
     ) -> str:
         """Place a stop-loss limit order. Returns the Kotak order ID."""
         client = self._get_client()
@@ -516,7 +518,7 @@ class KotakNeoService:
         try:
             resp = client.place_order(
                 exchange_segment=exchange_seg,
-                product="MIS",
+                product=product,
                 price=str(_round_to_tick(limit_price)),
                 order_type="SL",
                 quantity=str(qty),
@@ -526,7 +528,7 @@ class KotakNeoService:
                 amo="NO",
                 disclosed_quantity="0",
                 trigger_price=str(_round_to_tick(trigger_price)),
-                tag=None,
+                tag=tag,
             )
             return self._extract_order_id(resp)
         except KotakError:
@@ -578,6 +580,8 @@ class KotakNeoService:
         qty: int,
         trigger_price: float,
         limit_price: float,
+        tag: str | None = None,
+        product: str = "MIS",
     ) -> str:
         """Place an SL limit order on an options contract. Returns the Kotak order ID."""
         client = self._get_client()
@@ -585,7 +589,7 @@ class KotakNeoService:
         try:
             resp = client.place_order(
                 exchange_segment=exchange_seg,
-                product="MIS",
+                product=product,
                 price=str(_round_to_tick(limit_price)),
                 order_type="SL",
                 quantity=str(qty),
@@ -595,7 +599,7 @@ class KotakNeoService:
                 amo="NO",
                 disclosed_quantity="0",
                 trigger_price=str(_round_to_tick(trigger_price)),
-                tag=None,
+                tag=tag,
             )
             return self._extract_order_id(resp)
         except KotakError:
@@ -858,7 +862,11 @@ class KotakNeoService:
             def expired():
                 if current():
                     self.shutdown()
-            self._bridge = KotakFeedBridge(client, order, market, expired)
+            def connected():
+                if current():
+                    from app.services.real_protection import notify_reconnected
+                    notify_reconnected()
+            self._bridge = KotakFeedBridge(client, order, market, expired, on_connected=connected)
 
     def _on_message(self, message: Any) -> None:
         """
@@ -877,6 +885,10 @@ class KotakNeoService:
                 return
 
             msg_type = message.get("type")
+            if msg_type == "order_reconnected":
+                from app.services.real_protection import notify_reconnected
+                notify_reconnected()
+                return
             logger.debug("KotakNeoService: WebSocket message type=%s", msg_type)
 
             # Dispatch market data to KotakBroadcaster if registered

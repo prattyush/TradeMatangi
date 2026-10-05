@@ -1332,7 +1332,14 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
         const snapshot = event as unknown as import('./services/api').BrokerSnapshot
         sim.applyBrokerSnapshot(snapshotSessionId, snapshot)
         setBrokerOrdersSnapshot({ sessionId: snapshotSessionId, orders: snapshot.orders })
-        setBrokerError(snapshot.wallet_error ?? null)
+        setBrokerError(snapshot.protection_error ?? snapshot.wallet_error ?? null)
+      }
+    } else if (event.type === 'protection_status') {
+      if (event.session_id === simRef.current.sessionId) {
+        const coverage = event.protection as { missing: number; status: string; manual_excess?: number }[]
+        const unresolved = coverage.filter(row => row.missing > 0 || row.status === 'unknown' || row.status === 'error' || (row.manual_excess ?? 0) > 0)
+        const missing = unresolved.reduce((sum, row) => sum + row.missing, 0)
+        if (unresolved.length) setBrokerError(missing > 0 ? `Exit protection needs attention: ${missing} quantity uncovered; refresh order history to check broker orders.` : 'Exit coverage could not be verified. Refresh order history to check broker exits.')
       }
     } else if (event.type === 'broker_error') {
       setBrokerError(event.message as string)
@@ -2725,6 +2732,8 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
               instrumentType={instrumentType}
               lotSize={sim.lotSize}
               activeRight={instrumentType === 'options' ? activeRight : undefined}
+              activeStrike={sim.sessionType === 'real' && instrumentType === 'options' ? (activeRight === 'CE' ? sim.sessionStrikeCE : sim.sessionStrikePE) : undefined}
+              activeExpiry={sim.sessionType === 'real' && instrumentType === 'options' ? sim.sessionExpiry : undefined}
               positionCE={sim.positionCE}
               positionPE={sim.positionPE}
               runningStrategies={runningStrategies}
@@ -2791,7 +2800,7 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
                 if (simRef.current.sessionId !== sessionId) return
                 sim.applyBrokerSnapshot(sessionId, result)
                 setBrokerOrdersSnapshot({ sessionId, orders: result.orders })
-                setBrokerError(result.wallet_error ?? null)
+                setBrokerError(result.protection_error ?? result.wallet_error ?? null)
               } catch (error) {
                 if (simRef.current.sessionId === sessionId) setBrokerError(error instanceof Error ? error.message : String(error))
               }

@@ -73,20 +73,31 @@ def _stoploss_available_quantity(
     strike: int | None,
     expiry: str | None,
     exclude_order_id: str | None = None,
+    broker_product: str = "MIS",
+    broker_exchange: str | None = None,
 ) -> tuple[int, int]:
     """Return available closing quantity and current position quantity for a contract."""
     position = trading_service.get_position(
         session.session_id, session.symbol, right=right, strike=strike, expiry=expiry,
     )
+    exchange = broker_exchange or (("bse_fo" if session.symbol == "BSESEN" else "nse_fo") if right else "nse_cm")
+    if session.session_type == "real" and getattr(session, "broker_positions", None) is not None:
+        matching = [p for p in session.broker_positions
+                    if (p.get("right"), p.get("strike"), p.get("expiry")) == (right, strike, expiry)
+                    and (p.get("product") or "MIS") == broker_product and (p.get("exchange") or exchange) == exchange]
+        net = sum(p["quantity"] * (1 if p["side"] == "LONG" else -1 if p["side"] == "SHORT" else 0) for p in matching)
+        position = position.model_copy(update={"quantity": abs(net), "side": "LONG" if net > 0 else "SHORT" if net < 0 else "FLAT"})
     if position.side == "FLAT" or position.quantity <= 0:
         return 0, 0
     exit_side = TradeSide.SELL if position.side == "LONG" else TradeSide.BUY
     covered = sum(
-        order.quantity
+        max(0, order.quantity - order.broker_filled_quantity) if session.session_type == "real" else order.quantity
         for order in order_service.get_open_orders(session.session_id)
         if order.order_id != exclude_order_id
         and order.status == order_service.OrderStatus.PENDING
         and order.side == exit_side
+        and (session.session_type != "real" or bool(order.kotak_order_id))
+        and (session.session_type != "real" or ((order.broker_product or "MIS") == broker_product and (order.broker_exchange or exchange) == exchange))
         and (order.right or None) == right
         and (order.strike if order.strike is not None else None) == strike
         and (order.expiry if order.expiry is not None else None) == expiry
@@ -559,6 +570,9 @@ async def cancel_order(order_id: str, session_id: str = Query(...)):
             logger.warning("broker_order_cancel_failed order=%s: %s", order_id, exc)
             raise HTTPException(status_code=502, detail=f"Broker rejected cancellation: {exc}") from exc
     order = order_service.cancel_order(session_id, order_id, trading_date)
+    if session and session.session_type == "real":
+        from app.services.real_protection import request
+        request(session, reason="order_cancel")
 
     return order
 
@@ -668,8 +682,12 @@ async def update_order(order_id: str, req: UpdateOrderRequest, session_id: str =
             raise HTTPException(status_code=400, detail=f"Stop-loss quantity must be a positive multiple of {lot_size}")
         available, position_quantity = _stoploss_available_quantity(
             session, existing.right, existing.strike, existing.expiry, exclude_order_id=order_id,
+            broker_product=existing.broker_product or "MIS", broker_exchange=existing.broker_exchange,
         )
-        if req.quantity > available:
+        already_filled = existing.broker_filled_quantity if session.session_type == "real" else 0
+        if session.session_type == "real" and req.quantity <= already_filled:
+            raise HTTPException(status_code=400, detail="Pending exit quantity must exceed its filled quantity; cancel the order to remove the remaining exit")
+        if req.quantity > available + already_filled:
             raise HTTPException(
                 status_code=400,
                 detail=f"Stop-loss quantity exceeds available uncovered position ({available} of {position_quantity})",

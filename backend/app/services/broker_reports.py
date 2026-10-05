@@ -72,6 +72,7 @@ def normalize_order(raw: dict) -> dict:
         "strike": int(number(raw.get("stkPrc") or raw.get("strike"))) or None,
         "expiry": expiry_date(raw.get("expDt") or raw.get("expiry")),
         "instrument_token": str(raw.get("tok") or raw.get("instrument_token") or ""),
+        "client_tag": str(raw.get("GuiOrdId") or raw.get("client_tag") or ""),
     }
 
     if result["status"] in ("complete", "filled") and not result["filled_quantity"]:
@@ -100,15 +101,22 @@ def in_scope(session, row: dict) -> bool:
     if session.instrument_type != "options":
         expected = _SYMBOL_MAP.get(session.symbol, (session.symbol, ""))[0].upper()
         return symbol == expected
-    base = "SENSEX" if session.symbol == "BSESEN" else session.symbol.upper()
+    base = option_base(session.symbol)
     return bool(re.fullmatch(re.escape(base) + r"\d{2}(?:[1-9OND]\d{2}|[A-Z]{3})\d+(?:CE|PE)", symbol))
+
+
+def option_base(symbol: str) -> str:
+    from app.services.kotak_service import _SYMBOL_MAP
+    if symbol == "BSESEN":
+        return "SENSEX"
+    return _SYMBOL_MAP.get(symbol, (symbol, ""))[0].removesuffix("-EQ").upper()
 
 
 def contract(session, row: dict, master=None) -> dict:
     if session.instrument_type != "options":
         return {"right": None, "strike": None, "expiry": None}
     symbol = row["symbol"].upper()
-    base = "SENSEX" if session.symbol == "BSESEN" else session.symbol.upper()
+    base = option_base(session.symbol)
     weekly = re.fullmatch(re.escape(base) + r"(\d{2})([1-9OND])(\d{2})(\d+)(CE|PE)", symbol)
     if weekly:
         year, month, day, strike, right = weekly.groups()

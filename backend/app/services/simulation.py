@@ -2616,8 +2616,10 @@ def start_session(session: SimulationSession) -> None:
         for order in order_service.get_all_orders(session.session_id):
             if order.kotak_order_id and order.status.value == "PENDING":
                 _register_kotak_sl_for_order(session, order, loop, attach_only=True)
-            if order.execution_role != "exit" and order.broker_filled_quantity and (order.entry_sl_price is not None or order.is_autostop):
+            if order.execution_role != "exit" and order.broker_filled_quantity and order.source != "broker_external":
                 on_entry_filled(order, session, loop)
+        from app.services.real_protection import request
+        request(session, delay=0, reason="resume")
         session.task = loop.create_task(_run_real_session(session))
     else:
         session.task = loop.create_task(_run_session(session))
@@ -2664,6 +2666,9 @@ def stop_session(session: SimulationSession, *, preserve_trading_state: bool = F
         if lease_task is not current_task:
             lease_task.cancel()
     session.state = SimulationState.ENDED
+    if session.session_type == "real":
+        from app.services.real_protection import cancel as cancel_protection
+        cancel_protection(session.session_id)
     session.resume_event.set()  # unblock if paused
     session.step_event.set()    # unblock if waiting for next-bar (stepwise)
     session.queue.close()       # unblock any waiting SSE get() consumers

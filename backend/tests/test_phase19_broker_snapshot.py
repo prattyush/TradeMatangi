@@ -26,8 +26,22 @@ class Table:
         if self.fail:
             raise RuntimeError('link unavailable')
         row = self.items.setdefault(self.key(Key), dict(Key))
+        if ':resolved' in ExpressionAttributeValues:
+            row['protection_pending_tags'] = set(row.get('protection_pending_tags', [])) - ExpressionAttributeValues[':resolved']
+            return
+        if ':tag' in ExpressionAttributeValues:
+            tags = set(row.get('protection_pending_tags', []))
+            if kwargs.get('UpdateExpression', '').startswith('DELETE'):
+                tags -= ExpressionAttributeValues[':tag']
+            else:
+                tags |= ExpressionAttributeValues[':tag']
+            row['protection_pending_tags'] = tags
+            return
+        if ':expires' in ExpressionAttributeValues:
+            row.update(protection_owner=ExpressionAttributeValues[':owner'], protection_expires=ExpressionAttributeValues[':expires'])
+            return
         row.update(broker_projection_id=ExpressionAttributeValues[':root'], broker_projection_owner=ExpressionAttributeValues[':owner'])
-    def delete_item(self, Key):
+    def delete_item(self, Key, **kwargs):
         self.items.pop(self.key(Key), None)
     def query(self, KeyConditionExpression, **kwargs):
         if isinstance(KeyConditionExpression, str):
@@ -70,9 +84,8 @@ def env(monkeypatch):
     trading._trades.pop(session.session_id, None)
     state._links.clear()
     state._locks.clear()
-    for timer in entry_sl_watcher._pending_real_timers.values():
-        timer.cancel()
-    entry_sl_watcher._pending_real_timers.clear()
+    from app.services.real_protection import cancel
+    cancel(session.session_id)
 
 
 def test_broker_timestamp_formats_preserve_ist_wall_clock():
@@ -129,6 +142,27 @@ async def test_refresh_includes_other_strikes_same_underlying_and_excludes_other
     broker.get_trade_history.return_value = [execution(), execution('other-strike', 'other', strike=71500), other]
     result = await state.refresh(s, broker)
     assert {r['strike'] for r in result['trades']} == {71100, 71500}
+
+
+@pytest.mark.asyncio
+async def test_order_refresh_includes_all_rights_strikes_expiries_and_statuses(env):
+    s, broker, _ = env
+    rows = []
+    for identifier, symbol, status in [
+        ('pe-a', 'SENSEX26O0171100PE', 'trigger pending'),
+        ('ce-b', 'SENSEX26O0171500CE', 'open'),
+        ('ce-next', 'SENSEX26O0871800CE', 'cancelled'),
+        ('other', 'NIFTY26O0122500PE', 'open'),
+    ]:
+        row = broker_order(identifier, status=status, filled=0)
+        row['symbol'] = symbol
+        rows.append(row)
+    broker.get_order_history.return_value = rows
+    result = await state.refresh(s, broker)
+    assert {r['kotak_order_id'] for r in result['orders']} == {'pe-a', 'ce-b', 'ce-next'}
+    assert {r['right'] for r in result['orders']} == {'CE', 'PE'}
+    assert {r['strike'] for r in result['orders']} == {71100, 71500, 71800}
+    assert {r['expiry'] for r in result['orders']} == {'2026-10-01', '2026-10-08'}
 
 
 @pytest.mark.asyncio
@@ -248,12 +282,18 @@ async def test_explicit_real_sl_ignores_auto_toggle_and_preserves_entry_quantity
         entry_sl_price=30, group_id='entry-group', kotak_order_id='entry-a')
     order_service._orders[s.session_id][order.order_id] = order
     s.broker_positions = [dict(symbol=s.symbol, side='LONG', quantity=20, avg_entry_price=40, right='PE', strike=71100, expiry=s.expiry)]
+    from app.services import real_protection
+    monkeypatch.setattr(real_protection, '_verify_fresh', AsyncMock())
+    s.protection_executions = [execution(order='entry-a', qty=20)]
+    s.broker_positions[0].update(exchange='bse_fo', product='MIS')
     entry_sl_watcher.on_entry_filled(order, s, asyncio.get_running_loop())
-    await asyncio.sleep(.05)
+    assert real_protection._states[s.session_id].timer is not None
+    real_protection.cancel(s.session_id)
+    await real_protection._repair(s, broker, 'account-a')
     assert order.quantity == 40
     broker.place_options_sl_order.assert_called_once()
     assert broker.place_options_sl_order.call_args.kwargs['qty'] == 20
-    entry_sl_watcher._place_real_protection(order, s)
+    await real_protection._repair(s, broker, 'account-a')
     broker.place_options_sl_order.assert_called_once()
 
 
@@ -286,20 +326,25 @@ def test_valid_empty_report_is_accepted():
     assert broker.get_trade_history() == []
 
 @pytest.mark.asyncio
-async def test_protection_splits_sensex_freeze_and_retries_only_uncovered_quantity(env):
+async def test_protection_splits_sensex_freeze_and_retries_only_uncovered_quantity(env, monkeypatch):
     s, broker, _ = env
-    broker.place_options_sl_order.side_effect = ['protect-1', kotak_service.KotakError('temporary'), 'protect-2']
+    broker.place_options_sl_order.side_effect = ['protect-1', kotak_service.KotakError('Kotak API error: rejected (code 400)'), 'protect-2']
     order = Order(session_id=s.session_id, user_id=s.user_id, symbol=s.symbol, side=TradeSide.BUY,
         order_type=OrderType.LIMIT, quantity=1020, trigger_price=40, limit_price=40, created_at=1,
         right='PE', strike=71100, expiry=s.expiry, entry_sl_price=30, group_id='large-entry',
-        execution_role='entry', broker_filled_quantity=1020, filled_price=40, kotak_fill_confirmed=True)
+        execution_role='entry', broker_filled_quantity=1020, filled_price=40, kotak_fill_confirmed=True, kotak_order_id='entry-large')
     order_service._orders[s.session_id][order.order_id] = order
     s.broker_positions = [dict(symbol=s.symbol, side='LONG', quantity=1020, avg_entry_price=40, right='PE', strike=71100, expiry=s.expiry)]
-    entry_sl_watcher._place_real_protection(order, s)
+    from app.services import real_protection
+    monkeypatch.setattr(real_protection, '_verify_fresh', AsyncMock())
+    s.protection_executions = [execution(order='entry-large', qty=1020)]
+    s.broker_positions[0].update(exchange='bse_fo', product='MIS')
+    with pytest.raises(kotak_service.KotakError):
+        await real_protection._repair(s, broker, 'account-a')
     assert [c.kwargs['qty'] for c in broker.place_options_sl_order.call_args_list] == [1000, 20]
-    entry_sl_watcher._place_real_protection(order, s)
+    await real_protection._repair(s, broker, 'account-a')
     assert [c.kwargs['qty'] for c in broker.place_options_sl_order.call_args_list] == [1000, 20, 20]
-    assert sum(o.quantity for o in order_service.get_open_orders(s.session_id) if o.kotak_order_id) == 1020
+    assert sum(o.quantity for o in order_service.get_open_orders(s.session_id) if o.kotak_order_id and o.execution_role == 'exit') == 1020
 
 @pytest.mark.parametrize('report', ['order_report', 'positions'])
 def test_malformed_fact_row_is_not_an_authoritative_empty_report(report):
@@ -361,7 +406,8 @@ async def test_imported_sl_coverage_prevents_duplicate_protection(env):
     broker.get_order_history.return_value = [row]
     broker.get_positions.return_value = [dict(trdSym='SENSEX26O0171100PE', netQty=20, avgPrc=40)]
     await state.refresh(s, broker)
-    entry_sl_watcher._place_real_protection(entry, s)
+    from app.services.real_protection import _repair
+    await _repair(s, broker, "account-a")
     broker.place_options_sl_order.assert_not_called()
 
 def test_partial_cancel_dispatches_confirmed_fill_before_rejection():
