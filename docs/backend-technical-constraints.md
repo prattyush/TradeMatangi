@@ -40,6 +40,7 @@
 
 ## Options Data & Expiry
 
+- **Real exit recovery**: `real_protection` owns one event-driven timer per real session, not per strike/group. Confirmed broker orders and remaining quantities establish exact-contract coverage. Manual broker entries enroll only on explicit history refresh. Unknown submission tags survive lease expiry; never blindly retry them. See [real exit protection](real-exit-protection.md).
 - **Desktop history worker isolation**: Browse pages, preflight and live-chart history run through `history_workers.run_history`, a dedicated two-worker executor. Preserve context variables so historical provider/refresh policy survives the thread boundary. Do not use the website's default executor for these downloads.
 - **Breeze history pacing**: equity and options historical chunks share `breeze_history.request_history`, with one request slot per second per backend process. A returned HTTP-status field of 429, rate-limit error or rate-limit exception stops the download and starts a 60-second history cooldown; do not retry individual chunks during that cooldown. Live feeds and Kotak account/order requests use their existing independent paths.
 - **Options failure cooldown**: per-contract/day locks share download failures as well as successful caches. Empty-contract failures suppress further downloads for 10 minutes; other failures suppress them for 60 seconds. Explicit refresh cannot bypass a recent failure. The bounded, in-memory failure cache expires naturally and is cleared on backend restart; no fake candles or empty parquets are written.

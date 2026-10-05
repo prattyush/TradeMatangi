@@ -60,6 +60,8 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
+        from app.services.real_protection import shutdown as stop_protection
+        await stop_protection()
         from app.services.market_data import get_hub
         get_hub().shutdown()
         from app.services.kotak_service import get_service as get_kotak

@@ -190,9 +190,9 @@ export default function TradeHistory({ trades, historicalTrades = [], sessionTyp
           <summary style={{ cursor: 'pointer', padding: '10px 14px' }}>Kotak orders today ({brokerOrders.length})</summary>
           <div style={{ maxHeight: 250, overflow: 'auto' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', whiteSpace: 'nowrap' }}>
-              <thead><tr>{['Symbol', 'Side', 'Type', 'Status', 'Qty / Filled', 'Trigger', 'Limit', 'Fill'].map(label => <th key={label} style={{ padding: 6, textAlign: 'left', color: '#8b949e' }}>{label}</th>)}</tr></thead>
+              <thead><tr>{['Symbol', 'Right', 'Strike', 'Expiry', 'Side', 'Type', 'Status', 'Qty / Filled', 'Trigger', 'Limit', 'Fill'].map(label => <th key={label} style={{ padding: 6, textAlign: 'left', color: '#8b949e' }}>{label}</th>)}</tr></thead>
               <tbody>{brokerOrders.map(order => <tr key={order.kotak_order_id} title={order.reject_reason || order.kotak_order_id} style={{ borderTop: '1px solid #30363d' }}>
-                <td style={{ padding: 6 }}>{order.symbol}</td><td>{order.side}</td><td>{order.order_type}</td><td>{order.status}</td>
+                <td style={{ padding: 6 }}>{order.symbol}</td><td>{order.right ?? '—'}</td><td>{order.strike ?? '—'}</td><td>{order.expiry ?? '—'}</td><td>{order.side}</td><td>{order.order_type}</td><td>{order.status}</td>
                 <td>{order.quantity} / {order.filled_quantity}</td><td>{fmt(order.trigger_price)}</td><td>{fmt(order.limit_price)}</td><td>{fmt(order.filled_price)}</td>
               </tr>)}</tbody>
             </table>

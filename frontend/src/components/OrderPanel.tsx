@@ -38,6 +38,8 @@ interface Props {
   instrumentType?: 'equity' | 'options'
   lotSize?: number
   activeRight?: 'CE' | 'PE' | null
+  activeStrike?: number | null
+  activeExpiry?: string | null
   positionCE?: Position
   positionPE?: Position
   runningStrategies?: StrategyResponse[]
@@ -79,8 +81,10 @@ const QUANTITY_OPTIONS = [1, 2, 3, 5, 10]
 const RATIO_LABELS = ['L', 'M', 'H'] as const
 type RatioKey = 'l' | 'm' | 'h'
 
-function isClosingOrderForPosition(order: Order, position: Position, activeRight: 'CE' | 'PE' | null): boolean {
+function isClosingOrderForPosition(order: Order, position: Position, activeRight: 'CE' | 'PE' | null, strike?: number | null, expiry?: string | null): boolean {
   return order.status === 'PENDING' &&
+    (strike === undefined || order.strike === strike) &&
+    (expiry === undefined || order.expiry === expiry) &&
     (order.right ?? null) === (activeRight ?? null) &&
     position.side !== 'FLAT' &&
     ((position.side === 'LONG' && order.side === 'SELL') ||
@@ -99,6 +103,8 @@ export default function OrderPanel({
   instrumentType = 'equity',
   lotSize = 1,
   activeRight = null,
+  activeStrike,
+  activeExpiry,
   positionCE,
   positionPE,
   runningStrategies = [],
@@ -181,8 +187,8 @@ export default function OrderPanel({
   const parsedPrice = parseFloat(price)
   const deviation = targetDeviationPct  // fraction
   const slCoveredQty = openOrders
-    .filter(o => isClosingOrderForPosition(o, position, activeRight) && (o.is_stoploss || o.order_type === 'LIMIT'))
-    .reduce((sum, o) => sum + o.quantity, 0)
+    .filter(o => isClosingOrderForPosition(o, position, activeRight, activeStrike, activeExpiry) && (o.is_stoploss || o.order_type === 'LIMIT') && (sessionType !== 'real' || Boolean(o.kotak_order_id)))
+    .reduce((sum, o) => sum + (sessionType === 'real' ? Math.max(0, o.quantity - (o.broker_filled_quantity ?? 0)) : o.quantity), 0)
   const slAvailableQty = Math.max(0, position.quantity - slCoveredQty)
 
   // When SL tab selected, lock side to opposite of position; default qty = uncovered portion
@@ -385,9 +391,9 @@ export default function OrderPanel({
     const nextQty = editQty.trim() === '' ? NaN : Number(editQty)
     const quantityChanged = quantityEditable && nextQty !== order.quantity
     const coveredElsewhere = openOrders
-      .filter(item => item.order_id !== order.order_id && isClosingOrderForPosition(item, position, activeRight) && (item.is_stoploss || item.order_type === 'LIMIT'))
-      .reduce((sum, item) => sum + item.quantity, 0)
-    const maxQty = Math.max(0, position.quantity - coveredElsewhere)
+      .filter(item => item.order_id !== order.order_id && isClosingOrderForPosition(item, position, activeRight, activeStrike, activeExpiry) && (item.is_stoploss || item.order_type === 'LIMIT') && (sessionType !== 'real' || Boolean(item.kotak_order_id)))
+      .reduce((sum, item) => sum + (sessionType === 'real' ? Math.max(0, item.quantity - (item.broker_filled_quantity ?? 0)) : item.quantity), 0)
+    const maxQty = Math.max(0, position.quantity - coveredElsewhere) + (sessionType === 'real' ? (order.broker_filled_quantity ?? 0) : 0)
     if (quantityChanged && (!Number.isInteger(nextQty) || nextQty < slQtyMin || nextQty > maxQty || (instrumentType === 'options' && nextQty % slQtyStep !== 0))) {
       setEditError(`SL quantity must be ${slQtyMin}–${maxQty}${instrumentType === 'options' ? ` in lots of ${slQtyStep}` : ''}`)
       return
@@ -1474,7 +1480,7 @@ export default function OrderPanel({
 
           {/* Batch Update exits — shown when 2+ closing orders exist for active tab */}
           {(() => {
-            const closingOrders = openOrders.filter(o => isClosingOrderForPosition(o, position, activeRight ?? null))
+            const closingOrders = openOrders.filter(o => isClosingOrderForPosition(o, position, activeRight ?? null, activeStrike, activeExpiry))
             if (closingOrders.length < 2 || !onBulkUpdateSL) return null
             const rightLabel = activeRight ? ` ${activeRight}` : ''
             return (
@@ -1659,9 +1665,9 @@ export default function OrderPanel({
                       </div>
                       {(order.is_stoploss || order.order_type === 'STOPLOSS') && (() => {
                         const coveredElsewhere = openOrders
-                          .filter(item => item.order_id !== order.order_id && isClosingOrderForPosition(item, position, activeRight) && (item.is_stoploss || item.order_type === 'LIMIT'))
-                          .reduce((sum, item) => sum + item.quantity, 0)
-                        const maxQty = Math.max(0, position.quantity - coveredElsewhere)
+                          .filter(item => item.order_id !== order.order_id && isClosingOrderForPosition(item, position, activeRight, activeStrike, activeExpiry) && (item.is_stoploss || item.order_type === 'LIMIT') && (sessionType !== 'real' || Boolean(item.kotak_order_id)))
+                          .reduce((sum, item) => sum + (sessionType === 'real' ? Math.max(0, item.quantity - (item.broker_filled_quantity ?? 0)) : item.quantity), 0)
+                        const maxQty = Math.max(0, position.quantity - coveredElsewhere) + (sessionType === 'real' ? (order.broker_filled_quantity ?? 0) : 0)
                         return <label style={{ display: 'flex', alignItems: 'center', gap: 6, color: '#8b949e', fontSize: 10 }}>
                           SL Qty
                           <input type="number" min={slQtyMin} max={maxQty} step={slQtyStep} value={editQty} onChange={e => setEditQty(e.target.value)} style={{ width: 90, padding: '4px 6px', background: '#0d1117', border: '1px solid #388bfd', borderRadius: 4, color: '#e6edf3', fontSize: 12 }} />

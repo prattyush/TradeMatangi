@@ -201,7 +201,9 @@ def _write_order_to_db(order: Order, *, strict: bool = False) -> None:
         if session and session.session_type == "real":
             from app.services.real_broker_state import active_partition
             item["session_id"] = active_partition(order.session_id) or order.session_id
-        for name in ("execution_role", "broker_product", "broker_exchange", "broker_filled_quantity", "broker_filled_value"):
+        for name in ("execution_role", "broker_product", "broker_exchange", "broker_filled_quantity", "broker_filled_value",
+                     "protection_enrolled", "protection_entry_allocations", "protection_operation_id",
+                     "broker_client_tag", "protection_submission", "protection_error"):
             value = getattr(order, name)
             if value is not None:
                 item[name] = Decimal(str(value)) if isinstance(value, float) else value

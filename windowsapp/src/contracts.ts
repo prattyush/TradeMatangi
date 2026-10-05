@@ -75,6 +75,8 @@ export interface DesktopTradingSettings {
 }
 
 export interface DesktopTradingSnapshot {
+  broker_orders?: { kotak_order_id: string; symbol: string; right: string | null; strike: number | null; expiry: string | null; side: string; order_type: string; status: string; quantity: number; filled_quantity: number; trigger_price: number; limit_price: number; filled_price: number }[]
+  protection?: { missing: number; status: string; manual_excess?: number }[]
   paper_status?: 'running' | 'stopped' | 'settled' | null
   cleanup_pending?: boolean
   settlement_pending?: boolean

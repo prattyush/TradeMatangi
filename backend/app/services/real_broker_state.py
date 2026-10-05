@@ -117,6 +117,8 @@ def normalize_positions(session, raw_positions, master=None):
         row = reports.normalize_order(raw)
         if not reports.in_scope(session, row):
             continue
+        if not row["exchange"]:
+            row["exchange"] = ("bse_fo" if session.symbol == "BSESEN" else "nse_fo") if session.instrument_type == "options" else "nse_cm"
         contract = reports.contract(session, row, master)
         buy = reports.number(raw.get("cfBuyQty")) + reports.number(raw.get("flBuyQty"))
         sell = reports.number(raw.get("cfSellQty")) + reports.number(raw.get("flSellQty"))
@@ -128,7 +130,7 @@ def normalize_positions(session, raw_positions, master=None):
             amount = reports.number(raw.get("cf" + prefix + "Amt")) + reports.number(raw.get("fl" + prefix + "Amt"))
             factor = reports.number(raw.get("prcFctr"), 1) or 1
             avg = amount / quantity / factor if quantity else 0
-        positions.append({**Position(symbol=session.symbol, side="LONG" if net > 0 else "SHORT" if net < 0 else "FLAT", quantity=abs(net), avg_entry_price=avg).model_dump(), **contract, "product": row["product"]})
+        positions.append({**Position(symbol=session.symbol, side="LONG" if net > 0 else "SHORT" if net < 0 else "FLAT", quantity=abs(net), avg_entry_price=avg).model_dump(), **contract, "product": row["product"], "exchange": row["exchange"]})
     return positions
 
 
@@ -136,11 +138,17 @@ def build_orders(session, broker_orders, master=None):
     from app.services import order_service
     original = order_service.get_all_orders(session.session_id)
     tracked = {o.kotak_order_id: o for o in original if o.kotak_order_id}
+    tagged = {o.broker_client_tag: o for o in original if o.broker_client_tag}
     result = {o.order_id: o.model_copy(deep=True) for o in original if not o.kotak_order_id}
+    for o in original:
+        if o.source == "entry_protection" and o.status == OrderStatus.PENDING:
+            copy = o.model_copy(deep=True)
+            copy.protection_submission = "unknown"
+            result[o.order_id] = copy
     for row in broker_orders:
         status = row["status"]
         kind = OrderType.STOPLOSS if row["order_type"] in ("SL", "SL-M", "STOPLOSS") else OrderType.LIMIT
-        previous = tracked.get(row["kotak_order_id"])
+        previous = tracked.get(row["kotak_order_id"]) or tagged.get(row.get("client_tag"))
         if previous is None and row["order_type"] == "MARKET" and status in OPEN:
             continue
         order = previous.model_copy(deep=True) if previous else Order(order_id="external_" + row["kotak_order_id"], session_id=session.session_id,
@@ -152,6 +160,10 @@ def build_orders(session, broker_orders, master=None):
         order.is_stoploss = kind == OrderType.STOPLOSS
         order.trigger_price, order.limit_price = row["trigger_price"], row["limit_price"]
         order.quantity = row["quantity"]
+        order.kotak_order_id = row["kotak_order_id"]
+        if order.protection_operation_id:
+            order.protection_submission = "accepted"
+            order.protection_error = None
         order.broker_product, order.broker_exchange = row["product"], row["exchange"]
         order.broker_filled_quantity = row["filled_quantity"]
         order.broker_filled_value = row["filled_quantity"] * row["filled_price"]
@@ -219,7 +231,7 @@ def stage(session, account_id, trades, broker_orders, positions, executions, ord
         db.Table("Orders").put_item(Item=encode({"session_id": partition, "order_id": f"report:{index}", "broker_order": row}))
     for index, row in enumerate(positions):
         db.Table("Orders").put_item(Item=encode({"session_id": partition, "order_id": f"position:{index}", "broker_position": row}))
-    return {"session_id": root, "active_partition": partition, "revision": revision, "owner_session_id": session.session_id,
+    return {"session_id": root, "broker_account_id": account_id, "active_partition": partition, "revision": revision, "owner_session_id": session.session_id,
             "synced_at": int(datetime.now(timezone.utc).timestamp()), "archived": True}, members
 
 
@@ -248,16 +260,18 @@ def fill_deferred(session, callback, *args):
     return False
 
 
-async def refresh(session, broker):
+async def _refresh_snapshot(session, broker, *, wallet=True, facts=None):
     from app.services import trading, order_service, wallet_service, simulation
     account = await asyncio.to_thread(broker.account_identity)
+    if getattr(session, "protection_account", account) != account:
+        raise ValueError("Broker account changed; reattach the correct real session before refreshing")
     root = projection_id(session, account)
     async with _locks.setdefault(root, asyncio.Lock()):
         if getattr(session, "broker_refresh_events", None) is not None:
             raise ValueError("A broker refresh is already running")
         session.broker_refresh_events = []
         try:
-            raw_orders, executions, raw_positions = await asyncio.gather(
+            raw_orders, executions, raw_positions = facts if facts is not None else await asyncio.gather(
                 asyncio.to_thread(broker.get_order_history), asyncio.to_thread(broker.get_trade_history), asyncio.to_thread(broker.get_positions))
             scoped_orders = [r for r in raw_orders if reports.in_scope(session, r)]
             scoped_executions = [r for r in executions if reports.in_scope(session, r)]
@@ -305,6 +319,8 @@ async def refresh(session, broker):
                 if not quantities_agree():
                     raise ValueError("Kotak reports are still updating after a fill; retry refresh shortly")
             by_broker_id = {t.kotak_order_id: t for t in trades}
+            for row in scoped_orders:
+                row.update(reports.contract(session, row, master))
             for order in orders.values():
                 if order.kotak_order_id and order.execution_role is None:
                     held = [p for p in positions if (p.get("right"), p.get("strike"), p.get("expiry")) == (order.right, order.strike, order.expiry)]
@@ -323,27 +339,25 @@ async def refresh(session, broker):
             order_service._orders[session.session_id] = orders
             session.kotak_order_map = {o.order_id: o.kotak_order_id for o in orders.values() if o.kotak_order_id}
             session.broker_positions = positions
+            session.protection_account = account
             events, session.broker_refresh_events = session.broker_refresh_events, None
             for callback, args in events:
                 callback(*args)
             for order in order_service.get_open_orders(session.session_id):
                 if order.kotak_order_id:
                     simulation._register_kotak_sl_for_order(session, order, asyncio.get_running_loop(), attach_only=True)
-            from app.services.entry_sl_watcher import on_entry_filled
-            for order in orders.values():
-                if order.broker_filled_quantity and (order.entry_sl_price is not None or order.is_autostop):
-                    on_entry_filled(order, session, asyncio.get_running_loop())
             wallet_balance, wallet_error, wallet_display_balance = None, None, None
-            try:
-                from app.services import real_accounting
-                account_wallet = await real_accounting.refresh(session.user_id, session.date, broker,
-                    reason="reconcile", executions=executions, positions=raw_positions)
-                real_accounting.apply_session_capital(session, account_wallet["session_capital"])
-                wallet_balance = account_wallet["balance"]
-                wallet_display_balance = account_wallet["display_balance"]
-            except Exception as exc:
-                wallet_balance, wallet_error = None, f"Could not refresh Kotak wallet: {exc}"
-                logger.warning("broker_snapshot_wallet_failed session=%s: %s", session.session_id, exc)
+            if wallet:
+                try:
+                    from app.services import real_accounting
+                    account_wallet = await real_accounting.refresh(session.user_id, session.date, broker,
+                        reason="reconcile", executions=executions, positions=raw_positions)
+                    real_accounting.apply_session_capital(session, account_wallet["session_capital"])
+                    wallet_balance = account_wallet["balance"]
+                    wallet_display_balance = account_wallet["display_balance"]
+                except Exception as exc:
+                    wallet_balance, wallet_error = None, f"Could not refresh Kotak wallet: {exc}"
+                    logger.warning("broker_snapshot_wallet_failed session=%s: %s", session.session_id, exc)
             current = trading.get_trades(session.session_id)
             result = {"reconciled": len(current), "updated": len(scoped_orders), "imported": 0,
                       "orders": scoped_orders, "open_orders": [r for r in scoped_orders if r["status"] not in ("complete", "filled", "cancelled", "canceled", "rejected", "expired")],
@@ -354,6 +368,22 @@ async def refresh(session, broker):
                       "snapshot_revision": manifest["revision"], "synced_at": manifest["synced_at"],
                       "wallet_balance": wallet_balance, "wallet_display_balance": wallet_display_balance,
                       "session_capital": session.session_capital if wallet_error is None else None, "wallet_error": wallet_error}
+            session.protection_executions = [r for r in scoped_executions
+                if datetime.fromtimestamp(r["timestamp"], timezone.utc).date().isoformat() == session.date]
+            session.protection_master = master
+            session.protection_carry = []
+            from app.services.real_protection import contract_key
+            for raw in raw_positions:
+                row = reports.normalize_order(raw)
+                if reports.in_scope(session, row):
+                    contract = reports.contract(session, row, master)
+                    row.update(contract)
+                    if not row["exchange"]:
+                        row["exchange"] = ("bse_fo" if session.symbol == "BSESEN" else "nse_fo") if session.instrument_type == "options" else "nse_cm"
+                    key = contract_key(row)
+                    net_carry = int(reports.number(raw.get("cfBuyQty")) - reports.number(raw.get("cfSellQty")))
+                    p = next((p for p in positions if contract_key(p) == key), {})
+                    session.protection_carry.append({"key": key, "side": "BUY" if net_carry > 0 else "SELL", "quantity": abs(net_carry), "price": p.get("avg_entry_price", 0)})
             session.queue.put_nowait(json.dumps({"type": "broker_snapshot", "session_id": session.session_id, **result}))
             logger.info("broker_snapshot_published session=%s revision=%s orders=%d trades=%d deferred=%d wallet_ok=%s",
                         session.session_id, manifest["revision"], len(scoped_orders), len(current), len(events), wallet_error is None)
@@ -364,6 +394,24 @@ async def refresh(session, broker):
             if events:
                 for callback, args in events:
                     callback(*args)
+
+
+async def refresh(session, broker, *, protection=True, wallet=True, facts=None):
+    # Never wait for the account lock while holding a projection lock.
+    result = await _refresh_snapshot(session, broker, wallet=wallet, facts=facts)
+    session.broker_orders_report = result["orders"]
+    if protection:
+        from app.services import real_protection, order_service
+        try:
+            result["protection"] = await real_protection.reconcile_now(session, broker, enroll_manual=True, refresh=False)
+        except Exception as exc:
+            result["protection_error"] = str(exc)
+            real_protection.record_failure(session, exc)
+            real_protection.request(session, delay=10, reason="manual_refresh_recovery")
+            logger.warning("protection_refresh_failed session=%s: %s", session.session_id, exc)
+        result["application_orders"] = [o.model_dump(mode="json") for o in order_service.get_open_orders(session.session_id)]
+        session.queue.put_nowait(json.dumps({"type": "broker_snapshot", "session_id": session.session_id, **result}))
+    return result
 
 
 def active_partition(session_id):
@@ -390,14 +438,21 @@ def restore_orders(session):
     session.kotak_order_map = {o.order_id: o.kotak_order_id for o in orders.values() if o.kotak_order_id}
     if manifest:
         session.broker_positions = [row["broker_position"] for row in rows if "broker_position" in row]
+        if manifest.get("broker_account_id"):
+            session.protection_account = manifest["broker_account_id"]
 
 
 def apply_position_fill(session, order, quantity, price):
+    from app.services.real_protection import contract_key
     positions = session.broker_positions
-    position = next((p for p in positions if (p.get("right"), p.get("strike"), p.get("expiry")) == (order.right, order.strike, order.expiry)), None)
+    key = contract_key(order)
+    position = next((p for p in positions if
+        (p.get("exchange") or key[0], p.get("product") or "MIS", p.get("right"), p.get("strike"), p.get("expiry")) == key), None)
     if position is None:
         position = {**Position(symbol=session.symbol, side="FLAT", quantity=0, avg_entry_price=0).model_dump(), "right": order.right, "strike": order.strike, "expiry": order.expiry}
+        position.update(exchange=contract_key(order)[0], product=contract_key(order)[1])
         positions.append(position)
+    position.update(exchange=key[0], product=key[1])
     signed = position["quantity"] * (1 if position["side"] == "LONG" else -1 if position["side"] == "SHORT" else 0)
     change = quantity * (1 if order.side == TradeSide.BUY else -1)
     net = signed + change

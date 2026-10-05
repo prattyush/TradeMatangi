@@ -101,6 +101,8 @@ export interface SymbolInfo {
 }
 
 export interface Order {
+  kotak_order_id?: string | null
+  broker_filled_quantity?: number
   order_id: string
   session_id: string
   user_id: string
@@ -270,6 +272,8 @@ export interface SessionGroupResponse {
 }
 
 export interface BrokerSnapshot {
+  protection_error?: string
+  protection?: { contract: unknown[]; held: number; covered: number; missing: number; status: string; manual_excess?: number }[]
   reconciled: number
   updated: number
   imported: number
@@ -286,6 +290,9 @@ export interface BrokerSnapshot {
 }
 
 export interface BrokerOrder {
+  right?: string | null
+  strike?: number | null
+  expiry?: string | null
   kotak_order_id: string
   status: string
   side: string

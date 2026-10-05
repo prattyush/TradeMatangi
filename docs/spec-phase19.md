@@ -1491,34 +1491,178 @@ unmatched/conflicting annotations stay archived. Label edits and statistics read
 canonical broker-day labels instead of assigning obsolete round-trip indices.
 The previous append-based reconciliation route has been replaced.
 
-### Sprint R3 — Delayed broker stoploss after entry fills
+### Sprint R3 — Broker-confirmed real exit protection
 
-**Status: implemented; configured delayed broker protection is retained.**
+**Checkpoint: implementation in progress, not merge/deployment ready (2026-10-05).**
+Work is on `feature/real-session-exit-protection`, based on synced dev commit
+`56a1e9e`. The user requested this checkpoint so another bug can be investigated
+in a fresh session. Resume from this branch; do not recreate earlier fixes or
+move this work back into PR #583, whose changes are already in dev.
 
-1. Honor explicitly selected Use as SL independently of the general automatic-SL
-   toggle. Capture exact contract, SL price and grouping at entry creation.
-2. Process confirmed partial/cumulative fill quantities rather than requested
-   order quantity. Reset the configured group timer as confirmed fills accumulate.
-3. At expiry, protect remaining confirmed position quantity, subtract existing
-   closing coverage, and split quantities according to broker limits.
-4. Execute delayed mutations on the session event loop. Do not mutate the
-   original entry order quantity to hold a group aggregate.
-5. Submit actual Kotak SL-limit orders, persist their identities and emit order
-   events. Repeated callbacks/timers/refresh/restart must not create extra SLs.
-6. Exclude exit fills from entry-group totals. Recover requested protection after
-   missed callbacks/restart without protecting an already closed position.
-7. Surface protection failure and retain its intent for retry/reconciliation.
-   Never display a local-only stoploss as confirmed broker protection.
-8. Unify direct Buy/Sell and chart-entry fill recording, broker identities and
-   requested protection; direct option trades use the options placement API.
+Real protection now uses one event-driven recovery timer per session/underlying,
+covering all its exact contracts. It allocates broker-confirmed remaining exit
+coverage once across entry lots instead of subtracting contract coverage from
+individual groups. Generated exits retain durable entry allocations and tags.
 
-The repaired real-mode watcher honors explicit SL selection even when the global
-auto-SL toggle is off. Timers are scoped by session/group and dispatch mutations
-onto the event loop. Confirmed entry quantities exclude exit orders; the original
-entry quantity remains intact. Existing broker exit coverage is subtracted before
-placing split protective SLs. Failed placement preserves intent, reports a broker
-error and cancels unsubmitted local protection; subsequent confirmed fills,
-refresh or resume retry uncovered quantity. There is no per-tick retry loop.
+Covered sessions go idle after broker confirmation. New application fills,
+exit changes, resume/reconnect and explicit history refresh wake recovery.
+Manual broker entries enroll only on explicit history refresh, using saved SL
+intent or the approved 25% fallback. Broker-entered exits count during recovery.
+There is no permanent polling loop or timer per strike. Recovery retries are
+bounded, unknown submission outcomes cannot be blindly resubmitted, and
+application-generated excess exits are repaired after closes/reversals.
+
+See [the complete design and acceptance cases](real-exit-protection.md) for
+session timer behavior, shared broker snapshots, persistent conditional guards,
+partial quantities, restart handling and all-strike order history refresh.
+
+#### Implemented at the checkpoint
+
+- Replaced real entry-group timers with `real_protection`: one session timer or
+  recovery pass, earliest deadline preserved, events coalesced, no idle polling.
+  New acknowledged exits get a confirmation check; coverage then goes idle.
+- Reconstructed open lots from broker executions/carry quantities and allocated
+  exit coverage once per exact contract. The reproduced 60-held/20-exit case now
+  submits the missing 40 rather than another 20. Partial exit modifications use
+  filled quantity plus desired remaining quantity.
+- Included broker-entered exits; enrolled manual entries only on explicit order
+  history refresh. Added the approved 25% fallback for missing SL intent. Existing
+  generated exits shrink/cancel after closes and reversals; manual exits are not
+  automatically edited.
+- Added persisted entry allocations, tags and submission state. Conditional
+  Orders-table guards include account/date/underlying/contract; pending tags
+  survive lease expiry and prevent blind retries of unknown outcomes. Broker
+  tag/ID matching restores acknowledged operations after interrupted persistence.
+- Added a post-lease broker orders/positions verification before mutation, lease
+  renewal, bounded 10/20/40-second recovery retries, and account-change/ambiguous
+  ownership checks. Automatic child rejection does not reset an exhausted budget.
+- Armed recovery before fill persistence/publication, so a trade-write failure
+  cannot discard the protection wake-up. Resume/reconnect, app exits and edits
+  request recovery; stop/shutdown cancels recovery without introducing a watchdog.
+- Enriched underlying-wide broker order reports with right, strike and expiry;
+  added website columns and desktop explicit history reconciliation/button/view.
+  Snapshots/events expose protection state and attention warnings.
+- Adjusted real manual-SL coverage to remaining broker quantities; local waiting
+  targets do not count. Added exact selected strike/expiry coverage in the website
+  order controls and allowed already-filled quantity in total-order edit limits.
+
+#### Validation actually completed
+
+- Latest focused run on the checkpoint: **148 passed** across
+  `test_real_protection.py`, `test_phase19_broker_snapshot.py`,
+  `test_phase19_real_exit_orders.py`, and `test_kotak_v3_migration.py`.
+- Latest website and desktop TypeScript checks both passed. `git diff --check`
+  passed. SDK checks use mock transports/loopback fixtures, not live orders.
+- The earlier full backend run was **1,461 passed / 9 failed**. Three additional
+  failures were synchronous fill/rejection callers trying to schedule without a
+  running event loop. That compatibility issue was fixed, and all four targeted
+  callback/refund cases passed afterwards. The other six match the known earlier
+  baseline failures: auth registration, guardrails zero-bars, options-start
+  fixture, two pattern-logger OHLC cases and tab-restore fixture.
+- **The full suite has not been rerun after the latest changes.** Do not report
+  this branch as fully validated based on focused tests alone. Desktop Vitest,
+  production frontend/desktop builds and live broker/EC2 acceptance are pending.
+
+#### Remaining work to finish this change
+
+1. Review the whole diff and rerun the complete backend suite. Investigate every
+   new failure; keep the six confirmed baseline failures separate. Run website
+   and desktop TypeScript, relevant desktop stream/recovery Vitest tests and
+   production builds after final edits.
+2. Add real DynamoDB/moto tests for conditional leases, renewal, pending-tag
+   cleanup and takeover. Current coordinator quantity tests mock these boundary
+   operations; guard unit tests exercise conditional failure/unknown blocking but
+   do not prove the complete persisted multi-worker protocol. Test two workers
+   with stale snapshots, timeout, lease expiry and late acknowledgement.
+3. Verify restart round trips through real persisted manifests/order partitions,
+   including enrollment, entry allocations, unknown submissions, account scope
+   and broker-tag recovery. Extend carry-position, monthly/equity alias, product,
+   exchange, fully closed and reversed-position cases.
+4. Finish post-repair history publication: the refreshed `application_orders`
+   contain new exits, but the raw broker `orders`/desktop history report currently
+   comes from the snapshot read before repair. After actual mutations, obtain and
+   publish the latest underlying order book once, without another funds/history
+   download or enabling background enrollment of manual entries.
+5. Audit remaining manual/strategy exit mutation paths for serialization and
+   exact contract/product coverage. The coordinator freezes/defer session changes
+   during recovery, but legacy bulk/right-only helpers and UI edits of another
+   strike need explicit regression coverage. Check partial-fill total-versus-
+   remaining quantity limits in both website and desktop controls.
+6. Review authorization of the new desktop reconcile endpoint: it checks session
+   ownership/type and calls the shared Kotak handler directly; make sure real-
+   trading access/whitelist policy is explicitly enforced rather than assuming
+   FastAPI dependencies execute on a direct Python handler call.
+7. Add UI tests for protection attention/clearing, session switch races, duplicate
+   refresh clicks, all CE/PE strikes and expiries, and manual-refresh-only
+   enrollment. Confirm failures retain the last good display and cannot silently
+   clear a still-unresolved protection warning.
+8. Reconcile final docs and PR description with the reviewed implementation;
+   review generated exit prices, rejected/unknown outcomes and actual broker tag
+   echo on EC2. Run the acceptance list in `real-exit-protection.md` only after
+   review. Rebuild desktop for its new button/view. No live acceptance has been
+   performed and no live broker orders were submitted during development.
+
+Suggested validation from `backend/` (isolated from real DynamoDB):
+
+```bash
+USE_DYNAMODB_LOCAL=true DYNAMODB_LOCAL_ENDPOINT=http://127.0.0.1:9 \
+AWS_MAX_ATTEMPTS=1 AWS_EC2_METADATA_DISABLED=true NEO_LOG_FILE_ENABLED=false \
+~/venvs/tradematangi/bin/python -m pytest tests/ -q --tb=short
+```
+
+#### Future phase: Kite as an execution broker
+
+**Not implemented in this branch.** Kite currently supplies market/historical
+data; choosing Kite prices must not be interpreted as choosing a Kite trading
+account. Adding execution requires a separate approved feature, following these
+steps:
+
+1. Persist an explicit execution-broker selection on real sessions, independent
+   of live/historical providers. Default legacy sessions to Kotak. Bind the broker
+   and verified account identity for the life of a session; switching execution
+   accounts must not silently transfer orders, positions, capital or history.
+2. Introduce a shared execution-adapter interface for account identity, order/
+   trade/position reads, entry and SL/LIMIT placement, modification, cancellation
+   and order-update registration. Route website, desktop, strategies, exits and
+   protection through the selected adapter instead of `get_kotak()` calls.
+3. Migrate hardcoded identifiers/maps (`kotak_order_id`, `kotak_order_map`, real
+   snapshot/protection storage) to broker-qualified identities with backward-
+   compatible Kotak aliases. Include broker name and account in execution IDs,
+   snapshot manifests, operation guards, wallet/capital keys and reconciliation
+   ownership. Never merge a Kite account with a Kotak ledger because symbols match.
+4. Add authenticated Kite account/profile validation and credential renewal using
+   the official login flow; keep secrets server-side. Token expiry pauses new
+   submissions and reports attention. Reuse existing credential infrastructure
+   where appropriate, without authenticating from scratch on every protection
+   read. Verify account binding with the [official user API](https://kite.trade/docs/connect/v3/user/).
+5. Normalize Kite daily orders, executions and positions into the shared model:
+   stable execution identity, exact contract, product/exchange, cumulative filled
+   and pending quantities, average price, statuses and timestamps. Validate
+   snapshots before publishing; preserve local history across restarts because
+   the broker order book is day-scoped. See [Kite orders/trades](https://kite.trade/docs/connect/v3/orders/).
+6. Resolve instruments from Kite's instrument metadata rather than applying
+   Kotak symbol-name parsing. Test NIFTY/SENSEX aliases, CE/PE, weekly/monthly
+   expiries, equity options, tick sizes, lot units and applicable freeze limits.
+7. Implement regular-order placement/modify/cancel with explicit variety,
+   transaction side, product, trigger, price and quantity mapping. Preserve shared
+   gap calculations and partial-fill total-versus-remaining semantics. Verify
+   current segment restrictions before offering other varieties. Kite documents
+   alphanumeric tags of at most 20 characters; tags are tracking, not proof of
+   idempotent placement. [Official order contract](https://kite.trade/docs/connect/v3/orders/)
+8. Integrate authenticated order updates through KiteTicker/order-update text
+   messages or verified postbacks. Share normalized cumulative-fill handling,
+   duplicate suppression and reconnect reconciliation; do not infer fills from
+   market ticks or turn recovery into perpetual polling. See [Kite WebSocket
+   streaming](https://kite.trade/docs/connect/v3/websocket/).
+9. Adapt real funds/capital accounting explicitly to Kite's funds and margin
+   model. Do not assume Kotak `Net`/`MarginUsed` formulas apply to Kite. Preserve
+   broker-account-specific buying power, positions, reservations and P&L history.
+10. Run the same protection contract tests against both adapters: 40/60 quantity
+    with lot 20, partial/early/missed fills, manual exits, manual entries enrolled
+    only on refresh, one session timer, unknown outcome, restart, rejection,
+    freeze splitting and all-strike refresh. Test mixed live-feed/execution
+    providers and identical symbols/order IDs across different accounts. Confirm
+    exchange acceptance in reviewed live testing before enabling Kite execution.
 
 Market buttons explicitly request immediate submission of a marketable broker
 LIMIT, while ordinary new-entry LIMIT/TARGET orders retain local trigger behavior.

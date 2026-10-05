@@ -80,6 +80,9 @@ def convert_order(session, order, new_type, price=None):
             result.execution_gap_pct = candidate.execution_gap_pct
             result.market_order = candidate.market_order
         order_service._write_order_to_db(result)
+        if session.session_type == "real":
+            from app.services.real_protection import request
+            request(session, reason="order_edit")
     return result
 
 
@@ -108,6 +111,15 @@ def register_callbacks(session, order, broker, loop):
         current.status = OrderStatus.FILLED if current.kotak_fill_confirmed else OrderStatus.PENDING
         from datetime import datetime, timezone
         current.filled_at = current.filled_at or int(datetime.now(timezone.utc).timestamp()) + 19800
+        # Arm recovery before persistence/trade publication: a failed write or
+        # full event queue must not lose protection for the newly confirmed fill.
+        if current.execution_role != "exit" and (current.entry_sl_price is not None or current.is_autostop):
+            from app.services.entry_sl_watcher import on_entry_filled
+            on_entry_filled(current, session, loop)
+        else:
+            from app.services.real_protection import request
+            request(session, order=current, reason="exit_fill" if current.execution_role == "exit" else "entry_fill",
+                    delay=0 if current.execution_role == "exit" else 3)
         order_service._write_order_to_db(current)
         # Funds displayed for real sessions are broker-owned; release local reservations
         # proportionally rather than applying fictional paper-trading cash movements.
@@ -127,9 +139,6 @@ def register_callbacks(session, order, broker, loop):
             real_broker_state.apply_position_fill(session, current, delta, delta_price)
         if hasattr(trade, "model_dump"):
             session.queue.put_nowait(json.dumps({"type": "new_trade", **trade.model_dump(mode="json")}))
-        if current.execution_role != "exit" and (current.entry_sl_price is not None or current.is_autostop):
-            from app.services.entry_sl_watcher import on_entry_filled
-            on_entry_filled(current, session, loop)
         order_service._write_order_to_db(current)
         session.queue.put_nowait(json.dumps({"type": "order_filled" if current.kotak_fill_confirmed else "order_updated",
             "order_id": current.order_id, "side": current.side.value, "quantity": quantity,
@@ -147,6 +156,8 @@ def register_callbacks(session, order, broker, loop):
             current.reserved_amount = 0
         current.status = OrderStatus.CANCELLED
         order_service._write_order_to_db(current)
+        from app.services.real_protection import request
+        request(session, order=current, reason="broker_cancel_or_reject")
         session.queue.put_nowait(json.dumps({"type": "order_cancelled", "order_id": current.order_id}))
         session.queue.put_nowait(json.dumps({"type": "broker_error", "message": f"Kotak rejected order: {reason}"}))
         logger.warning("broker_order_rejected session=%s order=%s reason=%s", session.session_id, current.order_id, reason)
