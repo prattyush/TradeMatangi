@@ -1,3 +1,4 @@
+import { legacyBrowserSettings, cacheSharedSettings } from './sharedSettings'
 import { BACKEND_URL, AI_HELPER_URL } from '../config'
 
 export class ApiError extends Error {
@@ -148,6 +149,16 @@ export interface SimulationStartRequest {
 }
 
 export interface UserSettingsResponse {
+  brokerage_per_order?: number
+  strategy_interval_secs?: 120 | 180 | 300
+  autostop_trigger_type?: 'bar' | 'deviation'
+  autostop_deviation_pct?: number
+  breakeven_mode?: 'shift_sl' | 'limit_order'
+  target_profit_buffer_ticks?: number
+  aggr_sl_only_in_profit?: boolean
+  auto_start_event_snapshots?: boolean
+  trade_labeling_mode_by_type?: Record<'stepwise' | 'sim' | 'paper' | 'real', 'off' | 'popup' | 'button'>
+  trading_roc_ratio_mode?: 'normalized' | 'raw'
   historical_days: number
   target_deviation_pct?: number
   target_deviation_configured?: boolean
@@ -1482,7 +1493,7 @@ const api = {
 
   // ── User Settings ──────────────────────────────────────────────────────────
 
-  async getUserSettings(): Promise<UserSettingsResponse> {
+  async getUserSettings(importBrowserPreferences = false): Promise<UserSettingsResponse> {
     const res = await fetch(`${BACKEND_URL}/api/users/settings`, {
       headers: _authHeaders(),
     })
@@ -1498,6 +1509,17 @@ const api = {
       if (!migrated.ok) throw new Error('Could not migrate saved target gap')
       settings = await migrated.json()
     }
+    if (importBrowserPreferences) {
+      const legacy = legacyBrowserSettings(localStorage)
+      if (Object.keys(legacy).length) {
+        const migrated = await fetch(`${BACKEND_URL}/api/users/settings/browser-migration`, {
+          method: 'PUT', headers: { 'Content-Type': 'application/json', ..._authHeaders() }, body: JSON.stringify(legacy),
+        })
+        if (!migrated.ok) throw new Error('Could not import saved browser preferences')
+        settings = await migrated.json()
+      }
+    }
+    if (importBrowserPreferences) cacheSharedSettings(settings, localStorage)
     // Cache only explicitly configured values; a default must not become a legacy override.
     if (settings.target_deviation_configured) localStorage.setItem('targetDeviationPct', String((settings.target_deviation_pct ?? 0.01) * 100))
     window.dispatchEvent(new CustomEvent("execution-gap-settings", { detail: settings }))
@@ -1512,6 +1534,7 @@ const api = {
     })
     const data = await res.json().catch(() => null)
     if (!res.ok) throw new Error(data?.detail || `Update user settings failed: ${res.status}`)
+    cacheSharedSettings(data, localStorage)
     return data
   },
 

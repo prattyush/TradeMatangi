@@ -201,7 +201,11 @@ input { width: 160px; }
 .login-divider { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 10px; color: #64748b; font-size: .72rem; }
 .login-divider span { height: 1px; background: #334155; }
 .login-error { color: #fca5a5; }
-.desktop-settings-modal { width: min(850px, 95vw); max-width: 850px; }
+.desktop-settings-modal { width: min(1050px, 95vw); max-width: 1050px; max-height: 90vh; display: flex; flex-direction: column; }
+.desktop-settings-modal form { display: flex; flex-direction: column; min-height: 0; }
+.desktop-settings-modal .settings-layout { min-height: 0; overflow: hidden; }
+.desktop-settings-modal .settings-scroll { overflow-y: auto; min-height: 0; }
+.desktop-settings-modal footer { flex-shrink: 0; }
 .settings-layout { display: flex; gap: 16px; }
 .settings-layout nav { display: flex; flex-direction: column; gap: 8px; flex: 0 0 150px; }
 .settings-layout nav button { text-align: left; }
@@ -226,3 +230,7 @@ input { width: 160px; }
 .profit-size-menu > div { display: none; position: absolute; left: 100%; top: -4px; min-width: 132px; background: #111827; border: 1px solid #475569; border-radius: 6px; padding: 4px; box-shadow: 0 14px 34px rgb(0 0 0 / .45); }
 .chart-context-menu.open-left .profit-size-menu > div { left: auto; right: 100%; }
 .profit-size-menu:hover > div, .profit-size-menu:focus-within > div { display: grid; }
+
+.desktop-settings-modal input[type="checkbox"] { width: auto; }
+.desktop-settings-modal .picker-fields label > span { display: flex; align-items: center; gap: 8px; }
+.desktop-settings-modal label:has(> input[type="checkbox"]) { flex-direction: row; align-items: center; gap: 8px; }
