@@ -98,6 +98,35 @@ async def test_first_midday_start_recovers_open_cost_without_adding_it_twice(iso
 
 
 @pytest.mark.asyncio
+async def test_first_start_with_balance_and_sdk_no_data_reports(isolated, monkeypatch):
+    import httpx
+    from neo_api_client import NeoAPI
+    from app.services import kotak_service
+    monkeypatch.setenv("NEO_LOG_FILE_ENABLED", "false")
+    requests = []
+    def respond(request):
+        requests.append(request.url.path)
+        response = ({"stat": "Ok", "Net": "18000", "MarginUsed": "0"}
+                    if request.url.path == "/limits" else
+                    {"stCode": 5203, "errMsg": "No Data", "desc": "data not found", "stat": "Not_Ok"})
+        return httpx.Response(200, json=response)
+    client = NeoAPI(consumer_key="test", transport=httpx.MockTransport(respond))
+    client.configuration.edit_token = "test-token"
+    client.configuration.edit_sid = "test-sid"
+    monkeypatch.setattr(client.configuration, "get_url_details", lambda method: f"https://broker.invalid/{method}")
+    broker = kotak_service.KotakNeoService()
+    broker._client, broker._authenticated = client, True
+    monkeypatch.setattr(broker, "account_identity", lambda: "account")
+    try:
+        result = await accounting.refresh(USER, DATE, broker, reason="start")
+        assert result == {"balance": 18000, "display_balance": 18000, "session_capital": 18000}
+        assert sorted(requests) == ["/limits", "/positions", "/trade_report"]
+        assert wallet_service.get_real_wallet_snapshot(USER, DATE)["balance"] == 18000
+    finally:
+        broker.shutdown()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize('limits', [
     {'Net': 18000}, {'Net': 18000, 'MarginUsed': None}, {'Net': 18000, 'MarginUsed': -1},
     {'Net': float('nan'), 'MarginUsed': 0}, {'Net': True, 'MarginUsed': 0},

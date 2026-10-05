@@ -688,8 +688,8 @@ class KotakNeoService:
             if not math.isfinite(funds):
                 raise KotakError("Kotak limits response contains invalid available funds")
             return limits
-        except KotakError:
-            raise
+        except KotakError as exc:
+            raise KotakError(f"Kotak limits: {exc}") from exc
         except Exception as exc:
             raise KotakError(str(exc)) from exc
 
@@ -703,6 +703,18 @@ class KotakNeoService:
         """A failed/malformed report must never become an authoritative empty day."""
         try:
             resp = getattr(self._get_client(), method)()
+            # Kotak documents this envelope for reports with no records. It is
+            # distinct from unavailable/malformed reports, and never supplies
+            # a substitute balance for limits().
+            if (isinstance(resp, dict)
+                    and str(resp.get("stCode")) == "5203"
+                    and str(resp.get("errMsg", "")).strip().casefold() == "no data"
+                    and str(resp.get("stat", "")).casefold() == "not_ok"
+                    and resp.get("data") in (None, [])
+                    and not any(resp.get(key) for key in ("error", "Error", "Error Message", "fault"))
+                    and str(resp.get("status_code") or resp.get("StatusCode") or "200") == "200"):
+                logger.debug("Kotak %s returned no records (5203)", method)
+                return []
             self._check_api_response(resp)
             if isinstance(resp, list):
                 data = resp
@@ -713,8 +725,8 @@ class KotakNeoService:
             if any(not isinstance(row, dict) for row in data):
                 raise KotakError(f"Malformed Kotak {method} record")
             return data
-        except KotakError:
-            raise
+        except KotakError as exc:
+            raise KotakError(f"Kotak {method}: {exc}") from exc
         except Exception as exc:
             raise KotakError(str(exc)) from exc
 
