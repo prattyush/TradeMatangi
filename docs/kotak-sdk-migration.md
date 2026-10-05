@@ -111,7 +111,12 @@ reliability utilities are not enabled, and order submissions are not retried.
 Error validation recurses into dictionary envelopes. Expired/unauthorized
 sessions clear authentication and stop feeds, including string error codes.
 Report failures and malformed rows do not become authoritative empty days.
-Successful empty data lists remain valid. Missing/nonfinite funds remain errors.
+Successful empty data lists and the documented `stCode: 5203`, `errMsg: "No Data"`,
+`stat: "Not_Ok"` report envelope remain valid empty order/trade/position reports.
+This permits a first real-session start with no trades or positions that day.
+The same response from limits remains an error; missing/nonfinite funds are never
+replaced with a fabricated balance. Report and limits errors identify the API
+that failed, even when the startup UI wraps them as a funds-refresh failure.
 Modify/cancel operations additionally require a recognizable success
 acknowledgement; placement requires an order ID. These checks address real v3
 returned-error paths rather than introducing broker functionality.
