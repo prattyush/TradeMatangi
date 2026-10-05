@@ -690,7 +690,7 @@ async def update_pane_strike(session_id: str, req: UpdatePaneStrikeRequest):
             elif session.kotak_streaming:
                 from app.services.kotak_service import fetch_kotak_options_instrument_token, get_kotak_broadcaster
                 token, exchange = await loop.run_in_executor(None, lambda: fetch_kotak_options_instrument_token(session.symbol, session.expiry, req.strike, right))
-                get_kotak_broadcaster().update_session_right(session_id, right, token, exchange, session.paper_tick_queue, loop)
+                await asyncio.to_thread(get_kotak_broadcaster().update_session_right, session_id, right, token, exchange, session.paper_tick_queue, loop)
             else:
                 from app.services import kite_service
                 new_token = await loop.run_in_executor(None, lambda: kite_service.fetch_options_instrument_token(session.symbol, session.expiry, req.strike, right))

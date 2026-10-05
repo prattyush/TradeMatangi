@@ -62,6 +62,8 @@ async def lifespan(app: FastAPI):
     finally:
         from app.services.market_data import get_hub
         get_hub().shutdown()
+        from app.services.kotak_service import get_service as get_kotak
+        await asyncio.to_thread(get_kotak().shutdown)
         exit_reconciler.cancel()
         try:
             await exit_reconciler

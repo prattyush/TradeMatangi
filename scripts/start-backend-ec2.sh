@@ -42,8 +42,7 @@ if [ ! -d "$VENV" ]; then
 fi
 
 echo "Installing dependencies..."
-"$VENV/bin/pip" install -q -r "$REPO_ROOT/backend/requirements.txt"
-"$VENV/bin/pip" install -q --no-deps "neo_api_client @ git+https://github.com/Kotak-Neo/Kotak-neo-api-v2.git@v2.0.1"
+bash "$REPO_ROOT/scripts/install-backend-dependencies.sh" --venv "$VENV"
 # Script dependencies (options_indicator.py and other standalone scripts)
 "$VENV/bin/pip" install -q mplfinance matplotlib
 

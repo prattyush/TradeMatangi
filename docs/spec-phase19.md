@@ -2013,3 +2013,52 @@ Look into sections:-
 4) Authentication API's
 5) Any breaking changes, please feel free to ask user.
 
+
+### Kotak SDK migration — implemented 2026-10-05
+
+Migrated existing functionality to the agreed published **`kotakneoapi==3.0.7`**
+release. The complete method-by-method investigation, source references,
+installation instructions, rollback and remaining acceptance are in
+[the Kotak SDK migration audit](kotak-sdk-migration.md). Unused APIs remain
+unintegrated; no new broker feature or database migration was introduced.
+
+- Existing equity/options LIMIT and SL placement, modification, conversion,
+  cancellation, reports, account accounting and instrument-master caching are
+  retained. Removed unsupported placement arguments and validated returned
+  errors, authentication responses and order acknowledgements.
+- Replaced legacy streaming with separate async SFeed/order sockets on a shared
+  background loop. Preserved index/scrip separation, exact contracts, shared
+  subscriptions, partial/early fills and protection; reconnects restore only
+  current subscriptions and reject stale login generations.
+- Added `scripts/install-backend-dependencies.sh`, called by both local and EC2
+  startup scripts. It uninstalls legacy/mixed SDK distributions **before**
+  installing requirements, verifies exact version/imports and runs `pip check`.
+  Run it directly with an existing Python 3.10+ venv:
+
+  ```bash
+  bash scripts/install-backend-dependencies.sh
+  # Optional custom environment:
+  bash scripts/install-backend-dependencies.sh --venv /path/to/venv
+  ```
+
+- Migrated the local `$HOME/venvs/tradematangi` environment using the helper;
+  import checks and `pip check` passed. A second run passed without uninstalling
+  the healthy SDK. A fresh external venv also passed installation checks.
+- **71 migration/installer tests passed**, including real SDK REST contracts
+  with mocked HTTP transport and actual SDK streaming over loopback WebSocket
+  servers. The same **71 passed** in the fresh venv, including its independently
+  resolved dependencies. No production Kotak requests or live orders were sent.
+- Final full backend run: **1,415 passed / 6 failed**. All six failures reproduced
+  against unchanged `dev` commit `2550902` under the same isolated test
+  configuration: auth register success; guardrail block-bars zero; options
+  session startup; pattern logger equity OHLC success/missing data; and tab
+  restore attach metadata. They are recorded baseline failures, not migration
+  regressions. Existing dateutil and two pytest-mark warnings remain.
+- Website and desktop TypeScript checks, shell syntax checks, Python compilation
+  and `git diff --check` passed. Native click-through and live broker acceptance
+  remain manual, as does execution on the actual EC2 host.
+
+Delivery branch: `feature/phase19-kotak-sdk-v3`, targeting `dev`. Review and merge
+into `dev` are pending; merging into `main` remains manual. Stop the backend
+before migrating its venv. Keep the code revision and SDK revision together
+when rolling back; the new startup scripts intentionally reinstall 3.0.7.
