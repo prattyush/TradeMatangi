@@ -189,6 +189,36 @@ def test_failed_reports_are_not_empty_days(broker, method):
         getattr(service, method)()
 
 
+NO_DATA = {"stCode": 5203, "errMsg": "No Data", "desc": "data not found", "stat": "Not_Ok"}
+
+
+@pytest.mark.parametrize("method", ["get_order_history", "get_trade_history", "get_positions"])
+@pytest.mark.parametrize("code", [5203, "5203"])
+def test_documented_no_data_reports_are_empty(broker, method, code):
+    service, _, _, responses = broker
+    responses.append({**NO_DATA, "stCode": code})
+    assert getattr(service, method)() == []
+    assert service.is_authenticated()
+
+
+@pytest.mark.parametrize("changes", [
+    {"stCode": 500}, {"errMsg": "Unavailable"}, {"data": [{"nOrdNo": "K1"}]},
+    {"error": [{"code": "401", "message": "Unauthorized"}]}, {"status_code": 503},
+])
+def test_no_data_report_does_not_hide_other_failures(broker, changes):
+    service, _, _, responses = broker
+    responses.append({**NO_DATA, **changes})
+    with pytest.raises(ks.KotakError, match="trade_report"):
+        service.get_trade_history()
+
+
+def test_no_data_limits_never_supply_a_balance(broker):
+    service, _, _, responses = broker
+    responses.append(NO_DATA)
+    with pytest.raises(ks.KotakError, match="Kotak limits:.*5203"):
+        service.get_limits()
+
+
 def order_update(quantity=1, status="open", price="100", side="B", order_id="K1"):
     from neo_api_client.websocket.orderfeed import OrderUpdate
     return OrderUpdate(data={"nOrdNo": order_id, "ordSt": status, "fldQty": quantity,
