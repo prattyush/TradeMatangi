@@ -1,6 +1,6 @@
 import type { DesktopTradingSnapshot } from './contracts'
-import { acceptPaperSnapshot, applyPaperStreamEvent, isDesktopTradingSnapshot } from './paperTradingState'
-import { eventNeedsTradingRefresh } from './tradingRefresh'
+import { applyPaperStreamEvent, isDesktopTradingSnapshot } from './paperTradingState'
+import { eventNeedsTradingRefresh, eventAffectsWallet } from './tradingRefresh'
 
 type Event = Record<string, unknown>
 
@@ -60,6 +60,7 @@ export class TradingEventJournal {
       const id = Number(event.event_id)
       if (!Number.isFinite(id) || id > cursor) {
         retry ||= eventNeedsTradingRefresh(event, snapshot.event_cursor ?? -1)
+        retry ||= eventAffectsWallet(event) && typeof event.wallet_balance !== 'number'
         snapshot = applyPaperStreamEvent(snapshot, event)
       }
     }
@@ -73,6 +74,7 @@ interface StreamCallbacks {
   current: () => DesktopTradingSnapshot | null
   publish: (snapshot: DesktopTradingSnapshot) => void
   fetchSnapshot: () => Promise<DesktopTradingSnapshot>
+  fetchWallet?: () => Promise<{ balance: number }>
   onError: (error: unknown) => void
   onRecovery?: (elapsedMs: number) => void
 }
@@ -86,6 +88,13 @@ export class TradingStreamController {
   private retryTimer: ReturnType<typeof setTimeout> | undefined
   private backoff = 1000
   private recoveryVersion = 0
+  private epoch = 0
+  private recoveryRequest: Promise<void> | undefined
+  private walletVersion = 0
+  private walletRequired = false
+  private walletPending = false
+  private walletRetry: ReturnType<typeof setTimeout> | undefined
+  private walletBackoff = 1000
   constructor(private callbacks: StreamCallbacks) {}
 
   receive(events: Event[], gap = false): void {
@@ -100,7 +109,20 @@ export class TradingStreamController {
     }
     for (const event of events) {
       if (isDesktopTradingSnapshot(event)) {
-        current = acceptPaperSnapshot(current, event)
+        if (event.stream_reconnected) {
+          this.epoch++
+          this.required = false
+          if (this.retryTimer !== undefined) { clearTimeout(this.retryTimer); this.retryTimer = undefined }
+          this.journal = new TradingEventJournal()
+          current = event
+          recover = false
+        } else {
+          const reconciled = this.journal.reconcile(current, event)
+          current = reconciled.snapshot
+          recover ||= reconciled.retry
+        }
+        this.walletVersion++
+        this.walletRequired = false
       } else {
         const id = Number(event.event_id)
         if (Number.isFinite(id) && id <= (current.event_cursor ?? -1)) continue
@@ -109,41 +131,79 @@ export class TradingStreamController {
           this.journal.gapThrough(id - 1)
         }
         recover ||= eventNeedsTradingRefresh(event, current.event_cursor ?? -1)
+        if (eventAffectsWallet(event)) {
+          this.walletVersion++
+          this.walletRequired = typeof event.wallet_balance !== 'number'
+        }
         this.journal.record(event)
         current = applyPaperStreamEvent(current, event)
       }
     }
     this.callbacks.publish(current)
-    if (recover) this.recover()
+    if (recover) void this.recover()
+    else this.refreshWallet()
   }
 
-  recover(): void {
-    if (this.stopped) return
+  recover(immediate = false): Promise<void> {
+    if (this.stopped) return Promise.resolve()
+    if (immediate && this.retryTimer !== undefined) { clearTimeout(this.retryTimer); this.retryTimer = undefined }
     this.required = true
     this.recoveryVersion++
-    if (this.pending || this.retryTimer !== undefined) return
+    if (this.pending || this.retryTimer !== undefined) return this.recoveryRequest ?? Promise.resolve()
     this.pending = true
     this.required = false
     const version = this.recoveryVersion
+    const epoch = this.epoch
     const started = performance.now()
-    void this.callbacks.fetchSnapshot().then(incoming => {
-      if (this.stopped) return
+    this.recoveryRequest = this.callbacks.fetchSnapshot().then(incoming => {
+      if (this.stopped || epoch !== this.epoch) return
       const current = this.callbacks.current()
       if (!current) return
       const result = this.journal.reconcile(current, incoming)
       this.required = result.retry || this.recoveryVersion !== version
+      this.walletVersion++
+      if (!result.retry) this.walletRequired = false
       this.callbacks.publish(result.snapshot)
       this.callbacks.onRecovery?.(performance.now() - started)
       this.backoff = 1000
     }).catch(error => {
-      if (this.stopped) return
+      if (this.stopped || epoch !== this.epoch) return
       this.required = true
       this.callbacks.onError(error)
       this.backoff = Math.min(this.backoff * 2, 30_000)
     }).finally(() => {
       this.pending = false
+      this.recoveryRequest = undefined
       if (!this.stopped && this.required) {
-        this.retryTimer = setTimeout(() => { this.retryTimer = undefined; this.recover() }, this.backoff)
+        this.retryTimer = setTimeout(() => { this.retryTimer = undefined; void this.recover() }, this.backoff)
+      } else this.refreshWallet()
+    })
+    return this.recoveryRequest
+  }
+
+  private refreshWallet(): void {
+    if (this.stopped || !this.walletRequired || !this.callbacks.fetchWallet || this.pending || this.retryTimer !== undefined || this.walletPending || this.walletRetry !== undefined) return
+    this.walletPending = true
+    this.walletRequired = false
+    const version = this.walletVersion
+    let failed = false
+    void this.callbacks.fetchWallet().then(wallet => {
+      if (this.stopped || version !== this.walletVersion) return
+      if (!Number.isFinite(wallet.balance)) throw new Error('Invalid wallet balance')
+      const current = this.callbacks.current()
+      if (current) this.callbacks.publish({ ...current, wallet_balance: wallet.balance })
+      this.walletBackoff = 1000
+    }).catch(error => {
+      if (this.stopped) return
+      failed = true
+      if (version !== this.walletVersion && !this.walletRequired) return
+      this.walletRequired = true
+      this.callbacks.onError(error)
+      this.walletBackoff = Math.min(this.walletBackoff * 2, 30_000)
+    }).finally(() => {
+      this.walletPending = false
+      if (!this.stopped && this.walletRequired) {
+        this.walletRetry = setTimeout(() => { this.walletRetry = undefined; this.refreshWallet() }, failed ? this.walletBackoff : 0)
       }
     })
   }
@@ -151,6 +211,7 @@ export class TradingStreamController {
   stop(): void {
     this.stopped = true
     if (this.retryTimer !== undefined) clearTimeout(this.retryTimer)
+    if (this.walletRetry !== undefined) clearTimeout(this.walletRetry)
   }
 }
 

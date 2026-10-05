@@ -88,7 +88,9 @@ pub struct TokenBundle {
 }
 
 const TOKEN_REFRESH_SKEW: Duration = Duration::from_secs(60);
-const CONNECTION_CHECK_INTERVAL: Duration = Duration::from_secs(15);
+const CONNECTION_CHECK_INTERVAL: Duration = Duration::from_secs(300);
+const CONNECTION_RETRY_INTERVAL: Duration = Duration::from_secs(15);
+const STREAM_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
 const CONNECTION_STATE_EVENT: &str = "desktop-connection-state";
 
 #[derive(Clone, Serialize)]
@@ -626,7 +628,8 @@ fn desktop_connection_monitor_start(
             let mut first_check = true;
             loop {
                 if !first_check {
-                    let changed = tokio::time::timeout(CONNECTION_CHECK_INTERVAL, monitor_host.2.notified()).await.is_ok();
+                    let interval = monitor_host.connection_check_interval();
+                    let changed = tokio::time::timeout(interval, monitor_host.2.notified()).await.is_ok();
                     if auth_suspended && !changed { continue; }
                 }
                 first_check = false;
@@ -1583,6 +1586,12 @@ impl HostState {
             let _ = app.emit(CONNECTION_STATE_EVENT, snapshot);
         }
     }
+    fn connection_check_interval(&self) -> Duration {
+        let state = self.0.lock().expect("host state lock");
+        if state.connection == "connected" && state.monitor_failures == 0 {
+            CONNECTION_CHECK_INTERVAL
+        } else { CONNECTION_RETRY_INTERVAL }
+    }
     fn record_probe_result(&self, generation: u64, result: &str) -> Option<ConnectionSnapshot> {
         let snapshot = {
             let mut state = self.0.lock().expect("host state lock");
@@ -1631,6 +1640,14 @@ impl HostState {
             stream.connection = connection.into();
         }
     }
+    fn reset_stream_delivery(&self, key: &str) {
+        if let Some(stream) = self.0.lock().expect("host state lock").streams.get_mut(key) {
+            stream.last_event_id = 0;
+            stream.latest_payload = serde_json::Value::Null;
+            stream.pending_payloads.clear();
+            stream.events_dropped = false;
+        }
+    }
     fn record_stream(&self, key: &str, event_id: u64, payload: serde_json::Value) {
         if let Some(stream) = self.0.lock().expect("host state lock").streams.get_mut(key) {
             if event_id >= stream.last_event_id {
@@ -1666,6 +1683,7 @@ impl HostState {
             stream.latest_payload.clone()
         };
         let events_dropped = std::mem::take(&mut stream.events_dropped);
+        if let Some(value) = stream.latest_payload.as_object_mut() { value.remove("stream_reconnected"); }
         Ok(DesktopStreamSnapshot {
             key: key.into(),
             last_event_id: stream.last_event_id,
@@ -1843,6 +1861,7 @@ async fn start_desktop_stream(
         let _ = ready_rx.await;
         let client = reqwest::Client::new();
         let mut backoff = 1_u64;
+        let mut opened = false;
         loop {
             stream_host.set_stream_connection(&stream_key, "reconnecting");
             let token = match stream_host.access_token(&base_url).await {
@@ -1860,16 +1879,24 @@ async fn start_desktop_stream(
                 .bearer_auth(token)
                 .header("Accept", "text/event-stream");
             let event_id = stream_host.stream_cursor(&stream_key);
-            if event_id > 0 {
+            if !opened && event_id > 0 {
                 request = request.header("Last-Event-ID", event_id.to_string());
             }
             match request.send().await {
                 Ok(response) if response.status().is_success() => {
+                    let mut reconnect_snapshot = opened;
+                    if opened { stream_host.reset_stream_delivery(&stream_key); }
+                    opened = true;
                     stream_host.set_stream_connection(&stream_key, "connected");
                     backoff = 1;
                     let mut stream = response.bytes_stream();
                     let mut buffer = String::new();
-                    while let Some(chunk) = stream.next().await {
+                    loop {
+                        let chunk = match tokio::time::timeout(STREAM_IDLE_TIMEOUT, stream.next()).await {
+                            Ok(Some(chunk)) => chunk,
+                            Ok(None) => break,
+                            Err(_) => { diagnostic_log("desktop stream heartbeat timeout; reconnecting"); break; }
+                        };
                         let bytes = match chunk {
                             Ok(bytes) => bytes,
                             Err(error) => {
@@ -1884,7 +1911,11 @@ async fn start_desktop_stream(
                             let (id, event_name, data) = parse_sse_frame(&frame);
                             let event_id = id.unwrap_or_else(|| stream_host.stream_cursor(&stream_key));
                             if let Some(data) = data {
-                                if let Ok(payload) = serde_json::from_str::<serde_json::Value>(&data) {
+                                if let Ok(mut payload) = serde_json::from_str::<serde_json::Value>(&data) {
+                                    if reconnect_snapshot && (payload.get("session").is_some() || payload.get("tiles").is_some() || payload.get("tile_states").is_some()) {
+                                        if let Some(value) = payload.as_object_mut() { value.insert("stream_reconnected".into(), serde_json::Value::Bool(true)); }
+                                        reconnect_snapshot = false;
+                                    }
                                     if payload.get("type").and_then(|value| value.as_str()) == Some("candle") {
                                         live_diagnostic("native_sse_candle", &serde_json::json!({
                                             "stream_key": &stream_key,
@@ -1937,6 +1968,7 @@ async fn start_desktop_stream(
                             }
                         }
                     }
+                    stream_host.set_stream_connection(&stream_key, "reconnecting");
                 }
                 Ok(response) if response.status().as_u16() == 401 => {
                     stream_host.set_stream_connection(&stream_key, "authentication_required");
@@ -2265,10 +2297,13 @@ mod connection_monitor_tests {
         host.configure_monitor("http://server".into());
         let generation = host.0.lock().unwrap().monitor_generation;
         host.set_connection("connected");
+        assert_eq!(host.connection_check_interval(), Duration::from_secs(300));
         assert!(host.record_probe_result(generation, "offline").is_none());
+        assert_eq!(host.connection_check_interval(), Duration::from_secs(15));
         assert_eq!(host.connection_snapshot().connection, "connected");
         assert_eq!(host.record_probe_result(generation, "offline").unwrap().connection, "offline");
         assert_eq!(host.record_probe_result(generation, "connected").unwrap().connection, "connected");
+        assert_eq!(host.connection_check_interval(), Duration::from_secs(300));
         assert_eq!(host.record_probe_result(generation, "authentication_required").unwrap().connection, "authentication_required");
     }
 }
@@ -2304,6 +2339,26 @@ mod screen_window_tests {
         }
         assert!(host.stream_snapshot("paper:one:session", "main").unwrap().events_dropped);
         assert!(!host.stream_snapshot("paper:one:session", "main").unwrap().events_dropped);
+        task.abort();
+    }
+    #[test]
+    fn reconnect_discards_old_buffer_and_delivers_new_cursor_marker_once() {
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let _guard = runtime.enter();
+        let host = HostState::default();
+        let task = tokio::spawn(std::future::pending::<()>());
+        let key = "paper:one:session";
+        host.start_stream(key, task.abort_handle(), "main").unwrap();
+        host.record_stream(key, 100, serde_json::json!({"type": "tick", "event_id": 100}));
+        host.reset_stream_delivery(key);
+        host.record_stream(key, 1, serde_json::json!({"session": {"session_id": "session"}, "event_cursor": 1, "stream_reconnected": true}));
+        let first = host.stream_snapshot(key, "main").unwrap();
+        assert_eq!(first.last_event_id, 1);
+        assert_eq!(first.latest_payload["stream_reconnected"], true);
+        assert!(!first.events_dropped);
+        let second = host.stream_snapshot(key, "main").unwrap();
+        assert_eq!(second.last_event_id, 1);
+        assert!(second.latest_payload.get("stream_reconnected").is_none());
         task.abort();
     }
     #[test]
