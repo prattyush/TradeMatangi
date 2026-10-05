@@ -1,4 +1,4 @@
-import { mergeScreenDraft, type ScreenDraft } from './screenConflict'
+import { mergeScreenDraft, screenContentKey, type ScreenDraft } from './screenConflict'
 
 export interface SavedScreenRecord extends ScreenDraft {
   screen_id: string
@@ -18,6 +18,8 @@ export function enqueueScreenSave<T>(previous: Promise<unknown>, execute: () => 
 
 /** Does not mutate the caller's base. It becomes authoritative only on success. */
 export async function saveScreenRecord<T extends SavedScreenRecord>(base: T | null, submitted: ScreenDraft, mutationId: string, transport: ScreenSaveTransport<T>): Promise<T> {
+  // A queued save may have become redundant while an earlier save completed.
+  if (base && screenContentKey({ state: base.state, name: base.name, order: base.order }) === screenContentKey(submitted)) return base
   try {
     return await transport.write(base?.screen_id, base?.revision, submitted, mutationId)
   } catch (error) {

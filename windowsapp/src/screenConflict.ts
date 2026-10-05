@@ -5,8 +5,18 @@ export interface ScreenStateRecord {
 const PRESENTATION_FIELDS = ['layout', 'tiles', 'indicators', 'activeToolTileId', 'speed']
 const LIFECYCLE_FIELDS = ['mode', 'live_enabled', 'live_stream_id', 'session_id', 'run_id', 'owned', 'run_date', 'start_time']
 
+/** Compare JSON content as it crosses Rust/server boundaries, preserving array order. */
+export function screenContentKey(value: unknown): string {
+  return JSON.stringify(value, (_key, item: unknown) => {
+    if (item && typeof item === 'object' && !Array.isArray(item)) {
+      return Object.fromEntries(Object.entries(item).sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0))
+    }
+    return item
+  }) ?? 'undefined'
+}
+
 function equal(left: unknown, right: unknown): boolean {
-  return JSON.stringify(left) === JSON.stringify(right)
+  return screenContentKey(left) === screenContentKey(right)
 }
 
 function mergePresentationField(field: string, base: unknown, local: unknown, remote: unknown, preferLocalConflicts = false): { value: unknown; conflict?: string } {

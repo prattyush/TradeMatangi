@@ -2075,4 +2075,151 @@ when rolling back; the new startup scripts intentionally reinstall 3.0.7.
 
 ## Paper/real history providers — 2026-10-05
 
-This follow-up supersedes the 2026-10-01 today-only historical setting. Paper/real and desktop live charts now use configured Breeze, Kite or Kotak minute history for today and uncached previous dates, while reusing complete previous-day Breeze caches first. Today keeps provider caches separate. Replay/stepwise and ordinary historical Browse/analysis remain Breeze-only. Kotak history uses a consumer-key client without trading login; provider minute caches remain separate from Breeze second data. See [live history providers](live-history-providers.md) for routing, API compatibility, limitations and validation. PR #586 is already merged and EC2-verified; this work uses a separate follow-up PR.
+### Status
+
+**Implemented and merged to `dev` in [PR #588](https://github.com/prattyush/TradeMatangi/pull/588)**,
+merge commit `911a6f0`, from `feature/live-history-providers`. This section supersedes
+the 2026-10-01 **today-only** historical-provider policy above. It records the
+current implementation; it is not a pending implementation plan.
+
+The preceding [PR #586](https://github.com/prattyush/TradeMatangi/pull/586) fixes
+for Kite throttling, repeated Breeze full-day refreshes and website/desktop Kite
+streaming were merged, deployed to `main`/EC2 and confirmed working by the user.
+EC2 acceptance of the new PR #588 history routing has not yet been reported.
+Merging/deploying to `main` remains manual.
+
+### Complete requirement
+
+**Platform parity:** Replay, stepwise and paper trading follow the same
+mode-specific provider, cache, refresh, fallback, failure and native-cadence
+requirements on **both desktop and website**. The requirements below apply
+equally to both platforms.
+
+1. **Paper and real trading must use the configured historical provider** for
+   equity/index and exact-contract option history, independently of the live
+   streaming provider. Supported history providers are ICICI Breeze, Kite and
+   Kotak Neo.
+2. **Previous-day cache reuse must avoid unnecessary downloads.** For paper/real,
+   reuse complete, valid Breeze data for that contract/day first, even when Kite
+   or Kotak is selected. Otherwise reuse a valid selected-provider cache or fetch
+   from the selected provider. A cache miss must not force Breeze merely because
+   the requested date is in the past.
+3. **Today keeps provider data separate.** Use the selected provider's own data,
+   cache and refresh rules. An existing current-day Breeze file must not silently
+   replace Kite/Kotak data; incomplete or inconsistent current-day data should not
+   override the selected source.
+4. **Replay and stepwise always use Breeze second-level data, for every date.**
+   This includes the selected trading date, today when applicable, and all previous
+   context days. Reuse usable Breeze data when cached; otherwise download from
+   Breeze. If required data cannot be obtained, report an error. Existing Kite or
+   Kotak minute files must be ignored, and neither provider is an allowed replay
+   fallback. Optional unavailable context days may be skipped by existing chart
+   handling, but must not be replaced with another provider's data.
+5. **Minimize calls during live-session startup and refresh.** Kite and Kotak
+   retrieve available minute candles for one instrument/day in one history call,
+   rather than Breeze's repeated 15-minute chunks for second data. Instrument
+   lookup/master initialization may require additional calls. Coalesce repeated
+   requests and preserve separate provider caches.
+6. **Support Kotak Neo historical candles without changing trading authentication.**
+   Use its SDK with a read-only consumer-key client; no TOTP login is needed for
+   history. Preserve order/live-feed connections, native cadence, IST timestamps,
+   and real-session trade history.
+
+### Current provider setup by mode
+
+There are two independent settings:
+
+- **Paper/real historical data**: `historical_data_policy`, with source
+  `breeze | kite | kotak` and an `allow_fallback` checkbox. Existing/default
+  settings remain **Breeze, fallback disabled**. This setting is available in
+  both website and desktop settings.
+- **Live streaming source**: `live_stream_source`, with
+  `kite | kotak | breeze | fyers`, defaulting to Kite. Its existing fallback rules
+  are separate from the historical fallback checkbox.
+
+| Mode / consumer | Today's history | Previous-day history | Live prices / execution |
+|---|---|---|---|
+| Paper trading (website and desktop) | Selected history provider; separate provider cache | Complete Breeze cache first; otherwise selected provider/cache | Configured live feed; simulated orders and paper wallet |
+| Real trading | Selected history provider; separate provider cache | Complete Breeze cache first; otherwise selected provider/cache | Configured live feed under real-session fallback rules; orders executed through Kotak Neo |
+| Replay trading (website and desktop) | Breeze only, cached or downloaded | Breeze only, cached or downloaded | Historical Breeze ticks; simulated execution; no live-feed substitution |
+| Stepwise trading (website and desktop) | Breeze only, cached or downloaded | Breeze only, cached or downloaded | Breeze ticks aggregated into stepped candles; simulated execution; no live-feed substitution |
+| Desktop chart-only live context | Same live-history routing as paper/real | Complete Breeze cache first; otherwise selected provider/cache | Shared configured live feed; chart-only history does not place orders |
+| Ordinary historical Browse / analysis | Breeze | Breeze | Historical display; does not inherit paper/real history selection |
+
+A provider chosen for live streaming does **not** decide the historical source or
+real-order broker. For example, live Kotak ticks can be paired with Kite minute
+history, while replay/stepwise remains Breeze-only regardless of either setting.
+
+### Cache, refresh and failure behavior
+
+- Prior Breeze-cache reuse checks the exact symbol/contract/day identity, existing
+  completeness row threshold, native second cadence and coverage through market
+  close. Empty, corrupt, partial and minute-only files do not satisfy this preference.
+  Complete legacy equity pickles retain their migration path.
+- Breeze retains its ten-minute current-day cache TTL. Stale/explicit refreshes
+  download an overlapping tail and merge provider rows into the daily parquet,
+  preserving the earlier PR #586 repair.
+- Kite/Kotak minute data uses separate `-kite1m.parquet` / `-kotak1m.parquet`
+  files. A minute file written intraday is refreshed for that date once it becomes
+  a previous day, instead of becoming a permanently incomplete cache. Usable
+  cached minute bars remain available as stale history if refresh fails.
+- Historical fallback runs **only when enabled for paper/real**:
+  Breeze → Kite; Kite → Breeze; Kotak → Kite → Breeze. With fallback disabled,
+  missing history is unavailable or uses an existing usable stale cache; it must
+  not initiate an unrequested Breeze download.
+- Replay/stepwise never uses those fallback chains. Required Breeze-download
+  failures report an error, and replay tick iterators reject minute frames.
+- Minute candles are never expanded into fake second ticks or exported into
+  desktop raw-second caches. Atomic writes preserve existing usable files on failure.
+
+The live-feed fallback rules remain:
+
+| Selected live source | Paper / chart-only feed candidates | Real-session feed candidates |
+|---|---|---|
+| Kite | Kite → Breeze | Kite only |
+| Kotak | Kotak → Kite → Breeze | Kotak → Kite |
+| Breeze | Breeze → Kite | Breeze → Kite |
+| Fyers | Fyers → Breeze → Kite | Fyers → Breeze → Kite |
+
+### Delivered implementation and provider limits
+
+- History operations carry explicit `live` / `replay` mode through startup,
+  resume, strike changes, chart context, worker threads and strategy backfill.
+  Background engines keep their mode while dropping the originating HTTP
+  operation/result cache. Policy is frozen per operation, including parallel loads.
+- Data endpoints accept optional `history_mode=live|replay`, defaulting to replay.
+  Website paper/real charts, indicator context, price preflight and strike selection
+  pass live mode. Backend and frontend cache keys include mode to prevent minute
+  history from leaking into replay after a mode switch.
+- Kotak uses SDK `historical_data(...)`, existing master/token resolution and
+  native minute OHLCV parsing. Stock option lookup also handles canonical-to-exchange
+  name aliases. Read-only history/master errors cannot log out the trading client.
+- Kotak history has per-key pacing and shared HTTP 429 cooldown. The parser accepts
+  the live endpoint's uppercase `SUCCESS`, discards zero-only/future placeholders,
+  treats unavailable volume as zero, and preserves actual prices in naive IST.
+- Kite/Kotak downloads depend on active, resolvable instrument tokens. Expired
+  options may require existing cached data or enabled Breeze fallback. There is
+  no contract substitution or fabricated history.
+- **Observed live Kotak check:** a stock request returned and successfully parsed
+  **360 minute candles in one API call without TOTP**. NIFTY `nse_cm|26000` returned
+  `SUCCESS` with **375 zero-only placeholders** in the same-day check. These are
+  rejected as unavailable data; configured Kite fallback can supply history when
+  enabled. This observation is not a claim that every index is unsupported.
+
+### Validation and deployment follow-up
+
+- **60 new provider/mode/cache/parser tests passed.**
+- Full backend suite: **1,537 passed / 2 pre-existing failures**. The known failures
+  are the stale options-expiry assertion in `test_options_api.py` and the missing
+  `group_id` fixture in `test_tab_restore.py`; both were previously reproduced on
+  unchanged `dev` during the earlier repairs.
+- Website and desktop TypeScript checks and `git diff --check` passed. Tests include
+  the real Kotak SDK with mocked HTTP transport, cross-mode cache isolation,
+  exact-contract lookup, Breeze-only replay, provider failures and placeholder rejection.
+- After deployment, verify start/resume, strike changes and refresh for paper/real;
+  previous-day cache hits and uncached history; Kotak history while trading is
+  logged out; enabled/disabled historical fallback; and replay/stepwise with
+  pre-existing Kite/Kotak files. Confirm that all replay/context dates remain Breeze-only.
+
+See [live history providers](live-history-providers.md) for detailed routing,
+API compatibility, SDK references and acceptance steps.

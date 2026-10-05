@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { mergeScreenDraft, mergeScreenState } from './screenConflict'
+import { mergeScreenDraft, mergeScreenState, screenContentKey } from './screenConflict'
 
 describe('mergeScreenState', () => {
   it('keeps independent local and remote presentation changes', () => {
@@ -82,5 +82,26 @@ describe('mergeScreenState', () => {
     const local = { layout: '4-grid', mode: 'Browse', session_id: undefined }
     const remote = { layout: '1', mode: 'Paper', session_id: 'session-1' }
     expect(mergeScreenState(base, local, remote).conflicts).toEqual(['mode', 'session_id'])
+  })
+})
+
+
+describe('screen JSON round trips', () => {
+  it('ignores reordered object keys and fields omitted by JSON transport', () => {
+    const local = { mode: 'Browse', session_id: undefined, tiles: [{ id: 'tile', symbol: 'NIFTY' }], indicators: { tile: ['EMA', 'RSI'] } }
+    const returned = { indicators: { tile: ['EMA', 'RSI'] }, tiles: [{ symbol: 'NIFTY', id: 'tile' }], mode: 'Browse' }
+    expect(screenContentKey(local)).toBe(screenContentKey(returned))
+  })
+
+  it('keeps tile and indicator order significant', () => {
+    expect(screenContentKey({ tiles: ['a', 'b'] })).not.toBe(screenContentKey({ tiles: ['b', 'a'] }))
+    expect(screenContentKey({ indicators: ['EMA', 'RSI'] })).not.toBe(screenContentKey({ indicators: ['RSI', 'EMA'] }))
+  })
+
+  it('does not report a conflict when a reordered local field and an actual remote edit coexist', () => {
+    const base = { custom: { a: 1, b: 2 }, mode: 'Browse' }
+    const local = { mode: 'Browse', custom: { b: 2, a: 1 } }
+    const remote = { ...base, custom: { a: 3, b: 2 } }
+    expect(mergeScreenState(base, local, remote)).toEqual({ state: remote, conflicts: [] })
   })
 })
