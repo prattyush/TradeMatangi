@@ -199,6 +199,8 @@ def iter_ticks(
     timestamp that displays as the IST wall-clock time in Lightweight Charts.
     """
     df = load_dataframe(symbol, date)
+    from app.services.historical_data_service import _require_replay_cadence, history_mode
+    _require_replay_cadence(df, history_mode())
 
     start_ts = pd.Timestamp(f"{date} {start_time}", tz="UTC")
     df = df[df.index >= start_ts]
@@ -215,7 +217,7 @@ def iter_ticks(
 
 
 def load_dataframe(symbol: str, date: str) -> pd.DataFrame:
-    from app.services.historical_data_service import is_today, load_history
-    if is_today(date):
+    from app.services.historical_data_service import history_mode, load_history
+    if history_mode() == "live":
         return load_history(symbol, date).frame
     return _load_breeze_dataframe(symbol, date)

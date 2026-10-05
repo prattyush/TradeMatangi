@@ -238,7 +238,7 @@ export default function SessionControls({
           const isLiveSession = sessionType === 'paper' || sessionType === 'real'
           const priceQueryTime = isLiveSession ? getCurrentIstTime() : startTime
           const [priceRes, expiryRes] = await Promise.all([
-            api.getPriceAt(currentSymbol, currentDate, priceQueryTime),
+            api.getPriceAt(currentSymbol, currentDate, priceQueryTime, isLiveSession ? 'live' : 'replay'),
             api.getExpiry(currentSymbol, currentDate),
           ])
           const interval = STRIKE_INTERVALS[currentSymbol] ?? 50
@@ -255,8 +255,8 @@ export default function SessionControls({
             const thresholdPE = parseFloat(localStorage.getItem('maxPriceThresholdPE') ?? defaultThreshold)
             const refTime = isLiveSession ? getCurrentIstTime() : startTime
             const [ceRes, peRes] = await Promise.all([
-              api.findStrikeByPrice(currentSymbol, currentDate, expiryRes.expiry, 'CE', thresholdCE, refTime),
-              api.findStrikeByPrice(currentSymbol, currentDate, expiryRes.expiry, 'PE', thresholdPE, refTime),
+              api.findStrikeByPrice(currentSymbol, currentDate, expiryRes.expiry, 'CE', thresholdCE, refTime, isLiveSession ? 'live' : 'replay'),
+              api.findStrikeByPrice(currentSymbol, currentDate, expiryRes.expiry, 'PE', thresholdPE, refTime, isLiveSession ? 'live' : 'replay'),
             ])
             ceStrike = ceRes.strike
             peStrike = peRes.strike

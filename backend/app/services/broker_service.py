@@ -362,7 +362,10 @@ def _fetch_breeze_historical_unlocked(symbol: str, date: str, *, force_refresh: 
 
 
 def fetch_historical(symbol: str, date: str) -> Path:
-    from app.services.historical_data_service import is_today, load_history
-    if is_today(date):
+    from app.services.historical_data_service import history_mode, load_history
+    if history_mode() == "live":
         return load_history(symbol, date).path
+    from app.services.historical_data_service import refresh_requested
+    if refresh_requested():
+        return _fetch_breeze_historical(symbol, date, force_refresh=True)
     return _fetch_breeze_historical(symbol, date)

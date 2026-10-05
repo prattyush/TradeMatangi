@@ -473,6 +473,12 @@ def _assert_can_switch_active_right(session, contract: dict) -> None:
 
 
 def _seed_underlying_options_request(req: SimulationStartRequest) -> None:
+    from app.services.historical_data_service import historical_operation
+    with historical_operation(mode="live" if req.session_type in ("paper", "real") else "replay"):
+        _seed_underlying_options_request_impl(req)
+
+
+def _seed_underlying_options_request_impl(req: SimulationStartRequest) -> None:
     """Resolve expiry/ATM for desktop sessions that start from only the underlying chart."""
     if req.instrument_type != "options" or (req.strike is not None and req.expiry):
         return
@@ -965,7 +971,8 @@ async def start_desktop_trading(req: DesktopTradingStartRequest, user_id: str = 
     else:
         req.session_type = "stepwise"
         req.stepwise = True
-    _seed_underlying_options_request(req)
+    from app.services.history_workers import run_history
+    await run_history(_seed_underlying_options_request, req)
     session_response = await simulation_router.start_with_paper_claim(req, user_id, desktop_independent=True)
     session = _require_session(session_response.session_id, user_id)
     setattr(session, "desktop_mode", req.desktop_mode)
@@ -1099,10 +1106,13 @@ async def attach_contract(session_id: str, req: AttachContractRequest, user_id: 
         raise HTTPException(status_code=400, detail=f"This desktop trading session is locked to expiry {session.expiry}")
     _assert_can_switch_active_right(session, contract)
     ensure = lambda: simulation_router._ensure_options_data(session.symbol, session.date, contract["strike"], contract["expiry"], contract["right"])
-    if session.session_type == "paper":
-        simulation_router._soft_ensure(ensure)
-    else:
-        ensure()
+    from app.services.historical_data_service import historical_operation
+    from app.services.history_workers import run_history
+    with historical_operation(mode="live" if session.session_type in ("paper", "real") else "replay"):
+        if session.session_type in ("paper", "real"):
+            await run_history(simulation_router._soft_ensure, ensure)
+        else:
+            await run_history(ensure)
     if session.session_type == "paper" and getattr(session, "paper_stream_source", None):
         try:
             sim_svc.subscribe_desktop_option_contract(session, contract)

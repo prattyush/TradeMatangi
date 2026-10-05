@@ -1186,6 +1186,8 @@ def _persist_group_clock(session: SimulationSession) -> None:
 
 
 async def _run_session(session: SimulationSession) -> None:
+    from app.services.historical_data_service import detach_historical_operation
+    detach_historical_operation(mode="replay")
     session.state = SimulationState.RUNNING
 
     start_event = {
@@ -1499,7 +1501,7 @@ def _historical_gap_ticks(symbol: str, date: str, after_ts: int) -> list[dict]:
     try:
         import pandas as pd
         from app.services.historical_data_service import load_history
-        df = load_history(symbol, date).frame
+        df = load_history(symbol, date, mode="live").frame
         if df.empty:
             return []
         if df.index.tzinfo is None:
@@ -1532,7 +1534,7 @@ def _historical_gap_options_ticks(
     try:
         import pandas as pd
         from app.services.historical_data_service import load_history
-        df = load_history(symbol, date, strike, expiry, right).frame
+        df = load_history(symbol, date, strike, expiry, right, mode="live").frame
         if df.empty:
             return []
         if df.index.tzinfo is None:
@@ -1663,7 +1665,7 @@ async def _run_paper_session(session: SimulationSession) -> None:
     """
     # Background engines must not retain their originating HTTP request cache.
     from app.services.historical_data_service import detach_historical_operation, historical_operation
-    detach_historical_operation()
+    detach_historical_operation(mode="live")
     session.state = SimulationState.RUNNING
     session.queue.phase = "phase1_fast_replay"
     phase1_started = time.monotonic()
@@ -1687,7 +1689,7 @@ async def _run_paper_session(session: SimulationSession) -> None:
         await start_session_feed(session)
         session.paper_stream_source = None  # history is presentation, not a live quote
         await session.queue.put(json.dumps({"type": "feed_status", **session.market_feed_group.status()}))
-        with historical_operation():
+        with historical_operation(mode="live"):
             # ── Phase 1: fast-replay historical data for today ────────────────────
             logger.info("Paper session %s: Phase 1 — fetching today's data for %s %s",
                         session.session_id, session.symbol, session.date)
@@ -2008,7 +2010,7 @@ async def _run_real_session(session: SimulationSession) -> None:
     """
     # Background engines must not retain their originating HTTP request cache.
     from app.services.historical_data_service import detach_historical_operation, historical_operation
-    detach_historical_operation()
+    detach_historical_operation(mode="live")
     session.state = SimulationState.RUNNING
     loop = asyncio.get_running_loop()
 
@@ -2025,7 +2027,7 @@ async def _run_real_session(session: SimulationSession) -> None:
         await start_session_feed(session)
         session.paper_stream_source = None  # history is presentation, not a live quote
         await session.queue.put(json.dumps({"type": "feed_status", **session.market_feed_group.status()}))
-        with historical_operation():
+        with historical_operation(mode="live"):
             # Phase 1: fast-replay today's historical data (same as paper)
             logger.info("Real session %s: Phase 1 — fetching today's data for %s",
                         session.session_id, session.symbol)
@@ -2432,7 +2434,7 @@ def _backfill_bar_history(
         if right is None:
             if is_live:
                 from app.services.historical_data_service import load_history
-                df = load_history(session.symbol, session.date).frame
+                df = load_history(session.symbol, session.date, mode="live").frame
             else:
                 from app.services.data_loader import load_dataframe
                 df = load_dataframe(session.symbol, session.date)
@@ -2442,7 +2444,7 @@ def _backfill_bar_history(
                 return []
             if is_live:
                 from app.services.historical_data_service import load_history
-                df = load_history(session.symbol, session.date, strike, session.expiry, right).frame
+                df = load_history(session.symbol, session.date, strike, session.expiry, right, mode="live").frame
             else:
                 from app.services.options_service import load_options_dataframe
                 df = load_options_dataframe(session.symbol, session.date, strike, session.expiry, right)

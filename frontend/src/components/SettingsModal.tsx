@@ -440,7 +440,7 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
   // Admin section — live streaming source
   const [streamSource, setStreamSource] = useState<'fyers' | 'kite' | 'kotak' | 'breeze'>('kite')
 
-  const [historicalSource, setHistoricalSource] = useState<'breeze' | 'kite'>('breeze')
+  const [historicalSource, setHistoricalSource] = useState<'breeze' | 'kite' | 'kotak'>('breeze')
   const [historicalFallback, setHistoricalFallback] = useState(false)
   const [historicalSaving, setHistoricalSaving] = useState(false)
 
@@ -858,7 +858,7 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
     }
   }
 
-  const saveHistoricalSource = async (source: 'breeze' | 'kite', fallback: boolean) => {
+  const saveHistoricalSource = async (source: 'breeze' | 'kite' | 'kotak', fallback: boolean) => {
     setHistoricalSaving(true)
     try {
       const saved = await api.setHistoricalSource(source, fallback)
@@ -2300,21 +2300,22 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
 
                 <div style={{ borderTop: '1px solid #21262d', paddingTop: 16 }}>
                   <div style={{ fontSize: 12, color: '#f0883e', fontWeight: 600, marginBottom: 10 }}>
-                    TODAY’S HISTORICAL DATA
+                    PAPER/REAL HISTORICAL DATA
                   </div>
                   <select value={historicalSource} disabled={historicalSaving}
-                    onChange={e => void saveHistoricalSource(e.target.value as 'breeze' | 'kite', historicalFallback)}
+                    onChange={e => void saveHistoricalSource(e.target.value as 'breeze' | 'kite' | 'kotak', historicalFallback)}
                     style={{ background: '#161b22', color: '#c9d1d9', border: '1px solid #30363d', borderRadius: 6, padding: '6px 10px' }}>
                     <option value="breeze">ICICI Breeze (1 second)</option>
                     <option value="kite">Kite (1 minute)</option>
+                    <option value="kotak">Kotak Neo (1 minute)</option>
                   </select>
                   <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, marginTop: 10 }}>
                     <input type="checkbox" checked={historicalFallback} disabled={historicalSaving}
                       onChange={e => void saveHistoricalSource(historicalSource, e.target.checked)} />
-                    Allow fallback to the other historical provider
+                    Allow historical provider fallback
                   </label>
                   <div style={{ fontSize: 11, color: '#8b949e', marginTop: 6 }}>
-                    Applies only to today’s historical data, independently of live streaming. Earlier dates always use Breeze for one-second replay.
+                    Paper/real history uses this provider independently of live streaming. Previous days reuse complete Breeze caches first. Today keeps providers separate. Replay and stepwise always use Breeze.
                   </div>
                 </div>
 
