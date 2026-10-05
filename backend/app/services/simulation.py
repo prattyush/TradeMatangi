@@ -1634,7 +1634,7 @@ async def _setup_kotak_streaming(session: SimulationSession, loop: "asyncio.Abst
                     session.session_id, exc,
                 )
 
-    ks.get_kotak_broadcaster().register(
+    await asyncio.to_thread(ks.get_kotak_broadcaster().register,
         session.session_id, tokens, exchanges, rights,
         session.paper_tick_queue, loop,
         is_indices=is_indices,
