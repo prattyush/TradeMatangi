@@ -1,6 +1,6 @@
 # Paper/real history providers
 
-This follow-up starts from dev `7c3a071`, which includes PR #586. The user deployed those original fixes to main/EC2 and confirmed that Kite throttling, Breeze refreshes and shared Kite streaming were resolved. This change uses a separate branch/PR and preserves those repairs.
+This follow-up starts from dev `7c3a071`, which includes PR #586. The user deployed those original fixes to main/EC2 and confirmed that Kite throttling, Breeze refreshes and shared Kite streaming were resolved. The follow-up was implemented separately in [PR #588](https://github.com/prattyush/TradeMatangi/pull/588) and merged to `dev` as `911a6f0`. It preserves those repairs. The full requirement and current mode/provider setup are recorded in [Phase 19](spec-phase19.md#paperreal-history-providers--2026-10-05).
 
 ## Routing
 
@@ -41,6 +41,8 @@ Official references:
 Kite/Kotak minute downloads require resolvable active instrument tokens. Expired options may be unavailable unless cached or supplied by enabled Breeze fallback. Kotak documents a 30-day maximum range for minute requests; the one-day requests here stay within that bound.
 
 ## Verification
+
+Final implementation validation: **60 new tests passed**; full backend suite **1,537 passed / 2 known baseline failures** (stale options-expiry assertion and missing `group_id` fixture). Website and desktop TypeScript checks passed.
 
 Tests cover the routing matrix for equity/options, valid and invalid caches, provider isolation, concurrent live/replay requests, session startup mode, API defaults/validation, as-of minute price lookup, fallback order, read-only Kotak authentication/master errors, native timestamps, malformed responses, throttling, stale cache preservation and one-call-per-day cache behavior. A test also exercises the actual Kotak SDK with a mock HTTP transport to check its wire parameters and Authorization header.
 
