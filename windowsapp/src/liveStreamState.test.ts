@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { applyLiveStreamPayloadToSnapshot, type LiveSnapshot } from './liveStreamState'
+import { applyLiveStreamPayloadToSnapshot, sameLiveTileConfiguration, type LiveSnapshot } from './liveStreamState'
 
 const candle = (timestamp: number, close: number) => ({ timestamp, open: close, high: close, low: close, close })
 
@@ -13,6 +13,19 @@ const snapshot = (eventId = 1): LiveSnapshot => ({
 })
 
 describe('desktop live stream state', () => {
+  it('does not reconfigure an instrument when transport changes field order', () => {
+    expect(sameLiveTileConfiguration(
+      { instrument: { exchange: 'BSE', kind: 'index', symbol: 'BSESEN' }, interval_minutes: 3 },
+      { instrument: { kind: 'index', exchange: 'BSE', symbol: 'BSESEN' }, interval_minutes: 3 },
+    )).toBe(true)
+  })
+  it('detects actual interval and exact option contract changes', () => {
+    const current = { instrument: { kind: 'option', exchange: 'BSE', underlying: 'BSESEN', expiry: '2026-10-08', strike: 70800, right: 'PE' }, interval_minutes: 3 }
+    expect(sameLiveTileConfiguration(current, { ...current, interval_minutes: 5 })).toBe(false)
+    for (const field of ['expiry', 'strike', 'right', 'underlying', 'exchange']) {
+      expect(sameLiveTileConfiguration(current, { ...current, instrument: { ...current.instrument, [field]: 'changed' } })).toBe(false)
+    }
+  })
   it('ignores provider status older than the accepted cursor', () => {
     const current = snapshot(5)
     const event = { version: 1, stream_id: 'stream-1', event_id: 4, timestamp: 10,

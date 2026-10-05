@@ -17,7 +17,7 @@ import { replayCandles } from './chartState'
 import { shouldConsumeDrawingCommand } from './drawingState'
 import type { Candle, DesktopOrder, DesktopPosition, DesktopTrade, DesktopTradingSnapshot } from './contracts'
 import { aggregateLiveTileCandles, appendLiveTick, reconcileLiveTicks } from './liveCandles'
-import { LiveEventJournal, applyLiveStreamPayloadToSnapshot, type LiveSnapshot, type LiveTileState } from './liveStreamState'
+import { LiveEventJournal, applyLiveStreamPayloadToSnapshot, sameLiveTileConfiguration, type LiveSnapshot, type LiveTileState } from './liveStreamState'
 import { isDesktopTradingSnapshot } from './paperTradingState'
 import { shouldShowMessage, useDismissMessage } from './useDismissMessage'
 import { mergeScreenDraft, type ScreenDraft } from './screenConflict'
@@ -1109,7 +1109,7 @@ function ScreenController(props: ScreenControllerProps) {
         }
         for (const tile of desired) {
           const existing = snapshot.tiles.find(item => item.tile_id === tile.tile_id)
-          const same = existing && JSON.stringify({ instrument: existing.instrument, interval_minutes: existing.interval_minutes }) === JSON.stringify({ instrument: tile.instrument, interval_minutes: tile.interval_minutes })
+          const same = existing && sameLiveTileConfiguration(existing, tile)
           if (!same) {
             snapshot = await liveRequest(`${snapshot.stream_id}/tiles/${encodeURIComponent(tile.tile_id)}`, 'PUT', { tile })
           }

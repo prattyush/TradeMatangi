@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+from app.services.history_workers import run_history
 import logging
 import time
 import uuid
@@ -226,8 +227,8 @@ async def _load_history(tile: dict) -> list[dict]:
         if instrument.get("kind") == "option":
             from app.services.options_service import fetch_options_historical, load_options_dataframe
             for day in (day for day in dates if day <= instrument["expiry"]):
-                await asyncio.to_thread(fetch_options_historical, instrument["underlying"], day, int(instrument["strike"]), instrument["expiry"], instrument["right"])
-                frame = await asyncio.to_thread(load_options_dataframe, instrument["underlying"], day, int(instrument["strike"]), instrument["expiry"], instrument["right"])
+                await run_history(fetch_options_historical, instrument["underlying"], day, int(instrument["strike"]), instrument["expiry"], instrument["right"])
+                frame = await run_history(load_options_dataframe, instrument["underlying"], day, int(instrument["strike"]), instrument["expiry"], instrument["right"])
                 if day == today:
                     candles.extend(_completed_current_candles(frame, interval))
                 else:
@@ -236,8 +237,8 @@ async def _load_history(tile: dict) -> list[dict]:
             from app.routers.data import _ensure_data
             from app.services.data_loader import load_dataframe
             for day in dates:
-                await asyncio.to_thread(_ensure_data, instrument["symbol"], day)
-                frame = await asyncio.to_thread(load_dataframe, instrument["symbol"], day)
+                await run_history(_ensure_data, instrument["symbol"], day)
+                frame = await run_history(load_dataframe, instrument["symbol"], day)
                 if day == today:
                     candles.extend(_completed_current_candles(frame, interval))
                 else:
@@ -262,13 +263,13 @@ async def _load_current_date_seconds(tile: dict) -> list[dict]:
             if today > instrument["expiry"]:
                 return []
             from app.services.options_service import fetch_options_historical, load_options_dataframe
-            await asyncio.to_thread(fetch_options_historical, instrument["underlying"], today, int(instrument["strike"]), instrument["expiry"], instrument["right"])
-            frame = await asyncio.to_thread(load_options_dataframe, instrument["underlying"], today, int(instrument["strike"]), instrument["expiry"], instrument["right"])
+            await run_history(fetch_options_historical, instrument["underlying"], today, int(instrument["strike"]), instrument["expiry"], instrument["right"])
+            frame = await run_history(load_options_dataframe, instrument["underlying"], today, int(instrument["strike"]), instrument["expiry"], instrument["right"])
         else:
             from app.routers.data import _ensure_data
             from app.services.data_loader import load_dataframe
-            await asyncio.to_thread(_ensure_data, instrument["symbol"], today)
-            frame = await asyncio.to_thread(load_dataframe, instrument["symbol"], today)
+            await run_history(_ensure_data, instrument["symbol"], today)
+            frame = await run_history(load_dataframe, instrument["symbol"], today)
 
         # A provider can fall back to minute (or larger) bars. Those bars are
         # already represented by the normal chart-candle baseline, but must never
@@ -286,13 +287,13 @@ async def _seed(stream: DesktopStream, tile: dict) -> None:
     """Load initial history and report a provider error only for this tile."""
     requested = tile.copy()
     history_generation = stream.tile_history_generations.get(tile["tile_id"], 0)
-    logger.info(
-        "desktop_live_seed stream_id=%s tile_id=%s instrument=%s interval=%s reason=seed_or_reconfigure",
-        stream.stream_id, tile.get("tile_id"), tile.get("instrument"), tile.get("interval_minutes"),
-    )
     try:
         key = _history_cache_key(requested)
         if key not in stream.history_cache:
+            logger.info(
+                "desktop_live_seed stream_id=%s tile_id=%s instrument=%s interval=%s reason=seed_or_reconfigure",
+                stream.stream_id, tile.get("tile_id"), tile.get("instrument"), tile.get("interval_minutes"),
+            )
             stream.history_cache[key] = await _load_history(requested)
         candles = [candle.copy() for candle in stream.history_cache[key]]
     except Exception as error:
@@ -340,6 +341,8 @@ async def _consume(stream: DesktopStream, tile: dict, queue: asyncio.Queue) -> N
 async def reconfigure_interval(stream: DesktopStream, tile: dict, interval_minutes: int) -> None:
     """Reload one tile's history without disturbing its raw-tick route."""
     async with _tile_lock(stream, tile["tile_id"]):
+        if tile.get("interval_minutes") == interval_minutes:
+            return
         stream.tile_history_generations[tile["tile_id"]] = stream.tile_history_generations.get(tile["tile_id"], 0) + 1
         tile["interval_minutes"] = interval_minutes
         tile["candles"] = []
