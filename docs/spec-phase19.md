@@ -2090,6 +2090,11 @@ Merging/deploying to `main` remains manual.
 
 ### Complete requirement
 
+**Platform parity:** Replay, stepwise and paper trading follow the same
+mode-specific provider, cache, refresh, fallback, failure and native-cadence
+requirements on **both desktop and website**. The requirements below apply
+equally to both platforms.
+
 1. **Paper and real trading must use the configured historical provider** for
    equity/index and exact-contract option history, independently of the live
    streaming provider. Supported history providers are ICICI Breeze, Kite and
@@ -2134,11 +2139,11 @@ There are two independent settings:
 
 | Mode / consumer | Today's history | Previous-day history | Live prices / execution |
 |---|---|---|---|
-| Paper trading | Selected history provider; separate provider cache | Complete Breeze cache first; otherwise selected provider/cache | Configured live feed; simulated orders and paper wallet |
+| Paper trading (website and desktop) | Selected history provider; separate provider cache | Complete Breeze cache first; otherwise selected provider/cache | Configured live feed; simulated orders and paper wallet |
 | Real trading | Selected history provider; separate provider cache | Complete Breeze cache first; otherwise selected provider/cache | Configured live feed under real-session fallback rules; orders executed through Kotak Neo |
-| Replay trading | Breeze only, cached or downloaded | Breeze only, cached or downloaded | Historical Breeze ticks; simulated execution; no live-feed substitution |
-| Stepwise trading | Breeze only, cached or downloaded | Breeze only, cached or downloaded | Breeze ticks aggregated into stepped candles; simulated execution; no live-feed substitution |
-| Desktop live / paper chart context | Same live-history routing as paper/real | Complete Breeze cache first; otherwise selected provider/cache | Shared configured live feed; chart-only history does not place orders |
+| Replay trading (website and desktop) | Breeze only, cached or downloaded | Breeze only, cached or downloaded | Historical Breeze ticks; simulated execution; no live-feed substitution |
+| Stepwise trading (website and desktop) | Breeze only, cached or downloaded | Breeze only, cached or downloaded | Breeze ticks aggregated into stepped candles; simulated execution; no live-feed substitution |
+| Desktop chart-only live context | Same live-history routing as paper/real | Complete Breeze cache first; otherwise selected provider/cache | Shared configured live feed; chart-only history does not place orders |
 | Ordinary historical Browse / analysis | Breeze | Breeze | Historical display; does not inherit paper/real history selection |
 
 A provider chosen for live streaming does **not** decide the historical source or

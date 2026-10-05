@@ -4,10 +4,14 @@ This follow-up starts from dev `7c3a071`, which includes PR #586. The user deplo
 
 ## Routing
 
+Replay, stepwise and paper trading use the same mode-specific provider rules on
+**desktop and website**, including cache reuse, downloads, refreshes, fallback,
+required-data errors and native cadence.
+
 | Consumer | Today | Previous dates |
 |---|---|---|
-| Website paper/real and desktop live charts | Configured provider, with separate provider caches | Complete Breeze cache first; otherwise configured provider/cache |
-| Replay and stepwise | Breeze only | Breeze only |
+| Paper (website and desktop), website real, and desktop live charts | Configured provider, with separate provider caches | Complete Breeze cache first; otherwise configured provider/cache |
+| Replay and stepwise (website and desktop) | Breeze only | Breeze only |
 | Historical Browse and analysis | Breeze | Breeze |
 
 The configured source is independent of the live streaming source. The existing `historical_data_policy` setting accepts `breeze`, `kite` and now `kotak`; the default remains Breeze with fallback disabled. Both settings UIs call this **Paper/real historical data**. Existing saved values remain valid; no database migration is needed.
