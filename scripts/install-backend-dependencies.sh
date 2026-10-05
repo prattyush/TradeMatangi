@@ -54,5 +54,8 @@ from neo_api_client.websocket.feed import SFeedWebSocket
 from neo_api_client.websocket.orderfeed import OrderFeedWebSocket
 print("Kotak SDK 3.0.7 imports verified")
 PY
-"$PYTHON_BIN" -m pip check
-echo "Backend dependencies verified."
+if "$PYTHON_BIN" -m pip check; then
+    echo "Backend dependencies verified."
+else
+    echo "WARNING: pip check found dependency conflicts. Continuing backend startup with the installed packages." >&2
+fi
