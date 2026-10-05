@@ -30,8 +30,10 @@ def clean(monkeypatch, tmp_path):
     history._policy_cache = None
     monkeypatch.setattr(history, "is_today", lambda date: date == TODAY)
     monkeypatch.setattr(token_service, "get_token", lambda key: None)
+    monkeypatch.setattr(token_service, "set_token", MagicMock())
     monkeypatch.setattr(history, "_path", lambda provider, *args: tmp_path / f"{provider}.parquet")
-    yield
+    with history.historical_operation(mode="live"):
+        yield
     history._results.clear()
     history._policy_cache = None
 
@@ -77,10 +79,10 @@ def test_fallback_requires_checkbox(source, fallback, monkeypatch):
 
 
 @pytest.mark.parametrize("fallback", [False, True])
-def test_past_always_breeze_even_when_today_kite(fallback, monkeypatch):
+def test_replay_past_always_breeze_even_when_live_kite(fallback, monkeypatch):
     calls = []
     monkeypatch.setattr(history, "_fetch", lambda provider, *args: calls.append(provider) or frame(PAST))
-    result = history.load_history("NIFTY", PAST, policy=history.HistoricalPolicy("kite", fallback))
+    result = history.load_history("NIFTY", PAST, policy=history.HistoricalPolicy("kite", fallback), mode="replay")
     assert calls == ["breeze"] and result.interval_seconds == 1
 
 
@@ -91,7 +93,7 @@ def test_past_failure_never_falls_back_to_kite(monkeypatch):
         raise RuntimeError("Breeze unavailable")
     monkeypatch.setattr(history, "_fetch", fetch)
     with pytest.raises(RuntimeError):
-        history.load_history("NIFTY", PAST, policy=history.HistoricalPolicy("kite", True))
+        history.load_history("NIFTY", PAST, policy=history.HistoricalPolicy("kite", True), mode="replay")
     assert calls == ["breeze"]
 
 
@@ -186,7 +188,7 @@ def test_strategy_backfill_uses_breeze_with_kite_stream(monkeypatch):
 @pytest.mark.asyncio
 async def test_admin_validates_source_and_reports_failed_save(monkeypatch):
     with pytest.raises(HTTPException) as error:
-        await admin.set_historical_source(admin.HistoricalSourceRequest(source="kotak"), "admin")
+        await admin.set_historical_source(admin.HistoricalSourceRequest(source="fyers"), "admin")
     assert error.value.status_code == 400
     monkeypatch.setattr(token_service, "set_token", MagicMock(side_effect=RuntimeError("write failed")))
     with pytest.raises(HTTPException) as error:
@@ -259,6 +261,8 @@ async def test_options_chart_mixes_breeze_past_and_selected_today(monkeypatch):
     monkeypatch.setattr(data, "prior_trading_days", lambda *args, **kwargs: [PAST])
     monkeypatch.setattr(history, "get_policy", lambda: history.HistoricalPolicy("kite"))
     past_fetch = MagicMock()
+    monkeypatch.setattr(history, "_complete_breeze_cache", lambda symbol, day, *args:
+        history.HistoricalResult(history._normalize(frame(PAST), PAST), history._path("breeze", symbol, day, None, None, None), "kite", "breeze", 1))
     monkeypatch.setattr(options_service, "_fetch_breeze_options_historical", past_fetch)
     monkeypatch.setattr(options_service, "_load_breeze_options_dataframe", lambda *args: history._normalize(frame(PAST), PAST))
     fetch = MagicMock(return_value=frame(freq="min", value=30))
@@ -268,12 +272,12 @@ async def test_options_chart_mixes_breeze_past_and_selected_today(monkeypatch):
     monkeypatch.setattr("asyncio.to_thread", inline_thread)
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         response = await client.get("/api/data/options-historical", params={"symbol": "BSESEN", "date": TODAY,
-            "strike": 71200, "expiry": TODAY, "right": "PE", "interval_minutes": 1})
+            "strike": 71200, "expiry": TODAY, "right": "PE", "interval_minutes": 1, "history_mode": "live"})
     assert response.status_code == 200
     body = response.json()
     assert body["dates"] == [PAST, TODAY]
     assert [candle["close"] for candle in body["candles"]] == [42, 30, 31, 32]
-    past_fetch.assert_called_once_with("BSESEN", PAST, 71200, TODAY, "PE")
+    past_fetch.assert_not_called()
     assert fetch.call_args.args[0] == "kite"
 
 

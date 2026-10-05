@@ -2072,3 +2072,7 @@ Delivery branch: `feature/phase19-kotak-sdk-v3`, targeting `dev`. Review and mer
 into `dev` are pending; merging into `main` remains manual. Stop the backend
 before migrating its venv. Keep the code revision and SDK revision together
 when rolling back; the new startup scripts intentionally reinstall 3.0.7.
+
+## Paper/real history providers — 2026-10-05
+
+This follow-up supersedes the 2026-10-01 today-only historical setting. Paper/real and desktop live charts now use configured Breeze, Kite or Kotak minute history for today and uncached previous dates, while reusing complete previous-day Breeze caches first. Today keeps provider caches separate. Replay/stepwise and ordinary historical Browse/analysis remain Breeze-only. Kotak history uses a consumer-key client without trading login; provider minute caches remain separate from Breeze second data. See [live history providers](live-history-providers.md) for routing, API compatibility, limitations and validation. PR #586 is already merged and EC2-verified; this work uses a separate follow-up PR.

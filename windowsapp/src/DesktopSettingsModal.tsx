@@ -854,7 +854,7 @@ export function DesktopSettingsModal({
                     Save streaming source
                   </button>
                   <label>
-                    Today's historical source
+                    Paper/real historical source
                     <select
                       value={historical.source}
                       onChange={(e) =>
@@ -864,8 +864,9 @@ export function DesktopSettingsModal({
                         }))
                       }
                     >
-                      <option value="breeze">ICICI Breeze</option>
-                      <option value="kite">Kite</option>
+                      <option value="breeze">ICICI Breeze (1 second)</option>
+                      <option value="kite">Kite (1 minute)</option>
+                      <option value="kotak">Kotak Neo (1 minute)</option>
                     </select>
                   </label>
                   <label>
@@ -899,6 +900,7 @@ export function DesktopSettingsModal({
                   >
                     Save historical source
                   </button>
+                  <small>Previous days reuse complete Breeze caches first. Today uses the selected provider. Replay and stepwise always use Breeze.</small>
                   <strong>Real trading access</strong>
                   <label>
                     Email

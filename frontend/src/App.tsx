@@ -906,7 +906,7 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
         const refTime = currentTimeForStrikeQuery()
         try {
           const res = await api.findStrikeByPrice(
-            sim.symbol, sim.date, effectiveExpiry, addPaneType as 'CE' | 'PE', threshold, refTime)
+            sim.symbol, sim.date, effectiveExpiry, addPaneType as 'CE' | 'PE', threshold, refTime, sim.sessionType === 'paper' || sim.sessionType === 'real' ? 'live' : 'replay')
           strike = res.strike
         } catch {
           // fallback to OTM offset if API fails
@@ -971,6 +971,7 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
 
   const indicatorCacheKey = useCallback((descriptor: IndicatorCacheDescriptor) => {
     const parts = [
+      sim.sessionType === 'paper' || sim.sessionType === 'real' ? 'live' : 'replay',
       sim.symbol,
       sim.date,
       descriptor.leg,
@@ -979,7 +980,7 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
       descriptor.expiry ?? '',
     ]
     return parts.join('|')
-  }, [sim.symbol, sim.date])
+  }, [sim.symbol, sim.date, sim.sessionType])
 
   const descriptorForPane = useCallback((pane: PaneConfig): IndicatorCacheDescriptor => ({
     leg: pane.type === 'equity' ? 'underlying' : pane.right ?? 'underlying',
@@ -1056,9 +1057,9 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
           if (descriptor.leg === 'underlying') {
             const cutoffTime = liveTs != null ? formatTimeFromTs(liveTs) : startTime
             const [historical, preSession] = await Promise.all([
-              api.getHistorical(sim.symbol, sim.date, descriptor.intervalMinutes, historicalDays).catch(() => ({ candles: [] })),
+              api.getHistorical(sim.symbol, sim.date, descriptor.intervalMinutes, historicalDays, sim.sessionType === 'paper' || sim.sessionType === 'real' ? 'live' : 'replay').catch(() => ({ candles: [] })),
               cutoffTime
-                ? api.getPreSession(sim.symbol, sim.date, cutoffTime, descriptor.intervalMinutes)
+                ? api.getPreSession(sim.symbol, sim.date, cutoffTime, descriptor.intervalMinutes, false, sim.sessionType === 'paper' || sim.sessionType === 'real' ? 'live' : 'replay')
                 : Promise.resolve([]),
             ])
             const allCandles = [...historical.candles, ...preSession]
@@ -1077,6 +1078,8 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
               descriptor.leg,
               descriptor.intervalMinutes,
               historicalDays,
+              false,
+              sim.sessionType === 'paper' || sim.sessionType === 'real' ? 'live' : 'replay',
             )
             const indicatorCandles = candles.filter(c => cutoffTs == null || c.time < cutoffTs).map(toIndicatorCandle)
             setIndicatorCandleCache(prev => {
@@ -1821,6 +1824,7 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
           key={`${chartSessionKey}:${pane.id}:${pane.type}:${pane.right ?? 'EQ'}:${pane.strike ?? ''}:${pane.expiry ?? ''}`}
           symbol={chartSymbol}
           tradingDate={chartDate}
+          historyMode={!draft && (sim.sessionType === 'paper' || sim.sessionType === 'real') ? 'live' : 'replay'}
           startTime={draft ? null : sim.startTime}
           intervalMinutes={pane.intervalMinutes}
           latestTick={draft ? null : getTickForPane(pane)}

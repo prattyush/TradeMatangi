@@ -280,14 +280,14 @@ def fetch_kite_1min(symbol: str, date: str) -> "pd.DataFrame":
     import pandas as pd
     from app.config import OHLCDATA_DIR, MARKET_OPEN, get_market_close
 
-    from app.services.historical_data_service import is_today as _is_today
+    from app.services.historical_data_service import is_today as _is_today, complete_day_cache
     is_today = _is_today(date)
     y, m, d = date.split("-")
     OHLCDATA_DIR.mkdir(parents=True, exist_ok=True)
     cache_path = OHLCDATA_DIR / f"{symbol}-{d}-{m}-{y}-kite1m.parquet"
     empty = pd.DataFrame(columns=["open", "high", "low", "close", "volume"])
 
-    if not is_today and cache_path.exists():
+    if not is_today and complete_day_cache(cache_path, date):
         try:
             df = pd.read_parquet(cache_path)
             if not df.empty:
@@ -347,7 +347,7 @@ def fetch_kite_1min_options(symbol: str, date: str, strike: int, expiry: str, ri
     import pandas as pd
     from app.config import OHLCDATA_DIR, MARKET_OPEN, get_market_close
 
-    from app.services.historical_data_service import is_today as _is_today
+    from app.services.historical_data_service import is_today as _is_today, complete_day_cache
     is_today = _is_today(date)
     y, m, d = date.split("-")
     expiry_compact = expiry.replace("-", "")
@@ -355,7 +355,7 @@ def fetch_kite_1min_options(symbol: str, date: str, strike: int, expiry: str, ri
     cache_path = OHLCDATA_DIR / f"{symbol}-{right}-{strike}-{expiry_compact}-{d}-{m}-{y}-kite1m.parquet"
     empty = pd.DataFrame(columns=["open", "high", "low", "close", "volume"])
 
-    if not is_today and cache_path.exists():
+    if not is_today and complete_day_cache(cache_path, date):
         try:
             df = pd.read_parquet(cache_path)
             if not df.empty:

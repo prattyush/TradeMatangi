@@ -440,6 +440,8 @@ def options_iter_ticks(
 ) -> Iterator[dict]:
     """Yield one tick dict per second for the options contract starting from start_time."""
     df = load_options_dataframe(symbol, date, strike, expiry, right)
+    from app.services.historical_data_service import _require_replay_cadence, history_mode
+    _require_replay_cadence(df, history_mode())
     start_ts = pd.Timestamp(f"{date} {start_time}", tz="UTC")
     df = df[df.index >= start_ts]
     for ts, row in df.iterrows():
@@ -471,6 +473,10 @@ def get_underlying_price_at(symbol: str, date: str, unix_ts: int) -> float | Non
         from app.services.data_loader import load_dataframe
         df = load_dataframe(symbol, date)
         target_ts = pd.Timestamp(unix_ts, unit="s", tz="UTC")
+        from app.services.historical_data_service import history_mode
+        if history_mode() == "live":
+            rows = df[df.index <= target_ts]
+            return round(float(rows.iloc[-1]["close"]), 2) if not rows.empty else None
         rows = df[df.index >= target_ts]
         if rows.empty:
             return None
@@ -566,9 +572,18 @@ def _get_option_price_at(
     """
     from app.services.historical_data_service import is_today as _is_today
     is_today = _is_today(date)
-    if is_today:
-        from app.services.historical_data_service import get_policy, load_history
-        if get_policy().source == "kite":
+    from app.services.historical_data_service import get_policy, load_history, history_mode
+    if history_mode() == "replay":
+        try:
+            _fetch_breeze_options_historical(symbol, date, strike, expiry, right)
+            df = _load_breeze_options_dataframe(symbol, date, strike, expiry, right)
+            rows = df[df.index <= pd.Timestamp(ref_ts, unit="s", tz="UTC")]
+            return float(rows.iloc[-1]["close"]) if not rows.empty else None
+        except Exception as exc:
+            logger.debug("Replay option price unavailable: %s", exc)
+            return None
+    if history_mode() == "live":
+        if get_policy().source in ("kite", "kotak"):
             try:
                 df = load_history(symbol, date, strike, expiry, right).frame
                 rows = df[df.index <= pd.Timestamp(ref_ts, unit="s", tz="UTC")]
@@ -675,14 +690,17 @@ def _get_option_price_at(
 
 
 def fetch_options_historical(symbol: str, date: str, strike: int, expiry: str, right: str) -> Path:
-    from app.services.historical_data_service import is_today, load_history
-    if is_today(date):
+    from app.services.historical_data_service import history_mode, load_history
+    if history_mode() == "live":
         return load_history(symbol, date, strike, expiry, right).path
+    from app.services.historical_data_service import refresh_requested
+    if refresh_requested():
+        return _fetch_breeze_options_historical(symbol, date, strike, expiry, right, force_refresh=True)
     return _fetch_breeze_options_historical(symbol, date, strike, expiry, right)
 
 
 def load_options_dataframe(symbol: str, date: str, strike: int, expiry: str, right: str) -> pd.DataFrame:
-    from app.services.historical_data_service import is_today, load_history
-    if is_today(date):
+    from app.services.historical_data_service import history_mode, load_history
+    if history_mode() == "live":
         return load_history(symbol, date, strike, expiry, right).frame
     return _load_breeze_options_dataframe(symbol, date, strike, expiry, right)
