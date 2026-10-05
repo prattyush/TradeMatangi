@@ -242,6 +242,12 @@ Kotak documents the fields but not a complete balance identity. See the
 
 ### Persistence, API and refresh integration
 
+Real-trading Start never offers to delete the prior session and start clean.
+For the same user, symbol, date and instrument type it follows the existing
+session resume path, retaining the session ID, trades and P&L history. Backend
+startup ignores `override=true` for real trading, including grouped requests
+from older clients. Practice-mode confirmation behavior remains unchanged.
+
 - Atomically initialize `day_start_capital` with DynamoDB `if_not_exists` in an
   existing WalletLedgers item keyed by user and `real-capital:<account>:<date>`.
   The first valid recovery is reused across same-day sessions and processes;

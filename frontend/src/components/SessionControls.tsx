@@ -293,10 +293,9 @@ export default function SessionControls({
         config = { symbol: currentSymbol, date: currentDate, instrument_type: 'equity', session_type: sessionType }
       }
 
-      // Always confirm before replacing data for the same symbol, date, session,
-      // and instrument type. This applies equally to simulation and live paper
-      // sessions; the user can choose to resume by selecting No.
-      if (sessionType === 'sim' || sessionType === 'paper' || sessionType === 'stepwise' || sessionType === 'real') {
+      // Real trading always preserves the existing session and broker history.
+      // Only practice modes can offer to replace a previous run.
+      if (sessionType === 'sim' || sessionType === 'paper' || sessionType === 'stepwise') {
         try {
           const existing = await api.checkExistingSession({
             symbol: currentSymbol,
