@@ -18,6 +18,7 @@ import asyncio
 import configparser
 import csv
 import logging
+import os
 import threading
 import time as _time
 from collections import defaultdict
@@ -26,7 +27,23 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from app.services.kite_reactor import call as _reactor_call
+from app.services.kite_requests import request as _kite_request, is_auth_error
+
 logger = logging.getLogger(__name__)
+_client_lock = threading.RLock()
+_cached_kite = None
+_cached_kite_creds = None
+_instrument_locks = defaultdict(threading.Lock)
+_instrument_guard = threading.Lock()
+
+
+def _invalidate_kite(kite):
+    global _cached_kite, _cached_kite_creds
+    with _client_lock:
+        if _cached_kite is kite:
+            _cached_kite = _cached_kite_creds = None
+
 
 
 # ---------------------------------------------------------------------------
@@ -71,13 +88,21 @@ def _get_kite():
     if not api_key or not access_token:
         raise KiteTokenError("Kite api_key or access_token missing — set via Admin panel or data/accesskeys.ini")
 
-    kite = KiteConnect(api_key=api_key)
-    kite.set_access_token(access_token)
-    try:
-        kite.profile()
-    except Exception as exc:
-        raise KiteTokenError(f"Kite token invalid or expired: {exc}") from exc
-    return kite
+    global _cached_kite, _cached_kite_creds
+    creds = (api_key, access_token)
+    with _client_lock:
+        if _cached_kite is not None and _cached_kite_creds == creds:
+            return _cached_kite
+        kite = KiteConnect(api_key=api_key)
+        kite.set_access_token(access_token)
+        try:
+            _kite_request(kite, "general", "profile")
+        except Exception as exc:
+            if is_auth_error(exc):
+                raise KiteTokenError(f"Kite token invalid or expired: {exc}") from exc
+            raise
+        _cached_kite, _cached_kite_creds = kite, creds
+        return kite
 
 
 # ---------------------------------------------------------------------------
@@ -177,10 +202,20 @@ def _lookup_options_token(cache_path: Path, symbol: str, expiry: str, strike: in
 
 
 def _refresh_instruments_cache(exchange: str, cache_path: Path) -> None:
+    requested_at = _time.time()
+    with _instrument_guard:
+        lock = _instrument_locks[str(cache_path.resolve())]
+    with lock:
+        if cache_path.exists() and cache_path.stat().st_mtime >= requested_at - 60:
+            return
+        _refresh_instruments_cache_unlocked(exchange, cache_path)
+
+
+def _refresh_instruments_cache_unlocked(exchange: str, cache_path: Path) -> None:
     """Fetch instruments from Kite API and write to CSV cache."""
     try:
         kite = _get_kite()
-        instruments = kite.instruments(exchange)
+        instruments = _kite_request(kite, "instruments", "instruments", exchange=exchange)
     except KiteTokenError:
         raise
     except Exception as exc:
@@ -191,10 +226,12 @@ def _refresh_instruments_cache(exchange: str, cache_path: Path) -> None:
 
     cache_path.parent.mkdir(parents=True, exist_ok=True)
     fieldnames = list(instruments[0].keys())
-    with open(cache_path, "w", newline="") as f:
+    tmp = cache_path.with_suffix(".csv.tmp")
+    with open(tmp, "w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(instruments)
+    os.replace(tmp, cache_path)
     logger.info("Cached %d %s instruments to %s", len(instruments), exchange, cache_path)
 
 
@@ -273,7 +310,7 @@ def fetch_kite_1min(symbol: str, date: str) -> "pd.DataFrame":
     )
 
     try:
-        records = kite.historical_data(
+        records = _kite_request(kite, "historical", "historical_data",
             instrument_token=token,
             from_date=from_ts.to_pydatetime(),
             to_date=to_ts.to_pydatetime(),
@@ -342,7 +379,7 @@ def fetch_kite_1min_options(symbol: str, date: str, strike: int, expiry: str, ri
     )
 
     try:
-        records = kite.historical_data(
+        records = _kite_request(kite, "historical", "historical_data",
             instrument_token=token,
             from_date=from_ts.to_pydatetime(),
             to_date=to_ts.to_pydatetime(),
@@ -443,6 +480,14 @@ class KiteBroadcaster:
         # Generation bumps whenever the ticker is replaced so stale timers no-op.
         self._restart_pending = False
         self._restart_generation = 0
+        self._ready = threading.Event()
+        self._startup_error = None
+        self._starting = False
+        self._startup_timeout = 15.0
+        self._first_ticks = set()
+        self._first_candles = set()
+        self._subscribed_at = {}
+        self._quiet_warned = set()
 
     def register(
         self,
@@ -464,50 +509,59 @@ class KiteBroadcaster:
                 self._session_tokens[session_id].add(token)
             new_tokens = list(tokens)
 
-        with self._start_lock:
-            if self._ticker is None:
-                self._start(new_tokens)
-            elif self._connected:
-                self._subscribe_more(new_tokens)
+        try:
+            with self._start_lock:
+                if self._ticker is None:
+                    self._start(new_tokens)
+                elif self._connected:
+                    self._subscribe_more(new_tokens)
+                else:
+                    raise KiteConnectionError("Kite socket is reconnecting")
+        except Exception:
+            self.unregister(session_id)
+            raise
         loop.call_soon_threadsafe(self._ensure_flusher, loop)
-        # else: ticker exists but _on_connect hasn't fired yet; it will subscribe
-        # all tokens from _token_sessions once the handshake completes.
 
     def unregister(self, session_id: str) -> None:
-        """Remove session; unsubscribes tokens with no remaining subscribers."""
-        with self._lock:
-            owned = self._session_tokens.pop(session_id, set())
-            orphaned = []
-            for token in owned:
-                self._token_sessions[token].pop(session_id, None)
-                if not self._token_sessions[token]:
-                    del self._token_sessions[token]
-                    self._accumulators.pop(token, None)
-                    self._finalized_seconds.pop(token, None)
-                    orphaned.append(token)
-
-            if orphaned and self._ticker:
+        """Release ownership before issuing socket operations outside the state lock."""
+        with self._start_lock:
+            with self._lock:
+                owned = self._session_tokens.pop(session_id, set())
+                orphaned = []
+                for token in owned:
+                    sessions = self._token_sessions.get(token, {})
+                    sessions.pop(session_id, None)
+                    if not sessions:
+                        self._token_sessions.pop(token, None)
+                        self._accumulators.pop(token, None)
+                        self._finalized_seconds.pop(token, None)
+                        self._subscribed_at.pop(token, None)
+                        self._first_ticks.discard(token)
+                        self._first_candles.discard(token)
+                        self._quiet_warned.discard(token)
+                        orphaned.append(token)
+                ticker = self._ticker
+                stopped = not self._token_sessions
+                if stopped:
+                    self._ticker = None
+                    self._connected = False
+                    self._restart_generation += 1
+                    self._restart_pending = False
+            if ticker:
                 try:
-                    self._ticker.unsubscribe(orphaned)
+                    if orphaned:
+                        _reactor_call(ticker.unsubscribe, orphaned)
                 except Exception as exc:
                     logger.warning("Kite unsubscribe error: %s", exc)
-
-            if not any(self._token_sessions.values()) and self._ticker:
-                try:
-                    self._ticker.close()
-                except Exception:
-                    pass
-                self._ticker = None
-                self._connected = False
-                # Invalidate any pending restart timer so it doesn't fire after a
-                # new session starts and replaces the ticker with a fresh one.
-                self._restart_generation += 1
-                self._restart_pending = False
+                if stopped:
+                    try:
+                        _reactor_call(ticker.close)
+                    except Exception as exc:
+                        logger.warning("Kite close error: %s", exc)
+            if stopped:
                 if self._flush_task and self._flush_loop:
                     self._flush_loop.call_soon_threadsafe(self._flush_task.cancel)
                 self._flush_task = None
-                self._accumulators.clear()
-                self._finalized_seconds.clear()
                 logger.info("KiteBroadcaster: no active sessions, ticker stopped")
 
     def update_session_right(
@@ -550,7 +604,7 @@ class KiteBroadcaster:
 
         if orphaned and self._ticker:
             try:
-                self._ticker.unsubscribe(orphaned)
+                _reactor_call(self._ticker.unsubscribe, orphaned)
             except Exception as exc:
                 logger.warning("KiteBroadcaster unsubscribe error on strike change: %s", exc)
 
@@ -572,12 +626,13 @@ class KiteBroadcaster:
         with self._lock:
             self._restart_generation += 1
             self._restart_pending = False
+            self._connected = False
             old_ticker = self._ticker
             self._ticker = None
 
         if old_ticker:
             try:
-                old_ticker.close()
+                _reactor_call(old_ticker.close)
             except Exception:
                 pass
 
@@ -587,23 +642,57 @@ class KiteBroadcaster:
         ticker.on_ticks = self._on_ticks
         ticker.on_error = self._on_error
         ticker.on_close = self._on_close
+        ticker.on_reconnect = self._on_reconnect
+        ticker.on_noreconnect = self._on_noreconnect
 
         # Set _ticker under lock before connect() so that concurrent register()
         # calls see a non-None ticker and don't launch a second _start.
         # _connected is set to True in _on_connect once the handshake completes.
         with self._lock:
             self._ticker = ticker
-        ticker.connect(threaded=True)
-        _time.sleep(1.0)  # allow websocket handshake to complete
-        logger.info("KiteBroadcaster started")
+            self._connected = False
+            self._starting = True
+            self._startup_error = None
+            self._ready.clear()
+        logger.info("kite_connection_attempt generation=%d tokens=%s", self._restart_generation, tokens)
+        try:
+            _reactor_call(ticker.connect)
+            if not self._ready.wait(self._startup_timeout):
+                raise KiteConnectionError("Kite handshake/subscription timed out after 15 seconds")
+            if self._startup_error:
+                raise KiteConnectionError(self._startup_error)
+            logger.info("KiteBroadcaster started: handshake and subscription confirmed")
+        except Exception:
+            with self._lock:
+                if self._ticker is ticker:
+                    self._ticker = None
+                    self._connected = False
+                    self._restart_generation += 1
+            try:
+                _reactor_call(ticker.close)
+            except Exception:
+                logger.exception("Kite startup cleanup failed")
+            raise
+        finally:
+            self._starting = False
 
     def _subscribe_more(self, tokens: list[int]) -> None:
-        if self._ticker:
-            try:
-                self._ticker.subscribe(tokens)
-                self._ticker.set_mode(self._ticker.MODE_LTP, tokens)
-            except Exception as exc:
-                logger.warning("KiteBroadcaster subscribe_more error: %s", exc)
+        ticker = self._ticker
+        if not ticker or not self._connected:
+            raise KiteConnectionError("Kite is not connected")
+        def subscribe():
+            with self._lock:
+                active = [t for t in tokens if t in self._token_sessions]
+                if ticker is not self._ticker:
+                    raise KiteConnectionError("Kite ticker was replaced")
+            if active:
+                ticker.subscribe(active)
+                ticker.set_mode(ticker.MODE_LTP, active)
+                with self._lock:
+                    for token in active:
+                        self._subscribed_at.setdefault(token, _time.monotonic())
+                logger.info("kite_subscription_confirmed tokens=%s", active)
+        _reactor_call(subscribe)
 
     def _read_config(self) -> dict:
         from app.config import DATA_DIR
@@ -641,6 +730,10 @@ class KiteBroadcaster:
                 pass
 
     def _restart_with_fresh_creds(self, gen: int) -> None:
+        with self._start_lock:
+            self._restart_locked(gen)
+
+    def _restart_locked(self, gen: int) -> None:
         """Re-create the KiteTicker with fresh credentials (reads DDB token)."""
         with self._lock:
             if gen != self._restart_generation:
@@ -655,7 +748,7 @@ class KiteBroadcaster:
             self._ticker = None
         if old_ticker:
             try:
-                old_ticker.close()
+                _reactor_call(old_ticker.close)
             except Exception:
                 pass
         try:
@@ -677,16 +770,25 @@ class KiteBroadcaster:
             if ws is not self._ticker:
                 logger.debug("KiteBroadcaster: stale _on_connect from replaced ticker — ignored")
                 return
-            self._connected = True
+            self._connected = False
             all_tokens = list(self._token_sessions.keys())
         logger.info("KiteBroadcaster: WebSocket connected, subscribing %d tokens: %s", len(all_tokens), all_tokens)
         if all_tokens and ws:
             try:
                 ws.subscribe(all_tokens)
                 ws.set_mode(ws.MODE_LTP, all_tokens)
+                with self._lock:
+                    self._connected = True
+                    self._subscribed_at = {token: _time.monotonic() for token in all_tokens}
+                    self._first_ticks.clear()
+                    self._quiet_warned.clear()
+                self._ready.set()
                 logger.info("KiteBroadcaster: subscribed %d tokens in LTP mode", len(all_tokens))
             except Exception as exc:
+                self._startup_error = f"Kite subscription failed: {exc}"
+                self._ready.set()
                 logger.error("KiteBroadcaster on_connect subscribe error: %s", exc)
+                self._notify_sessions_error(self._startup_error)
 
     @staticmethod
     def _safe_put(queue, payload):
@@ -701,6 +803,9 @@ class KiteBroadcaster:
             queue.put_nowait({"type": "broker_error", "message": "Kite consumer queue overflow", "stream_gap": True})
 
     def _publish_candle(self, token, candle, sessions):
+        if token not in self._first_candles:
+            self._first_candles.add(token)
+            logger.info("kite_first_candle token=%s time=%s consumers=%d", token, candle["time"], len(sessions))
         for session_id, (queue, right, loop) in sessions.items():
             payload = {**candle, "provider_token": str(token)}
             if right:
@@ -720,6 +825,7 @@ class KiteBroadcaster:
             while True:
                 await asyncio.sleep(max(.01, 1 - (_time.time() % 1)))
                 self.flush_completed(int(_time.time()) + 19800)
+                self._warn_quiet_indices()
         self._flush_task = loop.create_task(flush())
 
     def flush_completed(self, current_second):
@@ -739,7 +845,7 @@ class KiteBroadcaster:
     def _on_ticks(self, ws, ticks):
         # LTP packets do not contain exchange timestamps. Receipt epoch is
         # converted once to the established IST-as-UTC chart convention.
-        if ws is not None and self._ticker is not None and ws is not self._ticker:
+        if ws is not None and ws is not self._ticker:
             return
         for tick in ticks or []:
             token = tick.get("instrument_token")
@@ -751,6 +857,9 @@ class KiteBroadcaster:
             with self._lock:
                 if token not in self._token_sessions:
                     continue
+                if token not in self._first_ticks:
+                    self._first_ticks.add(token)
+                    logger.info("kite_first_tick token=%s time=%s", token, ts_second)
                 acc = self._accumulators[token]
                 if ts_second <= self._finalized_seconds.get(token, 0):
                     continue
@@ -769,9 +878,14 @@ class KiteBroadcaster:
                 self._publish_candle(token, candle, sessions)
 
     def _on_error(self, ws, code, reason) -> None:
-        if ws is not None and self._ticker is not None and ws is not self._ticker:
+        if ws is not None and ws is not self._ticker:
             return
         logger.error("KiteTicker error — code=%s reason=%s", code, reason)
+        if self._starting:
+            self._startup_error = f"Kite connection failed: {code} {reason}"
+            self._ready.set()
+            return
+        self._notify_sessions_error(f"Kite connection error: {code} {reason}")
         # 403 on WebSocket upgrade = auth issue or concurrent connection limit.
         # kiteconnect keeps retrying with the same stale token; schedule a single
         # restart that re-reads credentials from DDB before reconnecting.
@@ -784,13 +898,46 @@ class KiteBroadcaster:
             threading.Timer(5.0, lambda: self._restart_with_fresh_creds(gen)).start()
 
     def _on_close(self, ws, code, reason) -> None:
-        if ws is not None and self._ticker is not None and ws is not self._ticker:
+        if ws is not None and ws is not self._ticker:
             return
         logger.warning("KiteTicker closed — code=%s reason=%s", code, reason)
         self._connected = False
+        if self._starting:
+            self._startup_error = f"Kite closed during startup: {code} {reason}"
+            self._ready.set()
         self._notify_sessions_error(
             "Kite connection lost — attempting to reconnect. Ticks may be delayed."
         )
+
+    def _on_reconnect(self, ws, attempts):
+        if ws is not self._ticker:
+            return
+        self._connected = False
+        logger.warning("kite_reconnect_attempt attempt=%s", attempts)
+        self._notify_sessions_error(f"Kite reconnecting (attempt {attempts})")
+
+    def _on_noreconnect(self, ws):
+        if ws is not self._ticker:
+            return
+        self._connected = False
+        self._startup_error = "Kite reconnect attempts exhausted"
+        self._ready.set()
+        self._notify_sessions_error(self._startup_error)
+
+    def _warn_quiet_indices(self):
+        from zoneinfo import ZoneInfo
+        from app.utils import is_trading_day
+        from app.config import MARKET_OPEN, get_market_close
+        now = datetime.now(ZoneInfo("Asia/Kolkata"))
+        if not is_trading_day(now.date()) or not MARKET_OPEN <= now.strftime("%H:%M:%S") < get_market_close(now.date().isoformat()):
+            return
+        with self._lock:
+            for _, token in _EQUITY_TOKENS.values():
+                started = self._subscribed_at.get(token)
+                if (self._connected and started is not None and token not in self._first_ticks
+                    and token not in self._quiet_warned and _time.monotonic() - started >= 30):
+                    self._quiet_warned.add(token)
+                    logger.warning("kite_no_index_tick token=%s elapsed=30s socket_connected=True", token)
 
 
 _broadcaster: KiteBroadcaster | None = None

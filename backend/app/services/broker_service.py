@@ -153,16 +153,19 @@ def _breeze_to_dataframe(records: list[dict]) -> pd.DataFrame:
     return df
 
 
-def _fetch_day_paginated(breeze, sym_info: dict, date: str) -> list[dict]:
+def _fetch_day_paginated(breeze, sym_info: dict, date: str, *, cached=None) -> list[dict]:
     """
     Fetch a full trading day by issuing 15-minute chunk requests.
     The Breeze API caps responses at ~1000 records; chunking prevents truncation.
     """
-    from_ts = pd.Timestamp(f"{date} {MARKET_OPEN}")
-    to_ts = pd.Timestamp(f"{date} {get_market_close(date)}")
+    from app.services.history_tail import fetch_window
+    from_ts, to_ts = fetch_window(date, cached)
+    logger.info("breeze_history_window symbol=%s date=%s from=%s to=%s reused_rows=%d",
+                sym_info["breeze_stock_code"], date, from_ts, to_ts, 0 if cached is None else len(cached))
     chunk_delta = pd.Timedelta(minutes=_CHUNK_MINUTES)
 
     all_records: list[dict] = []
+    chunks = 0
     current = from_ts
     while current < to_ts:
         chunk_end = min(current + chunk_delta, to_ts)
@@ -197,13 +200,39 @@ def _fetch_day_paginated(breeze, sym_info: dict, date: str) -> list[dict]:
                 f"{current.strftime('%H:%M')}–{chunk_end.strftime('%H:%M')}: {error}"
             )
 
+        chunks += 1
         all_records.extend(response.get("Success") or [])
         current = chunk_end
 
+    logger.info("breeze_history_download symbol=%s date=%s chunks=%d rows=%d",
+                sym_info["breeze_stock_code"], date, chunks, len(all_records))
     return all_records
 
 
+_fetch_locks = {}
+_fetch_guard = threading.Lock()
+_fetch_completed = {}
+
+
 def _fetch_breeze_historical(symbol: str, date: str, *, force_refresh: bool = False) -> Path:
+    import time
+    requested = time.monotonic()
+    key = str(parquet_path(symbol, date).resolve())
+    with _fetch_guard:
+        lock = _fetch_locks.setdefault(key, threading.Lock())
+    with lock:
+        completed = _fetch_completed.get(key)
+        if completed and completed[0] >= requested and completed[1].exists():
+            return completed[1]
+        result = _fetch_breeze_historical_unlocked(symbol, date, force_refresh=force_refresh)
+        with _fetch_guard:
+            if len(_fetch_completed) >= 256:
+                _fetch_completed.pop(next(iter(_fetch_completed)))
+            _fetch_completed[key] = (time.monotonic(), result)
+        return result
+
+
+def _fetch_breeze_historical_unlocked(symbol: str, date: str, *, force_refresh: bool = False) -> Path:
     """
     Ensure second-level OHLC data for symbol+date exists as a complete Parquet file
     in data/ohlcdata/.  Returns the parquet path.
@@ -214,7 +243,8 @@ def _fetch_breeze_historical(symbol: str, date: str, *, force_refresh: bool = Fa
       3. Fetch from Breeze API (paginated 15-min chunks) — validate, save as parquet, return
 
     Raises BreezeTokenError on auth failure, BreezeSymbolError for unknown symbols.
-    Incomplete cached files (< _MIN_DAY_ROWS rows) are discarded and re-fetched.
+    Today uses a ten-minute TTL; stale/explicit reads merge an overlapping tail.
+    Incomplete past-date files (< _MIN_DAY_ROWS rows) are re-fetched.
     """
     if symbol not in SUPPORTED_SYMBOLS:
         raise BreezeSymbolError(
@@ -229,6 +259,7 @@ def _fetch_breeze_historical(symbol: str, date: str, *, force_refresh: bool = Fa
     _TODAY_CACHE_TTL = 600  # 10 minutes — re-fetch today's partial data after this
 
     pq = parquet_path(symbol, date)
+    cached_df = None
     partial_pq: "Path | None" = None  # preserve partial data for today as fallback
 
     if pq.exists():
@@ -245,8 +276,9 @@ def _fetch_breeze_historical(symbol: str, date: str, *, force_refresh: bool = Fa
                 if len(cached_df) > 0:
                     partial_pq = pq  # keep as fallback if Breeze fails
                 logger.info(
-                    "Today's parquet for %s %s is %s (%.0fs old) — re-fetching",
-                    symbol, date, "stale" if age_secs >= _TODAY_CACHE_TTL else "empty", age_secs,
+                    "Today's parquet for %s %s refresh_reason=%s (%.0fs old, %d rows) — fetching tail",
+                    symbol, date, ("empty" if cached_df.empty else "explicit_refresh" if force_refresh else "stale"),
+                    age_secs, len(cached_df),
                 )
             else:
                 cached_df = pd.read_parquet(pq)
@@ -284,7 +316,7 @@ def _fetch_breeze_historical(symbol: str, date: str, *, force_refresh: bool = Fa
     sym_info = SUPPORTED_SYMBOLS[symbol]
     try:
         breeze = _get_breeze()
-        records = _fetch_day_paginated(breeze, sym_info, date)
+        records = _fetch_day_paginated(breeze, sym_info, date, cached=cached_df if is_today else None)
     except (BreezeTokenError, Exception) as exc:
         if partial_pq is not None:
             # Breeze unavailable but we have partial today data — use it
@@ -307,6 +339,10 @@ def _fetch_breeze_historical(symbol: str, date: str, *, force_refresh: bool = Fa
     df = _breeze_to_dataframe(records)
     if df.empty:
         raise RuntimeError(f"Could not parse Breeze data for {symbol} on {date}.")
+
+    if is_today and partial_pq is not None:
+        from app.services.history_tail import merge_tail
+        df = merge_tail(cached_df, df)
 
     # Current-day minute data must remain minute data. Expanding it to one
     # second would fabricate ticks that the desktop could incorrectly cache.
