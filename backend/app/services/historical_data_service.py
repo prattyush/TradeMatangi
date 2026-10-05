@@ -145,6 +145,7 @@ def load_history(symbol: str, date: str, strike: int | None = None, expiry: str 
     Brief request coalescing allows old ensure/load callers to share one result.
     Freshness TTL for provider files is preserved; force_refresh bypasses it.
     """
+    requested_at = time.monotonic()
     operation = _operation.get()
     if is_today(date):
         if operation and operation.policy is None:
@@ -167,7 +168,7 @@ def load_history(symbol: str, date: str, strike: int | None = None, expiry: str 
             return operation.results[key]
         with _guard:
             cached = _results.get(key)
-        if cached and not force_refresh and time.monotonic() - cached[0] < 10:
+        if cached and (not force_refresh or cached[0] >= requested_at) and time.monotonic() - cached[0] < 10:
             if operation:
                 operation.results[key] = cached[1]
             return cached[1]

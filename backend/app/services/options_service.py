@@ -35,8 +35,9 @@ STRIKE_INTERVALS: dict[str, int] = {
 # option contract at session start.  Keep one lock per on-disk daily cache key
 # so only one caller downloads its 25 Breeze chunks; waiters re-check the cache
 # once that download completes.
-_options_fetch_locks: dict[tuple[str, str, int, str, str], threading.Lock] = {}
+_options_fetch_locks: dict[tuple, threading.Lock] = {}
 _options_fetch_locks_guard = threading.Lock()
+_options_fetch_completed = {}
 _options_fetch_failures: dict[tuple, tuple[float, type[Exception], str]] = {}
 _OPTIONS_FAILURE_TTL = 60
 _OPTIONS_EMPTY_TTL = 600
@@ -152,7 +153,7 @@ def _is_breeze_rate_limit_error(error: object) -> bool:
 
 
 def _fetch_options_day_paginated(
-    breeze, symbol: str, date: str, strike: int, expiry: str, right: str
+    breeze, symbol: str, date: str, strike: int, expiry: str, right: str, *, cached=None
 ) -> list[dict]:
     """
     Fetch a full trading day of options OHLC data in 15-minute chunks
@@ -161,8 +162,10 @@ def _fetch_options_day_paginated(
     """
     from app.services.broker_service import BreezeTokenError
 
-    from_ts = pd.Timestamp(f"{date} {MARKET_OPEN}")
-    to_ts = pd.Timestamp(f"{date} {get_market_close(date)}")
+    from app.services.history_tail import fetch_window
+    from_ts, to_ts = fetch_window(date, cached)
+    logger.info("breeze_options_window symbol=%s right=%s strike=%s date=%s from=%s to=%s reused_rows=%d",
+                symbol, right, strike, date, from_ts, to_ts, 0 if cached is None else len(cached))
     chunk_delta = pd.Timedelta(minutes=_CHUNK_MINUTES)
     right_str = "call" if right.upper() in ("CE", "CALL") else "put"
     expiry_iso = _breeze_expiry_format(expiry)
@@ -171,6 +174,7 @@ def _fetch_options_day_paginated(
     options_exchange = sym_info.get("options_exchange_code", "NFO")
 
     all_records: list[dict] = []
+    chunks = 0
     current = from_ts
     while current < to_ts:
         chunk_end = min(current + chunk_delta, to_ts)
@@ -204,8 +208,11 @@ def _fetch_options_day_paginated(
                 f"Breeze API error for {symbol} options "
                 f"{current.strftime('%H:%M')}–{chunk_end.strftime('%H:%M')}: {error}"
             )
+        chunks += 1
         all_records.extend(response.get("Success") or [])
         current = chunk_end
+    logger.info("breeze_options_download symbol=%s right=%s strike=%s date=%s chunks=%d rows=%d",
+                symbol, right, strike, date, chunks, len(all_records))
     return all_records
 
 
@@ -260,6 +267,7 @@ def _fetch_options_historical_unlocked(
     from app.services.historical_data_service import is_today as _is_today
     is_today = _is_today(date)
     pq = options_parquet_path(symbol, date, strike, expiry, right)
+    cached_df = None
     partial_pq: Path | None = None  # fallback if Breeze unavailable for today
 
     if pq.exists():
@@ -276,8 +284,8 @@ def _fetch_options_historical_unlocked(
                         return pq
                     partial_pq = pq
                     logger.info(
-                        "Today's options parquet %s is stale (%.0fs) — re-fetching",
-                        pq.name, age_secs,
+                        "Today's options parquet %s refresh_reason=%s (%.0fs) — fetching tail",
+                        pq.name, "explicit_refresh" if force_refresh else "stale", age_secs,
                     )
                 else:
                     if len(cached_df) >= _MIN_OPTIONS_DAY_ROWS:
@@ -303,7 +311,7 @@ def _fetch_options_historical_unlocked(
     )
     try:
         breeze = _get_breeze()
-        records = _fetch_options_day_paginated(breeze, symbol, date, strike, expiry, right)
+        records = _fetch_options_day_paginated(breeze, symbol, date, strike, expiry, right, cached=cached_df if is_today else None)
     except Exception as exc:
         if partial_pq is not None:
             logger.warning(
@@ -332,6 +340,10 @@ def _fetch_options_historical_unlocked(
             f"Could not parse Breeze options data for {symbol} {right} {strike} on {date}."
         )
 
+    if is_today and partial_pq is not None:
+        from app.services.history_tail import merge_tail
+        df = merge_tail(cached_df, df)
+
     from app.services.data_loader import has_native_second_cadence
     # Do not manufacture second OHLC from a current-day minute source.
     if not is_today or has_native_second_cadence(df):
@@ -354,17 +366,26 @@ def _fetch_breeze_options_historical(
 ) -> Path:
     """Fetch one contract/day, coalescing simultaneous cache-miss requests."""
     right_key = "CE" if right.upper() in ("CE", "CALL") else "PE"
-    key = (symbol, date, int(strike), expiry, right_key)
+    requested = time.monotonic()
+    key = (symbol, date, int(strike), expiry, right_key, str(options_parquet_path(symbol, date, strike, expiry, right).resolve()))
     with _options_fetch_locks_guard:
         lock = _options_fetch_locks.setdefault(key, threading.Lock())
     with lock:
+        completed = _options_fetch_completed.get(key)
+        if completed and completed[0] >= requested and completed[1].exists():
+            return completed[1]
         with _options_fetch_locks_guard:
             failure = _options_fetch_failures.get(key)
             if failure and time.monotonic() < failure[0]:
                 raise failure[1](failure[2])
             _options_fetch_failures.pop(key, None)
         try:
-            return _fetch_options_historical_unlocked(symbol, date, strike, expiry, right, force_refresh=force_refresh)
+            result = _fetch_options_historical_unlocked(symbol, date, strike, expiry, right, force_refresh=force_refresh)
+            with _options_fetch_locks_guard:
+                if len(_options_fetch_completed) >= 256:
+                    _options_fetch_completed.pop(next(iter(_options_fetch_completed)))
+                _options_fetch_completed[key] = (time.monotonic(), result)
+            return result
         except Exception as exc:
             from app.services.broker_service import BreezeTokenError
             message = str(exc)
