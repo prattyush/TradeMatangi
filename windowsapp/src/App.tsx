@@ -20,7 +20,7 @@ import { aggregateLiveTileCandles, appendLiveTick, reconcileLiveTicks } from './
 import { LiveEventJournal, applyLiveStreamPayloadToSnapshot, sameLiveTileConfiguration, type LiveSnapshot, type LiveTileState } from './liveStreamState'
 import { isDesktopTradingSnapshot } from './paperTradingState'
 import { shouldShowMessage, useDismissMessage } from './useDismissMessage'
-import { mergeScreenDraft, type ScreenDraft } from './screenConflict'
+import { mergeScreenDraft, screenContentKey, type ScreenDraft } from './screenConflict'
 import { enqueueScreenSave, saveScreenRecord } from './screenSave'
 
 interface HistoricalPage { candles: Candle[]; available?: boolean; unavailable_reason?: string }
@@ -681,7 +681,7 @@ function ScreenController(props: ScreenControllerProps) {
 
   useEffect(() => {
     if (connection !== 'connected' || !props.loaded || !restoredReady || !activeScreen || !childReady || handingOff) return
-    const payloadKey = JSON.stringify({ id: activeScreen.id, name: activeScreen.name, state: screenState(activeScreen), order: screens.findIndex(screen => screen.id === activeScreen.id) })
+    const payloadKey = screenContentKey({ id: activeScreen.id, name: activeScreen.name, state: screenState(activeScreen), order: screens.findIndex(screen => screen.id === activeScreen.id) })
     if (payloadKey === lastScreenPayloadRef.current) return
     if (screenSaveTimerRef.current) window.clearTimeout(screenSaveTimerRef.current)
     screenSaveTimerRef.current = window.setTimeout(() => {
@@ -913,14 +913,14 @@ function ScreenController(props: ScreenControllerProps) {
       const reconciled = mergeScreenDraft(submitted, latest, recordDraft(record), true)
       persistedScreenRef.current = record
       currentScreenDraftRef.current = reconciled.draft
-      if (JSON.stringify(reconciled.draft) === JSON.stringify(recordDraft(record))) {
-        lastScreenPayloadRef.current = JSON.stringify({ id: activeScreenId, name: record.name, state: record.state, order: record.order })
+      if (screenContentKey(reconciled.draft) === screenContentKey(recordDraft(record))) {
+        lastScreenPayloadRef.current = screenContentKey({ id: activeScreenId, name: record.name, state: record.state, order: record.order })
       }
       applySavedScreen(reconciled.draft, record)
       try {
         const pending = JSON.parse(localStorage.getItem(recoveryKey) ?? 'null') as RecoveryJournal<PersistedScreenState> | null
         if (pending?.mutationId) {
-          const unsavedState = JSON.stringify(reconciled.draft.state) !== JSON.stringify(record.state)
+          const unsavedState = screenContentKey(reconciled.draft.state) !== screenContentKey(record.state)
           if (unsavedState || pending.mutationId !== mutationId) {
             localStorage.setItem(recoveryKey, JSON.stringify({ state: reconciled.draft.state, revision: record.revision, mutationId: pending.mutationId }))
           } else localStorage.removeItem(recoveryKey)

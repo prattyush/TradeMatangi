@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { enqueueScreenSave, saveScreenRecord, type SavedScreenRecord } from './screenSave'
-import type { ScreenDraft } from './screenConflict'
+import { mergeScreenDraft, screenContentKey, type ScreenDraft } from './screenConflict'
 
 const base: SavedScreenRecord = { screen_id: 'screen-1', revision: 1, state: { layout: '1', mode: 'Browse' }, name: 'One', order: 0 }
 const desired = { state: { layout: '2-side', mode: 'Browse' }, name: 'One', order: 0 }
@@ -50,5 +50,72 @@ describe('saveScreenRecord', () => {
     const read = vi.fn(async () => ({ ...base, revision: 2, state: { ...base.state, mode: 'Paper', session_id: 'paper-1' } }))
     await expect(saveScreenRecord(base, desired, 'mutation', { write, read, isConflict: () => true })).rejects.toThrow('protected fields')
     expect(write).toHaveBeenCalledTimes(1)
+  })
+})
+
+
+describe('autosave deduplication', () => {
+  it('stops saving after a server/Rust response reorders the same screen content', async () => {
+    const submitted: ScreenDraft = { name: 'One', order: 0, state: { id: 'screen-1', layout: '2-side', mode: 'Browse', tiles: [{ id: 'tile', symbol: 'NIFTY' }], session_id: undefined } }
+    const write = vi.fn(async (_id, revision, draft: ScreenDraft) => ({
+      screen_id: 'screen-1', revision: (revision ?? 0) + 1, name: draft.name, order: draft.order,
+      state: { tiles: [{ symbol: 'NIFTY', id: 'tile' }], mode: 'Browse', layout: draft.state.layout, id: 'screen-1' },
+    }))
+    const transport = { write, read: vi.fn(), isConflict: () => false }
+    let persisted = await saveScreenRecord(base, submitted, 'first', transport)
+    const returnedDraft = { state: persisted.state, name: persisted.name, order: persisted.order }
+    const reconciled = mergeScreenDraft(submitted, submitted, returnedDraft, true).draft
+    const savedKey = screenContentKey({ id: 'screen-1', ...returnedDraft })
+    const nextKey = screenContentKey({ id: 'screen-1', ...submitted })
+    expect(savedKey).toBe(nextKey)
+    expect(screenContentKey(reconciled)).toBe(screenContentKey(returnedDraft))
+    for (let n = 0; n < 5; n += 1) persisted = await saveScreenRecord(persisted, submitted, `repeat-${n}`, transport)
+    expect(write).toHaveBeenCalledTimes(1)
+    expect(persisted.revision).toBe(2)
+  })
+
+  it('coalesces redundant queued saves after the first write completes', async () => {
+    let release: (() => void) | undefined
+    const gate = new Promise<void>(resolve => { release = resolve })
+    let persisted = base
+    const write = vi.fn(async (_id, revision, draft: ScreenDraft) => {
+      await gate
+      return { ...base, ...draft, revision: (revision ?? 0) + 1 }
+    })
+    const transport = { write, read: vi.fn(), isConflict: () => false }
+    const execute = async () => { persisted = await saveScreenRecord(persisted, desired, 'queued', transport) }
+    const first = enqueueScreenSave(Promise.resolve(), execute)
+    const second = enqueueScreenSave(first, execute)
+    await vi.waitFor(() => expect(write).toHaveBeenCalledTimes(1))
+    release?.()
+    await Promise.all([first, second])
+    expect(write).toHaveBeenCalledTimes(1)
+    expect(persisted.revision).toBe(2)
+  })
+
+  it('preserves an actual edit made while an earlier save is in flight', async () => {
+    let release: (() => void) | undefined
+    const gate = new Promise<void>(resolve => { release = resolve })
+    let persisted = base
+    let current: ScreenDraft = desired
+    const write = vi.fn(async (_id, revision, draft: ScreenDraft) => {
+      if (revision === 1) await gate
+      return { ...base, ...draft, revision: (revision ?? 0) + 1 }
+    })
+    const transport = { write, read: vi.fn(), isConflict: () => false }
+    const execute = async () => {
+      const submitted = current
+      const returned = await saveScreenRecord(persisted, submitted, 'edit', transport)
+      current = mergeScreenDraft(submitted, current, { state: returned.state, name: returned.name, order: returned.order }, true).draft
+      persisted = returned
+    }
+    const first = enqueueScreenSave(Promise.resolve(), execute)
+    const second = enqueueScreenSave(first, execute)
+    await vi.waitFor(() => expect(write).toHaveBeenCalledTimes(1))
+    current = { ...desired, state: { ...desired.state, layout: '4-grid' } }
+    release?.()
+    await Promise.all([first, second])
+    expect(write.mock.calls.map(call => [call[1], call[2].state.layout])).toEqual([[1, '2-side'], [2, '4-grid']])
+    expect(persisted.state.layout).toBe('4-grid')
   })
 })
