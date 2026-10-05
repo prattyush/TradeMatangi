@@ -171,3 +171,92 @@ describe('browser trading SSE', () => {
     controller.stop()
   })
 })
+
+describe('event-triggered wallet recovery', () => {
+  it('does not fetch wallet or snapshots on ordinary price ticks or idle time', async () => {
+    vi.useFakeTimers()
+    let current = snapshot()
+    const fetchWallet = vi.fn(), fetchSnapshot = vi.fn()
+    const controller = new TradingStreamController({ current: () => current, publish: value => { current = value }, fetchSnapshot, fetchWallet, onError: vi.fn() })
+    for (let n = 11; n < 20; n++) controller.receive([tick(n, n)])
+    await vi.advanceTimersByTimeAsync(600_000)
+    expect(fetchWallet).not.toHaveBeenCalled()
+    expect(fetchSnapshot).not.toHaveBeenCalled()
+    controller.stop()
+  })
+
+  it('updates reservations/refunds directly when an order event carries a balance', () => {
+    let current = snapshot()
+    const fetchWallet = vi.fn()
+    const controller = new TradingStreamController({ current: () => current, publish: value => { current = value }, fetchSnapshot: vi.fn(), fetchWallet, onError: vi.fn() })
+    controller.receive([{ type: 'order_placed', event_id: 11, order_id: 'new', status: 'PENDING', wallet_balance: 8000 }])
+    expect(current.wallet_balance).toBe(8000)
+    controller.receive([{ type: 'order_cancelled', event_id: 12, order_id: 'new', wallet_balance: 10000 }])
+    expect(current.wallet_balance).toBe(10000)
+    expect(fetchWallet).not.toHaveBeenCalled()
+    controller.stop()
+  })
+
+  it('coalesces wallet reads and refetches after an event overtakes the pending response', async () => {
+    vi.useFakeTimers()
+    let current = snapshot()
+    let complete!: (wallet: { balance: number }) => void
+    const fetchWallet = vi.fn(() => new Promise<{ balance: number }>(resolve => { complete = resolve }))
+    const controller = new TradingStreamController({ current: () => current, publish: value => { current = value }, fetchSnapshot: vi.fn(), fetchWallet, onError: vi.fn() })
+    controller.receive([{ type: 'order_placed', event_id: 11, order_id: 'a', status: 'PENDING' }])
+    controller.receive([{ type: 'order_cancelled', event_id: 12, order_id: 'a' }])
+    expect(fetchWallet).toHaveBeenCalledOnce()
+    complete({ balance: 8000 })
+    await flush()
+    expect(current.wallet_balance).not.toBe(8000)
+    await vi.advanceTimersByTimeAsync(0)
+    expect(fetchWallet).toHaveBeenCalledTimes(2)
+    complete({ balance: 10000 })
+    await flush()
+    expect(current.wallet_balance).toBe(10000)
+    controller.stop()
+  })
+
+  it('does not overwrite a newer committed balance with an old response', async () => {
+    let current = snapshot()
+    let complete!: (wallet: { balance: number }) => void
+    const fetchWallet = vi.fn(() => new Promise<{ balance: number }>(resolve => { complete = resolve }))
+    const controller = new TradingStreamController({ current: () => current, publish: value => { current = value }, fetchSnapshot: vi.fn(), fetchWallet, onError: vi.fn() })
+    controller.receive([{ type: 'order_updated', event_id: 11, order_id: 'stop' }])
+    controller.receive([{ type: 'order_cancelled', event_id: 12, order_id: 'stop', wallet_balance: 10000 }])
+    complete({ balance: 8000 })
+    await flush()
+    expect(current.wallet_balance).toBe(10000)
+    expect(fetchWallet).toHaveBeenCalledOnce()
+    controller.stop()
+  })
+
+  it('retries failed wallet requests and cancels the retry after stop', async () => {
+    vi.useFakeTimers()
+    let current = snapshot()
+    const fetchWallet = vi.fn().mockRejectedValueOnce(new Error('offline')).mockResolvedValue({ balance: 9000 })
+    const controller = new TradingStreamController({ current: () => current, publish: value => { current = value }, fetchSnapshot: vi.fn(), fetchWallet, onError: vi.fn() })
+    controller.receive([{ type: 'order_updated', event_id: 11, order_id: 'stop' }])
+    await flush()
+    await vi.advanceTimersByTimeAsync(2000)
+    expect(fetchWallet).toHaveBeenCalledTimes(2)
+    expect(current.wallet_balance).toBe(9000)
+    controller.stop()
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(fetchWallet).toHaveBeenCalledTimes(2)
+  })
+
+  it('accepts a reconnect snapshot with a reset cursor and rejects old pending recovery', async () => {
+    let current = snapshot(100)
+    let complete!: (value: DesktopTradingSnapshot) => void
+    const controller = new TradingStreamController({ current: () => current, publish: value => { current = value }, fetchSnapshot: () => new Promise(resolve => { complete = resolve }), onError: vi.fn() })
+    void controller.recover()
+    const reconnected = { ...snapshot(1), wallet_balance: 9000, stream_reconnected: true }
+    controller.receive([reconnected])
+    complete({ ...snapshot(101), wallet_balance: 7000 })
+    await flush()
+    expect(current.event_cursor).toBe(1)
+    expect(current.wallet_balance).toBe(9000)
+    controller.stop()
+  })
+})

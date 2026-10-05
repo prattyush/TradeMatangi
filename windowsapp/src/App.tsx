@@ -3,7 +3,7 @@ import { accountSettingsRequest } from './desktopSettingsRequest'
 import { parseGuardrailError } from './guardrailFeedback'
 import { DesktopSettingsModal, type ChartSettings } from './DesktopSettingsModal'
 import { ToolbarIcon } from './ToolbarIcon'
-import { TradingRefresh, TRADING_RECONCILE_MS } from './tradingRefresh'
+import { TradingRefresh, backupReconciliationEnabled, readStreamChunk } from './tradingRefresh'
 import { TradingSseDecoder, TradingStreamController, TradingStreamDrain, TradingStreamLifecycle } from './tradingStream'
 import { bounded, closeAfterSave, controlledScreens, SAVE_TIMEOUT_MS, journalKey, recoverState, type RecoveryJournal } from './windowLifecycle'
 import { ticketSizingPayload, ticketSizingLabel, switchTicketSizing } from './ticketSizing'
@@ -14,6 +14,7 @@ import { listen } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { ChartTile } from './ChartTile'
 import { replayCandles } from './chartState'
+import { replaySnapshotFromStream, type ReplaySnapshot } from './replayStreamState'
 import { shouldConsumeDrawingCommand } from './drawingState'
 import type { Candle, DesktopOrder, DesktopPosition, DesktopTrade, DesktopTradingSnapshot } from './contracts'
 import { aggregateLiveTileCandles, appendLiveTick, reconcileLiveTicks } from './liveCandles'
@@ -32,20 +33,6 @@ type Layout = '1' | '2-side' | '2-stacked' | '3-wide-top' | '4-grid' | '4-one-th
 interface Screen { id: string; persistedId?: string; revision?: number; name: string; tiles: TileConfig[]; layout: Layout; saved?: PersistedScreenState }
 interface PersistedScreenState extends Record<string, unknown> { id?: string; layout?: Layout; tiles?: TileConfig[]; indicators?: Record<string, string[]>; activeToolTileId?: string; mode?: DesktopMode; live_enabled?: boolean; session_id?: string; run_id?: string; live_stream_id?: string; owned?: boolean; run_date?: string; start_time?: string; speed?: string }
 interface DesktopScreenRecord { screen_id: string; name: string; state: PersistedScreenState; revision: number; order: number; active?: boolean }
-interface ReplaySnapshot { run_id: string; event_id: number; cursor: number; state: string; mode: string; bar_index: number; interval_seconds: number; tile_states: Array<{ tile_id: string; availability: string; interval_minutes?: number; candle?: Candle }> }
-const replaySnapshotFromStream = (value: unknown): ReplaySnapshot | null => {
-  if (!value || typeof value !== 'object') return null
-  const item = value as Record<string, unknown>
-  if (item.type === 'batch' && Array.isArray(item.events)) {
-    for (const event of [...item.events].reverse()) {
-      const snapshot = replaySnapshotFromStream(event)
-      if (snapshot) return snapshot
-    }
-    return null
-  }
-  if (typeof item.run_id === 'string' && typeof item.cursor === 'number' && Array.isArray(item.tile_states)) return item as unknown as ReplaySnapshot
-  return replaySnapshotFromStream(item.payload)
-}
 
 interface TileSwap { dir: string; label: string; onClick: () => void }
 interface DesktopStreamSnapshot<T> { key: string; last_event_id: number; latest_payload: T | null; connection: 'connected' | 'reconnecting' | 'offline' | 'authentication_required'; events_dropped?: boolean }
@@ -548,6 +535,13 @@ function ScreenController(props: ScreenControllerProps) {
   const authenticatedRef = useRef(connection !== 'authentication_required')
   const tradingStreamEventRef = useRef<Record<string, number>>({})
   const tradingRefreshRef = useRef(new TradingRefresh())
+  const liveRefreshRef = useRef(new TradingRefresh())
+  const replayRefreshRef = useRef(new TradingRefresh())
+  const liveEpochRef = useRef(0)
+  const replayEpochRef = useRef(0)
+  const replayStateRef = useRef(replay)
+  replayStateRef.current = replay
+  const tradingControllerRef = useRef<TradingStreamController | null>(null)
   const tradingStreamLifecycleRef = useRef(new TradingStreamLifecycle())
   const tradingStateRef = useRef(trading)
   tradingStateRef.current = trading
@@ -605,7 +599,7 @@ function ScreenController(props: ScreenControllerProps) {
     }
   }
   const liveJournalRef = useRef(new LiveEventJournal())
-  const setLiveSnapshot = (snapshot: LiveSnapshot | null, replaceStream = false) => { setLive(current => snapshot ? current && current.stream_id !== snapshot.stream_id && !replaceStream ? current : liveJournalRef.current.reconcile(current, snapshot) : null); if (snapshot) clearLiveError() }
+  const setLiveSnapshot = (snapshot: LiveSnapshot | null, replaceStream = false) => { setLive(current => snapshot ? current && current.stream_id !== snapshot.stream_id && !replaceStream ? current : liveJournalRef.current.reconcile(current, snapshot) : null); if (snapshot) { liveRefreshRef.current.mark(`${serverUrl}:${browserToken}:${snapshot.stream_id}`); clearLiveError() } }
   const updateLiveSnapshot = (updater: (snapshot: LiveSnapshot | null) => LiveSnapshot | null) => {
     setLive(current => {
       const next = updater(current)
@@ -771,7 +765,7 @@ function ScreenController(props: ScreenControllerProps) {
     setChartSettings(settings)
   }
 
-  const replayRequest = async <T = ReplaySnapshot,>(path: string, method: 'GET' | 'POST' | 'PUT', body: Record<string, unknown> = {}): Promise<T> => {
+  const rawReplayRequest = async <T = ReplaySnapshot,>(path: string, method: 'GET' | 'POST' | 'PUT', body: Record<string, unknown> = {}): Promise<T> => {
     if (hasNativeHost) return invoke<T>('desktop_replay_request', { baseUrl: serverUrl, path, method, body, screenId: activeScreenId })
     const response = await fetch(`${serverUrl.replace(/\/$/, '')}/api/desktop/v1/replay/${path}`, { method, headers: { Authorization: `Bearer ${browserToken}`, 'Content-Type': 'application/json' }, body: method === 'GET' ? undefined : JSON.stringify(body) })
     if (!response.ok) {
@@ -780,7 +774,26 @@ function ScreenController(props: ScreenControllerProps) {
     }
     return response.json() as Promise<T>
   }
-  const liveRequest = async (path: string, method: 'GET' | 'POST' | 'PUT' | 'DELETE', body: Record<string, unknown> = {}): Promise<LiveSnapshot> => { if (hasNativeHost) return invoke<LiveSnapshot>('desktop_live_request', { baseUrl: serverUrl, path, method, body, screenId: activeScreenId }); const response = await fetch(`${serverUrl.replace(/\/$/, '')}/api/desktop/v1/live/${path}`, { method, headers: { Authorization: `Bearer ${browserToken}`, 'Content-Type': 'application/json' }, body: method === 'GET' || method === 'DELETE' ? undefined : JSON.stringify(body) }); if (!response.ok) throw new Error(`Live request failed (${response.status})`); return response.json() as Promise<LiveSnapshot> }
+  const replayRequest = async <T = ReplaySnapshot,>(path: string, method: 'GET' | 'POST' | 'PUT', body: Record<string, unknown> = {}): Promise<T> => {
+    const key = `${serverUrl}:${browserToken}:${path.split('/')[0]}`
+    if (method === 'GET' && /^[^/]+\/snapshot$/.test(path)) {
+      return replayRefreshRef.current.request(key, () => rawReplayRequest<T>(path, method, body))
+    }
+    const result = await rawReplayRequest<T>(path, method, body)
+    const snapshot = replaySnapshotFromStream(result)
+    if (snapshot) replayRefreshRef.current.mark(`${serverUrl}:${browserToken}:${snapshot.run_id}`)
+    return result
+  }
+  const rawLiveRequest = async (path: string, method: 'GET' | 'POST' | 'PUT' | 'DELETE', body: Record<string, unknown> = {}): Promise<LiveSnapshot> => { if (hasNativeHost) return invoke<LiveSnapshot>('desktop_live_request', { baseUrl: serverUrl, path, method, body, screenId: activeScreenId }); const response = await fetch(`${serverUrl.replace(/\/$/, '')}/api/desktop/v1/live/${path}`, { method, headers: { Authorization: `Bearer ${browserToken}`, 'Content-Type': 'application/json' }, body: method === 'GET' || method === 'DELETE' ? undefined : JSON.stringify(body) }); if (!response.ok) throw new Error(`Live request failed (${response.status})`); return response.json() as Promise<LiveSnapshot> }
+  const liveRequest = async (path: string, method: 'GET' | 'POST' | 'PUT' | 'DELETE', body: Record<string, unknown> = {}): Promise<LiveSnapshot> => {
+    const key = `${serverUrl}:${browserToken}:${path.split('/')[0]}`
+    if (method === 'GET' && /^[^/]+\/snapshot$/.test(path)) {
+      return liveRefreshRef.current.request(key, () => rawLiveRequest(path, method, body))
+    }
+    const snapshot = await rawLiveRequest(path, method, body)
+    liveRefreshRef.current.mark(`${serverUrl}:${browserToken}:${snapshot.stream_id}`)
+    return snapshot
+  }
   const desktopRecordRequest = async <T,>(path: string, method: 'GET' | 'POST' | 'PUT' | 'DELETE', body: Record<string, unknown> = {}): Promise<T> => {
     if (hasNativeHost) return invoke<T>('desktop_drawing_request', { baseUrl: serverUrl, path, method, body, screenId: activeScreenId })
     const response = await fetch(`${serverUrl.replace(/\/$/, '')}/api/desktop/v1/${path}`, { method, headers: { Authorization: `Bearer ${browserToken}`, 'Content-Type': 'application/json' }, body: method === 'GET' ? undefined : JSON.stringify(body) })
@@ -1044,7 +1057,19 @@ function ScreenController(props: ScreenControllerProps) {
     // Only the API capability probe owns the app-wide connection state.
     return snapshot
   }
-  const applyLiveStreamPayload = (payload: unknown) => {
+  const applyLiveStreamPayload = (payload: unknown): void => {
+    const value = payload as Record<string, unknown> | null
+    if (value?.type === 'batch' && Array.isArray(value.events)) { value.events.forEach(applyLiveStreamPayload); return }
+    if (value?.stream_reconnected && Array.isArray(value.tiles)) {
+      liveEpochRef.current += 1
+      liveJournalRef.current = new LiveEventJournal()
+      setLive(value as unknown as LiveSnapshot)
+      liveRefreshRef.current.mark(`${serverUrl}:${browserToken}:${value.stream_id}`)
+      clearLiveError()
+      return
+    }
+    const snapshotPayload = value && Array.isArray(value.tiles) ? value : value?.payload as Record<string, unknown> | undefined
+    if (snapshotPayload && Array.isArray(snapshotPayload.tiles)) liveRefreshRef.current.mark(`${serverUrl}:${browserToken}:${snapshotPayload.stream_id}`)
     liveJournalRef.current.record(payload)
     updateLiveSnapshot(current => {
       const next = applyLiveStreamPayloadToSnapshot(current, payload)
@@ -1127,22 +1152,47 @@ function ScreenController(props: ScreenControllerProps) {
     const abort = new AbortController()
     const streamId = live.stream_id
     let cursor = live.event_id
-    const recover = async () => { const snapshot = await liveRequest(`${streamId}/snapshot`, 'GET'); if (!cancelled) { cursor = Math.max(cursor, snapshot.event_id); setLiveSnapshot(snapshot) } }
+    let recoveryPending: Promise<void> | undefined
+    let recoveryRetry: ReturnType<typeof setTimeout> | undefined
+    let recoveryBackoff = 1000
+    const recover = (): Promise<void> => {
+      if (cancelled || recoveryPending) return recoveryPending ?? Promise.resolve()
+      if (recoveryRetry !== undefined) { clearTimeout(recoveryRetry); recoveryRetry = undefined }
+      const epoch = liveEpochRef.current
+      recoveryPending = liveRequest(`${streamId}/snapshot`, 'GET').then(snapshot => {
+        if (!cancelled && epoch === liveEpochRef.current) { cursor = Math.max(cursor, snapshot.event_id); setLiveSnapshot(snapshot) }
+        recoveryBackoff = 1000
+      }).catch(error => {
+        if (cancelled) return
+        reportLiveError(error)
+        recoveryRetry = setTimeout(() => { recoveryRetry = undefined; void recover() }, recoveryBackoff)
+        recoveryBackoff = Math.min(recoveryBackoff * 2, 30_000)
+      }).finally(() => { recoveryPending = undefined })
+      return recoveryPending
+    }
     const connect = async () => {
       let backoff = 1_000
+      let opened = false
       while (!cancelled) {
         try {
-          const response = await fetch(`${serverUrl.replace(/\/$/, '')}/api/desktop/v1/live/${streamId}/events?last_event_id=${cursor}`, { headers: { Authorization: `Bearer ${browserToken}`, Accept: 'text/event-stream' }, signal: abort.signal })
+          const response = await fetch(`${serverUrl.replace(/\/$/, '')}/api/desktop/v1/live/${streamId}/events${opened ? '' : `?last_event_id=${cursor}`}`, { headers: { Authorization: `Bearer ${browserToken}`, Accept: 'text/event-stream' }, signal: abort.signal })
           if (!response.ok || !response.body) throw new Error(`Live stream failed (${response.status})`)
+          let reconnectSnapshot = opened
+          opened = true
           const reader = response.body.getReader()
           const decoder = new TradingSseDecoder((event, id) => {
+            if (reconnectSnapshot && (isDesktopTradingSnapshot(event) || Array.isArray(event.tiles))) {
+              event.stream_reconnected = true
+              cursor = Number(event.event_cursor ?? event.event_id) || 0
+              reconnectSnapshot = false
+            }
             const nextId = id ?? Number(event.event_id)
             if (Number.isFinite(nextId) && nextId > cursor + 1 && !Array.isArray(event.tiles)) void recover().catch(reportLiveError)
             if (Number.isFinite(nextId)) cursor = Math.max(cursor, nextId)
             if (!cancelled) applyLiveStreamPayload(event)
           }, () => { void recover().catch(reportLiveError) })
           backoff = 1_000
-          try { while (!cancelled) { const { done, value } = await reader.read(); if (done) break; decoder.push(value) } }
+          try { while (!cancelled) { const { done, value } = await readStreamChunk(reader); if (done) break; decoder.push(value) } }
           finally { await reader.cancel().catch(() => undefined); reader.releaseLock() }
         } catch (error) { if (!cancelled) reportLiveError(error) }
         if (!cancelled) await new Promise(resolve => window.setTimeout(resolve, backoff))
@@ -1150,65 +1200,98 @@ function ScreenController(props: ScreenControllerProps) {
       }
     }
     void connect()
-    return () => { cancelled = true; abort.abort() }
+    return () => { cancelled = true; abort.abort(); if (recoveryRetry !== undefined) clearTimeout(recoveryRetry) }
   }, [live?.stream_id, hasNativeHost, serverUrl, browserToken, connection, childReady])
   useEffect(() => {
     if (!live || connection === 'authentication_required') return
     let cancelled = false
     let inFlight = false
-    let lastHealthCheck = 0
-    let lastProviderRetry = 0
+    const streamId = live.stream_id
+    const key = `${serverUrl}:${browserToken}:${streamId}`
+    let cursor = live.event_id
+    let deliveredCursor = -1
+    let recoveryRequired = false
+    let retryAt = 0
+    let backoff = 1000
+    const recover = async () => {
+      const epoch = liveEpochRef.current
+      try {
+        const snapshot = await liveRequest(`${streamId}/snapshot`, 'GET')
+        if (!cancelled && epoch === liveEpochRef.current) { setLiveSnapshot(snapshot); cursor = Math.max(cursor, snapshot.event_id); clearLiveError() }
+        recoveryRequired = false
+        backoff = 1000
+      } catch (error) {
+        recoveryRequired = true
+        retryAt = Date.now() + backoff
+        backoff = Math.min(backoff * 2, 30_000)
+        if (!cancelled) {
+          if (isMissingLiveStream(error)) { stopNativeStream(`browse-live:${activeScreenId}:${streamId}`); await startLive(undefined, true) }
+          else reportLiveError(error)
+        }
+      }
+    }
     const timer = window.setInterval(() => {
       if (inFlight) return
       inFlight = true
-      if (hasNativeHost) {
-        void readNativeStreamState<unknown>(`browse-live:${activeScreenId}:${live.stream_id}`)
-          .then(async stream => {
-            if (cancelled) return
-            if (stream?.connection === 'connected') applyLiveStreamPayload(stream.latest_payload)
-            if (Date.now() - lastHealthCheck < 15_000 || connection !== 'connected') return
-            lastHealthCheck = Date.now()
-            try {
-              let snapshot = await liveRequest(`${live.stream_id}/snapshot`, 'GET')
-              if (snapshot.tiles.some(tile => tile.availability === 'provider_error') && Date.now() - lastProviderRetry >= 30_000) {
-                lastProviderRetry = Date.now()
-                snapshot = await liveRequest(`${live.stream_id}/refresh`, 'POST')
-              }
-              if (!cancelled) {
-                setLiveSnapshot(snapshot)
-                clearLiveError()
-              }
-            } catch (error) {
-              if (cancelled) return
-              if (isMissingLiveStream(error)) {
-                stopNativeStream(`browse-live:${activeScreenId}:${live.stream_id}`)
-                await startLive(undefined, true)
-              } else reportLiveError(error)
-            }
-          })
-          .catch(error => { if (!cancelled) reportLiveError(error) })
-          .finally(() => { inFlight = false })
-      } else {
-        if (Date.now() - lastHealthCheck < 15_000) { inFlight = false; return }
-        lastHealthCheck = Date.now()
-        void liveRequest(`${live.stream_id}/snapshot`, 'GET').then(async current => {
-          let snapshot = current
-          if (current.tiles.some(tile => tile.availability === 'provider_error') && Date.now() - lastProviderRetry >= 30_000) {
-            lastProviderRetry = Date.now()
-            snapshot = await liveRequest(`${live.stream_id}/refresh`, 'POST')
-          }
-          if (!cancelled) setLiveSnapshot(snapshot)
-        }).catch(error => {
+      void (async () => {
+        if (hasNativeHost) {
+          const stream = await readNativeStreamState<unknown>(`browse-live:${activeScreenId}:${streamId}`)
           if (cancelled) return
-          if (isMissingLiveStream(error)) void startLive(undefined, true)
-          else reportLiveError(error)
-        }).finally(() => { inFlight = false })
-      }
+          if (stream?.connection === 'connected') {
+            const events = paperStreamEvents(stream.latest_payload as DesktopTradingStreamPayload)
+            const changed = stream.last_event_id !== deliveredCursor || stream.events_dropped || events.some(event => Boolean(event.stream_reconnected))
+            if (changed) {
+              deliveredCursor = stream.last_event_id
+              for (const event of events) {
+                if (event.stream_reconnected || Array.isArray(event.tiles)) cursor = Number(event.event_id) || 0
+                else {
+                  const next = Number(event.event_id)
+                  if (Number.isFinite(next) && next > cursor + 1) recoveryRequired = true
+                  if (Number.isFinite(next)) cursor = Math.max(cursor, next)
+                }
+              }
+              applyLiveStreamPayload(stream.latest_payload)
+              recoveryRequired ||= Boolean(stream.events_dropped) && !events.some(event => Boolean(event.stream_reconnected) || Array.isArray(event.tiles))
+            }
+          }
+        }
+        const running = mode === 'Browse' ? liveEnabled : backupReconciliationEnabled(mode, tradingStateRef.current?.session.state)
+        if (connection === 'connected' && (recoveryRequired && Date.now() >= retryAt || running && liveRefreshRef.current.due(key))) {
+          await recover()
+        }
+      })().catch(error => { if (!cancelled) reportLiveError(error) }).finally(() => { inFlight = false })
     }, 1000)
     return () => { cancelled = true; window.clearInterval(timer) }
-  }, [live?.stream_id, hasNativeHost, serverUrl, reportLiveError, connection])
+  }, [live?.stream_id, hasNativeHost, serverUrl, reportLiveError, connection, mode, liveEnabled])
+  const refreshCurrentScreen = async () => {
+    const sessionId = trading?.session.session_id
+    try {
+      const tasks: Promise<unknown>[] = []
+      const replayEpoch = replayEpochRef.current
+      if (live) tasks.push(refreshLive())
+      if (replay) tasks.push(replayRequest(`${replay.run_id}/snapshot`, 'GET').then(snapshot => {
+        if (replayEpoch !== replayEpochRef.current) return
+        setReplay(current => current?.run_id === snapshot.run_id && (snapshot.event_id >= current.event_id || Boolean(snapshot.stream_reconnected)) ? snapshot : current)
+      }))
+      if (sessionId) {
+        const controller = tradingControllerRef.current
+        if (controller) tasks.push(controller.recover(true))
+        else tasks.push(desktopTradingRequest<DesktopTradingSnapshot>(`${sessionId}/snapshot`, 'GET').then(snapshot => {
+          setTrading(current => current?.session.session_id === sessionId ? snapshot : current)
+        }))
+      }
+      await Promise.all(tasks)
+    } catch (error) { reportTradingError(error) }
+  }
   useEffect(() => { if (connection === 'authentication_required') clearLiveTickCache() }, [connection])
-  useEffect(() => { const onKeyDown = (event: KeyboardEvent) => { if ((mode !== 'Browse' && mode !== 'Paper') || !live || (!props.assignedId && props.selectedId !== activeScreenId)) return; if (event.key === 'F5') { event.preventDefault(); void refreshLive() } }; window.addEventListener('keydown', onKeyDown); return () => window.removeEventListener('keydown', onKeyDown) }, [live?.stream_id, mode, props.selectedId])
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if ((!live && !trading && !replay) || (!props.assignedId && props.selectedId !== activeScreenId)) return
+      if (event.key === 'F5') { event.preventDefault(); void refreshCurrentScreen() }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [live?.stream_id, trading?.session.session_id, replay?.run_id, mode, props.selectedId])
   const tradingStartBody = (date: string) => {
     const tile = activeScreen.tiles.find(item => item.id === activeToolTile) ?? activeScreen.tiles[0]
     const item = catalogue.find(entry => entry.symbol === tile.symbol) ?? fallbackCatalogue[0]
@@ -1439,10 +1522,14 @@ function ScreenController(props: ScreenControllerProps) {
   useEffect(() => {
     if (!replay || replay.state === 'stopped' || connection === 'authentication_required') return
     const runId = replay.run_id
+    let deliveredCursor = -1
     const acceptSnapshot = (value: unknown) => {
       const next = replaySnapshotFromStream(value)
-      if (!next || next.run_id !== runId) return
-      setReplay(current => current?.run_id === runId && current.event_id > next.event_id ? current : next)
+      if (!next || next.run_id !== runId || next.event_id === deliveredCursor && !next.stream_reconnected) return
+      deliveredCursor = next.event_id
+      if (next.stream_reconnected) replayEpochRef.current += 1
+      replayRefreshRef.current.mark(`${serverUrl}:${browserToken}:${runId}`)
+      setReplay(current => current?.run_id === runId && current.event_id > next.event_id && !next.stream_reconnected ? current : next)
       lastReplayPollError.current = ''
       setReplayError('')
     }
@@ -1452,17 +1539,20 @@ function ScreenController(props: ScreenControllerProps) {
       let eventId = replay.event_id
       const connect = async () => {
         let backoff = 1_000
+        let opened = false
         while (!cancelled) {
           try {
-            const response = await fetch(`${serverUrl.replace(/\/$/, '')}/api/desktop/v1/replay/${runId}/events?last_event_id=${eventId}`, { headers: { Authorization: `Bearer ${browserToken}`, Accept: 'text/event-stream' }, signal: abort.signal })
+            const response = await fetch(`${serverUrl.replace(/\/$/, '')}/api/desktop/v1/replay/${runId}/events${opened ? '' : `?last_event_id=${eventId}`}`, { headers: { Authorization: `Bearer ${browserToken}`, Accept: 'text/event-stream' }, signal: abort.signal })
             if (!response.ok) throw new Error(`Replay stream failed (${response.status})`)
             if (!response.body) throw new Error('Replay stream has no body')
             backoff = 1_000
+            let reconnectSnapshot = opened
+            opened = true
             const reader = response.body.getReader()
             const decoder = new TextDecoder()
             let buffer = ''
             while (!cancelled) {
-              const { done, value } = await reader.read()
+              const { done, value } = await readStreamChunk(reader)
               if (done) break
               buffer = (buffer + decoder.decode(value, { stream: true })).replace(/\r\n/g, '\n')
               let end = buffer.indexOf('\n\n')
@@ -1476,7 +1566,13 @@ function ScreenController(props: ScreenControllerProps) {
                   try {
                     const payload: unknown = JSON.parse(data)
                     const snapshot = replaySnapshotFromStream(payload)
-                    if (snapshot) eventId = Math.max(eventId, snapshot.event_id)
+                    if (snapshot) {
+                      if (reconnectSnapshot) {
+                        (snapshot as unknown as Record<string, unknown>).stream_reconnected = true
+                        eventId = snapshot.event_id
+                        reconnectSnapshot = false
+                      } else eventId = Math.max(eventId, snapshot.event_id)
+                    }
                     if (!cancelled) acceptSnapshot(payload)
                   } catch (error) {
                     if (!(error instanceof SyntaxError)) throw error
@@ -1532,6 +1628,26 @@ function ScreenController(props: ScreenControllerProps) {
     return () => { cancelled = true; window.clearInterval(timer) }
   }, [replay?.run_id, replay?.state, hasNativeHost, serverUrl, browserToken, connection])
   useEffect(() => {
+    if (!replay || mode !== 'Replay' || connection !== 'connected') return
+    const runId = replay.run_id
+    const key = `${serverUrl}:${browserToken}:${runId}`
+    let cancelled = false
+    let inFlight = false
+    let retryAt = 0
+    const timer = window.setInterval(() => {
+      if (inFlight || replayStateRef.current?.run_id !== runId || replayStateRef.current.state !== 'running' || Date.now() < retryAt || !replayRefreshRef.current.due(key)) return
+      inFlight = true
+      const epoch = replayEpochRef.current
+      void replayRequest(`${runId}/snapshot`, 'GET').then(snapshot => {
+        if (!cancelled && epoch === replayEpochRef.current) setReplay(current => current?.run_id === runId && snapshot.event_id >= current.event_id ? snapshot : current)
+      }).catch(error => {
+        retryAt = Date.now() + 30_000
+        if (!cancelled) setReplayError(String(error))
+      }).finally(() => { inFlight = false })
+    }, 1000)
+    return () => { cancelled = true; window.clearInterval(timer) }
+  }, [replay?.run_id, mode, connection, serverUrl, browserToken])
+  useEffect(() => {
     if (mode !== 'Paper' || !trading?.session.session_id || trading.session.state === 'ended' || !live?.stream_id) return
     void desktopTradingRequest(`${trading.session.session_id}/live-stream`, 'POST', { live_stream_id: live.stream_id }).catch(reportTradingError)
   }, [mode, trading?.session.session_id, trading?.session.state, live?.stream_id])
@@ -1548,12 +1664,14 @@ function ScreenController(props: ScreenControllerProps) {
         setTrading(current => current?.session.session_id === sessionId ? snapshot : current)
       },
       fetchSnapshot: () => desktopTradingRequest<DesktopTradingSnapshot>(`${sessionId}/snapshot`, 'GET'),
+      fetchWallet: mode === 'Paper' ? () => desktopTradingRequest<{ balance: number }>(`${sessionId}/wallet`, 'GET') : undefined,
       onError: error => { if (!cancelled) reportTradingError(error) },
       onRecovery: elapsedMs => {
         tradingRefreshRef.current.mark(tradingRefreshKey(sessionId))
         recordRendererDiagnostic('trading_snapshot_reconciled', { session_id: sessionId, elapsed_ms: elapsedMs })
       },
     })
+    tradingControllerRef.current = controller
     const receive = (events: Record<string, unknown>[], gap = false) => {
       if (cancelled) return
       const started = performance.now()
@@ -1572,19 +1690,25 @@ function ScreenController(props: ScreenControllerProps) {
       }
       clearTradingError()
     }
-    const reconcileTimer = window.setInterval(() => controller.recover(), TRADING_RECONCILE_MS)
+    const reconcileTimer = window.setInterval(() => {
+      const current = tradingStateRef.current
+      if (connection === 'connected' && backupReconciliationEnabled(mode, current?.session.state) && (mode !== 'Replay' || replay?.state === 'running') && tradingRefreshRef.current.due(tradingRefreshKey(sessionId))) {
+        tradingRefreshRef.current.mark(tradingRefreshKey(sessionId))
+        void controller.recover()
+      }
+    }, 1000)
     if (trading.session.state === 'ended') {
-      return () => { cancelled = true; controller.stop(); window.clearInterval(reconcileTimer) }
+      return () => { cancelled = true; controller.stop(); if (tradingControllerRef.current === controller) tradingControllerRef.current = null; window.clearInterval(reconcileTimer) }
     }
     if (hasNativeHost) {
       const drain = new TradingStreamDrain(async () => {
         const stream = await readNativeStreamState<DesktopTradingStreamPayload>(key)
         if (cancelled || !stream) return
         const previousCursor = tradingStreamEventRef.current[key] ?? -1
-        if (stream.last_event_id > previousCursor || stream.events_dropped || tradingSnapshotRequiredRef.current[key]) {
+        if (stream.last_event_id > previousCursor || stream.events_dropped || tradingSnapshotRequiredRef.current[key] || paperStreamEvents(stream.latest_payload as DesktopTradingStreamPayload).some(event => Boolean(event.stream_reconnected))) {
           const recover = Boolean(stream.events_dropped || tradingSnapshotRequiredRef.current[key])
           delete tradingSnapshotRequiredRef.current[key]
-          receive(paperStreamEvents(stream.latest_payload), recover)
+          receive(paperStreamEvents(stream.latest_payload as DesktopTradingStreamPayload), recover)
           tradingStreamEventRef.current[key] = stream.last_event_id
         }
       }, reportTradingError)
@@ -1608,6 +1732,7 @@ function ScreenController(props: ScreenControllerProps) {
       return () => {
         cancelled = true
         controller.stop()
+        if (tradingControllerRef.current === controller) tradingControllerRef.current = null
         drain.stop()
         unlisten?.()
         void tradingStreamLifecycleRef.current.run(key, async () => {
@@ -1622,15 +1747,23 @@ function ScreenController(props: ScreenControllerProps) {
     let cursor = tradingStateRef.current?.event_cursor ?? 0
     const connect = async () => {
       let backoff = 1_000
+      let opened = false
       while (!cancelled) {
         try {
-          const response = await fetch(`${serverUrl.replace(/\/$/, '')}/api/desktop/v1/trading/${sessionId}/events?last_event_id=${cursor}`, {
+          const response = await fetch(`${serverUrl.replace(/\/$/, '')}/api/desktop/v1/trading/${sessionId}/events${opened ? '' : `?last_event_id=${cursor}`}`, {
             headers: { Authorization: `Bearer ${browserToken}`, Accept: 'text/event-stream' }, signal: abort.signal,
           })
           if (!response.ok || !response.body) throw new Error(`Trading stream failed (${response.status})`)
           backoff = 1_000
+          let reconnectSnapshot = opened
+          opened = true
           const reader = response.body.getReader()
           const decoder = new TradingSseDecoder((event, id) => {
+            if (reconnectSnapshot && (isDesktopTradingSnapshot(event) || Array.isArray(event.tiles))) {
+              event.stream_reconnected = true
+              cursor = Number(event.event_cursor ?? event.event_id) || 0
+              reconnectSnapshot = false
+            }
             const nextId = id ?? Number(event.event_id)
             const gap = Number.isFinite(nextId) && nextId > cursor + 1 && !isDesktopTradingSnapshot(event)
             if (Number.isFinite(nextId)) cursor = Math.max(cursor, nextId)
@@ -1639,7 +1772,7 @@ function ScreenController(props: ScreenControllerProps) {
           }, () => controller.recover())
           try {
             while (!cancelled) {
-              const { done, value } = await reader.read()
+              const { done, value } = await readStreamChunk(reader)
               if (done) break
               decoder.push(value)
             }
@@ -1653,19 +1786,8 @@ function ScreenController(props: ScreenControllerProps) {
       }
     }
     void connect()
-    return () => { cancelled = true; abort.abort(); controller.stop(); window.clearInterval(reconcileTimer) }
-  }, [mode, trading?.session.session_id, trading?.session.state, serverUrl, browserToken, hasNativeHost, connection, childReady, activeScreenId])
-  useEffect(() => {
-    if (mode !== 'Paper' || !trading?.session.session_id || trading.session.state === 'ended' || connection !== 'connected') return
-    const sessionId = trading.session.session_id
-    let cancelled = false
-    const timer = window.setInterval(() => {
-      void desktopTradingRequest<{ balance: number }>(`${sessionId}/wallet`, 'GET').then(wallet => {
-        if (!cancelled) setTrading(current => current?.session.session_id === sessionId ? { ...current, wallet_balance: wallet.balance } : current)
-      }).catch(reportTradingError)
-    }, 2000)
-    return () => { cancelled = true; window.clearInterval(timer) }
-  }, [mode, trading?.session.session_id, trading?.session.state, connection])
+    return () => { cancelled = true; abort.abort(); controller.stop(); if (tradingControllerRef.current === controller) tradingControllerRef.current = null; window.clearInterval(reconcileTimer) }
+  }, [mode, trading?.session.session_id, trading?.session.state, replay?.state, serverUrl, browserToken, hasNativeHost, connection, childReady, activeScreenId])
   const contractPayloadForTile = (tile: TileConfig): Record<string, unknown> => tile.kind === 'option' ? { right: tile.right, strike: Number(tile.strike), expiry: tile.expiry } : { right: null }
   const ensureOptionContractAttached = async (tile: TileConfig) => {
     if (!trading || tile.kind !== 'option') return
@@ -2030,9 +2152,9 @@ function ScreenController(props: ScreenControllerProps) {
       {!props.assignedId && <span className="screen-actions"><button className="icon-button" title="Rename screen" aria-label="Rename screen" onClick={renameScreen}>✎</button><button className="icon-button" title="Duplicate screen" aria-label="Duplicate screen" onClick={duplicateScreen}>⧉</button><button className="icon-button" title="Pop out screen" aria-label="Pop out screen" onClick={() => void popOutScreen()}>⇱</button><button className="icon-button" title="Move screen left" aria-label="Move screen left" onClick={() => moveScreen(-1)}>‹</button><button className="icon-button" title="Move screen right" aria-label="Move screen right" onClick={() => moveScreen(1)}>›</button><button className="icon-button" title="Close screen" aria-label="Close screen" disabled={screens.length <= 1} onClick={() => void closeScreen().catch(reportTradingError)}>×</button></span>}
       {(['Browse', 'Paper', 'Replay', 'Stepwise'] as const).map(value => <button className={mode === value ? 'selected mode-button' : 'mode-button'} onClick={() => switchMode(value)} key={value} title={value === 'Paper' ? 'Live' : value} aria-label={value === 'Paper' ? 'Live' : value}><ToolbarIcon name={value} /></button>)}
       {live?.feed && <small role="status" title={live.feed.reason ?? undefined}>Feed {live.feed.actual_provider ?? live.feed.selected_provider} · {live.feed.connection}{live.feed.actual_provider && live.feed.actual_provider !== live.feed.selected_provider ? ` (fallback from ${live.feed.selected_provider})` : ''}</small>}
-      {mode === 'Browse' && <span className="run-controls live-controls"><button onClick={() => void (live ? stopLive() : startLive())}>{live ? 'Stop Live' : 'Start Live'}</button><button className="icon-button" title="Refresh live charts" aria-label="Refresh live charts" onClick={refreshLive} disabled={!live}><ToolbarIcon name="Refresh" /></button></span>}
-      {mode === 'Paper' && <span className="run-controls"><label>Date <input type="date" value={runDate} onChange={event => setRunDate(event.target.value)} disabled={Boolean(historicalStarting || (trading && trading.session.state !== 'ended'))} /></label><label>Start <input type="time" value={runStartTime} onChange={event => setRunStartTime(event.target.value)} disabled={Boolean(historicalStarting || (trading && trading.session.state !== 'ended'))} step="60" /></label>{!trading || (trading.session.state === 'ended' && trading.paper_status !== 'running') ? <button className="run-start" onClick={startRun} disabled={Boolean(historicalStarting || (trading && (trading.session.date !== paperMarketDate() || paperMarketTime() >= '15:09:00' || trading.paper_status === 'settled' || trading.cleanup_pending)))}>{historicalStarting ? 'Starting…' : trading?.paper_status === 'settled' || (trading && (trading.session.date !== paperMarketDate() || paperMarketTime() >= '15:09:00')) ? 'Closed' : trading?.paper_status === 'stopped' ? 'Resume' : 'Start'}</button> : <button className="run-stop" onClick={() => void stopPaper()}>{sharedTradingSession ? 'Detach' : 'Stop'}</button>}{trading?.cleanup_pending && <small role="status">Paper cleanup pending; retrying automatically</small>}{trading?.settlement_pending && <small role="status">Close settlement pending an exact contract quote</small>}<button className="icon-button" title="Refresh live charts" aria-label="Refresh live charts" onClick={refreshLive} disabled={!live}><ToolbarIcon name="Refresh" /></button></span>}
-      {(mode === 'Replay' || mode === 'Stepwise') && <span className="run-controls"><label>Date <input type="date" value={runDate} onChange={event => setRunDate(event.target.value)} disabled={Boolean(historicalStarting || (replay && replay.state !== 'stopped'))} /></label><label>Start <input type="time" value={runStartTime} onChange={event => setRunStartTime(event.target.value)} disabled={Boolean(historicalStarting || (replay && replay.state !== 'stopped'))} step="60" /></label>{mode === 'Replay' && <label>Speed <select value={replaySpeed} onChange={event => updateReplaySpeed(event.target.value)} disabled={historicalStarting}><option value="0.25">0.25×</option><option value="0.5">0.5×</option><option value="1">1×</option><option value="1.1">1.1×</option><option value="1.25">1.25×</option><option value="1.5">1.5×</option><option value="2">2×</option><option value="5">5×</option><option value="10">10×</option></select></label>}{!replay || replay.state === 'stopped' ? <button className="run-start" onClick={startRun} disabled={historicalStarting}>{historicalStarting ? 'Starting…' : 'Start'}</button> : <>{mode === 'Replay' && <button className="run-pause" onClick={() => replayAction(replay.state === 'paused' ? 'resume' : 'pause')}>{replay.state === 'paused' ? 'Resume' : 'Pause'}</button>}{mode === 'Stepwise' && <button className="run-next" onClick={() => replayAction('next-bar')}>Next bar</button>}<button className="run-stop" onClick={() => replayAction('stop')}>Stop</button><small>{replay.bar_index} · {new Date(replay.cursor * 1000).toISOString().slice(11, 19)}</small></>}</span>}
+      {mode === 'Browse' && <span className="run-controls live-controls"><button onClick={() => void (live ? stopLive() : startLive())}>{live ? 'Stop Live' : 'Start Live'}</button><button className="icon-button" title="Refresh live charts" aria-label="Refresh live charts" onClick={refreshCurrentScreen} disabled={!live && !trading && !replay}><ToolbarIcon name="Refresh" /></button></span>}
+      {mode === 'Paper' && <span className="run-controls"><label>Date <input type="date" value={runDate} onChange={event => setRunDate(event.target.value)} disabled={Boolean(historicalStarting || (trading && trading.session.state !== 'ended'))} /></label><label>Start <input type="time" value={runStartTime} onChange={event => setRunStartTime(event.target.value)} disabled={Boolean(historicalStarting || (trading && trading.session.state !== 'ended'))} step="60" /></label>{!trading || (trading.session.state === 'ended' && trading.paper_status !== 'running') ? <button className="run-start" onClick={startRun} disabled={Boolean(historicalStarting || (trading && (trading.session.date !== paperMarketDate() || paperMarketTime() >= '15:09:00' || trading.paper_status === 'settled' || trading.cleanup_pending)))}>{historicalStarting ? 'Starting…' : trading?.paper_status === 'settled' || (trading && (trading.session.date !== paperMarketDate() || paperMarketTime() >= '15:09:00')) ? 'Closed' : trading?.paper_status === 'stopped' ? 'Resume' : 'Start'}</button> : <button className="run-stop" onClick={() => void stopPaper()}>{sharedTradingSession ? 'Detach' : 'Stop'}</button>}{trading?.cleanup_pending && <small role="status">Paper cleanup pending; retrying automatically</small>}{trading?.settlement_pending && <small role="status">Close settlement pending an exact contract quote</small>}<button className="icon-button" title="Refresh live charts" aria-label="Refresh live charts" onClick={refreshCurrentScreen} disabled={!live && !trading && !replay}><ToolbarIcon name="Refresh" /></button></span>}
+      {(mode === 'Replay' || mode === 'Stepwise') && <span className="run-controls"><button className="icon-button" title="Refresh charts and trading state" aria-label="Refresh charts and trading state" onClick={refreshCurrentScreen} disabled={!replay && !trading}><ToolbarIcon name="Refresh" /></button><label>Date <input type="date" value={runDate} onChange={event => setRunDate(event.target.value)} disabled={Boolean(historicalStarting || (replay && replay.state !== 'stopped'))} /></label><label>Start <input type="time" value={runStartTime} onChange={event => setRunStartTime(event.target.value)} disabled={Boolean(historicalStarting || (replay && replay.state !== 'stopped'))} step="60" /></label>{mode === 'Replay' && <label>Speed <select value={replaySpeed} onChange={event => updateReplaySpeed(event.target.value)} disabled={historicalStarting}><option value="0.25">0.25×</option><option value="0.5">0.5×</option><option value="1">1×</option><option value="1.1">1.1×</option><option value="1.25">1.25×</option><option value="1.5">1.5×</option><option value="2">2×</option><option value="5">5×</option><option value="10">10×</option></select></label>}{!replay || replay.state === 'stopped' ? <button className="run-start" onClick={startRun} disabled={historicalStarting}>{historicalStarting ? 'Starting…' : 'Start'}</button> : <>{mode === 'Replay' && <button className="run-pause" onClick={() => replayAction(replay.state === 'paused' ? 'resume' : 'pause')}>{replay.state === 'paused' ? 'Resume' : 'Pause'}</button>}{mode === 'Stepwise' && <button className="run-next" onClick={() => replayAction('next-bar')}>Next bar</button>}<button className="run-stop" onClick={() => replayAction('stop')}>Stop</button><small>{replay.bar_index} · {new Date(replay.cursor * 1000).toISOString().slice(11, 19)}</small></>}</span>}
       {isTradingMode(mode) && <><span className={`trading-pill session-indicator ${sharedTradingSession ? 'good' : ''}`} title={sharedTradingSession ? 'Shared session' : 'This screen session'} aria-label={sharedTradingSession ? 'Shared session' : 'This screen session'}>{trading ? (sharedTradingSession ? '⇄' : '▣') : '◌'}</span><button className="trading-pill good wallet-button" onClick={() => { setWalletAmount(String(Math.round(trading?.wallet_balance ?? preStartWallet ?? 0))); setWalletOpen(value => !value) }}>Wallet {preStartWallet === null && !trading ? '—' : `₹${Math.round(trading?.wallet_balance ?? preStartWallet ?? 0).toLocaleString('en-IN')}`}</button>{trading && <><span className={`trading-pill ${trading.pnl.day >= 0 ? 'good' : 'bad'}`}>P&L {trading.settings.desktop_pnl_display_mode === 'percent' ? `${trading.pnl.day_pct.toFixed(2)}%` : `₹${Math.round(trading.pnl.day).toLocaleString('en-IN')}`}</span><button className="flatten-button icon-button" title="Flatten" aria-label="Flatten" onClick={() => void flattenTrading().catch(reportTradingError)}><ToolbarIcon name="Flatten" /></button><button className="block-button icon-button" title="Block trading" aria-label="Block trading" disabled={blockPending || trading.guardrails?.ban_active} onClick={() => void blockTrading()}><ToolbarIcon name="Block" /></button></>}</>}
       <label className="layout-control">Layout <select value={activeScreen.layout} onChange={event => setLayout(event.target.value as Layout)}><option value="1">1 chart</option><option value="2-side">2 side-by-side</option><option value="2-stacked">2 stacked</option><option value="3-wide-top">3 wide-top</option><option value="4-grid">4 grid</option><option value="4-one-three">4 panes — 1+3</option><option value="5-equal">5 panes — Equal</option><option value="5-wide-right">5 panes — Wide R</option></select></label>
       <button className="icon-button" title="Chart settings" aria-label="Chart settings" onClick={() => setShowSettings(true)}>⚙</button><span className={`connection ${connection}`}>● {connection}</span><button onClick={logoutDesktop}>Log out</button>

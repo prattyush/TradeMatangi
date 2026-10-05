@@ -1,6 +1,15 @@
 # Phase 19 — Shared live market data and partial take profit
 
-## Current delivery status — shared settings
+## Current delivery status — desktop reconciliation
+
+Desktop traffic reduction is implemented and locally validated on
+`feature/desktop-event-reconciliation`, for a separate PR targeting `dev`.
+Review, merge and Windows installer acceptance are pending. See
+[Desktop reconciliation and idle traffic](#desktop-reconciliation-and-idle-traffic--2026-10-05)
+for the full requirement, policy, validation and deferred scope. The earlier
+screen autosave loop repair is already on `dev` in commit `ae100c1`.
+
+## Prior delivery status — shared settings
 
 Desktop/website settings parity is implemented and validated on
 `feature/phase19-desktop-settings-sync`, delivered through
@@ -2223,3 +2232,83 @@ The live-feed fallback rules remain:
 
 See [live history providers](live-history-providers.md) for detailed routing,
 API compatibility, SDK references and acceptance steps.
+
+## Desktop reconciliation and idle traffic — 2026-10-05
+
+### Requirement and agreed plan
+
+The desktop logs showed repeated unchanged `PUT /screens/{id}` calls, live
+snapshot GETs every 15 seconds, trading snapshots every 30 seconds, and Paper
+wallet GETs every two seconds. The requirement is to reduce unnecessary traffic,
+particularly while idle, and use streamed events, reconnection and the existing
+Refresh charts action to reconcile. Paper, Replay and Stepwise must retain their
+shared backend behavior across website and desktop; this change concerns desktop
+transport scheduling and does not change trading or history-provider policy.
+
+The continuous screen PUT loop was fixed separately in `ae100c1`: canonical JSON
+comparisons skip saves for unchanged screen content even after backend JSON
+round trips. This follow-up retains that fix and does not suppress access logs
+as a substitute for reducing requests.
+
+### Implemented desktop policy
+
+| Operation | Policy |
+|---|---|
+| Live chart snapshot | Five-minute backup while Browse live charts or Paper is running; no periodic GET while idle/stopped |
+| Trading snapshot | Five-minute backup while Paper or Replay is running; none while paused/ended or Stepwise waits for Next Bar |
+| Replay chart snapshot | Five-minute backup while Replay is running; none while paused/stopped or Stepwise waits |
+| Healthy API capabilities check | Every five minutes, shared by native windows; immediate startup/config changes |
+| Unhealthy API capabilities check | Existing 15-second recovery cadence, starting after the first failed probe |
+| Paper wallet | Streamed balances after own-session order changes; one coalesced wallet read when an event omits the balance, with retry on failure |
+| Refresh button / F5 | Reconcile chart and trading snapshots, including orders, positions, P&L and wallet, in Paper, Replay and Stepwise |
+| SSE reconnect | Request a fresh authoritative initial snapshot, including when backend event IDs restart at a lower cursor |
+| Event gap, lost native buffer, malformed frame/reset | Immediate snapshot recovery, coalesced with concurrent reads and retried after failures |
+| Silent transport stall | Reconnect after 60 seconds without stream bytes; heartbeat bytes count as activity |
+
+Successful full snapshots and state-changing responses reset the corresponding
+backup deadline. Quote/order events continue to update locally immediately;
+ordinary ticks do not trigger wallet or full trading snapshot requests. Automatic
+live health recovery uses snapshot GETs rather than chart-history refresh POSTs.
+Explicit live chart Refresh retains the historical refresh behavior.
+
+Native stream-buffer drains remain frequent local IPC operations. They do not
+send HTTP requests and are needed to deliver chart ticks and trading updates.
+Server SSE heartbeats remain unchanged, so a quiet market is not mistaken for a
+broken connection. Failed recovery attempts retain bounded backoff instead of
+waiting five minutes. Reconnection clears obsolete buffered events and trusts
+the new snapshot cursor; late wallet/trading recovery responses cannot replace
+newer committed state.
+
+### Tradeoffs and deferred scope
+
+This reduces background traffic substantially while retaining immediate recovery
+for observable stream failures and a five-minute backup for active sessions.
+An undetected state discrepancy may persist until that backup or manual Refresh;
+paused/idle sessions depend on events, reconnect or explicit Refresh. Native API
+capability status can take up to five minutes plus the 15-second confirmation probe to notice a failure when no active
+stream detects it first; existing faster retries apply once unhealthy.
+
+Cross-session/cross-symbol wallet notification is explicitly deferred. The wallet
+is shared by user/date, but this implementation assumes one actively influencing
+Paper session for immediate wallet updates. Changes from another Paper session
+are reconciled by the active-session backup or manual Refresh; an idle screen
+requires Refresh or reconnection. This PR does not introduce wallet broadcasts.
+Website polling/scheduling is unchanged; both clients still use the same backend
+session engines and provider rules. Replay/Stepwise remain Breeze-only for every
+required historical day, as documented in the preceding provider requirement.
+
+### Validation and remaining acceptance
+
+- Desktop frontend: **164 tests passed**; TypeScript and Vite production build passed.
+- Native desktop: **17 Rust tests passed**, including reset to a lower reconnect
+  cursor, stale buffer removal and single delivery of the reconnect marker.
+- Backend desktop live refresh/trading and Paper startup regression suites:
+  **176 tests passed**.
+- Added coverage includes five-minute scheduling, idle/Stepwise exclusion,
+  heartbeat versus silent stall, wallet read coalescing/retry, late wallet
+  response protection and obsolete trading recovery after reconnect.
+- Windows installer builds through the PR workflow. Manual Windows acceptance
+  remains: verify quiet idle/paused/Stepwise HTTP traffic; Paper order balance
+  updates; Refresh/F5 across modes; dropped connections and backend restarts;
+  and recovery after 60 seconds of silent transport loss. A new installer is
+  required for the native cadence and timeout changes.
