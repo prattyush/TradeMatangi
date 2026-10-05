@@ -232,6 +232,10 @@ wallet is a display value and never grants additional buying power.
 `MarginUsed` is treated as the aggregate commitment, including long-option
 premium and pending reservations. Do not separately add option cost, premium,
 full equity notional or a locally estimated margin on top of that field.
+Preserve its signed broker value: negative `MarginUsed` was observed after
+position exits and must not block an explicit wallet/chart refresh. Do not clamp
+it to zero or take its absolute value. Missing, boolean and nonfinite values
+remain errors. Previously initialized account/day capital remains unchanged.
 This accounting relationship is an explicit broker acceptance assumption;
 Kotak documents the fields but not a complete balance identity. See the
 [Kotak limits reference](https://github.com/Kotak-Neo/Kotak-neo-api-v2/blob/main/docs/Limits.md).
