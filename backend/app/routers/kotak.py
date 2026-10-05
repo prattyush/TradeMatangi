@@ -5,6 +5,7 @@ All endpoints require the user to be in the real-trading whitelist
 (or be an admin).  The TOTP login must be called before starting a
 real-trading session.
 """
+import asyncio
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -29,7 +30,7 @@ async def kotak_login(
     Returns 502 with the exact Kotak error message on failure.
     """
     try:
-        get_service().login_with_totp(req.totp)
+        await asyncio.to_thread(get_service().login_with_totp, req.totp)
         return {"status": "ok", "broker": "KotakNeo"}
     except KotakError as exc:
         raise HTTPException(status_code=502, detail=str(exc))
@@ -51,8 +52,7 @@ async def kotak_funds(
     try:
         balance = get_service().get_funds()
         return KotakFundsResponse(balance=balance)
-    except Exception as e:
-
+    except KotakError as exc:
         raise HTTPException(status_code=502, detail=str(exc))
 
 

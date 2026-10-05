@@ -31,8 +31,12 @@ from __future__ import annotations
 
 import asyncio
 import configparser
+import contextlib
 import json
 import logging
+import math
+import os
+import sys
 import threading
 import time
 from collections import defaultdict
@@ -127,6 +131,7 @@ def _load_kotak_master_from_api() -> list[dict]:
         logger.info("KotakBroadcaster: fetching scrip master URL for segment %s …", seg)
         try:
             url = client.scrip_master(exchange_segment=seg)
+            _service._check_api_response(url)
             if not isinstance(url, str) or not url.startswith("http"):
                 logger.warning(
                     "KotakBroadcaster: scrip_master(%s) returned unexpected value: %r — skipping",
@@ -367,6 +372,10 @@ class KotakNeoService:
         self._client: Any = None
         self._authenticated = False
         self._lock = threading.Lock()
+        self._login_lock = threading.Lock()
+        self._feed_lock = threading.Lock()
+        self._bridge = None
+        self._generation = 0
         # kotak_order_id → (callback, asyncio_loop)
         self._fill_callbacks: dict[str, tuple[Callable, Any]] = {}
         self._reject_callbacks: dict[str, tuple[Callable, Any]] = {}
@@ -374,59 +383,79 @@ class KotakNeoService:
         # for very fast fills on liquid instruments).
         # kotak_order_id → (side, qty, price)
         self._pending_fills: dict[str, tuple[str, int, float]] = {}
+        self._pending_rejects: dict[str, str] = {}
+        self._terminal_orders: set[str] = set()
         # KotakBroadcaster registers here to receive stock_feed messages
         self._market_data_callback: Callable | None = None
-        # Called by _on_open so KotakBroadcaster can re-subscribe after reconnect
-        self._reconnect_callback: Callable | None = None
-        # Pending reconnect timer (cancelled if _on_open fires first)
-        self._reconnect_timer: threading.Timer | None = None
 
     # ── Authentication ────────────────────────────────────────────────────────
 
-    def login_with_totp(self, totp: str) -> None:
-        """
-        Authenticate with Kotak Neo using a TOTP code.
-        Raises KotakError with the exact error message on any failure.
-        """
-        try:
-            from neo_api_client import NeoAPI  # type: ignore[import]
-        except ImportError:
-            raise KotakError(
-                "neo_api_client package not installed. "
-                "Run: pip install neo_api_client"
-            )
+    @staticmethod
+    def _close_client(client):
+        if client is not None:
+            with contextlib.suppress(Exception):
+                client.api_client.rest_client.close()
 
+    def shutdown(self) -> None:
+        """Invalidate old callbacks before closing sockets, without holding state locks."""
+        with self._feed_lock:
+            with self._lock:
+                self._generation += 1
+                self._authenticated = False
+                client, self._client = self._client, None
+                bridge, self._bridge = self._bridge, None
+        try:
+            if bridge is not None:
+                bridge.close()
+        finally:
+            self._close_client(client)
+
+    def login_with_totp(self, totp: str) -> None:
+        # SDK logging must use the application's configured log directory.
+        from app.config import LOG_DIR
+        os.environ.setdefault("NEO_LOG_FILE_PATH", str(LOG_DIR / "neo-api-client.log"))
+        if "pytest" in sys.modules:
+            os.environ.setdefault("NEO_LOG_FILE_ENABLED", "false")
+        try:
+            from neo_api_client import NeoAPI
+        except ImportError as exc:
+            raise KotakError("Kotak SDK missing. Run: bash scripts/install-backend-dependencies.sh") from exc
         creds = _read_kotak_credentials()
         for key in ("access_token", "mobile", "ucc", "mpin"):
             if not creds[key]:
-                raise KotakError(
-                    f"Kotak Neo '{key}' missing in data/accesskeys.ini [kotakneo]"
-                )
-
-        with self._lock:
+                raise KotakError(f"Kotak Neo '{key}' missing in data/accesskeys.ini [kotakneo]")
+        with self._login_lock:
+            self.shutdown()
+            client = None
             try:
-                client = NeoAPI(
-                    environment="prod",
-                    access_token=None,
-                    neo_fin_key=None,
-                    consumer_key=creds["access_token"],
-                )
-                client.totp_login(
-                    mobile_number=creds["mobile"],
-                    ucc=creds["ucc"],
-                    totp=totp,
-                )
-                client.totp_validate(mpin=creds["mpin"])
-                self._client = client
-                self._authenticated = True
-                logger.info("Kotak Neo authenticated successfully")
+                client = NeoAPI(environment="prod", consumer_key=creds["access_token"])
+                response = client.totp_login(mobile_number=creds["mobile"], ucc=creds["ucc"], totp=totp)
+                self._validate_login_response(response, client, trade=False)
+                response = client.totp_validate(mpin=creds["mpin"])
+                self._validate_login_response(response, client, trade=True)
+                with self._lock:
+                    self._client = client
+                    self._authenticated = True
+                    self._pending_fills.clear()
                 self._start_order_feed()
-            except KotakError:
-                raise
+                # Re-login restores only subscriptions still owned by consumers.
+                get_kotak_broadcaster()._subscribe_all(wait=False)
+                logger.info("Kotak Neo authenticated successfully")
             except Exception as exc:
-                self._authenticated = False
-                self._client = None
+                self.shutdown()
+                self._close_client(client)
+                if isinstance(exc, KotakError):
+                    raise
                 raise KotakError(str(exc)) from exc
+
+    def _validate_login_response(self, response, client, *, trade):
+        self._check_api_response(response)
+        data = response.get("data") if isinstance(response, dict) else None
+        config = client.configuration
+        token = config.edit_token if trade else config.view_token
+        sid = config.edit_sid if trade else config.sid
+        if not isinstance(data, dict) or data.get("status") != "success" or not token or not sid:
+            raise KotakError("Kotak authentication response is missing a valid session")
 
     def is_authenticated(self) -> bool:
         with self._lock:
@@ -464,8 +493,6 @@ class KotakNeoService:
                 transaction_type=side,
                 amo="NO",
                 disclosed_quantity="0",
-                market_protection="0",
-                pf="N",
                 trigger_price="0",
                 tag=None,
             )
@@ -498,8 +525,6 @@ class KotakNeoService:
                 transaction_type=side,
                 amo="NO",
                 disclosed_quantity="0",
-                market_protection="0",
-                pf="N",
                 trigger_price=str(_round_to_tick(trigger_price)),
                 tag=None,
             )
@@ -534,8 +559,6 @@ class KotakNeoService:
                 transaction_type=side,
                 amo="NO",
                 disclosed_quantity="0",
-                market_protection="0",
-                pf="N",
                 trigger_price="0",
                 tag=None,
             )
@@ -571,8 +594,6 @@ class KotakNeoService:
                 transaction_type=side,
                 amo="NO",
                 disclosed_quantity="0",
-                market_protection="0",
-                pf="N",
                 trigger_price=str(_round_to_tick(trigger_price)),
                 tag=None,
             )
@@ -588,7 +609,7 @@ class KotakNeoService:
         new_trigger: float,
         new_limit: float,
         qty: int,
-    ) -> None:
+    ) -> str:
         """Modify the trigger and limit price of an existing SL order on Kotak."""
         client = self._get_client()
         try:
@@ -601,7 +622,7 @@ class KotakNeoService:
                 trigger_price=str(_round_to_tick(new_trigger)),
                 disclosed_quantity="0",
             )
-            self._check_api_response(resp)
+            self._check_order_ack(resp)
             data = resp.get("data", resp) if isinstance(resp, dict) else {}
             return str(data.get("nOrdNo") or data.get("order_id") or kotak_order_id) if isinstance(data, dict) else kotak_order_id
         except KotakError:
@@ -614,7 +635,7 @@ class KotakNeoService:
         kotak_order_id: str,
         limit_price: float,
         qty: int,
-    ) -> None:
+    ) -> str:
         """
         Convert an existing SL order to a plain LIMIT order by calling modify_order
         with order_type="L" and trigger_price="0".  Atomic — no window without
@@ -631,7 +652,7 @@ class KotakNeoService:
                 trigger_price="0",
                 disclosed_quantity="0",
             )
-            self._check_api_response(resp)
+            self._check_order_ack(resp)
             data = resp.get("data", resp) if isinstance(resp, dict) else {}
             return str(data.get("nOrdNo") or data.get("order_id") or kotak_order_id) if isinstance(data, dict) else kotak_order_id
         except KotakError:
@@ -644,7 +665,7 @@ class KotakNeoService:
         client = self._get_client()
         try:
             resp = client.cancel_order(order_id=kotak_order_id)
-            self._check_api_response(resp)
+            self._check_order_ack(resp)
         except Exception as exc:
             raise KotakError(str(exc)) from exc
 
@@ -745,7 +766,8 @@ class KotakNeoService:
         """
         with self._lock:
             pending = self._pending_fills.pop(kotak_order_id, None)
-            self._fill_callbacks[kotak_order_id] = (callback, loop)
+            if kotak_order_id not in self._terminal_orders:
+                self._fill_callbacks[kotak_order_id] = (callback, loop)
 
         if pending is not None:
             p_side, p_qty, p_price = pending
@@ -768,7 +790,11 @@ class KotakNeoService:
     ) -> None:
         """Register a callback fired when `kotak_order_id` is rejected by the exchange."""
         with self._lock:
-            self._reject_callbacks[kotak_order_id] = (callback, loop)
+            pending = self._pending_rejects.pop(kotak_order_id, None)
+            if kotak_order_id not in self._terminal_orders:
+                self._reject_callbacks[kotak_order_id] = (callback, loop)
+        if pending is not None:
+            loop.call_soon_threadsafe(callback, kotak_order_id, pending)
 
     def deregister_reject_callback(self, kotak_order_id: str) -> None:
         with self._lock:
@@ -789,82 +815,48 @@ class KotakNeoService:
             "registered" if callback else "cleared",
         )
 
-    def register_reconnect_callback(self, callback: Callable | None) -> None:
-        """
-        Register (or clear) a no-arg callback invoked by _on_open after a WebSocket
-        reconnect. KotakBroadcaster uses this to re-subscribe to market data tokens
-        because Kotak drops all subscriptions when the connection is re-established.
-        """
+    def replace_market_subscriptions(self, subscriptions, *, wait=True) -> None:
+        self._get_client()
+        self._start_order_feed()
         with self._lock:
-            self._reconnect_callback = callback
-
-    # ── WebSocket order feed ──────────────────────────────────────────────────
+            bridge = self._bridge
+        try:
+            if bridge is None:
+                raise KotakError("Kotak feed is unavailable; login required")
+            bridge.replace_subscriptions(subscriptions, wait=wait)
+        except Exception as exc:
+            raise KotakError(str(exc)) from exc
 
     def _start_order_feed(self) -> None:
-        """Start the Kotak order-feed WebSocket (runs in a background thread)."""
-        if self._client is None:
-            return
-        try:
-            self._client.on_message = self._on_message
-            self._client.on_error = self._on_error
-            self._client.on_close = self._on_close
-            self._client.on_open = self._on_open
-            # subscribe_to_orderfeed() creates the NeoWebSocket and calls
-            # get_order_feed() which starts the WS in a background thread.
-            # Setting on_* attributes before calling this is required.
-            self._client.subscribe_to_orderfeed()
-            logger.info("Kotak Neo order feed WebSocket subscribed")
-        except Exception as exc:
-            logger.warning("Failed to start Kotak order feed WebSocket: %s", exc)
-
-    def _on_open(self, *args: Any) -> None:
-        logger.info("Kotak Neo order feed WebSocket opened")
-        with self._lock:
-            # Cancel any pending reconnect timer — the connection is already up.
-            if self._reconnect_timer is not None:
-                self._reconnect_timer.cancel()
-                self._reconnect_timer = None
-            cb = self._reconnect_callback
-        if cb is not None:
-            try:
-                cb()
-            except Exception as exc:
-                logger.warning("KotakNeoService: reconnect callback error: %s", exc)
-
-    def _on_close(self, *args: Any) -> None:
-        logger.warning("Kotak Neo order feed WebSocket closed — scheduling reconnect in 5 s")
-        with self._lock:
-            if self._reconnect_timer is not None:
-                self._reconnect_timer.cancel()
-            t = threading.Timer(5.0, self._attempt_reconnect_order_feed)
-            self._reconnect_timer = t
-        t.start()
-
-    def _attempt_reconnect_order_feed(self) -> None:
-        with self._lock:
-            self._reconnect_timer = None
-            if not self._authenticated or self._client is None:
-                logger.info("Kotak Neo: reconnect skipped — not authenticated")
-                return
-        logger.info("Kotak Neo: attempting order feed reconnect after connection close")
-        try:
-            self._start_order_feed()
-        except Exception as exc:
-            logger.warning("Kotak Neo: order feed reconnect failed: %s", exc)
-
-    def _on_error(self, *args: Any) -> None:
-        error = args[0] if args else "unknown"
-        logger.error("Kotak Neo order feed WebSocket error: %s", error)
+        from app.services.kotak_stream import KotakFeedBridge
+        with self._feed_lock:
+            with self._lock:
+                if not self._authenticated or self._client is None or self._bridge is not None:
+                    return
+                client, generation = self._client, self._generation
+            def current():
+                with self._lock:
+                    return self._authenticated and self._generation == generation
+            def order(message):
+                if current():
+                    self._on_message(message)
+            def market(message):
+                if current():
+                    self._on_message(message)
+            def expired():
+                if current():
+                    self.shutdown()
+            self._bridge = KotakFeedBridge(client, order, market, expired)
 
     def _on_message(self, message: Any) -> None:
         """
-        Handle incoming messages from the Kotak NeoWebSocket.
-        Dispatches by "type" field:
-          - "order_feed"  → order fill / reject callbacks
-          - "stock_feed"  → market data callback (KotakBroadcaster)
-        Sample order_feed: {"type":"order_feed","data":"{\"type\":\"order\",\"data\":[{...}]}"}
+        Adapt typed v3 orders and raw fallback frames to existing callbacks.
+        The bridge normalizes market prices into stock_feed messages. Older
+        nested order envelopes remain accepted for imported/test fixtures.
         """
         try:
+            if hasattr(message, "model_dump"):
+                message = message.model_dump(by_alias=True)
             if isinstance(message, (bytes, bytearray)):
                 message = message.decode()
             if isinstance(message, str):
@@ -888,12 +880,12 @@ class KotakNeoService:
                         )
                 return
 
-            if msg_type != "order_feed":
+            if msg_type not in ("order_feed", "order"):
                 logger.debug("KotakNeoService: ignoring unknown message type=%s", msg_type)
                 return
 
             raw_data = message.get("data")
-            outer = json.loads(raw_data) if isinstance(raw_data, str) else raw_data
+            outer = message if msg_type == "order" else json.loads(raw_data) if isinstance(raw_data, str) else raw_data
             if not isinstance(outer, dict) or outer.get("type") != "order":
                 return
 
@@ -907,17 +899,26 @@ class KotakNeoService:
                 if not isinstance(order_data, dict):
                     continue
 
-                order_id = str(order_data.get("nOrdNo", ""))
+                order_id = str(order_data.get("nOrdNo") or "")
+                if not order_id:
+                    continue
+                with self._lock:
+                    if order_id in self._terminal_orders:
+                        continue
                 order_status = str(order_data.get("ordSt", "")).lower()
 
                 cumulative_qty = int(float(order_data.get("fldQty") or order_data.get("flQty") or 0))
                 if order_status in ("complete", "filled") or cumulative_qty > 0:
                     avg_prc = order_data.get("avgPrc", "0") or "0"
                     qty_str = cumulative_qty or order_data.get("qty", "0") or "0"
-                    side_code = order_data.get("trnsTp", "B")
+                    side_code = order_data.get("trnsTp")
+                    if side_code not in ("B", "BUY", "S", "SELL") or not order_id:
+                        continue
 
                     filled_price = float(avg_prc)
                     qty = int(qty_str)
+                    if qty <= 0 or not math.isfinite(filled_price) or filled_price <= 0:
+                        continue
                     side = "BUY" if side_code in ("B", "BUY") else "SELL"
 
                     with self._lock:
@@ -925,25 +926,27 @@ class KotakNeoService:
                         if order_status in ("complete", "filled"):
                             self._fill_callbacks.pop(order_id, None)
                             self._reject_callbacks.pop(order_id, None)
+                            self._terminal_orders.add(order_id)
 
                     if entry is None:
                         # Fill arrived before register_fill_callback was called.
                         # Buffer it so the callback can dispatch immediately on registration.
                         with self._lock:
-                            self._pending_fills[order_id] = (side, qty, filled_price)
+                            previous = self._pending_fills.get(order_id)
+                            if previous is None or qty > previous[1]:
+                                self._pending_fills[order_id] = (side, qty, filled_price)
                         logger.info(
                             "Kotak order %s filled with no callback registered — buffered "
                             "(side=%s qty=%d price=%.2f)",
                             order_id, side, qty, filled_price,
                         )
-                        continue
-
-                    callback, loop = entry
-                    logger.info(
-                        "Kotak order %s filled: side=%s qty=%d price=%.2f",
-                        order_id, side, qty, filled_price,
-                    )
-                    loop.call_soon_threadsafe(callback, order_id, side, qty, filled_price)
+                    else:
+                        callback, loop = entry
+                        logger.info(
+                            "Kotak order %s filled: side=%s qty=%d price=%.2f",
+                            order_id, side, qty, filled_price,
+                        )
+                        loop.call_soon_threadsafe(callback, order_id, side, qty, filled_price)
 
                 if order_status in ("rejected", "cancelled"):
                     reject_reason = (
@@ -960,6 +963,9 @@ class KotakNeoService:
                         entry = self._reject_callbacks.get(order_id)
                         self._fill_callbacks.pop(order_id, None)
                         self._reject_callbacks.pop(order_id, None)
+                        self._terminal_orders.add(order_id)
+                        if entry is None:
+                            self._pending_rejects[order_id] = str(reject_reason)
 
                     if entry is not None:
                         r_callback, r_loop = entry
@@ -996,26 +1002,29 @@ class KotakNeoService:
         return _SYMBOL_MAP[symbol]
 
     def _check_api_response(self, resp: Any) -> None:
-        """
-        Raise KotakError if resp is a Kotak error dict (stat=Not_Ok / errMsg present).
-        stCode 100008 = session expired — also marks the service as unauthenticated so
-        the next is_authenticated() check returns False and prompts a re-TOTP.
-        """
+        """SDK REST failures are returned as dictionaries, not just exceptions."""
         if not isinstance(resp, dict):
             return
-        if str(resp.get("stat", "")).lower() in ("not_ok", "not ok", "error", "failed") or resp.get("errMsg") or resp.get("Error"):
-            err_msg = resp.get("errMsg") or resp.get("Error") or "unknown error"
-            st_code = resp.get("stCode")
-            if st_code == 100008:
-                # Session expired — force re-authentication
-                with self._lock:
-                    self._authenticated = False
-                    self._client = None
-                raise KotakError(
-                    f"Kotak session expired (unauthorized) — please reconnect via Settings. "
-                    f"(code {st_code})"
-                )
-            raise KotakError(f"Kotak API error: {err_msg} (code {st_code})")
+        if isinstance(resp.get("data"), dict):
+            self._check_api_response(resp["data"])
+        error = next((resp[k] for k in ("errMsg", "Error", "error", "Error Message", "fault")
+                      if resp.get(k)), None)
+        status = str(resp.get("stat") or resp.get("status") or "").lower()
+        code = str(resp.get("stCode", ""))
+        http_status = str(resp.get("status_code") or resp.get("StatusCode") or "")
+        if isinstance(error, list):
+            code = str(error[0].get("code", code)) if error and isinstance(error[0], dict) else code
+            error = "; ".join(str(e.get("message", "Broker error")) if isinstance(e, dict) else str(e) for e in error)
+        if isinstance(error, dict):
+            code = str(error.get("code", code))
+            error = error.get("message") or "Broker error"
+        expired = code in ("100008", "401", "403") or http_status in ("401", "403") or bool(resp.get("Error Message"))
+        failed = status in ("not_ok", "not ok", "error", "failed", "failure") or (http_status.isdigit() and int(http_status) >= 400)
+        if expired:
+            self.shutdown()
+            raise KotakError("Kotak session expired (unauthorized) — please reconnect via Settings")
+        if error or failed or (code and code not in ("200", "0") and status not in ("ok", "success")):
+            raise KotakError(f"Kotak API error: {error or resp.get('stat') or 'unknown error'} (code {code})")
 
     def _extract_order_id(self, resp: Any) -> str:
         """Parse Kotak place_order response to extract the order number."""
@@ -1029,7 +1038,16 @@ class KotakNeoService:
                 self._check_api_response(data)
                 if data.get("nOrdNo"):
                     return str(data["nOrdNo"])
-        raise KotakError(f"Unexpected Kotak order response (no order ID): {resp!r}")
+        raise KotakError("Unexpected Kotak order response (no order ID)")
+
+    def _check_order_ack(self, resp: Any) -> None:
+        self._check_api_response(resp)
+        data = resp.get("data", resp) if isinstance(resp, dict) else None
+        if not isinstance(data, dict) or not (
+            str(data.get("stat") or data.get("status") or "").lower() in ("ok", "success")
+            or data.get("nOrdNo") or data.get("order_id")
+        ):
+            raise KotakError("Malformed Kotak order acknowledgement")
 
 
 # ---------------------------------------------------------------------------
@@ -1095,8 +1113,8 @@ class KotakBroadcaster:
     Mirrors KiteBroadcaster: one shared WebSocket connection (via the
     authenticated KotakNeoService), fan-out to all registered session queues.
 
-    Market data arrives on the same NeoWebSocket as order feed; the service
-    dispatches "stock_feed" type messages here via register_market_data_callback.
+    A dedicated SFeed socket delivers normalized "stock_feed" messages through
+    register_market_data_callback; order events use a separate socket.
     Completed 1-second OHLC candles are pushed to session queues using
     loop.call_soon_threadsafe so asyncio loops receive them safely from the
     background WebSocket thread.
@@ -1108,253 +1126,95 @@ class KotakBroadcaster:
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
-        # Kotak scrip token str → {session_id: (queue, right, loop)}
-        self._token_sessions: dict[str, dict[str, tuple]] = defaultdict(dict)
-        # session_id → set[token_str]
-        self._session_tokens: dict[str, set[str]] = defaultdict(set)
-        # token_str → exchange_segment (for (un)subscribe calls)
-        self._token_exchange: dict[str, str] = {}
-        # token_str → True if this is an index instrument (NIFTY/SENSEX underlying)
-        self._token_is_index: dict[str, bool] = {}
-        # per-token OHLC accumulator
-        self._accumulators: dict[str, _KotakOHLCAccumulator] = defaultdict(_KotakOHLCAccumulator)
+        # Serialize mutations and bridge waits without holding the tick lock.
+        self._operation_lock = threading.RLock()
+        self._token_sessions: dict[tuple[str, str], dict[str, tuple]] = defaultdict(dict)
+        self._session_tokens: dict[str, set[tuple[str, str]]] = defaultdict(set)
+        self._token_is_index: dict[tuple[str, str], bool] = {}
+        self._accumulators: dict[tuple[str, str], _KotakOHLCAccumulator] = defaultdict(_KotakOHLCAccumulator)
         self._subscribed = False
 
     def is_ready(self) -> bool:
-        """True when Kotak Neo is authenticated and ready to stream market data."""
         return _service.is_authenticated()
 
-    def register(
-        self,
-        session_id: str,
-        tokens: list[str],
-        exchanges: list[str],
-        rights: list[str | None],
-        queue: "asyncio.Queue",
-        loop: "asyncio.AbstractEventLoop",
-        is_indices: list[bool] | None = None,
-    ) -> None:
-        """
-        Register a session for the given Kotak scrip tokens.
-
-        tokens[i]:     Kotak instrument token string (from master data)
-        exchanges[i]:  exchange_segment for tokens[i] (e.g. "nse_cm", "nse_fo")
-        rights[i]:     "CE", "PE", or None (equity/index)
-        is_indices[i]: True when token is an index (NIFTY/SENSEX underlying) —
-                       Kotak requires a separate subscribe call with isIndex=True
-                       for indices. Defaults to False for all tokens when omitted.
-
-        Raises KotakError if Kotak is not authenticated or subscription fails.
-        """
-        if is_indices is None:
-            is_indices = [False] * len(tokens)
-        logger.info(
-            "KotakBroadcaster: registering session %s with %d tokens: %s",
-            session_id, len(tokens),
-            [(t, r, idx) for t, r, idx in zip(tokens, rights, is_indices)],
-        )
+    def _subscriptions(self):
         with self._lock:
-            for token, exchange, right, is_idx in zip(tokens, exchanges, rights, is_indices):
-                self._token_sessions[token][session_id] = (queue, right, loop)
-                self._session_tokens[session_id].add(token)
-                self._token_exchange[token] = exchange
-                self._token_is_index[token] = is_idx
+            return [{"exchange_segment": exchange, "instrument_token": token,
+                     "is_index": self._token_is_index[(exchange, token)]}
+                    for exchange, token in self._token_sessions]
 
-        _service.register_reconnect_callback(self._on_reconnect)
-        self._subscribe_all()
-
-    def _on_reconnect(self) -> None:
-        """
-        Called by KotakNeoService._on_open after a WebSocket reconnect.
-        Kotak drops all market data subscriptions when the connection drops, so we
-        must re-subscribe every tracked token on each successful reconnect.
-        Runs on the WebSocket background thread — must be thread-safe and not raise.
-        """
-        with self._lock:
-            n = len(self._token_exchange)
-        logger.info(
-            "KotakBroadcaster: WebSocket reconnected — re-subscribing %d tokens", n
-        )
-        try:
-            self._subscribe_all()
-        except Exception as exc:
-            logger.error(
-                "KotakBroadcaster: re-subscription after reconnect failed: %s", exc
-            )
-
-    def _subscribe_all(self) -> None:
-        """Register market data callback and subscribe to all tracked tokens.
-
-        Kotak requires separate subscribe() calls for index instruments (isIndex=True)
-        and regular scrips (isIndex=False) — mixing them in one call causes indices
-        to silently receive no data.
-        """
-        with self._lock:
-            index_dicts = [
-                {"instrument_token": tok, "exchange_segment": exch}
-                for tok, exch in self._token_exchange.items()
-                if self._token_is_index.get(tok, False)
-            ]
-            scrip_dicts = [
-                {"instrument_token": tok, "exchange_segment": exch}
-                for tok, exch in self._token_exchange.items()
-                if not self._token_is_index.get(tok, False)
-            ]
-
-        if not index_dicts and not scrip_dicts:
-            return
-
-        try:
-            _service.register_market_data_callback(self._on_ticks)
-            client = _service._get_client()
-            if index_dicts:
-                client.subscribe(
-                    instrument_tokens=index_dicts,
-                    isIndex=True,
-                    isDepth=False,
-                )
-                logger.info(
-                    "KotakBroadcaster: subscribed %d index instruments (isIndex=True): %s",
-                    len(index_dicts),
-                    [d["instrument_token"] for d in index_dicts],
-                )
-            if scrip_dicts:
-                client.subscribe(
-                    instrument_tokens=scrip_dicts,
-                    isIndex=False,
-                    isDepth=False,
-                )
-                logger.info(
-                    "KotakBroadcaster: subscribed %d scrip instruments (isIndex=False): %s",
-                    len(scrip_dicts),
-                    [d["instrument_token"] for d in scrip_dicts],
-                )
-            self._subscribed = True
-        except KotakError:
-            raise
-        except Exception as exc:
-            logger.error("KotakBroadcaster: subscription call failed: %s", exc)
-            raise KotakError(f"Kotak market data subscription failed: {exc}") from exc
-
-    def unregister(self, session_id: str) -> None:
-        """Remove a session; unsubscribes tokens that have no remaining sessions."""
-        logger.info("KotakBroadcaster: unregistering session %s", session_id)
-        orphaned: list[tuple[str, str]] = []   # (token, exchange_segment)
-        with self._lock:
-            owned = self._session_tokens.pop(session_id, set())
-            for token in owned:
-                self._token_sessions[token].pop(session_id, None)
-                if not self._token_sessions[token]:
-                    del self._token_sessions[token]
-                    exch = self._token_exchange.pop(token, "")
-                    self._token_is_index.pop(token, None)
-                    orphaned.append((token, exch))
-
-        if orphaned:
-            logger.info(
-                "KotakBroadcaster: unsubscribing orphaned tokens: %s",
-                [t for t, _ in orphaned],
-            )
-            try:
-                client = _service._get_client()
-                client.un_subscribe(
-                    instrument_tokens=[
-                        {"instrument_token": t, "exchange_segment": e}
-                        for t, e in orphaned
-                    ]
-                )
-            except Exception as exc:
-                logger.warning("KotakBroadcaster: un_subscribe error: %s", exc)
-
-        with self._lock:
-            has_sessions = bool(any(self._token_sessions.values()))
-
-        if not has_sessions:
-            self._subscribed = False
-            _service.register_market_data_callback(None)
-            _service.register_reconnect_callback(None)
-            logger.info(
-                "KotakBroadcaster: no active sessions — market data and reconnect callbacks cleared"
-            )
-
-    def update_session_right(
-        self,
-        session_id: str,
-        right: str,
-        new_token: str,
-        new_exchange: str,
-        queue: "asyncio.Queue",
-        loop: "asyncio.AbstractEventLoop",
-    ) -> None:
-        """
-        Swap the instrument token for a given right (CE/PE) in a live session.
-        Called when the user changes the options strike mid-session.
-        """
-        orphaned: list[tuple[str, str]] = []  # (token, exchange_segment)
-        with self._lock:
-            if session_id not in self._session_tokens:
-                logger.debug(
-                    "KotakBroadcaster: update_session_right — session %s not registered",
-                    session_id,
-                )
+    def _subscribe_all(self, *, wait=True) -> None:
+        with self._operation_lock:
+            subscriptions = self._subscriptions()
+            if not subscriptions:
                 return
+            _service.register_market_data_callback(self._on_ticks)
+            _service.replace_market_subscriptions(subscriptions, wait=wait)
+            self._subscribed = True
 
-            old_token: str | None = None
-            for token in list(self._session_tokens[session_id]):
-                entry = self._token_sessions.get(token, {}).get(session_id)
-                if entry and entry[1] == right:
-                    old_token = token
-                    break
-
-            if old_token is not None and old_token != new_token:
-                self._token_sessions[old_token].pop(session_id, None)
-                self._session_tokens[session_id].discard(old_token)
-                if not self._token_sessions.get(old_token):
-                    self._token_sessions.pop(old_token, None)
-                    old_exch = self._token_exchange.pop(old_token, "")
-                    self._token_is_index.pop(old_token, None)
-                    orphaned.append((old_token, old_exch))
-
-            self._token_sessions[new_token][session_id] = (queue, right, loop)
-            self._session_tokens[session_id].add(new_token)
-            self._token_exchange[new_token] = new_exchange
-            self._token_is_index[new_token] = False  # strike updates are always options, never indices
-
-        if orphaned:
+    def register(self, session_id, tokens, exchanges, rights, queue, loop, is_indices=None) -> None:
+        """Share exact exchange/token subscriptions, separating indices from scrips."""
+        is_indices = is_indices if is_indices is not None else [False] * len(tokens)
+        if not len(tokens) == len(exchanges) == len(rights) == len(is_indices):
+            raise KotakError("Kotak subscription lists have different lengths")
+        with self._operation_lock:
+            with self._lock:
+                for token, exchange, right, is_index in zip(tokens, exchanges, rights, is_indices):
+                    key = (exchange, str(token))
+                    self._token_sessions[key][session_id] = (queue, right, loop)
+                    self._session_tokens[session_id].add(key)
+                    self._token_is_index[key] = is_index
             try:
-                client = _service._get_client()
-                client.un_subscribe(
-                    instrument_tokens=[
-                        {"instrument_token": t, "exchange_segment": e}
-                        for t, e in orphaned
-                    ]
-                )
-            except Exception as exc:
-                logger.warning(
-                    "KotakBroadcaster: un_subscribe error on strike change: %s", exc
-                )
+                self._subscribe_all()
+            except Exception:
+                self.unregister(session_id)
+                raise
 
-        # Subscribe new token
-        try:
-            client = _service._get_client()
-            client.subscribe(
-                instrument_tokens=[
-                    {"instrument_token": new_token, "exchange_segment": new_exchange}
-                ],
-                isIndex=False,
-                isDepth=False,
-            )
-            logger.info(
-                "KotakBroadcaster: session %s right=%s token updated "
-                "(old=%s new=%s exchange=%s)",
-                session_id, right,
-                orphaned[0] if orphaned else "none", new_token, new_exchange,
-            )
-        except Exception as exc:
-            logger.error(
-                "KotakBroadcaster: failed to subscribe new token %s: %s",
-                new_token, exc,
-            )
+    def _remove_key(self, session_id, key):
+        self._token_sessions[key].pop(session_id, None)
+        self._session_tokens[session_id].discard(key)
+        if not self._token_sessions[key]:
+            self._token_sessions.pop(key, None)
+            self._token_is_index.pop(key, None)
+            self._accumulators.pop(key, None)
+
+    def unregister(self, session_id) -> None:
+        with self._operation_lock:
+            with self._lock:
+                for key in list(self._session_tokens.get(session_id, ())):
+                    self._remove_key(session_id, key)
+                self._session_tokens.pop(session_id, None)
+            subscriptions = self._subscriptions()
+            if _service.is_authenticated():
+                try:
+                    _service.replace_market_subscriptions(subscriptions)
+                except KotakError as exc:
+                    logger.warning("Kotak unsubscribe failed: %s", exc)
+            self._subscribed = bool(subscriptions)
+            if not subscriptions:
+                _service.register_market_data_callback(None)
+
+    def update_session_right(self, session_id, right, new_token, new_exchange, queue, loop) -> None:
+        """Commit a strike replacement only after the new subscription succeeds."""
+        new_key = (new_exchange, str(new_token))
+        with self._operation_lock:
+            with self._lock:
+                if session_id not in self._session_tokens:
+                    return
+                old_key = next((key for key in self._session_tokens[session_id]
+                                if self._token_sessions[key][session_id][1] == right), None)
+                orphan = old_key != new_key and old_key is not None and len(self._token_sessions[old_key]) == 1
+            subscriptions = [s for s in self._subscriptions()
+                             if not orphan or (s["exchange_segment"], s["instrument_token"]) != old_key]
+            if not any((s["exchange_segment"], s["instrument_token"]) == new_key for s in subscriptions):
+                subscriptions.append({"exchange_segment": new_exchange, "instrument_token": str(new_token), "is_index": False})
+            _service.replace_market_subscriptions(subscriptions)
+            with self._lock:
+                if old_key is not None and old_key != new_key:
+                    self._remove_key(session_id, old_key)
+                self._token_sessions[new_key][session_id] = (queue, right, loop)
+                self._session_tokens[session_id].add(new_key)
+                self._token_is_index[new_key] = False
 
     # ── Internal tick handler ─────────────────────────────────────────────────
 
@@ -1440,7 +1300,7 @@ class KotakBroadcaster:
             )
             return
 
-        if price <= 0:
+        if not math.isfinite(price) or price <= 0:
             return
 
         # Timestamp: prefer exchange timestamp; add IST offset to align with
@@ -1454,24 +1314,20 @@ class KotakBroadcaster:
         if ts_raw is not None:
             try:
                 ts_int = int(ts_raw)
-                # If the timestamp looks like epoch seconds in IST-range add offset;
-                # if it's already large enough, treat as-is.
-                ts_second = ts_int + _IST_OFFSET if ts_int < 2_000_000_000 else ts_int
+                ts_second = (ts_int if ts_int > 0 else int(time.time())) + _IST_OFFSET
             except (TypeError, ValueError):
                 ts_second = int(time.time()) + _IST_OFFSET
         else:
             ts_second = int(time.time()) + _IST_OFFSET
 
-        # Update OHLC accumulator for this token
+        key = (tick.get("e") or tick.get("exchange_segment"), token)
         with self._lock:
-            acc = self._accumulators[token]
-        completed = acc.update(price, ts_second)
+            session_entries = dict(self._token_sessions.get(key, {}))
+            if not session_entries:
+                return
+            completed = self._accumulators[key].update(price, ts_second)
         if completed is None:
             return
-
-        # Retrieve registered sessions for this token
-        with self._lock:
-            session_entries = dict(self._token_sessions.get(token, {}))
 
         if not session_entries:
             logger.debug(

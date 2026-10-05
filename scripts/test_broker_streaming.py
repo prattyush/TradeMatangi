@@ -23,6 +23,7 @@ import configparser
 import json
 import logging
 import os
+import queue as thread_queue
 import signal
 import sys
 import threading
@@ -588,6 +589,8 @@ class KiteStreamTester:
 class KotakStreamTester:
     def __init__(self, symbol: str = "NIFTY"):
         self._client = None
+        self._bridge = None
+        self._subscriptions = []
         self._tick_count = 0
         self._subscribed_options = False
         self._index_price = 0.0
@@ -696,7 +699,7 @@ class KotakStreamTester:
         if ts_raw is not None:
             try:
                 ts_int = int(ts_raw)
-                ts_second = ts_int + _IST_OFFSET if ts_int < 2_000_000_000 else ts_int
+                ts_second = (ts_int if ts_int > 0 else int(_time.time())) + _IST_OFFSET
             except (TypeError, ValueError):
                 ts_second = int(_time.time()) + _IST_OFFSET
         else:
@@ -754,11 +757,8 @@ class KotakStreamTester:
 
         if tokens:
             try:
-                self._client.subscribe(
-                    instrument_tokens=tokens,
-                    isIndex=False,
-                    isDepth=False,
-                )
+                self._subscriptions.extend(tokens)
+                self._bridge.replace_subscriptions(self._subscriptions)
                 logger.info("KOTAK: subscribed %d option tokens", len(tokens))
             except Exception as exc:
                 logger.error("KOTAK: options subscribe failed: %s", exc)
@@ -766,7 +766,10 @@ class KotakStreamTester:
         self._subscribed_options = True
 
     def run(self):
+        os.environ.setdefault("NEO_LOG_FILE_PATH", str(LOG_DIR / "neo-api-client.log"))
         from neo_api_client import NeoAPI
+        from app.services.kotak_service import KotakNeoService
+        from app.services.kotak_stream import KotakFeedBridge
         creds = self._read_kotak_config()
 
         # Ask for OTP
@@ -776,7 +779,7 @@ class KotakStreamTester:
             logger.error("KOTAK: no OTP provided — exiting")
             return
 
-        logger.info("KOTAK: authenticating mobile=%s ucc=%s...", creds["mobile"], creds["ucc"])
+        logger.info("KOTAK: authenticating...")
         client = NeoAPI(
             environment="prod",
             access_token=None,
@@ -784,50 +787,48 @@ class KotakStreamTester:
             consumer_key=creds["access_token"],
         )
         try:
-            client.totp_login(
+            response = client.totp_login(
                 mobile_number=creds["mobile"],
                 ucc=creds["ucc"],
                 totp=totp,
             )
-            client.totp_validate(mpin=creds["mpin"])
+            validator = KotakNeoService()
+            validator._validate_login_response(response, client, trade=False)
+            response = client.totp_validate(mpin=creds["mpin"])
+            validator._validate_login_response(response, client, trade=True)
             logger.info("KOTAK: authenticated successfully")
         except Exception as exc:
             logger.error("KOTAK: authentication failed: %s", exc)
+            client.api_client.rest_client.close()
             return
 
         self._client = client
 
-        # Set up order feed WebSocket (market data rides on this)
-        client.on_message = self._on_message
-        client.on_error = lambda *a: logger.error("KOTAK: WebSocket error: %s", a)
-        client.on_close = lambda *a: logger.warning("KOTAK: WebSocket closed: %s", a)
-        client.on_open = lambda *a: logger.info("KOTAK: WebSocket opened")
-        client.subscribe_to_orderfeed()
-
-        # Load instrument master to find the index token for the chosen symbol.
-        instruments = self._get_instruments()
-        self._index_token, self._index_exchange = self._get_index_token(instruments)
-        logger.info(
-            "KOTAK: %s index token=%s exchange=%s",
-            self.info["display_name"], self._index_token, self._index_exchange,
-        )
-
-        # Subscribe index
-        client.subscribe(
-            instrument_tokens=[
-                {"instrument_token": self._index_token, "exchange_segment": self._index_exchange},
-            ],
-            isIndex=True,
-            isDepth=False,
-        )
-        logger.info("KOTAK: subscribed %s index (isIndex=True)", self.info["display_name"])
-
-        logger.info("KOTAK: streaming started — waiting for ticks... (Ctrl+C to stop)")
-
-        while not shutdown_event.is_set():
-            _time.sleep(0.5)
+        incoming = thread_queue.Queue()
+        self._bridge = KotakFeedBridge(client, lambda message: None,
+                                       incoming.put, shutdown_event.set)
+        try:
+            instruments = self._get_instruments()
+            self._index_token, self._index_exchange = self._get_index_token(instruments)
+            self._subscriptions = [{"instrument_token": self._index_token,
+                                    "exchange_segment": self._index_exchange, "is_index": True}]
+            self._bridge.replace_subscriptions(self._subscriptions)
+            logger.info("KOTAK: streaming started (Ctrl+C to stop)")
+            while not shutdown_event.is_set():
+                try:
+                    self._on_message(incoming.get(timeout=0.5))
+                except thread_queue.Empty:
+                    pass
+        finally:
+            self.stop()
 
     def stop(self):
+        if self._bridge is not None:
+            self._bridge.close()
+            self._bridge = None
+        if self._client is not None:
+            self._client.api_client.rest_client.close()
+            self._client = None
         logger.info("KOTAK: total ticks received: %d", self._tick_count)
 
 
