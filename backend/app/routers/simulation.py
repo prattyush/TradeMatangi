@@ -339,6 +339,10 @@ async def _start_simulation(
     is_stepwise = (req.session_type == "stepwise")
     is_paper = (req.session_type == "paper")
     is_real = (req.session_type == "real")
+    # Real trades and P&L cannot be reset by restarting the website. Ignore a
+    # stale client's override flag and follow the existing-session resume path.
+    if is_real:
+        req.override = False
 
     if is_stepwise and (is_paper or is_real):
         raise HTTPException(status_code=400, detail="Stepwise mode is only supported for historical simulation (session_type='stepwise')")

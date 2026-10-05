@@ -128,12 +128,21 @@ async def test_refresh_failure_retains_snapshot(monkeypatch):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("branch", ["new", "active", "saved"])
-async def test_each_real_start_fetches_once(branch, monkeypatch):
+@pytest.mark.parametrize("override", [False, True])
+@pytest.mark.parametrize("grouped", [False, True])
+async def test_each_real_start_fetches_once_and_preserves_history(branch, override, grouped, monkeypatch):
     from app.services import session_group_service as groups
     group = {"group_id": "wallet-group", "date": DATE, "clock_family": "live",
              "state": "running", "member_session_ids": [], "members": []}
     monkeypatch.setattr(groups, "get_active_group", lambda *args: None)
     monkeypatch.setattr(groups, "create_group", lambda *args: group)
+    monkeypatch.setattr(groups, "get_group", lambda *args: group)
+    monkeypatch.setattr(groups, "validate_add", lambda *args, **kwargs: None)
+    monkeypatch.setattr(start_router, "_has_live_group_session", lambda *args: True)
+    remove_member = MagicMock()
+    delete_sessions = MagicMock()
+    monkeypatch.setattr(groups, "remove_member", remove_member)
+    monkeypatch.setattr(start_router, "_delete_existing_context_sessions", delete_sessions)
     monkeypatch.setattr(groups, "add_member", lambda *args: None)
     monkeypatch.setattr("app.services.user_service.get_user_info", lambda *args: {"is_admin": True})
     monkeypatch.setattr(start_router, "_ensure_session_data", lambda *args: None)
@@ -164,11 +173,16 @@ async def test_each_real_start_fetches_once(branch, monkeypatch):
     broker.get_positions.return_value = []
     monkeypatch.setattr(kotak_service, "get_service", lambda: broker)
     result = await start_router._start_simulation(SimulationStartRequest(symbol="RELIANCE", date=DATE,
-        start_time="09:15:00", speed=1, session_type="real"), USER)
+        start_time="09:15:00", speed=1, session_type="real", override=override,
+        group_id=group["group_id"] if grouped else None), USER)
     assert result.session_capital == 18000
     assert result.wallet_ledger_id == f"real:{DATE}"
     assert wallet_service._wallets[(USER, DATE)] == 150000
     broker.get_limits.assert_called_once()
+    delete_sessions.assert_not_called()
+    remove_member.assert_not_called()
+    if branch != "new":
+        assert result.session_id == "existing-real"
 
 
 @pytest.mark.asyncio
