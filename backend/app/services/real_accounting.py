@@ -128,9 +128,10 @@ async def refresh(user_id, date, broker, *, reason, executions=None, positions=N
         if positions is None:
             positions = values[offset]
         net = required_number(limits.get("Net"), "Net")
+        # Preserve the broker's signed adjustment, including negative values
+        # observed after exits. Finite-value validation still applies; clamping
+        # would change the existing capital-recovery calculation.
         committed = required_number(limits.get("MarginUsed"), "MarginUsed")
-        if committed < 0:
-            raise ValueError("Kotak MarginUsed cannot be negative")
         realized = gross_realized_pnl(date, executions, positions)
         if not isinstance(account, str) or not account:
             raise ValueError("Kotak account identity is missing")

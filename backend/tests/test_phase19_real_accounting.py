@@ -128,7 +128,8 @@ async def test_first_start_with_balance_and_sdk_no_data_reports(isolated, monkey
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize('limits', [
-    {'Net': 18000}, {'Net': 18000, 'MarginUsed': None}, {'Net': 18000, 'MarginUsed': -1},
+    {'Net': 18000}, {'Net': 18000, 'MarginUsed': None}, {'Net': 18000, 'MarginUsed': float('nan')},
+    {'Net': 18000, 'MarginUsed': True}, {'Net': 18000, 'MarginUsed': 'invalid'},
     {'Net': float('nan'), 'MarginUsed': 0}, {'Net': True, 'MarginUsed': 0},
 ])
 async def test_bad_accounting_inputs_preserve_snapshot(isolated, limits):
@@ -142,6 +143,27 @@ async def test_bad_accounting_inputs_preserve_snapshot(isolated, limits):
     with pytest.raises(KotakError):
         await accounting.refresh(USER, DATE, broker, reason='refresh')
     assert wallet_service.get_real_wallet_snapshot(USER, DATE) == previous
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('existing_capital', [False, True])
+@pytest.mark.parametrize('margin_used', [-250, '-250.00'])
+async def test_negative_margin_used_after_exit_preserves_signed_broker_funds(isolated, existing_capital, margin_used):
+    if existing_capital:
+        wallet_service.sync_real_account_funds(USER, DATE, 'account', 20000, 0, 0, reason='start')
+    broker = MagicMock()
+    broker.account_identity.return_value = 'account'
+    broker.get_limits.return_value = {'Net': 18350, 'MarginUsed': margin_used}
+    broker.get_trade_history.return_value = [
+        execution('buy', 'B', 10, 100, time='09:00:00'), execution('exit', 'S', 10, 110)]
+    broker.get_positions.return_value = []
+    result = await accounting.refresh(USER, DATE, broker, reason='refresh')
+    # Existing formula: 18350 - 100 - 250 = 18000, never clamp or abs().
+    assert result == {'balance': 18350, 'display_balance': 18250, 'session_capital': 20000 if existing_capital else 18000}
+    row = isolated.get_item(Key={'user_id': USER, 'ledger_id': f'real:{DATE}'})['Item']
+    assert float(row['committed_funds']) == -250
+    assert float(row['gross_realized_pnl']) == 100
+    assert wallet_service.get_real_wallet_snapshot(USER, DATE)['balance'] == 18350
 
 
 def test_snapshot_write_failure_preserves_previous_accounting(isolated):
