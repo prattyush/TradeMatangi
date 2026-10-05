@@ -54,8 +54,11 @@ new package. Removing both also repairs an environment with mixed distributions.
 Healthy migrated environments are not uninstalled on subsequent runs.
 
 The helper verifies that the legacy distribution is absent, the new version is
-exactly 3.0.7, both async feed classes import, and `pip check` succeeds. Failure
-aborts startup. The old Git URL and `--no-deps` workaround are removed from both
+exactly 3.0.7, and both async feed classes import. Installation or SDK verification
+failure aborts startup. The final `pip check` reports dependency conflicts as a
+warning and allows startup to continue with the installed packages. This permits
+EC2 startup when an existing Fyers installation has incompatible dependency pins;
+it does not resolve those conflicts. The old Git URL and `--no-deps` workaround are removed from both
 startup scripts. Existing standalone plotting dependencies remain installed by
 those scripts.
 

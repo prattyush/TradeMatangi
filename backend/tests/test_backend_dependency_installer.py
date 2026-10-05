@@ -58,7 +58,6 @@ def test_healthy_and_legacy_or_mixed_environments(environment, legacy):
 @pytest.mark.parametrize("failure,options", [
     ("uninstall", {"LEGACY": "yes", "FAIL_PIP": "uninstall"}),
     ("install", {"FAIL_PIP": "install"}),
-    ("check", {"FAIL_PIP": "check"}),
     ("version", {"INCOMPATIBLE": "yes"}),
     ("imports", {"BAD_IMPORT": "yes"}),
 ])
@@ -71,6 +70,16 @@ def test_failures_abort_without_later_steps(environment, failure, options):
         assert not any(c[:3] == ["-m", "pip", "install"] for c in calls)
     if failure in ("install", "imports"):
         assert not any(c == ["-m", "pip", "check"] for c in calls)
+
+
+def test_dependency_conflicts_warn_and_allow_startup(environment):
+    run, _, _ = environment
+    result, calls = run(FAIL_PIP="check")
+    assert result.returncode == 0
+    assert "WARNING: pip check found dependency conflicts" in result.stderr
+    assert "Continuing backend startup" in result.stderr
+    assert "Backend dependencies verified" not in result.stdout
+    assert calls[-1] == ["-m", "pip", "check"]
 
 
 def test_default_home_path(environment, tmp_path):
@@ -90,7 +99,8 @@ def test_missing_venv_and_invalid_arguments_fail(arguments):
 
 
 @pytest.mark.parametrize("script", ["start-backend.sh", "start-backend-ec2.sh"])
-def test_startup_aborts_when_shared_installer_fails(environment, tmp_path, script):
+@pytest.mark.parametrize("failure", ["install", "check"])
+def test_startup_dependency_failure_behavior(environment, tmp_path, script, failure):
     _, venv, env = environment
     home = tmp_path / "home"
     default = home / "venvs/tradematangi"
@@ -104,12 +114,21 @@ def test_startup_aborts_when_shared_installer_fails(environment, tmp_path, scrip
     source = fake_python.read_text().replace('if sys.argv[1:] == ["-"]:',
         'if sys.argv[1:2] == ["-c"]:\n    print("3.12")\n    raise SystemExit(0)\nif sys.argv[1:] == ["-"]:')
     fake_python.write_text(source)
+    for name in ("pip", "uvicorn"):
+        executable = venv / "bin" / name
+        executable.write_text("#!/usr/bin/env bash\nexit 0\n")
+        executable.chmod(0o755)
     result = subprocess.run(["bash", str(ROOT / "scripts" / script)],
                             env={**env, "HOME": str(home), "PATH": str(tmp_path) + ":" + env["PATH"],
-                                 "FAIL_PIP": "install"}, capture_output=True, text=True)
-    assert result.returncode != 0
-    assert "pip failed" in result.stderr
-    assert "Starting backend" not in result.stdout
+                                 "FAIL_PIP": failure}, capture_output=True, text=True)
+    if failure == "install":
+        assert result.returncode != 0
+        assert "pip failed" in result.stderr
+        assert "Starting backend" not in result.stdout
+    else:
+        assert result.returncode == 0, result.stderr
+        assert "WARNING: pip check found dependency conflicts" in result.stderr
+        assert "Starting backend" in result.stdout
 
 
 def test_target_release_is_pinned_and_startups_do_not_install_legacy():
