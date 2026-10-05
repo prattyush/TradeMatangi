@@ -5,6 +5,7 @@ broker credentials. New desktop endpoints belong here rather than being added
 to the legacy web/trading routers.
 """
 import asyncio
+from app.services.history_workers import run_history
 import uuid
 from datetime import date as calendar_date
 
@@ -160,7 +161,7 @@ async def historical_page(
     loaded_dates: list[str] = []
     for page_date in dates:
         try:
-            await asyncio.to_thread(_ensure_data, symbol, page_date)
+            await run_history(_ensure_data, symbol, page_date)
             records = candles_to_records(resample_to_candles(load_dataframe(symbol, page_date), interval_minutes))
             candles.extend(DesktopCandle(timestamp=item["time"], open=item["open"], high=item["high"], low=item["low"], close=item["close"]) for item in records)
             loaded_dates.append(page_date)
@@ -207,8 +208,9 @@ async def option_historical_page(
     loaded_dates: list[str] = []
     for page_date in dates:
         try:
-            await asyncio.to_thread(fetch_options_historical, symbol, page_date, strike, expiry, right.upper())
-            records = candles_to_records(resample_to_candles(load_options_dataframe(symbol, page_date, strike, expiry, right.upper()), interval_minutes))
+            await run_history(fetch_options_historical, symbol, page_date, strike, expiry, right.upper())
+            frame = await run_history(load_options_dataframe, symbol, page_date, strike, expiry, right.upper())
+            records = candles_to_records(resample_to_candles(frame, interval_minutes))
             candles.extend(DesktopCandle(timestamp=item["time"], open=item["open"], high=item["high"], low=item["low"], close=item["close"]) for item in records)
             loaded_dates.append(page_date)
         except Exception:
@@ -223,7 +225,7 @@ async def option_historical_page(
 async def _run_preflight(job_id: str, symbol: str, trading_date: str) -> None:
     from app.routers.data import _ensure_data
     try:
-        await asyncio.to_thread(_ensure_data, symbol, trading_date)
+        await run_history(_ensure_data, symbol, trading_date)
         _preflight_jobs[job_id] = PreflightStatus(job_id=job_id, status="ready")
     except Exception as error:
         _preflight_jobs[job_id] = PreflightStatus(job_id=job_id, status="failed", detail=str(error))

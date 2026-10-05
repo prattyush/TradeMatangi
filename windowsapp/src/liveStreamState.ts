@@ -5,6 +5,12 @@ export interface FeedStatus { selected_provider: string; actual_provider: string
 export interface LiveSnapshot { feed?: FeedStatus | null; stream_id: string; event_id: number; tiles: LiveTileState[] }
 export interface LiveStreamEvent { version: number; stream_id: string; generation?: number; event_id: number; timestamp: number; type: string; tile_id: string; payload: unknown }
 
+export const sameLiveTileConfiguration = (left: Pick<LiveTileState, 'instrument' | 'interval_minutes'>, right: Pick<LiveTileState, 'instrument' | 'interval_minutes'>): boolean => {
+  if (left.interval_minutes !== right.interval_minutes || !left.instrument || !right.instrument) return false
+  const keys = Object.keys(left.instrument)
+  return keys.length === Object.keys(right.instrument).length && keys.every(key => left.instrument![key] === right.instrument![key])
+}
+
 export const isLiveSnapshot = (value: unknown): value is LiveSnapshot =>
   Boolean(value && typeof value === 'object' && Array.isArray((value as LiveSnapshot).tiles) && typeof (value as LiveSnapshot).stream_id === 'string')
 

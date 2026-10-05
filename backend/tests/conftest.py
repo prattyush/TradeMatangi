@@ -4,6 +4,18 @@ import numpy as np
 from datetime import datetime, timedelta
 
 
+@pytest.fixture(autouse=True)
+def isolated_history_throttle(monkeypatch):
+    """No real pacing delays or cooldown state shared between broker mocks."""
+    from app.services import breeze_history, options_service
+    monkeypatch.setattr(breeze_history, "_MIN_INTERVAL", 0.0)
+    monkeypatch.setattr(breeze_history, "_next_request", 0.0)
+    monkeypatch.setattr(breeze_history, "_retry_after", 0.0)
+    options_service._options_fetch_failures.clear()
+    yield
+    options_service._options_fetch_failures.clear()
+
+
 @pytest.fixture
 def sample_df_ist():
     """1-minute second-level OHLC with tz-naive IST index (60 seconds)."""

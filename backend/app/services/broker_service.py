@@ -166,7 +166,8 @@ def _fetch_day_paginated(breeze, sym_info: dict, date: str) -> list[dict]:
     current = from_ts
     while current < to_ts:
         chunk_end = min(current + chunk_delta, to_ts)
-        response = breeze.get_historical_data_v2(
+        from app.services.breeze_history import request_history
+        response = request_history(breeze,
             interval="1second",
             from_date=current.strftime("%Y-%m-%d %H:%M:%S"),
             to_date=chunk_end.strftime("%Y-%m-%d %H:%M:%S"),
