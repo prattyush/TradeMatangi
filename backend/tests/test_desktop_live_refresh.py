@@ -172,6 +172,26 @@ async def test_duplicate_live_tiles_reuse_cached_history(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_repeated_same_interval_does_not_reseed_or_clear_candles(monkeypatch, caplog):
+    from unittest.mock import AsyncMock
+    from app.routers import desktop_live
+    current = tile("tile", 3, [candle(180, 100)])
+    current["instrument"] = {"exchange": "BSE", "kind": "index", "symbol": "BSESEN"}
+    stream = live.DesktopStream(stream_id="stream", user_id="user", generation=1, tiles=[current])
+    seed = AsyncMock()
+    monkeypatch.setattr(live, "get", lambda *_: stream)
+    monkeypatch.setattr(live, "_seed", seed)
+    request = desktop_live.ConfigureLiveRequest(tile=desktop_live.LiveTile(
+        tile_id="tile", instrument={"kind": "index", "symbol": "BSESEN", "exchange": "BSE"}, interval_minutes=3))
+    for _ in range(100):
+        await desktop_live.configure_live_tile("stream", "tile", request, "user")
+    seed.assert_not_awaited()
+    assert current["candles"] == [candle(180, 100)]
+    assert not stream.tile_history_generations
+    assert "desktop_live_seed" not in caplog.text
+
+
+@pytest.mark.asyncio
 async def test_interval_switch_does_not_restore_an_older_live_baseline(monkeypatch):
     current = tile("first", 3, [candle(0, 3)])
     stream = live.DesktopStream(stream_id="stream", user_id="user", generation=1, tiles=[current])

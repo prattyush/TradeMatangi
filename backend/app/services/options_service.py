@@ -37,6 +37,9 @@ STRIKE_INTERVALS: dict[str, int] = {
 # once that download completes.
 _options_fetch_locks: dict[tuple[str, str, int, str, str], threading.Lock] = {}
 _options_fetch_locks_guard = threading.Lock()
+_options_fetch_failures: dict[tuple, tuple[float, type[Exception], str]] = {}
+_OPTIONS_FAILURE_TTL = 60
+_OPTIONS_EMPTY_TTL = 600
 
 
 def _prev_trading_day(d: datetime.date) -> datetime.date:
@@ -171,44 +174,19 @@ def _fetch_options_day_paginated(
     current = from_ts
     while current < to_ts:
         chunk_end = min(current + chunk_delta, to_ts)
-        response = None
-        for attempt in range(len(_BREEZE_RATE_LIMIT_BACKOFF_SECS) + 1):
-            try:
-                response = breeze.get_historical_data_v2(
-                    interval="1second",
-                    from_date=current.strftime("%Y-%m-%d %H:%M:%S"),
-                    to_date=chunk_end.strftime("%Y-%m-%d %H:%M:%S"),
-                    stock_code=stock_code,
-                    exchange_code=options_exchange,
-                    product_type="options",
-                    expiry_date=expiry_iso,
-                    strike_price=str(strike),
-                    right=right_str,
-                )
-            except Exception as exc:
-                if not _is_breeze_rate_limit_error(exc) or attempt >= len(_BREEZE_RATE_LIMIT_BACKOFF_SECS):
-                    raise
-                wait_secs = _BREEZE_RATE_LIMIT_BACKOFF_SECS[attempt]
-                logger.warning(
-                    "Breeze rate limit for %s options %s %s %s %s-%s; retrying in %ss",
-                    symbol, right, strike, date,
-                    current.strftime("%H:%M"), chunk_end.strftime("%H:%M"), wait_secs,
-                )
-                time.sleep(wait_secs)
-                continue
-            error = response.get("Error") if response else None
-            status = response.get("Status") if response else None
-            if not (error and _is_breeze_rate_limit_error(error)):
-                break
-            if attempt >= len(_BREEZE_RATE_LIMIT_BACKOFF_SECS):
-                break
-            wait_secs = _BREEZE_RATE_LIMIT_BACKOFF_SECS[attempt]
-            logger.warning(
-                "Breeze rate limit for %s options %s %s %s %s-%s; retrying in %ss",
-                symbol, right, strike, date,
-                current.strftime("%H:%M"), chunk_end.strftime("%H:%M"), wait_secs,
-            )
-            time.sleep(wait_secs)
+        from app.services.breeze_history import request_history
+        response = request_history(
+            breeze,
+            interval="1second",
+            from_date=current.strftime("%Y-%m-%d %H:%M:%S"),
+            to_date=chunk_end.strftime("%Y-%m-%d %H:%M:%S"),
+            stock_code=stock_code,
+            exchange_code=options_exchange,
+            product_type="options",
+            expiry_date=expiry_iso,
+            strike_price=str(strike),
+            right=right_str,
+        )
         if response is None:
             raise BreezeTokenError(
                 "Breeze returned no response. Your session_token may be expired. "
@@ -221,7 +199,7 @@ def _fetch_options_day_paginated(
                 f"Breeze session expired or invalid: {error}. "
                 "Please refresh session_token in data/accesskeys.ini."
             )
-        if status not in (200, None) and error:
+        if error or status not in (200, None):
             raise RuntimeError(
                 f"Breeze API error for {symbol} options "
                 f"{current.strftime('%H:%M')}–{chunk_end.strftime('%H:%M')}: {error}"
@@ -380,7 +358,26 @@ def _fetch_breeze_options_historical(
     with _options_fetch_locks_guard:
         lock = _options_fetch_locks.setdefault(key, threading.Lock())
     with lock:
-        return _fetch_options_historical_unlocked(symbol, date, strike, expiry, right, force_refresh=force_refresh)
+        with _options_fetch_locks_guard:
+            failure = _options_fetch_failures.get(key)
+            if failure and time.monotonic() < failure[0]:
+                raise failure[1](failure[2])
+            _options_fetch_failures.pop(key, None)
+        try:
+            return _fetch_options_historical_unlocked(symbol, date, strike, expiry, right, force_refresh=force_refresh)
+        except Exception as exc:
+            from app.services.broker_service import BreezeTokenError
+            message = str(exc)
+            ttl = _OPTIONS_EMPTY_TTL if "no options data" in message.lower() else _OPTIONS_FAILURE_TTL
+            error_type = BreezeTokenError if isinstance(exc, BreezeTokenError) else RuntimeError
+            with _options_fetch_locks_guard:
+                now = time.monotonic()
+                for old in [old for old, failure in _options_fetch_failures.items() if failure[0] <= now]:
+                    _options_fetch_failures.pop(old, None)
+                if len(_options_fetch_failures) >= 256:
+                    _options_fetch_failures.pop(next(iter(_options_fetch_failures)))
+                _options_fetch_failures[key] = (now + ttl, error_type, message)
+            raise
 
 
 def _load_breeze_options_dataframe(

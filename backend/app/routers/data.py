@@ -346,5 +346,5 @@ async def find_strike_by_max_price(
         reference_time = reference_time + ":00"
 
     from app.services.options_service import find_strike_by_max_price, get_expiry_date
-    result = find_strike_by_max_price(symbol, date, expiry, right.upper(), max_price, reference_time)
+    result = await asyncio.to_thread(find_strike_by_max_price, symbol, date, expiry, right.upper(), max_price, reference_time)
     return {**result, "symbol": symbol, "date": date, "right": right.upper()}
