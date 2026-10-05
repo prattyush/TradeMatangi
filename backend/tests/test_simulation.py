@@ -186,7 +186,7 @@ class TestBackfillBarHistory:
              patch("app.services.data_loader.load_dataframe") as mock_breeze:
             result = sim._backfill_bar_history(session, None, slot_ts)
 
-        mock_kite.assert_called_once_with("NIFTY", date)
+        mock_kite.assert_called_once_with("NIFTY", date, mode="live")
         mock_breeze.assert_not_called()
         assert len(result) == 2
 
@@ -206,7 +206,8 @@ class TestBackfillBarHistory:
 
         captured = {}
 
-        def fake_kite_options(symbol, date_, strike, expiry, right):
+        def fake_kite_options(symbol, date_, strike, expiry, right, *, mode):
+            assert mode == "live"
             captured.update({"strike": strike, "right": right})
             return SimpleNamespace(frame=df)
 

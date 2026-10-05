@@ -31,6 +31,7 @@ export interface ChartVisibleRange {
 }
 
 interface Props {
+  historyMode?: 'live' | 'replay'
   symbol: string
   tradingDate: string
   startTime: string | null
@@ -409,7 +410,7 @@ function RatioIndicatorPanel({ comparison, series, ratioMode, height, expanded, 
 }
 
 export default function Chart({
-  symbol, tradingDate, startTime, intervalMinutes,
+  symbol, tradingDate, startTime, intervalMinutes, historyMode = 'replay',
   latestTick, completedBar, onPriceUpdate, height = 380,
   paneType = 'equity', strike, expiry, right,
   isActive = false, onActivate,
@@ -876,13 +877,13 @@ export default function Chart({
 
         const [histCandles, preCandles] = await Promise.all([
           rememberChartData(
-            `${historicalCacheKey(symbol, tradingDate, intervalMinutes, historicalDays)}:reload:${effectiveReloadKey}`,
-            () => api.getHistorical(symbol, tradingDate, intervalMinutes, historicalDays).then(res => res.candles),
+            `${historyMode}:${historicalCacheKey(symbol, tradingDate, intervalMinutes, historicalDays)}:reload:${effectiveReloadKey}`,
+            () => api.getHistorical(symbol, tradingDate, intervalMinutes, historicalDays, historyMode).then(res => res.candles),
           ),
           preSessionTime
             ? rememberChartData(
-                `${preSessionCacheKey(symbol, tradingDate, preSessionTime, intervalMinutes)}:reload:${effectiveReloadKey}`,
-                () => api.getPreSession(symbol, tradingDate, preSessionTime, intervalMinutes, localReloadKey > 0),
+                `${historyMode}:${preSessionCacheKey(symbol, tradingDate, preSessionTime, intervalMinutes)}:reload:${effectiveReloadKey}`,
+                () => api.getPreSession(symbol, tradingDate, preSessionTime, intervalMinutes, localReloadKey > 0, historyMode),
               )
             : Promise.resolve([]),
         ])
@@ -936,7 +937,7 @@ export default function Chart({
       }
     })()
     return () => { cancelled = true }
-  }, [symbol, tradingDate, intervalMinutes, paneType, startTime, effectiveReloadKey, publishIndicatorCandles])
+  }, [historyMode, symbol, tradingDate, intervalMinutes, paneType, startTime, effectiveReloadKey, publishIndicatorCandles])
 
   // ── Historical data — options (full trading day, loads when session starts) ──
   // Backend caches options data during session start, so we wait for startTime.
@@ -955,8 +956,8 @@ export default function Chart({
 
     let cancelled = false
     rememberChartData(
-      `${optionsCacheKey(symbol, tradingDate, strike, expiry, right, intervalMinutes, historicalDays)}:reload:${effectiveReloadKey}`,
-      () => api.getOptionsHistorical(symbol, tradingDate, strike, expiry, right, intervalMinutes, historicalDays, localReloadKey > 0).then(res => res.candles),
+      `${historyMode}:${optionsCacheKey(symbol, tradingDate, strike, expiry, right, intervalMinutes, historicalDays)}:reload:${effectiveReloadKey}`,
+      () => api.getOptionsHistorical(symbol, tradingDate, strike, expiry, right, intervalMinutes, historicalDays, localReloadKey > 0, historyMode).then(res => res.candles),
     )
       .then((candles) => {
         if (cancelled) return
@@ -1024,7 +1025,7 @@ export default function Chart({
       })
       .catch(console.error)
     return () => { cancelled = true }
-  }, [symbol, tradingDate, intervalMinutes, paneType, strike, expiry, right, startTime, liveFromTs, effectiveReloadKey, publishIndicatorCandles])
+  }, [historyMode, symbol, tradingDate, intervalMinutes, paneType, strike, expiry, right, startTime, liveFromTs, effectiveReloadKey, publishIndicatorCandles])
 
   // ── Live tick processing — latestTick is already filtered by caller ─────────
   const intervalSecs = CANDLE_INTERVAL_SECS(intervalMinutes)

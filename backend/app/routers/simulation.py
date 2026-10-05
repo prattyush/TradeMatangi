@@ -335,6 +335,18 @@ async def _start_simulation(
     user_id: str = Depends(get_request_user_id),
     *, desktop_independent: bool = False, paper_record: dict | None = None, defer_paper_start: bool = False,
 ):
+    from app.services.historical_data_service import historical_operation
+    mode = "live" if req.session_type in ("paper", "real") else "replay"
+    with historical_operation(mode=mode):
+        return await _start_simulation_impl(req, user_id, desktop_independent=desktop_independent,
+            paper_record=paper_record, defer_paper_start=defer_paper_start)
+
+
+async def _start_simulation_impl(
+    req: SimulationStartRequest,
+    user_id: str = Depends(get_request_user_id),
+    *, desktop_independent: bool = False, paper_record: dict | None = None, defer_paper_start: bool = False,
+):
     internal_session_type = req.session_type
     is_stepwise = (req.session_type == "stepwise")
     is_paper = (req.session_type == "paper")
@@ -651,16 +663,13 @@ async def update_pane_strike(session_id: str, req: UpdatePaneStrikeRequest):
     # Paper sessions use soft-ensure (swallow errors) — session is already live.
     # Sim sessions propagate errors — tick loop needs the parquet to exist.
     loop = asyncio.get_running_loop()
-    if session.session_type in ("paper", "real"):
-        await loop.run_in_executor(None, lambda: _soft_ensure(
-            lambda: _ensure_options_data(
-                session.symbol, session.date, req.strike, session.expiry, req.right.upper()
-            )
-        ))
-    else:
-        await loop.run_in_executor(None, lambda: _ensure_options_data(
-            session.symbol, session.date, req.strike, session.expiry, req.right.upper()
-        ))
+    from app.services.historical_data_service import historical_operation
+    with historical_operation(mode="live" if session.session_type in ("paper", "real") else "replay"):
+        ensure = lambda: _ensure_options_data(session.symbol, session.date, req.strike, session.expiry, req.right.upper())
+        if session.session_type in ("paper", "real"):
+            await asyncio.to_thread(_soft_ensure, ensure)
+        else:
+            await asyncio.to_thread(ensure)
 
     right = req.right.upper()
     old_strike = session.strike_ce if right == "CE" else session.strike_pe

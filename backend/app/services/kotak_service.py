@@ -106,7 +106,7 @@ def _get_instruments_cache_path():
     return DATA_DIR / "kotak_instruments.json"
 
 
-def _load_kotak_master_from_api() -> list[dict]:
+def _load_kotak_master_from_api(*, client=None) -> list[dict]:
     """
     Download the Kotak Neo instrument master via neo_api_client and cache to disk.
 
@@ -118,8 +118,10 @@ def _load_kotak_master_from_api() -> list[dict]:
     import csv
     import urllib.request
 
+    read_only = client is not None
     try:
-        client = _service._get_client()
+        if client is None:
+            client = _service._get_client()
     except KotakError as exc:
         logger.error("KotakBroadcaster: cannot download master — Kotak not authenticated: %s", exc)
         return []
@@ -131,7 +133,8 @@ def _load_kotak_master_from_api() -> list[dict]:
         logger.info("KotakBroadcaster: fetching scrip master URL for segment %s …", seg)
         try:
             url = client.scrip_master(exchange_segment=seg)
-            _service._check_api_response(url)
+            if not read_only:
+                _service._check_api_response(url)
             if not isinstance(url, str) or not url.startswith("http"):
                 logger.warning(
                     "KotakBroadcaster: scrip_master(%s) returned unexpected value: %r — skipping",
@@ -208,7 +211,15 @@ def _load_kotak_master_from_api() -> list[dict]:
     return normalized
 
 
-def _get_kotak_instruments() -> list[dict]:
+_master_lock = threading.Lock()
+
+
+def _get_kotak_instruments(*, client=None) -> list[dict]:
+    with _master_lock:
+        return _get_kotak_instruments_unlocked(client=client)
+
+
+def _get_kotak_instruments_unlocked(*, client=None) -> list[dict]:
     """
     Return cached Kotak Neo instrument master, refreshing from API if stale (> 24h).
     Returns an empty list when Kotak is not authenticated and no cache exists.
@@ -232,10 +243,10 @@ def _get_kotak_instruments() -> list[dict]:
         "KotakBroadcaster: instrument cache missing or stale (%.0fs old), downloading …",
         time.time() - cache_path.stat().st_mtime if cache_path.exists() else -1,
     )
-    return _load_kotak_master_from_api()
+    return _load_kotak_master_from_api() if client is None else _load_kotak_master_from_api(client=client)
 
 
-def fetch_kotak_equity_instrument_token(symbol: str) -> tuple[str, str]:
+def fetch_kotak_equity_instrument_token(symbol: str, *, client=None) -> tuple[str, str]:
     """
     Return (instrument_token, exchange_segment) for the equity / index instrument.
     Used by KotakBroadcaster to subscribe to live price feed.
@@ -245,12 +256,13 @@ def fetch_kotak_equity_instrument_token(symbol: str) -> tuple[str, str]:
         raise KotakError(f"Symbol '{symbol}' not configured for Kotak Neo streaming")
 
     kotak_sym, exchange_seg = _SYMBOL_MAP[symbol]
-    instruments = _get_kotak_instruments()
+    instruments = _get_kotak_instruments() if client is None else _get_kotak_instruments(client=client)
 
     if not instruments:
         raise KotakError(
             f"Kotak Neo instrument master is empty. "
-            f"Ensure Kotak Neo is authenticated and re-try."
+            + ("Check the configured Kotak consumer key and retry." if client is not None
+               else "Ensure Kotak Neo is authenticated and re-try.")
         )
 
     # Exact match first
@@ -291,6 +303,7 @@ def fetch_kotak_options_instrument_token(
     expiry: str,
     strike: int,
     right: str,
+    *, client=None,
 ) -> tuple[str, str]:
     """
     Return (instrument_token, exchange_segment) for an options contract.
@@ -303,7 +316,7 @@ def fetch_kotak_options_instrument_token(
     base = "SENSEX" if symbol == "BSESEN" else symbol
 
     kotak_sym = _build_options_trading_symbol(base, expiry, strike, right, symbol)
-    instruments = _get_kotak_instruments()
+    instruments = _get_kotak_instruments() if client is None else _get_kotak_instruments(client=client)
 
     if not instruments:
         raise KotakError(
@@ -314,6 +327,16 @@ def fetch_kotak_options_instrument_token(
         inst for inst in instruments
         if inst["symbol"] == kotak_sym and inst["exchange"] == exchange_seg
     ]
+
+    if not matches:
+        # Canonical Breeze stock codes differ from exchange trading names.
+        mapped_base = _SYMBOL_MAP.get(symbol, (base, exchange_seg))[0].removesuffix("-EQ")
+        if mapped_base != base:
+            mapped_symbol = _build_options_trading_symbol(mapped_base, expiry, strike, right, symbol)
+            matches = [inst for inst in instruments
+                       if inst["symbol"] == mapped_symbol and inst["exchange"] == exchange_seg]
+            if matches:
+                kotak_sym = mapped_symbol
 
     if not matches:
         raise KotakError(

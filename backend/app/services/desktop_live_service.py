@@ -217,7 +217,7 @@ def _completed_current_candles(frame, interval_minutes: int) -> list[dict]:
 async def _load_history(tile: dict) -> list[dict]:
     """Fetch chart history without changing in-memory live tile state."""
     from app.services.historical_data_service import historical_operation
-    with historical_operation():
+    with historical_operation(mode="live"):
         instrument, interval = tile["instrument"], tile["interval_minutes"]
         today = datetime.now(ZoneInfo("Asia/Kolkata")).date().isoformat()
         from app.services.data_loader import candles_to_records, resample_to_candles
@@ -254,7 +254,7 @@ async def _load_current_date_seconds(tile: dict) -> list[dict]:
     received from the stream.  Do not expose raw seconds for previous dates.
     """
     from app.services.historical_data_service import historical_operation
-    with historical_operation():
+    with historical_operation(mode="live"):
         instrument = tile["instrument"]
         today = datetime.now(ZoneInfo("Asia/Kolkata")).date().isoformat()
         from app.services.data_loader import candles_to_records, has_native_second_cadence
@@ -389,7 +389,7 @@ async def activate(stream: DesktopStream) -> None:
 async def refresh(stream: DesktopStream) -> None:
     """Refresh authoritative chart bars and today's raw second OHLC per tile."""
     from app.services.historical_data_service import historical_operation
-    with historical_operation(force_refresh=True):
+    with historical_operation(force_refresh=True, mode="live"):
         tiles = list(stream.tiles)
         requests = [tile.copy() for tile in tiles]
         generations = [stream.tile_history_generations.get(tile["tile_id"], 0) for tile in tiles]

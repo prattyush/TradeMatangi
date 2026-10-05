@@ -798,11 +798,12 @@ const api = {
     return data.dates as string[]
   },
 
-  async getHistorical(symbol = 'NIFTY', tradingDate?: string, intervalMinutes?: number, historicalDays?: number): Promise<HistoricalDataResponse> {
+  async getHistorical(symbol = 'NIFTY', tradingDate?: string, intervalMinutes?: number, historicalDays?: number, historyMode: 'live' | 'replay' = 'replay'): Promise<HistoricalDataResponse> {
     let url = `${BACKEND_URL}/api/data/historical?symbol=${encodeURIComponent(symbol)}`
     if (tradingDate) url += `&trading_date=${tradingDate}`
     if (intervalMinutes) url += `&interval_minutes=${intervalMinutes}`
     if (historicalDays) url += `&historical_days=${historicalDays}`
+    url += `&history_mode=${historyMode}`
     const res = await fetch(url)
     if (!res.ok) throw new Error(`Historical data fetch failed: ${res.status}`)
     return res.json()
@@ -817,6 +818,7 @@ const api = {
     intervalMinutes?: number,
     historicalDays?: number,
     forceRefresh = false,
+    historyMode: 'live' | 'replay' = 'replay',
   ): Promise<HistoricalDataResponse> {
     let url = `${BACKEND_URL}/api/data/options-historical`
       + `?symbol=${encodeURIComponent(symbol)}`
@@ -827,23 +829,25 @@ const api = {
     if (intervalMinutes) url += `&interval_minutes=${intervalMinutes}`
     if (historicalDays) url += `&historical_days=${historicalDays}`
     if (forceRefresh) url += '&force_refresh=true'
+    url += `&history_mode=${historyMode}`
     const res = await fetch(url)
     if (!res.ok) throw new Error(`Options historical data fetch failed: ${res.status}`)
     return res.json()
   },
 
-  async getPreSession(symbol: string, tradingDate: string, startTime: string, intervalMinutes?: number, forceRefresh = false): Promise<OHLCCandle[]> {
+  async getPreSession(symbol: string, tradingDate: string, startTime: string, intervalMinutes?: number, forceRefresh = false, historyMode: 'live' | 'replay' = 'replay'): Promise<OHLCCandle[]> {
     let url = `${BACKEND_URL}/api/data/pre-session?symbol=${encodeURIComponent(symbol)}&trading_date=${tradingDate}&start_time=${encodeURIComponent(startTime)}`
     if (intervalMinutes) url += `&interval_minutes=${intervalMinutes}`
     if (forceRefresh) url += '&force_refresh=true'
+    url += `&history_mode=${historyMode}`
     const res = await fetch(url)
     if (!res.ok) return []
     const data = await res.json()
     return data.candles ?? []
   },
 
-  async getPriceAt(symbol: string, date: string, time: string): Promise<PriceAtResponse> {
-    const url = `${BACKEND_URL}/api/data/price-at?symbol=${encodeURIComponent(symbol)}&date=${date}&time=${encodeURIComponent(time)}`
+  async getPriceAt(symbol: string, date: string, time: string, historyMode: 'live' | 'replay' = 'replay'): Promise<PriceAtResponse> {
+    const url = `${BACKEND_URL}/api/data/price-at?symbol=${encodeURIComponent(symbol)}&date=${date}&time=${encodeURIComponent(time)}&history_mode=${historyMode}`
     const res = await fetch(url)
     if (!res.ok) {
       const body = await res.json().catch(() => ({}))
@@ -861,9 +865,9 @@ const api = {
 
   async findStrikeByPrice(
     symbol: string, date: string, expiry: string, right: 'CE' | 'PE',
-    maxPrice: number, referenceTime: string,
+    maxPrice: number, referenceTime: string, historyMode: 'live' | 'replay' = 'replay',
   ): Promise<{ strike: number; price: number; symbol: string; date: string; right: string }> {
-    const params = new URLSearchParams({ symbol, date, expiry, right, max_price: String(maxPrice), reference_time: referenceTime })
+    const params = new URLSearchParams({ symbol, date, expiry, right, max_price: String(maxPrice), reference_time: referenceTime, history_mode: historyMode })
     const url = `${BACKEND_URL}/api/data/options/find-strike-by-price?${params}`
     const res = await fetch(url)
     if (!res.ok) {
@@ -1628,13 +1632,13 @@ const api = {
 
   // ── Live streaming source (admin) ──────────────────────────────────────────
 
-  async getHistoricalSource(): Promise<{ source: 'breeze' | 'kite'; allow_fallback: boolean }> {
+  async getHistoricalSource(): Promise<{ source: 'breeze' | 'kite' | 'kotak'; allow_fallback: boolean }> {
     const res = await fetch(`${BACKEND_URL}/api/admin/historical-source`, { headers: _authHeaders() })
     if (!res.ok) throw new Error(`Historical settings fetch failed: ${res.status}`)
     return res.json()
   },
 
-  async setHistoricalSource(source: 'breeze' | 'kite', allow_fallback: boolean): Promise<{ source: 'breeze' | 'kite'; allow_fallback: boolean }> {
+  async setHistoricalSource(source: 'breeze' | 'kite' | 'kotak', allow_fallback: boolean): Promise<{ source: 'breeze' | 'kite' | 'kotak'; allow_fallback: boolean }> {
     const res = await fetch(`${BACKEND_URL}/api/admin/historical-source`, {
       method: 'PUT', headers: { 'Content-Type': 'application/json', ..._authHeaders() },
       body: JSON.stringify({ source, allow_fallback }),

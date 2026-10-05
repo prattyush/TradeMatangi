@@ -156,11 +156,11 @@ async def get_historical_source(user_id: str = Depends(_require_admin)):
 @router.put("/historical-source", response_model=HistoricalSourceRequest)
 async def set_historical_source(req: HistoricalSourceRequest, user_id: str = Depends(_require_admin)):
     from app.services.historical_data_service import HistoricalPolicy, set_policy
-    if req.source not in ("breeze", "kite"):
-        raise HTTPException(status_code=400, detail="source must be 'breeze' or 'kite'")
+    if req.source not in ("breeze", "kite", "kotak"):
+        raise HTTPException(status_code=400, detail="source must be 'breeze', 'kite', or 'kotak'")
     try:
         set_policy(HistoricalPolicy(req.source, req.allow_fallback))
     except Exception:
-        logger.exception("Could not save today's historical policy")
+        logger.exception("Could not save live historical policy")
         raise HTTPException(status_code=503, detail="Could not save historical settings")
     return req

@@ -1,7 +1,7 @@
 """Historical provider policy, independent of live feeds.
 
-Earlier IST dates always use Breeze. Only today's data can select/fall back to
-Kite. Provider files and native cadence remain separate; no minute-to-second fill.
+Replay always uses Breeze. Live history uses the configured provider, preferring
+complete Breeze caches for earlier days. Minute caches never become replay ticks.
 """
 from __future__ import annotations
 
@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
+from typing import Literal
 import json
 import logging
 import threading
@@ -61,7 +62,7 @@ def get_policy() -> HistoricalPolicy:
         if raw:
             try:
                 value = json.loads(raw)
-                if value.get("source") in ("breeze", "kite") and isinstance(value.get("allow_fallback"), bool):
+                if value.get("source") in ("breeze", "kite", "kotak") and isinstance(value.get("allow_fallback"), bool):
                     policy = HistoricalPolicy(value["source"], value["allow_fallback"])
             except (ValueError, TypeError, AttributeError):
                 logger.warning("Invalid historical policy; using Breeze without fallback")
@@ -71,8 +72,8 @@ def get_policy() -> HistoricalPolicy:
 
 def set_policy(policy: HistoricalPolicy) -> None:
     global _policy_cache
-    if policy.source not in ("breeze", "kite"):
-        raise ValueError("Historical source must be breeze or kite")
+    if policy.source not in ("breeze", "kite", "kotak"):
+        raise ValueError("Historical source must be breeze, kite or kotak")
     from app.services import token_service
     token_service.set_token(_POLICY_KEY, json.dumps({"source": policy.source, "allow_fallback": policy.allow_fallback}), strict=True)
     with _policy_lock:
@@ -99,7 +100,7 @@ def _path(provider: str, symbol: str, date: str, strike: int | None, expiry: str
     from app.config import OHLCDATA_DIR
     y, m, d = date.split("-")
     name = f"{symbol}-{right}-{strike}-{expiry.replace('-', '')}-{d}-{m}-{y}" if right else f"{symbol}-{d}-{m}-{y}"
-    return OHLCDATA_DIR / f"{name}-kite1m.parquet"
+    return OHLCDATA_DIR / f"{name}-{provider}1m.parquet"
 
 
 def _normalize(frame: pd.DataFrame, date: str) -> pd.DataFrame:
@@ -118,6 +119,9 @@ def _fetch(provider: str, symbol: str, date: str, strike, expiry, right) -> pd.D
     if provider == "kite":
         from app.services.kite_service import fetch_kite_1min, fetch_kite_1min_options
         return fetch_kite_1min_options(symbol, date, strike, expiry, right) if right else fetch_kite_1min(symbol, date)
+    if provider == "kotak":
+        from app.services.kotak_history import fetch_history
+        return fetch_history(symbol, date, strike, expiry, right)
     if right:
         from app.services.options_service import _fetch_breeze_options_historical, _load_breeze_options_dataframe
         _fetch_breeze_options_historical(symbol, date, strike, expiry, right)
@@ -126,6 +130,51 @@ def _fetch(provider: str, symbol: str, date: str, strike, expiry, right) -> pd.D
     from app.services.data_loader import _load_breeze_dataframe
     _fetch_breeze_historical(symbol, date)
     return _load_breeze_dataframe(symbol, date)
+
+
+def complete_day_cache(path: Path, date: str) -> bool:
+    """A file written before that day's close may contain an intraday partial day."""
+    from app.config import get_market_close
+    close = pd.Timestamp(f"{date} {get_market_close(date)}", tz="Asia/Kolkata")
+    return path.exists() and path.stat().st_mtime >= close.timestamp()
+
+
+def _require_replay_cadence(frame: pd.DataFrame, mode: str) -> None:
+    from app.services.data_loader import has_native_second_cadence
+    if mode == "replay" and not has_native_second_cadence(frame):
+        raise RuntimeError("Replay/stepwise requires Breeze second-level data")
+
+
+def _complete_breeze_cache(symbol, date, strike, expiry, right, selected):
+    """Read-only cache reuse; never trigger a slow Breeze download on a live miss."""
+    from app.services.data_loader import _load_breeze_dataframe, has_native_second_cadence
+    from app.services.broker_service import _MIN_DAY_ROWS
+    from app.services.options_service import _MIN_OPTIONS_DAY_ROWS
+    from app.config import MARKET_OPEN, get_market_close
+    path = _path("breeze", symbol, date, strike, expiry, right)
+    try:
+        if path.exists():
+            raw = pd.read_parquet(path)
+        elif not right:
+            from app.services.data_loader import pickle_path
+            if not pickle_path(symbol, date).exists():
+                return None
+            raw = _load_breeze_dataframe(symbol, date)
+        else:
+            return None
+        frame = _normalize(raw, date)
+        minimum = _MIN_OPTIONS_DAY_ROWS if right else _MIN_DAY_ROWS
+        close = pd.Timestamp(f"{date} {get_market_close(date)}", tz="UTC")
+        if (len(frame) < minimum or not has_native_second_cadence(frame)
+            or frame.index.min() > pd.Timestamp(f"{date} {MARKET_OPEN}", tz="UTC")
+            or frame.index.max() < close - pd.Timedelta(seconds=1)):
+            return None
+        # Reuse this validated snapshot without a second parquet read. The
+        # legacy loader above already handles equity pickle migration.
+        logger.info("historical_cache_reused provider=breeze selected=%s symbol=%s date=%s right=%s", selected, symbol, date, right)
+        return HistoricalResult(frame, path, selected, "breeze", 1)
+    except Exception:
+        return None
 
 
 def _remember(key: tuple, result: HistoricalResult) -> None:
@@ -139,7 +188,7 @@ def _remember(key: tuple, result: HistoricalResult) -> None:
 
 def load_history(symbol: str, date: str, strike: int | None = None, expiry: str | None = None,
                  right: str | None = None, *, policy: HistoricalPolicy | None = None,
-                 force_refresh: bool = False) -> HistoricalResult:
+                 force_refresh: bool = False, mode: Literal["live", "replay"] | None = None) -> HistoricalResult:
     """Resolve/fetch a single contract/day and return the exact selected frame.
 
     Brief request coalescing allows old ensure/load callers to share one result.
@@ -147,17 +196,26 @@ def load_history(symbol: str, date: str, strike: int | None = None, expiry: str 
     """
     requested_at = time.monotonic()
     operation = _operation.get()
-    if is_today(date):
-        if operation and operation.policy is None:
-            operation.policy = policy or get_policy()
-        policy = policy or (operation.policy if operation else get_policy())
+    mode = mode or history_mode()
+    if mode not in ("live", "replay"):
+        raise ValueError("History mode must be live or replay")
+    if mode == "live":
+        if operation:
+            with operation.policy_lock:
+                if operation.policy is None:
+                    operation.policy = policy or get_policy()
+                snapshot = operation.policy
+            policy = policy or snapshot
+        else:
+            policy = policy or get_policy()
     else:
         policy = HistoricalPolicy()
     if right:
         right = "CE" if right.upper() in ("CE", "CALL") else "PE"
     # Include the cache location: separate data roots must never share frames.
     cache_path = _path(policy.source, symbol, date, strike, expiry, right)
-    key = (symbol, date, strike, expiry, right, policy, str(cache_path))
+    key = (symbol, date, strike, expiry, right, policy, mode, str(cache_path),
+           str(_path("breeze", symbol, date, strike, expiry, right)))
     if operation and key in operation.results:
         return operation.results[key]
     force_refresh = is_today(date) and (force_refresh or bool(operation and operation.force_refresh))
@@ -172,9 +230,17 @@ def load_history(symbol: str, date: str, strike: int | None = None, expiry: str 
             if operation:
                 operation.results[key] = cached[1]
             return cached[1]
+        if mode == "live" and not is_today(date):
+            reused = _complete_breeze_cache(symbol, date, strike, expiry, right, policy.source)
+            if reused is not None:
+                with _guard:
+                    _remember(key, reused)
+                if operation:
+                    operation.results[key] = reused
+                return reused
         providers = [policy.source]
         if policy.allow_fallback:
-            providers.append("kite" if policy.source == "breeze" else "breeze")
+            providers.extend({"breeze": ["kite"], "kite": ["breeze"], "kotak": ["kite", "breeze"]}[policy.source])
         stale_results = []
         last_error = None
         for provider in providers:
@@ -196,6 +262,7 @@ def load_history(symbol: str, date: str, strike: int | None = None, expiry: str 
                 frame = _normalize(frame, date)
                 if frame.empty:
                     raise RuntimeError(f"{provider} returned no market-hours historical data")
+                _require_replay_cadence(frame, mode)
                 stale = is_today(date) and path.exists() and time.time() - path.stat().st_mtime >= 600
                 from app.services.data_loader import has_native_second_cadence
                 result = HistoricalResult(frame, path, policy.source, provider,
@@ -212,10 +279,11 @@ def load_history(symbol: str, date: str, strike: int | None = None, expiry: str 
                 return result
             except Exception as exc:
                 last_error = exc
-                if is_today(date) and path.exists():
+                if (is_today(date) or provider in ("kite", "kotak")) and path.exists():
                     try:
                         frame = _normalize(pd.read_parquet(path), date)
                         if not frame.empty:
+                            _require_replay_cadence(frame, mode)
                             from app.services.data_loader import has_native_second_cadence
                             stale_results.append(HistoricalResult(frame, path, policy.source, provider,
                                 1 if has_native_second_cadence(frame) else 60, True))
@@ -241,28 +309,46 @@ class HistoricalOperation:
     policy: HistoricalPolicy | None = None
     results: dict = field(default_factory=dict)
     force_refresh: bool = False
+    mode: Literal["live", "replay"] = "replay"
+    policy_lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
 
 _operation: ContextVar[HistoricalOperation | None] = ContextVar("historical_operation", default=None)
+_background_mode: ContextVar[Literal["live", "replay"]] = ContextVar("historical_background_mode", default="replay")
+
+
+def refresh_requested() -> bool:
+    operation = _operation.get()
+    return bool(operation and operation.force_refresh)
+
+
+def history_mode() -> Literal["live", "replay"]:
+    operation = _operation.get()
+    return operation.mode if operation else _background_mode.get()
 
 
 @contextmanager
-def historical_operation(*, force_refresh: bool = False):
-    if _operation.get() is not None:
+def historical_operation(*, force_refresh: bool = False, mode: Literal["live", "replay"] | None = None):
+    parent = _operation.get()
+    if parent is not None and (mode is None or mode == parent.mode) and (not force_refresh or parent.force_refresh):
         yield
         return
-    token = _operation.set(HistoricalOperation(force_refresh=force_refresh))
+    selected_mode = mode or history_mode()
+    token = _operation.set(HistoricalOperation(
+        force_refresh=force_refresh or bool(parent and parent.force_refresh), mode=selected_mode))
     try:
         yield
     finally:
         _operation.reset(token)
 
 
-async def historical_request_scope(force_refresh: bool = False):
-    with historical_operation(force_refresh=force_refresh):
+async def historical_request_scope(force_refresh: bool = False,
+                                   history_mode: Literal["live", "replay"] = "replay"):
+    with historical_operation(force_refresh=force_refresh, mode=history_mode):
         yield
 
 
-def detach_historical_operation() -> None:
-    """Drop an inherited HTTP history scope before a long-lived engine starts."""
+def detach_historical_operation(*, mode: Literal["live", "replay"] = "replay") -> None:
+    """Keep only the engine's mode, never a long-lived HTTP result/policy cache."""
     _operation.set(None)
+    _background_mode.set(mode)
