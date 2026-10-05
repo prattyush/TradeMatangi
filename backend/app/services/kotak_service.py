@@ -877,7 +877,6 @@ class KotakNeoService:
                 return
 
             msg_type = message.get("type")
-            logger.debug("KotakNeoService: WebSocket message type=%s", msg_type)
 
             # Dispatch market data to KotakBroadcaster if registered
             if msg_type == "stock_feed":
@@ -891,6 +890,8 @@ class KotakNeoService:
                             "KotakNeoService: market data callback raised: %s", exc
                         )
                 return
+
+            logger.debug("KotakNeoService: WebSocket message type=%s", msg_type)
 
             if msg_type not in ("order_feed", "order"):
                 logger.debug("KotakNeoService: ignoring unknown message type=%s", msg_type)
@@ -1346,15 +1347,6 @@ class KotakBroadcaster:
                 "KotakBroadcaster: no sessions for token %s — dropped candle", token
             )
             return
-
-        logger.debug(
-            "KotakBroadcaster: token=%s OHLC O=%.2f H=%.2f L=%.2f C=%.2f ts=%d "
-            "sessions=%d",
-            token,
-            completed["open"], completed["high"],
-            completed["low"], completed["close"],
-            completed["time"], len(session_entries),
-        )
 
         for sid, (queue, right, loop) in session_entries.items():
             tick_payload = {**completed, "right": right, "provider_token": token}
