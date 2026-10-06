@@ -205,8 +205,8 @@ The two remaining failures are the existing stale expiry assertion in
 DynamoDB Local was restarted, four additional environment-dependent failures
 occurred; all six reproduced against unchanged dev commit `80fb0a5`. Starting
 DynamoDB resolved those four, leaving the established two-fixture baseline.
-The final focused run includes the prepared-Half allocation size-edit fence added
-after the full-suite checkpoint. Existing bundle-size/dateutil/pytest-marker
+The final focused run covers the final sizing-metadata/latency refinements and
+prepared-Half allocation size-edit fence after the full-suite checkpoint. Existing bundle-size/dateutil/pytest-marker
 warnings and pandas observation-column downcasting warnings remain visible.
 
 `summary.json`, complete logs and all regenerated screenshots are available in
@@ -232,7 +232,11 @@ No live orders, broker credential changes, main merges or deployment were perfor
 
 Implementation was completed on dev. Delivery uses a dedicated
 `feature/phase20-trading-analytics` branch targeting dev; review precedes merge.
-Main merging and deployment remain manual. PR details are recorded after submission.
+Main merging and deployment remain manual.
+
+Delivery: [PR #599](https://github.com/prattyush/TradeMatangi/pull/599),
+`feature/phase20-trading-analytics` → `dev`. Implementation commit `e3c66ed`;
+review/merge and the manual acceptance checks above remain pending.
 
 ## Baseline and research
 
