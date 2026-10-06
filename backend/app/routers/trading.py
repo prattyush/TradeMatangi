@@ -7,6 +7,7 @@ from app.models.schemas import Trade, Position, TradeRequest, TradeSide
 from app.services import trading as trading_svc
 from app.services import simulation as sim_svc
 from app.services import wallet_service, order_service
+from app.services.execution_analytics import snapshot
 from app.services.wallet_service import InsufficientFundsError
 from app.config import LOT_SIZES, EQUITY_MIS_MARGIN_RATE
 from app.dependencies import get_request_user_id
@@ -63,7 +64,7 @@ def _margin_rate_for(session, right: str | None = None) -> float:
     return EQUITY_MIS_MARGIN_RATE if _uses_equity_intraday_margin(session, right) else 1.0
 
 
-def _place_kotak_direct(session, side: TradeSide, price: float, lot_size: int, right) -> JSONResponse:
+def _place_kotak_direct(session, side: TradeSide, price: float, lot_size: int, right, capital_fraction=None) -> JSONResponse:
     """Place an immediate, tracked marketable LIMIT with exact contract identity."""
     from app.services import order_service
     from app.services.broker_order_service import submit_immediate
@@ -72,7 +73,8 @@ def _place_kotak_direct(session, side: TradeSide, price: float, lot_size: int, r
         raise HTTPException(status_code=409, detail="Broker refresh is in progress; retry shortly")
     from app.services.execution_price_service import gap_for, limit_price
     gap = gap_for(session.user_id)
-    order = Order(session_id=session.session_id, user_id=session.user_id, symbol=session.symbol,
+    from app.services.execution_analytics import snapshot
+    order = Order(analytics=snapshot(session, quantity=lot_size, price=price, side=side.value, capital_fraction=capital_fraction, margin_rate=_margin_rate_for(session, right), entry_method="MARKET", exit_method="MARKET"), session_id=session.session_id, user_id=session.user_id, symbol=session.symbol,
         side=side, order_type=OrderType.LIMIT, quantity=lot_size, limit_price=limit_price(side, price, gap),
         market_order=True, execution_gap_pct=gap, quote_price=price,
         trigger_price=price, created_at=int(session.current_time or 0), right=right,
@@ -132,7 +134,7 @@ async def buy(req: TradeRequest):
         blocked, reason = check_maxsize(session, price, quantity, "BUY", right=right, strike=_strike_for_right(session, right), expiry=session.expiry)
         if blocked:
             raise HTTPException(status_code=403, detail=reason)
-        return _place_kotak_direct(session, TradeSide.BUY, price, quantity, right)
+        return _place_kotak_direct(session, TradeSide.BUY, price, quantity, right, req.funds_ratio_pct)
 
     from app.services.guardrail_service import check_maxsize
     blocked, reason = check_maxsize(session, price, quantity, "BUY", right=right, strike=_strike_for_right(session, right), expiry=session.expiry)
@@ -152,6 +154,7 @@ async def buy(req: TradeRequest):
         )
         trade = trading_svc.record_trade(
             req.session_id, TradeSide.BUY, price=price, timestamp=timestamp,
+            analytics=snapshot(session, quantity=quantity, price=price, side="BUY", capital_fraction=req.funds_ratio_pct, margin_rate=_margin_rate_for(session, right), entry_method="MARKET", exit_method="MARKET"),
             symbol=session.symbol,
             instrument_type=session.instrument_type,
             strike=_strike_for_right(session, right),
@@ -193,7 +196,7 @@ async def sell(req: TradeRequest):
         blocked, reason = check_maxsize(session, price, quantity, "SELL", right=right, strike=_strike_for_right(session, right), expiry=session.expiry)
         if blocked:
             raise HTTPException(status_code=403, detail=reason)
-        return _place_kotak_direct(session, TradeSide.SELL, price, quantity, right)
+        return _place_kotak_direct(session, TradeSide.SELL, price, quantity, right, req.funds_ratio_pct)
 
     from app.services.guardrail_service import check_maxsize
     blocked, reason = check_maxsize(session, price, quantity, "SELL", right=right, strike=_strike_for_right(session, right), expiry=session.expiry)
@@ -213,6 +216,7 @@ async def sell(req: TradeRequest):
         )
         trade = trading_svc.record_trade(
             req.session_id, TradeSide.SELL, price=price, timestamp=timestamp,
+            analytics=snapshot(session, quantity=quantity, price=price, side="SELL", capital_fraction=req.funds_ratio_pct, margin_rate=_margin_rate_for(session, right), entry_method="MARKET", exit_method="MARKET"),
             symbol=session.symbol,
             instrument_type=session.instrument_type,
             strike=_strike_for_right(session, right),

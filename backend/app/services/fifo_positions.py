@@ -147,7 +147,8 @@ def live_delta(session, order, quantity, price):
             order.expiry or session.expiry, order.strike, order.right, session.symbol)
     now = int(time.time()) + 19800
     previous_sort = max((row.get('execution_sort_time', row['timestamp'] * 1_000_000) for row in session._fifo_executions), default=0)
-    row = dict(symbol=symbol, exchange=order.broker_exchange or exchange_for(session), product=order.broker_product or 'MIS',
+    from app.services.execution_analytics import order_snapshot, filled
+    row = dict(analytics=filled(order_snapshot(order, session), price, quantity), symbol=symbol, exchange=order.broker_exchange or exchange_for(session), product=order.broker_product or 'MIS',
         kotak_order_id=order.kotak_order_id, execution_id=f'live:{order.kotak_order_id}:{order.broker_filled_quantity}',
         quantity=quantity, price=price, side=order.side.value, timestamp=now,
         execution_sort_time=max(now * 1_000_000, previous_sort + 1), _live_delta=True)

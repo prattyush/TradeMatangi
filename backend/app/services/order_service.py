@@ -209,6 +209,9 @@ def _write_order_to_db(order: Order, *, strict: bool = False) -> None:
             value = getattr(order, name, None)
             if value is not None:
                 item[name] = Decimal(str(value)) if isinstance(value, float) else value
+        if order.analytics is not None:
+            from app.services.real_broker_state import encode
+            item["analytics"] = encode(order.analytics)
         if order.broker_conversion is not None:
             from app.services.real_broker_state import encode
             item["broker_conversion"] = encode(order.broker_conversion)
@@ -303,6 +306,7 @@ def place_order(
     exit_allocation_id: str | None = None,
     exit_position_side: str | None = None,
     exit_allocation_role: str | None = None,
+    analytics: dict | None = None,
 ) -> Order:
     _ensure_session(session_id)
     order_id = order_id or str(uuid.uuid4())
@@ -360,6 +364,7 @@ def place_order(
             wallet_service.debit(user_id, reserved_amount, trading_date)
 
     order = Order(
+        analytics=analytics,
         order_id=order_id,
         session_id=session_id,
         user_id=user_id,
@@ -392,6 +397,9 @@ def place_order(
         exit_position_side=exit_position_side,
         exit_allocation_role=exit_allocation_role,
     )
+    from app.services.execution_analytics import created
+    from app.services.simulation import get_session
+    created(order, get_session(session_id))
     if wallet_ledger_id and wallet_ledger_id.startswith("paper:"):
         from app.services import paper_wallet
         from app.services import simulation as sim_svc
@@ -535,6 +543,9 @@ def update_order(
             _adjust_buy_reservation(order, _reservation_for(order, order.limit_price, quantity), trading_date, {"quantity": quantity})
         order.quantity = quantity
 
+    if trigger_price is not None or limit_price is not None:
+        from app.services.execution_analytics import applied_controller
+        applied_controller(order)
     if persist:
         _write_order_to_db(order)
     return order
@@ -620,6 +631,8 @@ def convert_order(
     order.limit_price = new_limit
     order.is_stoploss = new_is_sl
 
+    from app.services.execution_analytics import applied_controller
+    applied_controller(order)
     if persist:
         _write_order_to_db(order)
     logger.info(

@@ -153,6 +153,7 @@ export default function OrderPanel({
   const [tpSize, setTpSize] = useState<'full' | 'half'>('full')
   const [tpIsPct, setTpIsPct] = useState(false)
   const [utpValue, setUtpValue] = useState('')
+  const [uslSize, setUslSize] = useState<'full' | 'half'>('full')
   const [uslValue, setUslValue] = useState('')
   const [lpValue, setLpValue] = useState('')
   const [lpIsPct, setLpIsPct] = useState(false)
@@ -469,7 +470,7 @@ export default function OrderPanel({
           setStratLoading(null)
           return
         }
-        extraOpts = { underlyingSlPrice: v }
+        extraOpts = { underlyingSlPrice: v, underlyingStoplossSize: uslSize }
       } else if (strategyType === 'LockProfit') {
         const v = parseFloat(lpValue)
         if (isNaN(v) || v <= 0) {
@@ -948,6 +949,7 @@ export default function OrderPanel({
             {/* Underlying SL (options only) */}
             {selectedStrategy === 'UnderlyingStoploss' && (
             <div>
+              <label>Exit size <select value={uslSize} onChange={e => setUslSize(e.target.value as 'full' | 'half')}><option value="full">Full</option><option value="half">Half</option></select></label>
               <div style={{ fontSize: 10, color: '#f0883e', fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 6 }}>
                 Exit Strategy {!stratHasPosition && <span style={{ fontWeight: 400, fontSize: 9 }}>(need position)</span>}
               </div>
@@ -1118,7 +1120,7 @@ export default function OrderPanel({
                       <div style={{ fontSize: 10, color: '#3fb950', display: 'flex', alignItems: 'center', gap: 4, padding: '4px 6px' }}>
                         <span>•</span>
                         <span style={{ flex: 1 }}>{s.strategy_type}</span>
-                        {(s.strategy_type === 'TargetProfit' || s.strategy_type === 'UnderlyingTargetProfit') && <select aria-label="Edit take profit size" value={s.target_profit_size ?? 'full'} disabled={!onUpdateStrategySize} onChange={e => void onUpdateStrategySize?.(s.strategy_id, e.target.value as 'full' | 'half').catch(err => setStratError(String(err)))}><option value="full">Full</option><option value="half">Half</option></select>}
+                        {(s.strategy_type === 'TargetProfit' || s.strategy_type === 'UnderlyingTargetProfit' || s.strategy_type === 'UnderlyingStoploss') && <select aria-label="Edit take profit size" value={s.target_profit_size ?? 'full'} disabled={!onUpdateStrategySize} onChange={e => void onUpdateStrategySize?.(s.strategy_id, e.target.value as 'full' | 'half').catch(err => setStratError(String(err)))}><option value="full">Full</option><option value="half">Half</option></select>}
                         {s.right && <span style={{ color: '#58a6ff' }}>{s.right}</span>}
                         {s.triggered && (
                           <span style={{ color: '#8b949e', fontSize: 9, background: '#21262d', padding: '1px 4px', borderRadius: 3 }}>triggered</span>

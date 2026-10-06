@@ -102,6 +102,8 @@ class SimulationStatusResponse(BaseModel):
 
 
 class Trade(BaseModel):
+    execution_sort_time: int | None = None
+    analytics: dict | None = None
     trade_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     user_id: str
     symbol: str
@@ -203,6 +205,7 @@ class OrderType(str, Enum):
 
 
 class Order(BaseModel):
+    analytics: dict | None = None
     order_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     session_id: str
     user_id: str
@@ -471,6 +474,7 @@ class StartStrategyRequest(BaseModel):
     # Auto-stop loss on entry (for AutoStop strategy)
     entry_sl_price: float | None = None        # if set, auto-places SL when AutoStop fills
     # UnderlyingStoploss settings
+    underlying_stoploss_size: Literal["full", "half"] = "full"
     underlying_sl_price: float | None = None   # underlying price at which to trigger option SL
 
 

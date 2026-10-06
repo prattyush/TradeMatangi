@@ -254,3 +254,82 @@ async def preflight_status(job_id: str, _: str = Depends(get_desktop_user_id)) -
     if job_id not in _preflight_jobs:
         raise HTTPException(status_code=404, detail="Preflight job was not found")
     return _preflight_jobs[job_id]
+
+
+@router.get("/historical/underlying-pages")
+async def underlying_history_page(
+    symbol: str = Query(...),
+    trading_date: str = Query(...),
+    before_date: str | None = Query(None),
+    interval_minutes: int = Query(1, ge=1, le=60),
+    history_mode: str = Query("replay", pattern="^(live|replay)$"),
+    _: str = Depends(get_desktop_user_id),
+):
+    """Two calendar dates strictly before the cursor, bounded to D-13..D."""
+    from datetime import timedelta
+    from app.services.historical_data_service import historical_operation
+
+    if symbol not in SUPPORTED_SYMBOLS:
+        raise HTTPException(404, "Instrument not supported")
+    try:
+        anchor = calendar_date.fromisoformat(trading_date)
+        cursor = calendar_date.fromisoformat(before_date) if before_date else anchor
+    except ValueError as exc:
+        raise HTTPException(422, "Dates must be YYYY-MM-DD") from exc
+    if cursor > anchor:
+        raise HTTPException(422, "Cursor exceeds chart date")
+    lower = anchor - timedelta(days=13)
+    scanned = []
+    loaded = []
+    unavailable = []
+    candles = []
+    from app.routers.data import _ensure_data
+
+    with historical_operation(mode=history_mode):
+        day = cursor - timedelta(days=1)
+        while len(scanned) < 2 and day >= lower:
+            value = day.isoformat()
+            scanned.append(value)
+            if is_trading_day(day):
+                try:
+
+                    def load_day():
+                        _ensure_data(symbol, value)
+                        return candles_to_records(
+                            resample_to_candles(
+                                load_dataframe(symbol, value), interval_minutes
+                            )
+                        )
+
+                    rows = await run_history(load_day)
+                    if rows:
+                        candles.extend(
+                            dict(
+                                timestamp=r["time"],
+                                open=r["open"],
+                                high=r["high"],
+                                low=r["low"],
+                                close=r["close"],
+                            )
+                            for r in rows
+                        )
+                        loaded.append(value)
+                    else:
+                        unavailable.append(value)
+                except (HTTPException, FileNotFoundError, RuntimeError):
+                    unavailable.append(value)
+            day -= timedelta(days=1)
+    # Failed trading dates are explicitly retryable; do not silently advance
+    # beyond them. Holidays consume calendar-window days normally.
+    next_date = min(scanned) if scanned and day >= lower else None
+    return dict(
+        version=1,
+        symbol=symbol,
+        interval_minutes=interval_minutes,
+        requested_date=trading_date,
+        candles=sorted(candles, key=lambda c: c["timestamp"]),
+        scanned_dates=scanned,
+        loaded_dates=loaded,
+        unavailable_dates=unavailable,
+        next_before_date=next_date,
+    )

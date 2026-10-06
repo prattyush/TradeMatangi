@@ -318,6 +318,8 @@ def _upsert_session_to_db(session: SimulationSession, *, strict: bool = False) -
             "speed": Decimal(str(session.speed)),
             "state": session.state.value,
             "session_capital": Decimal(str(session.session_capital)),
+            "strategy_interval_secs": session.strategy_interval_secs,
+            "brokerage_per_order": Decimal(str(session.brokerage_per_order)),
             "instrument_type": session.instrument_type,
             "session_type": session.session_type,
         }

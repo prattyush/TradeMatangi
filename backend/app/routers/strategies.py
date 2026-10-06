@@ -127,6 +127,7 @@ def start_strategy(req: StartStrategyRequest, user_id: str = Depends(get_request
         "breakeven_mode": req.breakeven_mode,
         "target_profit_value": req.target_profit_value,
         "target_profit_size": req.target_profit_size,
+        "underlying_stoploss_size": req.underlying_stoploss_size,
         "target_profit_is_pct": req.target_profit_is_pct,
         "target_profit_buffer_ticks": max(1, min(5, req.target_profit_buffer_ticks)),
         "triggered": False,
@@ -171,7 +172,7 @@ def start_strategy(req: StartStrategyRequest, user_id: str = Depends(get_request
         status=instance.status.value,
         triggered=bool(instance.metadata.get("triggered", False)),
         target_profit_value=instance.metadata.get("target_profit_value"),
-        target_profit_size=instance.metadata.get("target_profit_size", "full"),
+        target_profit_size=instance.metadata.get("underlying_stoploss_size" if instance.strategy_type == "UnderlyingStoploss" else "target_profit_size", "full"),
         target_profit_is_pct=bool(instance.metadata.get("target_profit_is_pct", False)),
     )
 
@@ -227,7 +228,7 @@ def list_strategies(session_id: str, user_id: str = Depends(get_request_user_id)
             status=s.status.value,
             triggered=bool(s.metadata.get("triggered", False)),
             target_profit_value=s.metadata.get("target_profit_value"),
-            target_profit_size=s.metadata.get("target_profit_size", "full"),
+            target_profit_size=s.metadata.get("underlying_stoploss_size" if s.strategy_type == "UnderlyingStoploss" else "target_profit_size", "full"),
             target_profit_is_pct=bool(s.metadata.get("target_profit_is_pct", False)),
         )
         for s in running

@@ -85,6 +85,8 @@ def candidate_for(order, new_type, price):
     candidate.is_stoploss = new_type == OrderType.STOPLOSS
     candidate.trigger_price = candidate.limit_price = _round_to_tick(resolved)
     reprice_trigger(candidate)
+    from app.services.execution_analytics import applied_controller
+    applied_controller(candidate)
     return candidate
 
 
@@ -217,6 +219,11 @@ async def _commit(session, order, candidate, job, broker, raw):
             await asyncio.to_thread(journal.store.put, job['operation_id'], job)
             return
         order = current
+        if candidate.analytics and candidate.analytics.get('controller_history'):
+            from copy import deepcopy
+            candidate.analytics = deepcopy(candidate.analytics)
+            candidate.analytics['controller_history'][-1]['timestamp'] = int(time.time()) + 19800
+            candidate.analytics['timestamp'] = candidate.analytics['controller_history'][-1]['timestamp']
         replacement = job.get('replacement_id')
         if current.status != OrderStatus.PENDING and not (replacement and job.get('original_cancelled') and current.status == OrderStatus.CANCELLED):
             await publish(session, order, job, 'failed', 'Order became terminal during conversion')
@@ -262,7 +269,7 @@ async def _commit(session, order, candidate, job, broker, raw):
             await publish(session, order, job, 'unknown', 'Quantity changed during conversion; refresh required')
             return
         # The candidate was copied before I/O. Never overwrite newer cumulative fills.
-        for key in ('order_type', 'is_stoploss', 'trigger_price', 'limit_price', 'execution_gap_pct', 'market_order'):
+        for key in ('order_type', 'is_stoploss', 'trigger_price', 'limit_price', 'execution_gap_pct', 'market_order', 'analytics'):
             setattr(current, key, getattr(candidate, key))
         await publish(session, current, job, 'confirmed')
         session.queue.put_nowait(json.dumps({'type': 'order_converted', 'session_id': session.session_id,

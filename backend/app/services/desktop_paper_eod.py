@@ -134,11 +134,13 @@ def reconcile_session(record: dict) -> bool:
             identity = f"eod:{session_id}:{contract_symbol}:{expiry or '-'}:{strike or 0}:{right or 'EQ'}"
             trading.settle_wallet_for_trade(session, side, float(quote["price"]), position.quantity,
                 right=right, strike=strike, expiry=expiry, operation_id=identity)
+            from app.services.execution_analytics import snapshot
             trading.record_trade(session_id, side, float(quote["price"]), int(quote["timestamp"]),
                 quantity=position.quantity, symbol=contract_symbol,
                 instrument_type="options" if right else session.instrument_type, strike=strike,
                 expiry=expiry, right=right, brokerage_per_order=session.brokerage_per_order,
-                user_id=user_id, session_type="paper", source="desktop_paper", trade_id=identity)
+                user_id=user_id, session_type="paper", source="desktop_paper", trade_id=identity,
+                analytics=snapshot(session, quantity=position.quantity, price=float(quote["price"]), side=side.value, exit_method="EOD_CLOSE", action_id=identity))
         table.update_item(Key=key, UpdateExpression="SET settlement_pending = :pending, settlement_retry_after = :retry",
             ConditionExpression="settlement_token = :token AND session_status = :stopped",
             ExpressionAttributeValues={":pending": pending, ":retry": int(time.time()) + 60 if pending else 0,

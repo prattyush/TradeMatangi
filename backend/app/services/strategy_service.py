@@ -21,6 +21,8 @@ Cross-process cancellation:
 """
 from __future__ import annotations
 
+from app.services.execution_analytics import strategy_context
+
 import logging
 import math
 import uuid
@@ -336,14 +338,16 @@ def update_target_profit_size(session_id: str, strategy_id: str, size: str) -> b
         raise ValueError("Size must be full or half")
     for strategy in list_running(session_id):
         if (strategy.strategy_id == strategy_id
-                and strategy.strategy_type in ("TargetProfit", "UnderlyingTargetProfit")
-                and not strategy.metadata.get("half_action_order_ids")):
-            previous = strategy.metadata.get("target_profit_size", "full")
-            strategy.metadata["target_profit_size"] = size
+                and strategy.strategy_type in ("TargetProfit", "UnderlyingTargetProfit", "UnderlyingStoploss")
+                and not strategy.metadata.get("half_action_order_ids")
+                and not strategy.metadata.get("half_action_started")):
+            field = "underlying_stoploss_size" if strategy.strategy_type == "UnderlyingStoploss" else "target_profit_size"
+            previous = strategy.metadata.get(field, "full")
+            strategy.metadata[field] = size
             try:
                 _write_strategy_to_db(strategy, strict=True)
             except Exception:
-                strategy.metadata["target_profit_size"] = previous
+                strategy.metadata[field] = previous
                 raise
             return True
     return False
@@ -372,6 +376,7 @@ def _apply_half_exit(strategy, session, position, price, right, ts, underlying=F
         logger.info("take_profit_half_allocated strategy=%s session=%s right=%s strike=%s expiry=%s position_qty=%d selected_qty=%d lot_size=%d", strategy.strategy_id, session.session_id, right, _session_strike(session, right, strategy), _strategy_expiry(strategy, session, right), position.quantity, quantity, lot)
         strategy.metadata["half_action_started"] = True
         strategy.metadata["half_selected_quantity"] = quantity
+        strategy.metadata["half_position_quantity"] = position.quantity
     exit_side = TradeSide.SELL if position.side == "LONG" else TradeSide.BUY
     applied = strategy.metadata.setdefault("half_action_order_ids", [])
     already = sum(o.quantity for oid in applied if (o := orders.get_order(session.session_id, oid)))
@@ -632,6 +637,7 @@ def _on_bar_close(
         _on_bar_close_aggressive_sl(strategy, session, closed_ohlc, tick_right, current_ts, loop)
 
 
+@strategy_context
 def _on_bar_close_autostop(
     strategy: StrategyInstance,
     session,
@@ -665,6 +671,7 @@ def _on_bar_close_autostop(
         logger.warning("AutoStop %s: entry price rounds to zero", strategy.strategy_id)
         return
 
+    sizing_stop = meta.get("entry_sl_price")
     # Resolve quantity
     quantity = meta.get("quantity")
     if quantity is None:
@@ -686,6 +693,7 @@ def _on_bar_close_autostop(
                         entry_sl_price = trigger_price * (1 - default_sl_pct)
                     else:
                         entry_sl_price = trigger_price * (1 + default_sl_pct)
+                sizing_stop = entry_sl_price
                 quantity = compute_risk_ratio_quantity(
                     session.symbol, trigger_price, entry_sl_price,
                     session.session_capital, risk_ratio_pct, current_wallet,
@@ -734,6 +742,14 @@ def _on_bar_close_autostop(
     group_id = None
     if entry_sl_price is not None:
         group_id = str(_uuid.uuid4())
+    from app.services.execution_analytics import snapshot
+    analytics = snapshot(session, quantity=quantity, price=trigger_price, side=side.value,
+        capital_fraction=meta.get('funds_ratio_pct') if meta.get('risk_ratio_pct') is None else None,
+        risk_fraction=meta.get('risk_ratio_pct'), stop=sizing_stop,
+        margin_rate=_margin_rate_for_quantity(session, tick_right),
+        entry_method='AUTOSTOP_LIMIT' if order_type == OrderType.LIMIT else 'AUTOSTOP',
+        action_id=strategy.strategy_id, strategy_id=strategy.strategy_id)
+    analytics['stop_source'] = 'explicit' if meta.get('entry_sl_price') is not None else 'sizing_default' if sizing_stop is not None else None
     try:
         if entry_sl_price is not None and (entry_sl_price <= 0 or
             (side == TradeSide.BUY and entry_sl_price >= trigger_price) or
@@ -766,6 +782,7 @@ def _on_bar_close_autostop(
             group_id=group_id,
             source=desktop_source,
             is_autostop=True,
+            analytics=analytics,
             margin_rate=_margin_rate_for_quantity(session, tick_right),
             **_wallet_ledger_kwargs(session),
         )
@@ -822,6 +839,7 @@ def _update_exit_order_price(session, order, new_price: float) -> None:
                      trading_date=session.date, limit_price=new_price)
 
 
+@strategy_context
 def _on_bar_close_aggressive_sl(
     strategy: StrategyInstance,
     session,
@@ -835,6 +853,7 @@ def _on_bar_close_aggressive_sl(
     from app.services.order_service import place_order
 
     position = _strategy_position(strategy, session, tick_right)
+    strategy.metadata["_analytics_position_quantity"] = position.quantity
     if position.side == "FLAT":
         strategy.status = StrategyStatus.COMPLETED
         _write_strategy_to_db(strategy)
@@ -953,6 +972,7 @@ def _cancel_exit_and_place_limit(
     logger.info("strategy_exit_limit_placed strategy=%s order=%s", strategy.strategy_id, order.order_id)
 
 
+@strategy_context
 def _on_tick_breakeven(
     strategy: StrategyInstance,
     session,
@@ -966,6 +986,7 @@ def _on_tick_breakeven(
     from app.services.order_service import place_order
 
     position = _strategy_position(strategy, session, tick_right)
+    strategy.metadata["_analytics_position_quantity"] = position.quantity
 
     if position.side == "FLAT":
         strategy.status = StrategyStatus.COMPLETED
@@ -1068,6 +1089,7 @@ def _on_tick_breakeven(
                 logger.warning("BreakEven %s: place_order failed: %s", strategy.strategy_id, exc)
 
 
+@strategy_context
 def _on_tick_target_profit(
     strategy: StrategyInstance,
     session,
@@ -1081,6 +1103,7 @@ def _on_tick_target_profit(
     from app.services.order_service import place_order
 
     position = _strategy_position(strategy, session, tick_right)
+    strategy.metadata["_analytics_position_quantity"] = position.quantity
 
     if position.side == "FLAT":
         strategy.status = StrategyStatus.COMPLETED
@@ -1132,6 +1155,7 @@ def _on_tick_target_profit(
     )
 
 
+@strategy_context
 def _on_tick_lock_profit(
     strategy: StrategyInstance,
     session,
@@ -1153,6 +1177,7 @@ def _on_tick_lock_profit(
     from app.models.schemas import TradeSide
 
     position = _strategy_position(strategy, session, tick_right)
+    strategy.metadata["_analytics_position_quantity"] = position.quantity
     if position.side == "FLAT":
         return
 
@@ -1222,6 +1247,7 @@ def _on_tick_lock_profit(
     _write_strategy_to_db(strategy)
 
 
+@strategy_context
 def _on_tick_underlying_target_profit(
     strategy: StrategyInstance,
     session,
@@ -1246,6 +1272,7 @@ def _on_tick_underlying_target_profit(
     from app.services.order_service import place_order
 
     position = _strategy_position(strategy, session, tick_right)
+    strategy.metadata["_analytics_position_quantity"] = position.quantity
     if position.side == "FLAT":
         strategy.status = StrategyStatus.COMPLETED
         _write_strategy_to_db(strategy)
@@ -1350,6 +1377,7 @@ def _on_tick_underlying_target_profit(
     )
 
 
+@strategy_context
 def _on_tick_underlying_stoploss(
     strategy: StrategyInstance,
     session,
@@ -1375,6 +1403,7 @@ def _on_tick_underlying_stoploss(
     from app.services.order_service import place_order
 
     position = _strategy_position(strategy, session, tick_right)
+    strategy.metadata["_analytics_position_quantity"] = position.quantity
     if position.side == "FLAT":
         strategy.status = StrategyStatus.COMPLETED
         _write_strategy_to_db(strategy)
@@ -1411,6 +1440,12 @@ def _on_tick_underlying_stoploss(
     else:
         new_sl = _ceil_tick(current_price + tick_buffer)
         exit_side = TradeSide.BUY
+
+    if meta.get("underlying_stoploss_size", "full") == "half":
+        if _apply_half_exit(strategy, session, position, new_sl, tick_right, current_ts, underlying=True, loop=loop):
+            strategy.status = StrategyStatus.COMPLETED
+            _write_strategy_to_db(strategy, strict=True)
+        return
 
     exit_orders = _find_open_exit_orders(session.session_id, exit_side, tick_right, strategy)
 
