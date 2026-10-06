@@ -1,7 +1,7 @@
 from __future__ import annotations
 from enum import Enum
 from typing import Literal
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 import uuid
 
 
@@ -246,6 +246,7 @@ class Order(BaseModel):
     recovery_operation_id: str | None = None
     recovery_parent_order_id: str | None = None
     recovery_state: str | None = None
+    broker_conversion: dict | None = None
     recovery_attempt: int = 0
     entry_sl_price: float | None = None  # auto-stoploss price set at entry time
     group_id: str | None = None          # links entry order with its auto-placed SL order
@@ -257,6 +258,13 @@ class Order(BaseModel):
     quote_price: float | None = None
     quote_timestamp: int | None = None
     quote_source: str | None = None
+
+    @field_validator('broker_conversion', mode='before')
+    @classmethod
+    def normalize_conversion_clock(cls, value):
+        if isinstance(value, dict) and value.get('updated_at') is not None:
+            return {**value, 'updated_at': float(value['updated_at'])}
+        return value
 
 
 class PlaceOrderRequest(BaseModel):

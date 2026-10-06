@@ -163,3 +163,21 @@ older response from overwriting a newer fill. The cached position-snapshot endpo
 reads application state without polling broker reports on each event. An existing
 open book without verified executions requires Trade History Refresh before its
 FIFO basis can be repaired.
+
+## Broker-confirmed conversion and position evidence
+
+LIMIT ↔ STOPLOSS conversion now retains the broker-confirmed type until a matching
+order event confirms type, prices and quantity. This applies to individual orders,
+All SL and All Limit. Pending/unknown conversion metadata is durable; coherent
+refresh and passive confirmation after restart do not resubmit the operation.
+Explicit refusal can invoke confirmed cancel-and-replace. Conversion cancellation
+intent suppresses independent protection recovery, and coverage is reconciled
+before submitting the replacement. Confirmed cancellation removes the original
+from open orders immediately; an unresolved replacement produces a visible notice.
+
+Position-feed messages provide reconciliation evidence rather than trades. Matching
+committed execution quantities require no report poll. Mismatches coalesce into a
+coherent broker refresh, preserving individual execution deduplication and FIFO.
+Raw order/position wire evidence is available in `LOG_DIR/kotak-events.ndjson`
+(daily rotation, 30 backups, secrets redacted), alongside decoded DEBUG payloads and
+INFO position summaries. See [Phase 19](spec-phase19.md) for requirements and validation.

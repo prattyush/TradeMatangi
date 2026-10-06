@@ -1,3 +1,4 @@
+import { mergeOpenOrders } from '../services/brokerOrderState'
 import { contractPosition, unrealizedPnl, advancePositionClock, mergeConfirmedTrade, PositionSnapshot, ContractPosition } from '../services/positionAccounting'
 import { refreshedSessionCapital } from '../brokerSnapshot'
 import { useState, useCallback, useRef } from 'react'
@@ -175,7 +176,7 @@ export function useSimulation() {
         positionCE: contractPosition(s.symbol, snapshot.positions, 'CE', s.sessionStrikeCE, s.sessionExpiry),
         positionPE: contractPosition(s.symbol, snapshot.positions, 'PE', s.sessionStrikePE, s.sessionExpiry),
         trades: snapshot.trades ?? (snapshot.trade ? mergeConfirmedTrade(s.trades, snapshot.trade) : s.trades),
-        openOrders: snapshot.application_orders ?? s.openOrders,
+        openOrders: snapshot.application_orders ? mergeOpenOrders(s.openOrders, snapshot.application_orders, true) : s.openOrders,
       }
     })
   }, [])
@@ -654,8 +655,7 @@ export function useSimulation() {
 
   const addOpenOrder = useCallback((order: Order) => {
     setState(s => {
-      if (s.openOrders.some(o => o.order_id === order.order_id)) return s
-      return { ...s, openOrders: [...s.openOrders, order] }
+      return { ...s, openOrders: mergeOpenOrders(s.openOrders, [order]) }
     })
   }, [])
 
@@ -683,12 +683,13 @@ export function useSimulation() {
     triggerPrice: number,
     limitPrice: number,
     isStoploss: boolean,
+    conversion?: Order['broker_conversion'],
   ) => {
     setState(s => ({
       ...s,
       openOrders: s.openOrders.map(o =>
         o.order_id === orderId
-          ? { ...o, order_type: newOrderType as Order['order_type'], trigger_price: triggerPrice, limit_price: limitPrice, is_stoploss: isStoploss }
+          ? mergeOpenOrders([o], [{ ...o, order_type: newOrderType as Order['order_type'], trigger_price: triggerPrice, limit_price: limitPrice, is_stoploss: isStoploss, broker_conversion: conversion ?? o.broker_conversion }])[0] ?? o
           : o
       ),
     }))
@@ -882,7 +883,7 @@ export function useSimulation() {
       if (!clock) return s
       const findPosition = (right: string | null, strike: number | null) => contractPosition(s.symbol, snapshot.positions, right, strike, s.sessionExpiry)
       return { ...s, sessionCapital: refreshedSessionCapital(s.sessionId, sessionId, s.sessionCapital, snapshot.session_capital),
-        trades: snapshot.trades, historicalTrades: [], openOrders: snapshot.application_orders,
+        trades: snapshot.trades, historicalTrades: [], openOrders: mergeOpenOrders(s.openOrders, snapshot.application_orders, true),
         contractPositions: snapshot.positions, positionClock: clock,
         position: findPosition(null, null), positionCE: findPosition('CE', s.sessionStrikeCE),
         positionPE: findPosition('PE', s.sessionStrikePE), walletRefreshKey: s.walletRefreshKey + 1 }
@@ -993,17 +994,16 @@ export function useSimulation() {
 
   const bulkUpdateOrders = useCallback((updatedOrders: Order[]) => {
     if (updatedOrders.length === 0) return
-    const updatedMap = new Map(updatedOrders.map(o => [o.order_id, o]))
     setState(s => ({
       ...s,
-      openOrders: s.openOrders.map(o => updatedMap.get(o.order_id) || o),
+      openOrders: mergeOpenOrders(s.openOrders, updatedOrders),
       walletRefreshKey: s.walletRefreshKey + 1,
     }))
   }, [])
 
   const refreshOpenOrders = useCallback(async (sessionId: string) => {
     const orders = await api.getOrders(sessionId)
-    setState(s => s.sessionId === sessionId ? { ...s, openOrders: orders, walletRefreshKey: s.walletRefreshKey + 1 } : s)
+    setState(s => s.sessionId === sessionId ? { ...s, openOrders: mergeOpenOrders(s.openOrders, orders, true), walletRefreshKey: s.walletRefreshKey + 1 } : s)
   }, [])
 
   // ── In-session trade labeling ───────────────────────────────────────────────

@@ -1348,13 +1348,21 @@ async def bulk_convert(session_id: str, req: BulkChartConvertRequest, user_id: s
     session = _require_session(session_id, user_id)
     right, strike, expiry = _target_scope(session, req.right, req.strike, req.expiry)
     converted: list[Order] = []
+    results = []
     for order in _closing_orders(session, right, strike, expiry):
-        from app.routers.orders import _convert_with_broker
-        updated = _convert_with_broker(session, order, req.new_order_type, req.price)
-        if updated:
-            converted.append(updated)
-            _emit_order_converted(session, updated)
-    return {"converted": len(converted), "orders": converted}
+        from app.routers.orders import _convert_with_broker_async
+        try:
+            updated = await _convert_with_broker_async(session, order, req.new_order_type, req.price)
+            if updated:
+                converted.append(updated)
+                state = (updated.broker_conversion or {}).get('state', 'confirmed')
+                results.append({'order_id': order.order_id, 'state': state, 'message': (updated.broker_conversion or {}).get('message')})
+                if not updated.broker_conversion:
+                    _emit_order_converted(session, updated)
+        except HTTPException as exc:
+            results.append({'order_id': order.order_id, 'state': 'failed', 'message': str(exc.detail)})
+    return {"converted": sum(r['state'] == 'confirmed' for r in results), "orders": converted, "results": results}
+
 
 
 @router.patch("/{session_id}/orders/bulk-update-sl")
@@ -1505,8 +1513,8 @@ async def flatten(session_id: str, req: FlattenRequest, user_id: str = Depends(g
         closers = _closing_orders(session, right, strike, expiry)
         if closers:
             for order in closers:
-                from app.routers.orders import _convert_with_broker
-                converted = _convert_with_broker(session, order, OrderType.LIMIT, emergency_price)
+                from app.routers.orders import _convert_with_broker_async
+                converted = await _convert_with_broker_async(session, order, OrderType.LIMIT, emergency_price)
                 if converted:
                     if session.session_type == "real":
                         converted.market_order = True
@@ -1514,7 +1522,8 @@ async def flatten(session_id: str, req: FlattenRequest, user_id: str = Depends(g
                         converted.quote_price = price
                         order_service._write_order_to_db(converted)
                     result["converted"].append(converted.model_dump(mode="json"))
-                    _emit_order_converted(session, converted)
+                    if not converted.broker_conversion:
+                        _emit_order_converted(session, converted)
         else:
             created = order_service.place_order(
                 session_id=session_id,

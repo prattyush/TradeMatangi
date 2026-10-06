@@ -1,15 +1,15 @@
 # Phase 19 — Shared live market data and partial take profit
 
-## Latest delivery status — Kotak recovery and FIFO accounting — 2026-10-06
+## Latest delivery status — confirmed Kotak conversions and position events — 2026-10-06
 
-Unexpected-cancellation exit recovery is implemented on `dev` in commit
-`14daeb8` (**Recover missing Kotak exits after unexpected cancellations**).
-The additional FIFO average-entry and website P&L refresh repair is implemented
-and validated in [PR #595](https://github.com/prattyush/TradeMatangi/pull/595),
-from `fix/phase19-kotak-fifo-refresh` into `dev`.
-PR review/merge and live Kotak acceptance remain pending; merge/deployment to
-`main` remains manual. See **Kotak unexpected cancellation and FIFO refresh repair
-— 2026-10-06** at the end for requirements, changes and latest verification.
+FIFO average-entry/P&L repair was merged into `dev` through
+[PR #595](https://github.com/prattyush/TradeMatangi/pull/595), merge commit `e3ac5f5`.
+The follow-up implements broker-confirmed LIMIT ↔ STOPLOSS conversion for individual
+orders, All SL and All Limit, plus position-feed reconciliation and raw event logs.
+These follow-up changes are implemented and validated for delivery from
+`fix/phase19-kotak-confirmed-conversions` into `dev`. PR review/merge and live broker
+acceptance remain pending; automated validation and acceptance status are recorded in **Broker-confirmed conversions and position feed
+— 2026-10-06** below. Merge/deployment to `main` remains manual.
 Older delivery statuses below describe their respective changes at that time.
 
 ## Current delivery status — shared settings
@@ -2312,3 +2312,93 @@ notices support investigation and restart handling. See
 - Delivery: [PR #595](https://github.com/prattyush/TradeMatangi/pull/595),
   branch `fix/phase19-kotak-fifo-refresh`, target `dev`. Review/merge
   and manual production deployment remain pending.
+
+
+## Broker-confirmed conversions and position feed — 2026-10-06
+
+### Requirement and investigation
+
+The user observed website STOPLOSS while Kotak still showed LIMIT, without an
+error, after both individual conversion and **All SL**. The requirement applies
+symmetrically to STOPLOSS → LIMIT and **All Limit**: the website must show Kotak's
+confirmed state, not assume a modification acknowledgement means success.
+
+Investigation found that the application sent the correct SL modification payload
+but immediately committed the requested type after REST acknowledgement. Ordinary
+modification feed events were logged without confirming the local type. The SDK
+returns an OMS acknowledgement and documents order feed/history as the final-state
+source. The exact broker-side cause of the reported unchanged LIMIT is unverified.
+
+The user approved cancel-and-replace when Kotak explicitly refuses modification,
+with confirmed cancellation and exposure reconciliation before any replacement.
+Additional requirements: handle `position` events, log raw order/position events,
+and deduplicate position and order notifications for the same LIMIT fill.
+
+### Delivered behavior
+
+- Individual conversion, All SL and All Limit share a broker-confirmed worker.
+  The confirmed type remains unchanged while optional `broker_conversion` metadata
+  displays requested type/state/message. Success requires an order event matching
+  broker identity, type, tick-rounded prices and total quantity; LIMIT also requires
+  a cleared trigger. Missing fields and modification-pending events are insufficient.
+- The HTTP request waits up to five seconds; confirmation continues within a
+  30-second operation window. Unknown outcomes remain visible and block duplicate
+  edits. Passive observers also accept a matching confirmation arriving after the
+  operation window, without another request. Explicit coherent broker refresh/restart reconciliation can resolve them
+  from authoritative reports; it never blindly repeats a submission.
+- Explicit refusal plus a confirmed open original order can invoke cancel-and-replace.
+  Intentional cancellation is journaled so protection recovery does not duplicate
+  it. Only confirmed cancellation allows replacement; the original then disappears
+  from open orders immediately. A notice identifies the gap until replacement is
+  confirmed. Failed cancellation retains the original order.
+- Recheck committed fills, exact contract/product and other exit coverage before
+  replacement. Submit only the uncovered remaining quantity, in whole option lots,
+  using the requested price and existing configured execution gap. Crossed/stale
+  stoploss quotes cannot cause an invalid replacement. No silent trigger substitution
+  or market exit is introduced. Replacement placement currently supports MIS, matching
+  the application's existing placement methods; other products retain their exit.
+- Durable operations reuse `BrokerProtectionRecovery` with separate conversion keys.
+  Replacement tags/identities permit uncertain acknowledgement reconciliation. Late
+  fills, refreshes, connection changes and terminal states are fenced. Browser order
+  updates carry conversion timestamps so late HTTP responses cannot revert confirmed
+  SSE state. Bulk results add per-order confirmed/pending/failed outcomes and preserve
+  independent successes.
+- Kotak `position` messages are live account-position updates, distinct from order
+  lifecycle events. The SDK payload contains exchange/product, symbol, filled buy/sell
+  quantities and amounts, position/square-off flags and update time. They do not prove
+  an order changed type and do not replace FIFO entry basis with broker day averages.
+- Exact-contract position messages are debounced/coalesced and compared with committed
+  quantity/execution counters. Matching evidence needs no broker poll. A mismatch or
+  legacy book triggers the existing coherent orders/executions/positions refresh.
+  Position events never synthesize a trade: individual execution IDs and cumulative
+  order fills own deduplication. Incomplete/invalid scope remains diagnostic evidence;
+  failed refresh preserves verified accounting. Caches are bounded and session stop
+  removes observers/tasks.
+- Raw order and position wire payloads are captured before SDK conversion in
+  `LOG_DIR/kotak-events.ndjson`, daily rotation with 30 backups and secret redaction.
+  Backend DEBUG logs also contain sanitized decoded payloads; INFO logs summarize
+  position quantities/flags. Existing cancellation-only audit remains available.
+
+### Validation and acceptance
+
+- **244 focused backend tests passed**, covering conversion confirmation/fallback,
+  position-only and combined fill delivery, real exits, recovery, broker snapshots,
+  SDK transport, execution gaps and FIFO. Final checks include late confirmation,
+  restored passive confirmation and DynamoDB conversion-clock persistence.
+- **7 frontend tests passed** for conversion response ordering and FIFO/P&L state.
+  Website TypeScript, production build and `git diff --check` passed; the existing
+  Vite bundle-size warning remains.
+- Full backend run: **1,640 passed / 2 pre-existing failures** (stale options-expiry
+  assertion and the tab-restore fixture's missing `group_id`). The final three
+  added late-confirmation/persistence/restart regressions and subsequent refinements
+  were verified in the final focused run above.
+- No live broker orders were submitted. Delivery branch:
+  `fix/phase19-kotak-confirmed-conversions`, targeting `dev`. Review/merge and manual
+  production acceptance remain pending; deployment to `main` remains manual.
+
+Manual acceptance remains: both conversion directions individually
+and in bulk; pending/rejected/uncertain broker outcomes; confirmed cancellation and
+replacement; and a BUY LIMIT fill with order-only, position-only and both event types.
+Confirm website order type/prices agree with Kotak and remaining quantity/FIFO P&L
+are unchanged by duplicate notifications. Review the new raw event log when feed
+fields are incomplete. Existing `.gitignore` work is preserved.

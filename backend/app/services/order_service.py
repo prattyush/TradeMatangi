@@ -209,6 +209,9 @@ def _write_order_to_db(order: Order, *, strict: bool = False) -> None:
             value = getattr(order, name, None)
             if value is not None:
                 item[name] = Decimal(str(value)) if isinstance(value, float) else value
+        if order.broker_conversion is not None:
+            from app.services.real_broker_state import encode
+            item["broker_conversion"] = encode(order.broker_conversion)
         if order.kotak_order_id:
             item["kotak_order_id"] = order.kotak_order_id
         if order.kotak_fill_confirmed:

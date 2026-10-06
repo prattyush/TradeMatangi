@@ -413,6 +413,9 @@ class KotakNeoService:
         # kotak_order_id → (side, qty, price)
         self._pending_fills: dict[str, tuple[str, int, float]] = {}
         self._pending_rejects: dict[str, str] = {}
+        self._position_observers: dict[str, tuple[Callable, Any]] = {}
+        self._position_events: dict[tuple, dict] = {}
+        self._order_observers: dict[str, tuple[Callable, Any]] = {}
         self._terminal_orders: set[str] = set()
         # KotakBroadcaster registers here to receive stock_feed messages
         self._market_data_callback: Callable | None = None
@@ -430,6 +433,7 @@ class KotakNeoService:
         with self._feed_lock:
             with self._lock:
                 self._generation += 1
+                self._position_events.clear()
                 self._authenticated = False
                 client, self._client = self._client, None
                 bridge, self._bridge = self._bridge, None
@@ -506,6 +510,7 @@ class KotakNeoService:
         side: str,    # "B" (buy) or "S" (sell)
         qty: int,
         price: float,
+        tag: str | None = None,
     ) -> str:
         """Place a limit order. Returns the Kotak order ID (nOrdNo)."""
         client = self._get_client()
@@ -523,7 +528,7 @@ class KotakNeoService:
                 amo="NO",
                 disclosed_quantity="0",
                 trigger_price="0",
-                tag=None,
+                tag=tag,
             )
             return self._extract_order_id(resp)
         except KotakError:
@@ -573,6 +578,7 @@ class KotakNeoService:
         side: str,      # "B" or "S"
         qty: int,
         price: float,
+        tag: str | None = None,
     ) -> str:
         """Place a limit order on an options contract. Returns the Kotak order ID."""
         client = self._get_client()
@@ -590,7 +596,7 @@ class KotakNeoService:
                 amo="NO",
                 disclosed_quantity="0",
                 trigger_price="0",
-                tag=None,
+                tag=tag,
             )
             return self._extract_order_id(resp)
         except KotakError:
@@ -870,6 +876,23 @@ class KotakNeoService:
         with self._lock:
             self._cancel_callbacks.pop(kotak_order_id, None)
 
+    def register_position_observer(self, token, callback, loop):
+        with self._lock:
+            self._position_observers[token] = (callback, loop)
+
+    def deregister_position_observer(self, token):
+        with self._lock:
+            self._position_observers.pop(token, None)
+
+    def register_order_observer(self, token, callback, loop):
+        """Observe raw order updates without replacing fill/terminal handlers."""
+        with self._lock:
+            self._order_observers[token] = (callback, loop)
+
+    def deregister_order_observer(self, token):
+        with self._lock:
+            self._order_observers.pop(token, None)
+
     # ── Market data callback (used by KotakBroadcaster) ──────────────────────
 
     def register_market_data_callback(self, callback: Callable | None) -> None:
@@ -935,6 +958,11 @@ class KotakNeoService:
                 return
 
             msg_type = message.get("type")
+            if msg_type == 'order_feed':
+                nested = message.get('data')
+                nested = json.loads(nested) if isinstance(nested, str) else nested
+                if isinstance(nested, dict) and nested.get('type') == 'position':
+                    message, msg_type = nested, 'position'
 
             # Dispatch market data to KotakBroadcaster if registered
             if msg_type == "stock_feed":
@@ -950,6 +978,29 @@ class KotakNeoService:
                 return
 
             logger.debug("KotakNeoService: WebSocket message type=%s", msg_type)
+            if msg_type in ("order", "order_feed", "position"):
+                from app.services.kotak_cancel_audit import redact
+                logger.debug("Kotak raw event type=%s payload=%s", msg_type, json.dumps(redact(message), default=str))
+            if msg_type == "position":
+                payload = message.get("data")
+                rows = payload if isinstance(payload, list) else [payload]
+                for row in rows:
+                    if not isinstance(row, dict):
+                        continue
+                    key = tuple(str(row.get(name) or "") for name in ("actId", "exSeg", "prod", "sym", "tok"))
+                    with self._lock:
+                        self._position_events[key] = {"received_at": time.time(), "generation": self._generation, "raw": dict(row)}
+                        if len(self._position_events) > 256:
+                            self._position_events.pop(next(iter(self._position_events)))
+                    with self._lock:
+                        observers = list(self._position_observers.values())
+                    for callback, loop in observers:
+                        if not loop.is_closed():
+                            loop.call_soon_threadsafe(callback, dict(row))
+                    logger.info("Kotak position update symbol=%s exchange=%s product=%s filled_buy=%s filled_sell=%s position_flag=%s square_off_flag=%s",
+                                row.get("sym"), row.get("exSeg"), row.get("prod"), row.get("flBuyQty"), row.get("flSellQty"), row.get("posFlg"), row.get("sqrFlg"))
+                return
+
 
             if msg_type not in ("order_feed", "order"):
                 logger.debug("KotakNeoService: ignoring unknown message type=%s", msg_type)
@@ -982,6 +1033,12 @@ class KotakNeoService:
         order_id = str(order_data.get("nOrdNo") or "")
         if not order_id:
             return
+        with self._lock:
+            observers = list(self._order_observers.values())
+        received = time.time()
+        for callback, loop in observers:
+            if not loop.is_closed():
+                loop.call_soon_threadsafe(callback, {**order_data, '_received_at': received})
         status = str(order_data.get("ordSt") or order_data.get("stat") or "").strip().lower().replace("_", " ")
         if status == "canceled":
             status = "cancelled"

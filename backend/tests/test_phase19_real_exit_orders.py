@@ -68,9 +68,19 @@ async def test_new_long_entries_stay_local_until_trigger(env, kind):
     broker.place_limit_order.assert_called_once()
     assert o.kotak_order_id == "broker-limit"
 
+def confirm_limit_modify(broker):
+    def modified(identifier, price, quantity):
+        _, callback, loop = broker.register_order_observer.call_args.args
+        loop.call_soon_threadsafe(callback, dict(nOrdNo=identifier, ordSt='modified', prcTp='L',
+            qty=quantity, prc=price, trgPrc=0))
+        return identifier
+    broker.modify_sl_to_limit_order.side_effect = modified
+
+
 @pytest.mark.asyncio
 async def test_exit_conversion_reuses_broker_id_with_exact_limit(env):
     s, broker, _ = env
+    confirm_limit_modify(broker)
     o = local(s)
     simulation._register_kotak_sl_for_order(s, o, asyncio.get_running_loop())
     result = await orders.convert_order(o.order_id, ConvertOrderRequest(session_id=s.session_id,
@@ -87,10 +97,9 @@ async def test_rejected_conversion_keeps_original_stoploss(env):
     o = local(s)
     simulation._register_kotak_sl_for_order(s, o, asyncio.get_running_loop())
     broker.modify_sl_to_limit_order.side_effect = kotak_service.KotakError("rejected")
-    with pytest.raises(HTTPException) as error:
-        await orders.convert_order(o.order_id, ConvertOrderRequest(session_id=s.session_id,
-            new_order_type=OrderType.LIMIT, price=120))
-    assert error.value.status_code == 502
+    result = await orders.convert_order(o.order_id, ConvertOrderRequest(session_id=s.session_id,
+        new_order_type=OrderType.LIMIT, price=120))
+    assert result.broker_conversion['state'] == 'unknown'
     assert o.order_type == OrderType.STOPLOSS and o.trigger_price == 90 and o.kotak_order_id == "broker-sl"
 
 @pytest.mark.asyncio
@@ -142,6 +151,7 @@ async def test_fill_callback_is_idempotent_and_persists_confirmation(env):
 @pytest.mark.asyncio
 async def test_desktop_bulk_conversion_uses_same_broker_path(env):
     s, broker, _ = env
+    confirm_limit_modify(broker)
     o = local(s)
     simulation._register_kotak_sl_for_order(s, o, asyncio.get_running_loop())
     result = await desktop_trading.bulk_convert(s.session_id,

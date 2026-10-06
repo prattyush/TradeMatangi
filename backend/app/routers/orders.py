@@ -120,6 +120,9 @@ def _session_edit_lock(session):
 
 
 def _require_confirmed_recovery(order):
+    from app.services.broker_conversion import busy
+    if busy(order):
+        raise HTTPException(status_code=409, detail="Conversion is unconfirmed; refresh broker state before changing this order")
     if order.recovery_state in ("prepared", "submitting", "unknown"):
         raise HTTPException(status_code=409, detail="Recovery submission is unconfirmed; refresh broker state before changing it")
 
@@ -133,7 +136,11 @@ async def _convert_with_broker_async(session, order, new_type, price=None):
             if current is None or current.status != order_service.OrderStatus.PENDING:
                 raise HTTPException(status_code=404, detail="Order not found or not pending")
             _require_confirmed_recovery(current)
-            return await convert_order_async(session, current, new_type, price)
+            result = await convert_order_async(session, current, new_type, price)
+        if result.broker_conversion:
+            from app.services.broker_conversion import wait
+            await wait(result)
+        return order_service.get_order(session.session_id, result.order_id) or result
     except KotakError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
@@ -655,13 +662,17 @@ async def bulk_convert_route(req: BulkConvertRequest):
     if not target_orders:
         return {"converted": 0, "orders": []}
 
-    converted_orders = []
+    converted_orders, results = [], []
     for order in target_orders:
-        converted = await _convert_with_broker_async(session, order, req.new_order_type, req.price)
-        if converted:
-            converted_orders.append(converted)
+        try:
+            updated = await _convert_with_broker_async(session, order, req.new_order_type, req.price)
+            state = (updated.broker_conversion or {}).get('state', 'confirmed')
+            results.append({'order_id': order.order_id, 'state': state, 'message': (updated.broker_conversion or {}).get('message')})
+            converted_orders.append(updated)
+        except (HTTPException, ValueError) as exc:
+            results.append({'order_id': order.order_id, 'state': 'failed', 'message': str(getattr(exc, 'detail', exc))})
+    return {"converted": sum(r['state'] == 'confirmed' for r in results), "orders": converted_orders, "results": results}
 
-    return {"converted": len(converted_orders), "orders": converted_orders}
 
 
 @router.post("/{order_id}/convert", response_model=Order)
@@ -675,7 +686,7 @@ async def convert_order(order_id: str, req: ConvertOrderRequest):
     if existing is None or existing.status != order_service.OrderStatus.PENDING:
         raise HTTPException(status_code=404, detail="Order not found or not pending")
     order = await _convert_with_broker_async(session, existing, req.new_order_type, req.price)
-    if order.status != order_service.OrderStatus.PENDING:
+    if order.status != order_service.OrderStatus.PENDING or order.broker_conversion:
         return order
 
     # Emit SSE event so the frontend updates the order in-place

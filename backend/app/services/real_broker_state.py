@@ -354,6 +354,8 @@ async def refresh(session, broker):
                     on_entry_filled(order, session, asyncio.get_running_loop())
             from app.services.protection_recovery import resume
             await resume(session)
+            from app.services.broker_conversion import reconcile_refresh
+            await reconcile_refresh(session, scoped_orders)
             wallet_balance, wallet_error, wallet_display_balance = None, None, None
             try:
                 from app.services import real_accounting
