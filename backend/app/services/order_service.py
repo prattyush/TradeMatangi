@@ -485,6 +485,7 @@ def update_order(
     quantity: int | None = None,
     target_deviation_pct: float = _TARGET_DEVIATION,
     execution_gap_pct: float | None = None,
+    persist: bool = True,
 ) -> Order | None:
     """Update price and/or quantity of a PENDING order; handle BUY wallet re-reservation."""
     order = _orders.get(session_id, {}).get(order_id)
@@ -527,7 +528,8 @@ def update_order(
             _adjust_buy_reservation(order, _reservation_for(order, order.limit_price, quantity), trading_date, {"quantity": quantity})
         order.quantity = quantity
 
-    _write_order_to_db(order)
+    if persist:
+        _write_order_to_db(order)
     return order
 
 
@@ -537,6 +539,8 @@ def convert_order(
     new_order_type: "OrderType",
     trading_date: str,
     price: float | None = None,
+    persist: bool = True,
+    execution_gap_pct: float | None = None,
 ) -> "Order | None":
     """
     Convert a PENDING order to a different type in-place.  Uses the provided
@@ -574,7 +578,7 @@ def convert_order(
     from app.services import execution_price_service as execution
     gap = None
     if execution.real_session(session_id, order.wallet_ledger_kind) and new_order_type in (OrderType.TARGET, OrderType.STOPLOSS):
-        gap = execution.gap_for(order.user_id, new_order_type == OrderType.STOPLOSS)
+        gap = execution_gap_pct if execution_gap_pct is not None else execution.gap_for(order.user_id, new_order_type == OrderType.STOPLOSS)
         new_limit = execution.limit_price(side, new_trigger, gap)
 
     # ── Wallet reservation ──────────────────────────────────────────────────
@@ -609,7 +613,8 @@ def convert_order(
     order.limit_price = new_limit
     order.is_stoploss = new_is_sl
 
-    _write_order_to_db(order)
+    if persist:
+        _write_order_to_db(order)
     logger.info(
         "convert_order %s: %s → %s trigger=%.2f limit=%.2f",
         order_id, old_type.value, new_order_type.value,

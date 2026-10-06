@@ -1,3 +1,4 @@
+import asyncio
 import logging
 
 from fastapi import APIRouter, Query, HTTPException
@@ -31,7 +32,7 @@ async def store_snapshot(data: SnapshotPayload):
         logger.info("Storing snapshot %s for session %s (event: %s)",
                      data.event_id, data.session_id, data.event.get("description", ""))
         d = data.model_dump()
-        snapshot_service.save_snapshot(data.session_id, d)
+        await asyncio.to_thread(snapshot_service.save_snapshot, data.session_id, d)
         return {"event_id": data.event_id, "status": "stored"}
     except Exception:
         logger.exception("Snapshot store failed for %s", data.event_id)
@@ -41,14 +42,14 @@ async def store_snapshot(data: SnapshotPayload):
 @router.get("")
 async def list_snapshots(session_id: str = Query(...)):
     """List all event snapshots for a session, oldest first."""
-    snaps = snapshot_service.get_snapshots(session_id)
+    snaps = await asyncio.to_thread(snapshot_service.get_snapshots, session_id)
     return snaps
 
 
 @router.get("/{event_id}")
 async def get_snapshot(event_id: str, session_id: str = Query(...)):
     """Retrieve a single event snapshot."""
-    snap = snapshot_service.get_snapshot(session_id, event_id)
+    snap = await asyncio.to_thread(snapshot_service.get_snapshot, session_id, event_id)
     if snap is None:
         raise HTTPException(status_code=404, detail="Snapshot not found")
     return snap
@@ -57,5 +58,5 @@ async def get_snapshot(event_id: str, session_id: str = Query(...)):
 @router.delete("")
 async def delete_snapshots(session_id: str = Query(...)):
     """Delete all event snapshots for a session."""
-    count = snapshot_service.delete_snapshots(session_id)
+    count = await asyncio.to_thread(snapshot_service.delete_snapshots, session_id)
     return {"deleted": count}

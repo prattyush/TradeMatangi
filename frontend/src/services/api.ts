@@ -1,3 +1,4 @@
+import { measureRequest } from './performanceDiagnostics'
 import { legacyBrowserSettings, cacheSharedSettings } from './sharedSettings'
 import { BACKEND_URL, AI_HELPER_URL } from '../config'
 
@@ -1124,16 +1125,18 @@ const api = {
     if (limitPrice !== undefined) body.limit_price = limitPrice
     if (targetDeviationPct !== undefined) body.target_deviation_pct = targetDeviationPct
     if (quantity !== undefined) body.quantity = quantity
-    const res = await fetch(`${BACKEND_URL}/api/orders/${order_id}?session_id=${session_id}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json', ..._authHeaders() },
-      body: JSON.stringify(body),
+    return measureRequest('order-edit', async () => {
+      const res = await fetch(`${BACKEND_URL}/api/orders/${order_id}?session_id=${session_id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', ..._authHeaders() },
+        body: JSON.stringify(body),
     })
     if (!res.ok) {
       const error = await res.json().catch(() => ({}))
       throw new Error(typeof error.detail === 'string' ? error.detail : `Update order failed: ${res.status}`)
     }
     return res.json()
+    })
   },
 
   async convertOrder(sessionId: string, orderId: string, newOrderType: 'TARGET' | 'LIMIT' | 'STOPLOSS', price?: number): Promise<Order> {
@@ -1968,13 +1971,15 @@ const api = {
   // ── Event Snapshots ────────────────────────────────────────────────────────
 
   async saveSnapshot(data: SnapshotPayload): Promise<{ event_id: string }> {
-    const res = await fetch(`${BACKEND_URL}/api/snapshots`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', ..._authHeaders() },
-      body: JSON.stringify(data),
+    return measureRequest('snapshot-save', async () => {
+      const res = await fetch(`${BACKEND_URL}/api/snapshots`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ..._authHeaders() },
+        body: JSON.stringify(data),
     })
     if (!res.ok) throw new Error(`Save snapshot failed: ${res.status}`)
     return res.json()
+    })
   },
 
   async getSnapshots(sessionId: string): Promise<EventSnapshot[]> {

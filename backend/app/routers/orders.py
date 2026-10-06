@@ -105,10 +105,31 @@ def _sync_kotak_after_convert(session, order: Order, new_order_type: OrderType, 
 
 
 def _convert_with_broker(session, order, new_type, price=None):
+    # Compatibility for desktop/strategy callers that still use the sync path.
     from app.services.broker_order_service import convert_order
     from app.services.kotak_service import KotakError
     try:
         return convert_order(session, order, new_type, price)
+    except KotakError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+def _session_edit_lock(session):
+    lock = getattr(session, "website_order_edit_lock", None)
+    if lock is None:
+        lock = session.website_order_edit_lock = asyncio.Lock()
+    return lock
+
+
+async def _convert_with_broker_async(session, order, new_type, price=None):
+    from app.services.broker_order_service import convert_order_async
+    from app.services.kotak_service import KotakError
+    try:
+        async with _session_edit_lock(session):
+            current = order_service.get_order(session.session_id, order.order_id)
+            if current is None or current.status != order_service.OrderStatus.PENDING:
+                raise HTTPException(status_code=404, detail="Order not found or not pending")
+            return await convert_order_async(session, current, new_type, price)
     except KotakError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
@@ -547,6 +568,13 @@ async def cancel_order(order_id: str, session_id: str = Query(...)):
     session = sim_svc.get_session(session_id)
     if session and session.session_type == "real" and getattr(session, "broker_refresh_events", None) is not None:
         raise HTTPException(status_code=409, detail="Broker refresh is in progress; retry shortly")
+    if session:
+        async with _session_edit_lock(session):
+            return await _cancel_order_locked(order_id, session_id, session)
+    return await _cancel_order_locked(order_id, session_id, session)
+
+
+async def _cancel_order_locked(order_id, session_id, session):
     trading_date = session.date if session else ""
     existing = order_service.get_order(session_id, order_id)
     if existing is None or existing.status != order_service.OrderStatus.PENDING:
@@ -554,10 +582,12 @@ async def cancel_order(order_id: str, session_id: str = Query(...)):
     if existing.kotak_order_id:
         try:
             from app.services.kotak_service import get_service as get_kotak
-            get_kotak().cancel_order(existing.kotak_order_id)
+            await asyncio.to_thread(get_kotak().cancel_order, existing.kotak_order_id)
         except Exception as exc:
             logger.warning("broker_order_cancel_failed order=%s: %s", order_id, exc)
             raise HTTPException(status_code=502, detail=f"Broker rejected cancellation: {exc}") from exc
+    if existing.status != order_service.OrderStatus.PENDING:
+        return existing
     order = order_service.cancel_order(session_id, order_id, trading_date)
 
     return order
@@ -614,7 +644,7 @@ async def bulk_convert_route(req: BulkConvertRequest):
 
     converted_orders = []
     for order in target_orders:
-        converted = _convert_with_broker(session, order, req.new_order_type, req.price)
+        converted = await _convert_with_broker_async(session, order, req.new_order_type, req.price)
         if converted:
             converted_orders.append(converted)
 
@@ -631,7 +661,9 @@ async def convert_order(order_id: str, req: ConvertOrderRequest):
     existing = order_service.get_order(req.session_id, order_id)
     if existing is None or existing.status != order_service.OrderStatus.PENDING:
         raise HTTPException(status_code=404, detail="Order not found or not pending")
-    order = _convert_with_broker(session, existing, req.new_order_type, req.price)
+    order = await _convert_with_broker_async(session, existing, req.new_order_type, req.price)
+    if order.status != order_service.OrderStatus.PENDING:
+        return order
 
     # Emit SSE event so the frontend updates the order in-place
     try:
@@ -655,6 +687,11 @@ async def update_order(order_id: str, req: UpdateOrderRequest, session_id: str =
     session = sim_svc.get_session(session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
+    async with _session_edit_lock(session):
+        return await _update_order_locked(session, order_id, req, session_id)
+
+
+async def _update_order_locked(session, order_id, req, session_id):
     existing = order_service.get_order(session_id, order_id)
     if existing is None or existing.status != order_service.OrderStatus.PENDING:
         raise HTTPException(status_code=404, detail="Order not found or not pending")
@@ -682,7 +719,16 @@ async def update_order(order_id: str, req: UpdateOrderRequest, session_id: str =
         value = getattr(req, name)
         if value is not None:
             setattr(candidate, name, value)
-    _sync_kotak_after_convert(session, candidate, candidate.order_type, reprice=req.trigger_price is not None or req.limit_price is not None)
+    from app.services.broker_order_service import sync_order_edit_async, persist_order_async
+    from app.services.kotak_service import KotakError
+    try:
+        await sync_order_edit_async(session, candidate, candidate.order_type, reprice=req.trigger_price is not None or req.limit_price is not None)
+    except KotakError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    # A broker fill can arrive while the edit acknowledgement is in flight.
+    if existing.status != order_service.OrderStatus.PENDING:
+        await persist_order_async(existing)
+        return existing
 
     order = order_service.update_order(
         session_id=session_id,
@@ -693,11 +739,12 @@ async def update_order(order_id: str, req: UpdateOrderRequest, session_id: str =
         quantity=req.quantity,
         target_deviation_pct=req.target_deviation_pct,
         execution_gap_pct=candidate.execution_gap_pct,
+        persist=False,
     )
     if order is None:
         raise HTTPException(status_code=404, detail="Order not found or not pending")
 
     order.kotak_order_id = candidate.kotak_order_id
     order.execution_role = candidate.execution_role
-    order_service._write_order_to_db(order)
+    await persist_order_async(order)
     return order

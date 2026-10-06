@@ -7,6 +7,108 @@ from app.services import order_service
 logger = logging.getLogger(__name__)
 
 
+async def sync_order_edit_async(session, order: Order, new_order_type: OrderType, *, reprice: bool = False) -> None:
+    """Run broker I/O off-loop; keep identity and callback changes on the loop."""
+    if session.session_type != "real":
+        return
+    from app.services.kotak_service import get_service, KotakError
+    from app.services.execution_price_service import reprice_trigger
+    from app.services.simulation import _is_position_exit
+    if getattr(session, "broker_refresh_events", None) is not None:
+        raise KotakError("Broker refresh is in progress; retry the edit shortly")
+    previous = order_service.get_order(session.session_id, order.order_id)
+    if reprice or previous is None or previous.order_type != order.order_type or previous.trigger_price != order.trigger_price:
+        await asyncio.to_thread(reprice_trigger, order)
+    broker = get_service()
+    loop = asyncio.get_running_loop()
+    old_id = order.kotak_order_id
+    try:
+        replacement = None
+        if old_id:
+            if new_order_type == OrderType.LIMIT:
+                replacement = await asyncio.to_thread(broker.modify_sl_to_limit_order, old_id, order.limit_price, order.quantity)
+            elif new_order_type == OrderType.STOPLOSS:
+                replacement = await asyncio.to_thread(broker.modify_sl_order, old_id, order.trigger_price, order.limit_price, order.quantity)
+            else:
+                await asyncio.to_thread(broker.cancel_order, old_id)
+                broker.deregister_fill_callback(old_id)
+                broker.deregister_reject_callback(old_id)
+                session.kotak_order_map.pop(order.order_id, None)
+                order.kotak_order_id = None
+            if isinstance(replacement, str) and replacement and replacement != old_id:
+                broker.deregister_fill_callback(old_id)
+                broker.deregister_reject_callback(old_id)
+                order.kotak_order_id = replacement
+                session.kotak_order_map[order.order_id] = replacement
+        elif new_order_type in (OrderType.LIMIT, OrderType.STOPLOSS) and _is_position_exit(session, order):
+            kwargs = dict(symbol=session.symbol, side="B" if order.side == TradeSide.BUY else "S", qty=order.quantity)
+            if order.right:
+                kwargs.update(right=order.right, strike=order.strike if order.strike is not None else session.strike, expiry=order.expiry or session.expiry)
+            if new_order_type == OrderType.LIMIT:
+                method = broker.place_options_limit_order if order.right else broker.place_limit_order
+                kwargs["price"] = order.limit_price
+            else:
+                method = broker.place_options_sl_order if order.right else broker.place_sl_order
+                kwargs.update(trigger_price=order.trigger_price, limit_price=order.limit_price)
+            order.kotak_order_id = await asyncio.to_thread(method, **kwargs)
+            order.execution_role = "exit"
+            session.kotak_order_map[order.order_id] = order.kotak_order_id
+        # Publish the broker identity before registering callbacks: a callback may
+        # already be waiting when a replacement/new order is acknowledged.
+        if previous is not None:
+            previous.kotak_order_id = order.kotak_order_id
+            previous.execution_role = order.execution_role
+        if order.kotak_order_id and order.kotak_order_id != old_id:
+            register_callbacks(session, order, broker, loop)
+    except Exception as exc:
+        logger.warning("broker_order_edit_failed session=%s order=%s: %s", session.session_id, order.order_id, exc)
+        raise KotakError(f"Broker rejected order edit: {exc}") from exc
+
+
+async def persist_order_async(order):
+    """Persist copies off-loop and reconcile fills received during the write."""
+    while True:
+        snapshot = order.model_copy(deep=True)
+        await asyncio.to_thread(order_service._write_order_to_db, snapshot)
+        current = order_service.get_order(order.session_id, order.order_id)
+        if current is None or current.model_dump() == snapshot.model_dump():
+            return
+        order = current
+
+
+async def convert_order_async(session, order, new_type, price=None):
+    candidate = order.model_copy(deep=True)
+    if new_type == candidate.order_type:
+        if price is not None:
+            if new_type == OrderType.LIMIT:
+                candidate.limit_price = price
+            else:
+                candidate.trigger_price = price
+    else:
+        resolved = price if price is not None else (candidate.trigger_price if new_type == OrderType.LIMIT else candidate.limit_price)
+        candidate.order_type = new_type
+        candidate.trigger_price = candidate.limit_price = resolved
+        candidate.is_stoploss = new_type == OrderType.STOPLOSS
+    await sync_order_edit_async(session, candidate, new_type, reprice=price is not None or new_type != order.order_type)
+    if order.status != order_service.OrderStatus.PENDING:
+        await persist_order_async(order)
+        return order
+    if new_type == order.order_type:
+        kwargs = {"limit_price": price} if new_type == OrderType.LIMIT else {"trigger_price": price}
+        result = order_service.update_order(session.session_id, order.order_id, session.date, **kwargs, persist=False) if price is not None else order
+    else:
+        result = order_service.convert_order(session.session_id, order.order_id, new_type, session.date, price, persist=False, execution_gap_pct=candidate.execution_gap_pct)
+    if result:
+        result.kotak_order_id = candidate.kotak_order_id
+        result.execution_role = candidate.execution_role
+        if session.session_type == "real":
+            result.limit_price = candidate.limit_price
+            result.execution_gap_pct = candidate.execution_gap_pct
+            result.market_order = candidate.market_order
+        await persist_order_async(result)
+    return result
+
+
 def sync_order_edit(session, order: Order, new_order_type: OrderType, *, reprice: bool = False) -> None:
     """Sync a proposed edit before publishing it locally; propagate broker failure."""
     if session.session_type != "real":

@@ -1,3 +1,5 @@
+import { recordPerformance } from '../services/performanceDiagnostics'
+import { openPositionTrades, RecentLiveTicks, reconcileChartObjects } from '../services/tradingChartState'
 import { rememberChartData } from '../services/chartDataCache'
 import { useEffect, useRef, useState, useCallback, useMemo } from 'react'
 import {
@@ -50,6 +52,8 @@ interface Props {
   onActivate?: () => void
   // Trade markers
   trades?: Trade[]
+  markerSessionKey?: string
+  onRatioIndicatorsChange?: (keys: RocComparisonKey[]) => void
   // Open order price lines
   openOrders?: Order[]
   targetProfitStrategies?: StrategyResponse[]
@@ -126,7 +130,6 @@ const CANDLE_INTERVAL_SECS = (m: number) => m * 60
 const RATIO_PANEL_HEIGHT_RATIO = 0.18
 const RATIO_PANEL_EXPANDED_HEIGHT_RATIO = 0.25
 const MIN_RATIO_PANEL_HEIGHT = 90
-const RECENT_LIVE_TICK_SECONDS = 15 * 60
 
 
 function historicalCacheKey(symbol: string, tradingDate: string, intervalMinutes: number, historicalDays?: number) {
@@ -153,13 +156,6 @@ function toIndicatorCandle(c: OHLCCandle | BarCandle): IndicatorCandle {
     low: c.low,
     close: c.close,
   }
-}
-
-function appendRecentLiveTick(ticks: TickEvent[], tick: TickEvent): TickEvent[] {
-  const byTime = new Map(ticks.map(item => [item.time, item]))
-  byTime.set(tick.time, tick)
-  const cutoff = tick.time - RECENT_LIVE_TICK_SECONDS
-  return [...byTime.values()].filter(item => item.time >= cutoff).sort((left, right) => left.time - right.time)
 }
 
 function mergeRecentTicksIntoHistory(candles: OHLCCandle[], ticks: TickEvent[], intervalMinutes: number): OHLCCandle[] {
@@ -415,6 +411,8 @@ export default function Chart({
   paneType = 'equity', strike, expiry, right,
   isActive = false, onActivate,
   trades = [],
+  markerSessionKey,
+  onRatioIndicatorsChange,
   openOrders,
   targetProfitStrategies,
   strategyPosition,
@@ -446,13 +444,14 @@ export default function Chart({
   initialVisibleRange,
   onVisibleRangeChange,
 }: Props) {
+  recordPerformance('chart-render')
   const containerRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<IChartApi | null>(null)
   const seriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null)
   const ema9Ref = useRef<ISeriesApi<'Line'> | null>(null)
   const ema21Ref = useRef<ISeriesApi<'Line'> | null>(null)
   const liveWindowRef = useRef<{ start: number; open: number; high: number; low: number; close: number } | null>(null)
-  const recentLiveTicksRef = useRef<TickEvent[]>([])
+  const recentLiveTicksRef = useRef(new RecentLiveTicks())
   const lastEma9Ref = useRef<number | null>(null)
   const lastEma21Ref = useRef<number | null>(null)
   const candleTimesRef = useRef<number[]>([])
@@ -463,7 +462,10 @@ export default function Chart({
   const drawPtsRef = useRef<{ time: number; price: number }[]>([])
   const drawingsRef = useRef<Drawing[]>([])
   const ignoreNextClickRef = useRef(false)
-  const tradeMarkerPool = useRef<ISeriesApi<'Line'>[]>([])
+  const tradeMarkerPool = useRef(new Map<string, { object: ISeriesApi<'Line'>; signature: string }>())
+  const [showAllMarkers, setShowAllMarkers] = useState(false)
+  const visibleTrades = useMemo(() => showAllMarkers ? trades : openPositionTrades(trades), [trades, showAllMarkers])
+  useEffect(() => { setShowAllMarkers(false) }, [markerSessionKey, symbol, paneType, right, strike, expiry])
   const orderPriceLinesRef = useRef<Map<string, IPriceLine>>(new Map())
   const strategyPriceLinesRef = useRef<Map<string, IPriceLine>>(new Map())
   const onPriceSelectRef = useRef<((price: number) => void) | null>(null)
@@ -508,7 +510,13 @@ export default function Chart({
     () => indicatorKeysForPane(paneType, right).filter(key => hasIndicatorData(key, ratioCandles)),
     [paneType, right, ratioCandles],
   )
-  const activeAvailableRatioIndicators = activeRatioIndicators.filter(key => availableRatioKeys.includes(key))
+  const activeAvailableRatioIndicators = useMemo(() => activeRatioIndicators.filter(key => availableRatioKeys.includes(key)), [activeRatioIndicators, availableRatioKeys])
+  const onRatioIndicatorsChangeRef = useRef(onRatioIndicatorsChange)
+  onRatioIndicatorsChangeRef.current = onRatioIndicatorsChange
+  useEffect(() => {
+    onRatioIndicatorsChangeRef.current?.(activeRatioIndicators)
+    return () => onRatioIndicatorsChangeRef.current?.([])
+  }, [activeRatioIndicators])
   const ratioSeriesByKey = useMemo(() => {
     const result: Partial<Record<RocComparisonKey, RocSeries[]>> = {}
     if (!ratioCandles) return result
@@ -818,7 +826,7 @@ export default function Chart({
     return () => {
       ro.disconnect()
       container.removeEventListener('contextmenu', handleContextMenu)
-      tradeMarkerPool.current = []
+      tradeMarkerPool.current.clear()
       orderPriceLinesRef.current.clear()
       strategyPriceLinesRef.current.clear()
       series.detachPrimitive(positionPnlPrimitive)
@@ -889,7 +897,7 @@ export default function Chart({
         ])
         if (cancelled) return
 
-        const allCandles = mergeRecentTicksIntoHistory([...histCandles, ...preCandles], recentLiveTicksRef.current, intervalMinutes)
+        const allCandles = mergeRecentTicksIntoHistory([...histCandles, ...preCandles], recentLiveTicksRef.current.values(), intervalMinutes)
         if (allCandles.length === 0) return
 
         series.setData(allCandles.map(toCandle))
@@ -961,7 +969,7 @@ export default function Chart({
     )
       .then((candles) => {
         if (cancelled) return
-        const patchedCandles = mergeRecentTicksIntoHistory(candles, recentLiveTicksRef.current, intervalMinutes)
+        const patchedCandles = mergeRecentTicksIntoHistory(candles, recentLiveTicksRef.current.values(), intervalMinutes)
         // Only show candles BEFORE the session start window — live ticks will
         // append from startTime onwards. Loading future candles first would
         // cause "Cannot update oldest data" when the first live tick arrives.
@@ -1031,7 +1039,7 @@ export default function Chart({
   const intervalSecs = CANDLE_INTERVAL_SECS(intervalMinutes)
 
   useEffect(() => {
-    recentLiveTicksRef.current = []
+    recentLiveTicksRef.current.clear()
   }, [symbol, tradingDate, paneType, strike, expiry, right])
 
   useEffect(() => {
@@ -1039,10 +1047,11 @@ export default function Chart({
     const e9 = ema9Ref.current
     const e21 = ema21Ref.current
     if (!latestTick || !series || !e9 || !e21) return
-    recentLiveTicksRef.current = appendRecentLiveTick(recentLiveTicksRef.current, latestTick)
+    if (!recentLiveTicksRef.current.append(latestTick)) return
 
     onPriceUpdate?.(latestTick.close)
 
+    const updateStarted = performance.now()
     const windowStart = Math.floor(latestTick.time / intervalSecs) * intervalSecs
     const live = liveWindowRef.current
 
@@ -1083,6 +1092,8 @@ export default function Chart({
     } catch (err) {
       // Chart may be disposed or have out-of-order timestamps; skip this tick
       console.warn('Chart update skipped:', err)
+    } finally {
+      recordPerformance('chart-tick-update', performance.now() - updateStarted)
     }
   }, [latestTick, intervalSecs, onPriceUpdate, upsertCompletedIndicatorCandle])
 
@@ -1154,74 +1165,44 @@ export default function Chart({
   useEffect(() => {
     const chart = chartRef.current
     if (!chart) return
-
-    // Remove all previous marker series
-    for (const s of tradeMarkerPool.current) {
-      try { chart.removeSeries(s) } catch { /* disposed */ }
-    }
-    tradeMarkerPool.current = []
-
-    const paneTrades = (trades ?? []).filter(t => {
-      if (paneType !== 'equity') return t.right === right && t.strike === strike
-      // Equity pane: own equity trades + CE/PE trades that have an underlying_price snapshot
-      return !t.right || t.underlying_price !== undefined
+    const inputs = visibleTrades.filter(t => {
+      const matches = paneType === 'equity' ? !t.right || t.underlying_price !== undefined
+        : t.right === right && t.strike === strike && (!t.expiry || t.expiry === expiry)
+      const price = paneType === 'equity' && t.right ? t.underlying_price : t.price
+      return matches && Number.isFinite(t.timestamp) && typeof price === 'number' && Number.isFinite(price)
+    }).map(t => {
+      const price = paneType === 'equity' && t.right && t.underlying_price !== undefined ? t.underlying_price : t.price
+      const time = Math.floor(t.timestamp / intervalSecs) * intervalSecs as Time
+      const style = paneType === 'equity' && t.right ? crossChartMarkerStyle(t.right, t.side)
+        : { color: t.side === 'BUY' ? '#FFFFFF' : '#00AAFF', text: t.side === 'BUY' ? 'B' : 'S' }
+      const input = { time, price, ...style }
+      return { id: t.trade_id, signature: JSON.stringify(input), input }
     })
-    if (paneTrades.length === 0) return
-
-    for (const t of paneTrades) {
-      // Use underlying_price for cross-chart CE/PE markers; trade price for equity markers
-      const markerPrice = (paneType === 'equity' && t.right !== undefined && t.underlying_price !== undefined)
-        ? t.underlying_price
-        : t.price
-      const slot = (Math.floor(t.timestamp / intervalSecs) * intervalSecs) as Time
-      try {
-        const s = chart.addLineSeries({
-          lineVisible: false, crosshairMarkerVisible: false,
-          lastValueVisible: false, priceLineVisible: false,
-        })
-        s.setData([{ time: slot, value: markerPrice }])
-
-        let color: string
-        let text: string
-        if (paneType === 'equity' && t.right) {
-          // CE/PE trade mirrored onto the underlying chart
-          const style = crossChartMarkerStyle(t.right, t.side)
-          color = style.color
-          text = style.text
-        } else {
-          // Equity trade on its own chart (or options trade on its own options pane)
-          color = t.side === 'BUY' ? '#FFFFFF' : '#00AAFF'
-          text = t.side === 'BUY' ? 'B' : 'S'
-        }
-
-        s.setMarkers([{
-          time: slot,
-          position: 'inBar' as const,
-          color,
-          shape: 'circle' as const,
-          text,
-          size: 0.6,
-        }])
-        tradeMarkerPool.current.push(s)
-      } catch { /* chart disposed mid-loop */ }
+    const update = (line: ISeriesApi<'Line'>, input: typeof inputs[number]['input']) => {
+      line.setData([{ time: input.time, value: input.price }])
+      line.setMarkers([{ time: input.time, position: 'inBar', color: input.color, shape: 'circle', text: input.text, size: 0.6 }])
     }
-  }, [trades, paneType, right, intervalSecs])
+    reconcileChartObjects(tradeMarkerPool.current, inputs, input => {
+      const line = chart.addLineSeries({ lineVisible: false, crosshairMarkerVisible: false, lastValueVisible: false, priceLineVisible: false })
+      update(line, input)
+      return line
+    }, update, line => chart.removeSeries(line))
+  }, [visibleTrades, paneType, right, strike, expiry, intervalSecs])
 
   // ── Open order price lines — dashed horizontal at limit/trigger price ────────
   useEffect(() => {
     const series = seriesRef.current
     if (!series) return
 
-    for (const line of orderPriceLinesRef.current.values()) {
-      try { series.removePriceLine(line) } catch { /* disposed */ }
-    }
-    orderPriceLinesRef.current.clear()
-
     const pending = (openOrders ?? []).filter(o => {
       if (o.status !== 'PENDING') return false
-      return paneType === 'equity' ? !o.right : o.right === right
+      return paneType === 'equity' ? !o.right : o.right === right && (o.strike == null || o.strike === strike) && (!o.expiry || o.expiry === expiry)
     })
 
+    const wanted = new Set(pending.map(order => order.order_id))
+    for (const [id, line] of orderPriceLinesRef.current) {
+      if (!wanted.has(id)) { series.removePriceLine(line); orderPriceLinesRef.current.delete(id) }
+    }
     for (const order of pending) {
       const price = orderDisplayPrice(order)
       let label = (order.side === 'BUY' ? 'B' : 'S') + (order.order_type === 'LIMIT' ? 'L' : 'T')
@@ -1232,28 +1213,28 @@ export default function Chart({
       }
 
       try {
-        const line = series.createPriceLine({
-          price, color: '#AAAAAA', lineWidth: 1,
-          lineStyle: LineStyle.Dashed,
-          axisLabelVisible: true, title: label,
-        })
-        orderPriceLinesRef.current.set(order.order_id, line)
+        const options = { price, color: '#AAAAAA', lineWidth: 1 as const, lineStyle: LineStyle.Dashed, axisLabelVisible: true, title: label }
+        const line = orderPriceLinesRef.current.get(order.order_id)
+        if (line) {
+          if (line.options().price !== options.price || line.options().title !== options.title) {
+            line.applyOptions(options)
+            recordPerformance('order-line-update')
+          }
+        } else {
+          orderPriceLinesRef.current.set(order.order_id, series.createPriceLine(options))
+          recordPerformance('order-line-create')
+        }
       } catch { /* disposed */ }
     }
-  }, [openOrders, paneType, right, position, pnlPctMode, sessionCapital])
+  }, [openOrders, paneType, right, strike, expiry, position, pnlPctMode, sessionCapital])
 
   // Running profit strategies use their own lines, separate from pending orders.
   useEffect(() => {
     const series = seriesRef.current
     if (!series) return
 
-    for (const line of strategyPriceLinesRef.current.values()) {
-      try { series.removePriceLine(line) } catch { /* disposed */ }
-    }
-    strategyPriceLinesRef.current.clear()
-
-    if (!strategyPaneActive) return
-    for (const strategy of targetProfitStrategies ?? []) {
+    const wanted = new Set<string>()
+    for (const strategy of strategyPaneActive ? targetProfitStrategies ?? [] : []) {
       if (strategy.status !== 'RUNNING' || strategy.symbol !== symbol) continue
       const isUnderlyingTarget = strategy.strategy_type === 'UnderlyingTargetProfit'
       if (isUnderlyingTarget) {
@@ -1271,16 +1252,29 @@ export default function Chart({
       const price = isUnderlyingTarget ? strategy.target_profit_value : targetProfitLinePrice(strategy, position, sessionCapital)
       if (typeof price !== 'number' || !Number.isFinite(price) || price <= 0) continue
       try {
-        const line = series.createPriceLine({
-          price, color: '#f59e0b', lineWidth: 1,
+        wanted.add(strategy.strategy_id)
+        const options = {
+          price, color: '#f59e0b', lineWidth: 1 as const,
           lineStyle: LineStyle.Dashed,
           axisLabelVisible: true,
           title: isUnderlyingTarget
             ? `UT ${strategy.right} ${strategy.target_profit_size === 'half' ? 'Half' : 'Full'} ${price.toFixed(2)}`
             : targetProfitLineLabel(strategy, price, position, pnlPctMode, sessionCapital, aggregatePnl, latestTick?.close ?? liveWindowRef.current?.close, brokeragePerOrder),
-        })
-        strategyPriceLinesRef.current.set(strategy.strategy_id, line)
+        }
+        const line = strategyPriceLinesRef.current.get(strategy.strategy_id)
+        if (line) {
+          if (line.options().price !== options.price || line.options().title !== options.title) {
+            line.applyOptions(options)
+            recordPerformance('strategy-line-update')
+          }
+        } else {
+          strategyPriceLinesRef.current.set(strategy.strategy_id, series.createPriceLine(options))
+          recordPerformance('strategy-line-create')
+        }
       } catch { /* disposed */ }
+    }
+    for (const [id, line] of strategyPriceLinesRef.current) {
+      if (!wanted.has(id)) { series.removePriceLine(line); strategyPriceLinesRef.current.delete(id) }
     }
   }, [targetProfitStrategies, strategyPosition, strategyPositionCE, strategyPositionPE, strategyPaneActive, paneType, right, symbol, pnlPctMode, sessionCapital, aggregatePnl, latestTick?.close, brokeragePerOrder])
 
@@ -1507,18 +1501,17 @@ export default function Chart({
                     return (
                       <label
                         key={key}
-                        title={available ? meta.label : 'Matching option candles are not loaded yet'}
+                        title={available ? meta.label : 'Enable to load matching option candles'}
                         style={{
                           display: 'flex', alignItems: 'center', gap: 8,
-                          padding: '7px 10px', cursor: available ? 'pointer' : 'not-allowed',
-                          fontSize: 11, color: !available ? '#484f58' : selected ? meta.color : '#e6edf3',
+                          padding: '7px 10px', cursor: 'pointer',
+                          fontSize: 11, color: selected ? meta.color : '#e6edf3',
                         }}
                       >
                         <input
                           type="checkbox"
                           checked={selected}
-                          disabled={!available}
-                          onChange={() => available && toggleRatioIndicator(key)}
+                          onChange={() => toggleRatioIndicator(key)}
                         />
                         <span>{meta.label}</span>
                       </label>
@@ -1646,6 +1639,13 @@ export default function Chart({
             {dir}
           </button>
         ))}
+        <button
+          onClick={e => { e.stopPropagation(); setShowAllMarkers(value => !value) }}
+          title={showAllMarkers ? 'Hide closed-trade markers; show open positions only' : 'Show all executed-trade markers'}
+          aria-label="All markers"
+          aria-pressed={showAllMarkers}
+          style={toolbarBtnStyle(showAllMarkers)}
+        >All markers</button>
         {onMaximize && (
           <button
             onClick={e => { e.stopPropagation(); onMaximize() }}
