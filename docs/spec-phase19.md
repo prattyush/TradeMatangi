@@ -6,7 +6,8 @@ FIFO average-entry/P&L repair was merged into `dev` through
 [PR #595](https://github.com/prattyush/TradeMatangi/pull/595), merge commit `e3ac5f5`.
 The follow-up implements broker-confirmed LIMIT ↔ STOPLOSS conversion for individual
 orders, All SL and All Limit, plus position-feed reconciliation and raw event logs.
-These follow-up changes are implemented and validated for delivery from
+These follow-up changes are implemented and validated in
+[PR #597](https://github.com/prattyush/TradeMatangi/pull/597), from
 `fix/phase19-kotak-confirmed-conversions` into `dev`. PR review/merge and live broker
 acceptance remain pending; automated validation and acceptance status are recorded in **Broker-confirmed conversions and position feed
 — 2026-10-06** below. Merge/deployment to `main` remains manual.
@@ -2392,7 +2393,8 @@ and deduplicate position and order notifications for the same LIMIT fill.
   assertion and the tab-restore fixture's missing `group_id`). The final three
   added late-confirmation/persistence/restart regressions and subsequent refinements
   were verified in the final focused run above.
-- No live broker orders were submitted. Delivery branch:
+- No live broker orders were submitted. Delivery:
+  [PR #597](https://github.com/prattyush/TradeMatangi/pull/597), branch
   `fix/phase19-kotak-confirmed-conversions`, targeting `dev`. Review/merge and manual
   production acceptance remain pending; deployment to `main` remains manual.
 
