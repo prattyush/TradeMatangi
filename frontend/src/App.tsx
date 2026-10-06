@@ -1,3 +1,5 @@
+import { IndicatorHistoryRequests } from './services/tradingChartState'
+import { startPerformanceDiagnostics, recordPerformance } from './services/performanceDiagnostics'
 import { formatPnl } from './pnlFormat'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import React from 'react'
@@ -14,7 +16,7 @@ import SessionSwitcher from './components/SessionSwitcher'
 import GuardRailPopup from './components/GuardRailPopup'
 import PatternAlertToast, { PatternAlert } from './components/PatternAlertToast'
 import SettingsModal, { loadFundsRatios, loadTargetDeviationPct, loadBrokeragePerOrder, loadStrategyIntervalSecs, loadAutostopTriggerType, loadAutostopDeviationPct, loadHistoricalDays, loadPnlPctMode, loadBreakevenMode, loadTargetProfitBufferTicks, loadAggrSlOnlyInProfit, loadAutoStartEventSnapshots, loadStepwiseLabelingPopupEnabled, loadLabelingModeByType, loadTradingRocRatioMode, FundsRatios, SizingMode, RiskRatios, loadSizingMode, loadRiskRatios, loadDefaultSlPct } from './components/SettingsModal'
-import { StrategyResponse, StartStrategyRequest, Order, OpenOptionContract, BrokerOrder } from './services/api'
+import { StrategyResponse, StartStrategyRequest, OpenOptionContract, BrokerOrder } from './services/api'
 import LoginScreen from './components/LoginScreen'
 import TradeAnalysis from './components/TradeAnalysis'
 import StepwiseLabelPopup from './components/StepwiseLabelPopup'
@@ -24,7 +26,7 @@ import { useMultiSSE } from './hooks/useSSE'
 import { useRecording } from './hooks/useRecording'
 import { useSnapshot } from './hooks/useSnapshot'
 import api, { OHLCCandle } from './services/api'
-import { IndicatorCandle, RocRatioMode } from './indicators/optionsRoc'
+import { IndicatorCandle, RocRatioMode, RocComparisonKey } from './indicators/optionsRoc'
 import { selectPaperResumePanes } from './paperResume'
 import { brokerSnapshotSessionId } from './brokerSnapshot'
 
@@ -513,9 +515,18 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
   const [activePaneId, setActivePaneId] = useState<number | null>(1)
   useEffect(() => { setMissingSlPick(null) }, [sim.sessionId, activePaneId, panes])
   const [maximizedPaneId, setMaximizedPaneId] = useState<number | null>(null)
+  useEffect(startPerformanceDiagnostics, [])
   const [paneCandles, setPaneCandles] = useState<Record<number, IndicatorCandle[]>>({})
   const [indicatorCandleCache, setIndicatorCandleCache] = useState<Record<string, IndicatorCandle[]>>({})
-  const indicatorCacheLoadingRef = useRef<Set<string>>(new Set())
+  const indicatorRequestsRef = useRef(new IndicatorHistoryRequests())
+  const [paneRatioIndicators, setPaneRatioIndicators] = useState<Record<number, RocComparisonKey[]>>({})
+  const historyContext = `${sim.sessionId}|${sim.symbol}|${sim.date}|${sim.sessionType}|${historicalDays}`
+  const handleRatioIndicatorsChange = useCallback((paneId: number, keys: RocComparisonKey[]) => {
+    setPaneRatioIndicators(prev => {
+      if ((prev[paneId] ?? []).join('|') === keys.join('|')) return prev
+      return { ...prev, [paneId]: keys }
+    })
+  }, [])
   const draftWorkspaceRef = useRef<DraftWorkspace | null>(null)
 
   // ── Options mode state ──────────────────────────────────────────────────────
@@ -718,8 +729,8 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
   useEffect(() => {
     setPaneCandles({})
     setIndicatorCandleCache({})
-    indicatorCacheLoadingRef.current.clear()
-  }, [sim.sessionId])
+    indicatorRequestsRef.current.clear()
+  }, [sim.sessionId, sim.symbol, sim.date, sim.sessionType, historicalDays])
 
   // ── Chart container height ──────────────────────────────────────────────────
   const mainContentRef = useRef<HTMLDivElement>(null)
@@ -1017,19 +1028,46 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
     })
   }, [descriptorForPane, indicatorCacheKey, panes])
 
+  const demandedIndicatorDescriptors = useMemo(() => {
+    const descriptors = new Map<string, IndicatorCacheDescriptor>()
+    const expiry = sim.sessionExpiry ?? optionsReady?.expiry
+    for (const pane of panes) {
+      const keys = paneRatioIndicators[pane.id] ?? []
+      const legs = new Set<IndicatorCacheDescriptor['leg']>()
+      for (const key of keys) {
+        if (key !== 'ce_pe') legs.add('underlying')
+        if (key !== 'underlying_pe') legs.add('CE')
+        if (key !== 'underlying_ce') legs.add('PE')
+      }
+      for (const leg of legs) {
+        const optionPane = panes.find(candidate => candidate.type === 'options' && candidate.right === leg && candidate.intervalMinutes === pane.intervalMinutes)
+        const descriptor: IndicatorCacheDescriptor = {
+          leg, intervalMinutes: pane.intervalMinutes,
+          strike: leg === 'underlying' ? undefined : (pane.right === leg ? pane.strike : optionPane?.strike) ?? (leg === 'CE' ? sim.sessionStrikeCE : sim.sessionStrikePE) ?? undefined,
+          expiry: leg === 'underlying' ? undefined : (pane.right === leg ? pane.expiry : optionPane?.expiry) ?? expiry ?? undefined,
+        }
+        descriptors.set(indicatorCacheKey(descriptor), descriptor)
+      }
+    }
+    return [...descriptors.values()]
+  }, [panes, paneRatioIndicators, sim.sessionExpiry, sim.sessionStrikeCE, sim.sessionStrikePE, optionsReady?.expiry, indicatorCacheKey])
+  const demandedKeys = useMemo(() => new Set(demandedIndicatorDescriptors.map(indicatorCacheKey)), [demandedIndicatorDescriptors, indicatorCacheKey])
+  indicatorRequestsRef.current.configure(historyContext, demandedKeys)
+
+  useEffect(() => {
+    const paneIds = new Set(panes.map(pane => pane.id))
+    setPaneRatioIndicators(prev => Object.keys(prev).some(id => !paneIds.has(Number(id)))
+      ? Object.fromEntries(Object.entries(prev).filter(([id]) => paneIds.has(Number(id)))) : prev)
+    const retainedKeys = new Set([...demandedKeys, ...panes.map(pane => indicatorCacheKey(descriptorForPane(pane)))])
+    setPaneCandles(prev => Object.keys(prev).some(id => !paneIds.has(Number(id)))
+      ? Object.fromEntries(Object.entries(prev).filter(([id]) => paneIds.has(Number(id)))) : prev)
+    setIndicatorCandleCache(prev => Object.keys(prev).some(key => !retainedKeys.has(key))
+      ? Object.fromEntries(Object.entries(prev).filter(([key]) => retainedKeys.has(key))) : prev)
+  }, [panes, demandedKeys, indicatorCacheKey, descriptorForPane])
+
   useEffect(() => {
     if (instrumentType !== 'options' && sim.sessionInstrumentType !== 'options') return
-
-    const expiry = sim.sessionExpiry ?? optionsReady?.expiry
-    const ceStrike = sim.sessionStrikeCE ?? (panes.find(p => p.type === 'options' && p.right === 'CE')?.strike)
-    const peStrike = sim.sessionStrikePE ?? (panes.find(p => p.type === 'options' && p.right === 'PE')?.strike)
-    const intervals = Array.from(new Set(panes.map(p => p.intervalMinutes)))
-    const descriptors = intervals.flatMap(intervalMinutes => {
-      const next: IndicatorCacheDescriptor[] = [{ leg: 'underlying', intervalMinutes }]
-      if (expiry && ceStrike) next.push({ leg: 'CE', intervalMinutes, strike: ceStrike, expiry })
-      if (expiry && peStrike) next.push({ leg: 'PE', intervalMinutes, strike: peStrike, expiry })
-      return next
-    })
+    const descriptors = demandedIndicatorDescriptors
 
     const liveTs = sim.latestEquityTick?.time ?? null
     const startTime = sim.startTime
@@ -1046,11 +1084,13 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
       const lastCachedTime = cached?.[cached.length - 1]?.time
       if (
         cached &&
-        (cached.length === 0 || cutoffTs == null || (lastCachedTime != null && lastCachedTime >= cutoffTs - intervalSecs))
+        (cached.length > 0 && (cutoffTs == null || (lastCachedTime != null && lastCachedTime >= cutoffTs - intervalSecs)))
       ) return
-      if (indicatorCacheLoadingRef.current.has(key)) return
       if (descriptor.leg !== 'underlying' && (!descriptor.strike || !descriptor.expiry || !startTime)) return
-      indicatorCacheLoadingRef.current.add(key)
+      const request = indicatorRequestsRef.current.begin(key)
+      if (!request) return
+      recordPerformance('indicator-history-request')
+      const { current } = request
 
       ;(async () => {
         try {
@@ -1064,6 +1104,7 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
             ])
             const allCandles = [...historical.candles, ...preSession]
             const indicatorCandles = (cutoffTs != null ? allCandles.filter(c => c.time < cutoffTs) : allCandles).map(toIndicatorCandle)
+            if (!current()) return
             setIndicatorCandleCache(prev => {
               const currentLast = prev[key]?.[prev[key].length - 1]?.time ?? -Infinity
               const nextLast = indicatorCandles[indicatorCandles.length - 1]?.time ?? -Infinity
@@ -1082,6 +1123,7 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
               sim.sessionType === 'paper' || sim.sessionType === 'real' ? 'live' : 'replay',
             )
             const indicatorCandles = candles.filter(c => cutoffTs == null || c.time < cutoffTs).map(toIndicatorCandle)
+            if (!current()) return
             setIndicatorCandleCache(prev => {
               const currentLast = prev[key]?.[prev[key].length - 1]?.time ?? -Infinity
               const nextLast = indicatorCandles[indicatorCandles.length - 1]?.time ?? -Infinity
@@ -1092,9 +1134,9 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
             })
           }
         } catch (err) {
-          console.error(err)
+          if (current()) console.warn('Indicator history load failed:', err)
         } finally {
-          indicatorCacheLoadingRef.current.delete(key)
+          request.finish()
         }
       })()
     })
@@ -1113,6 +1155,8 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
     indicatorCandleCache,
     indicatorCacheKey,
     historicalDays,
+    historyContext,
+    demandedIndicatorDescriptors,
   ])
 
   const getRatioCandlesForPane = useCallback((pane: PaneConfig) => {
@@ -1154,6 +1198,8 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
     descriptorForPane,
     getCachedCandles,
   ])
+
+  const ratioCandlesByPane = useMemo(() => new Map(panes.map(pane => [pane.id, getRatioCandlesForPane(pane)])), [panes, getRatioCandlesForPane])
 
   // ── Active pane derivations ─────────────────────────────────────────────────
   const activePane = panes.find(p => p.id === activePaneId) ?? null
@@ -1720,17 +1766,11 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
   const totalDayPnl = netDayPnl + sim.prevDayPnl
 
   // ── Trades filtered per pane for markers ─────────────────────────────────────
-  const getTradesForPane = useCallback((pane: PaneConfig) => {
-    if (pane.type === 'equity') return sim.trades.filter(t => !t.right || t.underlying_price !== undefined)
-    return sim.trades.filter(t => t.right === pane.right && t.strike === pane.strike)
-  }, [sim.trades])
-
-  const getOrdersForPane = useCallback((pane: PaneConfig): Order[] => {
-    if (pane.type === 'equity') return sim.openOrders.filter(o => !o.right)
-    return sim.openOrders.filter(o =>
-      o.right === pane.right && (o.strike == null || o.strike === pane.strike)
-    )
-  }, [sim.openOrders])
+  const paneTradingData = useMemo(() => new Map(panes.map(pane => [pane.id, {
+    trades: pane.type === 'equity' ? sim.trades : sim.trades.filter(t => t.right === pane.right && t.strike === pane.strike && (!t.expiry || t.expiry === pane.expiry)),
+    orders: sim.openOrders.filter(o => pane.type === 'equity' ? !o.right
+      : o.right === pane.right && (o.strike == null || o.strike === pane.strike) && (!o.expiry || o.expiry === pane.expiry)),
+  }])), [panes, sim.trades, sim.openOrders])
 
   const getPositionForPane = useCallback((pane: PaneConfig) => {
     if (pane.type === 'equity') return sim.position
@@ -1852,8 +1892,9 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
               setContextMenuOrderPick(null)
             }
           }}
-          trades={draft ? [] : getTradesForPane(pane)}
-          openOrders={draft ? [] : getOrdersForPane(pane)}
+          trades={draft ? [] : paneTradingData.get(pane.id)?.trades}
+          markerSessionKey={chartSessionKey}
+          openOrders={draft ? [] : paneTradingData.get(pane.id)?.orders}
           targetProfitStrategies={runningStrategies}
           strategyPaneActive={!draft && (sim.sessionState === 'running' || sim.sessionState === 'paused') && (
             pane.type === 'equity' || (pane.expiry === sim.sessionExpiry &&
@@ -1887,8 +1928,9 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
           aggregatePnl={draft ? undefined : totalDayPnl}
           onIntervalChange={(minutes) => handlePaneIntervalChange(pane.id, minutes)}
           onCandlesChange={draft ? undefined : (candles) => handlePaneCandlesChange(pane.id, candles)}
-          ratioCandles={draft ? null : getRatioCandlesForPane(pane)}
+          ratioCandles={draft ? null : ratioCandlesByPane.get(pane.id)}
           ratioMode={tradingRocRatioMode}
+          onRatioIndicatorsChange={keys => handleRatioIndicatorsChange(pane.id, keys)}
           initialVisibleRange={savedChartRangeKey ? chartRanges[savedChartRangeKey] ?? null : null}
           onVisibleRangeChange={savedChartRangeKey ? (range) => {
             setChartRanges(current => {

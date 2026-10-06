@@ -1,6 +1,8 @@
 import logging
 import logging.handlers
 import sys
+import os
+import time
 import asyncio
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
@@ -57,9 +59,19 @@ async def lifespan(app: FastAPI):
     paper_reconciler = asyncio.create_task(reconciliation_loop())
     from app.services.order_service import exit_reconciliation_loop
     exit_reconciler = asyncio.create_task(exit_reconciliation_loop())
+    diagnostics = None
+    if os.getenv("TRADING_PERFORMANCE_DIAGNOSTICS") == "1":
+        from app.services.performance_diagnostics import monitor_loop_lag
+        diagnostics = asyncio.create_task(monitor_loop_lag())
     try:
         yield
     finally:
+        if diagnostics:
+            diagnostics.cancel()
+            try:
+                await diagnostics
+            except asyncio.CancelledError:
+                pass
         from app.services.market_data import get_hub
         get_hub().shutdown()
         from app.services.kotak_service import get_service as get_kotak
@@ -122,3 +134,16 @@ app.include_router(fine_structures.router)
 @app.get("/health")
 async def health():
     return {"status": "ok"}
+
+
+if os.getenv("TRADING_PERFORMANCE_DIAGNOSTICS") == "1":
+    @app.middleware("http")
+    async def trading_request_timing(request, call_next):
+        started = time.monotonic()
+        try:
+            return await call_next(request)
+        finally:
+            path = request.url.path
+            if path.startswith(("/api/orders", "/api/snapshots", "/api/data")):
+                logger.info("trading_performance method=%s route=%s duration_ms=%.1f",
+                            request.method, path, (time.monotonic() - started) * 1000)

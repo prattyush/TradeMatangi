@@ -250,3 +250,107 @@ async def test_late_cancel_callback_does_not_cancel_converted_local_target(env):
     await orders.convert_order(o.order_id, ConvertOrderRequest(session_id=s.session_id, new_order_type=OrderType.TARGET, price=120))
     callback('broker-sl', 'cancelled')
     assert o.status.value == 'PENDING' and o.order_type == OrderType.TARGET and o.kotak_order_id is None
+
+@pytest.mark.asyncio
+async def test_slow_broker_edit_does_not_block_loop(env):
+    import threading
+    s, broker, _ = env
+    o = local(s)
+    simulation._register_kotak_sl_for_order(s, o, asyncio.get_running_loop())
+    started, release = threading.Event(), threading.Event()
+    loop_thread = threading.get_ident()
+    worker_threads = []
+    def modify(*args):
+        worker_threads.append(threading.get_ident())
+        started.set()
+        assert release.wait(2)
+        return o.kotak_order_id
+    broker.modify_sl_order.side_effect = modify
+    edit = asyncio.create_task(orders.update_order(o.order_id, UpdateOrderRequest(trigger_price=95), session_id=s.session_id))
+    try:
+        for _ in range(200):
+            if started.is_set():
+                break
+            await asyncio.sleep(.001)
+        assert started.is_set() and not edit.done()
+        assert worker_threads[0] != loop_thread
+        assert o.trigger_price == 90
+    finally:
+        release.set()
+        await edit
+    assert o.trigger_price == 95
+
+
+@pytest.mark.asyncio
+async def test_fill_during_edit_is_not_resurrected(env):
+    import threading
+    from app.models.schemas import OrderStatus
+    s, broker, _ = env
+    o = local(s)
+    simulation._register_kotak_sl_for_order(s, o, asyncio.get_running_loop())
+    started, release = threading.Event(), threading.Event()
+    def modify(*args):
+        started.set()
+        assert release.wait(2)
+        return o.kotak_order_id
+    broker.modify_sl_order.side_effect = modify
+    edit = asyncio.create_task(orders.update_order(o.order_id, UpdateOrderRequest(trigger_price=95), session_id=s.session_id))
+    try:
+        for _ in range(200):
+            if started.is_set():
+                break
+            await asyncio.sleep(.001)
+        assert started.is_set()
+        o.status = OrderStatus.FILLED
+        o.broker_filled_quantity = o.quantity
+        o.kotak_fill_confirmed = True
+    finally:
+        release.set()
+        result = await edit
+    assert result.status == OrderStatus.FILLED
+    assert result.trigger_price == 90
+
+
+@pytest.mark.asyncio
+async def test_replacement_callbacks_registered_on_loop(env):
+    import threading
+    s, broker, _ = env
+    o = local(s)
+    simulation._register_kotak_sl_for_order(s, o, asyncio.get_running_loop())
+    loop_thread = threading.get_ident()
+    threads = []
+    broker.modify_sl_order.return_value = 'replacement'
+    broker.register_fill_callback.side_effect = lambda *args: threads.append(threading.get_ident())
+    result = await orders.update_order(o.order_id, UpdateOrderRequest(trigger_price=95), session_id=s.session_id)
+    assert result.kotak_order_id == 'replacement'
+    assert threads == [loop_thread]
+    assert s.kotak_order_map[o.order_id] == 'replacement'
+
+
+@pytest.mark.asyncio
+async def test_persistence_reconciles_fill_received_during_write(env, monkeypatch):
+    from app.services.broker_order_service import persist_order_async
+    from app.models.schemas import OrderStatus
+    import threading
+    s, _, _ = env
+    o = local(s)
+    started, release = threading.Event(), threading.Event()
+    saved = []
+    def write(snapshot):
+        saved.append(snapshot.status)
+        if len(saved) == 1:
+            started.set()
+            assert release.wait(2)
+    monkeypatch.setattr(order_service, '_write_order_to_db', write)
+    task = asyncio.create_task(persist_order_async(o))
+    try:
+        for _ in range(200):
+            if started.is_set():
+                break
+            await asyncio.sleep(.001)
+        assert started.is_set()
+        o.status = OrderStatus.FILLED
+    finally:
+        release.set()
+        await task
+    assert saved == [OrderStatus.PENDING, OrderStatus.FILLED]
