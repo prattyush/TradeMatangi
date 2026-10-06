@@ -422,6 +422,14 @@ export interface SessionSummary {
 }
 
 export interface AnalysisTrade {
+  analysis_cycle_id?: string
+  analytics?: import('../../../shared/analysis/performance').AnalyticsMetadata
+  execution_sort_time?: number
+  execution_id?: string
+  order_id?: string
+  kotak_order_id?: string
+  exchange?: string
+  product?: string
   trade_id: string
   session_id: string
   user_id: string
@@ -440,6 +448,7 @@ export interface AnalysisTrade {
 }
 
 export interface SessionDetail extends SessionSummary {
+  cycles?: import('../../../shared/analysis/performance').PerformanceCycle[]
   trades: AnalysisTrade[]
 }
 
