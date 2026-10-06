@@ -1,9 +1,269 @@
+# Phase 20 — Trading performance and chart browsing
+
+## Agreed scope and decisions
+
+Capture analytics for website and desktop executions in Paper, Real, Stepwise,
+and Replay wherever those modes already exist. Reports remain in website
+Analysis → Stats. Kite broker execution, desktop real-trading enablement, a
+desktop Analysis tab, and website continuous browsing are deferred.
+
+- Use FIFO quantity splitting: entries 40 + 80, exit 60 consumes 40 + 20.
+- A trade cycle is one exact contract from flat to flat. Entry positions and
+  matched exit portions retain separate results. Handle shorts and reversals.
+- Reuse existing labels/tags and expected/actual patterns; no mandatory rationale.
+- Capture original entry intent independently of execution type and confirmed
+  exit controller, including Half/Full intent and actual selected quantity.
+- Capture Capital %, Risk %, fixed quantity, requested percentages/budgets,
+  capital baseline, sizing stop, effective exposure and minimum-lot overruns.
+- Statistics include unlabeled executions. Associated cycle results overlap
+  across methods and must not be added. Missing evidence stays Unknown/null.
+- Add expectancy, profit factor, distributions, fee drag, realized drawdown,
+  entry-spacing/scaling/re-entry behavior, MFE/MAE, giveback and initial-risk R.
+  Excursions are sampled/approximate when appropriate, never executable promises.
+- Groups below 30 closed cycles or 20 distinct market dates are exploratory.
+  Larger groups use 1,000 date-clustered bootstrap resamples for mean intervals.
+- Desktop underlying pagination retains D−13 through D, including holidays,
+  in two-calendar-date buckets. Both clients initially show up to 150 candles.
+  Restored ranges and subsequent user navigation take precedence.
+- Add Underlying Stoploss Half/Full using existing protected exit allocation.
+- Preserve Phase 19 exact-contract identity, IST wall-clock timestamp encoding,
+  provider/cache policies, broker confirmation and snapshot recovery.
+
+## Sprints and status
+
+| Sprint | Deliverable | Status |
+|---|---|---|
+| 0 | Agreed specification and baseline | Validated |
+| 1 | Execution provenance and sizing capture | Implemented; automated validation passed |
+| 2 | FIFO analytics and accounting corrections | Implemented; automated validation passed |
+| 3 | Performance APIs and behavior metrics | Implemented; automated validation passed |
+| 4 | Excursions and initial-risk analysis | Implemented; automated validation passed |
+| 5 | Website Stats dashboard and drill-down | Implemented; automated validation passed |
+| 6 | Desktop pagination and 150-candle viewport | Implemented; automated validation passed |
+| 7 | Underlying Stoploss Half/Full and integration | Implemented; automated validation passed |
+
+Each sprint records implementation, tests, and remaining acceptance below.
+Development stays on dev; delivery PR branches target dev after review. Main
+merging and deployment remain manual. Existing user requirements below are retained.
+
+## Restart reconciliation — 2026-10-06
+
+The laptop restart preserved the working tree on dev. All implementation files
+are present; no merge/deployment has occurred. Temporary test logs and browser
+screenshots were lost. The sprint table has been reconciled against code rather
+than treating the older Pending entries as absent implementation.
+
+Pre-restart validation reported 1,668 backend tests passing with two documented
+Phase 19 baseline failures (stale options-expiry assertion and tab-restore fixture
+missing group_id), 155 desktop/client tests, 29 website Node tests, both TypeScript
+checks/production builds, native Rust tests, and dashboard browser acceptance.
+Subsequent accounting/label integration changes passed 92 focused backend tests.
+These historical results are checkpoints, not final validation of later changes.
+
+Remaining work: API/database and history-page edge-case acceptance, controller and
+price-path provenance review, chart navigation/viewport checks, a durable final
+regression record, and PR delivery targeting dev. No live broker orders are needed
+for automated checks; native Windows and real-broker acceptance remain manual.
+
+## Sprint implementation notes
+
+### Sprint 1 — Execution provenance and sizing
+
+Orders and trades persist versioned analytics snapshots. Market-style LIMITs keep
+Market intent; AS and ASL retain their strategy origin. A logical action groups
+partial fills and broker split orders. Confirmed exit-controller history includes
+strategy, requested Half/Full and actual allocation. Manual price/type edits take
+ownership; quantity-only reconciliation and recovery preserve the controller.
+Broker conversion provenance is published only after confirmation.
+
+Capture Capital %, Risk %, fixed quantity, requested budget/percentage, captured
+capital, sizing reference/stop/source, lot/margin information and effective filled
+allocation/risk. Minimum-lot budget overruns are visible. Entry fills aggregate
+actual sizing across partial fills without counting extra decisions. Reuse the
+already-resolved sizing stop: analytics does not add settings reads to execution.
+Session interval/brokerage, trade metadata and same-clock fill ordering survive
+restart. Legacy metadata is Unknown rather than inferred from current presets.
+
+### Sprint 2 — FIFO accounting and labels
+
+A shared ledger handles exact-contract partial matching, shorts and reversals.
+Entry and exit fees follow matched quantity; remaining entry fees stay with open
+inventory. Session summaries no longer classify open purchases as realized losses.
+Real summaries use individual executions from a pinned committed projection,
+with order/execution membership, quantity/value and revision consistency checks.
+Exchange, product, strike and expiry stay separate; real aliases count once.
+
+Label round trips use the same ledger. New labels store stable cycle identities;
+legacy labels are attached only when entry/exit memberships and quantities agree.
+DynamoDB pagination and ownership checks cover the analysis/label boundaries.
+Metadata Decimals are normalized before arithmetic. No historical records are
+bulk-rewritten; provenance reconstruction uses stored evidence only.
+
+### Sprint 3 — Performance and behavior APIs
+
+- `GET /api/analysis/performance`: summaries, comparisons, distributions,
+  daily results, realized drawdown, behavior groups, coverage and insights.
+- `GET /api/analysis/performance/cycles`: paginated cycle drill-down.
+- `GET /api/analysis/performance/cycles/{cycle_id}`: owned detail, with optional
+  cached-price enrichment and the owning session ID.
+
+Filter dates, mode, client, symbol, instrument, direction, entry/exit methods,
+sizing/percentage, existing tags/strategies and data quality. Method/origin/sizing
+filters select containing cycles, retaining their other actions for whole-cycle
+context. Associated cycle results overlap and are not additive.
+
+Measure expectancy, win/loss/breakeven, profit factor, mean/median P&L, capital
+contribution and initial-risk R where available. Behavioral groups cover counts,
+strategy-bar spacing, relative addition size, contemporaneous addition P&L,
+rapid re-entry, size after losses, daily trade sequence, weekday, half-hour and
+holding duration. Partial fills and order splits are not discretionary decisions.
+Use bounded fingerprinted result caching, worker execution and date-clustered
+intervals. Read failures produce errors, not successful empty statistics.
+
+### Sprint 4 — Price-path quality
+
+Lazy enrichment reads cached exact-contract Breeze/Kite/Kotak data without
+broker polling or automatic downloads. Fresh provider caches preserve observed
+versus gap-filled rows. Legacy native-minute caches are sampled candles; old
+Breeze caches without observation provenance remain unavailable for excursions.
+Exclude ambiguous boundary bars and filled gaps. Report provider, resolution,
+coverage and sampled/unavailable status for matched portions and the changing
+cycle inventory. Preserve the initial sizing stop rather than rewriting risk
+from a later trailing stop. Fees remain the application's existing estimates;
+this phase does not reconcile broker contract notes or change charge schedules.
+
+### Sprint 5 — Website Stats
+
+Overview, Entries, Exits, Sizing and Behavior share filters, sortable tables,
+linked charts, calendar, entry→exit combinations, distributions and a sizing
+scatterplot. Rows show position attribution separately from associated-cycle
+outcomes. Half/Full, existing labels, coverage and small-sample badges are visible.
+Trade details include sizing, fees, FIFO portions, R, optional execution charts
+and sampled price paths. CSV exports the filtered cycles. Insights describe
+observed associations and never assert random/revenge intent.
+
+### Sprint 6 — Desktop history and viewport
+
+`GET /api/desktop/v1/historical/underlying-pages` scans at most two calendar dates
+before its cursor within D−13..D, including holidays. Failures are explicit and
+retryable. Desktop uses the existing authenticated request transport and history
+workers, KLineCharts' prepend loader, stale-request fencing and separate older
+context. Live refreshes retain that context. The history cache is bounded to
+32 entries/100,000 aggregate candles with ten-minute expiry and failed-promise
+removal. Live anchoring uses the current IST date; Replay/Browse uses its selected
+date. Options/futures do not gain continuous paging.
+
+Both clients initially display at most 150 available bars without reducing fetched
+data. Saved website ranges take precedence; subsequent navigation is preserved.
+Explicit Fit still shows all loaded data. Desktop native initial history now honors
+the configured context-day count rather than always requesting five days.
+
+### Sprint 7 — Underlying Stoploss Half/Full
+
+Persist `underlying_stoploss_size`, default Full. Both clients expose Half/Full
+and armed size editing through the existing shared controls. Half uses Phase 19's
+protected allocation, rounding and recovery rules; even one lot selects one lot.
+Remaining protection, manual reductions and retry fencing stay intact. Analytics
+records requested size separately from actual quantity and closed fraction.
+
+## Validation artifacts and reproduction
+
+Logs, JSON fixtures and regenerated screenshots are kept on disk in
+`.cache/phase20-validation/` (ignored by Git). The specification records durable
+results below. All automated browser/provider checks use synthetic or mocked data.
+
+Backend checks use `~/venvs/tradematangi/bin/python -m pytest backend/tests/ -q`
+with `USE_DYNAMODB_LOCAL=true AWS_MAX_ATTEMPTS=1`. Both clients run TypeScript
+checks and Vite production builds. Desktop tests use Vitest; website accounting
+checks use `node --test src/*.test.mjs src/services/*.test.mjs`. Native checks use
+`cargo test --offline --manifest-path windowsapp/src-tauri/Cargo.toml`.
+
+Browser checks are reproducible with `scripts/phase20-browser-check.mjs` and
+`scripts/phase20-chart-check.mjs`. Install playwright-core outside the project,
+then supply its module through `PLAYWRIGHT_MODULE`, the project venv through
+`PYTHON_BIN`, and optionally `CHROME_BIN` and `PHASE20_ARTIFACT_DIR`. No runtime
+browser-testing dependency was added. The existing chart soak script also runs
+with synthetic prices; a short accelerated run is not a long market-hours soak.
+
+## Final automated validation — 2026-10-06
+
+| Check | Result |
+|---|---|
+| Full backend suite with DynamoDB Local running | **1,685 passed / 2 baseline failures** |
+| Final focused accounting/API/order/strategy/desktop regressions | **351 passed** |
+| Desktop/client Vitest | **155 passed**, 25 files |
+| Website Node accounting/history checks | **29 passed** |
+| Website and desktop TypeScript / production builds | Passed |
+| Native Rust tests on Linux | **16 passed** |
+| Actual desktop chart browser acceptance | Passed: 375 retained bars / 144 visible initially; 100 prepended; one request; overlay and viewport survive a live append; refresh returns to 144 latest visible bars |
+| Website Stats browser acceptance | Passed: five views, detail, unavailable excursions, CSV, narrow viewport and close; no page errors |
+| Synthetic four-chart accelerated soak | Passed for one simulated minute; no failures; sampled JS heap about 5.15 → 6.10 MB |
+| Diff whitespace check | Passed |
+
+The two remaining failures are the existing stale expiry assertion in
+`test_options_api.py` and missing `group_id` in `test_tab_restore.py`. Before
+DynamoDB Local was restarted, four additional environment-dependent failures
+occurred; all six reproduced against unchanged dev commit `80fb0a5`. Starting
+DynamoDB resolved those four, leaving the established two-fixture baseline.
+The final focused run covers the final sizing-metadata/latency refinements and
+prepared-Half allocation size-edit fence after the full-suite checkpoint. Existing bundle-size/dateutil/pytest-marker
+warnings and pandas observation-column downcasting warnings remain visible.
+
+`summary.json`, complete logs and all regenerated screenshots are available in
+`.cache/phase20-validation/`. Browser scripts regenerate artifacts there by default.
+No live orders, broker credential changes, main merges or deployment were performed.
+
+### Remaining manual acceptance and operating limits
+
+- Native Windows packaging/interaction, pop-out/refresh/reconnect, 14-date browsing
+  with real cache/provider availability, and persisted drawings across sessions.
+- Authorized existing website real-trading acceptance for confirmed conversion,
+  partial fills, FIFO refresh and Underlying Stoploss Half remainder protection.
+- Excursions require cached observations; missing, legacy gap-filled or ambiguous
+  boundary data stays unavailable. Native minute candles are sampled, not ticks.
+- Statistical associations do not establish causality or psychological intent.
+  Current estimated fees, capital snapshots and historical lot-size limitations
+  retain their existing meanings. An underlying stop is not converted into a
+  fictional option-risk amount.
+- Website continuous browsing, desktop Analysis UI, Kite broker execution and
+  desktop real-trading enablement remain deferred as agreed.
+
+### Delivery
+
+Implementation was completed on dev. Delivery uses a dedicated
+`feature/phase20-trading-analytics` branch targeting dev; review precedes merge.
+Main merging and deployment remain manual.
+
+Delivery: [PR #599](https://github.com/prattyush/TradeMatangi/pull/599),
+`feature/phase20-trading-analytics` → `dev`. Implementation commit `e3c66ed`;
+review/merge and the manual acceptance checks above remain pending.
+
+## Baseline and research
+
+Current dev already includes PRs #568, #570, #588, #595 and #597 despite older
+Phase 19 delivery paragraphs recording pending merges. FIFO position tests:
+10 passed. Existing analysis reports an unclosed purchase as a realized loss;
+round-trip grouping also misses the closed half of a reversal. Legacy Stats
+reads only saved labels rather than all executions.
+
+Synthetic 5,250 OHLC objects used about 0.7 MB for one Node array and 3.3 MB
+for four additional copies, excluding charts/canvas/indicators/React. This is
+not a browser memory acceptance test. Website continuous browsing is deferred.
+
+Sources informing the design:
+- [TradingView expectancy](https://www.tradingview.com/support/solutions/43000772770-expected-payoff/)
+- [TradingView performance measures](https://www.tradingview.com/support/solutions/43000681733-overview-tab/)
+- [Fidelity MAE/MFE and drawdown definitions](https://www.fidelity.com/research/backtesting/glossary.html)
+- [CME risk management](https://www.cmegroup.com/education/courses/building-a-trade-plan/risk-management-and-your-trade-plan)
+
+## Original requirements
+
 # Upgrades
 
 ## Desktop Client Continuous browse
 1) In desktop client, when going through charts for any mode (browse, live, replay, stepwise), and only for underlying charts, not for options or futures, if the user goes to the end of the chart on the left side, first candle drawn. The desktop client should automatically fetch the data for previous days, upto 14 Days. This helps in desktop only as, we have more memory compared to website, or if is possible in website as well, please go ahead and do it, but primary requirement is for destkop only, as the lines and drawings are saved which can come in handy. Further, 14 days helps to look into previous weekly high and low which is important. By 14 days I didn't mean 14 trading days, I meant 14 days which can include holidays.
 
-Include this feature for website, if it is simple otherwise leave it. When fetching and drawing on chart, you can fetch in buckets, like fetching 1 day at a time or 2 days at a time, till the user keeps going back and at max 14 days data is fetched. This is because for smaller intervals, user may not go to back 14 days, but for 15 mins, 14 days makes more sense. 
+Include this feature for website, if it is simple otherwise leave it. When fetching and drawing on chart, you can fetch in buckets, like fetching 1 day at a time or 2 days at a time, till the user keeps going back and at max 14 days data is fetched. This is because for smaller intervals, user may not go to back 14 days, but for 15 mins, 14 days makes more sense.
 
 2) Separate, requirement, do, handle the case in website, as website draws all the candles on the screen, when refreshed, which may become a lot for 1 min candle, so maybe when refreshed it can only shows x number of candles, 150 candles in the view and rest can be scroolled. This 150 candle apply to desktop as well, if possible, only for first draw or refresh etc. It is max 150 just on view not backend fetch data. Not sure the complication of this requirement.
 
@@ -20,16 +280,19 @@ Similarly for Exit Orders, we need to store per order, whether that particular o
 
 
 ### Analytics On Order Info
-Now, a trade is different than a particular position. In one trade I can take 2 positions and exit one in some way and another in other way. While exitting I think, we take FIFO logic, for first exit would be for last entry, I am fine with that if quantities are same, if quuantities don't match, find a position in that trade that matches in quantity, if exit quantity is either low or high and doesn't match then match to last entry with min of (exit, entry) and use it in analytics. 
+Now, a trade is different than a particular position. In one trade I can take 2 positions and exit one in some way and another in other way. While exitting I think, we take FIFO logic, for first exit would be for last entry, I am fine with that if quantities are same, if quuantities don't match, find a position in that trade that matches in quantity, if exit quantity is either low or high and doesn't match then match to last entry with min of (exit, entry) and use it in analytics.
 
 #### Stats On Entries
-The stats windows needs to show per position, the breakdown of enter position types (based on previous section (Order Info of Analytics) values) against Profit and Loss % of that position and also the entire trade. What I mean lets say for one trade, we have 2 positions with Auto Stop entry with 100 quantity, the exit was in 2 ways, or total 100 quantity exit was in order, one in profit (40) and one in loss (60), then calculate actual profit and loss combined and calculate % against session capital. Also, in the same example, lets say 2nd entry was market order and the entire trade was in profit, but Auto Stop Order was in Loss Exit, when matched with FIFO logic or quantity match logic. Then, also show stat of Auto Stop entries against its own position profit and loss % and trade level profit and loss %. 
+The stats windows needs to show per position, the breakdown of enter position types (based on previous section (Order Info of Analytics) values) against Profit and Loss % of that position and also the entire trade. What I mean lets say for one trade, we have 2 positions with Auto Stop entry with 100 quantity, the exit was in 2 ways, or total 100 quantity exit was in order, one in profit (40) and one in loss (60), then calculate actual profit and loss combined and calculate % against session capital. Also, in the same example, lets say 2nd entry was market order and the entire trade was in profit, but Auto Stop Order was in Loss Exit, when matched with FIFO logic or quantity match logic. Then, also show stat of Auto Stop entries against its own position profit and loss % and trade level profit and loss %.
 
 You have aggregate across days and may be within a day, so you can show aggregate, sum, mean and median to get an idea of distribution or show histogram etc.
 
 #### Stats On Exits
 The stats window also needs to show similar stats for exit trades as well, I mean whether take profit is more profitable or aggresive SL , similar to previous section (Stats On Entries), you can show per position P&L and also trade level P&L.
 
+
+#### Stats On Entries/Exit Count
+Also, need stats on entry and exit counts in one trade and the result of those trades P&L % etc. Can you also give me stats whether I am entering too less gap or entries in same bar, bar interval length is counted from settings, strategy candle interval. If the entries vary in % entries w.r.t to sizes and whether that result in profit or losses, P&L in count of trades and also % in losses or profits.
 
 ## Kite Broker For Real Trading
 Supporting Kite for Real Trading API's, all the their is feature parity with Kotak Neo. With exactly the same implementation.

@@ -240,7 +240,10 @@ def _validate_options_gaps(df: pd.DataFrame, date: str, partial: bool = False) -
     else:
         end_ts = pd.Timestamp(f"{date} {get_market_close(date)}") - pd.Timedelta(seconds=1)
     full_index = pd.date_range(start=market_open, end=end_ts, freq="1s")
+    observed = df["observed"].reindex(full_index).fillna(False).astype(bool) if "observed" in df else None
     df = df.reindex(full_index).ffill().bfill()
+    if observed is not None:
+        df["observed"] = observed
     return df
 
 

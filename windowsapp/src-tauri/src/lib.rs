@@ -657,6 +657,7 @@ async fn desktop_historical_page(
     symbol: String,
     trading_date: String,
     interval_minutes: u32,
+    context_days: Option<u32>,
     host: tauri::State<'_, HostState>,
 ) -> Result<serde_json::Value, String> {
     let token = host.access_token(&base_url).await?;
@@ -670,7 +671,7 @@ async fn desktop_historical_page(
             ("symbol", symbol),
             ("trading_date", trading_date),
             ("interval_minutes", interval_minutes.to_string()),
-            ("context_days", "5".into()),
+            ("context_days", context_days.unwrap_or(5).min(5).to_string()),
         ])
         .send()
         .await

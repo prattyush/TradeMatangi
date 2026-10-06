@@ -7,7 +7,7 @@ export class ApiError extends Error {
   constructor(message: string, public readonly status: number) { super(message); this.name = 'ApiError' }
 }
 
-function _authHeaders(): Record<string, string> {
+export function _authHeaders(): Record<string, string> {
   try {
     const stored = localStorage.getItem('auth_user')
     if (stored) {
@@ -224,6 +224,7 @@ export interface StartStrategyRequest {
   lock_profit_value?: number
   lock_profit_is_pct?: boolean
   entry_sl_price?: number          // auto-stoploss price for AutoStop entry
+  underlying_stoploss_size?: 'full' | 'half'
   underlying_sl_price?: number     // underlying price for UnderlyingStoploss
 }
 

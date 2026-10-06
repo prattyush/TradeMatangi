@@ -9,7 +9,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import LOG_DIR
-from app.routers import data, simulation, trading, stream, orders, wallet, auth, analysis, strategies, users, admin, kotak, breeze, guardrails, internal, pattern_logger, snapshots, chart_structures, labels, fine_structures, desktop, desktop_persistence, desktop_live, desktop_replay, desktop_trading, desktop_settings
+from app.routers import data, simulation, trading, stream, orders, wallet, auth, analysis, strategies, users, admin, kotak, breeze, guardrails, internal, pattern_logger, snapshots, chart_structures, labels, fine_structures, desktop, desktop_persistence, desktop_live, desktop_replay, desktop_trading, desktop_settings, performance
 
 
 def _configure_logging() -> None:
@@ -149,3 +149,6 @@ if os.getenv("TRADING_PERFORMANCE_DIAGNOSTICS") == "1":
             if path.startswith(("/api/orders", "/api/snapshots", "/api/data")):
                 logger.info("trading_performance method=%s route=%s duration_ms=%.1f",
                             request.method, path, (time.monotonic() - started) * 1000)
+
+# Phase 20 read-only analytics boundary.
+app.include_router(performance.router)

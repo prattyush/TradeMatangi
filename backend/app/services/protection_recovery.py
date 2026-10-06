@@ -506,6 +506,7 @@ async def _attempt(session, parent, operation, job, broker):
             broker_exchange=expected_exchange(session, parent), source='cancellation_recovery',
             execution_gap_pct=float(settings.get('stoploss_limit_gap_pct', .015)),
             exit_allocation_id=operation, exit_position_side=side, exit_allocation_role='remainder',
+            analytics=parent.analytics,
             recovery_operation_id=operation, recovery_parent_order_id=job['root_order_id'],
             recovery_state='prepared', recovery_attempt=attempt)
         record = {'state': 'submitting', 'order': child.model_dump(mode='json'), 'tag': tag, 'cancelled_parent_id': parent.kotak_order_id}

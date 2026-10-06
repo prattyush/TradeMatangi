@@ -261,6 +261,7 @@ def _kite_1min_df_from_records(records: list[dict]) -> "pd.DataFrame":
     if not rows:
         return pd.DataFrame(columns=["open", "high", "low", "close", "volume"])
     df = pd.DataFrame(rows).set_index("datetime").sort_index()
+    df["observed"] = True
     return df[~df.index.duplicated(keep="first")]
 
 

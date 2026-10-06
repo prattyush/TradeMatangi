@@ -157,6 +157,11 @@ def _write_trade_to_db(trade: Trade) -> None:
             "instrument_type": trade.instrument_type,
             "commission": Decimal(str(trade.commission)),
         }
+        if trade.execution_sort_time is not None:
+            item["execution_sort_time"] = trade.execution_sort_time
+        if trade.analytics is not None:
+            from app.services.real_broker_state import encode
+            item["analytics"] = encode(trade.analytics)
         if trade.source:
             item["source"] = trade.source
         if trade.underlying_price is not None:
@@ -215,14 +220,25 @@ def record_trade(
     kotak_order_id: str | None = None,
     cumulative: bool = False,
     defer_exit_reconciliation: bool = False,
+    analytics: dict | None = None,
 ) -> Trade:
     ensure_session(session_id)
+    from app.services.execution_analytics import filled, order_snapshot
+    if analytics is None:
+        from app.services.order_service import get_all_orders
+        from app.services.simulation import get_session
+        order = next((o for o in get_all_orders(session_id) if o.order_id == trade_id or
+                      (kotak_order_id and o.kotak_order_id == kotak_order_id)), None)
+        if order is not None:
+            analytics = order_snapshot(order, get_session(session_id))
+    analytics = filled(analytics, price, quantity)
     if trade_id:
         existing = next((trade for trade in _trades[session_id]
                          if trade.trade_id == trade_id or (kotak_order_id and trade.kotak_order_id == kotak_order_id)), None)
         if existing:
             if cumulative and quantity > existing.quantity:
                 existing.quantity, existing.price = quantity, price
+                existing.analytics = analytics or existing.analytics
                 existing.commission = compute_commission(side, price, quantity, brokerage_per_order)
                 _write_trade_to_db(existing)
             return existing
@@ -250,7 +266,10 @@ def record_trade(
             except Exception:
                 logger.debug("Automatic underlying price lookup failed for %s at %s", symbol, timestamp)
 
+    previous_sort = (_trades[session_id][-1].execution_sort_time or _trades[session_id][-1].timestamp * 1_000_000) if _trades[session_id] else 0
     trade = Trade(
+        execution_sort_time=max(timestamp * 1_000_000, previous_sort + 1),
+        analytics=analytics,
         **({"trade_id": trade_id} if trade_id else {}),
         user_id=user_id,
         symbol=symbol,
@@ -438,6 +457,8 @@ def reload_trades_from_db(session_id: str, *, strict: bool = False) -> None:
         for item in raw:
             try:
                 trades.append(Trade(
+                    analytics=item.get("analytics"),
+                    execution_sort_time=int(item["execution_sort_time"]) if item.get("execution_sort_time") is not None else None,
                     trade_id=str(item["trade_id"]),
                     user_id=str(item["user_id"]),
                     symbol=str(item["symbol"]),
@@ -463,6 +484,7 @@ def reload_trades_from_db(session_id: str, *, strict: bool = False) -> None:
                 logger.warning("Skipping malformed trade during reload for session %s: %s", session_id, item)
                 if strict:
                     raise
+        trades.sort(key=lambda trade: trade.execution_sort_time or trade.timestamp * 1_000_000)
         _trades[session_id] = trades
         logger.info("reload_trades_from_db: loaded %d trades for session %s", len(trades), session_id)
     except Exception:

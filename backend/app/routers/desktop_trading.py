@@ -525,7 +525,7 @@ def _strategy_response(instance) -> StrategyResponse:
         target_profit_value=(float(metadata["target_profit_value"])
                              if instance.strategy_type == "TargetProfit" and metadata.get("target_profit_value") is not None
                              else None),
-        target_profit_size=metadata.get("target_profit_size", "full"),
+        target_profit_size=metadata.get("underlying_stoploss_size" if instance.strategy_type == "UnderlyingStoploss" else "target_profit_size", "full"),
         target_profit_is_pct=(bool(metadata.get("target_profit_is_pct", False))
                               if instance.strategy_type == "TargetProfit" else False),
         strike=instance.metadata.get("desktop_strike"),
@@ -801,11 +801,13 @@ def _flatten_positions_for_stop(session, user_id: str) -> None:
             raise HTTPException(status_code=409, detail=f"Cannot close {right or session.symbol} before a valid price is available")
         side = TradeSide.SELL if position.side == "LONG" else TradeSide.BUY
         trading_service.settle_wallet_for_trade(session, side, price, position.quantity, right=right, strike=strike, expiry=expiry)
+        from app.services.execution_analytics import snapshot
         trading_service.record_trade(
             session.session_id,
             side,
             price=price,
             timestamp=timestamp,
+            analytics=snapshot(session, quantity=position.quantity, price=price, side=side.value, exit_method="SESSION_CLOSE"),
             symbol=session.symbol,
             instrument_type="options" if right else session.instrument_type,
             strike=strike,

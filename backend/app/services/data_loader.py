@@ -129,7 +129,10 @@ def validate_and_fill_gaps(df: pd.DataFrame, date: str, partial: bool = False) -
         )
 
     full_index = pd.date_range(start=market_open, end=end_ts, freq="1s")
+    observed = df["observed"].reindex(full_index).fillna(False).astype(bool) if "observed" in df else None
     df = df.reindex(full_index).ffill().bfill()
+    if observed is not None:
+        df["observed"] = observed
     return df
 
 

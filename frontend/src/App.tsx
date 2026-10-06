@@ -1560,6 +1560,7 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
       lock_profit_is_pct: (opts.lockProfitIsPct as boolean) ?? false,
       entry_sl_price: opts.entry_sl_price as number | undefined,
       underlying_sl_price: opts.underlyingSlPrice as number | undefined,
+      underlying_stoploss_size: opts.underlyingStoplossSize as 'full' | 'half' | undefined,
     })
     setRunningStrategies(prev => [...prev, resp])
     strategySyncVersionRef.current++
@@ -1765,18 +1766,15 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
           submenu: (['half', 'full'] as const).map(size => ({ label: size === 'half' ? 'Half' : 'Full', onClick: () => { api.startStrategy({ session_id: sim.sessionId!, strategy_type: 'UnderlyingTargetProfit', target_profit_value: price, target_profit_size: size, right: targetRight }).then(resp => { strategySyncVersionRef.current++; setRunningStrategies(prev => [...prev, resp]) }).catch(() => {}) } })),
         })
       }
-      stratActions.push(
-        {
-          label: 'Underlying SL',
-          onClick: () => {
-            api.startStrategy({
-              session_id: sim.sessionId!,
-              strategy_type: 'UnderlyingStoploss',
-              underlying_sl_price: price,
-            }).then(resp => { strategySyncVersionRef.current++; setRunningStrategies(prev => [...prev, resp]) }).catch(() => {})
+      for (const targetRight of (['CE', 'PE'] as const)) {
+        if ((targetRight === 'CE' ? sim.positionCE : sim.positionPE).side === 'FLAT') continue
+        stratActions.push({ label: `Underlying SL (${targetRight})`, submenu: (['half', 'full'] as const).map(size => ({
+          label: size === 'half' ? 'Half' : 'Full', onClick: () => {
+            api.startStrategy({ session_id: sim.sessionId!, strategy_type: 'UnderlyingStoploss', underlying_sl_price: price,
+              underlying_stoploss_size: size, right: targetRight }).then(resp => { strategySyncVersionRef.current++; setRunningStrategies(prev => [...prev, resp]) }).catch(() => {})
           }
-        },
-      )
+        })) })
+      }
     }
 
     actions.push({ label: 'Start strategy', submenu: stratActions })

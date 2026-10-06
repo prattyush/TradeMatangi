@@ -337,6 +337,7 @@ async def _place_order_locked(req: PlaceOrderRequest):
         if req.entry_sl_price <= 0 or (req.side == TradeSide.BUY and req.entry_sl_price >= entry) or (req.side == TradeSide.SELL and req.entry_sl_price <= entry):
             raise HTTPException(status_code=400, detail="Long stop must be below entry; short stop must be above entry")
 
+    sizing_stop = req.entry_sl_price
     # Resolve quantity: either from funds_ratio_pct (FundsRatio mode) or explicit quantity
     if req.funds_ratio_pct is not None:
         if req.funds_ratio_pct <= 0 or req.funds_ratio_pct > 1:
@@ -388,6 +389,7 @@ async def _place_order_locked(req: PlaceOrderRequest):
             else:
                 sl_price = entry_price * (1 + default_sl_pct)
 
+        sizing_stop = sl_price
         try:
             current_wallet = _wallet_balance_for_session(session)
             quantity = order_service.compute_risk_ratio_quantity(
@@ -433,6 +435,10 @@ async def _place_order_locked(req: PlaceOrderRequest):
             if blocked:
                 raise HTTPException(status_code=403, detail=reason)
 
+    from app.services.execution_analytics import from_request
+    sizing_price = req.trigger_price if req.order_type in (OrderType.TARGET, OrderType.STOPLOSS) else req.limit_price
+    analytics = from_request(session, req, sum(qty_chunks), float(sizing_price or 0), order_margin_rate, sizing_stop=sizing_stop)
+
     try:
         order = order_service.place_order(
             session_id=req.session_id,
@@ -458,6 +464,7 @@ async def _place_order_locked(req: PlaceOrderRequest):
             quote_timestamp=req.quote_timestamp,
             quote_source=req.quote_source,
             market_order=req.market_order,
+            analytics=analytics,
             wallet_ledger_id=_reservation_ledger_id(session),
             wallet_ledger_kind=_ledger_kind(session),
         )
@@ -536,6 +543,7 @@ async def _place_order_locked(req: PlaceOrderRequest):
                     margin_rate=order_margin_rate,
                     source=_desktop_order_source(session),
                     market_order=req.market_order,
+            analytics=analytics,
                     quote_price=req.quote_price,
                     wallet_ledger_id=_reservation_ledger_id(session),
                     wallet_ledger_kind=_ledger_kind(session),
