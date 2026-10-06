@@ -188,7 +188,8 @@ class KotakFeedBridge:
 
     def _observe_raw_frame(self, raw):
         self._check_auth_frame(raw)
-        from app.services.kotak_cancel_audit import record
+        from app.services.kotak_cancel_audit import record, record_event
+        record_event(raw)
         record(raw)
 
     def _check_auth_frame(self, raw):

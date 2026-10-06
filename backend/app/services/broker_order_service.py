@@ -67,11 +67,14 @@ async def sync_order_edit_async(session, order: Order, new_order_type: OrderType
         raise KotakError(f"Broker rejected order edit: {exc}") from exc
 
 
-async def persist_order_async(order):
+async def persist_order_async(order, *, strict=False):
     """Persist copies off-loop and reconcile fills received during the write."""
     while True:
         snapshot = order.model_copy(deep=True)
-        await asyncio.to_thread(order_service._write_order_to_db, snapshot)
+        if strict:
+            await asyncio.to_thread(order_service._write_order_to_db, snapshot, strict=True)
+        else:
+            await asyncio.to_thread(order_service._write_order_to_db, snapshot)
         current = order_service.get_order(order.session_id, order.order_id)
         if current is None or current.model_dump() == snapshot.model_dump():
             return
@@ -79,6 +82,9 @@ async def persist_order_async(order):
 
 
 async def convert_order_async(session, order, new_type, price=None):
+    if session.session_type == "real" and order.kotak_order_id and new_type in (OrderType.LIMIT, OrderType.STOPLOSS) and new_type != order.order_type:
+        from app.services.broker_conversion import start
+        return await start(session, order, new_type, price)
     candidate = order.model_copy(deep=True)
     if new_type == candidate.order_type:
         if price is not None:
@@ -157,6 +163,11 @@ def sync_order_edit(session, order: Order, new_order_type: OrderType, *, reprice
 
 
 def convert_order(session, order, new_type, price=None):
+    if session.session_type == "real" and order.kotak_order_id and new_type in (OrderType.LIMIT, OrderType.STOPLOSS) and new_type != order.order_type:
+        # Legacy strategy callers already run on the application loop. Schedule the
+        # shared worker and keep the confirmed state until its event arrives.
+        from app.services.broker_conversion import enqueue
+        return enqueue(session, order, new_type, price)
     # Preview prices without changing the cached order or its wallet reservation.
     candidate = order.model_copy(deep=True)
     if new_type == candidate.order_type:
@@ -192,6 +203,8 @@ def convert_order(session, order, new_type, price=None):
 
 def register_callbacks(session, order, broker, loop):
     """One cumulative-fill handler for entry, exit and imported broker orders."""
+    from app.services.broker_position_events import register as register_position_events
+    register_position_events(session, broker, loop)
     import json
     from app.models.schemas import OrderStatus
     from app.services import trading, real_broker_state
@@ -280,6 +293,9 @@ def register_callbacks(session, order, broker, loop):
             return
         current = order_service.get_order(session.session_id, order.order_id)
         if current is None or current.kotak_order_id != k_id or current.kotak_fill_confirmed or current.status == OrderStatus.CANCELLED:
+            return
+        if current.broker_conversion and current.broker_conversion.get("state") in ("cancelling", "replacing"):
+            # Conversion worker observes cancellation; fills still use the ordinary handler.
             return
         if current.reserved_amount:
             order_service._credit_reservation(current, current.reserved_amount, session.date)

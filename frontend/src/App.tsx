@@ -268,6 +268,8 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
   useEffect(() => setLiveFeed(null), [sim.sessionId])
   const [brokerOrdersSnapshot, setBrokerOrdersSnapshot] = useState<{ sessionId: string; orders: BrokerOrder[] } | null>(null)
   const [brokerError, setBrokerError] = useState<string | null>(null)
+  const [conversionNotices, setConversionNotices] = useState<Record<string, string>>({})
+  useEffect(() => setConversionNotices({}), [sim.sessionId])
   const [protectionRecovery, setProtectionRecovery] = useState<RecoveryNotices>({})
   useEffect(() => { setProtectionRecovery({}) }, [sim.sessionId])
   const [isRealTradingUser, setIsRealTradingUser] = useState(false)
@@ -1374,7 +1376,7 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
       // Kotak rejected a forwarded order — remove it from open orders and credit wallet back
       sim.handleOrderCancelled(event.order_id as string)
     } else if (event.type === 'order_converted') {
-      sim.handleOrderConverted(event.order_id as string, event.new_order_type as string, event.trigger_price as number, event.limit_price as number, event.is_stoploss as boolean)
+      sim.handleOrderConverted(event.order_id as string, event.new_order_type as string, event.trigger_price as number, event.limit_price as number, event.is_stoploss as boolean, event.broker_conversion as import('./services/api').Order['broker_conversion'])
     } else if (event.type === 'strategy_completed') {
       strategySyncVersionRef.current++
       setRunningStrategies(prev => prev.filter(s => s.strategy_id !== (event.strategy_id as string)))
@@ -1397,6 +1399,14 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
       }
     } else if (event.type === 'protection_recovery') {
       setProtectionRecovery(previous => applyRecoveryEvent(previous, event))
+    } else if (event.type === 'broker_conversion_status') {
+      const operation = String(event.operation_id ?? '')
+      if (operation) setConversionNotices(previous => {
+        const next = { ...previous }
+        if (event.state === 'confirmed') delete next[operation]
+        else if (event.original_cancelled) next[operation] = String(event.message ?? 'Original exit cancelled; replacement is unconfirmed')
+        return next
+      })
     } else if (event.type === 'broker_error') {
       setBrokerError(event.message as string)
     } else if (event.type === 'new_trade') {
@@ -1700,7 +1710,7 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
           const ordersToConvert = sim.openOrders.filter(o => !o.is_stoploss && o.status === 'PENDING' && (!right || o.right === right))
           ordersToConvert.forEach(o => {
             api.convertOrder(sim.sessionId!, o.order_id, 'LIMIT', price).then(updated => {
-              sim.handleOrderConverted(updated.order_id, updated.order_type, updated.trigger_price, updated.limit_price, updated.is_stoploss)
+              sim.bulkUpdateOrders([updated])
             }).catch(() => {})
           })
         }
@@ -2654,6 +2664,11 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
           Exit protection · {key.split('|').join(' ')} · {recovery.message}
         </div>
       ))}
+      {Object.entries(conversionNotices).map(([operation, message]) => (
+        <div key={operation} role="status" style={{ padding: '8px 12px', color: '#d29922', background: '#272112', fontSize: 12 }}>
+          Kotak exit conversion: {message}
+        </div>
+      ))}
       {brokerError && (
         <div style={{
           background: '#3d1c1c', border: '1px solid #f85149', color: '#f85149',
@@ -2822,7 +2837,10 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
               onCancelOrder={sim.cancelOrder}
               onConvertOrder={async (orderId, newOrderType, price) => {
                 const updated = await api.convertOrder(sim.sessionId!, orderId, newOrderType, price)
-                sim.handleOrderConverted(updated.order_id, updated.order_type, updated.trigger_price, updated.limit_price, updated.is_stoploss)
+                sim.bulkUpdateOrders([updated])
+                if (updated.broker_conversion?.state === 'failed' || updated.broker_conversion?.state === 'unknown') {
+                  throw new Error(updated.broker_conversion.message ?? 'Kotak has not confirmed conversion; original type retained')
+                }
               }}
               onUpdateOrder={(orderId, triggerPrice, limitPrice, quantity) =>
                 sim.updateOrder(orderId, triggerPrice, limitPrice, targetDeviationPct, quantity)

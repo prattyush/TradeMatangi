@@ -59,7 +59,7 @@ def expiry_date(value) -> str | None:
 
 def normalize_order(raw: dict) -> dict:
     side = str(raw.get("trnsTp") or raw.get("side") or "B").upper()
-    kind = str(raw.get("prcTp") or raw.get("order_type") or "L").upper()
+    kind = str(raw.get("prcTp") or raw.get("pt") or raw.get("order_type") or "L").upper()
     result = {
         "kotak_order_id": str(raw.get("nOrdNo") or raw.get("kotak_order_id") or ""),
         "status": str(raw.get("ordSt") or raw.get("status") or raw.get("stat") or "").strip().lower().replace("_", " "),
@@ -68,12 +68,12 @@ def normalize_order(raw: dict) -> dict:
         "symbol": str(raw.get("trdSym") or raw.get("symbol") or raw.get("sym") or "").strip(),
         "underlying": str(raw.get("sym") or raw.get("underlying") or "").strip(),
         "exchange": str(raw.get("exSeg") or raw.get("exchange") or "").strip().lower(),
-        "quantity": int(number(raw.get("qty", raw.get("quantity")))),
+        "quantity": int(number(raw.get("qty", raw.get("qt", raw.get("quantity"))))),
         "filled_quantity": int(number(raw.get("fldQty") or raw.get("flQty") or raw.get("filled_quantity"))),
-        "limit_price": number(raw.get("prc", raw.get("limit_price"))),
-        "trigger_price": number(raw.get("trgPrc", raw.get("trigger_price"))),
+        "limit_price": number(raw.get("prc", raw.get("pr", raw.get("limit_price")))),
+        "trigger_price": number(raw.get("trgPrc", raw.get("tp", raw.get("trigger_price")))),
         "filled_price": number(raw.get("avgPrc") or raw.get("flPrc") or raw.get("filled_price")),
-        "order_type": {"L": "LIMIT", "MKT": "MARKET"}.get(kind, kind),
+        "order_type": {"L": "LIMIT", "LMT": "LIMIT", "LIMIT": "LIMIT", "SL-L": "SL", "MKT": "MARKET"}.get(kind, kind),
         "order_time": str(raw.get("ordDtTm") or raw.get("ordEntTm") or raw.get("order_time") or ""),
         "product": str(raw.get("prod") or raw.get("product") or "MIS"),
         "tag": str(raw.get("GuiOrdId") or raw.get("guiOrderId") or raw.get("guiOrdId") or raw.get("ig") or raw.get("tag") or raw.get("remarks") or raw.get("rmk") or raw.get("userTag") or ""),

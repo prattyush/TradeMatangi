@@ -68,7 +68,7 @@ interface Props {
   onUpdateStrategySize?: (strategyId: string, size: 'full' | 'half') => Promise<void>
   onUpdateStrategyPrice?: (strategyId: string, price: number) => Promise<void>
   onBulkUpdateSL?: (triggerPrice: number, right: string | null) => Promise<{ updated: number }>
-  onBulkConvert?: (newOrderType: 'TARGET' | 'LIMIT' | 'STOPLOSS', right: string | null, price?: number) => Promise<{ converted: number }>
+  onBulkConvert?: (newOrderType: 'TARGET' | 'LIMIT' | 'STOPLOSS', right: string | null, price?: number) => Promise<{ converted: number; results?: { order_id: string; state: string; message?: string | null }[] }>
   onRequestLpPick?: () => void
   injectedLpPrice?: number | null
   onGuardRailBlocked?: (type: 'BLOCK' | 'COOLDOWN' | 'BAN', reason: string) => void
@@ -555,7 +555,10 @@ export default function OrderPanel({
     try {
       const right = instrumentType === 'options' ? activeRight : null
       const p = parseFloat(bulkSLPrice)
-      await onBulkConvert(newType, right ?? null, !isNaN(p) && p > 0 ? p : undefined)
+      const result = await onBulkConvert(newType, right ?? null, !isNaN(p) && p > 0 ? p : undefined)
+      const pending = result.results?.filter(item => ['queued', 'modifying', 'cancelling', 'replacing', 'unknown'].includes(item.state)) ?? []
+      const failed = result.results?.filter(item => item.state === 'failed') ?? []
+      setStratError(result.results ? `${result.converted} confirmed, ${pending.length} pending, ${failed.length} failed${failed[0]?.message ? `: ${failed[0].message}` : ''}` : null)
     } catch (e) {
       setStratError(e instanceof Error ? e.message : 'Failed to bulk convert')
     } finally {
@@ -1547,6 +1550,7 @@ export default function OrderPanel({
             {openOrders.map(order => {
               const isEditing = editingOrderId === order.order_id
               const displayPrice = order.order_type === 'LIMIT' ? order.limit_price : order.trigger_price
+              const conversionPending = ['queued', 'modifying', 'cancelling', 'replacing', 'unknown'].includes(order.broker_conversion?.state ?? '')
 
               return (
                 <div
@@ -1558,6 +1562,12 @@ export default function OrderPanel({
                     overflow: 'hidden',
                   }}
                 >
+                  {order.broker_conversion && order.broker_conversion.state !== 'confirmed' && (
+                    <div role="status" style={{ padding: '4px 8px', color: '#d29922', fontSize: 10 }}>
+                      {conversionPending ? `Conversion to ${order.broker_conversion.requested_type ?? 'requested type'} pending Kotak confirmation` : 'Conversion failed'}
+                      {order.broker_conversion.message ? `: ${order.broker_conversion.message}` : ''}
+                    </div>
+                  )}
                   {/* Order summary row */}
                   <div
                     style={{
@@ -1565,7 +1575,7 @@ export default function OrderPanel({
                       padding: '4px 8px', cursor: isActive ? 'pointer' : 'default',
                       gap: 4,
                     }}
-                    onClick={() => isActive && !isEditing && startEdit(order)}
+                    onClick={() => isActive && !isEditing && !['queued', 'modifying', 'cancelling', 'replacing', 'unknown'].includes(order.broker_conversion?.state ?? '') && startEdit(order)}
                     title={isActive ? 'Click to edit price' : undefined}
                   >
                     <span style={{

@@ -2014,7 +2014,12 @@ async def _run_real_session(session: SimulationSession) -> None:
     session.state = SimulationState.RUNNING
     from app.services.protection_recovery import resume
     await resume(session)
+    from app.services.broker_conversion import resume as resume_conversions
+    await resume_conversions(session)
     loop = asyncio.get_running_loop()
+    from app.services.kotak_service import get_service as get_position_broker
+    from app.services.broker_position_events import register as register_position_events
+    register_position_events(session, get_position_broker(), loop)
 
     start_event = {
         "type": "session_started",
@@ -2670,6 +2675,12 @@ def stop_session(session: SimulationSession, *, preserve_trading_state: bool = F
     if lease_task:
         if lease_task is not current_task:
             lease_task.cancel()
+    if session.session_type == "real":
+        from app.services.kotak_service import get_service as get_event_broker
+        from app.services.broker_position_events import stop as stop_position_events
+        from app.services.broker_conversion import stop as stop_conversions
+        stop_position_events(session, get_event_broker())
+        stop_conversions(session)
     session.state = SimulationState.ENDED
     session.resume_event.set()  # unblock if paused
     session.step_event.set()    # unblock if waiting for next-bar (stepwise)
