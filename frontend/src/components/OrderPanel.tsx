@@ -182,7 +182,7 @@ export default function OrderPanel({
   const deviation = targetDeviationPct  // fraction
   const slCoveredQty = openOrders
     .filter(o => isClosingOrderForPosition(o, position, activeRight) && (o.is_stoploss || o.order_type === 'LIMIT'))
-    .reduce((sum, o) => sum + o.quantity, 0)
+    .reduce((sum, o) => sum + Math.max(0, o.quantity - (o.broker_filled_quantity ?? 0)), 0)
   const slAvailableQty = Math.max(0, position.quantity - slCoveredQty)
 
   // When SL tab selected, lock side to opposite of position; default qty = uncovered portion
@@ -386,9 +386,9 @@ export default function OrderPanel({
     const quantityChanged = quantityEditable && nextQty !== order.quantity
     const coveredElsewhere = openOrders
       .filter(item => item.order_id !== order.order_id && isClosingOrderForPosition(item, position, activeRight) && (item.is_stoploss || item.order_type === 'LIMIT'))
-      .reduce((sum, item) => sum + item.quantity, 0)
-    const maxQty = Math.max(0, position.quantity - coveredElsewhere)
-    if (quantityChanged && (!Number.isInteger(nextQty) || nextQty < slQtyMin || nextQty > maxQty || (instrumentType === 'options' && nextQty % slQtyStep !== 0))) {
+      .reduce((sum, item) => sum + Math.max(0, item.quantity - (item.broker_filled_quantity ?? 0)), 0)
+    const maxQty = Math.max(0, position.quantity - coveredElsewhere) + (order.broker_filled_quantity ?? 0)
+    if (quantityChanged && (!Number.isInteger(nextQty) || nextQty < slQtyMin || nextQty <= (order.broker_filled_quantity ?? 0) || nextQty > maxQty || (instrumentType === 'options' && nextQty % slQtyStep !== 0))) {
       setEditError(`SL quantity must be ${slQtyMin}–${maxQty}${instrumentType === 'options' ? ` in lots of ${slQtyStep}` : ''}`)
       return
     }
@@ -1660,8 +1660,8 @@ export default function OrderPanel({
                       {(order.is_stoploss || order.order_type === 'STOPLOSS') && (() => {
                         const coveredElsewhere = openOrders
                           .filter(item => item.order_id !== order.order_id && isClosingOrderForPosition(item, position, activeRight) && (item.is_stoploss || item.order_type === 'LIMIT'))
-                          .reduce((sum, item) => sum + item.quantity, 0)
-                        const maxQty = Math.max(0, position.quantity - coveredElsewhere)
+                          .reduce((sum, item) => sum + Math.max(0, item.quantity - (item.broker_filled_quantity ?? 0)), 0)
+                        const maxQty = Math.max(0, position.quantity - coveredElsewhere) + (order.broker_filled_quantity ?? 0)
                         return <label style={{ display: 'flex', alignItems: 'center', gap: 6, color: '#8b949e', fontSize: 10 }}>
                           SL Qty
                           <input type="number" min={slQtyMin} max={maxQty} step={slQtyStep} value={editQty} onChange={e => setEditQty(e.target.value)} style={{ width: 90, padding: '4px 6px', background: '#0d1117', border: '1px solid #388bfd', borderRadius: 4, color: '#e6edf3', fontSize: 12 }} />

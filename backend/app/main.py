@@ -66,6 +66,8 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
+        from app.services.protection_recovery import shutdown
+        await shutdown()
         if diagnostics:
             diagnostics.cancel()
             try:

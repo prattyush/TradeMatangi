@@ -23,6 +23,8 @@ def broker(monkeypatch):
     def respond(request):
         requests.append(request)
         result = responses.pop(0) if responses else {"stat": "Ok", "stCode": 200, "nOrdNo": "K1"}
+        if isinstance(result, BaseException):
+            raise result
         return httpx.Response(200, json=result)
     client = NeoAPI(consumer_key="test-consumer", transport=httpx.MockTransport(respond))
     client.configuration.edit_token = "test-trade"
@@ -31,6 +33,7 @@ def broker(monkeypatch):
     client.configuration.data_center = "gdc"
     service = ks.KotakNeoService()
     service._client, service._authenticated = client, True
+    monkeypatch.setattr(service, "account_identity", lambda: "mock-account")
     yield service, client, requests, responses
     service.shutdown()
 
@@ -582,3 +585,11 @@ async def test_real_sdk_rejected_order_session_stops_background_loop(broker, mon
         await asyncio.wait_for(stopped(), timeout=4)
         assert len(connections) == 1
         assert service._client is None and service._bridge is None
+
+
+def test_v3_wrapped_transport_exception_is_not_an_exchange_rejection(broker):
+    service, _, _, responses = broker
+    responses.append(httpx.ReadTimeout("Lost response after broker request"))
+    with pytest.raises(ks.KotakError) as failure:
+        service.place_sl_order("RELIND", "S", 1, 90, 89)
+    assert not isinstance(failure.value, ks.KotakOrderRejected)

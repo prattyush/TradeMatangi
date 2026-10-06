@@ -30,3 +30,21 @@ def sample_df_ist():
         "close": base + rng.uniform(-5, 5, 60),
     }
     return pd.DataFrame(data, index=idx)
+
+
+@pytest.fixture(autouse=True)
+def isolated_protection_journal(monkeypatch):
+    """New protection/cancel bookkeeping must never contact a real database."""
+    from app.services import protection_journal, protection_recovery
+    from tests.helpers.protection_memory_journal import MemoryJournal
+    memory = MemoryJournal()
+    monkeypatch.setattr(protection_journal, 'store', memory)
+    protection_recovery._tasks.clear()
+    protection_recovery._scope_locks.clear()
+    protection_recovery._pending_events.clear()
+    protection_recovery._closing = False
+    yield memory
+    protection_recovery._tasks.clear()
+    protection_recovery._scope_locks.clear()
+    protection_recovery._pending_events.clear()
+    protection_recovery._closing = False

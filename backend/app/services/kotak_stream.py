@@ -140,7 +140,7 @@ class KotakFeedBridge:
                 ws = factory(max_connect_retries=0, max_reconnect_attempts=0)
                 # The SDK consumes connection control frames instead of yielding
                 # them. Observe rejected sessions before that filtering happens.
-                ws.on_raw = self._check_auth_frame
+                ws.on_raw = self._observe_raw_frame
                 await ws.connect()
                 if kind == "market":
                     self._market_ws = ws
@@ -185,6 +185,11 @@ class KotakFeedBridge:
                 if kind == "market":
                     self._market_ready.clear()
                     self._market_error = None
+
+    def _observe_raw_frame(self, raw):
+        self._check_auth_frame(raw)
+        from app.services.kotak_cancel_audit import record
+        record(raw)
 
     def _check_auth_frame(self, raw):
         if self._closed or not isinstance(raw, (str, bytes, bytearray)):

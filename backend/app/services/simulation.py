@@ -2012,6 +2012,8 @@ async def _run_real_session(session: SimulationSession) -> None:
     from app.services.historical_data_service import detach_historical_operation, historical_operation
     detach_historical_operation(mode="live")
     session.state = SimulationState.RUNNING
+    from app.services.protection_recovery import resume
+    await resume(session)
     loop = asyncio.get_running_loop()
 
     start_event = {
@@ -2122,6 +2124,9 @@ async def _run_real_session(session: SimulationSession) -> None:
             watermarks[instrument_id] = int(payload["time"])
             session._live_watermarks = watermarks
             tick_right = payload.get("right")
+            quotes = getattr(session, "_protection_quotes", {})
+            quotes[(tick_right, payload.get("strike"), payload.get("expiry"))] = {**payload, "received_at": time.time()}
+            session._protection_quotes = quotes
             if tick_right == "CE":
                 session.last_price_ce = payload["close"]
             elif tick_right == "PE":

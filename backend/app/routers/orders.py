@@ -82,7 +82,7 @@ def _stoploss_available_quantity(
         return 0, 0
     exit_side = TradeSide.SELL if position.side == "LONG" else TradeSide.BUY
     covered = sum(
-        order.quantity
+        max(0, order.quantity - order.broker_filled_quantity)
         for order in order_service.get_open_orders(session.session_id)
         if order.order_id != exclude_order_id
         and order.status == order_service.OrderStatus.PENDING
@@ -115,10 +115,13 @@ def _convert_with_broker(session, order, new_type, price=None):
 
 
 def _session_edit_lock(session):
-    lock = getattr(session, "website_order_edit_lock", None)
-    if lock is None:
-        lock = session.website_order_edit_lock = asyncio.Lock()
-    return lock
+    from app.services.protection_recovery import session_lock
+    return session_lock(session)
+
+
+def _require_confirmed_recovery(order):
+    if order.recovery_state in ("prepared", "submitting", "unknown"):
+        raise HTTPException(status_code=409, detail="Recovery submission is unconfirmed; refresh broker state before changing it")
 
 
 async def _convert_with_broker_async(session, order, new_type, price=None):
@@ -129,6 +132,7 @@ async def _convert_with_broker_async(session, order, new_type, price=None):
             current = order_service.get_order(session.session_id, order.order_id)
             if current is None or current.status != order_service.OrderStatus.PENDING:
                 raise HTTPException(status_code=404, detail="Order not found or not pending")
+            _require_confirmed_recovery(current)
             return await convert_order_async(session, current, new_type, price)
     except KotakError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
@@ -213,6 +217,14 @@ async def fill_missing_stoploss(req: MissingStoplossRequest, user_id: str = Depe
 
 @router.post("", response_model=Order)
 async def place_order(req: PlaceOrderRequest):
+    session = sim_svc.get_session(req.session_id)
+    if session and session.session_type == "real":
+        async with _session_edit_lock(session):
+            return await _place_order_locked(req)
+    return await _place_order_locked(req)
+
+
+async def _place_order_locked(req: PlaceOrderRequest):
     session = sim_svc.get_session(req.session_id)
     if session and session.session_type == "real" and getattr(session, "broker_refresh_events", None) is not None:
         raise HTTPException(status_code=409, detail="Broker refresh is in progress; retry shortly")
@@ -579,10 +591,11 @@ async def _cancel_order_locked(order_id, session_id, session):
     existing = order_service.get_order(session_id, order_id)
     if existing is None or existing.status != order_service.OrderStatus.PENDING:
         raise HTTPException(status_code=404, detail="Order not found or already closed")
+    _require_confirmed_recovery(existing)
     if existing.kotak_order_id:
         try:
             from app.services.kotak_service import get_service as get_kotak
-            await asyncio.to_thread(get_kotak().cancel_order, existing.kotak_order_id)
+            await asyncio.to_thread(get_kotak().cancel_order, existing.kotak_order_id, initiator="user", purpose="user_cancel", context={"session_id": session_id, "order_id": order_id, "user_id": session.user_id})
         except Exception as exc:
             logger.warning("broker_order_cancel_failed order=%s: %s", order_id, exc)
             raise HTTPException(status_code=502, detail=f"Broker rejected cancellation: {exc}") from exc
@@ -695,6 +708,7 @@ async def _update_order_locked(session, order_id, req, session_id):
     existing = order_service.get_order(session_id, order_id)
     if existing is None or existing.status != order_service.OrderStatus.PENDING:
         raise HTTPException(status_code=404, detail="Order not found or not pending")
+    _require_confirmed_recovery(existing)
     if req.trigger_price is None and req.limit_price is None and req.quantity is None:
         raise HTTPException(status_code=400, detail="Provide trigger_price, limit_price, or quantity to update")
     if req.quantity is not None and req.quantity != existing.quantity:
@@ -706,7 +720,9 @@ async def _update_order_locked(session, order_id, req, session_id):
         available, position_quantity = _stoploss_available_quantity(
             session, existing.right, existing.strike, existing.expiry, exclude_order_id=order_id,
         )
-        if req.quantity > available:
+        if req.quantity <= existing.broker_filled_quantity:
+            raise HTTPException(status_code=400, detail="Stop-loss total quantity must exceed its already-filled quantity")
+        if req.quantity - existing.broker_filled_quantity > available:
             raise HTTPException(
                 status_code=400,
                 detail=f"Stop-loss quantity exceeds available uncovered position ({available} of {position_quantity})",

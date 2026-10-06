@@ -97,6 +97,10 @@ class KotakError(Exception):
     """Raised when Kotak Neo API returns an error or is misconfigured."""
 
 
+class KotakOrderRejected(KotakError):
+    """An explicit negative broker response, not an ambiguous transport failure."""
+
+
 # ---------------------------------------------------------------------------
 # Instrument master cache helpers
 # ---------------------------------------------------------------------------
@@ -402,6 +406,8 @@ class KotakNeoService:
         # kotak_order_id → (callback, asyncio_loop)
         self._fill_callbacks: dict[str, tuple[Callable, Any]] = {}
         self._reject_callbacks: dict[str, tuple[Callable, Any]] = {}
+        self._cancel_callbacks: dict[str, tuple[Callable, Any]] = {}
+        self._pending_cancellations: dict[str, dict] = {}
         # Fills that arrived before register_fill_callback was called (race condition
         # for very fast fills on liquid instruments).
         # kotak_order_id → (side, qty, price)
@@ -532,6 +538,7 @@ class KotakNeoService:
         qty: int,
         trigger_price: float,
         limit_price: float,
+        tag: str | None = None,
     ) -> str:
         """Place a stop-loss limit order. Returns the Kotak order ID."""
         client = self._get_client()
@@ -549,7 +556,7 @@ class KotakNeoService:
                 amo="NO",
                 disclosed_quantity="0",
                 trigger_price=str(_round_to_tick(trigger_price)),
-                tag=None,
+                tag=tag,
             )
             return self._extract_order_id(resp)
         except KotakError:
@@ -601,6 +608,7 @@ class KotakNeoService:
         qty: int,
         trigger_price: float,
         limit_price: float,
+        tag: str | None = None,
     ) -> str:
         """Place an SL limit order on an options contract. Returns the Kotak order ID."""
         client = self._get_client()
@@ -618,7 +626,7 @@ class KotakNeoService:
                 amo="NO",
                 disclosed_quantity="0",
                 trigger_price=str(_round_to_tick(trigger_price)),
-                tag=None,
+                tag=tag,
             )
             return self._extract_order_id(resp)
         except KotakError:
@@ -683,14 +691,24 @@ class KotakNeoService:
         except Exception as exc:
             raise KotakError(str(exc)) from exc
 
-    def cancel_order(self, kotak_order_id: str) -> None:
-        """Cancel an open order on Kotak."""
+    def cancel_order(self, kotak_order_id: str, *, initiator="system", purpose="legacy", context=None) -> None:
+        """Journal intent before the broker call, including fast/late terminal events."""
         client = self._get_client()
+        from app.services import protection_journal as journal
+        account = self.account_identity()
+        key, intent = journal.begin_cancel(account, kotak_order_id, initiator, purpose, context)
+        logger.info("broker_cancel_requested order=%s request=%s initiator=%s purpose=%s", kotak_order_id, intent["request_id"], initiator, purpose)
         try:
             resp = client.cancel_order(order_id=kotak_order_id)
             self._check_order_ack(resp)
         except Exception as exc:
+            # A transport exception is ambiguous; a negative acknowledgement is definitive.
+            state = "failed" if isinstance(exc, KotakOrderRejected) else "unknown"
+            journal.finish_cancel(key, intent, state, str(exc))
+            logger.warning("broker_cancel_failed order=%s request=%s state=%s", kotak_order_id, intent["request_id"], state)
             raise KotakError(str(exc)) from exc
+        journal.finish_cancel(key, intent, "acknowledged")
+        logger.info("broker_cancel_acknowledged order=%s request=%s", kotak_order_id, intent["request_id"])
 
     # ── Account data ─────────────────────────────────────────────────────────
 
@@ -755,7 +773,10 @@ class KotakNeoService:
 
     def get_order_history(self) -> list[dict]:
         try:
-            rows = [self._normalize_order(row) for row in self._report("order_report")]
+            raw = self._report("order_report")
+            from app.services.kotak_cancel_audit import record
+            record({"type": "order", "data": raw}, stage="report")
+            rows = [self._normalize_order(row) for row in raw]
             if any(not row["kotak_order_id"] or not row["symbol"] or not row["status"] or row["quantity"] <= 0 for row in rows):
                 raise KotakError("Malformed Kotak order report identity or quantity")
             return rows
@@ -834,6 +855,20 @@ class KotakNeoService:
     def deregister_reject_callback(self, kotak_order_id: str) -> None:
         with self._lock:
             self._reject_callbacks.pop(kotak_order_id, None)
+
+    def register_cancel_callback(self, kotak_order_id: str, callback: Callable, loop: Any) -> None:
+        with self._lock:
+            pending = self._pending_cancellations.pop(kotak_order_id, None)
+            if pending is not None:
+                self._pending_rejects.pop(kotak_order_id, None)
+            if kotak_order_id not in self._terminal_orders:
+                self._cancel_callbacks[kotak_order_id] = (callback, loop)
+        if pending is not None:
+            loop.call_soon_threadsafe(callback, kotak_order_id, pending)
+
+    def deregister_cancel_callback(self, kotak_order_id: str) -> None:
+        with self._lock:
+            self._cancel_callbacks.pop(kotak_order_id, None)
 
     # ── Market data callback (used by KotakBroadcaster) ──────────────────────
 
@@ -934,84 +969,80 @@ class KotakNeoService:
             for order_data in raw_orders:
                 if not isinstance(order_data, dict):
                     continue
-
-                order_id = str(order_data.get("nOrdNo") or "")
-                if not order_id:
-                    continue
-                with self._lock:
-                    if order_id in self._terminal_orders:
-                        continue
-                order_status = str(order_data.get("ordSt", "")).lower()
-
-                cumulative_qty = int(float(order_data.get("fldQty") or order_data.get("flQty") or 0))
-                if order_status in ("complete", "filled") or cumulative_qty > 0:
-                    avg_prc = order_data.get("avgPrc", "0") or "0"
-                    qty_str = cumulative_qty or order_data.get("qty", "0") or "0"
-                    side_code = order_data.get("trnsTp")
-                    if side_code not in ("B", "BUY", "S", "SELL") or not order_id:
-                        continue
-
-                    filled_price = float(avg_prc)
-                    qty = int(qty_str)
-                    if qty <= 0 or not math.isfinite(filled_price) or filled_price <= 0:
-                        continue
-                    side = "BUY" if side_code in ("B", "BUY") else "SELL"
-
-                    with self._lock:
-                        entry = self._fill_callbacks.get(order_id)
-                        if order_status in ("complete", "filled"):
-                            self._fill_callbacks.pop(order_id, None)
-                            self._reject_callbacks.pop(order_id, None)
-                            self._terminal_orders.add(order_id)
-
-                    if entry is None:
-                        # Fill arrived before register_fill_callback was called.
-                        # Buffer it so the callback can dispatch immediately on registration.
-                        with self._lock:
-                            previous = self._pending_fills.get(order_id)
-                            if previous is None or qty > previous[1]:
-                                self._pending_fills[order_id] = (side, qty, filled_price)
-                        logger.info(
-                            "Kotak order %s filled with no callback registered — buffered "
-                            "(side=%s qty=%d price=%.2f)",
-                            order_id, side, qty, filled_price,
-                        )
-                    else:
-                        callback, loop = entry
-                        logger.info(
-                            "Kotak order %s filled: side=%s qty=%d price=%.2f",
-                            order_id, side, qty, filled_price,
-                        )
-                        loop.call_soon_threadsafe(callback, order_id, side, qty, filled_price)
-
-                if order_status in ("rejected", "cancelled"):
-                    reject_reason = (
-                        order_data.get("rejRsn")
-                        or order_data.get("rjRsn")
-                        or order_data.get("rejectionReason")
-                        or "Order rejected by exchange"
-                    )
-                    logger.warning(
-                        "Kotak order %s %s: %s", order_id, order_status, reject_reason
-                    )
-
-                    with self._lock:
-                        entry = self._reject_callbacks.get(order_id)
-                        self._fill_callbacks.pop(order_id, None)
-                        self._reject_callbacks.pop(order_id, None)
-                        self._terminal_orders.add(order_id)
-                        if entry is None:
-                            self._pending_rejects[order_id] = str(reject_reason)
-
-                    if entry is not None:
-                        r_callback, r_loop = entry
-                        r_loop.call_soon_threadsafe(r_callback, order_id, str(reject_reason))
-
-            else:
-                logger.debug("Kotak order %s status update: %s", order_id, order_status)
-
+                try:
+                    self._dispatch_order_record(order_data)
+                except (ValueError, TypeError, OverflowError) as exc:
+                    logger.warning("Kotak invalid order row order=%s: %s", order_data.get("nOrdNo"), exc)
         except Exception as exc:
             logger.warning("Kotak order feed message parsing error: %s", exc)
+
+    def _dispatch_order_record(self, order_data):
+        from app.services.kotak_cancel_audit import record
+        record({"type": "order", "data": order_data}, stage="parsed")
+        order_id = str(order_data.get("nOrdNo") or "")
+        if not order_id:
+            return
+        status = str(order_data.get("ordSt") or order_data.get("stat") or "").strip().lower().replace("_", " ")
+        if status == "canceled":
+            status = "cancelled"
+        with self._lock:
+            if order_id in self._terminal_orders:
+                return
+        try:
+            cumulative = int(float(order_data.get("fldQty") or order_data.get("flQty") or 0))
+        except (ValueError, OverflowError):
+            if status not in ("cancelled", "rejected"):
+                raise
+            cumulative = 0
+            logger.warning("Kotak terminal order %s has invalid fill quantity; broker reconciliation required", order_id)
+        if status in ("complete", "filled") or cumulative > 0:
+            side_code = order_data.get("trnsTp")
+            qty = cumulative or int(float(order_data.get("qty") or 0))
+            price = float(order_data.get("avgPrc") or order_data.get("flPrc") or 0)
+            if side_code in ("B", "BUY", "S", "SELL") and qty > 0 and math.isfinite(price) and price > 0:
+                side = "BUY" if side_code in ("B", "BUY") else "SELL"
+                with self._lock:
+                    entry = self._fill_callbacks.get(order_id)
+                    if status in ("complete", "filled"):
+                        self._fill_callbacks.pop(order_id, None)
+                        self._reject_callbacks.pop(order_id, None)
+                        self._cancel_callbacks.pop(order_id, None)
+                        self._terminal_orders.add(order_id)
+                    if entry is None:
+                        previous = self._pending_fills.get(order_id)
+                        if previous is None or qty > previous[1]:
+                            self._pending_fills[order_id] = (side, qty, price)
+                if entry:
+                    callback, loop = entry
+                    loop.call_soon_threadsafe(callback, order_id, side, qty, price)
+                logger.info("Kotak order %s filled: side=%s qty=%d price=%.2f", order_id, side, qty, price)
+        if status in ("rejected", "cancelled"):
+            reasons = [str(order_data.get(key) or "") for key in ("rejRsn", "rjRsn", "rejectionReason")]
+            reason = next((value for value in reasons if value.strip() not in ("", "--", "___")), next((value for value in reasons if value), ""))
+            metadata = {"status": status, "raw_reason": reason,
+                        "reason": reason if reason.strip() not in ("", "--", "___") else None,
+                        "raw": order_data, "received_at": time.time()}
+            with self._lock:
+                reject = self._reject_callbacks.pop(order_id, None)
+                cancel = self._cancel_callbacks.pop(order_id, None)
+                self._fill_callbacks.pop(order_id, None)
+                self._terminal_orders.add(order_id)
+                if status == "cancelled" and cancel is None:
+                    self._pending_cancellations[order_id] = metadata
+                    if len(self._pending_cancellations) > 1024:
+                        self._pending_cancellations.pop(next(iter(self._pending_cancellations)))
+                if reject is None and cancel is None:
+                    self._pending_rejects[order_id] = reason or "Order rejected by exchange"
+            logger.warning("Kotak order %s %s: %s", order_id, status, reason or "reason missing")
+            if status == "cancelled" and cancel:
+                callback, loop = cancel
+                loop.call_soon_threadsafe(callback, order_id, metadata)
+            elif reject:
+                callback, loop = reject
+                loop.call_soon_threadsafe(callback, order_id, reason or "Order rejected by exchange")
+        else:
+            logger.debug("Kotak order %s status update: %s", order_id, status)
+
 
     # ── Helpers ───────────────────────────────────────────────────────────────
 
@@ -1045,6 +1076,10 @@ class KotakNeoService:
             self._check_api_response(resp["data"])
         error = next((resp[k] for k in ("errMsg", "Error", "error", "Error Message", "fault")
                       if resp.get(k)), None)
+        if isinstance(error, BaseException):
+            # v3 catches transport/SDK exceptions and returns {"Error": exc}.
+            # That dictionary is not an exchange rejection and cannot justify resubmission.
+            raise KotakError(f"Kotak SDK/transport failure: {error}") from error
         status = str(resp.get("stat") or resp.get("status") or "").lower()
         code = str(resp.get("stCode", ""))
         http_status = str(resp.get("status_code") or resp.get("StatusCode") or "")
@@ -1054,13 +1089,15 @@ class KotakNeoService:
         if isinstance(error, dict):
             code = str(error.get("code", code))
             error = error.get("message") or "Broker error"
+        if http_status.isdigit() and int(http_status) >= 500:
+            raise KotakError(f"Kotak server response is ambiguous (HTTP {http_status})")
         expired = code in ("100008", "401", "403") or http_status in ("401", "403") or bool(resp.get("Error Message"))
         failed = status in ("not_ok", "not ok", "error", "failed", "failure") or (http_status.isdigit() and int(http_status) >= 400)
         if expired:
             self.shutdown()
-            raise KotakError("Kotak session expired (unauthorized) — please reconnect via Settings")
+            raise KotakOrderRejected("Kotak session expired (unauthorized) — please reconnect via Settings")
         if error or failed or (code and code not in ("200", "0") and status not in ("ok", "success")):
-            raise KotakError(f"Kotak API error: {error or resp.get('stat') or 'unknown error'} (code {code})")
+            raise KotakOrderRejected(f"Kotak API error: {error or resp.get('stat') or 'unknown error'} (code {code})")
 
     def _extract_order_id(self, resp: Any) -> str:
         """Parse Kotak place_order response to extract the order number."""
