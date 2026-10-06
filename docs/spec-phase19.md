@@ -5,7 +5,8 @@
 Unexpected-cancellation exit recovery is implemented on `dev` in commit
 `14daeb8` (**Recover missing Kotak exits after unexpected cancellations**).
 The additional FIFO average-entry and website P&L refresh repair is implemented
-and validated for delivery from `fix/phase19-kotak-fifo-refresh` into `dev`.
+and validated in [PR #595](https://github.com/prattyush/TradeMatangi/pull/595),
+from `fix/phase19-kotak-fifo-refresh` into `dev`.
 PR review/merge and live Kotak acceptance remain pending; merge/deployment to
 `main` remains manual. See **Kotak unexpected cancellation and FIFO refresh repair
 — 2026-10-06** at the end for requirements, changes and latest verification.
@@ -2308,5 +2309,6 @@ notices support investigation and restart handling. See
   protection restoration and restart/uncertain-ack behavior. After scale-in and
   partial exit, click Trade History Refresh and compare remaining FIFO entry and
   both P&L displays; confirm matching quotes and percentage against session capital.
-- Delivery branch: `fix/phase19-kotak-fifo-refresh`; PR target: `dev`. Review/merge
+- Delivery: [PR #595](https://github.com/prattyush/TradeMatangi/pull/595),
+  branch `fix/phase19-kotak-fifo-refresh`, target `dev`. Review/merge
   and manual production deployment remain pending.
