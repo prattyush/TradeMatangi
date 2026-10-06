@@ -109,7 +109,6 @@ const GUARDRAIL_MAXSIZE_MODE_KEY = 'guardrailMaxSizeMode'
 const GUARDRAIL_MAXSIZE_PCT_KEY = 'guardrailMaxSizePct'
 const GUARDRAIL_MAXSIZE_VALUE_KEY = 'guardrailMaxSizeValue'
 
-const ENTRY_AUTO_SL_ENABLED_KEY = 'entryAutoSlEnabled'
 const ENTRY_AUTO_SL_DELAY_KEY = 'entryAutoSlDelay'
 
 const MAX_PRICE_MODE_KEY = 'maxPriceMode'
@@ -164,10 +163,6 @@ export function loadGuardRailMaxSizePct(): number {
 export function loadGuardRailMaxSizeValue(): number {
   const v = parseFloat(localStorage.getItem(GUARDRAIL_MAXSIZE_VALUE_KEY) ?? '')
   return isNaN(v) || v < 0 ? 0 : v
-}
-
-export function loadEntryAutoSlEnabled(): boolean {
-  return localStorage.getItem(ENTRY_AUTO_SL_ENABLED_KEY) === 'true'
 }
 
 export function loadEntryAutoSlDelay(): number {
@@ -410,7 +405,6 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
   const [autoStartSnapshots, setAutoStartSnapshots] = useState(loadAutoStartEventSnapshots)
   const [, setStepwiseLabelingPopup] = useState(loadStepwiseLabelingPopupEnabled)
   const [labelingModeByType, setLabelingModeByType] = useState<LabelingModeByType>(loadLabelingModeByType)
-  const [entryAutoSlEnabled, setEntryAutoSlEnabled] = useState(loadEntryAutoSlEnabled)
   const [entryAutoSlDelay, setEntryAutoSlDelay] = useState(loadEntryAutoSlDelay)
   const [maxPriceMode, setMaxPriceMode] = useState(loadMaxPriceMode)
   const [maxPriceThresholdCE, setMaxPriceThresholdCE] = useState(loadMaxPriceThresholdCE)
@@ -542,10 +536,6 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
           setFineStructureShareEmails(s.fine_structure_share_emails)
         }
         // Sync entry auto-stoploss settings
-        if (s.entry_auto_sl_enabled != null) {
-          setEntryAutoSlEnabled(s.entry_auto_sl_enabled)
-          localStorage.setItem(ENTRY_AUTO_SL_ENABLED_KEY, String(s.entry_auto_sl_enabled))
-        }
         if (s.entry_auto_sl_delay_sec != null) {
           setEntryAutoSlDelay(s.entry_auto_sl_delay_sec)
           localStorage.setItem(ENTRY_AUTO_SL_DELAY_KEY, String(s.entry_auto_sl_delay_sec))
@@ -1519,63 +1509,32 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
                 ENTRY AUTO-STOPLOSS
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' }}>
-                  <div
-                    onClick={() => {
-                      const next = !entryAutoSlEnabled
-                      void savePreference({ entry_auto_sl_enabled: next }, () => {
-                        setEntryAutoSlEnabled(next)
-                        localStorage.setItem(ENTRY_AUTO_SL_ENABLED_KEY, String(next))
+                <div style={{ fontSize: 11, color: '#8b949e' }}>
+                  Entry stoploss protection is always enabled. Entries with an attached SL price are protected when they fill.
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span style={{ fontSize: 11, color: '#8b949e' }}>Real trading delay:</span>
+                  <input
+                    type="number"
+                    value={entryAutoSlDelay}
+                    min={1} max={30}
+                    onChange={e => {
+                      const v = Math.min(30, Math.max(1, parseInt(e.target.value) || 3))
+                      void savePreference({ entry_auto_sl_delay_sec: v }, () => {
+                        setEntryAutoSlDelay(v)
+                        localStorage.setItem(ENTRY_AUTO_SL_DELAY_KEY, String(v))
                       })
-                      if (!next) localStorage.removeItem(ENTRY_AUTO_SL_DELAY_KEY)
                     }}
                     style={{
-                      width: 36, height: 20, borderRadius: 10,
-                      background: entryAutoSlEnabled ? '#1f6feb' : '#30363d',
-                      position: 'relative', cursor: 'pointer', transition: 'background 0.15s',
-                      flexShrink: 0,
+                      width: 48, padding: '3px 6px', background: '#0d1117',
+                      border: '1px solid #30363d', borderRadius: 4,
+                      color: '#e6edf3', fontSize: 12, textAlign: 'center',
                     }}
-                  >
-                    <div style={{
-                      position: 'absolute', top: 2,
-                      left: entryAutoSlEnabled ? 18 : 2,
-                      width: 16, height: 16, borderRadius: '50%',
-                      background: '#e6edf3', transition: 'left 0.15s',
-                    }} />
-                  </div>
-                  <div>
-                    <div style={{ fontSize: 12, color: '#e6edf3' }}>Auto-Stoploss on Entry</div>
-                    <div style={{ fontSize: 11, color: '#484f58', marginTop: 2 }}>
-                      Automatically places a STOPLOSS order when any entry order (TARGET, LIMIT, MARKET, AutoStop) fills
-                    </div>
-                  </div>
-                </label>
-                {entryAutoSlEnabled && (
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginLeft: 46 }}>
-                    <span style={{ fontSize: 11, color: '#8b949e' }}>Real trading delay:</span>
-                    <input
-                      type="number"
-                      value={entryAutoSlDelay}
-                      min={1} max={30}
-                      onChange={e => {
-                        const v = Math.min(30, Math.max(1, parseInt(e.target.value) || 3))
-                        void savePreference({ entry_auto_sl_delay_sec: v }, () => {
-                          setEntryAutoSlDelay(v)
-                          localStorage.setItem(ENTRY_AUTO_SL_DELAY_KEY, String(v))
-                        })
-                      }}
-                      style={{
-                        width: 48, padding: '3px 6px', background: '#0d1117',
-                        border: '1px solid #30363d', borderRadius: 4,
-                        color: '#e6edf3', fontSize: 12, textAlign: 'center',
-                      }}
-                    />
-                    <span style={{ fontSize: 11, color: '#484f58' }}>seconds</span>
-                  </div>
-                )}
+                  />
+                  <span style={{ fontSize: 11, color: '#484f58' }}>seconds</span>
+                </div>
               </div>
             </div>
-
             {/* Right-Click SL Direction */}
             <div style={{ borderTop: '1px solid #21262d', paddingTop: 16 }}>
               <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 10, fontWeight: 600 }}>

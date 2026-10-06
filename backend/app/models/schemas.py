@@ -379,7 +379,7 @@ class UserSettingsResponse(BaseModel):
     analysis_price_source: str = "options"
     experimental_patterns_enabled: bool = False
     pattern_share_emails: str = ""
-    entry_auto_sl_enabled: bool = False
+    entry_auto_sl_enabled: bool = True  # compatibility field; entry protection is always enabled
     entry_auto_sl_delay_sec: int = 3
     max_price_mode: str = "otm"          # "otm" | "threshold"
     max_price_threshold_ce: float = 50.0

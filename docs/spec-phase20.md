@@ -300,3 +300,54 @@ Supporting Kite for Real Trading API's, all the their is feature parity with Kot
 ## Supporting Real Trading In Desktop Client
 Support Real Trading in Desktop Client, with same support as with Website Real Trading, like trade history refresh button and others.
 
+
+
+## Always-enabled entry protection follow-up — 2026-10-06
+
+The user observed two website Replay NIFTY option Market entries, submitted through
+right-click Use as SL with Risk %, filling without protective stops. Inspection
+and reproduction found the non-real website fill watcher consulting
+`entry_auto_sl_enabled`, default False; a disabled setting silently skipped the
+explicit attached stop. That gate predates Phase 20 (introduced in September;
+real-mode exemption in Phase 19), rather than originating in analytics changes.
+
+The final requested scope retires this enable switch from **both website and
+desktop settings** and keeps the existing enabled behavior for every user. Entry
+SL requests and AutoStop fallback protection are always processed on fills.
+Original price selection/AutoStop fallback and configured real-trading delay are
+retained. Risk sizing alone still does not become an attached-stop instruction;
+this change removes the account opt-out rather than inventing new entry-price rules.
+
+Backend compatibility responses report the legacy field as True. Stored False
+values and writes from older clients cannot disable protection; unrelated settings
+and the real-trading delay are preserved. No bulk account migration is needed.
+The website no longer reads the stale localStorage flag, and the desktop settings
+field catalogue no longer includes the enable toggle. Delay remains configurable.
+
+Regression coverage includes the reported September 15 replay path for both CE
+and PE: two risk-sized marketable LIMIT fills produce separate same-contract
+stoplosses with the exact selected stop prices and quantities; the SSE order events
+are present; another strike cannot fill them; a matching price crossing closes the
+position. Settings tests cover previously disabled users and older-client writes.
+Automated checks use synthetic replay prices and mocked broker/database paths;
+no real broker orders are submitted.
+
+Confirmed scope: website left-panel orders may open positions without an SL.
+Selecting Use as SL or attaching an explicit SL must always protect that filled
+entry. The unchanged AS/ASL fallback is 25% from fill price when those strategies
+have no supplied SL; it does not extend to ordinary entries without an SL.
+
+Validation: **1,697 backend tests passed / 2 existing failures** (the stale
+options-expiry assertion and missing `group_id` tab-restore fixture). **296 focused
+regressions**, **155 desktop/client Vitest checks**, **29 website Node checks**,
+both TypeScript checks and both production builds passed. Mocked browser
+acceptance verified both Trading settings panels have no enable switch and retain
+a saved seven-second real-trading delay, with no browser errors. Logs/screenshots
+are retained in `.cache/replay-entry-stoploss-validation/`.
+
+Delivery targets dev through a dedicated `fix/always-enabled-entry-stoploss`
+branch. Update the backend and both clients together. Review/merge, main deployment
+and authorized native Windows/live-broker acceptance remain separate manual steps.
+Delivery: [PR #601](https://github.com/prattyush/TradeMatangi/pull/601),
+`fix/always-enabled-entry-stoploss` → `dev`, implementation commit `fc90c87`.
+Review/merge and manual main deployment remain pending.
