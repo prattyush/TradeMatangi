@@ -903,7 +903,7 @@ export default function Chart({
         if (allCandles.length === 0) return
 
         series.setData(allCandles.map(toCandle))
-        chartRef.current?.timeScale().fitContent()
+        chartRef.current?.timeScale().setVisibleLogicalRange({ from: Math.max(0, allCandles.length - 150), to: allCandles.length - 1 })
         restoreInitialVisibleRange()
         candleTimesRef.current = allCandles.map(c => c.time)
 
@@ -1012,7 +1012,7 @@ export default function Chart({
         }
 
         if (priorCandles.length === 0) return
-        chartRef.current?.timeScale().fitContent()
+        chartRef.current?.timeScale().setVisibleLogicalRange({ from: Math.max(0, priorCandles.length - 150), to: priorCandles.length - 1 })
         restoreInitialVisibleRange()
 
         const closes = priorCandles.map(c => c.close)

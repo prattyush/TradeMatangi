@@ -99,7 +99,7 @@ def _contract_identity(trade: dict) -> tuple[str | None, int | None, str | None]
     )
 
 
-def compute_round_trip_state(trades: list[dict]) -> tuple[list[dict], list[dict]]:
+def legacy_round_trip_state(trades: list[dict]) -> tuple[list[dict], list[dict]]:
     """Return completed and still-open FIFO round trips with stable global ids.
 
     A label is saved when the entry fills, so an open trade needs an index before
@@ -170,6 +170,42 @@ def compute_round_trip_state(trades: list[dict]) -> tuple[list[dict], list[dict]
     return completed, open_trips
 
 
+def cycle_round_trips(cycles):
+    completed, opened = [], []
+    for cycle in cycles:
+        trip = dict(
+            index=cycle["index"],
+            cycle_id=cycle["cycle_id"],
+            right=cycle["right"],
+            strike=cycle["strike"],
+            expiry=cycle["expiry"],
+            entry_trades=[
+                _serialize_rt_trade(r)
+                for r in cycle["executions"]
+                if r["role"] == "entry"
+            ],
+            exit_trades=[
+                _serialize_rt_trade(r)
+                for r in cycle["executions"]
+                if r["role"] == "exit"
+            ],
+            pnl=round(cycle["net_pnl"], 2),
+        )
+        (completed if cycle["state"] == "closed" else opened).append(trip)
+    return completed, opened
+
+
+def compute_round_trip_state(trades: list[dict], session: dict | None = None):
+    from app.services.performance_service import build_cycles
+
+    valid = [t for t in trades if int(t.get("quantity", 0)) > 0]
+    if not valid:
+        return [], []
+    session = session or dict(
+        session_id=valid[0].get("session_id", ""), symbol=valid[0].get("symbol", "")
+    )
+    return cycle_round_trips(build_cycles(session, valid))
+
 def _fifo_match_trades(trades: list[dict]) -> list[dict]:
     return compute_round_trip_state(trades)[0]
 
@@ -183,6 +219,7 @@ def _serialize_rt_trade(t: dict) -> dict:
         "timestamp": int(t.get("timestamp", 0)),
         "right": t.get("right"),
         "strike": int(t.get("strike")) if t.get("strike") is not None else None,
+        "expiry": t.get("expiry"),
         "commission": _safe_float(t.get("commission")),
     }
 
@@ -194,7 +231,11 @@ def compute_round_trips_for_session(session_id: str) -> list[dict]:
         trades = get_trades_for_session(session_id)
         if not trades:
             return []
-        return _fifo_match_trades(trades)
+        session = _load_session(session_id) or {"session_id": session_id}
+        if session.get("session_type") == "real":
+            from app.services.performance_service import load_session_cycles
+            return cycle_round_trips(load_session_cycles(session, include_labels=False))[0]
+        return compute_round_trip_state(trades, session)[0]
     except Exception:
         logger.exception("Failed to compute round trips for session %s", session_id)
         return []
@@ -242,6 +283,7 @@ def save_labels(session_id: str, labels: list[dict], user_id: str) -> list[dict]
             "date": date,
             "instrument_type": instrument_type,
             "session_type": session_type,
+            "analytics_cycle_id": rt.get("cycle_id") if rt else None,
             "round_trip_pnl": Decimal(str(rt_pnl)),
             "round_trip_pnl_pct": Decimal(str(rt_pnl_pct)),
             "expected_category": expected_cat,
@@ -558,6 +600,7 @@ def _serialize_label(item: dict) -> dict:
     return {
         "session_id": item.get("session_id", ""),
         "round_trip_index": int(item.get("round_trip_index", 0)),
+        "analytics_cycle_id": item.get("analytics_cycle_id"),
         "user_id": item.get("user_id", ""),
         "symbol": item.get("symbol", ""),
         "date": item.get("date", ""),

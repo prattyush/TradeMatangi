@@ -249,3 +249,30 @@ async def test_retry_completion_cannot_clear_newer_failed_reconciliation():
             await orders.exit_reconciliation_loop()
     assert orders._exit_retries[key] is not original
     orders._exit_retries.clear()
+
+
+@pytest.mark.parametrize('lots,selected',[(1,1),(2,1),(3,1),(4,2),(5,2)])
+def test_phase20_underlying_stoploss_half_keeps_remainder(lots,selected):
+    s=session();s.last_price=24900
+    from app.config import LOT_SIZES
+    lot=LOT_SIZES[s.symbol]
+    orders.place_order(s.session_id,s.symbol,TradeSide.SELL,OrderType.STOPLOSS,lots*lot,1,s.date,
+                       trigger_price=90,is_stoploss=True,right='CE',strike=s.strike,expiry=s.expiry)
+    strategy=strategies.start_strategy(s,'UnderlyingStoploss','CE',dict(underlying_sl_price=25000,underlying_stoploss_size='half'))
+    with patch.object(strategies,'_strategy_position',return_value=Position(symbol=s.symbol,side='LONG',quantity=lots*lot,avg_entry_price=100)):
+        strategies._on_tick_underlying_stoploss(strategy,s,100,'CE',10)
+    actions=[o for o in orders.get_open_orders(s.session_id) if o.exit_allocation_role=='action']
+    remainder=[o for o in orders.get_open_orders(s.session_id) if o.exit_allocation_role=='remainder']
+    assert sum(o.quantity for o in actions)==selected*lot
+    assert sum(o.quantity for o in remainder)==(lots-selected)*lot
+    assert all(o.trigger_price==90 for o in remainder)
+    assert all(o.analytics['exit_method']=='UnderlyingStoploss' and o.analytics['requested_size']=='half' for o in actions)
+
+
+def test_phase20_size_edit_cannot_change_a_prepared_underlying_half_allocation():
+    s = session()
+    strategy = strategies.start_strategy(s, 'UnderlyingStoploss', 'CE', dict(underlying_stoploss_size='half', underlying_sl_price=25000))
+    assert strategies.update_target_profit_size(s.session_id, strategy.strategy_id, 'full')
+    strategy.metadata.update(underlying_stoploss_size='half', half_action_started=True, half_selected_quantity=65)
+    assert not strategies.update_target_profit_size(s.session_id, strategy.strategy_id, 'full')
+    assert strategy.metadata['underlying_stoploss_size'] == 'half'

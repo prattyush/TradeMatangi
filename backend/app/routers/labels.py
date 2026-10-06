@@ -21,6 +21,7 @@ router = APIRouter(prefix="/api/analysis", tags=["trade_labels"])
 # ── Response models ────────────────────────────────────────────────────────────
 
 class RoundTripTradeOut(BaseModel):
+    expiry: str | None = None
     trade_id: str
     side: str
     quantity: int
@@ -31,6 +32,9 @@ class RoundTripTradeOut(BaseModel):
 
 
 class RoundTripOut(BaseModel):
+    cycle_id: str | None = None
+    strike: int | None = None
+    expiry: str | None = None
     index: int
     right: Optional[str]
     entry_trades: list[RoundTripTradeOut]
@@ -105,6 +109,12 @@ class TagListResponse(BaseModel):
     tags: list[str]
 
 
+def _owned(session_id: str, user_id: str):
+    session = svc._load_session(session_id)
+    if not session or session.get('user_id') != user_id:
+        raise HTTPException(status_code=404, detail='Session not found')
+
+
 # ── Endpoints ──────────────────────────────────────────────────────────────────
 
 @router.get("/round-trips", response_model=list[RoundTripOut])
@@ -114,8 +124,11 @@ async def get_round_trips(
 ):
     """Compute FIFO round-trips for a session."""
     try:
+        _owned(session_id, user_id)
         trips = svc.compute_round_trips_for_session(session_id)
         return trips
+    except HTTPException:
+        raise
     except Exception as exc:
         logger.error("round-trips error: %s", exc)
         raise HTTPException(status_code=500, detail="Failed to compute round trips")
@@ -128,7 +141,10 @@ async def get_labels(
 ):
     """Return saved labels for a session."""
     try:
+        _owned(session_id, user_id)
         return svc.get_labels_for_session(session_id)
+    except HTTPException:
+        raise
     except Exception as exc:
         logger.error("get_labels error: %s", exc)
         raise HTTPException(status_code=500, detail="Failed to get labels")
@@ -149,6 +165,8 @@ async def save_labels(
             labels_by_session[sid].append(lbl.model_dump())
 
         all_saved = []
+        for sid in labels_by_session:
+            _owned(sid, user_id)
         for sid, lbls in labels_by_session.items():
             saved = svc.save_labels(sid, lbls, user_id)
             all_saved.extend(saved)
@@ -156,6 +174,8 @@ async def save_labels(
         return all_saved
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
+    except HTTPException:
+        raise
     except Exception as exc:
         logger.error("save_labels error: %s", exc)
         raise HTTPException(status_code=500, detail="Failed to save labels")
@@ -170,6 +190,7 @@ async def update_label(
 ):
     """Update a single label."""
     try:
+        _owned(session_id, user_id)
         result = svc.update_label(session_id, round_trip_index, body.model_dump(exclude={"session_id", "round_trip_index"}))
         if result is None:
             raise HTTPException(status_code=404, detail="Label not found")
@@ -189,6 +210,8 @@ async def get_entry_tags(
     try:
         tags = svc.list_entry_tags(user_id)
         return {"tags": tags}
+    except HTTPException:
+        raise
     except Exception as exc:
         logger.error("entry-tags error: %s", exc)
         raise HTTPException(status_code=500, detail="Failed to list entry tags")
@@ -202,6 +225,8 @@ async def get_exit_tags(
     try:
         tags = svc.list_exit_tags(user_id)
         return {"tags": tags}
+    except HTTPException:
+        raise
     except Exception as exc:
         logger.error("exit-tags error: %s", exc)
         raise HTTPException(status_code=500, detail="Failed to list exit tags")
@@ -226,6 +251,8 @@ async def get_stats(
             instrument_type=instrument_type,
             session_type=session_type,
         )
+    except HTTPException:
+        raise
     except Exception as exc:
         logger.error("stats error: %s", exc)
         raise HTTPException(status_code=500, detail="Failed to compute stats")

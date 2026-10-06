@@ -26,6 +26,10 @@ class SessionSummary(BaseModel):
     session_capital: float = 0.0
     net_pnl: float = 0.0
     pnl_pct: float = 0.0
+    realized_pnl: float = 0.0
+    open_entry_fees: float = 0.0
+    open_quantity: int = 0
+    unrealized_pnl: float | None = None
     total_commission: float = 0.0
     trade_count: int = 0
     round_trip_count: int = 0
@@ -34,6 +38,8 @@ class SessionSummary(BaseModel):
 
 
 class TradeSummary(BaseModel):
+    execution_sort_time: int | None = None
+    analytics: dict | None = None
     trade_id: str
     session_id: str
     user_id: str
@@ -78,7 +84,12 @@ async def get_sessions(
             trades = [t for t in trades if t.get("source") == "desktop_stepwise"]
         if not trades and session_type == "desktop_stepwise":
             continue
-        summary = analysis_service.compute_session_summary(s, trades)
+        cycles = None
+        if s.get("session_type") == "real":
+            import asyncio
+            from app.services.performance_service import load_session_cycles
+            cycles = await asyncio.to_thread(load_session_cycles, s, include_labels=False)
+        summary = analysis_service.compute_session_summary(s, trades, cycles)
         result.append(summary)
     return result
 
@@ -111,7 +122,12 @@ async def get_trades_for_analysis(
     result = []
     for s in sessions:
         trades = analysis_service.get_trades_for_session(s["session_id"])
-        summary = analysis_service.compute_session_summary(s, trades)
+        cycles = None
+        if s.get("session_type") == "real":
+            import asyncio
+            from app.services.performance_service import load_session_cycles
+            cycles = await asyncio.to_thread(load_session_cycles, s, include_labels=False)
+        summary = analysis_service.compute_session_summary(s, trades, cycles)
         trade_list = [
             {
                 "trade_id": t.get("trade_id", ""),

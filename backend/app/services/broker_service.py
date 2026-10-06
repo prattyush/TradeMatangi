@@ -150,6 +150,7 @@ def _breeze_to_dataframe(records: list[dict]) -> pd.DataFrame:
     df = pd.DataFrame(rows)
     df = df.set_index("datetime").sort_index()
     df = df[~df.index.duplicated(keep="first")]  # remove duplicates from chunk boundaries
+    df["observed"] = True
     return df
 
 

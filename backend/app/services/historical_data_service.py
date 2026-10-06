@@ -105,7 +105,8 @@ def _path(provider: str, symbol: str, date: str, strike: int | None, expiry: str
 
 def _normalize(frame: pd.DataFrame, date: str) -> pd.DataFrame:
     from app.config import get_market_close
-    frame = frame.rename(columns=str.lower)[["open", "high", "low", "close"]].copy()
+    columns = ["open", "high", "low", "close"] + (["observed"] if "observed" in frame.columns else [])
+    frame = frame.rename(columns=str.lower)[columns].copy()
     if frame.index.tzinfo is None:
         frame.index = frame.index.tz_localize("UTC")
     else:

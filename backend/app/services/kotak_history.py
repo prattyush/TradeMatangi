@@ -108,6 +108,7 @@ def _frame(response, date):
     if not records:
         raise RuntimeError("Kotak returned no usable market-hours candles for the requested day")
     frame = pd.DataFrame(records, columns=["datetime", "open", "high", "low", "close", "volume"]).set_index("datetime")
+    frame["observed"] = True
     frame = frame[~frame.index.duplicated(keep="last")].sort_index()
     if frame.empty:
         raise RuntimeError("Kotak returned no market-hours candles for the requested day")
