@@ -10,6 +10,7 @@ venv/
 !frontend/.env
 *.egg-info/
 dist/
+logs/
 build/
 .pytest_cache/
 .mypy_cache/

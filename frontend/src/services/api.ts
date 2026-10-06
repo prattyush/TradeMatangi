@@ -102,7 +102,9 @@ export interface SymbolInfo {
   display_name: string
 }
 
+export interface ConversionResult { order_id: string; state: string; message?: string | null }
 export interface Order {
+  broker_conversion?: { operation_id?: string; updated_at?: number; state: string; requested_type?: string; message?: string | null } | null
   order_id: string
   session_id: string
   user_id: string
@@ -1496,7 +1498,7 @@ const api = {
     return res.json()
   },
 
-  async bulkConvertOrders(session_id: string, new_order_type: 'TARGET' | 'LIMIT' | 'STOPLOSS', right: string | null, price?: number): Promise<{ converted: number; orders: Order[] }> {
+  async bulkConvertOrders(session_id: string, new_order_type: 'TARGET' | 'LIMIT' | 'STOPLOSS', right: string | null, price?: number): Promise<{ converted: number; orders: Order[]; results?: ConversionResult[] }> {
     const res = await fetch(`${BACKEND_URL}/api/orders/bulk-convert`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json', ..._authHeaders() },

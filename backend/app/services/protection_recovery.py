@@ -262,6 +262,8 @@ async def reports_for(session, parent, broker):
         row = by_id.get(sibling.kotak_order_id)
         if sibling.execution_role != 'exit' or sibling.source == 'broker_external' or row is None:
             continue
+        if sibling.broker_conversion and sibling.broker_conversion.get('state') in ('cancelling', 'replacing'):
+            continue  # The conversion worker owns this intentional cancellation.
         if row['status'] not in ('cancelled', 'canceled') or row['filled_quantity'] != sibling.broker_filled_quantity:
             continue
         sibling.status = OrderStatus.CANCELLED
