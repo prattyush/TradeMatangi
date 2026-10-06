@@ -205,6 +205,8 @@ def register_callbacks(session, order, broker, loop):
         from app.services import protection_recovery
         before = trading.get_position(session.session_id, session.symbol, right=current.right, strike=current.strike, expiry=current.expiry)
         before_net = before.quantity * (1 if before.side == "LONG" else -1 if before.side == "SHORT" else 0)
+        from app.services.fifo_positions import bootstrap_live
+        bootstrap_live(session)
         previous_quantity = current.broker_filled_quantity
         previous_value = current.broker_filled_value
         delta = quantity - previous_quantity
@@ -232,7 +234,7 @@ def register_callbacks(session, order, broker, loop):
             session_type="real", source=current.source,
             trade_id="kotak-live:" + k_id, kotak_order_id=k_id, cumulative=True, defer_exit_reconciliation=True)
         positions = getattr(session, "broker_positions", None)
-        if positions is not None:
+        if positions is not None or getattr(session, '_fifo_executions', None) is not None:
             real_broker_state.apply_position_fill(session, current, delta, delta_price)
         protection_recovery.note_fill(session, current, delta, before_net)
         order_service.request_exit_reconciliation(session.session_id, session.symbol, current.right, current.strike, current.expiry, session.date)
@@ -242,6 +244,11 @@ def register_callbacks(session, order, broker, loop):
             from app.services.entry_sl_watcher import on_entry_filled
             on_entry_filled(current, session, loop)
         order_service._write_order_to_db(current)
+        if getattr(session, '_fifo_executions', None) is not None:
+            snapshot_trade = trade.model_dump(mode="json") if hasattr(trade, "model_dump") else None
+            session.queue.put_nowait(json.dumps({"type": "position_snapshot", "session_id": session.session_id,
+                "positions": session.broker_positions, "state_version": session._broker_state_version,
+                "state_generation": real_broker_state.STATE_GENERATION, "trade": snapshot_trade if isinstance(snapshot_trade, dict) else None}))
         session.queue.put_nowait(json.dumps({"type": "order_filled" if current.kotak_fill_confirmed else "order_updated",
             "order_id": current.order_id, "side": current.side.value, "quantity": quantity,
             "trigger_price": current.trigger_price, "filled_price": price,

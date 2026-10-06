@@ -138,3 +138,28 @@ production build. The full backend run passed 1,601 tests with the same two know
 baseline failures (`test_options_session_started_successfully` and
 `test_active_session_returns_attach_metadata`). Subsequent cancellation-journal
 changes were covered by the focused broker/recovery/API regressions.
+
+## FIFO average entry and P&L repair
+
+Trade History Refresh now reconstructs each contract's remaining lots from individual
+confirmed Kotak executions in chronological order, using FIFO. For example, buying
+65 at 40 and 65 at 60, then selling 65, leaves 65 with average entry 60. Cancellation
+notifications do not consume lots or change the cost basis. Partial executions are
+replayed individually, including execution timestamps below one second; duplicate
+execution IDs cannot count twice.
+
+The reconstruction must agree with broker net quantities for the same exchange,
+product, option right, strike and expiry. If history and positions are still updating,
+refresh retries once and then retains the previous verified state with an error.
+Broker average entry remains diagnostic evidence; it does not override FIFO entry.
+Remaining entry fees are allocated to the remaining lots. Both the chart and right
+panel use that same position and estimated exit fees for net unrealized P&L; the
+percentage remains relative to session capital. A missing quote for the exact
+contract displays an unavailable P&L rather than another strike's price.
+
+Confirmed live fills update the FIFO ledger after refresh, and persisted individual
+executions reconstruct it on reattachment. Versioned position snapshots prevent an
+older response from overwriting a newer fill. The cached position-snapshot endpoint
+reads application state without polling broker reports on each event. An existing
+open book without verified executions requires Trade History Refresh before its
+FIFO basis can be repaired.

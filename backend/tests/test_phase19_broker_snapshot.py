@@ -100,9 +100,14 @@ def broker_order(order='broker-a', status='complete', side='BUY', qty=20, filled
         ordDtTm='01-Oct-2026 13:53:00'))
 
 
+def reported_position(qty=20, price=38.6, strike=71100):
+    return dict(trdSym=f'SENSEX26O01{strike}PE', exSeg='bse_fo', prod='MIS', netQty=qty, buyAvgPrc=price)
+
+
 @pytest.mark.asyncio
 async def test_refresh_replaces_duplicates_with_exact_execution_contract_and_time(env):
     s, broker, tables = env
+    broker.get_positions.return_value = [reported_position(40, 39.3)]
     trading._trades[s.session_id] = [MagicMock(trade_id='old-duplicate')]
     broker.get_trade_history.return_value = [execution(), execution(), execution('fill-b', qty=20, price=40)]
     broker.get_order_history.return_value = [broker_order(qty=40, filled=40)]
@@ -124,6 +129,7 @@ async def test_refresh_replaces_duplicates_with_exact_execution_contract_and_tim
 @pytest.mark.asyncio
 async def test_refresh_includes_other_strikes_same_underlying_and_excludes_other_underlying(env):
     s, broker, _ = env
+    broker.get_positions.return_value = [reported_position(), reported_position(strike=71500)]
     other = execution('nifty', order='nifty')
     other['symbol'] = 'NIFTY26O0122500PE'
     broker.get_trade_history.return_value = [execution(), execution('other-strike', 'other', strike=71500), other]
@@ -145,6 +151,7 @@ async def test_empty_report_is_authoritative_and_preserves_local_entry(env):
 @pytest.mark.asyncio
 async def test_report_failure_leaves_previous_revision_and_memory(env):
     s, broker, _ = env
+    broker.get_positions.return_value = [reported_position()]
     broker.get_trade_history.return_value = [execution()]
     first = await state.refresh(s, broker)
     broker.get_trade_history.side_effect = kotak_service.KotakError('report failed')
@@ -158,6 +165,7 @@ async def test_report_failure_leaves_previous_revision_and_memory(env):
 @pytest.mark.asyncio
 async def test_staging_failure_never_publishes_revision(env):
     s, broker, tables = env
+    broker.get_positions.return_value = [reported_position()]
     broker.get_trade_history.return_value = [execution()]
     first = await state.refresh(s, broker)
     tables['Trades'].fail = True
@@ -351,6 +359,7 @@ async def test_label_read_edit_delete_and_stats_follow_rebuilt_day(env, monkeypa
 @pytest.mark.asyncio
 async def test_imported_sl_coverage_prevents_duplicate_protection(env):
     s, broker, _ = env
+    broker.get_trade_history.return_value = [execution(price=40)]
     entry = Order(session_id=s.session_id, user_id=s.user_id, symbol=s.symbol, side=TradeSide.BUY,
         order_type=OrderType.LIMIT, quantity=20, trigger_price=40, limit_price=40, created_at=1,
         right='PE', strike=71100, expiry=s.expiry, entry_sl_price=30, group_id='entry-group',
@@ -378,6 +387,7 @@ def test_partial_cancel_dispatches_confirmed_fill_before_rejection():
 @pytest.mark.asyncio
 async def test_refresh_retries_reports_that_straddle_a_fill(env):
     s, broker, _ = env
+    broker.get_positions.return_value = [reported_position(40)]
     broker.get_order_history.return_value = [broker_order(qty=40, filled=40)]
     broker.get_trade_history.side_effect = [[execution()], [execution(), execution('fill-b', qty=20, price=40)]]
     result = await state.refresh(s, broker)
@@ -387,6 +397,7 @@ async def test_refresh_retries_reports_that_straddle_a_fill(env):
 @pytest.mark.asyncio
 async def test_incoherent_report_does_not_erase_last_good_history(env):
     s, broker, _ = env
+    broker.get_positions.return_value = [reported_position()]
     broker.get_trade_history.return_value = [execution()]
     first = await state.refresh(s, broker)
     broker.get_order_history.return_value = [broker_order(qty=40, filled=40)]
@@ -399,3 +410,81 @@ def test_execution_identity_is_scoped_to_broker_order(env):
     s, _, _ = env
     trades = state.aggregate(s, [execution(), execution(order='other-order', strike=71500)], 'account-a')
     assert len(trades) == 2 and {t.strike for t in trades} == {71100, 71500}
+
+
+@pytest.mark.asyncio
+async def test_history_refresh_repairs_fifo_average_and_remaining_commission(env):
+    from tests.test_fifo_positions import execution as fill
+    s, broker, _ = env
+    s.symbol, s.date, s.expiry = 'NIFTY', '2026-10-06', '2026-10-08'
+    s.strike_ce = s.strike_pe = 25000
+    broker.get_trade_history.return_value = [fill('1', 'BUY', 40), fill('2', 'BUY', 60, time='10:01:00'),
+                                           fill('3', 'SELL', 50, time='10:02:00')]
+    broker.get_order_history.return_value = []
+    broker.get_positions.return_value = [dict(trdSym='NIFTY26O0825000CE', exSeg='nse_fo', prod='MIS', netQty=65, buyAvgPrc=50)]
+    result = await state.refresh(s, broker)
+    position = result['positions'][0]
+    assert position['quantity'] == 65 and position['avg_entry_price'] == 60
+    assert position['broker_avg_entry_price'] == 50
+    assert position['entry_commission'] == pytest.approx(trading.compute_commission(TradeSide.BUY, 60, 65, s.brokerage_per_order))
+    assert result['state_generation'] == state.STATE_GENERATION
+    assert result['state_version'] > 0
+    # Restart from persisted individual executions, never the aggregated order rows.
+    del s._fifo_executions
+    state.restore_orders(s)
+    assert s.broker_positions[0]['avg_entry_price'] == 60
+
+
+@pytest.mark.asyncio
+async def test_live_exit_after_refresh_keeps_fifo_open_lots_and_cancellation_does_not_change_them(env):
+    s, broker, _ = env
+    broker.get_trade_history.return_value = [execution('1', 'a', qty=20, price=40, time='10:00:00'),
+                                           execution('2', 'b', qty=20, price=60, time='10:01:00')]
+    broker.get_positions.return_value = [reported_position(40, 50)]
+    await state.refresh(s, broker)
+    outgoing = Order(session_id=s.session_id, user_id=s.user_id, symbol=s.symbol,
+        side=TradeSide.SELL, quantity=20, trigger_price=50, limit_price=49, created_at=10,
+        order_type=OrderType.STOPLOSS, right='PE', strike=71100, expiry=s.expiry,
+        kotak_order_id='exit', execution_role='exit', broker_filled_quantity=20)
+    state.apply_position_fill(s, outgoing, 20, 50)
+    assert s.broker_positions[0]['quantity'] == 20
+    assert s.broker_positions[0]['avg_entry_price'] == 60
+    original = copy.deepcopy(s.broker_positions)
+    outgoing.status = __import__('app.models.schemas', fromlist=['OrderStatus']).OrderStatus.CANCELLED
+    order_service._orders[s.session_id][outgoing.order_id] = outgoing
+    assert s.broker_positions == original
+    state.restore_orders(s)
+    assert s.broker_positions[0]['avg_entry_price'] == 60
+
+
+@pytest.mark.asyncio
+async def test_incomplete_fifo_refresh_preserves_verified_revision_and_positions(env):
+    s, broker, _ = env
+    broker.get_trade_history.return_value = [execution()]
+    broker.get_positions.return_value = [reported_position()]
+    first = await state.refresh(s, broker)
+    previous = copy.deepcopy(s.broker_positions)
+    broker.get_positions.return_value = [reported_position(40)]
+    with pytest.raises(ValueError, match='incomplete'):
+        await state.refresh(s, broker)
+    assert s.broker_positions == previous
+    assert state._links[s.session_id]['revision'] == first['snapshot_revision']
+
+
+@pytest.mark.asyncio
+async def test_cached_position_snapshot_is_owned_and_returns_verified_fifo(env):
+    from app.routers.trading import position_snapshot
+    from fastapi import HTTPException
+    s, broker, _ = env
+    broker.get_trade_history.return_value = [execution('1', 'a', qty=20, price=40)]
+    broker.get_positions.return_value = [reported_position(20, 40)]
+    await state.refresh(s, broker)
+    snapshot = await position_snapshot(s.session_id, s.user_id)
+    assert snapshot['calculation_verified'] is True
+    assert snapshot['positions'][0]['avg_entry_price'] == 40
+    calls = broker.get_positions.call_count
+    await position_snapshot(s.session_id, s.user_id)
+    assert broker.get_positions.call_count == calls
+    with pytest.raises(HTTPException) as denied:
+        await position_snapshot(s.session_id, 'different-user')
+    assert denied.value.status_code == 404
