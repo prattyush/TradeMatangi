@@ -284,6 +284,21 @@ async def get_open_option_contracts(
     return trading_svc.get_open_option_contracts(session_id, session.symbol)
 
 
+@router.get("/position-snapshot")
+async def position_snapshot(session_id: str = Query(...), user_id: str = Depends(get_request_user_id)):
+    session = sim_svc.get_session(session_id)
+    if not session or session.user_id != user_id:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if session.session_type != "real":
+        raise HTTPException(status_code=400, detail="Only real sessions have a broker position snapshot")
+    from app.services.real_broker_state import STATE_GENERATION
+    return {"session_id": session_id, "positions": getattr(session, "broker_positions", None) or [],
+            "trades": [trade.model_dump(mode="json") for trade in trading_svc.get_trades(session_id)],
+            "application_orders": [order.model_dump(mode="json") for order in order_service.get_open_orders(session_id)],
+            "state_generation": STATE_GENERATION, "state_version": getattr(session, "_broker_state_version", 0),
+            "calculation_verified": getattr(session, "_fifo_executions", None) is not None}
+
+
 @router.get("/position", response_model=Position)
 async def get_position(session_id: str = Query(...), right: str | None = Query(default=None),
                        strike: int | None = Query(default=None), expiry: str | None = Query(default=None)):

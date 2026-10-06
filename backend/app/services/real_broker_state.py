@@ -19,6 +19,7 @@ from app.services import broker_reports as reports
 logger = logging.getLogger(__name__)
 _locks: dict[str, asyncio.Lock] = {}
 _links: dict[str, dict] = {}
+STATE_GENERATION = str(uuid.uuid4())
 class SnapshotPersistenceError(RuntimeError):
     pass
 
@@ -128,7 +129,7 @@ def normalize_positions(session, raw_positions, master=None):
             amount = reports.number(raw.get("cf" + prefix + "Amt")) + reports.number(raw.get("fl" + prefix + "Amt"))
             factor = reports.number(raw.get("prcFctr"), 1) or 1
             avg = amount / quantity / factor if quantity else 0
-        positions.append({**Position(symbol=session.symbol, side="LONG" if net > 0 else "SHORT" if net < 0 else "FLAT", quantity=abs(net), avg_entry_price=avg).model_dump(), **contract, "product": row["product"]})
+        positions.append({**Position(symbol=session.symbol, side="LONG" if net > 0 else "SHORT" if net < 0 else "FLAT", quantity=abs(net), avg_entry_price=avg).model_dump(), **contract, "product": row["product"], "broker_exchange": row["exchange"]})
     return positions
 
 
@@ -293,7 +294,16 @@ async def refresh(session, broker):
                     actual[(*key, "BUY")] += int(reports.number(raw["flBuyQty"]))
                     actual[(*key, "SELL")] += int(reports.number(raw["flSellQty"]))
                 return all(actual[(*key, side)] == expected[(*key, side)] for key in checked for side in ("BUY", "SELL"))
-            if not quantities_agree():
+            from app.services.fifo_positions import verified_positions
+            def fifo_agrees():
+                if not quantities_agree():
+                    return False
+                try:
+                    verified_positions(session, scoped_executions, positions, master)
+                    return True
+                except ValueError:
+                    return False
+            if not fifo_agrees():
                 raw_orders, executions, raw_positions = await asyncio.gather(
                     asyncio.to_thread(broker.get_order_history), asyncio.to_thread(broker.get_trade_history),
                     asyncio.to_thread(broker.get_positions))
@@ -302,8 +312,11 @@ async def refresh(session, broker):
                 trades = aggregate(session, scoped_executions, account, master)
                 positions = normalize_positions(session, raw_positions, master)
                 orders = build_orders(session, scoped_orders, master)
-                if not quantities_agree():
-                    raise ValueError("Kotak reports are still updating after a fill; retry refresh shortly")
+                if not fifo_agrees():
+                    raise ValueError("Kotak execution history/positions are incomplete or still updating; FIFO refresh was not applied")
+            positions = verified_positions(session, scoped_executions, positions, master)
+            # Persist resolved monthly expiry so restart/live FIFO needs no instrument download.
+            scoped_executions = [{**row, **reports.contract(session, row, master)} for row in scoped_executions]
             by_broker_id = {t.kotak_order_id: t for t in trades}
             for order in orders.values():
                 if order.kotak_order_id and order.execution_role is None:
@@ -323,6 +336,11 @@ async def refresh(session, broker):
             order_service._orders[session.session_id] = orders
             session.kotak_order_map = {o.order_id: o.kotak_order_id for o in orders.values() if o.kotak_order_id}
             session.broker_positions = positions
+            from app.services.fifo_positions import unique_executions
+            session._fifo_executions = unique_executions(session, scoped_executions, master)
+            session._fifo_account = account
+            session._broker_state_version = getattr(session, "_broker_state_version", 0) + 1
+            session._broker_snapshot_revision = manifest["revision"]
             session._protection_revision = getattr(session, "_protection_revision", 0) + 1
             events, session.broker_refresh_events = session.broker_refresh_events, None
             for callback, args in events:
@@ -355,6 +373,7 @@ async def refresh(session, broker):
                       "local_entry_orders": [o.model_dump(mode="json") for o in order_service.get_open_orders(session.session_id) if not o.kotak_order_id],
                       "application_orders": [o.model_dump(mode="json") for o in order_service.get_open_orders(session.session_id)],
                       "snapshot_revision": manifest["revision"], "synced_at": manifest["synced_at"],
+                      "state_version": getattr(session, "_broker_state_version", 0), "state_generation": STATE_GENERATION,
                       "wallet_balance": wallet_balance, "wallet_display_balance": wallet_display_balance,
                       "session_capital": session.session_capital if wallet_error is None else None, "wallet_error": wallet_error}
             session.queue.put_nowait(json.dumps({"type": "broker_snapshot", "session_id": session.session_id, **result}))
@@ -393,9 +412,40 @@ def restore_orders(session):
     session.kotak_order_map = {o.order_id: o.kotak_order_id for o in orders.values() if o.kotak_order_id}
     if manifest:
         session.broker_positions = [row["broker_position"] for row in rows if "broker_position" in row]
+        executions = [dict(row["broker_execution"]) for row in rows if "broker_execution" in row]
+        if executions or not any(p["quantity"] for p in session.broker_positions):
+            from app.services.fifo_positions import unique_executions, verified_positions
+            try:
+                ledger = unique_executions(session, executions)
+                restored = verified_positions(session, ledger, session.broker_positions)
+            except ValueError:
+                session._fifo_executions = None
+                logger.exception("restored_fifo_incomplete session=%s; broker refresh required", session.session_id)
+            else:
+                session._fifo_executions = ledger
+                session.broker_positions = restored
+        session._broker_state_version = getattr(session, "_broker_state_version", 0) + 1
 
 
 def apply_position_fill(session, order, quantity, price):
+    from app.services.fifo_positions import live_delta, positions as fifo_positions
+    execution = live_delta(session, order, quantity, price)
+    if execution is not None:
+        session.broker_positions = fifo_positions(session, session._fifo_executions)
+        session._broker_state_version = getattr(session, "_broker_state_version", 0) + 1
+        partition = active_partition(session.session_id)
+        if partition:
+            from app.services.db import get_dynamodb_resource
+            db = get_dynamodb_resource()
+            try:
+                db.Table("Orders").put_item(Item=encode({"session_id": partition,
+                    "order_id": "execution:" + execution["exchange"] + ":" + order.kotak_order_id + ":" + execution["execution_id"], "broker_execution": execution}))
+                for index, row in enumerate(session.broker_positions):
+                    db.Table("Orders").put_item(Item=encode({"session_id": partition, "order_id": f"position:{index}", "broker_position": row}))
+            except Exception:
+                logger.exception("live_fifo_persistence_failed session=%s; refresh before reattachment", session.session_id)
+        return
+    # Legacy/unrefreshed open books keep broker basis until verified history is available.
     positions = session.broker_positions
     position = next((p for p in positions if (p.get("right"), p.get("strike"), p.get("expiry")) == (order.right, order.strike, order.expiry)), None)
     if position is None:

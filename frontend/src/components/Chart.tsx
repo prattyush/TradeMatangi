@@ -92,6 +92,7 @@ interface Props {
   aggregatePnl?: number
   positionLevelsMatch?: boolean
   pnl?: number
+  pnlAvailable?: boolean
   onCandlesChange?: (candles: IndicatorCandle[]) => void
   ratioCandles?: {
     underlying: IndicatorCandle[]
@@ -438,6 +439,7 @@ export default function Chart({
   aggregatePnl,
   positionLevelsMatch = true,
   pnl = 0,
+  pnlAvailable = true,
   onCandlesChange,
   ratioCandles = null,
   ratioMode = 'normalized',
@@ -1334,6 +1336,7 @@ export default function Chart({
   const hasPosition = position && position.side !== 'FLAT'
   const pnlColor = pnl > 0 ? '#26a641' : pnl < 0 ? '#f85149' : '#8b949e'
   const fmtPnlValue = () => {
+    if (!pnlAvailable) return '—'
     if (pnlPctMode && sessionCapital && sessionCapital > 0) {
       const pct = (pnl / sessionCapital) * 100
       return `${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%`
