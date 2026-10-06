@@ -348,4 +348,6 @@ are retained in `.cache/replay-entry-stoploss-validation/`.
 Delivery targets dev through a dedicated `fix/always-enabled-entry-stoploss`
 branch. Update the backend and both clients together. Review/merge, main deployment
 and authorized native Windows/live-broker acceptance remain separate manual steps.
-PR details will be recorded after submission.
+Delivery: [PR #601](https://github.com/prattyush/TradeMatangi/pull/601),
+`fix/always-enabled-entry-stoploss` → `dev`, implementation commit `fc90c87`.
+Review/merge and manual main deployment remain pending.
