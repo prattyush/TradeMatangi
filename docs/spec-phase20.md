@@ -539,3 +539,10 @@ Existing desktop Vitest/native Rust checks are recorded separately below when do
 
 Existing desktop/client Vitest regression: **155 passed / 25 files**. These existing
 tests do not establish coverage of the new desktop Analysis feature.
+
+Native Rust offline check on Linux: **16 passed**, main target/doc tests passed.
+This verifies compilation and existing native tests, not Windows packaging or new
+analysis command acceptance. Checkpoint implementation commit: `37fbc51`.
+Remote checkpoint: [wip/phase20-desktop-analysis](https://github.com/prattyush/TradeMatangi/tree/wip/phase20-desktop-analysis).
+Resume from this branch; finish the pending integration/tests before creating a
+reviewable delivery PR targeting dev.
