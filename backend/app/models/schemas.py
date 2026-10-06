@@ -237,6 +237,16 @@ class Order(BaseModel):
     broker_filled_quantity: int = 0
     broker_filled_value: float = 0.0
     kotak_fill_confirmed: bool = False  # True once Kotak WebSocket or reconcile records the fill
+    cancellation_status: str | None = None
+    cancellation_reason: str | None = None
+    cancelled_at: float | None = None
+    cancel_request_id: str | None = None
+    cancel_initiator: str | None = None
+    cancel_purpose: str | None = None
+    recovery_operation_id: str | None = None
+    recovery_parent_order_id: str | None = None
+    recovery_state: str | None = None
+    recovery_attempt: int = 0
     entry_sl_price: float | None = None  # auto-stoploss price set at entry time
     group_id: str | None = None          # links entry order with its auto-placed SL order
     # The authoritative quote used to create a chart-originated order.  These

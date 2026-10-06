@@ -447,7 +447,7 @@ def _apply_half_exit(strategy, session, position, price, right, ts, underlying=F
                     from app.services.kotak_service import get_service
                     broker = get_service()
                     if not allowed:
-                        broker.cancel_order(broker_id)
+                        broker.cancel_order(broker_id, purpose="position_resize")
                     elif order.order_type == OrderType.LIMIT:
                         broker.modify_sl_to_limit_order(broker_id, order.limit_price, allowed)
                     else:
@@ -546,6 +546,8 @@ def on_tick(session, tick: dict, tick_right: str | None, loop=None) -> None:
     Strategies are only evaluated when their right matches the tick's right.
     loop: asyncio event loop, provided by real sessions to enable broker-side order routing.
     """
+    if getattr(session, "_protection_recovery_busy", False):
+        return
     strategies = _registry.get(session.session_id)
     if not strategies:
         return

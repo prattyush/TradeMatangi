@@ -323,6 +323,7 @@ async def refresh(session, broker):
             order_service._orders[session.session_id] = orders
             session.kotak_order_map = {o.order_id: o.kotak_order_id for o in orders.values() if o.kotak_order_id}
             session.broker_positions = positions
+            session._protection_revision = getattr(session, "_protection_revision", 0) + 1
             events, session.broker_refresh_events = session.broker_refresh_events, None
             for callback, args in events:
                 callback(*args)
@@ -333,6 +334,8 @@ async def refresh(session, broker):
             for order in orders.values():
                 if order.broker_filled_quantity and (order.entry_sl_price is not None or order.is_autostop):
                     on_entry_filled(order, session, asyncio.get_running_loop())
+            from app.services.protection_recovery import resume
+            await resume(session)
             wallet_balance, wallet_error, wallet_display_balance = None, None, None
             try:
                 from app.services import real_accounting

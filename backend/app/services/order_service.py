@@ -205,6 +205,10 @@ def _write_order_to_db(order: Order, *, strict: bool = False) -> None:
             value = getattr(order, name)
             if value is not None:
                 item[name] = Decimal(str(value)) if isinstance(value, float) else value
+        for name in ("cancellation_status", "cancellation_reason", "cancelled_at", "cancel_request_id", "cancel_initiator", "cancel_purpose", "recovery_operation_id", "recovery_parent_order_id", "recovery_state", "recovery_attempt"):
+            value = getattr(order, name, None)
+            if value is not None:
+                item[name] = Decimal(str(value)) if isinstance(value, float) else value
         if order.kotak_order_id:
             item["kotak_order_id"] = order.kotak_order_id
         if order.kotak_fill_confirmed:
@@ -651,7 +655,7 @@ def check_orders(
         if order.status != OrderStatus.PENDING:
             continue
         # Skip orders placed directly on Kotak broker; fills arrive via order-feed WebSocket.
-        if order.kotak_order_id:
+        if order.kotak_order_id or order.recovery_state in ("prepared", "submitting", "unknown"):
             continue
         # For options ticks: only check orders for the same contract.
         # For equity ticks (tick_right=None): only check orders with right=None.
@@ -716,12 +720,20 @@ def cancel_all_pending_orders(session_id: str, trading_date: str) -> int:
 
 
 # Broker calls release the GIL; serialize competing trade/retry reconciliation.
-_exit_reconciliation_locks: dict[tuple, threading.RLock] = {}
+_exit_reconciliation_locks: dict[tuple, threading.Lock] = {}
+
+
+def exit_mutation_lock(session_id, symbol, right, strike, expiry):
+    key = (session_id, symbol, right, strike, expiry)
+    return _exit_reconciliation_locks.setdefault(key, threading.Lock())
 
 
 def reconcile_allocated_exits(session_id: str, symbol: str, right, strike, expiry, trading_date: str) -> None:
-    key = (session_id, symbol, right, strike, expiry)
-    lock = _exit_reconciliation_locks.setdefault(key, threading.RLock())
+    from app.services import simulation
+    session = simulation.get_session(session_id)
+    if session and getattr(session, "_protection_recovery_busy", False):
+        raise RuntimeError("Exit reconciliation deferred while protection is reserved")
+    lock = exit_mutation_lock(session_id, symbol, right, strike, expiry)
     with lock:
         _reconcile_allocated_exits(session_id, symbol, right, strike, expiry, trading_date)
 
@@ -734,22 +746,26 @@ def _reconcile_allocated_exits(session_id: str, symbol: str, right, strike, expi
     for order in get_all_orders(session_id):
         if order.exit_allocation_id and (order.symbol, order.right, order.strike, order.expiry) == (symbol, right, strike, expiry):
             _write_order_to_db(order, strict=True)
-    pending = [o for o in get_open_orders(session_id) if o.exit_allocation_id
-               and (o.symbol, o.right, o.strike, o.expiry) == (symbol, right, strike, expiry)]
-    if not pending:
+    scoped = [o for o in get_open_orders(session_id)
+              if (o.symbol, o.right, o.strike, o.expiry) == (symbol, right, strike, expiry)]
+    if not any(o.exit_allocation_id for o in scoped):
         return
+    pending = [o for o in scoped if o.exit_allocation_id or o.execution_role == "exit"]
     position = get_position(session_id, symbol, right, strike=strike, expiry=expiry)
     available = position.quantity
-    for order in sorted(pending, key=lambda o: (o.created_at, o.order_id)):
-        quantity = min(order.quantity, available) if position.side == order.exit_position_side else 0
-        available -= quantity
-        if quantity == order.quantity:
+    for order in sorted(pending, key=lambda o: (o.source != "broker_external", o.created_at, o.order_id)):
+        remaining = max(0, order.quantity - order.broker_filled_quantity)
+        expected_side = order.exit_position_side or ("LONG" if order.side == TradeSide.SELL else "SHORT")
+        allowed = min(remaining, available) if position.side == expected_side else 0
+        available -= allowed
+        if order.source == "broker_external" or allowed == remaining:
             continue
+        quantity = allowed + order.broker_filled_quantity if allowed else 0
         if order.kotak_order_id:
             from app.services.kotak_service import get_service
             broker = get_service()
             if not quantity:
-                broker.cancel_order(order.kotak_order_id)
+                broker.cancel_order(order.kotak_order_id, purpose="position_resize")
             elif order.order_type == OrderType.LIMIT:
                 broker.modify_sl_to_limit_order(order.kotak_order_id, order.limit_price, quantity)
             else:

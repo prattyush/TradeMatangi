@@ -30,14 +30,16 @@ async def sync_order_edit_async(session, order: Order, new_order_type: OrderType
             elif new_order_type == OrderType.STOPLOSS:
                 replacement = await asyncio.to_thread(broker.modify_sl_order, old_id, order.trigger_price, order.limit_price, order.quantity)
             else:
-                await asyncio.to_thread(broker.cancel_order, old_id)
+                await asyncio.to_thread(broker.cancel_order, old_id, purpose="conversion")
                 broker.deregister_fill_callback(old_id)
                 broker.deregister_reject_callback(old_id)
+                broker.deregister_cancel_callback(old_id)
                 session.kotak_order_map.pop(order.order_id, None)
                 order.kotak_order_id = None
             if isinstance(replacement, str) and replacement and replacement != old_id:
                 broker.deregister_fill_callback(old_id)
                 broker.deregister_reject_callback(old_id)
+                broker.deregister_cancel_callback(old_id)
                 order.kotak_order_id = replacement
                 session.kotak_order_map[order.order_id] = replacement
         elif new_order_type in (OrderType.LIMIT, OrderType.STOPLOSS) and _is_position_exit(session, order):
@@ -133,14 +135,16 @@ def sync_order_edit(session, order: Order, new_order_type: OrderType, *, reprice
                 replacement = broker.modify_sl_order(order.kotak_order_id, order.trigger_price,
                                        order.limit_price, order.quantity)
             else:
-                broker.cancel_order(order.kotak_order_id)
+                broker.cancel_order(order.kotak_order_id, purpose="conversion")
                 broker.deregister_fill_callback(order.kotak_order_id)
                 broker.deregister_reject_callback(order.kotak_order_id)
+                broker.deregister_cancel_callback(order.kotak_order_id)
                 session.kotak_order_map.pop(order.order_id, None)
                 order.kotak_order_id = None
             if isinstance(replacement, str) and replacement and replacement != old_id:
                 broker.deregister_fill_callback(old_id)
                 broker.deregister_reject_callback(old_id)
+                broker.deregister_cancel_callback(old_id)
                 order.kotak_order_id = replacement
                 session.kotak_order_map[order.order_id] = replacement
                 register_callbacks(session, order, broker, asyncio.get_running_loop())
@@ -198,6 +202,9 @@ def register_callbacks(session, order, broker, loop):
         current = order_service.get_order(session.session_id, order.order_id)
         if current is None or current.kotak_order_id != k_id or quantity <= current.broker_filled_quantity or price <= 0:
             return
+        from app.services import protection_recovery
+        before = trading.get_position(session.session_id, session.symbol, right=current.right, strike=current.strike, expiry=current.expiry)
+        before_net = before.quantity * (1 if before.side == "LONG" else -1 if before.side == "SHORT" else 0)
         previous_quantity = current.broker_filled_quantity
         previous_value = current.broker_filled_value
         delta = quantity - previous_quantity
@@ -223,10 +230,12 @@ def register_callbacks(session, order, broker, loop):
             right=current.right, strike=current.strike, expiry=current.expiry,
             brokerage_per_order=session.brokerage_per_order, user_id=session.user_id,
             session_type="real", source=current.source,
-            trade_id="kotak-live:" + k_id, kotak_order_id=k_id, cumulative=True)
+            trade_id="kotak-live:" + k_id, kotak_order_id=k_id, cumulative=True, defer_exit_reconciliation=True)
         positions = getattr(session, "broker_positions", None)
         if positions is not None:
             real_broker_state.apply_position_fill(session, current, delta, delta_price)
+        protection_recovery.note_fill(session, current, delta, before_net)
+        order_service.request_exit_reconciliation(session.session_id, session.symbol, current.right, current.strike, current.expiry, session.date)
         if hasattr(trade, "model_dump"):
             session.queue.put_nowait(json.dumps({"type": "new_trade", **trade.model_dump(mode="json")}))
         if current.execution_role != "exit" and (current.entry_sl_price is not None or current.is_autostop):
@@ -252,8 +261,32 @@ def register_callbacks(session, order, broker, loop):
         session.queue.put_nowait(json.dumps({"type": "order_cancelled", "order_id": current.order_id}))
         session.queue.put_nowait(json.dumps({"type": "broker_error", "message": f"Kotak rejected order: {reason}"}))
         logger.warning("broker_order_rejected session=%s order=%s reason=%s", session.session_id, current.order_id, reason)
+        if current.source == "cancellation_recovery":
+            from app.services.protection_recovery import note_cancel
+            current.cancellation_status = "rejected"
+            current.cancellation_reason = reason
+            current.cancelled_at = __import__("time").time()
+            note_cancel(session, current, {"status": "rejected", "raw_reason": reason, "received_at": current.cancelled_at, "raw": {}})
+
+    def cancelled(k_id, metadata):
+        if real_broker_state.fill_deferred(session, cancelled, k_id, metadata):
+            return
+        current = order_service.get_order(session.session_id, order.order_id)
+        if current is None or current.kotak_order_id != k_id or current.kotak_fill_confirmed or current.status == OrderStatus.CANCELLED:
+            return
+        if current.reserved_amount:
+            order_service._credit_reservation(current, current.reserved_amount, session.date)
+            current.reserved_amount = 0
+        current.status = OrderStatus.CANCELLED
+        current.cancellation_status = "cancelled"
+        current.cancellation_reason = metadata.get("raw_reason") or None
+        current.cancelled_at = metadata.get("received_at")
+        from app.services import protection_recovery
+        protection_recovery.note_cancel(session, current, metadata)
+        session.queue.put_nowait(json.dumps({"type": "order_cancelled", "order_id": current.order_id, "reason": current.cancellation_reason, "broker_status": "cancelled"}))
 
     broker.register_fill_callback(order.kotak_order_id, fill, loop)
+    broker.register_cancel_callback(order.kotak_order_id, cancelled, loop)
     broker.register_reject_callback(order.kotak_order_id, rejected, loop)
 
 

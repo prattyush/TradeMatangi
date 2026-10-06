@@ -1,3 +1,4 @@
+import { applyRecoveryEvent, pruneRecoveryNotices, RecoveryNotices } from './services/protectionRecoveryState'
 import { IndicatorHistoryRequests } from './services/tradingChartState'
 import { startPerformanceDiagnostics, recordPerformance } from './services/performanceDiagnostics'
 import { formatPnl } from './pnlFormat'
@@ -266,6 +267,8 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
   useEffect(() => setLiveFeed(null), [sim.sessionId])
   const [brokerOrdersSnapshot, setBrokerOrdersSnapshot] = useState<{ sessionId: string; orders: BrokerOrder[] } | null>(null)
   const [brokerError, setBrokerError] = useState<string | null>(null)
+  const [protectionRecovery, setProtectionRecovery] = useState<RecoveryNotices>({})
+  useEffect(() => { setProtectionRecovery({}) }, [sim.sessionId])
   const [isRealTradingUser, setIsRealTradingUser] = useState(false)
   const [guardrailPopup, setGuardrailPopup] = useState<{ type: 'BLOCK' | 'COOLDOWN' | 'BAN'; reason: string } | null>(null)
   const [combinedPnlOpen, setCombinedPnlOpen] = useState(false)
@@ -1380,9 +1383,12 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
       if (snapshotSessionId) {
         const snapshot = event as unknown as import('./services/api').BrokerSnapshot
         sim.applyBrokerSnapshot(snapshotSessionId, snapshot)
+        setProtectionRecovery(previous => pruneRecoveryNotices(previous, simRef.current.symbol, snapshot.positions))
         setBrokerOrdersSnapshot({ sessionId: snapshotSessionId, orders: snapshot.orders })
         setBrokerError(snapshot.wallet_error ?? null)
       }
+    } else if (event.type === 'protection_recovery') {
+      setProtectionRecovery(previous => applyRecoveryEvent(previous, event))
     } else if (event.type === 'broker_error') {
       setBrokerError(event.message as string)
     } else if (event.type === 'new_trade') {
@@ -2631,6 +2637,12 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
 
       {/* Broker error banner (paper trading) */}
       {liveFeed && sim.sessionType !== 'real' && <div role="status" style={{ fontSize: 11, color: '#8b949e', padding: '3px 12px' }}>Feed {liveFeed.actual_provider ?? liveFeed.selected_provider} · {liveFeed.connection}{liveFeed.actual_provider && liveFeed.actual_provider !== liveFeed.selected_provider ? ` (fallback from ${liveFeed.selected_provider})` : ''}</div>}
+      {sim.sessionType === 'real' && Object.entries(protectionRecovery).map(([key, recovery]) => (
+        <div key={key} role={recovery.state === 'needs_attention' ? 'alert' : 'status'}
+          style={{ background: recovery.state === 'needs_attention' ? '#3d1c1c' : '#14271d', padding: '6px 14px', fontSize: 12, color: recovery.state === 'needs_attention' ? '#ff7b72' : '#7ee787' }}>
+          Exit protection · {key.split('|').join(' ')} · {recovery.message}
+        </div>
+      ))}
       {brokerError && (
         <div style={{
           background: '#3d1c1c', border: '1px solid #f85149', color: '#f85149',

@@ -121,6 +121,7 @@ export interface Order {
   entry_sl_price?: number | null  // auto-stoploss price set at entry time
   group_id?: string | null        // links entry order with auto-SL order
   expiry?: string | null
+  broker_filled_quantity?: number
 }
 
 export interface HistoricalDataResponse {

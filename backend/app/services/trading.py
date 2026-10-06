@@ -214,6 +214,7 @@ def record_trade(
     trade_id: str | None = None,
     kotak_order_id: str | None = None,
     cumulative: bool = False,
+    defer_exit_reconciliation: bool = False,
 ) -> Trade:
     ensure_session(session_id)
     if trade_id:
@@ -281,8 +282,9 @@ def record_trade(
         logger.debug("guardrail on_trade_record skipped for session %s", session_id)
     from app.services.order_service import request_exit_reconciliation
     from datetime import datetime, timezone
-    request_exit_reconciliation(session_id, symbol, right, strike, expiry,
-                                datetime.fromtimestamp(timestamp, timezone.utc).date().isoformat())
+    if not defer_exit_reconciliation:
+        request_exit_reconciliation(session_id, symbol, right, strike, expiry,
+                                    datetime.fromtimestamp(timestamp, timezone.utc).date().isoformat())
     return trade
 
 

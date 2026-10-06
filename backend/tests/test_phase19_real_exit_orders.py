@@ -187,7 +187,7 @@ async def test_exit_target_conversion_cancels_broker_then_becomes_local(env):
     simulation._register_kotak_sl_for_order(s, o, asyncio.get_running_loop())
     await orders.convert_order(o.order_id, ConvertOrderRequest(session_id=s.session_id,
         new_order_type=OrderType.TARGET, price=95))
-    broker.cancel_order.assert_called_once_with("broker-limit")
+    broker.cancel_order.assert_called_once_with("broker-limit", purpose="conversion")
     assert not o.kotak_order_id and o.order_type == OrderType.TARGET
     assert o.order_id not in s.kotak_order_map
 

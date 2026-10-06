@@ -131,6 +131,8 @@
 - **Manual SL price edit forwards to Kotak for real sessions**: `PATCH /api/orders/{order_id}` calls `order_service.update_order()` (local) then, if `session_type == "real"` AND `order.kotak_order_id` is set AND `order_type == STOPLOSS`, calls `kotak_service.modify_sl_order()` to keep the broker-side SL in sync. TARGET and LIMIT orders are held locally until triggered and never need a Kotak modify call.
 - **Kotak index/scrip intent separation**: the v3 bridge batches `subscribe_index` and `subscribe_scrips` separately, with matching unsubscribe methods. NIFTY/BSESEN underlying registrations carry `is_indices=True`; CE/PE and equity registrations carry False. Desired subscriptions survive socket replacement, and removed subscriptions cannot reappear after an outage.
 
+- **Kotak cancelled-exit recovery**: cancellations and rejections have separate callbacks. Record cancellation intent before broker requests and preserve wire evidence via `on_raw`. Real MIS recovery uses broker-confirmed remaining quantities, a fresh exact-contract quote, and the user's `default_sl_pct` when the old trigger is crossed. Unconfirmed submissions must never be evaluated by local ticks or blindly retried. See [Kotak protection recovery](kotak-protection-recovery.md) for journal provisioning, policy, logs and failure handling.
+
 ## User Isolation
 
 - **User isolation via `X-User-Id` header**: `app/dependencies.py` exports `get_request_user_id` — a FastAPI dependency that reads the `X-User-Id` request header, defaulting to `FIXED_USER_ID` when absent (backward compat for tests). Use `Depends(get_request_user_id)` in routers; never import FastAPI's `Header` inside service modules.

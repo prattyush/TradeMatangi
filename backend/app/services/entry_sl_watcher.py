@@ -164,7 +164,7 @@ def _place_real_protection(order, session):
     import uuid
     from app.models.schemas import TradeSide, OrderType, OrderStatus
     from app.services import order_service, simulation, trading
-    if getattr(session, "broker_refresh_events", None) is not None:
+    if getattr(session, "broker_refresh_events", None) is not None or getattr(session, "_protection_recovery_busy", False):
         _schedule_delayed_sl(order, session, 1, asyncio.get_running_loop())
         return
     group = order.group_id or order.order_id
