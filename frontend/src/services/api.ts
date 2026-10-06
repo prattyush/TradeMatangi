@@ -1,3 +1,4 @@
+import type { PositionSnapshot } from './positionAccounting'
 import { measureRequest } from './performanceDiagnostics'
 import { legacyBrowserSettings, cacheSharedSettings } from './sharedSettings'
 import { BACKEND_URL, AI_HELPER_URL } from '../config'
@@ -272,6 +273,8 @@ export interface SessionGroupResponse {
 }
 
 export interface BrokerSnapshot {
+  state_version?: number
+  state_generation?: string
   reconciled: number
   updated: number
   imported: number
@@ -614,6 +617,7 @@ export interface Trade {
   // Frontend-only: NIFTY price snapshotted when a CE/PE trade lands in local state
   underlying_price?: number
   expiry?: string | null
+  kotak_order_id?: string | null
 }
 
 export interface Position {
@@ -1034,6 +1038,12 @@ const api = {
     const res = await fetch(url, { headers: _authHeaders() })
     if (!res.ok) return { trades: [], sessionIds: [] }
     return res.json()
+  },
+
+  async getPositionSnapshot(sessionId: string): Promise<PositionSnapshot> {
+    const response = await fetch(`${BACKEND_URL}/api/trades/position-snapshot?session_id=${encodeURIComponent(sessionId)}`, { headers: _authHeaders() })
+    if (!response.ok) throw new Error(`Position snapshot failed: ${response.status}`)
+    return response.json()
   },
 
   async getPosition(session_id: string, right?: string, strike?: number, expiry?: string): Promise<Position> {

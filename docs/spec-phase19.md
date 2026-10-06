@@ -1,5 +1,17 @@
 # Phase 19 — Shared live market data and partial take profit
 
+## Latest delivery status — Kotak recovery and FIFO accounting — 2026-10-06
+
+Unexpected-cancellation exit recovery is implemented on `dev` in commit
+`14daeb8` (**Recover missing Kotak exits after unexpected cancellations**).
+The additional FIFO average-entry and website P&L refresh repair is implemented
+and validated in [PR #595](https://github.com/prattyush/TradeMatangi/pull/595),
+from `fix/phase19-kotak-fifo-refresh` into `dev`.
+PR review/merge and live Kotak acceptance remain pending; merge/deployment to
+`main` remains manual. See **Kotak unexpected cancellation and FIFO refresh repair
+— 2026-10-06** at the end for requirements, changes and latest verification.
+Older delivery statuses below describe their respective changes at that time.
+
 ## Current delivery status — shared settings
 
 Desktop/website settings parity is implemented and validated on
@@ -2214,3 +2226,89 @@ The live-feed fallback rules remain:
 
 See [live history providers](live-history-providers.md) for detailed routing,
 API compatibility, SDK references and acceptance steps.
+
+
+## Kotak unexpected cancellation and FIFO refresh repair — 2026-10-06
+
+### Requirements and observed issue
+
+The user reported that, during Kotak real options trading, completion of one exit
+was followed by cancellation of another stoploss without a user cancellation.
+This was experienced with both the older and current Kotak Python SDK. The supplied
+log shows a SELL fill followed by `cancel pending` / `cancelled` for another
+stoploss and an uninitialized `order_status` parsing error. The log demonstrates
+the event sequence, but does not establish that Kotak itself initiated the cancel;
+application exit reconciliation must also be considered.
+
+Required recovery: after an exit fill and an unexpected stoploss cancellation,
+reconcile the exact contract's remaining exposure and exit coverage. Restore only
+uncovered open quantity, excluding user/application intentional cancellation.
+Prefer the cancelled stoploss's valid original trigger; otherwise use the configured
+default stoploss gap (20% by default) and current valid price. Avoid duplicate exits,
+overselling, repeated event submissions and ambiguous acknowledgement resubmission.
+
+Additional user requirement: cancellation must not corrupt the right-panel average
+entry or chart P&L percentage. Clicking **Trade History Refresh** must reconstruct
+the remaining position from confirmed executions for that symbol/contract using
+**FIFO**. Buying 65 at 40, buying 65 at 60, then selling 65 leaves 65 at average
+entry **60**. Both chart and right panel must consume the same repaired position,
+including remaining entry commissions, and subsequent live fills must maintain it.
+
+### Implemented changes
+
+**Recovery already on dev (`14daeb8`).** Broker cancellation intent and exit-fill
+correlation distinguish intentional cancellations from eligible unexpected ones.
+Recovery checks exact contract/product exposure and coverage, restores only missing
+quantity, uses valid original protection or the configured fallback, and fences
+concurrent changes. A persistent recovery journal, bounded retries, broker report
+reconciliation for uncertain acknowledgements, raw event audit and website recovery
+notices support investigation and restart handling. See
+[Kotak protection recovery](kotak-protection-recovery.md) for detailed policy.
+
+**FIFO repair in this delivery.**
+
+- Replay individual executions chronologically, including fractional-second ordering.
+  Scope by exchange, product, option right, strike and expiry; deduplicate execution
+  identities and reject conflicting duplicates. Preserve partial-fill interleaving
+  rather than reconstructing from order-aggregated averages.
+- Verify reconstructed signed quantities against broker positions. Retry incoherent
+  reports once, then return an error and retain the last verified state. Keep the
+  broker's average as diagnostic evidence rather than overriding FIFO entry.
+- Allocate entry commissions to remaining lots, including one flat brokerage charge
+  per order. Closed cycles and cancellation events cannot dilute a later entry.
+- Apply confirmed live fill deltas to the ledger and persist individual executions
+  and positions. Restore FIFO from those executions on reattachment, retaining
+  resolved monthly expiry without requiring another master download. An incomplete
+  persisted ledger requires broker refresh and is not marked verified.
+- Publish versioned position snapshots and expose an authenticated, session-owned
+  cached snapshot endpoint. Older responses cannot overwrite newer fill state;
+  routine position updates do not poll broker reports.
+- Use one unrealized P&L calculation for website chart and right panel, based on the
+  exact contract, remaining entry fees and estimated exit fees. Percentage retains
+  the existing session-capital denominator. Missing exact-contract quotes display
+  unavailable P&L instead of using another strike's price.
+- Existing open books without verified executions require Trade History Refresh to
+  establish FIFO. Paper/replay accounting retains its existing behavior.
+
+### Latest validation and remaining acceptance
+
+- **116 focused backend tests passed** across FIFO reconstruction, broker snapshots,
+  real exit orders and Kotak protection recovery. Coverage includes fee allocation,
+  shorts/reversals, duplicate/interleaved fills, incomplete reports, restart,
+  monthly-expiry persistence and cached endpoint ownership/no broker polling.
+- **4 frontend accounting tests passed** for exact-contract matching, shared net
+  P&L/percentage, snapshot version/generation fencing and trade deduplication.
+- Website TypeScript check, Vite production build and `git diff --check` passed.
+  The existing Vite bundle-size warning remains.
+- Full backend run: **1,617 passed / 2 pre-existing failures**. The failures remain
+  the stale expiry assertion in `test_options_api.py` and missing `group_id` fixture
+  in `test_tab_restore.py`; neither is changed by this delivery. The final additional
+  monthly-expiry and endpoint tests are included in the focused result above.
+- Automated tests submitted no live broker orders. Live Kotak acceptance is pending:
+  verify exit/cancel ordering, deliberate cancellation suppression, partial exits,
+  protection restoration and restart/uncertain-ack behavior. After scale-in and
+  partial exit, click Trade History Refresh and compare remaining FIFO entry and
+  both P&L displays; confirm matching quotes and percentage against session capital.
+- Delivery: [PR #595](https://github.com/prattyush/TradeMatangi/pull/595),
+  branch `fix/phase19-kotak-fifo-refresh`, target `dev`. Review/merge
+  and manual production deployment remain pending.

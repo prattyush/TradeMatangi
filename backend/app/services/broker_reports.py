@@ -20,21 +20,29 @@ def number(value, default=0):
     return result
 
 
-def wall_time(value: str) -> int:
-    """Broker IST wall clock encoded as UTC, matching chart/trade timestamps."""
+def wall_datetime(value: str):
     value = str(value or "").strip()
     for fmt in ("%d-%b-%Y %H:%M:%S", "%d/%m/%Y %H:%M:%S", "%d-%m-%Y %H:%M:%S", "%Y/%m/%d %H:%M:%S", "%Y-%m-%d %H:%M:%S"):
-        try:
-            return calendar.timegm(datetime.strptime(value, fmt).timetuple())
-        except ValueError:
-            pass
+        for variant in (fmt, fmt + ".%f"):
+            try:
+                return datetime.strptime(value, variant)
+            except ValueError:
+                pass
     try:
         dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError as exc:
         raise ValueError(f"Cannot parse broker timestamp: {value!r}") from exc
-    if dt.tzinfo:
-        dt = dt.astimezone(ZoneInfo("Asia/Kolkata")).replace(tzinfo=None)
-    return calendar.timegm(dt.timetuple())
+    return dt.astimezone(ZoneInfo("Asia/Kolkata")).replace(tzinfo=None) if dt.tzinfo else dt
+
+
+def wall_time(value: str) -> int:
+    """IST wall clock encoded as UTC; public chart timestamps remain seconds."""
+    return calendar.timegm(wall_datetime(value).timetuple())
+
+
+def execution_sort_time(value: str) -> int:
+    dt = wall_datetime(value)
+    return calendar.timegm(dt.timetuple()) * 1_000_000 + dt.microsecond
 
 
 def expiry_date(value) -> str | None:
@@ -93,6 +101,7 @@ def normalize_execution(raw: dict) -> dict:
     from app.services.real_accounting import price_factor
     result["price_factor"] = raw.get("price_factor", price_factor(raw))
     result["timestamp"] = wall_time(result["execution_time"])
+    result["execution_sort_time"] = execution_sort_time(result["execution_time"])
     return result
 
 

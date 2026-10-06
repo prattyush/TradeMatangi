@@ -1,3 +1,4 @@
+import { contractPosition, unrealizedPnl } from './services/positionAccounting'
 import { applyRecoveryEvent, pruneRecoveryNotices, RecoveryNotices } from './services/protectionRecoveryState'
 import { IndicatorHistoryRequests } from './services/tradingChartState'
 import { startPerformanceDiagnostics, recordPerformance } from './services/performanceDiagnostics'
@@ -1246,7 +1247,7 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
   // Price shown in TradePanel = active contract price (or equity)
   const tradePanelPrice = (() => {
     if (instrumentType === 'options') {
-      if (sim.sessionType === 'paper' && activePane?.type === 'options' &&
+      if ((sim.sessionType === 'paper' || sim.sessionType === 'real') && activePane?.type === 'options' &&
           (activePane.expiry !== sim.sessionExpiry || activePane.strike !== (activePane.right === 'CE' ? sim.sessionStrikeCE : sim.sessionStrikePE))) return 0
       if (activeRight === 'CE') return sim.currentPriceCE
       if (activeRight === 'PE') return sim.currentPricePE
@@ -1258,6 +1259,9 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
   // Position shown in TradePanel
   const tradePanelPosition = (() => {
     if (instrumentType === 'options') {
+      if (sim.sessionType === 'real' && activePane?.type === 'options') {
+        return contractPosition(sim.symbol, sim.contractPositions, activePane.right ?? null, activePane.strike ?? null, activePane.expiry ?? null)
+      }
       if (sim.sessionType === 'paper' && sim.sessionInstrumentType === 'options' && activePane?.type === 'options') {
         return openOptionContracts.find(p => p.right === activePane.right && p.strike === activePane.strike && p.expiry === activePane.expiry)?.position
           ?? { symbol: sim.symbol, quantity: 0, avg_entry_price: 0, side: 'FLAT' as const, entry_commission: 0 }
@@ -1270,7 +1274,9 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
   })()
 
   // TradePanel P&L = active contract only (options) or total (equity)
+  const tradePanelPnlAvailable = sim.sessionType !== 'real' || tradePanelPosition.side === 'FLAT' || tradePanelPrice > 0
   const tradePanelPnl = (() => {
+    if (sim.sessionType === 'real') return unrealizedPnl(tradePanelPosition, tradePanelPrice > 0 ? tradePanelPrice : null, sim.brokeragePerOrder) ?? 0
     if (instrumentType === 'options') {
       if (activeRight === 'CE') return sim.pnlCE
       if (activeRight === 'PE') return sim.pnlPE
@@ -1378,6 +1384,8 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
       if (sim.sessionId) void refreshRunningStrategies(sim.sessionId)
     } else if (event.type === 'order_updated') {
       if (sim.sessionId) void sim.refreshOpenOrders(sim.sessionId)
+    } else if (event.type === 'position_snapshot') {
+      sim.applyPositionSnapshot(event as unknown as import('./services/positionAccounting').PositionSnapshot)
     } else if (event.type === 'broker_snapshot') {
       const snapshotSessionId = brokerSnapshotSessionId(event, simRef.current.sessionId)
       if (snapshotSessionId) {
@@ -1414,7 +1422,7 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
       const peBar = mkCandle(event.bar_open_pe, event.bar_high_pe, event.bar_low_pe, event.bar_close_pe, event.bar_time)
       sim.handleBarPaused(event.bar_index as number, event.total_bars as number, eqBar, ceBar, peBar, eventSessionId)
     }
-  }, [sim.sessionId, sim.applyBrokerSnapshot, sim.setLatestTick, sim.handleSessionEnded, sim.handleOrderFilled, sim.handleOrderCancelled, sim.addOpenOrder, sim.addTradeFromSSE, sim.handleBarPaused, setGuardrailPopup, setRunningStrategies, captureSnapshot])
+  }, [sim.sessionId, sim.applyBrokerSnapshot, sim.applyPositionSnapshot, sim.setLatestTick, sim.handleSessionEnded, sim.handleOrderFilled, sim.handleOrderCancelled, sim.addOpenOrder, sim.addTradeFromSSE, sim.handleBarPaused, setGuardrailPopup, setRunningStrategies, captureSnapshot])
 
   const handleSSEReconnect = useCallback((sessionId?: string) => {
     if (sessionId && sessionId !== sim.sessionId) return
@@ -1780,6 +1788,7 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
 
   const getPositionForPane = useCallback((pane: PaneConfig) => {
     if (pane.type === 'equity') return sim.position
+    if (sim.sessionType === 'real') return contractPosition(sim.symbol, sim.contractPositions, pane.right ?? null, pane.strike ?? null, pane.expiry ?? null)
     if (sim.sessionType === 'paper' && sim.sessionInstrumentType === 'options') {
       return openOptionContracts.find(p => p.right === pane.right && p.strike === pane.strike && p.expiry === pane.expiry)?.position
         ?? { symbol: sim.symbol, quantity: 0, avg_entry_price: 0, side: 'FLAT' as const, entry_commission: 0 }
@@ -1787,7 +1796,7 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
     if (pane.right === 'CE') return sim.positionCE
     if (pane.right === 'PE') return sim.positionPE
     return sim.position
-  }, [sim.position, sim.positionCE, sim.positionPE, sim.sessionType, sim.sessionInstrumentType, sim.symbol, openOptionContracts])
+  }, [sim.position, sim.positionCE, sim.positionPE, sim.contractPositions, sim.sessionType, sim.sessionInstrumentType, sim.symbol, openOptionContracts])
 
   const getPnlForPane = useCallback((pane: PaneConfig) => {
     if (pane.type === 'equity') {
@@ -1795,10 +1804,11 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
       const firstEq = panes.find(p => p.type === 'equity')
       return pane.id === firstEq?.id ? sim.pnlEquity : 0
     }
+    if (sim.sessionType === 'real') return unrealizedPnl(getPositionForPane(pane), getTickForPane(pane)?.close ?? null, sim.brokeragePerOrder) ?? 0
     if (pane.right === 'CE') return sim.pnlCE
     if (pane.right === 'PE') return sim.pnlPE
     return 0
-  }, [sim.pnlEquity, sim.pnlCE, sim.pnlPE, panes])
+  }, [sim.pnlEquity, sim.pnlCE, sim.pnlPE, sim.sessionType, sim.brokeragePerOrder, getPositionForPane, getTickForPane, panes])
 
   // ── Layout rendering helpers ──────────────────────────────────────────────────
   const chartToolbarHeight = 32
@@ -1928,6 +1938,7 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
               ? true
               : pane.expiry === sim.sessionExpiry && pane.strike === (pane.right === 'CE' ? sim.sessionStrikeCE : sim.sessionStrikePE))}
           pnl={draft ? 0 : getPnlForPane(pane)}
+          pnlAvailable={sim.sessionType !== 'real' || getPositionForPane(pane).side === 'FLAT' || getTickForPane(pane) !== null}
           pnlPctMode={pnlPctMode}
           sessionCapital={draft ? 0 : sim.sessionCapital}
           brokeragePerOrder={sim.brokeragePerOrder}
@@ -2701,6 +2712,7 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
             currentPrice={tradePanelPrice}
             position={tradePanelPosition}
             pnl={tradePanelPnl}
+            pnlAvailable={tradePanelPnlAvailable}
             sessionPnl={sim.sessionState !== 'idle' && sim.sessionState !== 'ended' ? netDayPnl : undefined}
             activeRight={instrumentType === 'options' ? activeRight : undefined}
             activeLabel={activeLabel}
@@ -2793,7 +2805,7 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
               aggrSlOnlyInProfit={aggrSlOnlyInProfit}
               onPlaceOrder={(side, orderType, price, quantity, opts) =>
                 {
-                  if (sim.sessionType === 'paper' && activePane?.type === 'options' &&
+                  if ((sim.sessionType === 'paper' || sim.sessionType === 'real') && activePane?.type === 'options' &&
                       (activePane.strike !== (activePane.right === 'CE' ? sim.sessionStrikeCE : sim.sessionStrikePE)
                         || activePane.expiry !== sim.sessionExpiry)) {
                     return Promise.reject(new Error('Select a live option contract before placing an order'))

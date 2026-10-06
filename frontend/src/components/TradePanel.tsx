@@ -7,6 +7,7 @@ interface Props {
   currentPrice: number
   position: Position
   pnl: number           // unrealized position P&L
+  pnlAvailable?: boolean
   sessionPnl?: number   // realized + unrealized - commission for the full session
   // Options mode extras
   activeRight?: 'CE' | 'PE' | null   // null = equity pane active (no quick-trade)
@@ -38,7 +39,7 @@ function fmt(n: number) { return n.toFixed(2) }
 
 export default function TradePanel({
   sessionState, currentPrice, position, pnl, sessionPnl,
-  activeRight = null, activeLabel, pnlPctMode, sessionCapital, sizingMode, positionMarginRate = 1,
+  pnlAvailable = true, activeRight = null, activeLabel, pnlPctMode, sessionCapital, sizingMode, positionMarginRate = 1,
   sessionId,
   pendingExitLabels = [],
   openLegs = [],
@@ -138,7 +139,7 @@ export default function TradePanel({
         <div style={{ fontSize: 13, color: '#8b949e' }}>
           Pos P&L&nbsp;
           <span style={{ fontWeight: 700, color: pnlColor, fontVariantNumeric: 'tabular-nums' }}>
-            {fmtPnl(pnl)}
+            {pnlAvailable ? fmtPnl(pnl) : '—'}
           </span>
         </div>
         {active && sessionPnl !== undefined && (

@@ -381,7 +381,8 @@ def get_position(
         same = [p for p in matches if p["side"] == ("LONG" if signed > 0 else "SHORT")]
         quantity = sum(int(p["quantity"]) for p in same)
         avg = sum(float(p["avg_entry_price"]) * int(p["quantity"]) for p in same) / quantity if quantity else 0
-        return Position(symbol=symbol or session.symbol, side="LONG" if signed > 0 else "SHORT" if signed < 0 else "FLAT", quantity=abs(signed), avg_entry_price=avg if signed else 0)
+        return Position(symbol=symbol or session.symbol, side="LONG" if signed > 0 else "SHORT" if signed < 0 else "FLAT", quantity=abs(signed), avg_entry_price=avg if signed else 0,
+            entry_commission=sum(float(p.get("entry_commission", 0)) for p in same))
     symbol, buy_queue, sell_queue, net_qty = _open_position_lots(session_id, symbol, right, strike, expiry, exact_contract)
     if net_qty > 0:
         side: Literal["LONG", "SHORT", "FLAT"] = "LONG"
