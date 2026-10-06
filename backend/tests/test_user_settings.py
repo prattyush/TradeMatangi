@@ -265,3 +265,21 @@ class TestUserSettingsEndpoints:
         assert resp.json()["override_session_enabled"] is True
         called_settings = mock_fn.call_args[0][1]
         assert called_settings["override_session_enabled"] is True
+
+
+def test_entry_protection_is_enabled_for_new_and_previously_disabled_users():
+    from app.models.schemas import UserSettingsResponse
+    for item in (None, {"user_id": "user-123", "entry_auto_sl_enabled": False}):
+        resource, _ = _mock_db(item)
+        with patch("app.services.db.get_dynamodb_resource", return_value=resource):
+            assert svc.get_settings("user-123")["entry_auto_sl_enabled"] is True
+    assert UserSettingsResponse().entry_auto_sl_enabled is True
+
+
+def test_old_clients_cannot_disable_protection_or_reset_the_delay():
+    resource, table = _mock_db({"user_id": "user-123", "entry_auto_sl_enabled": False, "entry_auto_sl_delay_sec": 7})
+    with patch("app.services.db.get_dynamodb_resource", return_value=resource):
+        result = svc.update_settings("user-123", {"entry_auto_sl_enabled": False})
+    assert result["entry_auto_sl_enabled"] is True
+    assert result["entry_auto_sl_delay_sec"] == 7
+    table.update_item.assert_not_called()

@@ -29,7 +29,6 @@ logger = logging.getLogger(__name__)
 
 _IST_OFFSET = 19800
 _AUTOSTOP_FALLBACK_SL_PCT = 0.25
-_DESKTOP_ENTRY_SOURCES = {"desktop_stepwise", "desktop_replay", "desktop_paper"}
 
 _pending_real_timers: dict[str, threading.Timer] = {}
 _timers_lock = threading.Lock()
@@ -51,15 +50,10 @@ def on_entry_filled(
     if order.entry_sl_price is None and not is_autostop:
         return
 
-    explicit_desktop_sl = getattr(order, "source", None) in _DESKTOP_ENTRY_SOURCES
-    if getattr(session, "session_type", None) != "real" and not explicit_desktop_sl and not is_autostop:
-        try:
-            from app.services.user_settings_service import get_settings
-            settings = get_settings(order.user_id)
-            if not settings.get("entry_auto_sl_enabled", False):
-                return
-        except Exception:
-            return
+    # Entry protection is always enabled. The retired account switch cannot
+    # suppress a requested SL in any client or trading mode. Orders without an
+    # attached SL still return above, except AutoStop's existing fallback.
+    # Real sessions retain their configured delay.
 
     session_type = getattr(session, "session_type", "sim")
 
