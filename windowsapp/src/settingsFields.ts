@@ -86,7 +86,6 @@ export const sharedSettingsSections: Record<string, SettingsField[]> = {
       undefined,
       0.01
     ),
-    toggle('entry_auto_sl_enabled', 'Entry auto-stoploss'),
     number(
       'entry_auto_sl_delay_sec',
       'Entry auto-stoploss delay (seconds)',

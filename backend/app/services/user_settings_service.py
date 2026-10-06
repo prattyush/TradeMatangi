@@ -45,7 +45,7 @@ DEFAULT_SETTINGS: dict = {
     "experimental_patterns_enabled": False,
     "pattern_share_emails": "",
     "fine_structure_share_emails": "",
-    "entry_auto_sl_enabled": False,
+    "entry_auto_sl_enabled": True,
     "entry_auto_sl_delay_sec": 3,
     "max_price_mode": "otm",
     "max_price_threshold_ce": 50.0,
@@ -101,6 +101,8 @@ def get_settings(user_id: str, *, strict: bool = False) -> dict:
         ).get("Item", {})
         result = deepcopy(DEFAULT_SETTINGS)
         for key, default in DEFAULT_SETTINGS.items():
+            if key == "entry_auto_sl_enabled":
+                continue  # Retired switch: saved False values cannot disable entry protection.
             if key not in item:
                 continue
             value = item[key]
@@ -155,6 +157,7 @@ def update_settings(user_id: str, settings: dict) -> dict:
     """Merge settings into the user's record and return the updated settings."""
     import math
     settings = dict(settings)
+    settings.pop("entry_auto_sl_enabled", None)  # Accept old clients without restoring the retired switch.
     for key in ("target_deviation_pct", "stoploss_limit_gap_pct"):
         if settings.get(key) is not None:
             value = float(settings[key])
