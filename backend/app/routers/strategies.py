@@ -35,6 +35,11 @@ def _session_or_404(session_id: str, user_id: str | None = None):
 @router.post("/start", response_model=StrategyResponse)
 def start_strategy(req: StartStrategyRequest, user_id: str = Depends(get_request_user_id)):
     session = _session_or_404(req.session_id, user_id)
+    if getattr(session, 'session_type', 'sim') == 'real':
+        from app.services.real_trading_day import state
+        status = state(user_id)
+        if status['state'] != 'active':
+            raise HTTPException(403, 'Real trading is locked for this IST day; new strategies are disabled')
 
     right = req.right.upper() if req.right else None
 

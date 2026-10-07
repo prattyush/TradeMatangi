@@ -1,3 +1,4 @@
+import TradingSafetyActions from './components/TradingSafetyActions'
 import NotificationCenter from './components/NotificationCenter'
 import { useFlashError } from './hooks/useFlashError'
 import { flashError, flashMessage, setNotificationAccount, setNotificationContext } from './services/notifications'
@@ -1421,6 +1422,9 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
         else if (event.original_cancelled) next[operation] = String(event.message ?? 'Original exit cancelled; replacement is unconfirmed')
         return next
       })
+    } else if (event.type === 'real_trading_day_status') {
+      window.dispatchEvent(new CustomEvent('real-trading-day-status', { detail: event }))
+      flashMessage(String(event.message ?? 'Real trading day status updated'), event.state === 'done' ? 'success' : 'info', 'Done for day')
     } else if (event.type === 'broker_error') {
       setBrokerError(event.message as string)
     } else if (event.type === 'new_trade') {
@@ -2205,6 +2209,7 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
             )}
           </div>
         )}
+        {sim.sessionId && (sim.sessionState === 'running' || sim.sessionState === 'paused') && <TradingSafetyActions sessionId={sim.sessionId} sessionType={sim.sessionType} onOrdersRequested={async sessionId => { if (simRef.current.sessionId === sessionId) await simRef.current.refreshOpenOrders(sessionId) }} />}
         {(sim.sessionState === 'running' || sim.sessionState === 'paused') && !guardrailPopup?.type && (
           <button
             onClick={async () => {

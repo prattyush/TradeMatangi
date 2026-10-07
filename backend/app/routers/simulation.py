@@ -354,6 +354,10 @@ async def _start_simulation_impl(
     # Real trades and P&L cannot be reset by restarting the website. Ignore a
     # stale client's override flag and follow the existing-session resume path.
     if is_real:
+        from app.services.real_trading_day import state
+        status = await asyncio.to_thread(state, user_id)
+        if status['state'] == 'done':
+            raise HTTPException(403, 'Done for day: real trading is locked for this IST day')
         req.override = False
 
     if is_stepwise and (is_paper or is_real):
