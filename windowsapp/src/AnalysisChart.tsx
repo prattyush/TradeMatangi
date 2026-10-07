@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { init, dispose, registerOverlay, type Chart, type KLineData } from 'klinecharts'
 import type { AnalysisTrade, OHLCCandle, PatternAnnotation, TopPatterns } from '../../shared/analysis/api'
 import { useAnalysisApi, useAnalysisEnvironment } from '../../shared/analysis/environment'
-import { buildMarkers } from '../../frontend/src/services/patternMarkers'
+import { buildMarkers } from '../../shared/analysis/patternMarkers'
 import { analysisMarkers, type ExecutionMarker } from './analysisMarkers'
 
 interface Props {

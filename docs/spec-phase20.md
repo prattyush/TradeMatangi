@@ -1051,3 +1051,45 @@ Validation for this follow-up:
   Save/Cancel icons and retained-price/quantity editing. Feeds/broker responses
   are synthetic; no live broker orders were submitted. Screenshot/JSON/build/test
   artifacts remain under `.cache/desktop-analysis-validation/`.
+
+### Desktop clean-build correction: renderer ownership (2026-10-07)
+
+The Windows installer CI failure was caused by compile-time coupling, not a
+missing desktop chart feature: shared Analysis components still imported and
+contained the website's Lightweight Charts fallback implementations even though
+all desktop chart slots already used KLineCharts. The desktop TypeScript/Vite
+aliases resolved those imports through `frontend/node_modules`, masking the
+problem locally; Windows CI installs only desktop dependencies.
+
+Website implementations now live in `frontend/src/components/analysis/` and are
+registered by the website Analysis provider. Shared components contain only
+renderer-neutral props and workflows, and require the host's supplied renderer.
+Desktop retains its existing KLineCharts implementations for Sessions, Labels,
+Stats details, snapshots and comparisons. Pattern marker calculation is shared
+without chart-library types; only the website adapts markers to Lightweight
+Charts timestamp types. The desktop cross-client aliases are removed. No desktop
+package or lockfile dependency was added or changed. Windows build path triggers
+now also include shared Analysis and the frontend services consumed by desktop.
+
+Validation:
+
+- An isolated source checkout passed desktop `npm ci` and `npm run build`, with
+  neither `frontend/node_modules` nor desktop `lightweight-charts` installed.
+  The desktop Analysis bundle excludes the website renderers (about 108 kB rather
+  than 297 kB before this correction).
+- Both TypeScript checks passed; website production build passed.
+- Desktop Vitest: **176 passed**, 29 files; website Node checks: **41 passed**.
+- Desktop StrictMode Analysis workflows and Paper/Replay/Stepwise continuity
+  browser checks passed without a Lightweight Charts alias.
+- Website Stats browser acceptance passed (five views, cycle detail, cached-price
+  failure, CSV export, narrow layout and close). Its standalone browser harness
+  now supplies the React resolver/automatic JSX used by the production build.
+- `scripts/website-analysis-renderers-check.mjs` verifies all seven website chart
+  slots in StrictMode: underlying, options, chart panel, both snapshot renderers,
+  trade comparison and pattern comparison. All passed without page errors.
+- `wip/phase20-desktop-analysis` is an ancestor of the delivery branch; there are
+  no WIP commits missing from PR #610. Replay, order splitting, Stats, snapshots
+  and real-history sharing remain included.
+
+These are clean desktop frontend and browser checks; the packaged Windows
+installer is validated by the existing Windows CI workflow, not by Linux tests.

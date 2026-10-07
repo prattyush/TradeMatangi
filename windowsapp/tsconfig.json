@@ -24,9 +24,6 @@
       ],
       "react/*": [
         "node_modules/@types/react/*"
-      ],
-      "lightweight-charts": [
-        "../frontend/node_modules/lightweight-charts"
       ]
     },
     "types": [
