@@ -3,15 +3,41 @@
 from copy import deepcopy
 from decimal import Decimal
 import uuid
+import math
 from app.config import LOT_SIZES
 
 
+# Only these fields are arithmetic inputs. IDs, labels and contract strings must
+# remain strings even when they happen to contain digits.
+_NUMERIC_METADATA_FIELDS = frozenset({
+    "version", "capital", "lot_size", "strategy_interval_seconds", "requested_pct",
+    "requested_budget", "calculated_quantity", "reference_price", "initial_stop",
+    "margin_rate", "effective_allocation_pct", "initial_risk", "effective_risk_pct",
+    "position_quantity", "selected_quantity", "timestamp", "placement_time",
+    "filled_quantity", "filled_value", "quote_price", "quote_timestamp",
+    "execution_gap_pct", "requested_entry_stop", "closed_fraction",
+})
+
+
 def normalize_metadata(value):
-    """DynamoDB Decimals must not leak into float arithmetic or JSON output."""
+    """Normalize stored evidence, including Decimal strings from JSON snapshots."""
     if isinstance(value, Decimal):
         return float(value)
     if isinstance(value, dict):
-        return {key: normalize_metadata(item) for key, item in value.items()}
+        result = {}
+        for key, item in value.items():
+            if key in _NUMERIC_METADATA_FIELDS and isinstance(item, str):
+                if not item.strip():
+                    item = None
+                else:
+                    try:
+                        item = float(item)
+                    except ValueError as exc:
+                        raise ValueError(f"Invalid numeric analytics field: {key}") from exc
+                    if not math.isfinite(item):
+                        raise ValueError(f"Nonfinite numeric analytics field: {key}")
+            result[key] = normalize_metadata(item)
+        return result
     if isinstance(value, list):
         return [normalize_metadata(item) for item in value]
     return deepcopy(value)
