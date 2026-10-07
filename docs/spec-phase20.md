@@ -508,3 +508,7 @@ still requires authorized manual checks of exact-contract/freeze orders, pending
 conversion, partial fills, unknown acknowledgements and day closure/restart.
 Development is on dev; deliver in a dedicated reviewed PR targeting dev. Main merge
 and deployment remain manual. Desktop Analysis WIP remains separate.
+
+Delivery: [PR #605](https://github.com/prattyush/TradeMatangi/pull/605),
+`feature/website-emergency-exit-day-ban` → `dev`, implementation commit `dbcfb53`.
+Review/merge, authorized live acceptance and manual main deployment remain pending.
