@@ -984,3 +984,10 @@ logs, JSON summaries and screenshots are ignored under
 Packaged Windows acceptance (scale/focus/native auth refresh/download/resize) and
 existing authorized live-broker acceptance remain manual and are not claimed by
 Linux/browser tests. No live orders, credential changes, main merge or deployment.
+
+
+Delivery: [draft PR #610](https://github.com/prattyush/TradeMatangi/pull/610),
+`feature/desktop-analysis-history-sharing` → `dev`. Implementation commit
+`fa1957e`; the local `wip/phase20-desktop-analysis` checkout is retained with the
+completed code. PR review/merge, packaged Windows acceptance, authorized existing
+live acceptance and manual main deployment remain pending.
