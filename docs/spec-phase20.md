@@ -536,3 +536,46 @@ selection on mode switch, Sell fixed-quantity Limit, exact stop/contract preserv
 close and narrow viewport clamping without page errors. Artifacts are ignored under
 `.cache/website-safety-validation/`. No broker orders or backend changes in this
 follow-up. Included in the existing PR #605, not a separate delivery.
+
+## Real analytics numeric-metadata repair — 2026-10-07
+
+The user supplied a production trace where a successful broker snapshot publication
+(193 orders / 148 trades) was followed by round-trip calculation failure in
+`execution_analytics.filled`: float arithmetic multiplied a sequence-valued
+`margin_rate`. The reproduced path is DynamoDB Decimal analytics loaded into an
+Order's untyped analytics dictionary, then serialized with `model_dump(mode="json")`.
+Pydantic serializes those Decimals as strings; the old broker snapshot encoder
+persisted the strings, while the old metadata normalizer only handled Decimals.
+
+Normalize numeric strings for known arithmetic fields (capital, margin, stop,
+budget, percentages, quantities, controller/quote timestamps and related captured
+numbers). Preserve numeric-looking IDs, labels, methods and contract text as strings.
+Normalize before confirmed-controller history filtering as well as fill calculations,
+including decimal-form timestamp strings. Future snapshot encoding restores numeric
+analytics fields to DynamoDB numbers rather than persisting JSON numeric strings.
+Both paths work with already-stored records, without a historical rewrite/migration.
+
+Blank optional numeric evidence stays null. Invalid/nonfinite numeric strings raise
+an explicit field-named data error rather than producing invented zero statistics.
+Metadata inputs are copied, not mutated. This repair changes analytics serialization/
+reading, not broker order placement, contract matching, fees, wallet quantities or
+IST timestamp encoding. The quoted trace identifies the round-trip read failure;
+it does not by itself establish a broker execution/protection failure.
+
+Validation: **44 focused analytics/API tests passed**, including a database-backed
+real individual-execution projection with stored numeric strings and decimal-form
+controller timestamps. That fixture now produces its FIFO round trip, net P&L and
+initial-risk R through `compute_round_trips_for_session`, the function in the user's
+trace. **172 analytics/broker-snapshot/execution-gap/conversion/recovery regressions
+passed**; existing dateutil warnings remain. Full-suite results and delivery follow
+below. All broker paths in validation are synthetic/mocked, with ignored logs under
+`.cache/analytics-numeric-metadata-validation/`; no live orders or deployment.
+
+Final full backend validation: **1,728 passed / 2 existing baseline failures**
+(stale options-expiry assertion and missing group_id in tab-restore fixture).
+Development completed on dev; delivery is through a dedicated fix branch targeting
+dev. Review/merge and manual backend deployment remain separate steps.
+
+Delivery: [PR #607](https://github.com/prattyush/TradeMatangi/pull/607),
+`fix/analytics-numeric-metadata` → `dev`, implementation commit `bcf25a7`.
+Review/merge and manual backend deployment remain pending.

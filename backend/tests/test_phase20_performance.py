@@ -357,3 +357,45 @@ def test_cycle_identity_is_stable_across_model_defaults_and_dynamodb_numbers():
         build_cycles(SESSION, [persisted])[0]["cycle_id"]
         == build_cycles(SESSION, [model])[0]["cycle_id"]
     )
+
+
+def test_json_serialized_decimal_metadata_is_numeric_for_fills():
+    from decimal import Decimal
+    from app.models.schemas import Order
+    from app.services.execution_analytics import filled
+    order = Order(session_id='demo',user_id='demo',symbol='BSESEN',side='BUY',order_type='LIMIT',quantity=40,trigger_price=100,limit_price=100,created_at=1,
+        analytics=dict(capital=Decimal('10000'),margin_rate=Decimal('.2'),side='BUY',initial_stop=Decimal('90'),requested_budget=Decimal('100'),sizing_method='RISK',action_id='000001'))
+    serialized=order.model_dump(mode='json')['analytics']
+    assert serialized['margin_rate']=='.2' or serialized['margin_rate']=='0.2'
+    result=filled(serialized,100.0,40)
+    assert result['effective_allocation_pct']==8 and result['initial_risk']==400 and result['budget_exceeded']
+    assert result['action_id']=='000001'
+    assert isinstance(result['margin_rate'],float) and isinstance(serialized['margin_rate'],str)
+
+
+def test_numeric_metadata_normalization_preserves_identifiers_and_nested_history():
+    from app.services.execution_analytics import normalize_metadata
+    raw=dict(action_id='000123',order_id='123',strategy_id='0099',entry_method='MARKET',requested_size='Half',requested_pct='0.5',initial_stop='',controller_history=[dict(timestamp='1791347400',selected_quantity='20',strategy_id='001')])
+    result=normalize_metadata(raw)
+    assert result['requested_pct']==.5 and result['initial_stop'] is None
+    assert result['action_id']=='000123' and result['order_id']=='123' and result['strategy_id']=='0099'
+    assert result['controller_history'][0]['timestamp']==1791347400
+    assert result['controller_history'][0]['selected_quantity']==20
+    assert result['controller_history'][0]['strategy_id']=='001'
+    assert raw['requested_pct']=='0.5'
+
+
+@pytest.mark.parametrize('value',['nan','Infinity','not-a-number'])
+def test_invalid_numeric_metadata_is_explicit_not_fictional_zero(value):
+    from app.services.execution_analytics import filled
+    with pytest.raises(ValueError,match='analytics field: margin_rate'):
+        filled(dict(margin_rate=value),100,20)
+
+
+def test_broker_snapshot_writer_keeps_numeric_analytics_after_json_serialization():
+    from decimal import Decimal
+    from app.services.real_broker_state import encode
+    result=encode(dict(analytics=dict(margin_rate='0.2',capital='10000',action_id='00001')))
+    assert result['analytics']['margin_rate']==Decimal('0.2')
+    assert result['analytics']['capital']==Decimal('10000')
+    assert result['analytics']['action_id']=='00001'
