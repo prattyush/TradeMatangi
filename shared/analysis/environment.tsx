@@ -1,4 +1,4 @@
-import { createContext, useContext, type ComponentType, type ReactNode } from 'react'
+import { createContext, useContext, useEffect, type ComponentType, type ReactNode } from 'react'
 import type websiteApi from '../../frontend/src/services/api'
 import type { PerformanceCycle, PerformanceFilters, PerformanceReport } from './performance'
 
@@ -17,6 +17,7 @@ export interface AnalysisEnvironment {
   // Each adapter implements the existing chart's public props. The heterogeneous
   // snapshot/pattern inputs are normalized inside the desktop renderer boundary.
   charts?: Record<string, ComponentType<any>>
+  reportError?: (error: string, source: string) => void
   desktop?: boolean
   onSelectExecution?: (trade: import('./api').AnalysisTrade) => void
 }
@@ -30,3 +31,8 @@ export function useAnalysisEnvironment(): AnalysisEnvironment {
   return value
 }
 export function useAnalysisApi() { return useAnalysisEnvironment().api }
+
+export function useAnalysisError(error: string | null | undefined, source: string) {
+  const report = useAnalysisEnvironment().reportError
+  useEffect(() => { if (error) report?.(error, source) }, [error, source, report])
+}

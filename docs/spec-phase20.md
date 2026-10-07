@@ -546,3 +546,232 @@ analysis command acceptance. Checkpoint implementation commit: `37fbc51`.
 Remote checkpoint: [wip/phase20-desktop-analysis](https://github.com/prattyush/TradeMatangi/tree/wip/phase20-desktop-analysis).
 Resume from this branch; finish the pending integration/tests before creating a
 reviewable delivery PR targeting dev.
+
+## Website floating messages and error history — 2026-10-07
+
+The user reported distracting chart movement when top-level order/broker/exit
+protection/conversion banners appeared and disappeared during real trading.
+Website messages now use a fixed floating stack rather than consuming chart layout
+space. There is no backdrop, focus steal, sound or slide animation. At most three
+flashes appear in the lower-right corner; errors/warnings dismiss after eight
+seconds and informational/success messages after five. Users can dismiss them.
+Actual guardrail interventions and order confirmation state retain their meaning.
+
+A fixed message-history icon opens a nonmodal panel. Keep the latest 100 messages
+per account/backend in this browser for seven days, including actual receipt time
+(displayed in IST), severity/source, session/symbol/mode when available, repeated
+occurrence counts and unread error/warning badge. Opening history does not stop or
+resize charts. Support errors/warnings filtering, mark-read, confirmed clear, and
+JSON download. Closing/expiring a flash does not delete its history. Reload restores
+history without replaying flashes; logout/account/server changes isolate history.
+Storage failures retain in-memory notification functionality.
+
+Website API rejections, trading/local validation errors, recording errors, caught
+chart rendering errors and uncaught browser errors/rejections enter the same
+journal. Expected missing saved patterns/active-session lookups and aborted requests
+are not errors. Duplicate API/panel reporting is suppressed; repeated identical
+messages within 30 seconds update history counts without restarting dismissed
+flashes. Request errors capture the originating session context and obsolete account
+responses cannot populate another account's journal. Storage writes are batched
+outside the user-action callback and flushed on page hide/account change.
+
+Recovery needs-attention is a warning; pending/restored states are informational/
+success. Broker conversions are informational while awaiting confirmation, warnings
+when unknown or replacement is unconfirmed, errors when failed and success when
+confirmed. The order row still identifies its pending conversion and keeps the last
+broker-confirmed type. The notification change does not assume broker success or
+change recovery, order routing or real trading behavior.
+
+Broker recovery/conversion errors already have backend logs, including
+`protection_recovery` and `broker_conversion`. Browser-only validation/network/
+rendering errors are now retained in browser history; this is not a new server audit
+log or cross-device history. No broker credentials or raw event payloads are added.
+
+Validation: 37 website Node tests (including eight new journal tests), website
+TypeScript/production build, and 155 existing desktop/client tests passed.
+`scripts/website-notification-check.mjs` provides synthetic browser acceptance with
+Playwright installed externally through PLAYWRIGHT_MODULE. It verifies three
+severities, unchanged real chart geometry and instance on show/dismiss/expiry,
+chart interaction, IST/context/history/download, reload without replay, account
+isolation, narrow history layout, API error capture, expected 404 suppression and
+late-account failure fencing, with no page errors. Artifacts are ignored in
+`.cache/website-notification-validation/`. No backend code changes or live orders.
+The existing production bundle-size warning remains. Backend/full-suite and live
+broker acceptance are not claimed for this UI-only change.
+
+Development on dev; deliver in a dedicated feature branch/PR targeting dev.
+Review/merge and manual main deployment remain pending. Desktop Analysis work is
+still preserved separately on `wip/phase20-desktop-analysis` and is not included.
+
+Delivery: [PR #603](https://github.com/prattyush/TradeMatangi/pull/603),
+`feature/website-floating-error-history` → `dev`, implementation commit `f624e6a`.
+Review/merge and manual main deployment remain pending.
+
+## Website emergency exits and manual real-day ban — 2026-10-07
+
+### Agreed behavior
+
+- **Exit all now** closes only the selected session's open contracts/positions,
+  including CE/PE, older strikes/expiries, equity and shorts. It is a one-click
+  urgent order action, not a fill guarantee. Use LIMIT SELL 3% below a fresh quote
+  for longs, LIMIT BUY 3% above for shorts, tick-aligned independently of normal
+  Market/Target gap settings. Keep normal quote/provider/contract identity rules.
+- **Done for day** appears only in Real mode. After explicit confirmation, block
+  new real entries while requesting exits for the user's real sessions for today.
+  Cancel entry orders and strategies, preserve existing protection, use the same
+  emergency exit path, and mark **done** only after coherent broker confirmation
+  of flat positions and no pending orders. Aliases of a broker book exit once.
+- The final ban is user-wide for the current IST calendar date. It persists across
+  logout/reconnect/session restart/backend restart. There is no UI, settings,
+  whitelist/admin action or API endpoint to clear it. A new IST date uses a new
+  record. Paper, Replay and Stepwise remain unaffected.
+- While closing, risk-reducing exits/protection can finish. After done, no new real
+  order execution is allowed, including an old view whose position appears stale.
+  The status is monotonic within a day: delayed HTTP responses cannot revert
+  closing/done SSE status, and an old-day status cannot replace the new day.
+
+### Implementation and failure behavior
+
+`POST /api/trades/sessions/{session_id}/exit-all` is owned/session-scoped.
+`POST /api/trades/sessions/{session_id}/done-for-day` requires an owned real session
+and initiates the user-wide day closure. `GET /api/trades/real-day-status` reports
+active/closing/done and resumes monitoring an unfinished closure after reattachment.
+There is deliberately no unlock route or writeable day-state request parameter.
+
+`emergency_exit` uses existing exact-contract positions and broker-confirmed
+conversion workers. Convert/reprice existing closing orders first, retain their
+coverage while confirmation is pending, and create only uncovered quantity. Re-read
+positions/remaining fills before each additional chunk; respect freeze splitting,
+short covers and duplicate-click fencing. Process contracts independently and report
+partial failures. Existing uncertain conversions/acknowledgements do not justify
+another full-position exit. Do not change realized positions/P&L before actual fills.
+
+Real quotes must be fresh for the exact contract, including older strikes. Missing
+quotes, mismatched coverage, unsupported products and broker errors are explicit
+needs-attention results. A real submission is persisted before contacting Kotak;
+SDK/transport uncertainty reserves its quantity and is excluded from local tick
+execution. An explicit rejection is distinct from uncertainty. Tagged submissions
+retain evidence for broker investigation; retry cannot blindly duplicate an unknown
+exit. Existing MIS placement support is retained. Practice limits fill when their
+supported engine next processes a matching price; paused/stepwise charts do not
+invent an immediate execution.
+
+The day state is stored separately from resettable session guardrails/settings in
+`WalletLedgers`, keyed by user and `real-day-lock:<IST date>`, with conditional
+active→closing→done progression. Closing is persisted before exit requests. Existing
+entry/forwarding/strategy/start paths enforce the day barrier using server state,
+not client booleans. Failures to verify the lock block new entries; protective
+closures can continue during storage outage, while known done state rejects orders.
+Normal settings edits, session override flags and permission changes do not clear
+this record. No per-tick database polling is added for ordinary market data.
+
+Day-completion monitoring does not call an acknowledgement a fill. It uses existing
+broker orders/executions/positions reconciliation before committing done. Pending
+orders, uncertain submissions, inconsistent reports or failed verification leave
+closing/needs-attention, with new entries still blocked. No automatic duplicate
+submission is used to force progress. No backend shutdown/revocation of shared
+broker credentials is introduced. Broker trading outside this application is not
+controlled by this user lock.
+
+Both website actions use floating feedback/history. Labels distinguish requesting
+exits, closing for day and done; charts remain in place. The day confirmation is an
+explicit user action, and there is no unlock control. The desktop Flatten button and
+its existing normal real-market gap behavior are unchanged.
+
+### Validation and delivery
+
+- Full backend: **1,721 passed / 2 documented baseline failures** (stale options
+  expiry assertion and tab-restore fixture missing group_id).
+- Focused existing execution/conversion/recovery/desktop plus initial new tests:
+  **288 passed**. Final day/protection/strategy/emergency regressions: **115 passed**.
+- Website accounting/history/journal checks plus four monotonic day-state tests:
+  **41 passed**. Website and desktop TypeScript/production builds passed with their
+  existing bundle-size warnings.
+- Synthetic browser acceptance via `scripts/website-safety-check.mjs`: selected
+  session endpoint only, Real-only day action, confirmation before submission,
+  closing until completion, disabled done state, Paper/Stepwise unaffected, stable
+  chart geometry and floating feedback, with no page errors.
+- New backend coverage exercises aggressive long/short prices, partial protection
+  plus uncovered remainder, repeated requests, exact old contract enumeration,
+  per-contract failure isolation, real timeout versus rejection, ownership, day
+  persistence/rollover, mode isolation, no premature completion on report failure,
+  user-wide real-only scope, alias deduplication and protection during storage outage.
+
+Artifacts/logs are ignored under `.cache/website-safety-validation/`. All broker
+checks use mocks; no live broker orders were placed. Native/live broker acceptance
+still requires authorized manual checks of exact-contract/freeze orders, pending
+conversion, partial fills, unknown acknowledgements and day closure/restart.
+Development is on dev; deliver in a dedicated reviewed PR targeting dev. Main merge
+and deployment remain manual. Desktop Analysis WIP remains separate.
+
+Delivery: [PR #605](https://github.com/prattyush/TradeMatangi/pull/605),
+`feature/website-emergency-exit-day-ban` → `dev`, implementation commit `dbcfb53`.
+Review/merge, authorized live acceptance and manual main deployment remain pending.
+
+### Compact website chart entry ticket follow-up — PR #605
+
+At the user's request, the website right-click Use as SL ticket now shows order
+choices on the left and sizing on the right in one window, replacing the type→size
+navigation and Back button. Reduce ticket and chart-context-menu text to 10px
+(ticket heading 11px, hints 9px). Keep both columns visible while selecting.
+
+Type-first and size-first are supported: submit when the second selection is made,
+through the existing Market/Limit/Target/AS/ASL handler. Buy/Sell selection remains
+available where configured; sizing choices wait for a direction. Capital/Risk is
+local to this ticket, and switching it clears the prior size selection so a changed
+preset cannot submit accidentally. Fixed quantity and saved percentage values retain
+their existing units. Preserve clicked stop price, exact contract, minimum-lot hint,
+Limit/Target price-pick behavior, outside-click/Escape and explicit close. The ticket
+is fixed-position, measured/clamped within the viewport, and does not resize charts.
+
+Validation: website TypeScript/build and 41 Node checks passed. Synthetic production
+component acceptance in `scripts/website-entry-ticket-check.mjs` exercises left/right
+layout/no Back, Market type-first Risk %, ASL size-first Risk %, AS Capital %, clearing
+selection on mode switch, Sell fixed-quantity Limit, exact stop/contract preservation,
+close and narrow viewport clamping without page errors. Artifacts are ignored under
+`.cache/website-safety-validation/`. No broker orders or backend changes in this
+follow-up. Included in the existing PR #605, not a separate delivery.
+
+## Real analytics numeric-metadata repair — 2026-10-07
+
+The user supplied a production trace where a successful broker snapshot publication
+(193 orders / 148 trades) was followed by round-trip calculation failure in
+`execution_analytics.filled`: float arithmetic multiplied a sequence-valued
+`margin_rate`. The reproduced path is DynamoDB Decimal analytics loaded into an
+Order's untyped analytics dictionary, then serialized with `model_dump(mode="json")`.
+Pydantic serializes those Decimals as strings; the old broker snapshot encoder
+persisted the strings, while the old metadata normalizer only handled Decimals.
+
+Normalize numeric strings for known arithmetic fields (capital, margin, stop,
+budget, percentages, quantities, controller/quote timestamps and related captured
+numbers). Preserve numeric-looking IDs, labels, methods and contract text as strings.
+Normalize before confirmed-controller history filtering as well as fill calculations,
+including decimal-form timestamp strings. Future snapshot encoding restores numeric
+analytics fields to DynamoDB numbers rather than persisting JSON numeric strings.
+Both paths work with already-stored records, without a historical rewrite/migration.
+
+Blank optional numeric evidence stays null. Invalid/nonfinite numeric strings raise
+an explicit field-named data error rather than producing invented zero statistics.
+Metadata inputs are copied, not mutated. This repair changes analytics serialization/
+reading, not broker order placement, contract matching, fees, wallet quantities or
+IST timestamp encoding. The quoted trace identifies the round-trip read failure;
+it does not by itself establish a broker execution/protection failure.
+
+Validation: **44 focused analytics/API tests passed**, including a database-backed
+real individual-execution projection with stored numeric strings and decimal-form
+controller timestamps. That fixture now produces its FIFO round trip, net P&L and
+initial-risk R through `compute_round_trips_for_session`, the function in the user's
+trace. **172 analytics/broker-snapshot/execution-gap/conversion/recovery regressions
+passed**; existing dateutil warnings remain. Full-suite results and delivery follow
+below. All broker paths in validation are synthetic/mocked, with ignored logs under
+`.cache/analytics-numeric-metadata-validation/`; no live orders or deployment.
+
+Final full backend validation: **1,728 passed / 2 existing baseline failures**
+(stale options-expiry assertion and missing group_id in tab-restore fixture).
+Development completed on dev; delivery is through a dedicated fix branch targeting
+dev. Review/merge and manual backend deployment remain separate steps.
+
+Delivery: [PR #607](https://github.com/prattyush/TradeMatangi/pull/607),
+`fix/analytics-numeric-metadata` → `dev`, implementation commit `bcf25a7`.
+Review/merge and manual backend deployment remain pending.
+

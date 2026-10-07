@@ -1,3 +1,4 @@
+import { flashError } from '../services/notifications'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { createChart, IChartApi, ISeriesApi, Time, LineStyle } from 'lightweight-charts'
 import api, { FineDefinition, FlowStep, FineSearchResult, OHLCCandle } from '../services/api'
@@ -121,7 +122,7 @@ function DefinitionsView({ definitions, onRefresh }: {
       setEditing(null)
       onRefresh()
     } catch (err) {
-      alert(err instanceof Error ? err.message : 'Save failed')
+      flashError(err instanceof Error ? err.message : 'Save failed')
     }
   }
 
@@ -131,7 +132,7 @@ function DefinitionsView({ definitions, onRefresh }: {
       await api.fineStructureDeleteDefinition(d.definition_id)
       onRefresh()
     } catch (err) {
-      alert(err instanceof Error ? err.message : 'Delete failed')
+      flashError(err instanceof Error ? err.message : 'Delete failed')
     }
   }
 
@@ -274,7 +275,7 @@ function BuilderView({ definitions }: { definitions: FineDefinition[] }) {
         setSteps([])
       }
     } catch (err) {
-      alert(err instanceof Error ? err.message : 'Failed to load OHLC')
+      flashError(err instanceof Error ? err.message : 'Failed to load OHLC')
     } finally {
       setLoading(false)
     }
@@ -565,7 +566,7 @@ function BuilderView({ definitions }: { definitions: FineDefinition[] }) {
       setSaveMsg('Saved!')
       setTimeout(() => setSaveMsg(null), 2000)
     } catch (err) {
-      alert(err instanceof Error ? err.message : 'Save failed')
+      flashError(err instanceof Error ? err.message : 'Save failed')
     }
   }
 
@@ -836,7 +837,7 @@ function OptionsBuilderView({ definitions }: { definitions: FineDefinition[] }) 
         } catch { setPeCandles([]); setPeSteps([]) }
       }
     } catch (err) {
-      alert(err instanceof Error ? err.message : 'Failed to load OHLC')
+      flashError(err instanceof Error ? err.message : 'Failed to load OHLC')
     } finally {
       setLoading(false)
     }
@@ -895,7 +896,7 @@ function OptionsBuilderView({ definitions }: { definitions: FineDefinition[] }) 
       setSaveMsg(`${activeChart} saved!`)
       setTimeout(() => setSaveMsg(null), 2000)
     } catch (err) {
-      alert(err instanceof Error ? err.message : 'Save failed')
+      flashError(err instanceof Error ? err.message : 'Save failed')
     }
   }
 
@@ -1609,7 +1610,7 @@ function SearchView({ definitions }: {
       })
       setResults(res)
     } catch (err) {
-      alert(err instanceof Error ? err.message : 'Search failed')
+      flashError(err instanceof Error ? err.message : 'Search failed')
     } finally {
       setSearching(false)
     }

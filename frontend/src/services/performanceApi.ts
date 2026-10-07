@@ -1,8 +1,9 @@
+import { flashError, getNotificationContext, getNotificationScope } from './notifications';
 import { BACKEND_URL } from "../config";
 import { _authHeaders } from "./api";
 import type { PerformanceFilters, PerformanceReport, PerformanceCycle } from '../../../shared/analysis/performance'
 export * from '../../../shared/analysis/performance'
-async function request<T>(
+async function rawRequest<T>(
   path: string,
   filters: PerformanceFilters,
   signal?: AbortSignal,
@@ -19,6 +20,11 @@ async function request<T>(
       `Analytics could not load (${response.status}). Retry when the backend is available.`,
     );
   return response.json() as Promise<T>;
+}
+async function request<T>(path: string, filters: PerformanceFilters, signal?: AbortSignal): Promise<T> {
+  const scope = getNotificationScope(); const context = getNotificationContext();
+  try { return await rawRequest<T>(path, filters, signal) }
+  catch (error) { if (scope === getNotificationScope()) flashError(error, 'Analysis', context); throw error }
 }
 export const getPerformance = (
   filters: PerformanceFilters,

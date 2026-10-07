@@ -1,3 +1,4 @@
+import { useFlashError } from '../hooks/useFlashError'
 import { useState, useRef, useEffect } from 'react'
 import api from '../services/api'
 
@@ -10,6 +11,7 @@ export default function KotakTOTPModal({ onSuccess, onCancel }: Props) {
   const [totp, setTotp] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  useFlashError(error, 'KotakTOTPModal')
   const inputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
@@ -77,14 +79,7 @@ export default function KotakTOTPModal({ onSuccess, onCancel }: Props) {
           />
         </div>
 
-        {error && (
-          <div style={{
-            background: 'rgba(248,81,73,0.1)', border: '1px solid rgba(248,81,73,0.3)',
-            borderRadius: 6, padding: '8px 12px', fontSize: 12, color: '#f85149',
-          }}>
-            {error}
-          </div>
-        )}
+
 
         <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
           <button

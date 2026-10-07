@@ -1,3 +1,4 @@
+import { useFlashError } from '../hooks/useFlashError'
 import { clearChartDataCache } from '../services/chartDataCache'
 import { Fragment, useState, useEffect } from 'react'
 import api, { type UserSettingsResponse } from '../services/api'
@@ -339,6 +340,7 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
   const [loadAttempt, setLoadAttempt] = useState(0)
   const [customAmount, setCustomAmount] = useState('')
   const [status, setStatus] = useState<string | null>(null)
+  useFlashError(status && !/saved|success|connected|added|updated|deleted|^Streaming source set to:|^Reset to /i.test(status) ? status : null, 'Settings')
 
   const [pnlPctMode, setPnlPctMode] = useState(loadPnlPctMode)
   const [tradingRocRatioMode, setTradingRocRatioMode] = useState<RocRatioMode>(loadTradingRocRatioMode)
@@ -455,6 +457,7 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
   const [pwConfirm, setPwConfirm] = useState('')
   const [pwVisible, setPwVisible] = useState(false)
   const [pwStatus, setPwStatus] = useState<{ msg: string; ok: boolean } | null>(null)
+  useFlashError(pwStatus && !pwStatus.ok ? pwStatus.msg : null, 'Password')
   const [pwLoading, setPwLoading] = useState(false)
 
   useEffect(() => {

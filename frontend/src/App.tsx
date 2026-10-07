@@ -1,3 +1,9 @@
+import ChartEntryTicket, { type EntryTicket as ContextMenuEntryTicket } from './components/ChartEntryTicket'
+import TradingSafetyActions from './components/TradingSafetyActions'
+import NotificationCenter from './components/NotificationCenter'
+import { useFlashError } from './hooks/useFlashError'
+import { flashError, flashMessage, setNotificationAccount, setNotificationContext } from './services/notifications'
+import { BACKEND_URL } from './config'
 import { contractPosition, unrealizedPnl } from './services/positionAccounting'
 import { applyRecoveryEvent, pruneRecoveryNotices, RecoveryNotices } from './services/protectionRecoveryState'
 import { IndicatorHistoryRequests } from './services/tradingChartState'
@@ -85,14 +91,6 @@ interface DraftWorkspace {
   optionsReady: OptionsReadyConfig | null
 }
 
-type ContextMenuEntryOrderType = 'MARKET' | 'AUTO_STOP' | 'AUTO_STOP_LIMIT' | 'TARGET' | 'LIMIT'
-interface ContextMenuEntryTicket {
-  x: number; y: number; price: number; right?: 'CE' | 'PE'; strike?: number; expiry?: string
-  side: 'BUY' | 'SELL' | null
-  orderType?: ContextMenuEntryOrderType
-  sizingMode: SizingMode
-}
-
 type IndicatorLeg = 'underlying' | 'CE' | 'PE'
 
 interface IndicatorCacheDescriptor {
@@ -175,16 +173,18 @@ function defaultPanesForLayout(preset: LayoutPreset, current: PaneConfig[]): Pan
 
 export default function App() {
   // ── Auth state ──────────────────────────────────────────────────────────────
-  const [authUser, setAuthUser] = useState(loadAuthUser)
+  const [authUser, setAuthUser] = useState(() => { const user = loadAuthUser(); setNotificationAccount(user?.userId ?? null, BACKEND_URL); return user })
 
   const handleLogin = useCallback((userId: string, email: string, isAdmin = false, accountName?: string) => {
     const user = { userId, email, isAdmin, accountName }
     localStorage.setItem('auth_user', JSON.stringify(user))
     localStorage.setItem('user', JSON.stringify({ userId, username: email }))
+    setNotificationAccount(userId, BACKEND_URL)
     setAuthUser(user)
   }, [])
 
   const handleLogout = useCallback(() => {
+    setNotificationAccount(null)
     localStorage.removeItem('auth_user')
     setAuthUser(null)
   }, [])
@@ -205,10 +205,10 @@ export default function App() {
   }, [])  // mount only
 
   if (!authUser) {
-    return <LoginScreen onLogin={handleLogin} />
+    return <><LoginScreen onLogin={handleLogin} /><NotificationCenter /></>
   }
 
-  return <AppInner authUser={authUser} onLogout={handleLogout} setAuthUser={setAuthUser} />
+  return <><AppInner authUser={authUser} onLogout={handleLogout} setAuthUser={setAuthUser} /><NotificationCenter key={authUser.userId} /></>
 }
 
 function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: string; email: string; isAdmin: boolean; accountName?: string }; onLogout: () => void; setAuthUser: React.Dispatch<React.SetStateAction<{ userId: string; email: string; isAdmin: boolean; accountName?: string } | null>> }) {
@@ -268,9 +268,15 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
   useEffect(() => setLiveFeed(null), [sim.sessionId])
   const [brokerOrdersSnapshot, setBrokerOrdersSnapshot] = useState<{ sessionId: string; orders: BrokerOrder[] } | null>(null)
   const [brokerError, setBrokerError] = useState<string | null>(null)
-  const [conversionNotices, setConversionNotices] = useState<Record<string, string>>({})
+  useFlashError(brokerError, 'Broker')
+  useFlashError(sim.orderError, 'Order')
+  useFlashError(recordingError, 'Recording')
+  useEffect(() => { setNotificationContext({ sessionId: sim.sessionId ?? undefined, symbol: sim.symbol, mode: sim.sessionType }); return () => setNotificationContext({}) }, [sim.sessionId, sim.symbol, sim.sessionType])
+  useEffect(() => { if (brokerError) setBrokerError(null) }, [brokerError])
+  useEffect(() => { if (sim.orderError) sim.clearOrderError() }, [sim.orderError, sim.clearOrderError])
+  const [, setConversionNotices] = useState<Record<string, string>>({})
   useEffect(() => setConversionNotices({}), [sim.sessionId])
-  const [protectionRecovery, setProtectionRecovery] = useState<RecoveryNotices>({})
+  const [, setProtectionRecovery] = useState<RecoveryNotices>({})
   useEffect(() => { setProtectionRecovery({}) }, [sim.sessionId])
   const [isRealTradingUser, setIsRealTradingUser] = useState(false)
   const [guardrailPopup, setGuardrailPopup] = useState<{ type: 'BLOCK' | 'COOLDOWN' | 'BAN'; reason: string } | null>(null)
@@ -354,7 +360,6 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
     quantity: number | null; fundsRatioPct?: number; riskRatioPct?: number; right?: string; strike?: number; expiry?: string;
   } | null>(null)
   const [contextMenuEntryTicket, setContextMenuEntryTicket] = useState<ContextMenuEntryTicket | null>(null)
-  const contextMenuSizingMode = contextMenuEntryTicket?.sizingMode ?? sizingMode
   const contextMenuEntryTicketRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -1398,15 +1403,20 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
         setBrokerError(snapshot.wallet_error ?? null)
       }
     } else if (event.type === 'protection_recovery') {
+      if (typeof event.message === 'string' && ['pending', 'restored', 'needs_attention'].includes(String(event.state))) flashMessage(`Exit protection · ${[event.symbol, event.right ?? 'EQ', event.strike, event.expiry].filter(v => v != null && v !== '').join(' ')} · ${event.message}`, event.state === 'needs_attention' ? 'warning' : event.state === 'restored' ? 'success' : 'info', 'Exit protection')
       setProtectionRecovery(previous => applyRecoveryEvent(previous, event))
     } else if (event.type === 'broker_conversion_status') {
       const operation = String(event.operation_id ?? '')
+      flashMessage(String(event.message ?? (event.state === 'confirmed' ? 'Conversion confirmed by Kotak' : 'Conversion pending Kotak confirmation')), event.state === 'confirmed' ? 'success' : event.state === 'failed' ? 'error' : event.original_cancelled || event.state === 'unknown' ? 'warning' : 'info', 'Kotak exit conversion')
       if (operation) setConversionNotices(previous => {
         const next = { ...previous }
         if (event.state === 'confirmed') delete next[operation]
         else if (event.original_cancelled) next[operation] = String(event.message ?? 'Original exit cancelled; replacement is unconfirmed')
         return next
       })
+    } else if (event.type === 'real_trading_day_status') {
+      window.dispatchEvent(new CustomEvent('real-trading-day-status', { detail: event }))
+      flashMessage(String(event.message ?? 'Real trading day status updated'), event.state === 'done' ? 'success' : 'info', 'Done for day')
     } else if (event.type === 'broker_error') {
       setBrokerError(event.message as string)
     } else if (event.type === 'new_trade') {
@@ -2191,6 +2201,7 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
             )}
           </div>
         )}
+        {sim.sessionId && (sim.sessionState === 'running' || sim.sessionState === 'paused') && <TradingSafetyActions sessionId={sim.sessionId} sessionType={sim.sessionType} onOrdersRequested={async sessionId => { if (simRef.current.sessionId === sessionId) await simRef.current.refreshOpenOrders(sessionId) }} />}
         {(sim.sessionState === 'running' || sim.sessionState === 'paused') && !guardrailPopup?.type && (
           <button
             onClick={async () => {
@@ -2200,6 +2211,7 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
                 setGuardrailPopup({ type: 'BLOCK', reason: result.reason })
               } catch (e) {
                 const msg = e instanceof Error ? e.message : 'Block failed'
+                flashError(e, 'Guardrails')
                 if (msg.includes('BAN')) setGuardrailPopup({ type: 'BAN', reason: msg })
               }
             }}
@@ -2395,9 +2407,6 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
             {snapshotActive && (
               <span style={{ fontSize: 11, color: '#3fb950', fontWeight: 600 }}>📸 Snapping</span>
             )}
-            {recordingError && (
-              <span style={{ fontSize: 11, color: '#f85149' }}>{recordingError}</span>
-            )}
           </div>
         )}
         <SettingsModal
@@ -2460,20 +2469,6 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
           roundTrips={stepwiseLabels.map(l => ({ right: l.right, pnl: 0, round_trip_index: l.round_trip_index }))}
           onDone={() => setStepwiseLabels(null)}
         />
-      )}
-
-      {/* Error banner */}
-      {sim.orderError && (
-        <div style={{
-          background: '#3d1f1f', borderBottom: '1px solid #f85149',
-          padding: '8px 20px', display: 'flex', alignItems: 'center', gap: 12,
-        }}>
-          <span style={{ color: '#f85149', fontSize: 13 }}>{sim.orderError}</span>
-          <button
-            onClick={sim.clearOrderError}
-            style={{ marginLeft: 'auto', background: 'none', border: 'none', color: '#8b949e', cursor: 'pointer', fontSize: 14 }}
-          >✕</button>
-        </div>
       )}
 
       {/* Session Controls — layout/pane controls injected inline via extraControls */}
@@ -2656,30 +2651,6 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
 
       {/* Broker error banner (paper trading) */}
       {liveFeed && sim.sessionType !== 'real' && <div role="status" style={{ fontSize: 11, color: '#8b949e', padding: '3px 12px' }}>Feed {liveFeed.actual_provider ?? liveFeed.selected_provider} · {liveFeed.connection}{liveFeed.actual_provider && liveFeed.actual_provider !== liveFeed.selected_provider ? ` (fallback from ${liveFeed.selected_provider})` : ''}</div>}
-      {sim.sessionType === 'real' && Object.entries(protectionRecovery).map(([key, recovery]) => (
-        <div key={key} role={recovery.state === 'needs_attention' ? 'alert' : 'status'}
-          style={{ background: recovery.state === 'needs_attention' ? '#3d1c1c' : '#14271d', padding: '6px 14px', fontSize: 12, color: recovery.state === 'needs_attention' ? '#ff7b72' : '#7ee787' }}>
-          Exit protection · {key.split('|').join(' ')} · {recovery.message}
-        </div>
-      ))}
-      {Object.entries(conversionNotices).map(([operation, message]) => (
-        <div key={operation} role="status" style={{ padding: '8px 12px', color: '#d29922', background: '#272112', fontSize: 12 }}>
-          Kotak exit conversion: {message}
-        </div>
-      ))}
-      {brokerError && (
-        <div style={{
-          background: '#3d1c1c', border: '1px solid #f85149', color: '#f85149',
-          padding: '6px 14px', fontSize: 12, display: 'flex', alignItems: 'center', gap: 8,
-        }}>
-          <span>⚠ {brokerError}</span>
-          <button
-            onClick={() => setBrokerError(null)}
-            style={{ background: 'none', border: 'none', color: '#f85149', cursor: 'pointer', marginLeft: 'auto', fontSize: 14 }}
-          >✕</button>
-        </div>
-      )}
-
       {/* Main content */}
       <div ref={mainContentRef} style={{ display: 'flex', flex: 1, minHeight: 0, overflow: 'hidden' }}>
         {/* Chart column */}
@@ -2916,23 +2887,7 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
         />
       )}
 
-      {contextMenuEntryTicket && <div ref={contextMenuEntryTicketRef} style={{
-        position: 'fixed', left: Math.max(8, Math.min(contextMenuEntryTicket.x + 10, window.innerWidth - 268)), top: Math.max(8, Math.min(contextMenuEntryTicket.y + 10, window.innerHeight - 260)), zIndex: 10002,
-        width: 250, background: '#161b22', border: '1px solid #30363d', borderRadius: 8, padding: 10, boxShadow: '0 8px 24px rgba(0,0,0,0.4)', color: '#e6edf3',
-      }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}><strong style={{ fontSize: 13 }}>Use as SL</strong><button aria-label="Close order ticket" onClick={() => setContextMenuEntryTicket(null)} style={{ border: 0, background: 'transparent', color: '#8b949e', cursor: 'pointer' }}>×</button></div>
-        <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 10 }}>SL ₹{contextMenuEntryTicket.price.toFixed(2)}</div>
-        {contextMenuSizingMode !== 'quantity' && <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, marginBottom: 10, fontSize: 12 }}>
-          <span>Risk %</span>
-          <button type="button" role="switch" aria-label="Use Capital % instead of Risk % for this order" aria-checked={contextMenuSizingMode === 'fundsRatio'}
-            onClick={() => setContextMenuEntryTicket(ticket => ticket ? { ...ticket, sizingMode: ticket.sizingMode === 'fundsRatio' ? 'riskRatio' : 'fundsRatio' } : ticket)}
-            style={{ width: 34, height: 20, padding: 2, border: 0, borderRadius: 12, background: contextMenuSizingMode === 'fundsRatio' ? '#1d4ed8' : '#475569', cursor: 'pointer' }}>
-            <span style={{ display: 'block', width: 14, height: 14, borderRadius: '50%', background: '#fff', transform: contextMenuSizingMode === 'fundsRatio' ? 'translateX(14px)' : undefined }} />
-          </button>
-          <span>Capital %</span>
-        </div>}
-        {!contextMenuEntryTicket.side ? <><div style={{ fontSize: 12, marginBottom: 7 }}>Choose direction</div><div style={{ display: 'flex', gap: 6 }}><button onClick={() => setContextMenuEntryTicket(ticket => ticket ? { ...ticket, side: 'BUY' } : ticket)}>Buy</button><button onClick={() => setContextMenuEntryTicket(ticket => ticket ? { ...ticket, side: 'SELL' } : ticket)}>Sell</button></div></> : !contextMenuEntryTicket.orderType ? <><div style={{ fontSize: 12, marginBottom: 7 }}>{contextMenuEntryTicket.side === 'BUY' ? 'Buy' : 'Sell'} entry type</div><div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>{([['MARKET', 'Market'], ['LIMIT', 'Limit'], ['AUTO_STOP', 'AS'], ['AUTO_STOP_LIMIT', 'ASL'], ['TARGET', 'Target']] as const).map(([orderType, label]) => <button key={orderType} title={orderType === 'AUTO_STOP_LIMIT' ? 'Auto Stop Order Limit' : orderType === 'AUTO_STOP' ? 'Auto Stop Order' : label} aria-label={orderType === 'AUTO_STOP_LIMIT' ? 'Auto Stop Order Limit' : label} onClick={() => setContextMenuEntryTicket(ticket => ticket ? { ...ticket, orderType } : ticket)}>{label}</button>)}</div></> : <><div style={{ fontSize: 12, marginBottom: 7 }}>Choose saved size</div><div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>{contextMenuSizingMode === 'quantity' ? [1, 2, 3, 5, 10].map(quantity => <button key={quantity} onClick={() => submitContextMenuEntry(contextMenuEntryTicket, quantity)}>{quantity}</button>) : (['l', 'm', 'h'] as const).map(key => { const value = contextMenuSizingMode === 'riskRatio' ? riskRatios[key] : fundsRatios[key]; return <button key={key} onClick={() => submitContextMenuEntry(contextMenuEntryTicket, null, contextMenuSizingMode === 'fundsRatio' ? value / 100 : undefined, contextMenuSizingMode === 'riskRatio' ? value : undefined)}>{contextMenuSizingMode === 'riskRatio' ? `Risk ${value}%` : `Capital ${value}%`}</button> })}</div>{contextMenuSizingMode === 'riskRatio' && ['paper', 'sim', 'stepwise'].includes(sim.sessionType) && <div style={{ fontSize: 10, color: '#f0883e', marginTop: 6 }}>Minimum one {instrumentType === 'options' ? 'lot' : 'share'} is placed if funded, even above selected Risk %.</div>}<button onClick={() => setContextMenuEntryTicket(ticket => ticket ? { ...ticket, orderType: undefined } : ticket)} style={{ marginTop: 9 }}>Back</button></>}
-      </div>}
+      {contextMenuEntryTicket && <ChartEntryTicket ref={contextMenuEntryTicketRef} ticket={contextMenuEntryTicket} fundsRatios={fundsRatios} riskRatios={riskRatios} instrumentType={instrumentType} sessionType={sim.sessionType} onChange={setContextMenuEntryTicket} onSubmit={submitContextMenuEntry} onClose={() => setContextMenuEntryTicket(null)} />}
     </div>
   )
 }

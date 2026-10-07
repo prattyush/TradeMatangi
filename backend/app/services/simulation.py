@@ -2288,6 +2288,12 @@ def _emit_tick_and_check_orders_real(
         kotak_price = order.limit_price
 
         try:
+            from app.services.real_trading_day import require_entry_allowed
+            from fastapi import HTTPException
+            try:
+                require_entry_allowed(session, order.side, order.quantity, order.right, order.strike, order.expiry)
+            except HTTPException as exc:
+                raise KotakError(str(exc.detail)) from exc
             if order.right and session.instrument_type == "options":
                 kotak_order_id = kotak_svc.place_options_limit_order(
                     symbol=session.symbol,

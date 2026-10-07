@@ -1,3 +1,4 @@
+import { useAnalysisError } from './environment'
 import { useAnalysisApi, useAnalysisEnvironment } from './environment'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
@@ -1032,6 +1033,7 @@ export default function TradeAnalysis({ onClose, historicalDays = 2 }: Props) {
   const [sessions, setSessions] = useState<SessionSummary[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  useAnalysisError(error, 'TradeAnalysis')
   const [hasSearched, setHasSearched] = useState(false)
   const [statsOpen, setStatsOpen] = useState(false)
 

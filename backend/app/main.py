@@ -68,6 +68,8 @@ async def lifespan(app: FastAPI):
     finally:
         from app.services.protection_recovery import shutdown
         await shutdown()
+        from app.services.real_trading_day import shutdown as shutdown_day_jobs
+        await shutdown_day_jobs()
         if diagnostics:
             diagnostics.cancel()
             try:

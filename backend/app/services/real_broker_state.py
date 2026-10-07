@@ -31,7 +31,9 @@ def encode(value):
     if isinstance(value, float):
         return Decimal(str(value))
     if isinstance(value, dict):
-        return {key: encode(item) for key, item in value.items()}
+        from app.services.execution_analytics import normalize_metadata
+        return {key: encode(normalize_metadata(item) if key == "analytics" else item)
+                for key, item in value.items()}
     if isinstance(value, list):
         return [encode(item) for item in value]
     return value

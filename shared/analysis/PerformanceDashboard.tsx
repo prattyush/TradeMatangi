@@ -1,3 +1,4 @@
+import { useAnalysisError } from './environment'
 import { useAnalysisEnvironment } from './environment'
 import { AnalysisChart, OptionsChart } from "./TradeAnalysis";
 import type { AnalysisTrade } from "./api";
@@ -244,8 +245,10 @@ export default function PerformanceDashboard(props: Props) {
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  useAnalysisError(error, 'PerformanceDashboard')
   const [detail, setDetail] = useState<PerformanceCycle | null>(null);
   const [detailError, setDetailError] = useState("");
+  useAnalysisError(detailError, 'PerformanceDashboard')
   const [showChart, setShowChart] = useState(false);
   const [detailBusy, setDetailBusy] = useState(false);
   const [focus, setFocus] = useState<{

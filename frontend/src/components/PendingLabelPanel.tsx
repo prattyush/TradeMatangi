@@ -1,3 +1,4 @@
+import { useFlashError } from '../hooks/useFlashError'
 /**
  * PendingLabelPanel — compact in-session trade labeling surface.
  *
@@ -63,6 +64,7 @@ export default function PendingLabelPanel({
   const [exitTags, setExitTags] = useState<string[]>([])
   const [savingKey, setSavingKey] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  useFlashError(error, 'PendingLabelPanel')
 
   const [openPopup, setOpenPopup] = useState<{
     mode: 'entry' | 'exit'
@@ -209,9 +211,7 @@ export default function PendingLabelPanel({
           </button>
         ))}
 
-        {error && (
-          <div style={{ color: '#f85149', fontSize: 10 }}>{error}</div>
-        )}
+
       </div>
 
       {openPopup && (

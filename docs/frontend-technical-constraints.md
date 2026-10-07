@@ -77,3 +77,19 @@
 - **Settings modal tab structure**: admin users see `[General] [Admin]` tabs (state `activeTab`). Non-admin users see no tabs (same single-column layout). Admin tab content: BROKER TOKENS, LIVE STREAMING SOURCE toggle, REAL TRADING ACCESS whitelist, BROKER CONNECTION. General tab: all existing trading/wallet/strategy settings + BROKER section for real trading users. `api.getStreamSource()` / `api.setStreamSource()` → `GET/PUT /api/admin/stream-source`.
 
 - **Historical request mode**: paper/real chart, indicator and strike-selection requests pass `history_mode=live`; replay, stepwise, analysis and ordinary Browse use the default `replay`. Include mode in frontend chart/indicator cache keys so minute chart history cannot leak into replay after a mode switch.
+
+## Floating website notifications
+
+- Do not add trading error/status banners to the main flex layout: they resize
+  charts when messages appear or clear. Use `services/notifications.ts` and the
+  portal-based NotificationCenter instead. Guardrail interventions retain their
+  existing blocking semantics; notifications do not imply a broker acknowledgement.
+- Website API failures are journaled at the API boundary and rethrown unchanged.
+  Local error state uses `useFlashError`; duplicate reporting is suppressed.
+  Capture account/session context when an asynchronous request starts, and suppress
+  reporting into a different account after completion. Expected optional 404s and
+  aborts must not flash.
+- History contains actual browser receipt timestamps, unlike IST-as-UTC candle
+  timestamps: format notification milliseconds in Asia/Kolkata. Persist at most
+  100 records per account/backend, expire after seven days, and never replay old
+  flashes on reload. No backend audit or cross-device sync is implied.

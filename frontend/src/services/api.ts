@@ -1,3 +1,4 @@
+import { flashError, getNotificationContext, getNotificationScope } from './notifications'
 import type { PositionSnapshot } from './positionAccounting'
 import { measureRequest } from './performanceDiagnostics'
 import { legacyBrowserSettings, cacheSharedSettings } from './sharedSettings'
@@ -801,7 +802,30 @@ export interface CommandItem {
   cancel_reason?: string | null
 }
 
+export interface EmergencyExitResult {
+  session_id: string
+  offset_pct: number
+  status: 'orders_requested' | 'needs_attention' | 'already_flat'
+  results: Array<{ right: string | null; strike: number | null; expiry: string | null; created: string[]; converted: string[]; pending: string[]; errors: string[] }>
+}
+export interface RealTradingDayStatus { date: string; state: 'active' | 'closing' | 'done'; message?: string }
+
 const api = {
+  async exitAllPositions(sessionId: string): Promise<EmergencyExitResult> {
+    const response = await fetch(`${BACKEND_URL}/api/trades/sessions/${encodeURIComponent(sessionId)}/exit-all`, { method: 'POST', headers: _authHeaders() })
+    if (!response.ok) throw new ApiError((await response.json().catch(() => ({}))).detail || 'Could not request all exits', response.status)
+    return response.json()
+  },
+  async getRealTradingDayStatus(): Promise<RealTradingDayStatus> {
+    const response = await fetch(`${BACKEND_URL}/api/trades/real-day-status`, { headers: _authHeaders() })
+    if (!response.ok) throw new ApiError('Could not load real-trading day status', response.status)
+    return response.json()
+  },
+  async doneForRealTradingDay(sessionId: string): Promise<RealTradingDayStatus & { results: Array<EmergencyExitResult | { session_id: string; error: string }> }> {
+    const response = await fetch(`${BACKEND_URL}/api/trades/sessions/${encodeURIComponent(sessionId)}/done-for-day`, { method: 'POST', headers: _authHeaders() })
+    if (!response.ok) throw new ApiError((await response.json().catch(() => ({}))).detail || 'Could not start day closure', response.status)
+    return response.json()
+  },
   async getSymbols(): Promise<SymbolInfo[]> {
     const res = await fetch(`${BACKEND_URL}/api/data/symbols`)
     if (!res.ok) throw new Error(`Symbols fetch failed: ${res.status}`)
@@ -2163,4 +2187,26 @@ const api = {
   },
 }
 
-export default api
+// All request failures enter the same non-blocking journal, including errors
+// caught by a panel or a background chart loader. Expected lookup misses remain
+// control flow, and request callers still receive the original rejection.
+const notifiedApi: typeof api = new Proxy(api, {
+  get(target, property, receiver) {
+    const value = Reflect.get(target, property, receiver)
+    if (typeof value !== 'function') return value
+    return async (...args: unknown[]) => {
+      const scope = getNotificationScope(); const requestContext = getNotificationContext()
+      try { return await value.apply(target, args) }
+      catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        const expectedMissing = ['patternGetChartByDate', 'getActiveSimulation'].includes(String(property)) &&
+          ((error instanceof ApiError && error.status === 404) || /(?:^|\D)404(?:\D|$)/.test(message))
+        const name = String(property)
+        const source = /kotak/i.test(name) ? 'Kotak' : /order|buy|sell|square|flatten/i.test(name) ? 'Orders' : /simulation|session|group/i.test(name) ? 'Sessions' : /histor|preSession|expiry|strike|indicator|chart/i.test(name) ? 'Charts' : /pattern|analysis|label/i.test(name) ? 'Analysis' : 'Website request'
+        if (!expectedMissing && scope === getNotificationScope()) flashError(error, source, requestContext)
+        throw error
+      }
+    }
+  },
+})
+export default notifiedApi
