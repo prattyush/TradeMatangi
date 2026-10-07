@@ -444,7 +444,7 @@ def behavior_groups(cycles):
     history = {}
     for c in sorted(cycles, key=lambda c: (c["entry_time"], c["cycle_id"])):
         bucket = lambda n: str(n) if n < 4 else "4+"
-        daily_key = (c["mode"], c["date"], c.get("book_id"))
+        daily_key = (c.get("user_id"), c["mode"], c["date"], c.get("book_id"))
         sequence[daily_key] += 1
         ordinal = sequence[daily_key]
         tags = [
@@ -520,6 +520,7 @@ def behavior_groups(cycles):
             )
         tags += [("entry_spacing", g) for g in set(gaps)]
         book = (
+            c.get("user_id"),
             c["mode"],
             c["date"],
             c.get("book_id"),
@@ -614,6 +615,10 @@ def report(cycles):
     comparisons["modes"] = [
         dict(key=k, **outcome_stats(v)) for k, v in sorted(modes.items())
     ]
+    accounts = defaultdict(list)
+    for c in closed:
+        accounts[c.get('owner_email') or c.get('user_id') if c.get('shared') else 'Own account'].append(c)
+    comparisons['accounts'] = [dict(key=key,**outcome_stats(rows),exploratory=len(rows)<30 or len({c['date'] for c in rows})<20) for key,rows in sorted(accounts.items())]
     matrix = defaultdict(list)
     for c in cycles:
         for m in c["matches"]:
@@ -896,16 +901,20 @@ def load_cycles(user_id, **filters):
     from app.services.db import get_dynamodb_resource
     from boto3.dynamodb.conditions import Key
 
-    sessions = query_all(
-        get_dynamodb_resource().Table("Sessions"),
-        IndexName="UserIdIndex",
-        KeyConditionExpression=Key("user_id").eq(user_id),
-    )
+    if filters.get('include_shared'):
+        from app.services.analysis_sharing import visible_sessions
+        sessions = visible_sessions(user_id)
+    else:
+        sessions = query_all(
+            get_dynamodb_resource().Table("Sessions"),
+            IndexName="UserIdIndex",
+            KeyConditionExpression=Key("user_id").eq(user_id),
+        )
     result = []
     owners = set()
     for session in sessions:
         if (
-            session.get("user_id") != user_id
+            (session.get("user_id") != user_id and not session.get("shared"))
             or session.get("broker_projection_owner", session["session_id"])
             != session["session_id"]
         ):
@@ -928,6 +937,7 @@ def load_cycles(user_id, **filters):
             continue
         owners.add(owner)
         for c in load_session_cycles(session):
+            c.update(shared=session.get("shared",False),owner_email=session.get("owner_email"))
             if filters.get("client") and not any(
                 e["client"] == filters["client"] for e in c["entries"]
             ):

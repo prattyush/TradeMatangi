@@ -34,3 +34,29 @@ async def migrate_target_gap(req: UserSettingsUpdateRequest, user_id: str = Depe
 @router.put("/settings/browser-migration", response_model=UserSettingsResponse)
 async def migrate_browser_settings(req: UserSettingsUpdateRequest, user_id: str = Depends(get_request_user_id)):
     return UserSettingsResponse(**user_settings_service.migrate_browser_settings(user_id, req.model_dump(exclude_none=True)))
+
+
+from pydantic import BaseModel, Field
+import asyncio
+from app.services import analysis_sharing
+
+class HistorySharingRequest(BaseModel):
+    emails: list[str] = Field(default_factory=list, max_length=20)
+
+@router.get('/real-history-sharing')
+async def get_history_sharing(user_id: str = Depends(get_request_user_id)):
+    try:
+        return await asyncio.to_thread(analysis_sharing.settings, user_id)
+    except ValueError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(503, 'History sharing settings could not be read; retry later') from exc
+
+@router.put('/real-history-sharing')
+async def save_history_sharing(req: HistorySharingRequest, user_id: str = Depends(get_request_user_id)):
+    try:
+        return await asyncio.to_thread(analysis_sharing.save, user_id, req.emails)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(503, 'History sharing could not be saved; refresh and retry') from exc

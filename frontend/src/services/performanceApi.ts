@@ -12,7 +12,7 @@ async function rawRequest<T>(
     Object.entries(filters).filter(([, value]) => Boolean(value)),
   );
   const response = await fetch(
-    `${BACKEND_URL}/api/analysis/performance${path}?${params}`,
+    `${BACKEND_URL}/api/analysis/performance${path}?include_shared=true&${params}`,
     { headers: _authHeaders(), signal },
   );
   if (!response.ok)

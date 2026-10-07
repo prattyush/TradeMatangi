@@ -57,7 +57,7 @@ try {
   await page.getByRole('button',{name:'Sign in',exact:true}).click()
   const nav = page.getByRole('navigation',{name:'Desktop workspace'})
   await nav.getByRole('button',{name:'Analysis',exact:true}).click()
-  await page.getByText(cycle.date,{exact:true}).first().click()
+  await page.getByRole('complementary',{name:'Session navigator'}).getByRole('button').first().click()
   await page.locator('.analysis-kline').first().waitFor()
   await page.screenshot({path:artifacts+'/chart-layout.png'})
   assert.ok(await page.locator('.analysis-kline').first().evaluate(el => [...el.querySelectorAll('canvas')].some(c => c.height > 100)), 'Candlestick pane has usable height')

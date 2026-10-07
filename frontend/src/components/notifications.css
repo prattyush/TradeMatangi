@@ -20,3 +20,6 @@
 .notification-history article { border-left: 2px solid var(--notice-color); padding: 8px 10px; margin-top: 8px; background: #0d1117; overflow-wrap: anywhere; }
 .notification-toggle { position: fixed; right: 14px; bottom: 12px; z-index: 20002; width: 38px; }
 .notification-flashes { bottom: 52px; }
+.history-sharing-settings { padding: 16px; max-width: 680px; color: #c9d1d9; font-size: 13px; }
+.history-sharing-settings label { display: grid; gap: 8px; }
+.history-sharing-settings textarea { width: 100%; color: inherit; background: #161b22; padding: 8px; margin-bottom: 10px; }

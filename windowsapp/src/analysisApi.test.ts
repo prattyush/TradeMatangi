@@ -51,3 +51,21 @@ describe('desktop analysis transport', () => {
     expect(query.get('interval_minutes')).toBe('3')
   })
 })
+
+it('rejects an aborted native call promptly and fences a late unauthorized response', async () => {
+  let reject!: (reason:unknown)=>void
+  const native=(()=>new Promise((_resolve,fail)=>{reject=fail})) as AnalysisRequest
+  const unauthorized=vi.fn(),controller=new AbortController()
+  const result=analysisRequest('http://localhost','',native,unauthorized)('sessions','GET',undefined,controller.signal)
+  controller.abort()
+  await expect(result).rejects.toMatchObject({name:'AbortError'})
+  reject(new Error('Analysis request failed (401): expired'))
+  await Promise.resolve()
+  expect(unauthorized).not.toHaveBeenCalled()
+})
+it('reports active native authentication expiry',async()=>{
+  const unauthorized=vi.fn()
+  const native=vi.fn().mockRejectedValue(new Error('Analysis request failed (401): expired')) as unknown as AnalysisRequest
+  await expect(analysisRequest('http://localhost','',native,unauthorized)('sessions','GET')).rejects.toThrow('401')
+  expect(unauthorized).toHaveBeenCalledTimes(1)
+})

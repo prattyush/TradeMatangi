@@ -1,6 +1,9 @@
+import HistorySharingSettings, { type HistorySharingState } from '../../../shared/analysis/HistorySharingSettings'
+import { BACKEND_URL } from '../config'
+import { _authHeaders } from '../services/api'
 import { useFlashError } from '../hooks/useFlashError'
 import { clearChartDataCache } from '../services/chartDataCache'
-import { Fragment, useState, useEffect } from 'react'
+import { Fragment, useCallback, useState, useEffect } from 'react'
 import api, { type UserSettingsResponse } from '../services/api'
 import KotakTOTPModal from './KotakTOTPModal'
 import { RocRatioMode } from '../indicators/optionsRoc'
@@ -334,6 +337,11 @@ interface Props {
 
 export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessionActive, onWalletReset, onSizingModeChange, onTargetDeviationChange, onBrokerageChange, onStrategySettingsChange, onHistoricalDaysChange, onPnlPctModeChange, onGuardRailSettingsChange, onAutoStartSnapshotsChange, onStepwiseLabelingPopupChange, onLabelingModeChange, onTradingIndicatorSettingsChange }: Props) {
   const [open, setOpen] = useState(false)
+  const sharingRequest = useCallback(async (method: 'GET'|'PUT', emails?: string[]): Promise<HistorySharingState> => {
+    const response = await fetch(`${BACKEND_URL}/api/users/real-history-sharing`, {method,headers:{..._authHeaders(),'Content-Type':'application/json'},body:method==='PUT'?JSON.stringify({emails}):undefined})
+    if(!response.ok) throw new Error(`Sharing settings failed (${response.status}): ${await response.text()}`)
+    return response.json()
+  },[])
   const [settingsLoading, setSettingsLoading] = useState(false)
   const [settingsLoadFailed, setSettingsLoadFailed] = useState(false)
   const [preferenceSaving, setPreferenceSaving] = useState(false)
@@ -399,7 +407,7 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
   const [aggrSlOnlyInProfit, setAggrSlOnlyInProfit] = useState(loadAggrSlOnlyInProfit)
 
   // Active tab
-  const [activeTab, setActiveTab] = useState<'general' | 'trading' | 'analytics' | 'strategies' | 'guardrails' | 'admin' | 'profile'>('general')
+  const [activeTab, setActiveTab] = useState<'general' | 'trading' | 'analytics' | 'strategies' | 'guardrails' | 'admin' | 'profile' | 'sharing'>('general')
 
   // GuardRails settings state
   const [grBanEnabled, setGrBanEnabled] = useState(loadGuardRailBanEnabled)
@@ -968,8 +976,8 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
               overflowX: 'auto',
             }}>
               {(isAdmin
-                ? ['general', 'trading', 'analytics', 'strategies', 'guardrails', 'admin', 'profile'] as const
-                : ['general', 'trading', 'analytics', 'strategies', 'guardrails', 'profile'] as const
+                ? ['general', 'trading', 'analytics', 'strategies', 'guardrails', 'sharing', 'admin', 'profile'] as const
+                : ['general', 'trading', 'analytics', 'strategies', 'guardrails', 'sharing', 'profile'] as const
               ).map(tab => (
                 <button
                   key={tab}
@@ -1001,6 +1009,7 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
               ))}
             </div>
 
+            {activeTab === 'sharing' && <HistorySharingSettings request={sharingRequest} />}
             {settingsLoading && <p role="status">Loading settings…</p>}
             {status && <p role="status">{status}</p>}
             {settingsLoadFailed && <button onClick={() => setLoadAttempt(value => value + 1)}>Retry loading settings</button>}

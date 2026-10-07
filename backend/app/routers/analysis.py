@@ -3,7 +3,7 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
-from app.services import analysis_service
+from app.services import analysis_service, analysis_sharing
 from app.dependencies import get_request_user_id
 
 logger = logging.getLogger(__name__)
@@ -14,6 +14,9 @@ router = APIRouter(prefix="/api/analysis", tags=["analysis"])
 
 
 class SessionSummary(BaseModel):
+    snapshot_session_ids: list[str] = []
+    shared: bool = False
+    owner_email: str | None = None
     session_id: str
     user_id: str
     symbol: str
@@ -38,6 +41,11 @@ class SessionSummary(BaseModel):
 
 
 class TradeSummary(BaseModel):
+    execution_id: str | None = None
+    order_id: str | None = None
+    kotak_order_id: str | None = None
+    exchange: str | None = None
+    product: str | None = None
     execution_sort_time: int | None = None
     analytics: dict | None = None
     trade_id: str
@@ -58,6 +66,7 @@ class TradeSummary(BaseModel):
 
 
 class SessionDetail(SessionSummary):
+    orders: list[dict] = []
     trades: list[TradeSummary] = []
 
 
@@ -68,38 +77,47 @@ async def get_sessions(
     end_date: str | None = Query(default=None, description="YYYY-MM-DD"),
     instrument_type: str | None = Query(default=None),
     session_type: str | None = Query(default=None, description="sim, paper, real, or stepwise"),
+    include_shared: bool = False,
     user_id: str = Depends(get_request_user_id),
 ):
-    query_session_type = "stepwise" if session_type == "desktop_stepwise" else session_type
-    sessions = analysis_service.get_sessions_for_user(
-        user_id, symbol=symbol,
-        start_date=start_date, end_date=end_date,
-        instrument_type=instrument_type,
-        session_type=query_session_type,
-    )
-    result = []
-    for s in sessions:
-        trades = analysis_service.get_trades_for_session(s["session_id"])
-        if session_type == "desktop_stepwise":
-            trades = [t for t in trades if t.get("source") == "desktop_stepwise"]
-        if not trades and session_type == "desktop_stepwise":
-            continue
-        cycles = None
-        if s.get("session_type") == "real":
-            import asyncio
-            from app.services.performance_service import load_session_cycles
-            cycles = await asyncio.to_thread(load_session_cycles, s, include_labels=False)
-        summary = analysis_service.compute_session_summary(s, trades, cycles)
-        result.append(summary)
-    return result
+    import asyncio
+    def load():
+        query_session_type = "stepwise" if session_type == "desktop_stepwise" else session_type
+        reader = analysis_sharing.visible_sessions if include_shared else analysis_service.get_sessions_for_user
+        sessions = reader(
+            user_id, symbol=symbol,
+            start_date=start_date, end_date=end_date,
+            instrument_type=instrument_type,
+            session_type=query_session_type,
+        )
+        result = []
+        for s in sessions:
+            trades = analysis_service.get_trades_for_session(s["session_id"])
+            if session_type == "desktop_stepwise":
+                trades = [t for t in trades if t.get("source") == "desktop_stepwise"]
+            if not trades and session_type == "desktop_stepwise":
+                continue
+            cycles = None
+            if s.get("session_type") == "real":
+                import asyncio
+                from app.services.performance_service import load_session_cycles
+                cycles = load_session_cycles(s, include_labels=False)
+            summary = analysis_service.compute_session_summary(s, trades, cycles)
+            result.append({**summary,"shared":s.get("shared",False),"owner_email":s.get("owner_email"),"snapshot_session_ids":s.get("snapshot_session_ids",[s["session_id"]])})
+        return result
+    try:
+        return await asyncio.to_thread(load)
+    except Exception as exc:
+        raise HTTPException(503,"Analysis history could not be read; retry later") from exc
 
 
 @router.get("/sessions/{session_id}", response_model=SessionDetail)
 async def get_session_detail(session_id: str, user_id: str = Depends(get_request_user_id)):
-    detail = analysis_service.get_session_summary_with_trades(session_id)
-    if not detail or detail.get("user_id") != user_id:
-        raise HTTPException(status_code=404, detail="Session not found")
-    return detail
+    import asyncio
+    detail = await asyncio.to_thread(analysis_service.get_session_summary_with_trades,session_id)
+    if not await asyncio.to_thread(analysis_sharing.can_read,detail,user_id):
+        raise HTTPException(404,"Session not found")
+    return {**detail,"shared":detail.get('user_id') != user_id}
 
 
 @router.get("/trades")
@@ -126,7 +144,7 @@ async def get_trades_for_analysis(
         if s.get("session_type") == "real":
             import asyncio
             from app.services.performance_service import load_session_cycles
-            cycles = await asyncio.to_thread(load_session_cycles, s, include_labels=False)
+            cycles = load_session_cycles(s, include_labels=False)
         summary = analysis_service.compute_session_summary(s, trades, cycles)
         trade_list = [
             {

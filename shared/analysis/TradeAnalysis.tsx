@@ -1,3 +1,4 @@
+import StoredOrders from './StoredOrders'
 import { useAnalysisError } from './environment'
 import { useAnalysisApi, useAnalysisEnvironment } from './environment'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -51,8 +52,8 @@ export interface SessionGroup {
 export function groupSessions(sessions: SessionSummary[]): SessionGroup[] {
   const map = new Map<string, SessionGroup>()
   for (const s of sessions) {
-    if (s.trade_count === 0) continue
-    const key = `${s.date}|${s.symbol}|${s.instrument_type}|${s.session_type ?? ''}`
+    if (s.trade_count === 0 && s.session_type !== 'real') continue
+    const key = `${s.user_id}|${s.date}|${s.symbol}|${s.instrument_type}|${s.session_type ?? ''}`
     if (!map.has(key)) {
       map.set(key, {
         key,
@@ -557,7 +558,7 @@ interface OptionTab {
   trades: AnalysisTrade[]
 }
 
-function AnalysisChartPanel({
+function WebsiteAnalysisChartPanel({
   symbol, date, allTrades, isOptions, historicalDays = 2,
 }: {
   symbol: string
@@ -705,6 +706,12 @@ function AnalysisChartPanel({
   )
 }
 
+export function AnalysisChartPanel(props: React.ComponentProps<typeof WebsiteAnalysisChartPanel>) {
+  const environment = useAnalysisEnvironment()
+  const Override = environment.charts?.AnalysisChartPanel
+  return Override ? <Override {...props} /> : <WebsiteAnalysisChartPanel {...props} />
+}
+
 // ── Trade table ───────────────────────────────────────────────────────────────
 
 function TradeTable({ trades }: { trades: AnalysisTrade[] }) {
@@ -753,6 +760,7 @@ function TradeTable({ trades }: { trades: AnalysisTrade[] }) {
 
 export function GroupCard({ group, historicalDays = 2, initiallyExpanded = false }: { group: SessionGroup; historicalDays?: number; initiallyExpanded?: boolean }) {
   const api = useAnalysisApi()
+  const environment = useAnalysisEnvironment()
 
   const [expanded, setExpanded] = useState(false)
   const [details, setDetails] = useState<Map<string, SessionDetail>>(new Map())
@@ -765,6 +773,7 @@ export function GroupCard({ group, historicalDays = 2, initiallyExpanded = false
   const [showComparison, setShowComparison] = useState(false)
 
   const handleExpand = async () => {
+    if (expanded && environment.confirmDiscard?.() === false) return
     if (!expanded && details.size === 0) {
       setLoading(true)
       try {
@@ -779,7 +788,7 @@ export function GroupCard({ group, historicalDays = 2, initiallyExpanded = false
         setLoading(false)
       }
     }
-    setExpanded(v => !v)
+    setExpanded(!expanded)
   }
 
   useEffect(() => { if (initiallyExpanded) void handleExpand() }, [])
@@ -809,7 +818,7 @@ export function GroupCard({ group, historicalDays = 2, initiallyExpanded = false
         <div style={{ minWidth: 90 }}>
           <div style={{ fontSize: 13, fontWeight: 600, color: '#e6edf3' }}>{group.date}</div>
           <div style={{ fontSize: 11, color: '#484f58', marginTop: 2 }}>
-            {sessionTypeLabel}{multiSession ? ` · ${group.sessions.length} sessions` : ''}
+            {sessionTypeLabel}{group.sessions[0]?.shared ? ` · Shared by ${group.sessions[0].owner_email ?? group.sessions[0].user_id}` : ''}{multiSession ? ` · ${group.sessions.length} sessions` : ''}
           </div>
         </div>
 
@@ -860,18 +869,16 @@ export function GroupCard({ group, historicalDays = 2, initiallyExpanded = false
               try {
                 // Aggregate snapshots from all sessions in this group
                 const allSnapshots: EventSnapshot[] = []
-                const sessionIds: string[] = []
-                let firstSession: SessionSummary | null = null
-                for (const s of group.sessions) {
-                  if (!firstSession) firstSession = s
-                  sessionIds.push(s.session_id)
-                  const snaps = await api.getSnapshots(s.session_id)
+                const sessionIds = [...new Set(group.sessions.flatMap(s => s.snapshot_session_ids?.length ? s.snapshot_session_ids : [s.session_id]))]
+                const firstSession = group.sessions[0]
+                for (const id of sessionIds) {
+                  const snaps = await api.getSnapshots(id)
                   allSnapshots.push(...snaps)
                 }
-                if (allSnapshots.length > 0 && firstSession) {
+                if (firstSession) {
                   setViewingSnapshots({ session: firstSession, snapshots: allSnapshots, sessionIds })
                 }
-              } catch { /* ignore */ }
+              } catch (error) { setDetailError(String(error)) }
               finally { setSnapshotLoading(false) }
             }}
             title="View event snapshots"
@@ -883,7 +890,7 @@ export function GroupCard({ group, historicalDays = 2, initiallyExpanded = false
           >
             {snapshotLoading ? '...' : '📸 Snapshots'}
           </button>
-          {hasPattern && (
+          {(hasPattern || environment.desktop) && (
             <button
               onClick={(e) => { e.stopPropagation(); setShowComparison(true) }}
               title="Compare trades vs pattern annotations"
@@ -905,6 +912,7 @@ export function GroupCard({ group, historicalDays = 2, initiallyExpanded = false
       {/* Event snapshot viewer modal */}
       {viewingSnapshots && (
         <EventSnapshotViewer
+          readOnly={group.sessions.some(s => s.shared)}
           session={viewingSnapshots.session}
           snapshots={viewingSnapshots.snapshots}
           onClose={() => setViewingSnapshots(null)}
@@ -937,7 +945,7 @@ export function GroupCard({ group, historicalDays = 2, initiallyExpanded = false
           {/* Tab bar */}
           <div style={{ display: 'flex', gap: 0, marginTop: 12, marginBottom: 12 }}>
             <button
-              onClick={() => setActiveTab('trades')}
+              onClick={() => { if (environment.confirmDiscard?.() !== false) setActiveTab('trades') }}
               style={{
                 padding: '6px 16px', border: 'none',
                 borderBottom: activeTab === 'trades' ? '2px solid #58a6ff' : '2px solid transparent',
@@ -966,7 +974,7 @@ export function GroupCard({ group, historicalDays = 2, initiallyExpanded = false
             <>
               {group.sessions.map((s, idx) => {
                 const d = details.get(s.session_id)
-                if (!d || d.trades.length === 0) return null
+                if (!d) return null
                 return (
                   <div key={s.session_id}>
                     {idx > 0 && (
@@ -987,7 +995,9 @@ export function GroupCard({ group, historicalDays = 2, initiallyExpanded = false
                       </div>
                     )}
                     <div style={{ marginTop: idx === 0 && !multiSession ? 12 : 4 }}>
+                      {d.trades.length === 0 && <p>No executions yet.</p>}
                       <TradeTable trades={d.trades} />
+                      {d.orders && <StoredOrders orders={d.orders} />}
                     </div>
                   </div>
                 )
@@ -1003,6 +1013,7 @@ export function GroupCard({ group, historicalDays = 2, initiallyExpanded = false
             </>
           ) : (
             <TradeLabeling
+              readOnly={group.sessions.some(s => s.shared)}
               symbol={group.symbol}
               date={group.date}
               sessionIds={group.sessions.map(s => s.session_id)}

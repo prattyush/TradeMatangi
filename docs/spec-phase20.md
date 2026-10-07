@@ -452,13 +452,13 @@ inference, double percentage conversion or psychological-intent claims.
 | Sprint | Deliverable and acceptance gate | Status |
 |---|---|---|
 | 0 | Complete specification, inventory, sprint breakdown and acceptance | Complete |
-| 1 | Shared contracts/API/native auth/canonical membership; ownership/parity tests | In progress — bearer/ownership/FIFO/real Decimal/worker checks passed; broader parity gates pending |
-| 2 | Shared views/dedicated tab/session filters/navigation/tables; workspace continuity | In progress — lazy desktop tab and shared Sessions/Stats wired; navigator/split layout pending |
-| 3 | KLine exact charts/EMA/split/maximize/history/viewport | In progress — KLine wired; chart layout and tab cleanup acceptance passed; maximize/exact-contract surfaces pending |
-| 4 | Clickable/grouped markers and full evidence inspector across analysis views | In progress — keyboard selection and initial evidence inspector/cycle links wired; presentation and all-surface acceptance pending |
-| 5 | Labels/snapshots/comparison parity and cross-client persistence | Planned |
-| 6 | Five shared Stats views/all filters/detail/enrichment/full CSV | In progress — shared views/detail/CSV wired; paging/failure/enrichment acceptance pending |
-| 7 | Regression/browser/Windows acceptance/docs/reviewed PR to dev | Planned |
+| 1 | Shared contracts/API/native auth/canonical membership; ownership/parity tests | Complete — automated ownership, FIFO, real Decimal and failure checks passed |
+| 2 | Shared views/dedicated tab/session filters/navigation/tables; workspace continuity | Complete — lazy tab, resizable navigator and trading continuity verified |
+| 3 | KLine exact charts/EMA/split/maximize/history/viewport | Complete — exact-contract KLine charts, EMA, viewport/maximize and cleanup verified |
+| 4 | Clickable/grouped markers and full evidence inspector across analysis views | Complete — readable inspector, canonical cycle links, keyboard and physical overlay hit testing verified |
+| 5 | Labels/snapshots/comparison parity and cross-client persistence | Complete — save/discard/read-only, snapshot and comparison error/retry acceptance passed |
+| 6 | Five shared Stats views/all filters/detail/enrichment/full CSV | Complete — five shared views, detail, cached enrichment and complete CSV traversal verified |
+| 7 | Regression/browser/Windows acceptance/docs/reviewed PR to dev | Automated regression and browser acceptance passed; packaged Windows and PR review/merge remain manual |
 
 ### Test and delivery gates
 
@@ -832,7 +832,7 @@ Validation of this checkpoint:
 - Logs, fixtures, screenshots and browser summary are ignored under
   `.cache/desktop-analysis-validation/`. Diff whitespace check passed.
 
-Next implementation gates remain:
+Implementation gates outstanding at the initial `e89c20c` checkpoint (completed in the delivery continuation below):
 1. Replace the reused modal/group layout with the specified resizable navigator,
    linked session selection, draggable underlying/option split and narrow-pane UX.
 2. Present captured execution/sizing/controller/FIFO evidence as readable fields;
@@ -847,3 +847,140 @@ Next implementation gates remain:
    regression and packaged Windows acceptance before a delivery PR targeting dev.
 
 No delivery PR, main merge, deployment or live broker orders in this continuation.
+
+
+### Desktop Analysis completion and real-history sharing — 2026-10-07
+
+The initial WIP checkpoint is superseded by this completed implementation. Work
+continued on `wip/phase20-desktop-analysis`; delivery uses a separate feature branch
+and reviewed PR to dev. Main merge and deployment remain manual.
+
+Desktop now has the dedicated lazy Workspace / Analysis tab and Sessions / Stats
+navigation. Sessions provides mode/symbol/instrument/date filters, the last 30 IST
+dates by default, refresh/error/retry/empty states, a collapsible 300px navigator
+resizable from 240–480px, bounded execution/order tables and selected-session
+content. Preserve filters, selection and label drafts across tab switches. Show
+real sessions containing only pending/cancelled orders as well as filled sessions.
+Use the existing saved historical-context setting, including zero context days.
+Main navigation styles load with the workspace rather than waiting for lazy CSS.
+
+Underlying / exact option charts use KLineCharts, EMA9/21 and separate expiry,
+exchange and product identities. The split is draggable and keyboard adjustable;
+narrow layouts switch panes. Maximize changes layout without disposing the chart.
+Viewport restoration centres the saved timestamp correctly rather than using
+KLine's right-edge timestamp anchor. Clear the old price series before loading a
+different contract/date so stale candles cannot appear under a new identity. Hidden Analysis views dispose their charts,
+while trading controllers, engines and streams stay mounted. Hidden workspace
+charts do not consume drawing/refresh keyboard shortcuts. History and viewport
+caches are bounded, scoped to the account and cleared on account/server changes;
+failed/aborted requests are not memoized. Active authentication expiry returns to
+sign-in, and cancelled late native replies cannot change another account's state.
+
+Execution circles are locked and clickable; exact coincident fills and circles
+that overlap geometrically on nearby bars offer a chronological chooser. Keep
+physical execution IDs and owning sessions, both reversal roles and role quantities.
+Accessible table selection opens the 380px inspector; Escape closes it before a
+maximized view. Readable fields cover captured entry intent/execution type, sizing,
+requested budgets/percentages/quantity, capital/reference/initial stop, effective
+allocation/risk/overruns, confirmed exit method and Half/Full allocation, logical
+fill/action totals, FIFO gross/net/fees/capital contribution/R/open inventory,
+labels and controller history. Missing evidence remains Unknown; zero is retained.
+Associated cycle results are shown separately and are not additive. Open cycle
+provides the shared detail and explicit cached-only sampled excursion analysis.
+
+Labels retains saved/custom values, expected/actual fields, tags and FIFO context.
+Protect dirty edits when leaving a session or label view, prevent navigation while
+saving, and retain drafts on failure. Saved labels invalidate cached reads and
+refresh Stats. Metadata and round-trip storage failures now raise explicit errors
+rather than successful empty reports; label/tag/pattern reads consume every page.
+Comparison joins physical or stored execution IDs within the owning session and
+retains both label contexts for a reversal; category/strategy filters and top
+pattern annotations remain shared. Charts preserve their instances on maximize.
+
+Snapshots retains chronological group events, wildcard search, keyboard navigation,
+underlying/CE/PE panes and captured orders/positions/wallet/P&L. Include recordings
+from broker-book aliases without counting their executions twice. Pass the actual
+snapshot session; resolve captured fills only against unique physical evidence with
+matching price and quantity, otherwise show captured-only/Unknown provenance.
+Discard cached boundary/future bars and use captured OHLC when available; preserve
+unknown observation resolution. New recordings retain exact expiry/broker IDs/fees
+and available option observations, without rewriting legacy snapshots. Snapshot
+reads paginate; delete-all requires confirmation, retries bounded unprocessed
+batches and reports incomplete deletion. Capture/read/delete ownership is enforced.
+
+Stats has Overview / Entries / Exits / Sizing / Behavior, existing filters and
+sortable linked tables, summary/curve/drawdown/calendar/distributions/matrix/scatter,
+coverage/small-sample badges, comparisons/insights, cycle detail and CSV. Export
+traverses every page, validates total/membership/offset consistency and fails
+explicitly without downloading partial data. Filter changes cancel stale exports.
+
+#### Additional user requirement: share complete real history by email
+
+Website Settings → sharing and Desktop Settings → History sharing allow an owner
+to select up to 20 registered email addresses. Share all past and future real-mode
+sessions: application orders plus committed broker report facts (including orders
+without fills), individual executions, analytics, saved labels and recorded trading
+snapshots. Recipients see these alongside their own practice history, with owner
+identity and account/mode comparisons in Stats. Owner and recipient sessions cannot
+merge merely because their dates/symbols/modes match.
+
+Sharing grants read access only. Recipients cannot trade, change protection, edit
+labels, create snapshots or delete the owner's snapshots. Paper/Replay/Stepwise
+history, broker credentials, account settings and private patterns are not newly
+shared. Existing Pattern Library sharing remains separate. Saved order evidence
+uses an allowlist, keeps application-versus-broker facts distinct and exposes full
+recorded fields through lazy expandable tables. No broker polling, reconciliation,
+subscription or order request is performed by Analysis.
+
+`GET/PUT /api/users/real-history-sharing` and the bearer-authenticated desktop
+settings adapters persist grants on existing Users records, using an atomic
+version-checked transaction and reverse source references. No additional table or
+historical rewrite is needed. Check the owner's current grant on every server read;
+reverse references alone cannot authorize access. Normalize/deduplicate email
+addresses, reject unknown/self/ambiguous targets and preserve existing grants after
+validation or write failures. Removing an email revokes further reads; already
+loaded/downloaded copies cannot be recalled. Failed settings loads cannot submit
+an empty replacement list. No emails/notifications are sent to recipients. Website
+requests retain the existing website identity transport; desktop adapters require
+verified bearer identity. Trading permissions and credentials remain unchanged.
+
+#### Final validation and reproduction
+
+All provider, broker and browser paths in validation use synthetic/mocked data.
+DynamoDB Local is running for the existing full backend regression environment.
+
+- Full backend regression: **1,758 passed / 2 documented baseline failures**.
+  The failures remain the stale expiry fixture in `test_options_api.py` and the
+  missing `group_id` fixture in `test_tab_restore.py`; no new failures.
+- Final focused backend boundary/accounting regressions: **74 passed** after the
+  final storage/worker refinements.
+- Desktop/client Vitest: **171 passed**, 28 files. Website Node checks: **41 passed**.
+- Website and desktop TypeScript checks and production builds passed. Existing
+  bundle-size/dateutil/pytest-marker/pandas warnings remain.
+- Native Rust offline tests on Linux: **16 passed**, main/doc targets passed.
+- Built-app browser acceptance verifies login, lazy tab, Sessions/KLine, keyboard
+  inspector/cycle links, five Stats views/CSV, chart disposal/restoration, narrow
+  layout and logout isolation.
+- StrictMode workflow acceptance verifies chart instance/viewport retention,
+  actual underlying/option overlay hit testing and overlaps, dirty-label guards,
+  save/reload and error/retry, snapshot chronology/wildcards/recorded boundary
+  prices/delete failures, comparison failures, shared read-only views, real
+  order-only sessions, all-page CSV failure/retry and desktop sharing settings.
+- Paper / Replay / Stepwise continuity acceptance verifies that SSE and P&L update
+  while Analysis is visible and existing trading chart instances survive return.
+- Website settings acceptance verifies normalized emails, validation failures,
+  revocation and incoming owner display. Cross-client backend tests verify atomic
+  grant/revoke, non-transitive grants, real-only scope, complete sanitized order
+  evidence, snapshot alias membership and rejection of unauthorized writes.
+
+Reproduction scripts are `scripts/desktop-analysis-check.mjs`,
+`scripts/desktop-analysis-workflows.mjs`, `scripts/desktop-analysis-continuity.mjs`
+and `scripts/history-sharing-settings-check.mjs`. As with earlier checks, provide
+external PLAYWRIGHT_MODULE and optional CHROME_BIN; fixture-generating scripts also
+accept PYTHON_BIN. No runtime browser-test dependency was added. Durable test/build
+logs, JSON summaries and screenshots are ignored under
+`.cache/desktop-analysis-validation/`.
+
+Packaged Windows acceptance (scale/focus/native auth refresh/download/resize) and
+existing authorized live-broker acceptance remain manual and are not claimed by
+Linux/browser tests. No live orders, credential changes, main merge or deployment.

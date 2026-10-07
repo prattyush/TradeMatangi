@@ -234,3 +234,8 @@ input { width: 160px; }
 .desktop-settings-modal input[type="checkbox"] { width: auto; }
 .desktop-settings-modal .picker-fields label > span { display: flex; align-items: center; gap: 8px; }
 .desktop-settings-modal label:has(> input[type="checkbox"]) { flex-direction: row; align-items: center; gap: 8px; }
+
+/* Main navigation must be styled before the lazy Analysis bundle loads. */
+.desktop-main-navigation { height: 36px; display: flex; align-items: center; gap: 8px; padding: 3px 12px; background: #181d27; }
+.desktop-main-navigation button { padding: 3px 12px; }
+.desktop-with-navigation > div > main, .desktop-with-navigation > main { height: calc(100vh - 36px); }

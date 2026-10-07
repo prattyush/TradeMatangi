@@ -212,6 +212,7 @@ def _fifo_match_trades(trades: list[dict]) -> list[dict]:
 
 def _serialize_rt_trade(t: dict) -> dict:
     return {
+        "execution_id":t.get("execution_id"),
         "trade_id": t.get("trade_id", ""),
         "side": t.get("side", ""),
         "quantity": int(t.get("quantity", 0)),
@@ -236,9 +237,9 @@ def compute_round_trips_for_session(session_id: str) -> list[dict]:
             from app.services.performance_service import load_session_cycles
             return cycle_round_trips(load_session_cycles(session, include_labels=False))[0]
         return compute_round_trip_state(trades, session)[0]
-    except Exception:
+    except Exception as exc:
         logger.exception("Failed to compute round trips for session %s", session_id)
-        return []
+        raise RuntimeError("Round-trip history could not be read; retry later") from exc
 
 
 def save_labels(session_id: str, labels: list[dict], user_id: str) -> list[dict]:
@@ -314,19 +315,23 @@ def get_labels_for_session(session_id: str) -> list[dict]:
             KeyConditionExpression="session_id = :sid",
             ExpressionAttributeValues={":sid": session_id},
         )
+        items = list(resp.get("Items", []))
+        while resp.get("LastEvaluatedKey"):
+            resp = table.query(KeyConditionExpression="session_id = :sid",ExpressionAttributeValues={":sid":session_id},ExclusiveStartKey=resp["LastEvaluatedKey"])
+            items.extend(resp.get("Items", []))
         from app.services.real_broker_state import projected_labels, _links
-        real_labels = any(row.get("session_type") == "real" for row in resp.get("Items", []))
+        real_labels = any(row.get("session_type") == "real" for row in items)
         projected = projected_labels(session_id) if real_labels or session_id in _links else None
         if projected is not None:
             revision = _links.get(session_id, {}).get("revision")
-            current = [r for r in resp.get("Items", []) if revision and r.get("broker_snapshot_revision") == revision]
+            current = [r for r in items if revision and r.get("broker_snapshot_revision") == revision]
             by_index = {int(r["round_trip_index"]): r for r in projected}
             by_index.update({int(r["round_trip_index"]): r for r in current})
             return [_serialize_label(item) for item in by_index.values()]
-        return [_serialize_label(item) for item in resp.get("Items", [])]
-    except Exception:
+        return [_serialize_label(item) for item in items]
+    except Exception as exc:
         logger.exception("Failed to get labels for session %s", session_id)
-        return []
+        raise RuntimeError("Saved labels could not be read; retry later") from exc
 
 
 def update_label(session_id: str, round_trip_index: int, label_data: dict) -> dict | None:
@@ -375,15 +380,19 @@ def list_entry_tags(user_id: str) -> list[str]:
             KeyConditionExpression="user_id = :uid",
             ExpressionAttributeValues={":uid": user_id},
         )
+        items = list(resp.get("Items", []))
+        while resp.get("LastEvaluatedKey"):
+            resp=table.query(IndexName="UserIdDateIndex",KeyConditionExpression="user_id = :uid",ExpressionAttributeValues={":uid":user_id},ExclusiveStartKey=resp["LastEvaluatedKey"])
+            items.extend(resp.get("Items", []))
         tags = set()
-        for item in resp.get("Items", []):
+        for item in items:
             tag = item.get("entry_tag", "")
             if tag and tag != "AS_PER_PATTERN":
                 tags.add(tag)
         return sorted(tags)
-    except Exception:
+    except Exception as exc:
         logger.exception("Failed to list entry tags for user %s", user_id)
-        return []
+        raise RuntimeError("Saved entry tags could not be read; retry later") from exc
 
 
 def list_exit_tags(user_id: str) -> list[str]:
@@ -395,15 +404,19 @@ def list_exit_tags(user_id: str) -> list[str]:
             KeyConditionExpression="user_id = :uid",
             ExpressionAttributeValues={":uid": user_id},
         )
+        items = list(resp.get("Items", []))
+        while resp.get("LastEvaluatedKey"):
+            resp=table.query(IndexName="UserIdDateIndex",KeyConditionExpression="user_id = :uid",ExpressionAttributeValues={":uid":user_id},ExclusiveStartKey=resp["LastEvaluatedKey"])
+            items.extend(resp.get("Items", []))
         tags = set()
-        for item in resp.get("Items", []):
+        for item in items:
             tag = item.get("exit_tag", "")
             if tag and tag != "AS_PER_PATTERN":
                 tags.add(tag)
         return sorted(tags)
-    except Exception:
+    except Exception as exc:
         logger.exception("Failed to list exit tags for user %s", user_id)
-        return []
+        raise RuntimeError("Saved exit tags could not be read; retry later") from exc
 
 
 def get_stats(

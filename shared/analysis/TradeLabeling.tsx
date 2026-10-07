@@ -1,9 +1,10 @@
-import { useAnalysisApi } from './environment'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useAnalysisApi, useAnalysisEnvironment } from './environment'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AnalysisChart, OptionsChart } from './TradeAnalysis'
 import { AnalysisTrade, RoundTrip, TradeLabel } from './api'
 
 interface TradeLabelingProps {
+  readOnly?: boolean
   symbol: string
   date: string
   sessionIds: string[]
@@ -28,8 +29,17 @@ interface OptionTab {
   trades: AnalysisTrade[]
 }
 
-export default function TradeLabeling({ symbol, date, sessionIds, allTrades, historicalDays }: TradeLabelingProps) {
+export default function TradeLabeling({ readOnly=false, symbol, date, sessionIds, allTrades, historicalDays }: TradeLabelingProps) {
   const api = useAnalysisApi()
+  const environment = useAnalysisEnvironment()
+  const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState('')
+  const [retry, setRetry] = useState(0)
+  const [dirty, setDirty] = useState(false)
+  const edits = useRef(0)
+  const sessionKey = sessionIds.join('|')
+  const notifyDirty = environment.onDirtyChange
+  const notifySaving = environment.onLabelSavingChange
 
   const [roundTrips, setRoundTrips] = useState<(RoundTrip & { session_id: string })[]>([])
   const [labels, setLabels] = useState<Map<string, TradeLabel>>(new Map())
@@ -41,50 +51,45 @@ export default function TradeLabeling({ symbol, date, sessionIds, allTrades, his
   const [saveMsg, setSaveMsg] = useState<string | null>(null)
 
   useEffect(() => {
+    let cancelled = false
+    setLoading(true); setLoadError('')
     const load = async () => {
-      const allRTs: (RoundTrip & { session_id: string })[] = []
-      const allLabels: Map<string, TradeLabel> = new Map()
-
-      for (const sid of sessionIds) {
-        try {
-          const rts = await api.getRoundTrips(sid)
-          rts.forEach(rt => allRTs.push({ ...rt, session_id: sid }))
-        } catch { /* ignore */ }
-        try {
-          const lbls = await api.getLabels(sid)
-          lbls.forEach(l => allLabels.set(`${l.session_id}#${l.round_trip_index}`, l))
-        } catch { /* ignore */ }
-      }
-
-      setRoundTrips(allRTs)
-      setLabels(allLabels)
-
-      try {
-        const [strats, cats, etags, xtags] = await Promise.all([
-          api.patternListStrategies().then(r => r.strategies),
-          api.patternListCategories().then(r => r.categories),
-          api.getEntryTags(),
-          api.getExitTags(),
-        ])
-        setStrategies(strats)
-        setCategories(cats)
-        setEntryTags(etags)
-        setExitTags(xtags)
-      } catch { /* ignore */ }
+      const [tripPages, labelPages, strats, cats, etags, xtags] = await Promise.all([
+        Promise.all(sessionIds.map(id => api.getRoundTrips(id))),
+        Promise.all(sessionIds.map(id => api.getLabels(id))),
+        api.patternListStrategies(), api.patternListCategories(), api.getEntryTags(), api.getExitTags(),
+      ])
+      if (cancelled) return
+      setRoundTrips(tripPages.flatMap((rows,i) => rows.map(rt => ({...rt,session_id:sessionIds[i]}))))
+      setLabels(new Map(labelPages.flat().map(label => [`${label.session_id}#${label.round_trip_index}`,label])))
+      setStrategies(strats.strategies); setCategories(cats.categories); setEntryTags(etags); setExitTags(xtags)
+      setDirty(false)
     }
-    load()
-  }, [sessionIds])
+    void load().catch(error => { if (!cancelled) setLoadError(String(error)) }).finally(() => { if (!cancelled) setLoading(false) })
+    return () => { cancelled = true }
+  }, [api, sessionKey, retry])
+  useEffect(() => { notifySaving?.(saving); return () => notifySaving?.(false) }, [saving, notifySaving])
+  useEffect(() => { notifyDirty?.(dirty); return () => notifyDirty?.(false) }, [dirty, notifyDirty])
+  useEffect(() => {
+    if (!dirty) return
+    const beforeUnload = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = '' }
+    window.addEventListener('beforeunload',beforeUnload)
+    return () => window.removeEventListener('beforeunload',beforeUnload)
+  }, [dirty])
 
   const updateLabel = useCallback((key: string, patch: Partial<TradeLabel>) => {
+    if (readOnly || loading || saving || loadError) return
+    edits.current++; setDirty(true); setSaveMsg(null)
     setLabels(prev => {
       const next = new Map(prev)
       const existing = next.get(key) || { session_id: key.split('#')[0], round_trip_index: parseInt(key.split('#')[1]), expected_category: '', expected_strategy: '', actual_category: '', actual_strategy: '', entry_tag: '', exit_tag: '' }
       next.set(key, { ...existing, ...patch })
       return next
     })
-  }, [])
+  }, [readOnly, loading, saving, loadError])
 
   const handleSave = useCallback(async () => {
+    const revision = edits.current
     setSaving(true)
     setSaveMsg(null)
     try {
@@ -103,7 +108,9 @@ export default function TradeLabeling({ symbol, date, sessionIds, allTrades, his
         }
       }
       await api.saveLabels(labelData)
+      if (revision === edits.current) setDirty(false)
       setSaveMsg('Saved!')
+      environment.onDataChanged?.()
       const [et, xt] = await Promise.all([api.getEntryTags(), api.getExitTags()])
       setEntryTags(et)
       setExitTags(xt)
@@ -111,9 +118,9 @@ export default function TradeLabeling({ symbol, date, sessionIds, allTrades, his
       setSaveMsg(err instanceof Error ? err.message : 'Save failed')
     } finally {
       setSaving(false)
-      setTimeout(() => setSaveMsg(null), 2000)
+
     }
-  }, [roundTrips, labels])
+  }, [roundTrips, labels, environment.onDataChanged])
 
   // Group round-trips by session for header display
   const sessionGroups = new Map<string, (RoundTrip & { session_id: string })[]>()
@@ -123,6 +130,8 @@ export default function TradeLabeling({ symbol, date, sessionIds, allTrades, his
     sessionGroups.set(rt.session_id, existing)
   }
 
+  const displayedCategories = [...new Set([...categories,...[...labels.values()].flatMap(label=>[label.expected_category,label.actual_category]).filter(Boolean)])].sort()
+  const displayedStrategies = [...new Set([...strategies,...[...labels.values()].flatMap(label=>[label.expected_strategy,label.actual_strategy]).filter(Boolean)])].sort()
   const selectStyle: React.CSSProperties = {
     background: '#0d1117', border: '1px solid #30363d', color: '#e6edf3',
     borderRadius: 4, padding: '3px 6px', fontSize: 11, maxWidth: 140,
@@ -161,11 +170,12 @@ export default function TradeLabeling({ symbol, date, sessionIds, allTrades, his
     return () => window.removeEventListener('keydown', handler)
   }, [maximized])
 
+  const LabelCharts = environment.charts?.LabelCharts
   const content = (
     <div style={{ display: 'flex', gap: 12, minHeight: maximized ? 0 : 400, flex: maximized ? 1 : undefined, overflow: maximized ? 'hidden' : undefined }}>
       {/* Chart */}
-      <div style={{ flex: 3, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
-        {chartView === 'underlying' ? (
+      <div className="label-chart-container" style={{ flex: 3, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
+        {LabelCharts ? <LabelCharts symbol={symbol} date={date} allTrades={allTrades} historicalDays={historicalDays} getMarkerText={(trade: AnalysisTrade) => { const trips = roundTrips.filter(row => [...row.entry_trades,...row.exit_trades].some(t => [trade.trade_id,trade.execution_id,trade.stored_trade_id].some(identity => Boolean(identity) && (identity === t.trade_id || identity === t.execution_id))) && row.session_id === trade.session_id); return trips.length ? `${trips.map(rt=>`#${rt.index}`).join('/')} ${trade.side}` : trade.side }} /> : chartView === 'underlying' ? (
           <AnalysisChart
             symbol={symbol}
             date={date}
@@ -184,7 +194,7 @@ export default function TradeLabeling({ symbol, date, sessionIds, allTrades, his
             historicalDays={historicalDays}
           />
         ) : null}
-        {optionTabs.length > 0 && (
+        {!LabelCharts && optionTabs.length > 0 && (
           <div style={{ display: 'flex', gap: 4, marginTop: 4, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
             <button
               onClick={() => setChartView('underlying')}
@@ -233,14 +243,16 @@ export default function TradeLabeling({ symbol, date, sessionIds, allTrades, his
           >
             {maximized ? '⤡' : '⤢'}
           </button>
+          {readOnly && <span>Shared history · read only</span>}
+          {dirty && <span>Unsaved labels</span>}
           {saveMsg && (
-            <span style={{ fontSize: 12, color: saveMsg.startsWith('Saved') ? '#3fb950' : '#f85149' }}>
+            <span role={saveMsg.startsWith('Saved')?'status':'alert'} style={{ fontSize: 12, color: saveMsg.startsWith('Saved') ? '#3fb950' : '#f85149' }}>
               {saveMsg}
             </span>
           )}
           <button
             onClick={handleSave}
-            disabled={saving || roundTrips.length === 0}
+            disabled={readOnly || saving || loading || Boolean(loadError) || roundTrips.length === 0}
             style={{
               background: '#238636', border: 'none', color: '#fff',
               borderRadius: 4, padding: '5px 14px', fontSize: 12,
@@ -304,48 +316,48 @@ export default function TradeLabeling({ symbol, date, sessionIds, allTrades, his
                     <div>
                       <div style={{ fontSize: 10, color: '#484f58', marginBottom: 2 }}>Expected Pattern</div>
                       <div style={{ display: 'flex', gap: 4 }}>
-                        <select
+                        <select disabled={readOnly || saving}
                           value={l.expected_category}
                           onChange={e => updateLabel(key, { expected_category: e.target.value })}
                           style={selectStyle}
                         >
                           <option value="">— Category —</option>
-                          {categories.map(c => <option key={c} value={c}>{c}</option>)}
+                          {displayedCategories.map(c => <option key={c} value={c}>{c}</option>)}
                         </select>
-                        <select
+                        <select disabled={readOnly || saving}
                           value={l.expected_strategy}
                           onChange={e => updateLabel(key, { expected_strategy: e.target.value })}
                           style={selectStyle}
                         >
                           <option value="">— Strategy —</option>
-                          {strategies.map(s => <option key={s} value={s}>{s}</option>)}
+                          {displayedStrategies.map(s => <option key={s} value={s}>{s}</option>)}
                         </select>
                       </div>
                     </div>
                     <div>
                       <div style={{ fontSize: 10, color: '#484f58', marginBottom: 2 }}>Actual Pattern</div>
                       <div style={{ display: 'flex', gap: 4 }}>
-                        <select
+                        <select disabled={readOnly || saving}
                           value={l.actual_category}
                           onChange={e => updateLabel(key, { actual_category: e.target.value })}
                           style={selectStyle}
                         >
                           <option value="">— Category —</option>
-                          {categories.map(c => <option key={c} value={c}>{c}</option>)}
+                          {displayedCategories.map(c => <option key={c} value={c}>{c}</option>)}
                         </select>
-                        <select
+                        <select disabled={readOnly || saving}
                           value={l.actual_strategy}
                           onChange={e => updateLabel(key, { actual_strategy: e.target.value })}
                           style={selectStyle}
                         >
                           <option value="">— Strategy —</option>
-                          {strategies.map(s => <option key={s} value={s}>{s}</option>)}
+                          {displayedStrategies.map(s => <option key={s} value={s}>{s}</option>)}
                         </select>
                       </div>
                     </div>
                     <div>
                       <div style={{ fontSize: 10, color: '#484f58', marginBottom: 2 }}>Entry Tag</div>
-                      <input
+                      <input disabled={readOnly || saving}
                         list={`et-${key}`}
                         value={l.entry_tag}
                         onChange={e => updateLabel(key, { entry_tag: e.target.value })}
@@ -358,7 +370,7 @@ export default function TradeLabeling({ symbol, date, sessionIds, allTrades, his
                     </div>
                     <div>
                       <div style={{ fontSize: 10, color: '#484f58', marginBottom: 2 }}>Exit Tag</div>
-                      <input
+                      <input disabled={readOnly || saving}
                         list={`xt-${key}`}
                         value={l.exit_tag}
                         onChange={e => updateLabel(key, { exit_tag: e.target.value })}
@@ -379,6 +391,9 @@ export default function TradeLabeling({ symbol, date, sessionIds, allTrades, his
     </div>
   )
 
+  if (loading) return <p role="status">Loading round trips and saved labels…</p>
+  if (loadError) return <p role="alert">{loadError}<button onClick={() => setRetry(n => n + 1)}>Retry labels</button></p>
+  if (environment.desktop) return <div className={`desktop-label-workflow ${maximized ? 'labels-maximized' : ''}`}>{content}</div>
   if (maximized) {
     return (
       <div style={{ position: 'fixed', inset: 0, zIndex: 2000, background: '#0d1117', display: 'flex', flexDirection: 'column', padding: 12 }}>

@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react'
+import HistorySharingSettings, { type HistorySharingState } from '../../shared/analysis/HistorySharingSettings'
+import { useCallback, useEffect, useState } from 'react'
 import { GuardrailFields, guardrailFields } from './GuardrailSettings'
 import {
   sharedSettingsSections,
@@ -173,6 +174,7 @@ export function DesktopSettingsModal({
 }: Props) {
   const [draft, setDraft] = useState(settings)
   const [userDraft, setUserDraft] = useState<Record<string, unknown>>({})
+  const sharingRequest = useCallback((method: 'GET'|'PUT', emails?: string[]) => accountRequest<HistorySharingState>('real-history-sharing',method,method==='PUT'?{emails}:{}),[accountRequest])
   const [tab, setTab] = useState('General')
   const [profile, setProfile] = useState<Profile | null>(null)
   const [loading, setLoading] = useState(true)
@@ -360,12 +362,13 @@ export function DesktopSettingsModal({
   )
   const tabs = [
     ...Object.keys(sharedSettingsSections),
+    'History sharing',
     'GuardRails',
     'Drawing & Display',
     ...(profile?.is_admin ? ['Admin'] : []),
     'Profile'
   ]
-  const preferenceTab = tab !== 'Admin' && tab !== 'Profile'
+  const preferenceTab = tab !== 'Admin' && tab !== 'Profile' && tab !== 'History sharing'
   return (
     <div className="modal-backdrop">
       <section
@@ -960,6 +963,7 @@ export function DesktopSettingsModal({
                   {profile.real_trading_enabled && brokerControls}
                 </section>
               )}
+              {tab === 'History sharing' && <HistorySharingSettings request={sharingRequest} />}
               {tab === 'Profile' && (
                 <section className="settings-section">
                   <strong>{profile?.email}</strong>

@@ -41,7 +41,10 @@ def get_sessions_for_user(
             resp = table.query(IndexName="UserIdIndex", KeyConditionExpression=Key("user_id").eq(user_id), ExclusiveStartKey=resp["LastEvaluatedKey"])
             items.extend(resp.get("Items", []))
 
+        raw_items = [s for s in items if s.get('user_id') == user_id]
+        items = raw_items
         items = [s for s in items if not s.get("broker_projection_owner") or s["broker_projection_owner"] == s["session_id"]]
+        items = [{**s,'snapshot_session_ids':sorted({s['session_id'],*[alias['session_id'] for alias in raw_items if alias.get('broker_projection_owner') == s['session_id'] and alias.get('date') == s.get('date') and alias.get('symbol') == s.get('symbol') and alias.get('instrument_type','equity') == s.get('instrument_type','equity')]})} for s in items]
         if symbol:
             items = [s for s in items if s.get("symbol") == symbol]
         if start_date:
@@ -143,6 +146,7 @@ def get_session_summary_with_trades(session_id: str) -> dict | None:
             cycles = load_session_cycles(session, include_labels=False)
         summary = compute_session_summary(session, trades, cycles)
         summary["trades"] = [_serialize_trade(t) for t in trades]
+        summary["orders"] = get_stored_orders(session)
         
         return summary
     except Exception:
@@ -167,6 +171,53 @@ def _serialize_trade(t: dict) -> dict:
         "commission": _safe_float(t.get("commission", 0)),
         "underlying_price": _safe_float(t.get("underlying_price")) if t.get("underlying_price") is not None else None,
         "source": t.get("source"),
+        "execution_id":t.get("execution_id"),
+        "order_id":t.get("order_id"),
+        "kotak_order_id":t.get("kotak_order_id"),
+        "exchange":t.get("broker_exchange") or t.get("exchange"),
+        "product":t.get("broker_product") or t.get("product"),
         "analytics": t.get("analytics"),
         "execution_sort_time": t.get("execution_sort_time"),
     }
+
+
+def get_stored_orders(session: dict) -> list[dict]:
+    """Committed stored order evidence only; never query or reconcile a broker."""
+    from app.services.db import get_dynamodb_resource
+    from app.services.real_broker_state import link_for
+    from app.services.performance_service import query_all
+    from app.services.execution_analytics import normalize_metadata
+    from app.models.schemas import Order
+    from boto3.dynamodb.conditions import Key
+    db = get_dynamodb_resource()
+    sid = session['session_id']
+    link = link_for(sid) if session.get('session_type') == 'real' else None
+    manifest = db.Table('Sessions').get_item(Key={'session_id':link['projection_id']},ConsistentRead=True).get('Item',{}) if link else None
+    partition = manifest.get('active_partition',sid) if manifest is not None else sid
+    rows = query_all(db.Table('Orders'),KeyConditionExpression=Key('session_id').eq(partition),ConsistentRead=True)
+    if manifest is not None:
+        latest = db.Table('Sessions').get_item(Key={'session_id':link['projection_id']},ConsistentRead=True).get('Item',{})
+        if latest.get('revision') != manifest.get('revision') or latest.get('active_partition') != manifest.get('active_partition'):
+            raise RuntimeError('Broker order revision changed; retry')
+    fields = set(Order.model_fields)
+    result = []
+    for row in rows:
+        if 'order_type' not in row:
+            continue
+        # An allowlist excludes raw broker payloads or unrelated stored attributes.
+        item = {key:value for key,value in row.items() if key in fields}
+        if item.get('analytics'):
+            item['analytics'] = normalize_metadata(item['analytics'])
+        result.append(item)
+    by_broker = {(str(item.get('broker_exchange') or ''),str(item.get('kotak_order_id') or '')):item for item in result if item.get('kotak_order_id')}
+    report_fields = {'kotak_order_id','status','side','side_known','symbol','underlying','exchange','quantity','filled_quantity','limit_price','trigger_price','filled_price','order_type','order_time','product','tag','reject_reason','right','strike','expiry','instrument_token'}
+    for row in rows:
+        if not isinstance(row.get('broker_order'),dict):
+            continue
+        report = {key:value for key,value in row['broker_order'].items() if key in report_fields}
+        matched = by_broker.get((str(report.get('exchange') or ''),str(report.get('kotak_order_id') or '')))
+        if matched is not None:
+            matched['broker_report'] = report
+        else:
+            result.append({**report,'order_id':row['order_id'],'source':'broker_report','broker_exchange':report.get('exchange'),'broker_product':report.get('product'),'broker_report':report})
+    return sorted(result,key=lambda row:(row.get('placement_time',0),row.get('order_id','')))

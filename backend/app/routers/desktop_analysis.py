@@ -23,9 +23,10 @@ def get_analysis_user_id(authorization: str | None = Header(default=None)) -> st
     return get_desktop_user_id(authorization=authorization, x_user_id=None)
 
 
-def owned_session(session_id, user_id):
+def owned_session(session_id, user_id, read_only=False):
     session = labels.svc._load_session(session_id)
-    if not session or session.get("user_id") != user_id:
+    from app.services.analysis_sharing import can_read
+    if not session or (not can_read(session,user_id) if read_only else session.get("user_id") != user_id):
         raise HTTPException(404, "Session not found")
     return session
 
@@ -46,12 +47,12 @@ def adapt(route: APIRoute, path: str):
     async def authenticated(**kwargs):
         owner = kwargs.get(identity_parameter) if has_user else kwargs.pop("desktop_owner")
         if "session_id" in kwargs:
-            await asyncio.to_thread(owned_session, kwargs["session_id"], owner)
+            await asyncio.to_thread(owned_session, kwargs["session_id"], owner, "GET" in route.methods)
         if path.startswith('/data/'):
             with desktop_history_scope():
                 return await endpoint(**kwargs)
-        if path.startswith('/pattern/ohlc/'):
-            # These legacy async endpoints do synchronous provider/cache work.
+        if path.startswith('/pattern/'):
+            # Legacy pattern endpoints do synchronous storage/provider work.
             return await run_history(lambda: asyncio.run(endpoint(**kwargs)))
         return await endpoint(**kwargs)
 
@@ -89,7 +90,7 @@ for source, paths in allowed:
 @router.get("/sessions/{session_id}")
 async def session_detail(session_id: str, user_id: str = Depends(get_analysis_user_id)):
     def load():
-        session = owned_session(session_id, user_id)
+        session = owned_session(session_id, user_id, read_only=True)
         cycles = performance_service.load_session_cycles(session)
         # The same execution can belong to two cycles during a reversal. Keep its
         # role quantities in cycles, but show one physical fill in the table/chart.
@@ -104,15 +105,15 @@ async def session_detail(session_id: str, user_id: str = Depends(get_analysis_us
         trades = []
         for identity, row in executions.items():
             trades.append({**analysis_service._serialize_trade({**row, "session_id": session_id,
-                           "user_id": user_id, "symbol": session["symbol"],
+                           "user_id": session["user_id"], "symbol": session["symbol"],
                            "instrument_type": session.get("instrument_type", "equity")}),
-                           "trade_id": identity, "execution_id": row.get("execution_id"),
+                           "trade_id": identity, "stored_trade_id":row.get("trade_id"), "execution_id": row.get("execution_id"),
                            "order_id": row.get("order_id"), "kotak_order_id": row.get("kotak_order_id"),
                            "exchange": row.get("broker_exchange") or row.get("exchange"),
                            "product": row.get("broker_product") or row.get("product")})
         trades.sort(key=performance_service.execution_order_key)
         summary = analysis_service.compute_session_summary(session, trades, cycles)
-        return {**summary, "trades": trades, "cycles": cycles}
+        return {**summary, "shared":session["user_id"] != user_id, "trades": trades, "cycles": cycles, "orders":analysis_service.get_stored_orders(session)}
     try:
         return await asyncio.to_thread(load)
     except HTTPException:

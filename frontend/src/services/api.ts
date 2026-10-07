@@ -80,6 +80,7 @@ export interface FineSearchResult {
 }
 
 export interface TickEvent {
+  interval_seconds?: number
   type: 'tick'
   session_id?: string
   time: number
@@ -403,6 +404,9 @@ export interface AdminTokensResponse {
 // ── Analysis types ──────────────────────────────────────────────────────────
 
 export interface SessionSummary {
+  snapshot_session_ids?: string[]
+  shared?: boolean
+  owner_email?: string | null
   session_id: string
   user_id: string
   symbol: string
@@ -423,6 +427,8 @@ export interface SessionSummary {
 }
 
 export interface AnalysisTrade {
+  captured_only?: boolean
+  stored_trade_id?: string
   analysis_cycle_id?: string
   analytics?: import('../../../shared/analysis/performance').AnalyticsMetadata
   execution_sort_time?: number
@@ -449,6 +455,7 @@ export interface AnalysisTrade {
 }
 
 export interface SessionDetail extends SessionSummary {
+  orders?: Record<string, unknown>[]
   cycles?: import('../../../shared/analysis/performance').PerformanceCycle[]
   trades: AnalysisTrade[]
 }
@@ -456,6 +463,7 @@ export interface SessionDetail extends SessionSummary {
 // ── Trade Labels & Round Trips types ─────────────────────────────────────────
 
 export interface RoundTripTrade {
+  execution_id?: string | null
   trade_id: string
   side: 'BUY' | 'SELL'
   quantity: number
@@ -526,6 +534,10 @@ export interface AnalysisStats {
 // ── Event Snapshot types ────────────────────────────────────────────────────
 
 export interface SnapshotFilledTrade {
+  expiry?: string | null
+  execution_id?: string
+  kotak_order_id?: string | null
+  commission?: number
   trade_id: string
   side: 'BUY' | 'SELL'
   price: number
@@ -551,6 +563,9 @@ export interface SnapshotEventDetail {
 }
 
 export interface SnapshotData {
+  bar_observation_resolution_seconds?: number | null
+  option_observation_ce?: {time:number;ohlc:Omit<OHLCCandle,'time'>;resolution_seconds:number | null; source_time?:number} | null
+  option_observation_pe?: {time:number;ohlc:Omit<OHLCCandle,'time'>;resolution_seconds:number | null; source_time?:number} | null
   current_price: number
   current_price_ce: number
   current_price_pe: number
@@ -1373,7 +1388,7 @@ const api = {
     instrumentType?: string
     sessionType?: string
   } = {}): Promise<SessionSummary[]> {
-    const params = new URLSearchParams()
+    const params = new URLSearchParams({include_shared:'true'})
     if (opts.symbol) params.set('symbol', opts.symbol)
     if (opts.startDate) params.set('start_date', opts.startDate)
     if (opts.endDate) params.set('end_date', opts.endDate)

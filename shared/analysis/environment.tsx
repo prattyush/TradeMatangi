@@ -20,6 +20,13 @@ export interface AnalysisEnvironment {
   reportError?: (error: string, source: string) => void
   active?: boolean
   desktop?: boolean
+  historicalDays?: number
+  dataRevision?: number
+  onDataChanged?: () => void
+  onLabelSavingChange?: (saving: boolean) => void
+  onDirtyChange?: (dirty: boolean) => void
+  confirmDiscard?: () => boolean
+  onSelectionContextChange?: () => void
   onSelectExecution?: (trade: import('./api').AnalysisTrade) => void
 }
 const Context = createContext<AnalysisEnvironment | null>(null)

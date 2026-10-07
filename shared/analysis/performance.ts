@@ -27,6 +27,7 @@ export interface Comparison extends Metrics {
   mean_interval?: number[] | null;
 }
 export interface Excursion {
+  interval_seconds?: number
   status: string;
   reason?: string;
   mfe?: number;
@@ -80,6 +81,10 @@ export interface EntryPosition {
   analytics: AnalyticsMetadata;
 }
 export interface MatchedPortion {
+  gross_pnl?: number
+  pnl_pct?: number | null
+  capital?: number | null
+  initial_risk?: number | null
   entry_execution_id?: string
   exit_execution_id?: string
   entry_id: string;
@@ -98,6 +103,9 @@ export interface MatchedPortion {
   requested_size?: string;
 }
 export interface PerformanceCycle {
+  shared?: boolean
+  owner_email?: string | null
+  user_id?: string
   cycle_id: string;
   session_id: string;
   symbol: string;

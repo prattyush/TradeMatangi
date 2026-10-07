@@ -1,3 +1,4 @@
+import { completeCycleExport } from './exportCycles'
 import { useAnalysisError } from './environment'
 import { useAnalysisEnvironment } from './environment'
 import { AnalysisChart, OptionsChart } from "./TradeAnalysis";
@@ -261,9 +262,12 @@ export default function PerformanceDashboard(props: Props) {
   const [exporting, setExporting] = useState(false);
   const generation = useRef(0);
   const detailGeneration = useRef(0);
+  const exportController = useRef<AbortController | null>(null);
   useEffect(() => {
     const controller = new AbortController();
     const revision = ++generation.current;
+    exportController.current?.abort();
+    setExporting(false);
     setLoading(true);
     setError("");
     setFocus(null);
@@ -289,9 +293,10 @@ export default function PerformanceDashboard(props: Props) {
       });
     return () => {
       controller.abort();
+      exportController.current?.abort();
       detailGeneration.current++;
     };
-  }, [filters, refresh]);
+  }, [filters, refresh, environment.dataRevision]);
   const select = (key: string, dimension?: string) =>
     setFocus({ key, dimension });
   const showDetail = async (c: PerformanceCycle, enrich = false) => {
@@ -327,16 +332,13 @@ export default function PerformanceDashboard(props: Props) {
   };
   const exportCsv = async () => {
     const revision = generation.current;
+    const controller = new AbortController();
+    exportController.current?.abort();
+    exportController.current = controller;
     setExporting(true);
     try {
-      let rows = [...cycles],
-        offset = nextOffset;
-      while (offset != null) {
-        const page = await getPerformanceCycles(filters, offset);
-        if (revision !== generation.current) return;
-        rows.push(...page.items);
-        offset = page.next_offset;
-      }
+      const rows = await completeCycleExport(cycles,nextOffset,total,offset=>getPerformanceCycles(filters,offset,controller.signal),controller.signal);
+      if(revision!==generation.current)return;
       const url = URL.createObjectURL(
         new Blob([cyclesCsv(rows)], { type: "text/csv;charset=utf-8" }),
       );
@@ -346,9 +348,9 @@ export default function PerformanceDashboard(props: Props) {
       a.click();
       URL.revokeObjectURL(url);
     } catch (e) {
-      setError(String(e));
+      if (!controller.signal.aborted && revision === generation.current) setError(String(e));
     } finally {
-      setExporting(false);
+      if (exportController.current === controller) { exportController.current = null; setExporting(false) }
     }
   };
   useEffect(() => { if (props.selectedCycle) void showDetail(props.selectedCycle) }, [props.selectedCycle]);
@@ -361,6 +363,8 @@ export default function PerformanceDashboard(props: Props) {
             ? c.matches.some(
                 (m) => `${m.entry_method} → ${m.exit_method}` === focus.key,
               )
+            : focus.dimension === "account"
+              ? (c.shared ? c.owner_email || c.user_id : 'Own account') === focus.key
             : focus.dimension === "entry_method"
               ? c.entries.some((e) => e.entry_method === focus.key)
               : focus.dimension === "exit_method"
@@ -738,6 +742,7 @@ export default function PerformanceDashboard(props: Props) {
                     </div>
                   </section>
                 </div>
+                {report.comparisons.accounts && <ComparisonTable title="Accounts — real versus practice" dimension="account" rows={report.comparisons.accounts} onSelect={select} />}
                 <ComparisonTable
                   rows={report.comparisons.modes}
                   title="Keep trading modes in perspective"

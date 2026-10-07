@@ -13,17 +13,19 @@ import { EventSnapshot, SessionSummary, OHLCCandle } from './api'
 import { useAnalysisApi, useAnalysisEnvironment } from './environment'
 
 interface Props {
+  readOnly?: boolean
   session: SessionSummary
   snapshots: EventSnapshot[]
   onClose: () => void
   onDeleteAll: () => void
 }
 
-export default function EventSnapshotViewer({ session, snapshots, onClose, onDeleteAll }: Props) {
+export default function EventSnapshotViewer({ readOnly=false, session, snapshots, onClose, onDeleteAll }: Props) {
   // Sort by timestamp ascending for chronological event list
   const sorted = snapshots.length > 0 ? [...snapshots].sort((a, b) => a.timestamp - b.timestamp) : snapshots
   const [selectedIdx, setSelectedIdx] = useState(0)
   const [deleting, setDeleting] = useState(false)
+  const [deleteError,setDeleteError] = useState('')
   const [searchQuery, setSearchQuery] = useState('')
 
   // Filter sorted snapshots by search query (case-insensitive, * = wildcard)
@@ -48,7 +50,8 @@ export default function EventSnapshotViewer({ session, snapshots, onClose, onDel
   const handleDeleteAll = async () => {
     if (!confirm(`Delete all ${snapshots.length} event snapshots for ${session.date}?`)) return
     setDeleting(true)
-    try { await onDeleteAll() } finally { setDeleting(false) }
+    setDeleteError('')
+    try { await onDeleteAll() } catch (error) { setDeleteError(String(error)) } finally { setDeleting(false) }
   }
 
   useEffect(() => {
@@ -59,8 +62,9 @@ export default function EventSnapshotViewer({ session, snapshots, onClose, onDel
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
+      if ((e.target as HTMLElement).closest('input, select, textarea, [contenteditable]')) return
       if (e.key === 'ArrowUp') setSelectedIdx(i => Math.max(0, i - 1))
-      if (e.key === 'ArrowDown') setSelectedIdx(i => Math.min(filtered.length - 1, i + 1))
+      if (e.key === 'ArrowDown') setSelectedIdx(i => Math.max(0,Math.min(filtered.length - 1, i + 1)))
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
@@ -80,7 +84,7 @@ export default function EventSnapshotViewer({ session, snapshots, onClose, onDel
   }
 
   return (
-    <div style={{
+    <div className="analysis-snapshot-viewer" role="dialog" aria-label="Event snapshots" style={{
       position: 'fixed', inset: 0, zIndex: 1000,
       background: '#0d1117', display: 'flex', flexDirection: 'column',
       fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
@@ -95,7 +99,7 @@ export default function EventSnapshotViewer({ session, snapshots, onClose, onDel
         </span>
         <span style={{ fontSize: 12, color: '#484f58' }}>{snapshots.length} event(s)</span>
         <div style={{ flex: 1 }} />
-        <button onClick={handleDeleteAll} disabled={deleting}
+        <button hidden={readOnly} onClick={handleDeleteAll} disabled={deleting}
           style={{ background: '#3d1010', border: '1px solid #8b1a1a', color: '#f85149', borderRadius: 6, padding: '4px 10px', fontSize: 12, cursor: 'pointer' }}
         >{deleting ? 'Deleting...' : '🗑 Delete All'}</button>
         <button onClick={onClose}
@@ -103,6 +107,7 @@ export default function EventSnapshotViewer({ session, snapshots, onClose, onDel
         >✕ Close</button>
       </div>
 
+      {deleteError && <p role="alert">Snapshots were not fully deleted: {deleteError} Retry Delete All when available.</p>}
       <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
         <div style={{ width: 280, minWidth: 280, borderRight: '1px solid #21262d', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
           <div style={{ padding: '8px 12px', background: '#0d1117', borderBottom: '1px solid #21262d', fontSize: 11, color: '#484f58', fontWeight: 600 }}>
@@ -133,7 +138,7 @@ export default function EventSnapshotViewer({ session, snapshots, onClose, onDel
               </div>
             ) : (
               filtered.map((s, i) => (
-              <div key={s.event_id} onClick={() => setSelectedIdx(i)}
+              <div key={`${s.session_id}:${s.event_id}`} role="button" tabIndex={0} aria-pressed={selectedIdx===i} onKeyDown={e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();setSelectedIdx(i)}}} onClick={() => setSelectedIdx(i)}
                 style={{
                   padding: '8px 12px', cursor: 'pointer',
                   background: i === selectedIdx ? '#1f6feb22' : 'transparent',
@@ -209,6 +214,7 @@ function WebsiteSnapshotChart({
 }: {
   symbol: string; date: string
   sessionId?: string
+  observationResolution?: number
   barTime: number
   barOhlc: { open: number; high: number; low: number; close: number } | null
   currentPrice: number
@@ -511,10 +517,12 @@ function WebsiteSnapshotOptionsChart({
 }: {
   symbol: string; date: string
   sessionId?: string
+  observationResolution?: number
   barTime: number
   barOhlc: { open: number; high: number; low: number; close: number } | null
   currentPrice: number
   openOrders: { side: string; order_type: string; trigger_price: number; limit_price: number; is_stoploss: boolean; right?: string; quantity: number }[]
+  position?: {side:string;quantity:number;avg_entry_price:number} | null
   strike: number; expiry: string; right: string
   filledTrades: { trade_id: string; side: 'BUY' | 'SELL'; price: number; timestamp: number; right?: string; strike?: number; underlying_price?: number; quantity: number }[]
 }) {
@@ -762,7 +770,7 @@ function SnapshotDetail({ snapshot }: { snapshot: EventSnapshot }) {
                 <div style={{ flex: 1 }}>
                   <SnapshotChart
                     sessionId={snapshot.session_id} symbol={snapshot.symbol} date={snapshot.date}
-                    barTime={snap.bar_time} barOhlc={snap.bar_ohlc}
+                    observationResolution={snap.bar_observation_resolution_seconds ?? undefined} barTime={snap.bar_time} barOhlc={snap.bar_ohlc}
                     currentPrice={snap.current_price}
                     openOrders={snap.open_orders}
                     position={snap.position}
@@ -774,8 +782,9 @@ function SnapshotDetail({ snapshot }: { snapshot: EventSnapshot }) {
                 <div style={{ flex: 1 }}>
                   <SnapshotOptionsChart
                     sessionId={snapshot.session_id} symbol={snapshot.symbol} date={snapshot.date}
-                    barTime={snap.bar_time} barOhlc={null}
+                    observationResolution={snap.option_observation_ce?.resolution_seconds ?? undefined} barTime={snap.option_observation_ce?.time ?? snap.bar_time} barOhlc={snap.option_observation_ce?.ohlc ?? null}
                     currentPrice={snap.current_price_ce}
+                    position={snap.position_ce}
                     openOrders={snap.open_orders.filter(o => !o.right || o.right === 'CE')}
                     strike={snap.strike_ce} expiry={snap.expiry} right="CE"
                     filledTrades={snap.filled_trades || []}
@@ -786,8 +795,9 @@ function SnapshotDetail({ snapshot }: { snapshot: EventSnapshot }) {
                 <div style={{ flex: 1 }}>
                   <SnapshotOptionsChart
                     sessionId={snapshot.session_id} symbol={snapshot.symbol} date={snapshot.date}
-                    barTime={snap.bar_time} barOhlc={null}
+                    observationResolution={snap.option_observation_pe?.resolution_seconds ?? undefined} barTime={snap.option_observation_pe?.time ?? snap.bar_time} barOhlc={snap.option_observation_pe?.ohlc ?? null}
                     currentPrice={snap.current_price_pe}
+                    position={snap.position_pe}
                     openOrders={snap.open_orders.filter(o => !o.right || o.right === 'PE')}
                     strike={snap.strike_pe} expiry={snap.expiry} right="PE"
                     filledTrades={snap.filled_trades || []}
@@ -807,7 +817,7 @@ function SnapshotDetail({ snapshot }: { snapshot: EventSnapshot }) {
           <div style={{ flex: 1 }}>
             <SnapshotChart
               sessionId={snapshot.session_id} symbol={snapshot.symbol} date={snapshot.date}
-              barTime={snap.bar_time} barOhlc={snap.bar_ohlc}
+              observationResolution={snap.bar_observation_resolution_seconds ?? undefined} barTime={snap.bar_time} barOhlc={snap.bar_ohlc}
               currentPrice={snap.current_price}
               openOrders={snap.open_orders}
               position={snap.position}
