@@ -9,7 +9,7 @@ import { TradingSseDecoder, TradingStreamController, TradingStreamDrain, Trading
 import { bounded, closeAfterSave, controlledScreens, SAVE_TIMEOUT_MS, journalKey, recoverState, type RecoveryJournal } from './windowLifecycle'
 import { ticketSizingPayload, ticketSizingLabel, switchTicketSizing } from './ticketSizing'
 import { entryUnavailableReason, equityEntryEnabled, entryQuantity, instrumentLotSize, validateEntryStop } from './tradingInstrument'
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction, type ReactNode } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
@@ -429,6 +429,7 @@ function DesktopTile({ refreshVersion, contextDays, config, catalogue, connectio
 type Connection = 'connected' | 'reconnecting' | 'offline' | 'authentication_required'
 interface ConnectionSnapshot { connection: Connection; revision: number }
 interface ScreenControllerProps {
+  viewSelector?: ReactNode
   workspaceVisible: boolean
   onAnalysisContextDays: (days: number) => void
   screenId: string; screens: Screen[]; setScreens: Dispatch<SetStateAction<Screen[]>>
@@ -542,17 +543,24 @@ export default function App() {
   const visibleId = screens.some(screen => screen.id === selectedId) ? selectedId : screens[0]?.id
   const assigned = screens.find(screen => screen.id === assignedId || screen.persistedId === assignedId)
   const ownedScreens = controlledScreens(screens, assignedId, loaded, external)
-  return <div className={!assignedId && connection !== 'authentication_required' ? 'desktop-with-navigation' : undefined}>
-    {!assignedId && connection !== 'authentication_required' && <nav className="desktop-main-navigation" aria-label="Desktop workspace"><button aria-pressed={mainTab === 'Workspace'} onClick={() => setMainTab('Workspace')}>Workspace</button><button aria-pressed={mainTab === 'Analysis'} onClick={() => { setAnalysisVisited(true); setMainTab('Analysis') }}>Analysis</button></nav>}
+  const viewSelector = !assignedId && connection !== 'authentication_required' ? <select
+    className="desktop-view-select" aria-label="Desktop view" title="Switch between Workspace and Analysis"
+    value={mainTab} onChange={event => {
+      const view = event.target.value as 'Workspace' | 'Analysis'
+      if (view === 'Analysis') setAnalysisVisited(true)
+      setMainTab(view)
+    }}
+  ><option value="Workspace">Workspace</option><option value="Analysis">Analysis</option></select> : null
+  return <div>
     {closeError && <p role="alert">{closeError}</p>}
     {loadFailed && <main role="alert">{loadError && <p>{loadError}</p>}<button onClick={() => setLoadAttempt(value => value + 1)}>Retry loading screens</button></main>}
     {assignedId && !loaded && <main><p>{connection === 'authentication_required' ? 'Sign in in the main window to reconnect this screen.' : 'Loading popped-out screen…'}</p><button onClick={() => void invoke('focus_main_window')}>Main window</button></main>}
-    {!assignedId && external.includes(visibleId) && <main><header><nav className="screen-tabs">{screens.map(screen => <button key={screen.id} onClick={() => selectScreen(screen.id)}>{screen.name}{external.includes(screen.id) ? ' ↗' : ''}</button>)}</nav><button onClick={() => void invoke('focus_screen_window', { screenId: visibleId })}>Focus window</button><button onClick={() => void invoke('close_screen_window', { screenId: visibleId })}>Bring back</button></header><p>This screen is open in another window.</p></main>}
+    {!assignedId && mainTab === 'Workspace' && external.includes(visibleId) && <main><header>{viewSelector}<nav className="screen-tabs">{screens.map(screen => <button key={screen.id} onClick={() => selectScreen(screen.id)}>{screen.name}{external.includes(screen.id) ? ' ↗' : ''}</button>)}</nav><button onClick={() => void invoke('focus_screen_window', { screenId: visibleId })}>Focus window</button><button onClick={() => void invoke('close_screen_window', { screenId: visibleId })}>Bring back</button></header><p>This screen is open in another window.</p></main>}
     {assignedId && loaded && !assigned && <main><p>Saved screen not found. Return to the main window.</p></main>}
     {ownedScreens.map(screen => <div key={screen.id} style={{ display: mainTab === 'Workspace' && (assignedId || screen.id === visibleId) ? 'contents' : 'none' }}>
-      <ScreenController workspaceVisible={Boolean(assignedId)||mainTab==='Workspace'} onAnalysisContextDays={setAnalysisContextDays} registerSave={registerSave} screenId={screen.id} screens={screens} setScreens={setScreens} selectedId={visibleId} selectScreen={selectScreen} loaded={loaded} external={external} assignedId={assignedId} connection={connection} setConnection={setConnection} browserToken={browserToken} setBrowserToken={setBrowserToken} serverUrl={serverUrl} setServerUrl={setServerUrl} />
+      <ScreenController viewSelector={viewSelector} workspaceVisible={Boolean(assignedId)||mainTab==='Workspace'} onAnalysisContextDays={setAnalysisContextDays} registerSave={registerSave} screenId={screen.id} screens={screens} setScreens={setScreens} selectedId={visibleId} selectScreen={selectScreen} loaded={loaded} external={external} assignedId={assignedId} connection={connection} setConnection={setConnection} browserToken={browserToken} setBrowserToken={setBrowserToken} serverUrl={serverUrl} setServerUrl={setServerUrl} />
     </div>)}
-    {!assignedId && analysisVisited && connection !== 'authentication_required' && <Suspense fallback={<p role="status">Loading Analysis…</p>}><DesktopAnalysis key={`${serverUrl}:${browserToken}`} baseUrl={serverUrl} token={browserToken} onUnauthorized={analysisUnauthorized} historicalDays={analysisContextDays} active={mainTab === 'Analysis'} onClose={() => setMainTab('Workspace')} /></Suspense>}
+    {!assignedId && analysisVisited && connection !== 'authentication_required' && <Suspense fallback={<p role="status">Loading Analysis…</p>}><DesktopAnalysis viewSelector={viewSelector} key={`${serverUrl}:${browserToken}`} baseUrl={serverUrl} token={browserToken} onUnauthorized={analysisUnauthorized} historicalDays={analysisContextDays} active={mainTab === 'Analysis'} onClose={() => setMainTab('Workspace')} /></Suspense>}
   </div>
 }
 
@@ -2083,7 +2091,7 @@ function ScreenController(props: ScreenControllerProps) {
   if (props.assignedId && connection === 'authentication_required') return <main><p>Sign in in the main window to reconnect this screen.</p><button onClick={() => void invoke('focus_main_window')}>Main window</button></main>
   if (connection === 'authentication_required') return <main className="login-page"><section className="login-card"><h1>Trade Matangi Charts</h1><p>Sign in to the chart-only desktop companion.</p><label>Server URL<input value={serverUrl} onChange={event => setServerUrl(event.target.value)} /></label>{pendingGoogleToken ? <><p className="login-help">Google sign-in succeeded. Choose an account name to finish creating your Trade Matangi account.</p><label>Account name<input value={googleAccountName} onChange={event => setGoogleAccountName(event.target.value)} placeholder="Your display name" /></label><button className="login-button" disabled={googleLoading || !googleAccountName.trim()} onClick={() => void googleLogin(pendingGoogleToken, googleAccountName.trim())}>{googleLoading ? 'Creating account…' : 'Continue'}</button><button onClick={() => { setPendingGoogleToken(null); setGoogleAccountName('') }}>Use email instead</button></> : <><button className="google-login-button" disabled={googleLoading || (!hasNativeHost && !googleReady)} onClick={beginGoogleLogin}><span className="google-mark">G</span>{googleLoading ? 'Signing in…' : hasNativeHost || googleReady ? 'Continue with Google' : 'Loading Google…'}</button><div className="login-divider"><span />or<span /></div><label>Email<input value={email} onChange={event => setEmail(event.target.value)} /></label><label>Password<input type="password" value={password} onChange={event => setPassword(event.target.value)} /></label><button className="login-button" onClick={login}>Sign in</button></>}{loginError && <p className="login-error">{loginError}</p>}</section></main>
   return <main>
-    <header>
+    <header>{props.viewSelector}
       <button className="icon-button panel-toggle" title={toolPanelOpen ? 'Hide chart tools' : 'Show chart tools'} aria-label={toolPanelOpen ? 'Hide chart tools' : 'Show chart tools'} aria-pressed={toolPanelOpen} onClick={() => setToolPanelOpen(value => !value)}>{toolPanelOpen ? '◧' : '◨'}</button>
       <nav className="screen-tabs">{(props.assignedId ? [activeScreen] : screens).map(screen => <button key={screen.id} className={screen.id === activeScreenId ? 'active' : ''} onClick={() => { setActiveScreenId(screen.id); setMaximizedTileId(null) }}>{screen.name}{props.external.includes(screen.id) ? ' ↗' : ''}</button>)}{!props.assignedId && <button className="new-screen" onClick={addScreen}>＋</button>}</nav>
       {!props.assignedId && <span className="screen-actions"><button className="icon-button" title="Rename screen" aria-label="Rename screen" onClick={renameScreen}>✎</button><button className="icon-button" title="Duplicate screen" aria-label="Duplicate screen" onClick={duplicateScreen}>⧉</button><button className="icon-button" title="Pop out screen" aria-label="Pop out screen" onClick={() => void popOutScreen()}>⇱</button><button className="icon-button" title="Move screen left" aria-label="Move screen left" onClick={() => moveScreen(-1)}>‹</button><button className="icon-button" title="Move screen right" aria-label="Move screen right" onClick={() => moveScreen(1)}>›</button><button className="icon-button" title="Close screen" aria-label="Close screen" disabled={screens.length <= 1} onClick={() => void closeScreen().catch(reportTradingError)}>×</button></span>}
