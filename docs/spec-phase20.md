@@ -512,3 +512,27 @@ and deployment remain manual. Desktop Analysis WIP remains separate.
 Delivery: [PR #605](https://github.com/prattyush/TradeMatangi/pull/605),
 `feature/website-emergency-exit-day-ban` → `dev`, implementation commit `dbcfb53`.
 Review/merge, authorized live acceptance and manual main deployment remain pending.
+
+### Compact website chart entry ticket follow-up — PR #605
+
+At the user's request, the website right-click Use as SL ticket now shows order
+choices on the left and sizing on the right in one window, replacing the type→size
+navigation and Back button. Reduce ticket and chart-context-menu text to 10px
+(ticket heading 11px, hints 9px). Keep both columns visible while selecting.
+
+Type-first and size-first are supported: submit when the second selection is made,
+through the existing Market/Limit/Target/AS/ASL handler. Buy/Sell selection remains
+available where configured; sizing choices wait for a direction. Capital/Risk is
+local to this ticket, and switching it clears the prior size selection so a changed
+preset cannot submit accidentally. Fixed quantity and saved percentage values retain
+their existing units. Preserve clicked stop price, exact contract, minimum-lot hint,
+Limit/Target price-pick behavior, outside-click/Escape and explicit close. The ticket
+is fixed-position, measured/clamped within the viewport, and does not resize charts.
+
+Validation: website TypeScript/build and 41 Node checks passed. Synthetic production
+component acceptance in `scripts/website-entry-ticket-check.mjs` exercises left/right
+layout/no Back, Market type-first Risk %, ASL size-first Risk %, AS Capital %, clearing
+selection on mode switch, Sell fixed-quantity Limit, exact stop/contract preservation,
+close and narrow viewport clamping without page errors. Artifacts are ignored under
+`.cache/website-safety-validation/`. No broker orders or backend changes in this
+follow-up. Included in the existing PR #605, not a separate delivery.

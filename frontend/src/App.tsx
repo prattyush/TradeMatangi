@@ -1,3 +1,4 @@
+import ChartEntryTicket, { type EntryTicket as ContextMenuEntryTicket } from './components/ChartEntryTicket'
 import TradingSafetyActions from './components/TradingSafetyActions'
 import NotificationCenter from './components/NotificationCenter'
 import { useFlashError } from './hooks/useFlashError'
@@ -88,14 +89,6 @@ interface DraftWorkspace {
   maximizedPaneId: number | null
   instrumentType: 'equity' | 'options'
   optionsReady: OptionsReadyConfig | null
-}
-
-type ContextMenuEntryOrderType = 'MARKET' | 'AUTO_STOP' | 'AUTO_STOP_LIMIT' | 'TARGET' | 'LIMIT'
-interface ContextMenuEntryTicket {
-  x: number; y: number; price: number; right?: 'CE' | 'PE'; strike?: number; expiry?: string
-  side: 'BUY' | 'SELL' | null
-  orderType?: ContextMenuEntryOrderType
-  sizingMode: SizingMode
 }
 
 type IndicatorLeg = 'underlying' | 'CE' | 'PE'
@@ -367,7 +360,6 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
     quantity: number | null; fundsRatioPct?: number; riskRatioPct?: number; right?: string; strike?: number; expiry?: string;
   } | null>(null)
   const [contextMenuEntryTicket, setContextMenuEntryTicket] = useState<ContextMenuEntryTicket | null>(null)
-  const contextMenuSizingMode = contextMenuEntryTicket?.sizingMode ?? sizingMode
   const contextMenuEntryTicketRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -2895,23 +2887,7 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
         />
       )}
 
-      {contextMenuEntryTicket && <div ref={contextMenuEntryTicketRef} style={{
-        position: 'fixed', left: Math.max(8, Math.min(contextMenuEntryTicket.x + 10, window.innerWidth - 268)), top: Math.max(8, Math.min(contextMenuEntryTicket.y + 10, window.innerHeight - 260)), zIndex: 10002,
-        width: 250, background: '#161b22', border: '1px solid #30363d', borderRadius: 8, padding: 10, boxShadow: '0 8px 24px rgba(0,0,0,0.4)', color: '#e6edf3',
-      }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}><strong style={{ fontSize: 13 }}>Use as SL</strong><button aria-label="Close order ticket" onClick={() => setContextMenuEntryTicket(null)} style={{ border: 0, background: 'transparent', color: '#8b949e', cursor: 'pointer' }}>×</button></div>
-        <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 10 }}>SL ₹{contextMenuEntryTicket.price.toFixed(2)}</div>
-        {contextMenuSizingMode !== 'quantity' && <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, marginBottom: 10, fontSize: 12 }}>
-          <span>Risk %</span>
-          <button type="button" role="switch" aria-label="Use Capital % instead of Risk % for this order" aria-checked={contextMenuSizingMode === 'fundsRatio'}
-            onClick={() => setContextMenuEntryTicket(ticket => ticket ? { ...ticket, sizingMode: ticket.sizingMode === 'fundsRatio' ? 'riskRatio' : 'fundsRatio' } : ticket)}
-            style={{ width: 34, height: 20, padding: 2, border: 0, borderRadius: 12, background: contextMenuSizingMode === 'fundsRatio' ? '#1d4ed8' : '#475569', cursor: 'pointer' }}>
-            <span style={{ display: 'block', width: 14, height: 14, borderRadius: '50%', background: '#fff', transform: contextMenuSizingMode === 'fundsRatio' ? 'translateX(14px)' : undefined }} />
-          </button>
-          <span>Capital %</span>
-        </div>}
-        {!contextMenuEntryTicket.side ? <><div style={{ fontSize: 12, marginBottom: 7 }}>Choose direction</div><div style={{ display: 'flex', gap: 6 }}><button onClick={() => setContextMenuEntryTicket(ticket => ticket ? { ...ticket, side: 'BUY' } : ticket)}>Buy</button><button onClick={() => setContextMenuEntryTicket(ticket => ticket ? { ...ticket, side: 'SELL' } : ticket)}>Sell</button></div></> : !contextMenuEntryTicket.orderType ? <><div style={{ fontSize: 12, marginBottom: 7 }}>{contextMenuEntryTicket.side === 'BUY' ? 'Buy' : 'Sell'} entry type</div><div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>{([['MARKET', 'Market'], ['LIMIT', 'Limit'], ['AUTO_STOP', 'AS'], ['AUTO_STOP_LIMIT', 'ASL'], ['TARGET', 'Target']] as const).map(([orderType, label]) => <button key={orderType} title={orderType === 'AUTO_STOP_LIMIT' ? 'Auto Stop Order Limit' : orderType === 'AUTO_STOP' ? 'Auto Stop Order' : label} aria-label={orderType === 'AUTO_STOP_LIMIT' ? 'Auto Stop Order Limit' : label} onClick={() => setContextMenuEntryTicket(ticket => ticket ? { ...ticket, orderType } : ticket)}>{label}</button>)}</div></> : <><div style={{ fontSize: 12, marginBottom: 7 }}>Choose saved size</div><div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>{contextMenuSizingMode === 'quantity' ? [1, 2, 3, 5, 10].map(quantity => <button key={quantity} onClick={() => submitContextMenuEntry(contextMenuEntryTicket, quantity)}>{quantity}</button>) : (['l', 'm', 'h'] as const).map(key => { const value = contextMenuSizingMode === 'riskRatio' ? riskRatios[key] : fundsRatios[key]; return <button key={key} onClick={() => submitContextMenuEntry(contextMenuEntryTicket, null, contextMenuSizingMode === 'fundsRatio' ? value / 100 : undefined, contextMenuSizingMode === 'riskRatio' ? value : undefined)}>{contextMenuSizingMode === 'riskRatio' ? `Risk ${value}%` : `Capital ${value}%`}</button> })}</div>{contextMenuSizingMode === 'riskRatio' && ['paper', 'sim', 'stepwise'].includes(sim.sessionType) && <div style={{ fontSize: 10, color: '#f0883e', marginTop: 6 }}>Minimum one {instrumentType === 'options' ? 'lot' : 'share'} is placed if funded, even above selected Risk %.</div>}<button onClick={() => setContextMenuEntryTicket(ticket => ticket ? { ...ticket, orderType: undefined } : ticket)} style={{ marginTop: 9 }}>Back</button></>}
-      </div>}
+      {contextMenuEntryTicket && <ChartEntryTicket ref={contextMenuEntryTicketRef} ticket={contextMenuEntryTicket} fundsRatios={fundsRatios} riskRatios={riskRatios} instrumentType={instrumentType} sessionType={sim.sessionType} onChange={setContextMenuEntryTicket} onSubmit={submitContextMenuEntry} onClose={() => setContextMenuEntryTicket(null)} />}
     </div>
   )
 }
