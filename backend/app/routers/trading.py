@@ -312,3 +312,32 @@ async def get_position(session_id: str = Query(...), right: str | None = Query(d
     effective_right = right if right is not None else (session.right if session else None)
     return trading_svc.get_position(session_id, symbol=symbol, right=effective_right,
                                     strike=strike, expiry=expiry, exact_contract=strike is not None and expiry is not None)
+
+
+@router.post('/sessions/{session_id}/exit-all', status_code=202)
+async def exit_all_now(session_id: str, user_id: str = Depends(get_request_user_id)):
+    session = sim_svc.get_session(session_id)
+    if not session or session.user_id != user_id:
+        raise HTTPException(404, 'Session not found')
+    from app.services.emergency_exit import exit_all
+    return await exit_all(session)
+
+
+@router.get('/real-day-status')
+async def real_day_status(user_id: str = Depends(get_request_user_id)):
+    from app.services import real_trading_day
+    status = await asyncio.to_thread(real_trading_day.state, user_id)
+    if status['state'] == 'closing':
+        real_trading_day.monitor(user_id)
+    return status
+
+
+@router.post('/sessions/{session_id}/done-for-day', status_code=202)
+async def done_for_day(session_id: str, user_id: str = Depends(get_request_user_id)):
+    session = sim_svc.get_session(session_id)
+    if not session or session.user_id != user_id:
+        raise HTTPException(404, 'Session not found')
+    if session.session_type != 'real':
+        raise HTTPException(400, 'Done for day applies only to real trading')
+    from app.services.real_trading_day import done_for_day as finish_day
+    return await finish_day(user_id)

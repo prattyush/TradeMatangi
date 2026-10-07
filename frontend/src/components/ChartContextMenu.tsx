@@ -56,7 +56,7 @@ export default function ChartContextMenu({ x, y, price, actions, onClose }: Char
         boxShadow: '0 8px 24px rgba(0,0,0,0.4)',
       }}
     >
-      <div style={{ padding: '4px 12px', fontSize: 11, color: '#8b949e', borderBottom: '1px solid #21262d', marginBottom: 4 }}>
+      <div style={{ padding: '4px 12px', fontSize: 10, color: '#8b949e', borderBottom: '1px solid #21262d', marginBottom: 4 }}>
         ₹{price.toFixed(2)}
       </div>
       {actions.map((action, i) => (
@@ -90,8 +90,8 @@ function ContextMenuItem({ action, onClose, depth }: { action: ContextMenuAction
           onClose()
         }}
         style={{
-          padding: '6px 12px',
-          fontSize: 12,
+          padding: '5px 10px',
+          fontSize: 10,
           color: action.disabled ? '#484f58' : (action.color || '#e6edf3'),
           cursor: action.disabled ? 'not-allowed' : 'pointer',
           display: 'flex',

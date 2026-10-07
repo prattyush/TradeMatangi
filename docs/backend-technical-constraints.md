@@ -142,3 +142,17 @@
 ## SEBI Regulations
 
 - **SEBI IP whitelisting for broker order APIs**: SEBI regulations require all brokers to accept API-based order placement only from pre-registered IP addresses. This applies to **every** broker (Kotak Neo, Zerodha, ICICI Direct, etc.). Fund/balance read APIs are typically exempt. Always register the server's public IP in the broker's developer portal before testing any order flow. For EC2, use an Elastic IP. For local dev, register your current public IP. TOTP/credential login succeeds regardless of IP — the rejection only occurs on `place_order` / `modify_order` / `cancel_order` calls.
+
+## Manual real-trading day lock
+
+- `real_trading_day` owns the persistent user/IST-date closing/done state in a
+  dedicated WalletLedgers namespace. Do not reset it through session restart,
+  settings edits, whitelist changes or wallet reset; there is no public unlock.
+- New real entries are checked at order creation and actual broker forwarding,
+  including AutoStop/ASL and direct marketable orders. Paper/sim/stepwise skip the
+  check. Closing allows protective exits to finish; done rejects new execution.
+- Emergency exits reuse broker-confirmed conversions and only place uncovered
+  quantity at exact-contract quotes. An uncertain acknowledgement is a reservation,
+  not proof of rejection, and must not trigger another full-position order. Positions
+  change on confirmed fills. Day completion requires coherent broker verification,
+  not just HTTP acknowledgements or local counters. Real aliases exit once per book.
