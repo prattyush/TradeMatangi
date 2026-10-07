@@ -1,3 +1,4 @@
+import { useFlashError } from '../hooks/useFlashError'
 /**
  * StepwiseLabelPopup — trade labeling popup shown when a round-trip completes
  * in stepwise mode. Collects expected/actual pattern, entry/exit tags and persists
@@ -39,6 +40,7 @@ export default function StepwiseLabelPopup({ sid, date, symbol, roundTrips, onDo
   const [exitTags, setExitTags] = useState<string[]>([])
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  useFlashError(error, 'StepwiseLabelPopup')
 
   const [fields, setFields] = useState(roundTrips.map(() => ({
     expCat: '', expStrat: '', actCat: '', actStrat: '', entryTag: 'AS_PER_PATTERN', exitTag: 'AS_PER_PATTERN',
@@ -155,7 +157,7 @@ export default function StepwiseLabelPopup({ sid, date, symbol, roundTrips, onDo
           </div>
         ))}
 
-        {error && <div style={{ color: '#f85149', fontSize: 12, marginBottom: 12 }}>{error}</div>}
+
         <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
           <button onClick={onDone} style={{
             background: '#21262d', border: '1px solid #30363d',

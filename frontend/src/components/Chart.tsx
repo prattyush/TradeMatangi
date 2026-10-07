@@ -1,3 +1,4 @@
+import { flashError } from '../services/notifications'
 import { recordPerformance } from '../services/performanceDiagnostics'
 import { openPositionTrades, RecentLiveTicks, reconcileChartObjects } from '../services/tradingChartState'
 import { rememberChartData } from '../services/chartDataCache'
@@ -943,6 +944,7 @@ export default function Chart({
         if (last9.length) lastEma9Ref.current = last9[last9.length - 1]!
         if (last21.length) lastEma21Ref.current = last21[last21.length - 1]!
       } catch (err) {
+        if (!cancelled) flashError(err, 'Charts')
         console.error(err)
       }
     })()
@@ -1033,7 +1035,7 @@ export default function Chart({
         if (last9.length) lastEma9Ref.current = last9[last9.length - 1]!
         if (last21.length) lastEma21Ref.current = last21[last21.length - 1]!
       })
-      .catch(console.error)
+      .catch(error => { if (!cancelled) flashError(error, 'Charts'); console.error(error) })
     return () => { cancelled = true }
   }, [historyMode, symbol, tradingDate, intervalMinutes, paneType, strike, expiry, right, startTime, liveFromTs, effectiveReloadKey, publishIndicatorCandles])
 

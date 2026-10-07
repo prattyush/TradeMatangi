@@ -1,3 +1,4 @@
+import { useFlashError } from '../hooks/useFlashError'
 import { useState, useEffect } from 'react'
 import { Order, Position, StrategyResponse } from '../services/api'
 import { SessionState } from '../hooks/useSimulation'
@@ -129,6 +130,7 @@ export default function OrderPanel({
   const parsedSlQty = slQty.trim() === '' ? NaN : Number(slQty)
   const [placing, setPlacing] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  useFlashError(error, 'OrderPanel')
 
   // Auto-stoploss on entry state
   const [slOnEntry, setSlOnEntry] = useState(false)
@@ -148,6 +150,7 @@ export default function OrderPanel({
   const [stratQty, setStratQty] = useState(1)
   const [stratLoading, setStratLoading] = useState<string | null>(null)
   const [stratError, setStratError] = useState<string | null>(null)
+  useFlashError(stratError, 'OrderPanel')
   const [cancellingAll, setCancellingAll] = useState(false)
   const [tpValue, setTpValue] = useState('')
   const [tpSize, setTpSize] = useState<'full' | 'half'>('full')
@@ -176,6 +179,7 @@ export default function OrderPanel({
   const [editQty, setEditQty] = useState('')
   const [updating, setUpdating] = useState(false)
   const [editError, setEditError] = useState<string | null>(null)
+  useFlashError(editError, 'OrderPanel')
 
   const isActive = sessionState === 'running' || sessionState === 'paused'
   const hasPosition = position.side !== 'FLAT'
@@ -1191,7 +1195,7 @@ export default function OrderPanel({
             </div>
           )}
 
-          {stratError && <div style={{ fontSize: 10, color: '#f85149' }}>{stratError}</div>}
+
         </div>
       )}
 
@@ -1384,7 +1388,7 @@ export default function OrderPanel({
         </div>
       )}
 
-      {error && <div style={{ fontSize: 11, color: '#f85149' }}>{error}</div>}
+
 
       {/* Auto-Stoploss on Entry — expandable section for TARGET / LIMIT / MARKET */}
       {isActive && (orderType === 'TARGET' || orderType === 'LIMIT' || orderType === 'MARKET') && (
@@ -1689,7 +1693,7 @@ export default function OrderPanel({
                           } (±{(deviation * 100).toFixed(1)}%)
                         </div>
                       )}
-                      {editError && <div style={{ fontSize: 10, color: '#f85149' }}>{editError}</div>}
+
                       <div style={{ display: 'flex', gap: 4 }}>
                         <button
                           onClick={() => saveEdit(order)}

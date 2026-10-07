@@ -1,3 +1,4 @@
+import { flashError, getNotificationContext, getNotificationScope } from './notifications';
 import { BACKEND_URL } from "../config";
 import { _authHeaders } from "./api";
 export type PerformanceFilters = Record<string, string>;
@@ -146,7 +147,7 @@ export interface PerformanceReport {
   };
   insights: { text: string; dimension: string; key: string }[];
 }
-async function request<T>(
+async function rawRequest<T>(
   path: string,
   filters: PerformanceFilters,
   signal?: AbortSignal,
@@ -163,6 +164,11 @@ async function request<T>(
       `Analytics could not load (${response.status}). Retry when the backend is available.`,
     );
   return response.json() as Promise<T>;
+}
+async function request<T>(path: string, filters: PerformanceFilters, signal?: AbortSignal): Promise<T> {
+  const scope = getNotificationScope(); const requestContext = getNotificationContext();
+  try { return await rawRequest<T>(path, filters, signal) }
+  catch (error) { if (scope === getNotificationScope()) flashError(error, 'Analysis', requestContext); throw error }
 }
 export const getPerformance = (
   filters: PerformanceFilters,

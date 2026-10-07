@@ -1,3 +1,4 @@
+import { flashError } from '../services/notifications'
 /**
  * Pattern Library — Trade Pattern Logger (Phase XII)
  *
@@ -1103,8 +1104,8 @@ export default function PatternLibrary() {
     if (!chartLoaded) return
     const strategy = activeStrategy || newStrategyName.trim()
     const category = activeCategory || newCategoryName.trim()
-    if (!category) { alert('Please select or type a category name before annotating.'); return }
-    if (!strategy) { alert('Please select or type a strategy name before annotating.'); return }
+    if (!category) { flashError('Please select or type a category name before annotating.'); return }
+    if (!strategy) { flashError('Please select or type a strategy name before annotating.'); return }
     const tool = TOOL_OPTIONS.find(t => t.key === activeToolKey)
     if (!tool) return
     const id = crypto.randomUUID()
@@ -1126,8 +1127,8 @@ export default function PatternLibrary() {
   const handleSave = useCallback(async () => {
     const strategy = activeStrategy || newStrategyName.trim()
     const category = activeCategory || newCategoryName.trim()
-    if (!category) { alert('Please specify a category before saving.'); return }
-    if (!strategy) { alert('Please specify a strategy name before saving.'); return }
+    if (!category) { flashError('Please specify a category before saving.'); return }
+    if (!strategy) { flashError('Please specify a strategy name before saving.'); return }
     setSaveMsg(null)
     const firstCe = optionPanes.find(p => p.right === 'CE')
     try {
