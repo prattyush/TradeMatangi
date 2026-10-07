@@ -156,3 +156,11 @@
   not proof of rejection, and must not trigger another full-position order. Positions
   change on confirmed fills. Day completion requires coherent broker verification,
   not just HTTP acknowledgements or local counters. Real aliases exit once per book.
+
+- **Analytics numeric metadata after JSON serialization**: Order/Trade analytics
+  dictionaries can contain DynamoDB Decimals; Pydantic JSON mode emits those as
+  strings. Use `execution_analytics.normalize_metadata` before arithmetic and
+  controller-time filtering. Only recognized numeric fields are cast; digit-only
+  action/order/strategy IDs remain strings. Broker snapshot encoding canonicalizes
+  analytics back to DynamoDB numbers. Readers also handle existing numeric-string
+  records, so a bulk migration is unnecessary.

@@ -780,7 +780,8 @@ def load_session_cycles(session, include_labels=True):
                 order = orders.get(
                     (r.get("exchange") or "", str(r["kotak_order_id"])), {}
                 )
-                meta = deepcopy(order.get("analytics") or t.get("analytics") or {})
+                from app.services.execution_analytics import normalize_metadata
+                meta = normalize_metadata(order.get("analytics") or t.get("analytics") or {})
                 events = [
                     e
                     for e in meta.get("controller_history", [])

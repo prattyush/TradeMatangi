@@ -287,8 +287,9 @@ def test_history_failure_is_explicit_and_retryable(monkeypatch):
     assert page["unavailable_dates"] == ["2026-10-05"] and not page["candles"]
 
 
+@pytest.mark.parametrize("metadata_encoding", ["decimal", "legacy-json-strings"])
 def test_real_execution_reader_preserves_decimal_sizing_and_controller(
-    database, monkeypatch
+    database, monkeypatch, metadata_encoding
 ):
     from app.services.execution_analytics import snapshot
     from app.services.real_broker_state import encode
@@ -346,7 +347,26 @@ def test_real_execution_reader_preserves_decimal_sizing_and_controller(
                 )
             )
         )
+    if metadata_encoding == "legacy-json-strings":
+        # Bypass the repaired writer to reproduce already-stored reconciled rows.
+        legacy = {key: str(value) if isinstance(value, (int, float, Decimal)) and not isinstance(value, bool) else value
+                  for key, value in meta.items()}
+        database.Table("Orders").update_item(
+            Key={"session_id": "session", "order_id": "1"},
+            UpdateExpression="SET analytics=:meta",
+            ExpressionAttributeValues={":meta": legacy},
+        )
+        database.Table("Orders").update_item(
+            Key={"session_id": "session", "order_id": "2"},
+            UpdateExpression="SET analytics=:meta",
+            ExpressionAttributeValues={":meta": {"exit_method": "LIMIT", "controller_history": [
+                {"timestamp": "2.0", "exit_method": "STOPLOSS", "exit_action_id": "one-stop", "selected_quantity": "40"}
+            ]}},
+        )
     cycles = perf.load_session_cycles(session)
+    from app.services.trade_label_service import compute_round_trips_for_session
+    trips = compute_round_trips_for_session("session")
+    assert len(trips) == 1 and trips[0]["pnl"] == 398
     assert cycles[0]["entries"][0]["requested_pct"] == 2 and cycles[0]["entries"][0][
         "r_multiple"
     ] == pytest.approx(1.99)
