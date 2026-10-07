@@ -92,4 +92,3 @@ export function WebsitePatternChart({symbol,date,annotations,topPatterns,activeS
     <div ref={cr} style={{flex:1}}/>
   </div>
 }
-

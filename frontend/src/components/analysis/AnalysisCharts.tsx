@@ -232,7 +232,7 @@ export function WebsiteAnalysisChart({
         ? `${t.right} ${t.side === 'BUY' ? 'B' : 'S'}`
         : (t.side === 'BUY' ? 'B' : 'S')
       const text = getMarkerText ? getMarkerText(t) : defaultText
-      
+
       let markerPrice: number | undefined
       if (t.right) {
         // Options trade mirrored on underlying
@@ -639,4 +639,3 @@ export function WebsiteAnalysisChartPanel({
     </div>
   )
 }
-

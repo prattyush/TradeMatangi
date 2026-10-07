@@ -519,4 +519,3 @@ export function WebsiteSnapshotOptionsChart({
 }
 
 // ── Snapshot Detail (right panel) ─────────────────────────────────────────
-

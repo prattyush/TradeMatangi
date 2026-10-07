@@ -61,4 +61,3 @@ export type SnapshotOptionsChartProps = {
 export type TradesChartProps = {symbol:string;date:string;trades:AnalysisTrade[];getMarkerText:(t:AnalysisTrade)=>string;strikeTabs:StrikeTab[];isOpt:boolean;onMax?:()=>void}
 
 export type PatternChartProps = {symbol:string;date:string;annotations:PatternAnnotation[];topPatterns:TopPatterns;activeStrategy:string|null;activeCategory:string|null;instFilter:InstFilter;setInstFilter:(f:InstFilter)=>void;isOpt:boolean;patternStrike:{ce:number|null;pe:number|null;exp:string|null};onMax?:()=>void}
-
