@@ -1,3 +1,4 @@
+import { useFlashError } from '../hooks/useFlashError'
 import { AnalysisChart, OptionsChart } from "./TradeAnalysis";
 import type { AnalysisTrade } from "../services/api";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -245,8 +246,10 @@ export default function PerformanceDashboard(props: Props) {
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  useFlashError(error, 'PerformanceDashboard')
   const [detail, setDetail] = useState<PerformanceCycle | null>(null);
   const [detailError, setDetailError] = useState("");
+  useFlashError(detailError, 'PerformanceDashboard')
   const [showChart, setShowChart] = useState(false);
   const [detailBusy, setDetailBusy] = useState(false);
   const [focus, setFocus] = useState<{
@@ -622,12 +625,7 @@ export default function PerformanceDashboard(props: Props) {
         )}
       </nav>
       <main className="pa-main">
-        {error && (
-          <div role="alert" className="pa-error">
-            {error}
-            <button onClick={() => setRefresh((r) => r + 1)}>Retry</button>
-          </div>
-        )}
+
         {loading && !report && <p role="status">Reading your executions…</p>}
         {report && (
           <>
@@ -1218,11 +1216,7 @@ export default function PerformanceDashboard(props: Props) {
               )}
             </p>
           )}
-          {detailError && (
-            <p role="alert" className="pa-error">
-              {detailError}
-            </p>
-          )}
+
           <p className="pa-footnote">
             Price-path analysis uses available exact-contract caches. Boundary
             bars and missing observations are excluded. Sampled peaks are not

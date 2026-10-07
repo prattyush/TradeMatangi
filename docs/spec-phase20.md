@@ -351,3 +351,63 @@ and authorized native Windows/live-broker acceptance remain separate manual step
 Delivery: [PR #601](https://github.com/prattyush/TradeMatangi/pull/601),
 `fix/always-enabled-entry-stoploss` → `dev`, implementation commit `fc90c87`.
 Review/merge and manual main deployment remain pending.
+
+## Website floating messages and error history — 2026-10-07
+
+The user reported distracting chart movement when top-level order/broker/exit
+protection/conversion banners appeared and disappeared during real trading.
+Website messages now use a fixed floating stack rather than consuming chart layout
+space. There is no backdrop, focus steal, sound or slide animation. At most three
+flashes appear in the lower-right corner; errors/warnings dismiss after eight
+seconds and informational/success messages after five. Users can dismiss them.
+Actual guardrail interventions and order confirmation state retain their meaning.
+
+A fixed message-history icon opens a nonmodal panel. Keep the latest 100 messages
+per account/backend in this browser for seven days, including actual receipt time
+(displayed in IST), severity/source, session/symbol/mode when available, repeated
+occurrence counts and unread error/warning badge. Opening history does not stop or
+resize charts. Support errors/warnings filtering, mark-read, confirmed clear, and
+JSON download. Closing/expiring a flash does not delete its history. Reload restores
+history without replaying flashes; logout/account/server changes isolate history.
+Storage failures retain in-memory notification functionality.
+
+Website API rejections, trading/local validation errors, recording errors, caught
+chart rendering errors and uncaught browser errors/rejections enter the same
+journal. Expected missing saved patterns/active-session lookups and aborted requests
+are not errors. Duplicate API/panel reporting is suppressed; repeated identical
+messages within 30 seconds update history counts without restarting dismissed
+flashes. Request errors capture the originating session context and obsolete account
+responses cannot populate another account's journal. Storage writes are batched
+outside the user-action callback and flushed on page hide/account change.
+
+Recovery needs-attention is a warning; pending/restored states are informational/
+success. Broker conversions are informational while awaiting confirmation, warnings
+when unknown or replacement is unconfirmed, errors when failed and success when
+confirmed. The order row still identifies its pending conversion and keeps the last
+broker-confirmed type. The notification change does not assume broker success or
+change recovery, order routing or real trading behavior.
+
+Broker recovery/conversion errors already have backend logs, including
+`protection_recovery` and `broker_conversion`. Browser-only validation/network/
+rendering errors are now retained in browser history; this is not a new server audit
+log or cross-device history. No broker credentials or raw event payloads are added.
+
+Validation: 37 website Node tests (including eight new journal tests), website
+TypeScript/production build, and 155 existing desktop/client tests passed.
+`scripts/website-notification-check.mjs` provides synthetic browser acceptance with
+Playwright installed externally through PLAYWRIGHT_MODULE. It verifies three
+severities, unchanged real chart geometry and instance on show/dismiss/expiry,
+chart interaction, IST/context/history/download, reload without replay, account
+isolation, narrow history layout, API error capture, expected 404 suppression and
+late-account failure fencing, with no page errors. Artifacts are ignored in
+`.cache/website-notification-validation/`. No backend code changes or live orders.
+The existing production bundle-size warning remains. Backend/full-suite and live
+broker acceptance are not claimed for this UI-only change.
+
+Development on dev; deliver in a dedicated feature branch/PR targeting dev.
+Review/merge and manual main deployment remain pending. Desktop Analysis work is
+still preserved separately on `wip/phase20-desktop-analysis` and is not included.
+
+Delivery: [PR #603](https://github.com/prattyush/TradeMatangi/pull/603),
+`feature/website-floating-error-history` → `dev`, implementation commit `f624e6a`.
+Review/merge and manual main deployment remain pending.

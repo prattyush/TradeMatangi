@@ -1,3 +1,7 @@
+import NotificationCenter from './components/NotificationCenter'
+import { useFlashError } from './hooks/useFlashError'
+import { flashError, flashMessage, setNotificationAccount, setNotificationContext } from './services/notifications'
+import { BACKEND_URL } from './config'
 import { contractPosition, unrealizedPnl } from './services/positionAccounting'
 import { applyRecoveryEvent, pruneRecoveryNotices, RecoveryNotices } from './services/protectionRecoveryState'
 import { IndicatorHistoryRequests } from './services/tradingChartState'
@@ -175,16 +179,18 @@ function defaultPanesForLayout(preset: LayoutPreset, current: PaneConfig[]): Pan
 
 export default function App() {
   // ── Auth state ──────────────────────────────────────────────────────────────
-  const [authUser, setAuthUser] = useState(loadAuthUser)
+  const [authUser, setAuthUser] = useState(() => { const user = loadAuthUser(); setNotificationAccount(user?.userId ?? null, BACKEND_URL); return user })
 
   const handleLogin = useCallback((userId: string, email: string, isAdmin = false, accountName?: string) => {
     const user = { userId, email, isAdmin, accountName }
     localStorage.setItem('auth_user', JSON.stringify(user))
     localStorage.setItem('user', JSON.stringify({ userId, username: email }))
+    setNotificationAccount(userId, BACKEND_URL)
     setAuthUser(user)
   }, [])
 
   const handleLogout = useCallback(() => {
+    setNotificationAccount(null)
     localStorage.removeItem('auth_user')
     setAuthUser(null)
   }, [])
@@ -205,10 +211,10 @@ export default function App() {
   }, [])  // mount only
 
   if (!authUser) {
-    return <LoginScreen onLogin={handleLogin} />
+    return <><LoginScreen onLogin={handleLogin} /><NotificationCenter /></>
   }
 
-  return <AppInner authUser={authUser} onLogout={handleLogout} setAuthUser={setAuthUser} />
+  return <><AppInner authUser={authUser} onLogout={handleLogout} setAuthUser={setAuthUser} /><NotificationCenter key={authUser.userId} /></>
 }
 
 function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: string; email: string; isAdmin: boolean; accountName?: string }; onLogout: () => void; setAuthUser: React.Dispatch<React.SetStateAction<{ userId: string; email: string; isAdmin: boolean; accountName?: string } | null>> }) {
@@ -268,9 +274,15 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
   useEffect(() => setLiveFeed(null), [sim.sessionId])
   const [brokerOrdersSnapshot, setBrokerOrdersSnapshot] = useState<{ sessionId: string; orders: BrokerOrder[] } | null>(null)
   const [brokerError, setBrokerError] = useState<string | null>(null)
-  const [conversionNotices, setConversionNotices] = useState<Record<string, string>>({})
+  useFlashError(brokerError, 'Broker')
+  useFlashError(sim.orderError, 'Order')
+  useFlashError(recordingError, 'Recording')
+  useEffect(() => { setNotificationContext({ sessionId: sim.sessionId ?? undefined, symbol: sim.symbol, mode: sim.sessionType }); return () => setNotificationContext({}) }, [sim.sessionId, sim.symbol, sim.sessionType])
+  useEffect(() => { if (brokerError) setBrokerError(null) }, [brokerError])
+  useEffect(() => { if (sim.orderError) sim.clearOrderError() }, [sim.orderError, sim.clearOrderError])
+  const [, setConversionNotices] = useState<Record<string, string>>({})
   useEffect(() => setConversionNotices({}), [sim.sessionId])
-  const [protectionRecovery, setProtectionRecovery] = useState<RecoveryNotices>({})
+  const [, setProtectionRecovery] = useState<RecoveryNotices>({})
   useEffect(() => { setProtectionRecovery({}) }, [sim.sessionId])
   const [isRealTradingUser, setIsRealTradingUser] = useState(false)
   const [guardrailPopup, setGuardrailPopup] = useState<{ type: 'BLOCK' | 'COOLDOWN' | 'BAN'; reason: string } | null>(null)
@@ -1398,9 +1410,11 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
         setBrokerError(snapshot.wallet_error ?? null)
       }
     } else if (event.type === 'protection_recovery') {
+      if (typeof event.message === 'string' && ['pending', 'restored', 'needs_attention'].includes(String(event.state))) flashMessage(`Exit protection · ${[event.symbol, event.right ?? 'EQ', event.strike, event.expiry].filter(v => v != null && v !== '').join(' ')} · ${event.message}`, event.state === 'needs_attention' ? 'warning' : event.state === 'restored' ? 'success' : 'info', 'Exit protection')
       setProtectionRecovery(previous => applyRecoveryEvent(previous, event))
     } else if (event.type === 'broker_conversion_status') {
       const operation = String(event.operation_id ?? '')
+      flashMessage(String(event.message ?? (event.state === 'confirmed' ? 'Conversion confirmed by Kotak' : 'Conversion pending Kotak confirmation')), event.state === 'confirmed' ? 'success' : event.state === 'failed' ? 'error' : event.original_cancelled || event.state === 'unknown' ? 'warning' : 'info', 'Kotak exit conversion')
       if (operation) setConversionNotices(previous => {
         const next = { ...previous }
         if (event.state === 'confirmed') delete next[operation]
@@ -2200,6 +2214,7 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
                 setGuardrailPopup({ type: 'BLOCK', reason: result.reason })
               } catch (e) {
                 const msg = e instanceof Error ? e.message : 'Block failed'
+                flashError(e, 'Guardrails')
                 if (msg.includes('BAN')) setGuardrailPopup({ type: 'BAN', reason: msg })
               }
             }}
@@ -2395,9 +2410,6 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
             {snapshotActive && (
               <span style={{ fontSize: 11, color: '#3fb950', fontWeight: 600 }}>📸 Snapping</span>
             )}
-            {recordingError && (
-              <span style={{ fontSize: 11, color: '#f85149' }}>{recordingError}</span>
-            )}
           </div>
         )}
         <SettingsModal
@@ -2460,20 +2472,6 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
           roundTrips={stepwiseLabels.map(l => ({ right: l.right, pnl: 0, round_trip_index: l.round_trip_index }))}
           onDone={() => setStepwiseLabels(null)}
         />
-      )}
-
-      {/* Error banner */}
-      {sim.orderError && (
-        <div style={{
-          background: '#3d1f1f', borderBottom: '1px solid #f85149',
-          padding: '8px 20px', display: 'flex', alignItems: 'center', gap: 12,
-        }}>
-          <span style={{ color: '#f85149', fontSize: 13 }}>{sim.orderError}</span>
-          <button
-            onClick={sim.clearOrderError}
-            style={{ marginLeft: 'auto', background: 'none', border: 'none', color: '#8b949e', cursor: 'pointer', fontSize: 14 }}
-          >✕</button>
-        </div>
       )}
 
       {/* Session Controls — layout/pane controls injected inline via extraControls */}
@@ -2656,30 +2654,6 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
 
       {/* Broker error banner (paper trading) */}
       {liveFeed && sim.sessionType !== 'real' && <div role="status" style={{ fontSize: 11, color: '#8b949e', padding: '3px 12px' }}>Feed {liveFeed.actual_provider ?? liveFeed.selected_provider} · {liveFeed.connection}{liveFeed.actual_provider && liveFeed.actual_provider !== liveFeed.selected_provider ? ` (fallback from ${liveFeed.selected_provider})` : ''}</div>}
-      {sim.sessionType === 'real' && Object.entries(protectionRecovery).map(([key, recovery]) => (
-        <div key={key} role={recovery.state === 'needs_attention' ? 'alert' : 'status'}
-          style={{ background: recovery.state === 'needs_attention' ? '#3d1c1c' : '#14271d', padding: '6px 14px', fontSize: 12, color: recovery.state === 'needs_attention' ? '#ff7b72' : '#7ee787' }}>
-          Exit protection · {key.split('|').join(' ')} · {recovery.message}
-        </div>
-      ))}
-      {Object.entries(conversionNotices).map(([operation, message]) => (
-        <div key={operation} role="status" style={{ padding: '8px 12px', color: '#d29922', background: '#272112', fontSize: 12 }}>
-          Kotak exit conversion: {message}
-        </div>
-      ))}
-      {brokerError && (
-        <div style={{
-          background: '#3d1c1c', border: '1px solid #f85149', color: '#f85149',
-          padding: '6px 14px', fontSize: 12, display: 'flex', alignItems: 'center', gap: 8,
-        }}>
-          <span>⚠ {brokerError}</span>
-          <button
-            onClick={() => setBrokerError(null)}
-            style={{ background: 'none', border: 'none', color: '#f85149', cursor: 'pointer', marginLeft: 'auto', fontSize: 14 }}
-          >✕</button>
-        </div>
-      )}
-
       {/* Main content */}
       <div ref={mainContentRef} style={{ display: 'flex', flex: 1, minHeight: 0, overflow: 'hidden' }}>
         {/* Chart column */}

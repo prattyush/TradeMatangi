@@ -1,3 +1,4 @@
+import { flashError, getNotificationContext, getNotificationScope } from './notifications'
 import type { PositionSnapshot } from './positionAccounting'
 import { measureRequest } from './performanceDiagnostics'
 import { legacyBrowserSettings, cacheSharedSettings } from './sharedSettings'
@@ -2154,4 +2155,26 @@ const api = {
   },
 }
 
-export default api
+// All request failures enter the same non-blocking journal, including errors
+// caught by a panel or a background chart loader. Expected lookup misses remain
+// control flow, and request callers still receive the original rejection.
+const notifiedApi: typeof api = new Proxy(api, {
+  get(target, property, receiver) {
+    const value = Reflect.get(target, property, receiver)
+    if (typeof value !== 'function') return value
+    return async (...args: unknown[]) => {
+      const scope = getNotificationScope(); const requestContext = getNotificationContext()
+      try { return await value.apply(target, args) }
+      catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        const expectedMissing = ['patternGetChartByDate', 'getActiveSimulation'].includes(String(property)) &&
+          ((error instanceof ApiError && error.status === 404) || /(?:^|\D)404(?:\D|$)/.test(message))
+        const name = String(property)
+        const source = /kotak/i.test(name) ? 'Kotak' : /order|buy|sell|square|flatten/i.test(name) ? 'Orders' : /simulation|session|group/i.test(name) ? 'Sessions' : /histor|preSession|expiry|strike|indicator|chart/i.test(name) ? 'Charts' : /pattern|analysis|label/i.test(name) ? 'Analysis' : 'Website request'
+        if (!expectedMissing && scope === getNotificationScope()) flashError(error, source, requestContext)
+        throw error
+      }
+    }
+  },
+})
+export default notifiedApi
