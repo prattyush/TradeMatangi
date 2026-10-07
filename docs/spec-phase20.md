@@ -407,3 +407,7 @@ broker acceptance are not claimed for this UI-only change.
 Development on dev; deliver in a dedicated feature branch/PR targeting dev.
 Review/merge and manual main deployment remain pending. Desktop Analysis work is
 still preserved separately on `wip/phase20-desktop-analysis` and is not included.
+
+Delivery: [PR #603](https://github.com/prattyush/TradeMatangi/pull/603),
+`feature/website-floating-error-history` → `dev`, implementation commit `f624e6a`.
+Review/merge and manual main deployment remain pending.
