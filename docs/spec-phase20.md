@@ -452,12 +452,12 @@ inference, double percentage conversion or psychological-intent claims.
 | Sprint | Deliverable and acceptance gate | Status |
 |---|---|---|
 | 0 | Complete specification, inventory, sprint breakdown and acceptance | Complete |
-| 1 | Shared contracts/API/native auth/canonical membership; ownership/parity tests | In progress — access scaffolding implemented; tests pending |
-| 2 | Shared views/dedicated tab/session filters/navigation/tables; workspace continuity | In progress — shared views extracted; desktop tab pending |
-| 3 | KLine exact charts/EMA/split/maximize/history/viewport | In progress — initial renderer; integration/acceptance pending |
-| 4 | Clickable/grouped markers and full evidence inspector across analysis views | In progress — marker grouping/callbacks; inspector pending |
+| 1 | Shared contracts/API/native auth/canonical membership; ownership/parity tests | In progress — bearer/ownership/FIFO/real Decimal/worker checks passed; broader parity gates pending |
+| 2 | Shared views/dedicated tab/session filters/navigation/tables; workspace continuity | In progress — lazy desktop tab and shared Sessions/Stats wired; navigator/split layout pending |
+| 3 | KLine exact charts/EMA/split/maximize/history/viewport | In progress — KLine wired; chart layout and tab cleanup acceptance passed; maximize/exact-contract surfaces pending |
+| 4 | Clickable/grouped markers and full evidence inspector across analysis views | In progress — keyboard selection and initial evidence inspector/cycle links wired; presentation and all-surface acceptance pending |
 | 5 | Labels/snapshots/comparison parity and cross-client persistence | Planned |
-| 6 | Five shared Stats views/all filters/detail/enrichment/full CSV | Planned |
+| 6 | Five shared Stats views/all filters/detail/enrichment/full CSV | In progress — shared views/detail/CSV wired; paging/failure/enrichment acceptance pending |
 | 7 | Regression/browser/Windows acceptance/docs/reviewed PR to dev | Planned |
 
 ### Test and delivery gates
@@ -775,3 +775,75 @@ Delivery: [PR #607](https://github.com/prattyush/TradeMatangi/pull/607),
 `fix/analytics-numeric-metadata` → `dev`, implementation commit `bcf25a7`.
 Review/merge and manual backend deployment remain pending.
 
+
+
+### Desktop Analysis resumed implementation — 2026-10-07
+
+Resumed on the explicitly requested local `wip/phase20-desktop-analysis` branch.
+Merged current dev `32c76ba` into WIP (merge commit `3f8ca8c`), retaining the shared
+Analysis extraction and bringing across the website floating notifications,
+emergency-exit/day barrier, and real analytics numeric-metadata repair. Website
+shared views report errors through its floating journal; desktop retains explicit
+inline errors. This remains an incomplete implementation checkpoint, not delivery.
+
+Implemented and checked in this continuation:
+- Analysis endpoints require a verified desktop bearer, without the legacy
+  X-User-Id bypass. Adapt both user_id and _user_id signatures and retain source
+  route dependencies, including historical request policy. Session-scoped reads
+  and snapshot deletes enforce ownership before calling services.
+- Data history adapters use the bounded desktop history executor while website
+  history retains its existing executor. Legacy synchronous pattern OHLC work
+  is offloaded from the event loop. Context/provider policy survives the worker.
+- Canonical session detail retains exchange/product and physical execution IDs.
+  Tests cover one physical reversal fill with separate entry/exit role quantities,
+  and committed real projection detail with Decimal and legacy numeric-string
+  sizing/controller evidence, FIFO net P&L and initial-risk R.
+- Transport cancellation/generation fencing prevents late native/browser responses
+  from succeeding after refresh/disposal/account changes. Failed cached reads retry;
+  session search responses are fenced. StrictMode cleanup does not retire the
+  immediately remounted transport.
+- Lazy main-window Workspace / Analysis tab, shared Sessions and five Stats views,
+  detail and CSV. Trading ScreenControllers remain mounted across tab switches;
+  analysis chart adapters dispose while their view is hidden. Account/server/token
+  changes replace the provider and logout removes account data. Popped-out screens
+  remain trading windows. Desktop Sessions defaults to the last 30 IST dates.
+- KLine adapters now cover Sessions, Labels, Snapshots, Comparison and Stats.
+  Fix the zero-height internal candle pane with a definite containing block.
+  Pass the actual snapshot session identity and stop guessing an option expiry
+  from the selected snapshot chart. Annotation styles follow their own annotation.
+- Initial 380px execution evidence inspector, grouped marker callbacks, accessible
+  trade-table selection, Escape close and canonical Open cycle links. Reversals
+  expose both FIFO roles; matching cannot cross sessions. The current inspector
+  uses structured JSON evidence and still needs the planned readable presentation.
+
+Validation of this checkpoint:
+- **94 focused backend tests passed** (desktop adapters, Phase 20 accounting/API,
+  and Phase 19 historical policy), including 13 new desktop boundary/worker tests.
+- **163 desktop/client Vitest tests passed**, 27 files, including eight new
+  transport/marker tests. **41 website Node checks passed**.
+- Website and desktop TypeScript checks and production builds passed. Existing
+  bundle-size and dateutil warnings remain.
+- `scripts/desktop-analysis-check.mjs` exercises the built desktop app with
+  synthetic/mock APIs: login, lazy Analysis tab, usable KLine candle pane,
+  keyboard execution inspector/cycle link, five Stats views, CSV download,
+  chart disposal/restoration, narrow viewport and logout isolation; no page errors
+  or Analysis trading writes. It regenerates its fixture with PYTHON_BIN and uses
+  externally supplied PLAYWRIGHT_MODULE/CHROME_BIN like the earlier browser checks.
+- Logs, fixtures, screenshots and browser summary are ignored under
+  `.cache/desktop-analysis-validation/`. Diff whitespace check passed.
+
+Next implementation gates remain:
+1. Replace the reused modal/group layout with the specified resizable navigator,
+   linked session selection, draggable underlying/option split and narrow-pane UX.
+2. Present captured execution/sizing/controller/FIFO evidence as readable fields;
+   clear selection on owning group/contract changes. Verify real marker hit testing,
+   overlap chooser and physical IDs across every surface and snapshot provenance.
+3. Preserve chart instance/viewport through maximize, review exact exchange/product
+   selection and snapshot boundary candles/positions, and bound candle caching.
+4. Finish dirty-label protection, explicit snapshot/comparison error/retry and full
+   cross-client save/reload parity; shared legacy error swallowing remains to fix.
+5. Validate Stats all-page CSV failures/paging/enrichment and account/query races,
+   run active Paper/Replay/Stepwise continuity acceptance, then full backend/native
+   regression and packaged Windows acceptance before a delivery PR targeting dev.
+
+No delivery PR, main merge, deployment or live broker orders in this continuation.

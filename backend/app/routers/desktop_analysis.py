@@ -8,13 +8,19 @@ import inspect
 from functools import wraps
 from typing import get_type_hints
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException
 from fastapi.routing import APIRoute
 from app.dependencies import get_desktop_user_id
 from app.routers import analysis, data, labels, pattern_logger, performance, snapshots
 from app.services import analysis_service, performance_service
+from app.services.history_workers import desktop_history_scope, run_history
 
 router = APIRouter(prefix="/api/desktop/v1/analysis", tags=["desktop-analysis"])
+
+
+def get_analysis_user_id(authorization: str | None = Header(default=None)) -> str:
+    """Analysis requires a desktop bearer; legacy website identity is not proof."""
+    return get_desktop_user_id(authorization=authorization, x_user_id=None)
 
 
 def owned_session(session_id, user_id):
@@ -29,22 +35,29 @@ def adapt(route: APIRoute, path: str):
     signature = inspect.signature(endpoint)
     hints = get_type_hints(endpoint)
     parameters = [p.replace(annotation=hints.get(p.name, p.annotation)) for p in signature.parameters.values()]
-    has_user = "user_id" in signature.parameters
+    identity_parameter = next((name for name in ("user_id", "_user_id") if name in signature.parameters), None)
+    has_user = identity_parameter is not None
     if has_user:
-        parameters = [p.replace(default=Depends(get_desktop_user_id)) if p.name == "user_id" else p for p in parameters]
+        parameters = [p.replace(default=Depends(get_analysis_user_id)) if p.name == identity_parameter else p for p in parameters]
     else:
-        parameters.append(inspect.Parameter("desktop_owner", inspect.Parameter.KEYWORD_ONLY, default=Depends(get_desktop_user_id), annotation=str))
+        parameters.append(inspect.Parameter("desktop_owner", inspect.Parameter.KEYWORD_ONLY, default=Depends(get_analysis_user_id), annotation=str))
 
     @wraps(endpoint)
     async def authenticated(**kwargs):
-        owner = kwargs.get("user_id") if has_user else kwargs.pop("desktop_owner")
+        owner = kwargs.get(identity_parameter) if has_user else kwargs.pop("desktop_owner")
         if "session_id" in kwargs:
             await asyncio.to_thread(owned_session, kwargs["session_id"], owner)
+        if path.startswith('/data/'):
+            with desktop_history_scope():
+                return await endpoint(**kwargs)
+        if path.startswith('/pattern/ohlc/'):
+            # These legacy async endpoints do synchronous provider/cache work.
+            return await run_history(lambda: asyncio.run(endpoint(**kwargs)))
         return await endpoint(**kwargs)
 
     authenticated.__signature__ = signature.replace(parameters=parameters, return_annotation=hints.get("return", signature.return_annotation))
     router.add_api_route(path, authenticated, methods=list(route.methods), response_model=route.response_model,
-                         status_code=route.status_code, name=f"desktop_analysis_{route.name}")
+                         status_code=route.status_code, dependencies=route.dependencies, name=f"desktop_analysis_{route.name}")
 
 
 # Deliberately exclude arbitrary trades/user queries, trading writes, pattern writes
@@ -74,7 +87,7 @@ for source, paths in allowed:
 
 
 @router.get("/sessions/{session_id}")
-async def session_detail(session_id: str, user_id: str = Depends(get_desktop_user_id)):
+async def session_detail(session_id: str, user_id: str = Depends(get_analysis_user_id)):
     def load():
         session = owned_session(session_id, user_id)
         cycles = performance_service.load_session_cycles(session)
@@ -94,7 +107,9 @@ async def session_detail(session_id: str, user_id: str = Depends(get_desktop_use
                            "user_id": user_id, "symbol": session["symbol"],
                            "instrument_type": session.get("instrument_type", "equity")}),
                            "trade_id": identity, "execution_id": row.get("execution_id"),
-                           "order_id": row.get("order_id"), "kotak_order_id": row.get("kotak_order_id")})
+                           "order_id": row.get("order_id"), "kotak_order_id": row.get("kotak_order_id"),
+                           "exchange": row.get("broker_exchange") or row.get("exchange"),
+                           "product": row.get("broker_product") or row.get("product")})
         trades.sort(key=performance_service.execution_order_key)
         summary = analysis_service.compute_session_summary(session, trades, cycles)
         return {**summary, "trades": trades, "cycles": cycles}

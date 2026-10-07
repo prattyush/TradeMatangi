@@ -1021,8 +1021,9 @@ export function GroupCard({ group, historicalDays = 2, initiallyExpanded = false
 export default function TradeAnalysis({ onClose, historicalDays = 2 }: Props) {
   const api = useAnalysisApi()
 
-  const today = new Date().toISOString().slice(0, 10)
-  const thirtyDaysAgo = new Date(Date.now() - 30 * 86400 * 1000).toISOString().slice(0, 10)
+  const environment = useAnalysisEnvironment()
+  const today = environment.desktop ? new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(new Date()) : new Date().toISOString().slice(0, 10)
+  const thirtyDaysAgo = new Date(Date.parse(today + 'T00:00:00Z') - (environment.desktop ? 29 : 30) * 86400 * 1000).toISOString().slice(0, 10)
 
   const [symbol, setSymbol] = useState<string>('')
   const [instrumentType, setInstrumentType] = useState<string>('')
@@ -1037,7 +1038,9 @@ export default function TradeAnalysis({ onClose, historicalDays = 2 }: Props) {
   const [hasSearched, setHasSearched] = useState(false)
   const [statsOpen, setStatsOpen] = useState(false)
 
+  const searchGeneration = useRef(0)
   const handleSearch = useCallback(async () => {
+    const revision = ++searchGeneration.current
     setLoading(true)
     setError(null)
     setHasSearched(true)
@@ -1049,16 +1052,18 @@ export default function TradeAnalysis({ onClose, historicalDays = 2 }: Props) {
         instrumentType: instrumentType || undefined,
         sessionType: sessionType || undefined,
       })
+      if (revision !== searchGeneration.current) return
       setSessions(data)
     } catch (err: unknown) {
+      if (revision !== searchGeneration.current || (err instanceof DOMException && err.name === 'AbortError')) return
       setError(err instanceof Error ? err.message : 'Failed to load analysis data')
       setSessions([])
     } finally {
-      setLoading(false)
+      if (revision === searchGeneration.current) setLoading(false)
     }
-  }, [symbol, instrumentType, sessionType, startDate, endDate])
+  }, [api, symbol, instrumentType, sessionType, startDate, endDate])
 
-  useEffect(() => { handleSearch() }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { void handleSearch(); return () => { searchGeneration.current++ } }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   const groups = groupSessions(sessions)
   const totalPnl = groups.reduce((s, g) => s + g.totalPnl, 0)
@@ -1197,7 +1202,7 @@ export default function TradeAnalysis({ onClose, historicalDays = 2 }: Props) {
 
         {/* Group list */}
         <div style={{ flex: 1, overflowY: 'auto', padding: '16px 20px' }}>
-          {error && (
+          {error && !environment.reportError && (
             <div style={{
               padding: '10px 14px', background: '#3d1f1f',
               border: '1px solid #f85149', borderRadius: 6,
@@ -1234,11 +1239,15 @@ export default function TradeAnalysis({ onClose, historicalDays = 2 }: Props) {
 }
 
 export function AnalysisChart(props: React.ComponentProps<typeof WebsiteAnalysisChart>) {
-  const Override = useAnalysisEnvironment().charts?.AnalysisChart
+  const environment = useAnalysisEnvironment()
+  const Override = environment.charts?.AnalysisChart
+  if (environment.desktop && environment.active === false) return null
   return Override ? <Override {...props} /> : <WebsiteAnalysisChart {...props} />
 }
 
 export function OptionsChart(props: React.ComponentProps<typeof WebsiteOptionsChart>) {
-  const Override = useAnalysisEnvironment().charts?.OptionsChart
+  const environment = useAnalysisEnvironment()
+  const Override = environment.charts?.OptionsChart
+  if (environment.desktop && environment.active === false) return null
   return Override ? <Override {...props} /> : <WebsiteOptionsChart {...props} />
 }

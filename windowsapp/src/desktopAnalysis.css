@@ -1,0 +1,22 @@
+.desktop-main-navigation { height: 36px; display: flex; align-items: center; gap: 8px; padding: 3px 12px; background: #181d27; }
+.desktop-main-navigation button { padding: 3px 12px; }
+.desktop-with-navigation > div > main, .desktop-with-navigation > main { height: calc(100vh - 36px); }
+.desktop-analysis { position: fixed; inset: 36px 0 0; background: #10131a; overflow: hidden; z-index: 20; }
+.desktop-analysis[hidden], .desktop-analysis [hidden] { display: none !important; }
+.analysis-navigation { height: 42px; display: flex; gap: 8px; align-items: center; padding: 4px 12px; }
+.analysis-sessions, .analysis-stats { position: absolute; inset: 42px 0 0; }
+.analysis-sessions > div { position: absolute !important; inset: 0 !important; }
+.desktop-analysis .pa-overlay { position: absolute; inset: 0; }
+.desktop-analysis main { height: auto; display: block; }
+.desktop-analysis-chart { display: flex; flex-direction: column; height: 100%; min-height: 250px; position: relative; }
+.desktop-analysis-chart header { min-height: 36px; flex-shrink: 0; font-size: 12px; }
+.analysis-kline { flex: 1; min-height: 210px; }
+.analysis-comparison-chart { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+.analysis-comparison-chart > .desktop-analysis-chart { flex: 1; }
+.analysis-marker-chooser { position: absolute; inset: 42px 12px auto; max-height: 250px; overflow: auto; background: #182233; border: 1px solid #64748b; z-index: 4; padding: 12px; display: grid; gap: 8px; }
+.analysis-execution-inspector { position: absolute; top: 42px; right: 0; bottom: 0; width: 380px; max-width: 100%; overflow: auto; background: #151d2a; border-left: 1px solid #64748b; z-index: 3000; padding: 12px; }
+.analysis-execution-inspector header { justify-content: space-between; min-height: 36px; }
+.analysis-execution-inspector pre { font-size: 11px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.analysis-execution-inspector h3 { font-size: 13px; }
+/* Give KLine's percentage-height root a definite containing block. */
+.analysis-kline { position: absolute; inset: 36px 0 0; }

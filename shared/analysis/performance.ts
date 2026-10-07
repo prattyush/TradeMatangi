@@ -80,6 +80,8 @@ export interface EntryPosition {
   analytics: AnalyticsMetadata;
 }
 export interface MatchedPortion {
+  entry_execution_id?: string
+  exit_execution_id?: string
   entry_id: string;
   exit_id: string;
   quantity: number;

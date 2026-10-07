@@ -42,7 +42,7 @@ export default function DesktopAnalysisChart(props: Props) {
   const keyRef=useRef(key); keyRef.current=key
   const selectRef=useRef(environment.onSelectExecution); selectRef.current=environment.onSelectExecution
   const generation=useRef(0)
-  const trades=useMemo(()=>props.trades ?? (props.filledTrades ?? []).map(t=>({ ...t, session_id:props.sessionId??'', user_id:'', symbol:props.symbol, instrument_type:t.right?'options':'equity', right:t.right??null, strike:t.strike??null, expiry:t.expiry??props.expiry??null, commission:t.commission??0 }) as AnalysisTrade),[props.trades,props.filledTrades,props.sessionId,props.symbol,props.expiry])
+  const trades=useMemo(()=>props.trades ?? (props.filledTrades ?? []).map(t=>({ ...t, session_id:props.sessionId??'', user_id:'', symbol:props.symbol, instrument_type:t.right?'options':'equity', right:t.right??null, strike:t.strike??null, expiry:t.expiry??null, commission:t.commission??0 }) as AnalysisTrade),[props.trades,props.filledTrades,props.sessionId,props.symbol,props.expiry])
   const contract=props.right && props.strike && props.expiry ? {right:props.right,strike:props.strike,expiry:props.expiry}:undefined
   const markers=analysisMarkers(trades,candles,contract,filter,props.getMarkerText)
   const markersRef=useRef(markers); markersRef.current=markers
@@ -83,8 +83,8 @@ export default function DesktopAnalysisChart(props: Props) {
       if(typeof id==='string')overlays.current.push(id)
     }
     const annotations=(props.annotations??[]).filter(a=>props.right?a.instrument===props.right:a.instrument==='underlying')
-    const patternStyles=buildMarkers(annotations,props.activeStrategy??null,props.activeCategory??null,props.topPatterns)
-    annotations.sort((a,b)=>a.time-b.time).forEach((a,i)=>{const style=patternStyles[i];const id=chart.createOverlay({name:'analysisAnnotation',lock:true,points:[{timestamp:a.time*1000,value:a.price}],extendData:{color:style?.color??'#fbbf24',text:`${a.type==='entry'?'↑':'↓'} ${style?.text??a.text}`}});if(typeof id==='string')overlays.current.push(id)})
+
+    annotations.sort((a,b)=>a.time-b.time).forEach(a=>{const style=buildMarkers([a],props.activeStrategy??null,props.activeCategory??null,props.topPatterns)[0];const id=chart.createOverlay({name:'analysisAnnotation',lock:true,points:[{timestamp:a.time*1000,value:a.price}],extendData:{color:style?.color??'#fbbf24',text:`${a.type==='entry'?'↑':'↓'} ${style?.text??a.text}`}});if(typeof id==='string')overlays.current.push(id)})
     for(const order of props.openOrders??[]){const price=order.trigger_price||order.limit_price;if(!price||!candles.length)continue;const id=chart.createOverlay({name:'horizontalStraightLine',lock:true,points:[{timestamp:candles[candles.length-1].time*1000,value:price}],extendData:{text:`${order.side} ${order.order_type} ${order.quantity}`}});if(typeof id==='string')overlays.current.push(id)}
   },[candles,filter,trades,props.annotations,props.activeStrategy,props.activeCategory,props.topPatterns])
   return <section className={`desktop-analysis-chart ${props.isMaximized?'maximized':''}`}>

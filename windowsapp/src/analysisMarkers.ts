@@ -23,5 +23,5 @@ export function analysisMarkers(trades: AnalysisTrade[], candles: { time: number
   return [...groups.values()]
 }
 export function executionRoles(trade: AnalysisTrade, cycles: PerformanceCycle[]) {
-  return cycles.flatMap(cycle => cycle.executions.filter(row => (row.execution_id || row.trade_id) === (trade.execution_id || trade.trade_id)).map(row => ({cycle, row})))
+  return cycles.filter(cycle => cycle.session_id === trade.session_id).flatMap(cycle => cycle.executions.filter(row => (row.execution_id || row.trade_id) === (trade.execution_id || trade.trade_id)).map(row => ({cycle, row})))
 }

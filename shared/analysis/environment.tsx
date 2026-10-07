@@ -18,6 +18,7 @@ export interface AnalysisEnvironment {
   // snapshot/pattern inputs are normalized inside the desktop renderer boundary.
   charts?: Record<string, ComponentType<any>>
   reportError?: (error: string, source: string) => void
+  active?: boolean
   desktop?: boolean
   onSelectExecution?: (trade: import('./api').AnalysisTrade) => void
 }

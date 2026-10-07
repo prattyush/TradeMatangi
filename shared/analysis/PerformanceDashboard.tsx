@@ -13,6 +13,7 @@ import {
 import "./performance.css";
 
 interface Props {
+  selectedCycle?: PerformanceCycle;
   onClose: () => void;
   defaultSymbol: string;
   defaultStartDate: string;
@@ -227,7 +228,8 @@ function Curve({
 }
 
 export default function PerformanceDashboard(props: Props) {
-  const { getPerformance, getPerformanceCycles, getPerformanceDetail } = useAnalysisEnvironment().performance
+  const environment = useAnalysisEnvironment()
+  const { getPerformance, getPerformanceCycles, getPerformanceDetail } = environment.performance
   const [filters, setFilters] = useState<PerformanceFilters>({
     symbol: props.defaultSymbol,
     start_date: props.defaultStartDate || dateAgo(29),
@@ -349,6 +351,7 @@ export default function PerformanceDashboard(props: Props) {
       setExporting(false);
     }
   };
+  useEffect(() => { if (props.selectedCycle) void showDetail(props.selectedCycle) }, [props.selectedCycle]);
   const visible = useMemo(
     () =>
       cycles.filter(
@@ -624,7 +627,7 @@ export default function PerformanceDashboard(props: Props) {
         )}
       </nav>
       <main className="pa-main">
-        {error && (
+        {error && !environment.reportError && (
           <div role="alert" className="pa-error">
             {error}
             <button onClick={() => setRefresh((r) => r + 1)}>Retry</button>
@@ -1221,7 +1224,7 @@ export default function PerformanceDashboard(props: Props) {
               )}
             </p>
           )}
-          {detailError && (
+          {detailError && !environment.reportError && (
             <p role="alert" className="pa-error">
               {detailError}
             </p>

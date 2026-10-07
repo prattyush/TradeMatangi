@@ -154,11 +154,15 @@ export default function PatternVsTradeComparison({symbol,date,instrumentType,ses
 const sel: React.CSSProperties = {background:'#161b22',border:'1px solid #30363d',color:'#e6edf3',borderRadius:4,padding:'4px 8px',fontSize:11,minWidth:140}
 
 export function TradesChart(props: React.ComponentProps<typeof WebsiteTradesChart>) {
-  const Override = useAnalysisEnvironment().charts?.TradesChart
+  const environment = useAnalysisEnvironment()
+  const Override = environment.charts?.TradesChart
+  if (environment.desktop && environment.active === false) return null
   return Override ? <Override {...props} /> : <WebsiteTradesChart {...props} />
 }
 
 export function PatternChart(props: React.ComponentProps<typeof WebsitePatternChart>) {
-  const Override = useAnalysisEnvironment().charts?.PatternChart
+  const environment = useAnalysisEnvironment()
+  const Override = environment.charts?.PatternChart
+  if (environment.desktop && environment.active === false) return null
   return Override ? <Override {...props} /> : <WebsitePatternChart {...props} />
 }

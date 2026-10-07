@@ -208,6 +208,7 @@ function WebsiteSnapshotChart({
   symbol, date, barTime, barOhlc, currentPrice, openOrders, position, filledTrades,
 }: {
   symbol: string; date: string
+  sessionId?: string
   barTime: number
   barOhlc: { open: number; high: number; low: number; close: number } | null
   currentPrice: number
@@ -509,6 +510,7 @@ function WebsiteSnapshotOptionsChart({
   strike, expiry, right, filledTrades,
 }: {
   symbol: string; date: string
+  sessionId?: string
   barTime: number
   barOhlc: { open: number; high: number; low: number; close: number } | null
   currentPrice: number
@@ -759,7 +761,7 @@ function SnapshotDetail({ snapshot }: { snapshot: EventSnapshot }) {
               {optionTab === 'underlying' && (
                 <div style={{ flex: 1 }}>
                   <SnapshotChart
-                    symbol={snapshot.symbol} date={snapshot.date}
+                    sessionId={snapshot.session_id} symbol={snapshot.symbol} date={snapshot.date}
                     barTime={snap.bar_time} barOhlc={snap.bar_ohlc}
                     currentPrice={snap.current_price}
                     openOrders={snap.open_orders}
@@ -771,7 +773,7 @@ function SnapshotDetail({ snapshot }: { snapshot: EventSnapshot }) {
               {optionTab === 'CE' && snap.strike_ce && snap.expiry && (
                 <div style={{ flex: 1 }}>
                   <SnapshotOptionsChart
-                    symbol={snapshot.symbol} date={snapshot.date}
+                    sessionId={snapshot.session_id} symbol={snapshot.symbol} date={snapshot.date}
                     barTime={snap.bar_time} barOhlc={null}
                     currentPrice={snap.current_price_ce}
                     openOrders={snap.open_orders.filter(o => !o.right || o.right === 'CE')}
@@ -783,7 +785,7 @@ function SnapshotDetail({ snapshot }: { snapshot: EventSnapshot }) {
               {optionTab === 'PE' && snap.strike_pe && snap.expiry && (
                 <div style={{ flex: 1 }}>
                   <SnapshotOptionsChart
-                    symbol={snapshot.symbol} date={snapshot.date}
+                    sessionId={snapshot.session_id} symbol={snapshot.symbol} date={snapshot.date}
                     barTime={snap.bar_time} barOhlc={null}
                     currentPrice={snap.current_price_pe}
                     openOrders={snap.open_orders.filter(o => !o.right || o.right === 'PE')}
@@ -804,7 +806,7 @@ function SnapshotDetail({ snapshot }: { snapshot: EventSnapshot }) {
           /* Equity: single chart */
           <div style={{ flex: 1 }}>
             <SnapshotChart
-              symbol={snapshot.symbol} date={snapshot.date}
+              sessionId={snapshot.session_id} symbol={snapshot.symbol} date={snapshot.date}
               barTime={snap.bar_time} barOhlc={snap.bar_ohlc}
               currentPrice={snap.current_price}
               openOrders={snap.open_orders}
@@ -857,11 +859,15 @@ function formatTimestamp(ts: number): string {
 }
 
 export function SnapshotChart(props: React.ComponentProps<typeof WebsiteSnapshotChart>) {
-  const Override = useAnalysisEnvironment().charts?.SnapshotChart
+  const environment = useAnalysisEnvironment()
+  const Override = environment.charts?.SnapshotChart
+  if (environment.desktop && environment.active === false) return null
   return Override ? <Override {...props} /> : <WebsiteSnapshotChart {...props} />
 }
 
 export function SnapshotOptionsChart(props: React.ComponentProps<typeof WebsiteSnapshotOptionsChart>) {
-  const Override = useAnalysisEnvironment().charts?.SnapshotOptionsChart
+  const environment = useAnalysisEnvironment()
+  const Override = environment.charts?.SnapshotOptionsChart
+  if (environment.desktop && environment.active === false) return null
   return Override ? <Override {...props} /> : <WebsiteSnapshotOptionsChart {...props} />
 }

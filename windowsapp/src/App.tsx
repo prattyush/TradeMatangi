@@ -9,7 +9,7 @@ import { TradingSseDecoder, TradingStreamController, TradingStreamDrain, Trading
 import { bounded, closeAfterSave, controlledScreens, SAVE_TIMEOUT_MS, journalKey, recoverState, type RecoveryJournal } from './windowLifecycle'
 import { ticketSizingPayload, ticketSizingLabel, switchTicketSizing } from './ticketSizing'
 import { entryUnavailableReason, equityEntryEnabled, entryQuantity, instrumentLotSize, validateEntryStop } from './tradingInstrument'
-import { useCallback, useEffect, useRef, useState, type Dispatch, type SetStateAction } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useRef, useState, type Dispatch, type SetStateAction } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
@@ -23,6 +23,8 @@ import { isDesktopTradingSnapshot } from './paperTradingState'
 import { shouldShowMessage, useDismissMessage } from './useDismissMessage'
 import { mergeScreenDraft, screenContentKey, type ScreenDraft } from './screenConflict'
 import { enqueueScreenSave, saveScreenRecord } from './screenSave'
+
+const DesktopAnalysis = lazy(() => import('./DesktopAnalysis'))
 
 interface HistoricalPage { candles: Candle[]; available?: boolean; unavailable_reason?: string }
 interface Instrument { symbol: string; display_name: string; exchange: string; chart_type?: string; option_eligible: boolean; supported_intervals: number[] }
@@ -429,6 +431,8 @@ interface ScreenControllerProps {
 }
 
 export default function App() {
+  const [mainTab, setMainTab] = useState<'Workspace' | 'Analysis'>('Workspace')
+  const [analysisVisited, setAnalysisVisited] = useState(false)
   const assignedId = new URLSearchParams(window.location.search).get('screen_id')
   const [screens, setScreens] = useState<Screen[]>([newScreen(1)])
   const [selectedId, selectScreen] = useState(screens[0].id)
@@ -519,19 +523,24 @@ export default function App() {
     void discover().catch(error => { if (!cancelled) { setLoadFailed(true); setLoadError(String(error)) } }).finally(() => { discoveryInFlight.current = false })
     return () => { cancelled = true; discoveryInFlight.current = false }
   }, [connection, loaded, serverUrl, browserToken, loadAttempt, assignedId])
+  useEffect(() => {
+    if (connection === 'authentication_required') { setMainTab('Workspace'); setAnalysisVisited(false) }
+  }, [connection, serverUrl, browserToken])
   const visibleId = screens.some(screen => screen.id === selectedId) ? selectedId : screens[0]?.id
   const assigned = screens.find(screen => screen.id === assignedId || screen.persistedId === assignedId)
   const ownedScreens = controlledScreens(screens, assignedId, loaded, external)
-  return <>
+  return <div className={!assignedId && connection !== 'authentication_required' ? 'desktop-with-navigation' : undefined}>
+    {!assignedId && connection !== 'authentication_required' && <nav className="desktop-main-navigation" aria-label="Desktop workspace"><button aria-pressed={mainTab === 'Workspace'} onClick={() => setMainTab('Workspace')}>Workspace</button><button aria-pressed={mainTab === 'Analysis'} onClick={() => { setAnalysisVisited(true); setMainTab('Analysis') }}>Analysis</button></nav>}
     {closeError && <p role="alert">{closeError}</p>}
     {loadFailed && <main role="alert">{loadError && <p>{loadError}</p>}<button onClick={() => setLoadAttempt(value => value + 1)}>Retry loading screens</button></main>}
     {assignedId && !loaded && <main><p>{connection === 'authentication_required' ? 'Sign in in the main window to reconnect this screen.' : 'Loading popped-out screen…'}</p><button onClick={() => void invoke('focus_main_window')}>Main window</button></main>}
     {!assignedId && external.includes(visibleId) && <main><header><nav className="screen-tabs">{screens.map(screen => <button key={screen.id} onClick={() => selectScreen(screen.id)}>{screen.name}{external.includes(screen.id) ? ' ↗' : ''}</button>)}</nav><button onClick={() => void invoke('focus_screen_window', { screenId: visibleId })}>Focus window</button><button onClick={() => void invoke('close_screen_window', { screenId: visibleId })}>Bring back</button></header><p>This screen is open in another window.</p></main>}
     {assignedId && loaded && !assigned && <main><p>Saved screen not found. Return to the main window.</p></main>}
-    {ownedScreens.map(screen => <div key={screen.id} style={{ display: assignedId || screen.id === visibleId ? 'contents' : 'none' }}>
+    {ownedScreens.map(screen => <div key={screen.id} style={{ display: mainTab === 'Workspace' && (assignedId || screen.id === visibleId) ? 'contents' : 'none' }}>
       <ScreenController registerSave={registerSave} screenId={screen.id} screens={screens} setScreens={setScreens} selectedId={visibleId} selectScreen={selectScreen} loaded={loaded} external={external} assignedId={assignedId} connection={connection} setConnection={setConnection} browserToken={browserToken} setBrowserToken={setBrowserToken} serverUrl={serverUrl} setServerUrl={setServerUrl} />
     </div>)}
-  </>
+    {!assignedId && analysisVisited && connection !== 'authentication_required' && <Suspense fallback={<p role="status">Loading Analysis…</p>}><DesktopAnalysis key={`${serverUrl}:${browserToken}`} baseUrl={serverUrl} token={browserToken} active={mainTab === 'Analysis'} onClose={() => setMainTab('Workspace')} /></Suspense>}
+  </div>
 }
 
 function ScreenController(props: ScreenControllerProps) {

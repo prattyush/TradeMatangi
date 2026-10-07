@@ -27,12 +27,30 @@ export function createAnalysisApi(request: AnalysisRequest) {
   const sessions = new Map<string, { expires: number; value: Promise<SessionDetail> }>()
   const cycles = new Map<string, PerformanceCycle>()
   let generation = 0
+  let disposed = false
+  const pending = new Set<AbortController>()
+  const invalidate = () => { generation++; pending.forEach(controller => controller.abort()); pending.clear(); sessions.clear(); cycles.clear() }
+  const scopedRequest: AnalysisRequest = async <T>(path: string, method: 'GET' | 'POST' | 'DELETE', body?: unknown, signal?: AbortSignal): Promise<T> => {
+    if (disposed) throw new DOMException('Analysis account changed', 'AbortError')
+    const current = generation
+    const controller = new AbortController()
+    const abort = () => controller.abort()
+    signal?.throwIfAborted()
+    signal?.addEventListener('abort', abort, { once: true })
+    pending.add(controller)
+    try {
+      const value = await request<T>(path, method, body, controller.signal)
+      controller.signal.throwIfAborted()
+      if (disposed || current !== generation) throw new DOMException('Analysis request superseded', 'AbortError')
+      return value
+    } finally { pending.delete(controller); signal?.removeEventListener('abort', abort) }
+  }
   const params = (values: Record<string, unknown>) => new URLSearchParams(Object.entries(values).filter(([,v]) => v !== undefined && v !== null && v !== '').map(([k,v]) => [k, String(v)])).toString()
   type Result<K extends keyof AnalysisApi> = Awaited<ReturnType<AnalysisApi[K]>>
-  const call = <K extends keyof AnalysisApi>(_key: K, path: string, query: Record<string, unknown> = {}, method: 'GET' | 'POST' | 'DELETE' = 'GET', body?: unknown) => request<Result<K>>(`${path}?${params(query)}`, method, body)
+  const call = <K extends keyof AnalysisApi>(_key: K, path: string, query: Record<string, unknown> = {}, method: 'GET' | 'POST' | 'DELETE' = 'GET', body?: unknown) => scopedRequest<Result<K>>(`${path}?${params(query)}`, method, body)
   const remember = (cycle: PerformanceCycle) => { cycles.set(`${cycle.session_id}:${cycle.cycle_id}`, cycle); while (cycles.size > 200) cycles.delete(cycles.keys().next().value!) }
   const api: AnalysisApi = {
-    getAnalysisSessions: opts => { generation++; sessions.clear(); cycles.clear(); return call('getAnalysisSessions', 'sessions', {symbol: opts?.symbol, start_date: opts?.startDate, end_date: opts?.endDate, instrument_type: opts?.instrumentType, session_type: opts?.sessionType}) },
+    getAnalysisSessions: opts => { invalidate(); return call('getAnalysisSessions', 'sessions', {symbol: opts?.symbol, start_date: opts?.startDate, end_date: opts?.endDate, instrument_type: opts?.instrumentType, session_type: opts?.sessionType}) },
     getSessionDetail: id => {
       const cached = sessions.get(id)
       if (cached && cached.expires > Date.now()) return cached.value
@@ -43,11 +61,11 @@ export function createAnalysisApi(request: AnalysisRequest) {
     },
     getRoundTrips: id => call('getRoundTrips', 'round-trips', {session_id:id}),
     getLabels: id => call('getLabels','labels',{session_id:id}),
-    saveLabels: async labels => { const result = await call('saveLabels','labels',{},'POST',{labels}); sessions.clear(); cycles.clear(); return result },
-    getEntryTags: async () => (await request<{tags:string[]}>('entry-tags','GET')).tags,
-    getExitTags: async () => (await request<{tags:string[]}>('exit-tags','GET')).tags,
+    saveLabels: async labels => { const result = await call('saveLabels','labels',{},'POST',{labels}); invalidate(); return result },
+    getEntryTags: async () => (await scopedRequest<{tags:string[]}>('entry-tags','GET')).tags,
+    getExitTags: async () => (await scopedRequest<{tags:string[]}>('exit-tags','GET')).tags,
     getHistorical: (symbol,date,interval=3,days=2) => days === 0 ? Promise.resolve({symbol: symbol ?? 'NIFTY', dates:[], candles:[]}) : call('getHistorical','data/historical',{symbol,trading_date:date,interval_minutes:interval,historical_days:days}),
-    getPreSession: async (symbol,date,time,interval=3) => (await request<{candles: Result<'getPreSession'>}>(`data/pre-session?${params({symbol,trading_date:date,start_time:time,interval_minutes:interval})}`,'GET')).candles,
+    getPreSession: async (symbol,date,time,interval=3) => (await scopedRequest<{candles: Result<'getPreSession'>}>(`data/pre-session?${params({symbol,trading_date:date,start_time:time,interval_minutes:interval})}`,'GET')).candles,
     getOptionsHistorical: (symbol,date,strike,expiry,right,interval=3,days=2) => call('getOptionsHistorical','data/options-historical',{symbol,date,strike,expiry,right,interval_minutes:interval,historical_days:days}),
     getExpiry: (symbol,date) => call('getExpiry','data/expiry',{symbol,date}),
     getSnapshots: id => call('getSnapshots','snapshots',{session_id:id}),
@@ -59,9 +77,9 @@ export function createAnalysisApi(request: AnalysisRequest) {
     patternOhlcOptions: (symbol,date,strike,expiry,right,interval=3,days=2) => call('patternOhlcOptions','pattern/ohlc/options',{symbol,date,strike,expiry,right,interval_minutes:interval,days_back:days}),
   }
   const performance: AnalysisEnvironment['performance'] = {
-    getPerformance: (filters:PerformanceFilters,signal) => request<PerformanceReport>(`performance?${params(filters)}`,'GET',undefined,signal),
-    getPerformanceCycles: async (filters,offset=0,signal) => { const current=generation; const page=await request<{items:PerformanceCycle[];total:number;next_offset:number|null}>(`performance/cycles?${params({...filters,offset})}`,'GET',undefined,signal); if(current===generation) page.items.forEach(remember); return page },
-    getPerformanceDetail: async (cycle,enrich=false,signal) => { const current=generation; const detail=await request<PerformanceCycle>(`performance/cycles/${encodeURIComponent(cycle.cycle_id)}?${params({session_id:cycle.session_id,enrich})}`,'GET',undefined,signal); if(current===generation) remember(detail); return detail },
+    getPerformance: (filters:PerformanceFilters,signal) => scopedRequest<PerformanceReport>(`performance?${params(filters)}`,'GET',undefined,signal),
+    getPerformanceCycles: async (filters,offset=0,signal) => { const current=generation; const page=await scopedRequest<{items:PerformanceCycle[];total:number;next_offset:number|null}>(`performance/cycles?${params({...filters,offset})}`,'GET',undefined,signal); if(current===generation) page.items.forEach(remember); return page },
+    getPerformanceDetail: async (cycle,enrich=false,signal) => { const current=generation; const detail=await scopedRequest<PerformanceCycle>(`performance/cycles/${encodeURIComponent(cycle.cycle_id)}?${params({session_id:cycle.session_id,enrich})}`,'GET',undefined,signal); if(current===generation) remember(detail); return detail },
   }
-  return { api, performance, cycles, clear: () => { generation++; sessions.clear(); cycles.clear() } }
+  return { api, performance, cycles, clear: invalidate, dispose: () => { disposed = true; invalidate() } }
 }
