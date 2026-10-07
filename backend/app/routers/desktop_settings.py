@@ -85,3 +85,16 @@ async def add_whitelist(req: WhitelistAddRequest, user_id: str = Depends(require
 @router.delete("/admin/real-trading/whitelist/{email}", status_code=204)
 async def remove_whitelist(email: str, user_id: str = Depends(require_admin)):
     await admin.remove_real_trading_whitelist(email, user_id)
+
+
+from app.routers.users import HistorySharingRequest
+from app.routers import users
+from app.routers.desktop_analysis import get_analysis_user_id
+
+@router.get('/real-history-sharing')
+async def history_sharing(user_id: str = Depends(get_analysis_user_id)):
+    return await users.get_history_sharing(user_id)
+
+@router.put('/real-history-sharing')
+async def save_history_sharing(req: HistorySharingRequest, user_id: str = Depends(get_analysis_user_id)):
+    return await users.save_history_sharing(req, user_id)

@@ -7,7 +7,7 @@ from app.services import order_service
 logger = logging.getLogger(__name__)
 
 
-async def sync_order_edit_async(session, order: Order, new_order_type: OrderType, *, reprice: bool = False) -> None:
+async def sync_order_edit_async(session, order: Order, new_order_type: OrderType, *, reprice: bool = False, split_operation_id: str | None = None) -> None:
     """Run broker I/O off-loop; keep identity and callback changes on the loop."""
     if session.session_type != "real":
         return
@@ -19,6 +19,10 @@ async def sync_order_edit_async(session, order: Order, new_order_type: OrderType
     from app.services.real_trading_day import require_entry_allowed
     require_entry_allowed(session, order.side, max(0, order.quantity - order.broker_filled_quantity), order.right, order.strike, order.expiry)
     previous = order_service.get_order(session.session_id, order.order_id)
+    from app.services.order_split import ACTIVE
+    split_job = (previous.split_operation if previous else order.split_operation) or {}
+    if split_job.get('state') in ACTIVE and split_job.get('operation_id') != split_operation_id:
+        raise KotakError('Order split is unconfirmed; refresh broker orders before editing')
     if reprice or previous is None or previous.order_type != order.order_type or previous.trigger_price != order.trigger_price:
         await asyncio.to_thread(reprice_trigger, order)
     broker = get_service()
@@ -130,6 +134,9 @@ def sync_order_edit(session, order: Order, new_order_type: OrderType, *, reprice
     from app.services.simulation import _register_kotak_sl_for_order
     from app.services.execution_price_service import reprice_trigger
     previous = order_service.get_order(session.session_id, order.order_id)
+    from app.services.order_split import ACTIVE
+    if ((previous.split_operation if previous else order.split_operation) or {}).get('state') in ACTIVE:
+        raise KotakError('Order split is unconfirmed; refresh broker orders before editing')
     if reprice or previous is None or previous.order_type != order.order_type or previous.trigger_price != order.trigger_price:
         reprice_trigger(order)
     try:

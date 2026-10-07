@@ -101,6 +101,9 @@ async def validate_stop(session, candidate, operation):
 
 async def start(session, order, new_type, price):
     from app.services.kotak_service import get_service, KotakError
+    from app.services.order_split import ACTIVE as SPLIT_ACTIVE
+    if (order.split_operation or {}).get('state') in SPLIT_ACTIVE:
+        raise KotakError('Order split is unconfirmed; refresh broker orders before converting')
     if busy(order) and order.broker_conversion.get('state') != 'queued':
         raise KotakError('Conversion is unconfirmed; refresh broker state before changing this order')
     if getattr(session, 'broker_refresh_events', None) is not None:
@@ -471,6 +474,9 @@ def stop(session):
 def enqueue(session, order, new_type, price):
     """Synchronous strategy entrypoint; the async worker still owns broker confirmation."""
     from app.services.kotak_service import KotakError
+    from app.services.order_split import ACTIVE as SPLIT_ACTIVE
+    if (order.split_operation or {}).get('state') in SPLIT_ACTIVE:
+        raise KotakError('Order split is unconfirmed; refresh broker orders before converting')
     if busy(order):
         raise KotakError('Conversion is unconfirmed; refresh broker state first')
     order.broker_conversion = {'state': 'queued', 'requested_type': new_type.value, 'updated_at': time.time()}

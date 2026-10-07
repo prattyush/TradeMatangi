@@ -5,6 +5,7 @@ existing simulation, order, strategy, wallet, and trade services as the source
 of truth for Stepwise and desktop Replay trading.
 """
 from __future__ import annotations
+from app.models.schemas import SplitOrderRequest
 
 import asyncio
 import json
@@ -1711,3 +1712,12 @@ async def desktop_block(session_id: str, user_id: str = Depends(get_desktop_user
     from app.services.guardrail_service import trigger_block
     reason, until_bar = trigger_block(session)
     return {"reason": reason, "until_bar": until_bar, "snapshot": _snapshot(session, user_id)}
+
+
+@router.post("/{session_id}/orders/{order_id}/split", response_model=list[Order])
+async def split_order(session_id: str, order_id: str,
+                      req: SplitOrderRequest,
+                      user_id: str = Depends(get_desktop_user_id)):
+    _require_session(session_id, user_id)
+    from app.routers.orders import split_order as web_split_order
+    return await web_split_order(order_id, req, session_id=session_id, user_id=user_id)

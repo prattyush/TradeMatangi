@@ -26,11 +26,13 @@ def filters(
     exit_tag: str | None = None,
     expected_strategy: str | None = None,
     actual_strategy: str | None = None,
+    include_shared: bool = False,
     data_quality: Literal["known", "executions"] | None = None,
 ):
     if start_date and end_date and start_date > end_date:
         raise HTTPException(422, "Start date must not follow end date")
     return dict(
+        include_shared=include_shared,
         start_date=start_date.isoformat() if start_date else None,
         end_date=end_date.isoformat() if end_date else None,
         symbol=symbol,
@@ -102,7 +104,8 @@ async def cycle_detail(
             .get_item(Key={"session_id": session_id}, ConsistentRead=True)
             .get("Item")
         )
-        if not session or session.get("user_id") != user_id:
+        from app.services.analysis_sharing import can_read
+        if not can_read(session,user_id):
             return None
         return next(
             (c for c in svc.load_session_cycles(session) if c["cycle_id"] == cycle_id),
@@ -117,7 +120,7 @@ async def cycle_detail(
             from app.services.excursion_service import enrich_cycle
 
             item = await asyncio.to_thread(enrich_cycle, item)
-        return item
+        return {**item,"shared":item.get("user_id") != user_id}
     except HTTPException:
         raise
     except Exception as exc:

@@ -1,3 +1,4 @@
+import { captureObservation } from '../../../shared/analysis/snapshotCapture'
 import { useState, useCallback, useRef, useEffect } from 'react'
 import api, { SnapshotPayload, SnapshotPosition } from '../services/api'
 import { SimulationState } from './useSimulation'
@@ -178,6 +179,9 @@ export function useSnapshot(simRef: React.RefObject<SimulationState>) {
           current_price_pe: pePrice,
           bar_time: barTime,
           bar_ohlc: barOhlc,
+          bar_observation_resolution_seconds: sim.latestEquityTick?.interval_seconds ?? null,
+          option_observation_ce: captureObservation(sim.latestCETick),
+          option_observation_pe: captureObservation(sim.latestPETick),
           position: eqPos,
           position_ce: cePos ?? { side: 'FLAT', quantity: 0, avg_entry_price: 0, pnl: 0, pnl_pct: 0 },
           position_pe: pePos ?? { side: 'FLAT', quantity: 0, avg_entry_price: 0, pnl: 0, pnl_pct: 0 },
@@ -197,6 +201,9 @@ export function useSnapshot(simRef: React.RefObject<SimulationState>) {
           quantity_mode: qtyMode,
           filled_trades: (sim.trades || []).map(t => ({
             trade_id: t.trade_id,
+            expiry: t.expiry,
+            kotak_order_id: t.kotak_order_id,
+            commission: t.commission,
             side: t.side,
             price: t.price,
             timestamp: t.timestamp,

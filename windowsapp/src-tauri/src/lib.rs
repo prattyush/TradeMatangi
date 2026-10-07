@@ -1094,6 +1094,49 @@ async fn desktop_settings_request(
     response.json().await.map_err(|e| e.to_string())
 }
 
+fn valid_analysis_path(path: &str, method: &str) -> bool {
+    let route = path.split('?').next().unwrap_or("");
+    if route.is_empty() || route.starts_with('/') || route.contains('%') || route.contains('#') || route.contains('\\') || route.split('/').any(|s| s == "." || s == "..") { return false; }
+    if method == "POST" { return route == "labels"; }
+    if method == "DELETE" { return route == "snapshots"; }
+    if method != "GET" { return false; }
+    let valid_id = |id: &str| !id.is_empty() && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
+    match route {
+        "sessions" | "round-trips" | "labels" | "entry-tags" | "exit-tags" | "snapshots" | "performance" | "performance/cycles" |
+        "data/historical" | "data/pre-session" | "data/options-historical" | "data/expiry" |
+        "pattern/strategies" | "pattern/categories" | "pattern/chart/by-date" | "pattern/ohlc/equity" | "pattern/ohlc/options" => true,
+        _ => route.strip_prefix("sessions/").or_else(|| route.strip_prefix("performance/cycles/")).map(valid_id).unwrap_or(false),
+    }
+}
+
+#[tauri::command]
+async fn desktop_analysis_request(
+    base_url: String,
+    path: String,
+    method: String,
+    body: serde_json::Value,
+    host: tauri::State<'_, HostState>,
+) -> Result<serde_json::Value, String> {
+    if !valid_analysis_path(&path, &method) { return Err("Invalid analysis request".into()); }
+    let token = host.access_token(&base_url).await?;
+    let client = reqwest::Client::new();
+    let url = format!("{}/api/desktop/v1/analysis/{}", base_url.trim_end_matches('/'), path);
+    let request = match method.as_str() {
+        "GET" => client.get(url),
+        "POST" => client.post(url).json(&body),
+        "DELETE" => client.delete(url),
+        _ => return Err("Unsupported analysis request".into()),
+    };
+    let response = request.bearer_auth(token).send().await.map_err(|e| e.to_string())?;
+    let status = response.status();
+    if !status.is_success() {
+        let detail = response.text().await.unwrap_or_default();
+        return Err(format!("Analysis request failed ({status}): {detail}"));
+    }
+    if status == reqwest::StatusCode::NO_CONTENT { return Ok(serde_json::Value::Null); }
+    response.json().await.map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 async fn desktop_drawing_request(
     window: tauri::WebviewWindow,
@@ -2045,6 +2088,7 @@ pub fn run() {
             close_screen_window,
             desktop_drawing_request,
             desktop_settings_request,
+            desktop_analysis_request,
             desktop_logout,
             queue_offline_mutation,
             pending_offline_mutations,
@@ -2284,7 +2328,7 @@ mod screen_window_tests {
         assert!(!trading_event_wakes_renderer("paper:one:session", &tick));
         assert!(!trading_event_wakes_renderer("replay:one:run", &fill));
         assert!(trading_event_wakes_renderer("paper:one:session", &fill));
-        for event in ["order_cancelled", "order_placed", "order_converted", "strategy_completed", "session_ended", "bar_paused"] {
+        for event in ["order_cancelled", "order_placed", "order_updated", "order_converted", "strategy_completed", "session_ended", "bar_paused"] {
             assert!(trading_event_wakes_renderer("paper:one:session", &serde_json::json!({"type": event})));
         }
         assert!(trading_event_wakes_renderer("paper:one:session", &serde_json::json!({"session": {"session_id": "session"}})));

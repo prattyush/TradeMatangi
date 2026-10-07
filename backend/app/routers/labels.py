@@ -5,6 +5,7 @@ Prefix: /api/analysis  (same prefix as existing analysis router)
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -21,6 +22,7 @@ router = APIRouter(prefix="/api/analysis", tags=["trade_labels"])
 # ── Response models ────────────────────────────────────────────────────────────
 
 class RoundTripTradeOut(BaseModel):
+    execution_id: str | None = None
     expiry: str | None = None
     trade_id: str
     side: str
@@ -109,9 +111,10 @@ class TagListResponse(BaseModel):
     tags: list[str]
 
 
-def _owned(session_id: str, user_id: str):
+def _owned(session_id: str, user_id: str, read_only: bool = False):
     session = svc._load_session(session_id)
-    if not session or session.get('user_id') != user_id:
+    from app.services.analysis_sharing import can_read
+    if not session or (not can_read(session,user_id) if read_only else session.get('user_id') != user_id):
         raise HTTPException(status_code=404, detail='Session not found')
 
 
@@ -124,8 +127,8 @@ async def get_round_trips(
 ):
     """Compute FIFO round-trips for a session."""
     try:
-        _owned(session_id, user_id)
-        trips = svc.compute_round_trips_for_session(session_id)
+        await asyncio.to_thread(_owned, session_id, user_id, read_only=True)
+        trips = await asyncio.to_thread(svc.compute_round_trips_for_session, session_id)
         return trips
     except HTTPException:
         raise
@@ -141,8 +144,8 @@ async def get_labels(
 ):
     """Return saved labels for a session."""
     try:
-        _owned(session_id, user_id)
-        return svc.get_labels_for_session(session_id)
+        await asyncio.to_thread(_owned, session_id, user_id, read_only=True)
+        return await asyncio.to_thread(svc.get_labels_for_session, session_id)
     except HTTPException:
         raise
     except Exception as exc:
@@ -208,7 +211,7 @@ async def get_entry_tags(
 ):
     """Distinct entry tag values for user."""
     try:
-        tags = svc.list_entry_tags(user_id)
+        tags = await asyncio.to_thread(svc.list_entry_tags, user_id)
         return {"tags": tags}
     except HTTPException:
         raise
@@ -223,7 +226,7 @@ async def get_exit_tags(
 ):
     """Distinct exit tag values for user."""
     try:
-        tags = svc.list_exit_tags(user_id)
+        tags = await asyncio.to_thread(svc.list_exit_tags, user_id)
         return {"tags": tags}
     except HTTPException:
         raise
