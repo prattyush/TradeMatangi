@@ -26,6 +26,9 @@ export interface DesktopOrder {
   filled_at?: number | null; filled_price?: number | null
   is_stoploss: boolean; is_autostop?: boolean; right?: 'CE' | 'PE' | null; strike?: number | null; expiry?: string | null
   source?: string | null
+  broker_filled_quantity?: number
+  broker_conversion?: { state: string } | null
+  split_operation?: { operation_id: string; state: string; message?: string } | null
   quote_price?: number | null; quote_timestamp?: number | null; quote_source?: string | null
 }
 

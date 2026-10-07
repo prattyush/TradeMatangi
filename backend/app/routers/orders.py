@@ -5,7 +5,7 @@ import logging
 from fastapi import APIRouter, HTTPException, Query, Depends
 from pydantic import BaseModel, Field
 from app.dependencies import get_request_user_id
-from app.models.schemas import Order, OrderType, TradeSide, PlaceOrderRequest, UpdateOrderRequest, BulkUpdateSLRequest, ConvertOrderRequest, BulkConvertRequest
+from app.models.schemas import Order, OrderType, TradeSide, PlaceOrderRequest, UpdateOrderRequest, SplitOrderRequest, BulkUpdateSLRequest, ConvertOrderRequest, BulkConvertRequest
 from app.services import order_service, simulation as sim_svc, trading as trading_service
 from app.services.wallet_service import InsufficientFundsError, get_balance, get_ledger_balance
 from app.config import LOT_SIZES, EQUITY_MIS_MARGIN_RATE
@@ -120,6 +120,9 @@ def _session_edit_lock(session):
 
 
 def _require_confirmed_recovery(order):
+    from app.services.order_split import ACTIVE
+    if (order.split_operation or {}).get('state') in ACTIVE:
+        raise HTTPException(409, detail="Split is unconfirmed; refresh broker orders before changing this order")
     from app.services.broker_conversion import busy
     if busy(order):
         raise HTTPException(status_code=409, detail="Conversion is unconfirmed; refresh broker state before changing this order")
@@ -783,3 +786,22 @@ async def _update_order_locked(session, order_id, req, session_id):
     order.execution_role = candidate.execution_role
     await persist_order_async(order)
     return order
+
+
+@router.post("/{order_id}/split", response_model=list[Order])
+async def split_order(order_id: str, req: SplitOrderRequest, session_id: str = Query(...),
+                      user_id: str = Depends(get_request_user_id)):
+    session = sim_svc.get_session(session_id)
+    if session is None or session.user_id != user_id:
+        raise HTTPException(404, detail="Session not found")
+    if session.state == sim_svc.SimulationState.ENDED:
+        raise HTTPException(409, detail="Session ended; pending orders cannot be split")
+    async with _session_edit_lock(session):
+        order = order_service.get_order(session_id, order_id)
+        if order is None or order.user_id != user_id:
+            raise HTTPException(404, detail="Order not found")
+        # A confirmed operation is safe to retry even if a fill has since arrived.
+        if (order.split_operation or {}).get('operation_id') != req.operation_id:
+            _require_confirmed_recovery(order)
+        from app.services.order_split import split
+        return await split(session, order, req.operation_id)

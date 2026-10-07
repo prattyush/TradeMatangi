@@ -250,6 +250,7 @@ class Order(BaseModel):
     recovery_parent_order_id: str | None = None
     recovery_state: str | None = None
     broker_conversion: dict | None = None
+    split_operation: dict | None = None
     recovery_attempt: int = 0
     entry_sl_price: float | None = None  # auto-stoploss price set at entry time
     group_id: str | None = None          # links entry order with its auto-placed SL order
@@ -268,6 +269,10 @@ class Order(BaseModel):
         if isinstance(value, dict) and value.get('updated_at') is not None:
             return {**value, 'updated_at': float(value['updated_at'])}
         return value
+
+
+class SplitOrderRequest(BaseModel):
+    operation_id: str = Field(min_length=1, max_length=100, pattern=r"^[a-zA-Z0-9_-]+$")
 
 
 class PlaceOrderRequest(BaseModel):

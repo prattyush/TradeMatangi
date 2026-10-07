@@ -1,5 +1,5 @@
 import { useFlashError } from '../hooks/useFlashError'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { Order, Position, StrategyResponse } from '../services/api'
 import { SessionState } from '../hooks/useSimulation'
 import { FundsRatios } from './SettingsModal'
@@ -25,6 +25,7 @@ interface Props {
     quantity: number | null,
     opts: { market_order?: boolean; execute_immediately?: boolean; is_stoploss?: boolean; funds_ratio_pct?: number; risk_pct?: number; risk_ratio_pct?: number; target_deviation_pct?: number; entry_sl_price?: number; group_id?: string },
   ) => Promise<void>
+  onSplitOrder?: (orderId: string, operationId: string) => Promise<void>
   onCancelOrder: (orderId: string) => Promise<void>
   onConvertOrder?: (orderId: string, newOrderType: 'TARGET' | 'LIMIT' | 'STOPLOSS', price?: number) => Promise<void>
   onUpdateOrder: (orderId: string, triggerPrice?: number, limitPrice?: number, quantity?: number) => Promise<void>
@@ -91,7 +92,7 @@ function isClosingOrderForPosition(order: Order, position: Position, activeRight
 export default function OrderPanel({
   sessionState, currentPrice, openOrders, position,
   sizingMode, fundsRatios, riskRatios, defaultSlPct, sessionCapital, sessionType, targetDeviationPct,
-  onPlaceOrder, onCancelOrder, onConvertOrder, onUpdateOrder,
+  onPlaceOrder, onCancelOrder, onSplitOrder, onConvertOrder, onUpdateOrder,
   onRequestPricePick, injectedEditPrice,
   onRequestTpPick,
   injectedTpPrice,
@@ -125,6 +126,25 @@ export default function OrderPanel({
   const [quantity, setQuantity] = useState(1)
   const [ratio, setRatio] = useState<RatioKey>('l')
   const [slQty, setSlQty] = useState('1')
+  const [splittingId, setSplittingId] = useState<string | null>(null)
+  const splitRequests = useRef<Record<string, string>>({})
+  const split = async (order: Order) => {
+    if (!onSplitOrder || splittingId) return
+    setSplittingId(order.order_id)
+    setEditError(null)
+    const operationId = splitRequests.current[order.order_id] ?? crypto.randomUUID()
+    splitRequests.current[order.order_id] = operationId
+    try {
+      await onSplitOrder(order.order_id, operationId)
+      delete splitRequests.current[order.order_id]
+      onSnapshotEvent?.({ type: 'order_split', description: `Split ${order.side} ${order.order_type} × ${order.quantity}`, details: {
+        parent_order_id: order.order_id, operation_id: operationId, quantity: order.quantity,
+        trigger_price: order.trigger_price, limit_price: order.limit_price, right: order.right, strike: order.strike, expiry: order.expiry,
+      } })
+      setEditingOrderId(null)
+    } catch (error) { setEditError(String(error)) }
+    finally { setSplittingId(null) }
+  }
   const slQtyStep = instrumentType === 'options' ? Math.max(1, lotSize || 1) : 1
   const slQtyMin = instrumentType === 'options' ? slQtyStep : 1
   const parsedSlQty = slQty.trim() === '' ? NaN : Number(slQty)
@@ -1568,6 +1588,9 @@ export default function OrderPanel({
                     overflow: 'hidden',
                   }}
                 >
+                  {order.split_operation && ['prepared', 'modifying', 'submitting', 'unknown', 'failed'].includes(order.split_operation.state) && <div role="status" style={{ padding: '4px 8px', color: '#d29922', fontSize: 10 }}>
+                    {order.split_operation.message ?? 'Order split pending broker confirmation; refresh broker orders'}
+                  </div>}
                   {order.broker_conversion && order.broker_conversion.state !== 'confirmed' && (
                     <div role="status" style={{ padding: '4px 8px', color: '#d29922', fontSize: 10 }}>
                       {conversionPending ? `Conversion to ${order.broker_conversion.requested_type ?? 'requested type'} pending Kotak confirmation` : 'Conversion failed'}
@@ -1581,7 +1604,7 @@ export default function OrderPanel({
                       padding: '4px 8px', cursor: isActive ? 'pointer' : 'default',
                       gap: 4,
                     }}
-                    onClick={() => isActive && !isEditing && !['queued', 'modifying', 'cancelling', 'replacing', 'unknown'].includes(order.broker_conversion?.state ?? '') && startEdit(order)}
+                    onClick={() => isActive && !isEditing && !splittingId && !['prepared', 'modifying', 'submitting', 'unknown'].includes(order.split_operation?.state ?? '') && !['queued', 'modifying', 'cancelling', 'replacing', 'unknown'].includes(order.broker_conversion?.state ?? '') && startEdit(order)}
                     title={isActive ? 'Click to edit price' : undefined}
                   >
                     <span style={{
@@ -1601,6 +1624,12 @@ export default function OrderPanel({
                     {isActive && !isEditing && (
                       <span style={{ color: '#484f58', fontSize: 10, marginRight: 2 }} title="Edit">✎</span>
                     )}
+                    {onSplitOrder && <button
+                      aria-label="Split order" title="Split into two orders in whole lots"
+                      disabled={!isActive || updating || !!splittingId || conversionPending || ['prepared', 'modifying', 'submitting', 'unknown'].includes(order.split_operation?.state ?? '') || (order.quantity - (order.broker_filled_quantity ?? 0)) < 2 * (order.right ? Math.max(1, lotSize) : 1)}
+                      onClick={e => { e.stopPropagation(); void split(order) }}
+                      style={{ background: 'none', border: 'none', color: '#8b949e', cursor: 'pointer', fontSize: 14, padding: '0 3px' }}
+                    ><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true"><path d="M8 14V9L3 4M8 9l5-5M1 4h4V0M11 0v4h4" /></svg></button>}
                     <button
                       onClick={e => { e.stopPropagation(); onCancelOrder(order.order_id) }}
                       style={{
@@ -1697,24 +1726,28 @@ export default function OrderPanel({
                       <div style={{ display: 'flex', gap: 4 }}>
                         <button
                           onClick={() => saveEdit(order)}
-                          disabled={updating}
+                          aria-label={pendingConversion ? `Save as ${pendingConversion}` : "Save order edits"}
+                          title={pendingConversion ? `Save as ${pendingConversion}` : "Save order edits"}
+                          disabled={updating || !!splittingId}
                           style={{
-                            flex: 1, padding: '4px 0', background: '#1f6feb',
+                            width: 28, padding: '4px 0', background: '#1f6feb',
                             border: 'none', borderRadius: 4, color: '#fff',
                             cursor: updating ? 'not-allowed' : 'pointer', fontSize: 11, fontWeight: 600,
                           }}
                         >
-                          {updating ? '…' : pendingConversion ? `Save as ${pendingConversion}` : 'Save'}
+                          {updating ? '…' : '✓'}
                         </button>
                         <button
                           onClick={cancelEdit}
+                          aria-label="Cancel order edits" title="Cancel order edits"
+                          disabled={updating || !!splittingId}
                           style={{
-                            flex: 1, padding: '4px 0', background: '#21262d',
+                            width: 28, padding: '4px 0', background: '#21262d',
                             border: '1px solid #30363d', borderRadius: 4, color: '#8b949e',
                             cursor: 'pointer', fontSize: 11,
                           }}
                         >
-                          Cancel
+                          ✕
                         </button>
                       </div>
                     </div>

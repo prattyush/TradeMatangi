@@ -991,3 +991,63 @@ Delivery: [draft PR #610](https://github.com/prattyush/TradeMatangi/pull/610),
 `fa1957e`; the local `wip/phase20-desktop-analysis` checkout is retained with the
 completed code. PR review/merge, packaged Windows acceptance, authorized existing
 live acceptance and manual main deployment remain pending.
+
+### Follow-up in PR #610: website Replay and open-order splitting (2026-10-07)
+
+The delivery branch remains `feature/desktop-analysis-history-sharing`, targeting
+`dev` in the same draft PR. It contains the completed desktop Analysis, Stats,
+snapshots and real-history sharing work above, plus these follow-up changes.
+
+**Website NIFTY options Replay.** The notification API proxy wrapped the
+synchronous `getSSEUrl()` helper in an async function. EventSource therefore
+received a Promise instead of the stream URL, which explains the stationary
+clock/charts despite active Pause/Stop controls. The facade now preserves the
+synchronous URL, including user identity and replay cursor. A separate connection
+fix always subscribes to the selected active member when its group refresh is
+empty/stale/unavailable; attaching clears a different group's stale state and
+late start responses cannot overwrite a newer selection. Dual options replay
+loads underlying/CE/PE data, including strike reloads, in worker threads rather
+than blocking the application's SSE event loop.
+
+**Split pending orders on website and desktop.** A compact fork icon splits the
+remaining quantity as evenly as possible in complete lots, retaining the larger
+half on the original order. With a lot size of 20, 60 becomes 40 + 20; one lot
+cannot be split. Entries, targets, limit exits and stoploss orders retain their
+prices, exact contract, stop attachment, execution provenance and exit allocation.
+Equities use whole shares. Existing wallet reservations are redistributed, with
+no second debit; cancellation refunds only each sibling's share. Related order
+records are committed atomically, including the desktop Paper ownership fence.
+Stable operation IDs prevent duplicate submissions on request retries, including
+retries after a later split. Both edit panels now use accessible, titled check
+and cross icons for Save and Cancel.
+
+For broker-backed intraday orders, the original quantity reduction must be
+confirmed in a broker report before the child is submitted. Fills received during
+acknowledgement remain authoritative. Durable uncertainty barriers block edits,
+conversions and duplicate submission; a complete account refresh can adopt a
+child by its persisted unique tag without importing a duplicate order. In-flight
+splits and account refreshes cannot replace each other's order state. Failure
+messages explicitly identify uncertain or incomplete splits; reconciliation does
+not submit another order. Trading streams carry full sibling updates, including
+removal of a retained order that filled during confirmation. Website snapshot
+recording receives the successful split action.
+
+Validation for this follow-up:
+
+- Full backend: **1,794 passed**, with only the same two documented baseline
+  fixture failures (`test_options_api.py`, `test_tab_restore.py`). Final focused
+  split/replay/broker-confirmation checks: **58 passed**, including local DynamoDB
+  atomic commit/conflict, Paper lease fencing, wallet refunds, partial/full fill
+  races, lost acknowledgements, refresh adoption and retry idempotency.
+- Desktop/client Vitest: **176 passed**, 29 files; website Node checks: **41 passed**.
+  The new facade tests require a synchronous SSE URL while preserving asynchronous
+  request behavior and selected-session/group subscription rules.
+- Website and desktop TypeScript checks and production builds passed. Native
+  Rust offline tests on Linux: **16 passed**.
+- `scripts/replay-order-split-check.mjs` passed with actual website replay hooks,
+  the real API facade and Lightweight Charts in StrictMode: advancing NIFTY
+  underlying/CE/PE prices and candles, Pause/Resume/Stop, empty/stale/wrong/missing
+  groups, both real order-panel components, 60 → 40/20, minimum-lot disabling,
+  Save/Cancel icons and retained-price/quantity editing. Feeds/broker responses
+  are synthetic; no live broker orders were submitted. Screenshot/JSON/build/test
+  artifacts remain under `.cache/desktop-analysis-validation/`.

@@ -2328,7 +2328,7 @@ mod screen_window_tests {
         assert!(!trading_event_wakes_renderer("paper:one:session", &tick));
         assert!(!trading_event_wakes_renderer("replay:one:run", &fill));
         assert!(trading_event_wakes_renderer("paper:one:session", &fill));
-        for event in ["order_cancelled", "order_placed", "order_converted", "strategy_completed", "session_ended", "bar_paused"] {
+        for event in ["order_cancelled", "order_placed", "order_updated", "order_converted", "strategy_completed", "session_ended", "bar_paused"] {
             assert!(trading_event_wakes_renderer("paper:one:session", &serde_json::json!({"type": event})));
         }
         assert!(trading_event_wakes_renderer("paper:one:session", &serde_json::json!({"session": {"session_id": "session"}})));

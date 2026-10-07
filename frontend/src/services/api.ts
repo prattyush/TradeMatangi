@@ -106,6 +106,7 @@ export interface SymbolInfo {
 
 export interface ConversionResult { order_id: string; state: string; message?: string | null }
 export interface Order {
+  split_operation?: { operation_id: string; state: string; message?: string } | null
   broker_conversion?: { operation_id?: string; updated_at?: number; state: string; requested_type?: string; message?: string | null } | null
   order_id: string
   session_id: string
@@ -1201,6 +1202,18 @@ const api = {
     })
   },
 
+  async splitOrder(sessionId: string, orderId: string, operationId: string): Promise<Order[]> {
+    const res = await fetch(`${BACKEND_URL}/api/orders/${orderId}/split?session_id=${sessionId}`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', ..._authHeaders() },
+      body: JSON.stringify({ operation_id: operationId }),
+    })
+    if (!res.ok) {
+      const error = await res.json().catch(() => ({}))
+      throw new Error(typeof error.detail === 'string' ? error.detail : `Split failed: ${res.status}`)
+    }
+    return res.json()
+  },
+
   async convertOrder(sessionId: string, orderId: string, newOrderType: 'TARGET' | 'LIMIT' | 'STOPLOSS', price?: number): Promise<Order> {
     const body: Record<string, unknown> = { session_id: sessionId, new_order_type: newOrderType }
     if (price !== undefined) body.price = price
@@ -2209,6 +2222,9 @@ const notifiedApi: typeof api = new Proxy(api, {
   get(target, property, receiver) {
     const value = Reflect.get(target, property, receiver)
     if (typeof value !== 'function') return value
+    // URL construction is synchronous. Turning this helper into a Promise
+    // makes EventSource request '[object Promise]' instead of the replay stream.
+    if (property === 'getSSEUrl') return value.bind(target)
     return async (...args: unknown[]) => {
       const scope = getNotificationScope(); const requestContext = getNotificationContext()
       try { return await value.apply(target, args) }
