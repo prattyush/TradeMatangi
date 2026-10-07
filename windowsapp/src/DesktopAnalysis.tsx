@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { AnalysisProvider, type AnalysisEnvironment } from '../../shared/analysis/environment'
 import DesktopAnalysisSessions from './DesktopAnalysisSessions'
@@ -11,7 +11,7 @@ import { analysisRequest, createAnalysisApi, type AnalysisRequest } from './anal
 import ExecutionInspector from './ExecutionInspector'
 import './desktopAnalysis.css'
 
-export default function DesktopAnalysis({ baseUrl, token, active, onClose, onUnauthorized, historicalDays=2 }: { historicalDays?:number; onUnauthorized?:()=>void; baseUrl: string; token: string; active: boolean; onClose: () => void }) {
+export default function DesktopAnalysis({ viewSelector, baseUrl, token, active, onClose, onUnauthorized, historicalDays=2 }: { viewSelector?: ReactNode; historicalDays?:number; onUnauthorized?:()=>void; baseUrl: string; token: string; active: boolean; onClose: () => void }) {
   const adapter = useMemo(() => {
     const native: AnalysisRequest | undefined = '__TAURI_INTERNALS__' in window
       ? <T,>(path: string, method: string, body?: unknown) => invoke<T>('desktop_analysis_request', { baseUrl, path, method, body: body ?? {} }) : undefined
@@ -62,7 +62,7 @@ export default function DesktopAnalysis({ baseUrl, token, active, onClose, onUna
     onSelectionContextChange: () => setTrade(null),
   }), [adapter, active, dataRevision,historicalDays])
   return <AnalysisProvider value={environment}><div className="desktop-analysis" hidden={!active}>
-    <nav className="analysis-navigation" aria-label="Analysis views"><button aria-pressed={view === 'Sessions'} onClick={() => setView('Sessions')}>Sessions</button><button aria-pressed={view === 'Stats'} onClick={() => { setStatsVisited(true); setView('Stats') }}>Stats</button><button onClick={onClose}>Return to Workspace</button></nav>
+    <nav className="analysis-navigation" aria-label="Analysis views">{viewSelector}<button aria-pressed={view === 'Sessions'} onClick={() => setView('Sessions')}>Sessions</button><button aria-pressed={view === 'Stats'} onClick={() => { setStatsVisited(true); setView('Stats') }}>Stats</button>{!viewSelector && <button onClick={onClose}>Return to Workspace</button>}</nav>
     {navigationMessage && <p className="analysis-navigation-message" role="status">{navigationMessage}</p>}
     <div className="analysis-sessions" hidden={view !== 'Sessions'}><AnalysisProvider value={{...environment, active: active && view === 'Sessions'}}><DesktopAnalysisSessions /></AnalysisProvider></div>
     <div className="analysis-stats" hidden={view !== 'Stats'}>{statsVisited && <AnalysisProvider value={{...environment, active: active && view === 'Stats'}}><PerformanceDashboard onClose={() => setView('Sessions')} defaultSymbol="" defaultStartDate="" defaultEndDate="" defaultInstrumentType="" defaultSessionType="" selectedCycle={cycle} /></AnalysisProvider>}</div>

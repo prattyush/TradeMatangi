@@ -1093,3 +1093,16 @@ Validation:
 
 These are clean desktop frontend and browser checks; the packaged Windows
 installer is validated by the existing Windows CI workflow, not by Linux tests.
+
+### Compact desktop view switcher (2026-10-07)
+
+Workspace and Analysis now share a compact, keyboard-accessible dropdown in
+their existing toolbar. The separate 36-pixel navigation row is removed, giving
+both views that height back. Analysis overlays/maximized charts now align below
+its own 42-pixel toolbar. Popped-out screens keep their existing Workspace-only
+controls, and active controllers remain mounted when changing views.
+
+Validation: desktop TypeScript and production build passed. Built-app browser
+acceptance verifies the toolbar starts at y=0 and the separate row is absent;
+Analysis workflow and Paper/Replay/Stepwise continuity checks passed with dropdown
+navigation, including chart retention, labels, snapshots, comparison and Stats.
