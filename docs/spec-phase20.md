@@ -575,3 +575,7 @@ Final full backend validation: **1,728 passed / 2 existing baseline failures**
 (stale options-expiry assertion and missing group_id in tab-restore fixture).
 Development completed on dev; delivery is through a dedicated fix branch targeting
 dev. Review/merge and manual backend deployment remain separate steps.
+
+Delivery: [PR #607](https://github.com/prattyush/TradeMatangi/pull/607),
+`fix/analytics-numeric-metadata` → `dev`, implementation commit `bcf25a7`.
+Review/merge and manual backend deployment remain pending.
