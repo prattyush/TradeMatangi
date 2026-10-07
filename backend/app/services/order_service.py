@@ -176,86 +176,94 @@ def _real_opening_quantity(order) -> int:
     return max(0, order.quantity - closing)
 
 
+def _order_db_item(order: Order) -> dict:
+    item: dict = {
+        "session_id": order.session_id,
+        "order_id": order.order_id,
+        "user_id": order.user_id,
+        "symbol": order.symbol,
+        "side": order.side.value,
+        "order_type": order.order_type.value,
+        "quantity": order.quantity,
+        "reservation_revision": order.reservation_revision,
+        "trigger_price": Decimal(str(order.trigger_price)),
+        "limit_price": Decimal(str(order.limit_price)),
+        "status": order.status.value,
+        "created_at": order.created_at,
+        "is_stoploss": order.is_stoploss,
+        "is_autostop": order.is_autostop,
+    }
+    from app.services import simulation
+    session = simulation.get_session(order.session_id)
+    if session and session.session_type == "real":
+        from app.services.real_broker_state import active_partition
+        item["session_id"] = active_partition(order.session_id) or order.session_id
+    for name in ("execution_role", "broker_product", "broker_exchange", "broker_filled_quantity", "broker_filled_value"):
+        value = getattr(order, name)
+        if value is not None:
+            item[name] = Decimal(str(value)) if isinstance(value, float) else value
+    for name in ("cancellation_status", "cancellation_reason", "cancelled_at", "cancel_request_id", "cancel_initiator", "cancel_purpose", "recovery_operation_id", "recovery_parent_order_id", "recovery_state", "recovery_attempt"):
+        value = getattr(order, name, None)
+        if value is not None:
+            item[name] = Decimal(str(value)) if isinstance(value, float) else value
+    if order.analytics is not None:
+        from app.services.real_broker_state import encode
+        item["analytics"] = encode(order.analytics)
+    if order.split_operation is not None:
+        from app.services.real_broker_state import encode
+        item["split_operation"] = encode(order.split_operation)
+    if order.broker_conversion is not None:
+        from app.services.real_broker_state import encode
+        item["broker_conversion"] = encode(order.broker_conversion)
+    if order.kotak_order_id:
+        item["kotak_order_id"] = order.kotak_order_id
+    if order.kotak_fill_confirmed:
+        item["kotak_fill_confirmed"] = True
+    if order.filled_at is not None:
+        item["filled_at"] = order.filled_at
+    if order.filled_price is not None:
+        item["filled_price"] = Decimal(str(order.filled_price))
+    if order.reserved_amount:
+        item["reserved_amount"] = Decimal(str(order.reserved_amount))
+    if order.reservation_margin_rate != 1.0:
+        item["reservation_margin_rate"] = Decimal(str(order.reservation_margin_rate))
+    if order.wallet_ledger_id is not None:
+        item["wallet_ledger_id"] = order.wallet_ledger_id
+    if order.wallet_ledger_kind is not None:
+        item["wallet_ledger_kind"] = order.wallet_ledger_kind
+    if order.right is not None:
+        item["right"] = order.right
+    if order.strike is not None:
+        item["strike"] = order.strike
+    if order.expiry is not None:
+        item["expiry"] = order.expiry
+    if order.exit_allocation_id is not None:
+        item["exit_allocation_id"] = order.exit_allocation_id
+        item["exit_position_side"] = order.exit_position_side
+        item["exit_allocation_role"] = order.exit_allocation_role
+    if order.source is not None:
+        item["source"] = order.source
+    if order.entry_sl_price is not None:
+        item["entry_sl_price"] = Decimal(str(order.entry_sl_price))
+    if order.group_id is not None:
+        item["group_id"] = order.group_id
+    if order.execution_gap_pct is not None:
+        item["execution_gap_pct"] = Decimal(str(order.execution_gap_pct))
+    item["market_order"] = order.market_order
+    if order.quote_price is not None:
+        item["quote_price"] = Decimal(str(order.quote_price))
+    if order.quote_timestamp is not None:
+        item["quote_timestamp"] = order.quote_timestamp
+    if order.quote_source is not None:
+        item["quote_source"] = order.quote_source
+    return item
+
+
 def _write_order_to_db(order: Order, *, strict: bool = False) -> None:
     try:
         from app.services.db import get_dynamodb_resource
         table = get_dynamodb_resource().Table("Orders")
-        item: dict = {
-            "session_id": order.session_id,
-            "order_id": order.order_id,
-            "user_id": order.user_id,
-            "symbol": order.symbol,
-            "side": order.side.value,
-            "order_type": order.order_type.value,
-            "quantity": order.quantity,
-            "reservation_revision": order.reservation_revision,
-            "trigger_price": Decimal(str(order.trigger_price)),
-            "limit_price": Decimal(str(order.limit_price)),
-            "status": order.status.value,
-            "created_at": order.created_at,
-            "is_stoploss": order.is_stoploss,
-            "is_autostop": order.is_autostop,
-        }
-        from app.services import simulation
-        session = simulation.get_session(order.session_id)
-        if session and session.session_type == "real":
-            from app.services.real_broker_state import active_partition
-            item["session_id"] = active_partition(order.session_id) or order.session_id
-        for name in ("execution_role", "broker_product", "broker_exchange", "broker_filled_quantity", "broker_filled_value"):
-            value = getattr(order, name)
-            if value is not None:
-                item[name] = Decimal(str(value)) if isinstance(value, float) else value
-        for name in ("cancellation_status", "cancellation_reason", "cancelled_at", "cancel_request_id", "cancel_initiator", "cancel_purpose", "recovery_operation_id", "recovery_parent_order_id", "recovery_state", "recovery_attempt"):
-            value = getattr(order, name, None)
-            if value is not None:
-                item[name] = Decimal(str(value)) if isinstance(value, float) else value
-        if order.analytics is not None:
-            from app.services.real_broker_state import encode
-            item["analytics"] = encode(order.analytics)
-        if order.broker_conversion is not None:
-            from app.services.real_broker_state import encode
-            item["broker_conversion"] = encode(order.broker_conversion)
-        if order.kotak_order_id:
-            item["kotak_order_id"] = order.kotak_order_id
-        if order.kotak_fill_confirmed:
-            item["kotak_fill_confirmed"] = True
-        if order.filled_at is not None:
-            item["filled_at"] = order.filled_at
-        if order.filled_price is not None:
-            item["filled_price"] = Decimal(str(order.filled_price))
-        if order.reserved_amount:
-            item["reserved_amount"] = Decimal(str(order.reserved_amount))
-        if order.reservation_margin_rate != 1.0:
-            item["reservation_margin_rate"] = Decimal(str(order.reservation_margin_rate))
-        if order.wallet_ledger_id is not None:
-            item["wallet_ledger_id"] = order.wallet_ledger_id
-        if order.wallet_ledger_kind is not None:
-            item["wallet_ledger_kind"] = order.wallet_ledger_kind
-        if order.right is not None:
-            item["right"] = order.right
-        if order.strike is not None:
-            item["strike"] = order.strike
-        if order.expiry is not None:
-            item["expiry"] = order.expiry
-        if order.exit_allocation_id is not None:
-            item["exit_allocation_id"] = order.exit_allocation_id
-            item["exit_position_side"] = order.exit_position_side
-            item["exit_allocation_role"] = order.exit_allocation_role
-        if order.source is not None:
-            item["source"] = order.source
-        if order.entry_sl_price is not None:
-            item["entry_sl_price"] = Decimal(str(order.entry_sl_price))
-        if order.group_id is not None:
-            item["group_id"] = order.group_id
-        if order.execution_gap_pct is not None:
-            item["execution_gap_pct"] = Decimal(str(order.execution_gap_pct))
-        item["market_order"] = order.market_order
-        if order.quote_price is not None:
-            item["quote_price"] = Decimal(str(order.quote_price))
-        if order.quote_timestamp is not None:
-            item["quote_timestamp"] = order.quote_timestamp
-        if order.quote_source is not None:
-            item["quote_source"] = order.quote_source
+        item = _order_db_item(order)
         if order.source == "desktop_paper" and (order.wallet_ledger_id or "").startswith("paper:"):
             from app.services import paper_wallet
             context = paper_wallet.desktop_write_context(order.session_id, order.user_id,
@@ -676,7 +684,7 @@ def check_orders(
         if order.status != OrderStatus.PENDING:
             continue
         # Skip orders placed directly on Kotak broker; fills arrive via order-feed WebSocket.
-        if order.kotak_order_id or order.recovery_state in ("prepared", "submitting", "unknown"):
+        if order.kotak_order_id or (order.split_operation or {}).get("state") in ("prepared", "modifying", "submitting", "unknown") or order.recovery_state in ("prepared", "submitting", "unknown"):
             continue
         # For options ticks: only check orders for the same contract.
         # For equity ticks (tick_right=None): only check orders with right=None.

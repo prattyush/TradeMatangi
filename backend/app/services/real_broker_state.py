@@ -139,11 +139,21 @@ def build_orders(session, broker_orders, master=None):
     from app.services import order_service
     original = order_service.get_all_orders(session.session_id)
     tracked = {o.kotak_order_id: o for o in original if o.kotak_order_id}
+    # A split placement may succeed while its HTTP acknowledgement is lost.
+    # Adopt its unique, persisted tag rather than importing a duplicate exit.
+    split_children = {o.split_operation.get('tag'): o for o in original
+        if o.split_operation and o.split_operation.get('child_id') == o.order_id
+        and o.split_operation.get('tag') and not o.kotak_order_id}
     result = {o.order_id: o.model_copy(deep=True) for o in original if not o.kotak_order_id}
     for row in broker_orders:
         status = row["status"]
         kind = OrderType.STOPLOSS if row["order_type"] in ("SL", "SL-M", "STOPLOSS") else OrderType.LIMIT
         previous = tracked.get(row["kotak_order_id"])
+        tagged = split_children.get(row.get('tag'))
+        if previous is None and tagged is not None and row['quantity'] == tagged.quantity and row['side'] == tagged.side.value and kind == tagged.order_type:
+            contract = reports.contract(session, row, master)
+            if (contract.get('right'), contract.get('strike'), contract.get('expiry')) == (tagged.right, tagged.strike, tagged.expiry):
+                previous = tagged
         if previous is None and row["order_type"] == "MARKET" and status in OPEN:
             continue
         order = previous.model_copy(deep=True) if previous else Order(order_id="external_" + row["kotak_order_id"], session_id=session.session_id,
@@ -151,6 +161,7 @@ def build_orders(session, broker_orders, master=None):
             quantity=row["quantity"], trigger_price=row["trigger_price"], limit_price=row["limit_price"],
             created_at=reports.wall_time(row["order_time"]) if row.get("order_time") else 0,
             source="broker_external", kotak_order_id=row["kotak_order_id"], **reports.contract(session, row, master))
+        order.kotak_order_id = row["kotak_order_id"]
         order.order_type = kind
         order.is_stoploss = kind == OrderType.STOPLOSS
         order.trigger_price, order.limit_price = row["trigger_price"], row["limit_price"]
@@ -163,6 +174,8 @@ def build_orders(session, broker_orders, master=None):
         if order.broker_filled_quantity:
             order.filled_price = row["filled_price"]
         result[order.order_id] = order
+    from app.services.order_split import reconcile_projection
+    reconcile_projection(result, broker_orders)
     # Broker-backed locals absent from a complete report are not live orders.
     return result
 
@@ -256,6 +269,8 @@ async def refresh(session, broker):
     account = await asyncio.to_thread(broker.account_identity)
     root = projection_id(session, account)
     async with _locks.setdefault(root, asyncio.Lock()):
+        if getattr(session, 'order_split_in_progress', None):
+            raise ValueError('Order split is in progress; retry broker refresh shortly')
         if getattr(session, "broker_refresh_events", None) is not None:
             raise ValueError("A broker refresh is already running")
         session.broker_refresh_events = []

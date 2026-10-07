@@ -195,6 +195,7 @@ export function useSimulation() {
       ...s,
       sessionId: res.session_id,
       groupId: res.group_id,
+      group: s.group?.group_id === res.group_id ? s.group : null,
       sessionState: restoredState,
       symbol: sym,
       date: res.date,
@@ -400,7 +401,8 @@ export function useSimulation() {
     // member list so the switcher is available immediately after first start.
     if (res.group_id) {
       const group = await api.getActiveSessionGroup().catch(() => null)
-      setState(s => ({ ...s, groupId: res.group_id, group }))
+      setState(s => s.sessionId === res.session_id && s.groupId === res.group_id
+        ? { ...s, group: group?.group_id === res.group_id ? group : null } : s)
     }
     return res.session_id
   }, [state.symbol, state.date, activateSession])
@@ -622,6 +624,13 @@ export function useSimulation() {
       openOrders: s.openOrders.map(o => o.order_id === orderId ? updated : o),
       walletRefreshKey: s.walletRefreshKey + 1,
     }))
+  }, [state.sessionId])
+
+  const splitOrder = useCallback(async (orderId: string, operationId: string) => {
+    const sessionId = state.sessionId
+    if (!sessionId) return
+    const orders = await api.splitOrder(sessionId, orderId, operationId)
+    setState(s => s.sessionId === sessionId ? { ...s, openOrders: mergeOpenOrders(s.openOrders, orders) } : s)
   }, [state.sessionId])
 
   const placeOrder = useCallback(async (
@@ -1092,6 +1101,7 @@ export function useSimulation() {
     handleSessionEnded,
     placeOrder,
     updateOrder,
+    splitOrder,
     bulkUpdateOrders,
     refreshOpenOrders,
     cancelOrder,

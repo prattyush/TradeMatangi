@@ -1,0 +1,368 @@
+.pa-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 2100;
+  background: #0a1020;
+  color: #e2e8f0;
+  display: flex;
+  flex-direction: column;
+  font-family: Inter, system-ui, sans-serif;
+}
+.pa-header {
+  display: flex;
+  justify-content: space-between;
+  padding: 24px 32px 15px;
+  background: radial-gradient(ellipse at 25% 0, #25375f 0, transparent 75%);
+}
+.pa-eyebrow {
+  font-size: 10px;
+  letter-spacing: 2px;
+  color: #a5b4fc;
+  font-weight: 700;
+}
+.pa-header h1 {
+  font-size: 27px;
+  letter-spacing: -0.8px;
+  margin: 7px 0;
+}
+.pa-header p,
+.pa-card p,
+.pa-drawer p {
+  font-size: 12px;
+  color: #94a3b8;
+  line-height: 1.6;
+  margin: 7px 0;
+}
+.pa-overlay button,
+.pa-overlay select,
+.pa-overlay input {
+  border: 1px solid #34415b;
+  border-radius: 7px;
+  background: #141e32;
+  color: #e2e8f0;
+  padding: 7px 10px;
+  font: inherit;
+  font-size: 12px;
+}
+.pa-overlay button {
+  cursor: pointer;
+}
+.pa-overlay button:hover {
+  border-color: #a5b4fc;
+  background: #243252;
+}
+.pa-overlay button:disabled {
+  opacity: 0.5;
+  cursor: wait;
+}
+.pa-overlay button:focus-visible {
+  outline: 2px solid #a5b4fc;
+  outline-offset: 2px;
+}
+.pa-close {
+  align-self: flex-start;
+  font-size: 25px !important;
+}
+.pa-filters {
+  display: flex;
+  align-items: end;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 10px 32px 18px;
+}
+.pa-filters label {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 10px;
+  color: #94a3b8;
+}
+.pa-tabs {
+  display: flex;
+  gap: 8px;
+  padding: 0 32px;
+  border-bottom: 1px solid #26334c;
+}
+.pa-tabs button {
+  padding: 12px 20px;
+  border: 0;
+  border-radius: 7px 7px 0 0;
+  background: transparent;
+  color: #94a3b8;
+}
+.pa-tabs button.active {
+  background: #1e2b47;
+  color: #c7d2fe;
+  border-bottom: 2px solid #a5b4fc;
+}
+.pa-main {
+  overflow: auto;
+  flex: 1;
+  padding: 22px 32px 50px;
+}
+.pa-kpis {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 12px;
+}
+.pa-kpi {
+  background: linear-gradient(145deg, #18243d, #111a2b);
+  border: 1px solid #2a3851;
+  border-radius: 12px;
+  padding: 17px 15px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.pa-kpi span {
+  font-size: 11px;
+  color: #a5b4fc;
+}
+.pa-kpi strong {
+  font-size: 23px;
+  letter-spacing: -0.7px;
+  font-variant-numeric: tabular-nums;
+}
+.pa-kpi small {
+  font-size: 10px;
+  color: #94a3b8;
+  line-height: 1.5;
+}
+.pa-coverage {
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 14px 0;
+  font-size: 11px;
+  color: #94a3b8;
+}
+.pa-card {
+  background: #111a2b;
+  border: 1px solid #28354d;
+  border-radius: 12px;
+  padding: 20px;
+  margin: 0 0 18px;
+}
+.pa-card h3 {
+  font-size: 15px;
+  margin: 0 0 6px;
+}
+.pa-card-title {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+.pa-table-wrap {
+  overflow: auto;
+}
+.pa-overlay table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.pa-overlay th {
+  text-align: right;
+  font-size: 10px;
+  font-weight: 500;
+  color: #94a3b8;
+  padding: 12px 10px;
+  border-bottom: 1px solid #34415b;
+  white-space: nowrap;
+}
+.pa-overlay td {
+  text-align: right;
+  padding: 13px 10px;
+  border-bottom: 1px solid #233049;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.pa-overlay th:first-child,
+.pa-overlay td:first-child {
+  text-align: left;
+}
+.pa-overlay td small {
+  display: block;
+  color: #94a3b8;
+  font-size: 10px;
+  margin-top: 5px;
+}
+.pa-badge {
+  display: inline-block !important;
+  color: #fbbf24 !important;
+  margin-left: 7px;
+  padding: 3px 6px;
+  background: #3d331e;
+  border-radius: 4px;
+}
+.pa-footnote {
+  font-size: 11px !important;
+  color: #8393ac !important;
+  line-height: 1.6;
+}
+.pa-columns {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 18px;
+}
+.pa-curve {
+  width: 100%;
+  max-height: 250px;
+}
+.pa-calendar,
+.pa-heatmap {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(135px, 1fr));
+  gap: 9px;
+  margin-top: 17px;
+}
+.pa-calendar button,
+.pa-heatmap button {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  text-align: left;
+  padding: 13px;
+  background: #17243a;
+}
+.pa-calendar span,
+.pa-heatmap span {
+  font-size: 11px;
+}
+.pa-calendar small,
+.pa-heatmap small {
+  color: #94a3b8;
+  font-size: 10px;
+}
+.pa-distribution {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 150px;
+  overflow: auto;
+  padding: 8px 0;
+}
+.pa-distribution button {
+  min-width: 9px;
+  max-width: 30px;
+  flex: 1;
+  padding: 0;
+  border: 0;
+  border-radius: 3px;
+}
+.pa-insight {
+  display: block;
+  width: 100%;
+  margin: 10px 0;
+  text-align: left !important;
+  line-height: 1.7;
+}
+.pa-drawer {
+  position: absolute;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  width: min(570px, 95vw);
+  padding: 24px;
+  background: #10192b;
+  border-left: 1px solid #46577b;
+  box-shadow: -20px 0 60px #0008;
+  overflow: auto;
+}
+.pa-drawer h2 {
+  margin: 8px 0;
+  font-size: 22px;
+}
+.pa-detail-pnl {
+  font-size: 29px;
+  display: block;
+  padding: 12px 0;
+}
+.pa-detail-pnl small {
+  font-size: 12px;
+  display: block;
+  color: #94a3b8;
+  margin-top: 6px;
+}
+.pa-drawer .pa-card {
+  padding: 15px;
+  margin-top: 15px;
+}
+.pa-error {
+  padding: 15px;
+  background: #40212c;
+  color: #fecdd3;
+  border-radius: 8px;
+  margin: 10px 0;
+}
+.pa-error button {
+  margin-left: 12px;
+}
+.pa-overlay .positive {
+  color: #55dbb1;
+}
+.pa-overlay .negative {
+  color: #fb8c9e;
+}
+.pa-muted {
+  color: #94a3b8;
+}
+@media (max-width: 1100px) {
+  .pa-kpis {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+@media (max-width: 650px) {
+  .pa-header,
+  .pa-main {
+    padding: 17px;
+  }
+  .pa-filters {
+    padding: 10px 17px;
+  }
+  .pa-tabs {
+    padding: 0 17px;
+    overflow: auto;
+  }
+  .pa-tabs button {
+    padding: 10px 13px;
+  }
+  .pa-kpis {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .pa-columns {
+    grid-template-columns: 1fr;
+  }
+  .pa-header h1 {
+    font-size: 23px;
+  }
+}
+
+.pa-more-filters {
+  position: relative;
+  font-size: 12px;
+  color: #a5b4fc;
+  padding: 7px;
+}
+.pa-more-filters summary {
+  cursor: pointer;
+}
+.pa-more-filters > .pa-filters {
+  position: absolute;
+  right: 0;
+  z-index: 4;
+  width: min(760px, 85vw);
+  background: #111a2b;
+  border: 1px solid #34415b;
+  border-radius: 9px;
+  padding: 15px;
+  box-shadow: 0 12px 30px #0008;
+}
+
+/* Chart extension styles also set table colors; keep report numbers readable. */
+.pa-overlay table,
+.pa-overlay td {
+  color: #e2e8f0;
+}

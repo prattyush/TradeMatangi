@@ -1,9 +1,11 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
+import { fileURLToPath } from 'node:url'
 
 const disableHmr = process.env.VITE_DISABLE_HMR === 'true'
 
 export default defineConfig({
+  resolve: { dedupe: ['react', 'react-dom'], alias: { 'lightweight-charts': fileURLToPath(new URL('./node_modules/lightweight-charts', import.meta.url)) } },
   plugins: [react()],
   server: {
     allowedHosts: [

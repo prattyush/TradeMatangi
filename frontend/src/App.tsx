@@ -31,6 +31,7 @@ import StepwiseLabelPopup from './components/StepwiseLabelPopup'
 import AIChatPanel from './components/AIChatPanel'
 import { useSimulation, InstrumentConfig } from './hooks/useSimulation'
 import { useMultiSSE } from './hooks/useSSE'
+import { activeSessionSubscriptions } from './services/sessionSubscriptions'
 import { useRecording } from './hooks/useRecording'
 import { useSnapshot } from './hooks/useSnapshot'
 import api, { OHLCCandle } from './services/api'
@@ -1320,11 +1321,9 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
     return null
   }, [sim.lastCompletedBarEquity, sim.lastCompletedBarCE, sim.lastCompletedBarPE, sim.sessionStrikeCE, sim.sessionStrikePE, sim.sessionExpiry])
 
-  const streamSessionIds = useMemo(() => {
-    const ids = sim.group?.members.filter(m => m.state !== 'ended').map(m => m.session_id)
-      ?? (sim.sessionId && sim.sessionState !== 'ended' ? [sim.sessionId] : [])
-    return Array.from(new Set(ids.filter(Boolean))).sort()
-  }, [sim.group, sim.sessionId, sim.sessionState])
+  const streamSessionIds = useMemo(() =>
+    activeSessionSubscriptions(sim.group, sim.sessionId, sim.sessionState),
+  [sim.group, sim.sessionId, sim.sessionState])
 
   const refreshRunningStrategies = useCallback(async (sessionId: string) => {
     const version = ++strategySyncVersionRef.current
@@ -2804,6 +2803,7 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
                 }
               }
               onCancelOrder={sim.cancelOrder}
+              onSplitOrder={sim.splitOrder}
               onConvertOrder={async (orderId, newOrderType, price) => {
                 const updated = await api.convertOrder(sim.sessionId!, orderId, newOrderType, price)
                 sim.bulkUpdateOrders([updated])

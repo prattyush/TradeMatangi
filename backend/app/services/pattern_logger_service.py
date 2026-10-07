@@ -230,10 +230,18 @@ def _query_charts_for_owner(owner_id: str) -> list[dict]:
             IndexName="UserIdIndex",
             KeyConditionExpression=Key("user_id").eq(owner_id),
         )
-        return resp.get("Items", [])
-    except Exception:
+        items=list(resp.get("Items",[]))
+        while resp.get("LastEvaluatedKey"):
+            resp=_table().query(IndexName="UserIdIndex",KeyConditionExpression=Key("user_id").eq(owner_id),ExclusiveStartKey=resp["LastEvaluatedKey"])
+            items.extend(resp.get("Items",[]))
+        return items
+    except Exception as exc:
         logger.exception("Failed to query pattern charts for owner %s", owner_id)
-        return []
+        # A never-provisioned optional library has no charts; storage outages
+        # must not masquerade as a successful empty comparison.
+        if getattr(exc,'response',{}).get('Error',{}).get('Code') == 'ResourceNotFoundException':
+            return []
+        raise RuntimeError("Pattern history could not be read; retry later") from exc
 
 
 # ── Write ─────────────────────────────────────────────────────────────────────

@@ -1214,9 +1214,13 @@ async def _run_session(session: SimulationSession) -> None:
                     session.symbol, session.date, strike, session.expiry, right, start_str
                 )}
 
-            ce_by_time = _load_by_time(cur_ce_strike, "CE", session.start_time)
-            pe_by_time = _load_by_time(cur_pe_strike, "PE", session.start_time)
-            eq_ticks = list(iter_ticks(session.symbol, session.date, session.start_time))
+            # Materializing an entire day's three streams must not block SSE,
+            # pause/stop or the other sessions on the application event loop.
+            ce_by_time, pe_by_time, eq_ticks = await asyncio.gather(
+                asyncio.to_thread(_load_by_time, cur_ce_strike, "CE", session.start_time),
+                asyncio.to_thread(_load_by_time, cur_pe_strike, "PE", session.start_time),
+                asyncio.to_thread(lambda: list(iter_ticks(session.symbol, session.date, session.start_time))),
+            )
 
             prev_bar_slot_ds: Optional[int] = None
             bar_o_ds = bar_h_ds = bar_l_ds = bar_c_ds = None
@@ -1266,7 +1270,7 @@ async def _run_session(session: SimulationSession) -> None:
                 if new_ce != cur_ce_strike:
                     cur_ce_strike = new_ce
                     try:
-                        ce_by_time = _load_by_time(cur_ce_strike, "CE", ts_str)
+                        ce_by_time = await asyncio.to_thread(_load_by_time, cur_ce_strike, "CE", ts_str)
                     except Exception as exc:
                         logger.warning("Could not reload CE data for strike %s: %s", cur_ce_strike, exc)
                         ce_by_time = {}
@@ -1275,7 +1279,7 @@ async def _run_session(session: SimulationSession) -> None:
                 if new_pe != cur_pe_strike:
                     cur_pe_strike = new_pe
                     try:
-                        pe_by_time = _load_by_time(cur_pe_strike, "PE", ts_str)
+                        pe_by_time = await asyncio.to_thread(_load_by_time, cur_pe_strike, "PE", ts_str)
                     except Exception as exc:
                         logger.warning("Could not reload PE data for strike %s: %s", cur_pe_strike, exc)
                         pe_by_time = {}

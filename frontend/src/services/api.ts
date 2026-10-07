@@ -80,6 +80,7 @@ export interface FineSearchResult {
 }
 
 export interface TickEvent {
+  interval_seconds?: number
   type: 'tick'
   session_id?: string
   time: number
@@ -105,6 +106,7 @@ export interface SymbolInfo {
 
 export interface ConversionResult { order_id: string; state: string; message?: string | null }
 export interface Order {
+  split_operation?: { operation_id: string; state: string; message?: string } | null
   broker_conversion?: { operation_id?: string; updated_at?: number; state: string; requested_type?: string; message?: string | null } | null
   order_id: string
   session_id: string
@@ -403,6 +405,9 @@ export interface AdminTokensResponse {
 // ── Analysis types ──────────────────────────────────────────────────────────
 
 export interface SessionSummary {
+  snapshot_session_ids?: string[]
+  shared?: boolean
+  owner_email?: string | null
   session_id: string
   user_id: string
   symbol: string
@@ -423,6 +428,16 @@ export interface SessionSummary {
 }
 
 export interface AnalysisTrade {
+  captured_only?: boolean
+  stored_trade_id?: string
+  analysis_cycle_id?: string
+  analytics?: import('../../../shared/analysis/performance').AnalyticsMetadata
+  execution_sort_time?: number
+  execution_id?: string
+  order_id?: string
+  kotak_order_id?: string
+  exchange?: string
+  product?: string
   trade_id: string
   session_id: string
   user_id: string
@@ -441,12 +456,15 @@ export interface AnalysisTrade {
 }
 
 export interface SessionDetail extends SessionSummary {
+  orders?: Record<string, unknown>[]
+  cycles?: import('../../../shared/analysis/performance').PerformanceCycle[]
   trades: AnalysisTrade[]
 }
 
 // ── Trade Labels & Round Trips types ─────────────────────────────────────────
 
 export interface RoundTripTrade {
+  execution_id?: string | null
   trade_id: string
   side: 'BUY' | 'SELL'
   quantity: number
@@ -517,6 +535,10 @@ export interface AnalysisStats {
 // ── Event Snapshot types ────────────────────────────────────────────────────
 
 export interface SnapshotFilledTrade {
+  expiry?: string | null
+  execution_id?: string
+  kotak_order_id?: string | null
+  commission?: number
   trade_id: string
   side: 'BUY' | 'SELL'
   price: number
@@ -542,6 +564,9 @@ export interface SnapshotEventDetail {
 }
 
 export interface SnapshotData {
+  bar_observation_resolution_seconds?: number | null
+  option_observation_ce?: {time:number;ohlc:Omit<OHLCCandle,'time'>;resolution_seconds:number | null; source_time?:number} | null
+  option_observation_pe?: {time:number;ohlc:Omit<OHLCCandle,'time'>;resolution_seconds:number | null; source_time?:number} | null
   current_price: number
   current_price_ce: number
   current_price_pe: number
@@ -1177,6 +1202,18 @@ const api = {
     })
   },
 
+  async splitOrder(sessionId: string, orderId: string, operationId: string): Promise<Order[]> {
+    const res = await fetch(`${BACKEND_URL}/api/orders/${orderId}/split?session_id=${sessionId}`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', ..._authHeaders() },
+      body: JSON.stringify({ operation_id: operationId }),
+    })
+    if (!res.ok) {
+      const error = await res.json().catch(() => ({}))
+      throw new Error(typeof error.detail === 'string' ? error.detail : `Split failed: ${res.status}`)
+    }
+    return res.json()
+  },
+
   async convertOrder(sessionId: string, orderId: string, newOrderType: 'TARGET' | 'LIMIT' | 'STOPLOSS', price?: number): Promise<Order> {
     const body: Record<string, unknown> = { session_id: sessionId, new_order_type: newOrderType }
     if (price !== undefined) body.price = price
@@ -1364,7 +1401,7 @@ const api = {
     instrumentType?: string
     sessionType?: string
   } = {}): Promise<SessionSummary[]> {
-    const params = new URLSearchParams()
+    const params = new URLSearchParams({include_shared:'true'})
     if (opts.symbol) params.set('symbol', opts.symbol)
     if (opts.startDate) params.set('start_date', opts.startDate)
     if (opts.endDate) params.set('end_date', opts.endDate)
@@ -2185,6 +2222,9 @@ const notifiedApi: typeof api = new Proxy(api, {
   get(target, property, receiver) {
     const value = Reflect.get(target, property, receiver)
     if (typeof value !== 'function') return value
+    // URL construction is synchronous. Turning this helper into a Promise
+    // makes EventSource request '[object Promise]' instead of the replay stream.
+    if (property === 'getSSEUrl') return value.bind(target)
     return async (...args: unknown[]) => {
       const scope = getNotificationScope(); const requestContext = getNotificationContext()
       try { return await value.apply(target, args) }

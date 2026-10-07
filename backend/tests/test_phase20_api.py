@@ -374,6 +374,16 @@ def test_real_execution_reader_preserves_decimal_sizing_and_controller(
         cycles[0]["matches"][0]["exit_method"] == "STOPLOSS"
         and cycles[0]["net_pnl"] == 398
     )
+    # Desktop reads the same committed projection and exposes numeric evidence.
+    with patch('app.services.desktop_auth_service.verify_access_token', return_value='alice'):
+        response = TestClient(app).get('/api/desktop/v1/analysis/sessions/session', headers={'Authorization': 'Bearer synthetic'})
+    assert response.status_code == 200, response.text
+    desktop = response.json()
+    assert desktop['net_pnl'] == 398 and len(desktop['trades']) == 2
+    assert len({t['trade_id'] for t in desktop['trades']}) == 2
+    assert all(t['execution_id'] and t['exchange'] == 'nse_cm' for t in desktop['trades'])
+    assert desktop['cycles'][0]['entries'][0]['requested_pct'] == 2
+    assert desktop['cycles'][0]['entries'][0]['r_multiple'] == pytest.approx(1.99)
     database.Table("Orders").update_item(
         Key={"session_id": "session", "order_id": "execution:2"},
         UpdateExpression="SET broker_execution.quantity=:q",

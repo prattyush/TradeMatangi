@@ -94,27 +94,21 @@ def save_snapshot(session_id: str, data: dict) -> str:
         _table().put_item(Item=item)
         logger.info("Saved snapshot %s for session %s (%s)", event_id, session_id,
                      data.get("event", {}).get("description", ""))
-    except Exception:
+    except Exception as exc:
         logger.exception("Failed to save snapshot %s for session %s", event_id, session_id)
+        raise RuntimeError("Snapshot could not be stored") from exc
     return event_id
 
 
 def get_snapshots(session_id: str) -> list[dict]:
     """Return all snapshots for a session, sorted by event_id (chronological)."""
+    from app.services.performance_service import query_all
     try:
-        resp = _table().query(
-            KeyConditionExpression="session_id = :sid",
-            ExpressionAttributeValues={":sid": session_id},
-            ScanIndexForward=True,
-        )
-    except Exception:
-        logger.exception("Failed to query snapshots for session %s", session_id)
-        return []
-
-    snapshots = []
-    for item in resp.get("Items", []):
-        snapshots.append(_deserialize(item))
-    return snapshots
+        items = query_all(_table(), KeyConditionExpression="session_id = :sid", ExpressionAttributeValues={":sid":session_id}, ScanIndexForward=True, ConsistentRead=True)
+        return sorted((_deserialize(item) for item in items),key=lambda s:(s['timestamp'],s['event_id']))
+    except Exception as exc:
+        logger.exception("Failed to query snapshots for session %s",session_id)
+        raise RuntimeError("Recorded snapshots could not be read; retry later") from exc
 
 
 def get_snapshot(session_id: str, event_id: str) -> dict | None:
@@ -133,36 +127,24 @@ def get_snapshot(session_id: str, event_id: str) -> dict | None:
 
 def delete_snapshots(session_id: str) -> int:
     """Delete all snapshots for a session. Returns count deleted."""
-    try:
-        resp = _table().query(
-            KeyConditionExpression="session_id = :sid",
-            ExpressionAttributeValues={":sid": session_id},
-            ProjectionExpression="session_id, event_id",
-        )
-    except Exception:
-        logger.exception("Failed to query snapshots for deletion, session %s", session_id)
-        return 0
-
-    items = resp.get("Items", [])
-    if not items:
-        return 0
-
+    from app.services.performance_service import query_all
     from app.services.db import get_dynamodb_client
-    client = get_dynamodb_client()
-
-    for i in range(0, len(items), 25):
-        chunk = items[i:i + 25]
-        delete_requests = [
-            {"DeleteRequest": {"Key": {"session_id": {"S": it["session_id"]}, "event_id": {"S": it["event_id"]}}}}
-            for it in chunk
-        ]
-        try:
-            client.batch_write_item(RequestItems={TABLE_NAME: delete_requests})
-        except Exception:
-            logger.exception("Failed to batch-delete snapshots for session %s", session_id)
-
-    logger.debug("Deleted %d snapshots for session %s", len(items), session_id)
-    return len(items)
+    try:
+        items = query_all(_table(),KeyConditionExpression="session_id = :sid",ExpressionAttributeValues={":sid":session_id},ProjectionExpression="session_id, event_id",ConsistentRead=True)
+        client = get_dynamodb_client()
+        for offset in range(0,len(items),25):
+            pending = {TABLE_NAME:[{"DeleteRequest":{"Key":{"session_id":{"S":item['session_id']},"event_id":{"S":item['event_id']}}}} for item in items[offset:offset+25]]}
+            for attempt in range(4):
+                result = client.batch_write_item(RequestItems=pending)
+                pending = result.get('UnprocessedItems',{})
+                if not any(pending.values()):
+                    break
+            else:
+                raise RuntimeError("Some snapshots remain undeleted; retry Delete All")
+        return len(items)
+    except Exception as exc:
+        logger.exception("Snapshot deletion failed for session %s",session_id)
+        raise RuntimeError("Recorded snapshots were not fully deleted; retry later") from exc
 
 
 def _deserialize(item: dict) -> dict:

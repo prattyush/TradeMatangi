@@ -164,6 +164,12 @@ def move(user_id, date, delta, operation_id=None, allow_negative=False, order=No
 
 def fenced_put(table_name, item, *, user_id, date, symbol, session_id, token=None, stopped=False):
     """Commit one desktop Paper item only while its engine or stopped parent owns it."""
+    return fenced_put_many(table_name, [item], user_id=user_id, date=date,
+        symbol=symbol, session_id=session_id, token=token, stopped=stopped)
+
+
+def fenced_put_many(table_name, items, *, user_id, date, symbol, session_id, token=None, stopped=False):
+    """Commit a group of related items under a single Paper ownership fence."""
     from app.services.db import get_dynamodb_client
     from boto3.dynamodb.types import TypeSerializer
     encode = lambda values: {key: TypeSerializer().serialize(value) for key, value in values.items()}
@@ -177,7 +183,7 @@ def fenced_put(table_name, item, *, user_id, date, symbol, session_id, token=Non
             {"ConditionCheck": {"TableName": "WalletLedgers",
                 "Key": encode({"user_id": user_id, "ledger_id": f"paper:{date}:session:{symbol}"}),
                 "ConditionExpression": expression, "ExpressionAttributeValues": encode(values)}},
-            {"Put": {"TableName": table_name, "Item": encode(item)}},
+            *[{"Put": {"TableName": table_name, "Item": encode(item)}} for item in items],
         ])
     except ClientError as exc:
         if exc.response["Error"]["Code"] == "TransactionCanceledException":

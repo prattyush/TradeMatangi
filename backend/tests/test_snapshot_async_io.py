@@ -15,7 +15,8 @@ async def test_snapshot_save_runs_off_loop(monkeypatch):
         assert release.wait(2)
         return data['event_id']
     monkeypatch.setattr(snapshots.snapshot_service, 'save_snapshot', save)
-    task = asyncio.create_task(snapshots.store_snapshot(snapshots.SnapshotPayload(event_id='e', session_id='s')))
+    monkeypatch.setattr(snapshots, '_load_session', lambda session_id: {'user_id':'owner'})
+    task = asyncio.create_task(snapshots.store_snapshot(snapshots.SnapshotPayload(event_id='e', session_id='s'), user_id='owner'))
     try:
         for _ in range(200):
             if started.is_set():

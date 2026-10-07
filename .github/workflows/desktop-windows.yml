@@ -5,6 +5,8 @@ on:
   pull_request:
     paths:
       - 'windowsapp/**'
+      - 'shared/analysis/**'
+      - 'frontend/src/services/**'
       - '.github/workflows/desktop-windows.yml'
 
 jobs:

@@ -29,6 +29,7 @@ from app.utils import prior_trading_days
 logger = logging.getLogger(__name__)
 
 from app.services.historical_data_service import historical_request_scope
+from app.services.history_workers import run_data_history
 
 router = APIRouter(prefix="/api/data", tags=["data"], dependencies=[Depends(historical_request_scope)])
 
@@ -107,8 +108,8 @@ async def get_historical(
 
     for date in prior_dates:
         try:
-            await asyncio.to_thread(_ensure_data, symbol, date)
-            df = await asyncio.to_thread(load_dataframe, symbol, date)
+            await run_data_history(_ensure_data, symbol, date)
+            df = await run_data_history(load_dataframe, symbol, date)
             candles = resample_to_candles(df, interval_minutes)
             records = candles_to_records(candles)
             all_candles.extend(OHLCCandle(**r) for r in records)
@@ -157,10 +158,10 @@ async def get_pre_session(
     if len(start_time) == 5:
         start_time = start_time + ":00"
 
-    await asyncio.to_thread(_ensure_data, symbol, trading_date)
+    await run_data_history(_ensure_data, symbol, trading_date)
 
     try:
-        candles = await asyncio.to_thread(pre_session_candles, symbol, trading_date, start_time, interval_minutes)
+        candles = await run_data_history(pre_session_candles, symbol, trading_date, start_time, interval_minutes)
     except FileNotFoundError:
         raise HTTPException(
             status_code=404,
@@ -228,11 +229,11 @@ async def get_options_historical(
             # A session-start fetch only guarantees the selected date.  Fetch
             # every requested context day here so an empty local cache does not
             # silently omit previous-day option candles.
-            await asyncio.to_thread(
+            await run_data_history(
                 fetch_options_historical,
                 symbol, prior_date, strike, expiry, right.upper(),
             )
-            df = await asyncio.to_thread(load_options_dataframe, symbol, prior_date, strike, expiry, right.upper())
+            df = await run_data_history(load_options_dataframe, symbol, prior_date, strike, expiry, right.upper())
             candles = resample_to_candles(df, interval_minutes)
             records = candles_to_records(candles)
             all_candles.extend(OHLCCandle(**r) for r in records)
@@ -285,10 +286,10 @@ async def get_price_at(
     if len(time) == 5:
         time = time + ":00"
 
-    await asyncio.to_thread(_ensure_data, symbol, date)
+    await run_data_history(_ensure_data, symbol, date)
 
     try:
-        df = await asyncio.to_thread(load_dataframe, symbol, date)
+        df = await run_data_history(load_dataframe, symbol, date)
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail=f"Data not found for {symbol} on {date}")
 
@@ -346,5 +347,5 @@ async def find_strike_by_max_price(
         reference_time = reference_time + ":00"
 
     from app.services.options_service import find_strike_by_max_price, get_expiry_date
-    result = await asyncio.to_thread(find_strike_by_max_price, symbol, date, expiry, right.upper(), max_price, reference_time)
+    result = await run_data_history(find_strike_by_max_price, symbol, date, expiry, right.upper(), max_price, reference_time)
     return {**result, "symbol": symbol, "date": date, "right": right.upper()}

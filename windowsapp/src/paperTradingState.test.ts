@@ -25,6 +25,15 @@ describe('Paper trading incremental state', () => {
     expect(next.open_orders[0]).toMatchObject({ quantity: 50, trigger_price: 90 })
   })
 
+  it('applies split siblings and removes a retained order filled during confirmation', () => {
+    let current = snapshot()
+    current = applyPaperStreamEvent(current, { type: 'order_updated', event_id: 11, order_id: 'retained', status: 'PENDING', quantity: 40, limit_price: 100 })
+    current = applyPaperStreamEvent(current, { type: 'order_updated', event_id: 12, order_id: 'child', status: 'PENDING', quantity: 20, limit_price: 100 })
+    expect(current.open_orders.map(order => order.quantity)).toEqual([40, 20])
+    current = applyPaperStreamEvent(current, { type: 'order_updated', event_id: 13, order_id: 'retained', status: 'FILLED' })
+    expect(current.open_orders.map(order => order.order_id)).toEqual(['child'])
+  })
+
   it('applies a committed fill to orders, markers, position, and P&L without a snapshot', () => {
     const current = snapshot()
     current.open_orders = [{ order_id: 'order-1', session_id: 'paper-1', user_id: 'u', symbol: 'NIFTY', side: 'BUY', order_type: 'LIMIT', quantity: 50, trigger_price: 0, limit_price: 101, status: 'PENDING', created_at: 100, is_stoploss: false, right: 'CE', strike: 24000, expiry: '2026-10-01' }]

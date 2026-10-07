@@ -4,8 +4,8 @@
 
 Capture analytics for website and desktop executions in Paper, Real, Stepwise,
 and Replay wherever those modes already exist. Reports remain in website
-Analysis → Stats. Kite broker execution, desktop real-trading enablement, a
-desktop Analysis tab, and website continuous browsing are deferred.
+Analysis → Stats. Kite broker execution, desktop real-trading enablement, and website continuous browsing are deferred. Desktop Analysis is now included
+as a planned follow-up below; desktop real-trading execution remains deferred.
 
 - Use FIFO quantity splitting: entries 40 + 80, exit 60 consumes 40 + 20.
 - A trade cycle is one exact contract from flat to flat. Entry positions and
@@ -225,8 +225,8 @@ No live orders, broker credential changes, main merges or deployment were perfor
   Current estimated fees, capital snapshots and historical lot-size limitations
   retain their existing meanings. An underlying stop is not converted into a
   fictional option-risk amount.
-- Website continuous browsing, desktop Analysis UI, Kite broker execution and
-  desktop real-trading enablement remain deferred as agreed.
+- Website continuous browsing, Kite broker execution and desktop real-trading
+  enablement remain deferred. Desktop Analysis is now included in the follow-up.
 
 ### Delivery
 
@@ -301,6 +301,18 @@ Supporting Kite for Real Trading API's, all the their is feature parity with Kot
 Support Real Trading in Desktop Client, with same support as with Website Real Trading, like trade history refresh button and others.
 
 
+## Analysis In Desktop
+First list out all features of Analysis and then support the same website analysis (tab) in desktop as well.
+I am not how will analysis will open, will it be a separate screen or in the same screen. But, it should have the stats, date selection and type and other selection parameters then graphs shown with left and right.
+
+The way trades are calculated should be same.
+
+You can be creative in the UI. You can make the split view of left side underlying and right side chart for options, bigger and taking more screen space, in website it is too small.
+
+Another important feature in this would be when the markers (buy and sell) markers appear on the screen, both in full screen and in the split view, when user clicks on those markers it show if entry, then what type of entry (Auto Stop, risk % or capital %, what percentage, time, limit, market, target order), if sell or exit, then show type of exit (limit, stoploss, take profit full/half, aggresive SL or underlying target or underlying SL).
+
+The current stats view is awesome is website, can it be replicated in desktop client as well.
+
 
 ## Always-enabled entry protection follow-up — 2026-10-06
 
@@ -351,6 +363,189 @@ and authorized native Windows/live-broker acceptance remain separate manual step
 Delivery: [PR #601](https://github.com/prattyush/TradeMatangi/pull/601),
 `fix/always-enabled-entry-stoploss` → `dev`, implementation commit `fc90c87`.
 Review/merge and manual main deployment remain pending.
+
+
+## Analysis in Desktop — agreed specification and implementation plan
+
+### Follow-up Sprint 0 — Specification and baseline
+
+This follow-up supersedes desktop Analysis deferral. Preserve the original user
+requirement and earlier validation history. Development stays on dev; delivery PR
+branches target dev for review. Main/deployment remain manual. Local history contains
+Phase 19 FIFO/conversion and Phase 20 analytics merges plus the attached-stoploss
+fix. Native Windows/broker acceptance remains separate from automated validation.
+
+Decisions: dedicated Workspace / Analysis tab in the main window, KLineCharts in
+desktop Analysis, clickable executions only in Analysis. Same website calculations
+and full feature parity. Separate Analysis windows, desktop real execution, Kite
+execution, new drawing persistence and continuous Analysis browsing are deferred.
+
+### Website parity inventory
+
+| Area | Required capabilities |
+|---|---|
+| Sessions | Symbol/instrument/mode/date filters, refresh/loading/error/empty; aggregates; date/symbol/instrument/mode groups, multiple sessions; capital/net P&L/P&L %/round trips/fees; execution time/side/qty/price/right/strike/commission/value |
+| Charts | Prior context plus selected day, underlying/exact option tabs, All/CE/PE markers, EMA9/21, execution-price markers, maximize/restore |
+| Labels | FIFO round trips, expected/actual category/strategy, entry/exit tags/custom values, save/reload, round-trip markers, selection/maximize, dirty-edit protection |
+| Snapshots | Group-wide chronological events, wildcard search/keyboard navigation, underlying/CE/PE charts, captured orders/positions/wallet/P&L, confirmed delete-all and explicit failures |
+| Comparison | Trades versus saved annotations, category/strategy filters, underlying/options, top patterns, label context, maximize |
+| Stats | Overview/Entries/Exits/Sizing/Behavior, all existing filters, summaries/curve/drawdown/calendar/distributions/matrix/scatter/comparisons/behavior/insights; sorting/linked drill-down/pagination, fees/FIFO/R/labels, execution charts, explicit cached enrichment; all-page CSV |
+
+### Interfaces and implementation decisions
+
+Share workflows/dashboard/types/formatters/CSV in shared/analysis with injectable
+AnalysisApi and AnalysisChartRenderer. Website keeps its transport and Lightweight
+renderer; desktop uses bearer/native transport and KLineCharts. No duplicate FIFO
+or metrics logic. Extend types for stored analytics/sort times/stable execution,
+order/action identities/role quantities/exits/controller history/open/realized data.
+No database migration or execution capture changes.
+
+Authenticated /api/desktop/v1/analysis adapters expose sessions/detail/round-trips,
+labels/metadata, snapshots/comparison, performance/cycles/detail and historical
+candles through existing services. Verify owner for every session/cycle/label/
+snapshot operation. Preserve validation/pagination, worker execution, real committed
+execution checks and errors. Selected session loads canonical cycle membership once,
+not one request per marker. Native command is restricted to analysis endpoints and
+uses existing token refresh; browser preview uses the same bearer endpoints. Fence
+obsolete account/server/query responses. Viewing never orders/reconciles/subscribes.
+
+Dedicated full-size tab preserves active sessions/streams. Sessions / Stats retain
+filters and selection. Collapsible 300px navigator resizes 240–480px, Trades / Labels
+plus Snapshots / Compare actions, bounded scrollable tables and large charts.
+Underlying left / exact option right, draggable 50/50 split; equity full width.
+Below 1100px collapse navigator and switch chart pane. Maximize preserves viewport/
+selection. Default last 30 dates through today, all modes/symbols/instruments/both
+clients (Replay=sim). Preserve presentation state across switches, clear account data
+on logout/server/account change. Lazy-load charts and dispose hidden analysis charts.
+Existing popped-out trading windows stay trading windows.
+
+Charts use three-minute candles, prior context plus full selected day, dedup/sort,
+EMA9/21 and exact expiry/exchange/product. IST wall-clock and epoch alignment remain;
+seconds-to-milliseconds conversion only at renderer boundary. Preserve replay history
+provider/cache policies, bounded account/provider/contract/date cache, <=150 initial
+visible candles, restored ranges and Fit all. Underlying option markers use recorded
+underlying_price or identified approximate candle fallback, never as option fill.
+Enrichment is explicit and cached-only, with sampled/unavailable provenance.
+
+Locked non-draggable clickable overlays carry stable session/execution/cycle IDs.
+Coincident executions show count and chronology chooser; different prices stay
+separate. Linked table rows provide keyboard access. A 380px execution inspector
+(drawer on narrow windows) offers Close/Open cycle; Escape closes inspector before
+maximize. Selection survives layout, clears on owning group/contract change. Backend
+FIFO roles handle SELL short entries, BUY covering exits and reversals with both
+roles. Unresolvable snapshot IDs show captured evidence only, without guessed joins.
+
+Inspector includes all captured evidence: side/role/contract/time seconds/qty/lots/
+fill/value/fees/session/mode/client/IDs; original Market/Limit/Target/AS/ASL and actual
+execution type; Capital%/Risk%/fixed qty/requested %/budget/qty/capital baseline/
+reference price/initial sizing stop/source/lot/margin/effective allocation/risk/
+overrun; confirmed exit controller and requested Half/Full versus actual allocation/
+closed fraction; matched entries/FIFO gross/net/fees/capital%/R/open remainder and
+separate cycle results; labels/expected-actual patterns/partial-fill action totals/
+controller history; optional MFE/MAE/giveback/provider/resolution/coverage. Unknown
+stays Unknown, zero is valid; requested/effective and fill/action values stay distinct.
+Pending/refused conversion is not confirmed provenance. No settings/side/color
+inference, double percentage conversion or psychological-intent claims.
+
+### Follow-up sprints
+
+| Sprint | Deliverable and acceptance gate | Status |
+|---|---|---|
+| 0 | Complete specification, inventory, sprint breakdown and acceptance | Complete |
+| 1 | Shared contracts/API/native auth/canonical membership; ownership/parity tests | Complete — automated ownership, FIFO, real Decimal and failure checks passed |
+| 2 | Shared views/dedicated tab/session filters/navigation/tables; workspace continuity | Complete — lazy tab, resizable navigator and trading continuity verified |
+| 3 | KLine exact charts/EMA/split/maximize/history/viewport | Complete — exact-contract KLine charts, EMA, viewport/maximize and cleanup verified |
+| 4 | Clickable/grouped markers and full evidence inspector across analysis views | Complete — readable inspector, canonical cycle links, keyboard and physical overlay hit testing verified |
+| 5 | Labels/snapshots/comparison parity and cross-client persistence | Complete — save/discard/read-only, snapshot and comparison error/retry acceptance passed |
+| 6 | Five shared Stats views/all filters/detail/enrichment/full CSV | Complete — five shared views, detail, cached enrichment and complete CSV traversal verified |
+| 7 | Regression/browser/Windows acceptance/docs/reviewed PR to dev | Automated regression and browser acceptance passed; packaged Windows and PR review/merge remain manual |
+
+### Test and delivery gates
+
+Website/desktop identical fixtures must agree for FIFO/fees/reports/labels/CSV.
+Cover 40+80 entry/60 exit, multiple/partial exits/open inventory, shorts/reversals,
+interleaved/split/duplicate/equal-second fills, different sessions/expiries/products,
+marketable LIMIT/AS/ASL, sizing overrun/missing capital/legacy evidence, controller
+pending/refused/confirmed/manual changes and real revision conflicts. Verify ownership,
+no per-marker fanout/no broker actions and IST alignment. Exercise all marker surfaces
+(split/maximize/Labels/comparison/Stats/snapshots), overlaps/keyboard, dirty labels/save
+errors, snapshot wildcard/delete failures, comparison filters, Stats paging/coverage/
+enrichment and all-page CSV (incomplete export must fail explicitly).
+
+Verify active Paper/Replay/Stepwise continuity, slow/obsolete responses/rapid filters,
+reconnect/token expiry/logout/account changes, 150/Fit/restored viewport, repeat tab/
+maximize cleanup, bounded caches and large lazy fixtures. Run backend focused/full
+suite, desktop Vitest, website Node checks, both TS/builds and Rust tests. Keep
+reproducible browser logs/screenshots, record durable results here and list existing
+expiry/group_id failures separately. Packaged Windows acceptance covers scaling,
+auth refresh/CSV/focus/resize/maximize/workspace return; unperformed checks stay
+Pending. Update sprint implementation/validation after each sprint; earlier Phase 20
+results do not establish acceptance of this follow-up.
+
+
+### Desktop Analysis WIP checkpoint — 2026-10-06
+
+Work paused at the user's request for an overnight checkpoint. All current changes,
+including the original user-authored Analysis requirement, are saved on
+`wip/phase20-desktop-analysis`, based on dev commit `584c3bb` (PR #601 merged).
+This is an incomplete implementation, not a release or a completed sprint. No PR,
+merge, main deployment or broker orders are part of this checkpoint.
+
+Implemented foundations:
+- Sprint 0: agreed specification, full website parity inventory and sprint gates.
+- Existing Analysis, Labels, Snapshots, Comparison and Performance presentation
+  extracted into `shared/analysis`; website component wrappers provide the existing
+  API through an injected environment. Shared types expose stored analytics and
+  execution-role evidence. Website TypeScript/build pass after extraction.
+- Desktop-authenticated adapters in `backend/app/routers/desktop_analysis.py`
+  reuse explicitly allowlisted website endpoints/response validation. Snapshot
+  reads/deletes add session ownership checks. Selected-session detail loads existing
+  FIFO cycles and canonical execution membership. Backend router import succeeds
+  and registers 21 routes; accounting/ownership/parity tests still need to be added.
+- Native restricted `desktop_analysis_request`, browser/native request adapter,
+  bounded session/cycle memoization and basic stale-generation handling.
+- Initial standalone KLine renderer, EMA9/21, history loading, exact option filters,
+  grouped execution overlays/click callbacks, snapshot/comparison adapters and
+  viewport retention. These modules are **not wired into App.tsx yet**.
+
+Resume in this order:
+1. Review/test desktop API signatures, date/history parameters, strict auth/ownership,
+   real projection identity/role quantities and Decimal serialization. Preserve the
+   dedicated desktop history worker/provider conventions. Test failures as errors,
+   not empty reports. Improve request cancellation/account-generation fencing.
+2. Add the lazy Workspace / Analysis tab, desktop provider and Sessions / Stats
+   shell/navigation in `windowsapp/src/App.tsx`. Keep active trading hooks/streams
+   mounted and supervised. Add desktop-scoped styles and responsive split layout.
+3. Wire all KLine chart overrides, supply snapshot session/exact-contract identities,
+   preserve viewport through maximize without disposal, and verify real marker
+   hit testing. Review captured snapshot candle correctness and annotation ordering.
+4. Implement the complete execution inspector and cycle links using stored evidence;
+   retain stable physical execution IDs, reversals and role quantities, matched
+   FIFO results and Unknown legacy handling. Add accessible linked table selection.
+5. Finish Labels/Snapshots/Comparison desktop integration, dirty-label protection,
+   explicit error/retry handling, then the five shared Stats views and CSV workflow.
+6. Add focused ownership/accounting/marker/lifecycle/export tests and synthetic
+   browser acceptance, then run the required regression/build/Rust checks. Record
+   packaged Windows acceptance separately. Update sprint statuses from evidence.
+
+Checkpoint verification: both website and desktop TypeScript checks pass; both
+Vite production builds pass with existing bundle-size warnings; backend app/router
+import passes; diff whitespace check passes. Desktop production build currently
+validates the existing app, not runtime integration of the unwired analysis modules.
+The first website build caught shared-source module resolution; explicit Vite
+resolution was added and the rerun passed. No backend analysis unit/integration,
+new feature browser or packaged Windows acceptance has been run at this checkpoint.
+Existing desktop Vitest/native Rust checks are recorded separately below when done.
+
+Existing desktop/client Vitest regression: **155 passed / 25 files**. These existing
+tests do not establish coverage of the new desktop Analysis feature.
+
+Native Rust offline check on Linux: **16 passed**, main target/doc tests passed.
+This verifies compilation and existing native tests, not Windows packaging or new
+analysis command acceptance. Checkpoint implementation commit: `37fbc51`.
+Remote checkpoint: [wip/phase20-desktop-analysis](https://github.com/prattyush/TradeMatangi/tree/wip/phase20-desktop-analysis).
+Resume from this branch; finish the pending integration/tests before creating a
+reviewable delivery PR targeting dev.
 
 ## Website floating messages and error history — 2026-10-07
 
@@ -579,3 +774,322 @@ dev. Review/merge and manual backend deployment remain separate steps.
 Delivery: [PR #607](https://github.com/prattyush/TradeMatangi/pull/607),
 `fix/analytics-numeric-metadata` → `dev`, implementation commit `bcf25a7`.
 Review/merge and manual backend deployment remain pending.
+
+
+
+### Desktop Analysis resumed implementation — 2026-10-07
+
+Resumed on the explicitly requested local `wip/phase20-desktop-analysis` branch.
+Merged current dev `32c76ba` into WIP (merge commit `3f8ca8c`), retaining the shared
+Analysis extraction and bringing across the website floating notifications,
+emergency-exit/day barrier, and real analytics numeric-metadata repair. Website
+shared views report errors through its floating journal; desktop retains explicit
+inline errors. This remains an incomplete implementation checkpoint, not delivery.
+
+Implemented and checked in this continuation:
+- Analysis endpoints require a verified desktop bearer, without the legacy
+  X-User-Id bypass. Adapt both user_id and _user_id signatures and retain source
+  route dependencies, including historical request policy. Session-scoped reads
+  and snapshot deletes enforce ownership before calling services.
+- Data history adapters use the bounded desktop history executor while website
+  history retains its existing executor. Legacy synchronous pattern OHLC work
+  is offloaded from the event loop. Context/provider policy survives the worker.
+- Canonical session detail retains exchange/product and physical execution IDs.
+  Tests cover one physical reversal fill with separate entry/exit role quantities,
+  and committed real projection detail with Decimal and legacy numeric-string
+  sizing/controller evidence, FIFO net P&L and initial-risk R.
+- Transport cancellation/generation fencing prevents late native/browser responses
+  from succeeding after refresh/disposal/account changes. Failed cached reads retry;
+  session search responses are fenced. StrictMode cleanup does not retire the
+  immediately remounted transport.
+- Lazy main-window Workspace / Analysis tab, shared Sessions and five Stats views,
+  detail and CSV. Trading ScreenControllers remain mounted across tab switches;
+  analysis chart adapters dispose while their view is hidden. Account/server/token
+  changes replace the provider and logout removes account data. Popped-out screens
+  remain trading windows. Desktop Sessions defaults to the last 30 IST dates.
+- KLine adapters now cover Sessions, Labels, Snapshots, Comparison and Stats.
+  Fix the zero-height internal candle pane with a definite containing block.
+  Pass the actual snapshot session identity and stop guessing an option expiry
+  from the selected snapshot chart. Annotation styles follow their own annotation.
+- Initial 380px execution evidence inspector, grouped marker callbacks, accessible
+  trade-table selection, Escape close and canonical Open cycle links. Reversals
+  expose both FIFO roles; matching cannot cross sessions. The current inspector
+  uses structured JSON evidence and still needs the planned readable presentation.
+
+Validation of this checkpoint:
+- **94 focused backend tests passed** (desktop adapters, Phase 20 accounting/API,
+  and Phase 19 historical policy), including 13 new desktop boundary/worker tests.
+- **163 desktop/client Vitest tests passed**, 27 files, including eight new
+  transport/marker tests. **41 website Node checks passed**.
+- Website and desktop TypeScript checks and production builds passed. Existing
+  bundle-size and dateutil warnings remain.
+- `scripts/desktop-analysis-check.mjs` exercises the built desktop app with
+  synthetic/mock APIs: login, lazy Analysis tab, usable KLine candle pane,
+  keyboard execution inspector/cycle link, five Stats views, CSV download,
+  chart disposal/restoration, narrow viewport and logout isolation; no page errors
+  or Analysis trading writes. It regenerates its fixture with PYTHON_BIN and uses
+  externally supplied PLAYWRIGHT_MODULE/CHROME_BIN like the earlier browser checks.
+- Logs, fixtures, screenshots and browser summary are ignored under
+  `.cache/desktop-analysis-validation/`. Diff whitespace check passed.
+
+Implementation gates outstanding at the initial `e89c20c` checkpoint (completed in the delivery continuation below):
+1. Replace the reused modal/group layout with the specified resizable navigator,
+   linked session selection, draggable underlying/option split and narrow-pane UX.
+2. Present captured execution/sizing/controller/FIFO evidence as readable fields;
+   clear selection on owning group/contract changes. Verify real marker hit testing,
+   overlap chooser and physical IDs across every surface and snapshot provenance.
+3. Preserve chart instance/viewport through maximize, review exact exchange/product
+   selection and snapshot boundary candles/positions, and bound candle caching.
+4. Finish dirty-label protection, explicit snapshot/comparison error/retry and full
+   cross-client save/reload parity; shared legacy error swallowing remains to fix.
+5. Validate Stats all-page CSV failures/paging/enrichment and account/query races,
+   run active Paper/Replay/Stepwise continuity acceptance, then full backend/native
+   regression and packaged Windows acceptance before a delivery PR targeting dev.
+
+No delivery PR, main merge, deployment or live broker orders in this continuation.
+
+
+### Desktop Analysis completion and real-history sharing — 2026-10-07
+
+The initial WIP checkpoint is superseded by this completed implementation. Work
+continued on `wip/phase20-desktop-analysis`; delivery uses a separate feature branch
+and reviewed PR to dev. Main merge and deployment remain manual.
+
+Desktop now has the dedicated lazy Workspace / Analysis tab and Sessions / Stats
+navigation. Sessions provides mode/symbol/instrument/date filters, the last 30 IST
+dates by default, refresh/error/retry/empty states, a collapsible 300px navigator
+resizable from 240–480px, bounded execution/order tables and selected-session
+content. Preserve filters, selection and label drafts across tab switches. Show
+real sessions containing only pending/cancelled orders as well as filled sessions.
+Use the existing saved historical-context setting, including zero context days.
+Main navigation styles load with the workspace rather than waiting for lazy CSS.
+
+Underlying / exact option charts use KLineCharts, EMA9/21 and separate expiry,
+exchange and product identities. The split is draggable and keyboard adjustable;
+narrow layouts switch panes. Maximize changes layout without disposing the chart.
+Viewport restoration centres the saved timestamp correctly rather than using
+KLine's right-edge timestamp anchor. Clear the old price series before loading a
+different contract/date so stale candles cannot appear under a new identity. Hidden Analysis views dispose their charts,
+while trading controllers, engines and streams stay mounted. Hidden workspace
+charts do not consume drawing/refresh keyboard shortcuts. History and viewport
+caches are bounded, scoped to the account and cleared on account/server changes;
+failed/aborted requests are not memoized. Active authentication expiry returns to
+sign-in, and cancelled late native replies cannot change another account's state.
+
+Execution circles are locked and clickable; exact coincident fills and circles
+that overlap geometrically on nearby bars offer a chronological chooser. Keep
+physical execution IDs and owning sessions, both reversal roles and role quantities.
+Accessible table selection opens the 380px inspector; Escape closes it before a
+maximized view. Readable fields cover captured entry intent/execution type, sizing,
+requested budgets/percentages/quantity, capital/reference/initial stop, effective
+allocation/risk/overruns, confirmed exit method and Half/Full allocation, logical
+fill/action totals, FIFO gross/net/fees/capital contribution/R/open inventory,
+labels and controller history. Missing evidence remains Unknown; zero is retained.
+Associated cycle results are shown separately and are not additive. Open cycle
+provides the shared detail and explicit cached-only sampled excursion analysis.
+
+Labels retains saved/custom values, expected/actual fields, tags and FIFO context.
+Protect dirty edits when leaving a session or label view, prevent navigation while
+saving, and retain drafts on failure. Saved labels invalidate cached reads and
+refresh Stats. Metadata and round-trip storage failures now raise explicit errors
+rather than successful empty reports; label/tag/pattern reads consume every page.
+Comparison joins physical or stored execution IDs within the owning session and
+retains both label contexts for a reversal; category/strategy filters and top
+pattern annotations remain shared. Charts preserve their instances on maximize.
+
+Snapshots retains chronological group events, wildcard search, keyboard navigation,
+underlying/CE/PE panes and captured orders/positions/wallet/P&L. Include recordings
+from broker-book aliases without counting their executions twice. Pass the actual
+snapshot session; resolve captured fills only against unique physical evidence with
+matching price and quantity, otherwise show captured-only/Unknown provenance.
+Discard cached boundary/future bars and use captured OHLC when available; preserve
+unknown observation resolution. New recordings retain exact expiry/broker IDs/fees
+and available option observations, without rewriting legacy snapshots. Snapshot
+reads paginate; delete-all requires confirmation, retries bounded unprocessed
+batches and reports incomplete deletion. Capture/read/delete ownership is enforced.
+
+Stats has Overview / Entries / Exits / Sizing / Behavior, existing filters and
+sortable linked tables, summary/curve/drawdown/calendar/distributions/matrix/scatter,
+coverage/small-sample badges, comparisons/insights, cycle detail and CSV. Export
+traverses every page, validates total/membership/offset consistency and fails
+explicitly without downloading partial data. Filter changes cancel stale exports.
+
+#### Additional user requirement: share complete real history by email
+
+Website Settings → sharing and Desktop Settings → History sharing allow an owner
+to select up to 20 registered email addresses. Share all past and future real-mode
+sessions: application orders plus committed broker report facts (including orders
+without fills), individual executions, analytics, saved labels and recorded trading
+snapshots. Recipients see these alongside their own practice history, with owner
+identity and account/mode comparisons in Stats. Owner and recipient sessions cannot
+merge merely because their dates/symbols/modes match.
+
+Sharing grants read access only. Recipients cannot trade, change protection, edit
+labels, create snapshots or delete the owner's snapshots. Paper/Replay/Stepwise
+history, broker credentials, account settings and private patterns are not newly
+shared. Existing Pattern Library sharing remains separate. Saved order evidence
+uses an allowlist, keeps application-versus-broker facts distinct and exposes full
+recorded fields through lazy expandable tables. No broker polling, reconciliation,
+subscription or order request is performed by Analysis.
+
+`GET/PUT /api/users/real-history-sharing` and the bearer-authenticated desktop
+settings adapters persist grants on existing Users records, using an atomic
+version-checked transaction and reverse source references. No additional table or
+historical rewrite is needed. Check the owner's current grant on every server read;
+reverse references alone cannot authorize access. Normalize/deduplicate email
+addresses, reject unknown/self/ambiguous targets and preserve existing grants after
+validation or write failures. Removing an email revokes further reads; already
+loaded/downloaded copies cannot be recalled. Failed settings loads cannot submit
+an empty replacement list. No emails/notifications are sent to recipients. Website
+requests retain the existing website identity transport; desktop adapters require
+verified bearer identity. Trading permissions and credentials remain unchanged.
+
+#### Final validation and reproduction
+
+All provider, broker and browser paths in validation use synthetic/mocked data.
+DynamoDB Local is running for the existing full backend regression environment.
+
+- Full backend regression: **1,758 passed / 2 documented baseline failures**.
+  The failures remain the stale expiry fixture in `test_options_api.py` and the
+  missing `group_id` fixture in `test_tab_restore.py`; no new failures.
+- Final focused backend boundary/accounting regressions: **74 passed** after the
+  final storage/worker refinements.
+- Desktop/client Vitest: **171 passed**, 28 files. Website Node checks: **41 passed**.
+- Website and desktop TypeScript checks and production builds passed. Existing
+  bundle-size/dateutil/pytest-marker/pandas warnings remain.
+- Native Rust offline tests on Linux: **16 passed**, main/doc targets passed.
+- Built-app browser acceptance verifies login, lazy tab, Sessions/KLine, keyboard
+  inspector/cycle links, five Stats views/CSV, chart disposal/restoration, narrow
+  layout and logout isolation.
+- StrictMode workflow acceptance verifies chart instance/viewport retention,
+  actual underlying/option overlay hit testing and overlaps, dirty-label guards,
+  save/reload and error/retry, snapshot chronology/wildcards/recorded boundary
+  prices/delete failures, comparison failures, shared read-only views, real
+  order-only sessions, all-page CSV failure/retry and desktop sharing settings.
+- Paper / Replay / Stepwise continuity acceptance verifies that SSE and P&L update
+  while Analysis is visible and existing trading chart instances survive return.
+- Website settings acceptance verifies normalized emails, validation failures,
+  revocation and incoming owner display. Cross-client backend tests verify atomic
+  grant/revoke, non-transitive grants, real-only scope, complete sanitized order
+  evidence, snapshot alias membership and rejection of unauthorized writes.
+
+Reproduction scripts are `scripts/desktop-analysis-check.mjs`,
+`scripts/desktop-analysis-workflows.mjs`, `scripts/desktop-analysis-continuity.mjs`
+and `scripts/history-sharing-settings-check.mjs`. As with earlier checks, provide
+external PLAYWRIGHT_MODULE and optional CHROME_BIN; fixture-generating scripts also
+accept PYTHON_BIN. No runtime browser-test dependency was added. Durable test/build
+logs, JSON summaries and screenshots are ignored under
+`.cache/desktop-analysis-validation/`.
+
+Packaged Windows acceptance (scale/focus/native auth refresh/download/resize) and
+existing authorized live-broker acceptance remain manual and are not claimed by
+Linux/browser tests. No live orders, credential changes, main merge or deployment.
+
+
+Delivery: [draft PR #610](https://github.com/prattyush/TradeMatangi/pull/610),
+`feature/desktop-analysis-history-sharing` → `dev`. Implementation commit
+`fa1957e`; the local `wip/phase20-desktop-analysis` checkout is retained with the
+completed code. PR review/merge, packaged Windows acceptance, authorized existing
+live acceptance and manual main deployment remain pending.
+
+### Follow-up in PR #610: website Replay and open-order splitting (2026-10-07)
+
+The delivery branch remains `feature/desktop-analysis-history-sharing`, targeting
+`dev` in the same draft PR. It contains the completed desktop Analysis, Stats,
+snapshots and real-history sharing work above, plus these follow-up changes.
+
+**Website NIFTY options Replay.** The notification API proxy wrapped the
+synchronous `getSSEUrl()` helper in an async function. EventSource therefore
+received a Promise instead of the stream URL, which explains the stationary
+clock/charts despite active Pause/Stop controls. The facade now preserves the
+synchronous URL, including user identity and replay cursor. A separate connection
+fix always subscribes to the selected active member when its group refresh is
+empty/stale/unavailable; attaching clears a different group's stale state and
+late start responses cannot overwrite a newer selection. Dual options replay
+loads underlying/CE/PE data, including strike reloads, in worker threads rather
+than blocking the application's SSE event loop.
+
+**Split pending orders on website and desktop.** A compact fork icon splits the
+remaining quantity as evenly as possible in complete lots, retaining the larger
+half on the original order. With a lot size of 20, 60 becomes 40 + 20; one lot
+cannot be split. Entries, targets, limit exits and stoploss orders retain their
+prices, exact contract, stop attachment, execution provenance and exit allocation.
+Equities use whole shares. Existing wallet reservations are redistributed, with
+no second debit; cancellation refunds only each sibling's share. Related order
+records are committed atomically, including the desktop Paper ownership fence.
+Stable operation IDs prevent duplicate submissions on request retries, including
+retries after a later split. Both edit panels now use accessible, titled check
+and cross icons for Save and Cancel.
+
+For broker-backed intraday orders, the original quantity reduction must be
+confirmed in a broker report before the child is submitted. Fills received during
+acknowledgement remain authoritative. Durable uncertainty barriers block edits,
+conversions and duplicate submission; a complete account refresh can adopt a
+child by its persisted unique tag without importing a duplicate order. In-flight
+splits and account refreshes cannot replace each other's order state. Failure
+messages explicitly identify uncertain or incomplete splits; reconciliation does
+not submit another order. Trading streams carry full sibling updates, including
+removal of a retained order that filled during confirmation. Website snapshot
+recording receives the successful split action.
+
+Validation for this follow-up:
+
+- Full backend: **1,794 passed**, with only the same two documented baseline
+  fixture failures (`test_options_api.py`, `test_tab_restore.py`). Final focused
+  split/replay/broker-confirmation checks: **58 passed**, including local DynamoDB
+  atomic commit/conflict, Paper lease fencing, wallet refunds, partial/full fill
+  races, lost acknowledgements, refresh adoption and retry idempotency.
+- Desktop/client Vitest: **176 passed**, 29 files; website Node checks: **41 passed**.
+  The new facade tests require a synchronous SSE URL while preserving asynchronous
+  request behavior and selected-session/group subscription rules.
+- Website and desktop TypeScript checks and production builds passed. Native
+  Rust offline tests on Linux: **16 passed**.
+- `scripts/replay-order-split-check.mjs` passed with actual website replay hooks,
+  the real API facade and Lightweight Charts in StrictMode: advancing NIFTY
+  underlying/CE/PE prices and candles, Pause/Resume/Stop, empty/stale/wrong/missing
+  groups, both real order-panel components, 60 → 40/20, minimum-lot disabling,
+  Save/Cancel icons and retained-price/quantity editing. Feeds/broker responses
+  are synthetic; no live broker orders were submitted. Screenshot/JSON/build/test
+  artifacts remain under `.cache/desktop-analysis-validation/`.
+
+### Desktop clean-build correction: renderer ownership (2026-10-07)
+
+The Windows installer CI failure was caused by compile-time coupling, not a
+missing desktop chart feature: shared Analysis components still imported and
+contained the website's Lightweight Charts fallback implementations even though
+all desktop chart slots already used KLineCharts. The desktop TypeScript/Vite
+aliases resolved those imports through `frontend/node_modules`, masking the
+problem locally; Windows CI installs only desktop dependencies.
+
+Website implementations now live in `frontend/src/components/analysis/` and are
+registered by the website Analysis provider. Shared components contain only
+renderer-neutral props and workflows, and require the host's supplied renderer.
+Desktop retains its existing KLineCharts implementations for Sessions, Labels,
+Stats details, snapshots and comparisons. Pattern marker calculation is shared
+without chart-library types; only the website adapts markers to Lightweight
+Charts timestamp types. The desktop cross-client aliases are removed. No desktop
+package or lockfile dependency was added or changed. Windows build path triggers
+now also include shared Analysis and the frontend services consumed by desktop.
+
+Validation:
+
+- An isolated source checkout passed desktop `npm ci` and `npm run build`, with
+  neither `frontend/node_modules` nor desktop `lightweight-charts` installed.
+  The desktop Analysis bundle excludes the website renderers (about 108 kB rather
+  than 297 kB before this correction).
+- Both TypeScript checks passed; website production build passed.
+- Desktop Vitest: **176 passed**, 29 files; website Node checks: **41 passed**.
+- Desktop StrictMode Analysis workflows and Paper/Replay/Stepwise continuity
+  browser checks passed without a Lightweight Charts alias.
+- Website Stats browser acceptance passed (five views, cycle detail, cached-price
+  failure, CSV export, narrow layout and close). Its standalone browser harness
+  now supplies the React resolver/automatic JSX used by the production build.
+- `scripts/website-analysis-renderers-check.mjs` verifies all seven website chart
+  slots in StrictMode: underlying, options, chart panel, both snapshot renderers,
+  trade comparison and pattern comparison. All passed without page errors.
+- `wip/phase20-desktop-analysis` is an ancestor of the delivery branch; there are
+  no WIP commits missing from PR #610. Replay, order splitting, Stats, snapshots
+  and real-history sharing remain included.
+
+These are clean desktop frontend and browser checks; the packaged Windows
+installer is validated by the existing Windows CI workflow, not by Linux tests.
