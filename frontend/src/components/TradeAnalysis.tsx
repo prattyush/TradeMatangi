@@ -1,3 +1,4 @@
+import { useFlashError } from '../hooks/useFlashError'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   createChart,
@@ -293,7 +294,7 @@ export function AnalysisChart({
         ? `${t.right} ${t.side === 'BUY' ? 'B' : 'S'}`
         : (t.side === 'BUY' ? 'B' : 'S')
       const text = getMarkerText ? getMarkerText(t) : defaultText
-      
+
       let markerPrice: number | undefined
       if (t.right) {
         // Options trade mirrored on underlying
@@ -1018,6 +1019,7 @@ export default function TradeAnalysis({ onClose, historicalDays = 2 }: Props) {
   const [sessions, setSessions] = useState<SessionSummary[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  useFlashError(error, 'TradeAnalysis')
   const [hasSearched, setHasSearched] = useState(false)
   const [statsOpen, setStatsOpen] = useState(false)
 
@@ -1181,15 +1183,7 @@ export default function TradeAnalysis({ onClose, historicalDays = 2 }: Props) {
 
         {/* Group list */}
         <div style={{ flex: 1, overflowY: 'auto', padding: '16px 20px' }}>
-          {error && (
-            <div style={{
-              padding: '10px 14px', background: '#3d1f1f',
-              border: '1px solid #f85149', borderRadius: 6,
-              color: '#f85149', fontSize: 13, marginBottom: 12,
-            }}>
-              {error}
-            </div>
-          )}
+
 
           {!loading && hasSearched && groups.length === 0 && !error && (
             <div style={{ color: '#484f58', fontSize: 14, textAlign: 'center', marginTop: 40 }}>

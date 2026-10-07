@@ -1,3 +1,4 @@
+import { useFlashError } from '../hooks/useFlashError'
 import { useState, useEffect, useRef, useCallback, CSSProperties, ReactNode } from 'react'
 import { SessionState } from '../hooks/useSimulation'
 import api, { SymbolInfo } from '../services/api'
@@ -118,7 +119,9 @@ export default function SessionControls({
   const [speed, setSpeed] = useState(1.0)
   const [loading, setLoading] = useState(false)
   const [dateError, setDateError] = useState<string | null>(null)
+  useFlashError(dateError, 'SessionControls')
   const [startError, setStartError] = useState<string | null>(null)
+  useFlashError(startError, 'SessionControls')
   const [showTOTP, setShowTOTP] = useState(false)
   const [pendingStart, setPendingStart] = useState<(() => Promise<void>) | null>(null)
   const [overrideConfirm, setOverrideConfirm] = useState<{ config: InstrumentConfig; message: string; startTime: string; speed: number } | null>(null)
@@ -590,11 +593,7 @@ export default function SessionControls({
         {!addMode && extraControls}
       </div>
 
-      {(dateError || startError) && (
-        <div style={{ marginTop: 6, fontSize: 12, color: '#f85149' }}>
-          {dateError || startError}
-        </div>
-      )}
+
     </div>
     </>
   )

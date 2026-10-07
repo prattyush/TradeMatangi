@@ -1,3 +1,4 @@
+import { useFlashError } from '../hooks/useFlashError'
 import { useState, useEffect, useCallback } from 'react'
 import api from '../services/api'
 
@@ -32,6 +33,7 @@ export default function LoginScreen({ onLogin }: Props) {
   const [password, setPassword] = useState('')
   const [accountName, setAccountName] = useState('')
   const [error, setError] = useState<string | null>(null)
+  useFlashError(error, 'LoginScreen')
   const [loading, setLoading] = useState(false)
   const [googleLoading, setGoogleLoading] = useState(false)
   const [accountNamePopup, setAccountNamePopup] = useState<{ idToken: string } | null>(null)
@@ -264,15 +266,7 @@ export default function LoginScreen({ onLogin }: Props) {
             </div>
           )}
 
-          {error && (
-            <div style={{
-              padding: '8px 12px', background: '#3d1f1f',
-              border: '1px solid #f85149', borderRadius: 6,
-              color: '#f85149', fontSize: 13,
-            }}>
-              {error}
-            </div>
-          )}
+
 
           <button type="submit" style={btnStyle} disabled={loading}>
             {loading ? 'Please wait…' : mode === 'login' ? 'Sign in' : 'Create account'}
