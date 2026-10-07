@@ -317,6 +317,11 @@ def place_order(
 
     from app.services import execution_price_service as execution
     is_real = execution.real_session(session_id, wallet_ledger_kind)
+    if is_real:
+        from app.services import simulation, real_trading_day
+        session = simulation.get_session(session_id)
+        if session:
+            real_trading_day.require_entry_allowed(session, side, quantity, right, strike, expiry)
     execution_gap = None
     if is_real and order_type in (OrderType.TARGET, OrderType.STOPLOSS):
         execution_gap = execution.gap_for(user_id, order_type == OrderType.STOPLOSS)

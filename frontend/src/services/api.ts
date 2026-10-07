@@ -793,7 +793,30 @@ export interface CommandItem {
   cancel_reason?: string | null
 }
 
+export interface EmergencyExitResult {
+  session_id: string
+  offset_pct: number
+  status: 'orders_requested' | 'needs_attention' | 'already_flat'
+  results: Array<{ right: string | null; strike: number | null; expiry: string | null; created: string[]; converted: string[]; pending: string[]; errors: string[] }>
+}
+export interface RealTradingDayStatus { date: string; state: 'active' | 'closing' | 'done'; message?: string }
+
 const api = {
+  async exitAllPositions(sessionId: string): Promise<EmergencyExitResult> {
+    const response = await fetch(`${BACKEND_URL}/api/trades/sessions/${encodeURIComponent(sessionId)}/exit-all`, { method: 'POST', headers: _authHeaders() })
+    if (!response.ok) throw new ApiError((await response.json().catch(() => ({}))).detail || 'Could not request all exits', response.status)
+    return response.json()
+  },
+  async getRealTradingDayStatus(): Promise<RealTradingDayStatus> {
+    const response = await fetch(`${BACKEND_URL}/api/trades/real-day-status`, { headers: _authHeaders() })
+    if (!response.ok) throw new ApiError('Could not load real-trading day status', response.status)
+    return response.json()
+  },
+  async doneForRealTradingDay(sessionId: string): Promise<RealTradingDayStatus & { results: Array<EmergencyExitResult | { session_id: string; error: string }> }> {
+    const response = await fetch(`${BACKEND_URL}/api/trades/sessions/${encodeURIComponent(sessionId)}/done-for-day`, { method: 'POST', headers: _authHeaders() })
+    if (!response.ok) throw new ApiError((await response.json().catch(() => ({}))).detail || 'Could not start day closure', response.status)
+    return response.json()
+  },
   async getSymbols(): Promise<SymbolInfo[]> {
     const res = await fetch(`${BACKEND_URL}/api/data/symbols`)
     if (!res.ok) throw new Error(`Symbols fetch failed: ${res.status}`)

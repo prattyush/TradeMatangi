@@ -16,6 +16,8 @@ async def sync_order_edit_async(session, order: Order, new_order_type: OrderType
     from app.services.simulation import _is_position_exit
     if getattr(session, "broker_refresh_events", None) is not None:
         raise KotakError("Broker refresh is in progress; retry the edit shortly")
+    from app.services.real_trading_day import require_entry_allowed
+    require_entry_allowed(session, order.side, max(0, order.quantity - order.broker_filled_quantity), order.right, order.strike, order.expiry)
     previous = order_service.get_order(session.session_id, order.order_id)
     if reprice or previous is None or previous.order_type != order.order_type or previous.trigger_price != order.trigger_price:
         await asyncio.to_thread(reprice_trigger, order)
@@ -317,6 +319,8 @@ def submit_immediate(session, order, loop):
     """Submit a marketable LIMIT now, retaining exact contract and entry intent."""
     from app.services.kotak_service import get_service
     from app.services.simulation import _is_position_exit
+    from app.services.real_trading_day import require_entry_allowed
+    require_entry_allowed(session, order.side, order.quantity, order.right, order.strike, order.expiry)
     broker = get_service()
     role = "exit" if _is_position_exit(session, order) else "entry"
     kwargs = dict(symbol=session.symbol, side="B" if order.side == TradeSide.BUY else "S",
