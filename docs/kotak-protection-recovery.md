@@ -7,6 +7,45 @@ establish that Kotak or a particular SDK caused the cancellation.
 
 ## Recovery policy
 
+### Entries placed with an attached stop-loss
+
+Kotak real-options entries with an attached SL or AutoStop protection now use
+an event-driven account coordinator. It reconciles confirmed executions, orders
+and positions, allocates remaining exits once to FIFO entry groups, and repairs
+only missing coverage belonging to protected entries. A 40-unit entry and a
+20-unit entry cannot subtract each other's SL quantities. Partial fills require
+protection only for confirmed remaining quantities. Independent allocated
+target/limit exits and manually added SLs count as coverage.
+
+Fill events use the configured entry delay (default three seconds). Cancellations
+use 750 ms and qualify regardless of origin when protected entry intent is known.
+Refresh, reattachment and broker reconnection also trigger an audit. Explicit
+TradeMatangi cancellations/reductions and intentional conversions are respected;
+exclusions and allocation links are durable across splits and refreshes. FIFO
+closure consumes exclusions instead of disabling unrelated future protection.
+Orders lacking recoverable entry intent retain the legacy incident policy below.
+
+There is no periodic polling. Requests share one account report task and queue one
+continuation per affected session. Background report bundles start no more often
+than every two seconds, with shared 2/5/10-second failure backoff and any longer
+broker retry delay. Accounting reads request only executions and positions; a
+fresh shared bundle can be completed with just the missing order report. Explicit
+refresh clicks join in-flight requests. These are application limits, not Kotak
+quota claims. Manual trading takes precedence over queued repair; SDK requests
+already in progress cannot be preempted. Background reads run outside the
+foreground mutation barrier, and automatic submissions serialize per account.
+Independent groups in a fill burst submit from one validated snapshot, reserving
+acknowledged quantities until a shared verification pass. A new fill or foreground
+edit invalidates the batch before another submission.
+
+Repair reuses the durable claims/tags, uncertainty reconciliation and bounded
+submission policy. The entry coordinator verifies accepted orders in its next
+shared report pass, outside the manual-edit lock. Saved timeout-fallback positions
+can reopen charts but cannot authorize repair orders. Kite execution, paper,
+replay and desktop live browsing do not use this coordinator.
+
+### Legacy cancellation incidents
+
 After an app-managed exit cancellation, the backend coalesces events for 750 ms
 and audits broker orders and positions. An unknown-origin cancellation, including
 reason `--`, is eligible when an exit fill for that session's underlying occurred
@@ -171,8 +210,13 @@ sessions reconcile Kotak positions and orders before starting their live feed.
 Each CE/PE chart selects the most recently opened position within the saved
 session expiry (higher strike breaks timestamp ties). Flat sides keep the new
 Start request's selection. Other open contracts remain tracked. This matches
-paper resume selection; real Stop preserves broker stop-loss orders. A failed
-broker reconciliation returns a restart error and preserves durable trading state.
+paper resume selection; real Stop preserves broker stop-loss orders. If a report
+times out, restart can use the saved snapshot only when it belongs to the same
+broker account/day and its confirmed executions agree with its positions. A
+visible warning explains that the saved book may have changed while stopped and
+asks for Trade History Refresh. This fallback does not submit, modify or cancel
+broker orders. Missing/unverified snapshots, account mismatches and other
+reconciliation failures return a restart error and preserve durable trading state.
 
 LIMIT ↔ STOPLOSS conversion now retains the broker-confirmed type until a matching
 order event confirms type, prices and quantity. This applies to individual orders,

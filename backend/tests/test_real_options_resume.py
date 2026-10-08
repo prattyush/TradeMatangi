@@ -1,5 +1,7 @@
 """Real option restarts select charts from reconciled, exact-contract positions."""
 from contextlib import ExitStack
+from datetime import datetime, timezone
+import json
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
@@ -7,7 +9,8 @@ from fastapi import HTTPException
 
 from app.models.schemas import Order, OrderType, SimulationStartRequest, Trade, TradeSide
 from app.routers import simulation as route
-from app.services import market_data, order_service, simulation, trading
+from app.services import fifo_positions, market_data, order_service, real_broker_state, simulation, trading
+from app.services.kotak_service import KotakError
 
 
 @pytest.fixture
@@ -146,3 +149,61 @@ async def test_start_route_reconciles_and_selects_before_starting_engine(session
     assert not broker.place_options_sl_order.called
     assert not broker.modify_sl_order.called
     assert not broker.cancel_order.called
+
+
+def saved_snapshot(s):
+    timestamp = int(datetime.fromisoformat(f"{s.date}T10:00:00").replace(tzinfo=timezone.utc).timestamp())
+    s._fifo_executions = [{"symbol": "NIFTY26O1324000PE", "exchange": "nse_fo",
+        "product": "MIS", "side": "BUY", "quantity": 65, "price": 40,
+        "timestamp": timestamp, "execution_id": "execution", "kotak_order_id": "entry"}]
+    s.broker_positions = fifo_positions.positions(s, s._fifo_executions)
+    s.broker_projection_id = real_broker_state.projection_id(s, "account")
+    add_position(s, "PE", 24000, timestamp)
+
+
+@pytest.mark.asyncio
+async def test_timeout_resumes_verified_saved_contract_with_warning(session):
+    s = session
+    saved_snapshot(s)
+    broker = Mock()
+    broker.account_identity.return_value = "account"
+    timeout = KotakError("Kotak positions: Kotak SDK/transport failure: (0)\nReason: Request timeout after 30 seconds")
+    with patch("app.services.real_broker_state.refresh", new=AsyncMock(side_effect=timeout)), \
+         patch.object(simulation, "_upsert_session_to_db"), \
+         patch.object(simulation, "stop_session") as stop:
+        await route._prepare_real_options_resume(s, broker)
+    assert s.strike_pe == 24000 and s.strike_ce == 24200
+    assert s.broker_positions[0]["quantity"] == 65
+    stop.assert_not_called()
+    warning = json.loads(s.queue.get_nowait())
+    assert warning["type"] == "broker_error"
+    assert "Trade History Refresh" in warning["message"]
+    assert "saved" in warning["message"]
+    assert not broker.place_options_sl_order.called
+    assert not broker.modify_sl_order.called
+    assert not broker.cancel_order.called
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("invalid", ["missing", "unverified", "account", "mismatch", "not_timeout"])
+async def test_timeout_fallback_requires_verified_snapshot_for_same_account(session, invalid):
+    s = session
+    saved_snapshot(s)
+    broker = Mock()
+    broker.account_identity.return_value = "account"
+    if invalid == "missing":
+        s.broker_positions = None
+    elif invalid == "unverified":
+        s._fifo_executions = None
+    elif invalid == "account":
+        broker.account_identity.return_value = "other-account"
+    elif invalid == "mismatch":
+        s.broker_positions[0]["quantity"] = 130
+    error = KotakError("Malformed Kotak positions response" if invalid == "not_timeout" else "Request timeout after 30 seconds")
+    with patch("app.services.real_broker_state.refresh", new=AsyncMock(side_effect=error)), \
+         patch.object(simulation, "stop_session") as stop:
+        with pytest.raises(HTTPException) as caught:
+            await route._prepare_real_options_resume(s, broker)
+    assert caught.value.status_code == 502
+    stop.assert_called_once_with(s, preserve_trading_state=True)
+    assert s.queue.empty()

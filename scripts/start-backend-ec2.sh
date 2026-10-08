@@ -62,6 +62,6 @@ nohup "$VENV/bin/uvicorn" app.main:app \
   --workers 1 \
   --loop uvloop \
   --log-level info \
-  > "$LOG_DIR/backend.log" 2>&1 &
+  >> "$LOG_DIR/backend-stdout.log" 2>&1 &
 
-echo "Backend started (PID $!). Log: $LOG_DIR/backend.log"
+echo "Backend started (PID $!). Application log: $LOG_DIR/backend.log; stdout: $LOG_DIR/backend-stdout.log"

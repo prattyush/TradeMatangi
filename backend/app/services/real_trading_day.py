@@ -152,6 +152,7 @@ async def done_for_day(user_id):
     # Cancel entries/strategies on every alias, but submit exits once per book.
     sessions = sessions_for(user_id)
     for session in sessions:
+        session.real_day_closing = True
         try:
             strategy_service.cancel_all(session.session_id)
         except Exception as exc:

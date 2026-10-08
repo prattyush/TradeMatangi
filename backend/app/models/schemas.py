@@ -254,6 +254,9 @@ class Order(BaseModel):
     recovery_attempt: int = 0
     entry_sl_price: float | None = None  # auto-stoploss price set at entry time
     group_id: str | None = None          # links entry order with its auto-placed SL order
+    protection_group: str | None = None  # durable Kotak entry allocation across splits/conversions
+    protection_suppressed_quantity: int = 0
+    protection_allocations: dict[str, int] | None = None
     # The authoritative quote used to create a chart-originated order.  These
     # fields are intentionally optional so persisted and non-desktop orders
     # remain backwards compatible.

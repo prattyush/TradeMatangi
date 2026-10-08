@@ -246,9 +246,22 @@ async def test_partial_fill_is_cumulative_idempotent_and_deferred_during_refresh
 
 
 @pytest.mark.asyncio
-async def test_explicit_real_sl_ignores_auto_toggle_and_preserves_entry_quantity(env, monkeypatch):
+async def test_explicit_real_sl_ignores_auto_toggle_and_preserves_entry_quantity(env, monkeypatch, isolated_protection_journal):
     s, broker, _ = env
-    broker.place_options_sl_order.return_value = 'protect-a'
+    from app.models.schemas import SimulationState
+    from app.services import kotak_protection, protection_recovery
+    s.state = SimulationState.RUNNING
+    monkeypatch.setattr(protection_recovery, 'market_open', lambda s: True)
+    monkeypatch.setattr(protection_recovery, 'fresh_quote', lambda *args: 40.)
+    broker.get_order_history.return_value = [broker_order(order='entry-a', qty=40, filled=20)]
+    broker.get_trade_history.return_value = [execution(order='entry-a')]
+    broker.get_positions.return_value = [reported_position()]
+    def place(**kwargs):
+        row = broker_order(order='protect-a', status='trigger pending', side='SELL', qty=20, filled=0)
+        row.update(order_type='SL', trigger_price=kwargs['trigger_price'], tag=kwargs['tag'])
+        broker.get_order_history.return_value.append(row)
+        return 'protect-a'
+    broker.place_options_sl_order.side_effect = place
     monkeypatch.setattr('app.services.user_settings_service.get_settings', lambda uid: {'entry_auto_sl_enabled': False, 'entry_auto_sl_delay_sec': 0})
     order = Order(session_id=s.session_id, symbol=s.symbol, user_id=s.user_id, side=TradeSide.BUY,
         order_type=OrderType.LIMIT, quantity=40, trigger_price=40, limit_price=40, created_at=1, right='PE',
@@ -257,12 +270,13 @@ async def test_explicit_real_sl_ignores_auto_toggle_and_preserves_entry_quantity
     order_service._orders[s.session_id][order.order_id] = order
     s.broker_positions = [dict(symbol=s.symbol, side='LONG', quantity=20, avg_entry_price=40, right='PE', strike=71100, expiry=s.expiry)]
     entry_sl_watcher.on_entry_filled(order, s, asyncio.get_running_loop())
-    await asyncio.sleep(.05)
+    await asyncio.sleep(.1)
     assert order.quantity == 40
     broker.place_options_sl_order.assert_called_once()
     assert broker.place_options_sl_order.call_args.kwargs['qty'] == 20
-    entry_sl_watcher._place_real_protection(order, s)
+    await kotak_protection.audit(s, broker)
     broker.place_options_sl_order.assert_called_once()
+    await kotak_protection.shutdown()
 
 
 def test_labels_remap_only_exact_round_trip(env):
@@ -294,20 +308,40 @@ def test_valid_empty_report_is_accepted():
     assert broker.get_trade_history() == []
 
 @pytest.mark.asyncio
-async def test_protection_splits_sensex_freeze_and_retries_only_uncovered_quantity(env):
+async def test_protection_splits_sensex_freeze_and_retries_only_uncovered_quantity(env, monkeypatch, isolated_protection_journal):
+    from app.models.schemas import SimulationState
+    from app.services import kotak_protection, protection_recovery
     s, broker, _ = env
-    broker.place_options_sl_order.side_effect = ['protect-1', kotak_service.KotakError('temporary'), 'protect-2']
+    s.state = SimulationState.RUNNING
+    monkeypatch.setattr(protection_recovery, 'market_open', lambda s: True)
+    monkeypatch.setattr(protection_recovery, 'fresh_quote', lambda *args: 40.)
+    broker.get_order_history.return_value = [broker_order(order='entry-a', qty=1020, filled=1020)]
+    broker.get_trade_history.return_value = [execution(order='entry-a', qty=1020)]
+    broker.get_positions.return_value = [reported_position(1020)]
+    def place(**kwargs):
+        number = broker.place_options_sl_order.call_count
+        if number == 2:
+            raise kotak_service.KotakOrderRejected('confirmed rejection')
+        row = broker_order(order=f'protect-{number}', status='trigger pending', side='SELL', qty=kwargs['qty'], filled=0)
+        row.update(order_type='SL', trigger_price=kwargs['trigger_price'], tag=kwargs['tag'])
+        broker.get_order_history.return_value.append(row)
+        return row['kotak_order_id']
+    broker.place_options_sl_order.side_effect = place
     order = Order(session_id=s.session_id, user_id=s.user_id, symbol=s.symbol, side=TradeSide.BUY,
         order_type=OrderType.LIMIT, quantity=1020, trigger_price=40, limit_price=40, created_at=1,
         right='PE', strike=71100, expiry=s.expiry, entry_sl_price=30, group_id='large-entry',
-        execution_role='entry', broker_filled_quantity=1020, filled_price=40, kotak_fill_confirmed=True)
+        execution_role='entry', broker_filled_quantity=1020, filled_price=40, kotak_fill_confirmed=True,
+        kotak_order_id='entry-a')
     order_service._orders[s.session_id][order.order_id] = order
-    s.broker_positions = [dict(symbol=s.symbol, side='LONG', quantity=1020, avg_entry_price=40, right='PE', strike=71100, expiry=s.expiry)]
-    entry_sl_watcher._place_real_protection(order, s)
+    with pytest.raises(protection_recovery.Deferred):
+        await kotak_protection.audit(s, broker)
     assert [c.kwargs['qty'] for c in broker.place_options_sl_order.call_args_list] == [1000, 20]
-    entry_sl_watcher._place_real_protection(order, s)
+    with pytest.raises(protection_recovery.Deferred):
+        await kotak_protection.audit(s, broker)
+    await kotak_protection.audit(s, broker)
     assert [c.kwargs['qty'] for c in broker.place_options_sl_order.call_args_list] == [1000, 20, 20]
     assert sum(o.quantity for o in order_service.get_open_orders(s.session_id) if o.kotak_order_id) == 1020
+    await kotak_protection.shutdown()
 
 @pytest.mark.parametrize('report', ['order_report', 'positions'])
 def test_malformed_fact_row_is_not_an_authoritative_empty_report(report):

@@ -2,6 +2,7 @@ import asyncio
 import time
 import json
 import logging
+from contextlib import asynccontextmanager
 from fastapi import APIRouter, HTTPException, Query, Depends
 from pydantic import BaseModel, Field
 from app.dependencies import get_request_user_id
@@ -114,9 +115,16 @@ def _convert_with_broker(session, order, new_type, price=None):
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
-def _session_edit_lock(session):
+@asynccontextmanager
+async def _session_edit_lock(session):
     from app.services.protection_recovery import session_lock
-    return session_lock(session)
+    from app.services.kotak_protection import enabled, foreground
+    if enabled(session):
+        async with foreground(session), session_lock(session):
+            yield
+    else:
+        async with session_lock(session):
+            yield
 
 
 def _require_confirmed_recovery(order):
@@ -611,10 +619,14 @@ async def _cancel_order_locked(order_id, session_id, session):
         raise HTTPException(status_code=404, detail="Order not found or already closed")
     _require_confirmed_recovery(existing)
     if existing.kotak_order_id:
+        from app.services.kotak_protection import suppress, rollback_suppression, definitive_refusal
+        previous = await suppress(session, existing, max(0, existing.quantity - existing.broker_filled_quantity))
         try:
             from app.services.kotak_service import get_service as get_kotak
             await asyncio.to_thread(get_kotak().cancel_order, existing.kotak_order_id, initiator="user", purpose="user_cancel", context={"session_id": session_id, "order_id": order_id, "user_id": session.user_id})
         except Exception as exc:
+            if definitive_refusal(exc):
+                await rollback_suppression(existing, previous)
             logger.warning("broker_order_cancel_failed order=%s: %s", order_id, exc)
             raise HTTPException(status_code=502, detail=f"Broker rejected cancellation: {exc}") from exc
     if existing.status != order_service.OrderStatus.PENDING:
@@ -759,9 +771,13 @@ async def _update_order_locked(session, order_id, req, session_id):
             setattr(candidate, name, value)
     from app.services.broker_order_service import sync_order_edit_async, persist_order_async
     from app.services.kotak_service import KotakError
+    from app.services.kotak_protection import suppress, rollback_suppression, definitive_refusal
+    previous = await suppress(session, existing, max(0, existing.quantity - req.quantity) if req.quantity is not None else 0)
     try:
         await sync_order_edit_async(session, candidate, candidate.order_type, reprice=req.trigger_price is not None or req.limit_price is not None)
     except KotakError as exc:
+        if definitive_refusal(exc):
+            await rollback_suppression(existing, previous)
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     # A broker fill can arrive while the edit acknowledgement is in flight.
     if existing.status != order_service.OrderStatus.PENDING:

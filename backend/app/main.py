@@ -53,6 +53,8 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    from app.services.kotak_protection import startup as start_protection
+    start_protection()
     from app.services.user_service import seed_user
     from app.services.desktop_paper_eod import reconciliation_loop
     seed_user()
@@ -66,10 +68,14 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
+        from app.services.kotak_protection import shutdown as shutdown_protection
+        await shutdown_protection()
         from app.services.protection_recovery import shutdown
         await shutdown()
         from app.services.real_trading_day import shutdown as shutdown_day_jobs
         await shutdown_day_jobs()
+        from app.services.kotak_reports import shutdown as shutdown_reports
+        await shutdown_reports()
         if diagnostics:
             diagnostics.cancel()
             try:

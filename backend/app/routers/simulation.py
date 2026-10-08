@@ -100,8 +100,32 @@ def _delete_existing_context_sessions(user_id: str, date: str, session_type: str
 async def _prepare_real_options_resume(session, broker) -> None:
     """Select charts from fresh broker positions before starting the live feed."""
     from app.services import real_broker_state
+    from app.services.kotak_service import KotakError
     try:
-        await real_broker_state.refresh(session, broker)
+        try:
+            await real_broker_state.refresh(session, broker)
+        except KotakError as exc:
+            # A report timeout cannot turn the saved book into an empty position.
+            # Only a complete snapshot for this account/day can supply a fallback.
+            cause = exc
+            timed_out = False
+            while cause is not None:
+                timed_out |= isinstance(cause, TimeoutError) or "timeout" in str(cause).lower() or "timed out" in str(cause).lower()
+                cause = cause.__cause__
+            executions = getattr(session, "_fifo_executions", None)
+            positions = getattr(session, "broker_positions", None)
+            if not timed_out or executions is None or positions is None:
+                raise
+            account = await asyncio.to_thread(broker.account_identity)
+            if session.broker_projection_id != real_broker_state.projection_id(session, account):
+                raise
+            from app.services.fifo_positions import verified_positions
+            verified_positions(session, executions, positions)
+            logger.warning("real_options_resume_cached session_id=%s error=%s", session.session_id, exc)
+            import json
+            session.queue.put_nowait(json.dumps({"type": "broker_error", "message":
+                "Kotak reports timed out. Restarted using the last verified saved positions and orders; "
+                "they may have changed while stopped. Use Trade History Refresh to reconcile."}))
         sim_svc.resolve_website_resume_contracts(session)
     except Exception as exc:
         logger.exception("real_options_resume_failed session_id=%s", session.session_id)
