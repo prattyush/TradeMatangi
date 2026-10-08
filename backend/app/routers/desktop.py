@@ -25,7 +25,7 @@ class DesktopCapabilities(BaseModel):
     api_version: str = "v1"
     authentication: list[str] = ["bearer", "x-user-id-legacy"]
     features: list[str] = ["catalogue", "historical-candles", "option-metadata", "option-historical-candles", "preflight"]
-    trading_capabilities: list[str] = ["stepwise", "replay-trading", "orders", "strategies", "wallet", "flatten", "draggable-lines", "bulk-convert", "trade-labels"]
+    trading_capabilities: list[str] = ["stepwise", "replay-trading", "orders", "strategies", "wallet", "flatten", "draggable-lines", "bulk-convert", "trade-labels", "session-preparation"]
 
 
 class DesktopInstrument(BaseModel):
@@ -210,6 +210,8 @@ async def option_historical_page(
         try:
             await run_history(fetch_options_historical, symbol, page_date, strike, expiry, right.upper())
             frame = await run_history(load_options_dataframe, symbol, page_date, strike, expiry, right.upper())
+            from app.services.desktop_preparation import trim_leading_option_frame
+            frame = await run_history(trim_leading_option_frame, frame, symbol, page_date, strike, expiry, right.upper())
             records = candles_to_records(resample_to_candles(frame, interval_minutes))
             candles.extend(DesktopCandle(timestamp=item["time"], open=item["open"], high=item["high"], low=item["low"], close=item["close"]) for item in records)
             loaded_dates.append(page_date)

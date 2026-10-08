@@ -78,6 +78,7 @@ export interface DesktopTradingSettings {
 }
 
 export interface DesktopTradingSnapshot {
+  created_for_request?: boolean | null
   paper_status?: 'running' | 'stopped' | 'settled' | null
   cleanup_pending?: boolean
   settlement_pending?: boolean

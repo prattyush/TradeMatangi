@@ -45,6 +45,8 @@ def prepare_tiles(tiles: list[dict], date: str, interval_seconds: int) -> dict[s
                     continue
                 from app.services.options_service import load_options_dataframe
                 frame = load_options_dataframe(instrument["underlying"], date, int(instrument["strike"]), instrument["expiry"], instrument["right"])
+                from app.services.desktop_preparation import trim_leading_option_frame
+                frame = trim_leading_option_frame(frame, instrument["underlying"], date, int(instrument["strike"]), instrument["expiry"], instrument["right"])
             else:
                 frame = load_dataframe(instrument["symbol"], date)
             prepared[tile["tile_id"]] = candles_to_records(frame)

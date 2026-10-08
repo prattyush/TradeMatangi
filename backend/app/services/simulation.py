@@ -877,7 +877,7 @@ def _stop_desktop_option_subscriptions(session: SimulationSession) -> None:
 
 
 def _emit_attached_option_ticks(session: SimulationSession, timestamp: int) -> list[dict]:
-    from app.services.options_service import options_iter_ticks
+    from app.services.desktop_preparation import desktop_option_ticks as options_iter_ticks
     cache = getattr(session, "desktop_option_ticks_by_time", None)
     if cache is None:
         cache = {}
@@ -1212,6 +1212,8 @@ async def _run_session(session: SimulationSession) -> None:
         # can be updated mid-session when the user adds a new pane with a different OTM offset.
         if session.instrument_type == "options" and session.strike and session.expiry and session.right is None:
             from app.services.options_service import options_iter_ticks
+            if getattr(session, "desktop_created", False) or str(getattr(session, "desktop_origin", "")).startswith("desktop_"):
+                from app.services.desktop_preparation import desktop_option_ticks as options_iter_ticks
 
             cur_ce_strike = session.strike_ce or session.strike
             cur_pe_strike = session.strike_pe or session.strike
@@ -1341,6 +1343,8 @@ async def _run_session(session: SimulationSession) -> None:
         # Single-contract options (right provided — Sprint 3 compat)
         elif session.instrument_type == "options" and session.strike and session.expiry and session.right:
             from app.services.options_service import options_iter_ticks
+            if getattr(session, "desktop_created", False) or str(getattr(session, "desktop_origin", "")).startswith("desktop_"):
+                from app.services.desktop_preparation import desktop_option_ticks as options_iter_ticks
             tick_iter = options_iter_ticks(
                 session.symbol, session.date, session.strike,
                 session.expiry, session.right, session.start_time,
@@ -1801,6 +1805,8 @@ async def _run_paper_session(session: SimulationSession) -> None:
 
             elif session.instrument_type == "options" and session.strike and session.expiry and session.right:
                 from app.services.options_service import options_iter_ticks
+                if getattr(session, "desktop_created", False) or str(getattr(session, "desktop_origin", "")).startswith("desktop_"):
+                    from app.services.desktop_preparation import desktop_option_ticks as options_iter_ticks
                 try:
                     for tick in options_iter_ticks(
                         session.symbol, session.date, session.strike,

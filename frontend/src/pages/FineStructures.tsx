@@ -1,3 +1,4 @@
+import { premiumPresetsFor as thresholdValuesFor, withSavedPremium } from '../../../shared/optionPremiumPresets'
 import { flashError } from '../services/notifications'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { createChart, IChartApi, ISeriesApi, Time, LineStyle } from 'lightweight-charts'
@@ -8,13 +9,6 @@ const STEP_COLORS = [
   '#58a6ff', '#3fb950', '#d29922', '#f0883e', '#bc8cff',
   '#f85149', '#79c0ff', '#a371f7', '#f778ba', '#7ee787',
 ]
-
-const THRESHOLD_VALUES_NIFTY = [25, 50, 75, 100, 125, 150]
-const THRESHOLD_VALUES_SENSEX = [50, 100, 150, 200, 250]
-
-function thresholdValuesFor(symbol: string) {
-  return symbol === 'BSESEN' ? THRESHOLD_VALUES_SENSEX : THRESHOLD_VALUES_NIFTY
-}
 
 function nextEMA(prev: number, close: number, k: number): number {
   return close * k + prev * (1 - k)
@@ -1065,11 +1059,11 @@ function OptionsBuilderView({ definitions }: { definitions: FineDefinition[] }) 
           <>
             <span style={{ fontSize: 11, color: '#8b949e' }}>CE:</span>
             <select value={maxPriceCE} onChange={e => setMaxPriceCE(Number(e.target.value))} style={{ ...selectStyle, width: 70, fontSize: 11 }}>
-              {thresholdValuesFor(symbol).map(v => <option key={v} value={v}>₹{v}</option>)}
+              {withSavedPremium(thresholdValuesFor(symbol), maxPriceCE).map(v => <option key={v} value={v}>₹{v}{!thresholdValuesFor(symbol).includes(v) ? ' (saved)' : ''}</option>)}
             </select>
             <span style={{ fontSize: 11, color: '#8b949e' }}>PE:</span>
             <select value={maxPricePE} onChange={e => setMaxPricePE(Number(e.target.value))} style={{ ...selectStyle, width: 70, fontSize: 11 }}>
-              {thresholdValuesFor(symbol).map(v => <option key={v} value={v}>₹{v}</option>)}
+              {withSavedPremium(thresholdValuesFor(symbol), maxPricePE).map(v => <option key={v} value={v}>₹{v}{!thresholdValuesFor(symbol).includes(v) ? ' (saved)' : ''}</option>)}
             </select>
           </>
         ) : (

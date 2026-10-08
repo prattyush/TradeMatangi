@@ -442,6 +442,7 @@ export function ChartTile({ symbol, interval, supportedIntervals, onIntervalChan
   }, [drawingInstrumentKey, drawingRequest, onDrawingError])
   useEffect(() => {
     const shortcuts = (event: KeyboardEvent) => {
+      if (!active || (event.target instanceof HTMLElement && event.target.closest('input,textarea,select,[contenteditable=true]'))) return
       if (event.key === 'Escape') { setContextMenu(null); if (pricePickAction) onPricePick?.(NaN) }
       if ((event.key === 'Delete' || event.key === 'Backspace') && selectedOrderId !== null) { const order = openOrders.find(item => item.order_id === selectedOrderId); if (order) onOrderCancel?.(order); setSelectedOrderId(null); return }
       if ((event.key === 'Delete' || event.key === 'Backspace') && selected !== null) { const drawing = drawings.find(item => item.id === selected); if (drawing?.backendId && drawing.revision) void persistDrawing(`drawings/${drawing.backendId}`, 'DELETE', drawing.drawing, drawing.revision); chartRef.current?.removeOverlay({ id: selected }); drawingOverlayIdsRef.current.delete(selected); setDrawings(current => current.filter(item => item.id !== selected)); setSelected(null) }
@@ -449,7 +450,7 @@ export function ChartTile({ symbol, interval, supportedIntervals, onIntervalChan
     }
     window.addEventListener('keydown', shortcuts)
     return () => window.removeEventListener('keydown', shortcuts)
-  }, [selected, selectedOrderId, drawings, openOrders, pricePickAction])
+  }, [active, selected, selectedOrderId, drawings, openOrders, pricePickAction])
   const addDrawing = (nextTool: string, commandId: number) => {
     const name = overlayName(nextTool)
     const lineColor = nextTool === 'Trend' ? settings.trendLineColor : nextTool === 'Horizontal' ? settings.horizontalLineColor : settings.drawingLineColor

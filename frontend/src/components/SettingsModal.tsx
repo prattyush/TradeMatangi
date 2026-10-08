@@ -1,3 +1,4 @@
+import { NIFTY_PREMIUM_PRESETS as THRESHOLD_VALUES_NIFTY, SENSEX_PREMIUM_PRESETS as THRESHOLD_VALUES_SENSEX, withSavedPremium } from '../../../shared/optionPremiumPresets'
 import HistorySharingSettings, { type HistorySharingState } from '../../../shared/analysis/HistorySharingSettings'
 import { BACKEND_URL } from '../config'
 import { _authHeaders } from '../services/api'
@@ -8,11 +9,10 @@ import api, { type UserSettingsResponse } from '../services/api'
 import KotakTOTPModal from './KotakTOTPModal'
 import { RocRatioMode } from '../indicators/optionsRoc'
 
-const THRESHOLD_VALUES_NIFTY = [25, 50, 75, 100, 125, 150]   // interval 50
-const THRESHOLD_VALUES_SENSEX = [50, 100, 150, 200, 250]       // interval 100
 
 function ThresholdSelect({ value, onChange }: { value: number; onChange: (v: number) => void }) {
-  const values = [...new Set([...THRESHOLD_VALUES_NIFTY, ...THRESHOLD_VALUES_SENSEX])].sort((a, b) => a - b)
+  const presets = [...new Set([...THRESHOLD_VALUES_NIFTY, ...THRESHOLD_VALUES_SENSEX])].sort((a, b) => a - b)
+  const values = withSavedPremium(presets, value)
   return (
     <select
       value={value}
@@ -23,7 +23,7 @@ function ThresholdSelect({ value, onChange }: { value: number; onChange: (v: num
       }}
     >
       {values.map(v => (
-        <option key={v} value={v}>₹{v}</option>
+        <option key={v} value={v}>₹{v}{!presets.includes(v) ? ' (saved)' : ''}</option>
       ))}
     </select>
   )
