@@ -32,7 +32,7 @@ async function scenario(mode='Stepwise', five=false) {
   if(path.endsWith('/auth/desktop/token'))value={access_token:'synthetic'}
   else if(path.endsWith('/screens'))value={screens:[record]}
   else if(path.endsWith('/screens/record')){if(method==='PUT')record={...record,...body,revision:record.revision+1};value=record}
-  else if(path.endsWith('/catalogue'))value={instruments:[{symbol:'BSESEN',display_name:'SENSEX',exchange:'BSE',chart_type:'index',option_eligible:true,supported_intervals:[1,3,5,15,30,60]}]}
+  else if(path.endsWith('/catalogue'))value={instruments:[{symbol:'BSESEN',display_name:'SENSEX',exchange:'BSE',chart_type:'index',option_eligible:true,supported_intervals:[1,3,5,15,30,60]},{symbol:'NIFTY',display_name:'NIFTY 50',exchange:'NSE',chart_type:'index',option_eligible:true,supported_intervals:[1,3,5,15,30,60]}]}
   else if(path.endsWith('/option-metadata'))value={expiries:[date],strike_interval:100,rights:['CE','PE'],available:true}
   else if(path.endsWith('/historical/pages'))value={candles,available:true}
   else if(path.endsWith('/settings/current'))value=settings
@@ -109,7 +109,7 @@ async function scenario(mode='Stepwise', five=false) {
  await entry.getByRole('button',{name:'Edit',exact:true}).click();assert.equal(await entry.getByLabel('Order quantity').count(),0);await entry.getByRole('button',{name:'Cancel order edits'}).click()
  // Max-price picker captures and displays the search time before applying.
  await page.locator('.chart').nth(1).getByRole('button',{name:'Choose instrument'}).click()
- const picker=page.getByRole('dialog',{name:'Select chart instrument'});await picker.getByLabel('Strike selection').selectOption('max_price');await picker.getByLabel('Premium cap').fill('50');await picker.getByRole('button',{name:'Find strike'}).click();await picker.getByText('Selected CE 71800',{exact:false}).waitFor();await picker.getByRole('button',{name:'Apply to chart'}).click();await picker.waitFor({state:'hidden'})
+ const picker=page.getByRole('dialog',{name:'Select chart instrument'});await picker.getByLabel('Strike selection').selectOption('max_price');await picker.getByLabel('Symbol',{exact:true}).selectOption('NIFTY');const presets=picker.getByRole('group',{name:'Premium cap presets'});assert.deepEqual(await presets.getByRole('button').allTextContents(),['₹30','₹50','₹75','₹100','₹125','₹150']);await presets.getByRole('button',{name:'₹30',exact:true}).click();assert.equal(await picker.getByLabel('Premium cap',{exact:true}).inputValue(),'30');await picker.getByLabel('Symbol',{exact:true}).selectOption('BSESEN');await picker.getByLabel('Premium cap',{exact:true}).fill('50');await picker.getByRole('button',{name:'Find strike'}).click();await picker.getByText('Selected CE 71800',{exact:false}).waitFor();await picker.getByRole('button',{name:'Apply to chart'}).click();await picker.waitFor({state:'hidden'})
  await page.getByRole('button',{name:'Order',exact:true}).click();await order.getByRole('button',{name:'CE 71800',exact:true}).waitFor()
  await page.setViewportSize({width:600,height:650});await page.waitForTimeout(100);const bounded=await order.boundingBox();assert(bounded.x>=0&&bounded.x+bounded.width<=600)
  await page.screenshot({path:resolve(artifacts,`phase21-${mode.toLowerCase()}${five?'-five':''}.png`)})

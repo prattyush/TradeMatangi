@@ -33,7 +33,7 @@ merge. Main merge/deployment remain manual.
 | 3 | Session preparation and premium search API | Validated |
 | 4 | Picker and synchronized session start (requirement 3) | Validated |
 | 5 | Compact movable order window (requirement 2) | Validated |
-| 6 | Integrated acceptance, regression and PR delivery | Validated automatically; draft PR #619 |
+| 6 | Integrated acceptance, regression and PR delivery | Validated automatically; PR #619 published for review |
 
 Progression: Planned → In progress → Implemented—validation pending → Validated.
 Track PR merge, native Windows acceptance and deployment independently.
@@ -192,9 +192,30 @@ small viewport clamping and uncertainty fencing with zero page errors.
 Packaged Windows installer CI was triggered by the delivery branch; its status is separate
 from manual interaction acceptance. Packaged Windows DPI/focus/native auth refresh/pop-out/drag/wheel acceptance remains
 manual; Linux/browser results do not establish native Windows acceptance. Kite execution
-and desktop Real execution remain deferred. Delivery: [draft PR #619](https://github.com/prattyush/TradeMatangi/pull/619),
+and desktop Real execution remain deferred. Delivery: [PR #619](https://github.com/prattyush/TradeMatangi/pull/619),
 feature/phase21-desktop-ui → dev, implementation commit 4e60617. PR review/merge
 and manual main deployment remain pending. No automatic main merge or deployment is included.
+
+### NIFTY premium preset follow-up — 2026-10-08
+
+At the user's request, the first NIFTY Max Price preset is ₹30 instead of ₹25;
+higher presets remain ₹50/75/100/125/150. Shared preset definitions keep website
+SessionControls (Paper/Real/Replay/Stepwise), Settings, Fine Structures and desktop
+Paper/Replay/Stepwise symbol pickers consistent. Desktop displays small preset
+buttons alongside its custom input. Sensex and other-symbol presets are preserved.
+
+Existing saved/custom caps are not silently increased: website dropdowns show a
+non-preset value explicitly as saved; desktop retains its numeric input. The saved
+₹50 default is unchanged. No account migration, broker order or live test is involved.
+Both client TypeScript/production builds and synthetic website four-mode acceptance
+passed, including retained saved ₹25 and selecting/saving ₹30 for CE/PE. The desktop
+workflow harness checks NIFTY buttons and selection across its three modes and five
+panes. The isolated desktop build also includes the new shared helper without website
+dependencies. Windows CI now watches all shared source so future preset edits trigger it.
+
+PR #619 is published as ready for review at the user's explicit request. Windows
+installer CI passed for head 0b474a2; new preset changes trigger a subsequent run.
+Packaged native interaction acceptance, review/merge and main deployment remain manual.
 
 ## Original requirements
 

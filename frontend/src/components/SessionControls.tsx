@@ -1,3 +1,4 @@
+import { premiumPresetsFor as thresholdValuesFor, withSavedPremium } from '../../../shared/optionPremiumPresets'
 import { useFlashError } from '../hooks/useFlashError'
 import { useState, useEffect, useRef, useCallback, CSSProperties, ReactNode } from 'react'
 import { SessionState } from '../hooks/useSimulation'
@@ -5,13 +6,6 @@ import api, { SymbolInfo } from '../services/api'
 import { InstrumentConfig } from '../hooks/useSimulation'
 import KotakTOTPModal from './KotakTOTPModal'
 import ConfirmModal from './ConfirmModal'
-
-const THRESHOLD_VALUES_NIFTY = [25, 50, 75, 100, 125, 150]
-const THRESHOLD_VALUES_SENSEX = [50, 100, 150, 200, 250]
-
-function thresholdValuesFor(symbol: string) {
-  return symbol === 'BSESEN' ? THRESHOLD_VALUES_SENSEX : THRESHOLD_VALUES_NIFTY
-}
 
 interface Props {
   sessionState: SessionState
@@ -544,8 +538,8 @@ export default function SessionControls({
                 api.updateUserSettings({ max_price_threshold_ce: v, max_price_threshold_pe: v }).catch(() => {})
               }}
             >
-              {thresholdValuesFor(currentSymbol).map(v => (
-                <option key={v} value={v}>₹{v}</option>
+              {withSavedPremium(thresholdValuesFor(currentSymbol), maxThreshold).map(v => (
+                <option key={v} value={v}>₹{v}{!thresholdValuesFor(currentSymbol).includes(v) ? ' (saved)' : ''}</option>
               ))}
             </select>
             <span style={{ marginLeft: 4, fontSize: 11, color: '#484f58' }}>(CE & PE)</span>
