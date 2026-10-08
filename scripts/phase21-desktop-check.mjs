@@ -103,7 +103,7 @@ async function scenario(mode='Stepwise', five=false) {
  await sl.getByRole('button',{name:'Edit',exact:true}).click()
  const qty=sl.getByLabel('Order quantity');await qty.focus();await page.mouse.move(...Object.values(await qty.boundingBox()).slice(0,2).map((v,i)=>v+5));await page.mouse.wheel(0,-100);assert.equal(await qty.inputValue(),'60')
  await qty.press('ArrowDown');assert.equal(await qty.inputValue(),'40')
- const price=sl.getByLabel('Order price');await price.focus();await price.press('ArrowUp');assert.equal(await price.inputValue(),'90.25')
+ const price=sl.getByLabel('Order price');await price.focus();await price.press('ArrowUp');assert.equal(await price.inputValue(),'90.25');assert.equal(await price.evaluate(node=>{node.stepUp();return node.value}),'90.5');await price.fill('90.25')
  await sl.getByRole('button',{name:'Save order edits'}).click();assert(calls.some(c=>c.method==='PATCH'&&c.body.trigger_price===90.25))
  const entry=page.locator('.desktop-open-order').filter({hasText:'BUY · LIMIT'})
  await entry.getByRole('button',{name:'Edit',exact:true}).click();assert.equal(await entry.getByLabel('Order quantity').count(),0);await entry.getByRole('button',{name:'Cancel order edits'}).click()

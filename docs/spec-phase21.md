@@ -33,7 +33,7 @@ merge. Main merge/deployment remain manual.
 | 3 | Session preparation and premium search API | Validated |
 | 4 | Picker and synchronized session start (requirement 3) | Validated |
 | 5 | Compact movable order window (requirement 2) | Validated |
-| 6 | Integrated acceptance, regression and PR delivery | Automated checks passed; delivery pending |
+| 6 | Integrated acceptance, regression and PR delivery | Validated automatically; draft PR #619 |
 
 Progression: Planned → In progress → Implemented—validation pending → Validated.
 Track PR merge, native Windows acceptance and deployment independently.
@@ -120,7 +120,9 @@ manual/deployment gates. The Phase 21 plan and original requirements are retaine
 Sprint 1: the screen save/recovery state persists tools_collapsed; disclosure does
 not dispose charts. Status dot exposes backend/feed details through hover/focus.
 Sprint 2: one input helper prevents double native wheel changes, steps focused
-quantity by authoritative lots/shares, and pending prices by ₹0.25. SL-only quantity
+quantity by authoritative lots/shares, and pending prices by ₹0.25. Fractional
+price inputs avoid a browser min/step-base offset; typed finer prices retain their
+value when stepped by a quarter rupee. SL-only quantity
 editing accounts for exact-contract remaining exits and fills; ordinary pending
 entries keep price-only editing. Chart shortcuts ignore inactive panes and form input.
 Sprint 3: POST /api/desktop/v1/trading/prepare-session requires a verified bearer,
@@ -187,10 +189,12 @@ small viewport clamping and uncertainty fencing with zero page errors.
 
 ### Remaining acceptance and delivery
 
-Packaged Windows DPI/focus/native auth refresh/pop-out/drag/wheel acceptance remains
+Packaged Windows installer CI was triggered by the delivery branch; its status is separate
+from manual interaction acceptance. Packaged Windows DPI/focus/native auth refresh/pop-out/drag/wheel acceptance remains
 manual; Linux/browser results do not establish native Windows acceptance. Kite execution
-and desktop Real execution remain deferred. Delivery uses feature/phase21-desktop-ui targeting dev. PR review/merge and manual
-main deployment are pending. No automatic main merge or deployment is included.
+and desktop Real execution remain deferred. Delivery: [draft PR #619](https://github.com/prattyush/TradeMatangi/pull/619),
+feature/phase21-desktop-ui → dev, implementation commit 4e60617. PR review/merge
+and manual main deployment remain pending. No automatic main merge or deployment is included.
 
 ## Original requirements
 

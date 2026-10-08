@@ -13,7 +13,7 @@ describe('lot-aware editing', () => {
   })
   it('uses quarter-rupee steps without rounding a directly typed finer price on save', () => {
     expect(incrementValue('100.25', 1, .25, .01)).toBe('100.5')
-    expect(incrementValue('100.05', 1, .25, .01)).toBe('100.25')
+    expect(incrementValue('100.05', 1, .25, .01)).toBe('100.3')
   })
   it('counts only same-contract closing reservations and remaining fills', () => {
     const position = { symbol: 'BSESEN', side: 'LONG', quantity: 80, avg_entry_price: 100, entry_commission: 0 } as const

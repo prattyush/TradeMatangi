@@ -23,6 +23,6 @@ export function incrementValue(raw: string, direction: number, step: number, min
   const current = Number(raw)
   const value = Number.isFinite(current) ? current : min
   const scaled = value / step
-  const next = (direction > 0 ? Math.floor(scaled + 1e-8) + 1 : Math.ceil(scaled - 1e-8) - 1) * step
+  const next = step < 1 ? value + direction * step : (direction > 0 ? Math.floor(scaled + 1e-8) + 1 : Math.ceil(scaled - 1e-8) - 1) * step
   return String(Math.round(Math.max(min, Math.min(max, next)) * 100000) / 100000)
 }
