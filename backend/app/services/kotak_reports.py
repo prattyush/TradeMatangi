@@ -29,6 +29,8 @@ class Account:
     submission: asyncio.Lock = field(default_factory=asyncio.Lock)
     foreground: int = 0
     disagreements: dict = field(default_factory=dict)
+    explicit_waiters: int = 0
+    background_users: set = field(default_factory=set)
 
 
 _accounts = {}
@@ -74,8 +76,21 @@ def consistent(broker, scope):
     state(broker).disagreements.pop(scope, None)
 
 
-async def fetch(broker, *, background=False, force=False, include_orders=True):
+async def fetch(broker, *, background=False, force=False, include_orders=True, user_id=None):
     account = state(broker)
+    if not background:
+        account.explicit_waiters += 1
+    try:
+        return await _fetch(broker, background=background, force=force, include_orders=include_orders, user_id=user_id)
+    finally:
+        if not background:
+            account.explicit_waiters -= 1
+
+
+async def _fetch(broker, *, background=False, force=False, include_orders=True, user_id=None):
+    account = state(broker)
+    if background and user_id is not None:
+        account.background_users.add(user_id)
     if account.task and not account.task.done():
         logger.debug('kotak_reports_join revision=%d', account.revision)
         result = await asyncio.shield(account.task)
@@ -96,6 +111,10 @@ async def fetch(broker, *, background=False, force=False, include_orders=True):
                 await asyncio.sleep(min(max(wait, .05), .25))
                 continue
             break
+        if background and account.background_users and not account.explicit_waiters:
+            from app.services.kotak_automation_policy import enabled
+            if not any(enabled(user) for user in account.background_users):
+                raise RuntimeError('Automatic Kotak protection disabled; queued reports stopped')
         started, revision = time.monotonic(), account.revision
         account.next_start = started + MIN_INTERVAL
         # Wait for all threads, even if one report fails. A canceled waiter must
@@ -126,6 +145,7 @@ async def fetch(broker, *, background=False, force=False, include_orders=True):
         logger.info('kotak_reports_fetched requests=%d revision=%d background=%s', len(needed), revision, background)
         return bundle
 
+    account.background_users = {user_id} if background and user_id is not None else set()
     account.task = asyncio.create_task(run())
     account.task.add_done_callback(lambda task: task.exception() if not task.cancelled() else None)
     return await asyncio.shield(account.task)

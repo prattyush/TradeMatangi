@@ -268,10 +268,15 @@ async def refresh(session, broker, *, protection=False, bundle=None):
     from app.services import trading, order_service, wallet_service, simulation
     from app.services import kotak_reports
     from app.services.protection_recovery import Deferred
+    from app.services import kotak_automation_policy as policy
+    if not protection:
+        await policy.check(session.user_id, force=True)
     account = await asyncio.to_thread(broker.account_identity)
     root = projection_id(session, account)
     prefetched = bundle
     if protection:
+        if not policy.enabled(session.user_id):
+            raise Deferred('Automatic Kotak protection disabled')
         # Background reads must not set the foreground "refresh busy" barrier.
         version = getattr(session, '_protection_revision', 0)
         prefetched = prefetched or await kotak_reports.fetch(broker, background=True)
@@ -335,6 +340,8 @@ async def refresh(session, broker, *, protection=False, bundle=None):
                     return False
             if not fifo_agrees():
                 if protection:
+                    if not policy.enabled(session.user_id):
+                        raise Deferred('Automatic Kotak protection disabled during background staging')
                     from app.services.protection_recovery import Deferred
                     kotak_reports.disagree(broker, root)
                     raise Deferred('Broker reports are updating; retry entry protection after backoff')
@@ -395,6 +402,10 @@ async def refresh(session, broker, *, protection=False, bundle=None):
                 if order.kotak_order_id:
                     simulation._register_kotak_sl_for_order(session, order, asyncio.get_running_loop(), attach_only=True)
             if not protection:
+                if not policy.enabled(session.user_id) and any(o.recovery_state in ('prepared', 'submitting', 'unknown')
+                        for o in order_service.get_all_orders(session.session_id)):
+                    from app.services.kotak_protection import reconcile_sent_orders
+                    await reconcile_sent_orders(session, broker, scoped_orders)
                 from app.services.kotak_protection import request
                 request(session, reason='refresh', delay=0, invalidate=False)
                 from app.services.protection_recovery import resume

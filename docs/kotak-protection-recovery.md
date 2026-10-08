@@ -7,6 +7,19 @@ establish that Kotak or a particular SDK caused the cancellation.
 
 ## Recovery policy
 
+### Live settings switch
+
+Website and desktop Trading settings share **Automatic Kotak SL placement and
+cancelled-exit recovery**, saved to backend UserSettings as
+`kotak_automated_protection_enabled` (default True). Uncheck it during trading
+to stop new automatic entry SLs, manager audits and cancellation replacements.
+Changes apply after the backend confirms the save; no session restart is needed.
+Trade History Refresh reads the persisted flag and does not restart disabled
+automation. It can still reconcile an already-sent uncertain order without
+placing a replacement. Manual orders/SLs, existing broker orders and explicit
+strategies continue; paper/replay protection is unchanged. Already-dispatched SDK
+requests may finish. Re-enable and/or refresh to resume checks.
+
 ### Entries placed with an attached stop-loss
 
 Kotak real-options entries with an attached SL or AutoStop protection now use

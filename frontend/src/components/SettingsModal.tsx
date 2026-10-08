@@ -345,6 +345,7 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
   const [settingsLoading, setSettingsLoading] = useState(false)
   const [settingsLoadFailed, setSettingsLoadFailed] = useState(false)
   const [preferenceSaving, setPreferenceSaving] = useState(false)
+  const [kotakProtectionEnabled, setKotakProtectionEnabled] = useState(true)
   const [loadAttempt, setLoadAttempt] = useState(0)
   const [customAmount, setCustomAmount] = useState('')
   const [status, setStatus] = useState<string | null>(null)
@@ -547,6 +548,7 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
           setFineStructureShareEmails(s.fine_structure_share_emails)
         }
         // Sync entry auto-stoploss settings
+        setKotakProtectionEnabled(s.kotak_automated_protection_enabled ?? true)
         if (s.entry_auto_sl_delay_sec != null) {
           setEntryAutoSlDelay(s.entry_auto_sl_delay_sec)
           localStorage.setItem(ENTRY_AUTO_SL_DELAY_KEY, String(s.entry_auto_sl_delay_sec))
@@ -638,7 +640,13 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
 
   const savePreference = async (values: Partial<UserSettingsResponse>, apply: () => void) => {
     setPreferenceSaving(true)
-    try { await api.updateUserSettings(values); apply() }
+    try {
+      const saved = await api.updateUserSettings(values)
+      if (values.kotak_automated_protection_enabled !== undefined && saved.kotak_automated_protection_enabled !== values.kotak_automated_protection_enabled) {
+        throw new Error('Backend did not confirm the Kotak automation switch; update the backend before using this setting.')
+      }
+      apply()
+    }
     catch (error) { setStatus(`Could not save settings: ${String(error)}`) }
     finally { setPreferenceSaving(false) }
   }
@@ -1522,7 +1530,15 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                 <div style={{ fontSize: 11, color: '#8b949e' }}>
-                  Entry stoploss protection is always enabled. Entries with an attached SL price are protected when they fill.
+                  Paper/replay entry protection stays enabled. Kotak real trading uses the switch below.
+                </div>
+                <label style={{ fontSize: 12, color: '#e6edf3', display: 'flex', gap: 8, alignItems: 'center' }}>
+                  <input type="checkbox" checked={kotakProtectionEnabled} disabled={settingsLoading || settingsLoadFailed || preferenceSaving}
+                    onChange={e => { const enabled = e.target.checked; void savePreference({ kotak_automated_protection_enabled: enabled }, () => setKotakProtectionEnabled(enabled)) }} />
+                  Automatic Kotak SL placement and cancelled-exit recovery
+                </label>
+                <div style={{ fontSize: 11, color: '#8b949e' }}>
+                  Changes apply during trading after saving. When off, add and manage stoplosses manually; existing broker orders stay active. Trade History Refresh respects this switch. Orders already sent may still complete.
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                   <span style={{ fontSize: 11, color: '#8b949e' }}>Real trading delay:</span>

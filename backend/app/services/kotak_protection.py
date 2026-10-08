@@ -7,7 +7,7 @@ import logging
 import math
 import time
 
-from app.models.schemas import OrderStatus, OrderType, TradeSide
+from app.models.schemas import Order, OrderStatus, OrderType, TradeSide
 from app.services import order_service, protection_journal as journal
 
 logger = logging.getLogger(__name__)
@@ -21,14 +21,19 @@ def startup():
     _closing = False
 
 
-def enabled(session):
+def configured(session):
     return (session is not None and session.session_type == 'real'
             and getattr(session, 'instrument_type', None) == 'options'
             and getattr(session, 'execution_broker', 'KotakNeo') == 'KotakNeo')
 
 
+def enabled(session):
+    from app.services.kotak_automation_policy import enabled as permitted
+    return configured(session) and permitted(session.user_id)
+
+
 def entries(session):
-    if not enabled(session):
+    if not configured(session):
         return []
     return [o for o in order_service.get_all_orders(session.session_id)
             if o.user_id == session.user_id and o.source != 'broker_external'
@@ -36,7 +41,7 @@ def entries(session):
 
 
 def handles(session, order):
-    return enabled(session) and any((o.right, o.strike, o.expiry) == (order.right, order.strike, order.expiry)
+    return configured(session) and any((o.right, o.strike, o.expiry) == (order.right, order.strike, order.expiry)
                                    for o in entries(session))
 
 
@@ -142,7 +147,7 @@ def allocations(session, executions, rows, exclusions=None):
 
 
 def request(session, *, reason, delay=.75, invalidate=True):
-    if _closing or getattr(session, 'real_day_closing', False) or not entries(session):
+    if _closing or not enabled(session) or getattr(session, 'real_day_closing', False) or not entries(session):
         return
     from app.services.kotak_service import get_service
     from app.services import kotak_reports
@@ -178,10 +183,15 @@ def busy(session):
 
 
 async def audit(session, broker):
+    from app.services.kotak_automation_policy import check
+    if not await check(session.user_id):
+        return
     from app.services import kotak_reports, real_broker_state, protection_recovery as recovery
     if busy(session):
         raise recovery.Deferred('Manual edit, split or conversion pending; automatic repair deferred')
     bundle, executions = await snapshot(session, broker)
+    if not enabled(session):
+        return
     if bundle.revision != kotak_reports.state(broker).revision:
         raise recovery.Deferred('New broker events arrived during the audit; rechecking')
     intents = {}
@@ -224,6 +234,8 @@ async def audit(session, broker):
     expected_account_revision = bundle.revision
     session_revision = getattr(session, '_protection_revision', 0)
     for entry, required, covered, missing in gaps:
+        if not enabled(session):
+            return
         if busy(session) or kotak_reports.state(broker).foreground:
             raise recovery.Deferred('Foreground trading operation has priority')
         root = intent_key(session, entry)
@@ -292,7 +304,7 @@ async def snapshot(session, broker):
     from app.services import kotak_reports, real_broker_state, fifo_positions, broker_reports
     from app.services.protection_recovery import Deferred
     version = getattr(session, '_protection_revision', 0)
-    bundle = await kotak_reports.fetch(broker, background=True)
+    bundle = await kotak_reports.fetch(broker, background=True, user_id=session.user_id)
     if (busy(session) or version != getattr(session, '_protection_revision', 0)
             or bundle.revision != kotak_reports.state(broker).revision):
         raise Deferred('Foreground action or fill changed the audit snapshot')
@@ -362,15 +374,19 @@ async def _drive(identity, broker):
             ready = [key for key, item in pending.items() if item[1] <= time.monotonic()]
             batch = [pending.pop(key) for key in ready]
             for session, _, reason in batch:
-                if (simulation.get_session(session.session_id) is not session or session.state.value not in ('running', 'paused')
+                if (not enabled(session) or simulation.get_session(session.session_id) is not session or session.state.value not in ('running', 'paused')
                         or getattr(session, 'real_day_closing', False)):
                     continue
                 try:
                     await audit(session, broker)
                 except recovery.Deferred as exc:
+                    if not enabled(session):
+                        continue
                     logger.info('entry_protection_deferred session=%s reason=%s', session.session_id, exc)
                     _pending.setdefault(identity, {})[session.session_id] = (session, time.monotonic() + 1, reason)
                 except Exception as exc:
+                    if not enabled(session):
+                        continue
                     logger.exception('entry_protection_failed session=%s', session.session_id)
                     for entry in entries(session):
                         recovery.emit(session, entry, '', 'needs_attention', f'Entry protection could not be verified: {exc}')
@@ -387,6 +403,13 @@ async def _drive(identity, broker):
 async def foreground(session):
     from app.services import kotak_reports
     broker = getattr(session, '_kotak_protection_broker', None)
+    if broker is None:
+        try:
+            from app.services.kotak_service import get_service
+            broker = get_service()
+            broker.account_identity()
+        except Exception:
+            broker = None
     account = kotak_reports.state(broker) if broker else None
     session._kotak_manual_busy = getattr(session, '_kotak_manual_busy', 0) + 1
     session._protection_revision = getattr(session, '_protection_revision', 0) + 1
@@ -406,7 +429,7 @@ async def foreground(session):
 
 async def suppress(session, order, quantity):
     """Write manual exclusion before a broker mutation; caller rolls back refusal."""
-    if not enabled(session) or order.execution_role != 'exit' or not handles(session, order) or quantity <= 0:
+    if not configured(session) or order.execution_role != 'exit' or not handles(session, order) or quantity <= 0:
         return None
     previous = order.protection_suppressed_quantity
     remaining_at_request = {}
@@ -481,6 +504,20 @@ async def load_intent(root):
         if incident:
             return incident
     return index
+
+
+async def reconcile_sent_orders(session, broker, rows):
+    """Explicit refresh may resolve orders already sent while automation is off."""
+    from app.services import protection_recovery as recovery
+    jobs = await asyncio.to_thread(journal.store.for_session, session.session_id)
+    for operation, job in jobs:
+        if job.get('account') != broker.account_identity() or not job.get('children'):
+            continue
+        try:
+            parent = Order.model_validate(job['parent'])
+            await recovery.reconcile_children(session, parent, operation, job, rows, broker)
+        except recovery.Deferred as exc:
+            recovery.emit(session, parent, operation, 'needs_attention', f'Previously sent order still needs reconciliation: {exc}')
 
 
 async def shutdown():

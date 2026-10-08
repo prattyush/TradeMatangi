@@ -182,6 +182,7 @@ export interface UserSettingsResponse {
   fine_structure_share_emails?: string
   entry_auto_sl_enabled?: boolean
   entry_auto_sl_delay_sec?: number
+  kotak_automated_protection_enabled?: boolean
   max_price_mode?: string
   max_price_threshold_ce?: number
   max_price_threshold_pe?: number

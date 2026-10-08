@@ -118,8 +118,8 @@ def _convert_with_broker(session, order, new_type, price=None):
 @asynccontextmanager
 async def _session_edit_lock(session):
     from app.services.protection_recovery import session_lock
-    from app.services.kotak_protection import enabled, foreground
-    if enabled(session):
+    from app.services.kotak_protection import configured, foreground
+    if configured(session):
         async with foreground(session), session_lock(session):
             yield
     else:

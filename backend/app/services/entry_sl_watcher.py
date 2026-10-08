@@ -56,6 +56,9 @@ def on_entry_filled(
     session_type = getattr(session, "session_type", "sim")
 
     if session_type == "real":
+        from app.services.kotak_automation_policy import enabled as permitted
+        if not permitted(session.user_id):
+            return
         from app.services.kotak_protection import enabled, request
         if getattr(session, "execution_broker", "KotakNeo") != "KotakNeo":
             return
@@ -157,6 +160,9 @@ def _schedule_delayed_sl(order, session, delay_sec, loop=None):
 
 
 def _place_real_protection(order, session):
+    from app.services.kotak_automation_policy import enabled as permitted
+    if not permitted(session.user_id):
+        return
     from app.services.kotak_protection import enabled, request
     if enabled(session):
         request(session, reason="entry_fill", delay=0)

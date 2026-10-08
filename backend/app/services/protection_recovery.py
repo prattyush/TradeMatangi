@@ -78,6 +78,7 @@ def note_fill(session, order, quantity, before_net):
     if session.session_type != 'real' or getattr(session, 'execution_broker', 'KotakNeo') != 'KotakNeo':
         return
     session._protection_revision = getattr(session, '_protection_revision', 0) + 1
+    invalidate_reports(session)
     after = before_net + quantity * (1 if order.side == TradeSide.BUY else -1)
     epochs = getattr(session, '_protection_epochs', {})
     if before_net and (not after or before_net * after < 0):
@@ -94,6 +95,11 @@ def note_fill(session, order, quantity, before_net):
 
 
 def note_cancel(session, order, metadata):
+    invalidate_reports(session)
+    from app.services.kotak_automation_policy import enabled as permitted
+    if not permitted(session.user_id):
+        order_service._write_order_to_db(order)
+        return
     if _closing or getattr(session, 'execution_broker', 'KotakNeo') != 'KotakNeo':
         return
     from app.services.kotak_protection import handles, request
@@ -127,6 +133,16 @@ def note_cancel(session, order, metadata):
                 _pending_events.pop(operation, None)
             note_cancel(*following)
     task.add_done_callback(finished)
+
+
+def invalidate_reports(session):
+    if session.session_type == 'real' and getattr(session, 'execution_broker', 'KotakNeo') == 'KotakNeo':
+        try:
+            from app.services.kotak_service import get_service
+            from app.services.kotak_reports import invalidate
+            invalidate(get_service())
+        except Exception:
+            logger.debug('Report cache invalidation unavailable session=%s', session.session_id)
 
 
 def market_open(session):
@@ -263,7 +279,7 @@ async def reports_for(session, parent, broker, bundle=None):
     version = getattr(session, '_protection_revision', 0)
     try:
         from app.services import kotak_reports
-        bundle = bundle or await kotak_reports.fetch(broker, background=True)
+        bundle = bundle or await kotak_reports.fetch(broker, background=True, user_id=session.user_id)
         rows, raw_positions = bundle.orders, bundle.positions
     except Exception as exc:
         raise Deferred(f'Broker reports unavailable: {exc}') from exc
@@ -305,7 +321,7 @@ async def same_cycle(session, parent, broker):
     from app.services import broker_reports as reports
     try:
         from app.services import kotak_reports
-        executions = (await kotak_reports.fetch(broker, background=True)).executions
+        executions = (await kotak_reports.fetch(broker, background=True, user_id=session.user_id)).executions
     except Exception as exc:
         raise Deferred(f'Broker execution report unavailable: {exc}') from exc
     net = 0
@@ -457,6 +473,9 @@ async def abandon_prepared(session, child, record, operation, job, message):
 
 
 async def _attempt(session, parent, operation, job, broker, *, bundle=None, reserved_ids=()):
+    from app.services.kotak_automation_policy import check, enabled as permitted
+    if not await check(session.user_id):
+        return True
     from app.config import LOT_SIZES
     from app.services import user_settings_service, execution_price_service
     from app.services.broker_order_service import register_callbacks
@@ -527,6 +546,8 @@ async def _attempt(session, parent, operation, job, broker, *, bundle=None, rese
     job.update(attempts=attempt, state='submitting')
     await save_job(operation, job)
     for index, chunk in enumerate(chunks):
+        if not permitted(session.user_id):
+            return True
         if entry_intent:
             from app.services import kotak_reports
             if kotak_reports.state(broker).foreground:
@@ -571,6 +592,8 @@ async def _attempt(session, parent, operation, job, broker, *, bundle=None, rese
         if local_capacity(session, parent, child.order_id) < child.quantity:
             await abandon_prepared(session, child, record, operation, job, 'Another exit now covers this quantity; no duplicate submitted')
         fresh = fresh_quote(session, parent)
+        if not await check(session.user_id):
+            await abandon_prepared(session, child, record, operation, job, 'Automatic Kotak protection disabled; no order submitted')
         if not (trigger < fresh if side == 'LONG' else trigger > fresh):
             await abandon_prepared(session, child, record, operation, job, 'Market crossed the prepared stop; recalculate before submitting')
         kwargs = dict(symbol=session.symbol, side=parent.side.value[0], qty=chunk,
@@ -645,6 +668,9 @@ async def _drive(session, parent, metadata, operation):
     from app.services.kotak_service import get_service
     from app.services import simulation
     await asyncio.sleep(.75)
+    from app.services.kotak_automation_policy import check, enabled as permitted
+    if not await check(session.user_id):
+        return
     broker = get_service()
     try:
         account = await asyncio.to_thread(broker.account_identity)
@@ -681,6 +707,8 @@ async def _drive(session, parent, metadata, operation):
         explicit_origin = str(job['explicit_origin']).strip().upper()
         started = time.time()
         while simulation.get_session(session.session_id) is session and session.state.value in ('running', 'paused'):
+            if not permitted(session.user_id):
+                return
             correlated = abs(getattr(session, '_last_exit_fill_at', 0) - job['cancelled_at']) <= 30
             was_correlated = job.get('correlated', False)
             job['correlated'] = was_correlated or correlated
@@ -723,6 +751,9 @@ async def resume(session):
     global _closing
     _closing = False
     if session.session_type != 'real' or getattr(session, 'execution_broker', 'KotakNeo') != 'KotakNeo':
+        return
+    from app.services.kotak_automation_policy import check
+    if not await check(session.user_id):
         return
     from app.services.kotak_protection import enabled, request
     if enabled(session):

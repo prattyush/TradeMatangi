@@ -90,11 +90,13 @@ const tokenLabels: Record<string, string> = {
 function SettingControl({
   field,
   value,
-  onChange
+  onChange,
+  disabled = false
 }: {
   field: SettingsField
   value: unknown
   onChange: (value: unknown) => void
+  disabled?: boolean
 }) {
   if (field.type === 'boolean')
     return (
@@ -103,6 +105,7 @@ function SettingControl({
           <input
             aria-label={field.label}
             type="checkbox"
+            disabled={disabled}
             checked={Boolean(value)}
             onChange={(e) => onChange(e.target.checked)}
           />{' '}
@@ -688,6 +691,9 @@ export function DesktopSettingsModal({
                       Sizing applies to new sessions. Limit gaps apply to new
                       orders and trigger edits; pending orders retain their
                       prices.
+                      The Kotak automation checkbox saves immediately and applies
+                      during trading. When off, manage SLs manually. Existing
+                      broker orders remain active; requests already sent may finish.
                     </p>
                   )}
                   <div className="picker-fields">
@@ -696,12 +702,21 @@ export function DesktopSettingsModal({
                         key={field.key}
                         field={field}
                         value={userDraft[field.key]}
-                        onChange={(value) =>
+                        disabled={saving || loading || loadFailed}
+                        onChange={(value) => {
+                          if (field.key === 'kotak_automated_protection_enabled') {
+                            void action(async () => {
+                              const saved = await onSaveTradingSettings({ [field.key]: value })
+                              if (saved[field.key] !== value) throw new Error('Backend did not confirm the Kotak automation switch')
+                              setUserDraft(current => ({ ...current, [field.key]: value }))
+                            }, 'Kotak automation setting saved')
+                            return
+                          }
                           setUserDraft((current) => ({
                             ...current,
                             [field.key]: value
                           }))
-                        }
+                        }}
                       />
                     ))}
                   </div>

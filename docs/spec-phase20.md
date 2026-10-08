@@ -457,6 +457,42 @@ equity protection, lightweight in-memory audits and background staging priority.
 Delivery branch: `fix/kotak-entry-protection-coordinator`, targeting `dev` for PR
 review. Review/merge, main deployment and manual live acceptance remain pending.
 
+### Live automation kill switch — 2026-10-08
+
+`kotak_automated_protection_enabled` is a backend-owned, per-user UserSettings
+boolean, default True to preserve the current behavior. Website and desktop
+Trading settings expose the same checkbox and save it immediately, confirming
+the backend response before changing the displayed state. It may be unchecked
+during an active trading session; no restart is required.
+
+Off stops new automatic attached-entry SL placement, the protected-entry manager,
+and legacy automatic cancelled-exit recovery for Kotak real trading. Queued user
+work is removed and queued background reports check the flag before dispatch.
+Handlers recheck persisted settings before submissions, and a stale settings
+read cannot undo a newer local toggle. A failed strict settings read defers
+automatic repair rather than enabling it from defaults. Runtime settings checks
+occur only on work/submission boundaries; no idle polling is added.
+
+Trade History Refresh force-reads the saved flag and continues normal manual
+reconciliation while off without restarting automation. It may passively resolve
+orders already sent, so an uncertain acknowledgement does not leave duplicate
+runtime orders. Manual cancellations/reductions retain their intent while off.
+Manual entry/SL placement, broker working orders, explicit strategies, fills,
+data feeds and paper/replay protection remain available. An SDK request already
+dispatched may finish; the switch cannot recall it. Re-enabling schedules a new
+check for active sessions; Trade History Refresh also provides explicit recovery.
+
+Deploy backend and both clients together. Older backend responses that do not
+confirm the new setting produce a save error rather than a false disabled UI.
+Validation covers cross-client persistence/user isolation, stale-read races,
+disable before submission, queued reports, disabled refresh, retained manual
+intent and passive acknowledgement reconciliation. Both production builds,
+TypeScript checks and 13 desktop shared-settings tests passed.
+The flag follow-up full backend run passed **1,852 tests**, with the same two
+documented baseline failures; **166 focused backend tests** passed. Delivery is
+included in [PR #616](https://github.com/prattyush/TradeMatangi/pull/616), targeting
+dev. Review/merge and deployment remain manual.
+
 ## Analysis in Desktop — agreed specification and implementation plan
 
 ### Follow-up Sprint 0 — Specification and baseline

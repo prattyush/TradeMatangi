@@ -387,8 +387,9 @@ class UserSettingsResponse(BaseModel):
     analysis_price_source: str = "options"
     experimental_patterns_enabled: bool = False
     pattern_share_emails: str = ""
-    entry_auto_sl_enabled: bool = True  # compatibility field; entry protection is always enabled
+    entry_auto_sl_enabled: bool = True  # retired switch; Kotak real automation uses its own live flag
     entry_auto_sl_delay_sec: int = 3
+    kotak_automated_protection_enabled: bool = True
     max_price_mode: str = "otm"          # "otm" | "threshold"
     max_price_threshold_ce: float = 50.0
     max_price_threshold_pe: float = 50.0
@@ -428,6 +429,7 @@ class UserSettingsUpdateRequest(BaseModel):
     pattern_share_emails: str | None = None
     entry_auto_sl_enabled: bool | None = None
     entry_auto_sl_delay_sec: int | None = Field(default=None, ge=1, le=30)
+    kotak_automated_protection_enabled: bool | None = None
     max_price_mode: Literal["otm", "threshold"] | None = None
     max_price_threshold_ce: float | None = Field(default=None, gt=0, allow_inf_nan=False)
     max_price_threshold_pe: float | None = Field(default=None, gt=0, allow_inf_nan=False)
