@@ -30,7 +30,7 @@ class StartReplayRequest(BaseModel):
     start_time: str = "09:15:00"
     interval_seconds: int = Field(default=60, ge=60, le=3600)
     speed: float = Field(default=1, ge=0.05, le=100)
-    tiles: list[ReplayTile] = Field(min_length=1, max_length=4)
+    tiles: list[ReplayTile] = Field(min_length=1, max_length=5)
     initial_cursor: int | None = Field(default=None, gt=0)
     initial_bar_index: int | None = Field(default=None, ge=0)
     trading_session_id: str | None = None
@@ -38,7 +38,7 @@ class StartReplayRequest(BaseModel):
 
 
 class SyncReplayTilesRequest(BaseModel):
-    tiles: list[ReplayTile] = Field(min_length=1, max_length=4)
+    tiles: list[ReplayTile] = Field(min_length=1, max_length=5)
 
 
 class SpeedUpdateRequest(BaseModel):

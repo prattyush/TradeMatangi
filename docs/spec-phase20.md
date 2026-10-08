@@ -1,5 +1,20 @@
 # Phase 20 — Trading performance and chart browsing
 
+## Current status reconciliation — 2026-10-08
+
+Local `dev` history confirms PRs #599, #601, #603, #605, #607, #610,
+#612 and #616 have merged. Earlier pending-review/merge paragraphs are historical
+delivery checkpoints, not the current implementation status. Desktop Analysis,
+history sharing, Replay/order splitting, renderer isolation, compact navigation,
+and Kotak protection/automation controls are included in dev. Historical WIP
+sections are superseded by their later completion sections.
+
+Latest recorded backend validation is 1,852 passed with two documented baseline
+fixture failures. This is historical evidence, not validation of Phase 21 work.
+Packaged Windows/manual broker acceptance and main deployment remain unverified
+unless separately recorded. A dev merge does not establish deployment.
+Phase 21 Desktop UI work and new validation are tracked in `spec-phase21.md`.
+
 ## Agreed scope and decisions
 
 Capture analytics for website and desktop executions in Paper, Real, Stepwise,
@@ -235,8 +250,8 @@ Implementation was completed on dev. Delivery uses a dedicated
 Main merging and deployment remain manual.
 
 Delivery: [PR #599](https://github.com/prattyush/TradeMatangi/pull/599),
-`feature/phase20-trading-analytics` → `dev`. Implementation commit `e3c66ed`;
-review/merge and the manual acceptance checks above remain pending.
+`feature/phase20-trading-analytics` → `dev`. Implementation commit `e3c66ed`; merged to dev (confirmed 2026-10-08).
+The manual acceptance checks above and main deployment remain unverified.
 
 ## Baseline and research
 
@@ -356,7 +371,7 @@ branch. Update the backend and both clients together. Review/merge, main deploym
 and authorized native Windows/live-broker acceptance remain separate manual steps.
 Delivery: [PR #601](https://github.com/prattyush/TradeMatangi/pull/601),
 `fix/always-enabled-entry-stoploss` → `dev`, implementation commit `fc90c87`.
-Review/merge and manual main deployment remain pending.
+Merged to dev (confirmed 2026-10-08); manual main deployment remains unverified.
 
 
 ## Kotak protected-entry reconciliation follow-up — 2026-10-08
@@ -448,8 +463,8 @@ shared verification pass, invalidation of stale partial report caches, unchanged
 equity protection, lightweight in-memory audits and background staging priority.
 `git diff --check` and EC2 startup-script shell syntax validation passed.
 
-Delivery branch: `fix/kotak-entry-protection-coordinator`, targeting `dev` for PR
-review. Review/merge, main deployment and manual live acceptance remain pending.
+Delivered through PR #616 and merged to dev (confirmed 2026-10-08).
+Main deployment and manual live acceptance remain unverified.
 
 ### Live automation kill switch — 2026-10-08
 
@@ -725,12 +740,12 @@ The existing production bundle-size warning remains. Backend/full-suite and live
 broker acceptance are not claimed for this UI-only change.
 
 Development on dev; deliver in a dedicated feature branch/PR targeting dev.
-Review/merge and manual main deployment remain pending. Desktop Analysis work is
+Merged to dev (confirmed 2026-10-08); manual main deployment remains unverified. Desktop Analysis work is
 still preserved separately on `wip/phase20-desktop-analysis` and is not included.
 
 Delivery: [PR #603](https://github.com/prattyush/TradeMatangi/pull/603),
 `feature/website-floating-error-history` → `dev`, implementation commit `f624e6a`.
-Review/merge and manual main deployment remain pending.
+Merged to dev (confirmed 2026-10-08); manual main deployment remains unverified.
 
 ## Website emergency exits and manual real-day ban — 2026-10-07
 
@@ -831,7 +846,8 @@ and deployment remain manual. Desktop Analysis WIP remains separate.
 
 Delivery: [PR #605](https://github.com/prattyush/TradeMatangi/pull/605),
 `feature/website-emergency-exit-day-ban` → `dev`, implementation commit `dbcfb53`.
-Review/merge, authorized live acceptance and manual main deployment remain pending.
+Merged to dev (confirmed 2026-10-08); authorized live acceptance and manual main
+deployment remain unverified.
 
 ### Compact website chart entry ticket follow-up — PR #605
 
@@ -898,7 +914,7 @@ dev. Review/merge and manual backend deployment remain separate steps.
 
 Delivery: [PR #607](https://github.com/prattyush/TradeMatangi/pull/607),
 `fix/analytics-numeric-metadata` → `dev`, implementation commit `bcf25a7`.
-Review/merge and manual backend deployment remain pending.
+Merged to dev (confirmed 2026-10-08); manual backend deployment remains unverified.
 
 
 
@@ -1111,11 +1127,11 @@ existing authorized live-broker acceptance remain manual and are not claimed by
 Linux/browser tests. No live orders, credential changes, main merge or deployment.
 
 
-Delivery: [draft PR #610](https://github.com/prattyush/TradeMatangi/pull/610),
+Delivery: [PR #610](https://github.com/prattyush/TradeMatangi/pull/610),
 `feature/desktop-analysis-history-sharing` → `dev`. Implementation commit
 `fa1957e`; the local `wip/phase20-desktop-analysis` checkout is retained with the
-completed code. PR review/merge, packaged Windows acceptance, authorized existing
-live acceptance and manual main deployment remain pending.
+completed code. PR #610 is merged to dev (confirmed 2026-10-08). Packaged Windows acceptance,
+authorized existing live acceptance and manual main deployment remain unverified.
 
 ### Follow-up in PR #610: website Replay and open-order splitting (2026-10-07)
 
