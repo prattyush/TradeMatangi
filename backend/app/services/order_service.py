@@ -202,13 +202,15 @@ def _order_db_item(order: Order) -> dict:
         value = getattr(order, name)
         if value is not None:
             item[name] = Decimal(str(value)) if isinstance(value, float) else value
-    for name in ("cancellation_status", "cancellation_reason", "cancelled_at", "cancel_request_id", "cancel_initiator", "cancel_purpose", "recovery_operation_id", "recovery_parent_order_id", "recovery_state", "recovery_attempt"):
+    for name in ("cancellation_status", "cancellation_reason", "cancelled_at", "cancel_request_id", "cancel_initiator", "cancel_purpose", "recovery_operation_id", "recovery_parent_order_id", "recovery_state", "recovery_attempt", "protection_group", "protection_suppressed_quantity"):
         value = getattr(order, name, None)
         if value is not None:
             item[name] = Decimal(str(value)) if isinstance(value, float) else value
     if order.analytics is not None:
         from app.services.real_broker_state import encode
         item["analytics"] = encode(order.analytics)
+    if order.protection_allocations is not None:
+        item["protection_allocations"] = dict(order.protection_allocations)
     if order.split_operation is not None:
         from app.services.real_broker_state import encode
         item["split_operation"] = encode(order.split_operation)

@@ -47,6 +47,7 @@ DEFAULT_SETTINGS: dict = {
     "fine_structure_share_emails": "",
     "entry_auto_sl_enabled": True,
     "entry_auto_sl_delay_sec": 3,
+    "kotak_automated_protection_enabled": True,
     "max_price_mode": "otm",
     "max_price_threshold_ce": 50.0,
     "max_price_threshold_pe": 50.0,
@@ -215,6 +216,9 @@ def update_settings(user_id: str, settings: dict) -> dict:
     except Exception:
         logger.exception("Failed to update settings for user %s", user_id)
         raise
+    if 'kotak_automated_protection_enabled' in updates:
+        from app.services.kotak_automation_policy import apply
+        apply(user_id, current['kotak_automated_protection_enabled'])
     return current
 
 

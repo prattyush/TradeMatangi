@@ -365,6 +365,137 @@ Delivery: [PR #601](https://github.com/prattyush/TradeMatangi/pull/601),
 Review/merge and manual main deployment remain pending.
 
 
+## Kotak protected-entry reconciliation follow-up — 2026-10-08
+
+The 11:51 IST SENSEX 71700 PE incident involved separate 40-unit and 20-unit
+entries but only two initial 20-unit SLs. The user supplied the missing 20-unit
+SL manually. The watcher subtracted total contract coverage from each entry
+group independently, allowing one group's exit to reduce another's protection.
+The later 11:55 40-unit SL was intentionally split into 20+20; that operation
+must not create additional protection. Raw Kotak events and the browser message
+export support this distinction; the copied stdout log lacks application
+protection decisions, so the original entry-to-exit attribution is not claimed
+as conclusively reconstructed from logs alone.
+
+Implementation:
+
+- Only Kotak real-options execution enables the entry manager. Execution broker
+  identity is persisted separately from the market-data provider, defaulting to
+  the existing Kotak execution path. Paper/replay, desktop live browsing and
+  future Kite execution retain their existing behavior.
+- Confirmed executions reconstruct exact-contract FIFO remaining entry lots.
+  Entries carrying an attached SL or AutoStop intent are protected; unrelated
+  unprotected quantities and closed cycles do not gain unsolicited SLs.
+- Existing exits are allocated once: explicit entry links first, then unlinked
+  exits to protected groups in opening order. Manual SLs and allocated limit
+  exits count. Repair is capped by fresh broker position and exit capacity.
+- Optional order allocation/group metadata plus durable journal exclusions
+  preserve manual cancellations/reductions across refresh/restart. Split
+  siblings retain links. Historical application cancellation intent is honored
+  when adopting legacy records. Exclusions are consumed as their FIFO lots exit.
+- Fills, cancellations/rejections, reconnect, restart and Trade History Refresh
+  trigger coalesced checks. Entry delay defaults to three seconds; cancellation
+  delay is 750 ms. Known protected entries do not require a cancellation-origin
+  or recent-exit-fill correlation. Unrelated legacy cancellation incidents keep
+  their prior policy.
+- There is no periodic broker polling. Account reports share an in-flight task;
+  background bundles are spaced by at least two seconds, with shared 2/5/10-second
+  backoff and longer broker retry delays. Accounting fetches only its needed
+  reports; fresh partial bundles can be completed without repeating those reads.
+  Repeated refresh clicks join existing work.
+- Manual operations take priority over queued background work. Background
+  network reads occur before the foreground refresh barrier; stale revisions
+  are discarded. Pending splits/conversions and day closure defer repair.
+  Automatic placements serialize per account, with immutable conditional
+  submission claims, deterministic tags and no blind retries after uncertain
+  acknowledgements. Coverage verification occurs outside the manual-edit lock.
+- For the user's long idle periods and short action bursts, the manager has no
+  idle polling. Normal audits compare fresh broker executions/positions with the
+  confirmed in-memory ledger and avoid rewriting the day's trade history.
+  Missed-event/restart inconsistencies fall back to the heavier reconciliation,
+  reusing the same report bundle. Slow background staging does not set the
+  foreground refresh barrier; intervening trading invalidates its staged result.
+  Trade History Refresh remains the explicit heavier preparation/reconciliation
+  action. Unchanged protection records are not rewritten on every audit.
+- Repeated inconsistent reports remain coalesced in the account queue with
+  2/5/10-second spacing, rather than creating a job per event. Scope disagreement
+  counts reset only after that scope verifies. Retry windows remain bounded.
+- Repair prices use the group's protective SL or attached entry trigger and the
+  existing fresh-LTP recovery fallback. SL execution provenance is captured
+  separately from entry provenance. Per-contract notices and logs describe
+  required/covered/missing quantities, coalescing, request counts and failures.
+- EC2 stdout appends to `backend-stdout.log`; application decisions remain in
+  rotating `backend.log`, avoiding truncation/file-handler collisions on restart.
+
+Earlier changes retained:
+
+- Dev commit `6044885` already supplies the 750 ms recovery delay and open-position
+  CE/PE strike restoration within the saved shared expiry on real Stop/Start.
+- This delivery includes the subsequent timeout fallback: a report timeout can
+  reopen charts using a saved snapshot only when the same account/day projection
+  and confirmed executions verify its positions. A visible notice requests
+  Trade History Refresh. The fallback cannot authorize live protection repairs.
+
+Compatibility: optional metadata keeps existing orders/sessions readable. The
+existing BrokerProtectionRecovery table is reused; no new table or public API
+is required. Deploy the backend and updated EC2 startup script together. Main
+deployment, review/merge and live broker acceptance remain manual.
+
+Validation covers 40+20 entries, partial fills, freeze chunks, manual protection,
+FIFO closures/exclusions, unknown origin, uncertain acknowledgement/restart,
+split/conversion barriers, account single-flight/pacing/backoff, broker/client
+isolation and the earlier timeout fallback. Automated tests submit no live orders.
+Validation: full backend run **1,841 passed**, with the two documented baseline
+failures (`test_options_session_started_successfully`, stale expiry assertion;
+`test_active_session_returns_attach_metadata`, missing group_id fixture). The
+final focused protection/snapshot/split/conversion/restart run passed **176 tests**,
+including five entries submitted from one immutable report snapshot and one
+shared verification pass, invalidation of stale partial report caches, unchanged
+equity protection, lightweight in-memory audits and background staging priority.
+`git diff --check` and EC2 startup-script shell syntax validation passed.
+
+Delivery branch: `fix/kotak-entry-protection-coordinator`, targeting `dev` for PR
+review. Review/merge, main deployment and manual live acceptance remain pending.
+
+### Live automation kill switch — 2026-10-08
+
+`kotak_automated_protection_enabled` is a backend-owned, per-user UserSettings
+boolean, default True to preserve the current behavior. Website and desktop
+Trading settings expose the same checkbox and save it immediately, confirming
+the backend response before changing the displayed state. It may be unchecked
+during an active trading session; no restart is required.
+Both clients show the checkbox and its help only when the account has real
+trading access under the existing admin/whitelist permission policy. Hiding it
+does not change the saved preference.
+
+Off stops new automatic attached-entry SL placement, the protected-entry manager,
+and legacy automatic cancelled-exit recovery for Kotak real trading. Queued user
+work is removed and queued background reports check the flag before dispatch.
+Handlers recheck persisted settings before submissions, and a stale settings
+read cannot undo a newer local toggle. A failed strict settings read defers
+automatic repair rather than enabling it from defaults. Runtime settings checks
+occur only on work/submission boundaries; no idle polling is added.
+
+Trade History Refresh force-reads the saved flag and continues normal manual
+reconciliation while off without restarting automation. It may passively resolve
+orders already sent, so an uncertain acknowledgement does not leave duplicate
+runtime orders. Manual cancellations/reductions retain their intent while off.
+Manual entry/SL placement, broker working orders, explicit strategies, fills,
+data feeds and paper/replay protection remain available. An SDK request already
+dispatched may finish; the switch cannot recall it. Re-enabling schedules a new
+check for active sessions; Trade History Refresh also provides explicit recovery.
+
+Deploy backend and both clients together. Older backend responses that do not
+confirm the new setting produce a save error rather than a false disabled UI.
+Validation covers cross-client persistence/user isolation, stale-read races,
+disable before submission, queued reports, disabled refresh, retained manual
+intent and passive acknowledgement reconciliation. Both production builds,
+TypeScript checks and 13 desktop shared-settings tests passed.
+The flag follow-up full backend run passed **1,852 tests**, with the same two
+documented baseline failures; **166 focused backend tests** passed. Delivery is
+included in [PR #616](https://github.com/prattyush/TradeMatangi/pull/616), targeting
+dev. Review/merge and deployment remain manual.
+
 ## Analysis in Desktop — agreed specification and implementation plan
 
 ### Follow-up Sprint 0 — Specification and baseline

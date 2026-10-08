@@ -75,15 +75,19 @@ def emit(session, order, operation, state, message, replacement_ids=None):
 
 
 def note_fill(session, order, quantity, before_net):
-    if session.session_type != 'real':
+    if session.session_type != 'real' or getattr(session, 'execution_broker', 'KotakNeo') != 'KotakNeo':
         return
     session._protection_revision = getattr(session, '_protection_revision', 0) + 1
+    invalidate_reports(session)
     after = before_net + quantity * (1 if order.side == TradeSide.BUY else -1)
     epochs = getattr(session, '_protection_epochs', {})
     if before_net and (not after or before_net * after < 0):
         epochs[contract(order)] = epochs.get(contract(order), 0) + 1
         emit(session, order, order.recovery_operation_id or '', 'cleared', 'Position closed or reversed')
     session._protection_epochs = epochs
+    from app.services.kotak_protection import request
+    if order.execution_role == 'exit':
+        request(session, reason='exit_fill', delay=.75)
     if order.execution_role == 'exit' or (before_net and before_net * (1 if order.side == TradeSide.BUY else -1) < 0):
         session._last_exit_fill_at = time.time()
     logger.info('protection_fill_committed session=%s broker_order=%s contract=%s delta=%s net_before=%s net_after=%s',
@@ -91,6 +95,18 @@ def note_fill(session, order, quantity, before_net):
 
 
 def note_cancel(session, order, metadata):
+    invalidate_reports(session)
+    from app.services.kotak_automation_policy import enabled as permitted
+    if not permitted(session.user_id):
+        order_service._write_order_to_db(order)
+        return
+    if _closing or getattr(session, 'execution_broker', 'KotakNeo') != 'KotakNeo':
+        return
+    from app.services.kotak_protection import handles, request
+    if handles(session, order):
+        order_service._write_order_to_db(order)
+        request(session, reason='cancel', delay=.75)
+        return
     if _closing or session.session_type != 'real' or order.source == 'broker_external' or order.execution_role != 'exit':
         # Imported external orders still contribute to coverage, but are not taken over.
         order_service._write_order_to_db(order)
@@ -117,6 +133,16 @@ def note_cancel(session, order, metadata):
                 _pending_events.pop(operation, None)
             note_cancel(*following)
     task.add_done_callback(finished)
+
+
+def invalidate_reports(session):
+    if session.session_type == 'real' and getattr(session, 'execution_broker', 'KotakNeo') == 'KotakNeo':
+        try:
+            from app.services.kotak_service import get_service
+            from app.services.kotak_reports import invalidate
+            invalidate(get_service())
+        except Exception:
+            logger.debug('Report cache invalidation unavailable session=%s', session.session_id)
 
 
 def market_open(session):
@@ -216,7 +242,7 @@ def matching(session, order, row):
             and (row.get('exchange') or expected_exchange(session, order)) == expected_exchange(session, order))
 
 
-def coverage(session, parent, rows, position_quantity, side):
+def coverage(session, parent, rows, position_quantity, side, reserved_ids=()):
     exit_side = 'SELL' if side == 'LONG' else 'BUY'
     by_id = {row['kotak_order_id']: row for row in rows}
     covered = 0
@@ -237,6 +263,9 @@ def coverage(session, parent, rows, position_quantity, side):
             continue
         if local.kotak_order_id:
             if local.kotak_order_id not in by_id:
+                if local.order_id in reserved_ids and local.recovery_state == 'acknowledged':
+                    covered += max(0, local.quantity - local.broker_filled_quantity)
+                    continue
                 raise Deferred('Broker report has not caught up with an acknowledged exit')
         elif local.recovery_state in ('submitting', 'unknown'):
             raise Deferred('A recovery submission has an uncertain acknowledgement')
@@ -245,11 +274,13 @@ def coverage(session, parent, rows, position_quantity, side):
     return max(0, position_quantity - covered), covered
 
 
-async def reports_for(session, parent, broker):
+async def reports_for(session, parent, broker, bundle=None):
     from app.services import real_broker_state, trading
     version = getattr(session, '_protection_revision', 0)
     try:
-        rows, raw_positions = await asyncio.gather(asyncio.to_thread(broker.get_order_history), asyncio.to_thread(broker.get_positions))
+        from app.services import kotak_reports
+        bundle = bundle or await kotak_reports.fetch(broker, background=True, user_id=session.user_id)
+        rows, raw_positions = bundle.orders, bundle.positions
     except Exception as exc:
         raise Deferred(f'Broker reports unavailable: {exc}') from exc
     if getattr(session, 'broker_refresh_events', None) is not None or version != getattr(session, '_protection_revision', 0):
@@ -289,7 +320,8 @@ async def reports_for(session, parent, broker):
 async def same_cycle(session, parent, broker):
     from app.services import broker_reports as reports
     try:
-        executions = await asyncio.to_thread(broker.get_trade_history)
+        from app.services import kotak_reports
+        executions = (await kotak_reports.fetch(broker, background=True, user_id=session.user_id)).executions
     except Exception as exc:
         raise Deferred(f'Broker execution report unavailable: {exc}') from exc
     net = 0
@@ -320,7 +352,9 @@ def submission_key(operation, attempt, index):
 
 async def reconcile_children(session, parent, operation, job, rows, broker):
     from app.services.broker_order_service import register_callbacks
+    changed = False
     for child_record in job.get('children', []):
+        prior_state, prior_order = child_record['state'], child_record['order']
         child = Order.model_validate(child_record['order'])
         if child_record['state'] in ('submitting', 'unknown', 'acknowledged'):
             matches = [row for row in rows if row.get('tag') == child_record['tag'] or
@@ -356,8 +390,12 @@ async def reconcile_children(session, parent, operation, job, rows, broker):
                 child.exit_position_side = 'LONG' if child.side == TradeSide.SELL else 'SHORT'
                 child.exit_allocation_role = 'remainder'
             session.kotak_order_map[child.order_id] = row['kotak_order_id']
+            if job.get('entry_intent'):
+                child.protection_group = parent.protection_group
+                child.group_id = parent.group_id
             child_record['order'] = child.model_dump(mode='json')
             if row['status'] in ('cancelled', 'canceled', 'rejected'):
+                child_record['state'] = row['status']
                 child.status = OrderStatus.CANCELLED
                 if child.kotak_order_id != parent.kotak_order_id:
                     child.cancellation_status = row['status']
@@ -365,10 +403,19 @@ async def reconcile_children(session, parent, operation, job, rows, broker):
                     child.cancelled_at = time.time()
                     note_cancel(session, child, {'status': row['status'], 'raw_reason': child.cancellation_reason,
                         'received_at': child.cancelled_at, 'raw': {}})
+            elif row['status'] in ('complete', 'filled', 'traded'):
+                child_record['state'] = 'filled'
+                child.status = OrderStatus.FILLED
             # Known fills are applied by the existing callbacks/refresh; never invent them.
+            child_record['order'] = child.model_dump(mode='json')
+            if existing is not None and prior_state == child_record['state'] and prior_order == child_record['order']:
+                continue
+            changed = True
             await asyncio.to_thread(order_service._write_order_to_db, child.model_copy(deep=True), strict=True)
             register_callbacks(session, child, broker, asyncio.get_running_loop())
-    await save_job(operation, job)
+    if changed:
+        await save_job(operation, job)
+    return changed
 
 
 def local_capacity(session, parent, exclude_order_id):
@@ -402,6 +449,8 @@ async def bind_acknowledgement(session, child, broker_id, operation, job):
     current.kotak_order_id = broker_id
     current.recovery_state = 'acknowledged'
     current.source = 'cancellation_recovery'
+    current.protection_group = child.protection_group
+    current.group_id = child.group_id
     current.recovery_operation_id = operation
     current.recovery_parent_order_id = job['root_order_id']
     current.recovery_attempt = child.recovery_attempt
@@ -423,7 +472,10 @@ async def abandon_prepared(session, child, record, operation, job, message):
     raise Deferred(message)
 
 
-async def _attempt(session, parent, operation, job, broker):
+async def _attempt(session, parent, operation, job, broker, *, bundle=None, reserved_ids=()):
+    from app.services.kotak_automation_policy import check, enabled as permitted
+    if not await check(session.user_id):
+        return True
     from app.config import LOT_SIZES
     from app.services import user_settings_service, execution_price_service
     from app.services.broker_order_service import register_callbacks
@@ -431,21 +483,25 @@ async def _attempt(session, parent, operation, job, broker):
         raise Deferred('Contract expired; no automatic replacement')
     if (parent.broker_product or 'MIS').upper() != 'MIS':
         raise Deferred('This broker product is not supported by the MIS recovery submitter')
-    rows, qty, side, version = await reports_for(session, parent, broker)
+    rows, qty, side, version = await reports_for(session, parent, broker, bundle)
     await reconcile_children(session, parent, operation, job, rows, broker)
     if _pending_events.get(operation):
         return True  # The continuation will use the cancelled replacement's latest price.
-    if not qty or not await same_cycle(session, parent, broker):
+    entry_intent = job.get('entry_intent', False)
+    if not qty or (not entry_intent and not await same_cycle(session, parent, broker)):
         job['state'] = 'closed'
         await save_job(operation, job)
         emit(session, parent, operation, 'cleared', 'Original position closed or reversed; no replacement')
         return True
     old = next((row for row in rows if row['kotak_order_id'] == parent.kotak_order_id), None)
-    if old is None or old['status'] not in (('cancelled', 'canceled', 'rejected') if parent.source == 'cancellation_recovery' else ('cancelled', 'canceled')):
+    if entry_intent:
+        old = {'quantity': job['missing_quantity'], 'filled_quantity': 0,
+               'trigger_price': parent.trigger_price, 'order_type': 'SL'}
+    if not entry_intent and (old is None or old['status'] not in (('cancelled', 'canceled', 'rejected') if parent.source == 'cancellation_recovery' else ('cancelled', 'canceled'))):
         raise Deferred('Waiting for the broker to confirm cancellation')
-    if not matching(session, parent, old):
+    if not entry_intent and not matching(session, parent, old):
         raise Deferred('Cancelled order contract/product/exchange differs from managed protection')
-    missing, covered = coverage(session, parent, rows, qty, side)
+    missing, covered = coverage(session, parent, rows, qty, side, reserved_ids)
     logger.info('protection_coverage operation=%s contract=%s position=%s covered=%s missing=%s', operation, contract(parent), qty, covered, missing)
     if not missing:
         job['state'] = 'restored'
@@ -467,7 +523,7 @@ async def _attempt(session, parent, operation, job, broker):
         row = by_id.get(child_record['order'].get('kotak_order_id'))
         if row and row['status'] not in ('complete', 'filled', 'traded', 'cancelled', 'canceled', 'rejected'):
             restored_for_parent += max(0, row['quantity'] - row['filled_quantity'])
-    quantity = min(missing, max(0, lost - restored_for_parent))
+    quantity = min(missing, lost if entry_intent else max(0, lost - restored_for_parent))
     if not quantity:
         job['state'] = 'restored'
         await save_job(operation, job)
@@ -480,7 +536,7 @@ async def _attempt(session, parent, operation, job, broker):
     original = old.get('trigger_price', 0) if old.get('order_type') in ('SL', 'SL-L', 'SL-M', 'STOPLOSS') else 0
     if not original and parent.order_type == OrderType.STOPLOSS and not old.get('order_type'):
         original = parent.trigger_price
-    price = await obtain_quote(session, parent, operation)
+    price = fresh_quote(session, parent) if entry_intent else await obtain_quote(session, parent, operation)
     trigger, pricing = trigger_price(original, price, side, float(settings.get('default_sl_pct', .20)))
     limit = execution_price_service.limit_price(parent.side, trigger, float(settings.get('stoploss_limit_gap_pct', .015)))
     if version != getattr(session, '_protection_revision', 0):
@@ -490,6 +546,12 @@ async def _attempt(session, parent, operation, job, broker):
     job.update(attempts=attempt, state='submitting')
     await save_job(operation, job)
     for index, chunk in enumerate(chunks):
+        if not permitted(session.user_id):
+            return True
+        if entry_intent:
+            from app.services import kotak_reports
+            if kotak_reports.state(broker).foreground:
+                raise Deferred('Foreground trading has priority over the next protection chunk')
         # Quotes and live state are rechecked before every freeze-sized submission.
         price = fresh_quote(session, parent)
         trigger, pricing = trigger_price(original, price, side, float(settings.get('default_sl_pct', .20)))
@@ -507,8 +569,12 @@ async def _attempt(session, parent, operation, job, broker):
             execution_gap_pct=float(settings.get('stoploss_limit_gap_pct', .015)),
             exit_allocation_id=operation, exit_position_side=side, exit_allocation_role='remainder',
             analytics=parent.analytics,
+            protection_group=parent.protection_group, group_id=parent.group_id,
             recovery_operation_id=operation, recovery_parent_order_id=job['root_order_id'],
             recovery_state='prepared', recovery_attempt=attempt)
+        if entry_intent:
+            from app.services.execution_analytics import created
+            created(child, session)
         record = {'state': 'submitting', 'order': child.model_dump(mode='json'), 'tag': tag, 'cancelled_parent_id': parent.kotak_order_id}
         if not await asyncio.to_thread(journal.store.claim, key, record):
             raise Deferred('Submission already claimed; reconcile before retrying')
@@ -526,6 +592,8 @@ async def _attempt(session, parent, operation, job, broker):
         if local_capacity(session, parent, child.order_id) < child.quantity:
             await abandon_prepared(session, child, record, operation, job, 'Another exit now covers this quantity; no duplicate submitted')
         fresh = fresh_quote(session, parent)
+        if not await check(session.user_id):
+            await abandon_prepared(session, child, record, operation, job, 'Automatic Kotak protection disabled; no order submitted')
         if not (trigger < fresh if side == 'LONG' else trigger > fresh):
             await abandon_prepared(session, child, record, operation, job, 'Market crossed the prepared stop; recalculate before submitting')
         kwargs = dict(symbol=session.symbol, side=parent.side.value[0], qty=chunk,
@@ -536,7 +604,11 @@ async def _attempt(session, parent, operation, job, broker):
         logger.info('protection_submit operation=%s child=%s qty=%s trigger=%s limit=%s pricing=%s tag=%s', operation, child.order_id, chunk, trigger, limit, pricing, tag)
         try:
             broker_id = await asyncio.to_thread(method, **kwargs)
+            from app.services import kotak_reports
+            kotak_reports.invalidate(broker)
         except Exception as exc:
+            from app.services import kotak_reports
+            kotak_reports.invalidate(broker)
             # Even KotakError can wrap a timeout or a malformed positive response.
             # Only an explicit exchange rejection/rate limit is safe to retry.
             from app.services.kotak_service import KotakOrderRejected
@@ -564,6 +636,12 @@ async def _attempt(session, parent, operation, job, broker):
         await asyncio.to_thread(order_service._write_order_to_db, child.model_copy(deep=True), strict=True)
         if child.status == OrderStatus.PENDING:
             session.queue.put_nowait(json.dumps({'type': 'order_placed', **child.model_dump(mode='json')}))
+    if entry_intent:
+        # The manager verifies outside the foreground mutation lock, in its
+        # next shared report pass. An acknowledgement alone is not restoration.
+        job['state'] = 'verifying'
+        await save_job(operation, job)
+        return False
     # Verify the acknowledged exits against the broker book before announcing success.
     final_rows, final_quantity, _, _ = await reports_for(session, parent, broker)
     if not final_quantity:
@@ -590,6 +668,9 @@ async def _drive(session, parent, metadata, operation):
     from app.services.kotak_service import get_service
     from app.services import simulation
     await asyncio.sleep(.75)
+    from app.services.kotak_automation_policy import check, enabled as permitted
+    if not await check(session.user_id):
+        return
     broker = get_service()
     try:
         account = await asyncio.to_thread(broker.account_identity)
@@ -626,6 +707,8 @@ async def _drive(session, parent, metadata, operation):
         explicit_origin = str(job['explicit_origin']).strip().upper()
         started = time.time()
         while simulation.get_session(session.session_id) is session and session.state.value in ('running', 'paused'):
+            if not permitted(session.user_id):
+                return
             correlated = abs(getattr(session, '_last_exit_fill_at', 0) - job['cancelled_at']) <= 30
             was_correlated = job.get('correlated', False)
             job['correlated'] = was_correlated or correlated
@@ -639,7 +722,8 @@ async def _drive(session, parent, metadata, operation):
                 continue
             scope = (account, expected_exchange(session, parent), parent.broker_product or 'MIS', session.symbol, *contract(parent))
             try:
-                async with scope_lock(scope), session_lock(session):
+                from app.services import kotak_reports
+                async with kotak_reports.state(broker).submission, scope_lock(scope), session_lock(session):
                     if getattr(session, 'broker_refresh_events', None) is not None:
                         raise Deferred('Broker refresh is still running')
                     session._protection_recovery_busy = True
@@ -666,12 +750,20 @@ async def _drive(session, parent, metadata, operation):
 async def resume(session):
     global _closing
     _closing = False
-    if session.session_type != 'real':
+    if session.session_type != 'real' or getattr(session, 'execution_broker', 'KotakNeo') != 'KotakNeo':
         return
+    from app.services.kotak_automation_policy import check
+    if not await check(session.user_id):
+        return
+    from app.services.kotak_protection import enabled, request
+    if enabled(session):
+        request(session, reason='restart', invalidate=False)
     try:
         jobs = await asyncio.to_thread(journal.store.for_session, session.session_id)
         known = {operation: job for operation, job in jobs}
         for operation, job in jobs:
+            if job.get('entry_intent'):
+                continue
             if job.get('state') in ('restored', 'closed', 'user_cancelled'):
                 continue
             parent = Order.model_validate(job['parent'])

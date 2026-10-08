@@ -19,11 +19,12 @@ _INDEX_NAMES = {"nse_cm": "Nifty 50", "bse_cm": "SENSEX"}
 
 
 class KotakFeedBridge:
-    def __init__(self, client, on_order, on_market, on_expired, *, reconnect_delay=5, timeout=30):
+    def __init__(self, client, on_order, on_market, on_expired, *, reconnect_delay=5, timeout=30, on_connected=None):
         self.client = client
         self.on_order = on_order
         self.on_market = on_market
         self.on_expired = on_expired
+        self.on_connected = on_connected
         self.reconnect_delay = reconnect_delay
         self.timeout = timeout
         self._closed = False
@@ -149,6 +150,8 @@ class KotakFeedBridge:
                     self._market_error = None
                     self._market_ready.set()
                 logger.info("Kotak %s feed connected", kind)
+                if kind == "order" and self.on_connected:
+                    self.on_connected()
                 async for message in ws:
                     if self._closed:
                         break

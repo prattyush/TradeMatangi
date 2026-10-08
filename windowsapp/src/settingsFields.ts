@@ -40,6 +40,7 @@ export const sharedSettingsSections: Record<string, SettingsField[]> = {
     number('max_price_threshold_pe', 'PE maximum price (₹)', 1)
   ],
   Trading: [
+    toggle('kotak_automated_protection_enabled', 'Automatic Kotak SL placement and cancelled-exit recovery (off: manage SLs manually)'),
     select('desktop_order_size_mode', 'Order sizing', [
       'quantity',
       'funds_ratio',

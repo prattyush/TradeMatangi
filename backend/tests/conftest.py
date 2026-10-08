@@ -1,6 +1,23 @@
 import pytest
 import pandas as pd
 import numpy as np
+
+
+@pytest.fixture(autouse=True)
+def isolated_kotak_report_pacing(monkeypatch):
+    """Broker mocks do not need production sleeps; pacing tests override this."""
+    from app.services import kotak_reports, kotak_protection
+    from app.services import kotak_automation_policy as policy
+    policy._values.clear()
+    policy._epochs.clear()
+    async def settings_check(user_id, **kwargs):
+        return policy.enabled(user_id)
+    monkeypatch.setattr(policy, 'check', settings_check)
+    monkeypatch.setattr(kotak_protection, "_closing", False)
+    monkeypatch.setattr(kotak_reports, "MIN_INTERVAL", 0)
+    kotak_reports._accounts.clear()
+    yield
+    kotak_reports._accounts.clear()
 from datetime import datetime, timedelta
 
 

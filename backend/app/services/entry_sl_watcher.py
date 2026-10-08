@@ -11,12 +11,10 @@ Architecture:
   returns filled orders, and the real-mode Kotak fill callback triggers it
   after broker-confirmed fills.
 
-  Real-mode partial-fill handling:
-    For real (Kotak) sessions, fills may arrive in multiple partial events
-    over several seconds. The watcher starts a configurable delay timer on
-    the first fill within a group. Subsequent fills in the same group reset
-    the timer. When the timer fires, it queries the cumulative filled
-    quantity for that group and places a single SL order.
+  Kotak real-options fills are delegated to the event-driven account protection
+  manager. Its leading-edge delay coalesces bursts without indefinitely delaying
+  protection, and FIFO allocations prevent one entry borrowing another's exits.
+  Paper/replay placement remains immediate and does not use broker reports.
 """
 from __future__ import annotations
 
@@ -58,6 +56,12 @@ def on_entry_filled(
     session_type = getattr(session, "session_type", "sim")
 
     if session_type == "real":
+        from app.services.kotak_automation_policy import enabled as permitted
+        if not permitted(session.user_id):
+            return
+        from app.services.kotak_protection import enabled, request
+        if getattr(session, "execution_broker", "KotakNeo") != "KotakNeo":
+            return
         delay = 3
         try:
             from app.services.user_settings_service import get_settings
@@ -65,7 +69,10 @@ def on_entry_filled(
             delay = settings.get("entry_auto_sl_delay_sec", 3)
         except Exception:
             pass
-        _schedule_delayed_sl(order, session, delay, loop)
+        if enabled(session):
+            request(session, reason="entry_fill", delay=delay)
+        else:
+            _schedule_delayed_sl(order, session, delay, loop)
     else:
         _place_sl_immediately(order, session)
 
@@ -153,6 +160,17 @@ def _schedule_delayed_sl(order, session, delay_sec, loop=None):
 
 
 def _place_real_protection(order, session):
+    from app.services.kotak_automation_policy import enabled as permitted
+    if not permitted(session.user_id):
+        return
+    from app.services.kotak_protection import enabled, request
+    if enabled(session):
+        request(session, reason="entry_fill", delay=0)
+    elif getattr(session, "execution_broker", "KotakNeo") == "KotakNeo":
+        _place_legacy_real_protection(order, session)
+
+
+def _place_legacy_real_protection(order, session):
     import asyncio
     import json
     import uuid

@@ -939,7 +939,24 @@ class KotakNeoService:
             def expired():
                 if current():
                     self.shutdown()
-            self._bridge = KotakFeedBridge(client, order, market, expired)
+            def connected():
+                if current():
+                    # Dispatch to owning application loops, never the feed loop.
+                    with self._lock:
+                        loops = {loop for _, loop in (*self._fill_callbacks.values(), *self._position_observers.values())}
+                    for loop in loops:
+                        if not loop.is_closed():
+                            loop.call_soon_threadsafe(self._audit_reconnected_sessions)
+            self._bridge = KotakFeedBridge(client, order, market, expired, on_connected=connected)
+
+    @staticmethod
+    def _audit_reconnected_sessions():
+        import asyncio
+        from app.services import simulation, kotak_protection
+        loop = asyncio.get_running_loop()
+        for session in list(simulation._sessions.values()):
+            if session.task and session.task.get_loop() is loop:
+                kotak_protection.request(session, reason='reconnect')
 
     def _on_message(self, message: Any) -> None:
         """
