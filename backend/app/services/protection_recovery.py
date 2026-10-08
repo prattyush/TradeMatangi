@@ -336,7 +336,9 @@ def submission_key(operation, attempt, index):
 
 async def reconcile_children(session, parent, operation, job, rows, broker):
     from app.services.broker_order_service import register_callbacks
+    changed = False
     for child_record in job.get('children', []):
+        prior_state, prior_order = child_record['state'], child_record['order']
         child = Order.model_validate(child_record['order'])
         if child_record['state'] in ('submitting', 'unknown', 'acknowledged'):
             matches = [row for row in rows if row.get('tag') == child_record['tag'] or
@@ -385,11 +387,19 @@ async def reconcile_children(session, parent, operation, job, rows, broker):
                     child.cancelled_at = time.time()
                     note_cancel(session, child, {'status': row['status'], 'raw_reason': child.cancellation_reason,
                         'received_at': child.cancelled_at, 'raw': {}})
+            elif row['status'] in ('complete', 'filled', 'traded'):
+                child_record['state'] = 'filled'
+                child.status = OrderStatus.FILLED
             # Known fills are applied by the existing callbacks/refresh; never invent them.
             child_record['order'] = child.model_dump(mode='json')
+            if existing is not None and prior_state == child_record['state'] and prior_order == child_record['order']:
+                continue
+            changed = True
             await asyncio.to_thread(order_service._write_order_to_db, child.model_copy(deep=True), strict=True)
             register_callbacks(session, child, broker, asyncio.get_running_loop())
-    await save_job(operation, job)
+    if changed:
+        await save_job(operation, job)
+    return changed
 
 
 def local_capacity(session, parent, exclude_order_id):

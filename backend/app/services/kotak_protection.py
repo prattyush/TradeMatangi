@@ -4,6 +4,7 @@ from collections import defaultdict, deque
 from contextlib import asynccontextmanager
 import hashlib
 import logging
+import math
 import time
 
 from app.models.schemas import OrderStatus, OrderType, TradeSide
@@ -180,19 +181,22 @@ async def audit(session, broker):
     from app.services import kotak_reports, real_broker_state, protection_recovery as recovery
     if busy(session):
         raise recovery.Deferred('Manual edit, split or conversion pending; automatic repair deferred')
-    await real_broker_state.refresh(session, broker, protection=True)
-    bundle = session._kotak_report_bundle
+    bundle, executions = await snapshot(session, broker)
     if bundle.revision != kotak_reports.state(broker).revision:
         raise recovery.Deferred('New broker events arrived during the audit; rechecking')
+    intents = {}
     for entry in entries(session):
         root = intent_key(session, entry)
+        if root in intents:
+            continue
         job = await load_intent(root)
+        intents[root] = job
         if job and job['account'] != broker.account_identity():
             raise recovery.Deferred('Broker account changed; entry protection disabled')
         if job and job.get('children'):
             parent = type(entry).model_validate(job['parent'])
-            await recovery.reconcile_children(session, parent, f"{root}:{job.get('incident', 0)}", job, bundle.orders, broker)
-            await asyncio.to_thread(journal.store.put, root, job)
+            if await recovery.reconcile_children(session, parent, f"{root}:{job.get('incident', 0)}", job, bundle.orders, broker):
+                await asyncio.to_thread(journal.store.put, root, job)
     exclusions = await asyncio.to_thread(journal.store.get, f'entry-exclusions:{session.session_id}') or {}
     for order in order_service.get_all_orders(session.session_id):
         if (order.status != OrderStatus.CANCELLED or order.execution_role != 'exit'
@@ -202,7 +206,7 @@ async def audit(session, broker):
         if intent and intent.get('state') != 'failed' and (intent['initiator'] == 'user' or intent['purpose'] in ('conversion', 'flatten', 'session_stop')):
             await suppress(session, order, max(0, order.quantity - order.broker_filled_quantity))
     exclusions = await asyncio.to_thread(journal.store.get, f'entry-exclusions:{session.session_id}') or {}
-    gaps, assigned = allocations(session, session._fifo_executions, bundle.orders, exclusions)
+    gaps, assigned = allocations(session, executions, bundle.orders, exclusions)
     for identifier, mapping in assigned.items():
         order = order_service.get_order(session.session_id, identifier)
         if order.protection_allocations != mapping:
@@ -211,7 +215,7 @@ async def audit(session, broker):
     missing_groups = {group(entry) for entry, _, _, _ in gaps}
     for entry in entries(session):
         root = intent_key(session, entry)
-        job = await load_intent(root)
+        job = intents.get(root)
         if job and job.get('state') not in ('restored', 'closed') and group(entry) not in missing_groups:
             job['state'] = 'restored'
             await asyncio.to_thread(journal.store.put, root, job)
@@ -223,7 +227,7 @@ async def audit(session, broker):
         if busy(session) or kotak_reports.state(broker).foreground:
             raise recovery.Deferred('Foreground trading operation has priority')
         root = intent_key(session, entry)
-        job = await load_intent(root)
+        job = intents.get(root)
         if job and job['account'] != broker.account_identity():
             raise recovery.Deferred('Broker account changed; entry protection disabled')
         if job and job.get('state') in ('restored', 'closed'):
@@ -281,6 +285,68 @@ async def audit(session, broker):
         # All independent groups in a burst use one fresh position snapshot;
         # acknowledged submissions reserve capacity until one shared verification.
         raise recovery.Deferred('Protection submitted; verifying entry groups together')
+
+
+async def snapshot(session, broker):
+    """Normal fills verify in memory; rebuild history only for missing/new facts."""
+    from app.services import kotak_reports, real_broker_state, fifo_positions, broker_reports
+    from app.services.protection_recovery import Deferred
+    version = getattr(session, '_protection_revision', 0)
+    bundle = await kotak_reports.fetch(broker, background=True)
+    if (busy(session) or version != getattr(session, '_protection_revision', 0)
+            or bundle.revision != kotak_reports.state(broker).revision):
+        raise Deferred('Foreground action or fill changed the audit snapshot')
+    local = getattr(session, '_fifo_executions', None)
+    fast = local is not None and getattr(session, '_fifo_account', None) == broker.account_identity()
+    normalized = None
+    if fast:
+        kotak_reports.consistent(broker, real_broker_state.projection_id(session, broker.account_identity()))
+        try:
+            metadata = [row for row in local if row.get('expiry')]
+            normalized = fifo_positions.unique_executions(session, bundle.executions, metadata)
+            reported = real_broker_state.normalize_positions(session, bundle.positions, metadata)
+            verified = fifo_positions.verified_positions(session, normalized, reported, metadata)
+            def totals(rows):
+                result = defaultdict(lambda: [0, 0.])
+                for row in rows:
+                    identity = (*fifo_positions.scope(session, row, metadata), row['kotak_order_id'], row['side'])
+                    result[identity][0] += row['quantity']
+                    result[identity][1] += row['quantity'] * row['price']
+                return result
+            old, fresh = totals(local), totals(normalized)
+            fast = old.keys() == fresh.keys() and all(old[k][0] == fresh[k][0] and
+                math.isclose(old[k][1], fresh[k][1], rel_tol=1e-8,
+                             abs_tol=max(.01, fresh[k][0] * .005 + 1e-6)) for k in fresh)
+            cached = { (p.get('broker_exchange') or fifo_positions.exchange_for(session), p.get('product', 'MIS'),
+                         p.get('right'), p.get('strike'), p.get('expiry')): p
+                       for p in getattr(session, 'broker_positions', [])}
+            verified_open = {(p['broker_exchange'], p['product'], p['right'], p['strike'], p['expiry'])
+                             for p in verified if p['quantity']}
+            fast = fast and {k for k, p in cached.items() if p['quantity']} == verified_open
+            for p in verified:
+                identity = (p['broker_exchange'], p['product'], p['right'], p['strike'], p['expiry'])
+                previous = cached.get(identity)
+                fast = fast and previous is not None and previous['quantity'] == p['quantity'] and previous['side'] == p['side']
+                fast = fast and math.isclose(previous['avg_entry_price'], p['avg_entry_price'], rel_tol=1e-8, abs_tol=.01)
+            by_id = {r['kotak_order_id']: r for r in bundle.orders}
+            for order in order_service.get_all_orders(session.session_id):
+                row = by_id.get(order.kotak_order_id)
+                if row and (row['quantity'] != order.quantity or row['filled_quantity'] != order.broker_filled_quantity
+                            or (row['status'] in ('cancelled', 'canceled', 'rejected', 'expired') and order.status != OrderStatus.CANCELLED)):
+                    fast = False
+                if row and order.execution_role == 'exit' and order.status == OrderStatus.PENDING:
+                    if (order.order_type == OrderType.STOPLOSS and not math.isclose(row.get('trigger_price', 0), order.trigger_price, abs_tol=.01)
+                            or not math.isclose(row.get('limit_price', 0), order.limit_price, abs_tol=.01)):
+                        fast = False
+        except (ValueError, KeyError, TypeError):
+            fast = False
+    if fast:
+        session._kotak_report_bundle = bundle
+        logger.info('entry_protection_snapshot session=%s mode=memory history_rewrite=false', session.session_id)
+        return bundle, normalized
+    await real_broker_state.refresh(session, broker, protection=True, bundle=bundle)
+    logger.info('entry_protection_snapshot session=%s mode=rebuild history_rewrite=true', session.session_id)
+    return session._kotak_report_bundle, session._fifo_executions
 
 
 async def _drive(identity, broker):

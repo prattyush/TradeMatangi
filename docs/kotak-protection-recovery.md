@@ -37,6 +37,13 @@ foreground mutation barrier, and automatic submissions serialize per account.
 Independent groups in a fill burst submit from one validated snapshot, reserving
 acknowledged quantities until a shared verification pass. A new fill or foreground
 edit invalidates the batch before another submission.
+Normal audits verify against the confirmed in-memory FIFO ledger without rewriting
+the day's trade history. Missing or changed executions trigger the heavier
+reconciliation using the same reports. Slow background staging leaves manual
+actions available and is discarded if trading changes before publication.
+Repeated disagreements use the coalesced account queue with 2/5/10-second spacing.
+Trade History Refresh remains the explicit heavier reconciliation action; neither
+idle watching nor quote ticks cause periodic audits.
 
 Repair reuses the durable claims/tags, uncertainty reconciliation and bounded
 submission policy. The entry coordinator verifies accepted orders in its next

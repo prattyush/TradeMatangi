@@ -28,6 +28,7 @@ class Account:
     failures: int = 0
     submission: asyncio.Lock = field(default_factory=asyncio.Lock)
     foreground: int = 0
+    disagreements: dict = field(default_factory=dict)
 
 
 _accounts = {}
@@ -57,6 +58,20 @@ def state(broker):
 
 def invalidate(broker):
     state(broker).revision += 1
+
+
+def disagree(broker, scope):
+    account = state(broker)
+    count = account.disagreements.get(scope, 0) + 1
+    account.disagreements[scope] = count
+    delay = (2, 5, 10)[min(count - 1, 2)]
+    account.cooldown = max(account.cooldown, time.monotonic() + delay)
+    logger.warning('kotak_reports_disagree scope=%s queued=true count=%d backoff=%d', scope, count, delay)
+    return delay
+
+
+def consistent(broker, scope):
+    state(broker).disagreements.pop(scope, None)
 
 
 async def fetch(broker, *, background=False, force=False, include_orders=True):

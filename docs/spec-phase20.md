@@ -409,6 +409,17 @@ Implementation:
   Automatic placements serialize per account, with immutable conditional
   submission claims, deterministic tags and no blind retries after uncertain
   acknowledgements. Coverage verification occurs outside the manual-edit lock.
+- For the user's long idle periods and short action bursts, the manager has no
+  idle polling. Normal audits compare fresh broker executions/positions with the
+  confirmed in-memory ledger and avoid rewriting the day's trade history.
+  Missed-event/restart inconsistencies fall back to the heavier reconciliation,
+  reusing the same report bundle. Slow background staging does not set the
+  foreground refresh barrier; intervening trading invalidates its staged result.
+  Trade History Refresh remains the explicit heavier preparation/reconciliation
+  action. Unchanged protection records are not rewritten on every audit.
+- Repeated inconsistent reports remain coalesced in the account queue with
+  2/5/10-second spacing, rather than creating a job per event. Scope disagreement
+  counts reset only after that scope verifies. Retry windows remain bounded.
 - Repair prices use the group's protective SL or attached entry trigger and the
   existing fresh-LTP recovery fallback. SL execution provenance is captured
   separately from entry provenance. Per-contract notices and logs describe
@@ -434,12 +445,13 @@ Validation covers 40+20 entries, partial fills, freeze chunks, manual protection
 FIFO closures/exclusions, unknown origin, uncertain acknowledgement/restart,
 split/conversion barriers, account single-flight/pacing/backoff, broker/client
 isolation and the earlier timeout fallback. Automated tests submit no live orders.
-Validation: full backend run **1,835 passed**, with the two documented baseline
+Validation: full backend run **1,841 passed**, with the two documented baseline
 failures (`test_options_session_started_successfully`, stale expiry assertion;
 `test_active_session_returns_attach_metadata`, missing group_id fixture). The
-final focused protection/snapshot/split/conversion/restart run passed **170 tests**,
+final focused protection/snapshot/split/conversion/restart run passed **176 tests**,
 including five entries submitted from one immutable report snapshot and one
-shared verification pass, and invalidation of stale partial report caches.
+shared verification pass, invalidation of stale partial report caches, unchanged
+equity protection, lightweight in-memory audits and background staging priority.
 `git diff --check` and EC2 startup-script shell syntax validation passed.
 
 Delivery branch: `fix/kotak-entry-protection-coordinator`, targeting `dev` for PR

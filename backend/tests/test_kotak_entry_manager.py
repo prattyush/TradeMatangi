@@ -7,6 +7,7 @@ import pytest
 from app.models.schemas import Order, OrderType, OrderStatus, TradeSide, SimulationState
 from app.services import kotak_protection as manager, kotak_reports, protection_recovery as recovery
 from app.services import order_service, simulation
+from app.services import entry_sl_watcher
 from tests.test_phase19_broker_snapshot import env, execution, broker_order, reported_position
 
 
@@ -166,7 +167,7 @@ async def test_partial_entry_uses_confirmed_fill_and_reconciles_before_submissio
     monkeypatch.setattr('app.services.user_settings_service.get_settings', lambda uid: {})
     def place(**kwargs):
         row = broker_order('new', 'trigger pending', 'SELL', kwargs['qty'], 0)
-        row.update(order_type='SL', trigger_price=kwargs['trigger_price'], tag=kwargs['tag'])
+        row.update(order_type='SL', trigger_price=kwargs['trigger_price'], limit_price=kwargs['limit_price'], tag=kwargs['tag'])
         broker.get_order_history.return_value.append(row)
         return 'new'
     broker.place_options_sl_order.side_effect = place
@@ -197,7 +198,7 @@ async def test_full_40_plus_20_entries_each_receive_their_own_stop(env, monkeypa
     def place(**kwargs):
         identifier = f"stop-{broker.place_options_sl_order.call_count}"
         row = broker_order(identifier, 'trigger pending', 'SELL', kwargs['qty'], 0)
-        row.update(order_type='SL', trigger_price=kwargs['trigger_price'], tag=kwargs['tag'])
+        row.update(order_type='SL', trigger_price=kwargs['trigger_price'], limit_price=kwargs['limit_price'], tag=kwargs['tag'])
         broker.get_order_history.return_value.append(row)
         return identifier
     broker.place_options_sl_order.side_effect = place
@@ -225,7 +226,7 @@ async def test_five_entries_submit_from_one_snapshot_and_share_one_verification(
     monkeypatch.setattr('app.services.user_settings_service.get_settings', lambda uid: {})
     def place(**kwargs):
         row = broker_order(f'stop-{len(book)}', 'trigger pending', 'SELL', kwargs['qty'], 0)
-        row.update(order_type='SL', trigger_price=kwargs['trigger_price'], tag=kwargs['tag'])
+        row.update(order_type='SL', trigger_price=kwargs['trigger_price'], limit_price=kwargs['limit_price'], tag=kwargs['tag'])
         book.append(row)
         return row['kotak_order_id']
     broker.place_options_sl_order.side_effect = place
@@ -259,6 +260,20 @@ async def test_canceling_unfilled_entry_remainder_keeps_partial_fill_protection(
     partial.status = OrderStatus.PENDING
     assert await manager.suppress(s, partial, 20) is None
     assert manager.allocations(s, [execution(order='a')], [])[0][0][-1] == 20
+
+
+def test_equity_entry_protection_retains_legacy_path(env, monkeypatch):
+    s, _, _ = env
+    order = entry(s, 'a', 20)
+    s.instrument_type = 'equity'
+    timer, legacy = Mock(), Mock()
+    monkeypatch.setattr(entry_sl_watcher, '_schedule_delayed_sl', timer)
+    monkeypatch.setattr(entry_sl_watcher, '_place_legacy_real_protection', legacy)
+    monkeypatch.setattr('app.services.user_settings_service.get_settings', lambda uid: {'entry_auto_sl_delay_sec': 3})
+    entry_sl_watcher.on_entry_filled(order, s)
+    timer.assert_called_once_with(order, s, 3, None)
+    entry_sl_watcher._place_real_protection(order, s)
+    legacy.assert_called_once_with(order, s)
 
 
 @pytest.mark.asyncio
@@ -315,7 +330,7 @@ async def test_uncertain_submission_reconciles_after_runtime_restart_without_dup
     monkeypatch.setattr('app.services.user_settings_service.get_settings', lambda uid: {})
     def accepted_but_timeout(**kwargs):
         row = broker_order('accepted', 'trigger pending', 'SELL', kwargs['qty'], 0)
-        row.update(order_type='SL', trigger_price=kwargs['trigger_price'], tag=kwargs['tag'])
+        row.update(order_type='SL', trigger_price=kwargs['trigger_price'], limit_price=kwargs['limit_price'], tag=kwargs['tag'])
         broker.get_order_history.return_value.append(row)
         raise TimeoutError('response lost after acceptance')
     broker.place_options_sl_order.side_effect = accepted_but_timeout
@@ -349,3 +364,96 @@ async def test_partial_cached_reports_are_not_relabelled_after_a_manual_change(e
     fresh = await task
     assert fresh.positions == [{'netQty': 20}]
     assert broker.get_positions.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_regular_audit_verifies_in_memory_without_rewriting_history(env, monkeypatch):
+    from app.services import real_broker_state, fifo_positions
+    s, broker, _ = env
+    entry(s, 'a', 20)
+    broker.get_trade_history.return_value = [execution(order='a')]
+    broker.get_positions.return_value = [reported_position()]
+    broker.get_order_history.return_value = [broker_order('a')]
+    s._fifo_executions = fifo_positions.unique_executions(s, broker.get_trade_history.return_value)
+    s.broker_positions = fifo_positions.positions(s, s._fifo_executions)
+    s._fifo_account = broker.account_identity()
+    rewrite = AsyncMock(side_effect=AssertionError('Normal confirmed fills must not rewrite the day history'))
+    monkeypatch.setattr(real_broker_state, 'refresh', rewrite)
+    _, ledger = await manager.snapshot(s, broker)
+    assert len(ledger) == 1
+    rewrite.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_rounded_cumulative_fill_average_keeps_lightweight_audit(env, monkeypatch):
+    from app.services import real_broker_state, fifo_positions
+    s, broker, _ = env
+    entry(s, 'a', 40)
+    local = execution(order='a', qty=40, price=38.58)
+    s._fifo_executions = fifo_positions.unique_executions(s, [local])
+    s.broker_positions = fifo_positions.positions(s, s._fifo_executions)
+    s._fifo_account = broker.account_identity()
+    broker.get_trade_history.return_value = [execution('first', 'a', price=38.55),
+        execution('second', 'a', price=38.60, time='13:53:28')]
+    broker.get_positions.return_value = [reported_position(40, 38.58)]
+    broker.get_order_history.return_value = [broker_order('a', qty=40, filled=40, price=38.58)]
+    rewrite = AsyncMock(side_effect=AssertionError('SDK average rounding is not a missing execution'))
+    monkeypatch.setattr(real_broker_state, 'refresh', rewrite)
+    _, ledger = await manager.snapshot(s, broker)
+    assert len(ledger) == 2
+    rewrite.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_missing_execution_falls_back_to_one_shared_full_refresh(env, monkeypatch):
+    from app.services import real_broker_state, fifo_positions
+    s, broker, _ = env
+    entry(s, 'a', 20)
+    old = [execution(order='a')]
+    s._fifo_executions = fifo_positions.unique_executions(s, old)
+    s.broker_positions = fifo_positions.positions(s, s._fifo_executions)
+    s._fifo_account = broker.account_identity()
+    broker.get_trade_history.return_value = old + [execution('new', 'external', time='13:53:28')]
+    broker.get_positions.return_value = [reported_position(40)]
+    broker.get_order_history.return_value = [broker_order('a'), broker_order('external')]
+    rewrite = AsyncMock(wraps=real_broker_state.refresh)
+    monkeypatch.setattr(real_broker_state, 'refresh', rewrite)
+    await manager.snapshot(s, broker)
+    rewrite.assert_awaited_once()
+    assert s.broker_positions[0]['quantity'] == 40
+    broker.get_positions.assert_called_once()
+
+
+def test_repeated_disagreements_are_spaced_in_account_queue(env):
+    s, broker, _ = env
+    # Exercise within an application loop because coordinator state owns Tasks.
+    async def check():
+        scope = s.session_id
+        for delay in (2, 5, 10, 10):
+            assert kotak_reports.disagree(broker, scope) == delay
+            assert kotak_reports.state(broker).cooldown - time.monotonic() >= delay - .1
+        kotak_reports.consistent(broker, scope)
+        assert scope not in kotak_reports.state(broker).disagreements
+    asyncio.run(check())
+
+
+@pytest.mark.asyncio
+async def test_background_history_staging_does_not_block_foreground_and_discards_stale_result(env, monkeypatch):
+    from app.services import real_broker_state
+    s, broker, _ = env
+    entry(s, 'a', 20)
+    broker.get_trade_history.return_value = [execution(order='a')]
+    broker.get_positions.return_value = [reported_position()]
+    broker.get_order_history.return_value = [broker_order('a')]
+    stage = real_broker_state.stage
+    original_orders = order_service._orders[s.session_id]
+    def intervening_action(*args):
+        assert getattr(s, 'broker_refresh_events', None) is None
+        staged = stage(*args)
+        s._protection_revision = getattr(s, '_protection_revision', 0) + 1
+        return staged
+    monkeypatch.setattr(real_broker_state, 'stage', intervening_action)
+    with pytest.raises(recovery.Deferred, match='Trading changed during background staging'):
+        await real_broker_state.refresh(s, broker, protection=True)
+    assert order_service._orders[s.session_id] is original_orders
+    assert s.broker_refresh_events is None

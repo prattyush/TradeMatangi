@@ -258,7 +258,7 @@ async def test_explicit_real_sl_ignores_auto_toggle_and_preserves_entry_quantity
     broker.get_positions.return_value = [reported_position()]
     def place(**kwargs):
         row = broker_order(order='protect-a', status='trigger pending', side='SELL', qty=20, filled=0)
-        row.update(order_type='SL', trigger_price=kwargs['trigger_price'], tag=kwargs['tag'])
+        row.update(order_type='SL', trigger_price=kwargs['trigger_price'], limit_price=kwargs['limit_price'], tag=kwargs['tag'])
         broker.get_order_history.return_value.append(row)
         return 'protect-a'
     broker.place_options_sl_order.side_effect = place
@@ -323,7 +323,7 @@ async def test_protection_splits_sensex_freeze_and_retries_only_uncovered_quanti
         if number == 2:
             raise kotak_service.KotakOrderRejected('confirmed rejection')
         row = broker_order(order=f'protect-{number}', status='trigger pending', side='SELL', qty=kwargs['qty'], filled=0)
-        row.update(order_type='SL', trigger_price=kwargs['trigger_price'], tag=kwargs['tag'])
+        row.update(order_type='SL', trigger_price=kwargs['trigger_price'], limit_price=kwargs['limit_price'], tag=kwargs['tag'])
         broker.get_order_history.return_value.append(row)
         return row['kotak_order_id']
     broker.place_options_sl_order.side_effect = place

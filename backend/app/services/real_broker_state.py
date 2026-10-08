@@ -264,16 +264,17 @@ def fill_deferred(session, callback, *args):
     return False
 
 
-async def refresh(session, broker, *, protection=False):
+async def refresh(session, broker, *, protection=False, bundle=None):
     from app.services import trading, order_service, wallet_service, simulation
     from app.services import kotak_reports
+    from app.services.protection_recovery import Deferred
     account = await asyncio.to_thread(broker.account_identity)
     root = projection_id(session, account)
-    prefetched = None
+    prefetched = bundle
     if protection:
         # Background reads must not set the foreground "refresh busy" barrier.
         version = getattr(session, '_protection_revision', 0)
-        prefetched = await kotak_reports.fetch(broker, background=True)
+        prefetched = prefetched or await kotak_reports.fetch(broker, background=True)
         if (version != getattr(session, '_protection_revision', 0)
                 or prefetched.revision != kotak_reports.state(broker).revision
                 or kotak_reports.state(broker).foreground):
@@ -284,7 +285,8 @@ async def refresh(session, broker, *, protection=False):
             raise ValueError('Order split is in progress; retry broker refresh shortly')
         if getattr(session, "broker_refresh_events", None) is not None:
             raise ValueError("A broker refresh is already running")
-        session.broker_refresh_events = []
+        if not protection:
+            session.broker_refresh_events = []
         try:
             bundle = prefetched or await kotak_reports.fetch(broker, background=protection)
             raw_orders, executions, raw_positions = bundle.orders, bundle.executions, bundle.positions
@@ -334,6 +336,7 @@ async def refresh(session, broker, *, protection=False):
             if not fifo_agrees():
                 if protection:
                     from app.services.protection_recovery import Deferred
+                    kotak_reports.disagree(broker, root)
                     raise Deferred('Broker reports are updating; retry entry protection after backoff')
                 bundle = await kotak_reports.fetch(broker, background=True, force=True)
                 raw_orders, executions, raw_positions = bundle.orders, bundle.executions, bundle.positions
@@ -345,6 +348,7 @@ async def refresh(session, broker, *, protection=False):
                 if not fifo_agrees():
                     raise ValueError("Kotak execution history/positions are incomplete or still updating; FIFO refresh was not applied")
             positions = verified_positions(session, scoped_executions, positions, master)
+            kotak_reports.consistent(broker, root)
             # Persist resolved monthly expiry so restart/live FIFO needs no instrument download.
             scoped_executions = [{**row, **reports.contract(session, row, master)} for row in scoped_executions]
             by_broker_id = {t.kotak_order_id: t for t in trades}
@@ -358,7 +362,18 @@ async def refresh(session, broker, *, protection=False):
             # New live facts are handled after publication; they cannot append duplicates.
             try:
                 manifest, members = await asyncio.to_thread(stage, session, account, trades, scoped_orders, positions, scoped_executions, orders)
+                if protection:
+                    if (version != getattr(session, '_protection_revision', 0)
+                            or bundle.revision != kotak_reports.state(broker).revision
+                            or kotak_reports.state(broker).foreground):
+                        from app.services.protection_recovery import Deferred
+                        raise Deferred('Trading changed during background staging; the existing revision remains active')
+                    # Publish under a short callback barrier; slow report reads
+                    # and history staging never make manual order edits busy.
+                    session.broker_refresh_events = []
                 await asyncio.to_thread(commit, session, manifest, members)
+            except Deferred:
+                raise
             except Exception as exc:
                 logger.warning("broker_snapshot_persistence_failed session=%s: %s", session.session_id, exc)
                 raise SnapshotPersistenceError("Could not persist broker refresh; the previous revision remains active") from exc
