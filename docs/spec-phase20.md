@@ -294,12 +294,6 @@ The stats window also needs to show similar stats for exit trades as well, I mea
 #### Stats On Entries/Exit Count
 Also, need stats on entry and exit counts in one trade and the result of those trades P&L % etc. Can you also give me stats whether I am entering too less gap or entries in same bar, bar interval length is counted from settings, strategy candle interval. If the entries vary in % entries w.r.t to sizes and whether that result in profit or losses, P&L in count of trades and also % in losses or profits.
 
-## Kite Broker For Real Trading
-Supporting Kite for Real Trading API's, all the their is feature parity with Kotak Neo. With exactly the same implementation.
-
-## Supporting Real Trading In Desktop Client
-Support Real Trading in Desktop Client, with same support as with Website Real Trading, like trade history refresh button and others.
-
 
 ## Analysis In Desktop
 First list out all features of Analysis and then support the same website analysis (tab) in desktop as well.
