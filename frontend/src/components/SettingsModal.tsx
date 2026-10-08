@@ -1530,8 +1530,9 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                 <div style={{ fontSize: 11, color: '#8b949e' }}>
-                  Paper/replay entry protection stays enabled. Kotak real trading uses the switch below.
+                  Paper/replay entry protection stays enabled.{(isRealTradingUser || isAdmin) && ' Kotak real trading uses the switch below.'}
                 </div>
+                {(isRealTradingUser || isAdmin) && <>
                 <label style={{ fontSize: 12, color: '#e6edf3', display: 'flex', gap: 8, alignItems: 'center' }}>
                   <input type="checkbox" checked={kotakProtectionEnabled} disabled={settingsLoading || settingsLoadFailed || preferenceSaving}
                     onChange={e => { const enabled = e.target.checked; void savePreference({ kotak_automated_protection_enabled: enabled }, () => setKotakProtectionEnabled(enabled)) }} />
@@ -1540,6 +1541,7 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
                 <div style={{ fontSize: 11, color: '#8b949e' }}>
                   Changes apply during trading after saving. When off, add and manage stoplosses manually; existing broker orders stay active. Trade History Refresh respects this switch. Orders already sent may still complete.
                 </div>
+                </>}
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                   <span style={{ fontSize: 11, color: '#8b949e' }}>Real trading delay:</span>
                   <input

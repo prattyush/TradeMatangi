@@ -691,13 +691,15 @@ export function DesktopSettingsModal({
                       Sizing applies to new sessions. Limit gaps apply to new
                       orders and trigger edits; pending orders retain their
                       prices.
+                      {profile?.real_trading_enabled && <>{' '}
                       The Kotak automation checkbox saves immediately and applies
                       during trading. When off, manage SLs manually. Existing
                       broker orders remain active; requests already sent may finish.
+                      </>}
                     </p>
                   )}
                   <div className="picker-fields">
-                    {sharedSettingsSections[tab].map((field) => (
+                    {sharedSettingsSections[tab].filter(field => field.key !== 'kotak_automated_protection_enabled' || profile?.real_trading_enabled === true).map((field) => (
                       <SettingControl
                         key={field.key}
                         field={field}

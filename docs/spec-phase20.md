@@ -464,6 +464,9 @@ boolean, default True to preserve the current behavior. Website and desktop
 Trading settings expose the same checkbox and save it immediately, confirming
 the backend response before changing the displayed state. It may be unchecked
 during an active trading session; no restart is required.
+Both clients show the checkbox and its help only when the account has real
+trading access under the existing admin/whitelist permission policy. Hiding it
+does not change the saved preference.
 
 Off stops new automatic attached-entry SL placement, the protected-entry manager,
 and legacy automatic cancelled-exit recovery for Kotak real trading. Queued user
