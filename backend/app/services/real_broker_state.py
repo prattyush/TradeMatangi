@@ -264,19 +264,37 @@ def fill_deferred(session, callback, *args):
     return False
 
 
-async def refresh(session, broker):
+async def refresh(session, broker, *, protection=False, bundle=None):
     from app.services import trading, order_service, wallet_service, simulation
+    from app.services import kotak_reports
+    from app.services.protection_recovery import Deferred
+    from app.services import kotak_automation_policy as policy
+    if not protection:
+        await policy.check(session.user_id, force=True)
     account = await asyncio.to_thread(broker.account_identity)
     root = projection_id(session, account)
+    prefetched = bundle
+    if protection:
+        if not policy.enabled(session.user_id):
+            raise Deferred('Automatic Kotak protection disabled')
+        # Background reads must not set the foreground "refresh busy" barrier.
+        version = getattr(session, '_protection_revision', 0)
+        prefetched = prefetched or await kotak_reports.fetch(broker, background=True)
+        if (version != getattr(session, '_protection_revision', 0)
+                or prefetched.revision != kotak_reports.state(broker).revision
+                or kotak_reports.state(broker).foreground):
+            from app.services.protection_recovery import Deferred
+            raise Deferred('Foreground operation or fill changed the broker snapshot')
     async with _locks.setdefault(root, asyncio.Lock()):
         if getattr(session, 'order_split_in_progress', None):
             raise ValueError('Order split is in progress; retry broker refresh shortly')
         if getattr(session, "broker_refresh_events", None) is not None:
             raise ValueError("A broker refresh is already running")
-        session.broker_refresh_events = []
+        if not protection:
+            session.broker_refresh_events = []
         try:
-            raw_orders, executions, raw_positions = await asyncio.gather(
-                asyncio.to_thread(broker.get_order_history), asyncio.to_thread(broker.get_trade_history), asyncio.to_thread(broker.get_positions))
+            bundle = prefetched or await kotak_reports.fetch(broker, background=protection)
+            raw_orders, executions, raw_positions = bundle.orders, bundle.executions, bundle.positions
             scoped_orders = [r for r in raw_orders if reports.in_scope(session, r)]
             scoped_executions = [r for r in executions if reports.in_scope(session, r)]
             master = None
@@ -321,9 +339,14 @@ async def refresh(session, broker):
                 except ValueError:
                     return False
             if not fifo_agrees():
-                raw_orders, executions, raw_positions = await asyncio.gather(
-                    asyncio.to_thread(broker.get_order_history), asyncio.to_thread(broker.get_trade_history),
-                    asyncio.to_thread(broker.get_positions))
+                if protection:
+                    if not policy.enabled(session.user_id):
+                        raise Deferred('Automatic Kotak protection disabled during background staging')
+                    from app.services.protection_recovery import Deferred
+                    kotak_reports.disagree(broker, root)
+                    raise Deferred('Broker reports are updating; retry entry protection after backoff')
+                bundle = await kotak_reports.fetch(broker, background=True, force=True)
+                raw_orders, executions, raw_positions = bundle.orders, bundle.executions, bundle.positions
                 scoped_orders = [r for r in raw_orders if reports.in_scope(session, r)]
                 scoped_executions = [r for r in executions if reports.in_scope(session, r)]
                 trades = aggregate(session, scoped_executions, account, master)
@@ -332,6 +355,7 @@ async def refresh(session, broker):
                 if not fifo_agrees():
                     raise ValueError("Kotak execution history/positions are incomplete or still updating; FIFO refresh was not applied")
             positions = verified_positions(session, scoped_executions, positions, master)
+            kotak_reports.consistent(broker, root)
             # Persist resolved monthly expiry so restart/live FIFO needs no instrument download.
             scoped_executions = [{**row, **reports.contract(session, row, master)} for row in scoped_executions]
             by_broker_id = {t.kotak_order_id: t for t in trades}
@@ -345,7 +369,18 @@ async def refresh(session, broker):
             # New live facts are handled after publication; they cannot append duplicates.
             try:
                 manifest, members = await asyncio.to_thread(stage, session, account, trades, scoped_orders, positions, scoped_executions, orders)
+                if protection:
+                    if (version != getattr(session, '_protection_revision', 0)
+                            or bundle.revision != kotak_reports.state(broker).revision
+                            or kotak_reports.state(broker).foreground):
+                        from app.services.protection_recovery import Deferred
+                        raise Deferred('Trading changed during background staging; the existing revision remains active')
+                    # Publish under a short callback barrier; slow report reads
+                    # and history staging never make manual order edits busy.
+                    session.broker_refresh_events = []
                 await asyncio.to_thread(commit, session, manifest, members)
+            except Deferred:
+                raise
             except Exception as exc:
                 logger.warning("broker_snapshot_persistence_failed session=%s: %s", session.session_id, exc)
                 raise SnapshotPersistenceError("Could not persist broker refresh; the previous revision remains active") from exc
@@ -359,25 +394,31 @@ async def refresh(session, broker):
             session._broker_state_version = getattr(session, "_broker_state_version", 0) + 1
             session._broker_snapshot_revision = manifest["revision"]
             session._protection_revision = getattr(session, "_protection_revision", 0) + 1
+            session._kotak_report_bundle = bundle
             events, session.broker_refresh_events = session.broker_refresh_events, None
             for callback, args in events:
                 callback(*args)
             for order in order_service.get_open_orders(session.session_id):
                 if order.kotak_order_id:
                     simulation._register_kotak_sl_for_order(session, order, asyncio.get_running_loop(), attach_only=True)
-            from app.services.entry_sl_watcher import on_entry_filled
-            for order in orders.values():
-                if order.broker_filled_quantity and (order.entry_sl_price is not None or order.is_autostop):
-                    on_entry_filled(order, session, asyncio.get_running_loop())
-            from app.services.protection_recovery import resume
-            await resume(session)
+            if not protection:
+                if not policy.enabled(session.user_id) and any(o.recovery_state in ('prepared', 'submitting', 'unknown')
+                        for o in order_service.get_all_orders(session.session_id)):
+                    from app.services.kotak_protection import reconcile_sent_orders
+                    await reconcile_sent_orders(session, broker, scoped_orders)
+                from app.services.kotak_protection import request
+                request(session, reason='refresh', delay=0, invalidate=False)
+                from app.services.protection_recovery import resume
+                await resume(session)
             from app.services.broker_conversion import reconcile_refresh
             await reconcile_refresh(session, scoped_orders)
             wallet_balance, wallet_error, wallet_display_balance = None, None, None
             try:
                 from app.services import real_accounting
-                account_wallet = await real_accounting.refresh(session.user_id, session.date, broker,
-                    reason="reconcile", executions=executions, positions=raw_positions)
+                account_wallet = (await real_accounting.refresh(session.user_id, session.date, broker,
+                    reason="reconcile", executions=executions, positions=raw_positions)) if not protection else None
+                if account_wallet is None:
+                    account_wallet = {"session_capital": session.session_capital, "balance": None, "display_balance": None}
                 real_accounting.apply_session_capital(session, account_wallet["session_capital"])
                 wallet_balance = account_wallet["balance"]
                 wallet_display_balance = account_wallet["display_balance"]

@@ -119,6 +119,18 @@ async def split(session, order, operation_id):
     second.order_id = child_id
     first.quantity = order.broker_filled_quantity + keep
     second.quantity = moved
+    # Allocation links follow both siblings, while exclusions belong to the
+    # durable manual-intent journal rather than being duplicated by a split.
+    second.protection_suppressed_quantity = 0
+    if order.protection_allocations:
+        retained, transferred, room = {}, {}, keep
+        for name, size in order.protection_allocations.items():
+            amount = min(room, size)
+            retained[name] = amount
+            transferred[name] = size - amount
+            room -= amount
+        first.protection_allocations = {k: v for k, v in retained.items() if v}
+        second.protection_allocations = {k: v for k, v in transferred.items() if v}
     second.kotak_order_id = None
     second.broker_filled_quantity = 0
     second.broker_filled_value = 0

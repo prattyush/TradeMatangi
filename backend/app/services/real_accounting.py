@@ -114,19 +114,12 @@ async def refresh(user_id, date, broker, *, reason, executions=None, positions=N
     from app.services import wallet_service
     from app.services.kotak_service import KotakError
     try:
-        calls = [asyncio.to_thread(broker.get_limits), asyncio.to_thread(broker.account_identity)]
-        if executions is None:
-            calls.append(asyncio.to_thread(broker.get_trade_history))
-        if positions is None:
-            calls.append(asyncio.to_thread(broker.get_positions))
-        values = await asyncio.gather(*calls)
-        limits, account = values[:2]
-        offset = 2
-        if executions is None:
-            executions = values[offset]
-            offset += 1
-        if positions is None:
-            positions = values[offset]
+        limits, account = await asyncio.gather(asyncio.to_thread(broker.get_limits), asyncio.to_thread(broker.account_identity))
+        if executions is None or positions is None:
+            from app.services import kotak_reports
+            bundle = await kotak_reports.fetch(broker, include_orders=False)
+            executions = bundle.executions if executions is None else executions
+            positions = bundle.positions if positions is None else positions
         net = required_number(limits.get("Net"), "Net")
         # Preserve the broker's signed adjustment, including negative values
         # observed after exits. Finite-value validation still applies; clamping

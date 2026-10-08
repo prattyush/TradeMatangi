@@ -254,6 +254,9 @@ class Order(BaseModel):
     recovery_attempt: int = 0
     entry_sl_price: float | None = None  # auto-stoploss price set at entry time
     group_id: str | None = None          # links entry order with its auto-placed SL order
+    protection_group: str | None = None  # durable Kotak entry allocation across splits/conversions
+    protection_suppressed_quantity: int = 0
+    protection_allocations: dict[str, int] | None = None
     # The authoritative quote used to create a chart-originated order.  These
     # fields are intentionally optional so persisted and non-desktop orders
     # remain backwards compatible.
@@ -384,8 +387,9 @@ class UserSettingsResponse(BaseModel):
     analysis_price_source: str = "options"
     experimental_patterns_enabled: bool = False
     pattern_share_emails: str = ""
-    entry_auto_sl_enabled: bool = True  # compatibility field; entry protection is always enabled
+    entry_auto_sl_enabled: bool = True  # retired switch; Kotak real automation uses its own live flag
     entry_auto_sl_delay_sec: int = 3
+    kotak_automated_protection_enabled: bool = True
     max_price_mode: str = "otm"          # "otm" | "threshold"
     max_price_threshold_ce: float = 50.0
     max_price_threshold_pe: float = 50.0
@@ -425,6 +429,7 @@ class UserSettingsUpdateRequest(BaseModel):
     pattern_share_emails: str | None = None
     entry_auto_sl_enabled: bool | None = None
     entry_auto_sl_delay_sec: int | None = Field(default=None, ge=1, le=30)
+    kotak_automated_protection_enabled: bool | None = None
     max_price_mode: Literal["otm", "threshold"] | None = None
     max_price_threshold_ce: float | None = Field(default=None, gt=0, allow_inf_nan=False)
     max_price_threshold_pe: float | None = Field(default=None, gt=0, allow_inf_nan=False)

@@ -226,6 +226,7 @@ class SimulationSession:
     strike_ce: Optional[int] = None    # CE streaming strike (equals strike when offset=0)
     strike_pe: Optional[int] = None    # PE streaming strike (equals strike when offset=0)
     brokerage_per_order: float = 1.0    # flat brokerage per trade (from session start config)
+    execution_broker: str = "KotakNeo"  # execution identity is independent of market-data source
     strategy_interval_secs: int = 180   # candle interval for all strategies (180=3min, 300=5min)
     session_type: str = "sim"           # "sim", "paper", "real", or "stepwise"
     group_id: str | None = None
@@ -322,6 +323,7 @@ def _upsert_session_to_db(session: SimulationSession, *, strict: bool = False) -
             "brokerage_per_order": Decimal(str(session.brokerage_per_order)),
             "instrument_type": session.instrument_type,
             "session_type": session.session_type,
+            "execution_broker": session.execution_broker,
         }
         if getattr(session, "broker_projection_id", None):
             item["broker_projection_id"] = session.broker_projection_id
@@ -611,6 +613,7 @@ def rebuild_session_from_db(
         session_alias=db_record.get("session_alias"),
         wallet_ledger_id=ledger_id,
         resumed_from_db=True,
+        execution_broker=db_record.get("execution_broker", "KotakNeo"),
     )
     session.desktop_contracts = [
         {**contract, "strike": int(contract["strike"])} if isinstance(contract.get("strike"), Decimal) else contract

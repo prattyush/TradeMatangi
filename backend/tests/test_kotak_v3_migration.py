@@ -273,7 +273,7 @@ def test_replaced_login_generation_drops_old_messages(monkeypatch):
     service = ks.KotakNeoService()
     service._client, service._authenticated = MagicMock(), True
     captures = []
-    def bridge(client, order, market, expired):
+    def bridge(client, order, market, expired, **kwargs):
         captures.append((order, market, expired))
         return MagicMock()
     monkeypatch.setattr("app.services.kotak_stream.KotakFeedBridge", bridge)
