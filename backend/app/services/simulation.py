@@ -684,11 +684,15 @@ def rebuild_session_from_db(
 
 
 def resolve_website_paper_resume_contracts(session: SimulationSession) -> None:
+    resolve_website_resume_contracts(session)
+
+
+def resolve_website_resume_contracts(session: SimulationSession) -> None:
     """Open positions win per side; flat sides keep the requested selection."""
     from app.services import trading, order_service
     positions = trading.get_open_option_contracts(session.session_id, session.symbol)
     for right in ("CE", "PE"):
-        candidates = [item for item in positions if item["right"] == right]
+        candidates = [item for item in positions if item["right"] == right and item["expiry"] == session.expiry]
         if candidates:
             chosen = max(candidates, key=lambda item: (item["last_opened_at"], item["strike"]))
             setattr(session, f"strike_{right.lower()}", chosen["strike"])
@@ -706,7 +710,7 @@ def resolve_website_paper_resume_contracts(session: SimulationSession) -> None:
             session.desktop_contracts.append({"symbol": session.symbol, "right": right,
                 "strike": strike, "expiry": expiry, "contract_key": key})
             existing.add(key)
-    logger.info("paper_resume_contracts_selected session_id=%s strike_ce=%s strike_pe=%s open_contracts=%d tracked_contracts=%d",
+    logger.info("resume_contracts_selected session_id=%s strike_ce=%s strike_pe=%s open_contracts=%d tracked_contracts=%d",
         session.session_id, session.strike_ce, session.strike_pe, len(positions), len(contracts))
     _upsert_session_to_db(session)
 

@@ -375,7 +375,7 @@ async def test_cancellation_of_replacement_during_submission_is_queued(env, monk
         return result
     monkeypatch.setattr(recovery, '_attempt', attempt)
     recovery.note_cancel(s, parent, {'received_at': time.time(), 'raw': {}})
-    await asyncio.sleep(.8)
+    await asyncio.sleep(1.05)
     assert cancelled_once
     assert not recovery._pending_events
     # The queued child cancellation has its own running continuation.

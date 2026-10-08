@@ -589,7 +589,7 @@ async def _attempt(session, parent, operation, job, broker):
 async def _drive(session, parent, metadata, operation):
     from app.services.kotak_service import get_service
     from app.services import simulation
-    await asyncio.sleep(.5)
+    await asyncio.sleep(.75)
     broker = get_service()
     try:
         account = await asyncio.to_thread(broker.account_identity)
