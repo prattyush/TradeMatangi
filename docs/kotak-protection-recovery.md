@@ -7,7 +7,7 @@ establish that Kotak or a particular SDK caused the cancellation.
 
 ## Recovery policy
 
-After an app-managed exit cancellation, the backend coalesces events for 500 ms
+After an app-managed exit cancellation, the backend coalesces events for 750 ms
 and audits broker orders and positions. An unknown-origin cancellation, including
 reason `--`, is eligible when an exit fill for that session's underlying occurred
 within 30 seconds before or after it. An explicit broker/RMS/exchange/system
@@ -165,6 +165,14 @@ open book without verified executions requires Trade History Refresh before its
 FIFO basis can be repaired.
 
 ## Broker-confirmed conversion and position evidence
+
+On website Stop/Start for the same underlying and trading day, real-options
+sessions reconcile Kotak positions and orders before starting their live feed.
+Each CE/PE chart selects the most recently opened position within the saved
+session expiry (higher strike breaks timestamp ties). Flat sides keep the new
+Start request's selection. Other open contracts remain tracked. This matches
+paper resume selection; real Stop preserves broker stop-loss orders. A failed
+broker reconciliation returns a restart error and preserves durable trading state.
 
 LIMIT ↔ STOPLOSS conversion now retains the broker-confirmed type until a matching
 order event confirms type, prices and quantity. This applies to individual orders,

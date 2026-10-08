@@ -97,6 +97,18 @@ def _delete_existing_context_sessions(user_id: str, date: str, session_type: str
         wallet_service.recalculate_sim_ledger_for_date(user_id, date)
 
 
+async def _prepare_real_options_resume(session, broker) -> None:
+    """Select charts from fresh broker positions before starting the live feed."""
+    from app.services import real_broker_state
+    try:
+        await real_broker_state.refresh(session, broker)
+        sim_svc.resolve_website_resume_contracts(session)
+    except Exception as exc:
+        logger.exception("real_options_resume_failed session_id=%s", session.session_id)
+        sim_svc.stop_session(session, preserve_trading_state=True)
+        raise HTTPException(status_code=502, detail=f"Could not restore Kotak option contracts: {exc}") from exc
+
+
 def _normalise_option_contract_request(req: SimulationStartRequest) -> None:
     """Defend against stale client option metadata after symbol/date switches."""
     if req.instrument_type != "options" or req.expiry is None:
@@ -540,6 +552,8 @@ async def _start_simulation_impl(
                     sim_svc.stop_session(session, preserve_trading_state=True)
                     raise
             if is_real:
+                if session.instrument_type == "options":
+                    await _prepare_real_options_resume(session, kotak_svc)
                 session.session_capital = funds
                 sim_svc._upsert_session_to_db(session, strict=True)
             if desktop_independent and not session.group_id:
