@@ -267,7 +267,9 @@ failures/remaining gates/commit/PR. Manual promotion only after acceptance.
 
 2026-10-09/10: Sprint 0 specification was written before implementation. Sprints
 1–8 are implemented together on `feature/phase21-real-desktop`; review targets
-**preprod**. Earlier Phase 20/21 results are not counted as this extension's tests.
+**preprod**. Delivery: draft [PR #632](https://github.com/prattyush/TradeMatangi/pull/632),
+implementation commit `8a9528f`. Earlier Phase 20/21 results are not counted as
+this extension's tests.
 
 Delivered behavior: neutral broker execution identities, Kite MIS LIMIT/SL adapter
 with order events and non-retrying uncertain writes, account-scoped books/funds,
