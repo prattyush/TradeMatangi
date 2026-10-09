@@ -358,7 +358,7 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
   useEffect(() => {
     if (!open) return
     let cancelled = false
-    api.getWallet(date).then(wallet => {
+    api.getWallet(date, undefined, undefined, true).then(wallet => {
       if (!cancelled) { setWalletKind(wallet.ledger_kind ?? null); setWalletResetLocked(wallet.reset_allowed === false); setWalletResetReason(wallet.reset_reason ?? null) }
     }).catch(error => { if (!cancelled) { setWalletResetLocked(true); setWalletResetReason(error instanceof Error ? error.message : 'Could not read wallet status') } })
     return () => { cancelled = true }
@@ -1234,9 +1234,9 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
                 </div>
               </div>
               <div style={{ fontSize: 11, color: '#8b949e', marginTop: 8 }}>
-                Paper and Replay/Stepwise funds are separate. Update this dated wallet after Stop and completed order cleanup; future starts and resumes use the saved amount.
+                Paper and Replay/Stepwise funds are separate. Reset is allowed when no session is on; future starts and resumes use the saved amount.
               </div>
-              {walletResetLocked && <div role="status" style={{ fontSize: 11, color: '#fca5a5', marginTop: 8 }}>{walletResetReason ?? 'Wallet reset is unavailable while a session is active or cleanup is pending.'}</div>}
+              {walletResetLocked && <div role="status" style={{ fontSize: 11, color: '#fca5a5', marginTop: 8 }}>{walletResetReason ?? 'Wallet reset is unavailable while a session is on.'}</div>}
               {sessionActive && (
                 <div style={{ fontSize: 11, color: '#8b949e', marginTop: 8 }}>
                   Wallet cannot be changed during an active session

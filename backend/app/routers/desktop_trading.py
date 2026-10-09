@@ -1693,8 +1693,8 @@ async def pre_session_wallet(
     """Return the wallet balance that the next desktop run will use."""
     ledger_kind = "paper" if desktop_mode == "paper" else "sim"
     from app.services.practice_wallets import read, blocked
-    balance = float(read(user_id, date, ledger_kind)["current_balance"])
-    reason = blocked(user_id, date, ledger_kind)
+    balance = float((await asyncio.to_thread(read, user_id, date, ledger_kind))["current_balance"])
+    reason = await asyncio.to_thread(blocked, user_id, date, ledger_kind)
     return {"user_id": user_id, "date": date, "balance": balance, "locked": bool(reason), "reset_reason": reason}
 
 
@@ -1708,7 +1708,7 @@ async def reset_pre_session_wallet(
     """Set the wallet for the next desktop trading run."""
     from app.services.practice_wallets import reset
     kind = "paper" if desktop_mode == "paper" else "sim"
-    balance = reset(user_id, date, kind, req.amount)
+    balance = await asyncio.to_thread(reset, user_id, date, kind, req.amount)
     return {"user_id": user_id, "date": date, "balance": balance, "locked": False}
 
 
@@ -1719,7 +1719,7 @@ async def reset_wallet(session_id: str, req: WalletResetRequest, user_id: str = 
     if session.state != sim_svc.SimulationState.ENDED:
         raise HTTPException(status_code=409, detail="Wallet cannot be changed during an active desktop session")
     from app.services.practice_wallets import reset
-    balance = reset(user_id, session.date, "paper" if session.session_type == "paper" else "sim", req.amount)
+    balance = await asyncio.to_thread(reset, user_id, session.date, "paper" if session.session_type == "paper" else "sim", req.amount)
     return {"user_id": user_id, "date": session.date, "balance": balance}
 
 
