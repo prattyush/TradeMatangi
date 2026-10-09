@@ -579,7 +579,7 @@ four browser scripts recorded above. Main merging/deployment remain manual.
 
 ### Desktop price picking, popup closing and Stats layout — 2026-10-09
 
-**Status: all four requested changes implemented and validated; delivery PR pending.**
+**Status: all four requested changes implemented and validated; [PR #630](https://github.com/prattyush/TradeMatangi/pull/630) published for review → dev.**
 The chart-price controls below supersede the original “no chart click” default for
 the compact order window. Backend trading/wallet behavior is unchanged.
 
