@@ -4,8 +4,8 @@ import { BACKEND_URL } from '../config'
 import { _authHeaders } from '../services/api'
 import { useFlashError } from '../hooks/useFlashError'
 import { clearChartDataCache } from '../services/chartDataCache'
-import { Fragment, useCallback, useState, useEffect } from 'react'
-import api, { type UserSettingsResponse } from '../services/api'
+import { Fragment, useCallback, useState, useEffect, useRef } from 'react'
+import api, { ApiError, type UserSettingsResponse } from '../services/api'
 import KotakTOTPModal from './KotakTOTPModal'
 import { RocRatioMode } from '../indicators/optionsRoc'
 
@@ -348,6 +348,11 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
   const [kotakProtectionEnabled, setKotakProtectionEnabled] = useState(true)
   const [loadAttempt, setLoadAttempt] = useState(0)
   const [customAmount, setCustomAmount] = useState('')
+  const [walletResetBusy, setWalletResetBusy] = useState(false)
+  const [walletResetLocked, setWalletResetLocked] = useState(false)
+  const walletDate = useRef(date)
+  walletDate.current = date
+  useEffect(() => { setWalletResetLocked(false); setWalletResetBusy(false) }, [date])
   const [status, setStatus] = useState<string | null>(null)
   useFlashError(status && !/saved|success|connected|added|updated|deleted|^Streaming source set to:|^Reset to /i.test(status) ? status : null, 'Settings')
 
@@ -927,13 +932,21 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
   }
 
   const reset = async (amount?: number) => {
+    if (sessionActive || walletResetBusy || walletResetLocked) return
+    const targetDate = date
+    setWalletResetBusy(true)
     try {
-      await api.resetWallet(date, amount)
+      await api.resetWallet(targetDate, amount)
+      if (walletDate.current !== targetDate) return
       setStatus(amount ? `Reset to ₹${amount.toLocaleString('en-IN')}` : 'Reset to ₹1,50,000')
       onWalletReset()
-      setTimeout(() => setStatus(null), 2000)
-    } catch {
-      setStatus('Reset failed')
+      setTimeout(() => { if (walletDate.current === targetDate) setStatus(null) }, 2000)
+    } catch (error) {
+      if (walletDate.current !== targetDate) return
+      setStatus(error instanceof Error ? error.message : 'Wallet reset failed')
+      if (error instanceof ApiError && error.status === 409) setWalletResetLocked(true)
+    } finally {
+      if (walletDate.current === targetDate) setWalletResetBusy(false)
     }
   }
 
@@ -1171,13 +1184,14 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
               <div style={{ opacity: sessionActive ? 0.4 : 1, pointerEvents: sessionActive ? 'none' : 'auto' }}>
                 <button
                   onClick={() => reset()}
+                  disabled={Boolean(sessionActive || walletResetBusy || walletResetLocked)}
                   style={{
                     width: '100%', padding: '8px 12px', background: '#21262d',
                     border: '1px solid #30363d', borderRadius: 6, color: '#e6edf3',
                     cursor: 'pointer', fontSize: 13, marginBottom: 10,
                   }}
                 >
-                  Reset to ₹1,50,000
+                  {walletResetBusy ? 'Updating…' : 'Reset to ₹1,50,000'}
                 </button>
 
                 <div style={{ display: 'flex', gap: 8 }}>
@@ -1186,6 +1200,7 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
                     value={customAmount}
                     onChange={e => setCustomAmount(e.target.value)}
                     placeholder="Custom amount"
+                    disabled={Boolean(sessionActive || walletResetBusy || walletResetLocked)}
                     style={{
                       flex: 1, padding: '6px 10px', background: '#0d1117',
                       border: '1px solid #30363d', borderRadius: 6,
@@ -1197,7 +1212,7 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
                       const amt = parseFloat(customAmount)
                       if (amt > 0) reset(amt)
                     }}
-                    disabled={!customAmount || parseFloat(customAmount) <= 0}
+                    disabled={Boolean(sessionActive || walletResetBusy || walletResetLocked || !customAmount || parseFloat(customAmount) <= 0)}
                     style={{
                       padding: '6px 12px', background: '#1f6feb',
                       border: 'none', borderRadius: 6, color: '#fff',
@@ -1208,6 +1223,10 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
                   </button>
                 </div>
               </div>
+              <div style={{ fontSize: 11, color: '#8b949e', marginTop: 8 }}>
+                Paper funds are shared with desktop and stay locked for {date} after its first Paper session, even after Stop. Update them before starting Paper.
+              </div>
+              {walletResetLocked && <div role="status" style={{ fontSize: 11, color: '#fca5a5', marginTop: 8 }}>Paper wallet is locked for this date; reset is unavailable.</div>}
               {sessionActive && (
                 <div style={{ fontSize: 11, color: '#8b949e', marginTop: 8 }}>
                   Wallet cannot be changed during an active session
