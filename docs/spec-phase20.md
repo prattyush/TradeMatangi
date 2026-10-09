@@ -30,10 +30,12 @@ The subsequent Phase 21 website-stall fix moves wallet work off the request loop
 and removes historical eligibility scans. Latest reset rule: block while any
 session is on, otherwise allow reset. [PR #627](https://github.com/prattyush/TradeMatangi/pull/627)
 merged to dev (a1f2765), and main includes it through PR #628. The completed full
-verification and comprehensive review are recorded in Phase 21: 1,948 backend,
+verification and comprehensive review are recorded in Phase 21: 1,949 backend,
 303 AI helper, 182 desktop and 43 website tests passed, along with both builds
 and website/desktop browser acceptance. Earlier baseline fixture failures were
-corrected in tests; deployment/native acceptance remain separate.
+corrected in tests. The review also removed a stale balance-read cache write that
+could overwrite a concurrent Replay debit. Delivery: [PR #629](https://github.com/prattyush/TradeMatangi/pull/629),
+dev → main; deployment/native acceptance remain separate.
 
 ## Agreed scope and decisions
 

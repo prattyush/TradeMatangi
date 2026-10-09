@@ -12,7 +12,7 @@ follow-up below is implemented and validated; [PR #625](https://github.com/pratt
 merged to dev (a227b87). The website request-blocking fix
 [PR #627](https://github.com/prattyush/TradeMatangi/pull/627) merged to dev (a1f2765);
 main includes it through PR #628 (d52c863). Full checks and the comprehensive
-review below are complete. The new test/documentation delivery targets main;
+review below are complete. The reviewed cache correction and test/documentation delivery target main;
 main merging and deployment remain manual.
 
 ## Agreed scope and defaults
@@ -493,14 +493,15 @@ Packaged Windows acceptance remains manual.
 
 ### Full verification and comprehensive review after PR #627 — 2026-10-09
 
-**Status: full automated checks passed; review complete. Test/docs updates on dev
-are ready for delivery in a PR to main, as requested.** Runtime code was reviewed
-at dev merge a1f2765. This follow-up adds tests and fixes test fixtures; it does not
-change wallet or desktop runtime behavior.
+**Status: final full automated checks passed; comprehensive review complete.
+Delivery: [PR #629](https://github.com/prattyush/TradeMatangi/pull/629), dev → main;
+review/main merge remain pending.** Runtime code was reviewed at dev merge a1f2765. The review found and
+fixed one stale-read cache race; this follow-up also adds regression tests and
+corrects stale fixtures.
 
 | Check | Final result |
 |---|---|
-| Full backend suite with DynamoDB Local | **1,948 passed**, no failures (19 existing warnings) |
+| Full backend suite with DynamoDB Local | **1,949 passed**, no failures (19 existing warnings) |
 | Full AI helper suite | **303 passed**, no failures |
 | Desktop Vitest | **182 passed** across 31 files |
 | Website Node tests | **43 passed**, no failures |
@@ -519,11 +520,14 @@ failures were stale string-based mock targets after other suites reloaded module
 patching the dependencies actually bound to its test routers makes the complete
 suite deterministic. Funds-ratio reads in that test harness are explicitly mocked.
 
-Added **11 wallet cases** beyond the previous suite: running/paused checks across
+Added **12 wallet cases** beyond the previous suite: running/paused checks across
 Paper, Replay, Stepwise and Real, another user's active session not blocking this
 user's reset, and active Paper/Replay/Stepwise wallet/date/ownership overriding an
-idle picker date. The focused fixture/wallet run passed **50 checks** before the
-final full backend run.
+idle picker date, plus a delayed balance read interleaved with a Replay order debit.
+The focused fixture/wallet run passed **50 checks** before the initial full backend
+run. The final cache-race/dated/Paper/Real wallet checks passed **87 tests**; the full
+backend rerun including that correction passed **1,949 tests**. The preceding full
+run before the cache correction had 1,948 passes.
 
 Comprehensive review outcome:
 
@@ -537,6 +541,11 @@ Comprehensive review outcome:
   Eligibility does not scan Sessions/Orders history. The configured backend uses
   one worker (`scripts/start-backend-ec2.sh --workers 1`), matching the runtime
   session-state check. Existing Paper ownership/startup conflict fences remain.
+- A concrete delayed-read regression initially failed: after a ₹6,500 order debit
+  reduced ₹1,50,000 to ₹1,43,500, a prior viewer read restored the live Replay cache
+  to ₹1,50,000. Balance reads now leave trading caches unchanged. Explicit startup,
+  resets and trading cash flows retain their existing cache updates. This is one
+  removed side effect, with no new infrastructure or eligibility restrictions.
 - Wallet reads/checks/resets and Google verification run off the main request loop.
   Balance displays skip reset eligibility. Slow-storage concurrency tests prove
   other requests and Google sign-in complete while wallet work waits. The actual
@@ -556,8 +565,8 @@ Comprehensive review outcome:
   and endpoint. Abort identity, HTTP response handling and streaming behavior stay
   compatible; credentials, query values and request bodies are not logged.
 
-No further runtime changes were needed from this review. Automated checks use
-local/synthetic providers and records. The user's live website/account testing,
+The stale-read cache write above was the only additional runtime correction from
+this review. Automated checks use local/synthetic providers and records. The user's live website/account testing,
 packaged Windows installer acceptance and production deployment remain separate;
 these results do not claim real broker execution or installer validation.
 

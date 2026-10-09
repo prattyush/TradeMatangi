@@ -333,3 +333,22 @@ def test_active_session_wallet_uses_its_date_instead_of_idle_picker(db, session_
     assert response.json()["ledger_kind"] == kind
     wrong_user = TestClient(app).get(f"/api/wallet?date={DATE}&session_id={session.session_id}", headers={"X-User-Id": "other-user"})
     assert wrong_user.status_code == 404
+
+
+def test_delayed_balance_read_cannot_undo_a_replay_order_debit(db, monkeypatch):
+    seed(db, "sim", DATE, 150000)
+    ledger = f"sim:{DATE}"
+    wallet_service._ledgers[(USER, ledger)] = 150000
+    real_table = wallets.table()
+    class DelayedRead:
+        def __getattr__(self, name):
+            return getattr(real_table, name)
+        def get_item(self, **params):
+            snapshot = real_table.get_item(**params)
+            # The order completes while an earlier viewer read is in flight.
+            wallet_service.debit_ledger(USER, 6500, DATE, ledger)
+            return snapshot
+    monkeypatch.setattr(wallets, "table", lambda: DelayedRead())
+    assert wallets.read(USER, DATE, "sim")["current_balance"] == 150000
+    assert real_table.get_item(Key={"user_id": USER, "ledger_id": ledger})["Item"]["current_balance"] == 143500
+    assert wallet_service.get_ledger_balance(USER, DATE, ledger) == 143500
