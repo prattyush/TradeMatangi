@@ -22,7 +22,8 @@ serialization. The next Phase 21 follow-up implements separate dated Paper and
 Replay/Stepwise DB balances, completed-Stop reset eligibility, fresh website date
 selection and empty stopped desktop Paper resume. It supersedes the permanent
 first-start wallet lock. Real accounting, protection and history remain separate.
-Implementation and validation are recorded in [Phase 21](spec-phase21.md#dated-practice-wallets-paper-resume-and-popup-stoploss--2026-10-09).
+Delivery is [PR #625](https://github.com/prattyush/TradeMatangi/pull/625) → dev,
+published for review. Implementation and validation are recorded in [Phase 21](spec-phase21.md#dated-practice-wallets-paper-resume-and-popup-stoploss--2026-10-09).
 This does not reopen completed Phase 20 sprints or establish production deployment.
 
 ## Agreed scope and decisions

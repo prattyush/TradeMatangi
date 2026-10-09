@@ -8,7 +8,8 @@ below are historical checkpoints. A code merge does not establish the runtime
 backend's deployment. The Replay market-fill correction was merged to dev through PR #621 (02f904f)
 on 2026-10-09. Paper wallet serialization and reset-message follow-up merged to dev through
 PR #623 (0595055) on 2026-10-09. The dated-wallet and empty stopped Paper resume
-follow-up below is implemented and validated; its delivery PR targets dev.
+follow-up below is implemented and validated; [PR #625](https://github.com/prattyush/TradeMatangi/pull/625)
+targets dev and is published for review.
 Main merging/deployment remain manual.
 
 ## Agreed scope and defaults
@@ -333,7 +334,7 @@ No live broker order, wallet reset on the user's account, main merge or deployme
 
 ### Dated practice wallets, Paper resume and popup stoploss — 2026-10-09
 
-**Status: implemented and validated; delivery PR pending publication.** This
+**Status: implemented and validated; [PR #625](https://github.com/prattyush/TradeMatangi/pull/625) published for review → dev.** This
 follow-up replaces the permanent first-start Paper lock described above. The five
 original Phase 21 sprints remain complete.
 
@@ -367,7 +368,7 @@ Agreed behavior:
 |---|---|---|
 | W1 | Isolated dated storage, same-kind carry-forward, reset eligibility and startup conflict checks | Validated |
 | W2 | Website DB balance/date selection, client reset/status, desktop Paper preparation/resume and popup stoploss | Validated |
-| W3 | Corner cases, regressions, documentation and delivery PR | Checks/docs complete; PR publication pending |
+| W3 | Corner cases, regressions, documentation and delivery PR | Validated; PR #625 published for review |
 
 The reported empty Paper restart failure is specific to desktop preparation.
 Website browser checks verify both existing-session Yes/No choices start successfully
@@ -423,6 +424,10 @@ frontend/src/*.test.mjs frontend/src/services/*.test.mjs`, and browser scripts
 `scripts/wallet-settings-check.mjs`, `scripts/phase21-desktop-check.mjs` and
 `scripts/website-paper-restart-check.mjs` with
 external `PLAYWRIGHT_MODULE` and optional `CHROME_BIN`.
+
+Delivery: [PR #625](https://github.com/prattyush/TradeMatangi/pull/625),
+`fix/dated-practice-wallets-and-desktop-restart` → `dev`, implementation commit
+`74e097a`. Review/dev merge remain pending.
 
 Delivery requires the updated backend, website and a rebuilt desktop client.
 Native packaged Windows acceptance remains manual. Main merge/deployment remain
