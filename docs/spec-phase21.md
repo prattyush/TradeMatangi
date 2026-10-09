@@ -251,14 +251,15 @@ convenience selection, and evaluates secondary contracts at the same clock time.
 Existing cached ticks and leading-observation guards are reused; no provider polling,
 new public API or schema migration is introduced.
 
-Regression coverage adds 16 cases: BUY/SELL, CE/PE, paused Replay/Stepwise, exact
+Regression coverage adds 17 cases: BUY/SELL, CE/PE, paused Replay/Stepwise, exact
 position/stop/SSE evidence, unrelated pending-order isolation, older observation
 versus execution time, additional-contract entry/exit, primary-stream isolation,
-single-contract source identity, invalid/future quotes and ended-session rejection.
-The initial six failures now pass. Full backend regression: **1,894 passed / two
+single-contract source identity, invalid/future quotes, ended-session rejection and
+request-only fill isolation from the shared group clock.
+The initial six failures now pass. Full backend regression: **1,895 passed / two
 existing baseline fixture failures**, unchanged stale options expiry and missing
 tab-restore group_id assertions. Final focused desktop trading/preparation/replay/
-simulation/orders/entry-SL/sizing checks: **263 passed**. Desktop Vitest: **182 passed**.
+simulation/orders/entry-SL/sizing checks: **264 passed**. Desktop Vitest: **182 passed**.
 All provider/execution inputs are mocked/synthetic; no live broker orders were sent.
 Artifacts are ignored under .cache/desktop-replay-market-fix/.
 
@@ -267,8 +268,10 @@ python -m pytest backend/tests/ -q; focused files are test_desktop_trading.py,
 test_desktop_preparation.py, test_desktop_replay_events.py, test_simulation.py,
 test_orders_api.py, test_replay_entry_stoploss.py and test_sprint2_funds_ratio_stoploss.py.
 Desktop checks use npm test in windowsapp. Delivery branch:
-fix/desktop-replay-market-fill, targeting dev. Review/merge and backend deployment
-remain pending; main merging/deployment stay manual.
+[PR #621](https://github.com/prattyush/TradeMatangi/pull/621),
+fix/desktop-replay-market-fill → dev, implementation commit 6976795 plus the shared
+clock guard follow-up. Ready for review; merge and backend deployment remain pending.
+Main merging/deployment stay manual.
 
 This is backend-only: the existing desktop installer can use the correction after
 backend deployment. No live broker orders or main deployment are performed by this fix.

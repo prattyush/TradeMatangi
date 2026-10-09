@@ -987,7 +987,7 @@ def _emit_tick_and_check_orders(
     current_time = tick["time"]
     # A grouped replay has one durable clock.  Each member may have different
     # quote availability, but its visible clock is always this common tick.
-    if session.group_id and session.session_type in ("sim", "stepwise"):
+    if only_order_id is None and session.group_id and session.session_type in ("sim", "stepwise"):
         try:
             from app.services import session_group_service
             group = session_group_service.get_group(session.group_id, session.user_id)

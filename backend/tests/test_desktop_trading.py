@@ -1124,6 +1124,23 @@ def test_ended_replay_rejects_popup_market_without_creating_order():
         _clear()
 
 
+def test_immediate_market_check_does_not_move_a_shared_group_clock(monkeypatch):
+    _clear()
+    session = _session()
+    session.group_id = "shared"
+    now = int(session.current_time)
+    group = {"current_time": str(now + 20)}
+    monkeypatch.setattr("app.services.session_group_service.get_group", lambda *args: group)
+    try:
+        sim_svc._emit_tick_and_check_orders(session,
+            {"time": now, "open": 100, "high": 100, "low": 100, "close": 100},
+            "CE", only_order_id="new-order-only")
+        assert group["current_time"] == str(now + 20)
+        assert session.current_time == str(now)
+    finally:
+        _clear()
+
+
 @pytest.mark.parametrize("right,premium,stop", [("CE", 100, 80), ("PE", 120, 100)])
 def test_paper_market_uses_exact_live_option_tile_not_underlying_quote(right, premium, stop, monkeypatch):
     _clear()
