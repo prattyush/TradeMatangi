@@ -30,7 +30,7 @@ The subsequent Phase 21 website-stall fix moves wallet work off the request loop
 and removes historical eligibility scans. Latest reset rule: block while any
 session is on, otherwise allow reset. Full-suite testing of that simplification
 is deferred at the user's request; focused verification and request diagnostics
-are recorded in Phase 21.
+are recorded in Phase 21. Delivery: [PR #627](https://github.com/prattyush/TradeMatangi/pull/627) → dev, ready for testing.
 
 ## Agreed scope and decisions
 

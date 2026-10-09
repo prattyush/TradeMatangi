@@ -10,7 +10,7 @@ on 2026-10-09. Paper wallet serialization and reset-message follow-up merged to 
 PR #623 (0595055) on 2026-10-09. The dated-wallet and empty stopped Paper resume
 follow-up below is implemented and validated; [PR #625](https://github.com/prattyush/TradeMatangi/pull/625)
 merged to dev (a227b87). The website request-blocking follow-up below is ready
-for testing; its new PR targets dev.
+for testing in [PR #627](https://github.com/prattyush/TradeMatangi/pull/627) → dev.
 Main merging/deployment remain manual.
 
 ## Agreed scope and defaults
@@ -437,7 +437,7 @@ manual after review. Tests use local/synthetic records and providers.
 ### Website wallet stalls and simple reset rule — 2026-10-09
 
 **Status: implemented; focused checks passed; full-suite testing deferred at the
-user's request so they can test immediately. Delivery PR pending publication.**
+user's request so they can test immediately. [PR #627](https://github.com/prattyush/TradeMatangi/pull/627) published → dev.**
 PR #625 merged to dev (a227b87). Its synchronous wallet storage/eligibility work
 inside async request handlers could block the backend worker, delaying candles,
 Settings and sign-in. Settings disables its form while settings requests load,
