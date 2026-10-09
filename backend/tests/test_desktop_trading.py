@@ -1777,3 +1777,36 @@ def test_desktop_entries_use_shared_guardrail_checks(no_db, kind, restriction):
         asyncio.run(desktop_trading.place_chart_order(session.session_id, intent, session.user_id))
     assert restriction in exc.value.detail
     assert exc.value.status_code == 403
+
+
+def test_popup_replay_stoploss_http_request_after_filled_market_long(monkeypatch, tmp_path):
+    from fastapi.testclient import TestClient
+    from app.main import app
+    _clear()
+    session = _session()
+    session.session_type = "sim"
+    session.desktop_mode = "replay"
+    session.desktop_origin = "desktop_replay"
+    now = int(session.current_time)
+    monkeypatch.setattr("app.services.options_service.options_parquet_path", lambda *args: tmp_path / "absent.parquet")
+    monkeypatch.setattr("app.services.options_service.options_iter_ticks", lambda *args: [
+        {"time": now-1, "open": 150, "high": 150, "low": 150, "close": 150}])
+    monkeypatch.setattr("app.services.user_settings_service.get_settings", lambda *args, **kwargs: {"entry_auto_sl_enabled": False})
+    try:
+        entry = asyncio.run(desktop_trading.place_chart_order(session.session_id,
+            desktop_trading.ChartOrderIntent(symbol=session.symbol, right="CE", strike=24000,
+                expiry=session.expiry, side=TradeSide.BUY, intent="market", quantity=65), session.user_id))
+        assert entry.status == OrderStatus.FILLED
+        response = TestClient(app).post(f"/api/desktop/v1/trading/{session.session_id}/orders",
+            headers={"X-User-Id": session.user_id}, json={"session_id": session.session_id,
+                "expiry": session.expiry, "group_id": "popup-stop", "is_stoploss": True,
+                "order_type": "STOPLOSS", "quantity": 65, "right": "CE", "side": "SELL",
+                "strike": 24000, "target_deviation_pct": .01, "trigger_price": 118})
+        assert response.status_code == 200, response.text
+        assert response.json()["status"] == "PENDING"
+        assert response.json()["session_id"] == session.session_id
+        assert response.json()["trigger_price"] == 118
+        assert response.json()["strike"] == 24000
+        assert response.json()["quantity"] == 65
+    finally:
+        _clear()

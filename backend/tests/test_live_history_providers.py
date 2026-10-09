@@ -149,12 +149,20 @@ async def test_nested_mode_and_worker_context_are_preserved():
 async def test_session_start_selects_mode_before_preflight(session_type, monkeypatch):
     from app.routers import simulation
     from app.models.schemas import SimulationStartRequest
+    from app.services import practice_wallets
+    prepared = SimpleNamespace(session_id="mode-check")
     async def start(*args, **kwargs):
-        return history.history_mode()
+        prepared.mode = history.history_mode()
+        return prepared
     monkeypatch.setattr(simulation, "_start_simulation_impl", start)
+    monkeypatch.setattr(practice_wallets, "begin_start", lambda *args: 1)
+    monkeypatch.setattr(practice_wallets, "confirm_start", lambda *args: None)
+    monkeypatch.setattr(simulation.sim_svc, "get_session", lambda *args: prepared)
+    monkeypatch.setattr(simulation.sim_svc, "_upsert_session_to_db", lambda *args, **kwargs: None)
+    monkeypatch.setattr(simulation.sim_svc, "start_session", lambda *args: None)
     request = SimulationStartRequest(symbol="NIFTY", date=TODAY, session_type=session_type)
     with history.historical_operation(mode="replay"):
-        assert await simulation._start_simulation(request, "user") == ("live" if session_type in ("paper", "real") else "replay")
+        assert (await simulation._start_simulation(request, "user")).mode == ("live" if session_type in ("paper", "real") else "replay")
         assert history.history_mode() == "replay"
 
 

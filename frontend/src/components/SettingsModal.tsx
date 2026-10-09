@@ -352,7 +352,17 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
   const [walletResetLocked, setWalletResetLocked] = useState(false)
   const walletDate = useRef(date)
   walletDate.current = date
-  useEffect(() => { setWalletResetLocked(false); setWalletResetBusy(false) }, [date])
+  const [walletKind, setWalletKind] = useState<string | null>(null)
+  const [walletResetReason, setWalletResetReason] = useState<string | null>(null)
+  useEffect(() => { setWalletResetLocked(false); setWalletResetBusy(false); setWalletResetReason(null); setWalletKind(null) }, [date])
+  useEffect(() => {
+    if (!open) return
+    let cancelled = false
+    api.getWallet(date).then(wallet => {
+      if (!cancelled) { setWalletKind(wallet.ledger_kind ?? null); setWalletResetLocked(wallet.reset_allowed === false); setWalletResetReason(wallet.reset_reason ?? null) }
+    }).catch(error => { if (!cancelled) { setWalletResetLocked(true); setWalletResetReason(error instanceof Error ? error.message : 'Could not read wallet status') } })
+    return () => { cancelled = true }
+  }, [open, date, sessionActive])
   const [status, setStatus] = useState<string | null>(null)
   useFlashError(status && !/saved|success|connected|added|updated|deleted|^Streaming source set to:|^Reset to /i.test(status) ? status : null, 'Settings')
 
@@ -944,7 +954,7 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
     } catch (error) {
       if (walletDate.current !== targetDate) return
       setStatus(error instanceof Error ? error.message : 'Wallet reset failed')
-      if (error instanceof ApiError && error.status === 409) setWalletResetLocked(true)
+      if (error instanceof ApiError && error.status === 409) { setWalletResetLocked(true); setWalletResetReason(error.message) }
     } finally {
       if (walletDate.current === targetDate) setWalletResetBusy(false)
     }
@@ -1180,7 +1190,7 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
 
             {/* Wallet */}
             <div style={{ borderTop: '1px solid #21262d', paddingTop: 16 }}>
-              <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 10, fontWeight: 600 }}>WALLET</div>
+              <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 10, fontWeight: 600 }}>{walletKind === 'paper' ? 'PAPER WALLET' : walletKind === 'sim' ? 'REPLAY / STEPWISE WALLET' : 'WALLET'} — {date}</div>
               <div style={{ opacity: sessionActive ? 0.4 : 1, pointerEvents: sessionActive ? 'none' : 'auto' }}>
                 <button
                   onClick={() => reset()}
@@ -1224,9 +1234,9 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
                 </div>
               </div>
               <div style={{ fontSize: 11, color: '#8b949e', marginTop: 8 }}>
-                Paper funds are shared with desktop and stay locked for {date} after its first Paper session, even after Stop. Update them before starting Paper.
+                Paper and Replay/Stepwise funds are separate. Update this dated wallet after Stop and completed order cleanup; future starts and resumes use the saved amount.
               </div>
-              {walletResetLocked && <div role="status" style={{ fontSize: 11, color: '#fca5a5', marginTop: 8 }}>Paper wallet is locked for this date; reset is unavailable.</div>}
+              {walletResetLocked && <div role="status" style={{ fontSize: 11, color: '#fca5a5', marginTop: 8 }}>{walletResetReason ?? 'Wallet reset is unavailable while a session is active or cleanup is pending.'}</div>}
               {sessionActive && (
                 <div style={{ fontSize: 11, color: '#8b949e', marginTop: 8 }}>
                   Wallet cannot be changed during an active session
