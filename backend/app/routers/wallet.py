@@ -54,6 +54,7 @@ async def get_wallet(
     date: str = Query(..., description="YYYY-MM-DD"),
     session_id: str | None = Query(default=None),
     user_id: str = Depends(get_request_user_id),
+    mode: str | None = Query(default=None, pattern="^(paper|sim|replay|stepwise)$"),
 ):
     if session_id:
         from app.services import simulation
@@ -71,14 +72,23 @@ async def get_wallet(
             except Exception:
                 logger.exception("Real wallet snapshot unavailable user_id=%s", user_id)
                 raise HTTPException(status_code=503, detail="Could not read broker wallet snapshot")
-            return WalletResponse(user_id=user_id, date=session.date,
+            return WalletResponse(user_id=user_id, date=session.date, ledger_kind="real",
                 **{"session_capital": session.session_capital, **snapshot})
-        balance = wallet_service.get_ledger_balance(user_id, session.date, session.wallet_ledger_id)
+        from app.services.practice_wallets import read
+        kind = "paper" if session.session_type == "paper" else "sim"
+        balance = float(read(user_id, session.date, kind)["current_balance"])
         date = session.date
-        return WalletResponse(user_id=user_id, date=date, balance=balance, **_session_wallet_metrics(session, balance))
+        return WalletResponse(user_id=user_id, date=date, balance=balance, ledger_kind=kind, **_session_wallet_metrics(session, balance))
     else:
-        balance = wallet_service.get_balance(user_id, date)
-    return WalletResponse(user_id=user_id, date=date, balance=balance)
+        from app.services.practice_wallets import kind_for, read, blocked
+        try:
+            kind = kind_for(date, mode)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        balance = float(read(user_id, date, kind)["current_balance"])
+        reason = blocked(user_id, date, kind)
+        return WalletResponse(user_id=user_id, date=date, balance=balance, ledger_kind=kind,
+            reset_allowed=not reason, reset_reason=reason)
 
 
 @router.post("/reset", response_model=WalletResponse)
@@ -86,13 +96,16 @@ async def reset_wallet(
     req: WalletResetRequest,
     date: str = Query(..., description="YYYY-MM-DD"),
     user_id: str = Depends(get_request_user_id),
+    mode: str | None = Query(default=None, pattern="^(paper|sim|replay|stepwise)$"),
 ):
-    from app.services import simulation, paper_wallet
-    if any(session.user_id == user_id and session.date == date and session.session_type == "paper" for session in simulation._sessions.values()) or paper_wallet.locked(user_id, date):
-        raise HTTPException(status_code=409, detail="Paper wallet is locked after the first session starts")
-    paper_wallet.reset(user_id, date, req.amount)
-    balance = wallet_service.reset(user_id, date, req.amount)
-    return WalletResponse(user_id=user_id, date=date, balance=balance)
+    from app.services.practice_wallets import kind_for, reset
+    try:
+        kind = kind_for(date, mode)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    balance = reset(user_id, date, kind, req.amount)
+    return WalletResponse(user_id=user_id, date=date, balance=balance, ledger_kind=kind, reset_allowed=True)
+
 
 
 @router.post("/refresh", response_model=WalletResponse)

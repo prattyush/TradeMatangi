@@ -34,25 +34,8 @@ def _failure(exc):
 
 
 def read(user_id, date):
-    try:
-        table = _table()
-        key = {"user_id": user_id, "ledger_id": f"paper:{date}"}
-        item = table.get_item(Key=key, ConsistentRead=True).get("Item")
-        if item is None:
-            from app.services.wallet_service import get_or_init_wallet
-            amount = Decimal(str(round(get_or_init_wallet(user_id, date), 2)))
-            try:
-                table.put_item(Item={**key, "date": date, "ledger_kind": "paper", "current_balance": amount},
-                               ConditionExpression="attribute_not_exists(user_id)")
-            except ClientError as exc:
-                if exc.response["Error"]["Code"] != "ConditionalCheckFailedException":
-                    raise
-            item = table.get_item(Key=key, ConsistentRead=True)["Item"]
-        return item
-    except HTTPException:
-        raise
-    except Exception as exc:
-        _failure(exc)
+    from app.services.practice_wallets import read as read_dated
+    return read_dated(user_id, date, "paper")
 
 
 def balance(user_id, date):
@@ -65,7 +48,8 @@ def fill_recorded(user_id, date, order_id):
 
 
 def locked(user_id, date):
-    return bool(read(user_id, date).get("started_at"))
+    from app.services.practice_wallets import blocked
+    return bool(blocked(user_id, date, "paper"))
 
 
 def lock(user_id, date):
@@ -79,19 +63,8 @@ def lock(user_id, date):
 
 
 def reset(user_id, date, amount):
-    read(user_id, date)
-    try:
-        result = _table().update_item(Key={"user_id": user_id, "ledger_id": f"paper:{date}"},
-            UpdateExpression="SET current_balance = :balance",
-            ConditionExpression="attribute_not_exists(started_at)",
-            ExpressionAttributeValues={":balance": Decimal(str(round(amount, 2)))}, ReturnValues="ALL_NEW")
-        return float(result["Attributes"]["current_balance"])
-    except ClientError as exc:
-        if exc.response["Error"]["Code"] == "ConditionalCheckFailedException":
-            raise HTTPException(status_code=409, detail="Paper wallet is locked after the first session starts") from exc
-        _failure(exc)
-    except Exception as exc:
-        _failure(exc)
+    from app.services.practice_wallets import reset as reset_dated
+    return reset_dated(user_id, date, "paper", amount)
 
 
 def move(user_id, date, delta, operation_id=None, allow_negative=False, order=None, engine=None, cleanup=None):

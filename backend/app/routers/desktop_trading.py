@@ -229,7 +229,7 @@ async def prepare_session(req: PreparationRequest, user_id: str = Depends(prepar
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     if req.session_id:
-        session = _require_session(req.session_id, user_id)
+        session = _readable_session(req.session_id, user_id) if req.mode == "paper" else _require_session(req.session_id, user_id)
         if _desktop_mode(session) != req.mode:
             raise HTTPException(status_code=409, detail="Session mode changed; reopen the picker")
         req.date = session.date
@@ -1691,15 +1691,11 @@ async def pre_session_wallet(
     user_id: str = Depends(get_desktop_user_id),
 ):
     """Return the wallet balance that the next desktop run will use."""
-    active = _active_desktop_session_for_date(user_id, date, desktop_mode)
-    if active:
-        ledger_id = active.wallet_ledger_id
-        ledger_kind = "paper" if active.session_type == "paper" else "sim"
-    else:
-        ledger_id = f"paper:{date}" if desktop_mode == "paper" else f"sim:{date}"
-        ledger_kind = "paper" if desktop_mode == "paper" else "sim"
-    balance = wallet_service.get_ledger_balance(user_id, date, ledger_id, ledger_kind)
-    return {"user_id": user_id, "date": date, "balance": balance, "locked": __import__("app.services.paper_wallet", fromlist=["locked"]).locked(user_id, date) if desktop_mode == "paper" else False}
+    ledger_kind = "paper" if desktop_mode == "paper" else "sim"
+    from app.services.practice_wallets import read, blocked
+    balance = float(read(user_id, date, ledger_kind)["current_balance"])
+    reason = blocked(user_id, date, ledger_kind)
+    return {"user_id": user_id, "date": date, "balance": balance, "locked": bool(reason), "reset_reason": reason}
 
 
 @router.post("/wallet/reset")
@@ -1710,14 +1706,11 @@ async def reset_pre_session_wallet(
     user_id: str = Depends(get_desktop_user_id),
 ):
     """Set the wallet for the next desktop trading run."""
-    if _active_desktop_session_for_date(user_id, date, desktop_mode):
-        raise HTTPException(status_code=409, detail="Wallet cannot be changed during an active desktop session")
-    ledger_id = f"paper:{date}" if desktop_mode == "paper" else f"sim:{date}"
-    ledger_kind = "paper" if desktop_mode == "paper" else "sim"
-    if desktop_mode != "paper":
-        wallet_service.reset(user_id, date, req.amount)
-    balance = wallet_service.reset_ledger(user_id, date, ledger_id, req.amount, ledger_kind)
-    return {"user_id": user_id, "date": date, "balance": balance, "locked": __import__("app.services.paper_wallet", fromlist=["locked"]).locked(user_id, date) if desktop_mode == "paper" else False}
+    from app.services.practice_wallets import reset
+    kind = "paper" if desktop_mode == "paper" else "sim"
+    balance = reset(user_id, date, kind, req.amount)
+    return {"user_id": user_id, "date": date, "balance": balance, "locked": False}
+
 
 
 @router.post("/{session_id}/wallet/reset")
@@ -1725,7 +1718,8 @@ async def reset_wallet(session_id: str, req: WalletResetRequest, user_id: str = 
     session = _require_session(session_id, user_id)
     if session.state != sim_svc.SimulationState.ENDED:
         raise HTTPException(status_code=409, detail="Wallet cannot be changed during an active desktop session")
-    balance = wallet_service.reset_ledger(user_id, session.date, session.wallet_ledger_id, req.amount, "paper" if session.session_type == "paper" else "sim")
+    from app.services.practice_wallets import reset
+    balance = reset(user_id, session.date, "paper" if session.session_type == "paper" else "sim", req.amount)
     return {"user_id": user_id, "date": session.date, "balance": balance}
 
 

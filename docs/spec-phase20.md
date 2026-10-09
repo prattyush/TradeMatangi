@@ -15,6 +15,16 @@ Packaged Windows/manual broker acceptance and main deployment remain unverified
 unless separately recorded. A dev merge does not establish deployment.
 Phase 21 Desktop UI work and new validation are tracked in `spec-phase21.md`.
 
+## Wallet follow-up status — 2026-10-09
+
+Phase 21 PR #623 merged to dev (0595055), fixing nested Paper order/wallet DynamoDB
+serialization. The next Phase 21 follow-up implements separate dated Paper and
+Replay/Stepwise DB balances, completed-Stop reset eligibility, fresh website date
+selection and empty stopped desktop Paper resume. It supersedes the permanent
+first-start wallet lock. Real accounting, protection and history remain separate.
+Implementation and validation are recorded in [Phase 21](spec-phase21.md#dated-practice-wallets-paper-resume-and-popup-stoploss--2026-10-09).
+This does not reopen completed Phase 20 sprints or establish production deployment.
+
 ## Agreed scope and decisions
 
 Capture analytics for website and desktop executions in Paper, Real, Stepwise,

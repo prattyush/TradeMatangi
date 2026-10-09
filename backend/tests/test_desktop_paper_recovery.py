@@ -23,7 +23,7 @@ def database(monkeypatch):
         client = boto3.client("dynamodb", region_name="ap-south-1")
         monkeypatch.setattr("app.services.db.get_dynamodb_resource", lambda: resource)
         monkeypatch.setattr("app.services.db.get_dynamodb_client", lambda: client)
-        monkeypatch.setattr(wallet_service, "get_or_init_wallet", lambda *args: 100_000)
+        monkeypatch.setattr(wallet_service, "DEFAULT_BALANCE", 100_000)
         for name, hash_key, range_key in (("Sessions", "session_id", None),
             ("Orders", "session_id", "order_id"), ("Trades", "session_id", "trade_id")):
             names = [hash_key] + ([range_key] if range_key else [])

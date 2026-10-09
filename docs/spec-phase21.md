@@ -6,8 +6,10 @@ PR #619 merged to dev on 2026-10-08 (merge e1938ce). Main includes that delivery
 through PR #620 (d42ca29). Earlier ready-for-review/manual-main-merge statements
 below are historical checkpoints. A code merge does not establish the runtime
 backend's deployment. The Replay market-fill correction was merged to dev through PR #621 (02f904f)
-on 2026-10-09. Paper wallet serialization and reset-message follow-up is tracked
-below; main merging/deployment remain manual.
+on 2026-10-09. Paper wallet serialization and reset-message follow-up merged to dev through
+PR #623 (0595055) on 2026-10-09. The dated-wallet and empty stopped Paper resume
+follow-up below is implemented and validated; its delivery PR targets dev.
+Main merging/deployment remain manual.
 
 ## Agreed scope and defaults
 
@@ -42,7 +44,7 @@ merge. Main merge/deployment remain manual.
 | 3 | Session preparation and premium search API | Validated |
 | 4 | Picker and synchronized session start (requirement 3) | Validated |
 | 5 | Compact movable order window (requirement 2) | Validated |
-| 6 | Integrated acceptance, regression and PR delivery | Validated automatically; PR #619 published for review |
+| 6 | Integrated acceptance, regression and PR delivery | Validated; PR #619 merged to dev |
 
 Progression: Planned → In progress → Implemented—validation pending → Validated.
 Track PR merge, native Windows acceptance and deployment independently.
@@ -296,7 +298,8 @@ ownership fences remain unchanged. Underlying exceptions are logged without dump
 wallet/order payloads; genuine storage failures still fail closed with the existing
 503 and require the same operation identity for retry.
 
-The user also clarified website wallet reset happened AFTER starting/stopping Paper,
+Historical policy at PR #623 (superseded by the dated-wallet follow-up below):
+the user clarified website wallet reset happened AFTER starting/stopping Paper,
 whereas desktop reset was BEFORE starting Paper. Those timings explain the result:
 Paper funds are shared by user/date and remain locked after the first session starts,
 even after Stop. The website now preserves the backend error detail instead of
@@ -324,9 +327,106 @@ scripts/wallet-settings-check.mjs uses external PLAYWRIGHT_MODULE/CHROME_BIN.
 PR #621 was already merged when the user requested adding this correction to it.
 Delivery is the linked [PR #623](https://github.com/prattyush/TradeMatangi/pull/623),
 fix/paper-wallet-order-serialization → dev, implementation commit 9135f45.
-Review/merge remain pending. Deployment requires the updated backend
+PR #623 merged to dev on 2026-10-09 (0595055). Deployment requires the updated backend
 and website; the desktop Market correction does not require a new desktop installer.
 No live broker order, wallet reset on the user's account, main merge or deployment.
+
+### Dated practice wallets, Paper resume and popup stoploss — 2026-10-09
+
+**Status: implemented and validated; delivery PR pending publication.** This
+follow-up replaces the permanent first-start Paper lock described above. The five
+original Phase 21 sprints remain complete.
+
+Agreed behavior:
+
+- Paper uses `paper:<date>`; Replay and Stepwise share `sim:<date>`, both scoped
+  by user. Real remains separate. Website and desktop use the same respective
+  dated records in the existing `WalletLedgers` table.
+- Existing dated balance wins. A missing date carries forward only the previous
+  balance of the same wallet kind, otherwise ₹1,50,000. Generic `Wallet` and Real
+  values do not seed practice funds. Carry-forward uses actual cash flows; realized
+  P&L is not added twice.
+- A positive explicit reset persists for that date and becomes the starting
+  balance of subsequent starts **and resumes**. Saved trades/positions and their
+  history remain. This is the latest agreed resume rule.
+- Reset is allowed after Stop completes. Matching active/starting sessions,
+  pending refunds and Paper cleanup/settlement block it across clients/workers.
+  Reset/start races fail with a retryable conflict rather than using old funds.
+- Website idle today IST displays Paper from DB; selecting a historical date
+  displays Replay/Stepwise from DB. An active session displays its own wallet,
+  including the separate broker-backed Real snapshot. Settings displays the
+  selected date/kind and rechecks eligibility on reopen or session-state change.
+  Desktop Wallet also rechecks status and allows resets while a completed stopped
+  session remains visible; it no longer presents the permanent first-start lock.
+- An empty stopped desktop Paper run resumes its saved identity directly, without
+  an erase/resume confirmation. Preparation accepts the owned persisted record
+  after Stop removed it from memory. Runs with history retain the explicit resume
+  decision. Same-day/before-15:09 IST and completed-cleanup limits still apply.
+
+| Follow-up sprint | Deliverable | Status |
+|---|---|---|
+| W1 | Isolated dated storage, same-kind carry-forward, reset eligibility and startup conflict checks | Validated |
+| W2 | Website DB balance/date selection, client reset/status, desktop Paper preparation/resume and popup stoploss | Validated |
+| W3 | Corner cases, regressions, documentation and delivery PR | Checks/docs complete; PR publication pending |
+
+The reported empty Paper restart failure is specific to desktop preparation.
+Website browser checks verify both existing-session Yes/No choices start successfully
+with no trades, and DB-backed website start checks preserve the saved Paper identity
+and use the updated dated balance with either override choice. No website restart
+code change was needed.
+
+The user also reported desktop Replay popup Stoploss returning 422 after a CE Market
+buy. Its shared `PlaceOrderRequest` requires `session_id` in the JSON body even
+though the desktop path contains it. Popup Stoploss now sends the bound session ID;
+the backend still takes authority from the owned path session. A real HTTP regression
+places a pending 65-quantity CE Stoploss after a filled Replay Market buy; browser
+checks reject missing-body session IDs and verify the exact sell/contract payload
+across Replay, Stepwise and Paper.
+
+Corner cases covered: first date without a wallet, existing dates versus later
+changes to prior dates, same-kind carry-forward through paginated operation receipts,
+Paper cash-flow P&L, cross-client active/starting runs, paused Stepwise, pending
+refunds, incomplete Stop, expiry of startup tokens, concurrent reset/start, storage
+failure without a confirmed update, cache refresh, dated isolation from Real/legacy,
+empty stopped Paper with no orders/trades and owner-only preparation/resume.
+Replay erase/restart recalculation uses its dated reset baseline and includes only
+runs created after that reset; older evidence stays intact and is not recharged.
+Legacy Replay roots without baseline metadata use same-kind prior/default funds
+for erase/recalculation, never generic/Real balances. No new table or wallet version
+history is introduced.
+
+Validation:
+
+- Full backend regression: **1,920 passed / two established fixture failures**:
+  `test_options_session_started_successfully` (stale expiry) and
+  `test_active_session_returns_attach_metadata` (missing group_id).
+- **267 focused backend checks passed**, including all **16 new dated-wallet
+  cases**, website zero-trade restart for both override choices and the Replay
+  Market-buy → Stoploss HTTP regression. The final erase/recalculation versus
+  reset conflict guard and regression were verified by this focused run after
+  the full-suite run.
+- **182 desktop Vitest / 41 website Node checks passed**. Both clients' TypeScript
+  and production builds passed.
+- Website browser acceptance passed: active-reset 409 detail/repeat guard, completed
+  Stop unlock on the same date, saved balance refresh, historical selection and
+  isolated resets. Desktop browser acceptance passed across Stepwise, Replay,
+  Paper, five-pane Stepwise and empty stopped Paper, with no page errors. The
+  empty-run scenario verifies preparation with saved session ID, actual resume
+  request, no confirmation and no replacement start request. Desktop acceptance
+  also verifies a wallet reset with a stopped session visible before resuming.
+  Website empty Paper restart acceptance passed for both Yes/No choices.
+
+Artifacts: `.cache/dated-wallets-validation/`. Reproduce with the project venv's
+pytest (full suite uses `USE_DYNAMODB_LOCAL=true AWS_MAX_ATTEMPTS=1`), desktop
+`npm run test`, both clients' `npm run build`, website `node --test
+frontend/src/*.test.mjs frontend/src/services/*.test.mjs`, and browser scripts
+`scripts/wallet-settings-check.mjs`, `scripts/phase21-desktop-check.mjs` and
+`scripts/website-paper-restart-check.mjs` with
+external `PLAYWRIGHT_MODULE` and optional `CHROME_BIN`.
+
+Delivery requires the updated backend, website and a rebuilt desktop client.
+Native packaged Windows acceptance remains manual. Main merge/deployment remain
+manual after review. Tests use local/synthetic records and providers.
 
 ## Original requirements
 

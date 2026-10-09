@@ -629,6 +629,10 @@ function ScreenController(props: ScreenControllerProps) {
   const persistedScreenRef = useRef<DesktopScreenRecord | null>(null)
   const currentScreenDraftRef = useRef<ScreenDraft | null>(null)
   const [walletLocked, setWalletLocked] = useState(false)
+  const [walletBusy, setWalletBusy] = useState(false)
+  const [walletReason, setWalletReason] = useState<string | null>(null)
+  const walletRequestRef = useRef(0)
+  const walletSessionActive = Boolean(trading && (trading.session.state !== 'ended' || trading.paper_status === 'running'))
   const [liveEnabled, setLiveEnabled] = useState(Boolean(initial?.live_enabled))
   const [handingOff, setHandingOff] = useState(false)
   const handoffRef = useRef<string | null>(null)
@@ -922,9 +926,21 @@ function ScreenController(props: ScreenControllerProps) {
     return () => { active = false }
   }, [connection, browserToken, serverUrl])
   const loadPreStartWallet = async (date: string) => {
-    const wallet = await desktopTradingRequest<{ balance: number; locked?: boolean }>(`wallet?date=${encodeURIComponent(date)}&desktop_mode=${encodeURIComponent(mode.toLowerCase())}`, 'GET')
-    setPreStartWallet(wallet.balance)
-    setWalletLocked(Boolean(wallet.locked))
+    const requestId = ++walletRequestRef.current
+    setWalletBusy(true)
+    try {
+      const wallet = await desktopTradingRequest<{ balance: number; locked?: boolean; reset_reason?: string | null }>(`wallet?date=${encodeURIComponent(date)}&desktop_mode=${encodeURIComponent(mode.toLowerCase())}`, 'GET')
+      if (requestId !== walletRequestRef.current) return
+      setPreStartWallet(wallet.balance)
+      setTrading(current => current?.session.state === 'ended' && current.session.date === date && current.wallet_balance !== wallet.balance ? { ...current, wallet_balance: wallet.balance } : current)
+      setWalletLocked(Boolean(wallet.locked))
+      setWalletReason(wallet.reset_reason ?? null)
+    } catch (error) {
+      if (requestId === walletRequestRef.current) { setWalletLocked(true); setWalletReason('Could not read wallet status; reopen Wallet to retry.') }
+      throw error
+    } finally {
+      if (requestId === walletRequestRef.current) setWalletBusy(false)
+    }
   }
   const loadLabelMetadata = async () => {
     const requestId = ++labelMetadataRequestIdRef.current
@@ -1384,7 +1400,11 @@ function ScreenController(props: ScreenControllerProps) {
             setTradingNotice('Paper session is closed for trading. Its saved positions and history remain available.')
             return
           }
-          if (!window.confirm(`Resume Paper session ${candidate.existing_session_id} with its saved positions and history?`)) return
+          const saved = candidate.stopped
+          const hasActivity = saved.trades.length > 0 || saved.open_orders.length > 0 || saved.strategies.length > 0 || Object.values(saved.positions_by_contract).some(position => position.quantity > 0) || Object.values(saved.positions).some(position => position.quantity > 0)
+          // An empty stopped run needs no erase/resume decision: restarting its
+          // existing identity preserves the dated wallet and avoids a dead end.
+          if (hasActivity && !window.confirm(`Resume Paper session ${candidate.existing_session_id} with its saved positions and history?`)) return
           resumeSessionId = candidate.existing_session_id
         } else if (candidate.status === 'checkpoint' && candidate.checkpoint?.current_time) {
           const checkpointTime = new Date(candidate.checkpoint.current_time * 1000).toISOString().slice(11, 19)
@@ -1593,9 +1613,9 @@ function ScreenController(props: ScreenControllerProps) {
     setWalletOpen(false)
   }
   useEffect(() => {
-    if (!isTradingMode(mode) || trading || historicalStarting || connection !== 'connected') return
-    void loadPreStartWallet(runDate).catch(reportTradingError)
-  }, [mode, runDate, trading?.session.session_id, historicalStarting, connection, serverUrl, browserToken])
+    if (!isTradingMode(mode) || walletSessionActive || historicalStarting || connection !== 'connected') return
+    void loadPreStartWallet(mode === 'Paper' ? paperMarketDate() : runDate).catch(reportTradingError)
+  }, [mode, runDate, trading?.session.session_id, trading?.session.state, trading?.cleanup_pending, walletSessionActive, historicalStarting, connection, serverUrl, browserToken])
   useEffect(() => {
     if (!replay || replay.state === 'stopped') return
     let cancelled = false
@@ -1878,7 +1898,7 @@ function ScreenController(props: ScreenControllerProps) {
     if (!currentTilesRef.current.some(item => item.id === tile.id && instrumentKeyForTile(item, catalogue) === instrumentKeyForTile(tile, catalogue))) throw new Error('Trading request failed (409): Selected contract changed')
     const body: Record<string, unknown> = { side: draft.side, group_id: draft.group_id, ...contractPayloadForTile(tile), quantity: draft.quantity, funds_ratio_pct: draft.funds_ratio_pct, risk_pct: draft.risk_pct, entry_sl_price: draft.entry_sl_price, target_deviation_pct: session.settings.target_deviation_pct }
     if (draft.type === 'STOPLOSS') {
-      Object.assign(body, { order_type: 'STOPLOSS', is_stoploss: true, trigger_price: draft.price })
+      Object.assign(body, { session_id: sessionId, order_type: 'STOPLOSS', is_stoploss: true, trigger_price: draft.price })
       await desktopTradingRequest(`${sessionId}/orders`, 'POST', body)
     } else {
       Object.assign(body, { symbol: tile.symbol, intent: draft.type.toLowerCase(), price: draft.type === 'MARKET' ? undefined : draft.price })
@@ -2148,13 +2168,22 @@ function ScreenController(props: ScreenControllerProps) {
     return result
   }
   const resetWallet = async () => {
-    if (trading || historicalStarting) return
+    if (walletSessionActive || historicalStarting || walletBusy || walletLocked) return
     const amount = Number(walletAmount)
-    if (!Number.isFinite(amount) || amount < 0) { reportTradingError('Wallet reset amount must be a positive number'); return }
-    const result = await desktopTradingRequest<{ balance: number }>(`wallet/reset?date=${encodeURIComponent(runDate)}&desktop_mode=${encodeURIComponent(mode.toLowerCase())}`, 'POST', { amount })
-    setPreStartWallet(result.balance)
-    clearTradingError()
-    setWalletOpen(false)
+    if (!Number.isFinite(amount) || amount <= 0) { reportTradingError('Wallet reset amount must be a positive number'); return }
+    const requestId = ++walletRequestRef.current
+    setWalletBusy(true)
+    try {
+      const date = mode === 'Paper' ? paperMarketDate() : runDate
+      const result = await desktopTradingRequest<{ balance: number }>(`wallet/reset?date=${encodeURIComponent(date)}&desktop_mode=${encodeURIComponent(mode.toLowerCase())}`, 'POST', { amount })
+      if (requestId !== walletRequestRef.current) return
+      setPreStartWallet(result.balance)
+      setTrading(current => current?.session.state === 'ended' && current.session.date === date ? { ...current, wallet_balance: result.balance } : current)
+      clearTradingError()
+      setWalletOpen(false)
+    } finally {
+      if (requestId === walletRequestRef.current) setWalletBusy(false)
+    }
   }
   const ticketSizeOptions = () => tradeTicket?.settings?.desktop_order_size_mode === 'quantity' ? ['1', '2', '3'] : ['l', 'm', 'h']
   const ticketSizeLabel = (key: string) => tradeTicket?.settings ? ticketSizingLabel(tradeTicket.settings, key) : ''
@@ -2235,7 +2264,7 @@ function ScreenController(props: ScreenControllerProps) {
       {mode === 'Browse' && <span className="run-controls live-controls"><button onClick={() => void (live ? stopLive() : startLive())}>{live ? 'Stop Live' : 'Start Live'}</button><button className="icon-button" title="Refresh live charts" aria-label="Refresh live charts" onClick={refreshLive} disabled={!live}><ToolbarIcon name="Refresh" /></button></span>}
       {mode === 'Paper' && <span className="run-controls"><label>Date <input type="date" value={paperMarketDate()} readOnly disabled /></label><label>Clock <input type="time" value={paperMarketTime().slice(0, 5)} readOnly disabled step="60" /></label>{!trading || (trading.session.state === 'ended' && trading.paper_status !== 'running') ? <button className="run-start" onClick={startRun} disabled={Boolean(historicalStarting || (trading && (trading.session.date !== paperMarketDate() || paperMarketTime() >= '15:09:00' || trading.paper_status === 'settled' || trading.cleanup_pending)))}>{historicalStarting ? 'Starting…' : trading?.paper_status === 'settled' || (trading && (trading.session.date !== paperMarketDate() || paperMarketTime() >= '15:09:00')) ? 'Closed' : trading?.paper_status === 'stopped' ? 'Resume' : 'Start'}</button> : <button className="run-stop" onClick={() => void stopPaper()}>{sharedTradingSession ? 'Detach' : 'Stop'}</button>}{trading?.cleanup_pending && <small role="status">Paper cleanup pending; retrying automatically</small>}{trading?.settlement_pending && <small role="status">Close settlement pending an exact contract quote</small>}<button className="icon-button" title="Refresh live charts" aria-label="Refresh live charts" onClick={refreshLive} disabled={!live}><ToolbarIcon name="Refresh" /></button></span>}
       {(mode === 'Replay' || mode === 'Stepwise') && <span className="run-controls"><label>Date <input type="date" value={runDate} onChange={event => setRunDate(event.target.value)} disabled={Boolean(historicalStarting || (replay && replay.state !== 'stopped'))} /></label><label>Start <input type="time" value={runStartTime} onChange={event => setRunStartTime(event.target.value)} disabled={Boolean(historicalStarting || (replay && replay.state !== 'stopped'))} step="60" /></label>{mode === 'Replay' && <label>Speed <select value={replaySpeed} onChange={event => updateReplaySpeed(event.target.value)} disabled={historicalStarting}><option value="0.25">0.25×</option><option value="0.5">0.5×</option><option value="1">1×</option><option value="1.1">1.1×</option><option value="1.25">1.25×</option><option value="1.5">1.5×</option><option value="2">2×</option><option value="5">5×</option><option value="10">10×</option></select></label>}{!replay || replay.state === 'stopped' ? <button className="run-start" onClick={startRun} disabled={historicalStarting}>{historicalStarting ? 'Starting…' : 'Start'}</button> : <>{mode === 'Replay' && <button className="run-pause" onClick={() => replayAction(replay.state === 'paused' ? 'resume' : 'pause')}>{replay.state === 'paused' ? 'Resume' : 'Pause'}</button>}{mode === 'Stepwise' && <button className="run-next" onClick={() => replayAction('next-bar')}>Next bar</button>}<button className="run-stop" onClick={() => replayAction('stop')}>Stop</button><small>{replay.bar_index} · {new Date(replay.cursor * 1000).toISOString().slice(11, 19)}</small></>}</span>}
-      {isTradingMode(mode) && <><span className={`trading-pill session-indicator ${sharedTradingSession ? 'good' : ''}`} title={sharedTradingSession ? 'Shared session' : 'This screen session'} aria-label={sharedTradingSession ? 'Shared session' : 'This screen session'}>{trading ? (sharedTradingSession ? '⇄' : '▣') : '◌'}</span><button className="trading-pill good wallet-button" onClick={() => { setWalletAmount(String(Math.round(trading?.wallet_balance ?? preStartWallet ?? 0))); setWalletOpen(value => !value) }}>Wallet {preStartWallet === null && !trading ? '—' : `₹${Math.round(trading?.wallet_balance ?? preStartWallet ?? 0).toLocaleString('en-IN')}`}</button>{trading && <><span className={`trading-pill ${trading.pnl.day >= 0 ? 'good' : 'bad'}`}>P&L {trading.settings.desktop_pnl_display_mode === 'percent' ? `${trading.pnl.day_pct.toFixed(2)}%` : `₹${Math.round(trading.pnl.day).toLocaleString('en-IN')}`}</span><button className="flatten-button icon-button" title="Flatten" aria-label="Flatten" onClick={() => void flattenTrading().catch(reportTradingError)}><ToolbarIcon name="Flatten" /></button><button className="block-button icon-button" title="Block trading" aria-label="Block trading" disabled={blockPending || trading.guardrails?.ban_active} onClick={() => void blockTrading()}><ToolbarIcon name="Block" /></button></>}</>}
+      {isTradingMode(mode) && <><span className={`trading-pill session-indicator ${sharedTradingSession ? 'good' : ''}`} title={sharedTradingSession ? 'Shared session' : 'This screen session'} aria-label={sharedTradingSession ? 'Shared session' : 'This screen session'}>{trading ? (sharedTradingSession ? '⇄' : '▣') : '◌'}</span><button className="trading-pill good wallet-button" onClick={() => { setWalletAmount(String(Math.round(trading?.wallet_balance ?? preStartWallet ?? 0))); if (!walletOpen) void loadPreStartWallet(mode === 'Paper' ? paperMarketDate() : runDate).catch(reportTradingError); setWalletOpen(value => !value) }}>Wallet {preStartWallet === null && !trading ? '—' : `₹${Math.round(trading?.wallet_balance ?? preStartWallet ?? 0).toLocaleString('en-IN')}`}</button>{trading && <><span className={`trading-pill ${trading.pnl.day >= 0 ? 'good' : 'bad'}`}>P&L {trading.settings.desktop_pnl_display_mode === 'percent' ? `${trading.pnl.day_pct.toFixed(2)}%` : `₹${Math.round(trading.pnl.day).toLocaleString('en-IN')}`}</span><button className="flatten-button icon-button" title="Flatten" aria-label="Flatten" onClick={() => void flattenTrading().catch(reportTradingError)}><ToolbarIcon name="Flatten" /></button><button className="block-button icon-button" title="Block trading" aria-label="Block trading" disabled={blockPending || trading.guardrails?.ban_active} onClick={() => void blockTrading()}><ToolbarIcon name="Block" /></button></>}</>}
       {isTradingMode(mode) && <button disabled={!trading || trading.session.state === 'ended'} onClick={() => setOrderWindowOpen(true)}>Order</button>}
       {isHistoricalTradingMode(mode) && trading && trading.session.state !== 'ended' && (!replay || replay.state === 'stopped') && <span className="run-controls"><button disabled={historicalStarting} onClick={() => void startRun()}>Recover charts</button><button disabled={historicalStarting} onClick={() => { void (async () => { if (!sharedTradingSession) await desktopTradingRequest(`${trading.session.session_id}/stop`, 'POST'); setTrading(null); setSharedTradingSession(false); setOrderWindowOpen(false) })().catch(reportTradingError) }}>{sharedTradingSession ? 'Detach session' : 'Stop session'}</button></span>}
       <label className="layout-control">Layout <select value={activeScreen.layout} onChange={event => setLayout(event.target.value as Layout)}><option value="1">1 chart</option><option value="2-side">2 side-by-side</option><option value="2-stacked">2 stacked</option><option value="3-wide-top">3 wide-top</option><option value="4-grid">4 grid</option><option value="4-one-three">4 panes — 1+3</option><option value="5-equal">5 panes — Equal</option><option value="5-wide-right">5 panes — Wide R</option></select></label>
@@ -2246,7 +2275,7 @@ function ScreenController(props: ScreenControllerProps) {
     {walletOpen && isTradingMode(mode) && <div className="wallet-popover">
       <strong>Wallet</strong>
       <span>Current {trading || preStartWallet !== null ? `₹${Math.round(trading?.wallet_balance ?? preStartWallet ?? 0).toLocaleString('en-IN')}` : '—'}</span>
-      {trading || walletLocked ? <><small>{walletLocked ? 'Paper wallet is locked after the first session starts.' : 'Wallet cannot be changed during an active run.'}</small><div><button onClick={() => setWalletOpen(false)}>Close</button></div></> : <><label>Reset to<input type="number" min="0" value={walletAmount} onChange={event => setWalletAmount(event.target.value)} disabled={historicalStarting} /></label><div><button onClick={() => void resetWallet().catch(reportTradingError)} disabled={historicalStarting}>Reset</button><button onClick={() => setWalletOpen(false)}>Close</button></div></>}
+      {walletSessionActive || walletLocked ? <><small>{walletLocked ? walletReason ?? 'Wallet update is waiting for session cleanup.' : 'Wallet cannot be changed during an active run.'}</small><div><button onClick={() => setWalletOpen(false)}>Close</button></div></> : <><label>Reset to<input type="number" min="0" value={walletAmount} onChange={event => setWalletAmount(event.target.value)} disabled={historicalStarting || walletBusy} /></label><div><button onClick={() => void resetWallet().catch(reportTradingError)} disabled={historicalStarting || walletBusy}>Reset</button><button onClick={() => setWalletOpen(false)}>Close</button></div></>}
     </div>}
     {tradeTicket && <div className="trade-ticket trade-ticket-sizing" style={placeNearPoint(tradeTicket.anchor.x, tradeTicket.anchor.y, 280, 280)}>
       <header><strong>{tradeTicket.side} SL</strong><button onClick={() => { setTradeTicket(null); setPricePickAction(null) }}>x</button></header>

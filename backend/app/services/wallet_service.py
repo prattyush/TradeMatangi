@@ -120,7 +120,7 @@ def _ensure_ledger_table() -> None:
 
 
 def get_or_init_ledger(user_id: str, date: str, ledger_id: str, ledger_kind: str = "sim") -> float:
-    """Ledger-aware facade. First use copies the legacy balance, preserving history."""
+    """Use isolated dated practice funds; preserve the Real ledger path."""
     if ledger_id.startswith("paper:"):
         from app.services.paper_wallet import balance
         return balance(user_id, date)
@@ -137,7 +137,11 @@ def get_or_init_ledger(user_id: str, date: str, ledger_id: str, ledger_kind: str
     except Exception:
         logger.exception("DynamoDB ledger read failed user=%s ledger=%s", user_id, ledger_id)
     if balance is None:
-        balance = get_or_init_wallet(user_id, date)
+        if ledger_id == f"sim:{date}":
+            from app.services.practice_wallets import read
+            balance = float(read(user_id, date, "sim")["current_balance"])
+        else:
+            balance = get_or_init_wallet(user_id, date)
     _ledgers[key] = balance
     _write_ledger(user_id, date, ledger_id, ledger_kind, balance)
     return balance
@@ -202,32 +206,37 @@ def recalculate_sim_ledger_for_date(user_id: str, date: str) -> float:
     deleted sessions' cash-flow effects without erasing retained sessions for
     the same day.
     """
-    balance = _load_prior_from_db(user_id, date)
-    if balance is None:
-        balance = DEFAULT_BALANCE
+    from app.services import practice_wallets
+    record = practice_wallets.read(user_id, date, "sim")
+    # Explicit resets establish the baseline for later runs. Old evidence stays
+    # in history but must not be charged to that newly saved starting amount.
+    balance = float(record["initial_balance"]) if "initial_balance" in record else None
+    reset_at = int(record.get("reset_at") or 0)
     try:
         from app.services.db import get_dynamodb_resource
         from boto3.dynamodb.conditions import Key
         resource = get_dynamodb_resource()
+        if balance is None:
+            balance = float(practice_wallets.previous_balance(practice_wallets.table(), user_id, date, "sim"))
         sessions_table = resource.Table("Sessions")
         trades_table = resource.Table("Trades")
-        resp = sessions_table.query(
-            IndexName="UserIdIndex",
-            KeyConditionExpression=Key("user_id").eq(user_id),
-        )
+        from boto3.dynamodb.conditions import Attr
+        rows = practice_wallets.pages(sessions_table, "scan", ConsistentRead=True,
+            FilterExpression=Attr("user_id").eq(user_id))
         sessions = [
-            item for item in resp.get("Items", [])
+            item for item in rows
             if item.get("date") == date
             and item.get("session_type") in ("sim", "stepwise")
             and (item.get("wallet_ledger_id") or f"sim:{date}") == f"sim:{date}"
+            and (not reset_at or int(item.get("created_at") or 0) >= reset_at)
         ]
         trades: list[dict] = []
         for session in sessions:
             sid = session.get("session_id")
             if not sid:
                 continue
-            trade_resp = trades_table.query(KeyConditionExpression=Key("session_id").eq(sid))
-            trades.extend(trade_resp.get("Items", []))
+            trades.extend(practice_wallets.pages(trades_table, "query",
+                KeyConditionExpression=Key("session_id").eq(sid), ConsistentRead=True))
         trades.sort(key=lambda item: int(item.get("timestamp", 0)))
         from collections import deque
         from app.config import EQUITY_MIS_MARGIN_RATE
@@ -260,10 +269,23 @@ def recalculate_sim_ledger_for_date(user_id: str, date: str) -> float:
         from app.services import order_service
         for session in sessions:
             balance -= sum(order.reserved_amount for order in order_service.get_open_orders(session["session_id"]))
-    except Exception:
-        logger.exception("Could not recalculate sim ledger user=%s date=%s", user_id, date)
-    reset(user_id, date, balance)
-    return reset_ledger(user_id, date, f"sim:{date}", balance, "sim")
+    except Exception as exc:
+        practice_wallets.storage_error(exc)
+    # Do not update the generic/Real wallet when rebuilding Replay/Stepwise.
+    try:
+        practice_wallets.table().update_item(Key={"user_id": user_id, "ledger_id": f"sim:{date}"},
+            UpdateExpression="SET current_balance = :balance",
+            ConditionExpression="activity_revision = :revision OR (attribute_not_exists(activity_revision) AND :revision = :zero)",
+            ExpressionAttributeValues={":balance": Decimal(str(round(balance, 2))),
+                ":revision": int(record.get("activity_revision") or 0), ":zero": 0})
+    except Exception as exc:
+        from botocore.exceptions import ClientError
+        from fastapi import HTTPException
+        if isinstance(exc, ClientError) and exc.response["Error"]["Code"] == "ConditionalCheckFailedException":
+            raise HTTPException(409, "Wallet changed while rebuilding Replay funds; retry with the saved balance") from exc
+        practice_wallets.storage_error(exc)
+    _ledgers[(user_id, f"sim:{date}")] = balance
+    return balance
 
 
 def debit(user_id: str, amount: float, date: str) -> float:
