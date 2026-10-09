@@ -318,11 +318,13 @@ Artifacts: .cache/desktop-paper-wallet-fix/. Reproduce backend checks with
 USE_DYNAMODB_LOCAL=true AWS_MAX_ATTEMPTS=1 and the project venv's pytest backend/tests/;
 focused files: test_phase18_paper_wallet.py, test_desktop_paper_recovery.py,
 test_desktop_paper_eod.py, test_desktop_trading.py, test_orders_api.py and
- test_replay_entry_stoploss.py. Both clients use their existing checks; browser script
+test_replay_entry_stoploss.py. Both clients use their existing checks; browser script
 scripts/wallet-settings-check.mjs uses external PLAYWRIGHT_MODULE/CHROME_BIN.
 
-PR #621 was already merged when the user requested adding this correction to it, so
-this requires a linked follow-up PR to dev. Deployment requires the updated backend
+PR #621 was already merged when the user requested adding this correction to it.
+Delivery is the linked [PR #623](https://github.com/prattyush/TradeMatangi/pull/623),
+fix/paper-wallet-order-serialization → dev, implementation commit 9135f45.
+Review/merge remain pending. Deployment requires the updated backend
 and website; the desktop Market correction does not require a new desktop installer.
 No live broker order, wallet reset on the user's account, main merge or deployment.
 
