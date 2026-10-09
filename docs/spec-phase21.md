@@ -577,6 +577,53 @@ artifact directories). Reproduce with the project venv pytest for `backend/tests
 `npm run test`, both client `npm run build` commands, website Node tests and the
 four browser scripts recorded above. Main merging/deployment remain manual.
 
+### Desktop price picking, popup closing and Stats layout — 2026-10-09
+
+**Status: all four requested changes implemented and validated; [PR #630](https://github.com/prattyush/TradeMatangi/pull/630) published for review → dev.**
+The chart-price controls below supersede the original “no chart click” default for
+the compact order window. Backend trading/wallet behavior is unchanged.
+
+| Follow-up | Implemented behavior | Status |
+|---|---|---|
+| 1 — Order popup | Limit, Target and position SL price fields have a chart picker; clicking the price field also arms picking. Picked values stay editable until explicit Submit. | Validated |
+| 2 — Left-panel edit | Price field, chart icon and LTP work for the exact order contract. Picked/LTP prices remain draft values until Save; existing lot and coverage checks remain. | Validated |
+| 3 — Desktop close controls | Pressing buttons no longer moves their hit areas; popup close controls have stable 28px minimum targets. Chart activation ignores overlaid order/menu controls. | Validated |
+| 4 — Analysis Stats | Shared website/desktop dashboard places the selected Trades Behind panel directly after the row containing Outcome Distribution, before comparison rows. Other Stats views retain their details panel. | Validated |
+
+The price picker reuses the existing desktop chart conversion mechanism. It is
+bound to the selected tile, exact contract and session. Wrong-chart clicks leave
+the draft unchanged, even when another chart becomes active. Contract/session
+changes, field typing, close/cancel and submission clear draft picking. Choosing a
+price does not place an order or update an existing order. LTP requires an available
+quote for the displayed matching contract; unavailable quotes do not invent a price.
+Price spinners use a zero base so chart-picked prices cannot shift their quarter-
+rupee grid; keyboard/wheel increments and positive-price submission checks remain.
+
+Validation:
+
+- **182 desktop Vitest tests** and **43 website Node tests** passed.
+- Both client TypeScript/production builds passed.
+- Extended Phase 21 browser acceptance passed across Replay, Stepwise, Paper,
+  five-pane Stepwise and empty stopped Paper. Checks cover Limit/Target/SL picking,
+  field/icon entry paths, wrong-chart exclusion, no automatic trading writes,
+  edit LTP/picking/manual entry, ₹0.25/lot increments, stable close hitboxes on
+  hover and pointer-down, single right-edge closes for order and instrument popups,
+  dragging/viewport bounds, existing orders and uncertain submission handling.
+- Website Stats browser acceptance and actual desktop Analysis acceptance both
+  verify the selected Trades Behind card is the distribution row's immediate
+  next sibling. Filtering, detail inspection, all five views, CSV, narrow viewport
+  and close behavior pass with no page errors.
+
+Artifacts: `.cache/four-ui-updates/` (desktop Stats screenshots also use
+`.cache/desktop-analysis-validation/`). Scripts:
+`scripts/phase21-desktop-check.mjs`, `scripts/phase20-browser-check.mjs` and
+`scripts/desktop-analysis-check.mjs`, using external PLAYWRIGHT_MODULE and the
+project venv PYTHON_BIN where fixtures are generated. No backend changes were
+made, so the prior 1,949-backend/303-AI-helper results are historical evidence;
+those suites were not rerun for this frontend-only change. Native packaged Windows
+acceptance remains manual. Delivery needs a rebuilt desktop client and updated
+website assets; main merging/deployment remain manual.
+
 ## Original requirements
 
 ## Improvements
