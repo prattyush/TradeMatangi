@@ -23,7 +23,7 @@ class LiveTile(BaseModel):
 
 
 class StartLiveRequest(BaseModel):
-    tiles: list[LiveTile] = Field(min_length=1, max_length=4)
+    tiles: list[LiveTile] = Field(min_length=1, max_length=5)
 
 
 class ConfigureLiveRequest(BaseModel):

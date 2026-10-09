@@ -12,6 +12,8 @@ import json
 import logging
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
+from typing import Literal
+from weakref import WeakValueDictionary
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from fastapi.responses import StreamingResponse
@@ -47,10 +49,12 @@ from app.services.user_settings_service import get_settings, update_settings
 router = APIRouter(prefix="/api/desktop/v1/trading", tags=["desktop"])
 logger = logging.getLogger(__name__)
 HEARTBEAT_INTERVAL = 15
+_start_locks = WeakValueDictionary()
 
 
 class DesktopTradingSnapshot(BaseModel):
     version: int = 1
+    created_for_request: bool | None = None
     event_cursor: int = 0
     desktop_mode: str = "stepwise"
     source: str = "desktop_stepwise"
@@ -181,6 +185,61 @@ class DesktopTradeLabelRequest(BaseModel):
 class DesktopTradingStartRequest(SimulationStartRequest):
     desktop_mode: str = Field(default="stepwise", pattern="^(stepwise|replay|paper)$")
     resume_bar_index: int | None = Field(default=None, ge=0)
+
+
+class PreparationPane(BaseModel):
+    id: str = Field(min_length=1, max_length=100)
+    kind: Literal["spot", "option"]
+    symbol: str
+    interval: str = Field(pattern="^(1|3|5|15|30|60)$")
+    tradingDate: str
+    expiry: str = ""
+    strike: str = ""
+    right: Literal["CE", "PE"] = "CE"
+    selection_mode: Literal["manual", "max_price"] = "manual"
+    max_price: float | None = Field(default=None, gt=0, allow_inf_nan=False)
+
+
+class PreparationRequest(BaseModel):
+    mode: Literal["paper", "replay", "stepwise", "browse"]
+    date: str
+    reference_time: str = "09:15:00"
+    session_id: str | None = None
+    panes: list[PreparationPane] = Field(min_length=1, max_length=5)
+
+
+def preparation_user_id(authorization: str | None = Header(default=None)) -> str:
+    return get_desktop_user_id(authorization=authorization, x_user_id=None)
+
+
+@router.post("/prepare-session")
+async def prepare_session(req: PreparationRequest, user_id: str = Depends(preparation_user_id)):
+    from app.services.desktop_preparation import prepare
+    from app.services.history_workers import run_history
+    if len({pane.id for pane in req.panes}) != len(req.panes):
+        raise HTTPException(status_code=422, detail="Every pane must have a unique id")
+    try:
+        datetime.strptime(req.date, "%Y-%m-%d")
+        datetime.strptime(req.reference_time, "%H:%M:%S")
+        for pane in req.panes:
+            if pane.kind == "option":
+                if pane.selection_mode == "max_price" and pane.max_price is None:
+                    raise ValueError("Max Price requires a positive premium cap")
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if req.session_id:
+        session = _require_session(req.session_id, user_id)
+        if _desktop_mode(session) != req.mode:
+            raise HTTPException(status_code=409, detail="Session mode changed; reopen the picker")
+        req.date = session.date
+        req.reference_time = datetime.fromtimestamp(int(session.current_time), timezone.utc).strftime("%H:%M:%S") if session.current_time else session.start_time
+    if req.mode == "paper":
+        now = datetime.now(ZoneInfo("Asia/Kolkata"))
+        req.date, req.reference_time = now.date().isoformat(), now.strftime("%H:%M:%S")
+    try:
+        return await run_history(prepare, req.mode, req.date, req.reference_time, [pane.model_dump() for pane in req.panes])
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 def _active_desktop_session_for_date(user_id: str, date: str, desktop_mode: str | None = None):
@@ -365,8 +424,8 @@ def _historical_contract_quote(session, contract: dict) -> dict | None:
     ticks = cache.get(key)
     if ticks is None:
         try:
-            from app.services.options_service import options_iter_ticks
-            ticks = list(options_iter_ticks(session.symbol, session.date, contract["strike"], contract["expiry"], contract["right"], session.start_time))
+            from app.services.desktop_preparation import desktop_option_ticks
+            ticks = list(desktop_option_ticks(session.symbol, session.date, contract["strike"], contract["expiry"], contract["right"], session.start_time))
         except Exception:
             ticks = []
         cache[key] = ticks
@@ -374,6 +433,9 @@ def _historical_contract_quote(session, contract: dict) -> dict | None:
     if eligible:
         tick = eligible[-1]
         return {"price": float(tick["close"]), "timestamp": int(tick["time"]), "source": "historical_stepwise"}
+    from app.services.options_service import options_parquet_path
+    if options_parquet_path(session.symbol, session.date, contract["strike"], contract["expiry"], contract["right"]).exists():
+        return None
     # Existing sessions/tests that have not loaded source data retain the
     # historic CE/PE values as a compatibility fallback only for that exact
     # active contract.
@@ -403,6 +465,8 @@ def _refresh_contract_quotes(session) -> dict[str, dict]:
                     session.last_price_ce = float(quote["price"])
                 else:
                     session.last_price_pe = float(quote["price"])
+        elif session.session_type in ("sim", "stepwise"):
+            registry.pop(contract["contract_key"], None)
     return registry
 
 
@@ -959,6 +1023,31 @@ def _target_scope(session, right: str | None, strike: int | None, expiry: str | 
 
 @router.post("/start", response_model=DesktopTradingSnapshot, status_code=201)
 async def start_desktop_trading(req: DesktopTradingStartRequest, user_id: str = Depends(get_desktop_user_id)):
+    if req.desktop_mode == "paper":
+        now = datetime.now(ZoneInfo("Asia/Kolkata"))
+        if req.date != now.date().isoformat():
+            raise HTTPException(status_code=400, detail="Paper trading requires today's market date (IST)")
+        if now.strftime("%H:%M:%S") >= sim_svc._AUTO_CLOSE_TIME:
+            raise HTTPException(status_code=409, detail="Paper trading has closed for this date")
+    key = (user_id, req.date, req.symbol, req.instrument_type, req.desktop_mode)
+    lock = _start_locks.setdefault(key, asyncio.Lock())
+    async with lock:
+        active_before = {session.session_id for session in sim_svc._sessions.values()
+                         if session.user_id == user_id and session.state != sim_svc.SimulationState.ENDED}
+        if not req.override:
+            for session in sim_svc._sessions.values():
+                if (session.session_id in active_before and session.date == req.date
+                        and session.symbol == req.symbol and session.instrument_type == req.instrument_type
+                        and _desktop_mode(session) == req.desktop_mode):
+                    snapshot = _snapshot(session, user_id)
+                    snapshot.created_for_request = False
+                    return snapshot
+        snapshot = await _start_desktop_trading(req, user_id)
+        snapshot.created_for_request = snapshot.session.session_id not in active_before and snapshot.owned
+        return snapshot
+
+
+async def _start_desktop_trading(req: DesktopTradingStartRequest, user_id: str):
     if req.desktop_mode == "paper":
         now = datetime.now(ZoneInfo("Asia/Kolkata"))
         if req.date != now.date().isoformat():
