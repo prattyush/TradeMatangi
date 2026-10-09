@@ -1,5 +1,13 @@
 # Phase 21 — Desktop UI implementation
 
+## Current delivery status — 2026-10-09
+
+PR #619 merged to dev on 2026-10-08 (merge e1938ce). Main includes that delivery
+through PR #620 (d42ca29). Earlier ready-for-review/manual-main-merge statements
+below are historical checkpoints. A code merge does not establish the runtime
+backend's deployment. The Replay market-fill correction is tracked below and will
+be delivered separately to dev; main merging/deployment remain manual.
+
 ## Agreed scope and defaults
 
 Implement all five Desktop UI requirements below. Kite execution and desktop Real
@@ -216,6 +224,54 @@ dependencies. Windows CI now watches all shared source so future preset edits tr
 PR #619 is published as ready for review at the user's explicit request. Windows
 installer CI passed for head 0b474a2; new preset changes trigger a subsequent run.
 Packaged native interaction acceptance, review/merge and main deployment remain manual.
+
+### Desktop Replay Market fill correction — 2026-10-09
+
+Reported: Order popup → Market creates a pending Buy LIMIT line without a fill.
+Six synthetic reproductions failed against merged dev: paused Replay/Stepwise CE/PE
+Market entries, plus additional-contract entry/Stoploss execution on the replay clock.
+The old handler only performed the immediate Market check for Paper. Additional
+registered option strikes were also omitted from the options replay fill path.
+
+Market entries now reuse the authoritative exact-contract quote and existing fill,
+wallet, trade, protection and SSE pipeline in Replay/Stepwise as well as Paper.
+Historical execution uses the current session clock while preserving the quote's
+observation timestamp, so paused sessions fill without Next Bar and clocks do not
+rewind. Only the submitted order is checked immediately; other pending entries and
+exits retain their normal price-trigger behavior. Ended sessions and invalid/future
+quotes are rejected before creating an order. Broker-confirmed Real execution is
+unchanged and cannot be filled by this local check.
+
+The underlying replay clock now evaluates additional attached contracts from their
+own cached ticks, including their limits, targets and protective stops. Primary
+contracts are excluded from this auxiliary route so normal streams do not duplicate
+fills. Equity-hosted option attachments retain their existing path. A single-contract
+replay keeps its original source strike/expiry when another chart changes CE/PE
+convenience selection, and evaluates secondary contracts at the same clock time.
+Existing cached ticks and leading-observation guards are reused; no provider polling,
+new public API or schema migration is introduced.
+
+Regression coverage adds 16 cases: BUY/SELL, CE/PE, paused Replay/Stepwise, exact
+position/stop/SSE evidence, unrelated pending-order isolation, older observation
+versus execution time, additional-contract entry/exit, primary-stream isolation,
+single-contract source identity, invalid/future quotes and ended-session rejection.
+The initial six failures now pass. Full backend regression: **1,894 passed / two
+existing baseline fixture failures**, unchanged stale options expiry and missing
+tab-restore group_id assertions. Final focused desktop trading/preparation/replay/
+simulation/orders/entry-SL/sizing checks: **263 passed**. Desktop Vitest: **182 passed**.
+All provider/execution inputs are mocked/synthetic; no live broker orders were sent.
+Artifacts are ignored under .cache/desktop-replay-market-fix/.
+
+Reproduce with USE_DYNAMODB_LOCAL=true AWS_MAX_ATTEMPTS=1 and the project venv's
+python -m pytest backend/tests/ -q; focused files are test_desktop_trading.py,
+test_desktop_preparation.py, test_desktop_replay_events.py, test_simulation.py,
+test_orders_api.py, test_replay_entry_stoploss.py and test_sprint2_funds_ratio_stoploss.py.
+Desktop checks use npm test in windowsapp. Delivery branch:
+fix/desktop-replay-market-fill, targeting dev. Review/merge and backend deployment
+remain pending; main merging/deployment stay manual.
+
+This is backend-only: the existing desktop installer can use the correction after
+backend deployment. No live broker orders or main deployment are performed by this fix.
 
 ## Original requirements
 

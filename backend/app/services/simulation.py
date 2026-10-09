@@ -884,14 +884,19 @@ def _emit_attached_option_ticks(session: SimulationSession, timestamp: int) -> l
         session.desktop_option_ticks_by_time = cache
     events = []
     for contract in getattr(session, "desktop_contracts", []):
-        active_strike = session.strike_ce if contract["right"] == "CE" else session.strike_pe
-        if contract["strike"] != active_strike:
-            continue
+        if session.instrument_type == "options":
+            primary_rights = (session.right,) if session.right else ("CE", "PE")
+            primary_strike = session.strike if session.right else (
+                session.strike_ce if contract["right"] == "CE" else session.strike_pe)
+            if contract["right"] in primary_rights and contract["strike"] == primary_strike and contract["expiry"] == session.expiry:
+                continue  # The normal source stream evaluates this exact contract.
         key = contract["contract_key"]
         if key not in cache:
-            ticks = list(options_iter_ticks(session.symbol, session.date, contract["strike"], contract["expiry"], contract["right"], session.start_time))
-            cache[key] = {tick["time"]: tick for tick in ticks}
             quote_cache = getattr(session, "desktop_contract_quote_ticks", {})
+            ticks = quote_cache.get(key)
+            if ticks is None:
+                ticks = list(options_iter_ticks(session.symbol, session.date, contract["strike"], contract["expiry"], contract["right"], session.start_time))
+            cache[key] = {tick["time"]: tick for tick in ticks}
             quote_cache[key] = ticks
             session.desktop_contract_quote_ticks = quote_cache
         tick = cache[key].get(timestamp)
@@ -1176,7 +1181,9 @@ def _emit_tick_and_check_orders(
         except RuntimeError:
             pass  # not in async context — shouldn't happen
 
-    if tick_right is None and session.instrument_type == "equity" and not session.paper_stream_source and getattr(session, "desktop_contracts", None):
+    if (only_order_id is None and tick_right is None and not session.paper_stream_source
+            and getattr(session, "desktop_contracts", None)
+            and (session.instrument_type == "equity" or session.session_type in ("sim", "stepwise"))):
         fill_events.extend(_emit_attached_option_ticks(session, current_time))
     return fill_events
 
@@ -1384,7 +1391,12 @@ async def _run_session(session: SimulationSession) -> None:
 
                 session.current_time = str(tick["time"])
                 session.last_price = tick["close"]
+                # Attachments can change the CE/PE convenience strike, but this
+                # iterator still belongs to the original single-contract source.
+                tick = {**tick, "strike": session.strike, "expiry": session.expiry, "right": session.right}
                 fill_events = _emit_tick_and_check_orders(session, tick, session.right)
+                if getattr(session, "desktop_contracts", None):
+                    fill_events.extend(_emit_attached_option_ticks(session, tick["time"]))
                 for fe in fill_events:
                     try:
                         session.queue.put_nowait(json.dumps(fe))

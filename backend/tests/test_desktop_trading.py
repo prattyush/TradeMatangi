@@ -964,6 +964,166 @@ def test_chart_market_intent_uses_the_clicked_contract_quote(no_db, monkeypatch)
     _clear()
 
 
+@pytest.mark.parametrize("mode", ["replay", "stepwise"])
+@pytest.mark.parametrize("right", ["CE", "PE"])
+@pytest.mark.parametrize("side", [TradeSide.BUY, TradeSide.SELL])
+def test_popup_market_fills_paused_historical_contract_now_and_protects_it(mode, right, side, monkeypatch, tmp_path):
+    _clear()
+    session = _session()
+    session.session_type = "sim" if mode == "replay" else "stepwise"
+    session.desktop_mode = mode
+    session.desktop_origin = f"desktop_{mode}"
+    session.state = SimulationState.PAUSED
+    now = int(session.current_time)
+    wallet_service._ledgers[(session.user_id, session.wallet_ledger_id)] = 1000000
+    monkeypatch.setattr("app.services.options_service.options_parquet_path", lambda *args: tmp_path / "absent.parquet")
+    monkeypatch.setattr("app.services.options_service.get_underlying_price_at", lambda *args: 24000)
+    contract = {"symbol": session.symbol, "expiry": session.expiry, "strike": 24100,
+                "right": right, "contract_key": f"NIFTY:{session.expiry}:24100:{right}"}
+    session.desktop_contracts.append(contract)
+    monkeypatch.setattr("app.services.options_service.options_iter_ticks", lambda *args: [
+        {"time": now - 20, "open": 150, "high": 150, "low": 150, "close": 150}])
+    older = order_service.place_order(session.session_id, session.symbol, side,
+        OrderType.LIMIT, 65, now, session.date, limit_price=200 if side == TradeSide.BUY else 100,
+        right=right, strike=24100, expiry=session.expiry, user_id=session.user_id,
+        wallet_ledger_id=session.wallet_ledger_id)
+    try:
+        order = asyncio.run(desktop_trading.place_chart_order(session.session_id,
+            desktop_trading.ChartOrderIntent(symbol=session.symbol, right=right, strike=24100,
+                expiry=session.expiry, side=side, intent="market", quantity=65,
+                entry_sl_price=120 if side == TradeSide.BUY else 180, group_id=f"popup-{mode}-{right}"), session.user_id))
+        assert order.status == OrderStatus.FILLED
+        assert order.filled_price == 150
+        assert order.filled_at == now
+        assert order.quote_timestamp == now - 20
+        assert session.current_time == str(now)
+        assert session.state == SimulationState.PAUSED
+        assert older.status == OrderStatus.PENDING
+        snapshot = desktop_trading._snapshot(session, session.user_id)
+        assert snapshot.positions_by_contract[contract["contract_key"]]["quantity"] == 65
+        stops = [item for item in snapshot.open_orders if item.is_stoploss and item.group_id == order.group_id]
+        assert len(stops) == 1
+        assert (stops[0].right, stops[0].strike, stops[0].quantity, stops[0].trigger_price) == (right, 24100, 65, 120 if side == TradeSide.BUY else 180)
+        events = [json.loads(item) for item in session.queue._queue] if isinstance(session.queue, asyncio.Queue) else [json.loads(payload) for _, payload in session.queue._dq]
+        assert any(item.get("type") == "order_filled" and item.get("order_id") == order.order_id for item in events)
+    finally:
+        _clear()
+
+
+@pytest.mark.parametrize("right", ["CE", "PE"])
+def test_replay_clock_fills_additional_contract_limit_and_attached_stop(right, monkeypatch, tmp_path):
+    _clear()
+    session = _session()
+    session.session_type = "sim"
+    session.desktop_mode = "replay"
+    session.desktop_origin = "desktop_replay"
+    now = int(session.current_time)
+    contract = {"symbol": session.symbol, "expiry": session.expiry, "strike": 24100,
+                "right": right, "contract_key": f"NIFTY:{session.expiry}:24100:{right}"}
+    session.desktop_contracts.append(contract)
+    monkeypatch.setattr("app.services.options_service.options_parquet_path", lambda *args: tmp_path / "absent.parquet")
+    session.desktop_contract_quote_ticks = {contract["contract_key"]: [
+        {"time": now + 1, "open": 100, "high": 100, "low": 100, "close": 100},
+        {"time": now + 2, "open": 90, "high": 90, "low": 90, "close": 90},
+    ]}
+    primary_contract = {**contract, "strike": 24000, "contract_key": f"NIFTY:{session.expiry}:24000:{right}"}
+    if primary_contract not in session.desktop_contracts:
+        session.desktop_contracts.append(primary_contract)
+    session.desktop_contract_quote_ticks[primary_contract["contract_key"]] = session.desktop_contract_quote_ticks[contract["contract_key"]]
+    monkeypatch.setattr("app.services.options_service.options_iter_ticks", lambda *args: [])
+    try:
+        order = order_service.place_order(session.session_id, session.symbol, TradeSide.BUY,
+            OrderType.LIMIT, 65, now, session.date, limit_price=101, entry_sl_price=95,
+            group_id="secondary", right=right, strike=24100, expiry=session.expiry,
+            user_id=session.user_id, source="desktop_replay", wallet_ledger_id=session.wallet_ledger_id)
+        primary = order_service.place_order(session.session_id, session.symbol, TradeSide.BUY,
+            OrderType.LIMIT, 65, now, session.date, limit_price=101,
+            right=right, strike=24000, expiry=session.expiry,
+            user_id=session.user_id, wallet_ledger_id=session.wallet_ledger_id)
+        for offset in [1, 2]:
+            session.current_time = str(now + offset)
+            tick = {"time": now + offset, "open": 24000, "high": 24000, "low": 24000, "close": 24000}
+            sim_svc._emit_tick_and_check_orders(session, tick, None)
+            assert order.status == OrderStatus.FILLED
+            assert primary.status == OrderStatus.PENDING
+        trades = trading_service.get_trades(session.session_id)
+        assert [(trade.right, trade.strike, trade.side.value, trade.price) for trade in trades] == [(right, 24100, "BUY", 100), (right, 24100, "SELL", 90)]
+        assert trading_service.get_position(session.session_id, session.symbol, right, strike=24100, expiry=session.expiry).quantity == 0
+    finally:
+        _clear()
+
+
+def test_single_contract_replay_retains_source_identity_after_attachment(monkeypatch, tmp_path):
+    _clear()
+    session = _session()
+    session.session_type = "sim"
+    session.stepwise = False
+    session.desktop_origin = "desktop_replay"
+    session.right = "CE"
+    session.strike_ce = 24100  # Attaching another chart changes convenience selection.
+    session.resume_event.set()
+    now = int(session.current_time)
+    extra = {"symbol": session.symbol, "expiry": session.expiry, "strike": 24100,
+             "right": "CE", "contract_key": f"NIFTY:{session.expiry}:24100:CE"}
+    session.desktop_contracts.append(extra)
+    def ticks(symbol, date, strike, expiry, right, start):
+        price = 400 if strike == 24000 else 100
+        return [{"time": now + 1, "open": price, "high": price, "low": price, "close": price}]
+    monkeypatch.setattr("app.services.options_service.options_iter_ticks", ticks)
+    monkeypatch.setattr("app.services.options_service.options_parquet_path", lambda *args: tmp_path / "absent.parquet")
+    async def no_sleep(*args):
+        pass
+    monkeypatch.setattr("app.services.simulation.asyncio.sleep", no_sleep)
+    try:
+        primary = order_service.place_order(session.session_id, session.symbol, TradeSide.BUY,
+            OrderType.LIMIT, 65, now, session.date, limit_price=150, right="CE", strike=24000,
+            expiry=session.expiry, user_id=session.user_id, wallet_ledger_id=session.wallet_ledger_id)
+        secondary = order_service.place_order(session.session_id, session.symbol, TradeSide.BUY,
+            OrderType.LIMIT, 65, now, session.date, limit_price=110, right="CE", strike=24100,
+            expiry=session.expiry, user_id=session.user_id, source="desktop_replay", wallet_ledger_id=session.wallet_ledger_id)
+        asyncio.run(sim_svc._run_session(session))
+        trades = trading_service.get_trades(session.session_id)
+        assert not any(trade.trade_id == primary.order_id for trade in trades)
+        assert any(trade.trade_id == secondary.order_id and trade.price == 100 and trade.strike == 24100 for trade in trades)
+    finally:
+        _clear()
+
+
+@pytest.mark.parametrize("price,offset", [(float("nan"), 0), (float("inf"), 0), (0, 0), (100, 1)])
+def test_historical_market_rejects_invalid_or_future_quote_without_creating_order(price, offset, monkeypatch):
+    _clear()
+    session = _session()
+    contract = session.desktop_contracts[0]
+    monkeypatch.setattr(desktop_trading, "_refresh_contract_quotes", lambda session: {
+        contract["contract_key"]: {**contract, "price": price, "timestamp": int(session.current_time) + offset, "source": "synthetic"}})
+    try:
+        with pytest.raises(HTTPException) as error:
+            asyncio.run(desktop_trading.place_chart_order(session.session_id,
+                desktop_trading.ChartOrderIntent(symbol=session.symbol, right="CE", strike=24000,
+                    expiry=session.expiry, side=TradeSide.BUY, intent="market", quantity=65), session.user_id))
+        assert error.value.status_code == 409
+        assert order_service.get_open_orders(session.session_id) == []
+        assert trading_service.get_trades(session.session_id) == []
+    finally:
+        _clear()
+
+
+def test_ended_replay_rejects_popup_market_without_creating_order():
+    _clear()
+    session = _session()
+    session.session_type = "sim"
+    session.state = SimulationState.ENDED
+    try:
+        with pytest.raises(HTTPException) as error:
+            asyncio.run(desktop_trading.place_chart_order(session.session_id,
+                desktop_trading.ChartOrderIntent(symbol=session.symbol, right="CE", strike=24000,
+                    expiry=session.expiry, side=TradeSide.BUY, intent="market", quantity=65), session.user_id))
+        assert error.value.status_code == 409
+        assert order_service.get_open_orders(session.session_id) == []
+    finally:
+        _clear()
+
+
 @pytest.mark.parametrize("right,premium,stop", [("CE", 100, 80), ("PE", 120, 100)])
 def test_paper_market_uses_exact_live_option_tile_not_underlying_quote(right, premium, stop, monkeypatch):
     _clear()
