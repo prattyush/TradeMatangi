@@ -5,8 +5,9 @@
 PR #619 merged to dev on 2026-10-08 (merge e1938ce). Main includes that delivery
 through PR #620 (d42ca29). Earlier ready-for-review/manual-main-merge statements
 below are historical checkpoints. A code merge does not establish the runtime
-backend's deployment. The Replay market-fill correction is tracked below and will
-be delivered separately to dev; main merging/deployment remain manual.
+backend's deployment. The Replay market-fill correction was merged to dev through PR #621 (02f904f)
+on 2026-10-09. Paper wallet serialization and reset-message follow-up is tracked
+below; main merging/deployment remain manual.
 
 ## Agreed scope and defaults
 
@@ -275,6 +276,55 @@ Main merging/deployment stay manual.
 
 This is backend-only: the existing desktop installer can use the correction after
 backend deployment. No live broker orders or main deployment are performed by this fix.
+
+### Paper wallet serialization and reset messages — 2026-10-09
+
+The user reported a desktop Paper Market order failing with HTTP 503: "Paper wallet
+storage unavailable; retry without changing the operation identity". Two database-
+backed reproductions produced the identical detail, with underlying boto3 TypeError:
+"Float types are not supported. Use Decimal types instead." Paper reserve+order
+transactions serialized only top-level floats from model JSON; nested Phase 20
+analytics/controller numbers remained floats, while existing Decimals became strings.
+The failure occurred before submitting the transaction, not because of funds or a
+broker rejection.
+
+Paper movements now use the same canonical order database item as ordinary writes.
+Transaction/fenced writers apply the existing recursive DynamoDB encoding so nested
+numbers remain numbers; strings/IDs, booleans, zero and Unknown/null are preserved.
+Atomic order+wallet commits, operation receipts, spending limits and engine/cleanup
+ownership fences remain unchanged. Underlying exceptions are logged without dumping
+wallet/order payloads; genuine storage failures still fail closed with the existing
+503 and require the same operation identity for retry.
+
+The user also clarified website wallet reset happened AFTER starting/stopping Paper,
+whereas desktop reset was BEFORE starting Paper. Those timings explain the result:
+Paper funds are shared by user/date and remain locked after the first session starts,
+even after Stop. The website now preserves the backend error detail instead of
+"Wallet reset failed: 409"/"Reset failed", explains the lock rule, disables in-flight
+and repeated locked-date resets, and fences late replies when the selected date
+changes. No wallet-lock policy or post-start reset bypass is introduced.
+
+Validation: **1,904 backend tests passed / two existing fixture failures** (stale
+options expiry and missing tab-restore group_id). **223 focused checks passed**.
+Nine new database-backed regressions cover nested analytics/Decimal/list encoding,
+atomic reserve retries, ownership fencing, lost acknowledgement with exactly one
+debit, and actual desktop Paper CE/PE Market fills with fixed/Capital %/Risk % sizing,
+persisted trades/positions/protection and reserve-receipt replay. **182 desktop Vitest**
+and **41 website Node checks passed**; both client TypeScript/production builds passed.
+Actual website Settings browser acceptance verifies reason display, repeat blocking,
+date change, success callback and zero page errors. All orders/providers are synthetic.
+
+Artifacts: .cache/desktop-paper-wallet-fix/. Reproduce backend checks with
+USE_DYNAMODB_LOCAL=true AWS_MAX_ATTEMPTS=1 and the project venv's pytest backend/tests/;
+focused files: test_phase18_paper_wallet.py, test_desktop_paper_recovery.py,
+test_desktop_paper_eod.py, test_desktop_trading.py, test_orders_api.py and
+ test_replay_entry_stoploss.py. Both clients use their existing checks; browser script
+scripts/wallet-settings-check.mjs uses external PLAYWRIGHT_MODULE/CHROME_BIN.
+
+PR #621 was already merged when the user requested adding this correction to it, so
+this requires a linked follow-up PR to dev. Deployment requires the updated backend
+and website; the desktop Market correction does not require a new desktop installer.
+No live broker order, wallet reset on the user's account, main merge or deployment.
 
 ## Original requirements
 

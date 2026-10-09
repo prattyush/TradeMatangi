@@ -115,6 +115,67 @@ def test_wallet_reservation_and_order_commit_together(database):
     assert "Item" not in database.Table("Orders").get_item(Key={"session_id": rejected.session_id, "order_id": rejected.order_id})
 
 
+def test_atomic_order_reservation_handles_nested_analytics_and_decimal_evidence(database):
+    from decimal import Decimal
+    from app.models.schemas import Order, TradeSide
+    database.create_table(TableName="Orders", KeySchema=[{"AttributeName": "session_id", "KeyType": "HASH"}, {"AttributeName": "order_id", "KeyType": "RANGE"}], AttributeDefinitions=[{"AttributeName": "session_id", "AttributeType": "S"}, {"AttributeName": "order_id", "AttributeType": "S"}], BillingMode="PAY_PER_REQUEST")
+    token, _ = paper_wallet.claim_session(USER, DATE, "NIFTY")
+    paper_wallet.finish_session_claim(USER, DATE, "NIFTY", token, "analytics-paper", desktop=True)
+    order = Order(session_id="analytics-paper", user_id=USER, symbol="NIFTY", side=TradeSide.BUY,
+        quantity=65, trigger_price=101, limit_price=101, created_at=1, reserved_amount=6565,
+        source="desktop_paper", wallet_ledger_id=f"paper:{DATE}", wallet_ledger_kind="paper",
+        analytics={"capital": 100000.0, "requested_pct": 3.0, "reference_price": Decimal("100.25"),
+                   "action_id": "00123", "details": [{"budget": 3000.5, "unknown": None, "zero": 0.0, "enabled": False}]},
+        split_operation={"operation_id": "007", "details": [{"price": 100.25}]})
+    for _ in range(2):
+        assert paper_wallet.move(USER, DATE, -6565, "nested-reserve", order=order,
+            engine=(order.session_id, order.symbol, token)) == 93435
+    stored = database.Table("Orders").get_item(Key={"session_id": order.session_id, "order_id": order.order_id})["Item"]
+    assert stored["analytics"]["capital"] == Decimal("100000")
+    assert stored["analytics"]["reference_price"] == Decimal("100.25")
+    assert stored["analytics"]["action_id"] == "00123"
+    assert stored["analytics"]["details"] == [{"budget": Decimal("3000.5"), "unknown": None, "zero": Decimal("0"), "enabled": False}]
+    assert stored["split_operation"]["operation_id"] == "007"
+    assert stored["split_operation"]["details"][0]["price"] == Decimal("100.25")
+
+
+def test_fenced_nested_items_keep_numbers_and_engine_ownership(database):
+    from decimal import Decimal
+    database.create_table(TableName="Sessions", KeySchema=[{"AttributeName": "session_id", "KeyType": "HASH"}], AttributeDefinitions=[{"AttributeName": "session_id", "AttributeType": "S"}], BillingMode="PAY_PER_REQUEST")
+    token, _ = paper_wallet.claim_session(USER, DATE, "NIFTY")
+    paper_wallet.finish_session_claim(USER, DATE, "NIFTY", token, "nested-fence", desktop=True)
+    item = {"session_id": "nested-fence", "metadata": {"prices": [100.25, Decimal("90.5")], "enabled": True}}
+    paper_wallet.fenced_put("Sessions", item, user_id=USER, date=DATE, symbol="NIFTY", session_id="nested-fence", token=token)
+    stored = database.Table("Sessions").get_item(Key={"session_id": "nested-fence"})["Item"]
+    assert stored["metadata"]["prices"] == [Decimal("100.25"), Decimal("90.5")]
+    with pytest.raises(HTTPException) as error:
+        paper_wallet.fenced_put("Sessions", {**item, "metadata": {"prices": [999.25]}}, user_id=USER, date=DATE, symbol="NIFTY", session_id="nested-fence", token="other-engine")
+    assert error.value.status_code == 409
+    assert database.Table("Sessions").get_item(Key={"session_id": "nested-fence"})["Item"] == stored
+
+
+def test_lost_transaction_reply_recovers_same_receipt_without_second_debit(database, monkeypatch, caplog):
+    from app.services.db import get_dynamodb_client
+    assert paper_wallet.balance(USER, DATE) == 100000
+    client = get_dynamodb_client()
+    calls = []
+    def lost_reply(**params):
+        calls.append(params)
+        client.transact_write_items(**params)
+        raise TimeoutError("Synthetic lost acknowledgement")
+    monkeypatch.setattr("app.services.db.get_dynamodb_client", lambda: SimpleNamespace(transact_write_items=lost_reply))
+    with pytest.raises(HTTPException) as error:
+        paper_wallet.move(USER, DATE, -1000, "same-operation")
+    assert error.value.status_code == 503
+    assert "Synthetic lost acknowledgement" in caplog.text
+    assert paper_wallet.move(USER, DATE, -1000, "same-operation") == 99000
+    assert len(calls) == 1
+    with pytest.raises(HTTPException) as error:
+        paper_wallet.move(USER, DATE, -1001, "same-operation")
+    assert error.value.status_code == 409
+    assert paper_wallet.balance(USER, DATE) == 99000
+
+
 def test_expired_engine_cannot_renew_before_another_worker_claims(database):
     token, _ = paper_wallet.claim_session(USER, DATE, "TATPOW")
     paper_wallet.finish_session_claim(USER, DATE, "TATPOW", token, "session-a")

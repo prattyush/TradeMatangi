@@ -1257,7 +1257,10 @@ const api = {
       headers: { 'Content-Type': 'application/json', ..._authHeaders() },
       body: JSON.stringify({ amount: amount ?? 150000 }),
     })
-    if (!res.ok) throw new Error(`Wallet reset failed: ${res.status}`)
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}))
+      throw new ApiError(data.detail || `Wallet reset failed: ${res.status}`, res.status)
+    }
     return res.json()
   },
 

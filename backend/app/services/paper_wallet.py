@@ -5,6 +5,7 @@ share the ledger table; DynamoDB transactions commit each receipt and movement
 together. A caller retrying an operation must reuse its operation id.
 """
 from decimal import Decimal
+import logging
 import time
 import uuid
 
@@ -12,6 +13,7 @@ from botocore.exceptions import ClientError
 from fastapi import HTTPException
 
 _ready_endpoints = set()
+logger = logging.getLogger(__name__)
 
 
 def _table():
@@ -27,6 +29,7 @@ def _table():
 
 def _failure(exc):
     _ready_endpoints.clear()
+    logger.error("Paper wallet storage operation could not be confirmed", exc_info=(type(exc), exc, exc.__traceback__))
     raise HTTPException(status_code=503, detail="Paper wallet storage unavailable; retry without changing the operation identity") from exc
 
 
@@ -106,8 +109,9 @@ def move(user_id, date, delta, operation_id=None, allow_negative=False, order=No
             return balance(user_id, date)
         from app.services.db import get_dynamodb_client
         from boto3.dynamodb.types import TypeSerializer
+        from app.services.real_broker_state import encode as dynamodb_safe
         serializer = TypeSerializer()
-        encode = lambda values: {key: serializer.serialize(value) for key, value in values.items()}
+        encode = lambda values: {key: serializer.serialize(dynamodb_safe(value)) for key, value in values.items()}
         update = {"TableName": "WalletLedgers", "Key": encode({"user_id": user_id, "ledger_id": ledger}),
                   "UpdateExpression": "ADD current_balance :delta",
                   "ExpressionAttributeValues": encode({":delta": amount})}
@@ -138,8 +142,11 @@ def move(user_id, date, delta, operation_id=None, allow_negative=False, order=No
                 "ExpressionAttributeValues": encode({":session": session_id, ":owned": True, ":stopped": "stopped"}),
             }})
         if order is not None:
-            values = {key: Decimal(str(value)) if isinstance(value, float) else value
-                      for key, value in order.model_dump(mode="json", exclude_none=True).items()}
+            # Match ordinary order writes, including nested analytics/controller
+            # numbers. JSON mode turns Decimals into strings and leaves nested
+            # floats that boto3 rejects before the atomic reservation is sent.
+            from app.services.order_service import _order_db_item
+            values = _order_db_item(order)
             transactions.append({"Put": {"TableName": "Orders", "Item": encode(values)}})
         get_dynamodb_client().transact_write_items(TransactItems=transactions,
             ClientRequestToken=str(uuid.uuid5(uuid.NAMESPACE_URL, f"{user_id}:{receipt}:{amount}:{engine}:{cleanup}")))
@@ -172,7 +179,9 @@ def fenced_put_many(table_name, items, *, user_id, date, symbol, session_id, tok
     """Commit a group of related items under a single Paper ownership fence."""
     from app.services.db import get_dynamodb_client
     from boto3.dynamodb.types import TypeSerializer
-    encode = lambda values: {key: TypeSerializer().serialize(value) for key, value in values.items()}
+    from app.services.real_broker_state import encode as dynamodb_safe
+    serializer = TypeSerializer()
+    encode = lambda values: {key: serializer.serialize(dynamodb_safe(value)) for key, value in values.items()}
     expression = "session_id = :session AND desktop_owned = :owned AND session_status = :status"
     values = {":session": session_id, ":owned": True, ":status": "stopped" if stopped else "running"}
     if not stopped:

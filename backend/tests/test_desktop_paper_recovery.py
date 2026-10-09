@@ -235,3 +235,64 @@ def test_resume_keeps_saved_guardrail_restriction_before_first_write(database, m
     assert session.guardrail_consecutive_losses == 2
     saved = database.Table("Sessions").get_item(Key={"session_id": session_id})["Item"]
     assert saved["desktop_guardrail_state"] == record["desktop_guardrail_state"]
+
+
+@pytest.mark.parametrize("right", ["CE", "PE"])
+@pytest.mark.parametrize("sizing", ["quantity", "capital", "risk"])
+def test_desktop_paper_market_persists_analytics_fills_and_refunds_once(database, monkeypatch, right, sizing):
+    from app.models.schemas import SimulationState, TradeSide
+    user, date, symbol = "paper-analytics-user", "2026-09-28", "NIFTY"
+    session_id = f"paper-market-{right}-{sizing}"
+    expiry = "2026-09-29"
+    now = int(datetime(2026, 9, 28, 10).timestamp())
+    paper_wallet.read(user, date)
+    token, _ = paper_wallet.claim_session(user, date, symbol)
+    paper_wallet.finish_session_claim(user, date, symbol, token, session_id, desktop=True)
+    session = simulation.SimulationSession(session_id=session_id, user_id=user, symbol=symbol,
+        date=date, start_time="10:00:00", speed=1, session_type="paper",
+        instrument_type="options", strike=22950, strike_ce=22950, strike_pe=22950,
+        expiry=expiry, wallet_ledger_id=f"paper:{date}", session_capital=100000)
+    session.current_time = str(now)
+    session.last_price = 23000
+    session.state = SimulationState.RUNNING
+    session.desktop_origin = "desktop_paper"
+    session.desktop_mode = "paper"
+    session.paper_engine_token = token
+    session.paper_engine_valid_until = __import__('time').monotonic() + 40
+    contract = {"symbol": symbol, "expiry": expiry, "strike": 22950, "right": right,
+        "contract_key": f"{symbol}:{expiry}:22950:{right}"}
+    session.desktop_contracts = [contract]
+    simulation._sessions[session_id] = session
+    monkeypatch.setattr(desktop_trading, "_paper_chart_quote", lambda *args: {**contract,
+        "price": 100., "timestamp": now, "source": "desktop_live_chart"})
+    monkeypatch.setattr(desktop_trading, "_historical_context_trades", lambda *args: [])
+    monkeypatch.setattr("app.services.user_settings_service.get_settings", lambda *args, **kwargs: {
+        "target_deviation_pct": .01, "default_sl_pct": .2, "entry_auto_sl_enabled": True})
+    monkeypatch.setattr(desktop_trading, "get_settings", lambda *args: {"target_deviation_pct": .01})
+    allocation = {"quantity": 65} if sizing == "quantity" else {"funds_ratio_pct": .1} if sizing == "capital" else {"risk_pct": 1.}
+    order = asyncio.run(desktop_trading.place_chart_order(session_id,
+        desktop_trading.ChartOrderIntent(symbol=symbol, expiry=expiry, strike=22950,
+            right=right, side=TradeSide.BUY, intent="market", entry_sl_price=80,
+            group_id=f"paper-{right}-{sizing}", **allocation), user))
+    assert order.status == OrderStatus.FILLED
+    assert order.filled_price == 100
+    saved = database.Table("Orders").get_item(Key={"session_id": session_id, "order_id": order.order_id})["Item"]
+    assert saved["analytics"]["entry_method"] == "MARKET"
+    assert saved["analytics"]["capital"] == Decimal("100000")
+    assert saved["status"] == "FILLED"
+    assert paper_wallet.fill_recorded(user, date, order.order_id)
+    assert paper_wallet.balance(user, date) == pytest.approx(100000 - order.quantity * 100)
+    records = database.Table("Trades").query(KeyConditionExpression=Key("session_id").eq(session_id))["Items"]
+    assert len(records) == 1
+    assert (records[0]["right"], records[0]["strike"], records[0]["price"]) == (right, 22950, Decimal("100"))
+    position = trading.get_position(session_id, symbol, right, strike=22950, expiry=expiry)
+    assert position.quantity == order.quantity
+    stops = [item for item in order_service.get_open_orders(session_id) if item.is_stoploss]
+    assert len(stops) == 1
+    assert (stops[0].right, stops[0].strike, stops[0].quantity) == (right, 22950, order.quantity)
+    # Replaying the committed reserve receipt does not double debit/rewrite a fill.
+    current = paper_wallet.balance(user, date)
+    paper_wallet.move(user, date, -order.quantity * 101, f"order:{order.order_id}:reserve", order=order,
+        engine=(session_id, symbol, token))
+    assert paper_wallet.balance(user, date) == current
+    assert database.Table("Orders").get_item(Key={"session_id": session_id, "order_id": order.order_id})["Item"]["status"] == "FILLED"
