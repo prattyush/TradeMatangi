@@ -344,6 +344,9 @@ class ExpiryResponse(BaseModel):
 
 
 class WalletResponse(BaseModel):
+    ledger_kind: str | None = None
+    reset_allowed: bool | None = None
+    reset_reason: str | None = None
     display_balance: float | None = None
     broker_funds_updated_at: int | None = None
     user_id: str

@@ -22,7 +22,7 @@ def database(monkeypatch):
         client = boto3.client("dynamodb", region_name="ap-south-1")
         monkeypatch.setattr("app.services.db.get_dynamodb_resource", lambda: resource)
         monkeypatch.setattr("app.services.db.get_dynamodb_client", lambda: client)
-        monkeypatch.setattr(wallet_service, "get_or_init_wallet", lambda *args: 100_000)
+        monkeypatch.setattr(wallet_service, "DEFAULT_BALANCE", 100_000)
         yield resource
     wallet_service._ledgers.clear()
 
@@ -50,6 +50,8 @@ def test_shared_wallet_rejects_overspending_and_preserves_balance(database):
 
 def test_date_lock_survives_cache_clear_and_session_stop(database):
     paper_wallet.reset(USER, DATE, 150_000)
+    token, _ = paper_wallet.claim_session(USER, DATE, "NIFTY")
+    paper_wallet.finish_session_claim(USER, DATE, "NIFTY", token, "locked-run", desktop=True)
     paper_wallet.lock(USER, DATE)
     wallet_service._ledgers.clear()
     assert paper_wallet.locked(USER, DATE)
@@ -57,6 +59,10 @@ def test_date_lock_survives_cache_clear_and_session_stop(database):
         wallet_service.reset_ledger(USER, DATE, f"paper:{DATE}", 1_000_000)
     assert exc.value.status_code == 409
     assert paper_wallet.balance(USER, DATE) == 150_000
+    paper_wallet.stop_desktop_session(USER, DATE, "NIFTY", "locked-run")
+    paper_wallet.complete_desktop_cleanup(USER, DATE, "NIFTY", "locked-run")
+    assert not paper_wallet.locked(USER, DATE)
+    assert wallet_service.reset_ledger(USER, DATE, f"paper:{DATE}", 1_000_000) == 1_000_000
 
 
 def test_session_claim_prevents_duplicate_engines_and_can_recover(database):

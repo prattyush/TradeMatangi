@@ -374,14 +374,39 @@ async def _start_simulation(
     from app.services.historical_data_service import historical_operation
     mode = "live" if req.session_type in ("paper", "real") else "replay"
     with historical_operation(mode=mode):
-        return await _start_simulation_impl(req, user_id, desktop_independent=desktop_independent,
-            paper_record=paper_record, defer_paper_start=defer_paper_start)
+        if req.session_type not in ("sim", "stepwise"):
+            return await _start_simulation_impl(req, user_id, desktop_independent=desktop_independent,
+                paper_record=paper_record, defer_paper_start=defer_paper_start)
+        from app.services import practice_wallets
+        # Add-session requests inherit their group's date before claiming funds.
+        if req.group_id:
+            from app.services import session_group_service
+            group = session_group_service.get_group(req.group_id, user_id)
+            if group:
+                req.date = group["date"]
+        revision = practice_wallets.begin_start(user_id, req.date)
+        prepared = None
+        try:
+            result = await _start_simulation_impl(req, user_id, desktop_independent=desktop_independent,
+                paper_record=paper_record, defer_paper_start=defer_paper_start, defer_practice_start=True)
+            prepared = sim_svc.get_session(result.session_id)
+            if prepared is None:
+                raise HTTPException(503, "Practice session preparation failed")
+            sim_svc._upsert_session_to_db(prepared, strict=True)
+            practice_wallets.confirm_start(user_id, req.date, revision)
+            sim_svc.start_session(prepared)
+            return result
+        except Exception:
+            if prepared is not None:
+                sim_svc.stop_session(prepared)
+            raise
 
 
 async def _start_simulation_impl(
     req: SimulationStartRequest,
     user_id: str = Depends(get_request_user_id),
     *, desktop_independent: bool = False, paper_record: dict | None = None, defer_paper_start: bool = False,
+    defer_practice_start: bool = False,
 ):
     internal_session_type = req.session_type
     is_stepwise = (req.session_type == "stepwise")
@@ -629,7 +654,7 @@ async def _start_simulation_impl(
     if is_paper:
         from app.services.paper_wallet import lock
         lock(user_id, req.date)
-    if not (is_paper and defer_paper_start):
+    if not ((is_paper and defer_paper_start) or defer_practice_start):
         sim_svc.start_session(session)
     return _session_response(session, group)
 

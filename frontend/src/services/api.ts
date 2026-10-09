@@ -315,6 +315,9 @@ export interface BrokerOrder {
 }
 
 export interface WalletResponse {
+  ledger_kind?: string | null
+  reset_allowed?: boolean | null
+  reset_reason?: string | null
   display_balance?: number | null
   broker_funds_updated_at?: number | null
   user_id: string
@@ -1230,9 +1233,10 @@ const api = {
     return res.json()
   },
 
-  async getWallet(date: string, sessionId?: string | null): Promise<WalletResponse> {
+  async getWallet(date: string, sessionId?: string | null, mode?: 'paper' | 'sim'): Promise<WalletResponse> {
     const qs = new URLSearchParams({ date })
     if (sessionId) qs.set('session_id', sessionId)
+    if (mode) qs.set('mode', mode)
     const res = await fetch(`${BACKEND_URL}/api/wallet?${qs}`, {
       headers: _authHeaders(),
     })
@@ -1251,8 +1255,8 @@ const api = {
     return res.json()
   },
 
-  async resetWallet(date: string, amount?: number): Promise<WalletResponse> {
-    const res = await fetch(`${BACKEND_URL}/api/wallet/reset?date=${encodeURIComponent(date)}`, {
+  async resetWallet(date: string, amount?: number, mode?: 'paper' | 'sim'): Promise<WalletResponse> {
+    const res = await fetch(`${BACKEND_URL}/api/wallet/reset?${new URLSearchParams({ date, ...(mode ? { mode } : {}) })}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ..._authHeaders() },
       body: JSON.stringify({ amount: amount ?? 150000 }),

@@ -2223,7 +2223,7 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
             BLOCK
           </button>
         )}
-        <WalletWidget date={sim.date} sessionId={sim.sessionId} refreshKey={sim.walletRefreshKey} onWalletSnapshot={sim.applyWalletSnapshot} />
+        <WalletWidget date={sim.date} sessionId={sim.sessionState === 'running' || sim.sessionState === 'paused' ? sim.sessionId : null} refreshKey={sim.walletRefreshKey} onWalletSnapshot={sim.applyWalletSnapshot} />
         <button
           onClick={() => setShowAnalysis(true)}
           title="Trade Analysis"
