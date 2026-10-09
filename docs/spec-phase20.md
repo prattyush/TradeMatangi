@@ -26,6 +26,12 @@ Delivery is [PR #625](https://github.com/prattyush/TradeMatangi/pull/625) → de
 published for review. Implementation and validation are recorded in [Phase 21](spec-phase21.md#dated-practice-wallets-paper-resume-and-popup-stoploss--2026-10-09).
 This does not reopen completed Phase 20 sprints or establish production deployment.
 
+The subsequent Phase 21 website-stall fix moves wallet work off the request loop
+and removes historical eligibility scans. Latest reset rule: block while any
+session is on, otherwise allow reset. Full-suite testing of that simplification
+is deferred at the user's request; focused verification and request diagnostics
+are recorded in Phase 21. Delivery: [PR #627](https://github.com/prattyush/TradeMatangi/pull/627) → dev, ready for testing.
+
 ## Agreed scope and decisions
 
 Capture analytics for website and desktop executions in Paper, Real, Stepwise,

@@ -55,6 +55,7 @@ async def get_wallet(
     session_id: str | None = Query(default=None),
     user_id: str = Depends(get_request_user_id),
     mode: str | None = Query(default=None, pattern="^(paper|sim|replay|stepwise)$"),
+    include_reset_status: bool = Query(default=False),
 ):
     if session_id:
         from app.services import simulation
@@ -76,7 +77,7 @@ async def get_wallet(
                 **{"session_capital": session.session_capital, **snapshot})
         from app.services.practice_wallets import read
         kind = "paper" if session.session_type == "paper" else "sim"
-        balance = float(read(user_id, session.date, kind)["current_balance"])
+        balance = float((await asyncio.to_thread(read, user_id, session.date, kind))["current_balance"])
         date = session.date
         return WalletResponse(user_id=user_id, date=date, balance=balance, ledger_kind=kind, **_session_wallet_metrics(session, balance))
     else:
@@ -85,10 +86,12 @@ async def get_wallet(
             kind = kind_for(date, mode)
         except ValueError as exc:
             raise HTTPException(422, str(exc)) from exc
-        balance = float(read(user_id, date, kind)["current_balance"])
-        reason = blocked(user_id, date, kind)
+        balance = float((await asyncio.to_thread(read, user_id, date, kind))["current_balance"])
+        # The toolbar needs only its balance. Reset eligibility may scan saved
+        # sessions/orders and is requested explicitly when opening Settings.
+        reason = await asyncio.to_thread(blocked, user_id, date, kind) if include_reset_status is True else None
         return WalletResponse(user_id=user_id, date=date, balance=balance, ledger_kind=kind,
-            reset_allowed=not reason, reset_reason=reason)
+            reset_allowed=not reason if include_reset_status is True else None, reset_reason=reason)
 
 
 @router.post("/reset", response_model=WalletResponse)
@@ -103,7 +106,7 @@ async def reset_wallet(
         kind = kind_for(date, mode)
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
-    balance = reset(user_id, date, kind, req.amount)
+    balance = await asyncio.to_thread(reset, user_id, date, kind, req.amount)
     return WalletResponse(user_id=user_id, date=date, balance=balance, ledger_kind=kind, reset_allowed=True)
 
 

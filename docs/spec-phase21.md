@@ -9,7 +9,8 @@ backend's deployment. The Replay market-fill correction was merged to dev throug
 on 2026-10-09. Paper wallet serialization and reset-message follow-up merged to dev through
 PR #623 (0595055) on 2026-10-09. The dated-wallet and empty stopped Paper resume
 follow-up below is implemented and validated; [PR #625](https://github.com/prattyush/TradeMatangi/pull/625)
-targets dev and is published for review.
+merged to dev (a227b87). The website request-blocking follow-up below is ready
+for testing in [PR #627](https://github.com/prattyush/TradeMatangi/pull/627) → dev.
 Main merging/deployment remain manual.
 
 ## Agreed scope and defaults
@@ -432,6 +433,60 @@ Delivery: [PR #625](https://github.com/prattyush/TradeMatangi/pull/625),
 Delivery requires the updated backend, website and a rebuilt desktop client.
 Native packaged Windows acceptance remains manual. Main merge/deployment remain
 manual after review. Tests use local/synthetic records and providers.
+
+### Website wallet stalls and simple reset rule — 2026-10-09
+
+**Status: implemented; focused checks passed; full-suite testing deferred at the
+user's request so they can test immediately. [PR #627](https://github.com/prattyush/TradeMatangi/pull/627) published → dev.**
+PR #625 merged to dev (a227b87). Its synchronous wallet storage/eligibility work
+inside async request handlers could block the backend worker, delaying candles,
+Settings and sign-in. Settings disables its form while settings requests load,
+which explained why all inputs appeared uneditable. Two reproductions failed
+before the change with slow wallet read/status work blocking unrelated requests.
+The user's restart/retry and eventual success after minutes support a slow request;
+the exact deployed database delay was not measured.
+
+Latest user rule supersedes the previous pending-refund/history eligibility policy:
+
+- An on session uses its own wallet. When none is on, show the dated DB balance.
+- Any on session for the user blocks reset. Otherwise reset is allowed. Paused
+  sessions count as on; stopped session history does not add a reset restriction.
+- No historical Sessions/Orders table scans for balance or reset eligibility.
+  Eligibility uses current runtime session state. Existing atomic Paper ownership
+  and startup conflict fences remain; expired/stopped claim history and cleanup
+  metadata do not permanently lock resets.
+- Wallet DB reads/status/reset work runs in background threads. Normal balance
+  loading does not request reset eligibility; Settings requests it explicitly.
+  Google verification also runs off the main request loop.
+
+Always-on request diagnostics now record method/path/request ID at request start,
+slow pending requests, response status/duration, cancellation and exceptions.
+Background wallet work carries the request ID and logs table operation timings.
+These records use the existing `backend.log` handler. Browser network errors now
+identify method and endpoint instead of only “Failed to fetch”; requests that never
+reach the backend necessarily have only browser/network evidence. Credentials,
+query values and request bodies are not recorded.
+
+`AGENTS.md` now explicitly says to keep simple changes simple, prefer existing
+state/direct checks, avoid unnecessary historical scans/infrastructure/restrictions,
+and defer broad testing when the user requests immediate testing.
+
+Validation: **45 focused backend checks passed** for the final simple-rule change;
+**79 broader focused checks passed** before that final simplification, covering
+Google sign-in during wallet delay, auth, dated funds, request logging and Real
+wallet separation. **43 website Node tests**, both final client builds and **14 final
+request/concurrency/logging checks** passed.
+Full website acceptance uses the actual App/chart components: candles render and
+Settings custom amount is editable while the wallet request is pending, reset
+submits the entered amount, and candles return after page refresh. Wallet Settings
+and website Paper restart acceptance also passed. An earlier full regression
+(before the final simple-rule change) had **1,934 passes and the same two baseline
+fixture failures**; it is not a full-suite validation of the final simplification.
+Artifacts: `.cache/wallet-chart-startup-fix/`.
+
+Deploy/restart the updated backend and publish the rebuilt website to apply this
+fix. Main merge/deployment remain manual. Full-suite testing can run later as
+requested; packaged Windows acceptance remains manual.
 
 ## Original requirements
 

@@ -1,3 +1,4 @@
+import { requestFetch as fetch } from './requestFetch'
 import { flashError, getNotificationContext, getNotificationScope } from './notifications'
 import type { PositionSnapshot } from './positionAccounting'
 import { measureRequest } from './performanceDiagnostics'
@@ -1233,10 +1234,11 @@ const api = {
     return res.json()
   },
 
-  async getWallet(date: string, sessionId?: string | null, mode?: 'paper' | 'sim'): Promise<WalletResponse> {
+  async getWallet(date: string, sessionId?: string | null, mode?: 'paper' | 'sim', includeResetStatus = false): Promise<WalletResponse> {
     const qs = new URLSearchParams({ date })
     if (sessionId) qs.set('session_id', sessionId)
     if (mode) qs.set('mode', mode)
+    if (includeResetStatus) qs.set('include_reset_status', 'true')
     const res = await fetch(`${BACKEND_URL}/api/wallet?${qs}`, {
       headers: _authHeaders(),
     })
@@ -2241,7 +2243,7 @@ const notifiedApi: typeof api = new Proxy(api, {
         const expectedMissing = ['patternGetChartByDate', 'getActiveSimulation'].includes(String(property)) &&
           ((error instanceof ApiError && error.status === 404) || /(?:^|\D)404(?:\D|$)/.test(message))
         const name = String(property)
-        const source = /kotak/i.test(name) ? 'Kotak' : /order|buy|sell|square|flatten/i.test(name) ? 'Orders' : /simulation|session|group/i.test(name) ? 'Sessions' : /histor|preSession|expiry|strike|indicator|chart/i.test(name) ? 'Charts' : /pattern|analysis|label/i.test(name) ? 'Analysis' : 'Website request'
+        const source = /wallet/i.test(name) ? 'Wallet' : /settings/i.test(name) ? 'Settings' : /kotak/i.test(name) ? 'Kotak' : /order|buy|sell|square|flatten/i.test(name) ? 'Orders' : /simulation|session|group/i.test(name) ? 'Sessions' : /histor|preSession|expiry|strike|indicator|chart/i.test(name) ? 'Charts' : /pattern|analysis|label/i.test(name) ? 'Analysis' : 'Website request'
         if (!expectedMissing && scope === getNotificationScope()) flashError(error, source, requestContext)
         throw error
       }

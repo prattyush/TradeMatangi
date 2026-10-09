@@ -61,8 +61,7 @@ def test_paper_reset_after_stop_is_shared_by_clients_but_not_other_modes(db):
         wallets.reset(USER, DATE, "paper", 180000)
     assert blocked.value.status_code == 409
     paper_wallet.stop_desktop_session(USER, DATE, "NIFTY", "stopped")
-    with pytest.raises(HTTPException):
-        wallets.reset(USER, DATE, "paper", 180000)
+    assert wallets.reset(USER, DATE, "paper", 180000) == 180000
     paper_wallet.complete_desktop_cleanup(USER, DATE, "NIFTY", "stopped")
     client = TestClient(app)
     headers = {"X-User-Id": USER}
@@ -101,18 +100,20 @@ def test_default_today_is_paper_and_selected_historical_date_is_sim(db):
     assert client.get("/api/wallet?date=2020-01-02", headers=headers).json()["balance"] == 190000
 
 
-def test_persisted_active_run_and_pending_refunds_block_only_matching_wallet(db):
-    db.Table("Sessions").put_item(Item={"session_id": "remote", "user_id": USER, "date": DATE, "session_type": "stepwise", "state": "paused"})
-    with pytest.raises(HTTPException) as error:
-        wallets.reset(USER, DATE, "sim", 123000)
-    assert error.value.status_code == 409
-    assert wallets.reset(USER, DATE, "paper", 111000) == 111000
-    db.Table("Sessions").update_item(Key={"session_id": "remote"}, UpdateExpression="SET #state=:state", ExpressionAttributeNames={"#state": "state"}, ExpressionAttributeValues={":state": "ended"})
-    db.Table("Orders").put_item(Item={"session_id": "remote", "order_id": "refund", "user_id": USER, "status": "PENDING", "wallet_ledger_id": f"sim:{DATE}"})
-    with pytest.raises(HTTPException):
-        wallets.reset(USER, DATE, "sim", 123000)
-    db.Table("Orders").delete_item(Key={"session_id": "remote", "order_id": "refund"})
+def test_any_on_session_blocks_reset_but_stopped_history_does_not(db):
+    from types import SimpleNamespace
+    session = SimpleNamespace(user_id=USER, date=DATE, session_type="stepwise", state=simulation.SimulationState.PAUSED)
+    simulation._sessions["on"] = session
+    for kind in ("sim", "paper"):
+        with pytest.raises(HTTPException) as error:
+            wallets.reset(USER, "2026-10-08", kind, 123000)
+        assert error.value.status_code == 409
+    session.state = simulation.SimulationState.ENDED
+    db.Table("Sessions").put_item(Item={"session_id": "old", "user_id": USER, "date": DATE, "session_type": "sim", "state": "running"})
+    db.Table("Orders").put_item(Item={"session_id": "old", "order_id": "old-order", "user_id": USER, "status": "PENDING", "wallet_ledger_id": f"sim:{DATE}"})
     assert wallets.reset(USER, DATE, "sim", 123000) == 123000
+    assert wallets.reset(USER, DATE, "paper", 111000) == 111000
+    assert db.Table("Orders").scan()["Count"] == 1
 
 
 def test_replay_start_reset_revision_races_fail_closed(db):
@@ -124,8 +125,7 @@ def test_replay_start_reset_revision_races_fail_closed(db):
     version = wallets.begin_start(USER, DATE)
     db.Table("Sessions").put_item(Item={"session_id": "prepared", "user_id": USER, "date": DATE, "session_type": "sim", "state": "idle"})
     wallets.confirm_start(USER, DATE, version)
-    with pytest.raises(HTTPException):
-        wallets.reset(USER, DATE, "sim", 230000)
+    assert wallets.reset(USER, DATE, "sim", 230000) == 230000
 
 
 def test_reset_storage_failure_preserves_balance_and_history(db, monkeypatch):
