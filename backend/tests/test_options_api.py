@@ -185,7 +185,7 @@ class TestOptionsSimulationStart:
                 "date": date,
                 "instrument_type": "options",
                 "strike": 24000,
-                "expiry": "2026-05-19",
+                "expiry": "2026-05-12",
                 "right": "CE",
                 "speed": 100.0,
             })
@@ -193,7 +193,7 @@ class TestOptionsSimulationStart:
         body = resp.json()
         assert body["instrument_type"] == "options"
         assert body["strike"] == 24000
-        assert body["expiry"] == "2026-05-19"
+        assert body["expiry"] == "2026-05-12"
         assert body["right"] == "CE"
 
     def test_equity_session_unaffected(self):

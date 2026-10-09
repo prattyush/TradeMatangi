@@ -9,9 +9,11 @@ backend's deployment. The Replay market-fill correction was merged to dev throug
 on 2026-10-09. Paper wallet serialization and reset-message follow-up merged to dev through
 PR #623 (0595055) on 2026-10-09. The dated-wallet and empty stopped Paper resume
 follow-up below is implemented and validated; [PR #625](https://github.com/prattyush/TradeMatangi/pull/625)
-merged to dev (a227b87). The website request-blocking follow-up below is ready
-for testing in [PR #627](https://github.com/prattyush/TradeMatangi/pull/627) → dev.
-Main merging/deployment remain manual.
+merged to dev (a227b87). The website request-blocking fix
+[PR #627](https://github.com/prattyush/TradeMatangi/pull/627) merged to dev (a1f2765);
+main includes it through PR #628 (d52c863). Full checks and the comprehensive
+review below are complete. The new test/documentation delivery targets main;
+main merging and deployment remain manual.
 
 ## Agreed scope and defaults
 
@@ -436,8 +438,9 @@ manual after review. Tests use local/synthetic records and providers.
 
 ### Website wallet stalls and simple reset rule — 2026-10-09
 
-**Status: implemented; focused checks passed; full-suite testing deferred at the
-user's request so they can test immediately. [PR #627](https://github.com/prattyush/TradeMatangi/pull/627) published → dev.**
+**Status: implemented and merged to dev through [PR #627](https://github.com/prattyush/TradeMatangi/pull/627)
+(a1f2765), included in main through PR #628. The earlier deferred-testing checkpoint
+is superseded by the full verification below.**
 PR #625 merged to dev (a227b87). Its synchronous wallet storage/eligibility work
 inside async request handlers could block the backend worker, delaying candles,
 Settings and sign-in. Settings disables its form while settings requests load,
@@ -485,8 +488,85 @@ fixture failures**; it is not a full-suite validation of the final simplificatio
 Artifacts: `.cache/wallet-chart-startup-fix/`.
 
 Deploy/restart the updated backend and publish the rebuilt website to apply this
-fix. Main merge/deployment remain manual. Full-suite testing can run later as
-requested; packaged Windows acceptance remains manual.
+fix. Deployment remains manual; full automated verification is now recorded below.
+Packaged Windows acceptance remains manual.
+
+### Full verification and comprehensive review after PR #627 — 2026-10-09
+
+**Status: full automated checks passed; review complete. Test/docs updates on dev
+are ready for delivery in a PR to main, as requested.** Runtime code was reviewed
+at dev merge a1f2765. This follow-up adds tests and fixes test fixtures; it does not
+change wallet or desktop runtime behavior.
+
+| Check | Final result |
+|---|---|
+| Full backend suite with DynamoDB Local | **1,948 passed**, no failures (19 existing warnings) |
+| Full AI helper suite | **303 passed**, no failures |
+| Desktop Vitest | **182 passed** across 31 files |
+| Website Node tests | **43 passed**, no failures |
+| Website and desktop TypeScript/production builds | Passed |
+| Full website startup/candle/Settings browser acceptance | Passed |
+| Website dated-wallet Settings browser acceptance | Passed |
+| Website empty Paper restart browser acceptance | Passed for both existing-session choices |
+| Desktop Phase 21 browser acceptance | Passed: Replay, Stepwise, Paper, five-pane layout and empty stopped Paper |
+
+The initial backend run had 1,935 passes and the two previously recorded fixture
+failures. The options-start fixture now requests the correct NIFTY weekly expiry
+for its historical date instead of asserting a stale later expiry. The tab-restore
+fixture now includes the session group/alias/ledger metadata used by the response.
+No assertions were removed and no tests were skipped. AI helper's initial three
+failures were stale string-based mock targets after other suites reloaded modules;
+patching the dependencies actually bound to its test routers makes the complete
+suite deterministic. Funds-ratio reads in that test harness are explicitly mocked.
+
+Added **11 wallet cases** beyond the previous suite: running/paused checks across
+Paper, Replay, Stepwise and Real, another user's active session not blocking this
+user's reset, and active Paper/Replay/Stepwise wallet/date/ownership overriding an
+idle picker date. The focused fixture/wallet run passed **50 checks** before the
+final full backend run.
+
+Comprehensive review outcome:
+
+- Paper and Replay/Stepwise retain separate per-user dated records; Real accounting
+  remains separate. Missing-date carry-forward stays within its kind; existing
+  dates and explicit resets win. Receipts are excluded from carry-forward, and
+  realized P&L is not added twice.
+- Active session requests use the owned session's date/wallet; foreign-user access
+  returns 404. Runtime running/paused sessions block reset, regardless of mode/date.
+  Stopped historical records and pending historical orders add no reset restriction.
+  Eligibility does not scan Sessions/Orders history. The configured backend uses
+  one worker (`scripts/start-backend-ec2.sh --workers 1`), matching the runtime
+  session-state check. Existing Paper ownership/startup conflict fences remain.
+- Wallet reads/checks/resets and Google verification run off the main request loop.
+  Balance displays skip reset eligibility. Slow-storage concurrency tests prove
+  other requests and Google sign-in complete while wallet work waits. The actual
+  full website renders candle pixels, accepts a custom Settings amount and restores
+  candles on page refresh while wallet responses are pending.
+- Desktop empty stopped Paper resumes the saved identity without a redundant
+  confirmation; preparation accepts the owned persisted session. Completed stopped
+  history no longer prevents the Wallet popup reset. Reset funds are used on resume,
+  with existing same-date/market-time guards and trading history retained.
+- Desktop Replay Market execution and exact-contract quote routing, CE/PE option
+  lot sizing, pending-order edit increments and protective Stoploss submission are
+  covered by backend and browser checks. Popup Stoploss includes the required
+  session ID; the owned path session remains authoritative. No duplicate replacement
+  session is started for empty Paper recovery.
+- Request diagnostics record start/pending/status/duration/failure and correlate
+  background wallet work with a request ID. Browser network errors identify method
+  and endpoint. Abort identity, HTTP response handling and streaming behavior stay
+  compatible; credentials, query values and request bodies are not logged.
+
+No further runtime changes were needed from this review. Automated checks use
+local/synthetic providers and records. The user's live website/account testing,
+packaged Windows installer acceptance and production deployment remain separate;
+these results do not claim real broker execution or installer validation.
+
+Artifacts: `.cache/post627-validation/` (full backend/AI helper/client logs and
+browser summaries; browser scripts also write screenshots to their configured
+artifact directories). Reproduce with the project venv pytest for `backend/tests`
+(`USE_DYNAMODB_LOCAL=true AWS_MAX_ATTEMPTS=1`) and `aihelper/tests`, desktop
+`npm run test`, both client `npm run build` commands, website Node tests and the
+four browser scripts recorded above. Main merging/deployment remain manual.
 
 ## Original requirements
 

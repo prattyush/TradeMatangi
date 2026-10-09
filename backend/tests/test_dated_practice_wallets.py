@@ -100,9 +100,11 @@ def test_default_today_is_paper_and_selected_historical_date_is_sim(db):
     assert client.get("/api/wallet?date=2020-01-02", headers=headers).json()["balance"] == 190000
 
 
-def test_any_on_session_blocks_reset_but_stopped_history_does_not(db):
+@pytest.mark.parametrize("session_type", ["paper", "sim", "stepwise", "real"])
+@pytest.mark.parametrize("state", [simulation.SimulationState.RUNNING, simulation.SimulationState.PAUSED])
+def test_any_on_session_blocks_reset_but_stopped_history_does_not(db, session_type, state):
     from types import SimpleNamespace
-    session = SimpleNamespace(user_id=USER, date=DATE, session_type="stepwise", state=simulation.SimulationState.PAUSED)
+    session = SimpleNamespace(user_id=USER, date=DATE, session_type=session_type, state=state)
     simulation._sessions["on"] = session
     for kind in ("sim", "paper"):
         with pytest.raises(HTTPException) as error:
@@ -307,3 +309,27 @@ def test_replay_recalculation_cannot_overwrite_concurrent_explicit_reset(db, mon
         wallet_service.recalculate_sim_ledger_for_date(USER, DATE)
     assert error.value.status_code == 409
     assert wallets.read(USER, DATE, "sim")["current_balance"] == 250000
+
+
+def test_another_users_on_session_does_not_block_wallet_reset(db):
+    from types import SimpleNamespace
+    simulation._sessions["other-user-on"] = SimpleNamespace(user_id="other-user", state=simulation.SimulationState.RUNNING)
+    assert wallets.reset(USER, DATE, "paper", 180000) == 180000
+    assert wallets.reset(USER, DATE, "sim", 210000) == 210000
+
+
+@pytest.mark.parametrize("session_type,kind", [("paper", "paper"), ("sim", "sim"), ("stepwise", "sim")])
+def test_active_session_wallet_uses_its_date_instead_of_idle_picker(db, session_type, kind):
+    seed(db, kind, DATE, 185000)
+    seed(db, kind, "2020-01-02", 230000)
+    session = simulation.SimulationSession(session_id="wallet-on-session", user_id=USER, symbol="NIFTY",
+        date=DATE, start_time="09:15:00", speed=1, state=simulation.SimulationState.RUNNING,
+        session_type=session_type, instrument_type="options", wallet_ledger_id=f"{kind}:{DATE}")
+    simulation._sessions[session.session_id] = session
+    response = TestClient(app).get(f"/api/wallet?date=2020-01-02&session_id={session.session_id}", headers={"X-User-Id": USER})
+    assert response.status_code == 200, response.text
+    assert response.json()["date"] == DATE
+    assert response.json()["balance"] == 185000
+    assert response.json()["ledger_kind"] == kind
+    wrong_user = TestClient(app).get(f"/api/wallet?date={DATE}&session_id={session.session_id}", headers={"X-User-Id": "other-user"})
+    assert wrong_user.status_code == 404

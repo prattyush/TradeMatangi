@@ -31,6 +31,9 @@ def _session(user_id: str = "abc12300-0000-0000-0000-000000000001"):
         state=SimulationState.RUNNING,
         stepwise=False,
         total_bars=0,
+        group_id=None,
+        session_alias=None,
+        wallet_ledger_id="paper:2026-06-05",
     )
 
 
