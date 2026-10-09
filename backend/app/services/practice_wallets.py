@@ -6,9 +6,10 @@ import logging
 import time
 from zoneinfo import ZoneInfo
 
-from boto3.dynamodb.conditions import Attr, Key
+from boto3.dynamodb.conditions import Key
 from botocore.exceptions import ClientError
 from fastapi import HTTPException
+from app.request_logging import current_request_id
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +38,13 @@ def storage_error(exc):
 def pages(source, method, **params):
     rows = []
     while True:
+        started = time.monotonic()
+        logger.debug("wallet_storage_start request_id=%s operation=%s table=%s", current_request_id.get(), method, getattr(source, "name", "unknown"))
         response = getattr(source, method)(**params)
+        duration_ms = (time.monotonic() - started) * 1000
+        logger.log(logging.WARNING if duration_ms >= 1000 else logging.DEBUG,
+            "wallet_storage_complete request_id=%s operation=%s table=%s duration_ms=%.1f scanned=%s returned=%s more_pages=%s",
+            current_request_id.get(), method, getattr(source, "name", "unknown"), duration_ms, response.get("ScannedCount"), response.get("Count"), bool(response.get("LastEvaluatedKey")))
         rows.extend(response.get("Items", []))
         if not response.get("LastEvaluatedKey"):
             return rows
@@ -64,6 +71,7 @@ def previous_balance(db, user, date, kind):
 def read(user, date, kind):
     """Existing date wins. Only an earlier wallet of the same kind can seed it."""
     from app.services import wallet_service
+    logger.debug("wallet_balance_read request_id=%s kind=%s date=%s", current_request_id.get(), kind, date)
     try:
         db = table()
         key = {"user_id": user, "ledger_id": f"{kind}:{date}"}
@@ -90,43 +98,12 @@ def claims(user, date):
 
 
 def blocked(user, date, kind):
-    """Consult live state and persistent records, including other workers/windows."""
+    """Reset is allowed unless this user has a session on; no history scans."""
     from app.services import simulation
-    types = ("paper",) if kind == "paper" else ("sim", "stepwise")
-    for session in simulation._sessions.values():
-        if session.user_id == user and session.date == date and session.session_type in types and session.state != simulation.SimulationState.ENDED:
-            return "Wallet cannot be updated while a session for this wallet/date is active or starting"
-    try:
-        paper_claims = claims(user, date) if kind == "paper" else []
-        if kind == "paper":
-            now = int(time.time())
-            if any(row.get("session_status") == "running" or row.get("cleanup_pending") or row.get("settlement_pending")
-                   or int(row.get("claim_until") or 0) >= now or int(row.get("engine_until") or 0) >= now for row in paper_claims):
-                return "Paper session is active, starting, or waiting for Stop cleanup/settlement"
-        from app.services.db import get_dynamodb_resource
-        resource = get_dynamodb_resource()
-        # Consistent base-table reads avoid the eventually consistent user GSI.
-        for name in ("Sessions", "Orders"):
-            try:
-                rows = pages(resource.Table(name), "scan", ConsistentRead=True,
-                    FilterExpression=Attr("user_id").eq(user))
-            except ClientError as exc:
-                if exc.response["Error"]["Code"] == "ResourceNotFoundException":
-                    continue
-                raise
-            for row in rows:
-                if name == "Sessions":
-                    if row.get("date") == date and row.get("session_type") in types and row.get("state") not in ("ended", "stopped"):
-                        closed_claim = kind == "paper" and any(claim.get("desktop_owned") and claim.get("session_id") == row.get("session_id") and claim.get("session_status") in ("stopped", "settled") for claim in paper_claims)
-                        if not closed_claim:
-                            return "A saved session for this wallet/date is still active or starting; stop it first"
-                elif row.get("wallet_ledger_id") == f"{kind}:{date}" and row.get("status") == "PENDING":
-                    return "Wallet update is waiting for pending orders/refunds to finish"
-        return None
-    except HTTPException:
-        raise
-    except Exception as exc:
-        storage_error(exc)
+    if any(session.user_id == user and session.state != simulation.SimulationState.ENDED
+           for session in list(simulation._sessions.values())):
+        return "Wallet cannot be changed while a session is on; stop it first"
+    return None
 
 
 def begin_start(user, date):
@@ -184,14 +161,14 @@ def reset(user, date, kind, amount):
                 # otherwise could resume after a successful reset with old funds.
                 tx.append({"Update": {"TableName": "WalletLedgers", "Key": encode({"user_id": user, "ledger_id": f"paper:{date}:session:{symbol}"}),
                     "UpdateExpression": "REMOVE claim_token, claim_until",
-                    "ConditionExpression": "(attribute_not_exists(claim_until) OR claim_until < :now) AND (attribute_not_exists(engine_until) OR engine_until < :now) AND (attribute_not_exists(session_status) OR session_status <> :running) AND (attribute_not_exists(cleanup_pending) OR cleanup_pending = :false) AND (attribute_not_exists(settlement_pending) OR settlement_pending = :false)",
-                    "ExpressionAttributeValues": encode({":now": int(time.time()), ":running": "running", ":false": False})}})
+                    "ConditionExpression": "(attribute_not_exists(claim_until) OR claim_until < :now) AND (attribute_not_exists(engine_until) OR engine_until < :now)",
+                    "ExpressionAttributeValues": encode({":now": int(time.time())})}})
         get_dynamodb_client().transact_write_items(TransactItems=tx)
         wallet_service._ledgers[(user, f"{kind}:{date}")] = float(value)
         return float(value)
     except ClientError as exc:
         if exc.response["Error"]["Code"] == "TransactionCanceledException":
-            raise HTTPException(409, "Wallet/session changed during reset; refresh and retry after Stop cleanup") from exc
+            raise HTTPException(409, "Wallet/session changed during reset; refresh and retry after stopping any session") from exc
         storage_error(exc)
     except HTTPException:
         raise

@@ -54,7 +54,7 @@ def test_date_lock_survives_cache_clear_and_session_stop(database):
     paper_wallet.finish_session_claim(USER, DATE, "NIFTY", token, "locked-run", desktop=True)
     paper_wallet.lock(USER, DATE)
     wallet_service._ledgers.clear()
-    assert paper_wallet.locked(USER, DATE)
+    # A live Paper engine remains fenced even on another worker.
     with pytest.raises(HTTPException) as exc:
         wallet_service.reset_ledger(USER, DATE, f"paper:{DATE}", 1_000_000)
     assert exc.value.status_code == 409

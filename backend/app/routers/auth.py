@@ -1,3 +1,4 @@
+import asyncio
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
@@ -65,7 +66,7 @@ async def desktop_token(req: DesktopTokenRequest):
 
 @router.post("/desktop/google-token", response_model=DesktopTokenResponse)
 async def desktop_google_token(req: DesktopGoogleTokenRequest):
-    user = google_auth(req.id_token, account_name=req.account_name)
+    user = await asyncio.to_thread(google_auth, req.id_token, account_name=req.account_name)
     if not user:
         raise HTTPException(status_code=401, detail="Invalid Google token or account_name required")
     return issue_token_bundle(user["user_id"], req.device_name)
@@ -159,7 +160,7 @@ async def get_me(user_id: str = Depends(get_request_user_id)):
 @router.post("/google", response_model=AuthResponse)
 async def google_login(req: GoogleAuthRequest):
     """Sign in or sign up with Google ID token."""
-    result = google_auth(req.id_token, account_name=req.account_name)
+    result = await asyncio.to_thread(google_auth, req.id_token, account_name=req.account_name)
     if not result:
         raise HTTPException(status_code=401, detail="Invalid Google token or account_name required")
     return AuthResponse(
