@@ -51,12 +51,13 @@ async def test_completion_waits_for_flat_and_broker_verification(user,monkeypatc
     monkeypatch.setattr(order_service,'get_open_orders',lambda *a:[])
     monkeypatch.setattr(kotak_service,'get_service',lambda:object())
     calls=[]
+    monkeypatch.setattr(simulation, 'stop_session', lambda *a, **k: calls.append('stopped'))
     async def refresh(*a):calls.append('verified')
     monkeypatch.setattr(real_broker_state,'refresh',refresh)
     monkeypatch.setattr(day,'finish',lambda *a:calls.append('done'))
     monkeypatch.setattr(day,'broadcast',lambda *a:None)
     await day.complete_when_flat(user.user_id)
-    assert calls==['verified','done']
+    assert calls==['verified','done','stopped']
 
 def test_persisted_day_lock_survives_cache_clear_and_rollover(monkeypatch):
     rows={};date=['2026-10-07'];table=MagicMock()

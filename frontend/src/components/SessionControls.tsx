@@ -348,7 +348,12 @@ export default function SessionControls({
       // Check Kotak authentication before starting real session
       setLoading(true)
       try {
-        const status = await api.kotakStatus()
+        const status = await api.executionBrokerStatus()
+        if (!status.authenticated && status.broker === "kite") {
+          setStartError("Kite token is missing or expired. Update it in Admin Settings before starting.")
+          setLoading(false)
+          return
+        }
         if (!status.authenticated) {
           // Store the start action and show TOTP modal
           setPendingStart(() => _doStart)

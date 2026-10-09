@@ -13,6 +13,7 @@ export default function TradingSafetyActions({ sessionId, sessionType, onOrdersR
   const [exiting, setExiting] = useState(false)
   const [dayPending, setDayPending] = useState(false)
   const [day, setDay] = useState<RealTradingDayStatus | null>(null)
+  const [closeSummary, setCloseSummary] = useState('')
   const [confirm, setConfirm] = useState(false)
   const updateDay = (value: RealTradingDayStatus) => setDay(previous => mergeRealTradingDayStatus(previous, value))
   const busy = useRef(false)
@@ -57,7 +58,7 @@ export default function TradingSafetyActions({ sessionId, sessionType, onOrdersR
   const style = { border: '1px solid #a33c3c', color: '#ffb7b7', background: '#35191b', borderRadius: 5, padding: '5px 9px', fontSize: 12, width: 142, cursor: 'pointer', whiteSpace: 'nowrap' as const }
   return <>
     <button style={style} disabled={exiting || dayPending || (sessionType === 'real' && day?.state === 'done')} onClick={() => void exit()} title="Exit every open contract in this session using aggressive LIMIT orders, 3% below market for longs or above for shorts">{exiting ? 'Requesting exits…' : 'Exit all now'}</button>
-    {sessionType === 'real' && <button style={{ ...style, minWidth: 132 }} disabled={!day || day.state !== 'active' || dayPending || exiting} onClick={() => setConfirm(true)} title="Close your real-session positions and permanently lock real trading for this IST day; no settings or restart override">{dayPending || day?.state === 'closing' ? 'Closing for day…' : day?.state === 'done' ? 'Done for day 🔒' : 'Done for day'}</button>}
-    {confirm && <ConfirmModal message="Close positions in all your real sessions and stop real trading for today? New entries will be blocked while exits finish. After confirmed closure, today's ban has no UI or API override." onYes={() => void finish()} onNo={() => setConfirm(false)} />}
+    {sessionType === 'real' && <button style={{ ...style, minWidth: 132 }} disabled={!day || day.state !== 'active' || dayPending || exiting} onClick={() => { void api.realCloseSummary(sessionId).then(summary => { setCloseSummary(`${summary.position_count} open position(s) will be closed and ${summary.pending_order_count} pending order(s) reconciled. Cancel to close them yourself. `); setConfirm(true) }).catch(error => flashError(error, 'Done for day')) }} title="Close your real-session positions and permanently lock real trading for this IST day; no settings or restart override">{dayPending || day?.state === 'closing' ? 'Closing for day…' : day?.state === 'done' ? 'Done for day 🔒' : 'Done for day'}</button>}
+    {confirm && <ConfirmModal message={`${closeSummary}Stop Real trading for today across both brokers? New entries will be blocked while exits finish. After confirmed closure, today's ban has no UI or API override.`} onYes={() => void finish()} onNo={() => setConfirm(false)} />}
   </>
 }

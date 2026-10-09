@@ -55,7 +55,7 @@ def retry_delay(error):
 
 def state(broker):
     # Include the loop: tasks/locks never cross backend lifetimes or test loops.
-    return _accounts.setdefault((asyncio.get_running_loop(), broker.account_identity(), getattr(broker, '_generation', 0)), Account())
+    return _accounts.setdefault((asyncio.get_running_loop(), getattr(broker, 'execution_broker', 'kotak') if isinstance(getattr(broker, 'execution_broker', 'kotak'), str) else 'kotak', broker.account_identity(), getattr(broker, '_generation', 0)), Account())
 
 
 def invalidate(broker):

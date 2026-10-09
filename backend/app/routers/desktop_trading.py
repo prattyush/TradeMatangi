@@ -16,7 +16,7 @@ from zoneinfo import ZoneInfo
 from typing import Literal
 from weakref import WeakValueDictionary
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
@@ -47,7 +47,25 @@ from app.routers import simulation as simulation_router
 from app.services import order_service, options_service, paper_wallet, simulation as sim_svc, strategy_service, trading as trading_service, wallet_service
 from app.services.user_settings_service import get_settings, update_settings
 
-router = APIRouter(prefix="/api/desktop/v1/trading", tags=["desktop"])
+async def require_real_bearer(request: Request, authorization: str | None = Header(default=None)):
+    sid = request.path_params.get('session_id')
+    session = sim_svc.get_session(sid) if sid else None
+    real = session is not None and session.session_type == 'real'
+    real = real or request.query_params.get('desktop_mode') == 'real'
+    if request.method in ('POST', 'PUT'):
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        if isinstance(body, dict):
+            real = real or body.get('desktop_mode') == 'real' or body.get('mode') == 'real' or (isinstance(body.get('settings'), dict) and 'real_execution_broker' in body['settings'])
+    if real:
+        from app.dependencies import require_real_trading_access
+        user = get_desktop_user_id(authorization=authorization, x_user_id=None)
+        require_real_trading_access(user)
+
+
+router = APIRouter(prefix="/api/desktop/v1/trading", tags=["desktop"], dependencies=[Depends(require_real_bearer)])
 logger = logging.getLogger(__name__)
 HEARTBEAT_INTERVAL = 15
 _start_locks = WeakValueDictionary()
@@ -73,6 +91,7 @@ class DesktopTradingSnapshot(BaseModel):
     contracts: list[dict] = []
     positions_by_contract: dict[str, dict] = {}
     wallet_balance: float
+    broker_funds_updated_at: int | None = None
     pnl: dict
     settings: dict
     option_lot_size: int = 1
@@ -184,7 +203,7 @@ class DesktopTradeLabelRequest(BaseModel):
 
 
 class DesktopTradingStartRequest(SimulationStartRequest):
-    desktop_mode: str = Field(default="stepwise", pattern="^(stepwise|replay|paper)$")
+    desktop_mode: str = Field(default="stepwise", pattern="^(stepwise|replay|paper|real)$")
     resume_bar_index: int | None = Field(default=None, ge=0)
 
 
@@ -202,7 +221,7 @@ class PreparationPane(BaseModel):
 
 
 class PreparationRequest(BaseModel):
-    mode: Literal["paper", "replay", "stepwise", "browse"]
+    mode: Literal["paper", "real", "replay", "stepwise", "browse"]
     date: str
     reference_time: str = "09:15:00"
     session_id: str | None = None
@@ -234,7 +253,7 @@ async def prepare_session(req: PreparationRequest, user_id: str = Depends(prepar
             raise HTTPException(status_code=409, detail="Session mode changed; reopen the picker")
         req.date = session.date
         req.reference_time = datetime.fromtimestamp(int(session.current_time), timezone.utc).strftime("%H:%M:%S") if session.current_time else session.start_time
-    if req.mode == "paper":
+    if req.mode in ("paper", "real"):
         now = datetime.now(ZoneInfo("Asia/Kolkata"))
         req.date, req.reference_time = now.date().isoformat(), now.strftime("%H:%M:%S")
     try:
@@ -250,7 +269,7 @@ def _active_desktop_session_for_date(user_id: str, date: str, desktop_mode: str 
             continue
         if session.state == sim_svc.SimulationState.ENDED:
             continue
-        if _desktop_mode(session) in ("paper", "replay", "stepwise") and (desktop_mode is None or _desktop_mode(session) == desktop_mode):
+        if _desktop_mode(session) in ("paper", "real", "replay", "stepwise") and (desktop_mode is None or _desktop_mode(session) == desktop_mode):
             return session
     return None
 
@@ -261,6 +280,8 @@ def _desktop_mode(session) -> str:
 
 def _desktop_source(session) -> str:
     mode = _desktop_mode(session)
+    if mode == "real":
+        return "desktop_real"
     if mode == "paper":
         return "desktop_paper"
     return "desktop_replay" if mode == "replay" else "desktop_stepwise"
@@ -728,7 +749,11 @@ def _session_sizing_settings(session, settings: dict) -> dict:
 
 
 def _snapshot(session, user_id: str) -> DesktopTradingSnapshot:
-    wallet = wallet_service.get_ledger_balance(user_id, session.date, session.wallet_ledger_id)
+    if session.session_type == "real":
+        funds = wallet_service.get_real_wallet_snapshot(user_id, session.date, session.wallet_ledger_id)
+        wallet = funds["balance"]
+    else:
+        wallet = wallet_service.get_ledger_balance(user_id, session.date, session.wallet_ledger_id)
     strategies = [_strategy_response(item) for item in strategy_service.list_running(session.session_id)]
     day_pnl = _day_pnl(session)
     session_capital = float(session.session_capital or 0)
@@ -736,6 +761,13 @@ def _snapshot(session, user_id: str) -> DesktopTradingSnapshot:
     settings = dict(get_settings(user_id))
     settings.update(_session_sizing_settings(session, settings))
     contracts = _desktop_contracts(session)
+    required = list(getattr(session, 'broker_positions', []) or []) + [o.model_dump() for o in order_service.get_open_orders(session.session_id)]
+    for item in required:
+        if item.get('right') in ('CE', 'PE') and item.get('strike') and item.get('expiry') and item.get('quantity', 0):
+            contract = _normalise_contract(DesktopOptionContract(symbol=session.symbol, expiry=item['expiry'], strike=item['strike'], right=item['right']))
+            _register_contract(session, contract)
+            if session.session_type in ('paper', 'real') and session.paper_stream_source:
+                sim_svc.subscribe_desktop_option_contract(session, contract)
     quotes = _refresh_contract_quotes(session)
     positions_by_contract = {
         item["contract_key"]: _position_for(session, item["right"], item["strike"], item["expiry"]).model_dump(mode="json")
@@ -751,7 +783,7 @@ def _snapshot(session, user_id: str) -> DesktopTradingSnapshot:
     return DesktopTradingSnapshot(
         option_lot_size=LOT_SIZES.get(session.symbol, 1),
         owned=bool(getattr(session, "desktop_origin", None)),
-        wallet_locked=session.session_type == "paper",
+        wallet_locked=session.session_type in ("paper", "real"),
         engine_generation=getattr(session, "paper_engine_generation", None),
         event_cursor=session.queue.latest_id(),
         desktop_mode=_desktop_mode(session),
@@ -774,6 +806,7 @@ def _snapshot(session, user_id: str) -> DesktopTradingSnapshot:
         contracts=contracts,
         positions_by_contract=positions_by_contract,
         wallet_balance=wallet,
+        broker_funds_updated_at=funds["broker_funds_updated_at"] if session.session_type == "real" else None,
         pnl={
             "equity": _position_pnl(session, None),
             "ce": _position_pnl(session, "CE", session.strike_ce, session.expiry),
@@ -818,6 +851,10 @@ def _historical_context_trades(session, user_id: str) -> list[dict]:
         )
         trades: list[dict] = []
         for record in sessions:
+            if session.session_type == 'real':
+                from app.services.execution_broker import name
+                if name(record.get('execution_broker')) != name(session):
+                    continue
             sid = record.get("session_id")
             if sid and sid != session.session_id:
                 trades.extend(get_trades_for_session(sid))
@@ -1057,6 +1094,13 @@ async def _start_desktop_trading(req: DesktopTradingStartRequest, user_id: str):
             raise HTTPException(status_code=409, detail="Paper trading has closed for this date")
         req.session_type = "paper"
         req.stepwise = False
+    elif req.desktop_mode == "real":
+        from app.dependencies import require_real_trading_access
+        require_real_trading_access(user_id)
+        if req.date != datetime.now(ZoneInfo("Asia/Kolkata")).date().isoformat():
+            raise HTTPException(400, "Real trading requires today IST")
+        req.session_type = "real"
+        req.stepwise = False
     elif req.desktop_mode == "replay":
         req.session_type = "sim"
         req.stepwise = False
@@ -1143,7 +1187,7 @@ async def candidate(
     symbol: str,
     date: str,
     instrument_type: str,
-    desktop_mode: str = Query(pattern="^(stepwise|replay|paper)$"),
+    desktop_mode: str = Query(pattern="^(stepwise|replay|paper|real)$"),
     user_id: str = Depends(get_desktop_user_id),
 ):
     if desktop_mode == "paper":
@@ -1167,7 +1211,7 @@ async def candidate(
             if claim.get("session_status") == "running" and sim_svc.get_session(record["session_id"]) is None:
                 return DesktopTradingCandidate(status="remote", existing_session_id=record["session_id"],
                     stopped=_saved_paper_snapshot(record, user_id))
-    session_type = "paper" if desktop_mode == "paper" else "stepwise" if desktop_mode == "stepwise" else "sim"
+    session_type = "real" if desktop_mode == "real" else "paper" if desktop_mode == "paper" else "stepwise" if desktop_mode == "stepwise" else "sim"
     for session in list(sim_svc._sessions.values()):
         if session.user_id != user_id or session.state == sim_svc.SimulationState.ENDED:
             continue
@@ -1193,11 +1237,9 @@ async def candidate(
 async def attach_contract(session_id: str, req: AttachContractRequest, user_id: str = Depends(get_desktop_user_id)):
     session = _require_session(session_id, user_id)
     contract = _normalise_contract(req)
+    _desktop_contracts(session)
     if contract["symbol"] != session.symbol:
         raise HTTPException(status_code=400, detail=f"This desktop trading session is locked to {session.symbol}. Open another screen to use {contract['symbol']}.")
-    if session.expiry and contract["expiry"] != session.expiry:
-        raise HTTPException(status_code=400, detail=f"This desktop trading session is locked to expiry {session.expiry}")
-    _assert_can_switch_active_right(session, contract)
     ensure = lambda: simulation_router._ensure_options_data(session.symbol, session.date, contract["strike"], contract["expiry"], contract["right"])
     from app.services.historical_data_service import historical_operation
     from app.services.history_workers import run_history
@@ -1206,14 +1248,14 @@ async def attach_contract(session_id: str, req: AttachContractRequest, user_id: 
             await run_history(simulation_router._soft_ensure, ensure)
         else:
             await run_history(ensure)
-    if session.session_type == "paper" and getattr(session, "paper_stream_source", None):
+    if session.session_type in ("paper", "real") and getattr(session, "paper_stream_source", None):
         try:
             sim_svc.subscribe_desktop_option_contract(session, contract)
         except Exception as exc:
             raise HTTPException(status_code=503, detail=f"Could not subscribe to option contract: {exc}") from exc
-    if contract["right"] == "CE":
+    if contract["right"] == "CE" and session.strike_ce is None:
         session.strike_ce = contract["strike"]
-    else:
+    elif contract["right"] == "PE" and session.strike_pe is None:
         session.strike_pe = contract["strike"]
     if not session.expiry:
         session.expiry = contract["expiry"]
@@ -1227,7 +1269,7 @@ async def active_stepwise(
     symbol: str | None = Query(default=None),
     date: str | None = Query(default=None),
     instrument_type: str | None = Query(default=None),
-    desktop_mode: str | None = Query(default=None, pattern="^(stepwise|replay|paper)$"),
+    desktop_mode: str | None = Query(default=None, pattern="^(stepwise|replay|paper|real)$"),
     user_id: str = Depends(get_desktop_user_id),
 ):
     for session in list(sim_svc._sessions.values()):
@@ -1249,9 +1291,18 @@ async def active_stepwise(
 
 
 @router.get("/{session_id}/snapshot", response_model=DesktopTradingSnapshot)
-async def snapshot(session_id: str, user_id: str = Depends(get_desktop_user_id)):
+async def snapshot(session_id: str, user_id: str = Depends(get_desktop_user_id), authorization: str | None = Header(default=None)):
     session = sim_svc.get_session(session_id)
     if session and session.user_id == user_id and session.state != sim_svc.SimulationState.ENDED:
+        _require_session(session_id, user_id)
+        return _snapshot(session, user_id)
+    from app.services.db import get_dynamodb_resource
+    record = await asyncio.to_thread(lambda: get_dynamodb_resource().Table('Sessions').get_item(Key={'session_id': session_id}, ConsistentRead=True).get('Item'))
+    if record and record.get('user_id') == user_id and record.get('session_type') == 'real':
+        verified = get_desktop_user_id(authorization=authorization if isinstance(authorization, str) else None, x_user_id=None)
+        if verified != user_id:
+            raise HTTPException(404, 'Session not found')
+        session = sim_svc.rebuild_session_from_db(record, user_id, read_only=True)
         return _snapshot(session, user_id)
     record, claim = _saved_desktop_paper(session_id, user_id)
     claim = _reconcile_saved_paper(record, claim)
@@ -1283,15 +1334,28 @@ async def trading_events(
 
 
 @router.post("/{session_id}/stop")
-async def stop_stepwise(session_id: str, req: DesktopStopRequest | None = None, user_id: str = Depends(get_desktop_user_id)):
+async def stop_stepwise(session_id: str, req: DesktopStopRequest | None = None, user_id: str = Depends(get_desktop_user_id), authorization: str | None = Header(default=None)):
     logger.info("desktop_trading_stop_requested session_id=%s user_id=%s", session_id, user_id)
     session = sim_svc.get_session(session_id)
+    if not session:
+        from app.services.db import get_dynamodb_resource
+        record = await asyncio.to_thread(lambda: get_dynamodb_resource().Table('Sessions').get_item(Key={'session_id': session_id}, ConsistentRead=True).get('Item'))
+        if record and record.get('user_id') == user_id and record.get('session_type') == 'real':
+            verified = get_desktop_user_id(authorization=authorization if isinstance(authorization, str) else None, x_user_id=None)
+            if verified != user_id:
+                raise HTTPException(404, 'Session not found')
+            from app.services import real_sessions, real_close
+            session = await real_sessions.restore_for_close(record, user_id)
+            return await real_close.close(session)
     if not session or session.user_id != user_id:
         record, claim = _saved_desktop_paper(session_id, user_id)
         paper_wallet.stop_desktop_session(user_id, record["date"], record["symbol"], session_id,
             expected_generation=req.engine_generation if req else None)
         _reconcile_saved_paper(record, paper_wallet.session_claim(user_id, record["date"], record["symbol"]))
         return {"status": "stopped"}
+    if session.session_type == "real":
+        from app.services.real_close import close
+        return await close(session)
     if _desktop_mode(session) == "paper" and not getattr(session, "desktop_origin", None):
         raise HTTPException(status_code=409, detail="Attached Paper sessions cannot be stopped from desktop; detach this screen instead")
     if getattr(session, "desktop_origin", None) == "desktop_paper":
@@ -1302,6 +1366,9 @@ async def stop_stepwise(session_id: str, req: DesktopStopRequest | None = None, 
         record, claim = _saved_desktop_paper(session_id, user_id)
         _reconcile_saved_paper(record, claim)
         return {"status": "stopped"}
+    if session.session_type == "real":
+        from app.services.real_close import close
+        return await close(session)
     _flatten_positions_for_stop(session, user_id)
     _mark_desktop_checkpoint(session)
     sim_svc.stop_session(session)
@@ -1514,17 +1581,26 @@ async def convert_order(session_id: str, order_id: str, req: ConvertOrderRequest
 async def start_strategy(session_id: str, req: DesktopStartStrategyRequest, user_id: str = Depends(get_desktop_user_id)):
     session = _require_session(session_id, user_id)
     req.session_id = session_id
+    if req.strategy_type.value in ("UnderlyingTargetProfit", "UnderlyingStoploss"):
+        req.contract_scope = "all_right"
     contract = None
     if req.right:
         right = req.right.upper()
         requested_strike = getattr(req, "strike", None)
         requested_expiry = getattr(req, "expiry", None)
         strike = requested_strike if requested_strike is not None else session.strike_ce if right == "CE" else session.strike_pe if right == "PE" else None
+        if req.contract_scope == 'all_right' and requested_strike is None:
+            opened = [c for c in trading_service.get_open_option_contracts(session_id, session.symbol) if c['right'] == right]
+            if opened and _position_for(session, right, strike, req.expiry or session.expiry).side == 'FLAT':
+                chosen = sorted(opened, key=lambda c: (c['expiry'], c['strike']))[0]
+                strike, req.expiry = chosen['strike'], chosen['expiry']
         contract = _require_registered_contract(session, right, strike, requested_expiry or session.expiry)
         if requested_strike is not None and req.strategy_type.value in ("BreakEven", "AggressiveStoploss", "TargetProfit", "LockProfit", "UnderlyingTargetProfit", "UnderlyingStoploss"):
             position = _position_for(session, right, contract["strike"], contract["expiry"])
             if position.side == "FLAT":
                 raise HTTPException(status_code=400, detail=f"{req.strategy_type.value} requires an open position in {right} {contract['strike']}")
+    if contract:
+        req.strike, req.expiry = contract["strike"], contract["expiry"]
     from app.routers.strategies import start_strategy as web_start_strategy
     response = web_start_strategy(req, user_id=user_id)
     if contract:
@@ -1691,6 +1767,14 @@ async def pre_session_wallet(
     user_id: str = Depends(get_desktop_user_id),
 ):
     """Return the wallet balance that the next desktop run will use."""
+    if desktop_mode == "real":
+        from app.dependencies import require_real_trading_access
+        from app.services import execution_broker
+        require_real_trading_access(user_id)
+        settings = await asyncio.to_thread(get_settings, user_id, strict=True)
+        broker = execution_broker.get_service(settings["real_execution_broker"])
+        balance = await asyncio.to_thread(broker.get_funds)
+        return {"user_id": user_id, "date": date, "balance": balance, "locked": True, "reset_reason": "Real broker funds are read-only"}
     ledger_kind = "paper" if desktop_mode == "paper" else "sim"
     from app.services.practice_wallets import read, blocked
     balance = float((await asyncio.to_thread(read, user_id, date, ledger_kind))["current_balance"])
@@ -1716,6 +1800,8 @@ async def reset_pre_session_wallet(
 @router.post("/{session_id}/wallet/reset")
 async def reset_wallet(session_id: str, req: WalletResetRequest, user_id: str = Depends(get_desktop_user_id)):
     session = _require_session(session_id, user_id)
+    if session.session_type == "real":
+        raise HTTPException(403, "Real broker funds cannot be reset")
     if session.state != sim_svc.SimulationState.ENDED:
         raise HTTPException(status_code=409, detail="Wallet cannot be changed during an active desktop session")
     from app.services.practice_wallets import reset
@@ -1813,3 +1899,77 @@ async def split_order(session_id: str, order_id: str,
     _require_session(session_id, user_id)
     from app.routers.orders import split_order as web_split_order
     return await web_split_order(order_id, req, session_id=session_id, user_id=user_id)
+
+
+@router.get("/broker/status")
+async def real_broker_status(user_id: str = Depends(preparation_user_id)):
+    from app.dependencies import require_real_trading_access
+    from app.routers.execution_brokers import status_for
+    require_real_trading_access(user_id)
+    return await status_for(user_id)
+
+@router.post("/{session_id}/broker-refresh")
+async def refresh_real(session_id: str, user_id: str = Depends(preparation_user_id)):
+    from app.services import real_broker_state, execution_broker
+    session = _require_session(session_id, user_id)
+    if session.session_type != 'real':
+        raise HTTPException(400, 'Real session required')
+    await real_broker_state.refresh(session, execution_broker.get_service(session))
+    return _snapshot(session, user_id)
+
+@router.get("/{session_id}/close-summary")
+async def real_summary(session_id: str, user_id: str = Depends(preparation_user_id)):
+    from app.services import real_close
+    session = sim_svc.get_session(session_id)
+    if session:
+        return real_close.summary(_require_session(session_id, user_id))
+    from app.services.db import get_dynamodb_resource
+    record = await asyncio.to_thread(lambda: get_dynamodb_resource().Table('Sessions').get_item(Key={'session_id': session_id}, ConsistentRead=True).get('Item'))
+    if not record or record.get('user_id') != user_id or record.get('session_type') != 'real':
+        raise HTTPException(404, 'Real session not found')
+    return real_close.summary(sim_svc.rebuild_session_from_db(record, user_id, read_only=True))
+
+@router.post("/{session_id}/done-for-day")
+async def done_real_day(session_id: str, user_id: str = Depends(preparation_user_id)):
+    from app.services import real_trading_day
+    session = _require_session(session_id, user_id)
+    if session.session_type != 'real':
+        raise HTTPException(400, 'Real session required')
+    if session.date != real_trading_day.market_date():
+        raise HTTPException(409, 'Close the previous-day session before finishing today')
+    return await real_trading_day.done_for_day(user_id)
+
+
+class DesktopEventSnapshot(BaseModel):
+    event_id: str = Field(min_length=1, max_length=150)
+    event: dict
+
+
+@router.post('/{session_id}/event-snapshots')
+async def capture_event_snapshot(session_id: str, req: DesktopEventSnapshot, user_id: str = Depends(preparation_user_id)):
+    from app.routers.snapshots import SnapshotPayload, store_snapshot
+    session = _require_session(session_id, user_id)
+    state = _snapshot(session, user_id)
+    timestamp = state.current_time
+    if timestamp <= 0:
+        raise HTTPException(409, 'No observed trading clock is available for a snapshot')
+    return await store_snapshot(SnapshotPayload(event_id=req.event_id, session_id=session_id, user_id=user_id,
+        symbol=session.symbol, date=session.date, instrument_type=session.instrument_type, session_type=session.session_type,
+        timestamp=timestamp, event=req.event, snapshot={
+            'current_price': state.current_price, 'current_price_ce': state.current_price_ce, 'current_price_pe': state.current_price_pe,
+            'bar_time': timestamp // 180 * 180, 'bar_ohlc': None,
+            'position': state.positions['equity'], 'position_ce': state.positions['CE'], 'position_pe': state.positions['PE'],
+            'positions_by_contract': state.positions_by_contract, 'contract_quotes': state.contract_quotes,
+            'session_capital': session.session_capital, 'wallet_balance': state.wallet_balance,
+            'session_pnl': state.pnl['day'], 'session_pnl_pct': state.pnl['day_pct'],
+            'open_orders': [o.model_dump(mode='json') for o in state.open_orders],
+            'execution_broker': session.execution_broker if session.session_type == 'real' else None,
+        }), user_id=user_id)
+
+
+@router.get('/real-day-status')
+async def real_day_status(user_id: str = Depends(preparation_user_id)):
+    from app.dependencies import require_real_trading_access
+    from app.services.real_trading_day import state
+    require_real_trading_access(user_id)
+    return await asyncio.to_thread(state, user_id)

@@ -117,6 +117,7 @@ async def test_start_route_reconciles_and_selects_before_starting_engine(session
     group = {"group_id": "group", "date": s.date, "clock_family": "live",
         "strategy_interval_secs": 180, "member_session_ids": [], "state": "running"}
     broker = Mock()
+    broker.account_identity.return_value = "resume-account"
     async def refresh(current, service):
         add_position(current, "PE", 24000, 100)
     def start(current):

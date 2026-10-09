@@ -57,11 +57,16 @@ def expiry_date(value) -> str | None:
     return None
 
 
+def order_id(raw: dict) -> str:
+    return str(raw.get("broker_order_id") or raw.get("kotak_order_id") or raw.get("nOrdNo") or raw.get("order_id") or "")
+
+
 def normalize_order(raw: dict) -> dict:
     side = str(raw.get("trnsTp") or raw.get("side") or "B").upper()
     kind = str(raw.get("prcTp") or raw.get("pt") or raw.get("order_type") or "L").upper()
     result = {
-        "kotak_order_id": str(raw.get("nOrdNo") or raw.get("kotak_order_id") or ""),
+        "broker_order_id": order_id(raw),
+        "execution_broker": raw.get("execution_broker", "kotak"),
         "status": str(raw.get("ordSt") or raw.get("status") or raw.get("stat") or "").strip().lower().replace("_", " "),
         "side": "BUY" if side in ("B", "BUY") else "SELL",
         "side_known": bool(raw.get("trnsTp") or raw.get("side")) and side in ("B", "BUY", "S", "SELL"),
@@ -84,6 +89,8 @@ def normalize_order(raw: dict) -> dict:
         "instrument_token": str(raw.get("tok") or raw.get("instrument_token") or ""),
     }
 
+    if result["execution_broker"] != "kite":
+        result["kotak_order_id"] = result["broker_order_id"]
     if result["status"] in ("complete", "filled") and not result["filled_quantity"]:
         result["filled_quantity"] = result["quantity"]
     return result
@@ -96,7 +103,7 @@ def normalize_execution(raw: dict) -> dict:
                       f'{raw.get("flDt", "")} {raw.get("flTm", "")}'.strip()) or raw.get("exTm") or raw.get("hsUpTm") or ""),
                   quantity=int(number(raw.get("fldQty") or raw.get("flQty") or raw.get("quantity"))),
                   price=number(raw.get("flPrc") or raw.get("price") or raw.get("avgPrc")))
-    if not result["execution_id"] or not result["kotak_order_id"] or result["quantity"] <= 0 or result["price"] <= 0:
+    if not result["execution_id"] or not result["broker_order_id"] or result["quantity"] <= 0 or result["price"] <= 0:
         raise ValueError("Broker execution is missing identity, quantity or price")
     from app.services.real_accounting import price_factor
     result["price_factor"] = raw.get("price_factor", price_factor(raw))
@@ -105,13 +112,26 @@ def normalize_execution(raw: dict) -> dict:
     return result
 
 
+def option_base(session):
+    from app.services.execution_broker import name
+    if name(session) == 'kite':
+        from app.services.kite_service import _KITE_NAMES
+        return _KITE_NAMES.get(session.symbol, session.symbol).upper()
+    return "SENSEX" if session.symbol == "BSESEN" else session.symbol.upper()
+
+
 def in_scope(session, row: dict) -> bool:
     from app.services.kotak_service import _SYMBOL_MAP
     symbol = str(row.get("symbol", "")).upper()
     if session.instrument_type != "options":
-        expected = _SYMBOL_MAP.get(session.symbol, (session.symbol, ""))[0].upper()
+        from app.services.execution_broker import name
+        if name(session) == 'kite':
+            from app.services.kite_service import _KITE_NAMES
+            expected = _KITE_NAMES.get(session.symbol, session.symbol).upper()
+        else:
+            expected = _SYMBOL_MAP.get(session.symbol, (session.symbol, ""))[0].upper()
         return symbol == expected
-    base = "SENSEX" if session.symbol == "BSESEN" else session.symbol.upper()
+    base = option_base(session)
     return bool(re.fullmatch(re.escape(base) + r"\d{2}(?:[1-9OND]\d{2}|[A-Z]{3})\d+(?:CE|PE)", symbol))
 
 
@@ -119,7 +139,7 @@ def contract(session, row: dict, master=None) -> dict:
     if session.instrument_type != "options":
         return {"right": None, "strike": None, "expiry": None}
     symbol = row["symbol"].upper()
-    base = "SENSEX" if session.symbol == "BSESEN" else session.symbol.upper()
+    base = option_base(session)
     weekly = re.fullmatch(re.escape(base) + r"(\d{2})([1-9OND])(\d{2})(\d+)(CE|PE)", symbol)
     if weekly:
         year, month, day, strike, right = weekly.groups()

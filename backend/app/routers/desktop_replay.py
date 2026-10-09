@@ -250,3 +250,12 @@ async def stop(run_id: str, user_id: str = Depends(get_desktop_user_id)):
     snapshot = replay.snapshot(run)
     replay.forget(run)
     return snapshot
+
+
+@router.post("/{run_id}/detach")
+async def detach(run_id: str, user_id: str = Depends(get_desktop_user_id)):
+    run = replay.get(user_id, run_id)
+    if not run:
+        raise HTTPException(404, 'Replay display not found')
+    await replay.stop(run)
+    return replay.snapshot(run)

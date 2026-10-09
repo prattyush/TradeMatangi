@@ -1,3 +1,4 @@
+from app.services.broker_reports import order_id as broker_report_id
 """Remaining-lot cost basis from individual, confirmed broker executions."""
 from collections import defaultdict, deque
 from datetime import datetime, timezone
@@ -33,7 +34,7 @@ def unique_executions(session, executions, master=None):
         if row.get('side_known', True) is False or row['side'] not in ('BUY', 'SELL') or row['quantity'] <= 0 or not math.isfinite(row['price']) or row['price'] <= 0:
             raise ValueError('Invalid confirmed execution for FIFO reconstruction')
         row.update(reports.contract(session, row, master))
-        identity = (row.get('exchange') or exchange_for(session), row['kotak_order_id'], row['execution_id'])
+        identity = (row.get('exchange') or exchange_for(session), broker_report_id(row), row['execution_id'])
         fingerprint = (scope(session, row, master), row['side'], row['quantity'], row['price'], row['timestamp'])
         if identity in seen:
             if seen[identity] != fingerprint:
@@ -53,13 +54,13 @@ def positions(session, executions, master=None):
     rows = unique_executions(session, executions, master)
     totals = defaultdict(lambda: {'quantity': 0, 'value': 0.})
     for row in rows:
-        key = (*scope(session, row, master), row['kotak_order_id'], row['side'])
+        key = (*scope(session, row, master), broker_report_id(row), row['side'])
         totals[key]['quantity'] += row['quantity']
         totals[key]['value'] += row['quantity'] * row['price']
     lots = defaultdict(deque)
     for row in rows:
         key = scope(session, row, master)
-        total = totals[(*key, row['kotak_order_id'], row['side'])]
+        total = totals[(*key, broker_report_id(row), row['side'])]
         flat = session.brokerage_per_order
         fee = compute_commission(TradeSide(row['side']), total['value'] / total['quantity'], total['quantity'], flat)
         entry_fee = (fee - flat) * (row['quantity'] * row['price'] / total['value']) + flat * row['quantity'] / total['quantity']
@@ -126,12 +127,16 @@ def bootstrap_live(session):
     rows = []
     for trade in trades:
         symbol = _SYMBOL_MAP.get(session.symbol, (session.symbol, 'nse_cm'))[0]
+        if getattr(session, 'execution_broker', None) in ('Kite', 'kite'):
+            from app.services.kite_service import _KITE_NAMES
+            symbol = _KITE_NAMES.get(session.symbol, session.symbol)
         if trade.right:
-            symbol = _build_options_trading_symbol('SENSEX' if session.symbol == 'BSESEN' else session.symbol,
+            symbol = _build_options_trading_symbol(reports.option_base(session),
                 trade.expiry, trade.strike, trade.right, session.symbol)
         rows.append(dict(symbol=symbol, exchange=trade.broker_exchange or exchange_for(session), product='MIS',
-            kotak_order_id=trade.kotak_order_id or trade.trade_id, execution_id='legacy:' + trade.trade_id,
+            broker_order_id=trade.broker_order_id or trade.trade_id, execution_broker=getattr(session, 'execution_broker', 'KotakNeo'), execution_id='legacy:' + trade.trade_id,
             quantity=trade.quantity, price=trade.price, side=trade.side.value, timestamp=trade.timestamp,
+            right=trade.right, strike=trade.strike, expiry=trade.expiry,
             execution_sort_time=trade.timestamp * 1_000_000, _live_delta=True))
     session._fifo_executions = rows
 
@@ -142,15 +147,19 @@ def live_delta(session, order, quantity, price):
     from app.services.kotak_service import _SYMBOL_MAP, _build_options_trading_symbol
     import time
     symbol = _SYMBOL_MAP.get(session.symbol, (session.symbol, 'nse_cm'))[0]
+    if getattr(session, 'execution_broker', None) in ('Kite', 'kite'):
+        from app.services.kite_service import _KITE_NAMES
+        symbol = _KITE_NAMES.get(session.symbol, session.symbol)
     if order.right:
-        symbol = _build_options_trading_symbol('SENSEX' if session.symbol == 'BSESEN' else session.symbol,
+        symbol = _build_options_trading_symbol(reports.option_base(session),
             order.expiry or session.expiry, order.strike, order.right, session.symbol)
     now = int(time.time()) + 19800
     previous_sort = max((row.get('execution_sort_time', row['timestamp'] * 1_000_000) for row in session._fifo_executions), default=0)
     from app.services.execution_analytics import order_snapshot, filled
     row = dict(analytics=filled(order_snapshot(order, session), price, quantity), symbol=symbol, exchange=order.broker_exchange or exchange_for(session), product=order.broker_product or 'MIS',
-        kotak_order_id=order.kotak_order_id, execution_id=f'live:{order.kotak_order_id}:{order.broker_filled_quantity}',
+        broker_order_id=order.broker_order_id, execution_broker=getattr(session, 'execution_broker', 'KotakNeo'), execution_id=f'live:{order.broker_order_id}:{order.broker_filled_quantity}',
         quantity=quantity, price=price, side=order.side.value, timestamp=now,
+        right=order.right, strike=order.strike, expiry=order.expiry,
         execution_sort_time=max(now * 1_000_000, previous_sort + 1), _live_delta=True)
     session._fifo_executions.append(row)
     return row

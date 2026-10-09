@@ -25,7 +25,7 @@ class DesktopCapabilities(BaseModel):
     api_version: str = "v1"
     authentication: list[str] = ["bearer", "x-user-id-legacy"]
     features: list[str] = ["catalogue", "historical-candles", "option-metadata", "option-historical-candles", "preflight"]
-    trading_capabilities: list[str] = ["stepwise", "replay-trading", "orders", "strategies", "wallet", "flatten", "draggable-lines", "bulk-convert", "trade-labels", "session-preparation"]
+    trading_capabilities: list[str] = ["stepwise", "replay-trading", "orders", "strategies", "wallet", "flatten", "draggable-lines", "bulk-convert", "trade-labels", "session-preparation", "real", "execution-broker", "multiple-contracts", "linked-screens"]
 
 
 class DesktopInstrument(BaseModel):

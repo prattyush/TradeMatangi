@@ -158,6 +158,7 @@ export interface SimulationStartRequest {
 }
 
 export interface UserSettingsResponse {
+  real_execution_broker?: "kotak" | "kite"
   brokerage_per_order?: number
   strategy_interval_secs?: 120 | 180 | 300
   autostop_trigger_type?: 'bar' | 'deviation'
@@ -234,6 +235,8 @@ export interface StartStrategyRequest {
 }
 
 export interface SimulationStartResponse {
+  execution_broker?: string | null
+  broker_account_id?: string | null
   session_id: string
   symbol: string
   date: string
@@ -433,6 +436,8 @@ export interface SessionSummary {
 }
 
 export interface AnalysisTrade {
+  execution_broker?: string | null
+  broker_order_id?: string | null
   captured_only?: boolean
   stored_trade_id?: string
   analysis_cycle_id?: string
@@ -637,6 +642,9 @@ export class InsufficientFundsError extends Error {
 }
 
 export interface Trade {
+  execution_broker?: string | null
+  broker_order_id?: string | null
+  broker_account_id?: string | null
   trade_id: string
   user_id: string
   symbol: string
@@ -832,6 +840,16 @@ export interface EmergencyExitResult {
 export interface RealTradingDayStatus { date: string; state: 'active' | 'closing' | 'done'; message?: string }
 
 const api = {
+  async executionBrokerStatus(): Promise<{ broker: 'kotak' | 'kite'; authenticated: boolean; active_session_id?: string | null }> {
+    const res = await fetch(`${BACKEND_URL}/api/brokers/status`, { headers: _authHeaders() })
+    if (!res.ok) throw new ApiError((await res.json().catch(() => ({}))).detail || 'Could not load execution broker status', res.status)
+    return res.json()
+  },
+  async realCloseSummary(sessionId: string): Promise<{ position_count: number; pending_order_count: number }> {
+    const res = await fetch(`${BACKEND_URL}/api/brokers/${encodeURIComponent(sessionId)}/close-summary`, { headers: _authHeaders() })
+    if (!res.ok) throw new ApiError('Could not inspect Real positions before confirmation', res.status)
+    return res.json()
+  },
   async exitAllPositions(sessionId: string): Promise<EmergencyExitResult> {
     const response = await fetch(`${BACKEND_URL}/api/trades/sessions/${encodeURIComponent(sessionId)}/exit-all`, { method: 'POST', headers: _authHeaders() })
     if (!response.ok) throw new ApiError((await response.json().catch(() => ({}))).detail || 'Could not request all exits', response.status)
@@ -1014,12 +1032,14 @@ const api = {
     return res.json()
   },
 
-  async stopSimulation(session_id: string): Promise<void> {
-    await fetch(`${BACKEND_URL}/api/simulation/stop`, {
+  async stopSimulation(session_id: string): Promise<{ status?: string }> {
+    const response = await fetch(`${BACKEND_URL}/api/simulation/stop`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ..._authHeaders() },
       body: JSON.stringify({ session_id }),
     })
+    if (!response.ok) throw new ApiError((await response.json().catch(() => ({}))).detail || 'Could not stop session', response.status)
+    return response.json()
   },
 
   async pauseSimulation(session_id: string): Promise<void> {
@@ -1670,7 +1690,7 @@ const api = {
 
   async reconcileKotakOrders(sessionId: string): Promise<BrokerSnapshot> {
     const res = await fetch(
-      `${BACKEND_URL}/api/kotak/reconcile?session_id=${sessionId}`,
+      `${BACKEND_URL}/api/brokers/${encodeURIComponent(sessionId)}/reconcile`,
       { method: 'POST', headers: _authHeaders() }
     )
     if (!res.ok) {

@@ -97,7 +97,7 @@ def prepare(mode, date, reference_time, panes):
         raise ValueError("The selected date is not a trading day")
     reference = pd.Timestamp(f"{date} {reference_time}", tz="UTC")
     results = []
-    with historical_operation(mode="live" if mode == "paper" else "replay"):
+    with historical_operation(mode="live" if mode in ("paper", "real") else "replay"):
         for pane in panes:
             item = dict(pane)
             status, reason, premium = "available", None, None

@@ -54,8 +54,9 @@ def start_strategy(req: StartStrategyRequest, user_id: str = Depends(get_request
         StrategyType.TARGET_PROFIT,
         StrategyType.LOCK_PROFIT,
         StrategyType.UNDERLYING_TARGET_PROFIT,
+        StrategyType.UNDERLYING_STOPLOSS,
     ):
-        position = get_position(session.session_id, session.symbol, right)
+        position = get_position(session.session_id, session.symbol, right, strike=req.strike, expiry=req.expiry)
         if position.side == "FLAT":
             raise HTTPException(
                 status_code=400,
@@ -148,12 +149,20 @@ def start_strategy(req: StartStrategyRequest, user_id: str = Depends(get_request
     if req.underlying_sl_price is not None:
         metadata["underlying_sl_price"] = req.underlying_sl_price
 
+    if right:
+        strike = req.strike if req.strike is not None else session.strike_ce if right == 'CE' else session.strike_pe
+        expiry = req.expiry or session.expiry
+        metadata.update(desktop_strike=strike, desktop_expiry=expiry,
+                        desktop_contract_key=f"{session.symbol}:{expiry}:{strike}:{right}",
+                        contract_scope=req.contract_scope)
+        reference = get_position(session.session_id, session.symbol, right, strike=strike, expiry=expiry)
+        metadata['underlying_reference_side'] = reference.side
     # LockProfit: resolve pct → absolute price at start time
     if req.strategy_type == StrategyType.LOCK_PROFIT:
         lock_value = req.lock_profit_value  # validated non-None above
         if req.lock_profit_is_pct:
             session_capital = float(getattr(session, "session_capital", 0))
-            position = get_position(session.session_id, session.symbol, right)
+            position = get_position(session.session_id, session.symbol, right, strike=req.strike, expiry=req.expiry)
             if position.side != "FLAT" and position.quantity > 0 and session_capital > 0:
                 target_pnl = (lock_value / 100.0) * session_capital
                 from app.services.strategy_service import _ceil_tick

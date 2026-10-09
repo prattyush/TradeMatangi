@@ -1,3 +1,4 @@
+from app.services.broker_reports import order_id as broker_report_id
 """Lot-aware order splits: transfer reservations, preserve intent, confirm broker edits."""
 import asyncio
 import json
@@ -51,7 +52,7 @@ def _commit_pair(session, original, first, second):
         'ConditionExpression': '#status = :pending AND quantity = :quantity',
         'ExpressionAttributeNames': {'#status': 'status'},
         'ExpressionAttributeValues': encode({':pending': 'PENDING', ':quantity': original.quantity})}
-    if session.session_type == 'real' and original.kotak_order_id:
+    if session.session_type == 'real' and original.broker_order_id:
         # Fill callbacks may persist the confirmed reduced quantity during I/O.
         # The durable operation barrier, rather than an old quantity, fences this write.
         parent.update(ConditionExpression='#split.#operation = :operation',
@@ -78,7 +79,7 @@ async def _confirmed(broker, candidate, broker_id):
         rows = await asyncio.to_thread(broker.get_order_history)
         for raw in rows:
             row = normalize_order(raw)
-            if row['kotak_order_id'] != broker_id:
+            if broker_report_id(row) != broker_id:
                 continue
             if (row['quantity'] == candidate.quantity and row['status'] in
                     ('open', 'trigger pending', 'modified', 'complete', 'filled', 'partially filled', 'partial fill')
@@ -131,7 +132,7 @@ async def split(session, order, operation_id):
             room -= amount
         first.protection_allocations = {k: v for k, v in retained.items() if v}
         second.protection_allocations = {k: v for k, v in transferred.items() if v}
-    second.kotak_order_id = None
+    second.broker_order_id = None
     second.broker_filled_quantity = 0
     second.broker_filled_value = 0
     second.kotak_fill_confirmed = False
@@ -152,28 +153,28 @@ async def split(session, order, operation_id):
     broker = None
     remote_started = False
     try:
-        if session.session_type == 'real' and order.kotak_order_id:
+        if session.session_type == 'real' and order.broker_order_id:
             if getattr(session, 'broker_refresh_events', None) is not None:
                 raise HTTPException(409, 'Broker refresh is in progress; retry split shortly')
             session.order_split_in_progress = operation_id
-            from app.services.kotak_service import get_service
+            from app.services.execution_broker import get_service
             from app.services.real_trading_day import require_entry_allowed
             if order.order_type not in (OrderType.LIMIT, OrderType.STOPLOSS):
                 raise HTTPException(409, 'This broker order type cannot be split')
             if order.broker_product not in (None, 'MIS'):
                 raise HTTPException(409, 'Only intraday broker orders can be split')
             require_entry_allowed(session, second.side, second.quantity, second.right, second.strike, second.expiry)
-            broker = get_service()
+            broker = get_service(session)
             broker_generation = getattr(broker, '_generation', None)
             job.update(original_quantity=order.quantity, retained_quantity=first.quantity, child_quantity=moved,
-                original_broker_id=order.kotak_order_id, tag='split' + second.order_id.replace('-', '')[:15])
+                original_broker_id=order.broker_order_id, tag='split' + second.order_id.replace('-', '')[:15])
             job['state'] = 'modifying'
             order.split_operation = dict(job)
             # Durable barrier before any remote mutation; callback fills remain authoritative.
             await persist_order_async(order, strict=True)
             remote_started = True
             await sync_order_edit_async(session, first, first.order_type, split_operation_id=operation_id)
-            await _confirmed(broker, first, first.kotak_order_id)
+            await _confirmed(broker, first, first.broker_order_id)
             if order.broker_filled_quantity > first.quantity:
                 raise RuntimeError('Order filled before quantity reduction was confirmed; refresh required')
             if order_service.get_order(session.session_id, order.order_id) is not order or getattr(session, 'broker_refresh_events', None) is not None:
@@ -226,11 +227,11 @@ async def split(session, order, operation_id):
             else:
                 method = broker.place_options_sl_order if order.right else broker.place_sl_order
                 kwargs.update(trigger_price=order.trigger_price, limit_price=order.limit_price)
-            second.kotak_order_id = await asyncio.to_thread(method, **kwargs)
-            session.kotak_order_map[second.order_id] = second.kotak_order_id
+            second.broker_order_id = await asyncio.to_thread(method, **kwargs)
+            session.kotak_order_map[second.order_id] = second.broker_order_id
             register_callbacks(session, second, broker, asyncio.get_running_loop())
             await persist_order_async(second, strict=True)
-            await _confirmed(broker, second, second.kotak_order_id)
+            await _confirmed(broker, second, second.broker_order_id)
         job['state'] = 'confirmed'
         order.split_operation = second.split_operation = dict(job)
         if broker:
@@ -265,14 +266,14 @@ def reconcile_projection(orders, broker_orders):
 
     Never submit or resubmit a broker order during reconciliation.
     """
-    reported = {row['kotak_order_id']: row for row in broker_orders}
+    reported = {broker_report_id(row): row for row in broker_orders}
     for order in orders.values():
         job = order.split_operation or {}
         if job.get('parent_id') != order.order_id or job.get('state') != 'unknown':
             continue
-        parent_row = reported.get(order.kotak_order_id)
+        parent_row = reported.get(order.broker_order_id)
         child = orders.get(job.get('child_id'))
-        child_row = reported.get(child.kotak_order_id) if child else None
+        child_row = reported.get(child.broker_order_id) if child else None
         state, message = None, None
         if parent_row and child_row and order.quantity == job.get('retained_quantity') and child.quantity == job.get('child_quantity'):
             if child.status == OrderStatus.CANCELLED or order.status == OrderStatus.CANCELLED:

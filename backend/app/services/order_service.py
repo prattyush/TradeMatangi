@@ -217,8 +217,10 @@ def _order_db_item(order: Order) -> dict:
     if order.broker_conversion is not None:
         from app.services.real_broker_state import encode
         item["broker_conversion"] = encode(order.broker_conversion)
-    if order.kotak_order_id:
-        item["kotak_order_id"] = order.kotak_order_id
+    for field in ("execution_broker", "broker_account_id", "broker_order_id", "kotak_order_id"):
+        value = getattr(order, field)
+        if value:
+            item[field] = value
     if order.kotak_fill_confirmed:
         item["kotak_fill_confirmed"] = True
     if order.filled_at is not None:
@@ -686,7 +688,7 @@ def check_orders(
         if order.status != OrderStatus.PENDING:
             continue
         # Skip orders placed directly on Kotak broker; fills arrive via order-feed WebSocket.
-        if order.kotak_order_id or (order.split_operation or {}).get("state") in ("prepared", "modifying", "submitting", "unknown") or order.recovery_state in ("prepared", "submitting", "unknown"):
+        if order.broker_order_id or (order.split_operation or {}).get("state") in ("prepared", "modifying", "submitting", "unknown") or order.recovery_state in ("prepared", "submitting", "unknown"):
             continue
         # For options ticks: only check orders for the same contract.
         # For equity ticks (tick_right=None): only check orders with right=None.
@@ -792,15 +794,16 @@ def _reconcile_allocated_exits(session_id: str, symbol: str, right, strike, expi
         if order.source == "broker_external" or allowed == remaining:
             continue
         quantity = allowed + order.broker_filled_quantity if allowed else 0
-        if order.kotak_order_id:
-            from app.services.kotak_service import get_service
-            broker = get_service()
+        if order.broker_order_id:
+            from app.services.execution_broker import get_service
+            from app.services.simulation import get_session
+            broker = get_service(get_session(session_id))
             if not quantity:
-                broker.cancel_order(order.kotak_order_id, purpose="position_resize")
+                broker.cancel_order(order.broker_order_id, purpose="position_resize")
             elif order.order_type == OrderType.LIMIT:
-                broker.modify_sl_to_limit_order(order.kotak_order_id, order.limit_price, quantity)
+                broker.modify_sl_to_limit_order(order.broker_order_id, order.limit_price, quantity)
             else:
-                broker.modify_sl_order(order.kotak_order_id, order.trigger_price, order.limit_price, quantity)
+                broker.modify_sl_order(order.broker_order_id, order.trigger_price, order.limit_price, quantity)
         if quantity:
             update_order(session_id, order.order_id, trading_date, quantity=quantity)
         else:

@@ -1,7 +1,7 @@
 from __future__ import annotations
 from enum import Enum
 from typing import Literal
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 import uuid
 
 
@@ -38,6 +38,8 @@ class SimulationStartRequest(BaseModel):
 
 
 class SimulationStartResponse(BaseModel):
+    execution_broker: str | None = None
+    broker_account_id: str | None = None
     session_id: str
     symbol: str
     date: str
@@ -101,7 +103,36 @@ class SimulationStatusResponse(BaseModel):
     date: str
 
 
-class Trade(BaseModel):
+class BrokerIdentity(BaseModel):
+    execution_broker: str | None = None
+    broker_order_id: str | None = None
+    broker_account_id: str | None = None
+    kotak_order_id: str | None = None
+
+    @model_validator(mode="after")
+    def normalize_broker_identity(self):
+        if self.kotak_order_id:
+            self.execution_broker = self.execution_broker or "kotak"
+            self.broker_order_id = self.broker_order_id or self.kotak_order_id
+        if self.execution_broker in ("KotakNeo", "kotak"):
+            self.execution_broker = "kotak"
+            self.kotak_order_id = self.broker_order_id
+        elif self.execution_broker in ("Kite", "kite"):
+            self.execution_broker = "kite"
+            self.kotak_order_id = None
+        return self
+
+    def __setattr__(self, key, value):
+        super().__setattr__(key, value)
+        if key == "broker_order_id" and getattr(self, "execution_broker", None) in (None, "kotak", "KotakNeo"):
+            super().__setattr__("kotak_order_id", value)
+        elif key == "kotak_order_id" and getattr(self, "execution_broker", None) in (None, "kotak", "KotakNeo"):
+            super().__setattr__("broker_order_id", value)
+        elif key == "execution_broker" and value in ("kite", "Kite"):
+            super().__setattr__("kotak_order_id", None)
+
+
+class Trade(BrokerIdentity):
     execution_sort_time: int | None = None
     analytics: dict | None = None
     trade_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
@@ -204,7 +235,7 @@ class OrderType(str, Enum):
     STOPLOSS = "STOPLOSS"  # stoploss exit: same trigger logic as TARGET, no wallet effect
 
 
-class Order(BaseModel):
+class Order(BrokerIdentity):
     analytics: dict | None = None
     order_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     session_id: str
@@ -368,6 +399,7 @@ class WalletResetRequest(BaseModel):
 # ── User Settings ─────────────────────────────────────────────────────────────
 
 class UserSettingsResponse(BaseModel):
+    real_execution_broker: Literal["kotak", "kite"] = "kotak"
     brokerage_per_order: float = 1.0
     strategy_interval_secs: Literal[120, 180, 300] = 180
     autostop_trigger_type: Literal["bar", "deviation"] = "bar"
@@ -408,6 +440,7 @@ class UserSettingsResponse(BaseModel):
 
 
 class UserSettingsUpdateRequest(BaseModel):
+    real_execution_broker: Literal["kotak", "kite"] | None = None
     brokerage_per_order: float | None = Field(default=None, ge=0, allow_inf_nan=False)
     strategy_interval_secs: Literal[120, 180, 300] | None = None
     autostop_trigger_type: Literal["bar", "deviation"] | None = None
@@ -459,6 +492,9 @@ class StrategyType(str, Enum):
 
 
 class StartStrategyRequest(BaseModel):
+    strike: int | None = None
+    expiry: str | None = None
+    contract_scope: Literal["exact", "all_right"] = "exact"
     session_id: str
     strategy_type: StrategyType
     right: str | None = None              # "CE" | "PE" | None (equity)

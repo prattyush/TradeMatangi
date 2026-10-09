@@ -68,9 +68,10 @@ async def create_exit(session, target, side, quantity, price):
     order.execution_role = 'exit'
     order.execution_gap_pct = EMERGENCY_GAP
     if session.session_type == 'real':
-        from app.services.kotak_service import get_service, KotakOrderRejected
+        from app.services.execution_broker import get_service
+        from app.services.kotak_service import KotakOrderRejected
         from app.services.broker_order_service import register_callbacks, persist_order_async
-        broker = get_service()
+        broker = get_service(session)
         # Persist an unconfirmed reservation before contacting the broker. An
         # ambiguous acknowledgement cannot become a local tick fill or a new retry.
         order.recovery_state = 'submitting'
@@ -94,7 +95,7 @@ async def create_exit(session, target, side, quantity, price):
             await persist_order_async(order, strict=True)
             emit(session, order)
             raise ValueError(f'Exit submission {order.recovery_state}: {exc}. Check broker orders before retrying.') from exc
-        order.kotak_order_id = broker_id
+        order.broker_order_id = broker_id
         order.recovery_state = 'acknowledged'
         session.kotak_order_map[order.order_id] = broker_id
         register_callbacks(session, order, broker, asyncio.get_running_loop())
