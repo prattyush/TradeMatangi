@@ -10,6 +10,7 @@ from app.models.schemas import SplitOrderRequest
 import asyncio
 import json
 import logging
+import math
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 from typing import Literal
@@ -1359,6 +1360,8 @@ async def fill_missing_stoploss(session_id: str, req: MissingStoplossRequest, us
 async def place_chart_order(session_id: str, intent: ChartOrderIntent, user_id: str = Depends(get_desktop_user_id)):
     """Place a chart entry without trusting a frontend market price."""
     session = _require_session(session_id, user_id)
+    if session.state == sim_svc.SimulationState.ENDED:
+        raise HTTPException(status_code=409, detail="Trading session has ended")
     contract = None
     quote = None
     if intent.right:
@@ -1371,8 +1374,11 @@ async def place_chart_order(session_id: str, intent: ChartOrderIntent, user_id: 
     else:
         quote = {"price": float(session.last_price or 0), "timestamp": int(session.current_time or 0), "source": "session_equity"}
     if intent.intent == "market":
-        if not quote or float(quote.get("price", 0)) <= 0:
+        if (not quote or not math.isfinite(float(quote.get("price", 0)))
+                or float(quote.get("price", 0)) <= 0 or int(quote.get("timestamp", 0)) <= 0):
             raise HTTPException(status_code=409, detail="No authoritative quote is available for this chart contract")
+        if session.session_type in ("sim", "stepwise") and int(quote["timestamp"]) > int(session.current_time or 0):
+            raise HTTPException(status_code=409, detail="The chart quote is ahead of the replay clock")
         quote_price = float(quote["price"])
         from app.services.execution_price_service import limit_price
         entry_price = limit_price(intent.side, quote_price, float(get_settings(user_id).get("target_deviation_pct", 0.01)))
@@ -1418,11 +1424,14 @@ async def place_chart_order(session_id: str, intent: ChartOrderIntent, user_id: 
     from app.routers.orders import place_order as web_place_order
     logger.info("desktop_chart_order session_id=%s contract=%s intent=%s side=%s entry_price=%.2f quote_price=%.2f quote_source=%s quote_timestamp=%s", session_id, contract["contract_key"] if contract else session.symbol, intent.intent, intent.side.value, entry_price, quote_price, req.quote_source, req.quote_timestamp)
     order = await web_place_order(req)
-    if session.session_type == "paper" and intent.intent == "market":
+    if session.session_type in ("paper", "sim", "stepwise") and intent.intent == "market":
         # The placement quote is authoritative for this chart order. Restrict the
         # immediate check to the new order so unrelated limits and stops still
         # execute only on their own incoming ticks.
-        timestamp = int(quote["timestamp"])
+        # A historical quote can precede the current cursor. Execution happens
+        # now; retain the observation time in quote_timestamp without rewinding
+        # the replay/group clock or backdating the trade.
+        timestamp = int(quote["timestamp"]) if session.session_type == "paper" else int(session.current_time)
         tick = {
             "type": "tick", "time": timestamp, "close": quote_price,
             "open": quote_price, "high": quote_price, "low": quote_price,
@@ -1431,7 +1440,7 @@ async def place_chart_order(session_id: str, intent: ChartOrderIntent, user_id: 
         }
         for event in sim_svc._emit_tick_and_check_orders(session, tick, contract["right"] if contract else None, only_order_id=order.order_id):
             session.queue.put_nowait(json.dumps(event))
-        logger.info("desktop_paper_market_checked session_id=%s order_id=%s status=%s quote_timestamp=%s", session_id, order.order_id, order.status.value, timestamp)
+        logger.info("desktop_market_checked session_id=%s mode=%s order_id=%s status=%s execution_time=%s quote_timestamp=%s", session_id, session.session_type, order.order_id, order.status.value, timestamp, quote["timestamp"])
     return order
 
 
