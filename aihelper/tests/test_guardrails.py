@@ -337,8 +337,8 @@ class TestBarCloseHookMarketHours:
     def test_sim_session_bypasses_market_hours_check(self):
         """Simulation sessions are never blocked by the market-hours guardrail."""
         payload = self._make_payload(session_type="sim")
-        with patch("routers.hook.commands_store.get_active_commands_for_session", return_value=[_ACTIVE_CMD]), \
-             patch("guardrails.validator.check_market_hours", return_value=(False, "Outside hours")) as mock_check:
+        with patch.object(hook_module.commands_store, "get_active_commands_for_session", return_value=[_ACTIVE_CMD]), \
+             patch.object(hook_module, "check_market_hours", return_value=(False, "Outside hours")) as mock_check:
             resp = hook_client.post("/hook/bar-close", json=payload)
         # check_market_hours should NOT be called for sim sessions
         mock_check.assert_not_called()
@@ -348,16 +348,16 @@ class TestBarCloseHookMarketHours:
     def test_none_session_type_bypasses_market_hours_check(self):
         """session_type=None (default) is treated as simulation — no market hours check."""
         payload = self._make_payload(session_type=None)
-        with patch("routers.hook.commands_store.get_active_commands_for_session", return_value=[_ACTIVE_CMD]), \
-             patch("guardrails.validator.check_market_hours", return_value=(False, "Outside hours")) as mock_check:
+        with patch.object(hook_module.commands_store, "get_active_commands_for_session", return_value=[_ACTIVE_CMD]), \
+             patch.object(hook_module, "check_market_hours", return_value=(False, "Outside hours")) as mock_check:
             resp = hook_client.post("/hook/bar-close", json=payload)
         mock_check.assert_not_called()
         assert resp.json()["status"] == "received"
 
     def test_paper_session_outside_market_hours_is_blocked(self):
         payload = self._make_payload(session_type="paper")
-        with patch("routers.hook.commands_store.get_active_commands_for_session", return_value=[_ACTIVE_CMD]), \
-             patch("routers.hook.check_market_hours", return_value=(False, "Outside market hours (08:00:00 IST; market 09:15–15:30)")):
+        with patch.object(hook_module.commands_store, "get_active_commands_for_session", return_value=[_ACTIVE_CMD]), \
+             patch.object(hook_module, "check_market_hours", return_value=(False, "Outside market hours (08:00:00 IST; market 09:15–15:30)")):
             resp = hook_client.post("/hook/bar-close", json=payload)
         assert resp.status_code == 200
         assert resp.json()["status"] == "outside_market_hours"
@@ -365,24 +365,24 @@ class TestBarCloseHookMarketHours:
 
     def test_real_session_outside_market_hours_is_blocked(self):
         payload = self._make_payload(session_type="real")
-        with patch("routers.hook.commands_store.get_active_commands_for_session", return_value=[_ACTIVE_CMD]), \
-             patch("routers.hook.check_market_hours", return_value=(False, "Outside market hours")):
+        with patch.object(hook_module.commands_store, "get_active_commands_for_session", return_value=[_ACTIVE_CMD]), \
+             patch.object(hook_module, "check_market_hours", return_value=(False, "Outside market hours")):
             resp = hook_client.post("/hook/bar-close", json=payload)
         assert resp.status_code == 200
         assert resp.json()["status"] == "outside_market_hours"
 
     def test_paper_session_during_market_hours_proceeds(self):
         payload = self._make_payload(session_type="paper")
-        with patch("routers.hook.commands_store.get_active_commands_for_session", return_value=[_ACTIVE_CMD]), \
-             patch("routers.hook.check_market_hours", return_value=(True, "")):
+        with patch.object(hook_module.commands_store, "get_active_commands_for_session", return_value=[_ACTIVE_CMD]), \
+             patch.object(hook_module, "check_market_hours", return_value=(True, "")):
             resp = hook_client.post("/hook/bar-close", json=payload)
         assert resp.status_code == 200
         assert resp.json()["status"] == "received"
 
     def test_real_session_during_market_hours_proceeds(self):
         payload = self._make_payload(session_type="real")
-        with patch("routers.hook.commands_store.get_active_commands_for_session", return_value=[_ACTIVE_CMD]), \
-             patch("routers.hook.check_market_hours", return_value=(True, "")):
+        with patch.object(hook_module.commands_store, "get_active_commands_for_session", return_value=[_ACTIVE_CMD]), \
+             patch.object(hook_module, "check_market_hours", return_value=(True, "")):
             resp = hook_client.post("/hook/bar-close", json=payload)
         assert resp.status_code == 200
         assert resp.json()["status"] == "received"
@@ -390,8 +390,8 @@ class TestBarCloseHookMarketHours:
     def test_market_hours_not_checked_when_no_commands(self):
         """If there are no commands, the market-hours check is never reached."""
         payload = self._make_payload(session_type="paper")
-        with patch("routers.hook.commands_store.get_active_commands_for_session", return_value=[]), \
-             patch("guardrails.validator.check_market_hours", return_value=(False, "Closed")) as mock_check:
+        with patch.object(hook_module.commands_store, "get_active_commands_for_session", return_value=[]), \
+             patch.object(hook_module, "check_market_hours", return_value=(False, "Closed")) as mock_check:
             resp = hook_client.post("/hook/bar-close", json=payload)
         mock_check.assert_not_called()
         assert resp.json()["status"] == "no_commands"
@@ -431,6 +431,12 @@ _EXTRACTED_FIELDS = {
 class TestChatCommandSanitization:
     """Verify sanitize_command_text is called before LLM in _handle_command."""
 
+    @pytest.fixture(autouse=True)
+    def isolated_funds_ratios(self):
+        # Patch the dependencies bound to this router; other suites reload modules.
+        with patch.object(chat_module.backend_client, "get_user_funds_ratios", new=AsyncMock(return_value={"ratio_l": .03, "ratio_m": .06, "ratio_h": .12})):
+            yield
+
     def test_sanitize_called_before_llm_extract(self):
         """sanitize_command_text must be called with the raw message before extract_command_fields."""
         from guardrails.validator import sanitize_command_text as _real_sanitize
@@ -447,12 +453,12 @@ class TestChatCommandSanitization:
             captured_extract_args.append(text)
             return _EXTRACTED_FIELDS
 
-        with patch("services.intent_classifier.classify", new=classify), \
-             patch("services.llm_service.extract_command_fields", new=capture_extract), \
-             patch("routers.chat.sanitize_command_text", side_effect=tracking_sanitize), \
-             patch("db.commands_store.put_command"), \
-             patch("services.backend_client.notify_ai_commands_active", new=notify), \
-             patch("db.strategies_store.get_strategy", return_value=None):
+        with patch.object(chat_module.intent_classifier, "classify", new=classify), \
+             patch.object(chat_module.llm_service, "extract_command_fields", new=capture_extract), \
+             patch.object(chat_module, "sanitize_command_text", side_effect=tracking_sanitize), \
+             patch.object(chat_module.commands_store, "put_command"), \
+             patch.object(chat_module.backend_client, "notify_ai_commands_active", new=notify), \
+             patch.object(chat_module.strategies_store, "get_strategy", return_value=None):
             resp = chat_client.post("/ai/chat", json=_CHAT_BODY)
 
         assert resp.status_code == 200
@@ -477,11 +483,11 @@ class TestChatCommandSanitization:
             captured_calls.append(text)
             return _EXTRACTED_FIELDS
 
-        with patch("services.intent_classifier.classify", new=classify), \
-             patch("services.llm_service.extract_command_fields", new=capture_extract), \
-             patch("db.commands_store.put_command"), \
-             patch("services.backend_client.notify_ai_commands_active", new=notify), \
-             patch("db.strategies_store.get_strategy", return_value=None):
+        with patch.object(chat_module.intent_classifier, "classify", new=classify), \
+             patch.object(chat_module.llm_service, "extract_command_fields", new=capture_extract), \
+             patch.object(chat_module.commands_store, "put_command"), \
+             patch.object(chat_module.backend_client, "notify_ai_commands_active", new=notify), \
+             patch.object(chat_module.strategies_store, "get_strategy", return_value=None):
             resp = chat_client.post("/ai/chat", json=dirty_body)
 
         assert resp.status_code == 200
@@ -501,11 +507,11 @@ class TestChatCommandSanitization:
         def capture_put(item):
             stored_items.append(item)
 
-        with patch("services.intent_classifier.classify", new=classify), \
-             patch("services.llm_service.extract_command_fields", new=extract), \
+        with patch.object(chat_module.intent_classifier, "classify", new=classify), \
+             patch.object(chat_module.llm_service, "extract_command_fields", new=extract), \
              patch("db.commands_store.put_command", side_effect=capture_put), \
-             patch("services.backend_client.notify_ai_commands_active", new=notify), \
-             patch("db.strategies_store.get_strategy", return_value=None):
+             patch.object(chat_module.backend_client, "notify_ai_commands_active", new=notify), \
+             patch.object(chat_module.strategies_store, "get_strategy", return_value=None):
             resp = chat_client.post("/ai/chat", json=dirty_body)
 
         assert resp.status_code == 200

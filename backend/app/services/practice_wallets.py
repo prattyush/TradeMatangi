@@ -70,7 +70,6 @@ def previous_balance(db, user, date, kind):
 
 def read(user, date, kind):
     """Existing date wins. Only an earlier wallet of the same kind can seed it."""
-    from app.services import wallet_service
     logger.debug("wallet_balance_read request_id=%s kind=%s date=%s", current_request_id.get(), kind, date)
     try:
         db = table()
@@ -85,7 +84,7 @@ def read(user, date, kind):
                 if exc.response["Error"]["Code"] != "ConditionalCheckFailedException":
                     raise
             item = db.get_item(Key=key, ConsistentRead=True)["Item"]
-        wallet_service._ledgers[(user, f"{kind}:{date}")] = float(item["current_balance"])
+        # A viewer read may finish after a debit; never replace live funds here.
         return item
     except HTTPException:
         raise
