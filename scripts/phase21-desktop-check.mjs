@@ -107,24 +107,63 @@ async function scenario(mode='Stepwise', five=false, emptyStopped=false) {
  await page.getByRole('button',{name:'Order',exact:true}).click()
  const order=page.getByRole('dialog',{name:'Order window'})
  await order.waitFor();assert.equal(await page.locator('.modal-backdrop:visible').count(),0)
+ const clickPane=async index=>{
+  const pane=page.locator('.kline').nth(index)
+  const point=await pane.evaluate(node=>{const r=node.getBoundingClientRect();for(const y of [80,r.height/2,r.height-50])for(const x of [35,r.width*.3,r.width*.65]){const hit=document.elementFromPoint(r.x+x,r.y+y);if(hit&&node.contains(hit))return{x,y}}return null})
+  assert(point,'A chart point must be exposed beside the order window');await pane.click({position:point})
+ }
+
  await order.getByRole('button',{name:'CE 71700',exact:true}).click()
  await order.getByLabel('New order quantity',{exact:true}).fill('2')
  await order.getByRole('button',{name:'Submit BUY',exact:true}).click();await order.getByText('Order submitted',{exact:true}).waitFor()
  assert.equal(submissions.at(-1).quantity,40);assert.equal(submissions.at(-1).intent,'market');assert.equal(submissions.at(-1).strike,71700)
+ // Chart picking fills a draft for the exact contract; it never submits.
+ const beforePick=submissions.length
+ for(const type of ['Limit','Target','SL']) {
+  await order.getByRole('button',{name:type,exact:true}).click()
+  if(type==='Target')await order.getByLabel('New order price',{exact:true}).click();else await order.getByRole('button',{name:'Pick new order price on chart',exact:true}).click()
+  await clickPane(2)
+  assert.equal(await order.getByLabel('New order price',{exact:true}).inputValue(),'')
+  await clickPane(1)
+  await page.getByText('Pick price',{exact:true}).waitFor({state:'hidden'})
+  assert(Number(await order.getByLabel('New order price',{exact:true}).inputValue())>0)
+  assert.equal(submissions.length,beforePick)
+ }
+ await order.getByRole('button',{name:'Market',exact:true}).click()
  // Chart clicks leave the window's selected contract unchanged.
  await page.locator('.chart-head').last().click({position:{x:30,y:12}})
  assert.equal(await order.getByRole('button',{name:'CE 71700',exact:true}).getAttribute('aria-pressed'),'true')
  const from=await order.boundingBox(),head=await order.locator('header').boundingBox();await page.mouse.move(head.x+35,head.y+8);await page.mouse.down();await page.mouse.move(head.x-120,head.y+90);await page.mouse.up();const moved=await order.boundingBox();assert(moved.x<from.x&&moved.y>from.y)
  await order.getByRole('button',{name:'SL',exact:true}).click();await order.getByLabel('New order quantity',{exact:true}).fill('20');await order.getByLabel('New order price',{exact:true}).fill('90');await order.getByRole('button',{name:'Submit SELL',exact:true}).click();await order.getByText('Order submitted',{exact:true}).waitFor();assert.equal(submissions.at(-1).order_type,'STOPLOSS');assert.equal(submissions.at(-1).session_id,'session');assert.equal(submissions.at(-1).side,'SELL');assert.equal(submissions.at(-1).right,'CE');assert.equal(submissions.at(-1).strike,71700);assert.equal(submissions.at(-1).expiry,date)
- await order.getByRole('button',{name:'Close order window'}).click()
+ const close=order.getByRole('button',{name:'Close order window'}),closeBefore=await close.boundingBox()
+ await close.hover();assert.deepEqual(await close.boundingBox(),closeBefore)
+ await page.mouse.move(closeBefore.x+closeBefore.width-3,closeBefore.y+closeBefore.height/2)
+ await page.mouse.down();assert.deepEqual(await close.boundingBox(),closeBefore);await page.mouse.up()
+ await order.waitFor({state:'hidden'})
+
  const sl=page.locator('.desktop-open-order').filter({hasText:'SELL · SL'})
  await sl.getByRole('button',{name:'Edit',exact:true}).click()
  const qty=sl.getByLabel('Order quantity');await qty.focus();await page.mouse.move(...Object.values(await qty.boundingBox()).slice(0,2).map((v,i)=>v+5));await page.mouse.wheel(0,-100);assert.equal(await qty.inputValue(),'60')
  await qty.press('ArrowDown');assert.equal(await qty.inputValue(),'40')
- const price=sl.getByLabel('Order price');await price.focus();await price.press('ArrowUp');assert.equal(await price.inputValue(),'90.25');assert.equal(await price.evaluate(node=>{node.stepUp();return node.value}),'90.5');await price.fill('90.25')
- await sl.getByRole('button',{name:'Save order edits'}).click();await sl.getByRole('button',{name:'Save order edits'}).waitFor({state:'hidden'});assert(calls.some(c=>c.method==='PATCH'&&c.body.trigger_price===90.25))
+ const price=sl.getByLabel('Order price')
+ await sl.getByRole('button',{name:'Use LTP for order edit',exact:true}).click();assert.equal(await price.inputValue(),'100.00')
+ const patches=calls.filter(c=>c.method==='PATCH').length
+ await price.click()
+ await clickPane(1)
+ await page.getByText('Pick price',{exact:true}).waitFor({state:'hidden'})
+ assert(Number(await price.inputValue())>0)
+ assert.equal(calls.filter(c=>c.method==='PATCH').length,patches)
+ await price.fill('90');await price.focus();await price.press('ArrowUp');assert.equal(await price.inputValue(),'90.25');assert.equal(await price.evaluate(node=>{node.stepUp();return node.value}),'90.5');await price.fill('90.25')
+ await sl.getByRole('button',{name:'Save order edits'}).click();await sl.getByRole('button',{name:'Save order edits'}).waitFor({state:'hidden'});assert(calls.some(c=>c.method==='PATCH'&&c.body.trigger_price===90.25),JSON.stringify(calls.filter(c=>c.method==='PATCH')))
  const entry=page.locator('.desktop-open-order').filter({hasText:'BUY · LIMIT'})
  await entry.getByRole('button',{name:'Edit',exact:true}).click();assert.equal(await entry.getByLabel('Order quantity').count(),0);await entry.getByRole('button',{name:'Cancel order edits'}).click()
+ // Modal close buttons also stay under the pointer, including their right edge.
+ await page.locator('.chart').nth(1).getByRole('button',{name:'Choose instrument'}).click()
+ const closePicker=page.getByRole('dialog',{name:'Select chart instrument'})
+ const pickerClose=closePicker.locator('header button'),pickerBox=await pickerClose.boundingBox()
+ await pickerClose.hover();assert.deepEqual(await pickerClose.boundingBox(),pickerBox)
+ await page.mouse.move(pickerBox.x+pickerBox.width-3,pickerBox.y+pickerBox.height/2);await page.mouse.down();assert.deepEqual(await pickerClose.boundingBox(),pickerBox);await page.mouse.up()
+ await closePicker.waitFor({state:'hidden'})
  // Max-price picker captures and displays the search time before applying.
  await page.locator('.chart').nth(1).getByRole('button',{name:'Choose instrument'}).click()
  const picker=page.getByRole('dialog',{name:'Select chart instrument'});await picker.getByLabel('Strike selection').selectOption('max_price');await picker.getByLabel('Symbol',{exact:true}).selectOption('NIFTY');const presets=picker.getByRole('group',{name:'Premium cap presets'});assert.deepEqual(await presets.getByRole('button').allTextContents(),['₹30','₹50','₹75','₹100','₹125','₹150']);await presets.getByRole('button',{name:'₹30',exact:true}).click();assert.equal(await picker.getByLabel('Premium cap',{exact:true}).inputValue(),'30');await picker.getByLabel('Symbol',{exact:true}).selectOption('BSESEN');await picker.getByLabel('Premium cap',{exact:true}).fill('50');await picker.getByRole('button',{name:'Find strike'}).click();await picker.getByText('Selected CE 71800',{exact:false}).waitFor();await picker.getByRole('button',{name:'Apply to chart'}).click();await picker.waitFor({state:'hidden'})
@@ -135,7 +174,7 @@ async function scenario(mode='Stepwise', five=false, emptyStopped=false) {
  await order.getByRole('button',{name:'PE 71300',exact:true}).click();await order.getByRole('button',{name:'Market',exact:true}).click();await order.getByLabel('New order quantity',{exact:true}).fill('1');uncertain=true
  await order.getByRole('button',{name:'Submit BUY',exact:true}).click();await order.getByRole('button',{name:'Refresh submission status'}).waitFor();assert(await order.getByRole('button',{name:'Submit BUY',exact:true}).isDisabled());await order.getByRole('button',{name:'Close order window'}).click();await page.getByRole('button',{name:'Order',exact:true}).click();assert(await order.getByRole('button',{name:'Submit BUY',exact:true}).isDisabled())
  assert.deepEqual(errors,[])
- results.push({mode,emptyStopped,panes:expectedPanes,checks:'startup rollback/removal, chart retention, non-modal orders, exact contracts, lot/price edits, premium picker, dragging/clamping, uncertainty fencing',errors})
+ results.push({mode,emptyStopped,panes:expectedPanes,checks:'startup rollback/removal, chart retention, non-modal orders, exact-contract draft price picks, edit LTP/chart picks, stationary edge close hitbox, lot/price edits, premium picker, dragging/clamping, uncertainty fencing',errors})
  await page.close()
 }
 try {for(const mode of ['Stepwise','Replay','Paper'])await scenario(mode);await scenario('Stepwise',true);await scenario('Paper',false,true);await writeFile(resolve(artifacts,'phase21-browser-summary.json'),JSON.stringify(results,null,2));console.log(JSON.stringify(results,null,2))}finally{await browser.close();server.close()}

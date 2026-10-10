@@ -106,6 +106,21 @@ async function scenario(mode='Stepwise', five=false, emptyStopped=false) {
  await page.getByRole('button',{name:mode==='Real'?'Start Real':/^(Start|Resume)$/,exact:true}).click()
  if(emptyStopped){await page.getByRole('button',{name:'Stop',exact:true}).waitFor();assert.equal(dialogs.length,0);assert(calls.some(c=>c.path.endsWith('/trading/session/resume')));assert(calls.some(c=>c.path.endsWith('/prepare-session')&&c.body.session_id==='session'));assert(!calls.some(c=>c.path.endsWith('/trading/start')))}
  await page.getByRole('button',{name:'Order',exact:true}).waitFor({state:'visible'})
+ // Toolbar action labels remain accessible while the visible controls are icons.
+ for(const label of ['Record screen','Create linked screen','Event snapshots off']){
+  const button=page.getByRole('button',{name:label,exact:true})
+  assert.equal(await button.textContent(),'')
+  assert.equal(await button.getAttribute('title'),label)
+  assert.equal(await button.locator('svg').count(),1)
+ }
+ const snapshotToggle=page.getByRole('button',{name:'Event snapshots off',exact:true})
+ await snapshotToggle.hover()
+ await page.waitForFunction(()=>getComputedStyle(document.querySelector('[aria-label="Event snapshots off"]'),'::after').opacity==='1')
+ await snapshotToggle.click()
+ await page.getByRole('button',{name:'Event snapshots on',exact:true}).waitFor()
+ assert.equal(await page.getByRole('button',{name:'Event snapshots on',exact:true}).getAttribute('aria-pressed'),'true')
+ await page.getByRole('button',{name:'Event snapshots on',exact:true}).click()
+ assert.equal(await page.getByRole('button',{name:'Order',exact:true}).textContent(),'Order')
  await page.waitForFunction(count=>document.querySelectorAll('.tile-grid .chart').length===count,expectedPanes)
  const ids=await page.locator('.kline').evaluateAll(nodes=>nodes.map(n=>n.getAttribute('k-line-chart-id')))
  await page.getByRole('button',{name:'Draw / Indicators',exact:false}).click()
