@@ -675,4 +675,27 @@ the strike price is auto choosen based on under 50 rupees etc (current price), f
  Support in Desktop, if split screen, both screens can have same session. So one option where user can clicks the current replay trading, or paper or real trading and ask it to  split screen, the second screen will be the same paper trading or replay trading. It may have different strike prices of CE /PE etc. We can plan to make it simple, such that no wallet shown or orders only in one. I am open to suggestions.
 
 
+## Nifty 100 and Swing implementation
 
+The approved decisions and sprint implementation record are in
+[the Swing Trading specification](spec-phase21-swing-trading-plan.md).
+All work and review PRs target preprod.
+
+### Expanding Supported Symbols to Nifty 100
+1) Support Nifty 100 symbols.
+2) Make sure it is supported for both website and desktop.
+3) Make sure it is supported for real trading brokers, Kite and Kotak and ICICI Direct for replay trading, paper trading and stepwise.
+4) Support in all forms of trading types, paper, real, step, replay.
+5) Generate scripts to whether you can get historical data for all 100 nifty symbols, in Kotak, Kite and ICICI to know that the symbols mapping is present. Just either fetch latest price or smallest historical data, to know that all symbols mapping are correct. For scripts credentials are present in ddb local.
+6) Extend the symbol chooser in both website and desktop to handle. Don't add dropdown, as we have 2 sectios now, indices and equity symbols. Further in both the symbol selection fields, make it type and options comes, like I type TATA and all tata symbols will come. For quick selection. Feel free for UI suggestions.
+7) Also, support Options if available for these 100 symbols. And you can fix it to NIFTY 100, no need of SENSEX 100. Only nifty is fine.
+
+### Swing Trading Support
+This requirement is for supporting positions across days, and also in multiple symbols, for now only equity, maybe options. Support right now is required right now for paper and real, and replay. Replay is secondary, paper and real are more required.
+
+The thought behind is testing swing trading strategies, that is taking a position in long. In Indian Stock Market short position cannot be across days. Or PE Contract Long in that symbol for taking benefit of bear movement in the stock. 
+
+The session can be long lived, and once a capital is captured, honor it for percentages. For real trading scenario, do the same or now. For real do give the option, for uer to change session capital.
+When system detects mismatch betwween capital and P&L and orders, specially decrease, incerase is fine, then ask user to update session capital. Required for perccentage postion and % P&L Calculation.
+
+Point to note in multiple day trades, there is no leverage in equity.
