@@ -28,6 +28,10 @@ input { width: 160px; }
 .live-controls button { background: #1d4ed8; border-color: #3b82f6; color: #fff; font-weight: 600; }
 .live-controls button:hover:not(:disabled) { background: #2563eb; }
 .run-controls input { width: 124px; padding: 3px 5px; font-size: .72rem; }
+.run-controls input[type="date"] { width: 112px; }
+.run-controls input[type="time"] { width: 87px; padding-inline: 2px; }
+.run-controls input[type="time"]::-webkit-datetime-edit { padding: 0; }
+.run-controls input[type="time"]::-webkit-calendar-picker-indicator { width: 12px; padding: 0; margin: 0; }
 .run-error { position: fixed; z-index: 5; top: 50px; left: 12px; margin: 0; padding: 5px 8px; background: #7f1d1d; color: #fecaca; font-size: .75rem; }
 .run-notice { position: fixed; z-index: 5; top: 50px; left: 12px; margin: 0; padding: 5px 8px; background: #14532d; color: #bbf7d0; font-size: .75rem; }
 .layout-control { margin-left: auto; display: flex; align-items: center; gap: 5px; font-size: .78rem; }
