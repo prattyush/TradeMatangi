@@ -398,6 +398,85 @@ export default function PerformanceDashboard(props: Props) {
   );
   const field = (name: string, value: string) =>
     setFilters((f) => ({ ...f, [name]: value }));
+  const tradesPanel = (
+    <section className="pa-card">
+      <div className="pa-card-title">
+        <div>
+          <h3>
+            {focus
+              ? `Trades behind “${label(focus.key)}”`
+              : "Trace the individual trades"}
+          </h3>
+          <p>
+            {cycles.length} of {total} cycles loaded · quantities are
+            contracts/shares
+          </p>
+        </div>
+        {focus && (
+          <button onClick={() => setFocus(null)}>
+            Clear selection
+          </button>
+        )}
+      </div>
+      <div className="pa-table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Date / mode</th>
+              <th>Contract</th>
+              <th>Direction</th>
+              <th>Entry / exit decisions</th>
+              <th>Net realized</th>
+              <th>Capital contribution</th>
+              <th>State</th>
+              <th>Inspect</th>
+            </tr>
+          </thead>
+          <tbody>
+            {visible.map((c) => (
+              <tr key={c.cycle_id}>
+                <td>
+                  {c.date}
+                  <small>{label(c.mode)}</small>
+                </td>
+                <td>
+                  {c.symbol} {c.strike} {c.right}
+                  <small>{c.expiry}</small>
+                </td>
+                <td>{c.direction}</td>
+                <td>
+                  {c.entry_count} / {c.exit_count}
+                </td>
+                <td className={tint(c.net_pnl)}>{money(c.net_pnl)}</td>
+                <td>{pct(c.pnl_pct)}</td>
+                <td>
+                  {c.state}
+                  {c.open_quantity > 0 && ` · ${c.open_quantity} open`}
+                </td>
+                <td>
+                  <button onClick={() => void showDetail(c)}>
+                    Details →
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {!visible.length && (
+        <p>
+          No loaded cycles match this selection. Load more cycles below
+          if available.
+        </p>
+      )}
+      {nextOffset != null && (
+        <button disabled={loading} onClick={() => void loadMore()}>
+          {loading ? "Loading…" : "Load more cycles"}
+        </button>
+      )}
+    </section>
+  );
+
   return (
     <div
       className="pa-overlay"
@@ -742,6 +821,7 @@ export default function PerformanceDashboard(props: Props) {
                     </div>
                   </section>
                 </div>
+                {tradesPanel}
                 {report.comparisons.accounts && <ComparisonTable title="Accounts — real versus practice" dimension="account" rows={report.comparisons.accounts} onSelect={select} />}
                 <ComparisonTable
                   rows={report.comparisons.modes}
@@ -980,82 +1060,7 @@ export default function PerformanceDashboard(props: Props) {
                 />
               </>
             )}
-            <section className="pa-card">
-              <div className="pa-card-title">
-                <div>
-                  <h3>
-                    {focus
-                      ? `Trades behind “${label(focus.key)}”`
-                      : "Trace the individual trades"}
-                  </h3>
-                  <p>
-                    {cycles.length} of {total} cycles loaded · quantities are
-                    contracts/shares
-                  </p>
-                </div>
-                {focus && (
-                  <button onClick={() => setFocus(null)}>
-                    Clear selection
-                  </button>
-                )}
-              </div>
-              <div className="pa-table-wrap">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Date / mode</th>
-                      <th>Contract</th>
-                      <th>Direction</th>
-                      <th>Entry / exit decisions</th>
-                      <th>Net realized</th>
-                      <th>Capital contribution</th>
-                      <th>State</th>
-                      <th>Inspect</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {visible.map((c) => (
-                      <tr key={c.cycle_id}>
-                        <td>
-                          {c.date}
-                          <small>{label(c.mode)}</small>
-                        </td>
-                        <td>
-                          {c.symbol} {c.strike} {c.right}
-                          <small>{c.expiry}</small>
-                        </td>
-                        <td>{c.direction}</td>
-                        <td>
-                          {c.entry_count} / {c.exit_count}
-                        </td>
-                        <td className={tint(c.net_pnl)}>{money(c.net_pnl)}</td>
-                        <td>{pct(c.pnl_pct)}</td>
-                        <td>
-                          {c.state}
-                          {c.open_quantity > 0 && ` · ${c.open_quantity} open`}
-                        </td>
-                        <td>
-                          <button onClick={() => void showDetail(c)}>
-                            Details →
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-              {!visible.length && (
-                <p>
-                  No loaded cycles match this selection. Load more cycles below
-                  if available.
-                </p>
-              )}
-              {nextOffset != null && (
-                <button disabled={loading} onClick={() => void loadMore()}>
-                  {loading ? "Loading…" : "Load more cycles"}
-                </button>
-              )}
-            </section>
+            {view !== "Overview" && tradesPanel}
           </>
         )}
         {!loading && !error && report && total === 0 && (

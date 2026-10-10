@@ -13,11 +13,13 @@ const identity = (tile: PreparationTile) => tile.kind === 'option' ? `${tile.sym
 const label = (tile: PreparationTile) => tile.kind === 'option' ? `${tile.right} ${tile.strike}` : tile.symbol
 const fullLabel = (tile: PreparationTile) => `${tile.symbol}${tile.kind === 'option' ? ` · ${tile.right} ${tile.strike} · ${tile.expiry}` : ''}`
 
-export function FloatingOrderWindow({ visible, tiles, activeTileId, snapshot, priceForTile, onSubmit, onReconcile, onClose }: {
+export function FloatingOrderWindow({ visible, tiles, activeTileId, snapshot, priceForTile, onSubmit, onReconcile, onClose, onPickPrice, onCancelPick }: {
   visible: boolean; tiles: PreparationTile[]; activeTileId: string; snapshot: DesktopTradingSnapshot
   priceForTile: (tile: PreparationTile) => number
   onSubmit: (tile: PreparationTile, draft: FloatingOrderDraft) => Promise<void>
   onReconcile: () => Promise<DesktopTradingSnapshot>; onClose: () => void
+  onPickPrice?: (tile: PreparationTile, apply: (price: number) => void) => void
+  onCancelPick?: () => void
 }) {
   const contracts = useMemo(() => [...new Map(tiles.map(tile => [identity(tile), tile])).values()], [tiles])
   const [selected, setSelected] = useState(() => identity(tiles.find(tile => tile.id === activeTileId) ?? tiles[0]))
@@ -58,7 +60,8 @@ export function FloatingOrderWindow({ visible, tiles, activeTileId, snapshot, pr
     window.addEventListener('pointermove', move); window.addEventListener('pointerup', up); window.addEventListener('keydown', key, true)
     return () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); window.removeEventListener('keydown', key, true) }
   }, [visible, onClose])
-  const choose = (next: PreparationTile) => { setSelected(identity(next)); setPrice(''); setStop(''); setSize(''); setError(''); setNotice('') }
+  useEffect(() => { if (!visible) onCancelPick?.(); return () => onCancelPick?.() }, [visible, onCancelPick])
+  const choose = (next: PreparationTile) => { onCancelPick?.(); setSelected(identity(next)); setPrice(''); setStop(''); setSize(''); setError(''); setNotice('') }
   const submit = async () => {
     if (!tile || reason || pending.current || uncertain) return
     setError(''); setNotice('')
@@ -83,7 +86,7 @@ export function FloatingOrderWindow({ visible, tiles, activeTileId, snapshot, pr
         if (attached) { validateEntryStop(side, entry, Number(stop)); draft.entry_sl_price = Number(stop) }
       }
     } catch (cause) { setError(String(cause)); return }
-    pending.current = true; setBusy(true)
+    onCancelPick?.(); pending.current = true; setBusy(true)
     try { await onSubmit(tile, draft); setPrice(''); setSize(''); setStop(''); setNotice('Order submitted') }
     catch (cause) {
       const message = String(cause)
@@ -106,9 +109,9 @@ export function FloatingOrderWindow({ visible, tiles, activeTileId, snapshot, pr
     <div className="order-contracts">{contracts.map(item => <button key={identity(item)} aria-pressed={selected === identity(item)} title={fullLabel(item)} disabled={busy} onClick={() => choose(item)}>{label(item)}{contracts.some(other => identity(other) !== identity(item) && label(other) === label(item)) && <small>{item.expiry}</small>}</button>)}</div>
     <div className="order-identity">{tile ? fullLabel(tile) : 'Choose a displayed contract'}</div>
     {reason && <p role="status">{reason}. Select a tradable contract.</p>}
-    <div className="order-types">{(['MARKET', 'LIMIT', 'TARGET', 'STOPLOSS'] as const).map(value => <button disabled={busy} aria-pressed={type === value} key={value} onClick={() => { setType(value); setPrice(''); setSize('') }}>{value === 'STOPLOSS' ? 'SL' : value[0] + value.slice(1).toLowerCase()}</button>)}</div>
+    <div className="order-types">{(['MARKET', 'LIMIT', 'TARGET', 'STOPLOSS'] as const).map(value => <button disabled={busy} aria-pressed={type === value} key={value} onClick={() => { onCancelPick?.(); setType(value); setPrice(''); setSize('') }}>{value === 'STOPLOSS' ? 'SL' : value[0] + value.slice(1).toLowerCase()}</button>)}</div>
     <div className="order-row"><label>Side<select aria-label="Order side" value={type === 'STOPLOSS' ? closingSide : side} disabled={busy || type === 'STOPLOSS'} onChange={event => setSide(event.target.value as 'BUY' | 'SELL')}><option>BUY</option><option>SELL</option></select></label><span>LTP <b>{lastPrice > 0 ? lastPrice.toFixed(2) : 'Waiting'}</b></span></div>
-    {type !== 'MARKET' && <label>{type === 'LIMIT' ? 'Limit price' : 'Trigger price'}<StepInput aria-label="New order price" min={0.01} step={0.25} value={price} onValue={setPrice} disabled={busy} /></label>}
+    {type !== 'MARKET' && <label>{type === 'LIMIT' ? 'Limit price' : 'Trigger price'}<StepInput aria-label="New order price" onClick={() => tile && onPickPrice?.(tile, value => setPrice(value.toFixed(2)))} min={0.01} step={0.25} value={price} onValue={value => { onCancelPick?.(); setPrice(value) }} disabled={busy} /><button type="button" aria-label="Pick new order price on chart" title="Click a price on the selected contract's chart" disabled={busy || !tile || !onPickPrice} onClick={() => tile && onPickPrice?.(tile, value => setPrice(value.toFixed(2)))}>⊕</button></label>}
     {type === 'TARGET' && Number(price) > 0 && <small>Limit ₹{(Number(price) * (side === 'BUY' ? 1 + settings.target_deviation_pct : 1 - settings.target_deviation_pct)).toFixed(2)}</small>}
     {type !== 'STOPLOSS' && <label>Sizing<select aria-label="Order sizing" value={sizing} disabled={busy} onChange={event => { setSizing(event.target.value as typeof sizing); setSize('') }}><option value="quantity">Fixed quantity</option><option value="capital">Capital %</option><option value="risk">Risk %</option></select></label>}
     {type === 'STOPLOSS' || sizing === 'quantity' ? <label>{type === 'STOPLOSS' ? 'SL units' : tile?.kind === 'option' ? 'Lots' : 'Shares'}<StepInput aria-label="New order quantity" value={size} onValue={setSize} min={type === 'STOPLOSS' ? lot : 1} step={type === 'STOPLOSS' ? lot : 1} max={type === 'STOPLOSS' ? maxSl : undefined} disabled={busy} /></label> : <div className="order-ratios">{(['l', 'm', 'h'] as const).map(value => <button key={value} disabled={busy} aria-pressed={ratio === value} onClick={() => setRatio(value)}>{value.toUpperCase()} {sizing === 'capital' ? (settings[`funds_ratio_${value}_pct`] * 100).toFixed(1) : settings[`risk_ratio_${value}_pct`]}%</button>)}</div>}

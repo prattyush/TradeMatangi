@@ -117,6 +117,11 @@ try {
   await page.getByRole("button", { name: "Export CSV" }).click();
   await download;
   await page.setViewportSize({ width: 620, height: 850 });
+  await page.getByRole('button',{name:'Overview',exact:true}).click()
+  await page.locator('.pa-distribution button').first().click()
+  if (!await page.getByRole('heading',{name:/Trades behind/}).evaluate(node => {
+    const card=node.closest('.pa-card');return card.previousElementSibling?.querySelector('h3')?.textContent==='Realized P&L by trading date' || Boolean(card.previousElementSibling?.querySelector('.pa-distribution'))
+  })) throw new Error('Trades behind must immediately follow the distribution row')
   await page.screenshot({ path: join(artifactDir, "stats-mobile.png") });
   await page.getByRole("button", { name: "Close analytics" }).click();
   if ((await page.evaluate(() => document.body.dataset.closed)) !== "yes")
