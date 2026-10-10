@@ -1594,7 +1594,7 @@ async def start_strategy(session_id: str, req: DesktopStartStrategyRequest, user
             if opened and _position_for(session, right, strike, req.expiry or session.expiry).side == 'FLAT':
                 chosen = sorted(opened, key=lambda c: (c['expiry'], c['strike']))[0]
                 strike, req.expiry = chosen['strike'], chosen['expiry']
-        contract = _require_registered_contract(session, right, strike, requested_expiry or session.expiry)
+        contract = _require_registered_contract(session, right, strike, req.expiry or session.expiry)
         if requested_strike is not None and req.strategy_type.value in ("BreakEven", "AggressiveStoploss", "TargetProfit", "LockProfit", "UnderlyingTargetProfit", "UnderlyingStoploss"):
             position = _position_for(session, right, contract["strike"], contract["expiry"])
             if position.side == "FLAT":

@@ -330,3 +330,42 @@ for fills, partial fills, SLs, edits/cancellation, refresh and Stop/Done. Automa
 mocks do not establish venue behavior or native multi-monitor correctness.
 No credentials were changed, no live orders placed, and no deployment/main/dev
 promotion is included. Deferred scope remains as listed above.
+
+### PR #632 self-review — 2026-10-10
+
+Reviewed execution routing, credential renewal, account fencing, durable session
+ownership/recovery, unknown submissions, protection allocation, exact contracts,
+Stop/Done closure and linked desktop state. Found and corrected:
+
+1. Kite token renewal re-entered client resolution while recreating its existing
+   order socket. Pass the resolved client to feed startup to avoid recursion.
+2. After an earlier Kite SL was cancelled, later partial entry fills could reuse
+   its protection ID and skip new coverage. Use cumulative allocated coverage for
+   IDs and retain the entry's effective group even when it had no explicit group.
+   Previously cancelled coverage remains intentionally cancelled.
+3. An underlying strategy's fallback reference could select an open contract in a
+   different expiry but validate the original expiry. Validate the selected expiry.
+4. Refresh-only account checks were insufficient for operations immediately after
+   a Kotak account change. The shared resolver checks the session's account before
+   routing operations; callback cleanup can still use its explicit expired-owner path.
+   Closure reports account failures visibly and remains pending rather than silently
+   losing its supervisor before a retry.
+5. Done's monitor did not retry failed exits while positions remained locally open.
+   It now refreshes each pass, retries entry cancellations/exits, and requires a
+   later verified snapshot before final completion. A failed cancellation does not
+   prevent attempts to cancel other entries. The date barrier remains active.
+6. Website Stop returned success for a missing runtime, including a saved Real book
+   after restart. Saved Real books now use the same owned closure recovery as desktop;
+   neutral summaries can reconstruct read-only evidence and stop cannot silently
+   claim broker-confirmed closure from absence in memory.
+
+Regression checks cover token-renewal reconnect, replacement-account rejection,
+cancelled-SL/new-partial allocation and no recreation, cross-expiry reference,
+Done retry after broker outage with subsequent verification, and website recovery.
+Focused regression on the final changes: **363 passed**. The full backend review
+run passed **1,972 tests**, with the same four reproduced baseline failures (74.14
+seconds). The final closure-error visibility change was also covered by the focused
+run; no client/native code changed during this review.
+Windows/native and live-broker acceptance gates remain open; this review does not
+claim venue or physical multi-monitor acceptance. Changes remain in PR #632 targeting
+preprod, with no merge or deployment.

@@ -204,12 +204,14 @@ def _place_legacy_real_protection(order, session):
     protected = sum(max(0, o.quantity - o.broker_filled_quantity) for o in order_service.get_open_orders(session.session_id)
                     if o.execution_role == "exit" and o.broker_order_id and o.side == exit_side
                     and (o.right, o.strike, o.expiry) == (order.right, order.strike, order.expiry))
+    allocation_offset = protected
     if getattr(session, "execution_broker", None) in ("Kite", "kite"):
         # Submitted protection, even if later cancelled, consumes the requested
         # entry coverage. New partial fills can add only newly confirmed units.
         allocated = sum(o.quantity for o in order_service.get_all_orders(session.session_id)
                         if (o.group_id or o.order_id) == group and o.execution_role == "exit"
                         and (o.broker_order_id or o.recovery_state in ("submitting", "unknown")))
+        allocation_offset = allocated
         quantity = max(0, min(quantity - allocated, held - protected))
     else:
         quantity = max(0, min(quantity, held) - protected)
@@ -220,7 +222,7 @@ def _place_legacy_real_protection(order, session):
         sl_price = round(order.filled_price * (1 - _AUTOSTOP_FALLBACK_SL_PCT if order.side == TradeSide.BUY else 1 + _AUTOSTOP_FALLBACK_SL_PCT), 2)
     chunks = order_service.split_quantity(session.symbol, quantity) if order.right else [quantity]
     for index, chunk in enumerate(chunks):
-        identifier = str(uuid.uuid5(uuid.NAMESPACE_URL, f"protection:{session.session_id}:{group}:{protected}:{index}"))
+        identifier = str(uuid.uuid5(uuid.NAMESPACE_URL, f"protection:{session.session_id}:{group}:{allocation_offset}:{index}"))
         existing = order_service.get_order(session.session_id, identifier)
         if existing and existing.broker_order_id:
             continue
@@ -231,7 +233,7 @@ def _place_legacy_real_protection(order, session):
                     side=exit_side, order_type=OrderType.STOPLOSS, quantity=chunk,
                     created_at=int(session.current_time or 0), trading_date=session.date, trigger_price=sl_price,
                     is_stoploss=True, right=order.right, strike=order.strike, expiry=order.expiry,
-                    group_id=order.group_id, user_id=session.user_id, source="entry_protection", order_id=identifier,
+                    group_id=group, user_id=session.user_id, source="entry_protection", order_id=identifier,
                     wallet_ledger_id=getattr(session, "wallet_ledger_id", None), wallet_ledger_kind="real")
             simulation._register_kotak_sl_for_order(session, protective, asyncio.get_running_loop())
             session.queue.put_nowait(json.dumps({"type": "order_placed", **protective.model_dump(mode="json")}))

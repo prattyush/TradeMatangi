@@ -72,9 +72,9 @@ async def close(session):
         from app.routers.orders import cancel_order
         try:
             strategy_service.cancel_all(session.session_id)
-            broker = execution_broker.get_service(session)
             while session.state != simulation.SimulationState.ENDED:
                 try:
+                    broker = execution_broker.get_service(session)
                     from app.services.real_trading_day import market_date
                     if session.date != market_date():
                         # Daily broker order/trade books cannot reconstruct yesterday.

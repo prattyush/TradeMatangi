@@ -850,6 +850,12 @@ async def update_pane_strike(session_id: str, req: UpdatePaneStrikeRequest):
 async def stop_simulation(req: SimulationControlRequest, user_id: str = Depends(get_request_user_id)):
     session = sim_svc.get_session(req.session_id)
     if not session:
+        from app.routers.execution_brokers import saved_real_record
+        record = await saved_real_record(req.session_id, user_id)
+        if record:
+            from app.services import real_sessions, real_close
+            session = await real_sessions.restore_for_close(record, user_id)
+            return await real_close.close(session)
         return {"status": "stopped"}
     if session.user_id != user_id:
         raise HTTPException(status_code=403, detail="Session does not belong to this user")

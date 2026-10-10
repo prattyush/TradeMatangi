@@ -41,7 +41,7 @@ class KiteExecutionService:
                     raise KotakError('Kite account changed; close/reconcile the existing account before trading')
                 self._client, self._account = client, account
             if self._ticker and getattr(self, "_feed_client", None) is not client:
-                self.start_order_feed()
+                self.start_order_feed(client=client)
         return client
 
     def is_authenticated(self):
@@ -234,10 +234,10 @@ class KiteExecutionService:
     def get_funds(self):
         return self.get_limits()['Net']
 
-    def start_order_feed(self):
+    def start_order_feed(self, *, client=None):
         from kiteconnect import KiteTicker
         from app.services.kite_reactor import call
-        client = self._get_client()
+        client = client if client is not None else self._get_client()
         with self._feed_lock:
             if self._ticker and getattr(self, '_feed_client', None) is client:
                 return

@@ -1,7 +1,7 @@
 """Broker-neutral authenticated account and Real lifecycle facade."""
 import asyncio
 from fastapi import APIRouter, Depends, HTTPException
-from app.dependencies import get_desktop_user_id, require_real_trading_access
+from app.dependencies import require_real_trading_access
 from app.services import execution_broker, simulation, real_broker_state, real_close
 
 router = APIRouter(prefix='/api/brokers', tags=['brokers'])
@@ -12,6 +12,18 @@ def owned(session_id, user_id):
     if not session or session.user_id != user_id or session.session_type != 'real':
         raise HTTPException(404, 'Real session not found')
     return session
+
+
+async def saved_real_record(session_id, user_id):
+    from app.services.db import get_dynamodb_resource
+    record = await asyncio.to_thread(lambda: get_dynamodb_resource().Table('Sessions').get_item(
+        Key={'session_id': session_id}, ConsistentRead=True).get('Item'))
+    if not record or record.get('session_type') != 'real':
+        return None
+    if record.get('user_id') != user_id:
+        raise HTTPException(404, 'Real session not found')
+    require_real_trading_access(user_id)
+    return record
 
 
 async def status_for(user_id):
@@ -40,9 +52,20 @@ async def reconcile(session_id: str, user_id: str = Depends(require_real_trading
 
 @router.get('/{session_id}/close-summary')
 async def close_summary(session_id: str, user_id: str = Depends(require_real_trading_access)):
-    return real_close.summary(owned(session_id, user_id))
+    if simulation.get_session(session_id):
+        return real_close.summary(owned(session_id, user_id))
+    record = await saved_real_record(session_id, user_id)
+    if not record:
+        raise HTTPException(404, "Real session not found")
+    return real_close.summary(await asyncio.to_thread(simulation.rebuild_session_from_db, record, user_id, read_only=True))
 
 
 @router.post('/{session_id}/stop')
 async def stop(session_id: str, user_id: str = Depends(require_real_trading_access)):
-    return await real_close.close(owned(session_id, user_id))
+    if simulation.get_session(session_id):
+        return await real_close.close(owned(session_id, user_id))
+    record = await saved_real_record(session_id, user_id)
+    if not record:
+        raise HTTPException(404, "Real session not found")
+    from app.services.real_sessions import restore_for_close
+    return await real_close.close(await restore_for_close(record, user_id))

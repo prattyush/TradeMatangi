@@ -31,9 +31,14 @@ def get_service(session=None, *, allow_expired=False):
             raise RuntimeError("Real engine ownership expired; reconnect to the authoritative session")
     if name(session) == 'kotak':
         from app.services.kotak_service import get_service as kotak
-        return kotak()
-    from app.services.kite_execution import get_service as kite
-    return kite()
+        broker = kotak()
+    else:
+        from app.services.kite_execution import get_service as kite
+        broker = kite()
+    expected = getattr(session, 'broker_account_id', None)
+    if isinstance(expected, str) and expected and not allow_expired and broker.account_identity() != expected:
+        raise RuntimeError('Broker account changed; restore the original account before operating this session')
+    return broker
 
 
 def account_scope(broker):

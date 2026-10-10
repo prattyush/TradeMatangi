@@ -293,3 +293,139 @@ async def test_refresh_rejects_changed_account_before_mutating_book(monkeypatch)
     with pytest.raises(ValueError, match='Broker account changed'):
         await real_broker_state.refresh(session, broker)
     broker.get_orders.assert_not_called()
+
+
+def test_kite_token_renewal_reconnects_feed_without_recursive_client_resolution(monkeypatch):
+    import hashlib
+    import kiteconnect
+    from app.services import kite_requests, kite_reactor
+    broker = kite_execution.KiteExecutionService()
+    client = SimpleNamespace(api_key='key', access_token='renewed')
+    old_ticker = Mock()
+    broker._client = object()
+    broker._account = hashlib.sha256(b'user').hexdigest()[:16]
+    broker._ticker = old_ticker
+    broker._feed_client = object()
+    monkeypatch.setattr(kite_execution.kite_service, '_get_kite', lambda: client)
+    monkeypatch.setattr(kite_requests, 'request', lambda *a, **k: {'user_id':'user'})
+    ticker = Mock()
+    ticker.connect.side_effect = lambda: ticker.on_connect(ticker, {})
+    monkeypatch.setattr(kiteconnect, 'KiteTicker', lambda *a: ticker)
+    monkeypatch.setattr(kite_reactor, 'call', lambda method: method())
+    assert broker._get_client() is client
+    assert broker._ticker is ticker
+    ticker.connect.assert_called_once()
+    old_ticker.close.assert_called_once()
+
+
+def test_session_execution_rejects_replacement_account_before_routing(monkeypatch):
+    broker = Mock()
+    broker.account_identity.return_value = 'replacement'
+    monkeypatch.setattr('app.services.kotak_service.get_service', lambda: broker)
+    session = SimpleNamespace(execution_broker='kotak', broker_account_id='original')
+    with pytest.raises(RuntimeError, match='Broker account changed'):
+        execution_broker.get_service(session)
+    broker.place_limit_order.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_kite_later_fill_protection_uses_new_identity_after_prior_sl_cancel(monkeypatch):
+    import uuid
+    from app.services import entry_sl_watcher, order_service, trading
+    from app.models.schemas import Position, OrderStatus
+    session = simulation.SimulationSession('s', 'NIFTY', '2026-10-09', '09:15:00', 1,
+        user_id='u', session_type='real', execution_broker='Kite', instrument_type='options',
+        strike_ce=25000, expiry='2026-10-15')
+    entry = order(group_id=None, execution_broker='kite', broker_filled_quantity=130,
+        right='CE', strike=25000, expiry=session.expiry, entry_sl_price=90)
+    first_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f'protection:s:{entry.order_id}:0:0'))
+    cancelled = Order(order_id=first_id, session_id='s', symbol='NIFTY', user_id='u', side='SELL',
+        quantity=65, created_at=1, trigger_price=90, limit_price=90, execution_role='exit', group_id=entry.order_id,
+        execution_broker='kite', broker_order_id='old-sl', status=OrderStatus.CANCELLED,
+        right='CE', strike=25000, expiry=session.expiry)
+    rows = [entry, cancelled]
+    monkeypatch.setattr(order_service, 'get_all_orders', lambda sid: rows)
+    monkeypatch.setattr(order_service, 'get_open_orders', lambda sid: [entry])
+    monkeypatch.setattr(order_service, 'get_order', lambda sid, oid: next((o for o in rows if o.order_id == oid), None))
+    monkeypatch.setattr(trading, 'get_position', lambda *a, **k: Position(symbol='NIFTY', side='LONG', quantity=130, avg_entry_price=100))
+    submitted = []
+    def place(**kwargs):
+        value = Order(limit_price=kwargs['trigger_price'], **{k:v for k,v in kwargs.items() if k not in ('trading_date',)})
+        rows.append(value)
+        return value
+    monkeypatch.setattr(order_service, 'place_order', place)
+    def register(s, o, loop):
+        o.broker_order_id = 'new-sl'
+        o.execution_role = 'exit'
+        submitted.append(o)
+    monkeypatch.setattr(simulation, '_register_kotak_sl_for_order', register)
+    entry_sl_watcher._place_legacy_real_protection(entry, session)
+    assert len(submitted) == 1 and submitted[0].quantity == 65
+    assert submitted[0].order_id != first_id and submitted[0].group_id == entry.order_id
+    entry_sl_watcher._place_legacy_real_protection(entry, session)
+    assert len(submitted) == 1  # Do not recreate the intentionally cancelled coverage.
+
+
+@pytest.mark.asyncio
+async def test_underlying_reference_fallback_keeps_selected_expiry(monkeypatch):
+    from app.routers import desktop_trading, strategies
+    from app.services import strategy_service
+    session = simulation.SimulationSession('s', 'NIFTY', '2026-10-09', '09:15:00', 1,
+        user_id='u', instrument_type='options', strike_ce=25000, expiry='2026-10-15')
+    selected = {'symbol':'NIFTY', 'right':'CE', 'strike':25100, 'expiry':'2026-10-22',
+                'contract_key':'NIFTY:2026-10-22:25100:CE'}
+    monkeypatch.setattr(desktop_trading, '_require_session', lambda *a: session)
+    monkeypatch.setattr(desktop_trading.trading_service, 'get_open_option_contracts', lambda *a: [selected])
+    monkeypatch.setattr(desktop_trading, '_position_for', lambda *a: SimpleNamespace(side='FLAT'))
+    def require(s, right, strike, expiry):
+        assert (right, strike, expiry) == ('CE', 25100, '2026-10-22')
+        return selected
+    monkeypatch.setattr(desktop_trading, '_require_registered_contract', require)
+    monkeypatch.setattr(strategies, 'start_strategy', lambda req, **k: {'strategy_id':'test'})
+    monkeypatch.setattr(strategy_service, 'list_running', lambda *a: [])
+    request = desktop_trading.DesktopStartStrategyRequest(session_id='s',
+        strategy_type='UnderlyingTargetProfit', right='CE', target_profit_value=25200)
+    await desktop_trading.start_strategy('s', request, 'u')
+    assert request.expiry == '2026-10-22' and request.strike == 25100
+
+
+@pytest.mark.asyncio
+async def test_website_stop_recovers_saved_real_instead_of_reporting_false_closure(monkeypatch):
+    from unittest.mock import AsyncMock
+    from app.routers import simulation as routes, execution_brokers
+    from app.services import real_close
+    from app.models.schemas import SimulationControlRequest
+    record = {'session_id':'s', 'user_id':'u', 'session_type':'real'}
+    recovered = object()
+    monkeypatch.setattr(simulation, 'get_session', lambda *a: None)
+    monkeypatch.setattr(execution_brokers, 'saved_real_record', AsyncMock(return_value=record))
+    restore = AsyncMock(return_value=recovered)
+    close = AsyncMock(return_value={'status':'closing'})
+    monkeypatch.setattr(real_sessions, 'restore_for_close', restore)
+    monkeypatch.setattr(real_close, 'close', close)
+    result = await routes.stop_simulation(SimulationControlRequest(session_id='s'), 'u')
+    assert result['status'] == 'closing'
+    restore.assert_awaited_once_with(record, 'u')
+    close.assert_awaited_once_with(recovered)
+
+
+@pytest.mark.asyncio
+async def test_closure_account_failure_remains_visible_and_pending(monkeypatch):
+    from unittest.mock import AsyncMock
+    from app.services import real_close, strategy_service
+    session = simulation.SimulationSession('close-account', 'RELIND', '2026-10-09', '09:15:00', 1,
+        user_id='u', session_type='real', state=SimulationState.RUNNING)
+    monkeypatch.setattr(simulation, '_upsert_session_to_db', lambda *a, **k: None)
+    monkeypatch.setattr(strategy_service, 'cancel_all', lambda *a: None)
+    monkeypatch.setattr(real_close, 'summary', lambda s: {'position_count':1, 'pending_order_count':0})
+    monkeypatch.setattr(execution_broker, 'get_service', Mock(side_effect=RuntimeError('Broker account changed')))
+    messages = []
+    monkeypatch.setattr(real_close, 'emit', lambda s, message: messages.append(message))
+    monkeypatch.setattr(real_close.asyncio, 'sleep', AsyncMock(side_effect=asyncio.CancelledError()))
+    response = await real_close.close(session)
+    task = real_close._jobs[session.session_id]
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert response['status'] == 'closing' and session.real_closing
+    assert any('Broker account changed' in message for message in messages)
+    assert session.state == SimulationState.RUNNING
