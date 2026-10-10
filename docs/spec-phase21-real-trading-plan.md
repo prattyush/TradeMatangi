@@ -381,3 +381,25 @@ merging this PR. Sprint 9 remains open for those acceptance results and any fixe
 The sequence is review → preprod merge → backend deployment → runtime acceptance
 and fixes on preprod-targeted PRs → manual main/dev promotion after acceptance.
 Opening the desktop app does not establish multi-monitor or live-order acceptance.
+
+### Desktop toolbar and upstream UI sync — 2026-10-10
+
+Follow-up preprod PR converts toolbar actions to SVG icon buttons with hover/focus
+labels and unchanged accessible action names. Order stays textual; toolbar sequence,
+action handlers and disabled states are retained. Screen names remain readable tabs;
+the wallet uses an icon while keeping its amount visible. Snapshot on/off has a
+pressed-state highlight and matching hover label.
+
+`0e56139464e6f23d46ba0ed6654d692c44f19a37` was present in main (its constituent
+changes are also in dev), but absent from preprod after PR #632. The follow-up
+branch merges that main commit, including chart draft-price picking, edit LTP/chart
+picking, stable popup close hitboxes and Stats layout updates. Merge resolution
+retains Real mode, its live charts/settings and linked-screen primary controls.
+The referenced commit contains price-picking changes, not a new date-picker widget.
+
+Verification: desktop TypeScript, 184 Vitest tests, both production builds and
+website TypeScript pass. Built-app desktop price-picking/Stepwise/Replay/Paper
+regressions pass on rerun (one initial edit-price assertion failed during concurrent
+browser runs); Real/linked regressions pass across four modes, including new icon,
+hover tooltip and snapshot pressed-state assertions. No backend changes or live
+orders are involved. Merge target remains preprod.
