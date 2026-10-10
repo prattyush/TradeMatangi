@@ -626,7 +626,7 @@ website assets; main merging/deployment remain manual.
 
 ### Website running Real/Paper mode display — 2026-10-10
 
-**Status: implemented and validated; delivery PR pending.** Starting a session
+**Status: implemented and validated; [PR #634](https://github.com/prattyush/TradeMatangi/pull/634) published for review → dev.** Starting a session
 changes the SessionControls key, remounting it with the local Paper picker default.
 The running display previously used that picker instead of the session's actual
 mode, so a Real session could appear as Paper.
