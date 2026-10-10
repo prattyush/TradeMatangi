@@ -383,7 +383,7 @@ export function ChartTile({ symbol, interval, supportedIntervals, onIntervalChan
       if (incremental && latest && subscribeBarRef.current) {
         subscribeBarRef.current({ timestamp: latest.timestamp * 1000, open: latest.open, high: latest.high, low: latest.low, close: latest.close })
         renderedCandlesRef.current = candles
-        reportChartDiagnostic('chart_incremental_success', { symbol, interval, candle_count: candles.length, latest })
+        reportChartDiagnostic('chart_incremental_success', { symbol, instrument, interval, candle_count: candles.length, latest })
         return
       }
       const barSpace = chart.getBarSpace().bar

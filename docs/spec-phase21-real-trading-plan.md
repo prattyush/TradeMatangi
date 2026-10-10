@@ -403,3 +403,30 @@ regressions pass on rerun (one initial edit-price assertion failed during concur
 browser runs); Real/linked regressions pass across four modes, including new icon,
 hover tooltip and snapshot pressed-state assertions. No backend changes or live
 orders are involved. Merge target remains preprod.
+
+### Linked Replay candle latency investigation — 2026-10-10
+
+Reported: linked underlying/PE Replay candles can lag by 2–3 minutes or more after
+PE trading and Fibonacci creation/deletion, while order exits arrive immediately.
+Two delivery weaknesses were found: native Replay updates depended solely on a
+500ms renderer poll (unlike immediate committed trading wakeups), and the restored
+linked-follower path could create its Replay without starting its native stream.
+The native Replay renderer effect now subscribes before ensuring its stream starts,
+including followers, and drains on Replay-specific native notifications scoped to
+that stream's owning window. Reads are coalesced with the existing drain; the timer
+remains a recovery fallback. Pop-out readiness is part of the effect lifecycle.
+Trading notifications and drawing behavior remain independent of Replay delivery.
+Chart incremental diagnostics now include contract identity to distinguish CE/PE.
+
+Verification: 184 desktop tests, 17 Rust offline tests, 7 backend Replay tests,
+desktop TypeScript and production build passed. Regular synthetic browser checks
+passed in Real, Stepwise, Replay and Paper. A native-IPC browser probe suppresses
+500ms renderer polling, creates a linked underlying/PE screen, applies a PE position,
+creates/deletes Fibonacci and checks three subsequent PE candle updates via native
+notifications within two seconds each. The probe passes with no page errors.
+Run it with `NATIVE_REPLAY_CHECK=1` alongside the existing Playwright/Chrome variables
+for `scripts/phase21-real-linked-check.mjs`. This checks the delivery mechanism;
+it does not establish the exact cause of the user's physical Windows timing.
+After preprod review/merge, rebuild/reinstall the Windows exe and retest the reported
+workflow, including separate-window focus and the original Replay speed. No backend
+code changed. Native Windows acceptance remains open.
