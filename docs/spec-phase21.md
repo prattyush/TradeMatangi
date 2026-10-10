@@ -624,6 +624,26 @@ those suites were not rerun for this frontend-only change. Native packaged Windo
 acceptance remains manual. Delivery needs a rebuilt desktop client and updated
 website assets; main merging/deployment remain manual.
 
+### Website running Real/Paper mode display — 2026-10-10
+
+**Status: implemented and validated; delivery PR pending.** Starting a session
+changes the SessionControls key, remounting it with the local Paper picker default.
+The running display previously used that picker instead of the session's actual
+mode, so a Real session could appear as Paper.
+
+App now passes the current session type to SessionControls. Running/paused live
+selection and badges use that type, including restored sessions before the Real
+access lookup completes. Idle and add-session controls keep the existing picker
+behavior and fresh Paper default. Trading execution, permissions and backend
+session modes are unchanged.
+
+Validation: website TypeScript/production build and **43 website Node tests**
+passed. `scripts/website-real-mode-check.mjs` verifies choosing Real and starting
+through a component remount, repeated remount, paused Paper, restored Real before
+access lookup, fresh idle Paper default and no page errors. Artifacts:
+`.cache/real-session-label/`. Deploy rebuilt website assets to apply the display
+fix; main merge/deployment remain manual.
+
 ## Original requirements
 
 ## Improvements

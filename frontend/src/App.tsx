@@ -2475,6 +2475,7 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
       <SessionControls
         key={addingSession ? `add:${addSessionSymbol}` : `active:${sim.sessionId ?? 'idle'}:${sim.symbol}`}
         sessionState={addingSession ? 'idle' : sim.sessionState}
+        activeSessionType={addingSession ? undefined : sim.sessionType}
         currentSymbol={addingSession ? addSessionSymbol : sim.symbol}
         currentDate={addingSession ? addSessionDate : sim.date}
         onSymbolChange={addingSession ? setAddSessionSymbol : sim.updateSymbol}
