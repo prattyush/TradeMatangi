@@ -345,6 +345,8 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
   const [settingsLoading, setSettingsLoading] = useState(false)
   const [settingsLoadFailed, setSettingsLoadFailed] = useState(false)
   const [preferenceSaving, setPreferenceSaving] = useState(false)
+  const [executionBroker, setExecutionBroker] = useState<"kotak" | "kite">("kotak")
+  const [realActiveSession, setRealActiveSession] = useState(false)
   const [kotakProtectionEnabled, setKotakProtectionEnabled] = useState(true)
   const [loadAttempt, setLoadAttempt] = useState(0)
   const [customAmount, setCustomAmount] = useState('')
@@ -563,6 +565,8 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
           setFineStructureShareEmails(s.fine_structure_share_emails)
         }
         // Sync entry auto-stoploss settings
+        setExecutionBroker(s.real_execution_broker ?? "kotak")
+        if (isRealTradingUser || isAdmin) void api.executionBrokerStatus().then(v => { if (active) setRealActiveSession(Boolean(v.active_session_id)) }).catch(() => { if (active) setRealActiveSession(true) })
         setKotakProtectionEnabled(s.kotak_automated_protection_enabled ?? true)
         if (s.entry_auto_sl_delay_sec != null) {
           setEntryAutoSlDelay(s.entry_auto_sl_delay_sec)
@@ -1248,6 +1252,8 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
             {(isRealTradingUser || isAdmin) && (
               <div style={{ borderTop: '1px solid #21262d', paddingTop: 16 }}>
                 <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 10, fontWeight: 600 }}>BROKER</div>
+                <label>Real execution broker <select value={executionBroker} disabled={settingsLoading || settingsLoadFailed || preferenceSaving || realActiveSession} onChange={event => { const broker = event.target.value as 'kotak' | 'kite'; void savePreference({ real_execution_broker: broker }, () => setExecutionBroker(broker)) }}><option value="kotak">Kotak Neo</option><option value="kite">Kite (Zerodha)</option></select></label>
+                {realActiveSession && <p style={{ fontSize: 12 }}>Close the current Real session before switching broker.</p>}
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                   <span style={{ fontSize: 13, color: '#e6edf3' }}>Kotak Neo</span>
                   {kotakAuthenticated === null ? (

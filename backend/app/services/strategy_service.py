@@ -405,7 +405,7 @@ def _apply_half_exit(strategy, session, position, price, right, ts, underlying=F
                 from app.services.simulation import _register_kotak_sl_for_order
                 _register_kotak_sl_for_order(session, order, loop)
             except Exception:
-                if not order.kotak_order_id:
+                if not order.broker_order_id and order.recovery_state not in ("submitting", "unknown"):
                     orders.cancel_order(session.session_id, order.order_id, session.date)
                 raise
         mark(order, "action")
@@ -427,8 +427,8 @@ def _apply_half_exit(strategy, session, position, price, right, ts, underlying=F
                 remainder = orders.get_order(session.session_id, intent["remainder_id"])
                 if remainder:
                     restored = min(int(intent["original_quantity"]), position.quantity)
-                    if remainder.kotak_order_id and is_real:
-                        from app.services.kotak_service import get_service
+                    if remainder.broker_order_id and is_real:
+                        from app.services.execution_broker import get_service
                         _sync_broker_quantity(session, remainder, restored)
                     orders.update_order(session.session_id, remainder.order_id, session.date, quantity=restored)
                     orders._write_order_to_db(remainder, strict=True)
@@ -447,10 +447,10 @@ def _apply_half_exit(strategy, session, position, price, right, ts, underlying=F
             allowed = min(order.quantity, available)
             available -= allowed
             if allowed < order.quantity:
-                broker_id = getattr(order, "kotak_order_id", None)
+                broker_id = getattr(order, "broker_order_id", None)
                 if broker_id and is_real:
-                    from app.services.kotak_service import get_service
-                    broker = get_service()
+                    from app.services.execution_broker import get_service
+                    broker = get_service(session)
                     if not allowed:
                         broker.cancel_order(broker_id, purpose="position_resize")
                     elif order.order_type == OrderType.LIMIT:
@@ -471,7 +471,7 @@ def _apply_half_exit(strategy, session, position, price, right, ts, underlying=F
                 continue
             selected = min(remaining, order.quantity)
             old_quantity = order.quantity
-            broker_id = getattr(order, "kotak_order_id", None)
+            broker_id = getattr(order, "broker_order_id", None)
             if selected == old_quantity:
                 strategy.metadata["half_pending_chunk"] = {"action_id": order.order_id, "selected_quantity": selected}
                 _write_strategy_to_db(strategy, strict=True)
@@ -493,14 +493,14 @@ def _apply_half_exit(strategy, session, position, price, right, ts, underlying=F
                 _write_strategy_to_db(strategy, strict=True)
                 try:
                     if broker_id and is_real:
-                        from app.services.kotak_service import get_service
+                        from app.services.execution_broker import get_service
                         _sync_broker_quantity(session, order, old_quantity - selected)
                     orders.update_order(session.session_id, order.order_id, session.date, quantity=old_quantity - selected)
                     mark(order)
                     action = place(selected, action_id)
                 except Exception:
                     action = orders.get_order(session.session_id, action_id)
-                    if action and action.kotak_order_id:
+                    if action and action.broker_order_id:
                         # Acknowledged broker actions remain tracked for reconciliation.
                         if action_id not in applied:
                             applied.append(action_id)
@@ -566,11 +566,19 @@ def on_tick(session, tick: dict, tick_right: str | None, loop=None) -> None:
         if strategy.status != StrategyStatus.RUNNING:
             continue
 
+        if strategy.metadata.get("contract_scope") == "all_right" and strategy.strategy_type in ("UnderlyingTargetProfit", "UnderlyingStoploss"):
+            if tick_right is None:
+                _expand_underlying_exit(strategy, session, current_price, ts)
+            continue
         # Only evaluate this strategy when the tick's right matches the strategy's right
         if strategy.right != tick_right:
             continue
         target_contract = strategy.metadata.get("desktop_contract_key")
-        if target_contract and target_contract != tick.get("contract_key"):
+        tick_contract = tick.get("contract_key")
+        if tick_contract is None and tick_right:
+            primary = session.strike_ce if tick_right == "CE" else session.strike_pe
+            tick_contract = f"{session.symbol}:{tick.get('expiry') or session.expiry}:{tick.get('strike') or primary}:{tick_right}"
+        if target_contract and target_contract != tick_contract:
             continue
 
         # ── Bar OHLC tracking ──────────────────────────────────────────────
@@ -827,7 +835,7 @@ def _update_exit_order_price(session, order, new_price: float) -> None:
         else:
             candidate.trigger_price = new_price
         sync_order_edit(session, candidate, candidate.order_type, reprice=True)
-        order.kotak_order_id = candidate.kotak_order_id
+        order.broker_order_id = candidate.broker_order_id
         order.execution_role = candidate.execution_role
         effective_gap = candidate.execution_gap_pct
 
@@ -966,7 +974,7 @@ def _cancel_exit_and_place_limit(
         try:
             _register_kotak_sl_for_order(session, order, loop)
         except Exception:
-            if not order.kotak_order_id:
+            if not order.broker_order_id and order.recovery_state not in ("submitting", "unknown"):
                 orders.cancel_order(session.session_id, order.order_id, session.date)
             raise
     logger.info("strategy_exit_limit_placed strategy=%s order=%s", strategy.strategy_id, order.order_id)
@@ -1300,7 +1308,7 @@ def _on_tick_underlying_target_profit(
         else:  # PE
             triggered = underlying_price >= target_underlying_price
 
-    if not triggered:
+    if not triggered and not meta.get("underlying_force_trigger"):
         return
 
     # ── Compute new SL from option LTP ± buffer ─────────────────────────────
@@ -1430,7 +1438,7 @@ def _on_tick_underlying_stoploss(
         else:
             triggered = underlying_price <= sl_price
 
-    if not triggered:
+    if not triggered and not meta.get("underlying_force_trigger"):
         return
 
     tick_buffer = buffer_ticks * _TICK_SIZE
@@ -1513,5 +1521,39 @@ def _sync_broker_quantity(session, order, quantity):
     candidate = order.model_copy(deep=True)
     candidate.quantity = quantity
     sync_order_edit(session, candidate, candidate.order_type)
-    order.kotak_order_id = candidate.kotak_order_id
+    order.broker_order_id = candidate.broker_order_id
     order.execution_role = candidate.execution_role
+
+
+def _expand_underlying_exit(strategy, session, price, timestamp):
+    """Freeze an all-right action at trigger, then use ordinary exact-contract exits."""
+    import copy
+    from app.services import trading
+    meta = strategy.metadata
+    contracts = meta.get('underlying_trigger_contracts')
+    if contracts is None:
+        level = float(meta.get('underlying_sl_price' if strategy.strategy_type == 'UnderlyingStoploss' else 'target_profit_value') or 0)
+        bullish = (strategy.right == 'CE') == (meta.get('underlying_reference_side', 'LONG') == 'LONG')
+        above = not bullish if strategy.strategy_type == 'UnderlyingStoploss' else bullish
+        if level <= 0 or not (price >= level if above else price <= level):
+            return
+        contracts = [c for c in trading.get_open_option_contracts(session.session_id, session.symbol) if c['right'] == strategy.right]
+        meta['underlying_trigger_contracts'] = contracts
+        _write_strategy_to_db(strategy)
+    registry = _registry.setdefault(session.session_id, [])
+    for contract in contracts:
+        key = f"{session.symbol}:{contract['expiry']}:{contract['strike']}:{contract['right']}"
+        identifier = str(uuid.uuid5(uuid.NAMESPACE_URL, strategy.strategy_id + ':' + key))
+        if any(s.strategy_id == identifier for s in registry):
+            continue
+        child = copy.copy(strategy)
+        child.strategy_id = identifier
+        child.status = StrategyStatus.RUNNING
+        child.metadata = {**meta, 'contract_scope': 'exact', 'desktop_contract_key': key,
+            'desktop_strike': contract['strike'], 'desktop_expiry': contract['expiry'],
+            'underlying_force_trigger': True, 'underlying_parent_strategy': strategy.strategy_id}
+        child.metadata.pop('underlying_trigger_contracts', None)
+        _write_strategy_to_db(child)
+        registry.append(child)
+    strategy.status = StrategyStatus.COMPLETED
+    _write_strategy_to_db(strategy)

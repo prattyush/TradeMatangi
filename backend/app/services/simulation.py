@@ -226,6 +226,8 @@ class SimulationSession:
     strike_ce: Optional[int] = None    # CE streaming strike (equals strike when offset=0)
     strike_pe: Optional[int] = None    # PE streaming strike (equals strike when offset=0)
     brokerage_per_order: float = 1.0    # flat brokerage per trade (from session start config)
+    real_closing: bool = False
+    broker_account_id: str | None = None
     execution_broker: str = "KotakNeo"  # execution identity is independent of market-data source
     strategy_interval_secs: int = 180   # candle interval for all strategies (180=3min, 300=5min)
     session_type: str = "sim"           # "sim", "paper", "real", or "stepwise"
@@ -324,6 +326,8 @@ def _upsert_session_to_db(session: SimulationSession, *, strict: bool = False) -
             "instrument_type": session.instrument_type,
             "session_type": session.session_type,
             "execution_broker": session.execution_broker,
+            "broker_account_id": session.broker_account_id,
+            "real_closing": session.real_closing,
         }
         if getattr(session, "broker_projection_id", None):
             item["broker_projection_id"] = session.broker_projection_id
@@ -425,6 +429,8 @@ def create_session(
     session_alias: str | None = None,
     wallet_ledger_id: str | None = None,
     starting_capital: float | None = None,
+    execution_broker: str = "KotakNeo",
+    broker_account_id: str | None = None,
 ) -> SimulationSession:
     from app.services import wallet_service
     session_id = str(uuid.uuid4())
@@ -453,6 +459,7 @@ def create_session(
         group_id=group_id,
         session_alias=session_alias.strip() if session_alias else None,
         wallet_ledger_id=ledger_id,
+        execution_broker=execution_broker, broker_account_id=broker_account_id,
     )
     session.resume_event.set()  # not paused initially
     session.created_at = int(datetime.now(timezone.utc).timestamp() * 1000)
@@ -585,7 +592,7 @@ def rebuild_session_from_db(
     effective_ce = strike_ce if strike_ce is not None else (int(db_ce_raw) if db_ce_raw is not None else strike)
     effective_pe = strike_pe if strike_pe is not None else (int(db_pe_raw) if db_pe_raw is not None else strike)
 
-    ledger_id = f"real:{date}" if session_type == "real" else (db_record.get("wallet_ledger_id") or f"sim:{date}")
+    ledger_id = db_record.get("wallet_ledger_id") or (f"real:{date}" if session_type == "real" else f"sim:{date}")
     ledger_kind = "paper" if session_type == "paper" else ("real" if session_type == "real" else "sim")
     session_capital = (starting_capital if starting_capital is not None else
                        wallet_service.get_ledger_balance(user_id, date, ledger_id, ledger_kind))
@@ -614,6 +621,8 @@ def rebuild_session_from_db(
         wallet_ledger_id=ledger_id,
         resumed_from_db=True,
         execution_broker=db_record.get("execution_broker", "KotakNeo"),
+        broker_account_id=db_record.get("broker_account_id"),
+        real_closing=bool(db_record.get("real_closing", False)),
     )
     session.desktop_contracts = [
         {**contract, "strike": int(contract["strike"])} if isinstance(contract.get("strike"), Decimal) else contract
@@ -2048,9 +2057,9 @@ async def _run_real_session(session: SimulationSession) -> None:
     from app.services.broker_conversion import resume as resume_conversions
     await resume_conversions(session)
     loop = asyncio.get_running_loop()
-    from app.services.kotak_service import get_service as get_position_broker
+    from app.services.execution_broker import get_service as get_position_broker
     from app.services.broker_position_events import register as register_position_events
-    register_position_events(session, get_position_broker(), loop)
+    register_position_events(session, get_position_broker(session), loop)
 
     start_event = {
         "type": "session_started",
@@ -2112,6 +2121,12 @@ async def _run_real_session(session: SimulationSession) -> None:
                 return
 
         session.paper_stream_source = session.market_feed_group.actual
+        session.paper_base_contracts = {right: {"strike": strike, "expiry": session.expiry}
+            for right, strike in (("CE", session.strike_ce), ("PE", session.strike_pe)) if strike}
+        for contract in getattr(session, "desktop_contracts", []):
+            task = subscribe_desktop_option_contract(session, contract)
+            if task:
+                await task
         # Phase 3: consume live ticks
         logger.info("Real session %s: Phase 3 — consuming live ticks", session.session_id)
         while session.state != SimulationState.ENDED:
@@ -2160,14 +2175,19 @@ async def _run_real_session(session: SimulationSession) -> None:
             watermarks[instrument_id] = int(payload["time"])
             session._live_watermarks = watermarks
             tick_right = payload.get("right")
+            if tick_right:
+                payload["contract_key"] = f"{session.symbol}:{payload.get('expiry')}:{payload.get('strike')}:{tick_right}"
+                registry = getattr(session, "desktop_contract_quotes", {})
+                registry[payload["contract_key"]] = {**payload, "price": payload["close"], "timestamp": payload["time"], "source": "live_real"}
+                session.desktop_contract_quotes = registry
             quotes = getattr(session, "_protection_quotes", {})
             quotes[(tick_right, payload.get("strike"), payload.get("expiry"))] = {**payload, "received_at": time.time()}
             session._protection_quotes = quotes
-            if tick_right == "CE":
+            if tick_right == "CE" and payload.get("strike") == session.strike_ce and payload.get("expiry") == session.expiry:
                 session.last_price_ce = payload["close"]
-            elif tick_right == "PE":
+            elif tick_right == "PE" and payload.get("strike") == session.strike_pe and payload.get("expiry") == session.expiry:
                 session.last_price_pe = payload["close"]
-            else:
+            elif tick_right is None:
                 session.last_price = payload["close"]
             session.current_time = str(payload["time"])
 
@@ -2209,19 +2229,20 @@ def _register_kotak_sl_for_order(session: SimulationSession, order: Any, loop: A
     Place a closing STOPLOSS or LIMIT on Kotak and register fill/reject callbacks.
     Entry orders remain local. The historical helper name is retained for strategies.
     """
-    from app.services.kotak_service import get_service as get_kotak, KotakError
+    from app.services.execution_broker import get_service as get_kotak
+    from app.services.kotak_service import KotakError
     from app.services.trading import record_trade, settle_wallet_for_trade
     from app.services import order_service
     from app.models.schemas import OrderStatus
 
-    kotak_svc = get_kotak()
+    kotak_svc = get_kotak(session)
     from app.models.schemas import OrderType
     if attach_only:
-        kotak_order_id = order.kotak_order_id
+        kotak_order_id = order.broker_order_id
         if not kotak_order_id:
             return
     else:
-        if order.kotak_order_id:
+        if order.broker_order_id:
             return
         if not _is_position_exit(session, order):
             return  # Entry triggers remain local until live data triggers execution.
@@ -2240,16 +2261,18 @@ def _register_kotak_sl_for_order(session: SimulationSession, order: Any, loop: A
                           expiry=order.expiry or session.expiry)
         if order.order_type == OrderType.LIMIT:
             method = kotak_svc.place_options_limit_order if order.right else kotak_svc.place_limit_order
-            kotak_order_id = method(**kwargs, price=order.limit_price)
+            from app.services.broker_order_service import submit_once
+            kotak_order_id = submit_once(session, order, method, **kwargs, price=order.limit_price)
         elif order.order_type == OrderType.STOPLOSS:
             method = kotak_svc.place_options_sl_order if order.right else kotak_svc.place_sl_order
-            kotak_order_id = method(**kwargs, trigger_price=trigger, limit_price=kotak_limit)
+            from app.services.broker_order_service import submit_once
+            kotak_order_id = submit_once(session, order, method, **kwargs, trigger_price=trigger, limit_price=kotak_limit)
         else:
             return
 
     if not attach_only:
         order.execution_role = "exit"
-    order.kotak_order_id = kotak_order_id
+    order.broker_order_id = kotak_order_id
     session.kotak_order_map[order.order_id] = kotak_order_id
     order_service._write_order_to_db(order)
 
@@ -2277,7 +2300,8 @@ def _emit_tick_and_check_orders_real(
     from app.services.trading import record_trade, settle_wallet_for_trade
     if getattr(session, "broker_refresh_events", None) is not None:
         return []
-    from app.services.kotak_service import get_service as get_kotak, KotakError
+    from app.services.execution_broker import get_service as get_kotak
+    from app.services.kotak_service import KotakError
     from app.models.schemas import OrderType
 
     try:
@@ -2303,12 +2327,12 @@ def _emit_tick_and_check_orders_real(
     )
 
     fill_events: list[dict] = []
-    kotak_svc = get_kotak()
+    kotak_svc = get_kotak(session)
 
     for order in triggered:
         # SL orders placed on Kotak at creation time; fill comes via WebSocket.
         # For LIMIT/TARGET, forward to Kotak now as a market-ish limit order.
-        if order.kotak_order_id:
+        if order.broker_order_id:
             # Already placed on Kotak — the fill will arrive via order-feed WebSocket.
             continue
 
@@ -2324,7 +2348,8 @@ def _emit_tick_and_check_orders_real(
             except HTTPException as exc:
                 raise KotakError(str(exc.detail)) from exc
             if order.right and session.instrument_type == "options":
-                kotak_order_id = kotak_svc.place_options_limit_order(
+                from app.services.broker_order_service import submit_once
+                kotak_order_id = submit_once(session, order, kotak_svc.place_options_limit_order,
                     symbol=session.symbol,
                     right=order.right,
                     strike=order.strike if order.strike is not None else session.strike,
@@ -2334,14 +2359,15 @@ def _emit_tick_and_check_orders_real(
                     price=kotak_price,
                 )
             else:
-                kotak_order_id = kotak_svc.place_limit_order(
+                from app.services.broker_order_service import submit_once
+                kotak_order_id = submit_once(session, order, kotak_svc.place_limit_order,
                     symbol=session.symbol,
                     side=side_code,
                     qty=order.quantity,
                     price=kotak_price,
                 )
             session.kotak_order_map[order.order_id] = kotak_order_id
-            order.kotak_order_id = kotak_order_id
+            order.broker_order_id = kotak_order_id
             order.execution_role = order.execution_role or "entry"
             from app.models.schemas import OrderStatus
             order.status = OrderStatus.PENDING
@@ -2363,6 +2389,15 @@ def _emit_tick_and_check_orders_real(
                 "Real session %s: failed to forward order %s to Kotak: %s",
                 session.session_id, order.order_id, exc,
             )
+            if order.recovery_state in ('submitting', 'unknown'):
+                from app.models.schemas import OrderStatus
+                from app.services.order_service import _write_order_to_db
+                order.status = OrderStatus.PENDING
+                order.filled_at = order.filled_price = None
+                _write_order_to_db(order, strict=True)
+                session.queue.put_nowait(json.dumps({'type': 'order_updated', **order.model_dump(mode='json')}))
+                session.queue.put_nowait(json.dumps({'type': 'broker_error', 'message': f'Broker submission unconfirmed; refresh before retrying: {exc}'}))
+                continue
             # Revert the order — check_orders already marked it FILLED, undo that.
             from app.models.schemas import OrderStatus
             order.status = OrderStatus.CANCELLED
@@ -2400,7 +2435,7 @@ def _emit_tick_and_check_orders_real(
         # Emit placed events for new strategy orders
         for new_order in after_open_orders:
             if new_order.order_id not in before_ids:
-                if not new_order.kotak_order_id and new_order.order_type in (OrderType.LIMIT, OrderType.STOPLOSS):
+                if not new_order.broker_order_id and new_order.order_type in (OrderType.LIMIT, OrderType.STOPLOSS):
                     try:
                         _register_kotak_sl_for_order(session, new_order, loop)
                     except Exception as exc:
@@ -2663,7 +2698,7 @@ def start_session(session: SimulationSession) -> None:
         from app.services import order_service
         from app.services.entry_sl_watcher import on_entry_filled
         for order in order_service.get_all_orders(session.session_id):
-            if order.kotak_order_id and order.status.value == "PENDING":
+            if order.broker_order_id and order.status.value == "PENDING":
                 _register_kotak_sl_for_order(session, order, loop, attach_only=True)
             if order.execution_role != "exit" and order.broker_filled_quantity and (order.entry_sl_price is not None or order.is_autostop):
                 on_entry_filled(order, session, loop)
@@ -2713,10 +2748,17 @@ def stop_session(session: SimulationSession, *, preserve_trading_state: bool = F
         if lease_task is not current_task:
             lease_task.cancel()
     if session.session_type == "real":
-        from app.services.kotak_service import get_service as get_event_broker
+        from app.services.execution_broker import get_service as get_event_broker
         from app.services.broker_position_events import stop as stop_position_events
         from app.services.broker_conversion import stop as stop_conversions
-        stop_position_events(session, get_event_broker())
+        broker = get_event_broker(session, allow_expired=True)
+        from app.services.order_service import get_all_orders
+        for order in get_all_orders(session.session_id):
+            if order.broker_order_id:
+                broker.deregister_fill_callback(order.broker_order_id)
+                broker.deregister_reject_callback(order.broker_order_id)
+                broker.deregister_cancel_callback(order.broker_order_id)
+        stop_position_events(session, broker)
         stop_conversions(session)
     session.state = SimulationState.ENDED
     session.resume_event.set()  # unblock if paused

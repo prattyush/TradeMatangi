@@ -182,6 +182,9 @@ def order_snapshot(order, session=None, *, new_order=False):
             )
     meta.update(
         order_id=order.order_id,
+        execution_broker=getattr(order, "execution_broker", None),
+        broker_order_id=getattr(order, "broker_order_id", None),
+        broker_account_id=getattr(order, "broker_account_id", None),
         placement_time=order.created_at,
         execution_type=order.order_type.value,
         quote_price=order.quote_price,
@@ -300,6 +303,10 @@ def applied_controller(order):
 def created(order, session):
     active = _active_strategy.get()
     session = active[1] if active else session
+    if session is not None and getattr(session, "session_type", None) == "real":
+        from app.services.execution_broker import name
+        order.execution_broker = name(session)
+        order.broker_account_id = getattr(session, "broker_account_id", None)
     order.analytics = order_snapshot(order, session, new_order=True)
     if active and active[0].strategy_type != "AutoStop":
         applied_controller(order)

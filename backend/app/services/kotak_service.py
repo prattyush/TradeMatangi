@@ -393,11 +393,13 @@ _SYMBOL_MAP: dict[str, tuple[str, str]] = {
 # ---------------------------------------------------------------------------
 
 class KotakNeoService:
+    execution_broker = "kotak"
     """Thread-safe singleton wrapping neo_api_client.NeoAPI."""
 
     def __init__(self) -> None:
         self._client: Any = None
         self._authenticated = False
+        self._authenticated_account = None
         self._lock = threading.Lock()
         self._login_lock = threading.Lock()
         self._feed_lock = threading.Lock()
@@ -435,6 +437,7 @@ class KotakNeoService:
                 self._generation += 1
                 self._position_events.clear()
                 self._authenticated = False
+                self._authenticated_account = None
                 client, self._client = self._client, None
                 bridge, self._bridge = self._bridge, None
         try:
@@ -469,6 +472,8 @@ class KotakNeoService:
                 with self._lock:
                     self._client = client
                     self._authenticated = True
+                    import hashlib
+                    self._authenticated_account = hashlib.sha256(creds["ucc"].encode()).hexdigest()[:16]
                     self._pending_fills.clear()
                 self._start_order_feed()
                 # Re-login restores only subscriptions still owned by consumers.
@@ -806,6 +811,9 @@ class KotakNeoService:
     def account_identity(self) -> str:
         # Stable opaque identity; never return credentials in diagnostics or responses.
         import hashlib
+        with self._lock:
+            if self._authenticated_account:
+                return self._authenticated_account
         ucc = _read_kotak_credentials()["ucc"]
         if not ucc:
             raise KotakError("Kotak account identity is missing")

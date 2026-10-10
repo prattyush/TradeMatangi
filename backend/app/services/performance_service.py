@@ -1,5 +1,6 @@
 """Execution-based performance analysis, independent of labels and order display rows."""
 
+from app.services.broker_reports import order_id as broker_report_id
 from collections import defaultdict, deque
 from copy import deepcopy
 from datetime import datetime, timezone
@@ -57,7 +58,7 @@ def build_cycles(session, executions):
             raise ValueError("Invalid analytics execution")
         key = _identity(session, row)
         identifier = str(row.get("execution_id", row.get("trade_id", "")))
-        identity = (key, row.get("kotak_order_id"), identifier)
+        identity = (key, (row.get("broker_order_id") or row.get("kotak_order_id")), identifier)
         fingerprint = (
             side,
             quantity,
@@ -77,7 +78,7 @@ def build_cycles(session, executions):
         capital = number(meta.get("capital", session.get("session_capital")))
         action = str(
             meta.get("action_id")
-            or row.get("kotak_order_id")
+            or (row.get("broker_order_id") or row.get("kotak_order_id"))
             or row.get("trade_id")
             or identifier
         )
@@ -105,6 +106,8 @@ def build_cycles(session, executions):
                     expiry=key[5],
                     instrument_type=session.get("instrument_type", "equity"),
                     mode=session.get("session_type", "sim"),
+                    execution_broker=row.get("execution_broker") or (session.get("execution_broker") if session.get("session_type") == "real" else None),
+                    broker_account_id=row.get("broker_account_id") or session.get("broker_account_id"),
                     date=session.get("date", ""),
                     book_id=session.get("broker_projection_id")
                     or session.get("wallet_ledger_id")
@@ -727,7 +730,7 @@ def load_session_cycles(session, include_labels=True):
         orders[
             (
                 order_row.get("broker_exchange") or order_row.get("exchange") or "",
-                str(order_row.get("kotak_order_id") or order_row.get("order_id")),
+                str((order_row.get("broker_order_id") or order_row.get("kotak_order_id")) or order_row.get("order_id")),
             )
         ] = order_row
     executions = [
@@ -738,17 +741,17 @@ def load_session_cycles(session, include_labels=True):
         # fees by value and its flat fee by quantity, matching Phase 19 FIFO.
         totals = defaultdict(lambda: [0, 0.0])
         for r in executions:
-            totals[(r.get("exchange"), r["kotak_order_id"])][0] += int(r["quantity"])
-            totals[(r.get("exchange"), r["kotak_order_id"])][1] += int(
+            totals[(r.get("exchange"), broker_report_id(r))][0] += int(r["quantity"])
+            totals[(r.get("exchange"), broker_report_id(r))][1] += int(
                 r["quantity"]
             ) * number(r["price"])
         trade_map = {
             (
                 t.get("broker_exchange") or t.get("exchange") or "",
-                str(t["kotak_order_id"]),
+                str(broker_report_id(t)),
             ): t
             for t in trades
-            if t.get("kotak_order_id")
+            if (t.get("broker_order_id") or t.get("kotak_order_id"))
         }
         if set(trade_map) != {
             (exchange or "", str(order_id)) for exchange, order_id in totals
@@ -757,8 +760,8 @@ def load_session_cycles(session, include_labels=True):
                 "Execution membership changed during analytics read; retry"
             )
         for r in executions:
-            t = trade_map.get((r.get("exchange") or "", str(r["kotak_order_id"])), {})
-            q, v = totals[(r.get("exchange"), r["kotak_order_id"])]
+            t = trade_map.get((r.get("exchange") or "", str(broker_report_id(r))), {})
+            q, v = totals[(r.get("exchange"), broker_report_id(r))]
             if (
                 not t
                 or int(t["quantity"]) != q
@@ -778,12 +781,12 @@ def load_session_cycles(session, include_labels=True):
             r["commission"] = (number(t.get("commission")) - flat) * int(
                 r["quantity"]
             ) * number(r["price"]) / v + flat * int(r["quantity"]) / q
-            r["trade_id"] = t.get("trade_id", str(r["kotak_order_id"]))
+            r["trade_id"] = t.get("trade_id", str(broker_report_id(r)))
             r["symbol"] = session["symbol"]
             r["broker_exchange"] = r.get("exchange")
             if not r.get("analytics"):
                 order = orders.get(
-                    (r.get("exchange") or "", str(r["kotak_order_id"])), {}
+                    (r.get("exchange") or "", str(broker_report_id(r))), {}
                 )
                 from app.services.execution_analytics import normalize_metadata
                 meta = normalize_metadata(order.get("analytics") or t.get("analytics") or {})
@@ -808,7 +811,7 @@ def load_session_cycles(session, include_labels=True):
             order = orders.get(
                 (
                     t.get("broker_exchange") or t.get("exchange") or "",
-                    str(t.get("kotak_order_id") or t.get("trade_id")),
+                    str((t.get("broker_order_id") or t.get("kotak_order_id")) or t.get("trade_id")),
                 ),
                 {},
             )
@@ -838,13 +841,13 @@ def load_session_cycles(session, include_labels=True):
         return (
             tuple(
                 sorted(
-                    (str(r.get("kotak_order_id") or r["trade_id"]), int(r["quantity"]))
+                    (str((r.get("broker_order_id") or r.get("kotak_order_id")) or r["trade_id"]), int(r["quantity"]))
                     for r in entry_rows
                 )
             ),
             tuple(
                 sorted(
-                    (str(r.get("kotak_order_id") or r["trade_id"]), int(r["quantity"]))
+                    (str((r.get("broker_order_id") or r.get("kotak_order_id")) or r["trade_id"]), int(r["quantity"]))
                     for r in exit_rows
                 )
             ),
@@ -852,7 +855,7 @@ def load_session_cycles(session, include_labels=True):
 
     old_signatures = {}
     original_ids = {
-        str(t["trade_id"]): str(t.get("kotak_order_id") or t["trade_id"])
+        str(t["trade_id"]): str((t.get("broker_order_id") or t.get("kotak_order_id")) or t["trade_id"])
         for t in trades
     }
     for rt in completed + opened:
@@ -876,7 +879,7 @@ def load_session_cycles(session, include_labels=True):
         quantities = defaultdict(int)
         for r in c["executions"]:
             quantities[
-                (r["role"], str(r.get("kotak_order_id") or r.get("trade_id")))
+                (r["role"], str((r.get("broker_order_id") or r.get("kotak_order_id")) or r.get("trade_id")))
             ] += int(r["quantity"])
         es = [
             dict(trade_id=k[1], quantity=q)

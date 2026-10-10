@@ -4,6 +4,7 @@ A manifest points to a complete revision; old local rows remain archived. Live
 sessions reference one day projection rather than duplicating the broker day.
 """
 from __future__ import annotations
+from app.services.broker_reports import order_id as broker_report_id
 import asyncio
 import hashlib
 import json
@@ -51,6 +52,9 @@ def query_all(table, **params):
 
 def projection_id(session, account_id):
     scope = f"{session.user_id}:{account_id}:{session.date}:{session.symbol}:{session.instrument_type}"
+    from app.services.execution_broker import name
+    if name(session) == "kite":
+        scope = "kite:" + scope
     return "broker-day:" + hashlib.sha256(scope.encode()).hexdigest()[:32]
 
 
@@ -87,12 +91,12 @@ def aggregate(session, executions, account_id, master=None):
             continue
         if datetime.fromtimestamp(execution["timestamp"], timezone.utc).date().isoformat() != session.date:
             continue
-        identity = (execution.get("exchange", ""), execution["kotak_order_id"], execution["execution_id"])
+        identity = (execution.get("exchange", ""), broker_report_id(execution), execution["execution_id"])
         if identity in seen:
             continue
         seen.add(identity)
         contract = reports.contract(session, execution, master)
-        key = (execution.get("exchange", ""), execution["kotak_order_id"])
+        key = (execution.get("exchange", ""), broker_report_id(execution))
         group = groups.setdefault(key, {"row": execution, "contract": contract, "quantity": 0, "value": 0., "first": execution["timestamp"], "ids": []})
         if group["contract"] != contract or group["row"]["side"] != execution["side"]:
             raise ValueError("Broker order contains inconsistent execution identities")
@@ -104,12 +108,12 @@ def aggregate(session, executions, account_id, master=None):
     for (exchange, order_id), group in groups.items():
         side = TradeSide(group["row"]["side"])
         price, qty = group["value"] / group["quantity"], group["quantity"]
-        trades.append(Trade(trade_id=f"kotak:{account_id}:{exchange}:{order_id}",
+        trades.append(Trade(trade_id=f"{'kite' if getattr(session, 'execution_broker', 'KotakNeo') in ('Kite', 'kite') else 'kotak'}:{account_id}:{exchange}:{order_id}",
             session_id=session.session_id, user_id=session.user_id, symbol=session.symbol,
             side=side, quantity=qty, price=price, timestamp=group["first"],
             instrument_type=session.instrument_type, session_type="real", source="broker",
             commission=compute_commission(side, price, qty, session.brokerage_per_order),
-            kotak_order_id=order_id, broker_account_id=account_id, broker_exchange=exchange,
+            broker_order_id=order_id, execution_broker=getattr(session, "execution_broker", "KotakNeo"), broker_account_id=account_id, broker_exchange=exchange,
             broker_execution_ids=sorted(group["ids"]), **group["contract"]))
     return sorted(trades, key=lambda t: (t.timestamp, t.trade_id))
 
@@ -138,30 +142,36 @@ def normalize_positions(session, raw_positions, master=None):
 def build_orders(session, broker_orders, master=None):
     from app.services import order_service
     original = order_service.get_all_orders(session.session_id)
-    tracked = {o.kotak_order_id: o for o in original if o.kotak_order_id}
+    tracked = {o.broker_order_id: o for o in original if o.broker_order_id}
     # A split placement may succeed while its HTTP acknowledgement is lost.
     # Adopt its unique, persisted tag rather than importing a duplicate exit.
     split_children = {o.split_operation.get('tag'): o for o in original
         if o.split_operation and o.split_operation.get('child_id') == o.order_id
-        and o.split_operation.get('tag') and not o.kotak_order_id}
-    result = {o.order_id: o.model_copy(deep=True) for o in original if not o.kotak_order_id}
+        and o.split_operation.get('tag') and not o.broker_order_id}
+    uncertain = {o.analytics.get('broker_tag'): o for o in original if o.analytics and o.analytics.get('broker_tag')
+                 and not o.broker_order_id and o.recovery_state in ('submitting', 'unknown')}
+    result = {o.order_id: o.model_copy(deep=True) for o in original if not o.broker_order_id}
     for row in broker_orders:
         status = row["status"]
         kind = OrderType.STOPLOSS if row["order_type"] in ("SL", "SL-M", "STOPLOSS") else OrderType.LIMIT
-        previous = tracked.get(row["kotak_order_id"])
-        tagged = split_children.get(row.get('tag'))
-        if previous is None and tagged is not None and row['quantity'] == tagged.quantity and row['side'] == tagged.side.value and kind == tagged.order_type:
+        previous = tracked.get(broker_report_id(row))
+        tagged = split_children.get(row.get('tag')) or uncertain.get(row.get('tag'))
+        if previous is None and tagged is not None and row['quantity'] == tagged.quantity and row['side'] == tagged.side.value and (kind == tagged.order_type or (tagged.order_type == OrderType.TARGET and kind == OrderType.LIMIT)):
             contract = reports.contract(session, row, master)
             if (contract.get('right'), contract.get('strike'), contract.get('expiry')) == (tagged.right, tagged.strike, tagged.expiry):
                 previous = tagged
         if previous is None and row["order_type"] == "MARKET" and status in OPEN:
             continue
-        order = previous.model_copy(deep=True) if previous else Order(order_id="external_" + row["kotak_order_id"], session_id=session.session_id,
+        order = previous.model_copy(deep=True) if previous else Order(order_id="external_" + broker_report_id(row), session_id=session.session_id,
             user_id=session.user_id, symbol=session.symbol, side=TradeSide(row["side"]), order_type=kind,
             quantity=row["quantity"], trigger_price=row["trigger_price"], limit_price=row["limit_price"],
             created_at=reports.wall_time(row["order_time"]) if row.get("order_time") else 0,
-            source="broker_external", kotak_order_id=row["kotak_order_id"], **reports.contract(session, row, master))
-        order.kotak_order_id = row["kotak_order_id"]
+            source="broker_external", broker_order_id=broker_report_id(row), execution_broker=getattr(session, "execution_broker", "KotakNeo"), **reports.contract(session, row, master))
+        order.execution_broker = getattr(session, "execution_broker", "KotakNeo")
+        order.broker_account_id = getattr(session, "broker_account_id", None)
+        order.broker_order_id = broker_report_id(row)
+        if previous and not previous.broker_order_id and previous.recovery_state in ("submitting", "unknown"):
+            order.recovery_state = None
         order.order_type = kind
         order.is_stoploss = kind == OrderType.STOPLOSS
         order.trigger_price, order.limit_price = row["trigger_price"], row["limit_price"]
@@ -229,7 +239,7 @@ def stage(session, account_id, trades, broker_orders, positions, executions, ord
     for order in orders.values():
         db.Table("Orders").put_item(Item=encode({**order.model_dump(mode="json"), "session_id": partition}))
     for execution in executions:
-        db.Table("Orders").put_item(Item=encode({"session_id": partition, "order_id": "execution:" + execution.get("exchange", "") + ":" + execution["kotak_order_id"] + ":" + execution["execution_id"], "broker_execution": execution}))
+        db.Table("Orders").put_item(Item=encode({"session_id": partition, "order_id": "execution:" + execution.get("exchange", "") + ":" + broker_report_id(execution) + ":" + execution["execution_id"], "broker_execution": execution}))
     # Full broker order/position facts are separate from editable application orders.
     for index, row in enumerate(broker_orders):
         db.Table("Orders").put_item(Item=encode({"session_id": partition, "order_id": f"report:{index}", "broker_order": row}))
@@ -269,9 +279,13 @@ async def refresh(session, broker, *, protection=False, bundle=None):
     from app.services import kotak_reports
     from app.services.protection_recovery import Deferred
     from app.services import kotak_automation_policy as policy
-    if not protection:
+    from app.services.execution_broker import name
+    if not protection and name(session) == "kotak":
         await policy.check(session.user_id, force=True)
     account = await asyncio.to_thread(broker.account_identity)
+    expected_account = getattr(session, "broker_account_id", None)
+    if expected_account and expected_account != account:
+        raise ValueError("Broker account changed; reconnect the original account before refreshing this session")
     root = projection_id(session, account)
     prefetched = bundle
     if protection:
@@ -311,8 +325,8 @@ async def refresh(session, broker, *, protection=False, bundle=None):
             # Independent broker endpoints can straddle a fill. Retry once
             # before publishing a revision whose reported fills disagree.
             def quantities_agree():
-                quantities = {(t.broker_exchange, t.kotak_order_id): t.quantity for t in trades}
-                if any(r["filled_quantity"] != quantities.get((r["exchange"], r["kotak_order_id"]), 0) for r in scoped_orders):
+                quantities = {(t.broker_exchange, t.broker_order_id): t.quantity for t in trades}
+                if any(r["filled_quantity"] != quantities.get((r["exchange"], broker_report_id(r)), 0) for r in scoped_orders):
                     return False
                 expected = defaultdict(int)
                 for trade in trades:
@@ -358,14 +372,14 @@ async def refresh(session, broker, *, protection=False, bundle=None):
             kotak_reports.consistent(broker, root)
             # Persist resolved monthly expiry so restart/live FIFO needs no instrument download.
             scoped_executions = [{**row, **reports.contract(session, row, master)} for row in scoped_executions]
-            by_broker_id = {t.kotak_order_id: t for t in trades}
+            by_broker_id = {t.broker_order_id: t for t in trades}
             for order in orders.values():
-                if order.kotak_order_id and order.execution_role is None:
+                if order.broker_order_id and order.execution_role is None:
                     held = [p for p in positions if (p.get("right"), p.get("strike"), p.get("expiry")) == (order.right, order.strike, order.expiry)]
                     net = sum(p["quantity"] * (1 if p["side"] == "LONG" else -1 if p["side"] == "SHORT" else 0) for p in held)
                     order.execution_role = "exit" if (net > 0 and order.side == TradeSide.SELL) or (net < 0 and order.side == TradeSide.BUY) else "entry"
-                if order.kotak_order_id in by_broker_id:
-                    order.filled_at = by_broker_id[order.kotak_order_id].timestamp
+                if order.broker_order_id in by_broker_id:
+                    order.filled_at = by_broker_id[order.broker_order_id].timestamp
             # New live facts are handled after publication; they cannot append duplicates.
             try:
                 manifest, members = await asyncio.to_thread(stage, session, account, trades, scoped_orders, positions, scoped_executions, orders)
@@ -386,7 +400,7 @@ async def refresh(session, broker, *, protection=False, bundle=None):
                 raise SnapshotPersistenceError("Could not persist broker refresh; the previous revision remains active") from exc
             trading._trades[session.session_id] = trades
             order_service._orders[session.session_id] = orders
-            session.kotak_order_map = {o.order_id: o.kotak_order_id for o in orders.values() if o.kotak_order_id}
+            session.kotak_order_map = {o.order_id: o.broker_order_id for o in orders.values() if o.broker_order_id}
             session.broker_positions = positions
             from app.services.fifo_positions import unique_executions
             session._fifo_executions = unique_executions(session, scoped_executions, master)
@@ -399,9 +413,15 @@ async def refresh(session, broker, *, protection=False, bundle=None):
             for callback, args in events:
                 callback(*args)
             for order in order_service.get_open_orders(session.session_id):
-                if order.kotak_order_id:
+                if order.broker_order_id:
                     simulation._register_kotak_sl_for_order(session, order, asyncio.get_running_loop(), attach_only=True)
             if not protection:
+                from app.services.execution_broker import name
+                if name(session) == 'kite':
+                    from app.services.entry_sl_watcher import on_entry_filled
+                    for entry in order_service.get_all_orders(session.session_id):
+                        if entry.execution_role != 'exit' and entry.broker_filled_quantity and (entry.entry_sl_price is not None or entry.is_autostop):
+                            on_entry_filled(entry, session, asyncio.get_running_loop())
                 if not policy.enabled(session.user_id) and any(o.recovery_state in ('prepared', 'submitting', 'unknown')
                         for o in order_service.get_all_orders(session.session_id)):
                     from app.services.kotak_protection import reconcile_sent_orders
@@ -419,6 +439,10 @@ async def refresh(session, broker, *, protection=False, bundle=None):
                     reason="reconcile", executions=executions, positions=raw_positions)) if not protection else None
                 if account_wallet is None:
                     account_wallet = {"session_capital": session.session_capital, "balance": None, "display_balance": None}
+                broker_name = getattr(broker, 'execution_broker', None)
+                if isinstance(broker_name, str):
+                    session.broker_account_id = account
+                    session.wallet_ledger_id = f"real:{broker_name}:{account}:{session.date}"
                 real_accounting.apply_session_capital(session, account_wallet["session_capital"])
                 wallet_balance = account_wallet["balance"]
                 wallet_display_balance = account_wallet["display_balance"]
@@ -430,7 +454,7 @@ async def refresh(session, broker, *, protection=False, bundle=None):
                       "orders": scoped_orders, "open_orders": [r for r in scoped_orders if r["status"] not in ("complete", "filled", "cancelled", "canceled", "rejected", "expired")],
                       "trades": [t.model_dump(mode="json") for t in current],
                       "positions": getattr(session, "broker_positions", positions),
-                      "local_entry_orders": [o.model_dump(mode="json") for o in order_service.get_open_orders(session.session_id) if not o.kotak_order_id],
+                      "local_entry_orders": [o.model_dump(mode="json") for o in order_service.get_open_orders(session.session_id) if not o.broker_order_id],
                       "application_orders": [o.model_dump(mode="json") for o in order_service.get_open_orders(session.session_id)],
                       "snapshot_revision": manifest["revision"], "synced_at": manifest["synced_at"],
                       "state_version": getattr(session, "_broker_state_version", 0), "state_generation": STATE_GENERATION,
@@ -469,7 +493,7 @@ def restore_orders(session):
             order = Order.model_validate({**row, "session_id": session.session_id})
             orders[order.order_id] = order
     order_service._orders[session.session_id] = orders
-    session.kotak_order_map = {o.order_id: o.kotak_order_id for o in orders.values() if o.kotak_order_id}
+    session.kotak_order_map = {o.order_id: o.broker_order_id for o in orders.values() if o.broker_order_id}
     if manifest:
         session.broker_positions = [row["broker_position"] for row in rows if "broker_position" in row]
         executions = [dict(row["broker_execution"]) for row in rows if "broker_execution" in row]
@@ -499,7 +523,7 @@ def apply_position_fill(session, order, quantity, price):
             db = get_dynamodb_resource()
             try:
                 db.Table("Orders").put_item(Item=encode({"session_id": partition,
-                    "order_id": "execution:" + execution["exchange"] + ":" + order.kotak_order_id + ":" + execution["execution_id"], "broker_execution": execution}))
+                    "order_id": "execution:" + execution["exchange"] + ":" + order.broker_order_id + ":" + execution["execution_id"], "broker_execution": execution}))
                 for index, row in enumerate(session.broker_positions):
                     db.Table("Orders").put_item(Item=encode({"session_id": partition, "order_id": f"position:{index}", "broker_position": row}))
             except Exception:
@@ -539,7 +563,7 @@ def remap_labels(old_rows, labels, new_trades):
         by_identity[identity(row)].append(row["trade_id"])
     mapping = {}
     for row in old_rows:
-        candidates = [r["trade_id"] for r in new_rows if row.get("kotak_order_id") and r.get("kotak_order_id") == row["kotak_order_id"]]
+        candidates = [r["trade_id"] for r in new_rows if broker_report_id(row) and broker_report_id(r) == broker_report_id(row)]
         if not candidates:
             candidates = by_identity[identity(row)]
         if len(candidates) == 1:

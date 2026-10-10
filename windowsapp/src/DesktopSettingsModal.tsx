@@ -188,6 +188,7 @@ export function DesktopSettingsModal({
   const [walletAmount, setWalletAmount] = useState('150000')
   const [totp, setTotp] = useState('')
   const [brokerStatus, setBrokerStatus] = useState<Record<string, boolean>>({})
+  const [realActiveSession, setRealActiveSession] = useState(false)
   const [brokerError, setBrokerError] = useState('')
   const [tokens, setTokens] = useState<Record<string, string | null>>({})
   const [tokenDraft, setTokenDraft] = useState<Record<string, string>>({})
@@ -267,6 +268,7 @@ export function DesktopSettingsModal({
   useEffect(() => {
     if (!profile?.real_trading_enabled) return
     let active = true
+    void accountRequest<{ broker: string; authenticated: boolean; active_session_id?: string | null }>('broker/status', 'GET').then(v => { if (active) { setRealActiveSession(Boolean(v.active_session_id)); setBrokerStatus(current => ({ ...current, [v.broker]: v.authenticated })) } }).catch(() => { if (active) setRealActiveSession(true) })
     void Promise.all(
       ['kotak', 'breeze'].map(async (broker) => {
         try {
@@ -320,6 +322,9 @@ export function DesktopSettingsModal({
   const brokerControls = (
     <section className="settings-section">
       <strong>Broker connection</strong>
+      <p>Execution: {String(userDraft.real_execution_broker ?? 'kotak') === 'kite' ? `Kite · ${brokerStatus.kite === undefined ? 'Checking…' : brokerStatus.kite ? 'Connected' : 'Not connected; check the Kite token in Admin'}` : 'Kotak Neo'}</p>
+      <label>Real execution broker<select value={String(userDraft.real_execution_broker ?? 'kotak')} disabled={loading || loadFailed || saving || realActiveSession} onChange={event => { const broker = event.target.value; void onSaveTradingSettings({ real_execution_broker: broker }).then(value => setUserDraft(current => ({ ...current, ...value }))).catch(error => setBrokerError(String(error))) }}><option value="kotak">Kotak Neo</option><option value="kite">Kite (Zerodha)</option></select></label>
+      {realActiveSession && <small>Close the current Real session before switching broker.</small>}
       <p>
         Kotak Neo:{' '}
         {brokerStatus.kotak === undefined

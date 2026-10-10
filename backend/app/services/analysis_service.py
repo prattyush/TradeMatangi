@@ -174,6 +174,8 @@ def _serialize_trade(t: dict) -> dict:
         "execution_id":t.get("execution_id"),
         "order_id":t.get("order_id"),
         "kotak_order_id":t.get("kotak_order_id"),
+        "broker_order_id":t.get("broker_order_id") or t.get("kotak_order_id"),
+        "execution_broker":t.get("execution_broker"),
         "exchange":t.get("broker_exchange") or t.get("exchange"),
         "product":t.get("broker_product") or t.get("product"),
         "analytics": t.get("analytics"),
@@ -209,13 +211,13 @@ def get_stored_orders(session: dict) -> list[dict]:
         if item.get('analytics'):
             item['analytics'] = normalize_metadata(item['analytics'])
         result.append(item)
-    by_broker = {(str(item.get('broker_exchange') or ''),str(item.get('kotak_order_id') or '')):item for item in result if item.get('kotak_order_id')}
-    report_fields = {'kotak_order_id','status','side','side_known','symbol','underlying','exchange','quantity','filled_quantity','limit_price','trigger_price','filled_price','order_type','order_time','product','tag','reject_reason','right','strike','expiry','instrument_token'}
+    by_broker = {(str(item.get('broker_exchange') or ''),str(item.get('broker_order_id') or item.get('kotak_order_id') or '')):item for item in result if item.get('broker_order_id') or item.get('kotak_order_id')}
+    report_fields = {'execution_broker','broker_order_id','kotak_order_id','status','side','side_known','symbol','underlying','exchange','quantity','filled_quantity','limit_price','trigger_price','filled_price','order_type','order_time','product','tag','reject_reason','right','strike','expiry','instrument_token'}
     for row in rows:
         if not isinstance(row.get('broker_order'),dict):
             continue
         report = {key:value for key,value in row['broker_order'].items() if key in report_fields}
-        matched = by_broker.get((str(report.get('exchange') or ''),str(report.get('kotak_order_id') or '')))
+        matched = by_broker.get((str(report.get('exchange') or ''),str(report.get('broker_order_id') or report.get('kotak_order_id') or '')))
         if matched is not None:
             matched['broker_report'] = report
         else:

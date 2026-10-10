@@ -103,6 +103,8 @@ export interface MatchedPortion {
   requested_size?: string;
 }
 export interface PerformanceCycle {
+  execution_broker?: string | null
+  broker_account_id?: string | null
   shared?: boolean
   owner_email?: string | null
   user_id?: string
@@ -132,6 +134,8 @@ export interface PerformanceCycle {
     role?: 'entry' | 'exit'
     analytics?: AnalyticsMetadata
     order_id?: string
+    execution_broker?: string | null
+    broker_order_id?: string | null
     kotak_order_id?: string
     execution_sort_time?: number
     trade_id: string;
@@ -187,6 +191,7 @@ export function cyclesCsv(cycles: PerformanceCycle[]): string {
     "cycle_id",
     "date",
     "mode",
+    "execution_broker",
     "symbol",
     "right",
     "strike",

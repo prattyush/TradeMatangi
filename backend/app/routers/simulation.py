@@ -37,6 +37,8 @@ def _session_response(session, group=None) -> SimulationStartResponse:
         right=session.right, strike_ce=session.strike_ce, strike_pe=session.strike_pe,
         brokerage_per_order=session.brokerage_per_order, session_type=session.session_type,
         state=session.state, stepwise=session.stepwise,
+        execution_broker=session.execution_broker if session.session_type == "real" else None,
+        broker_account_id=getattr(session, "broker_account_id", None),
         total_bars=session.total_bars if session.stepwise else None,
         group_id=session.group_id, clock_family=group.get("clock_family") if group else None,
         group_state=group.get("state") if group else None,
@@ -258,6 +260,9 @@ async def start_simulation(req: SimulationStartRequest, user_id: str = Depends(g
 
 
 async def start_with_paper_claim(req, user_id, *, desktop_independent=False, resume_session_id=None):
+    if req.session_type == "real":
+        from app.services import real_sessions
+        return await real_sessions.start(req, user_id, lambda: _start_simulation(req, user_id, desktop_independent=desktop_independent))
     if req.session_type != "paper":
         return await _start_simulation(req, user_id, desktop_independent=desktop_independent)
     from app.services import paper_wallet
@@ -417,7 +422,7 @@ async def _start_simulation_impl(
     if is_real:
         from app.services.real_trading_day import state
         status = await asyncio.to_thread(state, user_id)
-        if status['state'] == 'done':
+        if status['state'] != 'active':
             raise HTTPException(403, 'Done for day: real trading is locked for this IST day')
         req.override = False
 
@@ -480,14 +485,27 @@ async def _start_simulation_impl(
         is_admin = bool(info and info.get("is_admin"))
         if not is_admin and not real_trading_service.is_whitelisted_user(user_id):
             raise HTTPException(status_code=403, detail="Real trading access is not enabled for your account")
-        from app.services.kotak_service import get_service as get_kotak, KotakError
-        kotak_svc = get_kotak()
-        if not kotak_svc.is_authenticated():
-            raise HTTPException(status_code=401, detail="Kotak login required. Please authenticate via /api/kotak/login before starting a real session.")
+        from app.services.execution_broker import get_service, name
+        from app.services.user_settings_service import get_settings
+        from app.services.kotak_service import KotakError
+        chosen_broker = name((await asyncio.to_thread(get_settings, user_id, strict=True))["real_execution_broker"])
+        kotak_svc = get_service(chosen_broker)
+        if not await asyncio.to_thread(kotak_svc.is_authenticated):
+            raise HTTPException(status_code=401, detail=f"{chosen_broker.title()} authentication required before starting a Real session")
         try:
             from app.services import real_accounting
             account_wallet = await real_accounting.refresh(user_id, req.date, kotak_svc, reason="start")
             funds = account_wallet["session_capital"]
+            broker_account = await asyncio.to_thread(kotak_svc.account_identity)
+            real_ledger = f"real:{chosen_broker}:{broker_account}:{req.date}"
+            if chosen_broker == "kite":
+                if req.instrument_type == 'options':
+                    reference_right = req.right or 'CE'
+                    reference_strike = (req.strike_ce if reference_right == 'CE' else req.strike_pe) or req.strike
+                    await asyncio.to_thread(kotak_svc.instrument, req.symbol, reference_right, reference_strike, req.expiry)
+                else:
+                    await asyncio.to_thread(kotak_svc.instrument, req.symbol)
+                await asyncio.to_thread(kotak_svc.start_order_feed)
         except KotakError as exc:
             raise HTTPException(status_code=502, detail=f"Could not fetch Kotak funds: {exc}")
         except Exception:
@@ -543,9 +561,14 @@ async def _start_simulation_impl(
     # under the same session_id after a reconnect.
     # For sim: if the user restarts with new params (start_time, speed, OTM), stop the
     # old session and create a fresh one — the user wants a new practice run, not a resume.
-    existing_record = paper_record or sim_svc.find_session_by_context(
+    from app.services import real_sessions
+    existing_record = (real_sessions.recovery_record() if is_real else None) or paper_record or sim_svc.find_session_by_context(
         user_id, req.symbol, req.date, internal_session_type, req.instrument_type
     )
+    if is_real and existing_record:
+        from app.services.execution_broker import name
+        if name(existing_record.get("execution_broker")) != chosen_broker:
+            existing_record = None
     if existing_record:
         existing_session_id = existing_record["session_id"]
         active = sim_svc.get_session(existing_session_id)
@@ -564,7 +587,7 @@ async def _start_simulation_impl(
             # Paper/real: already running in memory — return it (idempotent start)
             logger.info("start_simulation: returning already-active session %s", existing_session_id)
             if is_real:
-                active.wallet_ledger_id = f"real:{req.date}"
+                active.wallet_ledger_id = real_ledger
                 active.session_capital = funds
                 sim_svc._upsert_session_to_db(active, strict=True)
             return _session_response(active, group)
@@ -581,7 +604,7 @@ async def _start_simulation_impl(
             req_ce = req.strike_ce if req.strike_ce is not None else req.strike
             req_pe = req.strike_pe if req.strike_pe is not None else req.strike
             if is_real:
-                existing_record = {**existing_record, "wallet_ledger_id": f"real:{req.date}"}
+                existing_record = {**existing_record, "wallet_ledger_id": real_ledger}
             session = sim_svc.rebuild_session_from_db(
                 existing_record,
                 user_id=user_id,
@@ -601,7 +624,10 @@ async def _start_simulation_impl(
                     sim_svc.stop_session(session, preserve_trading_state=True)
                     raise
             if is_real:
-                if session.instrument_type == "options":
+                session.execution_broker = "KotakNeo" if chosen_broker == "kotak" else "Kite"
+                session.broker_account_id = broker_account
+                session.real_start_preparing = True
+                if session.instrument_type == "options" or chosen_broker == "kite":
                     await _prepare_real_options_resume(session, kotak_svc)
                 session.session_capital = funds
                 sim_svc._upsert_session_to_db(session, strict=True)
@@ -613,6 +639,8 @@ async def _start_simulation_impl(
             if is_paper:
                 from app.services.paper_wallet import lock
                 lock(user_id, req.date)
+            if is_real:
+                await real_sessions.bind_prepared(session)
             if not (is_paper and defer_paper_start):
                 sim_svc.start_session(session)
             logger.info(
@@ -642,11 +670,17 @@ async def _start_simulation_impl(
         group_id=group["group_id"],
         session_alias=req.session_alias,
         starting_capital=funds if is_real else None,
-        wallet_ledger_id=(f"paper:{req.date}" if internal_session_type == "paper" else f"real:{req.date}" if internal_session_type == "real" else f"sim:{req.date}"),
+        **({"execution_broker": "KotakNeo" if chosen_broker == "kotak" else "Kite", "broker_account_id": broker_account} if is_real else {}),
+        wallet_ledger_id=(f"paper:{req.date}" if internal_session_type == "paper" else real_ledger if internal_session_type == "real" else f"sim:{req.date}"),
     )
     if is_real:
+        session.real_start_preparing = True
+        session.execution_broker = "KotakNeo" if chosen_broker == "kotak" else "Kite"
+        session.broker_account_id = broker_account
         session.session_capital = funds
         sim_svc._upsert_session_to_db(session, strict=True)
+        if chosen_broker == "kite":
+            await _prepare_real_options_resume(session, kotak_svc)
     session.desktop_created = desktop_independent
     groups.add_member(group, {"session_id": session.session_id, "symbol": session.symbol,
         "session_type": session.session_type, "instrument_type": session.instrument_type,
@@ -654,6 +688,8 @@ async def _start_simulation_impl(
     if is_paper:
         from app.services.paper_wallet import lock
         lock(user_id, req.date)
+    if is_real:
+        await real_sessions.bind_prepared(session)
     if not ((is_paper and defer_paper_start) or defer_practice_start):
         sim_svc.start_session(session)
     return _session_response(session, group)
@@ -814,9 +850,18 @@ async def update_pane_strike(session_id: str, req: UpdatePaneStrikeRequest):
 async def stop_simulation(req: SimulationControlRequest, user_id: str = Depends(get_request_user_id)):
     session = sim_svc.get_session(req.session_id)
     if not session:
+        from app.routers.execution_brokers import saved_real_record
+        record = await saved_real_record(req.session_id, user_id)
+        if record:
+            from app.services import real_sessions, real_close
+            session = await real_sessions.restore_for_close(record, user_id)
+            return await real_close.close(session)
         return {"status": "stopped"}
     if session.user_id != user_id:
         raise HTTPException(status_code=403, detail="Session does not belong to this user")
+    if session.session_type == "real":
+        from app.services.real_close import close
+        return await close(session)
     group_id = session.group_id
     sim_svc.stop_session(session)
     if group_id:

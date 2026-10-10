@@ -175,7 +175,7 @@ def _write_trade_to_db(trade: Trade) -> None:
             if trade.right is not None:
                 item["right"] = trade.right
         item["session_type"] = trade.session_type
-        for field in ("kotak_order_id", "broker_account_id", "broker_exchange", "broker_execution_ids"):
+        for field in ("execution_broker", "broker_order_id", "kotak_order_id", "broker_account_id", "broker_exchange", "broker_execution_ids"):
             value = getattr(trade, field)
             if value:
                 item[field] = value
@@ -218,23 +218,33 @@ def record_trade(
     source: str | None = None,
     trade_id: str | None = None,
     kotak_order_id: str | None = None,
+    broker_order_id: str | None = None,
+    execution_broker: str | None = None,
+    broker_account_id: str | None = None,
     cumulative: bool = False,
     defer_exit_reconciliation: bool = False,
     analytics: dict | None = None,
 ) -> Trade:
     ensure_session(session_id)
+    from app.services.simulation import get_session
+    runtime = get_session(session_id)
+    if runtime is not None and session_type == "real":
+        from app.services.execution_broker import name
+        execution_broker = name(runtime)
+        broker_account_id = broker_account_id or getattr(runtime, "broker_account_id", None)
+    broker_order_id = broker_order_id or kotak_order_id
     from app.services.execution_analytics import filled, order_snapshot
     if analytics is None:
         from app.services.order_service import get_all_orders
         from app.services.simulation import get_session
         order = next((o for o in get_all_orders(session_id) if o.order_id == trade_id or
-                      (kotak_order_id and o.kotak_order_id == kotak_order_id)), None)
+                      (broker_order_id and o.broker_order_id == broker_order_id)), None)
         if order is not None:
             analytics = order_snapshot(order, get_session(session_id))
     analytics = filled(analytics, price, quantity)
     if trade_id:
         existing = next((trade for trade in _trades[session_id]
-                         if trade.trade_id == trade_id or (kotak_order_id and trade.kotak_order_id == kotak_order_id)), None)
+                         if trade.trade_id == trade_id or (broker_order_id and trade.broker_order_id == broker_order_id)), None)
         if existing:
             if cumulative and quantity > existing.quantity:
                 existing.quantity, existing.price = quantity, price
@@ -285,7 +295,9 @@ def record_trade(
         commission=compute_commission(side, price, quantity, brokerage_per_order),
         session_type=session_type,
         source=source,
-        kotak_order_id=kotak_order_id,
+        broker_order_id=broker_order_id,
+        execution_broker=execution_broker, broker_account_id=broker_account_id,
+        kotak_order_id=kotak_order_id if execution_broker != "kite" else None,
         underlying_price=underlying_price,
     )
     _trades[session_id].append(trade)
@@ -475,6 +487,7 @@ def reload_trades_from_db(session_id: str, *, strict: bool = False) -> None:
                     session_type=str(item.get("session_type", "sim")),
                     source=item.get("source"),
                     kotak_order_id=item.get("kotak_order_id"),
+                    broker_order_id=item.get("broker_order_id"), execution_broker=item.get("execution_broker"),
                     broker_account_id=item.get("broker_account_id"),
                     broker_exchange=item.get("broker_exchange"),
                     broker_execution_ids=item.get("broker_execution_ids", []),

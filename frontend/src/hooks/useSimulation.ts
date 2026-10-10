@@ -110,6 +110,7 @@ export interface InstrumentConfig {
 }
 
 export function useSimulation() {
+  const realStopPending = useRef(false)
   // Ref keeps the latest equity tick accessible synchronously inside buy/sell/addTradeFromSSE
   // callbacks without adding latestEquityTick to their dependency arrays.
   const latestEquityTickRef = useRef<TickEvent | null>(null)
@@ -237,7 +238,8 @@ export function useSimulation() {
 
     api.getTradesByContext(sym, res.date, instrumentType, sessionType).then(({ trades }) => {
       if (generation !== attachGenerationRef.current) return
-      setState(s => ({ ...s, historicalTrades: trades.filter(t => t.session_id !== res.session_id) }))
+      setState(s => ({ ...s, historicalTrades: trades.filter(t => t.session_id !== res.session_id && (sessionType !== 'real' ||
+        ((t.execution_broker ?? 'kotak').toLowerCase().replace('neo', '') === (res.execution_broker ?? 'kotak').toLowerCase().replace('neo', '')))) }))
     }).catch(() => {})
 
     const sequence = positionSequenceRef.current
@@ -444,6 +446,20 @@ export function useSimulation() {
 
   const stopSession = useCallback(async () => {
     const id = state.sessionId
+    if (id && state.sessionType === 'real') {
+      if (realStopPending.current) return
+      realStopPending.current = true
+      try {
+        const summary = await api.realCloseSummary(id)
+        if (!window.confirm(`Stop this Real session? ${summary.position_count} open position(s) will be closed and ${summary.pending_order_count} pending order(s) reconciled. Cancel to close them yourself. This does not lock your trading day.`)) return
+        await api.stopSimulation(id)
+        // Preserve broker state and SSE until the server confirms session_ended.
+        return
+      } catch (error) {
+        setState(s => s.sessionId === id ? { ...s, error: String(error) } : s)
+        return
+      } finally { realStopPending.current = false }
+    }
     setState(s => ({
       ...s,
       sessionId: null,
@@ -464,7 +480,7 @@ export function useSimulation() {
       openOrders: [],
     }))
     if (id) api.stopSimulation(id).catch(() => {})
-  }, [state.sessionId])
+  }, [state.sessionId, state.sessionType])
 
   const pauseSession = useCallback(async () => {
     if (!state.sessionId) return

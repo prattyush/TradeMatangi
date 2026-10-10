@@ -1,5 +1,22 @@
 # Phase 21 — Desktop UI implementation
 
+## Current extension — Kite and desktop Real / linked screens
+
+The approved [complete extension specification and sprint plan](spec-phase21-real-trading-plan.md)
+records scope, exclusions, decisions, broker/books/session design, desktop UI and
+linked-window lifecycle, failure cases and acceptance gates. Sprint 0 writes this
+handoff before trading-code changes. All extension work and PRs target **preprod**;
+main/dev promotion is manual after acceptance. One active Real session per user;
+close it before changing the saved broker preference. Funds and history stay
+broker-account separate. Earlier Kite/desktop Real deferrals and dev-delivery rules
+below describe the previous delivery and are superseded for this extension only.
+
+
+Extension implementation is on `feature/phase21-real-desktop` in ready-for-review
+[PR #632](https://github.com/prattyush/TradeMatangi/pull/632), targeting preprod.
+See the linked specification for delivered sprints, automated results and remaining
+Windows/native and live-broker acceptance gates. No main/dev promotion is included.
+
 ## Current delivery status — 2026-10-09
 
 PR #619 merged to dev on 2026-10-08 (merge e1938ce). Main includes that delivery
@@ -589,13 +606,26 @@ four browser scripts recorded above. Main merging/deployment remain manual.
 5) One other requirement in the edit options, which are present in the left panel, where I can change the quantity of already present orders. If you check in website, the similar option respects the option lot sizes, which are currently not respected in the left panel in desktop. That is with respect to scrolling. So if I scroll, the lot prices should change. Just look over into the website, edit options and how they're handled for options, or price change and quantity change, and try to duplicate that during edit options in left panel in desktop.
 
 ### Kite Broker For Real Trading
-Supporting Kite for Real Trading API's, all the their is feature parity with Kotak Neo. With exactly the same implementation.
+Supporting Kite for Real Trading API's, all the their is feature parity with Kotak Neo. With exactly the same implementation. The cancellation optimization present for Kotak Broker need not be applied in Kite Broker. Rest all the mechanism in which orders are placed, target, strategies should be same as currently with website and Kotak.
+
+The Admin can choose whether to use Kotak for real trading or Kite.
+
 
 ### Supporting Real Trading In Desktop Client
 Support Real Trading in Desktop Client, with same support as with Website Real Trading, like trade history refresh button and others.
 
+It should support all features currently supported in website for real trading. Do discuss if you find things need discussion.
 
+### Real Trading or All Trading in Option supporting multiple strike prices.
+1) We can have 2 CE Strike Prices, with orders and stoploss and target profit strategy at the same time.
+2) The 3 charts (One PE and 2 CE), can be in the 5 pane layout both desktop and website.
+3) For Kotak, with 2 strike prices, all optimizations, including auto cancellations handling should be done.
+4) For resume an old session which has open orders, during resuming a paper or real trading session, display definitely those open orders' Strike Prices. (one or 2).
+5) Support in website a similar seaerch feature as in desktop, to choose a chart with a specific strike price. It can be limited search, only for that underlying symbol. Or a much simpler can be just a dropdown to change strike price, or when search button cilck,  option to change the chart either a underlying or CE or PE with specific strike prices. This is required as currently during session starts
+the strike price is auto choosen based on under 50 rupees etc (current price), for 2 strike prices, it has to choosen manually.
 
+### Desktop Split Screen Trading
+ Support in Desktop, if split screen, both screens can have same session. So one option where user can clicks the current replay trading, or paper or real trading and ask it to  split screen, the second screen will be the same paper trading or replay trading. It may have different strike prices of CE /PE etc. We can plan to make it simple, such that no wallet shown or orders only in one. I am open to suggestions.
 
 
 

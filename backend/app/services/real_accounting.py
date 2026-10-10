@@ -1,5 +1,6 @@
 """Account-wide Kotak cash snapshots and a persistent IST-day capital baseline."""
 from __future__ import annotations
+from app.services.broker_reports import order_id as broker_report_id
 
 import asyncio
 import math
@@ -65,7 +66,7 @@ def gross_realized_pnl(date, executions, positions):
     for row in executions:
         if datetime.fromtimestamp(row["timestamp"], timezone.utc).date().isoformat() != date:
             continue
-        identity = (row["exchange"], row["kotak_order_id"], row["execution_id"])
+        identity = (row["exchange"], broker_report_id(row), row["execution_id"])
         if identity in seen:
             if seen[identity] != row:
                 raise ValueError("Conflicting duplicate Kotak execution")
@@ -74,7 +75,7 @@ def gross_realized_pnl(date, executions, positions):
         day.append(row)
     realized = 0.0
     day_quantities = {}
-    for row in sorted(day, key=lambda item: (item["timestamp"], item["kotak_order_id"], item["execution_id"])):
+    for row in sorted(day, key=lambda item: (item["timestamp"], broker_report_id(item), item["execution_id"])):
         key = contract_key(row)
         factor = factors.get(key, row.get("price_factor", 1.0))
         factor = required_number(factor, "price_factor")
@@ -125,13 +126,17 @@ async def refresh(user_id, date, broker, *, reason, executions=None, positions=N
         # observed after exits. Finite-value validation still applies; clamping
         # would change the existing capital-recovery calculation.
         committed = required_number(limits.get("MarginUsed"), "MarginUsed")
-        realized = gross_realized_pnl(date, executions, positions)
+        realized = required_number(limits.get("RealizedPnl"), "RealizedPnl") if getattr(broker, "execution_broker", None) == "kite" else gross_realized_pnl(date, executions, positions)
+        broker_name = getattr(broker, "execution_broker", None)
+        broker_name = broker_name if isinstance(broker_name, str) else None
+
         if not isinstance(account, str) or not account:
             raise ValueError("Kotak account identity is missing")
     except (ValueError, TypeError, KeyError) as exc:
         raise KotakError(str(exc)) from exc
     return await asyncio.to_thread(wallet_service.sync_real_account_funds, user_id, date,
-        account, net, realized, committed, reason=reason)
+        account, net, realized, committed, reason=reason, execution_broker=broker_name,
+        capital_override=required_number(limits.get("DayStartCapital"), "DayStartCapital") if broker_name == "kite" else None)
 
 
 def apply_session_capital(session, capital):
@@ -140,7 +145,9 @@ def apply_session_capital(session, capital):
     sessions = {session.session_id: session}
     sessions.update({sid: other for sid, other in simulation._sessions.items()
                      if other.user_id == session.user_id and other.date == session.date
-                     and other.session_type == "real"})
+                     and other.session_type == "real"
+                     and other.execution_broker == session.execution_broker
+                     and other.broker_account_id == session.broker_account_id})
     for other in sessions.values():
         if other.session_capital != capital:
             previous = other.session_capital

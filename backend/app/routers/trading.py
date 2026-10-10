@@ -84,10 +84,10 @@ def _place_kotak_direct(session, side: TradeSide, price: float, lot_size: int, r
     try:
         submit_immediate(session, order, asyncio.get_running_loop())
     except Exception as exc:
-        if not order.kotak_order_id:
+        if not order.broker_order_id and order.recovery_state not in ("submitting", "unknown"):
             order_service._orders[session.session_id].pop(order.order_id, None)
         raise HTTPException(status_code=502, detail=str(exc)) from exc
-    return JSONResponse(status_code=202, content={"status": "broker_pending", "kotak_order_id": order.kotak_order_id})
+    return JSONResponse(status_code=202, content={"status": "broker_pending", "kotak_order_id": order.broker_order_id})
 
 
 def _direct_trade_quantity(session, right, price, funds_ratio_pct):
@@ -339,5 +339,7 @@ async def done_for_day(session_id: str, user_id: str = Depends(get_request_user_
         raise HTTPException(404, 'Session not found')
     if session.session_type != 'real':
         raise HTTPException(400, 'Done for day applies only to real trading')
-    from app.services.real_trading_day import done_for_day as finish_day
+    from app.services.real_trading_day import done_for_day as finish_day, market_date
+    if session.date != market_date():
+        raise HTTPException(409, "Close the previous-day session before finishing today")
     return await finish_day(user_id)

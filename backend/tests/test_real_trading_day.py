@@ -51,12 +51,13 @@ async def test_completion_waits_for_flat_and_broker_verification(user,monkeypatc
     monkeypatch.setattr(order_service,'get_open_orders',lambda *a:[])
     monkeypatch.setattr(kotak_service,'get_service',lambda:object())
     calls=[]
+    monkeypatch.setattr(simulation, 'stop_session', lambda *a, **k: calls.append('stopped'))
     async def refresh(*a):calls.append('verified')
     monkeypatch.setattr(real_broker_state,'refresh',refresh)
     monkeypatch.setattr(day,'finish',lambda *a:calls.append('done'))
     monkeypatch.setattr(day,'broadcast',lambda *a:None)
     await day.complete_when_flat(user.user_id)
-    assert calls==['verified','done']
+    assert calls==['verified','done','stopped']
 
 def test_persisted_day_lock_survives_cache_clear_and_rollover(monkeypatch):
     rows={};date=['2026-10-07'];table=MagicMock()
@@ -117,3 +118,36 @@ def test_protection_is_not_blocked_by_lock_storage_outage(user,monkeypatch):
     getter=MagicMock(side_effect=RuntimeError('database down'));monkeypatch.setattr(day,'state',getter)
     day.require_entry_allowed(user,TradeSide.SELL,10)
     getter.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_done_monitor_retries_failed_exit_and_verifies_before_completion(user, monkeypatch):
+    from app.services import emergency_exit, real_broker_state, kotak_service, real_close
+    from unittest.mock import AsyncMock
+    monkeypatch.setattr(day, 'sessions_for', lambda *a: [user])
+    monkeypatch.setattr(kotak_service, 'get_service', lambda: object())
+    monkeypatch.setattr(order_service, 'get_open_orders', lambda *a: [])
+    monkeypatch.setattr(real_close, 'unresolved', lambda *a: False)
+    monkeypatch.setattr(day, 'broadcast', lambda *a: None)
+    remaining = [10]
+    monkeypatch.setattr(emergency_exit, 'position', lambda *a: Position(symbol=user.symbol,
+        side='LONG' if remaining[0] else 'FLAT', quantity=remaining[0], avg_entry_price=100))
+    refresh = AsyncMock()
+    monkeypatch.setattr(real_broker_state, 'refresh', refresh)
+    attempts = []
+    async def exit_book(session):
+        attempts.append(session.session_id)
+        if len(attempts) == 1:
+            raise RuntimeError('Temporary broker outage')
+        remaining[0] = 0
+    monkeypatch.setattr(emergency_exit, 'exit_all', exit_book)
+    monkeypatch.setattr(day.asyncio, 'sleep', AsyncMock())
+    finished = MagicMock()
+    monkeypatch.setattr(day, 'finish', finished)
+    stopped = AsyncMock()
+    monkeypatch.setattr(real_close, 'finish', stopped)
+    await day.complete_when_flat(user.user_id)
+    assert attempts == [user.session_id, user.session_id]
+    assert refresh.await_count == 3
+    finished.assert_called_once_with(user.user_id, user.date)
+    stopped.assert_awaited_once_with(user)

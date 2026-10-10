@@ -100,6 +100,7 @@ async def test_explicit_refresh_keeps_capital_and_paper_isolation(monkeypatch):
     wallet_service.sync_real_account_funds(USER, DATE, "account-a", 900, 0, 0, reason="start")
     broker.get_limits.return_value = {"Net": 750, "MarginUsed": 150}
     broker.account_identity.return_value = "account-a"
+    broker.execution_broker = "kotak"
     broker.get_trade_history.return_value = []
     broker.get_positions.return_value = []
     monkeypatch.setattr(kotak_service, "get_service", lambda: broker)
@@ -155,7 +156,7 @@ async def test_each_real_start_fetches_once_and_preserves_history(branch, overri
     s.session_capital, s.wallet_ledger_id = 0, f"sim:{DATE}"
     monkeypatch.setattr(simulation, "get_session", lambda sid: s if branch == "active" else None)
     def rebuild(record, **kwargs):
-        assert record["wallet_ledger_id"] == f"real:{DATE}"
+        assert record["wallet_ledger_id"] == f"real:kotak:account-a:{DATE}"
         s.wallet_ledger_id = record["wallet_ledger_id"]
         return s
     monkeypatch.setattr(simulation, "rebuild_session_from_db", rebuild)
@@ -164,6 +165,7 @@ async def test_each_real_start_fetches_once_and_preserves_history(branch, overri
     broker = MagicMock()
     broker.is_authenticated.return_value = True
     broker.account_identity.return_value = "account-a"
+    broker.execution_broker = "kotak"
     broker.get_limits.return_value = {"Net": 19200, "MarginUsed": 0}
     from app.services.broker_reports import normalize_execution
     broker.get_trade_history.return_value = [normalize_execution(dict(flId=identity, nOrdNo=identity,
@@ -176,7 +178,7 @@ async def test_each_real_start_fetches_once_and_preserves_history(branch, overri
         start_time="09:15:00", speed=1, session_type="real", override=override,
         group_id=group["group_id"] if grouped else None), USER)
     assert result.session_capital == 18000
-    assert result.wallet_ledger_id == f"real:{DATE}"
+    assert result.wallet_ledger_id == f"real:kotak:account-a:{DATE}"
     assert wallet_service._wallets[(USER, DATE)] == 150000
     broker.get_limits.assert_called_once()
     delete_sessions.assert_not_called()

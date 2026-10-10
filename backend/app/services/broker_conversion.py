@@ -1,3 +1,4 @@
+from app.services.broker_reports import order_id as broker_report_id
 """Broker-confirmed exit type changes. An acknowledgement is never confirmation."""
 import asyncio
 import json
@@ -55,7 +56,7 @@ def _matches(raw, candidate, broker_id):
     row = reports.normalize_order(raw)
     kind = 'SL' if candidate.order_type == OrderType.STOPLOSS else 'LIMIT'
     trigger = candidate.trigger_price if kind == 'SL' else 0
-    return (row['kotak_order_id'] == broker_id and row['order_type'] == kind
+    return (broker_report_id(row) == broker_id and row['order_type'] == kind
             and row['status'] in ('open', 'trigger pending', 'modified', 'complete', 'filled', 'partially filled', 'partial fill')
             and row['quantity'] == candidate.quantity
             and math.isclose(row['trigger_price'], trigger, abs_tol=.001)
@@ -100,7 +101,8 @@ async def validate_stop(session, candidate, operation):
 
 
 async def start(session, order, new_type, price):
-    from app.services.kotak_service import get_service, KotakError
+    from app.services.execution_broker import get_service
+    from app.services.kotak_service import KotakError
     from app.services.order_split import ACTIVE as SPLIT_ACTIVE
     if (order.split_operation or {}).get('state') in SPLIT_ACTIVE:
         raise KotakError('Order split is unconfirmed; refresh broker orders before converting')
@@ -112,9 +114,9 @@ async def start(session, order, new_type, price):
     operation = 'conversion:' + str(uuid.uuid4())
     job = dict(operation_id=operation, session_id=session.session_id, order_id=order.order_id,
                requested_type=new_type.value, original=order.model_dump(mode='json'),
-               candidate=candidate.model_dump(mode='json'), broker_id=order.kotak_order_id,
+               candidate=candidate.model_dump(mode='json'), broker_id=order.broker_order_id,
                requested_at=time.time(), state='modifying')
-    broker = get_service()
+    broker = get_service(session)
     generation = getattr(broker, '_generation', None)
     job['broker_generation'] = generation if isinstance(generation, int) else None
     require_active(session, job, broker)
@@ -137,7 +139,7 @@ async def start(session, order, new_type, price):
                     return  # Delayed exchange updates from a previous edit are not confirmation.
             except (ValueError, TypeError):
                 return
-        identifier = str(raw.get('nOrdNo') or raw.get('kotak_order_id') or '')
+        identifier = str(raw.get('broker_order_id') or raw.get('nOrdNo') or raw.get('kotak_order_id') or '')
         tag = str(raw.get('GuiOrdId') or raw.get('tag') or raw.get('ig') or '')
         if identifier not in (job['broker_id'], job.get('replacement_id')) and tag != job.get('tag'):
             return
@@ -231,11 +233,11 @@ async def _commit(session, order, candidate, job, broker, raw):
         if current.status != OrderStatus.PENDING and not (replacement and job.get('original_cancelled') and current.status == OrderStatus.CANCELLED):
             await publish(session, order, job, 'failed', 'Order became terminal during conversion')
             return
-        if current.kotak_order_id != job['broker_id']:
+        if current.broker_order_id != job['broker_id']:
             await publish(session, order, job, 'unknown', 'Broker identity changed; refresh required')
             return
         session._protection_revision = getattr(session, '_protection_revision', 0) + 1
-        old_id = current.kotak_order_id
+        old_id = current.broker_order_id
         replacement = job.get('replacement_id')
         if replacement:
             # Retain the original filled order history; create an independent replacement.
@@ -243,14 +245,14 @@ async def _commit(session, order, candidate, job, broker, raw):
             await publish(session, current, job, 'confirmed', 'Original exit cancelled; replacement confirmed')
             session.queue.put_nowait(json.dumps({'type': 'order_cancelled', 'order_id': current.order_id}))
             existing = next((item for item in order_service.get_all_orders(session.session_id)
-                             if item.kotak_order_id == replacement), None)
+                             if item.broker_order_id == replacement), None)
             if existing:
                 from app.services.broker_order_service import persist_order_async
                 await persist_order_async(existing, strict=True)
                 session.queue.put_nowait(json.dumps({'type': 'order_placed', **existing.model_dump(mode='json')}))
                 return
             candidate.order_id = str(uuid.uuid4())
-            candidate.kotak_order_id = replacement
+            candidate.broker_order_id = replacement
             candidate.broker_filled_quantity = 0
             candidate.broker_filled_value = 0
             candidate.kotak_fill_confirmed = False
@@ -285,7 +287,7 @@ async def _fallback(session, order, candidate, job, broker, queue):
     from app.services.protection_recovery import session_lock, reports_for, coverage
     from app.services.kotak_service import KotakError
     rows = await asyncio.to_thread(broker.get_order_history)
-    original = next((r for r in rows if r['kotak_order_id'] == job['broker_id']), None)
+    original = next((r for r in rows if broker_report_id(r) == job['broker_id']), None)
     expected = 'SL' if order.order_type == OrderType.STOPLOSS else 'LIMIT'
     if not original or original['order_type'] != expected or original['status'] not in ('open', 'trigger pending', 'partially filled', 'partial fill'):
         raise KotakError('Original exit is not confirmed open; replacement deferred')
@@ -300,7 +302,7 @@ async def _fallback(session, order, candidate, job, broker, queue):
             raise RuntimeError('Broker state changed before cancellation; original exit retained')
         require_active(session, job, broker)
         await asyncio.to_thread(broker.cancel_order, job['broker_id'], purpose='conversion', context={'session_id': session.session_id, 'operation_id': job['operation_id']})
-    await wait_event(job, queue, lambda raw: reports.normalize_order(raw)['kotak_order_id'] == job['broker_id']
+    await wait_event(job, queue, lambda raw: broker_report_id(reports.normalize_order(raw)) == job['broker_id']
                       and reports.normalize_order(raw)['status'] in ('cancelled', 'canceled'))
     if order.kotak_fill_confirmed:
         raise ValueError('Original exit filled during cancellation; no replacement submitted')
@@ -423,17 +425,17 @@ async def reconcile_refresh(session, rows):
             tagged = [row for row in rows if row.get('tag') == job.get('tag')]
             if len(tagged) != 1:
                 continue  # Absence is not proof an ambiguous placement failed.
-            broker_id = tagged[0]['kotak_order_id']
+            broker_id = broker_report_id(tagged[0])
             job['replacement_id'] = broker_id
-        row = next((row for row in rows if row['kotak_order_id'] == broker_id), None)
+        row = next((row for row in rows if broker_report_id(row) == broker_id), None)
         if row and _matches(row, candidate, broker_id):
             await publish(session, order, job, 'confirmed', 'Confirmed by broker refresh')
-            from app.services.kotak_service import get_service
-            get_service().deregister_order_observer(operation)
+            from app.services.execution_broker import get_service
+            get_service(session).deregister_order_observer(operation)
         elif row and row['status'] in ('open', 'trigger pending', 'cancelled', 'canceled', 'rejected', 'complete', 'filled') and time.time() - job['requested_at'] >= CONFIRM_WAIT:
             await publish(session, order, job, 'failed', 'Broker refresh confirms conversion was not applied')
-            from app.services.kotak_service import get_service
-            get_service().deregister_order_observer(operation)
+            from app.services.execution_broker import get_service
+            get_service(session).deregister_order_observer(operation)
 
 
 async def resume(session):
@@ -441,9 +443,9 @@ async def resume(session):
     if not any(busy(order) for order in order_service.get_all_orders(session.session_id)):
         return
     from app.services import real_broker_state
-    from app.services.kotak_service import get_service
+    from app.services.execution_broker import get_service
     try:
-        broker = get_service()
+        broker = get_service(session)
         await real_broker_state.refresh(session, broker)
         for order in order_service.get_all_orders(session.session_id):
             if not busy(order):
@@ -467,8 +469,8 @@ def stop(session):
         if task:
             task.cancel()
         if operation:
-            from app.services.kotak_service import get_service
-            get_service().deregister_order_observer(operation)
+            from app.services.execution_broker import get_service
+            get_service(session, allow_expired=True).deregister_order_observer(operation)
 
 
 def enqueue(session, order, new_type, price):
@@ -510,7 +512,7 @@ def watch_restored(session, order, job, broker):
     def observe(raw):
         if operation in _tasks:
             return
-        identifier = str(raw.get('nOrdNo') or raw.get('kotak_order_id') or '')
+        identifier = str(raw.get('broker_order_id') or raw.get('nOrdNo') or raw.get('kotak_order_id') or '')
         expected = job.get('replacement_id') or job['broker_id']
         if job.get('replacement_submitted') and not job.get('replacement_id'):
             tag = str(raw.get('GuiOrdId') or raw.get('tag') or raw.get('ig') or '')

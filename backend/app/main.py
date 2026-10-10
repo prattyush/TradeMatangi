@@ -75,6 +75,8 @@ async def lifespan(app: FastAPI):
         await shutdown()
         from app.services.real_trading_day import shutdown as shutdown_day_jobs
         await shutdown_day_jobs()
+        from app.services.real_close import shutdown as shutdown_close_jobs
+        await shutdown_close_jobs()
         from app.services.kotak_reports import shutdown as shutdown_reports
         await shutdown_reports()
         if diagnostics:
@@ -87,6 +89,8 @@ async def lifespan(app: FastAPI):
         get_hub().shutdown()
         from app.services.kotak_service import get_service as get_kotak
         await asyncio.to_thread(get_kotak().shutdown)
+        from app.services.kite_execution import get_service as get_kite_execution
+        await asyncio.to_thread(get_kite_execution().shutdown)
         exit_reconciler.cancel()
         try:
             await exit_reconciler
@@ -135,6 +139,8 @@ app.include_router(strategies.router)
 app.include_router(users.router)
 app.include_router(admin.router)
 app.include_router(kotak.router)
+from app.routers import execution_brokers
+app.include_router(execution_brokers.router)
 app.include_router(breeze.router)
 app.include_router(guardrails.router)
 app.include_router(internal.router)
