@@ -3,6 +3,7 @@ import { createServer } from 'node:http'
 import { readFile, mkdir, writeFile } from 'node:fs/promises'
 import { resolve, extname } from 'node:path'
 import assert from 'node:assert/strict'
+import { installNativeReplayMock } from './native-replay-mock.mjs'
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE || 'playwright-core')
 const root = resolve(new URL('..', import.meta.url).pathname)
 const artifacts = process.env.PHASE21_ARTIFACT_DIR || resolve(root, '.cache/phase21-real-validation/browser')
@@ -19,6 +20,7 @@ const contract=tile=>({symbol:tile.symbol,right:tile.right,strike:Number(tile.st
 const candles=Array.from({length:240},(_,i)=>({timestamp:start-86400+i*180,open:100+i/10,high:102+i/10,low:99+i/10,close:101+i/10}))
 async function scenario(mode='Stepwise', five=false, emptyStopped=false) {
  const page=await browser.newPage({viewport:{width:1400,height:850}}),errors=[],calls=[],submissions=[]
+ if(process.env.NATIVE_REPLAY_CHECK)await installNativeReplayMock(page)
  page.on('pageerror',e=>errors.push(String(e)))
  if(mode==='Paper'||mode==='Real')await page.clock.install({time:new Date(date+'T05:30:00Z')})
  const dialogs=[];page.on('dialog',async dialog=>{dialogs.push(dialog.message());await dialog.dismiss()})
@@ -33,7 +35,7 @@ async function scenario(mode='Stepwise', five=false, emptyStopped=false) {
  await page.route('**/api/**',async route=>{
   const request=route.request(),url=new URL(request.url()),path=url.pathname,method=request.method(),body=method==='GET'?{}:request.postDataJSON()||{};calls.push({path,method,body});let value={}
   if(path.endsWith('/auth/desktop/token'))value={access_token:'synthetic'}
-  else if(path.endsWith('/screens')) { if(method==='POST'){value={screen_id:'linked-record-'+linkedRecords.length,name:body.name,revision:1,order:body.order,state:body.state};linkedRecords.push(value)}else value={screens:[record,...linkedRecords]} }
+  else if(path.endsWith('/screens')) { if(method==='POST'){value={screen_id:'linked-record-'+linkedRecords.length,name:body.name,revision:1,order:body.order,state:body.state};if(process.env.NATIVE_REPLAY_CHECK)value.state={...value.state,layout:'2-side',tiles:value.state.tiles.filter(t=>t.kind==='spot'||t.right==='PE')};linkedRecords.push(value)}else value={screens:[record,...linkedRecords]} }
   else if(path.includes('/screens/linked-record-')){value=linkedRecords.find(r=>path.endsWith(r.screen_id));if(method==='PUT')Object.assign(value,body,{revision:value.revision+1})}
   else if(path.endsWith('/settings/profile'))value={email:'synthetic@example.invalid',is_admin:true,real_trading_enabled:mode==='Real'}
   else if(path.endsWith('/broker/status'))value={broker:'kite',authenticated:true,active_session_id:trading?'session':null}
@@ -69,7 +71,7 @@ async function scenario(mode='Stepwise', five=false, emptyStopped=false) {
   else if(path.endsWith('/orders/sl')&&method==='PATCH'){Object.assign(pending[0],body);value=pending[0]}
   else if(path.endsWith('/events'))return route.fulfill({status:200,contentType:'text/event-stream',body:`event: snapshot\ndata: ${JSON.stringify(path.includes('/replay/')?replay():path.includes('/live/')?live():snapshot())}\n\n`})
   else if(path.includes('/replay/run'))value=replay()
-  else if(path.endsWith('/drawings'))value={drawings:[]}
+  else if(path.endsWith('/drawings'))value=method==='POST'?{drawing_id:'fib-test',revision:1,drawing:body.drawing}:{drawings:[]}
   else if(path.endsWith('/wallet/reset')){walletBalance=body.amount;value={balance:walletBalance,locked:false}}
   else if(path.endsWith('/wallet'))value={balance:walletBalance,locked:false}
   else if(path.endsWith('/trade-labels/metadata'))value={categories:[],strategies:[],entry_tags:[],exit_tags:[]}
@@ -162,6 +164,44 @@ async function scenario(mode='Stepwise', five=false, emptyStopped=false) {
  const stopsBefore=calls.filter(c=>c.path.endsWith('/trading/session/stop')).length
  await page.getByRole('button',{name:'Create linked screen',exact:true}).click()
  await page.getByRole('button',{name:'Focus primary',exact:true}).waitFor()
+ if(process.env.NATIVE_REPLAY_CHECK){
+  await page.waitForFunction(()=>Array.from(window.__replayProbe.streams.keys()).filter(k=>k.startsWith('replay:')).length===2)
+  // A fresh linked follower receives candles without renderer timer polling.
+  await page.waitForFunction(()=>Array.from(window.__replayProbe.streams.keys()).filter(k=>k.startsWith('paper:')).length===2)
+  await page.evaluate(()=>{
+   const key=Array.from(window.__replayProbe.streams.keys()).filter(k=>k.startsWith('paper:')).at(-1)
+   const previous=window.__replayProbe.streams.get(key),position={symbol:'BSESEN',side:'LONG',quantity:20,avg_entry_price:80,entry_commission:0}
+   window.__replayProbe.publish(key,{...previous,event_cursor:1,positions:{...previous.positions,PE:position},positions_by_contract:{...previous.positions_by_contract,['BSESEN:'+previous.session.expiry+':71300:PE']:position}})
+  })
+  assert.equal(await page.locator('.tile-grid .chart:visible').count(),2)
+  await page.locator('.chart:visible').last().locator('.position-pnl-label').waitFor({state:'attached'})
+  await page.locator('.chart-head').last().click({position:{x:30,y:12}})
+  if(!await page.getByRole('button',{name:'Fibonacci retracement',exact:true}).count())await page.getByRole('button',{name:'Draw / Indicators',exact:false}).click()
+  await page.getByRole('button',{name:'Fibonacci retracement',exact:true}).click()
+  await page.waitForTimeout(100)
+  const peBox=await page.locator('.kline').last().boundingBox()
+  await page.mouse.click(peBox.x+peBox.width*.3,peBox.y+peBox.height*.3)
+  await page.waitForTimeout(350)
+  await page.mouse.click(peBox.x+peBox.width*.6,peBox.y+peBox.height*.6)
+  await page.waitForTimeout(350)
+  await page.mouse.click(peBox.x+peBox.width*.6,peBox.y+peBox.height*.6)
+  await page.waitForTimeout(100)
+  await page.screenshot({path:resolve(artifacts,'native-fibonacci.png')})
+  assert(calls.some(c=>c.method==='POST'&&c.path.endsWith('/drawings')&&c.body.drawing?.tool==='Fib Retracement'),JSON.stringify(calls.filter(c=>c.path.includes('drawings'))))
+  await page.getByRole('button',{name:'Delete selected drawing',exact:true}).click()
+  await page.waitForTimeout(100)
+  assert(calls.some(c=>c.method==='DELETE'&&c.path.endsWith('/drawings/fib-test')))
+  for(const close of [131,132,133]){
+   await page.evaluate(close=>{
+    const keys=Array.from(window.__replayProbe.streams.keys()).filter(k=>k.startsWith('replay:'))
+    const key=keys.at(-1),previous=window.__replayProbe.streams.get(key)
+    window.__replayProbe.publish(key,{...previous,event_id:(previous.event_id??0)+1,cursor:previous.cursor+1,
+     tile_states:previous.tile_states.map(t=>({...t,candle:{...t.candle,high:close+1,low:99,close}}))})
+   },close)
+   await page.waitForFunction(close=>window.__replayProbe.diagnostics.some(d=>d.kind==='chart_incremental_success'&&d.payload.instrument?.right==='PE'&&d.payload.latest.close===close),close,{timeout:2000})
+  }
+ }
+
  assert.equal(await page.getByRole('button',{name:/^Wallet ₹/}).count(),0)
  await page.getByRole('button',{name:'Order',exact:true}).click()
  await page.getByRole('dialog',{name:'Order window'}).waitFor()
@@ -182,7 +222,7 @@ async function scenario(mode='Stepwise', five=false, emptyStopped=false) {
   assert.equal(calls.filter(c=>c.path.endsWith('/done-for-day')).length,before+1)
  }
  assert.deepEqual(errors,[])
- results.push({mode,emptyStopped,panes:expectedPanes,checks:'startup rollback/removal, chart retention, non-modal orders, exact contracts, lot/price edits, premium picker, dragging/clamping, uncertainty fencing',errors})
+ results.push({mode,emptyStopped,panes:expectedPanes,checks:process.env.NATIVE_REPLAY_CHECK?'linked underlying/PE stream startup, PE position, Fibonacci creation/deletion, candle notifications with polling suspended':'startup rollback/removal, chart retention, non-modal orders, exact contracts, lot/price edits, premium picker, dragging/clamping, uncertainty fencing',errors})
  await page.close()
 }
-try {for(const mode of ['Real','Stepwise','Replay','Paper'])await scenario(mode);await writeFile(resolve(artifacts,'real-linked-browser-summary.json'),JSON.stringify(results,null,2));console.log(JSON.stringify(results,null,2))}finally{await browser.close();server.close()}
+try {for(const mode of process.env.NATIVE_REPLAY_CHECK?['Replay']:['Real','Stepwise','Replay','Paper'])await scenario(mode);await writeFile(resolve(artifacts,'real-linked-browser-summary.json'),JSON.stringify(results,null,2));console.log(JSON.stringify(results,null,2))}finally{await browser.close();server.close()}

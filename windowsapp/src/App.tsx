@@ -656,7 +656,6 @@ function ScreenController(props: ScreenControllerProps) {
   const startPending = useRef(false)
   const contextRef = useRef('')
   contextRef.current = `${serverUrl}:${browserToken}:${connection === 'authentication_required'}`
-  const replayPollInFlight = useRef(false)
   const lastReplayPollError = useRef('')
   const [restoredReady, setRestoredReady] = useState(!initial)
   const screenSaveQueueRef = useRef<Promise<unknown>>(Promise.resolve())
@@ -1749,35 +1748,46 @@ function ScreenController(props: ScreenControllerProps) {
       void connect()
       return () => { cancelled = true; abort.abort() }
     }
+    if (props.assignedId && !childReady) return
     let cancelled = false
-    const timer = window.setInterval(() => {
-      if (replayPollInFlight.current) return
-      replayPollInFlight.current = true
-      void readNativeStream<unknown>(`replay:${activeScreenId}:${runId}`)
-        .then(next => {
-          if (!cancelled) acceptSnapshot(next)
-        })
-        .catch(error => {
-          const message = String(error)
-          if (message.includes('(401)')) {
-            setReplay(null)
-            setConnection('authentication_required')
-            setLoginError('Replay authentication expired; please sign in again.')
-          } else if (message.includes('(404)')) {
-            setReplay(null)
-            setReplayError('Replay expired or the backend restarted; please start Replay again.')
-          } else {
-            const notice = 'Replay update unavailable; retrying…'
-            if (lastReplayPollError.current !== notice) {
-              lastReplayPollError.current = notice
-              setReplayError(notice)
-            }
-          }
-        })
-        .finally(() => { replayPollInFlight.current = false })
-    }, 500)
-    return () => { cancelled = true; window.clearInterval(timer) }
-  }, [replay?.run_id, replay?.state, hasNativeHost, serverUrl, browserToken, connection])
+    const key = `replay:${activeScreenId}:${runId}`
+    const onError = (error: unknown) => {
+      if (cancelled) return
+      const message = String(error)
+      if (message.includes('(401)')) {
+        setReplay(null)
+        setConnection('authentication_required')
+        setLoginError('Replay authentication expired; please sign in again.')
+      } else if (message.includes('(404)')) {
+        setReplay(null)
+        setReplayError('Replay expired or the backend restarted; please start Replay again.')
+      } else {
+        const notice = 'Replay update unavailable; retrying…'
+        if (lastReplayPollError.current !== notice) {
+          lastReplayPollError.current = notice
+          setReplayError(notice)
+        }
+      }
+    }
+    const drain = new TradingStreamDrain(async () => {
+      const next = await readNativeStream<unknown>(key)
+      if (!cancelled) acceptSnapshot(next)
+    }, onError)
+    let unlisten: (() => void) | undefined
+    const start = async () => {
+      unlisten = await listen<{ key: string; event_id: number }>('desktop-replay-events-available', event => {
+        if (event.payload.key === key) void drain.wake()
+      })
+      if (cancelled) { unlisten(); return }
+      // Includes restored linked followers; listen before starting their stream.
+      await startNativeStream(key, `replay/${runId}/events`, `replay/${runId}/snapshot`)
+      if (!cancelled) await drain.wake()
+    }
+    void start().catch(onError)
+    // Recovery fallback; normal Replay delivery is driven by native SSE wakeups.
+    const timer = window.setInterval(() => { void drain.wake() }, PAPER_STREAM_POLL_MS)
+    return () => { cancelled = true; drain.stop(); unlisten?.(); window.clearInterval(timer) }
+  }, [replay?.run_id, replay?.state, hasNativeHost, serverUrl, browserToken, connection, props.assignedId, childReady])
   useEffect(() => {
     if (mode !== 'Paper' || !trading?.session.session_id || trading.session.state === 'ended' || !live?.stream_id) return
     void desktopTradingRequest(`${trading.session.session_id}/live-stream`, 'POST', { live_stream_id: live.stream_id }).catch(reportTradingError)

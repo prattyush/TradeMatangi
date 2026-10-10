@@ -1862,9 +1862,13 @@ fn parse_sse_frame(frame: &str) -> (Option<u64>, Option<String>, Option<String>)
 }
 
 fn trading_event_wakes_renderer(key: &str, payload: &serde_json::Value) -> bool {
-    // Chart replay and quote ticks stay batched; committed trading changes wake
+    // Quote ticks stay batched; committed trading changes wake
     // only the owning renderer, which drains the ordered native event buffer.
     key.starts_with("paper:") && payload.get("type").and_then(|value| value.as_str()) != Some("tick")
+}
+
+fn replay_event_wakes_renderer(key: &str) -> bool {
+    key.starts_with("replay:")
 }
 
 #[tauri::command]
@@ -1943,9 +1947,11 @@ async fn start_desktop_stream(
                                         }));
                                     }
                                     let wake = trading_event_wakes_renderer(&stream_key, &payload);
+                                    let replay_wake = replay_event_wakes_renderer(&stream_key);
                                     stream_host.record_stream(&stream_key, event_id, payload);
-                                    if wake && stream_host.owns_stream(&stream_label, &stream_key) {
-                                        let _ = stream_app.emit_to(stream_label.as_str(), "desktop-trading-events-available", serde_json::json!({
+                                    if (wake || replay_wake) && stream_host.owns_stream(&stream_label, &stream_key) {
+                                        let event_name = if replay_wake { "desktop-replay-events-available" } else { "desktop-trading-events-available" };
+                                        let _ = stream_app.emit_to(stream_label.as_str(), event_name, serde_json::json!({
                                             "key": &stream_key, "event_id": event_id,
                                         }));
                                     }
@@ -2332,6 +2338,14 @@ mod screen_window_tests {
             assert!(trading_event_wakes_renderer("paper:one:session", &serde_json::json!({"type": event})));
         }
         assert!(trading_event_wakes_renderer("paper:one:session", &serde_json::json!({"session": {"session_id": "session"}})));
+    }
+
+    #[test]
+    fn replay_snapshots_wake_the_renderer_independently_of_trading_changes() {
+        assert!(replay_event_wakes_renderer("replay:linked-pe:run"));
+        assert!(replay_event_wakes_renderer("replay:primary-ce:run"));
+        assert!(!replay_event_wakes_renderer("paper:linked-pe:session"));
+        assert!(!replay_event_wakes_renderer("browse-live:screen:stream"));
     }
 
     fn opening(host: &HostState, id: &str, token: &str) {
