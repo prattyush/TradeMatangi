@@ -12,7 +12,7 @@ broker-account separate. Earlier Kite/desktop Real deferrals and dev-delivery ru
 below describe the previous delivery and are superseded for this extension only.
 
 
-Extension implementation is on `feature/phase21-real-desktop` in draft
+Extension implementation is on `feature/phase21-real-desktop` in ready-for-review
 [PR #632](https://github.com/prattyush/TradeMatangi/pull/632), targeting preprod.
 See the linked specification for delivered sprints, automated results and remaining
 Windows/native and live-broker acceptance gates. No main/dev promotion is included.

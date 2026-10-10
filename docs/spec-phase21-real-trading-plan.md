@@ -267,7 +267,7 @@ failures/remaining gates/commit/PR. Manual promotion only after acceptance.
 
 2026-10-09/10: Sprint 0 specification was written before implementation. Sprints
 1–8 are implemented together on `feature/phase21-real-desktop`; review targets
-**preprod**. Delivery: draft [PR #632](https://github.com/prattyush/TradeMatangi/pull/632),
+**preprod**. Delivery: ready-for-review [PR #632](https://github.com/prattyush/TradeMatangi/pull/632),
 implementation commit `8a9528f`. Earlier Phase 20/21 results are not counted as
 this extension's tests.
 
@@ -369,3 +369,15 @@ run; no client/native code changed during this review.
 Windows/native and live-broker acceptance gates remain open; this review does not
 claim venue or physical multi-monitor acceptance. Changes remain in PR #632 targeting
 preprod, with no merge or deployment.
+
+
+### Acceptance sequencing clarification — 2026-10-10
+
+The user confirms the desktop app is built and opens successfully. PR #632 is
+ready for code review and merge into **preprod**. Backend deployment requires that
+merge, so deployed runtime, physical multi-monitor and configured Kotak/Kite
+live-trading acceptance are **post-merge preprod steps**, not prerequisites for
+merging this PR. Sprint 9 remains open for those acceptance results and any fixes.
+The sequence is review → preprod merge → backend deployment → runtime acceptance
+and fixes on preprod-targeted PRs → manual main/dev promotion after acceptance.
+Opening the desktop app does not establish multi-monitor or live-order acceptance.
