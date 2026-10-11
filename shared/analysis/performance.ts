@@ -103,6 +103,8 @@ export interface MatchedPortion {
   requested_size?: string;
 }
 export interface PerformanceCycle {
+  fee_source?: string
+
   shared?: boolean
   owner_email?: string | null
   user_id?: string
@@ -208,3 +210,5 @@ export function cyclesCsv(cycles: PerformanceCycle[]): string {
     ].join("\r\n")
   );
 }
+
+export interface RealFeesDay { date: string; accounts: Array<{ account_id: string; order_count: number; estimated_total: number; actual_total: number | null; updated_at: string | null; history_changed: boolean }> }

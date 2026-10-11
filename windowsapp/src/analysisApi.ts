@@ -1,15 +1,15 @@
 import { AnalysisHistoryCache } from './analysisHistoryCache'
 import type { AnalysisApi, AnalysisEnvironment } from '../../shared/analysis/environment'
-import type { PerformanceCycle, PerformanceFilters, PerformanceReport } from '../../shared/analysis/performance'
+import type { PerformanceCycle, PerformanceFilters, PerformanceReport, RealFeesDay } from '../../shared/analysis/performance'
 import type { SessionDetail } from '../../shared/analysis/api'
 
 export type AnalysisRequest = <T>(path: string, method: 'GET' | 'POST' | 'DELETE', body?: unknown, signal?: AbortSignal) => Promise<T>
 export function validAnalysisPath(path: string, method: string): boolean {
   const route = path.split('?')[0]
   if (!route || route.startsWith('/') || route.includes('%') || route.includes('#') || route.includes('\\') || route.split('/').some(p => p === '.' || p === '..')) return false
-  if (method === 'POST') return route === 'labels'
-  if (method === 'DELETE') return route === 'snapshots'
-  return method === 'GET' && /^(sessions(?:\/[A-Za-z0-9_-]+)?|round-trips|labels|entry-tags|exit-tags|snapshots|performance(?:\/cycles(?:\/[A-Za-z0-9_-]+)?)?|data\/(historical|pre-session|options-historical|expiry)|pattern\/(strategies|categories|chart\/by-date|ohlc\/(equity|options)))$/.test(route)
+  if (method === 'POST') return route === 'labels' || route === 'performance/real-fees'
+  if (method === 'DELETE') return route === 'snapshots' || route === 'performance/real-fees'
+  return method === 'GET' && /^(sessions(?:\/[A-Za-z0-9_-]+)?|round-trips|labels|entry-tags|exit-tags|snapshots|performance(?:\/real-fees|\/cycles(?:\/[A-Za-z0-9_-]+)?)?|data\/(historical|pre-session|options-historical|expiry)|pattern\/(strategies|categories|chart\/by-date|ohlc\/(equity|options)))$/.test(route)
 }
 function awaitNative<T>(promise:Promise<T>,signal?:AbortSignal):Promise<T> {
   if(!signal)return promise
@@ -99,6 +99,9 @@ export function createAnalysisApi(request: AnalysisRequest) {
     patternOhlcOptions: (symbol,date,strike,expiry,right,interval=3,days=2) => call('patternOhlcOptions','pattern/ohlc/options',{symbol,date,strike,expiry,right,interval_minutes:interval,days_back:days}),
   }
   const performance: AnalysisEnvironment['performance'] = {
+    getRealFees: (date, signal) => scopedRequest<RealFeesDay>(`performance/real-fees?${params({date})}`, 'GET', undefined, signal),
+    saveRealFees: (date, account_id, actual_total) => scopedRequest<RealFeesDay>('performance/real-fees', 'POST', {date, account_id, actual_total}),
+    deleteRealFees: (date, account_id) => scopedRequest<RealFeesDay>(`performance/real-fees?${params({date, account_id})}`, 'DELETE'),
     getPerformance: (filters:PerformanceFilters,signal) => scopedRequest<PerformanceReport>(`performance?${params({...filters,include_shared:true})}`,'GET',undefined,signal),
     getPerformanceCycles: async (filters,offset=0,signal) => { const current=generation; const page=await scopedRequest<{items:PerformanceCycle[];total:number;next_offset:number|null}>(`performance/cycles?${params({...filters,offset,include_shared:true})}`,'GET',undefined,signal); if(current===generation) page.items.forEach(remember); return page },
     getPerformanceDetail: async (cycle,enrich=false,signal) => { const current=generation; const detail=await scopedRequest<PerformanceCycle>(`performance/cycles/${encodeURIComponent(cycle.cycle_id)}?${params({session_id:cycle.session_id,enrich})}`,'GET',undefined,signal); if(current===generation) remember(detail); return detail },

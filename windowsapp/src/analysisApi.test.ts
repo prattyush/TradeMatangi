@@ -69,3 +69,16 @@ it('reports active native authentication expiry',async()=>{
   await expect(analysisRequest('http://localhost','',native,unauthorized)('sessions','GET')).rejects.toThrow('401')
   expect(unauthorized).toHaveBeenCalledTimes(1)
 })
+
+
+describe('Real analytics fee metadata routes', () => {
+  it('permits only the exact correction endpoint and scopes its transport', async () => {
+    for (const method of ['GET', 'POST', 'DELETE']) expect(validAnalysisPath('performance/real-fees?date=2026-10-09', method)).toBe(true)
+    expect(validAnalysisPath('performance/real-fees/orders', 'POST')).toBe(false)
+    expect(validAnalysisPath('performance/cycles', 'POST')).toBe(false)
+    const request = vi.fn().mockResolvedValue({date:'2026-10-09',accounts:[]}) as unknown as AnalysisRequest
+    const adapter = createAnalysisApi(request)
+    await adapter.performance.saveRealFees!('2026-10-09','account',12.34)
+    expect(request).toHaveBeenCalledWith('performance/real-fees','POST',{date:'2026-10-09',account_id:'account',actual_total:12.34},expect.any(AbortSignal))
+  })
+})
