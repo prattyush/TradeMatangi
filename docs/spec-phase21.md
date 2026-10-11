@@ -19,7 +19,8 @@ Desktop chart-price picking, order editing and popup/Stats improvements in
 [PR #630](https://github.com/prattyush/TradeMatangi/pull/630), and the running website
 Real-mode label fix in [PR #634](https://github.com/prattyush/TradeMatangi/pull/634),
 are merged to dev. The Real Analytics finalized-charges follow-up below is
-implemented; its new delivery PR targets dev.
+implemented and validated; [PR #638](https://github.com/prattyush/TradeMatangi/pull/638)
+targets dev and is awaiting review.
 
 ## Agreed scope and defaults
 

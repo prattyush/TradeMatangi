@@ -18,7 +18,9 @@ Phase 21 Desktop UI work and new validation are tracked in `spec-phase21.md`.
 ## Real Analytics charges follow-up — 2026-10-11
 
 The shared website/desktop Stats UI now supports a manual finalized Real charges
-bill per owned broker account/trading date. Corrections apply before FIFO analytics
+bill per owned broker account/trading date in
+[PR #638](https://github.com/prattyush/TradeMatangi/pull/638) (awaiting dev review).
+Corrections apply before FIFO analytics
 and leave raw broker fills and trading wallets unchanged. Paper/Replay/Stepwise
 continue using their calculated fees. Allocation, broker-refresh safeguards,
 read-only sharing and validation are documented in
