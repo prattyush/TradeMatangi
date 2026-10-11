@@ -1083,7 +1083,8 @@ through the recorded event second from reliable cached second observations, othe
 show its full historical candle. Later candles remain excluded. A single captured
 observation is not used as accumulated three-minute OHLC. No precision/fallback
 caption is added. Website snapshot rendering remains unchanged. See the Phase 21
-Desktop snapshot event-candle follow-up for validation. New recordings retain exact expiry/broker IDs/fees
+Desktop snapshot event-candle follow-up for validation;
+[PR #640](https://github.com/prattyush/TradeMatangi/pull/640) awaits dev review. New recordings retain exact expiry/broker IDs/fees
 and available option observations, without rewriting legacy snapshots. Snapshot
 reads paginate; delete-all requires confirmation, retries bounded unprocessed
 batches and reports incomplete deletion. Capture/read/delete ownership is enforced.

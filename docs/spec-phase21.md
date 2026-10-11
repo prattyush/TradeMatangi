@@ -21,7 +21,8 @@ Real-mode label fix in [PR #634](https://github.com/prattyush/TradeMatangi/pull/
 are merged to dev. The Real Analytics finalized-charges follow-up below is
 implemented and validated; [PR #638](https://github.com/prattyush/TradeMatangi/pull/638)
 merged to dev (a150002). The Desktop snapshot event-candle follow-up below is
-implemented and validated; its delivery targets dev.
+implemented and validated; [PR #640](https://github.com/prattyush/TradeMatangi/pull/640)
+targets dev and awaits review.
 
 ## Agreed scope and defaults
 
@@ -744,7 +745,8 @@ no page errors. Artifacts: `.cache/snapshot-event-candle/`.
 No database migration or website behavior change. Rebuild the desktop client and
 update the backend to apply the feature; an older backend still permits the full
 historical-candle fallback. Packaged Windows acceptance remains manual. Delivery
-PR targets dev; main merge/deployment remain manual.
+[PR #640](https://github.com/prattyush/TradeMatangi/pull/640) targets dev and awaits
+review; main merge/deployment remain manual.
 
 ## Original requirements
 
