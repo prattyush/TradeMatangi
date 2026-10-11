@@ -22,7 +22,7 @@ are merged to dev. The Real Analytics finalized-charges follow-up below is
 implemented and validated; [PR #638](https://github.com/prattyush/TradeMatangi/pull/638)
 merged to dev (a150002). The Desktop snapshot event-candle follow-up below is
 implemented and validated; [PR #640](https://github.com/prattyush/TradeMatangi/pull/640)
-targets dev and awaits review.
+merged to dev (89efc32).
 
 ## Agreed scope and defaults
 
@@ -747,6 +747,18 @@ update the backend to apply the feature; an older backend still permits the full
 historical-candle fallback. Packaged Windows acceptance remains manual. Delivery
 [PR #640](https://github.com/prattyush/TradeMatangi/pull/640) targets dev and awaits
 review; main merge/deployment remain manual.
+
+## Desktop option marker text — 2026-10-11
+
+CE/PE execution markers now use colored circles without text on desktop trading,
+Analysis, comparison and snapshot charts. Underlying labels retain option-side
+context and grouped counts. Marker colors, exact fill placement, contract filtering
+and Analysis click/chooser behavior are unchanged. Pattern annotations and order
+price-line labels remain visible. Website rendering is unchanged.
+
+Validation: 12 focused marker tests and desktop TypeScript/production build pass.
+Tests cover CE/PE Buy/Sell colors, underlying labels, coincident fills, custom
+option labels, exact prices and open/history filtering. Delivery targets dev.
 
 ## Original requirements
 

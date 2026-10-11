@@ -25,7 +25,7 @@ function registerAnalysisOverlays() {
   registerOverlay({ name: 'analysisExecution', totalStep: 1, needDefaultPointFigure: false, needDefaultXAxisFigure: false, needDefaultYAxisFigure: false,
     createPointFigures: ({coordinates,overlay}) => { const point=coordinates[0]; if(!point) return []; const marker=overlay.extendData as ExecutionMarker; return [
       {type:'circle',attrs:{x:point.x,y:point.y,r:6},styles:{color:marker.color,borderColor:marker.color,style:'fill'},ignoreEvent:false},
-      {type:'text',attrs:{x:point.x,y:point.y-9,text:marker.text,align:'center',baseline:'bottom'},styles:{color:marker.color,size:11,weight:'bold'},ignoreEvent:false},
+      ...(marker.text ? [{type:'text',attrs:{x:point.x,y:point.y-9,text:marker.text,align:'center',baseline:'bottom'},styles:{color:marker.color,size:11,weight:'bold'},ignoreEvent:false}] : []),
     ] },
   })
   registerOverlay({ name:'analysisAnnotation', totalStep:1, needDefaultPointFigure:false, needDefaultXAxisFigure:false, needDefaultYAxisFigure:false,
