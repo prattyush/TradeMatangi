@@ -745,8 +745,8 @@ no page errors. Artifacts: `.cache/snapshot-event-candle/`.
 No database migration or website behavior change. Rebuild the desktop client and
 update the backend to apply the feature; an older backend still permits the full
 historical-candle fallback. Packaged Windows acceptance remains manual. Delivery
-[PR #640](https://github.com/prattyush/TradeMatangi/pull/640) targets dev and awaits
-review; main merge/deployment remain manual.
+[PR #640](https://github.com/prattyush/TradeMatangi/pull/640) merged to dev;
+main merge/deployment remain manual.
 
 ## Desktop option marker text — 2026-10-11
 
@@ -758,7 +758,8 @@ price-line labels remain visible. Website rendering is unchanged.
 
 Validation: 12 focused marker tests and desktop TypeScript/production build pass.
 Tests cover CE/PE Buy/Sell colors, underlying labels, coincident fills, custom
-option labels, exact prices and open/history filtering. Delivery targets dev.
+option labels, exact prices and open/history filtering.
+[PR #642](https://github.com/prattyush/TradeMatangi/pull/642) targets dev and awaits review.
 
 ## Original requirements
 
