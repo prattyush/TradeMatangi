@@ -692,7 +692,7 @@ def query_all(table, **params):
         params["ExclusiveStartKey"] = response["LastEvaluatedKey"]
 
 
-def load_session_cycles(session, include_labels=True):
+def load_session_cycles(session, include_labels=True, apply_fee_correction=True):
     """Read one committed book. Never call a broker or use in-memory pending state."""
     from app.services.db import get_dynamodb_resource
     from app.services.real_broker_state import link_for
@@ -781,6 +781,7 @@ def load_session_cycles(session, include_labels=True):
             r["trade_id"] = t.get("trade_id", str(r["kotak_order_id"]))
             r["symbol"] = session["symbol"]
             r["broker_exchange"] = r.get("exchange")
+            r["broker_account_id"] = t.get("broker_account_id")
             if not r.get("analytics"):
                 order = orders.get(
                     (r.get("exchange") or "", str(r["kotak_order_id"])), {}
@@ -822,7 +823,14 @@ def load_session_cycles(session, include_labels=True):
         )
         if current.get("revision") != manifest.get("revision"):
             raise RuntimeError("Broker revision changed during analytics read; retry")
+    if apply_fee_correction and session.get("session_type") == "real":
+        from app.services.real_analysis_fees import apply_rows
+        rows = apply_rows(session, rows)
     cycles = build_cycles(session, rows)
+    if session.get("session_type") == "real":
+        for cycle in cycles:
+            sources = {row.get("fee_source", "estimated") for row in cycle["executions"]}
+            cycle["fee_source"] = next(iter(sources)) if len(sources) == 1 else "mixed"
     if not include_labels:
         return cycles
     from app.services.trade_label_service import get_labels_for_session

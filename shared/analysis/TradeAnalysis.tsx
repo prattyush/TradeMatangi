@@ -157,6 +157,14 @@ export function GroupCard({ group, historicalDays = 2, initiallyExpanded = false
   }
 
   useEffect(() => { if (initiallyExpanded) void handleExpand() }, [])
+  useEffect(() => {
+    if (!expanded || group.session_type !== 'real') return
+    let cancelled = false
+    void Promise.all(group.sessions.map(session => api.getSessionDetail(session.session_id))).then(rows => {
+      if (!cancelled) setDetails(new Map(rows.map(row => [row.session_id, row])))
+    }).catch(cause => { if (!cancelled) setDetailError(String(cause)) })
+    return () => { cancelled = true }
+  }, [group.totalCommission])
 
   const allTrades = group.sessions.flatMap(s => details.get(s.session_id)?.trades ?? [])
   const multiSession = group.sessions.length > 1
@@ -608,6 +616,7 @@ export default function TradeAnalysis({ onClose, historicalDays = 2 }: Props) {
           defaultEndDate={endDate}
           defaultInstrumentType={instrumentType}
           defaultSessionType={sessionType}
+          onChargesChanged={() => void handleSearch()}
         />
       )}
     </div>

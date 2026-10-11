@@ -390,7 +390,8 @@ class TestPatternLoggerOHLC:
         df.to_pickle(pkl)
 
         with patch("app.services.data_loader.DATA_DIR", tmp_path), \
-             patch("app.services.data_loader.OHLCDATA_DIR", tmp_path / "ohlcdata"):
+             patch("app.services.data_loader.OHLCDATA_DIR", tmp_path / "ohlcdata"), \
+             patch("app.services.broker_service.fetch_historical", return_value=None):
             async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
                 resp = await client.get("/api/pattern/ohlc/equity", params={
                     "symbol": "NIFTY",
@@ -404,11 +405,14 @@ class TestPatternLoggerOHLC:
         assert "time" in data["candles"][0]
 
     async def test_ohlc_equity_missing_data(self):
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            resp = await client.get("/api/pattern/ohlc/equity", params={
-                "symbol": "NIFTY",
-                "date": "1999-01-01",
-            })
+        # The route checks downloads before local reads; keep this test offline.
+        with patch("app.services.broker_service.fetch_historical", return_value=None), \
+             patch("app.services.data_loader.load_dataframe", side_effect=FileNotFoundError):
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+                resp = await client.get("/api/pattern/ohlc/equity", params={
+                    "symbol": "NIFTY",
+                    "date": "1999-01-01",
+                })
         assert resp.status_code == 404
 
     async def test_ohlc_options_invalid_right(self):

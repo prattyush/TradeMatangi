@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, type ComponentType, type ReactNode } from 'react'
 import type websiteApi from '../../frontend/src/services/api'
-import type { PerformanceCycle, PerformanceFilters, PerformanceReport } from './performance'
+import type { PerformanceCycle, PerformanceFilters, PerformanceReport, RealFeesDay } from './performance'
 
 export type AnalysisApi = Pick<typeof websiteApi,
   'getAnalysisSessions' | 'getSessionDetail' | 'getRoundTrips' | 'getLabels' | 'saveLabels' |
@@ -10,6 +10,9 @@ export type AnalysisApi = Pick<typeof websiteApi,
 export interface AnalysisEnvironment {
   api: AnalysisApi
   performance: {
+    getRealFees?: (date: string, signal?: AbortSignal) => Promise<RealFeesDay>
+    saveRealFees?: (date: string, account: string, amount: number) => Promise<RealFeesDay>
+    deleteRealFees?: (date: string, account: string) => Promise<RealFeesDay>
     getPerformance: (filters: PerformanceFilters, signal?: AbortSignal) => Promise<PerformanceReport>
     getPerformanceCycles: (filters: PerformanceFilters, offset?: number, signal?: AbortSignal) => Promise<{ items: PerformanceCycle[]; total: number; next_offset: number | null }>
     getPerformanceDetail: (cycle: PerformanceCycle, enrich?: boolean, signal?: AbortSignal) => Promise<PerformanceCycle>

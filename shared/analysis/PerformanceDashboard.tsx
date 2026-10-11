@@ -1,3 +1,4 @@
+import RealChargesEditor from './RealChargesEditor'
 import { completeCycleExport } from './exportCycles'
 import { useAnalysisError } from './environment'
 import { useAnalysisEnvironment } from './environment'
@@ -15,6 +16,7 @@ import "./performance.css";
 
 interface Props {
   selectedCycle?: PerformanceCycle;
+  onChargesChanged?: () => void;
   onClose: () => void;
   defaultSymbol: string;
   defaultStartDate: string;
@@ -259,6 +261,7 @@ export default function PerformanceDashboard(props: Props) {
     dimension?: string;
   } | null>(null);
   const [refresh, setRefresh] = useState(0);
+  const [chargesOpen, setChargesOpen] = useState(false);
   const [exporting, setExporting] = useState(false);
   const generation = useRef(0);
   const detailGeneration = useRef(0);
@@ -447,7 +450,7 @@ export default function PerformanceDashboard(props: Props) {
                 <td>
                   {c.entry_count} / {c.exit_count}
                 </td>
-                <td className={tint(c.net_pnl)}>{money(c.net_pnl)}</td>
+                <td className={tint(c.net_pnl)}>{money(c.net_pnl)}{c.mode === 'real' && <small>{c.fee_source === 'allocated_actual' ? 'Allocated actual charges' : c.fee_source === 'mixed' ? 'Mixed charge sources' : c.fee_source === 'estimated_history_changed' ? 'Estimate · history changed' : 'Estimated charges'}</small>}</td>
                 <td>{pct(c.pnl_pct)}</td>
                 <td>
                   {c.state}
@@ -710,6 +713,8 @@ export default function PerformanceDashboard(props: Props) {
         )}
       </nav>
       <main className="pa-main">
+        {filters.session_type === 'real' && environment.performance.getRealFees && environment.performance.saveRealFees && environment.performance.deleteRealFees && <button onClick={() => setChargesOpen(value => !value)}>Actual Real charges</button>}
+        {chargesOpen && filters.session_type === 'real' && environment.performance.getRealFees && environment.performance.saveRealFees && environment.performance.deleteRealFees && <RealChargesEditor initialDate={filters.end_date || dateAgo(0)} onClose={() => setChargesOpen(false)} onSaved={() => { setRefresh(value => value + 1); props.onChargesChanged?.() }} />}
         {error && !environment.reportError && (
           <div role="alert" className="pa-error">
             {error}
