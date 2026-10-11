@@ -119,3 +119,46 @@ def test_selected_correction_survives_read_without_resetting_sibling(db):
     assert fresh["funding"]["modes"]["intraday"]["capital"] == 200000
     assert fresh["funding"]["modes"]["swing"]["capital"] == 750000
     assert rules.status(fresh["funding"], 950000)["entries_allowed"]
+
+
+def test_closed_intraday_effects_survive_until_swing_closes_then_next_period_captures_fresh(
+    db,
+):
+    from app.services import swing_funding_store as store, swing_accounting as rules
+
+    row = store.initialize("u", "kite", "account", 1000000)
+    period = row["period_id"]
+    store.start_participant("u", "kite", "account", period, "swing", "portfolio", 0.8)
+    store.start_participant(
+        "u", "kite", "account", period, "intraday", "first-day", 0.2
+    )
+    store.apply(
+        "u",
+        "kite",
+        "account",
+        period,
+        "loss",
+        "cash",
+        {},
+        lambda r: r.update(
+            funding=rules.movement(r["funding"], "intraday", -3000, -3000)
+        ),
+    )
+    store.close_participant("u", "kite", "account", period, "intraday", "first-day")
+    with pytest.raises(Exception):
+        store.finish_period("u", "kite", "account", period)
+    changed = store.start_participant(
+        "u", "kite", "account", period, "intraday", "second-day", 0.2
+    )
+    assert changed["funding"]["modes"]["intraday"]["capital"] == 200000
+    assert changed["funding"]["modes"]["intraday"]["expected_balance"] == 197000
+    store.close_participant("u", "kite", "account", period, "intraday", "second-day")
+    store.close_participant("u", "kite", "account", period, "swing", "portfolio")
+    store.finish_period("u", "kite", "account", period)
+    next_period = store.initialize("u", "kite", "account", 997000)
+    assert next_period["period_id"] != period
+    assert next_period["funding"]["starting_capital"] == 997000
+    archived = store._table().get_item(
+        Key={"user_id": "u", "ledger_id": f"funding-period:{period}"}
+    )["Item"]
+    assert int(archived["funding"]["starting_capital"]) == 1000000

@@ -23,6 +23,7 @@ def create(reference):
         "unallocated_balance": reference,
         "modes": {},
         "corrections": [],
+        "reservations": {},
     }
 
 
@@ -38,13 +39,21 @@ def allocate(state, mode, fraction):
         raise ValueError("Mode already has an allocation in this account period")
     if (
         capital <= 0
-        or money(sum(m["capital"] for m in result["modes"].values()) + capital)
+        or money(
+            sum(
+                m.get("funding_allocation", m["capital"])
+                for m in result["modes"].values()
+            )
+            + capital
+        )
         > result["allocation_reference"]
     ):
         raise ValueError("Combined allocations exceed the account reference")
     result["unallocated_balance"] = money(result["unallocated_balance"] - capital)
     result["modes"][mode] = {
         "capital": capital,
+        "funding_allocation": capital,
+        "acknowledged_profit": 0,
         "allocation_pct": fraction,
         "expected_balance": capital,
         "realized_pnl": 0.0,
@@ -77,6 +86,11 @@ def expected_balance(state):
     return money(
         state["unallocated_balance"]
         + sum(m["expected_balance"] for m in state["modes"].values())
+        - sum(
+            t.get("expected_amount", t["amount"])
+            for t in state.get("reservations", {}).values()
+            if t["owner"] == "broker"
+        )
     )
 
 
@@ -108,17 +122,46 @@ def correct(state, mode, capital, adjustment, reason, equity):
     item = result["modes"][mode]
     old = item["capital"]
     allocation_reference = money(result["allocation_reference"] + adjustment)
+    old_allocation = item.get("funding_allocation", old)
+    new_allocation = money(old_allocation + adjustment) if adjustment else capital
     total = money(
-        sum(m["capital"] for k, m in result["modes"].items() if k != mode) + capital
+        sum(
+            m.get("funding_allocation", m["capital"])
+            for k, m in result["modes"].items()
+            if k != mode
+        )
+        + new_allocation
     )
-    if allocation_reference <= 0 or total > allocation_reference:
+    if allocation_reference <= 0 or new_allocation <= 0 or total > allocation_reference:
         raise ValueError("Corrected allocations exceed acknowledged account funding")
     item["capital"] = capital
-    capital_delta = money(capital - old)
-    item["expected_balance"] = money(item["expected_balance"] + capital_delta)
-    result["unallocated_balance"] = money(
-        result["unallocated_balance"] + adjustment - capital_delta
-    )
+    item["funding_allocation"] = new_allocation
+    if adjustment:
+        item["expected_balance"] = money(item["expected_balance"] + adjustment)
+        remaining = max(0, adjustment)
+        sources = {}
+        for key in [mode] + [k for k in result["modes"] if k != mode]:
+            source = result["modes"][key]
+            amount = min(
+                remaining,
+                max(
+                    0,
+                    money(
+                        source["ignored_profit"] - source.get("acknowledged_profit", 0)
+                    ),
+                ),
+            )
+            if amount:
+                source["acknowledged_profit"] = money(
+                    source.get("acknowledged_profit", 0) + amount
+                )
+                remaining = money(remaining - amount)
+                sources[key] = amount
+    else:
+        delta = money(new_allocation - old_allocation)
+        item["expected_balance"] = money(item["expected_balance"] + delta)
+        result["unallocated_balance"] = money(result["unallocated_balance"] - delta)
+        sources = {}
     result["allocation_reference"] = allocation_reference
     # A reference edit redistributes attribution, not actual broker cash.
     item["guardrail_epoch"] += 1
@@ -130,6 +173,7 @@ def correct(state, mode, capital, adjustment, reason, equity):
             "capital": capital,
             "funding_adjustment": adjustment,
             "reason": str(reason).strip(),
+            "acknowledged_profit_sources": sources,
         }
     )
     return result
@@ -141,3 +185,81 @@ def loss_limit_reached(state, mode, equity, loss_fraction):
     if not isfinite(fraction) or not 0 < fraction <= 1:
         raise ValueError("Loss limit must be between zero and 100%")
     return money(equity) - item["guardrail_start_equity"] <= -item["capital"] * fraction
+
+
+def reset_reference(state, mode, capital, equity):
+    """Reset sizing/guardrails without moving cash or erasing funding differences."""
+    capital, equity = money(capital), money(equity)
+    if capital <= 0:
+        raise ValueError("Capital must be positive")
+    result = deepcopy(state)
+    item = result["modes"][mode]
+    item["capital"] = capital
+    item["guardrail_epoch"] += 1
+    item["guardrail_start_equity"] = equity
+    return result
+
+
+def adopt_opening_inventory(state, mode, cost):
+    """Recognize funded assets in this mode's allocation, not a broker cash debit."""
+    cost = money(cost)
+    if cost < 0:
+        raise ValueError("Opening inventory cost cannot be negative")
+    result = deepcopy(state)
+    item = result["modes"][mode]
+    item["expected_balance"] = money(item["expected_balance"] - cost)
+    result["unallocated_balance"] = money(result["unallocated_balance"] + cost)
+    result["allocation_reference"] = money(result["allocation_reference"] + cost)
+    return result
+
+
+def mode_available(state, mode):
+    item = state["modes"][mode]
+    income = max(0, money(item["ignored_profit"] - item.get("acknowledged_profit", 0)))
+    return money(
+        item["expected_balance"]
+        + income
+        - sum(
+            t["amount"]
+            for t in state.get("reservations", {}).values()
+            if t["mode"] == mode
+        )
+    )
+
+
+def reserve(state, mode, operation, amount, *, owner="local", expected_amount=None):
+    if owner not in ("local", "broker") or not operation:
+        raise ValueError("A reservation requires an identity and owner")
+    amount = money(amount)
+    expected = amount if expected_amount is None else money(expected_amount)
+    if amount < 0 or not 0 <= expected <= amount:
+        raise ValueError("Invalid reservation amount")
+    result = deepcopy(state)
+    previous = result["reservations"].get(operation)
+    if previous and previous["mode"] != mode:
+        raise ValueError("Reservation belongs to another mode")
+    if amount == 0:
+        result["reservations"].pop(operation, None)
+        return result
+    available = mode_available(result, mode) + (previous["amount"] if previous else 0)
+    if amount > available:
+        raise ValueError("Selected mode has insufficient available funds")
+    if amount:
+        result["reservations"][operation] = {
+            "mode": mode,
+            "owner": owner,
+            "amount": amount,
+            "expected_amount": expected,
+        }
+    else:
+        result["reservations"].pop(operation, None)
+    return result
+
+
+def release(state, mode, operation):
+    result = deepcopy(state)
+    previous = result["reservations"].get(operation)
+    if previous and previous["mode"] != mode:
+        raise ValueError("Reservation belongs to another mode")
+    result["reservations"].pop(operation, None)
+    return result

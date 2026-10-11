@@ -364,11 +364,12 @@ def submit_once(session, order, method, **kwargs):
     """Persist Kite intent before sending a write; uncertainty is never a retry."""
     from app.services.execution_broker import name
     from app.services.kotak_service import KotakError, KotakOrderRejected
-    order.trading_style = getattr(session, 'trading_style', 'intraday')
-    order.portfolio_id = getattr(session, 'portfolio_id', None)
+    order.trading_style = 'swing' if getattr(session,'trading_style',None)=='swing' else 'intraday'
+    order.portfolio_id = getattr(session,'portfolio_id',None) if order.trading_style=='swing' else None
+    order.broker_product=('NRML' if order.right else 'CNC') if order.trading_style=='swing' else 'MIS'
     order.execution_broker = name(session)
     order.broker_account_id = getattr(session, 'broker_account_id', None)
-    if name(session) != 'kite':
+    if name(session) != 'kite' and order.trading_style!='swing':
         return method(**kwargs)
     if order.recovery_state in ('submitting', 'unknown'):
         raise KotakError('Submission is unconfirmed; refresh broker orders before retrying')

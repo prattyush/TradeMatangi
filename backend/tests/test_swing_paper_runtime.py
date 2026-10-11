@@ -47,12 +47,24 @@ def db(monkeypatch):
         monkeypatch.setattr(
             "app.services.entry_sl_watcher.on_entry_filled", lambda *a, **k: None
         )
+        monkeypatch.setattr(
+            "app.services.swing_paper_recovery.observations", lambda *a: []
+        )
+        monkeypatch.setattr(
+            "app.services.breeze_master.listed_option_contract",
+            lambda symbol, strike, expiry, right: {
+                "strike": strike,
+                "expiry": expiry,
+                "right": right,
+                "lot_size": 10,
+            },
+        )
         yield resource
 
 
 def tick(date, price):
     stamp = int(
-        datetime.fromisoformat(date + "T15:15:00")
+        datetime.fromisoformat(date + "T15:00:00")
         .replace(tzinfo=timezone.utc)
         .timestamp()
     )
@@ -246,6 +258,7 @@ async def test_restart_restores_pending_orders_and_repairs_committed_fill_once(
     )
     current = service.runtime("u", parent["session_id"])
     filled = entry(child, 100)
+    pending = entry(child, 90, 1)
     original = trading.record_trade
 
     def crash(*args, **kwargs):
@@ -258,7 +271,6 @@ async def test_restart_restores_pending_orders_and_repairs_committed_fill_once(
         Key={"session_id": child.session_id, "order_id": filled.order_id}
     )["Item"]
     assert persisted["status"] == "FILLED"
-    pending = entry(child, 90, 1)
     monkeypatch.setattr(trading, "record_trade", original)
     service._runtimes.clear()
     simulation._sessions.clear()
@@ -370,3 +382,18 @@ async def test_backend_startup_restores_running_books_without_a_screen(db, monke
         service.snapshot("u", active["session_id"])["open_orders"][0]["order_id"]
         == pending.order_id
     )
+
+
+@pytest.mark.asyncio
+async def test_zero_quote_cannot_create_a_free_paper_position(db):
+    parent = store.create("u", "paper", 100000)
+    child = service.attach_context(
+        "u", parent["session_id"], "HDFCBANK", subscribe=False
+    )
+    order = entry(child, 100)
+    await service.on_tick(
+        service.runtime("u", parent["session_id"]), child, tick("2026-11-02", 0)
+    )
+    assert order.status == OrderStatus.PENDING
+    assert not trading.get_trades(child.session_id)
+    assert not service.snapshot("u", parent["session_id"])["positions"]

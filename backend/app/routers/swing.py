@@ -91,6 +91,7 @@ async def snapshot(portfolio_id: str, user: str = Depends(get_desktop_user_id)):
 async def attach(
     portfolio_id: str, req: ContextRequest, user: str = Depends(get_desktop_user_id)
 ):
+    await prepare_listed_contract(user, portfolio_id, req)
     child = service.attach_context(
         user,
         portfolio_id,
@@ -108,9 +109,9 @@ async def place(
     portfolio_id: str, req: PortfolioOrder, user: str = Depends(get_desktop_user_id)
 ):
     import uuid
-    from app.config import LOT_SIZES
 
     await service.ensure(user, portfolio_id)
+    await prepare_listed_contract(user, portfolio_id, req)
     child = service.attach_context(
         user,
         portfolio_id,
@@ -120,8 +121,26 @@ async def place(
         req.expiry,
         req.right,
     )
-    if req.instrument_type == "options" and req.quantity % LOT_SIZES[req.symbol]:
+    contract = next(
+        (
+            c
+            for c in getattr(child, "desktop_contracts", [])
+            if (c.get("strike"), c.get("expiry"), c.get("right"))
+            == (req.strike, req.expiry, req.right)
+        ),
+        None,
+    )
+    if req.instrument_type == "options" and (
+        not contract
+        or not contract.get("lot_size")
+        or req.quantity % contract["lot_size"]
+    ):
         raise HTTPException(422, "Option quantity must be complete lots")
+    if req.side == TradeSide.BUY and req.order_type == OrderType.STOPLOSS:
+        raise HTTPException(
+            422,
+            "Swing entries use Limit or Target intentions; SL protects a held long position",
+        )
     if req.side == TradeSide.SELL and req.order_type == OrderType.TARGET:
         raise HTTPException(
             422, "Use an SL/limit exit or a Target strategy for a held Swing position"
@@ -181,13 +200,15 @@ async def place(
         if req.order_type != OrderType.LIMIT
         else {"limit_price": req.price}
     )
+    from app.services.swing_paper_recovery import current_market_timestamp
+
     order = order_service.place_order(
         child.session_id,
         child.symbol,
         req.side,
         req.order_type,
         req.quantity,
-        int(child.current_time or 0),
+        current_market_timestamp(),
         child.date,
         **kwargs,
         right=req.right,
@@ -291,3 +312,52 @@ async def cancel(
             current.emit({"type": "portfolio_snapshot", **result})
             return result
     raise HTTPException(404, "Portfolio order not found")
+
+
+@router.get("/contracts/metadata")
+async def option_metadata(symbol: str, user: str = Depends(get_desktop_user_id)):
+    from app.services.breeze_master import listed_option_contracts
+    from app.services.real_trading_day import market_date
+
+    try:
+        contracts = await asyncio.to_thread(listed_option_contracts, symbol)
+    except FileNotFoundError as exc:
+        raise HTTPException(503, "Option contract metadata is unavailable") from exc
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return {
+        "symbol": symbol,
+        "contracts": [c for c in contracts if c["expiry"] >= market_date()],
+    }
+
+
+async def prepare_listed_contract(user, portfolio_id, req):
+    if req.instrument_type != "options":
+        return
+    current = service.runtime(user, portfolio_id)
+    child = current.contexts.get(req.symbol + ":options")
+    if child and any(
+        (c.get("strike"), c.get("expiry"), c.get("right"))
+        == (req.strike, req.expiry, req.right)
+        for c in getattr(child, "desktop_contracts", [])
+    ):
+        return
+    # Restoring existing contexts first preserves their frozen exact metadata.
+    await service.ensure(user, portfolio_id)
+    child = current.contexts.get(req.symbol + ":options")
+    if child and any(
+        (c.get("strike"), c.get("expiry"), c.get("right"))
+        == (req.strike, req.expiry, req.right)
+        for c in getattr(child, "desktop_contracts", [])
+    ):
+        return
+    from app.services.breeze_master import listed_option_contract
+
+    try:
+        await asyncio.to_thread(
+            listed_option_contract, req.symbol, req.strike, req.expiry, req.right
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(503, "Option contract metadata is unavailable") from exc
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc

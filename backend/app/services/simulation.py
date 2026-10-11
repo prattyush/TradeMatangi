@@ -937,6 +937,7 @@ def _emit_tick_and_check_orders(
     tick: dict,
     tick_right: Optional[str],
     only_order_id: str | None = None,
+    historical_broker_recovery: bool = False,
 ) -> list[dict]:
     """Put one tick on the queue and return fill events for any triggered orders."""
     from app.services.order_service import check_orders
@@ -1136,6 +1137,9 @@ def _emit_tick_and_check_orders(
             logger.info("desktop_fill_queued session_id=%s order_id=%s elapsed_ms=%.1f event_id=%s", session.session_id, order.order_id, (time.monotonic() - fill_started) * 1000, session.queue.latest_id())
         else:
             fill_events.append(fill_event)
+
+    if historical_broker_recovery:
+        return fill_events
 
     # Strategy evaluation — snapshot open orders before/after so strategy-placed
     # orders (e.g. AutoStop TARGET) are surfaced to the frontend via order_placed events,

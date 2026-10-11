@@ -519,14 +519,18 @@ class KotakNeoService:
         qty: int,
         price: float,
         tag: str | None = None,
+        *,
+        product: str = "MIS",
     ) -> str:
         """Place a limit order. Returns the Kotak order ID (nOrdNo)."""
+        from app.services.swing_execution_broker import validate_product
+        validate_product(product,False)
         client = self._get_client()
         kotak_sym, exchange_seg = self._resolve_symbol(symbol)
         try:
             resp = client.place_order(
                 exchange_segment=exchange_seg,
-                product="MIS",
+                product=product,
                 price=str(_round_to_tick(price)),
                 order_type="L",
                 quantity=str(qty),
@@ -552,14 +556,18 @@ class KotakNeoService:
         trigger_price: float,
         limit_price: float,
         tag: str | None = None,
+        *,
+        product: str = "MIS",
     ) -> str:
         """Place a stop-loss limit order. Returns the Kotak order ID."""
+        from app.services.swing_execution_broker import validate_product
+        validate_product(product,False)
         client = self._get_client()
         kotak_sym, exchange_seg = self._resolve_symbol(symbol)
         try:
             resp = client.place_order(
                 exchange_segment=exchange_seg,
-                product="MIS",
+                product=product,
                 price=str(_round_to_tick(limit_price)),
                 order_type="SL",
                 quantity=str(qty),
@@ -587,14 +595,18 @@ class KotakNeoService:
         qty: int,
         price: float,
         tag: str | None = None,
+        *,
+        product: str = "MIS",
     ) -> str:
         """Place a limit order on an options contract. Returns the Kotak order ID."""
+        from app.services.swing_execution_broker import validate_product
+        validate_product(product,True)
         client = self._get_client()
         kotak_sym, exchange_seg = self._resolve_options_symbol(symbol, right, strike, expiry)
         try:
             resp = client.place_order(
                 exchange_segment=exchange_seg,
-                product="MIS",
+                product=product,
                 price=str(_round_to_tick(price)),
                 order_type="L",
                 quantity=str(qty),
@@ -623,14 +635,18 @@ class KotakNeoService:
         trigger_price: float,
         limit_price: float,
         tag: str | None = None,
+        *,
+        product: str = "MIS",
     ) -> str:
         """Place an SL limit order on an options contract. Returns the Kotak order ID."""
+        from app.services.swing_execution_broker import validate_product
+        validate_product(product,True)
         client = self._get_client()
         kotak_sym, exchange_seg = self._resolve_options_symbol(symbol, right, strike, expiry)
         try:
             resp = client.place_order(
                 exchange_segment=exchange_seg,
-                product="MIS",
+                product=product,
                 price=str(_round_to_tick(limit_price)),
                 order_type="SL",
                 quantity=str(qty),

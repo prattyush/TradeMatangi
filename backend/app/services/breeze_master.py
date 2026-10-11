@@ -22,6 +22,7 @@ from __future__ import annotations
 
 from app.services.instrument_identity import strike_number
 import csv
+from functools import lru_cache
 import logging
 import urllib.request
 import zipfile
@@ -190,3 +191,45 @@ def load_breeze_security_master(
         return {}
 
     return scrip_map
+
+
+
+
+@lru_cache(maxsize=128)
+def _listed_option_rows(path: str, modified: int, stock_code: str):
+    """Public listed contracts, cached by master revision and canonical alias."""
+    contracts={}
+    with open(path,newline='') as file:
+        for row in csv.DictReader(file):
+            if row.get('ShortName','').upper()!=stock_code or row.get('Series','').upper()!='OPTION':continue
+            right=row.get('OptionType','').strip().upper()
+            if right not in ('CE','PE'):continue
+            try:
+                expiry=datetime.strptime(_normalise_expiry(row.get('ExpiryDate')),'%d-%b-%Y').date().isoformat()
+                strike=strike_number(row.get('StrikePrice'))
+                lot=int(row.get('LotSize','0'))
+                if not strike or strike<=0 or lot<=0 or not row.get('Token'):continue
+            except (ValueError,TypeError):continue
+            identity=(expiry,strike,right)
+            contract={'expiry':expiry,'strike':strike,'right':right,'lot_size':lot}
+            if identity in contracts and contracts[identity]!=contract:
+                raise ValueError('Listed contract has conflicting master metadata')
+            contracts[identity]=contract
+    return tuple(sorted(contracts.values(),key=lambda item:(item['expiry'],item['strike'],item['right'])))
+
+
+def listed_option_contracts(symbol: str) -> list[dict]:
+    from app.config import SUPPORTED_SYMBOLS
+    definition=SUPPORTED_SYMBOLS.get(symbol)
+    if not definition or not definition.get('options_exchange_code'):
+        return []
+    path=ensure_security_master_downloaded(definition['options_exchange_code'])
+    if path is None or not path.exists():raise FileNotFoundError('Option master unavailable')
+    return [dict(item) for item in _listed_option_rows(str(path),path.stat().st_mtime_ns,definition['breeze_stock_code'].upper())]
+
+
+def listed_option_contract(symbol,strike,expiry,right):
+    match=next((item for item in listed_option_contracts(symbol) if
+        (item['strike'],item['expiry'],item['right'])==(strike_number(strike),expiry,right)),None)
+    if match is None:raise ValueError('Contract is not listed in the current option master')
+    return match

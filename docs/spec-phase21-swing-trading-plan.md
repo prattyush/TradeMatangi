@@ -112,7 +112,7 @@ broker credential infrastructure, OCO, auto account-reduction or auto quantity s
 | 1 | Catalogue, mappings, search and read-only provider probes | Implemented; authenticated provider probes pending |
 | 2 | Persistent Paper portfolio, contexts, accounting and controls | In progress; basic runtime and controls implemented |
 | 3 | Shared Real funding, imports and manual correction | Funding rules/store tested; broker integration pending |
-| 4 | Kite/Kotak delivery execution, renewal and recovery parity | Pending |
+| 4 | Kite/Kotak delivery execution, renewal and recovery parity | Product-scoped adapters tested; Real runtime/renewal pending |
 | 5 | Portfolio UI, linked views and funding notifications | Basic Paper controls in both clients; linked views pending |
 | 6 | Multi-day Replay and expiry exits | Pending |
 | 7 | Integration, preprod delivery and runtime/native acceptance | Pending |
@@ -162,17 +162,17 @@ Implemented:
 
 Remaining implementation, in dependency order:
 
-1. Finish Paper order ownership and durable DAY-attempt windows, available-history
-   recovery restricted to broker-like exits, online-only renewals, missing-history
-   reconciliation status and expired-contract recovery. Test sparse/non-observed
-   history, stop-limit gaps, crash boundaries and strategy ownership. Validate
-   delivery-specific Paper charges and original/last-known mark presentation.
+1. Complete the remaining Paper integration edges: expired contracts without an
+   executable quote, amendment/partial-fill crash boundaries, delivery-charge
+   estimates, last-known mark presentation and strategy controls. DAY windows,
+   broker-like recovery, online renewal and missing-history status are now
+   implemented, with the verification described below.
 2. Connect account funding cohorts/participants to intraday and Swing lifecycle,
    coherent live broker reports, commitments/settlement and both entry barriers.
    Add correction preview/audit and one shared warning with sibling notices.
 3. Implement explicit opening inventory imports and delivery/overnight execution
-   for Kite and Kotak. Existing MIS adapters are not suitable for Swing and are
-   not exposed through this new Paper API. Add carry/T1/holding reconciliation,
+   for Kite and Kotak. Product binding is implemented; public Real activation
+   waits for account funding and reconciliation wiring. Add carry/T1/holding reconciliation,
    persistent multi-day broker execution journal, DAY renewal and unknown-ACK
    handling. Real expiry remains manual.
 4. Complete contract metadata/lot selection, trade/history and wallet details,
@@ -205,3 +205,89 @@ Verification so far:
 Ignored logs/screenshots are under `.cache/phase21-swing/`. Keep these remaining
 items visible when preparing the preprod PR; do not mark the whole plan complete
 based on the foundational tests or basic Paper screen.
+
+### Recovery and funding follow-up checkpoint
+
+The Paper runtime now persists broker-like exit DAY windows and renewed attempts.
+Recovery processes native observed seconds inside those windows; no orders are
+renewed during offline days. Limit/SL edits retain the original attempt terms for
+historical evaluation. Local entry intentions and application strategies are not
+replayed. Missing provenance or coverage produces reconciliation pending, including
+an entry barrier and a client notice. History downloads run off the event loop.
+Fresh Breeze cache downloads record observation masks and actual source cadence;
+expanded minute data cannot masquerade as native seconds.
+
+Swing option selection now uses public master contracts with expiry-specific lots,
+including fractional strikes. Existing registered contracts retain their metadata
+across recovery. Invalid new contracts fail before a child context is persisted.
+The built desktop check also passed listed options, lot steps and fractional order
+identity. Zero/nonfinite quotes cannot create a fictitious free position. Recorded
+Paper fees are rounded to the same precision as actual Paper-wallet debits.
+
+Funding rules additionally distinguish local reservation ownership from broker
+reservations. Promoting the same reservation does not charge it twice; confirming
+a fill consumes it once. Opening inventory reallocates the selected mode's existing
+budget toward owned assets while leaving account cash unchanged. It never fabricates
+an old execution or sends a second cash debit. The explicit import adds recognised
+asset principal to the account's acknowledged capital capacity, without changing
+any mode's existing capital reference. Profit acknowledgements consume available
+surplus so the same gains are not counted twice across modes.
+
+A **capital-reference reset** changes sizing and the guardrail epoch while preserving
+cash, commitments and funding differences. A **funding-allocation edit** redistributes
+attributed budget and previews that change. A **funding correction** acknowledges a
+cash difference for the selected mode. These are separate operations; reducing a
+reference after a recorded loss must not subtract that loss from cash again.
+
+Closed intraday participation retains its running effects and reference while Swing
+remains active. When both modes close, the funding period is archived and the next
+period captures a fresh starting reference. Archive evidence also permits recovery
+if the process stops between period closure and account-owner release.
+
+Working assumption pending the open policy question: one application operator owns
+a centrally shared Real account while either funded mode is active. That operator
+can run both Swing and intraday. The account-owner helper is implemented/tested but
+not yet connected to Real starts. Multiple unrelated users sharing one account and
+capital pool would require a broader allocation model; this assumption can be
+revised if requested.
+
+Kite/Kotak adapters now accept explicit CNC/NRML products while preserving MIS
+placement defaults. Delivery/overnight views bind products without mutating the
+shared connection. Report caches separate these product scopes and invalidate
+sibling scopes for the same account. Swing submission intentions are durable for
+both broker types and preserve unknown acknowledgements instead of resending.
+These adapters are **not yet activated by a public Real Swing endpoint**.
+
+Provider interpretation notes for Real integration:
+
+- [Kite order products](https://kite.trade/docs/connect/v3/orders/) and the
+  [Kotak SDK](https://github.com/Kotak-Neo/kotak-neo-api-v2) establish CNC for
+  delivery shares and NRML for overnight options. Product binding belongs to each
+  execution book rather than mutable broker-wide settings.
+- [Kite holdings/positions](https://kite.trade/docs/connect/v3/portfolio/) and
+  [the provider's worked quantity example](https://kite.trade/forum/discussion/comment/52974/)
+  show that sold holding quantities are already reduced. Do not subtract
+  `used_quantity` or a negative CNC day position from those holdings again.
+  T1 and same-day buying/selling require explicit deduplication, not blindly adding
+  every holdings and positions quantity.
+- Delivery sale depository authorisation, settlement/charges and corporate-action
+  discrepancies need broker evidence and a clear unresolved/manual-intervention
+  state. Missing evidence must not create synthetic fills or portfolio closure.
+  [NSE levies](https://www.nseindia.com/static/invest/first-time-investor-sebi-turnover-fees-stt-other-levies)
+  and [broker tariffs](https://zerodha.com/charges) are reference sources for charge
+  validation; estimates alone cannot prove an outside funding withdrawal.
+
+Additional verification: **166** recovery/provenance/history-loader tests, **115**
+provider/history regression tests, **132** broker product and existing execution
+checks, and the funding/ownership focused tests passed. Full backend after the
+Paper recovery/provenance work: **2,027 passed, four known configuration failures**.
+That full run precedes the final exact-contract and funding-helper additions; those
+have focused checks and still require the next integration run. Logs remain under
+`.cache/phase21-swing/`. All previous remaining Real, linked-UI and Replay work stays
+open; this follow-up does not mark the phase complete.
+
+Latest integrated checkpoint: **2,046 backend tests passed; the same four local
+configuration failures remain**. The account-owner/funding lifecycle focused run
+also passed **20 tests**, and the updated built-client Swing browser check passed
+fractional listed contracts and expiry-specific lot steps. Real activation remains
+pending; these results validate the helpers and existing behavior, not live trading.

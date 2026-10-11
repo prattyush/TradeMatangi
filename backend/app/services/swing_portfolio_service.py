@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 import json
 import logging
+from math import isfinite
 import uuid
 from types import SimpleNamespace
 from fastapi import HTTPException
@@ -118,6 +119,14 @@ def snapshot(user, portfolio_id):
             }
             for s in current.contexts.values()
         ],
+        "reconciliation_pending": [
+            o.order_id for o in orders if o.swing_reconcile_pending
+        ]
+        + [
+            "book:" + child.session_id
+            for child in current.contexts.values()
+            if getattr(child, "swing_book_needs_repair", False)
+        ],
         "pnl": pnl,
         "pnl_pct": round(pnl / row["session_capital"] * 100, 4)
         if pnl is not None
@@ -165,6 +174,22 @@ def require_entry_allowed(
             "Swing supports long positions only; SELL quantity cannot exceed the held position",
         )
     row = store.owned(session.user_id, session.portfolio_id)
+    current = _runtimes.get(session.portfolio_id)
+    if current and (
+        any(
+            getattr(child, "swing_book_needs_repair", False)
+            for child in current.contexts.values()
+        )
+        or any(
+            o.swing_reconcile_pending
+            for child in current.contexts.values()
+            for o in order_service.get_open_orders(child.session_id)
+        )
+    ):
+        raise HTTPException(
+            409,
+            "Paper broker-order recovery is pending; entries wait for reconciliation",
+        )
     if (
         row["state"] != "running"
         or row["entries_paused"]
@@ -215,6 +240,7 @@ def attach_context(
     current = runtime(user, portfolio_id)
     key = f"{symbol}:{instrument_type}"
     session = current.contexts.get(key)
+    saved = None
     if session is None:
         sid = row["contexts"].get(key) or str(
             uuid.uuid5(uuid.NAMESPACE_URL, portfolio_id + ":" + key)
@@ -227,6 +253,35 @@ def attach_context(
             .get_item(Key={"session_id": sid}, ConsistentRead=True)
             .get("Item")
         )
+    metadata = None
+    if instrument_type == "options":
+        existing = next(
+            (
+                c
+                for c in (
+                    getattr(session, "desktop_contracts", [])
+                    if session is not None
+                    else (saved or {}).get("desktop_contracts", [])
+                )
+                if (c.get("strike"), c.get("expiry"), c.get("right"))
+                == (strike, expiry, right)
+            ),
+            None,
+        )
+        metadata = existing
+        if existing is None:
+            from app.services.breeze_master import listed_option_contract
+
+            try:
+                metadata = listed_option_contract(symbol, strike, expiry, right)
+            except FileNotFoundError as exc:
+                raise HTTPException(
+                    503,
+                    "Option contract metadata is unavailable; no lot size was guessed",
+                ) from exc
+            except ValueError as exc:
+                raise HTTPException(422, str(exc)) from exc
+    if session is None:
         if saved:
             session = simulation.rebuild_session_from_db(saved, user, read_only=False)
         else:
@@ -250,6 +305,7 @@ def attach_context(
                 wallet_ledger_id=f"swing:{portfolio_id}",
             )
             simulation._upsert_session_to_db(session, strict=True)
+        session.swing_recovery_required = True
         session.swing_quote_seen = False
         session.desktop_contract_quotes = {}
         session.state = SimulationState.RUNNING
@@ -276,6 +332,8 @@ def attach_context(
                 symbol=symbol, strike=strike, expiry=expiry, right=right
             )
         )
+        if metadata and metadata.get("lot_size"):
+            contract["lot_size"] = metadata["lot_size"]
         _register_contract(session, contract)
         simulation._upsert_session_to_db(session, strict=True)
         if session.paper_stream_source:
@@ -328,7 +386,7 @@ async def ensure(user, portfolio_id, *, subscribe=True):
             raise HTTPException(
                 503, "Saved portfolio context is missing; no new book was substituted"
             )
-        attach_context(
+        child = attach_context(
             user,
             portfolio_id,
             symbol,
@@ -338,6 +396,9 @@ async def ensure(user, portfolio_id, *, subscribe=True):
             saved.get("right"),
             subscribe=subscribe,
         )
+        if getattr(child, "swing_book_needs_repair", False):
+            restore_execution_book(child)
+            child.swing_book_needs_repair = False
     return runtime(user, portfolio_id)
 
 
@@ -350,6 +411,7 @@ async def _consume(current, session):
         while session.state != SimulationState.ENDED:
             handles = []
             try:
+                session.swing_recovery_required = True
                 group = FeedGroup(selected_provider(), False)
                 session.market_feed_group = group
                 definition = SUPPORTED_SYMBOLS[session.symbol]
@@ -402,10 +464,23 @@ async def _consume(current, session):
 
 
 async def on_tick(current, session, event):
+    if getattr(session, "swing_book_needs_repair", False):
+        restore_execution_book(session)
+        session.swing_book_needs_repair = False
     if event.get("type") != "tick":
         current.emit(event)
         return
     timestamp = int(event["time"])
+    price = float(event["close"])
+    if not isfinite(price) or price < 0:
+        current.emit(
+            {
+                "type": "portfolio_quote_unavailable",
+                "message": "No executable quote is available",
+                "session_id": session.session_id,
+            }
+        )
+        return
     if session.current_time and timestamp < int(session.current_time):
         return
     if (
@@ -421,18 +496,19 @@ async def on_tick(current, session, event):
         session._auto_closed = False
         simulation._upsert_session_to_db(session, strict=True)
     session.current_time = str(timestamp)
-    if not event.get("right"):
-        session.last_price = float(event["close"])
-        session.swing_quote_seen = True
-    if event.get("right"):
-        key = f"{session.symbol}:{event.get('expiry')}:{event.get('strike')}:{event['right']}"
-        registry = getattr(session, "desktop_contract_quotes", {})
-        registry[key] = {
-            **event,
-            "price": float(event["close"]),
-            "timestamp": timestamp,
-        }
-        session.desktop_contract_quotes = registry
+    from app.services import swing_paper_recovery as recovery
+
+    if price == 0 or not recovery.day_window(timestamp):
+        update_current_mark(session, event, timestamp)
+        current.emit(
+            {
+                "type": "portfolio_snapshot",
+                **snapshot(current.user, current.portfolio_id),
+            }
+        )
+        return
+    await recovery.before_quote_async(session, event)
+    update_current_mark(session, event, timestamp)
     row = store.owned(current.user, current.portfolio_id)
     session.session_capital = row["session_capital"]
     before = snapshot(current.user, current.portfolio_id)
@@ -464,10 +540,15 @@ async def on_tick(current, session, event):
         )
     if row["state"] == "closing" or expiry_exit:
         close_position_on_quote(session, event)
-    for filled in simulation._emit_tick_and_check_orders(
-        session, event, event.get("right")
-    ):
-        session.queue.put_nowait(json.dumps(filled))
+    try:
+        for filled in simulation._emit_tick_and_check_orders(
+            session, event, event.get("right")
+        ):
+            session.queue.put_nowait(json.dumps(filled))
+    except Exception:
+        session.swing_book_needs_repair = True
+        raise
+    recovery.after_quote(session, event)
     result = snapshot(current.user, current.portfolio_id)
     if (
         row.get("loss_limit_pct")
@@ -609,6 +690,11 @@ def restore_execution_book(session):
     for item in records:
         order = Order.model_validate(item)
         orders[order.order_id] = order
+        if order.status == OrderStatus.PENDING and order.swing_attempts:
+            order.swing_reconcile_pending = True
+            order.swing_reconcile_reason = (
+                "Restored broker-held exit needs its valid DAY window reconciled"
+            )
         if order.status == OrderStatus.FILLED:
             if order.filled_price is None or order.filled_at is None:
                 raise HTTPException(
@@ -675,3 +761,18 @@ async def restore_active_portfolios():
                 "Swing portfolio restoration needs reconciliation: %s",
                 row["session_id"],
             )
+
+
+def update_current_mark(session, event, timestamp):
+    if not event.get("right"):
+        session.last_price = float(event["close"])
+        session.swing_quote_seen = True
+    if event.get("right"):
+        key = f"{session.symbol}:{event.get('expiry')}:{event.get('strike')}:{event['right']}"
+        registry = getattr(session, "desktop_contract_quotes", {})
+        registry[key] = {
+            **event,
+            "price": float(event["close"]),
+            "timestamp": timestamp,
+        }
+        session.desktop_contract_quotes = registry

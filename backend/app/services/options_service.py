@@ -242,8 +242,8 @@ def _validate_options_gaps(df: pd.DataFrame, date: str, partial: bool = False) -
     else:
         end_ts = pd.Timestamp(f"{date} {get_market_close(date)}") - pd.Timedelta(seconds=1)
     full_index = pd.date_range(start=market_open, end=end_ts, freq="1s")
-    observed = df["observed"].reindex(full_index).fillna(False).astype(bool) if "observed" in df else None
-    df = df.reindex(full_index).ffill().bfill()
+    observed = df["observed"].reindex(full_index).astype("boolean").fillna(False).astype(bool) if "observed" in df else None
+    df = df.drop(columns=["observed"],errors="ignore").reindex(full_index).ffill().bfill()
     if observed is not None:
         df["observed"] = observed
     return df
@@ -345,9 +345,13 @@ def _fetch_options_historical_unlocked(
             f"Could not parse Breeze options data for {symbol} {right} {strike} on {date}."
         )
 
+    from app.services.data_loader import attach_observation_provenance
+    df=attach_observation_provenance(df)
+    native_interval=df.attrs['native_interval_seconds']
     if is_today and partial_pq is not None:
         from app.services.history_tail import merge_tail
         df = merge_tail(cached_df, df)
+    df.attrs['native_interval_seconds']=native_interval
 
     from app.services.data_loader import has_native_second_cadence
     # Do not manufacture second OHLC from a current-day minute source.

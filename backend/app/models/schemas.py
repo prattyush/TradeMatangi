@@ -272,6 +272,9 @@ class Order(BrokerIdentity):
     reserved_amount: float = 0.0  # wallet amount debited on BUY placement; 0 for SELL
     reservation_revision: int = 0
     stop_triggered_at: int | None = None
+    swing_attempts: list[dict] = Field(default_factory=list)
+    swing_reconcile_pending: bool = False
+    swing_reconcile_reason: str | None = None
     reservation_margin_rate: float = 1.0  # multiplier used to compute reserved_amount
     wallet_ledger_id: str | None = None   # ledger debited for reserved_amount, if ledger-scoped
     wallet_ledger_kind: str | None = None

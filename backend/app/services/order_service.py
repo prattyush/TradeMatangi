@@ -195,6 +195,10 @@ def _order_db_item(order: Order) -> dict:
         "is_stoploss": order.is_stoploss,
         "is_autostop": order.is_autostop,
     }
+    if order.trading_style == "swing":
+        item["swing_attempts"] = order.swing_attempts
+        item["swing_reconcile_pending"] = order.swing_reconcile_pending
+        item["swing_reconcile_reason"] = order.swing_reconcile_reason
     if order.stop_triggered_at is not None:
         item["stop_triggered_at"] = order.stop_triggered_at
     if order.portfolio_id:
@@ -430,6 +434,11 @@ def place_order(
         exit_position_side=exit_position_side,
         exit_allocation_role=exit_allocation_role,
     )
+    if order.trading_style == 'swing' and getattr(scope,'session_type',None)=='paper':
+        from app.services.swing_paper_recovery import initial_attempt, broker_owned
+        if broker_owned(order):
+            attempt=initial_attempt(created_at,order)
+            if attempt and attempt['date']==trading_date:order.swing_attempts.append(attempt)
     from app.services.execution_analytics import created
     from app.services.simulation import get_session
     created(order, get_session(session_id))
@@ -542,6 +551,8 @@ def update_order(
     order = _orders.get(session_id, {}).get(order_id)
     if order is None or order.status != OrderStatus.PENDING:
         return None
+    from app.services.swing_paper_recovery import require_amendable, amend_attempt
+    require_amendable(order)
 
     from app.services import execution_price_service as execution
     is_real = execution.real_session(session_id, order.wallet_ledger_kind)
@@ -582,6 +593,7 @@ def update_order(
     if trigger_price is not None or limit_price is not None:
         from app.services.execution_analytics import applied_controller
         applied_controller(order)
+    amend_attempt(order)
     if persist:
         _write_order_to_db(order)
     return order
@@ -603,6 +615,8 @@ def convert_order(
     order = _orders.get(session_id, {}).get(order_id)
     if order is None or order.status != OrderStatus.PENDING:
         return None
+    from app.services.swing_paper_recovery import require_amendable, amend_attempt
+    require_amendable(order)
     if new_order_type == order.order_type:
         return order  # no-op
 
@@ -669,6 +683,7 @@ def convert_order(
 
     from app.services.execution_analytics import applied_controller
     applied_controller(order)
+    amend_attempt(order)
     if persist:
         _write_order_to_db(order)
     logger.info(
@@ -705,6 +720,8 @@ def check_orders(
         if only_order_id is not None and order.order_id != only_order_id:
             continue
         if order.status != OrderStatus.PENDING:
+            continue
+        if order.swing_reconcile_pending or (order.trading_style == "swing" and current_time < order.created_at):
             continue
         from app.services.simulation import get_session
         entry_scope = get_session(session_id)
@@ -746,7 +763,7 @@ def check_orders(
                 if triggered and order.stop_triggered_at is None:
                     order.stop_triggered_at=current_time
                     _write_order_to_db(order,strict=True)
-                triggered=order.stop_triggered_at is not None and current_price>=order.limit_price
+                triggered=order.stop_triggered_at is not None and order.stop_triggered_at<=current_time and current_price>=order.limit_price
             if triggered:
                 from app.services.trading import get_position
                 position=get_position(

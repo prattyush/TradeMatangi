@@ -341,9 +341,13 @@ def _fetch_breeze_historical_unlocked(symbol: str, date: str, *, force_refresh: 
     if df.empty:
         raise RuntimeError(f"Could not parse Breeze data for {symbol} on {date}.")
 
+    from app.services.data_loader import attach_observation_provenance
+    df=attach_observation_provenance(df)
+    native_interval=df.attrs['native_interval_seconds']
     if is_today and partial_pq is not None:
         from app.services.history_tail import merge_tail
         df = merge_tail(cached_df, df)
+    df.attrs['native_interval_seconds']=native_interval
 
     # Current-day minute data must remain minute data. Expanding it to one
     # second would fabricate ticks that the desktop could incorrectly cache.

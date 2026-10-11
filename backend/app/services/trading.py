@@ -270,7 +270,7 @@ def record_trade(
         try:
             from app.services import simulation as sim_svc
             session = sim_svc.get_session(session_id)
-            if session and session.last_price > 0:
+            if session and session.last_price > 0 and getattr(session, "swing_historical_recovery", False) is not True:
                 underlying_price = session.last_price
         except Exception:
             pass
@@ -314,6 +314,7 @@ def record_trade(
     )
     if getattr(runtime, 'trading_style', 'intraday') == 'swing' and runtime.session_type != 'real':
         from app.services.swing_cash import move
+        trade.commission=round(trade.commission,2)
         move(user_id, runtime.portfolio_id, -trade.commission, f'fee:{trade.trade_id}', allow_negative=True, trade=trade)
     _trades[session_id].append(trade)
     try:

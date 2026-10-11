@@ -202,3 +202,48 @@ def test_legacy_session_controls_cannot_end_or_pause_a_portfolio_child(client):
         client.get(path, headers={"X-User-Id": "u"}).json()["portfolio"]["state"]
         == "running"
     )
+
+
+def test_exact_contract_lot_validation_and_invalid_master_do_not_create_context(
+    client, monkeypatch
+):
+    path = start(client)
+    headers = {"X-User-Id": "u"}
+
+    def invalid(*a):
+        raise ValueError("Contract is not listed")
+
+    monkeypatch.setattr("app.services.breeze_master.listed_option_contract", invalid)
+    option = {
+        "symbol": "CANBK",
+        "instrument_type": "options",
+        "right": "CE",
+        "strike": 125.5,
+        "expiry": "2026-11-03",
+    }
+    response = client.post(path + "/contexts", json=option, headers=headers)
+    assert response.status_code == 422, response.text
+    assert client.get(path, headers=headers).json()["contexts"] == []
+    monkeypatch.setattr(
+        "app.services.breeze_master.listed_option_contract",
+        lambda *a: {
+            "strike": 125.5,
+            "expiry": "2026-11-03",
+            "right": "CE",
+            "lot_size": 10,
+        },
+    )
+    order = {
+        **option,
+        "side": "BUY",
+        "order_type": "LIMIT",
+        "quantity": 11,
+        "price": 10,
+        "request_id": "lot-check",
+    }
+    assert client.post(path + "/orders", json=order, headers=headers).status_code == 422
+    accepted = client.post(
+        path + "/orders", json={**order, "quantity": 10}, headers=headers
+    )
+    assert accepted.status_code == 200, accepted.text
+    assert accepted.json()["open_orders"][0]["strike"] == 125.5

@@ -1,6 +1,6 @@
 import { useId, useState } from 'react'
 
-export interface SymbolChoice { symbol: string; display_name: string; chart_type?: string; nse_symbol?: string }
+export interface SymbolChoice { symbol: string; display_name: string; chart_type?: string; nse_symbol?: string; option_eligible?: boolean }
 
 /** One catalogue picker for website/desktop; selection remains explicit. */
 export function SymbolSearch({ value, options, onChange, disabled = false }: {

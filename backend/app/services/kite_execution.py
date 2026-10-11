@@ -108,7 +108,9 @@ class KiteExecutionService:
         step = Decimal(str(tick))
         return float((Decimal(str(value)) / step).quantize(Decimal('1'), rounding=ROUND_HALF_UP) * step)
 
-    def _place(self, symbol, side, qty, price, right=None, strike=None, expiry=None, trigger=None, tag=None):
+    def _place(self, symbol, side, qty, price, right=None, strike=None, expiry=None, trigger=None, tag=None, product="MIS"):
+        from app.services.swing_execution_broker import validate_product
+        validate_product(product,right is not None)
         instrument = self.instrument(symbol, right, strike, expiry)
         lot = int(instrument.get('lot_size') or 1)
         if not isinstance(qty, int) or qty <= 0 or qty % lot:
@@ -120,20 +122,20 @@ class KiteExecutionService:
         tick = instrument['tick_size']
         return self._write('place_order', variety='regular', exchange=instrument['exchange'],
             tradingsymbol=instrument['tradingsymbol'], transaction_type='BUY' if side in ('B', 'BUY') else 'SELL',
-            quantity=qty, product='MIS', order_type='SL' if trigger is not None else 'LIMIT', validity='DAY',
+            quantity=qty, product=product, order_type='SL' if trigger is not None else 'LIMIT', validity='DAY',
             price=self._price(price, tick), trigger_price=self._price(trigger, tick) if trigger is not None else 0, tag=tag)
 
-    def place_limit_order(self, symbol, side, qty, price, tag=None):
-        return self._place(symbol, side, qty, price, tag=tag)
+    def place_limit_order(self, symbol, side, qty, price, tag=None, *, product="MIS"):
+        return self._place(symbol, side, qty, price, tag=tag, product=product)
 
-    def place_sl_order(self, symbol, side, qty, trigger_price, limit_price, tag=None):
-        return self._place(symbol, side, qty, limit_price, trigger=trigger_price, tag=tag)
+    def place_sl_order(self, symbol, side, qty, trigger_price, limit_price, tag=None, *, product="MIS"):
+        return self._place(symbol, side, qty, limit_price, trigger=trigger_price, tag=tag, product=product)
 
-    def place_options_limit_order(self, symbol, side, qty, price, right, strike, expiry, tag=None):
-        return self._place(symbol, side, qty, price, right, strike, expiry, tag=tag)
+    def place_options_limit_order(self, symbol, side, qty, price, right, strike, expiry, tag=None, *, product="MIS"):
+        return self._place(symbol, side, qty, price, right, strike, expiry, tag=tag, product=product)
 
-    def place_options_sl_order(self, symbol, side, qty, trigger_price, limit_price, right, strike, expiry, tag=None):
-        return self._place(symbol, side, qty, limit_price, right, strike, expiry, trigger_price, tag)
+    def place_options_sl_order(self, symbol, side, qty, trigger_price, limit_price, right, strike, expiry, tag=None, *, product="MIS"):
+        return self._place(symbol, side, qty, limit_price, right, strike, expiry, trigger_price, tag, product=product)
 
     def _modify(self, order_id, price, qty, trigger=None):
         # Existing order metadata supplies the actual tick size on resumed books.
@@ -182,13 +184,13 @@ class KiteExecutionService:
             order_time=str(raw.get('order_timestamp') or ''), right=right, strike=strike_number(float(meta.get('strike') or 0)) or None,
             expiry=expiry, instrument_token=meta.get('instrument_token')))
 
-    def get_order_history(self):
-        return [self._normalize(r) for r in self._read('orders') if r.get('product') == 'MIS']
+    def get_order_history(self, *, products=("MIS",)):
+        return [self._normalize(r) for r in self._read('orders') if products is None or r.get('product') in products]
 
-    def get_trade_history(self):
+    def get_trade_history(self, *, products=("MIS",)):
         rows = []
         for raw in self._read('trades'):
-            if raw.get('product') != 'MIS':
+            if products is not None and raw.get('product') not in products:
                 continue
             row = self._normalize(raw)
             stamp = str(raw.get('exchange_timestamp') or raw.get('fill_timestamp') or '')
@@ -196,18 +198,20 @@ class KiteExecutionService:
                 'execution_time': stamp, 'quantity': raw['quantity'], 'price': raw['average_price']}))
         return rows
 
-    def get_positions(self):
+    def get_positions(self, *, products=("MIS",)):
         rows = []
         for raw in self._read('positions')['net']:
-            if raw.get('product') != 'MIS':
+            if products is not None and raw.get('product') not in products:
                 continue
             row = self._normalize(raw)
-            if raw.get('overnight_quantity', 0):
+            if raw.get('product') == 'MIS' and raw.get('overnight_quantity', 0):
                 raise KotakError('Unexpected carried MIS position; broker verification required')
             rows.append({**row, 'netQty': raw['quantity'], 'avg_entry_price': raw['average_price'],
                 'flBuyQty': raw['day_buy_quantity'], 'flSellQty': raw['day_sell_quantity'],
                 'flBuyAmt': raw['day_buy_value'], 'flSellAmt': raw['day_sell_value'],
-                'cfBuyQty': 0, 'cfSellQty': 0, 'realized_pnl': raw['realised']})
+                'cfBuyQty': max(0,int(raw.get('overnight_quantity',0))), 'cfSellQty': max(0,-int(raw.get('overnight_quantity',0))),
+                'cfBuyAmt': float(raw.get('buy_value',0))-float(raw.get('day_buy_value',0)),
+                'cfSellAmt': float(raw.get('sell_value',0))-float(raw.get('day_sell_value',0)), 'realized_pnl': raw['realised']})
         return rows
 
     def get_limits(self):
