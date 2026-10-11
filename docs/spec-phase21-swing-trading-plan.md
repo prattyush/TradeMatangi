@@ -2,7 +2,30 @@
 
 Approved design, 2026-10-10. Work branches originate from preprod and all PRs
 are reviewed into preprod. Deployment/runtime acceptance follows preprod merge;
-main/dev promotion remains manual. This document is Sprint 0 and precedes code.
+main/dev promotion remains manual. The original Sprint 0 design and subsequent
+implementation/review checkpoints are retained here.
+
+## Current review status — 2026-10-11
+
+Authoritative status for this revision is this section and the review checkpoint
+below. Earlier checkpoints are historical snapshots, not competing completion
+claims. Work remains on `feature/phase21-swing-trading`, based on preprod; every
+PR targets **preprod**. No main/dev merge or authenticated live acceptance is
+implied by automated checks.
+
+The self-review reproduced eight gaps missed by the earlier suite: child ownership
+adoption, engine readiness during context restoration, incomplete startup recipes,
+allocation-versus-reconciliation retries, partial-fill reservations, pending
+funding entry reservations, unknown submission dating and empty-portfolio cash
+correction. Fixes and permanent regressions are now implemented. The former
+2,094-pass result describes the pre-review code; final results for this revision
+are recorded in the review checkpoint below.
+
+The approved ownership model remains four broker/style slots, with one Day and
+one Swing owner per broker across users, and one funding pool per actual broker
+account. Paper/Replay limits are unchanged. The broader linked Swing views,
+multi-day Replay, remaining Paper edges and live/native preprod acceptance remain
+outstanding.
 
 ## Decisions and scope
 
@@ -128,6 +151,8 @@ acceptance are post-preprod deployment gates, not blockers to code review.
 
 ## Implementation checkpoint — 2026-10-11
 
+Historical checkpoint; superseded by the current review status above.
+
 Work remains on `feature/phase21-swing-trading`, based on preprod. This is a
 partial implementation checkpoint, not completion or live-trading acceptance.
 
@@ -207,6 +232,8 @@ items visible when preparing the preprod PR; do not mark the whole plan complete
 based on the foundational tests or basic Paper screen.
 
 ### Recovery and funding follow-up checkpoint
+
+Historical checkpoint; superseded by the current review status above.
 
 The Paper runtime now persists broker-like exit DAY windows and renewed attempts.
 Recovery processes native observed seconds inside those windows; no orders are
@@ -385,6 +412,8 @@ must not be assumed to recover older outages.
 
 ## Implementation checkpoint — ownership/recovery revision, 2026-10-11
 
+Historical checkpoint; superseded by the current review status above.
+
 This checkpoint supersedes earlier notes saying shared funding and Real Swing
 runtime were unwired. Work remains on `feature/phase21-swing-trading`, based on
 preprod. No main/dev merge or live order was performed.
@@ -515,3 +544,97 @@ active books after restart.
 Deployment order: merge the reviewed feature branch into **preprod**, deploy the
 backend, then run authenticated website/native acceptance. All further PRs for
 this work target preprod; main/dev promotion remains manual after acceptance.
+
+
+## Code review and fix checkpoint — 2026-10-11
+
+### Findings and final design
+
+| Finding | Fix and expected behavior |
+| --- | --- |
+| Startup adopts a Swing child as a competing owner | Adopt roots only. Children belong to their recorded parent; missing/mismatched parents remain blocked. Closed roots cannot be revived by their child rows. Genuine root conflicts remain visible. |
+| Reconciliation/closure runs before child restoration | Renew the lease during restoration, but keep execution unready until every registered child is restored. Missing children cannot become an empty portfolio or verified closure. Concurrent attach/recovery returns a retryable response. Unrestored P&L stays pending; closed archives do not read newer funding pools. |
+| Startup fails between parent creation and allocation save | Parent/slot creation saves allocation instructions and the prepared funding period atomically. Retry completes enrollment for the same identity. Old empty incomplete starts recover their exact saved capital against the current account pool when it fits; ambiguous or conflicting funding remains blocked. Invalid retained-mode allocation changes are rejected before claiming another slot. |
+| Reconciliation overwrites a concurrent allocation/correction | Recompute the target and fingerprint from the current participant baseline on each conditional-write retry. |
+| A partial-fill report retains the original reservation | Rebuild funded Real reservations from confirmed held quantity and remaining opening units. MIS equity uses the existing 20% estimate; Swing uses full value. Terminal orders release residual reservations. No duplicate investment debit. |
+| Pending shared funding accepts new reservations | Risk-increasing local reservations check the shared entry barrier in the same funding mutation. Reductions, releases and recording confirmed broker effects remain possible. Actual submissions/edits use the style-specific entry guard. |
+| Old intention dates conceal current unknown attempts | Persist actual broker submission time separately before placement. Current-day uncertainty blocks closure regardless of original intention age or acknowledgement. Day closure retries report reconciliation without resubmitting the order. Recheck uncertainty after broker verification. |
+| Empty cash-correction confirmation assumes a child exists | Use the parent funding actor through preview/confirmation and preserve retry receipts. Attached children receive the corrected sizing capital. |
+
+Confirmed fills, refusals, cancellations and verified closure refresh existing
+funding/reconciliation machinery. They do not create a new monitor or lock manager.
+An incomplete funding write keeps entries pending rather than treating its old
+snapshot as authoritative.
+
+### Explicit undated-attempt decision
+
+The user selected **allow acknowledged verified close** for existing undated
+unknown attempts. Reconciliation exposes exact undated order identities. Website
+and desktop confirmation explicitly acknowledge those identities; the backend
+checks they belong to the selected book and persists the acknowledgement. It
+then verifies current scope flat with no pending orders before releasing the slot.
+History/P&L warnings remain; acknowledgement never creates a fill or authorizes a
+retry. Known current-day attempts cannot be acknowledged past this barrier.
+
+Close endpoints accept an optional JSON body:
+
+```json
+{ "acknowledge_undated_submission_ids": ["owned-order-id"] }
+```
+
+Existing no-body close requests remain compatible. Reconciliation and Real Swing
+snapshots additionally return `current_submission_ids`,
+`undated_submission_ids`, `older_submission_ids` and `closure_blocked`. Orders
+persist optional `broker_submission_at` as actual UTC milliseconds; `created_at`
+keeps the existing IST-wall-clock convention. Missing old submission timestamps
+remain undated rather than being guessed from intention creation.
+
+### Assumptions, limits and rollout
+
+One centrally configured account per broker remains assumed. Account/product,
+portfolio identity and current engine ownership stay pinned. A short engine lease
+is execution authority, not permission to abandon money or release a book. Outside
+broker mutations can occur between reads; the application verifies its managed
+scope and preserves uncertainty instead of claiming an atomic broker snapshot.
+
+The 20% MIS margin and existing charge estimates remain application affordability
+estimates; actual broker authorization/funds/rejection are authoritative. No
+broker-specific margin calculator, contract-note accounting, new distributed locks,
+arbitrary fill editor, corporate-action engine or force-unlock endpoint is added.
+Kite per-order history remains deferred. Positive funding acknowledgement,
+zero-cash initial capture, linked Swing chart/strategy/history views, multi-day
+Replay and remaining Paper acceptance work are still excluded from this fix pass.
+
+Merge the reviewed branch into **preprod**, deploy the backend, then test
+actual Kite/Kotak and website/native desktop execution. Native executable and live
+broker acceptance cannot be replaced by TypeScript builds or mocked browser tests.
+No live orders were sent during this review/fix work.
+
+### Verification of this revision
+
+Permanent regressions cover the eight findings plus genuine/missing-parent
+conflicts, closed-parent restart, missing children, legacy incomplete start,
+acknowledged versus current submissions, uncertainty arriving during verification,
+endpoint body forwarding, empty correction retries, pending reservation decreases
+and partial Day reversal margin. The final results below distinguish repository-wide verification from focused regression and mocked browser checks.
+
+
+Final verification of the reviewed code:
+
+- **Backend: 2,121 passed, four pre-existing local ICICI configuration failures**
+  (missing `[icicidirect]` in local `data/accesskeys.ini`): two options-start
+  validation tests and two pattern-logger OHLC tests. No new suite failures.
+- **27 new regression cases** cover this review and its follow-up boundaries.
+  Compatibility checks also passed for splits, legacy strategy edits, Day/Swing
+  lifecycle, funding and desktop routes.
+- **Desktop: 184 tests passed.** Website and desktop TypeScript checks and
+  production builds passed; existing large-chunk build notices remain.
+- Mock browser verification passed for both Day and Swing undated-attempt
+  acknowledgement: the submitted IDs matched the confirmation, the Day confirm
+  required acknowledgement, and no page errors occurred. This tests controls,
+  not authenticated broker behavior or a rebuilt native executable.
+- Python compilation, Ruff on the reviewed core services/new regression module,
+  and `git diff --check` passed. Temporary UI harness files were removed.
+
+Review fixes are implemented; authenticated preprod deployment/native/live
+acceptance and the broader outstanding Phase 21 sprints remain pending.

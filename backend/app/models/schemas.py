@@ -305,6 +305,7 @@ class Order(BrokerIdentity):
     recovery_operation_id: str | None = None
     recovery_parent_order_id: str | None = None
     recovery_state: str | None = None
+    broker_submission_at: int | None = None  # Actual UTC milliseconds; intention time is separate.
     broker_conversion: dict | None = None
     split_operation: dict | None = None
     recovery_attempt: int = 0

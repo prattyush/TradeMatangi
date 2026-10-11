@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from app.dependencies import require_real_trading_access
 from app.services import execution_broker, real_broker_state, real_close, simulation
+from app.services.real_recovery import CloseRequest
 
 router = APIRouter(prefix="/api/brokers", tags=["brokers"])
 
@@ -72,7 +73,7 @@ async def status_for(user_id):
             portfolio = await asyncio.to_thread(swing_portfolio_store.owned, user_id, row['session_id'])
             current = swing_portfolio_service._runtimes.get(row['session_id'])
             item['state'] = ('closing' if portfolio['state'] == 'closing' else
-                             'reconciling' if current and any(child.real_recovery_pending for child in current.contexts.values()) else
+                             'reconciling' if current and (not current.real_ready or any(child.real_recovery_pending for child in current.contexts.values())) else
                              'running' if current and getattr(current, 'real_valid_until', 0) > time.monotonic() else 'reconnecting')
         from app.services import swing_funding_store as funding
 
@@ -189,15 +190,15 @@ async def close_summary(
 
 
 @router.post("/{session_id}/stop")
-async def stop(session_id: str, user_id: str = Depends(require_real_trading_access)):
+async def stop(session_id: str, user_id: str = Depends(require_real_trading_access), req: CloseRequest | None = None):
     if simulation.get_session(session_id):
-        return await real_close.close(owned(session_id, user_id))
+        return await real_close.close(owned(session_id, user_id), req.acknowledge_undated_submission_ids if req else None)
     record = await saved_real_record(session_id, user_id)
     if not record:
         raise HTTPException(404, "Real session not found")
     from app.services.real_sessions import restore_for_close
 
-    return await real_close.close(await restore_for_close(record, user_id))
+    return await real_close.close(await restore_for_close(record, user_id), req.acknowledge_undated_submission_ids if req else None)
 
 
 from pydantic import BaseModel, Field

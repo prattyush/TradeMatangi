@@ -6,7 +6,7 @@ interface Portfolio { mode?: string; execution_broker?: string; history_warning?
 interface Position { symbol: string; right?: string; strike?: number; expiry?: string; quantity: number; avg_entry_price: number; mark_price?: number }
 interface ListedContract { strike: number; expiry: string; right: string; lot_size: number }
 interface PendingOrder { order_id: string; symbol: string; side: string; order_type: string; quantity: number; limit_price: number; right?: string; strike?: number; expiry?: string }
-interface Snapshot { allocation_pct?: number; recovery_issues?: { session_id: string; message: string; verified_flat: boolean }[]; funding_status?: { state: string; entries_allowed: boolean; shortfall?: number }; portfolio: Portfolio | null; wallet_balance?: number; pnl?: number | null; guardrail_pnl?: number | null; reconciliation_pending?: string[]; positions?: Position[]; open_orders?: PendingOrder[] }
+interface Snapshot { current_submission_ids?: string[]; undated_submission_ids?: string[]; closure_blocked?: boolean; allocation_pct?: number; recovery_issues?: { session_id: string; message: string; verified_flat: boolean }[]; funding_status?: { state: string; entries_allowed: boolean; shortfall?: number }; portfolio: Portfolio | null; wallet_balance?: number; pnl?: number | null; guardrail_pnl?: number | null; reconciliation_pending?: string[]; positions?: Position[]; open_orders?: PendingOrder[] }
 const money = (value?: number | null) => value == null ? 'Waiting for prices' : value.toLocaleString('en-IN', { maximumFractionDigits: 2 })
 
 /** Account-owned controls: dismissing this view never stops the portfolio. */
@@ -36,6 +36,7 @@ export default function SwingPortfolioPanel({ request, loadSymbols, onDetach }: 
   const [quantity, setQuantity] = useState('1')
   const [price, setPrice] = useState('')
   const [confirmClose, setConfirmClose] = useState(false)
+  const [acknowledgeUndated, setAcknowledgeUndated] = useState(false)
   const [importPreview, setImportPreview] = useState<{ positions: Position[]; cost: number; fingerprint: string; body: Record<string, unknown> } | null>(null)
   const [correctionAmount, setCorrectionAmount] = useState('')
   const [correctionReason, setCorrectionReason] = useState('')
@@ -87,6 +88,7 @@ export default function SwingPortfolioPanel({ request, loadSymbols, onDetach }: 
     try { const value = await request<{ capital: number; remaining_shortfall: number; funding_version: number }>(`${prefix}/funding-correction-preview`, 'POST', body); setCorrectionPreview({ ...value, body }) }
     catch (reason) { setError(String(reason)) } finally { setBusy(false) }
   }
+  useEffect(() => { setAcknowledgeUndated(false); setConfirmClose(false) }, [prefix, mode, broker])
   useEffect(() => { setImportPreview(null); setCorrectionPreview(null) }, [prefix, mode, broker, symbol, kind, strike, expiry, right, correctionAmount, correctionReason])
   const order = async () => {
     requestIdentity.current ??= crypto.randomUUID()
@@ -139,7 +141,7 @@ export default function SwingPortfolioPanel({ request, loadSymbols, onDetach }: 
         <button onClick={() => { setCapital(String(portfolio.session_capital)); setResetOpen(true) }}>Reset capital</button>
         <button onClick={() => setConfirmClose(true)}>Close portfolio…</button>
       </div>}
-      {confirmClose && <div role="alertdialog" aria-label="Confirm portfolio closure"><p>Close all managed positions at available market quotes and cancel entries? Closure waits for executable prices.</p><button disabled={busy} onClick={() => void act(`${prefix}/close`).then(ok => { if (ok) setConfirmClose(false) })}>Confirm close portfolio</button><button onClick={() => setConfirmClose(false)}>Keep portfolio</button></div>}
+      {confirmClose && <div role="alertdialog" aria-label="Confirm portfolio closure"><p>Close all managed positions at available market quotes and cancel entries? Closure waits for executable prices.</p>{Boolean(snapshot.current_submission_ids?.length) && <p>Current-day broker submissions are unconfirmed. Closure stays blocked until they reconcile.</p>}{Boolean(snapshot.undated_submission_ids?.length) && <label><input type="checkbox" checked={acknowledgeUndated} onChange={event => setAcknowledgeUndated(event.target.checked)} /> I acknowledge {snapshot.undated_submission_ids?.length} undated broker attempt(s). Close only after the broker verifies no current positions or pending orders; retain the history warning.</label>}<button disabled={busy} onClick={() => void act(`${prefix}/close`, { acknowledge_undated_submission_ids: acknowledgeUndated ? snapshot.undated_submission_ids ?? [] : [] }).then(ok => { if (ok) setConfirmClose(false) })}>Confirm close portfolio</button><button onClick={() => setConfirmClose(false)}>Keep portfolio</button></div>}
       {resetOpen && <form onSubmit={event => { event.preventDefault(); void act(`${prefix}/capital`, { capital: Number(capital), request_id: crypto.randomUUID() }).then(ok => { if (ok) setResetOpen(false) }) }}><p>Reset the sizing reference and loss-limit period. Cash, positions and history stay intact.</p>{mode === 'real' && <p>Use account allocation percentages for Real funding.</p>}<label>Capital ₹ <input type="number" min="1" step="0.01" required value={capital} onChange={event => setCapital(event.target.value)} /></label><button disabled={busy}>Confirm reset</button><button type="button" onClick={() => setResetOpen(false)}>Cancel</button></form>}
       {mode === 'real' && portfolio.state === 'running' && <div>
         <label>Account allocation % <input aria-label="Swing allocation percent" type="number" min="0.01" max="100" step="0.01" value={allocation} onChange={event => setAllocation(event.target.value)} /></label><button disabled={busy} onClick={() => void act(`${prefix}/allocation`, { fraction: Number(allocation) / 100, request_id: crypto.randomUUID() })}>Apply allocation</button>
@@ -148,7 +150,7 @@ export default function SwingPortfolioPanel({ request, loadSymbols, onDetach }: 
         {correctionPreview && <div role="alertdialog" aria-label="Confirm cash correction"><p>New capital ₹{money(correctionPreview.capital)} · remaining account gap ₹{money(correctionPreview.remaining_shortfall)}. This resets the portfolio loss-limit reference and records your reason.</p><button disabled={busy} onClick={() => void act(`${prefix}/funding-correction`, { ...correctionPreview.body, funding_version: correctionPreview.funding_version }).then(ok => { if (ok) setCorrectionPreview(null) })}>Confirm correction</button><button onClick={() => setCorrectionPreview(null)}>Cancel</button></div>}
       </div>}
       {snapshot.recovery_issues?.map(issue => <p role="status" key={issue.session_id}>{issue.message} {issue.verified_flat ? 'Broker currently verifies flat; closing can preserve the history warning.' : 'Manage current exposure at the broker, then reconcile again.'}</p>)}
-      {mode === 'real' && portfolio.state === 'closing' && <button disabled={busy} onClick={() => void act(`${prefix}/close`)}>Verify closure again</button>}
+      {mode === 'real' && portfolio.state === 'closing' && <button disabled={busy} onClick={() => setConfirmClose(true)}>Review and verify closure again</button>}
       <h3>Positions</h3>
       {snapshot.positions?.length ? <table><thead><tr><th>Instrument</th><th>Quantity</th><th>Average</th><th>Current</th></tr></thead><tbody>{snapshot.positions.map(position => <tr key={`${position.symbol}:${position.right}:${position.strike}:${position.expiry}`}><td>{position.symbol} {position.right} {position.strike} {position.expiry}</td><td>{position.quantity}</td><td>{money(position.avg_entry_price)}</td><td>{money(position.mark_price)}</td></tr>)}</tbody></table> : <p>No open positions.</p>}
       <h3>Pending intentions</h3>

@@ -13,6 +13,7 @@ from pydantic import Field, model_validator
 from app.dependencies import get_desktop_user_id
 from app.models.schemas import ContractModel, OrderType, TradeSide
 from app.services import order_service, trading
+from app.services.real_recovery import CloseRequest
 from app.services import (
     swing_portfolio_service as service,
 )
@@ -334,8 +335,8 @@ async def reset_capital(
 
 
 @router.post("/{portfolio_id}/close")
-async def close(portfolio_id: str, user: str = Depends(get_desktop_user_id)):
-    await service.close_portfolio(user, portfolio_id)
+async def close(portfolio_id: str, user: str = Depends(get_desktop_user_id), req: CloseRequest | None = None):
+    await service.close_portfolio(user, portfolio_id, req.acknowledge_undated_submission_ids if req else None)
     return service.snapshot(user, portfolio_id)
 
 

@@ -219,6 +219,30 @@ def build_orders(session, broker_orders, master=None):
     return result
 
 
+
+def rebuild_reservations(session, orders, positions):
+    """Reservations cover remaining opening quantity, never already confirmed fills."""
+    from app.config import EQUITY_MIS_MARGIN_RATE
+    if not isinstance(getattr(session, "real_funding_period", None), str) or not session.real_funding_period:
+        return
+    for order in orders.values():
+        if not order.broker_order_id:
+            continue
+        if order.status != OrderStatus.PENDING or order.is_stoploss:
+            order.reserved_amount = 0
+            continue
+        held = next((p for p in positions if (p.get("right"), p.get("strike"), p.get("expiry")) == (order.right, order.strike, order.expiry)), {})
+        remaining = max(0, order.quantity - order.broker_filled_quantity)
+        opposite = "SHORT" if order.side == TradeSide.BUY else "LONG"
+        closing = held.get("quantity", 0) if held.get("side") == opposite else 0
+        opening = max(0, remaining - closing)
+        rate = EQUITY_MIS_MARGIN_RATE if session.trading_style == "intraday" and session.instrument_type == "equity" else 1
+        order.reservation_margin_rate = rate
+        order.wallet_ledger_kind = "real"
+        order.wallet_ledger_id = session.wallet_ledger_id
+        order.reserved_amount = round(opening * order.limit_price * rate, 2)
+
+
 def stage(session, account_id, trades, broker_orders, positions, executions, orders):
     from app.services.db import get_dynamodb_resource
     db = get_dynamodb_resource()
@@ -399,6 +423,7 @@ async def refresh(session, broker, *, protection=False, bundle=None):
                 if not fifo_agrees():
                     raise ValueError("Kotak execution history/positions are incomplete or still updating; FIFO refresh was not applied")
             positions = verified_positions(session, scoped_executions, positions, master)
+            rebuild_reservations(session, orders, positions)
             kotak_reports.consistent(broker, root)
             # Persist resolved monthly expiry so restart/live FIFO needs no instrument download.
             scoped_executions = [{**row, **reports.contract(session, row, master)} for row in scoped_executions]

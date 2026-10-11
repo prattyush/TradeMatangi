@@ -414,7 +414,10 @@ async def bind_prepared(session):
     session.real_engine_lease_required = True
     session.real_engine_valid_until = time.monotonic() + 40
 
-    if isinstance(getattr(session, "real_funding_period", None), str) and session.real_funding_period:
+    if (
+        isinstance(getattr(session, "real_funding_period", None), str)
+        and session.real_funding_period
+    ):
         from app.services.real_funding import mark_pending
 
         await asyncio.to_thread(mark_pending, session)
@@ -560,6 +563,43 @@ def _adopt_legacy():
         for record in page.get("Items", []):
             if record.get("broker_projection_id") == record["session_id"]:
                 continue
+            if record.get("trading_style") == "swing" and record.get("portfolio_id"):
+                from app.services.execution_broker import name
+
+                parent = sessions.get_item(
+                    Key={"session_id": record["portfolio_id"]}, ConsistentRead=True
+                ).get("Item")
+                if (
+                    parent
+                    and parent.get("record_type") == "swing_portfolio"
+                    and parent.get("user_id") == record["user_id"]
+                    and parent.get("broker_account_id")
+                    == record.get("broker_account_id")
+                    and name(parent.get("execution_broker"))
+                    == name(record.get("execution_broker"))
+                ):
+                    continue
+                # Preserve the parent identity when its metadata is unavailable.
+                try:
+                    unresolved = {**record, "session_id": record["portfolio_id"]}
+                    adopted = slots.adopt(record["user_id"], unresolved)
+                    if adopted:
+                        slots.table().update_item(
+                            Key=slots.key(
+                                adopted["broker"],
+                                adopted["account"] or "unresolved-account",
+                                "swing",
+                            ),
+                            UpdateExpression="SET recovery_conflict = :yes",
+                            ExpressionAttributeValues={":yes": True},
+                        )
+                except HTTPException as exc:
+                    logger.warning(
+                        "Real Swing parent recovery needs attention for %s: %s",
+                        record["portfolio_id"],
+                        exc.detail,
+                    )
+                continue
             try:
                 legacy = (
                     slots.table()
@@ -659,9 +699,8 @@ async def _recover_outstanding():
                 await asyncio.to_thread(_adopt_legacy)
                 _ready = True
             for row in await asyncio.to_thread(_outstanding):
-                if (
-                    row.get("recovery_conflict")
-                    or row.get("engine_until", 0) >= int(time.time())
+                if row.get("recovery_conflict") or row.get("engine_until", 0) >= int(
+                    time.time()
                 ):
                     continue
                 session = simulation.get_session(row["session_id"])
@@ -683,6 +722,7 @@ async def _recover_outstanding():
                         continue  # Incomplete startup needs explicit retry/close, not new automatic entries.
                     if row["style"] == "swing":
                         from app.services.swing_portfolio_service import ensure
+
                         await ensure(row["owner_user_id"], row["session_id"])
                         continue
                     from app.services.real_trading_day import market_date

@@ -42,13 +42,28 @@ async def start(user, req):
         funding.initialize, user, broker_name, account, wallet["balance"]
     )
     # Validate funding before acquiring a new book. A later race stays recoverable.
-    from app.services.swing_accounting import allocate
+    from app.services import swing_accounting as rules
 
-    if "swing" not in pool["funding"]["modes"]:
-        try:
-            allocate(pool["funding"], "swing", req.allocation_pct)
-        except ValueError as exc:
-            raise HTTPException(422, str(exc)) from exc
+    try:
+        if "swing" not in pool["funding"]["modes"]:
+            rules.allocate(pool["funding"], "swing", req.allocation_pct)
+        else:
+            previous = pool["funding"]["modes"]["swing"]
+            amount = rules.money(
+                pool["funding"]["allocation_reference"] * req.allocation_pct
+            )
+            reduction = rules.money(
+                previous.get("funding_allocation", previous["capital"]) - amount
+            )
+            if reduction > 0 and reduction > rules.mode_available(
+                pool["funding"], "swing"
+            ):
+                raise ValueError("Requested allocation is below retained commitments")
+            rules.correct(
+                pool["funding"], "swing", amount, 0, "New session allocation", amount
+            )
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
     row = await asyncio.to_thread(
         store.create,
         user,
@@ -57,13 +72,8 @@ async def start(user, req):
         broker=broker_name,
         account=account,
         loss_limit_pct=req.loss_limit_pct,
-    )
-    row = await asyncio.to_thread(
-        store.update,
-        user,
-        row["session_id"],
-        {"allocation_pct": req.allocation_pct},
-        row["version"],
+        allocation_pct=req.allocation_pct,
+        funding_period=pool["period_id"],
     )
     await asyncio.to_thread(
         funding.start_participant,
@@ -81,7 +91,7 @@ async def start(user, req):
 
 async def bind(current, row):
     """One renewable parent lease fences every child, with no additional lock manager."""
-    if current.tasks.get("real-engine") and not current.tasks["real-engine"].done():
+    if current.tasks.get("real-lease") and not current.tasks["real-lease"].done():
         if time.monotonic() >= getattr(current, "real_valid_until", 0):
             raise HTTPException(409, "Swing ownership needs reconnection")
         return
@@ -94,7 +104,28 @@ async def bind(current, row):
             row["execution_broker"],
             row["broker_account_id"],
         )
-        if not pool or not row.get("allocation_pct"):
+        if pool and not row.get("allocation_pct") and not row.get("contexts"):
+            # Old interrupted starts saved the exact capital before enrollment.
+            fraction = row["session_capital"] / pool["funding"]["allocation_reference"]
+            if 0 < fraction <= 1:
+                row = await asyncio.to_thread(
+                    store.update,
+                    current.user,
+                    row["session_id"],
+                    {
+                        "allocation_pct": fraction,
+                        "prepared_funding_period": pool["period_id"],
+                    },
+                    row["version"],
+                )
+        if (
+            not pool
+            or not row.get("allocation_pct")
+            or (
+                row.get("prepared_funding_period")
+                and row["prepared_funding_period"] != pool["period_id"]
+            )
+        ):
             raise HTTPException(
                 409, "Saved Swing funding is incomplete; reconcile before trading"
             )
@@ -141,6 +172,7 @@ async def bind(current, row):
             )
         )
     )
+    current.real_ready = False
     current.real_token = token
     current.real_valid_until = time.monotonic() + 40
     for child in current.contexts.values():
@@ -249,6 +281,11 @@ async def engine(current):
             )
             if row["state"] == "ended":
                 return
+            if not current.real_ready or row["contexts"] != {
+                key: child.session_id for key, child in current.contexts.items()
+            }:
+                await asyncio.sleep(1)
+                continue
             try:
                 for child in list(current.contexts.values()):
                     child.real_engine_valid_until = current.real_valid_until
@@ -401,6 +438,7 @@ async def refresh(session, *, protection=False):
                         preserved.swing_reconcile_pending = True
                         preserved.swing_reconcile_reason = "Previous DAY attempt is absent from current broker reports; verify before replacement"
                     orders[old.order_id] = preserved
+            state.rebuild_reservations(session, orders, positions)
             manifest, _members = await asyncio.to_thread(
                 state.stage,
                 session,
@@ -516,23 +554,34 @@ async def verify_close(current):
         real_recovery,
     )
     from app.services import swing_portfolio_service as service
-    from app.services.real_trading_day import market_date
-    from app.services.swing_real_journal import today
 
-    for child in current.contexts.values():
-        if any(
-            order.recovery_state in ("submitting", "unknown")
-            and today({"timestamp": order.created_at}, market_date())
-            for order in order_service.get_all_orders(child.session_id)
-        ):
-            return False  # Current submission uncertainty is not an older-history exception.
+    row = store.owned(current.user, current.portfolio_id)
+    if not current.real_ready or row["contexts"] != {
+        key: child.session_id for key, child in current.contexts.items()
+    }:
+        return False
+    requirements = real_recovery.closure_requirements(
+        list(current.contexts.values()),
+        row.get("acknowledged_undated_submission_ids", []),
+    )
+    if requirements["closure_blocked"]:
+        return False
     results = [
         await real_recovery.verify(child) for child in list(current.contexts.values())
     ]
     if not all(result["verified_flat"] for result in results):
         return False
     row = await asyncio.to_thread(store.owned, current.user, current.portfolio_id)
-    warning = None
+    if real_recovery.closure_requirements(
+        list(current.contexts.values()),
+        row.get("acknowledged_undated_submission_ids", []),
+    )["closure_blocked"]:
+        return False
+    warning = (
+        "Current broker scope is flat; undated submission history was explicitly acknowledged and remains unverified."
+        if row.get("acknowledged_undated_submission_ids")
+        else None
+    )
     for child in current.contexts.values():
         if child.real_recovery_pending:
             warning = "Current broker exposure is flat; historical execution/P&L gaps remain unresolved."
@@ -555,6 +604,9 @@ async def verify_close(current):
         child.real_verified_closed = True
         child.broker_positions = []
     service.stop_runtime(current)
+    from app.services.broker_order_service import refresh_account_peers
+
+    refresh_account_peers(funding_actor(current))
     return True
 
 
@@ -989,7 +1041,7 @@ async def correct_shortfall(current, adjustment, reason, request_id, version):
     preview = await correction_preview(current, adjustment, reason)
     if preview["funding_version"] != version:
         raise HTTPException(409, "Funding changed; review the correction preview again")
-    child = next(iter(current.contexts.values()))
+    child = funding_actor(current)
     pool, parent = preview["pool"], preview["parent"]
 
     def mutate(row):
@@ -1029,6 +1081,9 @@ async def correct_shortfall(current, adjustment, reason, request_id, version):
         mutate,
         extra_actions=lambda _: parent_metadata(child, parent, changes),
     )
+
+    for session in current.contexts.values():
+        session.session_capital = preview["capital"]
 
 
 async def renew_protection_on_quote(session, event):

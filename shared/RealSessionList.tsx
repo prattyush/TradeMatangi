@@ -5,7 +5,7 @@ export interface RealBook {
   capital?: number; available?: number; allocation_pct?: number
   funding_status?: { state: string; available: number; shortfall?: number | null }
 }
-interface Verification { verified_flat: boolean; positions: unknown[]; pending_orders: unknown[]; history_warning?: string | null; reconciliation_error?: string; message: string }
+interface Verification { current_submission_ids?: string[]; undated_submission_ids?: string[]; closure_blocked?: boolean; verified_flat: boolean; positions: unknown[]; pending_orders: unknown[]; history_warning?: string | null; reconciliation_error?: string; message: string }
 export interface RealStatus {
   active_sessions?: RealBook[]; recovery_ready?: boolean
   availability?: { trading_style: string; occupied: boolean; owned_by_you: boolean }[]
@@ -20,10 +20,11 @@ export default function RealSessionList({ request, onAttach }: { request: RealBo
   const [busy, setBusy] = useState(false)
   const [verification, setVerification] = useState<Record<string, Verification>>({})
   const [closing, setClosing] = useState<string | null>(null)
+  const [acknowledgeUndated, setAcknowledgeUndated] = useState(false)
   const recover = async (book: RealBook, close = false) => {
     setBusy(true); setError('')
     try {
-      if (close) { await request(`${book.session_id}/stop`, 'POST'); setClosing(null); setNotice('Closure requested. Refresh for completion; older history warnings remain in the book record.'); await load() }
+      if (close) { await request(`${book.session_id}/stop`, 'POST', { acknowledge_undated_submission_ids: acknowledgeUndated ? verification[book.session_id]?.undated_submission_ids ?? [] : [] }); setClosing(null); setNotice('Closure requested. Refresh for completion; older history warnings remain in the book record.'); await load() }
       else { const value = await request<Verification>(`${book.session_id}/reconcile`, 'POST'); setVerification(previous => ({ ...previous, [book.session_id]: value })); await load() }
     } catch (reason) { setError(String(reason)) } finally { setBusy(false) }
   }
@@ -51,8 +52,8 @@ export default function RealSessionList({ request, onAttach }: { request: RealBo
         <p>{verification[book.session_id].verified_flat ? "Broker confirms this book’s scope is flat with no pending orders." : `${verification[book.session_id].positions.length} current positions · ${verification[book.session_id].pending_orders.length} pending orders.`}</p>
         <p>{verification[book.session_id].history_warning ?? verification[book.session_id].message}</p>
         {verification[book.session_id].reconciliation_error && <p>{verification[book.session_id].reconciliation_error}</p>}
-        {verification[book.session_id].verified_flat && <button type="button" disabled={busy} onClick={() => setClosing(book.session_id)}>Close verified book…</button>}
-        {closing === book.session_id && <div role="alertdialog" aria-label="Confirm verified book closure"><p>Verify again and close this book? Older history warnings remain in its record.</p><button type="button" disabled={busy} onClick={() => void recover(book, true)}>Confirm closure</button><button type="button" onClick={() => setClosing(null)}>Keep book</button></div>}
+        {verification[book.session_id].verified_flat && <button type="button" disabled={busy} onClick={() => { setAcknowledgeUndated(false); setClosing(book.session_id) }}>Close verified book…</button>}
+        {closing === book.session_id && <div role="alertdialog" aria-label="Confirm verified book closure"><p>Verify again and close this book? Older history warnings remain in its record.</p>{Boolean(verification[book.session_id].current_submission_ids?.length) && <p>Current-day submissions are unresolved; closure remains blocked.</p>}{Boolean(verification[book.session_id].undated_submission_ids?.length) && <label><input type="checkbox" checked={acknowledgeUndated} onChange={event => setAcknowledgeUndated(event.target.checked)} /> I acknowledge the undated attempts. Retain the history warning and close only after broker verification.</label>}<button type="button" disabled={busy || Boolean(verification[book.session_id].current_submission_ids?.length) || (Boolean(verification[book.session_id].undated_submission_ids?.length) && !acknowledgeUndated)} onClick={() => void recover(book, true)}>Confirm closure</button><button type="button" onClick={() => setClosing(null)}>Keep book</button></div>}
       </div>}
       {onAttach && book.trading_style === 'intraday' && <button type="button" onClick={() => onAttach(book.session_id)}>Open session</button>}
       {book.allocation_pct != null && book.trading_style === 'intraday' && book.state === 'running' && <label> Allocation % <input aria-label={`${book.broker} Day allocation percent`} type="number" min="0.01" max="100" step="0.01" style={{ width: 65 }} value={fractions[book.session_id] ?? String(Math.round(book.allocation_pct * 10000) / 100)} onChange={event => setFractions(previous => ({ ...previous, [book.session_id]: event.target.value }))} /><button type="button" disabled={busy} onClick={() => void save(book)}>Apply</button></label>}

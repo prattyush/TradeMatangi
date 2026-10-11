@@ -106,6 +106,7 @@ def real_book(db, monkeypatch):
     slots.claim("u", "kite", "account", "swing", parent["session_id"], "engine")
     current = service.runtime("u", parent["session_id"])
     current.real_token, current.real_valid_until = "engine", time.monotonic() + 40
+    current.real_ready = True
     child = service.attach_context(
         "u", parent["session_id"], "HDFCBANK", subscribe=False
     )

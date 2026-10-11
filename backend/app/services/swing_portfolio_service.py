@@ -21,6 +21,8 @@ class Runtime:
     contexts: dict = field(default_factory=dict)
     tasks: dict = field(default_factory=dict)
     subscribers: list = field(default_factory=list)
+    initializing: bool = False
+    real_ready: bool = False
 
     def emit(self, event):
         for queue in list(self.subscribers):
@@ -104,9 +106,9 @@ def snapshot(user, portfolio_id):
             - trade.commission
         )
     if row["mode"] == "real":
-        complete = complete and not any(child.real_recovery_pending for child in current.contexts.values())
+        complete = complete and current.real_ready and row["contexts"] == {key: child.session_id for key, child in current.contexts.items()} and not any(child.real_recovery_pending for child in current.contexts.values())
         from app.services import swing_funding_store as funding
-        pool = funding.read(user, row["execution_broker"], row["broker_account_id"])
+        pool = funding.read(user, row["execution_broker"], row["broker_account_id"]) if row["state"] != "ended" else None
         mode = (pool or {}).get("funding", {}).get("modes", {}).get("swing", {})
         from app.services.swing_accounting import mode_available
         wallet_balance = mode_available(pool['funding'], 'swing') if mode else 0
@@ -122,8 +124,13 @@ def snapshot(user, portfolio_id):
         wallet_balance, funding_status = None, None
         complete = complete and not row.get("history_warning")
     pnl = round(net, 2) if complete else None
+    requirements = {}
+    if row["mode"] == "real":
+        from app.services.real_recovery import closure_requirements
+        requirements = closure_requirements(list(current.contexts.values()), row.get("acknowledged_undated_submission_ids", []))
     return {
         "portfolio": row,
+        **requirements,
         "wallet_balance": wallet_balance,
         "funding_status": {key: value for key, value in funding_status.items() if key != "modes"} if funding_status else None,
         "allocation_pct": mode.get("funding_allocation", mode.get("capital", 0)) / pool["funding"]["allocation_reference"] if row["mode"] == "real" and pool else None,
@@ -140,7 +147,7 @@ def snapshot(user, portfolio_id):
             }
             for s in current.contexts.values()
         ],
-        "reconciliation_pending": [
+        "reconciliation_pending": (["portfolio:" + portfolio_id] if row["mode"] == "real" and not current.real_ready else []) + [
             o.order_id for o in orders if o.swing_reconcile_pending
         ]
         + [
@@ -169,6 +176,10 @@ def require_entry_allowed(
         and position.side == "LONG"
         and quantity <= position.quantity
     )
+    if session.session_type == "real":
+        current = _runtimes.get(session.portfolio_id)
+        if not current or not current.real_ready:
+            raise HTTPException(409, "Portfolio contexts are restoring; retry after reconciliation")
     if exit_order:
         return
     if session.session_type == "real":
@@ -345,7 +356,6 @@ def attach_context(
         session.desktop_contract_quotes = {}
         session.state = SimulationState.RUNNING
         session.resume_event.set()
-        simulation._sessions[sid] = session
         if row["mode"] == "paper":
             restore_execution_book(session)
         else:
@@ -359,6 +369,7 @@ def attach_context(
                 row["version"],
             )
         current.contexts[key] = session
+        simulation._sessions[sid] = session
     if instrument_type == "options":
         from app.routers.desktop_trading import (
             DesktopOptionContract,
@@ -385,6 +396,22 @@ def attach_context(
 
 
 async def ensure(user, portfolio_id, *, subscribe=True):
+    current = runtime(user, portfolio_id)
+    if current.initializing:
+        raise HTTPException(409, "Portfolio restoration is in progress; retry shortly")
+    current.initializing = True
+    try:
+        result = await _restore(user, portfolio_id, subscribe=subscribe)
+        current.real_ready = True
+        return result
+    except Exception:
+        current.real_ready = False
+        raise
+    finally:
+        current.initializing = False
+
+
+async def _restore(user, portfolio_id, *, subscribe=True):
     row = store.owned(user, portfolio_id)
     if row["mode"] == "real" and row["state"] != "ended":
         from app.dependencies import require_real_trading_access
@@ -509,6 +536,8 @@ async def on_tick(current, session, event):
     if getattr(session, "swing_book_needs_repair", False):
         restore_execution_book(session)
         session.swing_book_needs_repair = False
+    if session.session_type == "real" and not current.real_ready:
+        return
     if event.get("type") != "tick":
         current.emit(event)
         return
@@ -670,10 +699,16 @@ def close_position_on_quote(session, event):
     )
 
 
-async def close_portfolio(user, portfolio_id):
+async def close_portfolio(user, portfolio_id, acknowledge_undated_submission_ids=None):
     row = store.owned(user, portfolio_id)
     if row["state"] == "ended":
         return row
+    if row["mode"] == "real" and acknowledge_undated_submission_ids:
+        from app.services.real_recovery import validate_acknowledgements
+        current = await ensure(user, portfolio_id)
+        accepted = validate_acknowledgements(list(current.contexts.values()), acknowledge_undated_submission_ids)
+        row = store.owned(user, portfolio_id)
+        row = store.update(user, portfolio_id, {"acknowledged_undated_submission_ids": sorted(set(row.get("acknowledged_undated_submission_ids", [])) | set(accepted))}, row["version"])
     if row["state"] != "closing":
         row = store.update(
             user,

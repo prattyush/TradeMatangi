@@ -166,6 +166,20 @@ def reserve(session, order_id, amount, *, owner="local"):
             raise HTTPException(409, "Funding ownership changed")
         if amount:
             existing = current["funding"].get("reservations", {}).get(ticket)
+            increasing = owner == "local" and amount > (
+                existing["amount"] if existing else 0
+            )
+            pending = not (current.get("funding_status") or {}).get(
+                "entries_allowed"
+            ) or any(
+                p.get("reconciliation_pending")
+                for p in current["participants"].values()
+                if p.get("active")
+            )
+            if increasing and pending:
+                raise HTTPException(
+                    409, "Account funding needs reconciliation; exits remain available"
+                )
             available = rules.mode_available(
                 current["funding"], session.trading_style
             ) + (existing["amount"] if existing else 0)
@@ -268,23 +282,29 @@ def reconcile(session, available, *, coherent=True):
                     else "local",
                 }
     realized = rules.money(cash - commissions)
-    baseline = participant.get(
-        "baseline_balance",
-        row["funding"]["modes"][session.trading_style]["expected_balance"],
-    )
-    target = rules.money(baseline + min(realized, 0) - invested)
-    fingerprint = hashlib.sha256(
-        json.dumps(
-            {
-                "target": target,
-                "realized": realized,
-                "tickets": tickets,
-                "available": available,
-                "coherent": coherent,
-            },
-            sort_keys=True,
-        ).encode()
-    ).hexdigest()
+
+    def snapshot_values(current):
+        active = current["participants"][session.trading_style]
+        baseline = active.get(
+            "baseline_balance",
+            current["funding"]["modes"][session.trading_style]["expected_balance"],
+        )
+        target = rules.money(baseline + min(realized, 0) - invested)
+        fingerprint = hashlib.sha256(
+            json.dumps(
+                {
+                    "target": target,
+                    "realized": realized,
+                    "tickets": tickets,
+                    "available": available,
+                    "coherent": coherent,
+                },
+                sort_keys=True,
+            ).encode()
+        ).hexdigest()
+        return target, fingerprint
+
+    _target, fingerprint = snapshot_values(row)
     if participant.get("snapshot_fingerprint") == fingerprint:
         return row
 
@@ -296,6 +316,7 @@ def reconcile(session, available, *, coherent=True):
             or active["identity"] != identity(session)
         ):
             raise HTTPException(409, "Funding ownership changed during reconciliation")
+        target, fingerprint = snapshot_values(current)
         mode = current["funding"]["modes"][session.trading_style]
         mode["expected_balance"] = target
         mode["realized_pnl"] = rules.money(

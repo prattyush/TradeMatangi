@@ -3,6 +3,7 @@ from app.services.broker_reports import order_id as broker_report_id
 import asyncio
 import json
 import math
+import time
 import uuid
 from decimal import Decimal, ROUND_HALF_UP
 
@@ -146,7 +147,7 @@ async def split(session, order, operation_id):
     second.reserved_amount = float(transferred)
     first.reserved_amount = float(Decimal(str(order.reserved_amount)) - transferred)
     job = {'operation_id': operation_id, 'child_id': second.order_id, 'parent_id': order.order_id,
-        'state': 'prepared'}
+        'state': 'prepared', 'started_at': int(time.time() * 1000)}
     original_job = order.split_operation
     original_snapshot = order.model_copy(deep=True)
     order.split_operation = dict(job)

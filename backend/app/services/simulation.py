@@ -236,6 +236,7 @@ class SimulationSession:
     opening_inventory_fingerprint: str | None = None
     opening_inventory_captured_at: int | None = None
     real_history_warning: str | None = None
+    acknowledged_undated_submission_ids: list[str] = field(default_factory=list)
     real_verified_closed: bool = False
     real_recovery_pending: bool = False
     real_funding_period: str | None = None
@@ -348,6 +349,7 @@ def _upsert_session_to_db(session: SimulationSession, *, strict: bool = False) -
             "real_closing": session.real_closing,
             "real_verified_closed": session.real_verified_closed,
             "real_history_warning": session.real_history_warning,
+            "acknowledged_undated_submission_ids": session.acknowledged_undated_submission_ids,
             "opening_positions": session.opening_positions,
             "opening_inventory_cost": session.opening_inventory_cost,
             "opening_inventory_request_id": session.opening_inventory_request_id,
@@ -685,6 +687,7 @@ def rebuild_session_from_db(
         real_closing=bool(db_record.get("real_closing", False)),
         real_verified_closed=bool(db_record.get("real_verified_closed", False)),
         real_history_warning=db_record.get("real_history_warning"),
+        acknowledged_undated_submission_ids=list(db_record.get("acknowledged_undated_submission_ids", [])),
         opening_positions=db_record.get("opening_positions", []),
         opening_inventory_cost=float(db_record.get("opening_inventory_cost", 0)),
         opening_inventory_request_id=db_record.get("opening_inventory_request_id"),

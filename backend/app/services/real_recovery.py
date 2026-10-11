@@ -2,6 +2,8 @@
 
 import asyncio
 
+from pydantic import BaseModel, Field
+
 from app.services import (
     broker_reports,
     execution_broker,
@@ -117,5 +119,78 @@ async def verify(session):
         "pending_orders": pending,
         "verified_flat": not any(row["quantity"] for row in positions) and not pending,
         "history_warning": getattr(session, "real_history_warning", None),
+        **closure_requirements(
+            [session], getattr(session, "acknowledged_undated_submission_ids", [])
+        ),
         "message": "Broker reports verify current exposure only; older fills and archived P&L are not reconstructed.",
     }
+
+
+class CloseRequest(BaseModel):
+    acknowledge_undated_submission_ids: list[str] = Field(
+        default_factory=list, max_length=500
+    )
+
+
+def closure_requirements(sessions, acknowledged=()):
+    from datetime import UTC, datetime, timedelta
+
+    from app.services import order_service
+    from app.services.broker_conversion import busy
+    from app.services.order_split import ACTIVE
+    from app.services.real_trading_day import market_date
+
+    current, undated, older = [], [], []
+    acknowledged = set(acknowledged)
+    for session in sessions:
+        for order in order_service.get_all_orders(session.session_id):
+            if (
+                order.recovery_state not in ("submitting", "unknown")
+                and not busy(order)
+                and (order.split_operation or {}).get("state") not in ACTIVE
+            ):
+                continue
+            stamp = order.broker_submission_at
+            if busy(order):
+                stamp = (
+                    max(
+                        stamp or 0,
+                        int((order.broker_conversion.get("updated_at") or 0) * 1000),
+                    )
+                    or None
+                )
+            if (order.split_operation or {}).get("state") in ACTIVE:
+                stamp = (
+                    max(stamp or 0, (order.split_operation or {}).get("started_at", 0))
+                    or None
+                )
+            if not stamp:
+                undated.append(order.order_id)
+            elif (
+                datetime.fromtimestamp(stamp / 1000, UTC) + timedelta(seconds=19800)
+            ).date().isoformat() >= market_date():
+                current.append(order.order_id)
+            else:
+                older.append(order.order_id)
+    return {
+        "current_submission_ids": sorted(set(current)),
+        "undated_submission_ids": sorted(set(undated)),
+        "older_submission_ids": sorted(set(older)),
+        "closure_blocked": bool(current or set(undated) - acknowledged),
+    }
+
+
+def validate_acknowledgements(sessions, identifiers):
+    from fastapi import HTTPException
+
+    from app.services import order_service
+
+    owned = {
+        o.order_id for s in sessions for o in order_service.get_all_orders(s.session_id)
+    }
+    if set(identifiers) - owned:
+        raise HTTPException(
+            422, "Submission acknowledgement contains an order outside this book"
+        )
+    requirements = closure_requirements(sessions)
+    return sorted(set(identifiers) & set(requirements["undated_submission_ids"]))

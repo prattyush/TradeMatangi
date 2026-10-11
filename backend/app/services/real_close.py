@@ -13,7 +13,8 @@ def summary(session):
                  if emergency_exit.position(session, target).quantity]
     if getattr(session, 'real_verified_closed', False):
         positions = []
-    return {'session_id': session.session_id, 'execution_broker': session.execution_broker,
+    from app.services.real_recovery import closure_requirements
+    return {**closure_requirements([session], session.acknowledged_undated_submission_ids), 'session_id': session.session_id, 'execution_broker': session.execution_broker,
             'positions': positions, 'position_count': len(positions),
             'pending_order_count': 0 if getattr(session, 'real_verified_closed', False) else len(order_service.get_open_orders(session.session_id)),
             'closing': bool(getattr(session, 'real_closing', False)),
@@ -55,9 +56,11 @@ async def finish(session):
     session.queue.put_nowait(json.dumps(event))
     session.real_closing = False
     simulation.stop_session(session, preserve_trading_state=True)
+    from app.services.broker_order_service import refresh_account_peers
+    refresh_account_peers(session)
 
 
-async def close(session):
+async def close(session, acknowledge_undated_submission_ids=None):
     if getattr(session, 'real_start_preparing', False):
         from fastapi import HTTPException
 
@@ -67,6 +70,11 @@ async def close(session):
             raise HTTPException(409, 'Real startup ownership changed; reconnect to the authoritative session before closing')
     if session.state == simulation.SimulationState.ENDED:
         return {'status': 'stopped', **summary(session)}
+    if acknowledge_undated_submission_ids:
+        from app.services.real_recovery import validate_acknowledgements
+        accepted = validate_acknowledgements([session], acknowledge_undated_submission_ids)
+        session.acknowledged_undated_submission_ids = sorted(set(session.acknowledged_undated_submission_ids) | set(accepted))
+        await asyncio.to_thread(simulation._upsert_session_to_db, session, strict=True)
     if session.session_id in _jobs:
         return {'status': 'closing', **summary(session)}
     session.real_closing = True
@@ -92,12 +100,22 @@ async def close(session):
                 try:
                     broker = execution_broker.get_service(session)
                     from app.services.real_trading_day import market_date
-                    if session.date != market_date():
+                    from app.services.real_recovery import closure_requirements
+                    requirements = closure_requirements([session], session.acknowledged_undated_submission_ids)
+                    if requirements["closure_blocked"] and session.date == market_date():
+                        # Resolve an ACK/tag from reports; never resend the submission.
+                        await real_broker_state.refresh(session, broker)
+                        requirements = closure_requirements([session], session.acknowledged_undated_submission_ids)
+                    if requirements["closure_blocked"]:
+                        emit(session, "Closure waits for current submission recovery or explicit acknowledgement of undated attempts")
+                        await asyncio.sleep(5)
+                        continue
+                    if session.date != market_date() or (unresolved(session) and (requirements["older_submission_ids"] or session.acknowledged_undated_submission_ids)):
                         # Daily broker order/trade books cannot reconstruct yesterday.
                         # Confirm current exposure without overwriting archived executions.
                         from app.services.real_recovery import verify
                         verification = await verify(session)
-                        if verification['verified_flat']:
+                        if verification['verified_flat'] and not closure_requirements([session], session.acknowledged_undated_submission_ids)['closure_blocked']:
                             session.real_history_warning = (
                                 "Broker verified this book's scope is flat with no pending orders. "
                                 "Older execution history may be incomplete; archived P&L is unverified."
@@ -127,11 +145,12 @@ async def close(session):
                         return
                     emit(session, 'Closing positions; waiting for broker-confirmed fills and cancellations')
                 except Exception as exc:  # noqa: BLE001 - keep retrying broker verification without releasing uncertain ownership
-                    if not unresolved(session):
+                    from app.services.real_recovery import closure_requirements
+                    if not closure_requirements([session], session.acknowledged_undated_submission_ids)["closure_blocked"]:
                         try:
                             from app.services.real_recovery import verify
                             verification = await verify(session)
-                            if verification['verified_flat']:
+                            if verification['verified_flat'] and not closure_requirements([session], session.acknowledged_undated_submission_ids)['closure_blocked']:
                                 session.real_history_warning = "Broker verified this book's scope is flat; execution history/P&L remains unverified."
                                 await asyncio.to_thread(simulation._upsert_session_to_db, session, strict=True)
                                 for order in order_service.get_open_orders(session.session_id):

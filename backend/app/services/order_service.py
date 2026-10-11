@@ -212,7 +212,7 @@ def _order_db_item(order: Order) -> dict:
         value = getattr(order, name)
         if value is not None:
             item[name] = Decimal(str(value)) if isinstance(value, float) else value
-    for name in ("cancellation_status", "cancellation_reason", "cancelled_at", "cancel_request_id", "cancel_initiator", "cancel_purpose", "recovery_operation_id", "recovery_parent_order_id", "recovery_state", "recovery_attempt", "protection_group", "protection_suppressed_quantity"):
+    for name in ("cancellation_status", "cancellation_reason", "cancelled_at", "cancel_request_id", "cancel_initiator", "cancel_purpose", "recovery_operation_id", "recovery_parent_order_id", "recovery_state", "broker_submission_at", "recovery_attempt", "protection_group", "protection_suppressed_quantity"):
         value = getattr(order, name, None)
         if value is not None:
             item[name] = Decimal(str(value)) if isinstance(value, float) else value

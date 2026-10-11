@@ -62,7 +62,7 @@ def active(user, mode, broker=None):
     )
 
 
-def create(user, mode, capital, *, broker=None, account=None, loss_limit_pct=None):
+def create(user, mode, capital, *, broker=None, account=None, loss_limit_pct=None, allocation_pct=None, funding_period=None):
     from app.services.db import get_dynamodb_client
     from boto3.dynamodb.types import TypeSerializer
 
@@ -93,6 +93,9 @@ def create(user, mode, capital, *, broker=None, account=None, loss_limit_pct=Non
         "broker_account_id": account,
         "created_at": int(time.time() * 1000),
     }
+    if mode == "real":
+        row["allocation_pct"] = allocation_pct
+        row["prepared_funding_period"] = funding_period
     serialize = lambda value: {
         k: TypeSerializer().serialize(v) for k, v in encode(value).items()
     }

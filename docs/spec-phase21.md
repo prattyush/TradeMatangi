@@ -1,13 +1,37 @@
 # Phase 21 — Desktop UI implementation
 
+## Current Swing review status — 2026-10-11
+
+The ownership/funding/recovery self-review and fixes are on
+`feature/phase21-swing-trading`. See the [authoritative current status and review
+checkpoint](spec-phase21-swing-trading-plan.md#current-review-status--2026-10-11).
+Four broker/style slots supersede the earlier one-Real-session-per-user restriction.
+Running books keep their broker/account when the default setting changes.
+
+The review fixed startup child adoption/readiness, interrupted-start persistence,
+concurrent funding edits, partial-fill commitments, pending entry checks, unknown
+submission timing and empty cash correction. Undated attempts require explicit
+owned-order acknowledgement plus verified-flat closure; current-day unknown
+attempts remain blocked. History warnings persist. Earlier delivery/checkpoint
+sections below describe their original revisions.
+
+Verification: **2,121 backend tests passed** with four known local ICICI
+configuration failures; **184 desktop tests passed**. Both client TypeScript
+checks/builds and mocked acknowledgement controls passed.
+
+The branch and all PRs target **preprod**. Backend/native live acceptance follows
+merge and deployment; main/dev promotion is manual. Linked Swing views, multi-day
+Replay, remaining Paper edges and live/native acceptance are not declared complete.
+
 ## Current extension — Kite and desktop Real / linked screens
 
 The approved [complete extension specification and sprint plan](spec-phase21-real-trading-plan.md)
 records scope, exclusions, decisions, broker/books/session design, desktop UI and
 linked-window lifecycle, failure cases and acceptance gates. Sprint 0 writes this
 handoff before trading-code changes. All extension work and PRs target **preprod**;
-main/dev promotion is manual after acceptance. One active Real session per user;
-close it before changing the saved broker preference. Funds and history stay
+main/dev promotion is manual after acceptance. The original extension used one
+active Real session per user; the current Swing ownership revision above supersedes
+that limit and allows changing the default broker while books remain pinned. Funds and history stay
 broker-account separate. Earlier Kite/desktop Real deferrals and dev-delivery rules
 below describe the previous delivery and are superseded for this extension only.
 

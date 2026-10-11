@@ -6,6 +6,7 @@ of truth for Stepwise and desktop Replay trading.
 """
 from __future__ import annotations
 from app.routers.execution_brokers import AllocationRequest as RealAllocationRequest
+from app.services.real_recovery import CloseRequest
 from app.models.schemas import ContractModel
 from app.services.instrument_identity import strike_number
 from app.models.schemas import SplitOrderRequest
@@ -2005,8 +2006,8 @@ async def reconcile_real_book(session_id: str, user_id: str = Depends(get_deskto
 
 
 @router.post("/broker/{session_id}/stop")
-async def close_real_book(session_id: str, user_id: str = Depends(get_desktop_user_id)):
+async def close_real_book(session_id: str, user_id: str = Depends(get_desktop_user_id), req: CloseRequest | None = None):
     from app.dependencies import require_real_trading_access
     require_real_trading_access(user_id)
     from app.routers.execution_brokers import stop
-    return await stop(session_id, user_id)
+    return await stop(session_id, user_id, req)
