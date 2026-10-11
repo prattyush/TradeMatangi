@@ -796,8 +796,9 @@ viewer/KLineCharts browser check asserts position within **one pixel** for repea
 and zooming during delayed loading. Existing exact/full-candle fallback, contract
 tabs, keyboard navigation, resize/Fit, price lines, no blank frames and data-error
 checks also pass, with no page errors. Artifacts: `.cache/snapshot-fixed-position/`.
-Delivery is a new PR against dev because PR #642 has already merged. Rebuild the
-desktop client to apply; main merge/deployment remain manual.
+[PR #644](https://github.com/prattyush/TradeMatangi/pull/644) targets dev and awaits
+review because PR #642 has already merged. Rebuild the desktop client to apply;
+main merge/deployment remain manual.
 
 ## Original requirements
 
