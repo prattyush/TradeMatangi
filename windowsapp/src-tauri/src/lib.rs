@@ -1097,12 +1097,12 @@ async fn desktop_settings_request(
 fn valid_analysis_path(path: &str, method: &str) -> bool {
     let route = path.split('?').next().unwrap_or("");
     if route.is_empty() || route.starts_with('/') || route.contains('%') || route.contains('#') || route.contains('\\') || route.split('/').any(|s| s == "." || s == "..") { return false; }
-    if method == "POST" { return route == "labels"; }
-    if method == "DELETE" { return route == "snapshots"; }
+    if method == "POST" { return route == "labels" || route == "performance/real-fees"; }
+    if method == "DELETE" { return route == "snapshots" || route == "performance/real-fees"; }
     if method != "GET" { return false; }
     let valid_id = |id: &str| !id.is_empty() && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
     match route {
-        "sessions" | "round-trips" | "labels" | "entry-tags" | "exit-tags" | "snapshots" | "performance" | "performance/cycles" |
+        "sessions" | "round-trips" | "labels" | "entry-tags" | "exit-tags" | "snapshots" | "performance" | "performance/cycles" | "performance/real-fees" |
         "data/historical" | "data/pre-session" | "data/options-historical" | "data/expiry" |
         "pattern/strategies" | "pattern/categories" | "pattern/chart/by-date" | "pattern/ohlc/equity" | "pattern/ohlc/options" => true,
         _ => route.strip_prefix("sessions/").or_else(|| route.strip_prefix("performance/cycles/")).map(valid_id).unwrap_or(false),
@@ -2111,6 +2111,19 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn real_fee_metadata_routes_are_exact_and_do_not_allow_trading_writes() {
+        for method in ["GET", "POST", "DELETE"] {
+            assert!(valid_analysis_path("performance/real-fees?date=2026-10-09", method));
+            assert!(!valid_analysis_path("performance/real-fees/extra", method));
+            assert!(!valid_analysis_path("performance/../orders", method));
+            assert!(!valid_analysis_path("orders", method));
+        }
+        assert!(!valid_analysis_path("performance/real-fees", "PUT"));
+        assert!(!valid_analysis_path("performance/cycles", "POST"));
+    }
+
 
     #[test]
     fn google_authorize_url_contains_required_oauth_parameters() {

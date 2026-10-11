@@ -1,6 +1,6 @@
 # Phase 21 — Desktop UI implementation
 
-## Current delivery status — 2026-10-09
+## Current delivery status — 2026-10-11
 
 PR #619 merged to dev on 2026-10-08 (merge e1938ce). Main includes that delivery
 through PR #620 (d42ca29). Earlier ready-for-review/manual-main-merge statements
@@ -14,6 +14,12 @@ merged to dev (a227b87). The website request-blocking fix
 main includes it through PR #628 (d52c863). Full checks and the comprehensive
 review below are complete. The reviewed cache correction and test/documentation delivery target main;
 main merging and deployment remain manual.
+
+Desktop chart-price picking, order editing and popup/Stats improvements in
+[PR #630](https://github.com/prattyush/TradeMatangi/pull/630), and the running website
+Real-mode label fix in [PR #634](https://github.com/prattyush/TradeMatangi/pull/634),
+are merged to dev. The Real Analytics finalized-charges follow-up below is
+implemented; its new delivery PR targets dev.
 
 ## Agreed scope and defaults
 
@@ -643,6 +649,58 @@ through a component remount, repeated remount, paused Paper, restored Real befor
 access lookup, fresh idle Paper default and no page errors. Artifacts:
 `.cache/real-session-label/`. Deploy rebuilt website assets to apply the display
 fix; main merge/deployment remain manual.
+
+## Real Analytics finalized charges — 2026-10-11
+
+Implemented for the shared website/desktop Stats dashboard. Broker charges can
+finalize overnight; until a user supplies the finalized bill, analytics continues
+using calculated estimates. In Stats, select **Real → Actual Real charges**, choose
+the trading date and owned broker account, enter the finalized total, and save.
+**Use estimate** removes the correction. This is a manual correction, with no
+scheduled broker polling or statement import.
+
+- The bill covers all loaded Real orders for that account/date, across symbols
+  and sessions. Chart/report filters do not narrow the allocation. If the bill
+  includes other trades, load their history first or enter only the charges
+  attributable to the loaded orders. Legacy trades without an account identity
+  remain estimated.
+- Store the correction separately in the existing WalletLedgers table under
+  `analytics-real-fees:<date>:<account hash>`. Raw broker trades/orders, wallets,
+  live P&L, order placement and risk controls remain untouched. No migration or
+  new table is required; missing correction storage reads as an estimate.
+- Allocate the finalized total across broker orders using estimated charges,
+  falling back to turnover. Per-order allocations
+  sum to the exact bill in paise. Partial fills share each order allocation;
+  FIFO cycle matching allocates it between exits and remaining open inventory.
+- Apply corrections before building analytics cycles. Net P&L, outcomes,
+  drill-down details, summaries and CSV use corrected charges. Labels distinguish
+  estimates, allocated actual charges, mixed sources and changed history.
+  Individual allocated fees are approximations, not broker-confirmed order fees.
+- Broker refresh cannot overwrite a saved correction. New orders or changed
+  quantity/turnover keep their estimates, with a history-changed notice asking
+  the owner to save the finalized total again. Account/date/user isolation and
+  existing shared-history read-only permissions are preserved.
+- Reads and saves run off the backend event loop. Storage failures are logged
+  and return an error; the editor keeps the report available and permits retry.
+
+Validation complete: **1,962 backend tests**, **183 desktop Vitest tests**,
+**43 website Node tests**, and **17 native Rust unit tests (Linux)** pass. Both
+TypeScript/production builds pass. The 13 charge regression cases cover account,
+date and owner isolation, shared read-only access, projection aliases, partial
+fills and reversals, zero charges, changed history, refresh persistence, storage
+failure, outcome/summary/detail changes and reverting to estimates. Browser
+acceptance covers editor save/revert/zero/failure/empty date/close and the existing
+Stats sections, drill-down, CSV and narrow viewport, with no page errors.
+Two older equity OHLC fixtures were repaired to mock broker downloads; the full
+suite no longer depends on a live Breeze token for those cases. Test artifacts:
+`.cache/real-analytics-fees/`; repeatable editor check:
+`scripts/real-charges-browser-check.mjs` (set PLAYWRIGHT_MODULE if needed).
+
+Reviewed account/date scope, allocation, cache refresh, sharing permissions and
+trading isolation. No unresolved automated-check failures. Packaged Windows
+acceptance remains manual. Deploy the updated backend and website and rebuild the
+desktop client to include the native route allowlist. Main merge/deployment remain
+manual; this follow-up targets dev.
 
 ## Original requirements
 

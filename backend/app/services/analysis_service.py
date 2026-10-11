@@ -98,6 +98,8 @@ def compute_session_summary(session: dict, trades: list[dict], cycles: list[dict
     cycles = build_cycles(session, trades) if cycles is None else cycles
     net_pnl = sum(c["net_pnl"] for c in cycles)
     total_commission = sum(_safe_float(t.get("commission", 0)) for t in trades)
+    if session.get("session_type") == "real":
+        total_commission = sum(_safe_float(row.get("commission", 0)) for cycle in cycles for row in cycle["executions"])
     open_entry_fees = sum(c["open_entry_fees"] for c in cycles)
     pnl_pct = (net_pnl / session_capital * 100) if session_capital > 0 else 0.0
 
@@ -145,6 +147,9 @@ def get_session_summary_with_trades(session_id: str) -> dict | None:
             from app.services.performance_service import load_session_cycles
             cycles = load_session_cycles(session, include_labels=False)
         summary = compute_session_summary(session, trades, cycles)
+        if session.get("session_type") == "real":
+            from app.services.real_analysis_fees import apply_rows
+            trades = apply_rows(session, trades)
         summary["trades"] = [_serialize_trade(t) for t in trades]
         summary["orders"] = get_stored_orders(session)
         
@@ -169,6 +174,7 @@ def _serialize_trade(t: dict) -> dict:
         "strike": int(t.get("strike")) if t.get("strike") is not None else None,
         "expiry": t.get("expiry"),
         "commission": _safe_float(t.get("commission", 0)),
+        "fee_source": t.get("fee_source"),
         "underlying_price": _safe_float(t.get("underlying_price")) if t.get("underlying_price") is not None else None,
         "source": t.get("source"),
         "execution_id":t.get("execution_id"),
