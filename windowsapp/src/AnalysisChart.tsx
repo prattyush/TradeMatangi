@@ -1,5 +1,5 @@
 import { contractTabs } from './analysisContracts'
-import { snapshotCandles, resolveSnapshotExecutions } from './analysisSnapshot'
+import { snapshotCandles, snapshotBarTime, resolveSnapshotExecutions } from './analysisSnapshot'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { init, dispose, registerOverlay, type Chart, type KLineData } from 'klinecharts'
 import type { AnalysisTrade, OHLCCandle, PatternAnnotation, TopPatterns } from '../../shared/analysis/api'
@@ -12,7 +12,7 @@ interface Props {
   exchange?: string; product?: string;
   strike?: number; expiry?: string; right?: string; title?: string; isMaximized?: boolean
   onMaximize?: () => void; onMax?: () => void; getMarkerText?: (trade: AnalysisTrade) => string
-  observationResolution?: number;
+  observationResolution?: number; snapshotEventId?: string; snapshotEventTime?: number;
   sessionId?: string; filledTrades?: Array<Partial<AnalysisTrade>>; barTime?: number
   barOhlc?: Omit<OHLCCandle, 'time'> | null; currentPrice?: number
   openOrders?: Array<{side:string;order_type:string;trigger_price:number;limit_price:number;quantity:number}>
@@ -49,7 +49,8 @@ export default function DesktopAnalysisChart(props: Props) {
   const [candles,setCandles]=useState<OHLCCandle[]>([]); const [error,setError]=useState(''); const [loading,setLoading]=useState(true); const [refresh,setRefresh]=useState(0)
   const [filter,setFilter]=useState('all'); const [chooser,setChooser]=useState<ExecutionMarker|null>(null)
   const [unavailableSnapshot,setUnavailableSnapshot]=useState<AnalysisTrade|null>(null)
-  const key=`${props.sessionId??props.trades?.[0]?.session_id??'chart'}:${props.exchange??''}:${props.product??''}:${props.symbol}:${props.date}:${props.right??'underlying'}:${props.strike??''}:${props.expiry??''}:${props.barTime??''}`
+  const barTime=snapshotBarTime(props.snapshotEventTime,props.barTime,props.date)
+  const key=`${props.sessionId??props.trades?.[0]?.session_id??'chart'}:${props.exchange??''}:${props.product??''}:${props.symbol}:${props.date}:${props.right??'underlying'}:${props.strike??''}:${props.expiry??''}:${barTime??''}:${props.snapshotEventId??''}:${props.snapshotEventTime??''}`
   const keyRef=useRef(key); keyRef.current=key
   const loadedKey=useRef<string|null>(null)
   const selectRef=useRef(environment.onSelectExecution); selectRef.current=environment.onSelectExecution
@@ -98,27 +99,40 @@ export default function DesktopAnalysisChart(props: Props) {
     return ()=>{ generation.current++; saveViewport(); observer.disconnect(); chart.unsubscribeAction('onScroll',saveViewport); chart.unsubscribeAction('onZoom',saveViewport); dispose(owner); chartRef.current=null }
   },[])
   useEffect(()=>{
+    const controller=new AbortController()
     const request=++generation.current; setLoading(true);setError('');setChooser(null)
     if(loadedKey.current!==key){
       candlesRef.current=[];setCandles([])
       chartRef.current?.setDataLoader({getBars:({callback})=>callback([],{forward:false,backward:false})})
     }
-    if(props.barTime!=null&&(!Number.isFinite(props.barTime)||props.barTime<=0)){setError('No captured chart timestamp is available for this snapshot');setLoading(false);return}
+    if(barTime!=null&&(!Number.isFinite(barTime)||barTime<=0)){setError('No captured chart timestamp is available for this snapshot');setLoading(false);return () => controller.abort()}
     void (async()=>{
       let rows:OHLCCandle[]
       if(props.right&&props.strike&&props.expiry) rows=(await api.getOptionsHistorical(props.symbol,props.date,props.strike,props.expiry,props.right,3,Math.max(1,historicalDays))).candles
       else { const [history,day]=await Promise.all([api.getHistorical(props.symbol,props.date,3,historicalDays),api.getPreSession(props.symbol,props.date,'15:30:00',3)]); rows=[...history.candles,...day] }
       if(request!==generation.current)return
       if(historicalDays===0) rows=rows.filter(c=>new Date(c.time*1000).toISOString().slice(0,10)===props.date)
-      const sorted=snapshotCandles(rows,props.barTime,props.barOhlc)
+      let eventCandle:OHLCCandle|null=null
+      if(props.snapshotEventId&&props.sessionId&&api.getSnapshotCandle){
+        try {
+          eventCandle=(await api.getSnapshotCandle(props.sessionId,props.snapshotEventId,props.right==='CE'?'CE':props.right==='PE'?'PE':'underlying',controller.signal)).candle
+        } catch(cause) {
+          if(controller.signal.aborted)return
+          console.warn('Snapshot candle reconstruction unavailable; using historical candle',cause)
+        }
+      }
+      if(request!==generation.current||controller.signal.aborted)return
+      const sorted=snapshotCandles(rows,barTime,eventCandle&&eventCandle.time===barTime?eventCandle:null)
+      if(barTime!=null&&!sorted.some(c=>c.time===barTime))throw new Error('No candle data is available for the selected event')
 
       loadedKey.current=key;candlesRef.current=sorted;setCandles(sorted);setLoading(false)
       const chart=chartRef.current;if(!chart)return
       chart.setSymbol({ticker:props.symbol,pricePrecision:2,volumePrecision:0});chart.setPeriod({span:3,type:'minute'})
       chart.setDataLoader({getBars:({type,callback})=>callback(type==='init'?sorted.map(c=>({timestamp:c.time*1000,open:c.open,high:c.high,low:c.low,close:c.close} satisfies KLineData)):[],{forward:false,backward:false})})
-      requestAnimationFrame(()=>{if(request!==generation.current||chartRef.current!==chart)return; const saved=viewports.get(key);chart.setBarSpace(saved?.barSpace??Math.max(2,(container.current?.clientWidth??800)/Math.min(150,Math.max(1,sorted.length)))); if(saved)restoreAnchor(chart,saved.anchor);else chart.scrollToRealTime(0)})
+      requestAnimationFrame(()=>{if(request!==generation.current||chartRef.current!==chart)return; const saved=viewports.get(key);chart.setBarSpace(saved?.barSpace??Math.max(2,(container.current?.clientWidth??800)/Math.min(150,Math.max(1,sorted.length)))); if(saved&&barTime==null)restoreAnchor(chart,saved.anchor);else chart.scrollToRealTime(0)})
     })().catch(e=>{if(request===generation.current){setError(String(e));setLoading(false)}})
-  },[api,key,historicalDays,props.barOhlc,refresh])
+    return () => { controller.abort(); generation.current++ }
+  },[api,key,historicalDays,refresh])
   useEffect(()=>{
     const chart=chartRef.current;if(!chart)return
     overlays.current.forEach(id=>chart.removeOverlay({id}));overlays.current=[]
@@ -156,7 +170,6 @@ export default function DesktopAnalysisChart(props: Props) {
     {loading&&<div role="status">Loading candles…</div>}{error&&<div role="alert">{error}<button onClick={()=>setRefresh(n=>n+1)}>Retry</button></div>}
     {chooser&&<div className="analysis-marker-chooser" role="dialog" aria-label="Choose execution"><button onClick={()=>setChooser(null)}>Close</button>{chooser.approximate&&<p>Underlying marker price is an approximate candle close.</p>}{chooser.trades.map(t=><button key={`${t.session_id}:${t.trade_id}`} onClick={()=>{setChooser(null);if(t.session_id)selectRef.current?.(t);else setUnavailableSnapshot(t)}}>{new Date(t.timestamp*1000).toISOString().slice(11,19)} · {t.side} · {t.quantity} @ {t.price}</button>)}</div>}
     {unavailableSnapshot&&<div className="analysis-marker-chooser" role="dialog"><button onClick={()=>setUnavailableSnapshot(null)}>Close</button><p>Captured snapshot execution · {unavailableSnapshot.side} {unavailableSnapshot.quantity} @ {unavailableSnapshot.price}</p><p>Execution provenance not captured.</p></div>}
-    {props.barTime!=null&&<small className="analysis-snapshot-caption">Recorded boundary {props.observationResolution ? `${props.observationResolution}s observation` : 'evidence (resolution unknown)'}; cached prices after capture are excluded.</small>}
     {!props.right&&markers.some(m=>m.approximate)&&<small>Some underlying markers use approximate candle closes. Option fill prices remain exact.</small>}
   </section>
 }

@@ -82,3 +82,24 @@ describe('Real analytics fee metadata routes', () => {
     expect(request).toHaveBeenCalledWith('performance/real-fees','POST',{date:'2026-10-09',account_id:'account',actual_total:12.34},expect.any(AbortSignal))
   })
 })
+
+
+describe('snapshot candle transport', () => {
+  it('allows only the exact read route and carries event, session and contract side', async () => {
+    expect(validAnalysisPath('snapshots/event-one/candle?session_id=s&instrument=CE','GET')).toBe(true)
+    for(const method of ['POST','DELETE','PUT'])expect(validAnalysisPath('snapshots/event-one/candle',method)).toBe(false)
+    for(const path of ['snapshots/event-one','snapshots/../candle','snapshots/event-one/candle/extra'])expect(validAnalysisPath(path,'GET')).toBe(false)
+    const request=vi.fn().mockResolvedValue({candle:null}) as unknown as AnalysisRequest
+    const adapter=createAnalysisApi(request)
+    await adapter.api.getSnapshotCandle!('session-one','event-one','PE')
+    expect(request).toHaveBeenCalledWith('snapshots/event-one/candle?session_id=session-one&instrument=PE','GET',undefined,expect.any(AbortSignal))
+  })
+  it('rejects an event candle reply after an account change', async () => {
+    let resolve!:(value:unknown)=>void
+    const request=(()=>new Promise(r=>{resolve=r})) as AnalysisRequest
+    const adapter=createAnalysisApi(request)
+    const pending=adapter.api.getSnapshotCandle!('s','e','underlying')
+    adapter.dispose();resolve({candle:null})
+    await expect(pending).rejects.toMatchObject({name:'AbortError'})
+  })
+})

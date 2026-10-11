@@ -70,7 +70,7 @@ allowed = [
     (performance.router, {**{f"/api/analysis/performance{p}": {"GET"} for p in ("", "/cycles", "/cycles/{cycle_id}")}, "/api/analysis/performance/real-fees": {"GET", "POST", "DELETE"}}),
     (data.router, {f"/api/data/{p}": {"GET"} for p in ("historical", "pre-session", "options-historical", "expiry")}),
     (pattern_logger.router, {f"/api/pattern/{p}": {"GET"} for p in ("strategies", "categories", "chart/by-date", "ohlc/equity", "ohlc/options")}),
-    (snapshots.router, {"/api/snapshots": {"GET", "DELETE"}}),
+    (snapshots.router, {"/api/snapshots": {"GET", "DELETE"}, "/api/snapshots/{event_id}/candle": {"GET"}}),
 ]
 for source, paths in allowed:
     for route in source.routes:
@@ -83,7 +83,7 @@ for source, paths in allowed:
         elif route.path.startswith("/api/pattern/"):
             relative = "/pattern/" + route.path.removeprefix("/api/pattern/")
         else:
-            relative = "/snapshots"
+            relative = route.path.removeprefix("/api")
         adapt(route, relative)
 
 
