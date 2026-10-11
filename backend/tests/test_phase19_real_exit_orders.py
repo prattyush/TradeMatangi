@@ -124,7 +124,7 @@ async def test_exact_option_contract_sent_to_broker(env):
     simulation._register_kotak_sl_for_order(s, o, asyncio.get_running_loop())
     assert position.call_args.kwargs == {"right": "PE", "strike": 71200, "expiry": "2026-10-01"}
     broker.place_options_limit_order.assert_called_once_with(symbol="BSESEN", side="S", qty=1,
-        right="PE", strike=71200, expiry="2026-10-01", price=110)
+        right="PE", strike=71200, expiry="2026-10-01", price=110, tag=o.analytics["broker_tag"])
 
 @pytest.mark.asyncio
 async def test_different_contract_has_no_exit_position(env):
@@ -171,9 +171,9 @@ async def test_entry_conversion_is_local(env):
     broker.place_limit_order.assert_not_called()
 
 @pytest.mark.asyncio
-async def test_broker_placement_failure_cancels_local_exit(env):
+async def test_known_broker_refusal_cancels_local_exit(env):
     s, broker, _ = env
-    broker.place_limit_order.side_effect = kotak_service.KotakError("unavailable")
+    broker.place_limit_order.side_effect = kotak_service.KotakOrderRejected("refused")
     with pytest.raises(HTTPException) as error:
         await orders.place_order(PlaceOrderRequest(session_id=s.session_id, side=TradeSide.SELL,
             order_type=OrderType.LIMIT, quantity=1, limit_price=110))
@@ -364,3 +364,20 @@ async def test_persistence_reconciles_fill_received_during_write(env, monkeypatc
         release.set()
         await task
     assert saved == [OrderStatus.PENDING, OrderStatus.FILLED]
+
+
+@pytest.mark.asyncio
+async def test_unknown_ack_keeps_exit_pending_without_resending(env):
+    s, broker, _ = env
+    broker.place_limit_order.side_effect = kotak_service.KotakError('Acknowledgement lost')
+    with pytest.raises(HTTPException) as error:
+        await orders.place_order(PlaceOrderRequest(session_id=s.session_id, side=TradeSide.SELL,
+            order_type=OrderType.LIMIT, quantity=1, limit_price=110))
+    assert error.value.status_code == 502
+    pending = order_service.get_open_orders(s.session_id)
+    assert len(pending) == 1 and pending[0].recovery_state == 'unknown'
+    assert (pending[0].analytics or {}).get('broker_tag')
+    from app.services.broker_order_service import submit_once
+    with pytest.raises(kotak_service.KotakError):
+        submit_once(s, pending[0], broker.place_limit_order, symbol=s.symbol, side='S', qty=1, price=110)
+    broker.place_limit_order.assert_called_once()

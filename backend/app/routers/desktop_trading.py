@@ -5,6 +5,7 @@ existing simulation, order, strategy, wallet, and trade services as the source
 of truth for Stepwise and desktop Replay trading.
 """
 from __future__ import annotations
+from app.routers.execution_brokers import AllocationRequest as RealAllocationRequest
 from app.models.schemas import ContractModel
 from app.services.instrument_identity import strike_number
 from app.models.schemas import SplitOrderRequest
@@ -1216,14 +1217,22 @@ async def candidate(
                 return DesktopTradingCandidate(status="remote", existing_session_id=record["session_id"],
                     stopped=_saved_paper_snapshot(record, user_id))
     session_type = "real" if desktop_mode == "real" else "paper" if desktop_mode == "paper" else "stepwise" if desktop_mode == "stepwise" else "sim"
+    selected_broker = None
+    if desktop_mode == "real":
+        from app.services.execution_broker import name
+        selected_broker = name((await asyncio.to_thread(get_settings, user_id, strict=True))["real_execution_broker"])
     for session in list(sim_svc._sessions.values()):
         if session.user_id != user_id or session.state == sim_svc.SimulationState.ENDED:
+            continue
+        if selected_broker and (getattr(session, "trading_style", "intraday") == "swing" or name(session) != selected_broker):
             continue
         if session.symbol == symbol and session.date == date and _desktop_mode(session) == desktop_mode:
             if session.instrument_type != instrument_type:
                 raise HTTPException(status_code=409, detail=f"Existing session {session.session_id} uses a different anchor instrument")
             return DesktopTradingCandidate(status="active", active=_snapshot(session, user_id))
     records = sim_svc.find_all_sessions_by_context(user_id, symbol, date, session_type, instrument_type)
+    if selected_broker:
+        records = [r for r in records if name(r.get("execution_broker")) == selected_broker and r.get("trading_style", "intraday") != "swing"]
     if not records:
         return DesktopTradingCandidate(status="none")
     checkpoints = [
@@ -1977,3 +1986,27 @@ async def real_day_status(user_id: str = Depends(preparation_user_id)):
     from app.services.real_trading_day import state
     require_real_trading_access(user_id)
     return await asyncio.to_thread(state, user_id)
+
+
+@router.post("/broker/{session_id}/allocation")
+async def change_real_allocation(session_id: str, req: RealAllocationRequest, user_id: str = Depends(get_desktop_user_id)):
+    from app.dependencies import require_real_trading_access
+    from app.routers.execution_brokers import change_allocation
+    require_real_trading_access(user_id)
+    return await change_allocation(session_id, req, user_id)
+
+
+@router.post("/broker/{session_id}/reconcile")
+async def reconcile_real_book(session_id: str, user_id: str = Depends(get_desktop_user_id)):
+    from app.dependencies import require_real_trading_access
+    require_real_trading_access(user_id)
+    from app.routers.execution_brokers import reconcile
+    return await reconcile(session_id, user_id)
+
+
+@router.post("/broker/{session_id}/stop")
+async def close_real_book(session_id: str, user_id: str = Depends(get_desktop_user_id)):
+    from app.dependencies import require_real_trading_access
+    require_real_trading_access(user_id)
+    from app.routers.execution_brokers import stop
+    return await stop(session_id, user_id)

@@ -37,11 +37,20 @@ def owned(user, portfolio_id):
     return decode(row)
 
 
-def active(user, mode):
+def pointer_key(user, mode, broker=None):
+    from app.services.execution_broker import name
+    if mode == "real":
+        if broker is None:
+            raise ValueError("Real Swing lookup requires a broker")
+        return {"user_id": user, "ledger_id": f"swing-active:real:{name(broker)}"}
+    return {"user_id": user, "ledger_id": f"swing-active:{mode}"}
+
+
+def active(user, mode, broker=None):
     row = (
         _ledgers()
         .get_item(
-            Key={"user_id": user, "ledger_id": f"swing-active:{mode}"},
+            Key=pointer_key(user, mode, broker),
             ConsistentRead=True,
         )
         .get("Item")
@@ -100,8 +109,7 @@ def create(user, mode, capital, *, broker=None, account=None, loss_limit_pct=Non
                 "TableName": "WalletLedgers",
                 "Item": serialize(
                     {
-                        "user_id": user,
-                        "ledger_id": f"swing-active:{mode}",
+                        **pointer_key(user, mode, broker),
                         "portfolio_id": portfolio_id,
                         "state": "running",
                     }
@@ -112,6 +120,21 @@ def create(user, mode, capital, *, broker=None, account=None, loss_limit_pct=Non
             }
         },
     ]
+    if mode == "real":
+        from app.services import real_session_slots as slots
+        from app.services.execution_broker import name
+        token = str(uuid.uuid4())
+        row["real_claim_token"] = token
+        tx[0]["Put"]["Item"] = serialize(row)
+        tx.extend([
+            {"Put": {"TableName": "WalletLedgers", "Item": serialize({
+                **slots.key(broker, account, "swing"), "broker": name(broker), "account": account,
+                "style": "swing", "owner_user_id": user, "session_id": portfolio_id,
+                "operation_id": token, "engine_until": 0, "state": "running"}),
+                "ConditionExpression": "attribute_not_exists(ledger_id) OR #state = :closed",
+                "ExpressionAttributeNames": {"#state": "state"}, "ExpressionAttributeValues": serialize({":closed": "closed"})}},
+            slots.sibling_account_check(broker, account, "swing"),
+        ])
     if mode != "real":
         tx.append(
             {
@@ -160,6 +183,7 @@ def update(user, portfolio_id, changes, version):
         "broker_account_id",
         "version",
         "created_at",
+        "real_claim_token",
     }
     if protected.intersection(changes):
         raise ValueError("Portfolio identity and capture evidence are immutable")
@@ -222,12 +246,12 @@ def finish_verified_close(user, portfolio_id):
     version = row["version"]
     row["version"] += 1
     row["state"] = "ended"
+    if row["mode"] == "real":
+        row["real_verified_closed"] = True
     serialize = lambda value: {
         k: TypeSerializer().serialize(v) for k, v in encode(value).items()
     }
-    try:
-        get_dynamodb_client().transact_write_items(
-            TransactItems=[
+    actions = [
                 {
                     "Put": {
                         "TableName": "Sessions",
@@ -244,8 +268,7 @@ def finish_verified_close(user, portfolio_id):
                         "TableName": "WalletLedgers",
                         "Key": serialize(
                             {
-                                "user_id": user,
-                                "ledger_id": f"swing-active:{row['mode']}",
+                                **pointer_key(user, row["mode"], row.get("execution_broker")),
                             }
                         ),
                         "UpdateExpression": "SET #state = :ended",
@@ -257,7 +280,14 @@ def finish_verified_close(user, portfolio_id):
                     }
                 },
             ]
-        )
+    if row["mode"] == "real":
+        from app.services import real_session_slots as slots
+        actions.append(slots.close_action(user, row["execution_broker"], row["broker_account_id"], "swing", portfolio_id, row["real_claim_token"]))
+        if row.get("real_funding_period"):
+            from app.services.swing_funding_store import completion_action
+            actions.append(completion_action(user, row["execution_broker"], row["broker_account_id"], row["real_funding_period"], "swing", portfolio_id))
+    try:
+        get_dynamodb_client().transact_write_items(TransactItems=actions)
     except ClientError as exc:
         if exc.response["Error"]["Code"] == "TransactionCanceledException":
             raise HTTPException(

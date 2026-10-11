@@ -151,3 +151,46 @@ async def test_done_monitor_retries_failed_exit_and_verifies_before_completion(u
     assert refresh.await_count == 3
     finished.assert_called_once_with(user.user_id, user.date)
     stopped.assert_awaited_once_with(user)
+
+@pytest.mark.asyncio
+async def test_previous_day_verified_close_retains_warning_despite_unknown_history(user, monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+    from app.services import real_close, execution_broker, kotak_reports, strategy_service
+
+    user.date = '2020-01-01'
+    user.state = simulation.SimulationState.RUNNING
+    monkeypatch.setattr(simulation, '_upsert_session_to_db', MagicMock())
+    monkeypatch.setattr(execution_broker, 'get_service', lambda *_: object())
+    monkeypatch.setattr(strategy_service, 'cancel_all', lambda *_: None)
+    monkeypatch.setattr(kotak_reports, 'fetch', AsyncMock(return_value=SimpleNamespace(
+        positions=[], orders=[], executions=[])))
+    monkeypatch.setattr(order_service, 'get_open_orders', lambda *_: [])
+    monkeypatch.setattr(real_close, 'unresolved', lambda *_: True)
+    finished = AsyncMock()
+    monkeypatch.setattr(real_close, 'finish', finished)
+    await real_close.close(user)
+    await real_close._jobs[user.session_id]
+    finished.assert_awaited_once_with(user)
+    assert 'unverified' in user.real_history_warning
+    simulation._upsert_session_to_db.assert_called_with(user, strict=True)
+
+
+@pytest.mark.asyncio
+async def test_current_day_verified_flat_fallback_retains_history_warning(user, monkeypatch):
+    from unittest.mock import AsyncMock
+    from app.services import real_close, real_broker_state, real_recovery, strategy_service
+    user.state = simulation.SimulationState.RUNNING
+    monkeypatch.setattr(simulation, '_upsert_session_to_db', MagicMock())
+    monkeypatch.setattr(strategy_service, 'cancel_all', lambda *_: None)
+    monkeypatch.setattr(order_service, 'get_open_orders', lambda *_: [])
+    monkeypatch.setattr(real_close, 'unresolved', lambda *_: False)
+    monkeypatch.setattr(real_broker_state, 'refresh', AsyncMock(side_effect=ValueError('Older fills unavailable')))
+    monkeypatch.setattr(real_recovery, 'verify', AsyncMock(return_value={'verified_flat': True}))
+    finished = AsyncMock()
+    monkeypatch.setattr(real_close, 'finish', finished)
+    await real_close.close(user)
+    await real_close._jobs[user.session_id]
+    finished.assert_awaited_once_with(user)
+    assert 'unverified' in user.real_history_warning
+    simulation._upsert_session_to_db.assert_called_with(user, strict=True)

@@ -626,7 +626,7 @@ export default function App() {
       if (view === 'Analysis') setAnalysisVisited(true)
       setMainTab(view)
     }}
-  ><option value="Workspace">Workspace</option><option value="Analysis">Analysis</option><option value="Swing">Paper Swing</option></select> : null
+  ><option value="Workspace">Workspace</option><option value="Analysis">Analysis</option><option value="Swing">Swing</option></select> : null
   return <div>
     {closeError && <p role="alert">{closeError}</p>}
     {loadFailed && <main role="alert">{loadError && <p>{loadError}</p>}<button onClick={() => setLoadAttempt(value => value + 1)}>Retry loading screens</button></main>}
@@ -658,6 +658,7 @@ function ScreenController(props: ScreenControllerProps) {
   const snapshotsActiveRef = useRef(false)
   snapshotsActiveRef.current = snapshotsActive
   const [realEnabled, setRealEnabled] = useState(false)
+  const [realAllocationPct, setRealAllocationPct] = useState('100')
   const [realBroker, setRealBroker] = useState<{ broker: string; authenticated: boolean; active_session_id?: string | null } | null>(null)
   const [realClosing, setRealClosing] = useState(false)
   const [realDay, setRealDay] = useState<RealTradingDayStatus | null>(null)
@@ -1431,7 +1432,8 @@ function ScreenController(props: ScreenControllerProps) {
       const date = isLiveTradingMode(mode) ? paperMarketDate() : runDate
       const preferences = isTradingMode(mode) ? await desktopTradingRequest<Record<string, unknown>>('settings/current', 'GET') : null
       if (preferences) setSharedPreferences(preferences)
-      const startBody = isTradingMode(mode) ? { ...tradingStartBody(date), brokerage_per_order: Number(preferences?.brokerage_per_order ?? 1), strategy_interval_secs: Number(preferences?.strategy_interval_secs ?? 180), override: Boolean(preferences?.override_session_enabled) } : null
+      if (mode === 'Real' && (!Number.isFinite(Number(realAllocationPct)) || Number(realAllocationPct) <= 0 || Number(realAllocationPct) > 100)) throw new Error('Real capital allocation must be between 0 and 100%.')
+      const startBody = isTradingMode(mode) ? { ...tradingStartBody(date), ...(mode === 'Real' ? { allocation_pct: Number(realAllocationPct) / 100, execution_broker: sharedPreferences.real_execution_broker } : {}), brokerage_per_order: Number(preferences?.brokerage_per_order ?? 1), strategy_interval_secs: Number(preferences?.strategy_interval_secs ?? 180), override: Boolean(preferences?.override_session_enabled) } : null
       let attached: DesktopTradingSnapshot | null = null
       let resumeSessionId: string | null = null
       let replayStartTime = `${runStartTime}:00`
@@ -2438,7 +2440,7 @@ function ScreenController(props: ScreenControllerProps) {
       {isTradingMode(mode) && <button disabled={!trading || trading.session.state === 'ended'} onClick={() => setOrderWindowOpen(true)}>Order</button>}
       {isHistoricalTradingMode(mode) && trading && trading.session.state !== 'ended' && (!replay || replay.state === 'stopped') && <span className="run-controls"><ToolbarActionButton icon="Refresh" disabled={historicalStarting} onClick={() => void startRun()}>Recover charts</ToolbarActionButton><ToolbarActionButton icon={sharedTradingSession ? 'Detach' : 'Stop'} disabled={historicalStarting} onClick={() => { void (async () => { if (!sharedTradingSession) await desktopTradingRequest(`${trading.session.session_id}/stop`, 'POST'); setTrading(null); setSharedTradingSession(false); setOrderWindowOpen(false) })().catch(reportTradingError) }}>{sharedTradingSession ? 'Detach session' : 'Stop session'}</ToolbarActionButton></span>}
       {realEnabled && <ToolbarActionButton icon="Real" className={mode === 'Real' ? 'selected mode-button' : 'mode-button'} onClick={() => switchMode('Real')}>Real</ToolbarActionButton>}
-      {mode === 'Real' && !companion && <span className="run-controls">{realDay?.date === paperMarketDate() && realDay.state !== 'active' && <small>{realDay.state === 'done' ? 'Done for day 🔒' : 'Closing for day…'}</small>}<small>{realBroker?.broker ?? trading?.session.execution_broker ?? 'Broker'} · {realBroker?.authenticated ? 'Connected' : 'Authentication required'}</small>{!realBroker?.authenticated && <ToolbarActionButton icon="Refresh" onClick={() => { const context = contextRef.current; void settingsAccountRequest<{ broker: string; authenticated: boolean; active_session_id?: string | null }>('broker/status', 'GET').then(value => { if (context === contextRef.current) setRealBroker(value) }).catch(reportTradingError) }}>Check broker</ToolbarActionButton>}
+      {mode === 'Real' && !companion && <span className="run-controls">{(!trading || trading.session.state === 'ended') && <label>Capital % <input aria-label="Real Day capital allocation percent" type="number" min="0.01" max="100" step="0.01" style={{ width: 65 }} value={realAllocationPct} onChange={event => setRealAllocationPct(event.target.value)} /></label>}{realDay?.date === paperMarketDate() && realDay.state !== 'active' && <small>{realDay.state === 'done' ? 'Done for day 🔒' : 'Closing for day…'}</small>}<small>{realBroker?.broker ?? trading?.session.execution_broker ?? 'Broker'} · {realBroker?.authenticated ? 'Connected' : 'Authentication required'}</small>{!realBroker?.authenticated && <ToolbarActionButton icon="Refresh" onClick={() => { const context = contextRef.current; void settingsAccountRequest<{ broker: string; authenticated: boolean; active_session_id?: string | null }>('broker/status', 'GET').then(value => { if (context === contextRef.current) setRealBroker(value) }).catch(reportTradingError) }}>Check broker</ToolbarActionButton>}
         {(!trading || trading.session.state === 'ended') && realBroker?.active_session_id && <ToolbarActionButton icon={trading?.session.session_id === realBroker.active_session_id ? 'Stop' : 'Inspect'} disabled={realActionPending} onClick={() => { if (trading?.session.session_id === realBroker.active_session_id) void closeReal(false); else void desktopTradingRequest<DesktopTradingSnapshot>(`${realBroker.active_session_id}/snapshot`, 'GET').then(setTrading).catch(reportTradingError) }}>{trading?.session.session_id === realBroker.active_session_id ? 'Close outstanding session' : 'Inspect outstanding session'}</ToolbarActionButton>}
         {!trading || trading.session.state === 'ended' ? <ToolbarActionButton icon="Play" disabled={Boolean(realBroker?.active_session_id) || historicalStarting || !realBroker?.authenticated || (realDay?.date === paperMarketDate() && realDay.state !== 'active')} onClick={() => void startRun()}>Start Real</ToolbarActionButton> : <><ToolbarActionButton icon="Stop" disabled={realActionPending || realClosing} onClick={() => void closeReal(false)}>{realClosing ? 'Closing…' : 'Stop'}</ToolbarActionButton><ToolbarActionButton icon="Done" disabled={realActionPending || realClosing} onClick={() => void closeReal(true)}>Done for day</ToolbarActionButton><ToolbarActionButton icon="Refresh" disabled={realActionPending} onClick={() => void refreshBroker()}>Trade History Refresh</ToolbarActionButton></>}
       </span>}

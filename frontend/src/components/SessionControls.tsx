@@ -127,6 +127,7 @@ export default function SessionControls({
   const [optionsOffset, setOptionsOffset] = useState(0)
   const [stepwiseMode, setStepwiseMode] = useState(false)
   const [liveSessionType, setLiveSessionType] = useState<'paper' | 'real'>('paper')
+  const [realAllocationPct, setRealAllocationPct] = useState('100')
 
   // Max price threshold
   const [maxThreshold, setMaxThreshold] = useState(() => parseFloat(localStorage.getItem('maxPriceThresholdCE') ?? '50'))
@@ -292,6 +293,11 @@ export default function SessionControls({
         config = { symbol: currentSymbol, date: currentDate, instrument_type: 'equity', session_type: sessionType }
       }
 
+      if (sessionType === 'real') {
+        const allocation = Number(realAllocationPct)
+        if (!Number.isFinite(allocation) || allocation <= 0 || allocation > 100) throw new Error('Real capital allocation must be between 0 and 100%.')
+        config.allocation_pct = allocation / 100
+      }
       // Real trading always preserves the existing session and broker history.
       // Only practice modes can offer to replace a previous run.
       if (sessionType === 'sim' || sessionType === 'paper' || sessionType === 'stepwise') {
@@ -465,6 +471,7 @@ export default function SessionControls({
           </label>
         )}
 
+        {isRealMode && idle && <label style={label}>Capital % <input aria-label="Real Day capital allocation percent" type="number" min="0.01" max="100" step="0.01" style={{ ...inputStyle, width: 65 }} value={realAllocationPct} onChange={event => setRealAllocationPct(event.target.value)} title="Share of the broker account reference allocated to Day trading" /></label>}
         {isToday && isRealTradingUser ? (
           <div style={{ display: 'flex', border: '1px solid #30363d', borderRadius: 6, overflow: 'hidden' }}>
             {(['paper', 'real'] as const).map(mode => <button key={mode} type="button" disabled={!idle} onClick={() => setLiveSessionType(mode)} style={{ border: 0, padding: '4px 8px', cursor: 'pointer', fontWeight: 700, fontSize: 11, color: liveSessionType === mode ? '#fff' : '#8b949e', background: liveSessionType === mode ? (mode === 'real' ? '#b62324' : '#1a7f37') : '#161b22' }}>{mode === 'paper' ? 'PAPER' : 'REAL'}</button>)}

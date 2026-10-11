@@ -279,7 +279,12 @@ def _write_order_to_db(order: Order, *, strict: bool = False) -> None:
         from app.services.db import get_dynamodb_resource
         table = get_dynamodb_resource().Table("Orders")
         item = _order_db_item(order)
-        if order.source == "desktop_paper" and (order.wallet_ledger_id or "").startswith("paper:"):
+        from app.services.simulation import get_session
+        session = get_session(order.session_id)
+        if session and session.session_type == "real" and session.trading_style == "swing" and getattr(session, "real_claim_token", None):
+            from app.services.real_session_slots import fenced_put
+            fenced_put(session, "Orders", item)
+        elif order.source == "desktop_paper" and (order.wallet_ledger_id or "").startswith("paper:"):
             from app.services import paper_wallet
             context = paper_wallet.desktop_write_context(order.session_id, order.user_id,
                 order.wallet_ledger_id.removeprefix("paper:"), order.symbol)
@@ -389,7 +394,10 @@ def place_order(
                 symbol=symbol, side=side, quantity=quantity, right=right, strike=strike, expiry=expiry))
         reserved_amount = round(reserve_quantity * actual_limit * margin_rate, 2)
         from app.services import wallet_service
-        if wallet_ledger_id and wallet_ledger_id.startswith(("paper:", "swing:")):
+        if wallet_ledger_kind == "real" and getattr(entry_scope, "real_funding_period", None):
+            from app.services.real_funding import reserve
+            reserve(entry_scope, order_id, reserved_amount)
+        elif wallet_ledger_id and wallet_ledger_id.startswith(("paper:", "swing:")):
             pass  # committed together with the order below
         elif wallet_ledger_id:
             wallet_service.debit_ledger(user_id, reserved_amount, trading_date, wallet_ledger_id, wallet_ledger_kind or "sim", operation_id=f"order:{order_id}:reserve")
@@ -452,7 +460,7 @@ def place_order(
         engine = (session_id, symbol, session.paper_engine_token) if session and getattr(session, "desktop_origin", None) == "desktop_paper" and getattr(session, "paper_engine_token", None) else None
         paper_wallet.move(user_id, trading_date, -reserved_amount, f"order:{order_id}:reserve", order=order, engine=engine)
     _orders[session_id][order.order_id] = order
-    _write_order_to_db(order, strict=bool(exit_allocation_id) or order.trading_style == "swing")
+    _write_order_to_db(order, strict=is_real or bool(exit_allocation_id) or order.trading_style == "swing")
     return order
 
 
@@ -476,6 +484,10 @@ def _credit_reservation(order: Order, amount: float, trading_date: str, persiste
     from app.services import simulation as sim_svc
     session = sim_svc.get_session(order.session_id)
     engine = (order.session_id, order.symbol, session.paper_engine_token) if session and getattr(session, "desktop_origin", None) == "desktop_paper" and getattr(session, "paper_engine_token", None) else None
+    if session and order.wallet_ledger_kind == "real" and getattr(session, "real_funding_period", None):
+        from app.services.real_funding import reserve
+        reserve(session, order.order_id, max(0, round(order.reserved_amount - amount, 2)), owner="broker" if order.broker_order_id else "local")
+        return
     cleanup = (order.session_id, order.symbol) if not session and order.source == "desktop_paper" and persisted_order is not None and persisted_order.status == OrderStatus.CANCELLED else None
     if order.wallet_ledger_id:
         wallet_service.credit_ledger(order.user_id, amount, trading_date, order.wallet_ledger_id, order.wallet_ledger_kind or "sim", operation_id=f"order:{order.order_id}:adjust:{order.reservation_revision}", order=persisted_order, engine=engine, cleanup=cleanup)
@@ -488,6 +500,10 @@ def _debit_reservation(order: Order, amount: float, trading_date: str, persisted
     from app.services import simulation as sim_svc
     session = sim_svc.get_session(order.session_id)
     engine = (order.session_id, order.symbol, session.paper_engine_token) if session and getattr(session, "desktop_origin", None) == "desktop_paper" and getattr(session, "paper_engine_token", None) else None
+    if session and order.wallet_ledger_kind == "real" and getattr(session, "real_funding_period", None):
+        from app.services.real_funding import reserve
+        reserve(session, order.order_id, round(order.reserved_amount + amount, 2), owner="broker" if order.broker_order_id else "local")
+        return
     if order.wallet_ledger_id:
         wallet_service.debit_ledger(order.user_id, amount, trading_date, order.wallet_ledger_id, order.wallet_ledger_kind or "sim", operation_id=f"order:{order.order_id}:adjust:{order.reservation_revision}", order=persisted_order, engine=engine)
     else:

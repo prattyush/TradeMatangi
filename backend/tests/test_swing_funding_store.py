@@ -84,7 +84,7 @@ def test_retry_cannot_debit_twice_and_reused_id_rejects_changed_data(db):
 
 def test_account_broker_user_and_period_identities_are_fenced(db):
     row = store.initialize("u", "kite", "account", 100000)
-    assert store.read("other", "kite", "account") is None
+    assert store.read("other", "kite", "account")["period_id"] == row["period_id"]
     assert store.read("u", "kotak", "account") is None
     assert store.read("u", "kite", "other-account") is None
     with pytest.raises(HTTPException):
@@ -159,6 +159,6 @@ def test_closed_intraday_effects_survive_until_swing_closes_then_next_period_cap
     assert next_period["period_id"] != period
     assert next_period["funding"]["starting_capital"] == 997000
     archived = store._table().get_item(
-        Key={"user_id": "u", "ledger_id": f"funding-period:{period}"}
+        Key={"user_id": store.partition("kite", "account"), "ledger_id": f"funding-period:{period}"}
     )["Item"]
     assert int(archived["funding"]["starting_capital"]) == 1000000

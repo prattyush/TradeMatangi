@@ -82,6 +82,7 @@ def normalize_order(raw: dict) -> dict:
         "order_type": {"L": "LIMIT", "LMT": "LIMIT", "LIMIT": "LIMIT", "SL-L": "SL", "MKT": "MARKET"}.get(kind, kind),
         "order_time": str(raw.get("ordDtTm") or raw.get("ordEntTm") or raw.get("order_time") or ""),
         "product": str(raw.get("prod") or raw.get("product") or "MIS"),
+        "product_known": raw.get("product_known", bool(raw.get("prod") or raw.get("product"))),
         "tag": str(raw.get("GuiOrdId") or raw.get("guiOrderId") or raw.get("guiOrdId") or raw.get("ig") or raw.get("tag") or raw.get("remarks") or raw.get("rmk") or raw.get("userTag") or ""),
         "reject_reason": str(raw.get("rejRsn") or raw.get("rjRsn") or raw.get("rejectionReason") or raw.get("reject_reason") or ""),
         "right": str(raw.get("optTp") or raw.get("right") or "").strip().upper() or None,
@@ -158,3 +159,15 @@ def contract(session, row: dict, master=None) -> dict:
         if expiry and datetime.fromisoformat(expiry).strftime("%y%b").upper() == (year + month):
             return {"right": right, "strike": strike_number(strike), "expiry": expiry}
     raise UnknownContractError(f"Cannot resolve exact broker expiry for {symbol}")
+
+
+def in_book(session, row: dict) -> bool:
+    if not in_scope(session, row):
+        return False
+    if row.get('product_known') is False and (getattr(session, 'trading_style', 'intraday') == 'swing' or isinstance(getattr(session, 'real_funding_period', None), str) and session.real_funding_period):
+        raise ValueError('Broker product is missing; account book reconciliation is pending')
+    product = str(row.get("product") or "MIS").upper()
+    expected_product = ("NRML" if session.instrument_type == "options" else "CNC") if getattr(session, "trading_style", "intraday") == "swing" else "MIS"
+    if product != expected_product:
+        return False
+    return in_scope(session, row)

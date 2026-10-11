@@ -1,3 +1,4 @@
+import RealSessionList, { type RealBookRequest } from '../../../shared/RealSessionList'
 import { NIFTY_PREMIUM_PRESETS as THRESHOLD_VALUES_NIFTY, SENSEX_PREMIUM_PRESETS as THRESHOLD_VALUES_SENSEX, withSavedPremium } from '../../../shared/optionPremiumPresets'
 import HistorySharingSettings, { type HistorySharingState } from '../../../shared/analysis/HistorySharingSettings'
 import { BACKEND_URL } from '../config'
@@ -322,6 +323,7 @@ interface Props {
   isRealTradingUser?: boolean
   sessionActive?: boolean
   onWalletReset: () => void
+  onAttachRealSession?: (id: string) => Promise<void>
   onSizingModeChange: (mode: SizingMode, fundsRatios: FundsRatios, riskRatios: RiskRatios, defaultSlPct: number) => void
   onTargetDeviationChange: (pct: number) => void  // fraction e.g. 0.01
   onBrokerageChange: (brokerage: number) => void  // rupees per order
@@ -335,7 +337,7 @@ interface Props {
   onTradingIndicatorSettingsChange?: (ratioMode: RocRatioMode) => void
 }
 
-export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessionActive, onWalletReset, onSizingModeChange, onTargetDeviationChange, onBrokerageChange, onStrategySettingsChange, onHistoricalDaysChange, onPnlPctModeChange, onGuardRailSettingsChange, onAutoStartSnapshotsChange, onStepwiseLabelingPopupChange, onLabelingModeChange, onTradingIndicatorSettingsChange }: Props) {
+export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessionActive, onWalletReset, onAttachRealSession, onSizingModeChange, onTargetDeviationChange, onBrokerageChange, onStrategySettingsChange, onHistoricalDaysChange, onPnlPctModeChange, onGuardRailSettingsChange, onAutoStartSnapshotsChange, onStepwiseLabelingPopupChange, onLabelingModeChange, onTradingIndicatorSettingsChange }: Props) {
   const [open, setOpen] = useState(false)
   const sharingRequest = useCallback(async (method: 'GET'|'PUT', emails?: string[]): Promise<HistorySharingState> => {
     const response = await fetch(`${BACKEND_URL}/api/users/real-history-sharing`, {method,headers:{..._authHeaders(),'Content-Type':'application/json'},body:method==='PUT'?JSON.stringify({emails}):undefined})
@@ -347,6 +349,12 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
   const [preferenceSaving, setPreferenceSaving] = useState(false)
   const [executionBroker, setExecutionBroker] = useState<"kotak" | "kite">("kotak")
   const [realActiveSession, setRealActiveSession] = useState(false)
+  const realBookRequest = useCallback<RealBookRequest>(async <T,>(path: string, method: 'GET' | 'POST', body?: Record<string, unknown>) => {
+    const response = await fetch(`${BACKEND_URL}/api/brokers/${path}`, { method, headers: { ..._authHeaders(), 'Content-Type': 'application/json' }, ...(body ? { body: JSON.stringify(body) } : {}) })
+    const value = await response.json()
+    if (!response.ok) throw new Error(typeof value.detail === 'string' ? value.detail : 'Could not update Real session')
+    return value as T
+  }, [])
   const [kotakProtectionEnabled, setKotakProtectionEnabled] = useState(true)
   const [loadAttempt, setLoadAttempt] = useState(0)
   const [customAmount, setCustomAmount] = useState('')
@@ -1252,8 +1260,9 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
             {(isRealTradingUser || isAdmin) && (
               <div style={{ borderTop: '1px solid #21262d', paddingTop: 16 }}>
                 <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 10, fontWeight: 600 }}>BROKER</div>
-                <label>Real execution broker <select value={executionBroker} disabled={settingsLoading || settingsLoadFailed || preferenceSaving || realActiveSession} onChange={event => { const broker = event.target.value as 'kotak' | 'kite'; void savePreference({ real_execution_broker: broker }, () => setExecutionBroker(broker)) }}><option value="kotak">Kotak Neo</option><option value="kite">Kite (Zerodha)</option></select></label>
-                {realActiveSession && <p style={{ fontSize: 12 }}>Close the current Real session before switching broker.</p>}
+                <label>Real execution broker <select value={executionBroker} disabled={settingsLoading || settingsLoadFailed || preferenceSaving} onChange={event => { const broker = event.target.value as 'kotak' | 'kite'; void savePreference({ real_execution_broker: broker }, () => setExecutionBroker(broker)) }}><option value="kotak">Kotak Neo</option><option value="kite">Kite (Zerodha)</option></select></label>
+                {realActiveSession && <p style={{ fontSize: 12 }}>Changing the default broker affects new sessions. Existing sessions keep their broker.</p>}
+                <RealSessionList key={executionBroker} request={realBookRequest} onAttach={onAttachRealSession ? id => { void onAttachRealSession(id).catch(reason => window.alert(String(reason))) } : undefined} />
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                   <span style={{ fontSize: 13, color: '#e6edf3' }}>Kotak Neo</span>
                   {kotakAuthenticated === null ? (

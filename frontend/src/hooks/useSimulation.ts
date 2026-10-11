@@ -104,6 +104,8 @@ export interface InstrumentConfig {
   brokerage_per_order?: number
   strategy_interval_secs?: number
   session_type?: 'sim' | 'paper' | 'real' | 'stepwise'
+  execution_broker?: 'kotak' | 'kite'
+  allocation_pct?: number
   override?: boolean
   group_id?: string
   session_alias?: string

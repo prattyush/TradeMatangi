@@ -192,7 +192,12 @@ def _write_trade_to_db(trade: Trade) -> None:
         if trade.session_type == "real":
             from app.services.real_broker_state import active_partition
             item["session_id"] = active_partition(trade.session_id) or trade.session_id
-        if trade.source == "desktop_paper":
+        from app.services.simulation import get_session
+        session = get_session(trade.session_id)
+        if session and session.session_type == "real" and session.trading_style == "swing" and getattr(session, "real_claim_token", None):
+            from app.services.real_session_slots import fenced_put
+            fenced_put(session, "Trades", item)
+        elif trade.source == "desktop_paper":
             from datetime import datetime, timezone
             from app.services import paper_wallet
             date = datetime.fromtimestamp(trade.timestamp, tz=timezone.utc).date().isoformat()
@@ -529,6 +534,11 @@ def get_open_option_contracts(session_id: str, symbol: str) -> list[dict]:
     trades = get_trades(session_id)
     keys = {(t.right, t.strike, t.expiry) for t in trades
             if t.symbol == symbol and t.right in ("CE", "PE") and t.strike is not None and t.expiry}
+    from app.services.simulation import get_session
+    session = get_session(session_id)
+    if session and session.session_type == 'real':
+        keys.update((p['right'], p['strike'], p['expiry']) for p in getattr(session, 'broker_positions', [])
+                    if p.get('right') in ('CE', 'PE') and p.get('strike') and p.get('expiry'))
     result = []
     for right, strike, expiry in keys:
         position = get_position(

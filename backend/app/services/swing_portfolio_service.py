@@ -56,6 +56,7 @@ def snapshot(user, portfolio_id):
     net = 0.0
     complete = True
     for session in current.contexts.values():
+        net -= getattr(session, "opening_inventory_cost", 0)
         executions.extend(trading.get_trades(session.session_id))
         orders.extend(order_service.get_open_orders(session.session_id))
         contracts = (
@@ -102,10 +103,30 @@ def snapshot(user, portfolio_id):
             trade.price * trade.quantity * (1 if trade.side == TradeSide.SELL else -1)
             - trade.commission
         )
+    if row["mode"] == "real":
+        complete = complete and not any(child.real_recovery_pending for child in current.contexts.values())
+        from app.services import swing_funding_store as funding
+        pool = funding.read(user, row["execution_broker"], row["broker_account_id"])
+        mode = (pool or {}).get("funding", {}).get("modes", {}).get("swing", {})
+        from app.services.swing_accounting import mode_available
+        wallet_balance = mode_available(pool['funding'], 'swing') if mode else 0
+        funding_status = (pool or {}).get("funding_status")
+        if funding_status and pool:
+            local_reserved = sum(ticket['amount'] for ticket in pool['funding'].get('reservations', {}).values() if ticket['owner'] == 'local')
+            wallet_balance = max(0, min(wallet_balance, funding_status['available'] - local_reserved))
+    else:
+        wallet_balance = swing_cash.read(user, portfolio_id)["current_balance"]
+        funding_status = None
+    if row["mode"] == "real" and row["state"] == "ended":
+        positions, orders = [], []
+        wallet_balance, funding_status = None, None
+        complete = complete and not row.get("history_warning")
     pnl = round(net, 2) if complete else None
     return {
         "portfolio": row,
-        "wallet_balance": swing_cash.read(user, portfolio_id)["current_balance"],
+        "wallet_balance": wallet_balance,
+        "funding_status": {key: value for key, value in funding_status.items() if key != "modes"} if funding_status else None,
+        "allocation_pct": mode.get("funding_allocation", mode.get("capital", 0)) / pool["funding"]["allocation_reference"] if row["mode"] == "real" and pool else None,
         "positions": positions,
         "open_orders": [o.model_dump(mode="json") for o in orders],
         "trades": [t.model_dump(mode="json") for t in executions],
@@ -150,6 +171,11 @@ def require_entry_allowed(
     )
     if exit_order:
         return
+    if session.session_type == "real":
+        if session.real_recovery_pending:
+            raise HTTPException(409, "Broker history needs reconciliation; entries wait")
+        from app.services.real_funding import require_entry
+        require_entry(session)
     if expiry and session.session_type != "real":
         from app.config import get_market_close
 
@@ -177,7 +203,7 @@ def require_entry_allowed(
     current = _runtimes.get(session.portfolio_id)
     if current and (
         any(
-            getattr(child, "swing_book_needs_repair", False)
+            getattr(child, "swing_book_needs_repair", False) or (child.session_type == "real" and child.real_recovery_pending)
             for child in current.contexts.values()
         )
         or any(
@@ -215,8 +241,8 @@ def attach_context(
     from app.config import SUPPORTED_SYMBOLS
 
     row = store.owned(user, portfolio_id)
-    if row["mode"] != "paper":
-        raise HTTPException(409, "This execution context requires a Paper portfolio")
+    if row["mode"] not in ("paper", "real"):
+        raise HTTPException(409, "Unsupported portfolio mode")
     if row["state"] == "ended" or (
         row["state"] == "closing"
         and f"{symbol}:{instrument_type}" not in row["contexts"]
@@ -283,7 +309,7 @@ def attach_context(
                 raise HTTPException(422, str(exc)) from exc
     if session is None:
         if saved:
-            session = simulation.rebuild_session_from_db(saved, user, read_only=False)
+            session = simulation.rebuild_session_from_db(saved, user, read_only=row["mode"] == "real")
         else:
             session = simulation.SimulationSession(
                 sid,
@@ -298,21 +324,33 @@ def attach_context(
                 right=right,
                 strike_ce=strike if right == "CE" else None,
                 strike_pe=strike if right == "PE" else None,
-                session_type="paper",
+                session_type=row["mode"],
+                execution_broker=row.get("execution_broker") or "kotak",
+                broker_account_id=row.get("broker_account_id"),
+                real_funding_period=row.get("real_funding_period"),
                 trading_style="swing",
                 portfolio_id=portfolio_id,
                 session_capital=row["session_capital"],
-                wallet_ledger_id=f"swing:{portfolio_id}",
+                wallet_ledger_id=f"real:{row['execution_broker']}:{row['broker_account_id']}:{row['date']}" if row["mode"] == "real" else f"swing:{portfolio_id}",
             )
+            if row["mode"] == "real":
+                from app.services.swing_real import bind_child
+                bind_child(current, session, row)
             simulation._upsert_session_to_db(session, strict=True)
+        if row["mode"] == "real":
+            from app.services.swing_real import bind_child
+            bind_child(current, session, row)
         session.swing_recovery_required = True
         session.swing_quote_seen = False
         session.desktop_contract_quotes = {}
         session.state = SimulationState.RUNNING
         session.resume_event.set()
         simulation._sessions[sid] = session
-        restore_execution_book(session)
-        current.contexts[key] = session
+        if row["mode"] == "paper":
+            restore_execution_book(session)
+        else:
+            from app.services.real_broker_state import restore_orders
+            restore_orders(session)
         if key not in row["contexts"]:
             store.update(
                 user,
@@ -320,6 +358,7 @@ def attach_context(
                 {"contexts": {**row["contexts"], key: sid}},
                 row["version"],
             )
+        current.contexts[key] = session
     if instrument_type == "options":
         from app.routers.desktop_trading import (
             DesktopOptionContract,
@@ -338,7 +377,7 @@ def attach_context(
         simulation._upsert_session_to_db(session, strict=True)
         if session.paper_stream_source:
             simulation.subscribe_desktop_option_contract(session, contract)
-    if subscribe and session.session_id not in current.tasks:
+    if subscribe and (session.session_id not in current.tasks or current.tasks[session.session_id].done()):
         current.tasks[session.session_id] = asyncio.create_task(
             _consume(current, session)
         )
@@ -347,8 +386,11 @@ def attach_context(
 
 async def ensure(user, portfolio_id, *, subscribe=True):
     row = store.owned(user, portfolio_id)
-    if row["mode"] != "paper":
-        raise HTTPException(409, "Paper runtime required")
+    if row["mode"] == "real" and row["state"] != "ended":
+        from app.dependencies import require_real_trading_access
+        from app.services.swing_real import bind
+        require_real_trading_access(user)
+        await bind(runtime(user, portfolio_id), row)
     if row["state"] == "ended":
         current = runtime(user, portfolio_id)
         from app.services.db import get_dynamodb_resource
@@ -507,7 +549,8 @@ async def on_tick(current, session, event):
             }
         )
         return
-    await recovery.before_quote_async(session, event)
+    if session.session_type == "paper":
+        await recovery.before_quote_async(session, event)
     update_current_mark(session, event, timestamp)
     row = store.owned(current.user, current.portfolio_id)
     session.session_capital = row["session_capital"]
@@ -527,7 +570,7 @@ async def on_tick(current, session, event):
         or row["state"] != "running"
     )
     expiry_exit = False
-    if event.get("right") and event.get("expiry"):
+    if session.session_type != "real" and event.get("right") and event.get("expiry"):
         from app.config import get_market_close
 
         close_time = int(
@@ -538,17 +581,23 @@ async def on_tick(current, session, event):
         expiry_exit = event["expiry"] < date or (
             event["expiry"] == date and timestamp >= close_time - 900
         )
-    if row["state"] == "closing" or expiry_exit:
+    if (row["state"] == "closing" or expiry_exit) and session.session_type == "paper":
         close_position_on_quote(session, event)
+    if session.session_type == "real":
+        from app.services.swing_real import renew_protection_on_quote
+        await renew_protection_on_quote(session, event)
     try:
-        for filled in simulation._emit_tick_and_check_orders(
-            session, event, event.get("right")
-        ):
+        events = (simulation._emit_tick_and_check_orders_real(session, event, event.get("right"), asyncio.get_running_loop())
+                  if session.session_type == "real" and not session.real_recovery_pending
+                  else [] if session.session_type == "real"
+                  else simulation._emit_tick_and_check_orders(session, event, event.get("right")))
+        for filled in events:
             session.queue.put_nowait(json.dumps(filled))
     except Exception:
         session.swing_book_needs_repair = True
         raise
-    recovery.after_quote(session, event)
+    if session.session_type == "paper":
+        recovery.after_quote(session, event)
     result = snapshot(current.user, current.portfolio_id)
     if (
         row.get("loss_limit_pct")
@@ -562,7 +611,8 @@ async def on_tick(current, session, event):
         session.swing_entries_paused = True
         result = snapshot(current.user, current.portfolio_id)
     if (
-        row["state"] == "closing"
+        row["mode"] == "paper"
+        and row["state"] == "closing"
         and not result["positions"]
         and not result["open_orders"]
     ):
@@ -632,6 +682,10 @@ async def close_portfolio(user, portfolio_id):
             row["version"],
         )
     current = await ensure(user, portfolio_id)
+    if row["mode"] == "real":
+        from app.services.swing_real import verify_close
+        await verify_close(current)
+        return store.owned(user, portfolio_id)
     for session in current.contexts.values():
         session.swing_entries_paused = True
         strategy_service.cancel_all(session.session_id)

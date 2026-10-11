@@ -1,3 +1,4 @@
+import RealSessionList, { type RealBookRequest } from '../../shared/RealSessionList'
 import HistorySharingSettings, { type HistorySharingState } from '../../shared/analysis/HistorySharingSettings'
 import { useCallback, useEffect, useState } from 'react'
 import { GuardrailFields, guardrailFields } from './GuardrailSettings'
@@ -189,6 +190,7 @@ export function DesktopSettingsModal({
   const [totp, setTotp] = useState('')
   const [brokerStatus, setBrokerStatus] = useState<Record<string, boolean>>({})
   const [realActiveSession, setRealActiveSession] = useState(false)
+  const realBookRequest = useCallback<RealBookRequest>(<T,>(path: string, method: 'GET' | 'POST', body?: Record<string, unknown>) => accountRequest<T>(`broker/${path}`, method, body), [accountRequest])
   const [brokerError, setBrokerError] = useState('')
   const [tokens, setTokens] = useState<Record<string, string | null>>({})
   const [tokenDraft, setTokenDraft] = useState<Record<string, string>>({})
@@ -323,8 +325,9 @@ export function DesktopSettingsModal({
     <section className="settings-section">
       <strong>Broker connection</strong>
       <p>Execution: {String(userDraft.real_execution_broker ?? 'kotak') === 'kite' ? `Kite · ${brokerStatus.kite === undefined ? 'Checking…' : brokerStatus.kite ? 'Connected' : 'Not connected; check the Kite token in Admin'}` : 'Kotak Neo'}</p>
-      <label>Real execution broker<select value={String(userDraft.real_execution_broker ?? 'kotak')} disabled={loading || loadFailed || saving || realActiveSession} onChange={event => { const broker = event.target.value; void onSaveTradingSettings({ real_execution_broker: broker }).then(value => setUserDraft(current => ({ ...current, ...value }))).catch(error => setBrokerError(String(error))) }}><option value="kotak">Kotak Neo</option><option value="kite">Kite (Zerodha)</option></select></label>
-      {realActiveSession && <small>Close the current Real session before switching broker.</small>}
+      <label>Real execution broker<select value={String(userDraft.real_execution_broker ?? 'kotak')} disabled={loading || loadFailed || saving} onChange={event => { const broker = event.target.value; void onSaveTradingSettings({ real_execution_broker: broker }).then(value => setUserDraft(current => ({ ...current, ...value }))).catch(error => setBrokerError(String(error))) }}><option value="kotak">Kotak Neo</option><option value="kite">Kite (Zerodha)</option></select></label>
+      {realActiveSession && <small>Changing the default broker affects new sessions. Existing sessions keep their broker.</small>}
+      <RealSessionList key={String(userDraft.real_execution_broker)} request={realBookRequest} />
       <p>
         Kotak Neo:{' '}
         {brokerStatus.kotak === undefined

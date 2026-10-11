@@ -34,7 +34,7 @@ def allocate(state, mode, fraction):
     if not isfinite(fraction) or not 0 < fraction <= 1:
         raise ValueError("Allocation must be between zero and 100%")
     result = deepcopy(state)
-    capital = money(result["starting_capital"] * fraction)
+    capital = money(result["allocation_reference"] * fraction)
     if mode in result["modes"]:
         raise ValueError("Mode already has an allocation in this account period")
     if (

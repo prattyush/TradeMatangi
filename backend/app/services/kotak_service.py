@@ -820,6 +820,10 @@ class KotakNeoService:
         except ValueError as exc:
             raise KotakError(str(exc)) from exc
 
+    def get_recovery_reports(self):
+        """Read current orders/exposure independently of unavailable older executions."""
+        return {'orders': self._report('order_report'), 'positions': self._report('positions')}
+
     def get_positions(self) -> list[dict]:
         rows = self._report("positions")
         for row in rows:

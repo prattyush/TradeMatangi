@@ -198,6 +198,22 @@ class KiteExecutionService:
                 'execution_time': stamp, 'quantity': raw['quantity'], 'price': raw['average_price']}))
         return rows
 
+    def get_recovery_reports(self):
+        """Current exposure proof needs no old trades or expired instrument metadata."""
+        raw_orders = self._read('orders')
+        raw_positions = self._read('positions')
+        if not isinstance(raw_positions, dict) or not isinstance(raw_positions.get('net'), list) or not isinstance(raw_orders, list):
+            raise KotakError('Kite current exposure reports are unavailable')
+        def minimal(raw):
+            return broker_reports.normalize_order({'symbol': raw.get('tradingsymbol'),
+                'product': raw.get('product'), 'exchange': _EXCHANGES.get(raw.get('exchange'), str(raw.get('exchange', '')).lower()),
+                'broker_order_id': raw.get('order_id'), 'execution_broker': 'kite',
+                'side': raw.get('transaction_type'), 'status': raw.get('status'),
+                'quantity': raw.get('quantity'), 'filled_quantity': raw.get('filled_quantity')})
+        return {'orders': [minimal(row) for row in raw_orders], 'positions': [
+            {**minimal(row), 'netQty': row.get('quantity'), 'avg_entry_price': row.get('average_price')}
+            for row in raw_positions['net']]}
+
     def get_positions(self, *, products=("MIS",)):
         rows = []
         for raw in self._read('positions')['net']:

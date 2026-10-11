@@ -499,7 +499,8 @@ async def _place_order_locked(req: PlaceOrderRequest):
         try:
             sim_svc._register_kotak_sl_for_order(session, order, asyncio.get_running_loop())
         except Exception as exc:
-            order_service.cancel_order(session.session_id, order.order_id, session.date)
+            if not order.broker_order_id and order.recovery_state not in ("submitting", "unknown"):
+                order_service.cancel_order(session.session_id, order.order_id, session.date)
             logger.warning("broker_exit_place_failed session=%s order=%s: %s", session.session_id, order.order_id, exc)
             raise HTTPException(status_code=502, detail=f"Broker exit placement failed: {exc}") from exc
 

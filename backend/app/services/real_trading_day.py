@@ -75,6 +75,16 @@ def require_entry_allowed(session, side, quantity, right=None, strike=None, expi
     name = getattr(side, 'value', side)
     closing = (position.side == 'LONG' and name == 'SELL') or (position.side == 'SHORT' and name == 'BUY')
     pure_exit = closing and 0 < quantity <= position.quantity
+    if not pure_exit and (getattr(session, 'real_entries_paused', False) or getattr(session, 'real_recovery_pending', False)):
+        raise HTTPException(409, 'Real entries are paused or recovering; existing positions remain manageable')
+    if not pure_exit:
+        from app.services.real_close import unresolved
+        if unresolved(session):
+            raise HTTPException(409, 'A Real broker operation is unconfirmed; reconcile before submitting new entries')
+        from app.services.real_funding import require_entry
+        require_entry(session)
+    if not pure_exit and getattr(session, 'real_recovery_pending', False):
+        raise HTTPException(409, 'Real recovery is pending; entries wait for broker reconciliation')
     try:
         status = state(session.user_id)
     except Exception as exc:
@@ -101,7 +111,7 @@ def unique_books(sessions):
     # merely because the user has another runtime view of that symbol/mode.
     result = {}
     for session in sessions:
-        key = (getattr(session, '_fifo_account', None), session.symbol, session.instrument_type)
+        key = (session.execution_broker, session.broker_account_id, session.symbol, session.instrument_type)
         result.setdefault(key, session)
     return list(result.values())
 

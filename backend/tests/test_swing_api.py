@@ -53,7 +53,7 @@ def test_auth_ownership_and_single_active_portfolio(client):
             json={"capital": 100000, "mode": "real"},
             headers={"X-User-Id": "u"},
         ).status_code
-        == 422
+        == 403
     )
 
 
@@ -247,3 +247,22 @@ def test_exact_contract_lot_validation_and_invalid_master_do_not_create_context(
     )
     assert accepted.status_code == 200, accepted.text
     assert accepted.json()["open_orders"][0]["strike"] == 125.5
+
+
+def test_decimal_price_retry_uses_original_instructions_after_order_kind_changes(client):
+    from app.services import order_service
+    from app.models.schemas import OrderType
+    path = start(client)
+    headers = {'X-User-Id': 'u'}
+    request = {'symbol': 'HDFCBANK', 'side': 'BUY', 'quantity': 1, 'price': 100.05, 'request_id': 'decimal-retry'}
+    response = client.post(path + '/orders', json=request, headers=headers)
+    assert response.status_code == 200, response.text
+    identifier = response.json()['order_id']
+    child = service.runtime('u', path.rsplit('/', 1)[-1]).contexts['HDFCBANK:equity']
+    order = order_service.get_order(child.session_id, identifier)
+    order.order_type = OrderType.TARGET
+    order_service._write_order_to_db(order, strict=True)
+    retry = client.post(path + '/orders', json=request, headers=headers)
+    assert retry.status_code == 200, retry.text
+    assert retry.json()['order_id'] == identifier
+    assert client.post(path + '/orders', json={**request, 'price': 100.06}, headers=headers).status_code == 409

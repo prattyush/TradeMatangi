@@ -53,6 +53,8 @@ class DeliveryBroker:
         if self.base.execution_broker == "kite":
             return getattr(self.base, method)(products=(self.product,))
         rows = getattr(self.base, method)()
+        if any(row.get('product_known') is False or not (row.get('product') or row.get('prod')) for row in rows):
+            raise ValueError('Broker product is missing; delivery/overnight reports cannot verify this book')
         return [
             row
             for row in rows

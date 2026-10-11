@@ -2,24 +2,48 @@
 
 import asyncio
 import json
+import uuid
+from datetime import date as calendar_date
+from typing import Literal
+
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import Field, model_validator
-from typing import Literal
-from datetime import date as calendar_date
+
 from app.dependencies import get_desktop_user_id
-from app.models.schemas import ContractModel, TradeSide, OrderType
+from app.models.schemas import ContractModel, OrderType, TradeSide
+from app.services import order_service, trading
 from app.services import (
-    swing_portfolio_store as store,
     swing_portfolio_service as service,
 )
-from app.services import order_service, trading
+from app.services import (
+    swing_portfolio_store as store,
+)
 
 router = APIRouter(prefix="/swing/portfolios", tags=["swing"])
 
 
+async def funding_action(action):
+    try:
+        return await action
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+def portfolio_order(*args, **kwargs):
+    from app.services.wallet_service import InsufficientFundsError
+    try:
+        return order_service.place_order(*args, **kwargs)
+    except InsufficientFundsError as exc:
+        raise HTTPException(402, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
 class StartPortfolio(ContractModel):
-    mode: Literal["paper"] = "paper"
+    mode: Literal["paper", "real"] = "paper"
+    execution_broker: Literal["kotak", "kite"] | None = None
+    allocation_pct: float = Field(default=1, gt=0, le=1, allow_inf_nan=False)
     capital: float = Field(ge=0.01, allow_inf_nan=False)
     loss_limit_pct: float | None = Field(default=None, gt=0, le=1, allow_inf_nan=False)
 
@@ -60,12 +84,28 @@ class PauseRequest(ContractModel):
 
 
 class ResetCapital(ContractModel):
+    request_id: str = Field(default_factory=lambda: str(uuid.uuid4()), min_length=1, max_length=100)
     capital: float = Field(ge=0.01, allow_inf_nan=False)
 
 
+@router.get("/capabilities")
+async def capabilities(user: str = Depends(get_desktop_user_id)):
+    from app.dependencies import require_real_trading_access
+    try:
+        require_real_trading_access(user)
+    except HTTPException:
+        return {"real_trading_enabled": False}
+    return {"real_trading_enabled": True}
+
+
 @router.get("/active")
-async def active(user: str = Depends(get_desktop_user_id)):
-    portfolio = await asyncio.to_thread(store.active, user, "paper")
+async def active(mode: Literal["paper", "real"] = "paper", execution_broker: Literal["kotak", "kite"] | None = None, user: str = Depends(get_desktop_user_id)):
+    if mode == "real":
+        from app.dependencies import require_real_trading_access
+        from app.services.user_settings_service import get_settings
+        require_real_trading_access(user)
+        execution_broker = execution_broker or (await asyncio.to_thread(get_settings, user, strict=True))["real_execution_broker"]
+    portfolio = await asyncio.to_thread(store.active, user, mode, execution_broker)
     if not portfolio:
         return {"portfolio": None}
     await service.ensure(user, portfolio["session_id"])
@@ -74,15 +114,19 @@ async def active(user: str = Depends(get_desktop_user_id)):
 
 @router.post("")
 async def start(req: StartPortfolio, user: str = Depends(get_desktop_user_id)):
-    portfolio = await asyncio.to_thread(
-        store.create, user, req.mode, req.capital, loss_limit_pct=req.loss_limit_pct
-    )
+    if req.mode == "real":
+        from app.services.swing_real import start as start_real
+        portfolio = await funding_action(start_real(user, req))
+        await service.ensure(user, portfolio["session_id"])
+    else:
+        portfolio = await asyncio.to_thread(
+            store.create, user, req.mode, req.capital, loss_limit_pct=req.loss_limit_pct
+        )
     return service.snapshot(user, portfolio["session_id"])
 
 
 @router.get("/{portfolio_id}")
 async def snapshot(portfolio_id: str, user: str = Depends(get_desktop_user_id)):
-    portfolio = await asyncio.to_thread(store.owned, user, portfolio_id)
     await service.ensure(user, portfolio_id)
     return service.snapshot(user, portfolio_id)
 
@@ -91,6 +135,7 @@ async def snapshot(portfolio_id: str, user: str = Depends(get_desktop_user_id)):
 async def attach(
     portfolio_id: str, req: ContextRequest, user: str = Depends(get_desktop_user_id)
 ):
+    await service.ensure(user, portfolio_id)
     await prepare_listed_contract(user, portfolio_id, req)
     child = service.attach_context(
         user,
@@ -145,85 +190,108 @@ async def place(
         raise HTTPException(
             422, "Use an SL/limit exit or a Target strategy for a held Swing position"
         )
-    identifier = str(
-        uuid.uuid5(uuid.NAMESPACE_URL, child.session_id + ":order:" + req.request_id)
-    )
-    from app.services.db import get_dynamodb_resource
+    if child.session_type == "real":
+        from app.services.swing_real import refresh
+        await refresh(child)
+    from app.routers.orders import _session_edit_lock
+    async with _session_edit_lock(child):
+        identifier = str(
+            uuid.uuid5(uuid.NAMESPACE_URL, child.session_id + ":order:" + req.request_id)
+        )
+        from app.services.db import get_dynamodb_resource
+        from app.services.execution_analytics import normalize_metadata
+        from app.services.execution_analytics import snapshot as decision_snapshot
+        from app.services.real_broker_state import active_partition
 
-    saved = await asyncio.to_thread(
-        lambda: (
-            get_dynamodb_resource()
-            .Table("Orders")
-            .get_item(
-                Key={"session_id": child.session_id, "order_id": identifier},
-                ConsistentRead=True,
+        saved = await asyncio.to_thread(
+            lambda: (
+                get_dynamodb_resource()
+                .Table("Orders")
+                .get_item(
+                    Key={"session_id": active_partition(child.session_id) or child.session_id, "order_id": identifier},
+                    ConsistentRead=True,
+                )
+                .get("Item")
             )
-            .get("Item")
         )
-    )
-    if saved:
-        matching = (
-            saved.get("symbol") == req.symbol
-            and saved.get("side") == req.side.value
-            and saved.get("order_type") == req.order_type.value
-            and int(saved["quantity"]) == req.quantity
-            and float(saved["trigger_price"]) == req.price
-            and saved.get("right") == req.right
-            and saved.get("strike") == req.strike
-            and saved.get("expiry") == req.expiry
-        )
-        if not matching:
-            raise HTTPException(
-                409, "Order request identity was reused with different instructions"
+        if saved:
+            original_request = normalize_metadata((saved.get("analytics") or {}).get("swing_request"))
+            matching = original_request == req.model_dump(mode="json") if original_request else (
+                saved.get("symbol") == req.symbol
+                and saved.get("side") == req.side.value
+                and saved.get("order_type") == req.order_type.value
+                and int(saved["quantity"]) == req.quantity
+                and float(saved["trigger_price"]) == req.price
+                and saved.get("right") == req.right
+                and saved.get("strike") == req.strike
+                and saved.get("expiry") == req.expiry
             )
-        return {"order_id": identifier, **service.snapshot(user, portfolio_id)}
-    service.require_entry_allowed(
-        child, req.side, req.quantity, req.right, req.strike, req.expiry
-    )
-    held = trading.get_position(
-        child.session_id, child.symbol, req.right, req.strike, req.expiry
-    )
-    if req.side == TradeSide.SELL:
-        outstanding = sum(
-            o.quantity
-            for o in order_service.get_open_orders(child.session_id)
-            if o.side == TradeSide.SELL
-            and (o.right, o.strike, o.expiry) == (req.right, req.strike, req.expiry)
+            if not matching:
+                raise HTTPException(
+                    409, "Order request identity was reused with different instructions"
+                )
+            return {"order_id": identifier, **service.snapshot(user, portfolio_id)}
+        service.require_entry_allowed(
+            child, req.side, req.quantity, req.right, req.strike, req.expiry
         )
-        if outstanding + req.quantity > held.quantity:
-            raise HTTPException(
-                409,
-                "Existing exits already cover this quantity; edit or cancel them first",
+        held = trading.get_position(
+            child.session_id, child.symbol, req.right, req.strike, req.expiry
+        )
+        if req.side == TradeSide.SELL:
+            outstanding = sum(
+                max(0, o.quantity - o.broker_filled_quantity)
+                for o in order_service.get_open_orders(child.session_id)
+                if o.side == TradeSide.SELL
+                and (o.right, o.strike, o.expiry) == (req.right, req.strike, req.expiry)
             )
-    kwargs = (
-        {"trigger_price": req.price}
-        if req.order_type != OrderType.LIMIT
-        else {"limit_price": req.price}
-    )
-    from app.services.swing_paper_recovery import current_market_timestamp
+            if outstanding + req.quantity > held.quantity:
+                raise HTTPException(
+                    409,
+                    "Existing exits already cover this quantity; edit or cancel them first",
+                )
+        kwargs = (
+            {"trigger_price": req.price}
+            if req.order_type != OrderType.LIMIT
+            else {"limit_price": req.price}
+        )
+        from app.services.swing_paper_recovery import current_market_timestamp
 
-    order = order_service.place_order(
-        child.session_id,
-        child.symbol,
-        req.side,
-        req.order_type,
-        req.quantity,
-        current_market_timestamp(),
-        child.date,
-        **kwargs,
-        right=req.right,
-        strike=req.strike,
-        expiry=req.expiry,
-        user_id=user,
-        source="swing_paper",
-        order_id=identifier,
-        margin_rate=1,
-        wallet_ledger_id=child.wallet_ledger_id,
-        wallet_ledger_kind="paper",
-    )
-    current = service.runtime(user, portfolio_id)
-    current.emit({"type": "portfolio_snapshot", **service.snapshot(user, portfolio_id)})
-    return {"order_id": order.order_id, **service.snapshot(user, portfolio_id)}
+        order = portfolio_order(
+            child.session_id,
+            child.symbol,
+            req.side,
+            req.order_type,
+            req.quantity,
+            current_market_timestamp(),
+            child.date,
+            **kwargs,
+            right=req.right,
+            strike=req.strike,
+            expiry=req.expiry,
+            user_id=user,
+            analytics={**decision_snapshot(child, quantity=req.quantity, price=req.price, side=req.side.value, margin_rate=1, entry_method=req.order_type.value, action_id=identifier),
+                       "swing_request": req.model_dump(mode="json")},
+            source="swing_real" if child.session_type == "real" else "swing_paper",
+            order_id=identifier,
+            margin_rate=1,
+            wallet_ledger_id=child.wallet_ledger_id,
+            wallet_ledger_kind="real" if child.session_type == "real" else "paper",
+        )
+        if child.session_type == "real":
+            try:
+                from app.services.broker_order_service import submit_immediate
+                if order.order_type == OrderType.LIMIT:
+                    submit_immediate(child, order, asyncio.get_running_loop())
+                elif order.order_type == OrderType.STOPLOSS:
+                    from app.services import simulation
+                    simulation._register_kotak_sl_for_order(child, order, asyncio.get_running_loop())
+            except Exception as exc:  # noqa: BLE001 - preserve uncertain broker writes and return their recovery state
+                if not order.broker_order_id and order.recovery_state not in ("submitting", "unknown"):
+                    order_service.cancel_order(child.session_id, order.order_id, child.date)
+                raise HTTPException(502, f"Broker placement needs review: {exc}") from exc
+        current = service.runtime(user, portfolio_id)
+        current.emit({"type": "portfolio_snapshot", **service.snapshot(user, portfolio_id)})
+        return {"order_id": order.order_id, **service.snapshot(user, portfolio_id)}
 
 
 @router.post("/{portfolio_id}/pause")
@@ -245,6 +313,10 @@ async def reset_capital(
     portfolio_id: str, req: ResetCapital, user: str = Depends(get_desktop_user_id)
 ):
     await service.ensure(user, portfolio_id)
+    if store.owned(user, portfolio_id)["mode"] == "real":
+        from app.services.swing_real import reset_capital as reset_real_capital
+        await funding_action(reset_real_capital(service.runtime(user, portfolio_id), req.capital, req.request_id))
+        return service.snapshot(user, portfolio_id)
     current = service.snapshot(user, portfolio_id)
     if current["pnl"] is None:
         raise HTTPException(
@@ -289,7 +361,7 @@ async def events(portfolio_id: str, user: str = Depends(get_desktop_user_id)):
             while True:
                 try:
                     event = await asyncio.wait_for(queue.get(), timeout=15)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     yield ": keepalive\n\n"
                     continue
                 yield "event: portfolio\ndata: " + json.dumps(event) + "\n\n"
@@ -307,7 +379,11 @@ async def cancel(
     current = await service.ensure(user, portfolio_id)
     for child in current.contexts.values():
         if order_id in order_service._orders.get(child.session_id, {}):
-            order_service.cancel_order(child.session_id, order_id, child.date)
+            if child.session_type == "real":
+                from app.routers.orders import cancel_order
+                await cancel_order(order_id, child.session_id)
+            else:
+                order_service.cancel_order(child.session_id, order_id, child.date)
             result = service.snapshot(user, portfolio_id)
             current.emit({"type": "portfolio_snapshot", **result})
             return result
@@ -361,3 +437,92 @@ async def prepare_listed_contract(user, portfolio_id, req):
         raise HTTPException(503, "Option contract metadata is unavailable") from exc
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
+
+
+@router.post("/{portfolio_id}/reconcile")
+async def reconcile_portfolio(portfolio_id: str, user: str = Depends(get_desktop_user_id)):
+    current = await service.ensure(user, portfolio_id)
+    row = store.owned(user, portfolio_id)
+    if row["mode"] == "real":
+        from app.services.real_recovery import verify
+        from app.services.swing_real import refresh
+        issues = []
+        for child in current.contexts.values():
+            verification = await verify(child)
+            try:
+                await refresh(child)
+            except (ValueError, TypeError) as exc:
+                issues.append({"session_id": child.session_id, "message": str(exc), **verification})
+        result = service.snapshot(user, portfolio_id)
+        result["recovery_issues"] = issues
+        return result
+    return service.snapshot(user, portfolio_id)
+
+
+class ImportInventory(ContextRequest):
+    fingerprint: str = Field(min_length=1, max_length=100)
+    request_id: str = Field(min_length=1, max_length=100)
+
+
+async def import_context(user, portfolio_id, req):
+    await service.ensure(user, portfolio_id)
+    if store.owned(user, portfolio_id)['mode'] != 'real':
+        raise HTTPException(409, 'Opening broker inventory requires a Real portfolio')
+    await prepare_listed_contract(user, portfolio_id, req)
+    return service.attach_context(user, portfolio_id, req.symbol, req.instrument_type, req.strike, req.expiry, req.right)
+
+
+@router.post('/{portfolio_id}/import-preview')
+async def import_preview(portfolio_id: str, req: ContextRequest, user: str = Depends(get_desktop_user_id)):
+    from app.services.swing_real import inventory_preview
+    return await inventory_preview(await import_context(user, portfolio_id, req))
+
+
+@router.post('/{portfolio_id}/import')
+async def import_inventory(portfolio_id: str, req: ImportInventory, user: str = Depends(get_desktop_user_id)):
+    from app.services.swing_real import import_inventory as apply_import
+    child = await import_context(user, portfolio_id, req)
+    await apply_import(child, req.fingerprint, req.request_id)
+    return service.snapshot(user, portfolio_id)
+
+
+class AllocationRequest(ContractModel):
+    fraction: float = Field(gt=0, le=1, allow_inf_nan=False)
+    request_id: str = Field(min_length=1, max_length=100)
+
+
+@router.post('/{portfolio_id}/allocation')
+async def change_allocation(portfolio_id: str, req: AllocationRequest, user: str = Depends(get_desktop_user_id)):
+    current = await service.ensure(user, portfolio_id)
+    if store.owned(user, portfolio_id)['mode'] != 'real':
+        raise HTTPException(409, 'Shared allocations apply only to Real portfolios')
+    from app.services.swing_real import allocation
+    await funding_action(allocation(current, req.fraction, req.request_id))
+    return service.snapshot(user, portfolio_id)
+
+
+class CashCorrection(ContractModel):
+    adjustment: float = Field(lt=0, allow_inf_nan=False)
+    reason: str = Field(min_length=1, max_length=500)
+    request_id: str = Field(min_length=1, max_length=100)
+    funding_version: int | None = Field(default=None, ge=0)
+
+
+@router.post('/{portfolio_id}/funding-correction-preview')
+async def cash_correction_preview(portfolio_id: str, req: CashCorrection, user: str = Depends(get_desktop_user_id)):
+    current = await service.ensure(user, portfolio_id)
+    if store.owned(user, portfolio_id)['mode'] != 'real':
+        raise HTTPException(409, 'Cash corrections apply only to Real funding')
+    from app.services.swing_real import correction_preview
+    preview = await funding_action(correction_preview(current, req.adjustment, req.reason))
+    return {key: value for key, value in preview.items() if key not in ('pool', 'parent')}
+
+
+@router.post('/{portfolio_id}/funding-correction')
+async def cash_correction(portfolio_id: str, req: CashCorrection, user: str = Depends(get_desktop_user_id)):
+    current = await service.ensure(user, portfolio_id)
+    if store.owned(user, portfolio_id)['mode'] != 'real' or req.funding_version is None:
+        raise HTTPException(409, 'Review a Real funding correction preview first')
+    from app.services.swing_real import correct_shortfall
+    await funding_action(correct_shortfall(current, req.adjustment, req.reason, req.request_id, req.funding_version))
+    return service.snapshot(user, portfolio_id)

@@ -63,6 +63,8 @@ async def lifespan(app: FastAPI):
     paper_reconciler = asyncio.create_task(reconciliation_loop())
     from app.services.swing_portfolio_service import startup as start_swing
     start_swing()
+    from app.services.real_sessions import startup as start_real
+    start_real()
     from app.services.order_service import exit_reconciliation_loop
     exit_reconciler = asyncio.create_task(exit_reconciliation_loop())
     diagnostics = None
@@ -78,6 +80,8 @@ async def lifespan(app: FastAPI):
         await shutdown()
         from app.services.real_trading_day import shutdown as shutdown_day_jobs
         await shutdown_day_jobs()
+        from app.services.real_sessions import shutdown as shutdown_real
+        await shutdown_real()
         from app.services.real_close import shutdown as shutdown_close_jobs
         await shutdown_close_jobs()
         from app.services.kotak_reports import shutdown as shutdown_reports

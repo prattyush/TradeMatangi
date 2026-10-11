@@ -105,7 +105,7 @@ def test_opening_inventory_recognizes_mode_budget_without_debiting_broker_cash()
     assert state["unallocated_balance"] == 40000
     assert state["allocation_reference"] == 120000
     state = funding.allocate(state, "intraday", 0.2)
-    assert state["modes"]["intraday"]["capital"] == 20000
+    assert state["modes"]["intraday"]["capital"] == 24000
     assert funding.expected_balance(state) == 100000
 
 

@@ -699,3 +699,27 @@ The session can be long lived, and once a capital is captured, honor it for perc
 When system detects mismatch betwween capital and P&L and orders, specially decrease, incerase is fine, then ask user to update session capital. Required for perccentage postion and % P&L Calculation.
 
 Point to note in multiple day trades, there is no leverage in equity.
+
+
+### Real broker/style ownership and downtime recovery
+
+The 2026-10-11 revision in [the Swing implementation plan](spec-phase21-swing-trading-plan.md#real-ownership-and-outage-recovery-revision--2026-10-11-sprint-0)
+supersedes the earlier one-broker/one-operator assumptions. Real accounts permit
+one Day session and one Swing portfolio across users; one user can occupy all
+four Kite/Kotak style combinations. Each account has one shared capital pool.
+Unclosed books retain ownership through outages, pause and screen detach, and
+require reconciliation/verified closure before their slot can be reused. Paper
+and Replay restrictions are unchanged. Implementation and testing status remains
+in the linked document; Real Swing runtime acceptance is not implied by slot or
+funding-helper tests alone.
+
+
+### Ownership and recovery implementation checkpoint (2026-10-11)
+
+Real Day/Swing broker-style slots, shared account funding and Real Swing runtime
+are now connected on the existing feature branch. Website/desktop controls include
+broker reconciliation, opening inventory preview/import, selected funding edits,
+negative cash-correction preview and verified closure with history warnings.
+See the [full implementation checkpoint and exclusions](spec-phase21-swing-trading-plan.md#implementation-checkpoint--ownershiprecovery-revision-2026-10-11).
+Broader linked Swing charts, multi-day Replay and preprod/live acceptance remain
+explicitly outstanding; main/dev promotion remains manual after acceptance.

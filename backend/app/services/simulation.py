@@ -230,6 +230,16 @@ class SimulationSession:
     trading_style: str = "intraday"
     portfolio_id: str | None = None
     real_closing: bool = False
+    opening_positions: list = field(default_factory=list)
+    opening_inventory_cost: float = 0
+    opening_inventory_request_id: str | None = None
+    opening_inventory_fingerprint: str | None = None
+    opening_inventory_captured_at: int | None = None
+    real_history_warning: str | None = None
+    real_verified_closed: bool = False
+    real_recovery_pending: bool = False
+    real_funding_period: str | None = None
+    real_entries_paused: bool = False
     broker_account_id: str | None = None
     execution_broker: str = "KotakNeo"  # execution identity is independent of market-data source
     strategy_interval_secs: int = 180   # candle interval for all strategies (180=3min, 300=5min)
@@ -336,6 +346,15 @@ def _upsert_session_to_db(session: SimulationSession, *, strict: bool = False) -
             "execution_broker": session.execution_broker,
             "broker_account_id": session.broker_account_id,
             "real_closing": session.real_closing,
+            "real_verified_closed": session.real_verified_closed,
+            "real_history_warning": session.real_history_warning,
+            "opening_positions": session.opening_positions,
+            "opening_inventory_cost": session.opening_inventory_cost,
+            "opening_inventory_request_id": session.opening_inventory_request_id,
+            "opening_inventory_fingerprint": session.opening_inventory_fingerprint,
+            "opening_inventory_captured_at": session.opening_inventory_captured_at,
+            "real_funding_period": session.real_funding_period,
+            "real_entries_paused": session.real_entries_paused,
         }
         if getattr(session, "broker_projection_id", None):
             item["broker_projection_id"] = session.broker_projection_id
@@ -407,6 +426,21 @@ def _upsert_session_to_db(session: SimulationSession, *, strict: bool = False) -
             paper_wallet.fenced_put("Sessions", item, user_id=session.user_id, date=session.date,
                 symbol=session.symbol, session_id=session.session_id,
                 token=session.paper_engine_token, stopped=session.state == SimulationState.ENDED)
+        elif session.session_type == "real" and getattr(session, "real_claim_token", None) :
+            from app.services import real_session_slots as slots
+            from app.services.db import get_dynamodb_client
+            values = {":owner": session.user_id, ":sid": session.portfolio_id if session.trading_style == "swing" else session.session_id, ":token": session.real_claim_token, ":closed": "closed"}
+            condition = "owner_user_id = :owner AND session_id = :sid AND operation_id = :token"
+            if session.real_verified_closed:
+                condition += " AND #state = :closed"
+            else:
+                condition += " AND #state <> :closed AND engine_until >= :now"
+                import time
+                values[":now"] = int(time.time())
+            get_dynamodb_client().transact_write_items(TransactItems=[
+                {"ConditionCheck": {"TableName": "WalletLedgers", "Key": slots.serialize(slots.key(session.execution_broker, session.broker_account_id, session.trading_style)),
+                    "ConditionExpression": condition, "ExpressionAttributeNames": {"#state": "state"}, "ExpressionAttributeValues": slots.serialize(values)}},
+                {"Put": {"TableName": "Sessions", "Item": slots.serialize(item)}}])
         else:
             table.put_item(Item=item)
     except Exception:
@@ -443,9 +477,10 @@ def create_session(
     broker_account_id: str | None = None,
     trading_style: str = "intraday",
     portfolio_id: str | None = None,
+    session_id: str | None = None,
 ) -> SimulationSession:
     from app.services import wallet_service
-    session_id = str(uuid.uuid4())
+    session_id = session_id or str(uuid.uuid4())
     ledger_id = wallet_ledger_id or f"sim:{date}"
     ledger_kind = "paper" if session_type == "paper" else ("real" if session_type == "real" else "sim")
     session_capital = (starting_capital if starting_capital is not None else
@@ -478,8 +513,17 @@ def create_session(
     session.created_at = int(datetime.now(timezone.utc).timestamp() * 1000)
     if stepwise:
         session.total_bars = _count_total_bars(symbol, date, start_time, strategy_interval_secs)
+    if session_type == "real":
+        from app.services.real_sessions import prepared_claim
+        claim = prepared_claim()
+        if claim:
+            session.real_claim_token = claim["operation_id"]
+            session.real_active_claim = True
+            session.real_engine_lease_required = True
+            import time
+            session.real_engine_valid_until = time.monotonic() + 40
     _sessions[session_id] = session
-    _upsert_session_to_db(session)
+    _upsert_session_to_db(session, strict=session_type == "real")
     from app.services.guardrail_service import initialize_guardrails
     initialize_guardrails(session, user_id)
     return session
@@ -639,6 +683,15 @@ def rebuild_session_from_db(
         execution_broker=db_record.get("execution_broker", "KotakNeo"),
         broker_account_id=db_record.get("broker_account_id"),
         real_closing=bool(db_record.get("real_closing", False)),
+        real_verified_closed=bool(db_record.get("real_verified_closed", False)),
+        real_history_warning=db_record.get("real_history_warning"),
+        opening_positions=db_record.get("opening_positions", []),
+        opening_inventory_cost=float(db_record.get("opening_inventory_cost", 0)),
+        opening_inventory_request_id=db_record.get("opening_inventory_request_id"),
+        opening_inventory_fingerprint=db_record.get("opening_inventory_fingerprint"),
+        opening_inventory_captured_at=int(db_record["opening_inventory_captured_at"]) if db_record.get("opening_inventory_captured_at") is not None else None,
+        real_funding_period=db_record.get("real_funding_period"),
+        real_entries_paused=bool(db_record.get("real_entries_paused", db_record.get("state") == "paused")),
     )
     session.desktop_contracts = [
         {**contract, "strike": strike_number(contract["strike"])} if isinstance(contract.get("strike"), Decimal) else contract
@@ -2080,6 +2133,22 @@ async def _run_real_session(session: SimulationSession) -> None:
     await resume_conversions(session)
     loop = asyncio.get_running_loop()
     from app.services.execution_broker import get_service as get_position_broker
+    session.real_recovery_pending = True
+    from app.services import real_broker_state, real_close
+    while session.state != SimulationState.ENDED:
+        try:
+            await real_broker_state.refresh(session, get_position_broker(session))
+            if not real_close.unresolved(session):
+                session.real_recovery_pending = False
+                break
+        except Exception as exc:
+            logger.warning("Real entry reconciliation pending for %s: %s", session.session_id, type(exc).__name__)
+        await asyncio.sleep(5)
+    if session.state == SimulationState.ENDED:
+        return
+    if session.real_entries_paused:
+        session.state = SimulationState.PAUSED
+        session.resume_event.clear()
     from app.services.broker_position_events import register as register_position_events
     register_position_events(session, get_position_broker(session), loop)
 
@@ -2366,7 +2435,11 @@ def _emit_tick_and_check_orders_real(
             from app.services.real_trading_day import require_entry_allowed
             from fastapi import HTTPException
             try:
-                require_entry_allowed(session, order.side, order.quantity, order.right, order.strike, order.expiry)
+                if session.trading_style == "swing":
+                    from app.services.swing_portfolio_service import require_entry_allowed as require_swing_entry
+                    require_swing_entry(session, order.side, order.quantity, order.right, order.strike, order.expiry)
+                else:
+                    require_entry_allowed(session, order.side, order.quantity, order.right, order.strike, order.expiry)
             except HTTPException as exc:
                 raise KotakError(str(exc.detail)) from exc
             if order.right and session.instrument_type == "options":
@@ -2733,12 +2806,18 @@ def pause_session(session: SimulationSession) -> None:
     if session.state == SimulationState.RUNNING:
         session.state = SimulationState.PAUSED
         session.resume_event.clear()
+        if session.session_type == 'real':
+            session.real_entries_paused = True
+            _upsert_session_to_db(session, strict=True)
 
 
 def resume_session(session: SimulationSession) -> None:
     if session.state == SimulationState.PAUSED:
         session.state = SimulationState.RUNNING
         session.resume_event.set()
+        if session.session_type == 'real':
+            session.real_entries_paused = False
+            _upsert_session_to_db(session, strict=True)
 
 
 def stop_session(session: SimulationSession, *, preserve_trading_state: bool = False) -> None:
@@ -2765,6 +2844,9 @@ def stop_session(session: SimulationSession, *, preserve_trading_state: bool = F
         current_task = asyncio.current_task()
     except RuntimeError:
         current_task = None
+    funding_task = getattr(session, "real_funding_refresh_task", None)
+    if funding_task and funding_task is not current_task:
+        funding_task.cancel()
     lease_task = getattr(session, "paper_engine_task", None)
     if lease_task:
         if lease_task is not current_task:

@@ -97,11 +97,17 @@ def claim_table(monkeypatch):
         db = boto3.resource('dynamodb', region_name='ap-south-1')
         table = db.create_table(TableName='WalletLedgers', KeySchema=[{'AttributeName':'user_id','KeyType':'HASH'}, {'AttributeName':'ledger_id','KeyType':'RANGE'}],
             AttributeDefinitions=[{'AttributeName':'user_id','AttributeType':'S'}, {'AttributeName':'ledger_id','AttributeType':'S'}], BillingMode='PAY_PER_REQUEST')
-        monkeypatch.setattr(real_sessions, '_table', lambda: table)
+        monkeypatch.setattr('app.services.real_session_slots.table', lambda: table)
+        monkeypatch.setattr('app.services.db.get_dynamodb_resource', lambda: db)
+        client = boto3.client('dynamodb', region_name='ap-south-1')
+        monkeypatch.setattr('app.services.db.get_dynamodb_client', lambda: client)
+        db.create_table(TableName='Sessions', KeySchema=[{'AttributeName': 'session_id', 'KeyType': 'HASH'}], AttributeDefinitions=[{'AttributeName': 'session_id', 'AttributeType': 'S'}], BillingMode='PAY_PER_REQUEST')
+        monkeypatch.setattr(execution_broker, 'get_service', lambda value: SimpleNamespace(is_authenticated=lambda: True, account_identity=lambda: 'account'))
         monkeypatch.setattr('app.services.real_trading_day.market_date', lambda: '2026-10-09')
         monkeypatch.setattr('app.dependencies.require_real_trading_access', lambda user: user)
         monkeypatch.setattr('app.services.user_settings_service.get_settings', lambda *a, **k: {'real_execution_broker': 'kite'})
         monkeypatch.setattr(simulation, '_sessions', {})
+        monkeypatch.setattr(real_sessions, '_ready', True)
         yield table
 
 
@@ -112,22 +118,22 @@ async def test_concurrent_real_starts_share_one_execution_engine(claim_table):
     async def create():
         calls.append('created')
         await asyncio.sleep(.01)
-        session = simulation.SimulationSession('session-1', 'RELIND', request.date, '09:15:00', 1,
-            user_id='u', session_type='real', execution_broker='Kite', state=SimulationState.RUNNING)
+        session = simulation.SimulationSession(real_sessions.prepared_identity(), 'RELIND', request.date, '09:15:00', 1,
+            user_id='u', session_type='real', execution_broker='Kite', broker_account_id='account', state=SimulationState.RUNNING)
         simulation._sessions[session.session_id] = session
         return SimpleNamespace(session_id=session.session_id)
     first, second = await asyncio.gather(real_sessions.start(request, 'u', create), real_sessions.start(request, 'u', create))
-    assert first.session_id == second.session_id == 'session-1'
+    assert first.session_id == second.session_id
     assert calls == ['created']
-    assert real_sessions.active('u')['session_id'] == 'session-1'
+    assert real_sessions.active('u')['session_id'] == first.session_id
     with pytest.raises(Exception, match='Close the active'):
         await real_sessions.start(SimulationStartRequest(symbol='TATPOW', date=request.date, session_type='real'), 'u', create)
 
 
 def test_claim_cannot_be_released_by_a_different_operation(claim_table):
-    real_sessions._claim('u', 'owner')
-    real_sessions._finish('u', 'owner', 's')
-    stale = SimpleNamespace(user_id='u', session_id='s', real_claim_token='stale')
+    real_sessions._claim('u', 'owner', 's', 'kite', 'account')
+    real_sessions._finish('u', 'owner', 's', 'kite', 'account')
+    stale = SimpleNamespace(user_id='u', session_id='s', real_claim_token='stale', execution_broker='kite', broker_account_id='account')
     with pytest.raises(Exception): real_sessions.release(stale)
     assert real_sessions.active('u')['session_id'] == 's'
 
@@ -141,12 +147,13 @@ def test_expired_engine_cannot_route_another_broker_write(monkeypatch):
     assert execution_broker.get_service(stale, allow_expired=True) is broker
 
 
-def test_unknown_submission_is_durable_and_cannot_be_resent(monkeypatch):
+@pytest.mark.parametrize("broker_name", ["Kite", "KotakNeo"])
+def test_unknown_submission_is_durable_and_cannot_be_resent(monkeypatch, broker_name):
     from app.services.broker_order_service import submit_once
     from app.services import order_service
     writes = Mock()
     monkeypatch.setattr(order_service, '_write_order_to_db', writes)
-    session = SimpleNamespace(execution_broker='Kite', broker_account_id='kite-account')
+    session = SimpleNamespace(execution_broker=broker_name, broker_account_id='broker-account')
     pending = order()
     method = Mock(side_effect=TimeoutError('lost ACK'))
     with pytest.raises(TimeoutError): submit_once(session, pending, method, symbol='NIFTY')
@@ -429,3 +436,38 @@ async def test_closure_account_failure_remains_visible_and_pending(monkeypatch):
     assert response['status'] == 'closing' and session.real_closing
     assert any('Broker account changed' in message for message in messages)
     assert session.state == SimulationState.RUNNING
+
+
+def test_kite_recovery_reads_orders_before_positions_without_expired_metadata(monkeypatch):
+    broker, _ = service(monkeypatch)
+    calls = []
+    def read(method):
+        calls.append(method)
+        if method == 'orders':
+            return []
+        return {'net': [{'tradingsymbol': 'NIFTY26SEP25000CE', 'exchange': 'NFO',
+                         'product': 'NRML', 'quantity': 0}]}
+    monkeypatch.setattr(broker, '_read', read)
+    monkeypatch.setattr(broker, '_metadata', Mock(side_effect=AssertionError('Expired metadata is unnecessary')))
+    reports = broker.get_recovery_reports()
+    assert calls == ['orders', 'positions']
+    assert reports['positions'][0]['netQty'] == 0
+    assert reports['positions'][0]['product_known'] is True
+
+
+@pytest.mark.asyncio
+async def test_flat_expired_contract_reconciliation_retains_history_warning(monkeypatch):
+    from app.services.real_recovery import verify
+    broker, _ = service(monkeypatch)
+    monkeypatch.setattr(broker, '_read', lambda method: [] if method == 'orders' else {
+        'net': [{'tradingsymbol': 'NIFTY26SEP25000CE', 'exchange': 'NFO', 'product': 'NRML', 'quantity': 0}]})
+    monkeypatch.setattr(execution_broker, 'get_service', lambda *_: broker)
+    book = SimpleNamespace(session_id='s', user_id='u', execution_broker='kite', trading_style='swing',
+                           symbol='NIFTY', instrument_type='options', real_history_warning='Older fills missing')
+    result = await verify(book)
+    assert result['verified_flat']
+    assert result['history_warning'] == 'Older fills missing'
+    monkeypatch.setattr(broker, '_read', lambda method: [] if method == 'orders' else {
+        'net': [{'tradingsymbol': 'NIFTY26SEP25000CE', 'exchange': 'NFO', 'quantity': 0}]})
+    with pytest.raises(ValueError, match='identity is unavailable'):
+        await verify(book)

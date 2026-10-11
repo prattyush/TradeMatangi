@@ -28,7 +28,7 @@ main/dev promotion remains manual. This document is Sprint 0 and precedes code.
 
 Session capital is a fixed sizing/P&L reference. Actual broker funds remain the
 shared authority for affordability. Maintain separate changing mode balances and
-a shared user/broker/account funding record, not duplicate alarms in each session.
+a shared broker/account funding record, not duplicate alarms in each session.
 Capture initial account reference when the first participating mode starts. The
 later mode uses this starting reference instead of depleted free cash. Combined
 allocations cannot exceed the account allocation reference. Retain the account
@@ -111,9 +111,9 @@ broker credential infrastructure, OCO, auto account-reduction or auto quantity s
 | 0 | Scope, design, decisions, exclusions and verification record | Written |
 | 1 | Catalogue, mappings, search and read-only provider probes | Implemented; authenticated provider probes pending |
 | 2 | Persistent Paper portfolio, contexts, accounting and controls | In progress; basic runtime and controls implemented |
-| 3 | Shared Real funding, imports and manual correction | Funding rules/store tested; broker integration pending |
-| 4 | Kite/Kotak delivery execution, renewal and recovery parity | Product-scoped adapters tested; Real runtime/renewal pending |
-| 5 | Portfolio UI, linked views and funding notifications | Basic Paper controls in both clients; linked views pending |
+| 3 | Shared Real funding, imports and manual correction | Runtime wiring, explicit imports and negative cash correction implemented; live acceptance pending |
+| 4 | Kite/Kotak delivery execution, renewal and recovery parity | Real multi-day journal/runtime and evidenced expiry renewal implemented; authenticated broker acceptance pending |
+| 5 | Portfolio UI, linked views and funding notifications | Paper/Real controls, reconciliation, imports and correction previews in both clients; linked Swing charts pending |
 | 6 | Multi-day Replay and expiry exits | Pending |
 | 7 | Integration, preprod delivery and runtime/native acceptance | Pending |
 
@@ -244,12 +244,10 @@ remains active. When both modes close, the funding period is archived and the ne
 period captures a fresh starting reference. Archive evidence also permits recovery
 if the process stops between period closure and account-owner release.
 
-Working assumption pending the open policy question: one application operator owns
-a centrally shared Real account while either funded mode is active. That operator
-can run both Swing and intraday. The account-owner helper is implemented/tested but
-not yet connected to Real starts. Multiple unrelated users sharing one account and
-capital pool would require a broader allocation model; this assumption can be
-revised if requested.
+Superseded policy: Real ownership is per broker/account/style, not per account
+operator. One Day book and one Swing book may have different application owners.
+A user may occupy all four Kite/Kotak Day/Swing combinations. Each account still
+has one shared funding pool with at most two mode allocations.
 
 Kite/Kotak adapters now accept explicit CNC/NRML products while preserving MIS
 placement defaults. Delivery/overnight views bind products without mutating the
@@ -291,3 +289,229 @@ configuration failures remain**. The account-owner/funding lifecycle focused run
 also passed **20 tests**, and the updated built-client Swing browser check passed
 fractional listed contracts and expiry-specific lot steps. Real activation remains
 pending; these results validate the helpers and existing behavior, not live trading.
+
+
+## Real ownership and outage recovery revision — 2026-10-11 (Sprint 0)
+
+### Decisions and scope
+
+Real only: one occupied slot per authenticated broker account and style (intraday
+or Swing), across all application users. Day and Swing may have different owners.
+One user may run all four Kite Day/Kite Swing/Kotak Day/Kotak Swing combinations;
+there is no two-session user cap. Screens attach to a book and consume no slot.
+Paper/Replay keep existing lifecycle and ownership rules.
+
+Broker settings select the default for new sessions. Running books retain their
+broker/account. Flexible capital shares sum to at most the acknowledged account
+reference: 30/70 is allowed; 100/0 blocks funding a second style until an explicit
+allocation reduction. No automatic sibling resize or duplicate per-user pool.
+Separate personal broker credentials and extra brokers remain excluded.
+
+### Sprint 1: durable slots and recovery
+
+Use WalletLedgers conditional writes/transactions and existing short engine leases,
+without a new lock manager. Persist book identity before broker writes. Slot rows
+carry broker/account/style, owner, identity, lifecycle and engine operation token;
+active discovery reads the four canonical broker/style rows, without a separate user counter. Expired leases permit only the same book's
+recovery, not another user or session's takeover.
+
+Pause, screen detach, logout, server restart and absent runtime objects retain
+logical ownership. Startup adopts legacy active books and restores outstanding
+slots. Conflicts/missing records/account changes remain recovery-required. Retry
+transient authentication/report/storage failures without discarding obligations.
+Reconcile actual orders/fills/positions/funding before permitting new entries;
+never resend lost-ACK orders blindly or manufacture historical fills. Previously
+running books resume after successful reconciliation; saved pauses remain paused.
+Previous-day Day books must reconcile/close before replacement. Swing persists.
+
+Persist closing intent before mutations. Restart continues the already requested
+close. Confirm only the selected book's exposure is resolved, commitments released
+and unknown submissions reconciled, then atomically persist final session/funding
+participant state and free the slot. No age-based cleanup or blind force unlock.
+Stale engines are fenced from broker actions and authoritative session writes.
+
+### Sprint 2: account pool and Real execution
+
+Move funding keys to broker/account scope, with owner and identity per mode.
+Capture reference once; retain closed Day effects while Swing remains active.
+Validate allocations and commitments atomically; selected-owner corrections keep
+sibling references/history unchanged. Confirmed account shortfall blocks entries
+in both modes, never exit/protection/cancellation. Incomplete reports are pending.
+Integrate Real Swing adapters/runtime/recovery and route MIS versus CNC/NRML by
+account/product/app-owned order identity, including same-symbol contexts.
+
+### Sprint 3: client flows and acceptance
+
+Return active Real session lists, selected account style availability and recovery
+status. Accept optional explicit broker on starts; preserve default fallback.
+Website/desktop show broker/style book selection, occupancy, shared funds versus
+selected capital, and reconnect/reconcile/closing/recovery-required status. Users
+can attach/retry/confirm close; private sibling trading history stays owner-only.
+During backend downtime app-managed actions cannot execute; broker-held orders
+may continue. Linked screens do not create extra ownership or funding allocations.
+
+Test all allowed pairs/all four combinations, forbidden duplicate slots across
+users, racing starts/allocations, retries/attaches, pause/detach and lease takeover.
+Inject failure before/after durable creation, broker submission/ACK/fill, closing
+intent and final release. Verify stale engines, overnight/weekend recovery,
+previous-day exposure, external closes, missing reports and credential changes.
+Verify shared 30/70 and 100/0 funding, losses/fees/reservations/corrections, independent
+broker pools, legacy adoption, authorization and unchanged practice modes.
+
+Changes remain on feature/phase21-swing-trading, based on preprod. All PRs target
+preprod; backend deployment/native/live acceptance follow merging there, with
+manual main/dev promotion afterward. Implementation results and remaining work
+must be recorded below; storage helpers alone do not make Real Swing test-ready.
+
+Slot storage uses four canonical broker/style keys, with immutable account identity
+while occupied. A conditional sibling check prevents credential changes from
+starting the other style on a different account. Separate personal broker accounts
+remain deferred. Account funding/history keys retain the actual account identity.
+
+
+### Recovery decision: verified closure and older history
+
+Allow a previous-day Real book to close once successful, scoped broker reports
+confirm zero current exposure and no pending orders, even when local older
+operations remain unresolved. Persist a history warning before releasing ownership;
+preserve archived trades and omit a newly calculated closure P&L. Missing reports
+or any current exposure/pending order still prevent closure. This is a closure
+exception only: it does not authorize entry, recovery resend, or fabricated fills.
+
+Kite per-order `order_history(order_id)` / `order_trades(order_id)` fallbacks are
+deferred by user agreement to keep this implementation simple. These endpoints
+must not be assumed to recover older outages.
+
+
+## Implementation checkpoint — ownership/recovery revision, 2026-10-11
+
+This checkpoint supersedes earlier notes saying shared funding and Real Swing
+runtime were unwired. Work remains on `feature/phase21-swing-trading`, based on
+preprod. No main/dev merge or live order was performed.
+
+### Implemented scope
+
+- Four canonical broker/style ownership rows, shared across users. Each actual
+  broker account is pinned while either style is occupied. Users can own all four
+  allowed broker/style combinations; practice modes keep their previous rules.
+- Durable preparation, conditional claims, renewable existing engine leases and
+  session/funding/slot completion transactions. Outages retain ownership. Missing
+  account identity and conflicting legacy books stay explicitly recoverable.
+- Shared account funding, separate owner/mode references and reservations,
+  explicit allocation edits and account-wide shortfall/pending entry barriers.
+  Pure exits remain available. Real equity Day reservations use the configured
+  MIS margin rate; Swing equity and long options use full purchase value.
+- Real Swing start/attach, CNC/NRML execution, parent engine recovery, durable
+  multi-day execution revisions and FIFO cost basis. Current reports cannot
+  replace older confirmed fills. Delivery holdings/T1 and daily CNC changes are
+  checked against the reconstructed quantity; NRML quantities remain separate
+  from Day MIS. Account funds refresh preserves allocated session capital.
+- Whole-context opening inventory preview/import at the broker's reported basis,
+  before executions have started in that context and with no pending broker
+  orders. Imports create opening lots, not invented trades or a second broker cash
+  debit. Import/funding/metadata changes commit together and retries are checked.
+- Explicit online renewal of remaining long protection only after a terminal
+  broker report identifies the previous DAY attempt as expired. No offline
+  renewal, quantity scaling, unknown-ACK resend or inference from a missing order
+  report. Ambiguous older attempts keep entries blocked for user reconciliation.
+- Website and desktop share Paper/Real portfolio controls, broker selection,
+  allocation editing, entry pause/resume, detach, capital/guardrail reset,
+  import confirmation, cash correction preview and verified closure controls.
+  Changing views/closing the client does not close the backend portfolio.
+- Reconciliation reads authoritative broker reports. Unknown statuses and missing
+  quantities prevent flat verification. Older unavailable history can remain
+  warned while verified-flat closure releases ownership. Current unknown
+  submissions continue to block Swing closure. Archived warnings remain visible.
+
+### Funding and reconciliation decisions
+
+The first cash capture remains immutable audit evidence. Allocation percentages
+use the currently acknowledged account reference; that reference can include
+explicitly imported opening assets. Import adds only the importing mode's asset
+allocation/basis; the sibling's amount is unchanged. References do not grow from
+profits automatically. A sizing-capital reset changes the selected loss-limit
+period without changing funding allocations or erasing a cash discrepancy.
+
+The current cash correction UI acknowledges a confirmed **negative** cash
+shortfall with a reason, a preview and an explicit confirmation. It can cover part
+or all of the gap against free owned Swing funding. The selected allocation and
+reference fall by that acknowledged amount, and its loss-limit reference resets.
+The sibling's allocation and historical trades remain intact; any remaining gap
+blocks new entries in both styles. Missing historical P&L cannot be repaired by
+entering a cash correction. Positive external deposits/extra account-reference
+increases need a separate explicit acknowledgement flow and remain left out.
+
+For older missing executions, users can reconcile current exposure, close it at
+the broker if necessary, verify flat, and close the managed book with its history
+warning intact. A new book may then explicitly import current opening inventory.
+There is no arbitrary historical fill editor. Kite per-order history/trade fallback
+remains deferred by user agreement.
+
+### Verification and items still left out
+
+Focused automated checks cover multi-day buy/holdings/restart, duplicate and
+partial execution reports, history gaps retaining the previous revision, parent
+lease rotation, stale session/funding writers, atomic imports, no fake import
+trades/cash debit, reservation budgets, partial cash correction, evidenced DAY
+protection renewal and verified-flat closure with a retained history warning.
+
+Website and desktop TypeScript/production builds passed. Desktop unit tests:
+184 passed. Browser checks with mocked broker responses passed for Real mode,
+import preview/confirmation and broker reconciliation/verified-close confirmation,
+with no browser errors. This verifies controls, not authenticated broker execution.
+Final backend verification: **2,094 passed, four pre-existing local ICICI
+configuration failures** (missing `[icicidirect]` in local `data/accesskeys.ini`):
+two options-start validation tests and two pattern-logger OHLC tests. No new
+backend failures. Final website/desktop TypeScript and production builds passed;
+desktop unit tests passed again (184). New service modules passed Ruff and
+`git diff --check` passed. Mock browser checks are described above; no live orders
+were sent.
+
+Authenticated Kite/Kotak holdings, partial fills, authorization/refusal, overnight
+DAY expiry and native desktop execution still require preprod deployment and
+user acceptance. Delivery charges use the existing application estimates, not a
+new contract-note accounting engine. Settlement/physical stock-option obligations
+and Real expiry exits remain manual, as previously agreed. Corporate actions,
+expired holdings with unavailable metadata and ambiguous historical attempts can
+require broker intervention; no fictitious exit or P&L is recorded.
+
+Broader original Phase 21 work still includes linked Swing chart/strategy/history
+views (Sprint 5), multi-day Replay (Sprint 6), remaining Paper edge coverage and
+preprod/live/native acceptance (Sprint 7). This ownership/recovery revision does
+not claim completion of those broader sprints.
+
+
+Additional implementation review: funded entry checks read current broker `Net`
+funds once per one-second submission burst, so an outside withdrawal cannot rely
+on an indefinitely stale UI snapshot. Known Day ACK/fill effects schedule a
+bounded reconciliation using existing reports; Swing uses its persistent engine.
+Unknown ACKs retain their pending order and reservation, including resting exits.
+Closed books cannot refresh a newer owner's broker book. Empty Swing portfolios
+can reconcile funding and edit allocations before attaching their first context.
+Mixed holdings/day buy-sell imports verify remaining opening basis from confirmed
+execution evidence rather than applying the old holding average to new purchases.
+
+A new Real funding capture currently requires positive available cash. Starting a
+new holding-only portfolio from a zero-cash account, positive funding/deposit
+acknowledgements and arbitrary historical fill editing remain left out. Existing
+books retain their reconciliation/closure controls if cash falls to zero.
+
+### Final recovery review
+
+Closure verification uses thin current order/position reports, read in that
+order, without requiring old trade reports or metadata for flat expired
+contracts. Missing product identity, malformed quantities and unfamiliar pending
+statuses remain unresolved. Current-day Day closure can use this proof after a
+history refresh failure only when no current submission is unresolved; its
+history warning persists. Kite per-order history remains deferred.
+
+Day and Swing recovery mark shared funding pending before restoring an engine.
+Swing lease renewal runs independently of reconciliation, so slow broker reports
+do not release a book or authorize another owner. Opening inventory records its
+capture boundary so earlier same-day executions are not added twice. Closed
+roots are explicitly marked verified closed and cannot be adopted as legacy
+active books after restart.
+
+Deployment order: merge the reviewed feature branch into **preprod**, deploy the
+backend, then run authenticated website/native acceptance. All further PRs for
+this work target preprod; main/dev promotion remains manual after acceptance.

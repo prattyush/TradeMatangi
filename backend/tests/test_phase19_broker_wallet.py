@@ -152,6 +152,11 @@ async def test_each_real_start_fetches_once_and_preserves_history(branch, overri
     monkeypatch.setattr("app.services.guardrail_service.initialize_guardrails", lambda *args: None)
     existing = None if branch == "new" else {"session_id": "existing-real", "wallet_ledger_id": f"sim:{DATE}"}
     monkeypatch.setattr(simulation, "find_session_by_context", lambda *args: existing)
+    from app.services import real_sessions, swing_funding_store as funding_store
+    monkeypatch.setattr(real_sessions, "recovery_record", lambda: existing)
+    monkeypatch.setattr(real_sessions, "prepared_identity", lambda: "existing-real" if existing else "reserved-real")
+    monkeypatch.setattr(funding_store, "initialize", lambda *args: {"period_id": "test-period"})
+    monkeypatch.setattr(funding_store, "start_participant", lambda *args, **kwargs: {"period_id": "test-period", "funding": {"modes": {"intraday": {"capital": 18000}}}})
     s = session("existing-real")
     s.session_capital, s.wallet_ledger_id = 0, f"sim:{DATE}"
     monkeypatch.setattr(simulation, "get_session", lambda sid: s if branch == "active" else None)

@@ -4,20 +4,22 @@ Uses WalletLedgers. It does not fetch broker data, decide fills or submit orders
 Callers reconcile broker evidence before publishing a funding status.
 """
 
-from copy import deepcopy
-from decimal import Decimal
 import hashlib
 import json
 import time
 import uuid
+from copy import deepcopy
+from decimal import Decimal
+
 from botocore.exceptions import ClientError
 from fastapi import HTTPException
+
 from app.services import swing_accounting as rules
 
 
 def _table():
-    from app.services.wallet_service import _ensure_ledger_table
     from app.services.db import get_dynamodb_resource
+    from app.services.wallet_service import _ensure_ledger_table
 
     _ensure_ledger_table()
     return get_dynamodb_resource().Table("WalletLedgers")
@@ -51,11 +53,16 @@ def key(broker, account):
     return f"funding-active:{name(broker)}:{account}"
 
 
+def partition(broker, account):
+    """Application users share the centrally configured broker account money."""
+    return "real-funding:" + key(broker, account).removeprefix("funding-active:")
+
+
 def read(user, broker, account):
     row = (
         _table()
         .get_item(
-            Key={"user_id": user, "ledger_id": key(broker, account)},
+            Key={"user_id": partition(broker, account), "ledger_id": key(broker, account)},
             ConsistentRead=True,
         )
         .get("Item")
@@ -64,8 +71,12 @@ def read(user, broker, account):
 
 
 def initialize(user, broker, account, reference):
+    existing = read(user, broker, account)
+    if existing and existing.get("state") == "active" and existing.get("participants") and not any(p.get("active") for p in existing["participants"].values()) and not existing["funding"].get("reservations"):
+        finish_period(user, broker, account, existing["period_id"])
     row = {
-        "user_id": user,
+        "user_id": partition(broker, account),
+        "created_by": user,
         "ledger_id": key(broker, account),
         "version": 0,
         "period_id": str(uuid.uuid4()),
@@ -88,21 +99,22 @@ def initialize(user, broker, account, reference):
         return read(user, broker, account)
 
 
-def apply(user, broker, account, period_id, operation_id, kind, payload, mutate):
+def apply(user, broker, account, period_id, operation_id, kind, payload, mutate, *, extra_actions=None):
     """CAS the state and operation receipt together; retries cannot double-charge."""
-    from app.services.db import get_dynamodb_client
     from boto3.dynamodb.types import TypeSerializer
+
+    from app.services.db import get_dynamodb_client
 
     if not operation_id:
         raise ValueError("Funding operation identity is required")
     ledger = key(broker, account)
     fingerprint = hashlib.sha256(
         json.dumps(
-            {"kind": kind, "payload": payload}, sort_keys=True, allow_nan=False
+            {"kind": kind, "payload": payload, "actor_user_id": user}, sort_keys=True, allow_nan=False
         ).encode()
     ).hexdigest()
     receipt = {
-        "user_id": user,
+        "user_id": partition(broker, account),
         "ledger_id": f"funding-op:{period_id}:{hashlib.sha256(operation_id.encode()).hexdigest()}",
     }
     serialize = lambda row: {
@@ -150,7 +162,7 @@ def apply(user, broker, account, period_id, operation_id, kind, payload, mutate)
                             "ConditionExpression": "attribute_not_exists(ledger_id)",
                         }
                     },
-                ]
+                ] + (extra_actions(changed) if extra_actions else [])
             )
             return changed
         except ClientError as exc:
@@ -162,18 +174,43 @@ def apply(user, broker, account, period_id, operation_id, kind, payload, mutate)
     )
 
 
-def start_participant(user, broker, account, period_id, mode, identity, fraction):
+def start_participant(user, broker, account, period_id, mode, identity, fraction, *, session_record_id=None):
+    existing = read(user, broker, account)
+    participant = (existing or {}).get("participants", {}).get(mode)
+    if existing and existing["period_id"] == period_id and participant and participant.get("active") and participant.get("owner_user_id") == user and participant["identity"] == identity:
+        return existing  # Attach/recovery never edits frozen capital.
     def mutate(row):
         if row.get("state", "active") != "active":
             raise HTTPException(409, "Funding period is closed")
         current = row["participants"].get(mode)
-        if current and current.get("active") and current["identity"] != identity:
+        if current and current.get("active") and (current["identity"] != identity or current.get("owner_user_id") != user):
             raise HTTPException(
                 409, "This account mode already has an active participant"
             )
         if mode not in row["funding"]["modes"]:
             row["funding"] = rules.allocate(row["funding"], mode, fraction)
-        row["participants"][mode] = {"identity": identity, "active": True}
+        else:
+            amount = rules.money(row["funding"]["allocation_reference"] * float(fraction))
+            previous = row["funding"]["modes"][mode]
+            reduction = rules.money(previous.get("funding_allocation", previous["capital"]) - amount)
+            if reduction > 0 and reduction > rules.mode_available(row["funding"], mode):
+                raise HTTPException(409, "Requested allocation is below this mode's retained commitments")
+            if amount != previous.get("funding_allocation", previous["capital"]) or amount != previous["capital"]:
+                row["funding"] = rules.correct(row["funding"], mode, amount, 0, "New session allocation", amount)
+        row["participants"][mode] = {"identity": identity, "owner_user_id": user, "active": True, "reconciliation_pending": True, "baseline_balance": row["funding"]["modes"][mode]["expected_balance"], "baseline_realized_pnl": row["funding"]["modes"][mode]["realized_pnl"], "baseline_profit": row["funding"]["modes"][mode]["ignored_profit"]}
+        row["funding_status"] = rules.status(row["funding"], (row.get("funding_status") or {}).get("available", 0), coherent=False)
+
+    def metadata(row):
+        from app.services import real_session_slots as slots
+        return [{"Update": {"TableName": "Sessions",
+            "Key": slots.serialize({"session_id": session_record_id}),
+            "UpdateExpression": "SET real_funding_period = :period, session_capital = :capital",
+            "ConditionExpression": "user_id = :owner AND broker_account_id = :account",
+            "ExpressionAttributeValues": slots.serialize({":period": period_id, ":capital": row["funding"]["modes"][mode]["capital"], ":owner": user, ":account": account})}},
+            {"ConditionCheck": {"TableName": "WalletLedgers", "Key": slots.serialize(slots.key(broker, account, mode)),
+                "ConditionExpression": "owner_user_id = :owner AND session_id = :sid AND #account = :account AND #state <> :closed",
+                "ExpressionAttributeNames": {"#account": "account", "#state": "state"},
+                "ExpressionAttributeValues": slots.serialize({":owner": user, ":sid": identity, ":account": account, ":closed": "closed"})}}]
 
     return apply(
         user,
@@ -182,15 +219,16 @@ def start_participant(user, broker, account, period_id, mode, identity, fraction
         period_id,
         f"participant:{mode}:{identity}:start",
         "participant_start",
-        {"mode": mode, "identity": identity, "fraction": fraction},
+        {"mode": mode, "identity": identity, "fraction": fraction, "owner_user_id": user},
         mutate,
+        extra_actions=metadata if session_record_id else None,
     )
 
 
 def close_participant(user, broker, account, period_id, mode, identity):
     def mutate(row):
         current = row["participants"].get(mode)
-        if not current or current["identity"] != identity:
+        if not current or current["identity"] != identity or current.get("owner_user_id") != user:
             raise HTTPException(409, "Participant identity changed")
         if any(
             ticket["mode"] == mode
@@ -213,8 +251,9 @@ def close_participant(user, broker, account, period_id, mode, identity):
 
 def finish_period(user, broker, account, period_id):
     """Archive capture evidence after both managed participants have safely closed."""
-    from app.services.db import get_dynamodb_client
     from boto3.dynamodb.types import TypeSerializer
+
+    from app.services.db import get_dynamodb_client
 
     row = read(user, broker, account)
     if not row or row["period_id"] != period_id:
@@ -274,3 +313,51 @@ def finish_period(user, broker, account, period_id):
             ) from exc
         raise
     return closed
+
+
+def completion_action(user, broker, account, period_id, mode, identity):
+    """Join verified participant closure to session/slot completion atomically."""
+    from boto3.dynamodb.types import TypeSerializer
+    row = read(user, broker, account)
+    if not row or row['period_id'] != period_id:
+        raise HTTPException(409, 'Funding period changed during closure')
+    participant = row['participants'].get(mode)
+    if not participant or participant.get('owner_user_id') != user or participant['identity'] != identity:
+        raise HTTPException(409, 'Funding participant ownership changed')
+    if any(t['mode'] == mode for t in row['funding'].get('reservations', {}).values()):
+        raise HTTPException(409, 'Funding commitments must be reconciled before closure')
+    changed = deepcopy(row)
+    changed['participants'][mode]['active'] = False
+    changed['version'] += 1
+    return {'Put': {'TableName': 'WalletLedgers', 'Item': {k: TypeSerializer().serialize(v) for k, v in encode(changed).items()},
+        'ConditionExpression': '#version = :old AND period_id = :period', 'ExpressionAttributeNames': {'#version': 'version'},
+        'ExpressionAttributeValues': {':old': {'N': str(row['version'])}, ':period': {'S': period_id}}}}
+
+
+def owned_participant(user, broker, account, mode, identity):
+    row = read(user, broker, account)
+    participant = (row or {}).get('participants', {}).get(mode)
+    if not participant or participant.get('owner_user_id') != user or participant['identity'] != identity or not participant.get('active'):
+        raise HTTPException(409, 'This Real book no longer owns its funding allocation')
+    return row
+
+
+def change_allocation(user, broker, account, mode, identity, fraction, operation_id, *, extra_actions=None):
+    """Explicit owned-mode allocation edit; no automatic sibling resizing."""
+    current = owned_participant(user, broker, account, mode, identity)
+    def mutate(row):
+        participant = row['participants'].get(mode)
+        if not participant or participant.get('owner_user_id') != user or participant['identity'] != identity or not participant.get('active'):
+            raise HTTPException(409, 'Funding ownership changed')
+        fraction_value = float(fraction)
+        if not 0 < fraction_value <= 1:
+            raise ValueError('Allocation must be between zero and 100%')
+        amount = rules.money(row['funding']['allocation_reference'] * fraction_value)
+        previous = row['funding']['modes'][mode]
+        reduction = rules.money(previous.get('funding_allocation', previous['capital']) - amount)
+        if reduction > 0 and reduction > rules.mode_available(row['funding'], mode):
+            raise HTTPException(409, 'Allocation cannot be reduced below committed funds')
+        row['funding'] = rules.correct(row['funding'], mode, amount, 0, 'Explicit allocation edit', amount)
+        participant['baseline_balance'] = rules.money(participant['baseline_balance'] - reduction)
+        participant.pop('snapshot_fingerprint', None)
+    return apply(user, broker, account, current['period_id'], operation_id, 'allocation', {'mode': mode, 'identity': identity, 'fraction': fraction}, mutate, extra_actions=extra_actions)

@@ -43,6 +43,8 @@ class SimulationStartRequest(ContractModel):
     strategy_interval_secs: int = 180  # candle interval for all strategies (180=3min, 300=5min)
     session_type: str = "sim"          # "sim" (historical replay), "paper" (live data), "real" (Kotak live orders), or "stepwise"
     stepwise: bool = False             # stepwise mode: advance one bar per Next Bar press (only valid for session_type="stepwise")
+    execution_broker: Literal["kotak", "kite"] | None = None
+    allocation_pct: float = Field(default=1, gt=0, le=1, allow_inf_nan=False)
     override: bool = False             # if true, delete previous session data for same (symbol, date, type) before starting
     group_id: str | None = None
     session_alias: str | None = Field(default=None, max_length=40)
