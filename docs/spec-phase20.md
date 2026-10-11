@@ -19,7 +19,7 @@ Phase 21 Desktop UI work and new validation are tracked in `spec-phase21.md`.
 
 The shared website/desktop Stats UI now supports a manual finalized Real charges
 bill per owned broker account/trading date in
-[PR #638](https://github.com/prattyush/TradeMatangi/pull/638) (awaiting dev review).
+[PR #638](https://github.com/prattyush/TradeMatangi/pull/638) (merged to dev).
 Corrections apply before FIFO analytics
 and leave raw broker fills and trading wallets unchanged. Paper/Replay/Stepwise
 continue using their calculated fees. Allocation, broker-refresh safeguards,
@@ -1078,8 +1078,12 @@ underlying/CE/PE panes and captured orders/positions/wallet/P&L. Include recordi
 from broker-book aliases without counting their executions twice. Pass the actual
 snapshot session; resolve captured fills only against unique physical evidence with
 matching price and quantity, otherwise show captured-only/Unknown provenance.
-Discard cached boundary/future bars and use captured OHLC when available; preserve
-unknown observation resolution. New recordings retain exact expiry/broker IDs/fees
+Desktop snapshots now retain the event candle: reconstruct its three-minute OHLC
+through the recorded event second from reliable cached second observations, otherwise
+show its full historical candle. Later candles remain excluded. A single captured
+observation is not used as accumulated three-minute OHLC. No precision/fallback
+caption is added. Website snapshot rendering remains unchanged. See the Phase 21
+Desktop snapshot event-candle follow-up for validation. New recordings retain exact expiry/broker IDs/fees
 and available option observations, without rewriting legacy snapshots. Snapshot
 reads paginate; delete-all requires confirmation, retries bounded unprocessed
 batches and reports incomplete deletion. Capture/read/delete ownership is enforced.

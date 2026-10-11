@@ -1105,6 +1105,7 @@ fn valid_analysis_path(path: &str, method: &str) -> bool {
         "sessions" | "round-trips" | "labels" | "entry-tags" | "exit-tags" | "snapshots" | "performance" | "performance/cycles" | "performance/real-fees" |
         "data/historical" | "data/pre-session" | "data/options-historical" | "data/expiry" |
         "pattern/strategies" | "pattern/categories" | "pattern/chart/by-date" | "pattern/ohlc/equity" | "pattern/ohlc/options" => true,
+        _ if route.starts_with("snapshots/") => route.strip_prefix("snapshots/").and_then(|p| p.strip_suffix("/candle")).map(valid_id).unwrap_or(false),
         _ => route.strip_prefix("sessions/").or_else(|| route.strip_prefix("performance/cycles/")).map(valid_id).unwrap_or(false),
     }
 }
@@ -2111,6 +2112,17 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn snapshot_candle_route_is_read_only_and_exact() {
+        assert!(valid_analysis_path("snapshots/event-id/candle?session_id=s&instrument=CE", "GET"));
+        for method in ["POST", "DELETE", "PUT"] {
+            assert!(!valid_analysis_path("snapshots/event-id/candle", method));
+        }
+        for path in ["snapshots/event-id", "snapshots/../candle", "snapshots/event-id/candle/extra", "snapshots/%2e%2e/candle"] {
+            assert!(!valid_analysis_path(path, "GET"));
+        }
+    }
 
     #[test]
     fn real_fee_metadata_routes_are_exact_and_do_not_allow_trading_writes() {

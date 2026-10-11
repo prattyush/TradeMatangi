@@ -253,6 +253,7 @@ function SnapshotDetail({ snapshot }: { snapshot: EventSnapshot }) {
                 <div style={{ flex: 1 }}>
                   <SnapshotChart
                     sessionId={snapshot.session_id} symbol={snapshot.symbol} date={snapshot.date}
+                    snapshotEventId={snapshot.event_id} snapshotEventTime={timestamp}
                     observationResolution={snap.bar_observation_resolution_seconds ?? undefined} barTime={snap.bar_time} barOhlc={snap.bar_ohlc}
                     currentPrice={snap.current_price}
                     openOrders={snap.open_orders}
@@ -265,6 +266,7 @@ function SnapshotDetail({ snapshot }: { snapshot: EventSnapshot }) {
                 <div style={{ flex: 1 }}>
                   <SnapshotOptionsChart
                     sessionId={snapshot.session_id} symbol={snapshot.symbol} date={snapshot.date}
+                    snapshotEventId={snapshot.event_id} snapshotEventTime={timestamp}
                     observationResolution={snap.option_observation_ce?.resolution_seconds ?? undefined} barTime={snap.option_observation_ce?.time ?? snap.bar_time} barOhlc={snap.option_observation_ce?.ohlc ?? null}
                     currentPrice={snap.current_price_ce}
                     position={snap.position_ce}
@@ -278,6 +280,7 @@ function SnapshotDetail({ snapshot }: { snapshot: EventSnapshot }) {
                 <div style={{ flex: 1 }}>
                   <SnapshotOptionsChart
                     sessionId={snapshot.session_id} symbol={snapshot.symbol} date={snapshot.date}
+                    snapshotEventId={snapshot.event_id} snapshotEventTime={timestamp}
                     observationResolution={snap.option_observation_pe?.resolution_seconds ?? undefined} barTime={snap.option_observation_pe?.time ?? snap.bar_time} barOhlc={snap.option_observation_pe?.ohlc ?? null}
                     currentPrice={snap.current_price_pe}
                     position={snap.position_pe}
@@ -300,6 +303,7 @@ function SnapshotDetail({ snapshot }: { snapshot: EventSnapshot }) {
           <div style={{ flex: 1 }}>
             <SnapshotChart
               sessionId={snapshot.session_id} symbol={snapshot.symbol} date={snapshot.date}
+              snapshotEventId={snapshot.event_id} snapshotEventTime={timestamp}
               observationResolution={snap.bar_observation_resolution_seconds ?? undefined} barTime={snap.bar_time} barOhlc={snap.bar_ohlc}
               currentPrice={snap.current_price}
               openOrders={snap.open_orders}

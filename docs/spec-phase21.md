@@ -20,7 +20,8 @@ Desktop chart-price picking, order editing and popup/Stats improvements in
 Real-mode label fix in [PR #634](https://github.com/prattyush/TradeMatangi/pull/634),
 are merged to dev. The Real Analytics finalized-charges follow-up below is
 implemented and validated; [PR #638](https://github.com/prattyush/TradeMatangi/pull/638)
-targets dev and is awaiting review.
+merged to dev (a150002). The Desktop snapshot event-candle follow-up below is
+implemented and validated; its delivery targets dev.
 
 ## Agreed scope and defaults
 
@@ -702,6 +703,48 @@ trading isolation. No unresolved automated-check failures. Packaged Windows
 acceptance remains manual. Deploy the updated backend and website and rebuild the
 desktop client to include the native route allowlist. Main merge/deployment remain
 manual; this follow-up targets dev.
+
+## Desktop snapshot event candle — 2026-10-11
+
+Implemented the event-candle follow-up for Desktop Analysis snapshots. Selecting
+an event displays the three-minute candle containing its recorded market time,
+including underlying/CE/PE tabs. The previous implementation removed the boundary
+candle unless captured OHLC existed; captured OHLC itself could represent only a
+single observation rather than the accumulated three-minute candle.
+
+- Reconstruct from the candle boundary through the event second, inclusively:
+  first open, maximum high, minimum low, and close at that second. Use cached,
+  genuine observed seconds with complete coverage; never treat synthetic gap
+  filling or minute rows as exact second observations.
+- If suitable seconds are absent, retain the full historical event candle. No
+  precision or fallback labels are added. Exclude candles after the event candle.
+  Missing both sources produces the existing chart data-error flow rather than
+  substituting the preceding candle.
+- Keep captured current-price, order and position lines. Ignore stale captured
+  observation boundaries when a valid recorded event timestamp exists. Replay
+  uses its recorded market timestamp, not the wall-clock `event_timestamp`.
+- Add `GET /api/snapshots/{event_id}/candle?session_id=…&instrument=underlying|CE|PE`
+  and the desktop-authenticated equivalent, returning `{candle: OHLC | null}`.
+  Resolve date, symbol and strike/expiry from the saved snapshot. Preserve owner
+  and shared-history read permissions and exact read-only native allowlists.
+- Reconstruction only reads existing Breeze parquet/legacy equity pickle caches;
+  it does not download, migrate files or change recording/trading state. File
+  reads and aggregation run off the event loop. Unexpected errors are logged;
+  desktop falls back to the historical event candle. Event/account changes abort
+  or ignore obsolete replies. Reopening a snapshot keeps its event candle visible.
+
+Validation: **133 related backend tests**, **186 desktop Vitest tests**, **18 native
+Rust unit tests (Linux)** and **43 website Node tests** pass. Both TypeScript and
+production builds pass. `scripts/snapshot-candle-browser-check.mjs` exercises the
+actual shared viewer and desktop KLineCharts: exact OHLC/full fallback, stale
+capture boundaries, underlying/CE/PE, late responses, reconstruction failure,
+keyboard navigation, resize/Fit, price lines, missing event data and close, with
+no page errors. Artifacts: `.cache/snapshot-event-candle/`.
+
+No database migration or website behavior change. Rebuild the desktop client and
+update the backend to apply the feature; an older backend still permits the full
+historical-candle fallback. Packaged Windows acceptance remains manual. Delivery
+PR targets dev; main merge/deployment remain manual.
 
 ## Original requirements
 

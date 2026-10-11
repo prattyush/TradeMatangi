@@ -9,7 +9,7 @@ export function validAnalysisPath(path: string, method: string): boolean {
   if (!route || route.startsWith('/') || route.includes('%') || route.includes('#') || route.includes('\\') || route.split('/').some(p => p === '.' || p === '..')) return false
   if (method === 'POST') return route === 'labels' || route === 'performance/real-fees'
   if (method === 'DELETE') return route === 'snapshots' || route === 'performance/real-fees'
-  return method === 'GET' && /^(sessions(?:\/[A-Za-z0-9_-]+)?|round-trips|labels|entry-tags|exit-tags|snapshots|performance(?:\/real-fees|\/cycles(?:\/[A-Za-z0-9_-]+)?)?|data\/(historical|pre-session|options-historical|expiry)|pattern\/(strategies|categories|chart\/by-date|ohlc\/(equity|options)))$/.test(route)
+  return method === 'GET' && /^(sessions(?:\/[A-Za-z0-9_-]+)?|round-trips|labels|entry-tags|exit-tags|snapshots(?:\/[A-Za-z0-9_-]+\/candle)?|performance(?:\/real-fees|\/cycles(?:\/[A-Za-z0-9_-]+)?)?|data\/(historical|pre-session|options-historical|expiry)|pattern\/(strategies|categories|chart\/by-date|ohlc\/(equity|options)))$/.test(route)
 }
 function awaitNative<T>(promise:Promise<T>,signal?:AbortSignal):Promise<T> {
   if(!signal)return promise
@@ -63,7 +63,7 @@ export function createAnalysisApi(request: AnalysisRequest) {
     } finally { pending.delete(controller); signal?.removeEventListener('abort', abort) }
   }
   const params = (values: Record<string, unknown>) => new URLSearchParams(Object.entries(values).filter(([,v]) => v !== undefined && v !== null && v !== '').map(([k,v]) => [k, String(v)])).toString()
-  type Result<K extends keyof AnalysisApi> = Awaited<ReturnType<AnalysisApi[K]>>
+  type Result<K extends keyof AnalysisApi> = Awaited<ReturnType<NonNullable<AnalysisApi[K]>>>
   const call = <K extends keyof AnalysisApi>(_key: K, path: string, query: Record<string, unknown> = {}, method: 'GET'|'POST'|'DELETE'='GET', body?:unknown):Promise<Result<K>> => {
     const url=`${path}?${params(query)}`
     const load=()=>scopedRequest<Result<K>>(url,method,body)
@@ -90,6 +90,7 @@ export function createAnalysisApi(request: AnalysisRequest) {
     getPreSession: async (symbol,date,time,interval=3) => (await history.get(`pre:${symbol}:${date}:${time}:${interval}`,()=>scopedRequest<{candles: Result<'getPreSession'>}>(`data/pre-session?${params({symbol,trading_date:date,start_time:time,interval_minutes:interval})}`,'GET'))).candles,
     getOptionsHistorical: (symbol,date,strike,expiry,right,interval=3,days=2) => call('getOptionsHistorical','data/options-historical',{symbol,date,strike,expiry,right,interval_minutes:interval,historical_days:days}),
     getExpiry: (symbol,date) => call('getExpiry','data/expiry',{symbol,date}),
+    getSnapshotCandle: (sessionId, eventId, instrument, signal) => scopedRequest(`snapshots/${encodeURIComponent(eventId)}/candle?${params({session_id:sessionId,instrument})}`, 'GET', undefined, signal),
     getSnapshots: id => call('getSnapshots','snapshots',{session_id:id}),
     deleteSnapshots: async id => { await call('deleteSnapshots','snapshots',{session_id:id},'DELETE') },
     patternListStrategies: () => call('patternListStrategies','pattern/strategies'),
