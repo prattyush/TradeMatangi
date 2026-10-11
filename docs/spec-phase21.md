@@ -748,7 +748,7 @@ historical-candle fallback. Packaged Windows acceptance remains manual. Delivery
 [PR #640](https://github.com/prattyush/TradeMatangi/pull/640) merged to dev;
 main merge/deployment remain manual.
 
-## Desktop option marker text — 2026-10-11
+## Desktop option marker text and snapshot navigation — 2026-10-11
 
 CE/PE execution markers now use colored circles without text on desktop trading,
 Analysis, comparison and snapshot charts. Underlying labels retain option-side
@@ -756,9 +756,22 @@ context and grouped counts. Marker colors, exact fill placement, contract filter
 and Analysis click/chooser behavior are unchanged. Pattern annotations and order
 price-line labels remain visible. Website rendering is unchanged.
 
-Validation: 12 focused marker tests and desktop TypeScript/production build pass.
-Tests cover CE/PE Buy/Sell colors, underlying labels, coincident fills, custom
-option labels, exact prices and open/history filtering.
+Snapshot event navigation within the same session/date/contract now keeps the
+existing chart and its zoom. Prior candles and price lines remain while the next
+event loads, then update together. Stable chart identity is separate from event
+identity; the existing loader is reused without resetting the manual price scale.
+The view scrolls only when needed to bring the selected event candle into view.
+A different date or option contract clears the old series, and missing/invalid
+event data still produces a chart error rather than presenting a stale event.
+No backend changes or new caching infrastructure are required for this follow-up.
+
+Validation: **191 desktop Vitest tests**, TypeScript and production build pass.
+The snapshot browser check verifies retained chart instance/zoom, no blank frames
+during delayed navigation, zoom changes during loading, old price lines while
+waiting, distant/earlier events, cancellation, contract tabs, resize/Fit and error
+handling. Marker tests cover CE/PE colors, underlying labels, coincident fills,
+custom option labels, exact prices and open/history filtering. Artifacts:
+`.cache/snapshot-viewport/` and `.cache/option-marker-labels/`.
 [PR #642](https://github.com/prattyush/TradeMatangi/pull/642) targets dev and awaits review.
 
 ## Original requirements

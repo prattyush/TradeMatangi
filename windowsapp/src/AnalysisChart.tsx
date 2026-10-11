@@ -50,9 +50,12 @@ export default function DesktopAnalysisChart(props: Props) {
   const [filter,setFilter]=useState('all'); const [chooser,setChooser]=useState<ExecutionMarker|null>(null)
   const [unavailableSnapshot,setUnavailableSnapshot]=useState<AnalysisTrade|null>(null)
   const barTime=snapshotBarTime(props.snapshotEventTime,props.barTime,props.date)
-  const key=`${props.sessionId??props.trades?.[0]?.session_id??'chart'}:${props.exchange??''}:${props.product??''}:${props.symbol}:${props.date}:${props.right??'underlying'}:${props.strike??''}:${props.expiry??''}:${barTime??''}:${props.snapshotEventId??''}:${props.snapshotEventTime??''}`
-  const keyRef=useRef(key); keyRef.current=key
+  const chartKey=`${props.sessionId??props.trades?.[0]?.session_id??'chart'}:${props.exchange??''}:${props.product??''}:${props.symbol}:${props.date}:${props.right??'underlying'}:${props.strike??''}:${props.expiry??''}`
+  const key=`${chartKey}:${barTime??''}:${props.snapshotEventId??''}:${props.snapshotEventTime??''}`
+  const keyRef=useRef(chartKey); keyRef.current=chartKey
   const loadedKey=useRef<string|null>(null)
+  const loadedEventKey=useRef<string|null>(null)
+  const snapshotPending=barTime!=null&&loadedEventKey.current!==key
   const selectRef=useRef(environment.onSelectExecution); selectRef.current=environment.onSelectExecution
   const generation=useRef(0)
   const restoring=useRef(false)
@@ -72,7 +75,7 @@ export default function DesktopAnalysisChart(props: Props) {
   const trades=resolvedTrades??capturedTrades
   const contract=props.right && props.strike && props.expiry ? {right:props.right,strike:props.strike,expiry:props.expiry,exchange:props.exchange,product:props.product}:undefined
   const markers=analysisMarkers(trades,candles,contract,filter,props.getMarkerText)
-  const markersRef=useRef(markers); markersRef.current=markers
+  const markersRef=useRef(markers); if(!snapshotPending&&(!loading||barTime==null))markersRef.current=markers
   const saveViewport=()=>{ const chart=chartRef.current; if(!chart||!candlesRef.current.length||restoring.current)return; const range=chart.getVisibleRange(); const index=Math.max(0,Math.min(candlesRef.current.length-1,Math.floor((range.from+range.to)/2))); viewports.set(loadedKey.current??keyRef.current,{barSpace:chart.getBarSpace().bar,anchor:candlesRef.current[index].time*1000}); while(viewports.size>32)viewports.delete(viewports.keys().next().value!) }
   useEffect(()=>{
     if(!container.current)return
@@ -101,11 +104,15 @@ export default function DesktopAnalysisChart(props: Props) {
   useEffect(()=>{
     const controller=new AbortController()
     const request=++generation.current; setLoading(true);setError('');setChooser(null)
-    if(loadedKey.current!==key){
-      candlesRef.current=[];setCandles([])
+    const clearCandles=()=>{
+      candlesRef.current=[];setCandles([]);loadedKey.current=null
       chartRef.current?.setDataLoader({getBars:({callback})=>callback([],{forward:false,backward:false})})
     }
-    if(barTime!=null&&(!Number.isFinite(barTime)||barTime<=0)){setError('No captured chart timestamp is available for this snapshot');setLoading(false);return () => controller.abort()}
+    if(loadedKey.current!==chartKey)clearCandles()
+    if(barTime!=null&&(!Number.isFinite(barTime)||barTime<=0)){
+      setError('No captured chart timestamp is available for this snapshot');setLoading(false);loadedEventKey.current=key;clearCandles()
+      return () => controller.abort()
+    }
     void (async()=>{
       let rows:OHLCCandle[]
       if(props.right&&props.strike&&props.expiry) rows=(await api.getOptionsHistorical(props.symbol,props.date,props.strike,props.expiry,props.right,3,Math.max(1,historicalDays))).candles
@@ -125,16 +132,30 @@ export default function DesktopAnalysisChart(props: Props) {
       const sorted=snapshotCandles(rows,barTime,eventCandle&&eventCandle.time===barTime?eventCandle:null)
       if(barTime!=null&&!sorted.some(c=>c.time===barTime))throw new Error('No candle data is available for the selected event')
 
-      loadedKey.current=key;candlesRef.current=sorted;setCandles(sorted);setLoading(false)
       const chart=chartRef.current;if(!chart)return
-      chart.setSymbol({ticker:props.symbol,pricePrecision:2,volumePrecision:0});chart.setPeriod({span:3,type:'minute'})
-      chart.setDataLoader({getBars:({type,callback})=>callback(type==='init'?sorted.map(c=>({timestamp:c.time*1000,open:c.open,high:c.high,low:c.low,close:c.close} satisfies KLineData)):[],{forward:false,backward:false})})
-      requestAnimationFrame(()=>{if(request!==generation.current||chartRef.current!==chart)return; const saved=viewports.get(key);chart.setBarSpace(saved?.barSpace??Math.max(2,(container.current?.clientWidth??800)/Math.min(150,Math.max(1,sorted.length)))); if(saved&&barTime==null)restoreAnchor(chart,saved.anchor);else chart.scrollToRealTime(0)})
-    })().catch(e=>{if(request===generation.current){setError(String(e));setLoading(false)}})
+      const continuing=barTime!=null&&loadedKey.current===chartKey&&candlesRef.current.length>0
+      const range=chart.getVisibleRange()
+      const anchor=candlesRef.current[Math.max(0,Math.min(candlesRef.current.length-1,Math.floor((range.from+range.to)/2)))]?.time
+      const saved=continuing ? {barSpace:chart.getBarSpace().bar,anchor:(anchor??sorted[sorted.length-1].time)*1000} : viewports.get(chartKey)
+      loadedKey.current=chartKey;loadedEventKey.current=key;candlesRef.current=sorted;setCandles(sorted);setLoading(false)
+      if(!continuing){chart.setSymbol({ticker:props.symbol,pricePrecision:2,volumePrecision:0});chart.setPeriod({span:3,type:'minute'})}
+      // Reuse the loader on event changes so KLine also retains a manual price scale.
+      if(continuing)chart.resetData()
+      else chart.setDataLoader({getBars:({type,callback})=>callback(type==='init'?candlesRef.current.map(c=>({timestamp:c.time*1000,open:c.open,high:c.high,low:c.low,close:c.close} satisfies KLineData)):[],{forward:false,backward:false})})
+      requestAnimationFrame(()=>{
+        if(request!==generation.current||chartRef.current!==chart)return
+        chart.setBarSpace(saved?.barSpace??Math.max(2,(container.current?.clientWidth??800)/Math.min(150,Math.max(1,sorted.length))))
+        if(saved&&(continuing||barTime==null))restoreAnchor(chart,saved.anchor);else chart.scrollToRealTime(0)
+        if(barTime!=null){const visible=chart.getVisibleRange();const eventIndex=sorted.length-1;if(eventIndex<visible.from||eventIndex>=visible.to)chart.scrollToRealTime(0)}
+      })
+    })().catch(e=>{if(request===generation.current){
+      setError(String(e));setLoading(false);loadedEventKey.current=key
+      if(barTime!=null)clearCandles()
+    }})
     return () => { controller.abort(); generation.current++ }
   },[api,key,historicalDays,refresh])
   useEffect(()=>{
-    const chart=chartRef.current;if(!chart)return
+    const chart=chartRef.current;if(!chart||snapshotPending||(barTime!=null&&loading))return
     overlays.current.forEach(id=>chart.removeOverlay({id}));overlays.current=[]
     if(!candles.length)return
     for(const marker of markersRef.current){
@@ -159,7 +180,7 @@ export default function DesktopAnalysisChart(props: Props) {
     annotations.sort((a,b)=>a.time-b.time).forEach(a=>{const style=buildMarkers([a],props.activeStrategy??null,props.activeCategory??null,props.topPatterns)[0];const id=chart.createOverlay({name:'analysisAnnotation',lock:true,points:[{timestamp:a.time*1000,value:a.price}],extendData:{color:style?.color??'#fbbf24',text:`${a.type==='entry'?'↑':'↓'} ${style?.text??a.text}`}});if(typeof id==='string')overlays.current.push(id)})
     const levels=[...(props.openOrders??[]).map(order=>({price:order.trigger_price||order.limit_price,text:`${order.side} ${order.order_type} ${order.quantity}`})), ...(props.position?[{price:props.position.avg_entry_price,text:`Captured ${props.position.side} ${props.position.quantity}`}]:[]), ...(props.barTime!=null&&props.currentPrice!=null?[{price:props.currentPrice,text:'Captured current price'}]:[])]
     for(const order of levels){const price=order.price;if(!price||!candles.length)continue;const id=chart.createOverlay({name:'analysisLevel',lock:true,points:[{timestamp:candles[candles.length-1].time*1000,value:price}],extendData:{text:order.text}});if(typeof id==='string')overlays.current.push(id)}
-  },[candles,filter,trades,props.annotations,props.activeStrategy,props.activeCategory,props.topPatterns,props.openOrders,props.position,props.currentPrice])
+  },[candles,loading,snapshotPending,filter,trades,props.annotations,props.activeStrategy,props.activeCategory,props.topPatterns,props.openOrders,props.position,props.currentPrice])
   return <section aria-label={`${props.title??props.right??'Underlying'} chart`} className={`desktop-analysis-chart ${props.isMaximized?'maximized':''}`}>
     <header><strong>{props.title??(props.right?`${props.right} ${props.strike} · ${props.expiry}`:'Underlying')} · 3m · IST</strong>
       {!props.right&&trades.some(t=>t.right)&&<select aria-label="Underlying markers" value={filter} onChange={e=>setFilter(e.target.value)}><option value="all">All</option><option>CE</option><option>PE</option></select>}
