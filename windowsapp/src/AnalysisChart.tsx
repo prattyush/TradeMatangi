@@ -137,17 +137,27 @@ export default function DesktopAnalysisChart(props: Props) {
       const range=chart.getVisibleRange()
       const anchor=candlesRef.current[Math.max(0,Math.min(candlesRef.current.length-1,Math.floor((range.from+range.to)/2)))]?.time
       const saved=continuing ? {barSpace:chart.getBarSpace().bar,anchor:(anchor??sorted[sorted.length-1].time)*1000} : viewports.get(chartKey)
+      const anchorPoint=continuing&&saved ? chart.convertToPixel({timestamp:saved.anchor},{paneId:'candle_pane'}) : undefined
+      const anchorX=anchorPoint&&!Array.isArray(anchorPoint) ? anchorPoint.x : undefined
       loadedKey.current=chartKey;loadedEventKey.current=key;candlesRef.current=sorted;setCandles(sorted);setLoading(false)
       if(!continuing){chart.setSymbol({ticker:props.symbol,pricePrecision:2,volumePrecision:0});chart.setPeriod({span:3,type:'minute'})}
       // Reuse the loader on event changes so KLine also retains a manual price scale.
       if(continuing)chart.resetData()
       else chart.setDataLoader({getBars:({type,callback})=>callback(type==='init'?candlesRef.current.map(c=>({timestamp:c.time*1000,open:c.open,high:c.high,low:c.low,close:c.close} satisfies KLineData)):[],{forward:false,backward:false})})
-      requestAnimationFrame(()=>{
+      const restoreViewport=()=>{
         if(request!==generation.current||chartRef.current!==chart)return
         chart.setBarSpace(saved?.barSpace??Math.max(2,(container.current?.clientWidth??800)/Math.min(150,Math.max(1,sorted.length))))
-        if(saved&&(continuing||barTime==null))restoreAnchor(chart,saved.anchor);else chart.scrollToRealTime(0)
-        if(barTime!=null){const visible=chart.getVisibleRange();const eventIndex=sorted.length-1;if(eventIndex<visible.from||eventIndex>=visible.to)chart.scrollToRealTime(0)}
-      })
+        if(continuing){
+          if(saved&&typeof anchorX==='number'){
+            const point=chart.convertToPixel({timestamp:saved.anchor},{paneId:'candle_pane'})
+            if(!Array.isArray(point)&&typeof point.x==='number')chart.scrollByDistance(anchorX-point.x,0)
+          }
+        } else if(saved&&barTime==null)restoreAnchor(chart,saved.anchor)
+        else chart.scrollToRealTime(0)
+      }
+      // Restore in the same update; a later callback could undo a fresh user pan/zoom.
+      if(continuing)restoreViewport()
+      else requestAnimationFrame(restoreViewport)
     })().catch(e=>{if(request===generation.current){
       setError(String(e));setLoading(false);loadedEventKey.current=key
       if(barTime!=null)clearCandles()

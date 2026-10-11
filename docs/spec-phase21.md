@@ -760,19 +760,44 @@ Snapshot event navigation within the same session/date/contract now keeps the
 existing chart and its zoom. Prior candles and price lines remain while the next
 event loads, then update together. Stable chart identity is separate from event
 identity; the existing loader is reused without resetting the manual price scale.
-The view scrolls only when needed to bring the selected event candle into view.
+The original automatic event scrolling is superseded by the fixed-position
+follow-up below.
 A different date or option contract clears the old series, and missing/invalid
 event data still produces a chart error rather than presenting a stale event.
 No backend changes or new caching infrastructure are required for this follow-up.
 
-Validation: **191 desktop Vitest tests**, TypeScript and production build pass.
+PR #642 validation: **191 desktop Vitest tests**, TypeScript and production build passed.
 The snapshot browser check verifies retained chart instance/zoom, no blank frames
 during delayed navigation, zoom changes during loading, old price lines while
 waiting, distant/earlier events, cancellation, contract tabs, resize/Fit and error
 handling. Marker tests cover CE/PE colors, underlying labels, coincident fills,
 custom option labels, exact prices and open/history filtering. Artifacts:
 `.cache/snapshot-viewport/` and `.cache/option-marker-labels/`.
-[PR #642](https://github.com/prattyush/TradeMatangi/pull/642) targets dev and awaits review.
+[PR #642](https://github.com/prattyush/TradeMatangi/pull/642) merged to dev (194e15d).
+
+## Desktop snapshot fixed chart position — 2026-10-11
+
+Selecting snapshot events now preserves the time axis exactly where the user
+placed it. If 10:15 is centered and zoomed, another 10:15 event or a later 11:15
+event keeps 10:15 at the same screen position. The new event may remain offscreen;
+there is no automatic scroll to the latest candle during same-context navigation.
+
+Capture a candle's timestamp, measured horizontal pixel position and current zoom
+immediately before replacing data. Restore that position in the same synchronous
+update, without approximate re-centering or a delayed callback that could undo a
+fresh pan/zoom. Reuse the existing chart/loader; retain pending-data, price-line,
+manual price-scale, cancellation and error behavior. New dates/contracts retain
+initial positioning; earlier snapshots still exclude future candles and respect
+normal chart scrolling limits. No backend or public API changes.
+
+Validation: desktop TypeScript and production build pass. The actual snapshot
+viewer/KLineCharts browser check asserts position within **one pixel** for repeated
+10:15 events, 10:15 → 11:15 and back, distant events without auto-scroll, and panning
+and zooming during delayed loading. Existing exact/full-candle fallback, contract
+tabs, keyboard navigation, resize/Fit, price lines, no blank frames and data-error
+checks also pass, with no page errors. Artifacts: `.cache/snapshot-fixed-position/`.
+Delivery is a new PR against dev because PR #642 has already merged. Rebuild the
+desktop client to apply; main merge/deployment remain manual.
 
 ## Original requirements
 
