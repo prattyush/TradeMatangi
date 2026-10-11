@@ -35,7 +35,7 @@ const ensureExtensions = () => {
       if (!coordinate || !marker) return []
       return [
         { type: 'circle', attrs: { x: coordinate.x, y: coordinate.y, r: 3 }, styles: { style: 'fill', color: marker.color }, ignoreEvent: true },
-        { type: 'text', attrs: { x: coordinate.x, y: coordinate.y - 6, text: marker.text, align: 'center', baseline: 'bottom' }, styles: { color: marker.color, size: 8, family: 'Inter, system-ui, sans-serif', weight: 'bold' }, ignoreEvent: true },
+        ...(marker.text ? [{ type: 'text', attrs: { x: coordinate.x, y: coordinate.y - 6, text: marker.text, align: 'center', baseline: 'bottom' }, styles: { color: marker.color, size: 8, family: 'Inter, system-ui, sans-serif', weight: 'bold' }, ignoreEvent: true }] : []),
       ]
     },
   })

@@ -13,8 +13,16 @@ describe('desktop trade markers', () => {
       trade({ right: 'CE', strike: 24000 }),
       trade({ trade_id: 't2', right: 'PE', strike: 24000, price: 234.56 }),
     ], { kind: 'option', right: 'CE', strike: 24000 }, 180)).toEqual([
-      { id: 't1', timestamp: 1746522900, price: 123.45, text: 'B', color: '#FFFFFF' },
+      { id: 't1', timestamp: 1746522900, price: 123.45, text: '', color: '#FFFFFF' },
     ])
+  })
+
+  it.each(['CE', 'PE'] as const)('keeps %s buy/sell colors without text', right => {
+    const markers = buildTradeMarkers([
+      trade({ right, strike: 24000 }),
+      trade({ trade_id: 'sell', right, strike: 24000, side: 'SELL' }),
+    ], { kind: 'option', right, strike: 24000 }, 180)
+    expect(markers.map(marker => [marker.color, marker.text])).toEqual([['#FFFFFF', ''], ['#00AAFF', '']])
   })
 
   it('uses website buy/sell colors and labels for underlying option markers', () => {
@@ -38,7 +46,7 @@ describe('desktop trade markers', () => {
       trade({ trade_id: 'closed', right: 'CE', strike: 24000, is_open: false }),
       trade({ trade_id: 'open', right: 'CE', strike: 24000, timestamp: 1746523179, is_open: true }),
     ], { kind: 'option', right: 'CE', strike: 24000 }, 180, false)).toEqual([
-      { id: 'open', timestamp: 1746523080, price: 123.45, text: 'B', color: '#FFFFFF' },
+      { id: 'open', timestamp: 1746523080, price: 123.45, text: '', color: '#FFFFFF' },
     ])
   })
 })

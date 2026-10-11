@@ -14,9 +14,9 @@ export function analysisMarkers(trades: AnalysisTrade[], candles: { time: number
     if (price == null || !Number.isFinite(price) || price <= 0) continue
     const key = `${timestamp}:${price}`
     const buyDirection = !contract && trade.right === 'PE' ? trade.side === 'SELL' : trade.side === 'BUY'
-    const text = getText?.(trade) ?? `${!contract && trade.right ? `${trade.right} ` : ''}${trade.side === 'BUY' ? 'B' : 'S'}`
+    const text = contract ? '' : getText?.(trade) ?? `${!contract && trade.right ? `${trade.right} ` : ''}${trade.side === 'BUY' ? 'B' : 'S'}`
     const current = groups.get(key)
-    if (current) { current.trades.push(trade); current.text = String(current.trades.length); current.approximate ||= approximate }
+    if (current) { current.trades.push(trade); current.text = contract ? '' : String(current.trades.length); current.approximate ||= approximate }
     else groups.set(key, {key, timestamp, price, color: buyDirection ? '#FFFFFF' : '#00AAFF', text, approximate, trades: [trade]})
   }
   for (const group of groups.values()) group.trades.sort((a,b) => (a.execution_sort_time ?? a.timestamp*1e6)-(b.execution_sort_time ?? b.timestamp*1e6) || `${a.session_id}:${a.trade_id}`.localeCompare(`${b.session_id}:${b.trade_id}`))
