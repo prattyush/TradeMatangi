@@ -177,19 +177,32 @@ def fenced_put_many(table_name, items, *, user_id, date, symbol, session_id, tok
 
 def claim_session(user_id, date, symbol):
     """Serialize Paper starts across workers; retain an authoritative session id."""
-    read(user_id, date)
+    from app.services.practice_wallets import read as read_dated
+    from app.services.db import get_dynamodb_client
+    from boto3.dynamodb.types import TypeSerializer
+    record = read_dated(user_id, date, "paper")
+    revision = int(record.get("activity_revision") or 0)
     token = str(uuid.uuid4())
     key = {"user_id": user_id, "ledger_id": f"paper:{date}:session:{symbol}"}
+    encode = lambda row: {k: TypeSerializer().serialize(v) for k, v in row.items()}
     try:
-        result = _table().update_item(Key=key,
-            UpdateExpression="SET claim_token = :token, claim_until = :until",
-            ConditionExpression="(attribute_not_exists(claim_until) OR claim_until < :now) AND (attribute_not_exists(engine_until) OR engine_until < :now)",
-            ExpressionAttributeValues={":token": token, ":until": int(time.time()) + 120, ":now": int(time.time())},
-            ReturnValues="ALL_NEW")
-        return token, result["Attributes"].get("session_id")
+        # Every symbol start shares the wallet revision barrier. Reset no longer
+        # needs to transact once for every possible catalogue symbol.
+        get_dynamodb_client().transact_write_items(TransactItems=[
+            {"Update": {"TableName": "WalletLedgers", "Key": encode({"user_id":user_id,"ledger_id":f"paper:{date}"}),
+                "UpdateExpression":"SET activity_revision = :next",
+                "ConditionExpression":"activity_revision = :old OR (attribute_not_exists(activity_revision) AND :old = :zero)",
+                "ExpressionAttributeValues":encode({":next":revision+1,":old":revision,":zero":0})}},
+            {"Update": {"TableName":"WalletLedgers","Key":encode(key),
+                "UpdateExpression":"SET claim_token = :token, claim_until = :until",
+                "ConditionExpression":"(attribute_not_exists(claim_until) OR claim_until < :now) AND (attribute_not_exists(engine_until) OR engine_until < :now)",
+                "ExpressionAttributeValues":encode({":token":token,":until":int(time.time())+120,":now":int(time.time())})}}
+        ])
+        result = _table().get_item(Key=key, ConsistentRead=True).get('Item', {})
+        return token, result.get('session_id')
     except ClientError as exc:
-        if exc.response["Error"]["Code"] == "ConditionalCheckFailedException":
-            raise HTTPException(status_code=409, detail="A Paper start for this underlying is in progress; retry to attach") from exc
+        if exc.response["Error"]["Code"] in ("ConditionalCheckFailedException", "TransactionCanceledException"):
+            raise HTTPException(status_code=409, detail="Paper start or wallet changed; retry with current funds") from exc
         _failure(exc)
     except Exception as exc:
         _failure(exc)

@@ -122,3 +122,19 @@ SUPPORTED_SYMBOLS: dict[str, dict] = {
         "options_only": False,
     },
 }
+
+
+# Pinned constituent/master snapshot: keep legacy canonical keys and cache names.
+import json as _catalogue_json
+_NIFTY100 = _catalogue_json.loads((Path(__file__).parent / "resources" / "nifty100.json").read_text())["stocks"]
+for _stock in _NIFTY100:
+    _definition = {"display_name": _stock["display_name"], "exchange_code": "NSE",
+        "breeze_stock_code": _stock["breeze_stock_code"], "nse_symbol": _stock["nse_symbol"],
+        "product_type": "cash", "options_only": False, "isin": _stock["isin"]}
+    if _stock["option_eligible"]:
+        _definition.update(options_exchange_code="NFO", strike_interval=_stock.get("strike_interval"))
+        LOT_SIZES.setdefault(_stock["symbol"], _stock["lot_size"])
+    if _stock["symbol"] in SUPPORTED_SYMBOLS:
+        SUPPORTED_SYMBOLS[_stock["symbol"]].update(nse_symbol=_stock["nse_symbol"], isin=_stock["isin"])
+    else:
+        SUPPORTED_SYMBOLS[_stock["symbol"]] = _definition

@@ -1,5 +1,6 @@
 """Kite intraday execution. Writes are sent once; reports resolve uncertain ACKs."""
 from __future__ import annotations
+from app.services.instrument_identity import strike_number
 import csv
 import hashlib
 import math
@@ -178,7 +179,7 @@ class KiteExecutionService:
             quantity=raw.get('quantity', 0), filled_quantity=raw.get('filled_quantity', 0),
             filled_price=raw.get('average_price', 0), limit_price=raw.get('price', 0), trigger_price=raw.get('trigger_price', 0),
             product=raw.get('product', 'MIS'), tag=raw.get('tag'), reject_reason=raw.get('status_message'),
-            order_time=str(raw.get('order_timestamp') or ''), right=right, strike=int(float(meta.get('strike') or 0)) or None,
+            order_time=str(raw.get('order_timestamp') or ''), right=right, strike=strike_number(float(meta.get('strike') or 0)) or None,
             expiry=expiry, instrument_token=meta.get('instrument_token')))
 
     def get_order_history(self):

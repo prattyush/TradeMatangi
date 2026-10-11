@@ -109,11 +109,11 @@ broker credential infrastructure, OCO, auto account-reduction or auto quantity s
 | Sprint | Delivery | Status |
 |---|---|---|
 | 0 | Scope, design, decisions, exclusions and verification record | Written |
-| 1 | Catalogue, mappings, search and read-only provider probes | Pending |
-| 2 | Persistent Paper portfolio, contexts, accounting and controls | Pending |
-| 3 | Shared Real funding, imports and manual correction | Pending |
+| 1 | Catalogue, mappings, search and read-only provider probes | Implemented; authenticated provider probes pending |
+| 2 | Persistent Paper portfolio, contexts, accounting and controls | In progress; basic runtime and controls implemented |
+| 3 | Shared Real funding, imports and manual correction | Funding rules/store tested; broker integration pending |
 | 4 | Kite/Kotak delivery execution, renewal and recovery parity | Pending |
-| 5 | Portfolio UI, linked views and funding notifications | Pending |
+| 5 | Portfolio UI, linked views and funding notifications | Basic Paper controls in both clients; linked views pending |
 | 6 | Multi-day Replay and expiry exits | Pending |
 | 7 | Integration, preprod delivery and runtime/native acceptance | Pending |
 
@@ -125,3 +125,83 @@ withdrawals, partial/full corrections, sibling notices, unchanged quantities,
 capital/guardrail reset and preserved intraday history. Synthetic automation places
 no live orders. Record commands/results and failures; live-broker and native Windows
 acceptance are post-preprod deployment gates, not blockers to code review.
+
+## Implementation checkpoint — 2026-10-11
+
+Work remains on `feature/phase21-swing-trading`, based on preprod. This is a
+partial implementation checkpoint, not completion or live-trading acceptance.
+
+Implemented:
+
+- Official 100-stock snapshot in `backend/app/resources/nifty100.json`, including
+  ISIN and provider aliases. All 100 matched the ICICI public master by ISIN and
+  EQ series; 91 have derivatives metadata in that snapshot. Existing cache keys
+  remain canonical. Website and desktop now share grouped searchable symbols.
+- Fractional strikes survive schemas, history/cache keys, exact broker master
+  matching, database storage and the desktop native historical request. Integer
+  contracts retain their existing key format.
+- Persistent account funding rules and a versioned, idempotent funding store.
+  These are not yet connected to live account reconciliation or intraday starts.
+- Persistent Paper portfolio parent, owned symbol/instrument children, one active
+  portfolio per user/mode, independent multi-day cash and full equity funding.
+  Intraday discovery/accounting no longer adopts Swing children.
+- Current-quote Paper execution, shared portfolio P&L/loss limits, entry pause,
+  capital/guardrail-period reset, explicit order cancellation and confirmed close.
+  Closing waits for quotes; detaching the client leaves the backend running.
+- Backend startup restores active Paper contexts and pending orders. Recorded
+  cash settlements/fills repair missing trade records idempotently after a crash;
+  this does not infer unrecorded offline market executions.
+- Stop-limit exits wait for an executable price after triggering. Overlapping
+  exits cannot create short positions. Paper expiry quotes close the exact option
+  context without flattening unrelated shares. Legacy intraday controls are fenced
+  from stopping or directly trading a portfolio child.
+- Website Swing view and desktop Paper Swing view share basic controls/positions/
+  pending orders. Desktop uses its existing authenticated native request transport.
+  These views currently reconcile snapshots every two seconds; this is not yet
+  the shared streaming chart/linked-screen experience planned in Sprint 5.
+
+Remaining implementation, in dependency order:
+
+1. Finish Paper order ownership and durable DAY-attempt windows, available-history
+   recovery restricted to broker-like exits, online-only renewals, missing-history
+   reconciliation status and expired-contract recovery. Test sparse/non-observed
+   history, stop-limit gaps, crash boundaries and strategy ownership. Validate
+   delivery-specific Paper charges and original/last-known mark presentation.
+2. Connect account funding cohorts/participants to intraday and Swing lifecycle,
+   coherent live broker reports, commitments/settlement and both entry barriers.
+   Add correction preview/audit and one shared warning with sibling notices.
+3. Implement explicit opening inventory imports and delivery/overnight execution
+   for Kite and Kotak. Existing MIS adapters are not suitable for Swing and are
+   not exposed through this new Paper API. Add carry/T1/holding reconciliation,
+   persistent multi-day broker execution journal, DAY renewal and unknown-ACK
+   handling. Real expiry remains manual.
+4. Complete contract metadata/lot selection, trade/history and wallet details,
+   streaming chart attachment, strategies, linked portfolio views and screen
+   detach across both clients. The basic form is not the finished trading UI.
+5. Add the shared multi-day Replay clock/calendar, recovery/expiry parity and
+   linked-screen validation, then review the complete change and raise PRs to
+   preprod. Backend deployment and native/live acceptance follow preprod merge.
+
+Verification so far:
+
+- Full backend checkpoint: **2,016 passed, four failed**. The four match the
+  recorded local ICICI/configuration failures: two options-start validation tests
+  return 503 instead of 400, and two pattern-logger OHLC tests return 500 instead
+  of 200/404. New execution-scope compatibility regressions were corrected;
+  the focused execution/API rerun passed **59 tests**. Subsequent control fences
+  passed **45 focused tests**; full-suite counts precede those final fences.
+- Desktop unit suite: **184 passed**. Website and desktop TypeScript checks and
+  production builds passed; builds retain the existing large-chunk warnings.
+- Built desktop synthetic Swing browser check passed start, full-value reservation,
+  cancellation refund, pause, selected capital reset, detach/reconnect and explicit
+  close confirmation, with no browser errors. It submits no live orders.
+- Earlier catalogue/fractional checks and native replay acceptance passed, including
+  legacy cache identity, provider option identity and linked replay drawing changes.
+- Read-only provider probe: public ICICI mappings verified for all 100; local
+  Kite/Kotak authenticated probes remain **unverified** because this environment
+  lacks the corresponding usable configuration. Mapping success is not evidence
+  of second-level historical coverage.
+
+Ignored logs/screenshots are under `.cache/phase21-swing/`. Keep these remaining
+items visible when preparing the preprod PR; do not mark the whole plan complete
+based on the foundational tests or basic Paper screen.

@@ -1,5 +1,6 @@
 """Normalize broker facts without borrowing contract identity from chart settings."""
 from __future__ import annotations
+from app.services.instrument_identity import strike_number
 import calendar
 import math
 import re
@@ -84,7 +85,7 @@ def normalize_order(raw: dict) -> dict:
         "tag": str(raw.get("GuiOrdId") or raw.get("guiOrderId") or raw.get("guiOrdId") or raw.get("ig") or raw.get("tag") or raw.get("remarks") or raw.get("rmk") or raw.get("userTag") or ""),
         "reject_reason": str(raw.get("rejRsn") or raw.get("rjRsn") or raw.get("rejectionReason") or raw.get("reject_reason") or ""),
         "right": str(raw.get("optTp") or raw.get("right") or "").strip().upper() or None,
-        "strike": int(number(raw.get("stkPrc") or raw.get("strike"))) or None,
+        "strike": strike_number(number(raw.get("stkPrc") or raw.get("strike"))) or None,
         "expiry": expiry_date(raw.get("expDt") or raw.get("expiry")),
         "instrument_token": str(raw.get("tok") or raw.get("instrument_token") or ""),
     }
@@ -117,7 +118,8 @@ def option_base(session):
     if name(session) == 'kite':
         from app.services.kite_service import _KITE_NAMES
         return _KITE_NAMES.get(session.symbol, session.symbol).upper()
-    return "SENSEX" if session.symbol == "BSESEN" else session.symbol.upper()
+    from app.services.kotak_service import _SYMBOL_MAP
+    return _SYMBOL_MAP.get(session.symbol, (session.symbol.upper(), ""))[0].removesuffix("-EQ")
 
 
 def in_scope(session, row: dict) -> bool:
@@ -132,7 +134,7 @@ def in_scope(session, row: dict) -> bool:
             expected = _SYMBOL_MAP.get(session.symbol, (session.symbol, ""))[0].upper()
         return symbol == expected
     base = option_base(session)
-    return bool(re.fullmatch(re.escape(base) + r"\d{2}(?:[1-9OND]\d{2}|[A-Z]{3})\d+(?:CE|PE)", symbol))
+    return bool(re.fullmatch(re.escape(base) + r"\d{2}(?:[1-9OND]\d{2}|[A-Z]{3})\d+(?:\.\d+)?(?:CE|PE)", symbol))
 
 
 def contract(session, row: dict, master=None) -> dict:
@@ -140,19 +142,19 @@ def contract(session, row: dict, master=None) -> dict:
         return {"right": None, "strike": None, "expiry": None}
     symbol = row["symbol"].upper()
     base = option_base(session)
-    weekly = re.fullmatch(re.escape(base) + r"(\d{2})([1-9OND])(\d{2})(\d+)(CE|PE)", symbol)
+    weekly = re.fullmatch(re.escape(base) + r"(\d{2})([1-9OND])(\d{2})(\d+(?:\.\d+)?)(CE|PE)", symbol)
     if weekly:
         year, month, day, strike, right = weekly.groups()
         month_number = {"O": 10, "N": 11, "D": 12}.get(month, int(month) if month.isdigit() else 0)
         expiry = datetime(2000 + int(year), month_number, int(day)).date().isoformat()
-        return {"right": right, "strike": int(strike), "expiry": expiry}
+        return {"right": right, "strike": strike_number(strike), "expiry": expiry}
     metadata = row
     if not metadata.get("expiry") and master:
         metadata = next((r for r in master if str(r.get("symbol", "")).upper() == symbol), row)
-    monthly = re.fullmatch(re.escape(base) + r"(\d{2})([A-Z]{3})(\d+)(CE|PE)", symbol)
+    monthly = re.fullmatch(re.escape(base) + r"(\d{2})([A-Z]{3})(\d+(?:\.\d+)?)(CE|PE)", symbol)
     if monthly and metadata.get("expiry"):
         year, month, strike, right = monthly.groups()
         expiry = expiry_date(metadata["expiry"])
         if expiry and datetime.fromisoformat(expiry).strftime("%y%b").upper() == (year + month):
-            return {"right": right, "strike": int(strike), "expiry": expiry}
+            return {"right": right, "strike": strike_number(strike), "expiry": expiry}
     raise UnknownContractError(f"Cannot resolve exact broker expiry for {symbol}")

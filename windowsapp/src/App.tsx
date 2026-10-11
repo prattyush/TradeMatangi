@@ -1,3 +1,5 @@
+import SwingPortfolioPanel, { type SwingRequest } from '../../shared/SwingPortfolioPanel'
+import { SymbolSearch } from '../../shared/SymbolSearch'
 import { mergeRealTradingDayStatus } from "../../frontend/src/services/realTradingDayState"
 import type { RealTradingDayStatus } from "../../frontend/src/services/api"
 import { useRecording } from "../../shared/useRecording"
@@ -386,7 +388,7 @@ function InstrumentPicker({ initial, lockedTradingDate, referenceTime, sessionId
   const maxMode = draft.kind === 'option' && draft.selection_mode === 'max_price'
   return <div className="modal-backdrop" role="presentation"><section className="instrument-modal" role="dialog" aria-modal="true" aria-label="Select chart instrument"><header><strong>Select instrument</strong><button onClick={onClose}>×</button></header><div className="picker-fields">
     <label>Type<select value={draft.kind} disabled={busy} onChange={event => setDraft({ ...draft, kind: event.target.value as TileConfig['kind'], expiry: '', strike: '' })}><option value="spot">Equity / index</option><option value="option" disabled={!instrument.option_eligible}>Option</option></select></label>
-    <label>Symbol<select aria-label="Symbol" value={draft.symbol} disabled={busy} onChange={event => setDraft({ ...draft, symbol: event.target.value, expiry: '', strike: '' })}>{catalogue.map(item => <option key={item.symbol} value={item.symbol}>{item.display_name}</option>)}</select></label>
+    <label>Symbol<SymbolSearch value={draft.symbol} options={catalogue} disabled={busy} onChange={symbol => setDraft({ ...draft, symbol, kind: draft.kind === 'option' && !catalogue.find(item => item.symbol === symbol)?.option_eligible ? 'spot' : draft.kind, expiry: '', strike: '' })} /></label>
     <label>{lockedTradingDate ? 'Session date' : 'Browse date'}<input type="date" value={draft.tradingDate} disabled={Boolean(lockedTradingDate) || busy} onChange={event => setDraft({ ...draft, tradingDate: event.target.value, expiry: '', strike: '' })} /></label>
     {draft.kind === 'option' && <>
       <label>Expiry<select value={draft.expiry} onChange={event => setDraft({ ...draft, expiry: event.target.value })} disabled={busy || !metadata?.available}>{metadata?.expiries.map(value => <option key={value} value={value}>{value}</option>)}</select></label>
@@ -483,7 +485,7 @@ interface ScreenControllerProps {
 }
 
 export default function App() {
-  const [mainTab, setMainTab] = useState<'Workspace' | 'Analysis'>('Workspace')
+  const [mainTab, setMainTab] = useState<'Workspace' | 'Analysis' | 'Swing'>('Workspace')
   const [analysisVisited, setAnalysisVisited] = useState(false)
   const [analysisContextDays,setAnalysisContextDays] = useState(2)
   const assignedId = new URLSearchParams(window.location.search).get('screen_id')
@@ -521,6 +523,21 @@ export default function App() {
   const connectionRevision = useRef(-1)
   const [browserToken, setBrowserToken] = useState('')
   const [serverUrl, setServerUrl] = useState(() => localStorage.getItem('desktop-server-url') ?? 'http://localhost:8700')
+  const swingRequest = useCallback<SwingRequest>(async <T,>(path: string, method: 'GET' | 'POST', body?: Record<string, unknown>) => {
+    const route = `swing/portfolios${path ? '/' + path : ''}`
+    if ('__TAURI_INTERNALS__' in window) return invoke<T>('desktop_drawing_request', { baseUrl: serverUrl, path: route, method, body: body ?? {} })
+    const response = await fetch(`${serverUrl.replace(/\/$/, '')}/api/desktop/v1/${route}`, {
+      method, headers: { Authorization: `Bearer ${browserToken}`, 'Content-Type': 'application/json' },
+      body: method === 'GET' ? undefined : JSON.stringify(body ?? {})
+    })
+    if (!response.ok) throw new Error((await response.json()).detail ?? `Swing request failed (${response.status})`)
+    return response.json() as Promise<T>
+  }, [serverUrl, browserToken])
+  const swingSymbols = useCallback(async () => {
+    const response = await fetch(`${serverUrl.replace(/\/$/, '')}/api/data/symbols`)
+    if (!response.ok) throw new Error('Cannot load symbols')
+    return (await response.json()).symbols
+  }, [serverUrl])
   useEffect(()=>setAnalysisContextDays(2),[serverUrl,browserToken])
   useEffect(() => {
     if (!('__TAURI_INTERNALS__' in window)) return
@@ -605,11 +622,11 @@ export default function App() {
   const viewSelector = !assignedId && connection !== 'authentication_required' ? <select
     className="desktop-view-select" aria-label="Desktop view" title="Switch between Workspace and Analysis"
     value={mainTab} onChange={event => {
-      const view = event.target.value as 'Workspace' | 'Analysis'
+      const view = event.target.value as 'Workspace' | 'Analysis' | 'Swing'
       if (view === 'Analysis') setAnalysisVisited(true)
       setMainTab(view)
     }}
-  ><option value="Workspace">Workspace</option><option value="Analysis">Analysis</option></select> : null
+  ><option value="Workspace">Workspace</option><option value="Analysis">Analysis</option><option value="Swing">Paper Swing</option></select> : null
   return <div>
     {closeError && <p role="alert">{closeError}</p>}
     {loadFailed && <main role="alert">{loadError && <p>{loadError}</p>}<button onClick={() => setLoadAttempt(value => value + 1)}>Retry loading screens</button></main>}
@@ -619,6 +636,7 @@ export default function App() {
     {ownedScreens.map(screen => <div key={screen.id} style={{ display: mainTab === 'Workspace' && (assignedId || screen.id === visibleId) ? 'contents' : 'none' }}>
       <ScreenController viewSelector={viewSelector} workspaceVisible={Boolean(assignedId)||mainTab==='Workspace'} onAnalysisContextDays={setAnalysisContextDays} registerSave={registerSave} screenId={screen.id} screens={screens} setScreens={setScreens} selectedId={visibleId} selectScreen={selectScreen} loaded={loaded} external={external} assignedId={assignedId} connection={connection} setConnection={setConnection} browserToken={browserToken} setBrowserToken={setBrowserToken} serverUrl={serverUrl} setServerUrl={setServerUrl} />
     </div>)}
+    {!assignedId && mainTab === 'Swing' && connection === 'connected' && <><header>{viewSelector}</header><SwingPortfolioPanel key={`${serverUrl}:${browserToken}`} request={swingRequest} loadSymbols={swingSymbols} onDetach={() => setMainTab('Workspace')} /></>}
     {!assignedId && analysisVisited && connection !== 'authentication_required' && <Suspense fallback={<p role="status">Loading Analysis…</p>}><DesktopAnalysis viewSelector={viewSelector} key={`${serverUrl}:${browserToken}`} baseUrl={serverUrl} token={browserToken} onUnauthorized={analysisUnauthorized} historicalDays={analysisContextDays} active={mainTab === 'Analysis'} onClose={() => setMainTab('Workspace')} /></Suspense>}
   </div>
 }

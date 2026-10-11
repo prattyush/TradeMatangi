@@ -1,8 +1,19 @@
 from __future__ import annotations
 from enum import Enum
-from typing import Literal
+from typing import Literal, get_args
 from pydantic import BaseModel, Field, field_validator, model_validator
 import uuid
+
+
+class ContractModel(BaseModel):
+    @field_validator('strike', 'strike_ce', 'strike_pe', mode='before', check_fields=False)
+    @classmethod
+    def normalize_contract_strike(cls, value, info):
+        annotation = cls.model_fields[info.field_name].annotation
+        if annotation is str or str in get_args(annotation):
+            return value
+        from app.services.instrument_identity import strike_number
+        return strike_number(value)
 
 
 class TradeSide(str, Enum):
@@ -17,17 +28,17 @@ class SimulationState(str, Enum):
     ENDED = "ended"
 
 
-class SimulationStartRequest(BaseModel):
+class SimulationStartRequest(ContractModel):
     symbol: str = "NIFTY"
     date: str
     start_time: str = "09:15:00"
     speed: float = Field(default=1.0, ge=0.05, le=100.0)
     instrument_type: str = "equity"   # "equity" or "options"
-    strike: int | None = None          # ATM/reference strike; required when instrument_type="options"
+    strike: int | float | None = None          # ATM/reference strike; required when instrument_type="options"
     expiry: str | None = None          # YYYY-MM-DD; required when instrument_type="options"
     right: str | None = None           # "CE" or "PE"; required when instrument_type="options"
-    strike_ce: int | None = None       # CE streaming strike (defaults to strike when omitted)
-    strike_pe: int | None = None       # PE streaming strike (defaults to strike when omitted)
+    strike_ce: int | float | None = None       # CE streaming strike (defaults to strike when omitted)
+    strike_pe: int | float | None = None       # PE streaming strike (defaults to strike when omitted)
     brokerage_per_order: float = 1.0   # flat brokerage deducted per trade (user-configurable)
     strategy_interval_secs: int = 180  # candle interval for all strategies (180=3min, 300=5min)
     session_type: str = "sim"          # "sim" (historical replay), "paper" (live data), "real" (Kotak live orders), or "stepwise"
@@ -37,7 +48,9 @@ class SimulationStartRequest(BaseModel):
     session_alias: str | None = Field(default=None, max_length=40)
 
 
-class SimulationStartResponse(BaseModel):
+class SimulationStartResponse(ContractModel):
+    trading_style: str = "intraday"
+    portfolio_id: str | None = None
     execution_broker: str | None = None
     broker_account_id: str | None = None
     session_id: str
@@ -47,11 +60,11 @@ class SimulationStartResponse(BaseModel):
     speed: float
     session_capital: float = 0.0
     instrument_type: str = "equity"
-    strike: int | None = None
+    strike: int | float | None = None
     expiry: str | None = None
     right: str | None = None
-    strike_ce: int | None = None
-    strike_pe: int | None = None
+    strike_ce: int | float | None = None
+    strike_pe: int | float | None = None
     brokerage_per_order: float = 1.0
     session_type: str = "sim"
     state: SimulationState | None = None
@@ -66,7 +79,7 @@ class SimulationStartResponse(BaseModel):
     lot_size: int = 1
 
 
-class SessionGroupMember(BaseModel):
+class SessionGroupMember(ContractModel):
     session_id: str
     symbol: str
     session_type: str
@@ -75,7 +88,7 @@ class SessionGroupMember(BaseModel):
     state: SimulationState | None = None
 
 
-class SessionGroupResponse(BaseModel):
+class SessionGroupResponse(ContractModel):
     group_id: str
     date: str
     clock_family: Literal["sim", "stepwise", "live"]
@@ -86,15 +99,15 @@ class SessionGroupResponse(BaseModel):
     members: list[SessionGroupMember] = []
 
 
-class RenameSessionGroupMemberRequest(BaseModel):
+class RenameSessionGroupMemberRequest(ContractModel):
     session_alias: str | None = Field(default=None, max_length=40)
 
 
-class SimulationControlRequest(BaseModel):
+class SimulationControlRequest(ContractModel):
     session_id: str
 
 
-class SimulationStatusResponse(BaseModel):
+class SimulationStatusResponse(ContractModel):
     session_id: str
     state: SimulationState
     current_time: str | None
@@ -103,7 +116,9 @@ class SimulationStatusResponse(BaseModel):
     date: str
 
 
-class BrokerIdentity(BaseModel):
+class BrokerIdentity(ContractModel):
+    trading_style: Literal["intraday", "swing"] = "intraday"
+    portfolio_id: str | None = None
     execution_broker: str | None = None
     broker_order_id: str | None = None
     broker_account_id: str | None = None
@@ -144,7 +159,7 @@ class Trade(BrokerIdentity):
     timestamp: int
     session_id: str
     instrument_type: str = "equity"
-    strike: int | None = None
+    strike: int | float | None = None
     expiry: str | None = None
     right: str | None = None
     commission: float = 0.0  # computed at record time: exchange charges + brokerage
@@ -157,7 +172,7 @@ class Trade(BrokerIdentity):
     underlying_price: float | None = None  # snapshotted underlying price at fill time
 
 
-class Position(BaseModel):
+class Position(ContractModel):
     symbol: str
     quantity: int
     avg_entry_price: float
@@ -165,13 +180,13 @@ class Position(BaseModel):
     entry_commission: float = 0.0  # sum of commissions for the open lots (FIFO-apportioned)
 
 
-class TradeRequest(BaseModel):
+class TradeRequest(ContractModel):
     session_id: str
     right: str | None = None  # "CE" or "PE" for options sessions; None for equity
     funds_ratio_pct: float | None = None  # 0.0–1.0; when provided, overrides default lot-size quantity
 
 
-class OHLCCandle(BaseModel):
+class OHLCCandle(ContractModel):
     time: int
     open: float
     high: float
@@ -179,13 +194,13 @@ class OHLCCandle(BaseModel):
     close: float
 
 
-class HistoricalDataResponse(BaseModel):
+class HistoricalDataResponse(ContractModel):
     symbol: str
     dates: list[str]
     candles: list[OHLCCandle]
 
 
-class TickEvent(BaseModel):
+class TickEvent(ContractModel):
     type: Literal["tick"] = "tick"
     time: int
     open: float
@@ -195,28 +210,32 @@ class TickEvent(BaseModel):
     right: str | None = None  # "CE" or "PE" for options ticks; None for equity
 
 
-class SessionEvent(BaseModel):
+class SessionEvent(ContractModel):
     type: str
     session_id: str | None = None
     trading_date: str | None = None
     start_time: str | None = None
 
 
-class SymbolInfo(BaseModel):
+class SymbolInfo(ContractModel):
     symbol: str
     display_name: str
+    nse_symbol: str | None = None
+    chart_type: str = "equity"
+    option_eligible: bool = True
+    strike_interval: float | None = None
 
 
-class SymbolsResponse(BaseModel):
+class SymbolsResponse(ContractModel):
     symbols: list[SymbolInfo]
 
 
-class AvailableDatesResponse(BaseModel):
+class AvailableDatesResponse(ContractModel):
     symbol: str
     dates: list[str]
 
 
-class PreSessionDataResponse(BaseModel):
+class PreSessionDataResponse(ContractModel):
     symbol: str
     date: str
     start_time: str
@@ -252,13 +271,14 @@ class Order(BrokerIdentity):
     filled_price: float | None = None
     reserved_amount: float = 0.0  # wallet amount debited on BUY placement; 0 for SELL
     reservation_revision: int = 0
+    stop_triggered_at: int | None = None
     reservation_margin_rate: float = 1.0  # multiplier used to compute reserved_amount
     wallet_ledger_id: str | None = None   # ledger debited for reserved_amount, if ledger-scoped
     wallet_ledger_kind: str | None = None
     is_stoploss: bool = False      # SL orders skip all wallet debit/credit
     is_autostop: bool = False      # internal provenance for AutoStop entry fills
     right: str | None = None       # "CE" or "PE" for options orders; None for equity
-    strike: int | None = None      # options strike price; None for equity
+    strike: int | float | None = None      # options strike price; None for equity
     expiry: str | None = None      # options expiry; None for equity
     exit_allocation_id: str | None = None
     exit_position_side: str | None = None
@@ -305,11 +325,11 @@ class Order(BrokerIdentity):
         return value
 
 
-class SplitOrderRequest(BaseModel):
+class SplitOrderRequest(ContractModel):
     operation_id: str = Field(min_length=1, max_length=100, pattern=r"^[a-zA-Z0-9_-]+$")
 
 
-class PlaceOrderRequest(BaseModel):
+class PlaceOrderRequest(ContractModel):
     market_order: bool = False  # LIMIT used as market-style execution; price resolved server-side
     execute_immediately: bool = False
     session_id: str
@@ -323,7 +343,7 @@ class PlaceOrderRequest(BaseModel):
     risk_ratio_pct: float | None = None  # legacy 0–1 fraction; use risk_pct for new callers
     is_stoploss: bool = False
     right: str | None = None             # "CE" or "PE" for options orders; None for equity
-    strike: int | None = None            # options strike; populated server-side from session when omitted
+    strike: int | float | None = None            # options strike; populated server-side from session when omitted
     expiry: str | None = None            # options expiry; populated server-side from session when omitted
     target_deviation_pct: float = 0.01   # deviation used to compute limit from trigger for TARGET orders
     entry_sl_price: float | None = None  # optional auto-stoploss placed on entry fill
@@ -333,25 +353,25 @@ class PlaceOrderRequest(BaseModel):
     quote_source: str | None = None
 
 
-class UpdateOrderRequest(BaseModel):
+class UpdateOrderRequest(ContractModel):
     trigger_price: float | None = None    # new trigger price (TARGET / STOPLOSS)
     limit_price: float | None = None      # new limit price (LIMIT orders)
     quantity: int | None = Field(default=None, ge=1)  # new quantity for pending STOPLOSS orders
     target_deviation_pct: float = 0.01   # deviation for recomputing TARGET limit from new trigger
 
 
-class ConvertOrderRequest(BaseModel):
+class ConvertOrderRequest(ContractModel):
     session_id: str
     new_order_type: OrderType            # TARGET, LIMIT, or STOPLOSS
     price: float | None = None          # optional: use this price instead of existing order price
 
 
-class UpdatePaneStrikeRequest(BaseModel):
+class UpdatePaneStrikeRequest(ContractModel):
     right: str   # "CE" or "PE"
-    strike: int
+    strike: int | float
 
 
-class OrderFilledEvent(BaseModel):
+class OrderFilledEvent(ContractModel):
     type: Literal["order_filled"] = "order_filled"
     order_id: str
     side: str
@@ -361,20 +381,20 @@ class OrderFilledEvent(BaseModel):
     filled_at: int
 
 
-class PriceAtResponse(BaseModel):
+class PriceAtResponse(ContractModel):
     symbol: str
     date: str
     time: str
     price: float
 
 
-class ExpiryResponse(BaseModel):
+class ExpiryResponse(ContractModel):
     symbol: str
     date: str
     expiry: str
 
 
-class WalletResponse(BaseModel):
+class WalletResponse(ContractModel):
     ledger_kind: str | None = None
     reset_allowed: bool | None = None
     reset_reason: str | None = None
@@ -392,13 +412,13 @@ class WalletResponse(BaseModel):
     margin_rate: float | None = None
 
 
-class WalletResetRequest(BaseModel):
+class WalletResetRequest(ContractModel):
     amount: float = 150_000.0
 
 
 # ── User Settings ─────────────────────────────────────────────────────────────
 
-class UserSettingsResponse(BaseModel):
+class UserSettingsResponse(ContractModel):
     real_execution_broker: Literal["kotak", "kite"] = "kotak"
     brokerage_per_order: float = 1.0
     strategy_interval_secs: Literal[120, 180, 300] = 180
@@ -439,7 +459,7 @@ class UserSettingsResponse(BaseModel):
     stoploss_limit_gap_pct: float = 0.015
 
 
-class UserSettingsUpdateRequest(BaseModel):
+class UserSettingsUpdateRequest(ContractModel):
     real_execution_broker: Literal["kotak", "kite"] | None = None
     brokerage_per_order: float | None = Field(default=None, ge=0, allow_inf_nan=False)
     strategy_interval_secs: Literal[120, 180, 300] | None = None
@@ -491,8 +511,8 @@ class StrategyType(str, Enum):
     UNDERLYING_STOPLOSS = "UnderlyingStoploss"
 
 
-class StartStrategyRequest(BaseModel):
-    strike: int | None = None
+class StartStrategyRequest(ContractModel):
+    strike: int | float | None = None
     expiry: str | None = None
     contract_scope: Literal["exact", "all_right"] = "exact"
     session_id: str
@@ -527,36 +547,36 @@ class StartStrategyRequest(BaseModel):
     underlying_sl_price: float | None = None   # underlying price at which to trigger option SL
 
 
-class UpdateStrategyPriceRequest(BaseModel):
+class UpdateStrategyPriceRequest(ContractModel):
     session_id: str
     price: float
 
 
-class UpdateTargetProfitRequest(BaseModel):
+class UpdateTargetProfitRequest(ContractModel):
     session_id: str
     target_profit_value: float = Field(gt=0)
     target_profit_is_pct: bool = True
 
 
-class UpdateTargetProfitSizeRequest(BaseModel):
+class UpdateTargetProfitSizeRequest(ContractModel):
     session_id: str
     target_profit_size: Literal["full", "half"]
 
 
-class BulkUpdateSLRequest(BaseModel):
+class BulkUpdateSLRequest(ContractModel):
     session_id: str
     trigger_price: float
     right: str | None = None   # "CE" | "PE" | None (equity)
 
 
-class BulkConvertRequest(BaseModel):
+class BulkConvertRequest(ContractModel):
     session_id: str
     new_order_type: OrderType   # TARGET, LIMIT, or STOPLOSS
     right: str | None = None   # "CE" | "PE" | None (equity)
     price: float | None = None
 
 
-class StrategyResponse(BaseModel):
+class StrategyResponse(ContractModel):
     strategy_id: str
     strategy_type: str
     symbol: str
@@ -569,35 +589,35 @@ class StrategyResponse(BaseModel):
     target_profit_is_pct: bool = False
     # Optional desktop contract identity. Legacy and website strategies do not
     # carry these fields, but desktop overlays must not conflate CE/PE strikes.
-    strike: int | None = None
+    strike: int | float | None = None
     expiry: str | None = None
     contract_key: str | None = None
 
 
-class CancelAllStrategiesRequest(BaseModel):
+class CancelAllStrategiesRequest(ContractModel):
     session_id: str
 
 
 # ── Kotak Neo / Real Trading ──────────────────────────────────────────────────
 
-class KotakLoginRequest(BaseModel):
+class KotakLoginRequest(ContractModel):
     totp: str
 
 
-class KotakStatusResponse(BaseModel):
+class KotakStatusResponse(ContractModel):
     authenticated: bool
     broker: str = "KotakNeo"
 
 
-class KotakFundsResponse(BaseModel):
+class KotakFundsResponse(ContractModel):
     balance: float
 
 
-class WhitelistAddRequest(BaseModel):
+class WhitelistAddRequest(ContractModel):
     email: str
 
 
-class WhitelistEntry(BaseModel):
+class WhitelistEntry(ContractModel):
     email: str
     user_id: str | None = None
     added_at: str | None = None
@@ -605,7 +625,7 @@ class WhitelistEntry(BaseModel):
 
 # ── GuardRails ────────────────────────────────────────────────────────────────
 
-class GuardRailSettingsResponse(BaseModel):
+class GuardRailSettingsResponse(ContractModel):
     guardrail_block_bars: int = 3
     guardrail_cooldown_block_bars: int = 3
     guardrail_cooldown_losses: int = 3
@@ -620,7 +640,7 @@ class GuardRailSettingsResponse(BaseModel):
     guardrail_maxsize_value: float = 0.0
 
 
-class GuardRailSettingsUpdateRequest(BaseModel):
+class GuardRailSettingsUpdateRequest(ContractModel):
     guardrail_block_bars: int | None = Field(default=None, ge=0, le=20)
     guardrail_cooldown_block_bars: int | None = Field(default=None, ge=1, le=20)
     guardrail_cooldown_losses: int | None = Field(default=None, ge=1, le=20)
@@ -635,7 +655,7 @@ class GuardRailSettingsUpdateRequest(BaseModel):
     guardrail_maxsize_value: float | None = Field(default=None, ge=0.0)
 
 
-class GuardRailStatusResponse(BaseModel):
+class GuardRailStatusResponse(ContractModel):
     block_active: bool
     block_until_bar: int
     ban_active: bool
@@ -644,5 +664,5 @@ class GuardRailStatusResponse(BaseModel):
     settings: GuardRailSettingsResponse
 
 
-class TriggerBlockRequest(BaseModel):
+class TriggerBlockRequest(ContractModel):
     session_id: str

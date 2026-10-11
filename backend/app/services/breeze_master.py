@@ -20,6 +20,7 @@ Precedence when locating the master:
 """
 from __future__ import annotations
 
+from app.services.instrument_identity import strike_number
 import csv
 import logging
 import urllib.request
@@ -95,7 +96,7 @@ def _normalise_strike(value: object) -> int | None:
         parsed = float(str(value).strip())
     except (TypeError, ValueError):
         return None
-    return int(parsed) if parsed.is_integer() else None
+    return strike_number(parsed)
 
 
 def ensure_security_master_downloaded(exchange_code: str) -> Optional[Path]:
@@ -149,7 +150,7 @@ def ensure_security_master_downloaded(exchange_code: str) -> Optional[Path]:
 def load_breeze_security_master(
     stock_code: str,
     exchange_code: str,
-    strike: int,
+    strike: int | float,
     right: str,
     expiry_breeze: str,
 ) -> dict[str, tuple[int, str]]:
@@ -175,7 +176,7 @@ def load_breeze_security_master(
                     or row.get("Series", "").upper() != "OPTION"
                 ):
                     continue
-                if _normalise_strike(row.get("StrikePrice")) != int(strike):
+                if _normalise_strike(row.get("StrikePrice")) != strike_number(strike):
                     continue
                 if _normalise_expiry(row.get("ExpiryDate")) != _normalise_expiry(expiry_breeze):
                     continue

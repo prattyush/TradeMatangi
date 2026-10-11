@@ -5,6 +5,7 @@ Supports pause/resume via asyncio.Event and speed multiplier.
 """
 from __future__ import annotations
 
+from app.services.instrument_identity import strike_number
 import asyncio
 import json
 import logging
@@ -220,12 +221,14 @@ class SimulationSession:
     session_capital: float = 0.0      # wallet balance snapshotted at session start
     desktop_sizing_settings: Optional[dict] = None  # frozen on first desktop start/attachment
     instrument_type: str = "equity"   # "equity" or "options"
-    strike: Optional[int] = None       # options: ATM/reference strike
+    strike: Optional[int | float] = None       # options: ATM/reference strike
     expiry: Optional[str] = None       # options only (YYYY-MM-DD)
     right: Optional[str] = None        # options only: "CE", "PE", or None (dual-stream)
-    strike_ce: Optional[int] = None    # CE streaming strike (equals strike when offset=0)
-    strike_pe: Optional[int] = None    # PE streaming strike (equals strike when offset=0)
+    strike_ce: Optional[int | float] = None    # CE streaming strike (equals strike when offset=0)
+    strike_pe: Optional[int | float] = None    # PE streaming strike (equals strike when offset=0)
     brokerage_per_order: float = 1.0    # flat brokerage per trade (from session start config)
+    trading_style: str = "intraday"
+    portfolio_id: str | None = None
     real_closing: bool = False
     broker_account_id: str | None = None
     execution_broker: str = "KotakNeo"  # execution identity is independent of market-data source
@@ -290,6 +293,9 @@ class SimulationSession:
     _auto_closed: bool = field(default=False, init=False, repr=False)
 
     def __post_init__(self) -> None:
+        self.strike = strike_number(self.strike)
+        self.strike_ce = strike_number(self.strike_ce)
+        self.strike_pe = strike_number(self.strike_pe)
         self.queue.owner_id = self.session_id
 
 
@@ -325,6 +331,8 @@ def _upsert_session_to_db(session: SimulationSession, *, strict: bool = False) -
             "brokerage_per_order": Decimal(str(session.brokerage_per_order)),
             "instrument_type": session.instrument_type,
             "session_type": session.session_type,
+            "trading_style": session.trading_style,
+            "portfolio_id": session.portfolio_id,
             "execution_broker": session.execution_broker,
             "broker_account_id": session.broker_account_id,
             "real_closing": session.real_closing,
@@ -350,6 +358,7 @@ def _upsert_session_to_db(session: SimulationSession, *, strict: bool = False) -
             item["wallet_ledger_id"] = session.wallet_ledger_id
         if getattr(session, "desktop_contracts", None):
             item["desktop_contracts"] = session.desktop_contracts
+        from app.services.real_broker_state import encode
         if getattr(session, "desktop_origin", None) == "desktop_paper" and getattr(session, "desktop_contract_quotes", None):
             item["desktop_contract_quotes"] = {
                 key: {
@@ -392,6 +401,7 @@ def _upsert_session_to_db(session: SimulationSession, *, strict: bool = False) -
                 item["strike_ce"] = session.strike_ce
             if session.strike_pe is not None:
                 item["strike_pe"] = session.strike_pe
+        item = encode(item)
         if getattr(session, "desktop_origin", None) == "desktop_paper" and getattr(session, "paper_engine_token", None):
             from app.services import paper_wallet
             paper_wallet.fenced_put("Sessions", item, user_id=session.user_id, date=session.date,
@@ -416,11 +426,11 @@ def create_session(
     speed: float,
     user_id: str = FIXED_USER_ID,
     instrument_type: str = "equity",
-    strike: Optional[int] = None,
+    strike: Optional[int | float] = None,
     expiry: Optional[str] = None,
     right: Optional[str] = None,
-    strike_ce: Optional[int] = None,
-    strike_pe: Optional[int] = None,
+    strike_ce: Optional[int | float] = None,
+    strike_pe: Optional[int | float] = None,
     brokerage_per_order: float = 1.0,
     strategy_interval_secs: int = 180,
     session_type: str = "sim",
@@ -431,6 +441,8 @@ def create_session(
     starting_capital: float | None = None,
     execution_broker: str = "KotakNeo",
     broker_account_id: str | None = None,
+    trading_style: str = "intraday",
+    portfolio_id: str | None = None,
 ) -> SimulationSession:
     from app.services import wallet_service
     session_id = str(uuid.uuid4())
@@ -460,6 +472,7 @@ def create_session(
         session_alias=session_alias.strip() if session_alias else None,
         wallet_ledger_id=ledger_id,
         execution_broker=execution_broker, broker_account_id=broker_account_id,
+        trading_style=trading_style, portfolio_id=portfolio_id,
     )
     session.resume_event.set()  # not paused initially
     session.created_at = int(datetime.now(timezone.utc).timestamp() * 1000)
@@ -496,6 +509,7 @@ def find_session_by_context(
             if it.get("symbol") == symbol
             and it.get("date") == date
             and it.get("session_type") == session_type
+            and it.get("trading_style", "intraday") != "swing"
             and (
                 instrument_type is None
                 or it.get("instrument_type") == instrument_type
@@ -537,6 +551,7 @@ def find_all_sessions_by_context(
             if it.get("symbol") == symbol
             and it.get("date") == date
             and it.get("session_type") == session_type
+            and it.get("trading_style", "intraday") != "swing"
             and (
                 instrument_type is None
                 or it.get("instrument_type") == instrument_type
@@ -554,8 +569,8 @@ def find_all_sessions_by_context(
 def rebuild_session_from_db(
     db_record: dict,
     user_id: str,
-    strike_ce: Optional[int] = None,
-    strike_pe: Optional[int] = None,
+    strike_ce: Optional[int | float] = None,
+    strike_pe: Optional[int | float] = None,
     brokerage_per_order: float = 1.0,
     strategy_interval_secs: int = 180,
     starting_capital: float | None = None,
@@ -581,7 +596,7 @@ def rebuild_session_from_db(
     session_type = db_record["session_type"]
     instrument_type = db_record.get("instrument_type", "equity")
     strike_raw = db_record.get("strike")
-    strike = int(strike_raw) if strike_raw is not None else None
+    strike = strike_number(strike_raw) if strike_raw is not None else None
     expiry = db_record.get("expiry")
     right = db_record.get("right")
     created_at = int(db_record.get("created_at", 0))
@@ -589,8 +604,8 @@ def rebuild_session_from_db(
     # Resolve effective CE/PE strikes: caller override > DB-saved > ATM fallback
     db_ce_raw = db_record.get("strike_ce")
     db_pe_raw = db_record.get("strike_pe")
-    effective_ce = strike_ce if strike_ce is not None else (int(db_ce_raw) if db_ce_raw is not None else strike)
-    effective_pe = strike_pe if strike_pe is not None else (int(db_pe_raw) if db_pe_raw is not None else strike)
+    effective_ce = strike_ce if strike_ce is not None else (strike_number(db_ce_raw) if db_ce_raw is not None else strike)
+    effective_pe = strike_pe if strike_pe is not None else (strike_number(db_pe_raw) if db_pe_raw is not None else strike)
 
     ledger_id = db_record.get("wallet_ledger_id") or (f"real:{date}" if session_type == "real" else f"sim:{date}")
     ledger_kind = "paper" if session_type == "paper" else ("real" if session_type == "real" else "sim")
@@ -614,6 +629,7 @@ def rebuild_session_from_db(
         brokerage_per_order=brokerage_per_order,
         strategy_interval_secs=strategy_interval_secs,
         session_type=session_type,
+        trading_style=db_record.get("trading_style", "intraday"), portfolio_id=db_record.get("portfolio_id"),
         stepwise=(session_type == "stepwise"),
         created_at=created_at,
         group_id=db_record.get("group_id"),
@@ -625,7 +641,7 @@ def rebuild_session_from_db(
         real_closing=bool(db_record.get("real_closing", False)),
     )
     session.desktop_contracts = [
-        {**contract, "strike": int(contract["strike"])} if isinstance(contract.get("strike"), Decimal) else contract
+        {**contract, "strike": strike_number(contract["strike"])} if isinstance(contract.get("strike"), Decimal) else contract
         for contract in db_record.get("desktop_contracts", [])
     ]
     session.desktop_contract_quotes = {
@@ -738,6 +754,8 @@ def _auto_close_positions_if_eod(
     tick_right: Optional[str],
 ) -> list[dict]:
     """Check if it's past 15:09 and auto-close any open positions at market price."""
+    if getattr(session, "trading_style", "intraday") == "swing":
+        return []
     from app.services.order_service import place_order, get_open_orders, OrderType
     from app.services.trading import get_position, TradeSide
 
@@ -852,7 +870,7 @@ def subscribe_desktop_option_contract(session: SimulationSession, contract: dict
         session.market_feed_group = FeedGroup(session.paper_stream_source, session.session_type == "real")
     instrument = {"kind": "option", "exchange": SUPPORTED_SYMBOLS[session.symbol]["options_exchange_code"],
                   "underlying": session.symbol, "expiry": contract["expiry"],
-                  "strike": int(contract["strike"]), "right": contract["right"]}
+                  "strike": strike_number(contract["strike"]), "right": contract["right"]}
     async def attach():
         try:
             handle = await get_hub().subscribe(instrument, subscription_id, session.market_feed_group, queue)
@@ -943,7 +961,7 @@ def _emit_tick_and_check_orders(
         for contract in getattr(session, "desktop_contracts", []):
             if (
                 contract.get("right") == tick_right
-                and int(contract.get("strike") or 0) == int(tick_strike or 0)
+                and strike_number(contract.get("strike") or 0) == strike_number(tick_strike or 0)
                 and (contract.get("expiry") or "") == (tick_expiry or "")
             ):
                 tick = {**tick, **contract}
@@ -1234,7 +1252,7 @@ async def _run_session(session: SimulationSession) -> None:
             cur_ce_strike = session.strike_ce or session.strike
             cur_pe_strike = session.strike_pe or session.strike
 
-            def _load_by_time(strike: int, right: str, start_str: str) -> dict:
+            def _load_by_time(strike: int | float, right: str, start_str: str) -> dict:
                 return {t["time"]: t for t in options_iter_ticks(
                     session.symbol, session.date, strike, session.expiry, right, start_str
                 )}
@@ -1563,7 +1581,7 @@ def _historical_gap_ticks(symbol: str, date: str, after_ts: int) -> list[dict]:
 
 
 def _historical_gap_options_ticks(
-    symbol: str, date: str, strike: int, expiry: str, right: str, after_ts: int
+    symbol: str, date: str, strike: int | float, expiry: str, right: str, after_ts: int
 ) -> list[dict]:
     """
     Return configured historical options ticks for timestamps strictly after `after_ts`.

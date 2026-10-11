@@ -1,3 +1,4 @@
+import { SymbolSearch } from '../../../shared/SymbolSearch'
 import { premiumPresetsFor as thresholdValuesFor, withSavedPremium } from '../../../shared/optionPremiumPresets'
 import { useFlashError } from '../hooks/useFlashError'
 import { useState, useEffect, useRef, useCallback, CSSProperties, ReactNode } from 'react'
@@ -213,6 +214,7 @@ export default function SessionControls({
     setStartError(null)
     onSymbolChange(sym)
     if (OPTIONS_ONLY_SYMBOLS.has(sym)) setInstrumentType('options')
+    else if (symbols.find(item => item.symbol === sym)?.option_eligible === false) setInstrumentType('equity')
   }
 
   const getCurrentIstTime = () => {
@@ -238,7 +240,7 @@ export default function SessionControls({
             api.getPriceAt(currentSymbol, currentDate, priceQueryTime, isLiveSession ? 'live' : 'replay'),
             api.getExpiry(currentSymbol, currentDate),
           ])
-          const interval = STRIKE_INTERVALS[currentSymbol] ?? 50
+          const interval = symbols.find(item => item.symbol === currentSymbol)?.strike_interval ?? STRIKE_INTERVALS[currentSymbol] ?? 50
           const atmStrike = Math.round(priceRes.price / interval) * interval
 
           // Check if max-price threshold mode is active (indices only)
@@ -421,17 +423,7 @@ export default function SessionControls({
       <div style={row}>
         <label style={label}>
           Symbol&nbsp;
-          <select
-            value={currentSymbol}
-            onChange={e => handleSymbolChange(e.target.value)}
-            style={selectStyle}
-            disabled={!idle}
-          >
-            {symbols.length === 0
-              ? <option value={currentSymbol}>{currentSymbol}</option>
-              : symbols.map(s => <option key={s.symbol} value={s.symbol}>{s.display_name}</option>)
-            }
-          </select>
+          <SymbolSearch value={currentSymbol} options={symbols} onChange={handleSymbolChange} disabled={!idle} />
         </label>
 
         {/* Instrument type toggle */}
@@ -444,7 +436,8 @@ export default function SessionControls({
             Equity
           </button>
           <button
-            style={toggleBtn(instrumentType === 'options', !idle)}
+            disabled={!idle || symbols.find(item => item.symbol === currentSymbol)?.option_eligible === false}
+            style={toggleBtn(instrumentType === 'options', !idle || symbols.find(item => item.symbol === currentSymbol)?.option_eligible === false)}
             onClick={() => idle && setInstrumentType('options')}
           >
             Options

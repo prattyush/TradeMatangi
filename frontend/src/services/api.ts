@@ -103,6 +103,10 @@ export interface BarCandle {
 export interface SymbolInfo {
   symbol: string
   display_name: string
+  nse_symbol?: string
+  chart_type?: string
+  option_eligible?: boolean
+  strike_interval?: number
 }
 
 export interface ConversionResult { order_id: string; state: string; message?: string | null }

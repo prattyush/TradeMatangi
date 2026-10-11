@@ -742,7 +742,7 @@ async fn desktop_option_historical_page(
     symbol: String,
     trading_date: String,
     expiry: String,
-    strike: u32,
+    strike: f64,
     right: String,
     interval_minutes: u32,
     host: tauri::State<'_, HostState>,

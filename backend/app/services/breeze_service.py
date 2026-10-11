@@ -19,6 +19,7 @@ Usage (primary stream source — paper/real sessions):
 """
 from __future__ import annotations
 
+from app.services.instrument_identity import strike_number
 import asyncio
 import logging
 import threading
@@ -228,7 +229,7 @@ class BreezeStreamManager:
                 scrip_map = self._build_scrip_map(
                     inst["stock_code"],
                     inst["exchange_code"],
-                    int(float(inst["strike_price"])),
+                    strike_number(float(inst["strike_price"])),
                     right_label,
                     expiry_raw,
                 )
@@ -364,7 +365,7 @@ class BreezeStreamManager:
         self,
         stock_code: str,
         exchange_code: str,
-        strike: int,
+        strike: int | float,
         right: str,
         expiry_breeze: str,
     ) -> dict[str, tuple[int, str]]:

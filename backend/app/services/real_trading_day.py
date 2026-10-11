@@ -66,7 +66,7 @@ def finish(user_id, date):
 
 
 def require_entry_allowed(session, side, quantity, right=None, strike=None, expiry=None):
-    if session.session_type != 'real':
+    if session.session_type != 'real' or getattr(session,'trading_style','intraday') == 'swing':
         return
     if getattr(session, 'real_start_preparing', False) and session.state.value == 'idle' and not session.real_closing:
         raise HTTPException(409, 'Real startup is not complete; recover or close the session before trading')
@@ -93,7 +93,7 @@ def require_entry_allowed(session, side, quantity, right=None, strike=None, expi
 
 def sessions_for(user_id):
     from app.services import simulation
-    return [s for s in simulation._sessions.values() if s.user_id == user_id and s.session_type == 'real' and s.date == market_date()]
+    return [s for s in simulation._sessions.values() if s.user_id == user_id and s.session_type == 'real' and getattr(s,'trading_style','intraday') != 'swing' and s.date == market_date()]
 
 
 def unique_books(sessions):

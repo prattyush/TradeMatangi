@@ -1,3 +1,4 @@
+from app.services.instrument_identity import strike_number
 import asyncio
 import logging
 import time
@@ -39,6 +40,7 @@ def _session_response(session, group=None) -> SimulationStartResponse:
         state=session.state, stepwise=session.stepwise,
         execution_broker=session.execution_broker if session.session_type == "real" else None,
         broker_account_id=getattr(session, "broker_account_id", None),
+        trading_style=getattr(session, "trading_style", "intraday"), portfolio_id=getattr(session, "portfolio_id", None),
         total_bars=session.total_bars if session.stepwise else None,
         group_id=session.group_id, clock_family=group.get("clock_family") if group else None,
         group_state=group.get("state") if group else None,
@@ -154,8 +156,8 @@ def _normalise_option_contract_request(req: SimulationStartRequest) -> None:
             if strike is not None
         ]
         has_obvious_cross_symbol_strike = (
-            (req.symbol == "BSESEN" and any(int(strike) < 50000 for strike in requested_strikes)) or
-            (req.symbol == "NIFTY" and any(int(strike) > 50000 for strike in requested_strikes))
+            (req.symbol == "BSESEN" and any(strike_number(strike) < 50000 for strike in requested_strikes)) or
+            (req.symbol == "NIFTY" and any(strike_number(strike) > 50000 for strike in requested_strikes))
         )
 
         # Historical sim/stepwise sessions must have the selected symbol/date
@@ -184,7 +186,7 @@ def _normalise_option_contract_request(req: SimulationStartRequest) -> None:
 
         ce = req.strike_ce if req.strike_ce is not None else req.strike
         pe = req.strike_pe if req.strike_pe is not None else req.strike
-        stale = has_obvious_cross_symbol_strike or any(abs(int(strike) - atm) > max_distance for strike in (req.strike, ce, pe) if strike is not None)
+        stale = has_obvious_cross_symbol_strike or any(abs(strike_number(strike) - atm) > max_distance for strike in (req.strike, ce, pe) if strike is not None)
         if stale:
             logger.warning(
                 "start_simulation: correcting stale option strikes for %s %s underlying=%.2f atm=%s strike=%s ce=%s pe=%s",
@@ -225,7 +227,7 @@ def _ensure_session_data(symbol: str, date: str) -> None:
 
 
 def _ensure_options_data(
-    symbol: str, date: str, strike: int, expiry: str, right: str
+    symbol: str, date: str, strike: int | float, expiry: str, right: str
 ) -> None:
     """Validate options params and ensure options data is cached."""
     logger.info("start_simulation: fetching options data %s %s %s %s %s", symbol, date, strike, expiry, right)
@@ -274,7 +276,7 @@ async def start_with_paper_claim(req, user_id, *, desktop_independent=False, res
         req.date = group["date"]
     active = next((session for session in sim_svc._sessions.values()
         if session.user_id == user_id and session.date == req.date and session.symbol == req.symbol
-        and session.session_type == "paper" and session.state != SimulationState.ENDED), None)
+        and session.session_type == "paper" and getattr(session,"trading_style","intraday") != "swing" and session.state != SimulationState.ENDED), None)
     if active:
         if active.instrument_type != req.instrument_type:
             raise HTTPException(status_code=409, detail=f"Existing Paper session {active.session_id} has a different anchor; attach a compatible screen")
@@ -727,6 +729,8 @@ async def pause_simulation(req: SimulationControlRequest, user_id: str = Depends
         raise HTTPException(status_code=404, detail="Session not found")
     if session.user_id != user_id:
         raise HTTPException(status_code=403, detail="Session does not belong to this user")
+    if getattr(session, "trading_style", "intraday") == "swing":
+        raise HTTPException(409, "Use portfolio pause/resume or confirmed closure for Swing")
     if session.group_id:
         return await pause_group(session.group_id, user_id)
     sim_svc.pause_session(session)
@@ -740,6 +744,8 @@ async def resume_simulation(req: SimulationControlRequest, user_id: str = Depend
         raise HTTPException(status_code=404, detail="Session not found")
     if session.user_id != user_id:
         raise HTTPException(status_code=403, detail="Session does not belong to this user")
+    if getattr(session, "trading_style", "intraday") == "swing":
+        raise HTTPException(409, "Use portfolio pause/resume or confirmed closure for Swing")
     if session.group_id:
         return await resume_group(session.group_id, user_id)
     sim_svc.resume_session(session)
@@ -859,6 +865,8 @@ async def stop_simulation(req: SimulationControlRequest, user_id: str = Depends(
         return {"status": "stopped"}
     if session.user_id != user_id:
         raise HTTPException(status_code=403, detail="Session does not belong to this user")
+    if getattr(session, "trading_style", "intraday") == "swing":
+        raise HTTPException(409, "Use portfolio pause/resume or confirmed closure for Swing")
     if session.session_type == "real":
         from app.services.real_close import close
         return await close(session)

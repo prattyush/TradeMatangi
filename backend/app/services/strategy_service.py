@@ -21,6 +21,7 @@ Cross-process cancellation:
 """
 from __future__ import annotations
 
+from app.services.instrument_identity import strike_number
 from app.services.execution_analytics import strategy_context
 
 import logging
@@ -40,7 +41,7 @@ _TICK_SIZE = 0.05  # NSE/BSE minimum price increment
 def _session_strike(session, tick_right: str | None, strategy=None) -> int | None:
     """Return the correct strike for the given tick right, using per-right strike when available."""
     if tick_right and strategy and strategy.metadata.get("desktop_strike") is not None:
-        return int(strategy.metadata["desktop_strike"])
+        return strike_number(strategy.metadata["desktop_strike"])
     if tick_right == "CE":
         return getattr(session, "strike_ce", None) or getattr(session, "strike", None)
     if tick_right == "PE":
@@ -814,7 +815,7 @@ def _find_open_exit_orders(session_id: str, exit_side, tick_right: str | None, s
     return [
         o for o in get_open_orders(session_id)
         if o.side == exit_side and o.right == tick_right
-        and (not strategy or strategy.metadata.get("desktop_strike") is None or (o.strike == int(strategy.metadata["desktop_strike"]) and o.expiry == strategy.metadata.get("desktop_expiry")))
+        and (not strategy or strategy.metadata.get("desktop_strike") is None or (o.strike == strike_number(strategy.metadata["desktop_strike"]) and o.expiry == strategy.metadata.get("desktop_expiry")))
     ]
 
 

@@ -73,7 +73,7 @@ def _is_monthly_expiry(expiry_dt: date, symbol: str) -> bool:
     return (expiry_dt + timedelta(days=7)).month != expiry_dt.month
 
 
-def _build_options_trading_symbol(base: str, expiry: str, strike: int, right: str, symbol: str) -> str:
+def _build_options_trading_symbol(base: str, expiry: str, strike: int | float, right: str, symbol: str) -> str:
     """
     Construct the Kotak / NSE-BSE options trading symbol string.
 
@@ -305,7 +305,7 @@ def fetch_kotak_equity_instrument_token(symbol: str, *, client=None) -> tuple[st
 def fetch_kotak_options_instrument_token(
     symbol: str,
     expiry: str,
-    strike: int,
+    strike: int | float,
     right: str,
     *, client=None,
 ) -> tuple[str, str]:
@@ -387,6 +387,9 @@ _SYMBOL_MAP: dict[str, tuple[str, str]] = {
     "RELIND": ("RELIANCE-EQ",    "nse_cm"),
 }
 
+
+from app.config import SUPPORTED_SYMBOLS as _catalogue
+_SYMBOL_MAP.update({key: (value["nse_symbol"] + "-EQ", "nse_cm") for key, value in _catalogue.items() if value.get("nse_symbol")})
 
 # ---------------------------------------------------------------------------
 # Main service class
@@ -578,7 +581,7 @@ class KotakNeoService:
         self,
         symbol: str,
         right: str,     # "CE" or "PE"
-        strike: int,
+        strike: int | float,
         expiry: str,    # "YYYY-MM-DD"
         side: str,      # "B" or "S"
         qty: int,
@@ -613,7 +616,7 @@ class KotakNeoService:
         self,
         symbol: str,
         right: str,     # "CE" or "PE"
-        strike: int,
+        strike: int | float,
         expiry: str,    # "YYYY-MM-DD"
         side: str,      # "B" or "S"
         qty: int,
@@ -1128,7 +1131,7 @@ class KotakNeoService:
 
     # ── Helpers ───────────────────────────────────────────────────────────────
 
-    def _resolve_options_symbol(self, symbol: str, right: str, strike: int, expiry: str) -> tuple[str, str]:
+    def _resolve_options_symbol(self, symbol: str, right: str, strike: int | float, expiry: str) -> tuple[str, str]:
         """Return (kotak_trading_symbol, exchange_segment) for an options contract."""
         from app.config import SUPPORTED_SYMBOLS
         if symbol == "NIFTY":

@@ -1,3 +1,4 @@
+from app.services.instrument_identity import strike_number
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -24,7 +25,7 @@ class SessionSummary(BaseModel):
     start_time: str | None = None
     instrument_type: str = "equity"
     session_type: str = "sim"
-    strike: int | None = None
+    strike: int | float | None = None
     expiry: str | None = None
     session_capital: float = 0.0
     net_pnl: float = 0.0
@@ -58,7 +59,7 @@ class TradeSummary(BaseModel):
     timestamp: int
     instrument_type: str = "equity"
     right: str | None = None
-    strike: int | None = None
+    strike: int | float | None = None
     expiry: str | None = None
     commission: float = 0.0
     underlying_price: float | None = None
@@ -184,7 +185,7 @@ async def get_ohlc_context(
     entry_ts: int = Query(...),
     exit_ts: int | None = Query(default=None),
     right: str | None = Query(default=None),
-    strike: int | None = Query(default=None),
+    strike: int | float | None = Query(default=None),
     expiry: str | None = Query(default=None),
     pre_bars: int = Query(default=6, ge=1, le=20),
     post_bars: int = Query(default=3, ge=1, le=10),
@@ -207,7 +208,7 @@ async def get_ohlc_context(
     if is_options:
         try:
             from app.services.options_service import fetch_options_historical
-            fetch_options_historical(symbol, date, int(strike), expiry, right)
+            fetch_options_historical(symbol, date, strike_number(strike), expiry, right)
         except Exception as exc:
             logger.warning("ohlc-context: options Breeze fetch failed %s %s %s %s %s: %s",
                            symbol, date, right, strike, expiry, exc)
@@ -220,7 +221,7 @@ async def get_ohlc_context(
 
     try:
         if is_options:
-            df = load_options_dataframe(symbol, date, int(strike), expiry, right)
+            df = load_options_dataframe(symbol, date, strike_number(strike), expiry, right)
         else:
             df = load_dataframe(symbol, date)
     except FileNotFoundError as exc:

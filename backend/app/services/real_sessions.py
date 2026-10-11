@@ -59,7 +59,7 @@ async def start(req, user_id, create):
     async with lock:
         chosen = execution_broker.name((await asyncio.to_thread(user_settings_service.get_settings, user_id, strict=True))['real_execution_broker'])
         # Existing live objects also fence legacy sessions predating the durable slot.
-        runtime = next((s for s in simulation._sessions.values() if s.user_id == user_id and s.session_type == 'real'
+        runtime = next((s for s in simulation._sessions.values() if s.user_id == user_id and s.session_type == 'real' and getattr(s,'trading_style','intraday') != 'swing'
                         and s.state != simulation.SimulationState.ENDED), None)
         slot = await asyncio.to_thread(active, user_id)
         if runtime:
@@ -118,7 +118,7 @@ async def start(req, user_id, create):
             return response
         except Exception:
             # Keep an engine that actually started fenced even if its final write failed.
-            live = next((s for s in simulation._sessions.values() if s.user_id == user_id and s.session_type == 'real'
+            live = next((s for s in simulation._sessions.values() if s.user_id == user_id and s.session_type == 'real' and getattr(s,'trading_style','intraday') != 'swing'
                          and s.state != simulation.SimulationState.ENDED), None)
             if live:
                 if not getattr(live, 'real_active_claim', False):

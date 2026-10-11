@@ -1,5 +1,6 @@
 """Execution-based performance analysis, independent of labels and order display rows."""
 
+from app.services.instrument_identity import strike_number
 from app.services.broker_reports import order_id as broker_report_id
 from collections import defaultdict, deque
 from copy import deepcopy
@@ -32,7 +33,7 @@ def _identity(session, row):
         row.get("broker_exchange") or row.get("exchange") or "",
         (row.get("product") or row.get("broker_product") or "MIS").upper(),
         row.get("right"),
-        int(strike) if strike is not None else None,
+        strike_number(strike) if strike is not None else None,
         row.get("expiry"),
     )
 

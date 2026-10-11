@@ -191,7 +191,8 @@ def test_paper_start_racing_reset_cannot_be_adopted_after_reset(db, monkeypatch)
     seed(db, "paper", DATE, 100000)
     original = __import__('app.services.db', fromlist=['get_dynamodb_client']).get_dynamodb_client()
     def transaction(**params):
-        token, _ = paper_wallet.claim_session(USER, DATE, "NIFTY")
+        if len(params["TransactItems"]) == 1:
+            paper_wallet.claim_session(USER, DATE, "NIFTY")
         original.transact_write_items(**params)
     monkeypatch.setattr("app.services.db.get_dynamodb_client", lambda: type("Client", (), {"transact_write_items": staticmethod(transaction)})())
     with pytest.raises(HTTPException) as error:
@@ -352,3 +353,26 @@ def test_delayed_balance_read_cannot_undo_a_replay_order_debit(db, monkeypatch):
     assert wallets.read(USER, DATE, "sim")["current_balance"] == 150000
     assert real_table.get_item(Key={"user_id": USER, "ledger_id": ledger})["Item"]["current_balance"] == 143500
     assert wallet_service.get_ledger_balance(USER, DATE, ledger) == 143500
+
+
+def test_large_catalogue_reset_does_not_exceed_transaction_limit(db, monkeypatch):
+    from app import config
+    monkeypatch.setattr(config, 'SUPPORTED_SYMBOLS', {f'STOCK{i}': {} for i in range(150)})
+    for symbol in config.SUPPORTED_SYMBOLS:
+        db.Table('WalletLedgers').put_item(Item={'user_id':USER,'ledger_id':f'paper:{DATE}:session:{symbol}'})
+    seed(db, 'paper', DATE, 100000)
+    assert wallets.reset(USER, DATE, 'paper', 250000) == 250000
+    assert paper_wallet.balance(USER, DATE) == 250000
+
+
+def test_paper_start_revision_fences_reset_without_enumerating_new_symbol(db):
+    seed(db, 'paper', DATE, 100000)
+    before = wallets.read(USER, DATE, 'paper')
+    token, _ = paper_wallet.claim_session(USER, DATE, 'HDFCBANK')
+    after = wallets.read(USER, DATE, 'paper')
+    assert after['activity_revision'] == int(before.get('activity_revision') or 0) + 1
+    with pytest.raises(HTTPException) as error:
+        wallets.reset(USER, DATE, 'paper', 250000)
+    assert error.value.status_code == 409
+    paper_wallet.finish_session_claim(USER, DATE, 'HDFCBANK', token)
+    assert wallets.reset(USER, DATE, 'paper', 250000) == 250000

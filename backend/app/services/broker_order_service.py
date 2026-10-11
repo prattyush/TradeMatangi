@@ -364,6 +364,8 @@ def submit_once(session, order, method, **kwargs):
     """Persist Kite intent before sending a write; uncertainty is never a retry."""
     from app.services.execution_broker import name
     from app.services.kotak_service import KotakError, KotakOrderRejected
+    order.trading_style = getattr(session, 'trading_style', 'intraday')
+    order.portfolio_id = getattr(session, 'portfolio_id', None)
     order.execution_broker = name(session)
     order.broker_account_id = getattr(session, 'broker_account_id', None)
     if name(session) != 'kite':
