@@ -904,8 +904,9 @@ read-only preview, empty-session desktop/website resume after reset, zero and
 invalid legacy values, Real frozen daily balances, and unchanged Replay/Stepwise
 capital rules. The existing replay completion test now awaits the engine task
 with a bounded timeout instead of assuming it finishes in 100ms. Artifacts:
-`.cache/resume-session-capital/`. Delivery PR targets dev; main merge/deployment
-remain manual. Restart the backend to apply; no client rebuild is needed.
+`.cache/resume-session-capital/`. [PR #650](https://github.com/prattyush/TradeMatangi/pull/650)
+targets dev and awaits review; main merge/deployment remain manual. Restart the
+backend to apply; no client rebuild is needed.
 
 ## Original requirements
 
