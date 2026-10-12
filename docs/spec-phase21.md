@@ -849,17 +849,29 @@ Take Profit P&L text on the chart is now anchored 8px from the left edge at its
 price level, clearing the right-hand price scale. The strategy price line, numeric
 price label, P&L calculations and line interactions remain unchanged.
 
+The desktop TP percentage editor now has icon buttons with tooltips/accessible
+names: Save (check), Cancel edits (cross), and Delete strategy (trash). Delete
+uses the existing strategy-cancel endpoint, retains the position, and removes the
+confirmed-cancelled TP line. Disable controls while Save/Delete is pending; failed
+deletion keeps the editor/line and an error for retry. Confirmed cancellation is
+reflected locally even if the subsequent snapshot refresh fails, with the refresh
+failure reported separately. Session changes cannot receive an old cancellation
+snapshot. Sidebar cancellation continues to use the same handler/error reporting.
+
 Reuse the existing submenu hover/focus behavior and edge-opening styles. Existing
 position/entry/underlying eligibility, action identifiers, clicked price and anchor
 are unchanged; no backend or strategy execution changes. Allow enough space for
 nested underlying menus when choosing the opening side/vertical placement.
 
-Validation: desktop TypeScript and production build pass.
+Validation: **191 desktop Vitest tests**, TypeScript and production build pass.
 `scripts/desktop-strategy-menu-check.mjs` exercises the actual ChartTile/KLineCharts
 menu: grouped visibility and dispatch, Take Profit at root, keyboard focus,
 right/bottom-edge opening, underlying strategy size choices, existing flat vs
 held-position eligibility and left-aligned TP text clear of the price scale; no
-page errors. Artifacts: `.cache/desktop-strategy-menu/`.
+page errors. The editor check activates the registered line-selection callback
+then clicks the real Save/Cancel/Delete icons, verifying percentage payload,
+non-mutating Cancel, pending controls, deletion failure/retry, and line removal.
+Artifacts: `.cache/desktop-strategy-menu/` and `.cache/desktop-tp-editor/`.
 [PR #648](https://github.com/prattyush/TradeMatangi/pull/648) targets dev and awaits
 review; rebuild the desktop client to apply. Main merge/deployment remain manual.
 
