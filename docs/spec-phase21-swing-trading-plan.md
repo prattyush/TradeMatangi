@@ -658,3 +658,11 @@ See the separate [improvements sprint plan](spec-phase21-swing-improvements-plan
 This delivers chart workspaces and continuous active-book pricing; external
 linked Swing windows and multi-day Replay remain deferred. Existing ownership,
 funding and execution-history decisions stay authoritative.
+
+
+### Swing Improvements delivery — 2026-10-12
+
+The separate [Swing Improvements implementation checkpoint](spec-phase21-swing-improvements-plan.md#implementation-checkpoint--2026-10-12)
+records the implemented chart workspace, full-session pricing/restart behavior,
+review fixes and automated checks. Original funding/ownership/recovery rules remain
+in force. Preprod broker/Windows acceptance remains pending deployment.

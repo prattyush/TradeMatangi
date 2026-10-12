@@ -1115,3 +1115,13 @@ The approved [Swing Improvements sprint/design record](spec-phase21-swing-improv
 records portfolio-first 1–4 independent charts, confirmed chart picking, daily
 history, position P&L and backend-owned live pricing during 09:15–15:30 IST.
 This is a new sprint track; original Phase 21 status/history remains intact.
+
+
+### Swing Improvements implementation checkpoint — 2026-10-12
+
+Sprints 0–4 are implemented on `feature/swing-chart-workspace` for preprod.
+Sprint 5 automated review/build/browser checks are complete; broker and installed
+Windows acceptance follows preprod merge/deployment. See the [delivery decisions,
+interfaces, test evidence and remaining acceptance scope](spec-phase21-swing-improvements-plan.md#implementation-checkpoint--2026-10-12).
+Swing uses 09:15–15:30 IST for active Paper/Real pricing independently of screens;
+Paper expiry exits begin at 15:15. Main/dev promotion remains manual.
