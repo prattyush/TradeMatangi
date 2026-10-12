@@ -835,8 +835,28 @@ order editing/cancellation stay clickable during notifications; chart bounds and
 instance remain unchanged. Existing Real safety-action browser acceptance also
 passes. No page errors. Artifacts: `.cache/website-header-notifications/`.
 
-[PR #646](https://github.com/prattyush/TradeMatangi/pull/646) targets dev and awaits
-review. Deploy rebuilt website assets to apply; main merge/deployment remain manual.
+[PR #646](https://github.com/prattyush/TradeMatangi/pull/646) merged to dev (22c5f4f). Deploy rebuilt website assets to apply; main merge/deployment remain manual.
+
+## Desktop right-click Strategies submenu — 2026-10-12
+
+Desktop trading charts now group Aggressive SL, Breakeven and Lock Profit here
+under **Strategies**. Underlying target/SL strategies also use that submenu on
+eligible underlying charts, retaining their Half/Full choices. **Take profit here**
+remains a main-menu item with its existing Half/Full submenu. Buy/Sell entry,
+SL coverage and order-move actions remain in the main menu.
+
+Reuse the existing submenu hover/focus behavior and edge-opening styles. Existing
+position/entry/underlying eligibility, action identifiers, clicked price and anchor
+are unchanged; no backend or strategy execution changes. Allow enough space for
+nested underlying menus when choosing the opening side/vertical placement.
+
+Validation: desktop TypeScript and production build pass.
+`scripts/desktop-strategy-menu-check.mjs` exercises the actual ChartTile/KLineCharts
+menu: grouped visibility and dispatch, Take Profit at root, keyboard focus,
+right/bottom-edge opening, underlying strategy size choices and existing flat vs
+held-position eligibility; no page errors. Artifacts: `.cache/desktop-strategy-menu/`.
+Delivery targets dev for review; rebuild the desktop client to apply. Main
+merge/deployment remain manual.
 
 ## Original requirements
 
