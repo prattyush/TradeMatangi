@@ -855,8 +855,8 @@ Validation: desktop TypeScript and production build pass.
 menu: grouped visibility and dispatch, Take Profit at root, keyboard focus,
 right/bottom-edge opening, underlying strategy size choices and existing flat vs
 held-position eligibility; no page errors. Artifacts: `.cache/desktop-strategy-menu/`.
-Delivery targets dev for review; rebuild the desktop client to apply. Main
-merge/deployment remain manual.
+[PR #648](https://github.com/prattyush/TradeMatangi/pull/648) targets dev and awaits
+review; rebuild the desktop client to apply. Main merge/deployment remain manual.
 
 ## Original requirements
 
