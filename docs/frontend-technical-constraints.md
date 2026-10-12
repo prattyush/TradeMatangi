@@ -78,12 +78,16 @@
 
 - **Historical request mode**: paper/real chart, indicator and strike-selection requests pass `history_mode=live`; replay, stepwise, analysis and ordinary Browse use the default `replay`. Include mode in frontend chart/indicator cache keys so minute chart history cannot leak into replay after a mode switch.
 
-## Floating website notifications
+## Website header notifications
 
-- Do not add trading error/status banners to the main flex layout: they resize
-  charts when messages appear or clear. Use `services/notifications.ts` and the
-  portal-based NotificationCenter instead. Guardrail interventions retain their
-  existing blocking semantics; notifications do not imply a broker acknowledgement.
+- Reserve a stable, single-line error area in the existing header between Add
+  Session and Day P&L. Do not add/remove banner rows or float automatic cards over
+  trading controls. Use `services/notifications.ts` for the error-only FIFO and
+  NotificationCenter for manual full history. Each active error gets eight seconds;
+  queued errors do not expire before display. All severities remain journaled.
+  Critical pattern alerts enter the error queue; other pattern alerts are history
+  only. Guardrail interventions retain their existing blocking semantics;
+  notifications do not imply a broker acknowledgement.
 - Website API failures are journaled at the API boundary and rethrown unchanged.
   Local error state uses `useFlashError`; duplicate reporting is suppressed.
   Capture account/session context when an asynchronous request starts, and suppress

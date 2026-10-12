@@ -1,6 +1,6 @@
 # Phase 21 — Desktop UI implementation
 
-## Current delivery status — 2026-10-11
+## Current delivery status — 2026-10-12
 
 PR #619 merged to dev on 2026-10-08 (merge e1938ce). Main includes that delivery
 through PR #620 (d42ca29). Earlier ready-for-review/manual-main-merge statements
@@ -796,9 +796,47 @@ viewer/KLineCharts browser check asserts position within **one pixel** for repea
 and zooming during delayed loading. Existing exact/full-candle fallback, contract
 tabs, keyboard navigation, resize/Fit, price lines, no blank frames and data-error
 checks also pass, with no page errors. Artifacts: `.cache/snapshot-fixed-position/`.
-[PR #644](https://github.com/prattyush/TradeMatangi/pull/644) targets dev and awaits
-review because PR #642 has already merged. Rebuild the desktop client to apply;
+[PR #644](https://github.com/prattyush/TradeMatangi/pull/644) merged to dev (7126fe0). Rebuild the desktop client to apply;
 main merge/deployment remain manual.
+
+## Website header notifications — 2026-10-12
+
+Implemented the website notification follow-up for all trading modes: Paper,
+Replay, Stepwise and Real. Automatic floating cards could cover order controls;
+errors now use the reserved header space between Add Session and Day P&L.
+
+- Show one static error headline, clipping long first-line text with ellipsis.
+  Keep the header's height stable with or without messages. The history button
+  and unread error/warning count are beside the headline; there is no floating
+  launcher over the trading workspace. Sign-in retains a compact standalone
+  launcher where no trading header exists.
+- Queue distinct errors FIFO, with eight seconds starting when each becomes
+  active. Dismiss advances the next error. Repeats retain grouping/count behavior
+  without restarting the active timer; the queue is bounded by retained history.
+- Store all levels in history (latest 100 records, seven days per account/backend).
+  Clicking the headline opens the existing nonmodal history and scrolls to that
+  message. Full text, filters, mark-read, confirmed clear, download and IST receipt
+  times remain. Expiry/dismissal does not delete history, and reload does not replay
+  old headlines. Account changes cancel pending messages and timers.
+- Remove the separate pattern-alert stack. Pattern details and suggestions enter
+  the same history; critical alerts are errors, warnings stay warnings, and other
+  alerts are informational. Only errors appear automatically. Actual guardrail
+  blocking, confirmations and broker acknowledgement semantics are unchanged.
+- No backend/API/storage migration or desktop behavior change. The journal remains
+  browser-local and existing chart instances/data are retained.
+
+Validation: **49 website Node tests** (including **14 notification tests**),
+TypeScript and production build pass. Updated notification browser acceptance uses
+actual header/history components, Lightweight Charts and OrderPanel: one clipped
+headline, error FIFO/dismissal/expiry, complete details for every level, targeted
+history, download, reload/account isolation, narrow layout, pattern criticality,
+API failures and late-account fencing. Real/Paper/Replay/Stepwise Buy/Sell and
+order editing/cancellation stay clickable during notifications; chart bounds and
+instance remain unchanged. Existing Real safety-action browser acceptance also
+passes. No page errors. Artifacts: `.cache/website-header-notifications/`.
+
+[PR #646](https://github.com/prattyush/TradeMatangi/pull/646) targets dev and awaits
+review. Deploy rebuilt website assets to apply; main merge/deployment remain manual.
 
 ## Original requirements
 
