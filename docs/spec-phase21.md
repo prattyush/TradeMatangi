@@ -1102,7 +1102,7 @@ explicitly outstanding; main/dev promotion remains manual after acceptance.
 
 ### Swing Trading Improvements
 When I open swing trading I see a page with just numbers to enter or purchase without charts.
-1) Change the swing trading UI to support charts and maybe left panel has positions orders etc, or feel free to suggest great UI. Improve the UI, it literally has almost nothing, compared to day trading whicch is so great. 
+1) Change the swing trading UI to support charts and maybe left panel has positions orders etc, or feel free to suggest great UI. Improve the UI, it literally has almost nothing, compared to day trading whicch is so great.
 2) The charts for swing need not be fine, so you can download from kite or kotak or icici breeze 1 minute candles.
 3) The charts would be in website and desktop both, in desktop it is KLine.
 4) I can take position from ccharts or at least use chart picker to pick entry (limit, target), stoploss etc.
