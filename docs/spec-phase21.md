@@ -835,8 +835,8 @@ order editing/cancellation stay clickable during notifications; chart bounds and
 instance remain unchanged. Existing Real safety-action browser acceptance also
 passes. No page errors. Artifacts: `.cache/website-header-notifications/`.
 
-Delivery targets dev for review. Deploy rebuilt website assets to apply; main
-merge/deployment remain manual.
+[PR #646](https://github.com/prattyush/TradeMatangi/pull/646) targets dev and awaits
+review. Deploy rebuilt website assets to apply; main merge/deployment remain manual.
 
 ## Original requirements
 

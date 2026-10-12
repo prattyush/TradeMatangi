@@ -728,7 +728,9 @@ reviewable delivery PR targeting dev.
 error headline in reserved header space rather than floating cards. All severities
 remain in the same history. Pattern alerts join that history; only critical pattern
 alerts enter the error queue. See Phase 21's Website header notifications follow-up
-for current behavior and validation. The original delivery below is historical.
+for current behavior and validation.
+[PR #646](https://github.com/prattyush/TradeMatangi/pull/646) awaits dev review.
+The original delivery below is historical.
 
 The user reported distracting chart movement when top-level order/broker/exit
 protection/conversion banners appeared and disappeared during real trading.
