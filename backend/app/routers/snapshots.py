@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from typing import Literal
 
 from fastapi import APIRouter, Depends, Query, HTTPException
 from pydantic import BaseModel
@@ -65,6 +66,26 @@ async def get_snapshot(event_id: str, session_id: str = Query(...), user_id: str
     if snap is None:
         raise HTTPException(status_code=404, detail="Snapshot not found")
     return snap
+
+
+@router.get("/{event_id}/candle")
+async def snapshot_candle(event_id: str, session_id: str = Query(...),
+                          instrument: Literal["underlying", "CE", "PE"] = "underlying",
+                          user_id: str = Depends(get_request_user_id)):
+    session = await asyncio.to_thread(_load_session, session_id)
+    if not await asyncio.to_thread(analysis_sharing.can_read, session, user_id):
+        raise HTTPException(404, "Session not found")
+    try:
+        snap = await asyncio.to_thread(snapshot_service.get_snapshot, session_id, event_id)
+        if snap is None:
+            raise HTTPException(404, "Snapshot not found")
+        from app.services.snapshot_candle_service import reconstruct_candle
+        return {"candle": await asyncio.to_thread(reconstruct_candle, snap, instrument)}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("Snapshot candle read failed session=%s event=%s instrument=%s", session_id, event_id, instrument)
+        raise HTTPException(503, "Snapshot candle could not be read") from exc
 
 
 @router.delete("")

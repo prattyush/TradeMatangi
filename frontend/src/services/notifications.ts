@@ -13,6 +13,7 @@ export interface NotificationRecord {
   mode?: string
   unread: boolean
 }
+/** visible is the pending error FIFO; only its first entry is displayed. */
 export interface NotificationState { records: NotificationRecord[]; visible: string[] }
 export const NOTIFICATION_LIMIT = 100
 const RETENTION_MS = 7 * 24 * 60 * 60 * 1000
@@ -34,7 +35,12 @@ export function flushNotifications() {
   if (storageKey) try { localStorage.setItem(storageKey, JSON.stringify(state.records)) } catch {}
 }
 function publish(records: NotificationRecord[], visible: string[]) {
+  const retained = new Set(records.map(record => record.id))
+  visible = visible.filter(id => retained.has(id))
+  for (const [id,timer] of timers) if (id !== visible[0]) { clearTimeout(timer); timers.delete(id) }
   state = { records, visible }; listeners.forEach(fn => fn())
+  const active = visible[0]
+  if (active && !timers.has(active)) timers.set(active,setTimeout(()=>dismissNotification(active),8000))
   // Batch storage writes off the user action/SSE callback path.
   if (persistTimer) clearTimeout(persistTimer)
   const key = storageKey
@@ -78,12 +84,8 @@ export function flashMessage(message: string, level: NotificationLevel = 'error'
   const records = [entry, ...state.records.filter(n => n.id !== entry.id && now-n.lastAt < RETENTION_MS)].slice(0,NOTIFICATION_LIMIT)
   // Repeated active messages update counts without extending their display time.
   // Suppress repeated flashes in this short window even after dismissal.
-  const visible = previous ? state.visible : [...state.visible,entry.id].slice(-3)
+  const visible = previous || level !== 'error' ? state.visible : [...state.visible,entry.id]
   publish(records,visible)
-  if (!previous) {
-    timers.set(entry.id,setTimeout(()=>dismissNotification(entry.id),level==='info'||level==='success'?5000:8000))
-    for (const [id,timer] of timers) if (!visible.includes(id)) {clearTimeout(timer);timers.delete(id)}
-  }
 }
 export function flashError(error: unknown, source = 'Website', details: NotificationContext = context) {
   if (error && typeof error === 'object' && 'name' in error && error.name === 'AbortError') return
@@ -95,4 +97,10 @@ export function flashError(error: unknown, source = 'Website', details: Notifica
   recentErrors.set(key, { source, at: Date.now() })
   while (recentErrors.size > NOTIFICATION_LIMIT) recentErrors.delete(recentErrors.keys().next().value!)
   flashMessage(message, 'error', source, details)
+}
+
+
+export function flashPatternAlert(alert: {title: string; description: string; severity: string; pattern?: string; category?: string; trade_suggestion?: string | null}) {
+  const message = [alert.title, alert.pattern && `Pattern: ${alert.pattern}`, alert.category && `Category: ${alert.category}`, alert.description, alert.trade_suggestion].filter(Boolean).join('\n')
+  flashMessage(message,alert.severity === 'critical' ? 'error' : alert.severity === 'warning' ? 'warning' : 'info','Pattern alert')
 }

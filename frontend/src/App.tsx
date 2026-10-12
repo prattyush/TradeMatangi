@@ -2,9 +2,9 @@ import SwingPortfolioPanel, { type SwingRequest } from '../../shared/SwingPortfo
 import { _authHeaders } from './services/api'
 import ChartEntryTicket, { type EntryTicket as ContextMenuEntryTicket } from './components/ChartEntryTicket'
 import TradingSafetyActions from './components/TradingSafetyActions'
-import NotificationCenter from './components/NotificationCenter'
+import NotificationCenter, { NotificationHeadline, type HistoryRequest } from './components/NotificationCenter'
 import { useFlashError } from './hooks/useFlashError'
-import { flashError, flashMessage, setNotificationAccount, setNotificationContext } from './services/notifications'
+import { flashError, flashMessage, flashPatternAlert, setNotificationAccount, setNotificationContext } from './services/notifications'
 import { BACKEND_URL } from './config'
 import { contractPosition, unrealizedPnl } from './services/positionAccounting'
 import { applyRecoveryEvent, pruneRecoveryNotices, RecoveryNotices } from './services/protectionRecoveryState'
@@ -24,7 +24,6 @@ import OrderPanel from './components/OrderPanel'
 import WalletWidget from './components/WalletWidget'
 import SessionSwitcher from './components/SessionSwitcher'
 import GuardRailPopup from './components/GuardRailPopup'
-import PatternAlertToast, { PatternAlert } from './components/PatternAlertToast'
 import SettingsModal, { loadFundsRatios, loadTargetDeviationPct, loadBrokeragePerOrder, loadStrategyIntervalSecs, loadAutostopTriggerType, loadAutostopDeviationPct, loadHistoricalDays, loadPnlPctMode, loadBreakevenMode, loadTargetProfitBufferTicks, loadAggrSlOnlyInProfit, loadAutoStartEventSnapshots, loadStepwiseLabelingPopupEnabled, loadLabelingModeByType, loadTradingRocRatioMode, FundsRatios, SizingMode, RiskRatios, loadSizingMode, loadRiskRatios, loadDefaultSlPct } from './components/SettingsModal'
 import { StrategyResponse, StartStrategyRequest, OpenOptionContract, BrokerOrder } from './services/api'
 import LoginScreen from './components/LoginScreen'
@@ -175,8 +174,12 @@ function defaultPanesForLayout(preset: LayoutPreset, current: PaneConfig[]): Pan
 }
 
 export default function App() {
+  const [messageHistory,setMessageHistory]=useState<HistoryRequest|null>(null)
+  const openMessages=useCallback((id?:string)=>{setMessageHistory({notificationId:id})},[])
   // ── Auth state ──────────────────────────────────────────────────────────────
   const [authUser, setAuthUser] = useState(() => { const user = loadAuthUser(); setNotificationAccount(user?.userId ?? null, BACKEND_URL); return user })
+
+  useEffect(()=>setMessageHistory(null),[authUser?.userId])
 
   const handleLogin = useCallback((userId: string, email: string, isAdmin = false, accountName?: string) => {
     const user = { userId, email, isAdmin, accountName }
@@ -211,10 +214,10 @@ export default function App() {
     return <><LoginScreen onLogin={handleLogin} /><NotificationCenter /></>
   }
 
-  return <><AppInner authUser={authUser} onLogout={handleLogout} setAuthUser={setAuthUser} /><NotificationCenter key={authUser.userId} /></>
+  return <><AppInner authUser={authUser} onLogout={handleLogout} setAuthUser={setAuthUser} onOpenMessages={openMessages} /><NotificationCenter key={authUser.userId} request={messageHistory} onRequestChange={setMessageHistory} showLauncher={false} /></>
 }
 
-function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: string; email: string; isAdmin: boolean; accountName?: string }; onLogout: () => void; setAuthUser: React.Dispatch<React.SetStateAction<{ userId: string; email: string; isAdmin: boolean; accountName?: string } | null>> }) {
+function AppInner({ authUser, onLogout, setAuthUser, onOpenMessages }: { onOpenMessages:(id?:string)=>void; authUser: { userId: string; email: string; isAdmin: boolean; accountName?: string }; onLogout: () => void; setAuthUser: React.Dispatch<React.SetStateAction<{ userId: string; email: string; isAdmin: boolean; accountName?: string } | null>> }) {
   const sim = useSimulation()
   const [showSwing, setShowSwing] = useState(false)
   const swingRequest = useCallback<SwingRequest>(async <T,>(path: string, method: 'GET' | 'POST', body?: Record<string, unknown>) => {
@@ -296,7 +299,6 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
   const [combinedPnlOpen, setCombinedPnlOpen] = useState(false)
   const [autoStartSnapshots, setAutoStartSnapshots] = useState(loadAutoStartEventSnapshots)
   const [stepwiseLabelingPopup, setStepwiseLabelingPopup] = useState(loadStepwiseLabelingPopupEnabled)
-  const [patternAlerts, setPatternAlerts] = useState<PatternAlert[]>([])
   const [roundTrips, setRoundTrips] = useState<import('./services/api').RoundTrip[]>([])
   const [tradeLabels, setTradeLabels] = useState<import('./services/api').TradeLabel[]>([])
 
@@ -1433,16 +1435,12 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
     } else if (event.type === 'new_trade') {
       sim.addTradeFromSSE(event as unknown as import('./services/api').Trade)
     } else if (event.type === 'pattern_alert') {
-      const alert: PatternAlert = {
-        id: Date.now() + Math.random(),
-        pattern: (event.pattern as string) ?? '',
-        category: (event.category as string) ?? 'info',
-        title: (event.title as string) ?? 'Pattern Detected',
-        severity: (event.severity as string) ?? 'info',
-        description: (event.description as string) ?? '',
-        trade_suggestion: (event.trade_suggestion as string | null) ?? null,
-      }
-      setPatternAlerts(prev => [...prev.slice(-2), alert])
+      flashPatternAlert({
+        title: String(event.title ?? 'Pattern Detected'),
+        pattern: String(event.pattern ?? ''), category: String(event.category ?? 'info'),
+        severity: String(event.severity ?? 'info'), description: String(event.description ?? ''),
+        trade_suggestion: event.trade_suggestion == null ? null : String(event.trade_suggestion),
+      })
     } else if (event.type === 'bar_paused') {
       const mkCandle = (o: unknown, h: unknown, l: unknown, c: unknown, t: unknown) =>
         (o != null && h != null && l != null && c != null && t != null)
@@ -2162,7 +2160,7 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
           >
             ← Back to Trading
           </button>
-          <div style={{ flex: 1 }} />
+          <NotificationHeadline onOpenHistory={onOpenMessages} />
           <span style={{ fontSize: 12, color: '#484f58' }}>{authUser.accountName || authUser.email}</span>
           <button onClick={onLogout}
             style={{ background: 'none', border: '1px solid #30363d', color: '#8b949e', borderRadius: 6, padding: '3px 8px', fontSize: 11, cursor: 'pointer' }}>
@@ -2193,7 +2191,7 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
             + Add Session
           </button>
         )}
-        <div style={{ flex: 1 }} />
+        <NotificationHeadline onOpenHistory={onOpenMessages} />
         {sim.sessionState !== 'idle' && (
           <div style={{
             display: 'flex', alignItems: 'center', gap: 6,
@@ -2491,6 +2489,7 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
       <SessionControls
         key={addingSession ? `add:${addSessionSymbol}` : `active:${sim.sessionId ?? 'idle'}:${sim.symbol}`}
         sessionState={addingSession ? 'idle' : sim.sessionState}
+        activeSessionType={addingSession ? undefined : sim.sessionType}
         currentSymbol={addingSession ? addSessionSymbol : sim.symbol}
         currentDate={addingSession ? addSessionDate : sim.date}
         onSymbolChange={addingSession ? setAddSessionSymbol : sim.updateSymbol}
@@ -2884,12 +2883,6 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
         symbol={sim.symbol || null}
         strikeCe={sim.sessionStrikeCE}
         strikePe={sim.sessionStrikePE}
-      />
-
-      {/* Pattern alert toasts (experimental feature) */}
-      <PatternAlertToast
-        alerts={patternAlerts}
-        onDismiss={id => setPatternAlerts(prev => prev.filter(a => a.id !== id))}
       />
 
       {/* Right-click context menu */}

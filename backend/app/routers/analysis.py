@@ -62,6 +62,7 @@ class TradeSummary(BaseModel):
     strike: int | float | None = None
     expiry: str | None = None
     commission: float = 0.0
+    fee_source: str | None = None
     underlying_price: float | None = None
     source: str | None = None
 

@@ -15,6 +15,19 @@ Packaged Windows/manual broker acceptance and main deployment remain unverified
 unless separately recorded. A dev merge does not establish deployment.
 Phase 21 Desktop UI work and new validation are tracked in `spec-phase21.md`.
 
+## Real Analytics charges follow-up — 2026-10-11
+
+The shared website/desktop Stats UI now supports a manual finalized Real charges
+bill per owned broker account/trading date in
+[PR #638](https://github.com/prattyush/TradeMatangi/pull/638) (merged to dev).
+Corrections apply before FIFO analytics
+and leave raw broker fills and trading wallets unchanged. Paper/Replay/Stepwise
+continue using their calculated fees. Allocation, broker-refresh safeguards,
+read-only sharing and validation are documented in
+[Phase 21 — Real Analytics finalized charges](spec-phase21.md#real-analytics-finalized-charges--2026-10-11).
+The two older equity OHLC test failures now have offline broker mocks; their
+original status above remains historical.
+
 ## Wallet follow-up status — 2026-10-09
 
 Phase 21 PR #623 merged to dev (0595055), fixing nested Paper order/wallet DynamoDB
@@ -711,6 +724,14 @@ reviewable delivery PR targeting dev.
 
 ## Website floating messages and error history — 2026-10-07
 
+**Superseded layout — 2026-10-12:** automatic website notifications now use one
+error headline in reserved header space rather than floating cards. All severities
+remain in the same history. Pattern alerts join that history; only critical pattern
+alerts enter the error queue. See Phase 21's Website header notifications follow-up
+for current behavior and validation.
+[PR #646](https://github.com/prattyush/TradeMatangi/pull/646) awaits dev review.
+The original delivery below is historical.
+
 The user reported distracting chart movement when top-level order/broker/exit
 protection/conversion banners appeared and disappeared during real trading.
 Website messages now use a fixed floating stack rather than consuming chart layout
@@ -1065,8 +1086,13 @@ underlying/CE/PE panes and captured orders/positions/wallet/P&L. Include recordi
 from broker-book aliases without counting their executions twice. Pass the actual
 snapshot session; resolve captured fills only against unique physical evidence with
 matching price and quantity, otherwise show captured-only/Unknown provenance.
-Discard cached boundary/future bars and use captured OHLC when available; preserve
-unknown observation resolution. New recordings retain exact expiry/broker IDs/fees
+Desktop snapshots now retain the event candle: reconstruct its three-minute OHLC
+through the recorded event second from reliable cached second observations, otherwise
+show its full historical candle. Later candles remain excluded. A single captured
+observation is not used as accumulated three-minute OHLC. No precision/fallback
+caption is added. Website snapshot rendering remains unchanged. See the Phase 21
+Desktop snapshot event-candle follow-up for validation;
+[PR #640](https://github.com/prattyush/TradeMatangi/pull/640) awaits dev review. New recordings retain exact expiry/broker IDs/fees
 and available option observations, without rewriting legacy snapshots. Snapshot
 reads paginate; delete-all requires confirmation, retries bounded unprocessed
 batches and reports incomplete deletion. Capture/read/delete ownership is enforced.

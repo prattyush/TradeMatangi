@@ -34,6 +34,7 @@ export type AnalysisChartPanelProps = {
 }
 
 export type SnapshotChartProps = {
+  snapshotEventId?: string; snapshotEventTime?: number
   symbol: string; date: string
   sessionId?: string
   observationResolution?: number
@@ -46,6 +47,7 @@ export type SnapshotChartProps = {
 }
 
 export type SnapshotOptionsChartProps = {
+  snapshotEventId?: string; snapshotEventTime?: number
   symbol: string; date: string
   sessionId?: string
   observationResolution?: number

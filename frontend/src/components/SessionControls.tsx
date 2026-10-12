@@ -10,6 +10,7 @@ import ConfirmModal from './ConfirmModal'
 
 interface Props {
   sessionState: SessionState
+  activeSessionType?: string
   currentSymbol: string
   currentDate: string
   onSymbolChange: (symbol: string) => void
@@ -94,7 +95,7 @@ const STRIKE_INTERVALS: Record<string, number> = {
 const OPTIONS_ONLY_SYMBOLS = new Set(['NIFTY', 'BSESEN'])
 
 export default function SessionControls({
-  sessionState, currentSymbol, currentDate,
+  sessionState, activeSessionType, currentSymbol, currentDate,
   onSymbolChange, onDateChange,
   onStart, onStop, onPause, onResume,
   onOptionsReady,
@@ -167,8 +168,9 @@ export default function SessionControls({
   const paused = sessionState === 'paused'
   const today = formatLocalDate(new Date())
   const isToday = currentDate === todayIST()
-  const isRealMode = isToday && isRealTradingUser && liveSessionType === 'real'
-  const isPaperMode = isToday && !isRealMode
+  const displayedLiveType = !idle && (activeSessionType === 'real' || activeSessionType === 'paper') ? activeSessionType : liveSessionType
+  const isRealMode = !idle && activeSessionType ? activeSessionType === 'real' : isToday && isRealTradingUser && displayedLiveType === 'real'
+  const isPaperMode = !idle && activeSessionType ? activeSessionType === 'paper' : isToday && !isRealMode
 
   useEffect(() => {
     if (addMode && lockedSpeed != null) setSpeed(lockedSpeed)
@@ -474,7 +476,7 @@ export default function SessionControls({
         {isRealMode && idle && <label style={label}>Capital % <input aria-label="Real Day capital allocation percent" type="number" min="0.01" max="100" step="0.01" style={{ ...inputStyle, width: 65 }} value={realAllocationPct} onChange={event => setRealAllocationPct(event.target.value)} title="Share of the broker account reference allocated to Day trading" /></label>}
         {isToday && isRealTradingUser ? (
           <div style={{ display: 'flex', border: '1px solid #30363d', borderRadius: 6, overflow: 'hidden' }}>
-            {(['paper', 'real'] as const).map(mode => <button key={mode} type="button" disabled={!idle} onClick={() => setLiveSessionType(mode)} style={{ border: 0, padding: '4px 8px', cursor: 'pointer', fontWeight: 700, fontSize: 11, color: liveSessionType === mode ? '#fff' : '#8b949e', background: liveSessionType === mode ? (mode === 'real' ? '#b62324' : '#1a7f37') : '#161b22' }}>{mode === 'paper' ? 'PAPER' : 'REAL'}</button>)}
+            {(['paper', 'real'] as const).map(mode => <button key={mode} type="button" disabled={!idle} aria-pressed={displayedLiveType === mode} onClick={() => setLiveSessionType(mode)} style={{ border: 0, padding: '4px 8px', cursor: 'pointer', fontWeight: 700, fontSize: 11, color: displayedLiveType === mode ? '#fff' : '#8b949e', background: displayedLiveType === mode ? (mode === 'real' ? '#b62324' : '#1a7f37') : '#161b22' }}>{mode === 'paper' ? 'PAPER' : 'REAL'}</button>)}
           </div>
         ) : isRealMode ? (
           <span style={{

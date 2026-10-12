@@ -1,7 +1,9 @@
-"""Read-only, user-owned performance reports. Heavy work leaves the event loop."""
+"""Performance reports and owner-managed Real fee metadata; work leaves the event loop."""
 
 import asyncio
 from datetime import date
+from decimal import Decimal
+from pydantic import BaseModel, Field
 from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, Query
 from app.dependencies import get_request_user_id
@@ -127,3 +129,39 @@ async def cycle_detail(
         raise HTTPException(
             503, "Trade details could not be read; retry later"
         ) from exc
+
+
+class RealFeesRequest(BaseModel):
+    date: date
+    account_id: str = Field(min_length=1, max_length=256)
+    execution_broker: Literal["kotak", "kite"] = "kotak"
+    actual_total: Decimal = Field(ge=0, max_digits=14, decimal_places=2, allow_inf_nan=False)
+
+
+async def fees_call(function, *args):
+    try:
+        return await asyncio.to_thread(function, *args)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        import logging
+        logging.getLogger(__name__).exception("Real analytics charge correction failed")
+        raise HTTPException(503, "Real analytics charges could not be read/saved; retry later") from exc
+
+
+@router.get("/real-fees")
+async def real_fees(date: date, user_id: str = Depends(get_request_user_id)):
+    from app.services.real_analysis_fees import overview
+    return await fees_call(overview, user_id, date.isoformat())
+
+
+@router.post("/real-fees")
+async def save_real_fees(req: RealFeesRequest, user_id: str = Depends(get_request_user_id)):
+    from app.services.real_analysis_fees import save
+    return await fees_call(save, user_id, req.date.isoformat(), req.account_id, req.actual_total, req.execution_broker)
+
+
+@router.delete("/real-fees")
+async def delete_real_fees(date: date, account_id: str, user_id: str = Depends(get_request_user_id), execution_broker: Literal["kotak", "kite"] = "kotak"):
+    from app.services.real_analysis_fees import remove
+    return await fees_call(remove, user_id, date.isoformat(), account_id, execution_broker)

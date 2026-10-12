@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
 import { AnalysisHistoryCache } from './analysisHistoryCache'
-import { snapshotCandles, resolveSnapshotExecutions } from './analysisSnapshot'
+import { snapshotCandles, snapshotBarTime, resolveSnapshotExecutions } from './analysisSnapshot'
 import { completeCycleExport } from '../../shared/analysis/exportCycles'
 import { contractTabs } from './analysisContracts'
 import type { AnalysisTrade } from '../../shared/analysis/api'
@@ -22,11 +22,17 @@ describe('analysis history and exact contracts',()=>{
   it('separates expiry, exchange and product even at the same strike',()=>{
     expect(contractTabs([trade(),trade({product:'MIS'}),trade({product:'CNC'}),trade({expiry:'2026-10-15'}),trade({exchange:'nse_fo'})])).toHaveLength(5)
   })
-  it('never exposes the future portion of a snapshot boundary candle',()=>{
+  it('shows the event candle, preferring reconstructed seconds and excluding later bars',()=>{
     const rows=[{time:0,open:100,high:101,low:99,close:100},{time:180,open:100,high:500,low:1,close:400}]
-    expect(snapshotCandles(rows,180,null)).toEqual([rows[0]])
+    expect(snapshotCandles([...rows,{...rows[1],time:360}],180,null)).toEqual(rows)
     expect(snapshotCandles(rows,180,{open:100,high:102,low:100,close:101})).toEqual([rows[0],{time:180,open:100,high:102,low:100,close:101}])
     expect(rows[1].high).toBe(500)
+  })
+  it('uses the event market second instead of a stale captured observation boundary',()=>{
+    const event=Date.parse('2026-10-09T09:18:15Z')/1000
+    expect(snapshotBarTime(event,event-195,'2026-10-09')).toBe(event-15)
+    expect(snapshotBarTime(event+86400,event-195,'2026-10-09')).toBe(event-195)
+    expect(snapshotBarTime(undefined,event-195,'2026-10-09')).toBe(event-195)
   })
   it('resolves only unique physical snapshot evidence without guessed expiry',()=>{
     const captured=trade({expiry:null})

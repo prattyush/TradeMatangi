@@ -1,7 +1,7 @@
 import { flashError, getNotificationContext, getNotificationScope } from './notifications';
 import { BACKEND_URL } from "../config";
 import { _authHeaders } from "./api";
-import type { PerformanceFilters, PerformanceReport, PerformanceCycle } from '../../../shared/analysis/performance'
+import type { PerformanceFilters, PerformanceReport, PerformanceCycle, RealFeesDay } from '../../../shared/analysis/performance'
 export * from '../../../shared/analysis/performance'
 async function rawRequest<T>(
   path: string,
@@ -50,3 +50,16 @@ export const getPerformanceDetail = (
     { session_id: cycle.session_id, enrich: String(enrich) },
     signal,
   );
+
+async function realFeesRequest(date: string, method = 'GET', account = '', amount?: number, signal?: AbortSignal, execution_broker?: "kotak" | "kite"): Promise<RealFeesDay> {
+  const params = new URLSearchParams({date, ...(method === 'DELETE' ? {account_id: account, ...(execution_broker ? {execution_broker} : {})} : {})})
+  const response = await fetch(`${BACKEND_URL}/api/analysis/performance/real-fees?${params}`, {
+    method, signal, headers: {..._authHeaders(), 'Content-Type': 'application/json'},
+    body: method === 'POST' ? JSON.stringify({date, account_id: account, actual_total: amount, ...(execution_broker ? {execution_broker} : {})}) : undefined,
+  })
+  if (!response.ok) { const body = await response.json().catch(()=>({})); throw new Error(typeof body.detail === 'string' ? body.detail : `Real charges update failed (${response.status})`) }
+  return response.json()
+}
+export const getRealFees = (date: string, signal?: AbortSignal) => realFeesRequest(date, 'GET', '', undefined, signal)
+export const saveRealFees = (date: string, account: string, amount: number, broker?: "kotak" | "kite") => realFeesRequest(date, 'POST', account, amount, undefined, broker)
+export const deleteRealFees = (date: string, account: string, broker?: "kotak" | "kite") => realFeesRequest(date, 'DELETE', account, undefined, undefined, broker)

@@ -1,5 +1,54 @@
 # Phase 21 — Desktop UI implementation
 
+## Main → preprod integration — 2026-10-12
+
+PR #652 is merged into preprod (`49e92c8`); authenticated acceptance is in
+progress, not declared complete. Integration work starts from that revision on
+`integration/main-into-preprod` and merges main `d10ab97` (which contains dev
+`dfa878d`). Main/dev source contents match; six older script executable-mode
+changes exist only in main and remain preserved. Main/dev are not modified.
+
+The integration brings authoritative website live-mode labels, finalized Real
+Day charges, event-second snapshot candles, retained snapshot viewport/zoom,
+option marker cleanup, sequential header errors, desktop strategy submenu/Take
+Profit actions and saved Paper/Real capital restoration. It retains preprod's
+Kite/Real execution, four broker/style slots, shared funding, Swing runtime,
+linked Replay refresh, toolbar icons/tooltips and compact date/time controls.
+
+Four textual conflicts are resolved by retaining both behaviors: this document,
+shared performance broker/account/fee-source fields, the desktop workspace's
+Real/companion routing and strategy callbacks, and both CSS additions. Automatic
+merges are reviewed for account-scoped ledgers, frozen sizing capital, fractional
+option identity and native analysis allowlists.
+
+Finalized-charge corrections are **Day-only** for now, as explicitly selected.
+Swing histories keep estimates and are excluded from charge discovery/application;
+per-day Swing billing remains deferred. Corrections are owner/date/broker/account
+scoped and analytics-only. Legacy Kotak requests/records remain supported; Kite
+uses explicit broker scope. Legacy/current correction metadata is deleted together
+so reverting cannot revive an older bill. No trading, wallet or funding records
+are altered by charge correction.
+
+Integration verification:
+
+- Backend: **2,189 passed**, with the two known local ICICI configuration failures
+  in options-start validation (`test_missing_strike_returns_400` and
+  `test_invalid_right_returns_400`). No new integration failures. The incoming
+  pattern-logger test setup removes the other two former local failures.
+- Desktop: **194 tests passed**. Website notification tests: **14 passed**.
+  Both TypeScript checks and production builds passed.
+- Native Linux Rust: `cargo check --locked --offline` passed; **19 library tests
+  passed**. This does not replace building/testing the Windows executable.
+- Mocked browser checks passed for Day charges (separate Kite/Kotak scopes),
+  strategy submenu/Take Profit controls, snapshot candles/viewport navigation,
+  header notifications, running mode labels and Real/linked Replay controls.
+  No page errors or live broker orders were produced.
+- Python compilation, reviewed new-service lint and diff checks passed.
+
+PR delivery is recorded below. Delivery targets
+preprod; deployment and native Windows/authenticated broker acceptance remain
+manual. The original testing checkout is not modified by integration work.
+
 ## Current Swing review status — 2026-10-11
 
 The ownership/funding/recovery self-review and fixes are on
@@ -41,7 +90,7 @@ Extension implementation is on `feature/phase21-real-desktop` in ready-for-revie
 See the linked specification for delivered sprints, automated results and remaining
 Windows/native and live-broker acceptance gates. No main/dev promotion is included.
 
-## Current delivery status — 2026-10-09
+## Current delivery status — 2026-10-12
 
 PR #619 merged to dev on 2026-10-08 (merge e1938ce). Main includes that delivery
 through PR #620 (d42ca29). Earlier ready-for-review/manual-main-merge statements
@@ -55,6 +104,15 @@ merged to dev (a227b87). The website request-blocking fix
 main includes it through PR #628 (d52c863). Full checks and the comprehensive
 review below are complete. The reviewed cache correction and test/documentation delivery target main;
 main merging and deployment remain manual.
+
+Desktop chart-price picking, order editing and popup/Stats improvements in
+[PR #630](https://github.com/prattyush/TradeMatangi/pull/630), and the running website
+Real-mode label fix in [PR #634](https://github.com/prattyush/TradeMatangi/pull/634),
+are merged to dev. The Real Analytics finalized-charges follow-up below is
+implemented and validated; [PR #638](https://github.com/prattyush/TradeMatangi/pull/638)
+merged to dev (a150002). The Desktop snapshot event-candle follow-up below is
+implemented and validated; [PR #640](https://github.com/prattyush/TradeMatangi/pull/640)
+merged to dev (89efc32).
 
 ## Agreed scope and defaults
 
@@ -594,8 +652,9 @@ Comprehensive review outcome:
   candles on page refresh while wallet responses are pending.
 - Desktop empty stopped Paper resumes the saved identity without a redundant
   confirmation; preparation accepts the owned persisted session. Completed stopped
-  history no longer prevents the Wallet popup reset. Reset funds are used on resume,
-  with existing same-date/market-time guards and trading history retained.
+  history no longer prevents the Wallet popup reset. Reset funds remain available
+  on resume, with existing same-date/market-time guards and trading history retained.
+  The capital follow-up below preserves the saved session baseline separately.
 - Desktop Replay Market execution and exact-contract quote routing, CE/PE option
   lot sizing, pending-order edit increments and protective Stoploss submission are
   covered by backend and browser checks. Popup Stoploss includes the required
@@ -664,6 +723,280 @@ made, so the prior 1,949-backend/303-AI-helper results are historical evidence;
 those suites were not rerun for this frontend-only change. Native packaged Windows
 acceptance remains manual. Delivery needs a rebuilt desktop client and updated
 website assets; main merging/deployment remain manual.
+
+### Website running Real/Paper mode display — 2026-10-10
+
+**Status: implemented and validated; [PR #634](https://github.com/prattyush/TradeMatangi/pull/634) published for review → dev.** Starting a session
+changes the SessionControls key, remounting it with the local Paper picker default.
+The running display previously used that picker instead of the session's actual
+mode, so a Real session could appear as Paper.
+
+App now passes the current session type to SessionControls. Running/paused live
+selection and badges use that type, including restored sessions before the Real
+access lookup completes. Idle and add-session controls keep the existing picker
+behavior and fresh Paper default. Trading execution, permissions and backend
+session modes are unchanged.
+
+Validation: website TypeScript/production build and **43 website Node tests**
+passed. `scripts/website-real-mode-check.mjs` verifies choosing Real and starting
+through a component remount, repeated remount, paused Paper, restored Real before
+access lookup, fresh idle Paper default and no page errors. Artifacts:
+`.cache/real-session-label/`. Deploy rebuilt website assets to apply the display
+fix; main merge/deployment remain manual.
+
+## Real Analytics finalized charges — 2026-10-11
+
+Implemented for the shared website/desktop Stats dashboard. Broker charges can
+finalize overnight; until a user supplies the finalized bill, analytics continues
+using calculated estimates. In Stats, select **Real → Actual Real charges**, choose
+the trading date and owned broker account, enter the finalized total, and save.
+**Use estimate** removes the correction. This is a manual correction, with no
+scheduled broker polling or statement import.
+
+- The bill covers all loaded Real orders for that account/date, across symbols
+  and sessions. Chart/report filters do not narrow the allocation. If the bill
+  includes other trades, load their history first or enter only the charges
+  attributable to the loaded orders. Legacy trades without an account identity
+  remain estimated.
+- Store the correction separately in the existing WalletLedgers table under
+  `analytics-real-fees:<date>:<account hash>`. Raw broker trades/orders, wallets,
+  live P&L, order placement and risk controls remain untouched. No migration or
+  new table is required; missing correction storage reads as an estimate.
+- Allocate the finalized total across broker orders using estimated charges,
+  falling back to turnover. Per-order allocations
+  sum to the exact bill in paise. Partial fills share each order allocation;
+  FIFO cycle matching allocates it between exits and remaining open inventory.
+- Apply corrections before building analytics cycles. Net P&L, outcomes,
+  drill-down details, summaries and CSV use corrected charges. Labels distinguish
+  estimates, allocated actual charges, mixed sources and changed history.
+  Individual allocated fees are approximations, not broker-confirmed order fees.
+- Broker refresh cannot overwrite a saved correction. New orders or changed
+  quantity/turnover keep their estimates, with a history-changed notice asking
+  the owner to save the finalized total again. Account/date/user isolation and
+  existing shared-history read-only permissions are preserved.
+- Reads and saves run off the backend event loop. Storage failures are logged
+  and return an error; the editor keeps the report available and permits retry.
+
+Validation complete: **1,962 backend tests**, **183 desktop Vitest tests**,
+**43 website Node tests**, and **17 native Rust unit tests (Linux)** pass. Both
+TypeScript/production builds pass. The 13 charge regression cases cover account,
+date and owner isolation, shared read-only access, projection aliases, partial
+fills and reversals, zero charges, changed history, refresh persistence, storage
+failure, outcome/summary/detail changes and reverting to estimates. Browser
+acceptance covers editor save/revert/zero/failure/empty date/close and the existing
+Stats sections, drill-down, CSV and narrow viewport, with no page errors.
+Two older equity OHLC fixtures were repaired to mock broker downloads; the full
+suite no longer depends on a live Breeze token for those cases. Test artifacts:
+`.cache/real-analytics-fees/`; repeatable editor check:
+`scripts/real-charges-browser-check.mjs` (set PLAYWRIGHT_MODULE if needed).
+
+Reviewed account/date scope, allocation, cache refresh, sharing permissions and
+trading isolation. No unresolved automated-check failures. Packaged Windows
+acceptance remains manual. Deploy the updated backend and website and rebuild the
+desktop client to include the native route allowlist. Main merge/deployment remain
+manual; this follow-up targets dev.
+
+## Desktop snapshot event candle — 2026-10-11
+
+Implemented the event-candle follow-up for Desktop Analysis snapshots. Selecting
+an event displays the three-minute candle containing its recorded market time,
+including underlying/CE/PE tabs. The previous implementation removed the boundary
+candle unless captured OHLC existed; captured OHLC itself could represent only a
+single observation rather than the accumulated three-minute candle.
+
+- Reconstruct from the candle boundary through the event second, inclusively:
+  first open, maximum high, minimum low, and close at that second. Use cached,
+  genuine observed seconds with complete coverage; never treat synthetic gap
+  filling or minute rows as exact second observations.
+- If suitable seconds are absent, retain the full historical event candle. No
+  precision or fallback labels are added. Exclude candles after the event candle.
+  Missing both sources produces the existing chart data-error flow rather than
+  substituting the preceding candle.
+- Keep captured current-price, order and position lines. Ignore stale captured
+  observation boundaries when a valid recorded event timestamp exists. Replay
+  uses its recorded market timestamp, not the wall-clock `event_timestamp`.
+- Add `GET /api/snapshots/{event_id}/candle?session_id=…&instrument=underlying|CE|PE`
+  and the desktop-authenticated equivalent, returning `{candle: OHLC | null}`.
+  Resolve date, symbol and strike/expiry from the saved snapshot. Preserve owner
+  and shared-history read permissions and exact read-only native allowlists.
+- Reconstruction only reads existing Breeze parquet/legacy equity pickle caches;
+  it does not download, migrate files or change recording/trading state. File
+  reads and aggregation run off the event loop. Unexpected errors are logged;
+  desktop falls back to the historical event candle. Event/account changes abort
+  or ignore obsolete replies. Reopening a snapshot keeps its event candle visible.
+
+Validation: **133 related backend tests**, **186 desktop Vitest tests**, **18 native
+Rust unit tests (Linux)** and **43 website Node tests** pass. Both TypeScript and
+production builds pass. `scripts/snapshot-candle-browser-check.mjs` exercises the
+actual shared viewer and desktop KLineCharts: exact OHLC/full fallback, stale
+capture boundaries, underlying/CE/PE, late responses, reconstruction failure,
+keyboard navigation, resize/Fit, price lines, missing event data and close, with
+no page errors. Artifacts: `.cache/snapshot-event-candle/`.
+
+No database migration or website behavior change. Rebuild the desktop client and
+update the backend to apply the feature; an older backend still permits the full
+historical-candle fallback. Packaged Windows acceptance remains manual. Delivery
+[PR #640](https://github.com/prattyush/TradeMatangi/pull/640) merged to dev;
+main merge/deployment remain manual.
+
+## Desktop option marker text and snapshot navigation — 2026-10-11
+
+CE/PE execution markers now use colored circles without text on desktop trading,
+Analysis, comparison and snapshot charts. Underlying labels retain option-side
+context and grouped counts. Marker colors, exact fill placement, contract filtering
+and Analysis click/chooser behavior are unchanged. Pattern annotations and order
+price-line labels remain visible. Website rendering is unchanged.
+
+Snapshot event navigation within the same session/date/contract now keeps the
+existing chart and its zoom. Prior candles and price lines remain while the next
+event loads, then update together. Stable chart identity is separate from event
+identity; the existing loader is reused without resetting the manual price scale.
+The original automatic event scrolling is superseded by the fixed-position
+follow-up below.
+A different date or option contract clears the old series, and missing/invalid
+event data still produces a chart error rather than presenting a stale event.
+No backend changes or new caching infrastructure are required for this follow-up.
+
+PR #642 validation: **191 desktop Vitest tests**, TypeScript and production build passed.
+The snapshot browser check verifies retained chart instance/zoom, no blank frames
+during delayed navigation, zoom changes during loading, old price lines while
+waiting, distant/earlier events, cancellation, contract tabs, resize/Fit and error
+handling. Marker tests cover CE/PE colors, underlying labels, coincident fills,
+custom option labels, exact prices and open/history filtering. Artifacts:
+`.cache/snapshot-viewport/` and `.cache/option-marker-labels/`.
+[PR #642](https://github.com/prattyush/TradeMatangi/pull/642) merged to dev (194e15d).
+
+## Desktop snapshot fixed chart position — 2026-10-11
+
+Selecting snapshot events now preserves the time axis exactly where the user
+placed it. If 10:15 is centered and zoomed, another 10:15 event or a later 11:15
+event keeps 10:15 at the same screen position. The new event may remain offscreen;
+there is no automatic scroll to the latest candle during same-context navigation.
+
+Capture a candle's timestamp, measured horizontal pixel position and current zoom
+immediately before replacing data. Restore that position in the same synchronous
+update, without approximate re-centering or a delayed callback that could undo a
+fresh pan/zoom. Reuse the existing chart/loader; retain pending-data, price-line,
+manual price-scale, cancellation and error behavior. New dates/contracts retain
+initial positioning; earlier snapshots still exclude future candles and respect
+normal chart scrolling limits. No backend or public API changes.
+
+Validation: desktop TypeScript and production build pass. The actual snapshot
+viewer/KLineCharts browser check asserts position within **one pixel** for repeated
+10:15 events, 10:15 → 11:15 and back, distant events without auto-scroll, and panning
+and zooming during delayed loading. Existing exact/full-candle fallback, contract
+tabs, keyboard navigation, resize/Fit, price lines, no blank frames and data-error
+checks also pass, with no page errors. Artifacts: `.cache/snapshot-fixed-position/`.
+[PR #644](https://github.com/prattyush/TradeMatangi/pull/644) merged to dev (7126fe0). Rebuild the desktop client to apply;
+main merge/deployment remain manual.
+
+## Website header notifications — 2026-10-12
+
+Implemented the website notification follow-up for all trading modes: Paper,
+Replay, Stepwise and Real. Automatic floating cards could cover order controls;
+errors now use the reserved header space between Add Session and Day P&L.
+
+- Show one static error headline, clipping long first-line text with ellipsis.
+  Keep the header's height stable with or without messages. The history button
+  and unread error/warning count are beside the headline; there is no floating
+  launcher over the trading workspace. Sign-in retains a compact standalone
+  launcher where no trading header exists.
+- Queue distinct errors FIFO, with eight seconds starting when each becomes
+  active. Dismiss advances the next error. Repeats retain grouping/count behavior
+  without restarting the active timer; the queue is bounded by retained history.
+- Store all levels in history (latest 100 records, seven days per account/backend).
+  Clicking the headline opens the existing nonmodal history and scrolls to that
+  message. Full text, filters, mark-read, confirmed clear, download and IST receipt
+  times remain. Expiry/dismissal does not delete history, and reload does not replay
+  old headlines. Account changes cancel pending messages and timers.
+- Remove the separate pattern-alert stack. Pattern details and suggestions enter
+  the same history; critical alerts are errors, warnings stay warnings, and other
+  alerts are informational. Only errors appear automatically. Actual guardrail
+  blocking, confirmations and broker acknowledgement semantics are unchanged.
+- No backend/API/storage migration or desktop behavior change. The journal remains
+  browser-local and existing chart instances/data are retained.
+
+Validation: **49 website Node tests** (including **14 notification tests**),
+TypeScript and production build pass. Updated notification browser acceptance uses
+actual header/history components, Lightweight Charts and OrderPanel: one clipped
+headline, error FIFO/dismissal/expiry, complete details for every level, targeted
+history, download, reload/account isolation, narrow layout, pattern criticality,
+API failures and late-account fencing. Real/Paper/Replay/Stepwise Buy/Sell and
+order editing/cancellation stay clickable during notifications; chart bounds and
+instance remain unchanged. Existing Real safety-action browser acceptance also
+passes. No page errors. Artifacts: `.cache/website-header-notifications/`.
+
+[PR #646](https://github.com/prattyush/TradeMatangi/pull/646) merged to dev (22c5f4f). Deploy rebuilt website assets to apply; main merge/deployment remain manual.
+
+## Desktop right-click Strategies submenu — 2026-10-12
+
+Desktop trading charts now group Aggressive SL, Breakeven and Lock Profit here
+under **Strategies**. Underlying target/SL strategies also use that submenu on
+eligible underlying charts, retaining their Half/Full choices. **Take profit here**
+remains a main-menu item with its existing Half/Full submenu. Buy/Sell entry,
+SL coverage and order-move actions remain in the main menu.
+
+Take Profit P&L text on the chart is now anchored 8px from the left edge at its
+price level, clearing the right-hand price scale. The strategy price line, numeric
+price label, P&L calculations and line interactions remain unchanged.
+
+The desktop TP percentage editor now has icon buttons with tooltips/accessible
+names: Save (check), Cancel edits (cross), and Delete strategy (trash). Delete
+uses the existing strategy-cancel endpoint, retains the position, and removes the
+confirmed-cancelled TP line. Disable controls while Save/Delete is pending; failed
+deletion keeps the editor/line and an error for retry. Confirmed cancellation is
+reflected locally even if the subsequent snapshot refresh fails, with the refresh
+failure reported separately. Session changes cannot receive an old cancellation
+snapshot. Sidebar cancellation continues to use the same handler/error reporting.
+
+Reuse the existing submenu hover/focus behavior and edge-opening styles. Existing
+position/entry/underlying eligibility, action identifiers, clicked price and anchor
+are unchanged; no backend or strategy execution changes. Allow enough space for
+nested underlying menus when choosing the opening side/vertical placement.
+
+Validation: **191 desktop Vitest tests**, TypeScript and production build pass.
+`scripts/desktop-strategy-menu-check.mjs` exercises the actual ChartTile/KLineCharts
+menu: grouped visibility and dispatch, Take Profit at root, keyboard focus,
+right/bottom-edge opening, underlying strategy size choices, existing flat vs
+held-position eligibility and left-aligned TP text clear of the price scale; no
+page errors. The editor check activates the registered line-selection callback
+then clicks the real Save/Cancel/Delete icons, verifying percentage payload,
+non-mutating Cancel, pending controls, deletion failure/retry, and line removal.
+Artifacts: `.cache/desktop-strategy-menu/` and `.cache/desktop-tp-editor/`.
+[PR #648](https://github.com/prattyush/TradeMatangi/pull/648) targets dev and awaits
+review; rebuild the desktop client to apply. Main merge/deployment remain manual.
+
+## Paper/Real resumed session capital — 2026-10-12
+
+Implemented and validated. The shared storage restore path previously took current
+wallet cash as session capital, then persisted that reduced baseline. Desktop Paper
+resumes, stopped-session previews and website Paper restoration now retain the
+saved finite `session_capital`, including zero. Positions, trades, available wallet
+cash and P&L continue to use their existing values. For example, a ₹1,00,000 session
+with a ₹6,501 open-position debit resumes with ₹1,00,000 capital and ₹93,499 cash.
+
+Real restoration retains an explicitly supplied frozen broker account/day baseline;
+without that override it uses the saved session capital. Missing or invalid legacy
+capital falls back to the existing explicit-capital/wallet logic and logs
+`session_capital_resume_fallback`. No new API, fields, migration, historical scan
+or client calculation was introduced. Already overwritten original capital cannot
+be reconstructed reliably from current cash; no automatic repair is attempted.
+
+Wallet reset rules are unchanged. Resuming the same Paper session after reset keeps
+that session's original capital while exposing the updated available balance. A
+new session still starts from the existing wallet rules. Replay/Stepwise start,
+pause/resume, stop/checkpoint and position-flattening behavior remain unchanged.
+
+Validation: **162 focused backend tests**, **46 related backend tests**, **49 website
+tests**, **191 desktop tests**, and both TypeScript checks pass. Coverage includes
+open-position stop/restoration, repeated server-memory loss, persisted capital,
+read-only preview, empty-session desktop/website resume after reset, zero and
+invalid legacy values, Real frozen daily balances, and unchanged Replay/Stepwise
+capital rules. The existing replay completion test now awaits the engine task
+with a bounded timeout instead of assuming it finishes in 100ms. Artifacts:
+`.cache/resume-session-capital/`. [PR #650](https://github.com/prattyush/TradeMatangi/pull/650)
+targets dev and awaits review; main merge/deployment remain manual. Restart the
+backend to apply; no client rebuild is needed.
 
 ## Original requirements
 
