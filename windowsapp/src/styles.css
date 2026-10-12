@@ -274,3 +274,6 @@ input { width: 160px; }
 .desktop-order-edit label:first-child { width: 100%; }
 .desktop-order-price-controls { display: flex; align-items: center; gap: 3px; }
 .desktop-order-price-controls input { flex: 1; width: 65px; }
+
+.target-profit-editor .target-profit-icon { width: 28px; height: 26px; padding: 3px; display: inline-flex; align-items: center; justify-content: center; }
+.target-profit-editor .target-profit-delete { color: #f87171; }
