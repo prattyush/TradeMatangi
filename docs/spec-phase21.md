@@ -845,6 +845,10 @@ eligible underlying charts, retaining their Half/Full choices. **Take profit her
 remains a main-menu item with its existing Half/Full submenu. Buy/Sell entry,
 SL coverage and order-move actions remain in the main menu.
 
+Take Profit P&L text on the chart is now anchored 8px from the left edge at its
+price level, clearing the right-hand price scale. The strategy price line, numeric
+price label, P&L calculations and line interactions remain unchanged.
+
 Reuse the existing submenu hover/focus behavior and edge-opening styles. Existing
 position/entry/underlying eligibility, action identifiers, clicked price and anchor
 are unchanged; no backend or strategy execution changes. Allow enough space for
@@ -853,8 +857,9 @@ nested underlying menus when choosing the opening side/vertical placement.
 Validation: desktop TypeScript and production build pass.
 `scripts/desktop-strategy-menu-check.mjs` exercises the actual ChartTile/KLineCharts
 menu: grouped visibility and dispatch, Take Profit at root, keyboard focus,
-right/bottom-edge opening, underlying strategy size choices and existing flat vs
-held-position eligibility; no page errors. Artifacts: `.cache/desktop-strategy-menu/`.
+right/bottom-edge opening, underlying strategy size choices, existing flat vs
+held-position eligibility and left-aligned TP text clear of the price scale; no
+page errors. Artifacts: `.cache/desktop-strategy-menu/`.
 [PR #648](https://github.com/prattyush/TradeMatangi/pull/648) targets dev and awaits
 review; rebuild the desktop client to apply. Main merge/deployment remain manual.
 

@@ -532,7 +532,7 @@ export function ChartTile({ symbol, interval, supportedIntervals, onIntervalChan
       if (projectedLabel) {
         const pixel = pointToPixel(timestamp, price)
         if (pixel && typeof pixel.y === 'number') {
-          nextLabels.push({ key: strategy.strategy_id, x: Math.max(8, (element.current?.clientWidth ?? 0) - 122), y: pixel.y, text: projectedLabel, color: projectedLabel.startsWith('TP -') ? '#ef4444' : '#22c55e' })
+          nextLabels.push({ key: strategy.strategy_id, x: 8, y: pixel.y, text: projectedLabel, color: projectedLabel.startsWith('TP -') ? '#ef4444' : '#22c55e' })
         }
       }
       const overlayKey = `strategy:${strategy.strategy_id}`
