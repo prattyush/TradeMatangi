@@ -724,6 +724,12 @@ reviewable delivery PR targeting dev.
 
 ## Website floating messages and error history — 2026-10-07
 
+**Superseded layout — 2026-10-12:** automatic website notifications now use one
+error headline in reserved header space rather than floating cards. All severities
+remain in the same history. Pattern alerts join that history; only critical pattern
+alerts enter the error queue. See Phase 21's Website header notifications follow-up
+for current behavior and validation. The original delivery below is historical.
+
 The user reported distracting chart movement when top-level order/broker/exit
 protection/conversion banners appeared and disappeared during real trading.
 Website messages now use a fixed floating stack rather than consuming chart layout
