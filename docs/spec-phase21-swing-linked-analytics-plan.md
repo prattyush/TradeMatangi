@@ -180,7 +180,7 @@ certification or complete broker contract-note accounting.
 
 ### Verification and rollout
 
-The delivery PR records final command counts. Full backend checkpoint: **2,226
+The delivery PR records final command counts. Final full backend run: **2,229
 passed and two existing local ICICI credential failures** (`test_missing_strike_returns_400`
 and `test_invalid_right_returns_400`). Final focused backend check: **125 passed**, including rupee-drawdown, legacy
 non-flow corrections and cross-surface legacy order retries. Client attribution
