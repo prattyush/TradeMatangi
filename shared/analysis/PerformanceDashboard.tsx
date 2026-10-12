@@ -1,3 +1,4 @@
+import SwingStats from '../SwingStats'
 import RealChargesEditor from './RealChargesEditor'
 import { completeCycleExport } from './exportCycles'
 import { useAnalysisError } from './environment'
@@ -15,6 +16,7 @@ import {
 import "./performance.css";
 
 interface Props {
+  defaultTradingStyle?:string; defaultPortfolioId?:string;
   selectedCycle?: PerformanceCycle;
   onChargesChanged?: () => void;
   onClose: () => void;
@@ -238,11 +240,33 @@ export default function PerformanceDashboard(props: Props) {
     start_date: props.defaultStartDate || dateAgo(29),
     end_date: props.defaultEndDate || dateAgo(0),
     instrument_type: props.defaultInstrumentType,
+    trading_style:props.defaultTradingStyle??'intraday',
+    portfolio_id:props.defaultPortfolioId??'',
     session_type:
       props.defaultSessionType === "desktop_stepwise"
         ? "stepwise"
         : props.defaultSessionType,
   });
+  const [tradingStyle,setTradingStyle]=useState(props.defaultTradingStyle??'intraday');
+  const swingLabels = useRef({ dirty: false, saving: false });
+  const swingPortfolio = useRef(props.defaultPortfolioId ?? "");
+  const changeTradingStyle = (style: string) => {
+    if (
+      swingLabels.current.saving ||
+      (swingLabels.current.dirty &&
+        !window.confirm("Discard unsaved trade labels?"))
+    )
+      return;
+    swingLabels.current = { dirty: false, saving: false };
+    environment.onDirtyChange?.(false);
+    environment.onLabelSavingChange?.(false);
+    setTradingStyle(style);
+    setFilters((previous) => ({
+      ...previous,
+      trading_style: style,
+      portfolio_id: style === "intraday" ? "" : swingPortfolio.current,
+    }));
+  };
   const [view, setView] = useState<View>("Overview");
   const [report, setReport] = useState<PerformanceReport | null>(null);
   const [cycles, setCycles] = useState<PerformanceCycle[]>([]);
@@ -267,6 +291,7 @@ export default function PerformanceDashboard(props: Props) {
   const detailGeneration = useRef(0);
   const exportController = useRef<AbortController | null>(null);
   useEffect(() => {
+    if(tradingStyle==='swing')return;
     const controller = new AbortController();
     const revision = ++generation.current;
     exportController.current?.abort();
@@ -299,7 +324,7 @@ export default function PerformanceDashboard(props: Props) {
       exportController.current?.abort();
       detailGeneration.current++;
     };
-  }, [filters, refresh, environment.dataRevision]);
+  }, [filters, refresh, environment.dataRevision,tradingStyle]);
   const select = (key: string, dimension?: string) =>
     setFocus({ key, dimension });
   const showDetail = async (c: PerformanceCycle, enrich = false) => {
@@ -480,6 +505,8 @@ export default function PerformanceDashboard(props: Props) {
     </section>
   );
 
+  if(tradingStyle==='swing' && environment.active===false)return null;
+  if(tradingStyle==='swing')return <div className="pa-overlay" role="dialog" aria-label="Trading performance"><div className="pa-filters"><label>Trading style <select aria-label="Stats trading style" value={tradingStyle} onChange={event=>changeTradingStyle(event.target.value)}><option value="intraday">Day trading</option><option value="swing">Swing trading</option></select></label></div>{environment.performance.getSwingReport?<SwingStats initialPortfolioId={swingPortfolio.current} onPortfolioChange={id=>{swingPortfolio.current=id;}} onDraftStateChange={state=>{swingLabels.current=state;environment.onDirtyChange?.(state.dirty);environment.onLabelSavingChange?.(state.saving)}} load={environment.performance.getSwingReport} portfolioId={props.defaultPortfolioId} onClose={props.onClose} saveLabel={async(cycle,draft)=>{await environment.api.saveLabels([{session_id:cycle.session_id,round_trip_index:cycle.index,analytics_cycle_id:cycle.cycle_id,expected_category:draft.expected_category??'',expected_strategy:draft.expected_strategy??'',actual_category:draft.actual_category??'',actual_strategy:draft.actual_strategy??'',entry_tag:draft.entry_tag??'AS_PER_PATTERN',exit_tag:draft.exit_tag??'AS_PER_PATTERN'}])}}/>:<p>Swing statistics are unavailable in this client.</p>}</div>
   return (
     <div
       className="pa-overlay"
@@ -505,6 +532,7 @@ export default function PerformanceDashboard(props: Props) {
         </button>
       </header>
       <div className="pa-filters">
+        <label>Trading style <select aria-label="Stats trading style" value={tradingStyle} onChange={event=>changeTradingStyle(event.target.value)}><option value="intraday">Day trading</option><option value="swing">Swing trading</option></select></label>
         <label>
           From
           <input

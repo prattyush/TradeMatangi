@@ -26,6 +26,7 @@ export const buildTradeMarkers = (
   instrument: Record<string, unknown>,
   intervalSeconds: number,
   showHistoricalMarkers = true,
+  candleAnchorSeconds=0,
 ): TradeMarker[] => {
   const isOption = instrument.kind === 'option'
   const right = instrument.right as 'CE' | 'PE' | undefined
@@ -36,12 +37,12 @@ export const buildTradeMarkers = (
     if (isOption) {
       if (trade.right !== right || Number(trade.strike) !== strike) return []
       const style = markerStyle(trade.side)
-      return [{ id: trade.trade_id, timestamp: Math.floor(trade.timestamp / intervalSeconds) * intervalSeconds, price: trade.price, ...style, text: '' }]
+      return [{ id: trade.trade_id, timestamp: Math.floor((trade.timestamp-candleAnchorSeconds) / intervalSeconds) * intervalSeconds+candleAnchorSeconds, price: trade.price, ...style, text: '' }]
     }
     if (trade.right && (!Number.isFinite(Number(trade.underlying_price)) || Number(trade.underlying_price) <= 0)) return []
     const style = trade.right ? crossChartMarkerStyle(trade.right, trade.side) : markerStyle(trade.side)
     const price = trade.right ? Number(trade.underlying_price) : trade.price
     if (!Number.isFinite(price) || price <= 0) return []
-    return [{ id: trade.trade_id, timestamp: Math.floor(trade.timestamp / intervalSeconds) * intervalSeconds, price, ...style }]
+    return [{ id: trade.trade_id, timestamp: Math.floor((trade.timestamp-candleAnchorSeconds) / intervalSeconds) * intervalSeconds+candleAnchorSeconds, price, ...style }]
   })
 }

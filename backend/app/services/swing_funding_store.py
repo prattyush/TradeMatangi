@@ -99,7 +99,18 @@ def initialize(user, broker, account, reference):
         return read(user, broker, account)
 
 
-def apply(user, broker, account, period_id, operation_id, kind, payload, mutate, *, extra_actions=None):
+def apply(
+    user,
+    broker,
+    account,
+    period_id,
+    operation_id,
+    kind,
+    payload,
+    mutate,
+    *,
+    extra_actions=None,
+):
     """CAS the state and operation receipt together; retries cannot double-charge."""
     from boto3.dynamodb.types import TypeSerializer
 
@@ -110,7 +121,9 @@ def apply(user, broker, account, period_id, operation_id, kind, payload, mutate,
     ledger = key(broker, account)
     fingerprint = hashlib.sha256(
         json.dumps(
-            {"kind": kind, "payload": payload, "actor_user_id": user}, sort_keys=True, allow_nan=False
+            {"kind": kind, "payload": payload, "actor_user_id": user},
+            sort_keys=True,
+            allow_nan=False,
         ).encode()
     ).hexdigest()
     receipt = {
@@ -133,12 +146,45 @@ def apply(user, broker, account, period_id, operation_id, kind, payload, mutate,
                     409, "Funding operation identity was reused for different data"
                 )
             return current
-        if current.get("state")=="ended":
-            raise HTTPException(409,"Funding period is closed; no new operations can change its archived evidence")
+        if current.get("state") == "ended":
+            raise HTTPException(
+                409,
+                "Funding period is closed; no new operations can change its archived evidence",
+            )
         changed = deepcopy(current)
         mutate(changed)
         changed["version"] = current["version"] + 1
         changed["updated_at"] = int(time.time() * 1000)
+        analytics = []
+        for style, participant in changed.get("participants", {}).items():
+            if style != "swing":
+                continue
+            before = current.get("funding", {}).get("modes", {}).get(style, {})
+            after = changed.get("funding", {}).get("modes", {}).get(style, {})
+            same = current.get("participants", {}).get(style, {}).get(
+                "identity"
+            ) == participant.get("identity")
+            allocation_delta = (
+                rules.money(
+                    float(after.get("funding_allocation", after.get("capital", 0)))
+                    - float(before.get("funding_allocation", before.get("capital", 0)))
+                )
+                if same
+                else 0
+            )
+            analytics.append(
+                {
+                    "session_id": participant.get("identity"),
+                    "timestamp": changed["updated_at"] // 1000 + 19800,
+                    "cash_flow": allocation_delta,
+                    "reference_before": before.get("capital"),
+                    "reference_after": after.get("capital"),
+                    "kind": kind,
+                    "classification": "unclassified"
+                    if kind == "acknowledged_cash_shortfall"
+                    else "capital_transfer",
+                }
+            )
         try:
             get_dynamodb_client().transact_write_items(
                 TransactItems=[
@@ -157,12 +203,18 @@ def apply(user, broker, account, period_id, operation_id, kind, payload, mutate,
                         "Put": {
                             "TableName": "WalletLedgers",
                             "Item": serialize(
-                                {**receipt, "fingerprint": fingerprint, "kind": kind}
+                                {
+                                    **receipt,
+                                    "fingerprint": fingerprint,
+                                    "kind": kind,
+                                    "analytics": analytics,
+                                }
                             ),
                             "ConditionExpression": "attribute_not_exists(ledger_id)",
                         }
                     },
-                ] + (extra_actions(changed) if extra_actions else [])
+                ]
+                + (extra_actions(changed) if extra_actions else [])
             )
             return changed
         except ClientError as exc:

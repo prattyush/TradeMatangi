@@ -11,8 +11,10 @@ export type AnalysisApi = Pick<typeof websiteApi,
   getSnapshotCandle?: (sessionId: string, eventId: string, instrument: 'underlying' | 'CE' | 'PE', signal?: AbortSignal) => Promise<{candle: OHLCCandle | null}>
 }
 export interface AnalysisEnvironment {
+  swingRequest?: import('../SwingPortfolioPanel').SwingRequest
   api: AnalysisApi
   performance: {
+    getSwingReport?: (filters:PerformanceFilters,signal?:AbortSignal)=>Promise<any>
     getRealFees?: (date: string, signal?: AbortSignal) => Promise<RealFeesDay>
     saveRealFees?: (date: string, account: string, amount: number, broker?: "kotak" | "kite") => Promise<RealFeesDay>
     deleteRealFees?: (date: string, account: string, broker?: "kotak" | "kite") => Promise<RealFeesDay>

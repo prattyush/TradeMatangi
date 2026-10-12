@@ -162,3 +162,21 @@ def test_closed_intraday_effects_survive_until_swing_closes_then_next_period_cap
         Key={"user_id": store.partition("kite", "account"), "ledger_id": f"funding-period:{period}"}
     )["Item"]
     assert int(archived["funding"]["starting_capital"]) == 1000000
+
+
+def test_analytics_receipts_separate_reference_edits_from_capital_transfers(db,monkeypatch):
+    from app.services.swing_analytics import funding_flows
+    current=store.initialize('u','kite','account',10000)
+    def start(row):
+        row['funding']=rules.allocate(row['funding'],'swing',1)
+        row['participants']['swing']={'identity':'portfolio','owner_user_id':'u','active':True}
+    store.apply('u','kite','account',current['period_id'],'start','participant_start',{},start)
+    def reference(row):row['funding']['modes']['swing']['capital']=5000
+    store.apply('u','kite','account',current['period_id'],'reference','capital_reset',{},reference)
+    def transfer(row):row['funding']['modes']['swing']['funding_allocation']+=1000
+    first=store.apply('u','kite','account',current['period_id'],'transfer','allocation',{},transfer)
+    repeated=store.apply('u','kite','account',current['period_id'],'transfer','allocation',{},transfer)
+    assert first['version']==repeated['version']
+    flows,complete=funding_flows({'session_id':'portfolio','mode':'real','execution_broker':'kite','broker_account_id':'account','real_funding_period':current['period_id']})
+    assert complete and len(flows)==1 and flows[0]['cash_flow']==1000
+    assert flows[0]['classification']=='capital_transfer'

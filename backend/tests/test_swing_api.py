@@ -266,3 +266,25 @@ def test_decimal_price_retry_uses_original_instructions_after_order_kind_changes
     assert retry.status_code == 200, retry.text
     assert retry.json()['order_id'] == identifier
     assert client.post(path + '/orders', json={**request, 'price': 100.06}, headers=headers).status_code == 409
+
+
+def test_legacy_order_retry_from_another_surface_does_not_duplicate(client):
+    from app.services import order_service
+
+    path = start(client)
+    headers = {"X-User-Id": "u"}
+    request = {"symbol": "HDFCBANK", "side": "BUY", "quantity": 1,
+               "price": 100.05, "request_id": "legacy-surface"}
+    placed = client.post(path + "/orders", json=request, headers=headers)
+    assert placed.status_code == 200, placed.text
+    identifier = placed.json()["order_id"]
+    child = service.runtime("u", path.rsplit("/", 1)[-1]).contexts["HDFCBANK:equity"]
+    order = order_service.get_order(child.session_id, identifier)
+    order.analytics["swing_request"].pop("client", None)
+    order_service._write_order_to_db(order, strict=True)
+    retry = client.post(path + "/orders", json={**request, "client": "desktop"}, headers=headers)
+    assert retry.status_code == 200, retry.text
+    assert retry.json()["order_id"] == identifier
+    assert retry.json()["wallet_balance"] == placed.json()["wallet_balance"]
+    changed = client.post(path + "/orders", json={**request, "client": "desktop", "quantity": 2}, headers=headers)
+    assert changed.status_code == 409

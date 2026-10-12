@@ -1125,3 +1125,29 @@ Windows acceptance follows preprod merge/deployment. See the [delivery decisions
 interfaces, test evidence and remaining acceptance scope](spec-phase21-swing-improvements-plan.md#implementation-checkpoint--2026-10-12).
 Swing uses 09:15–15:30 IST for active Paper/Real pricing independently of screens;
 Paper expiry exits begin at 15:15. Main/dev promotion remains manual.
+
+### Linked Swing windows and analytics — 2026-10-12
+
+The approved [linked-window and Swing analytics plan](spec-phase21-swing-linked-analytics-plan.md)
+adds desktop portfolio companions and Swing-aware history, labels, Analysis and
+Stats. The previous chart workspace was merged through PR #655. This extension
+uses a new branch and targets preprod.
+
+
+### Linked windows and Swing Stats implementation checkpoint — 2026-10-12
+
+Desktop companions now share one exact portfolio with independent chart workspaces.
+Both clients have execution history, stable open/closed trade labels, Swing-aware
+Analysis and portfolio/trade/exposure Stats. See the [implementation details,
+accounting conventions and test/acceptance record](spec-phase21-swing-linked-analytics-plan.md#implementation-checkpoint--2026-10-12).
+Work is on the new `feature/swing-linked-analytics` branch targeting preprod;
+installed-Windows and authenticated broker acceptance follows merge/deployment.
+Multi-day Replay, website popups, new strategies and finalized Swing charges remain
+deferred; earlier linked-chart/history pending notes are superseded.
+
+
+PR #656 follow-up review corrections are recorded in the
+[linked Swing delivery record](spec-phase21-swing-linked-analytics-plan.md#pr-656-review-corrections--2026-10-12):
+History initialization, valuation chronology/import attribution, independent drawing
+scopes, label navigation, Day/Swing filters and a single native window close owner.
+Installed Windows and broker acceptance remain after preprod deployment.

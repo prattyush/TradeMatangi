@@ -28,6 +28,8 @@ export default function SwingChart(props: SwingChartProps) {
     >
       <Chart
         symbol={pane.symbol}
+        candleAnchorSeconds={pane.interval==='1D'?0:33300}
+        defaultShowAllMarkers={props.showHistoricalTrades}
         tradingDate={pane.as_of_date}
         startTime={null}
         intervalMinutes={minutes}
@@ -37,6 +39,7 @@ export default function SwingChart(props: SwingChartProps) {
         strike={pane.strike}
         expiry={pane.expiry}
         latestTick={null}
+        trades={props.trades}
         externalCandles={props.candles}
         externalLoading={props.loading}
         externalMessage={props.message}

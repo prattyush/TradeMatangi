@@ -9,7 +9,7 @@ export function validAnalysisPath(path: string, method: string): boolean {
   if (!route || route.startsWith('/') || route.includes('%') || route.includes('#') || route.includes('\\') || route.split('/').some(p => p === '.' || p === '..')) return false
   if (method === 'POST') return route === 'labels' || route === 'performance/real-fees'
   if (method === 'DELETE') return route === 'snapshots' || route === 'performance/real-fees'
-  return method === 'GET' && /^(sessions(?:\/[A-Za-z0-9_-]+)?|round-trips|labels|entry-tags|exit-tags|snapshots(?:\/[A-Za-z0-9_-]+\/candle)?|performance(?:\/real-fees|\/cycles(?:\/[A-Za-z0-9_-]+)?)?|data\/(historical|pre-session|options-historical|expiry)|pattern\/(strategies|categories|chart\/by-date|ohlc\/(equity|options)))$/.test(route)
+  return method === 'GET' && /^(sessions(?:\/[A-Za-z0-9_-]+)?|round-trips|labels|entry-tags|exit-tags|snapshots(?:\/[A-Za-z0-9_-]+\/candle)?|performance(?:\/swing|\/real-fees|\/cycles(?:\/[A-Za-z0-9_-]+)?)?|data\/(historical|pre-session|options-historical|expiry)|pattern\/(strategies|categories|chart\/by-date|ohlc\/(equity|options)))$/.test(route)
 }
 function awaitNative<T>(promise:Promise<T>,signal?:AbortSignal):Promise<T> {
   if(!signal)return promise
@@ -72,7 +72,7 @@ export function createAnalysisApi(request: AnalysisRequest) {
 
   const remember = (cycle: PerformanceCycle) => { cycles.set(`${cycle.session_id}:${cycle.cycle_id}`, cycle); while (cycles.size > 200) cycles.delete(cycles.keys().next().value!) }
   const api: AnalysisApi = {
-    getAnalysisSessions: opts => { invalidate(); return call('getAnalysisSessions', 'sessions', {symbol: opts?.symbol, start_date: opts?.startDate, end_date: opts?.endDate, include_shared: true, instrument_type: opts?.instrumentType, session_type: opts?.sessionType}) },
+    getAnalysisSessions: opts => { invalidate(); return call('getAnalysisSessions', 'sessions', {symbol: opts?.symbol, start_date: opts?.startDate, end_date: opts?.endDate, include_shared: true, instrument_type: opts?.instrumentType, session_type: opts?.sessionType,trading_style:opts?.tradingStyle,portfolio_id:opts?.portfolioId}) },
     getSessionDetail: id => {
       const cached = sessions.get(id)
       if (cached && cached.expires > Date.now()) return cached.value
@@ -100,6 +100,7 @@ export function createAnalysisApi(request: AnalysisRequest) {
     patternOhlcOptions: (symbol,date,strike,expiry,right,interval=3,days=2) => call('patternOhlcOptions','pattern/ohlc/options',{symbol,date,strike,expiry,right,interval_minutes:interval,days_back:days}),
   }
   const performance: AnalysisEnvironment['performance'] = {
+    getSwingReport:(filters,signal)=>scopedRequest<any>(`performance/swing?${params(filters)}`,'GET',undefined,signal),
     getRealFees: (date, signal) => scopedRequest<RealFeesDay>(`performance/real-fees?${params({date})}`, 'GET', undefined, signal),
     saveRealFees: (date, account_id, actual_total, execution_broker) => scopedRequest<RealFeesDay>('performance/real-fees', 'POST', {date, account_id, actual_total, ...(execution_broker ? {execution_broker} : {})}),
     deleteRealFees: (date, account_id, execution_broker) => scopedRequest<RealFeesDay>(`performance/real-fees?${params({date, account_id, execution_broker})}`, 'DELETE'),

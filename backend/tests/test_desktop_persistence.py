@@ -123,3 +123,22 @@ def test_get_screen_route_returns_record_and_404():
         with pytest.raises(HTTPException) as error:
             asyncio.run(persistence_router.get_screen("screen-1", "user-2"))
     assert error.value.status_code == 404
+
+
+def test_swing_drawing_scopes_isolate_windows_history_and_legacy(monkeypatch):
+    table = FakeTable()
+    monkeypatch.setattr(persistence, "_table", lambda name: table)
+    scopes = [None, "swing:book:primary", "swing:book:companion-one",
+              "swing:book:companion-two", "swing:book:history", "swing:other:primary"]
+    records = []
+    for index, scope in enumerate(scopes):
+        instrument = {**equity(), **({"drawing_scope":scope} if scope else {})}
+        record = persistence.create_drawing("u", instrument, line(), f"draw-{index}")
+        records.append((instrument, record))
+    for instrument, expected in records:
+        assert [row["drawing_id"] for row in persistence.list_drawings("u",instrument)] == [expected["drawing_id"]]
+    first = records[1][1]
+    persistence.update_drawing("u",first["drawing_id"],line(),1,"delete-first",deleted=True)
+    assert persistence.list_drawings("u",records[1][0]) == []
+    assert persistence.list_drawings("u",records[2][0])[0]["drawing_id"] == records[2][1]["drawing_id"]
+    assert persistence.list_drawings("u",equity())[0]["drawing_id"] == records[0][1]["drawing_id"]

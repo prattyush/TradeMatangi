@@ -15,6 +15,8 @@ router = APIRouter(prefix="/api/analysis/performance", tags=["performance"])
 def filters(
     start_date: date | None = None,
     end_date: date | None = None,
+    trading_style: Literal["intraday","swing"] | None = None,
+    portfolio_id: str | None = None,
     symbol: str | None = None,
     session_type: Literal["sim", "paper", "stepwise", "real"] | None = None,
     instrument_type: Literal["equity", "options"] | None = None,
@@ -34,6 +36,8 @@ def filters(
     if start_date and end_date and start_date > end_date:
         raise HTTPException(422, "Start date must not follow end date")
     return dict(
+        trading_style=trading_style,
+        portfolio_id=portfolio_id,
         include_shared=include_shared,
         start_date=start_date.isoformat() if start_date else None,
         end_date=end_date.isoformat() if end_date else None,
@@ -88,6 +92,34 @@ async def cycles(
         total=len(rows),
         next_offset=offset + limit if offset + limit < len(rows) else None,
     )
+
+
+@router.get("/swing")
+async def swing_report(
+    history: bool = True,
+    portfolio_id: str | None = None,
+    start_date: date | None = None,
+    end_date: date | None = None,
+    session_type: Literal["paper", "real"] | None = None,
+    execution_broker: Literal["kite", "kotak"] | None = None,
+    user_id: str = Depends(get_request_user_id),
+):
+    from app.services.swing_analytics import list_portfolios, report
+
+    rows = await asyncio.to_thread(
+        list_portfolios, user_id, session_type, execution_broker
+    )
+    if not portfolio_id:
+        return {"portfolios": rows, "report": None}
+    result = await asyncio.to_thread(
+        report,
+        user_id,
+        portfolio_id,
+        start_date.isoformat() if start_date else None,
+        end_date.isoformat() if end_date else None,
+        history,
+    )
+    return {"portfolios": rows, "report": result}
 
 
 @router.get("/cycles/{cycle_id}")

@@ -149,9 +149,9 @@ broker credential infrastructure, OCO, auto account-reduction or auto quantity s
 | 2 | Persistent Paper portfolio, contexts, accounting and controls | In progress; basic runtime and controls implemented |
 | 3 | Shared Real funding, imports and manual correction | Runtime wiring, explicit imports and negative cash correction implemented; live acceptance pending |
 | 4 | Kite/Kotak delivery execution, renewal and recovery parity | Real multi-day journal/runtime and evidenced expiry renewal implemented; authenticated broker acceptance pending |
-| 5 | Portfolio UI, linked views and funding notifications | Paper/Real controls, reconciliation, imports and correction previews in both clients; linked Swing charts pending |
-| 6 | Multi-day Replay and expiry exits | Pending |
-| 7 | Integration, preprod delivery and runtime/native acceptance | Pending |
+| 5 | Portfolio UI, linked views and funding notifications | Workspace, linked desktop windows, history, labels and Swing Stats implemented; new strategies and website popups deferred |
+| 6 | Multi-day Replay and expiry exits | Replay pending; Paper expiry exits implemented, Real settlement manual |
+| 7 | Integration, preprod delivery and runtime/native acceptance | Automated integration checks complete; preprod broker/installed-Windows acceptance pending |
 
 Verify persistence across nights/weekends/restarts; mixed equity/options; correct
 lot/product/expiry; partial fills; cancellations; conversions; auth outages;
@@ -666,3 +666,11 @@ The separate [Swing Improvements implementation checkpoint](spec-phase21-swing-i
 records the implemented chart workspace, full-session pricing/restart behavior,
 review fixes and automated checks. Original funding/ownership/recovery rules remain
 in force. Preprod broker/Windows acceptance remains pending deployment.
+
+### Linked windows and analytics extension — 2026-10-12
+
+[The approved implementation plan](spec-phase21-swing-linked-analytics-plan.md)
+supersedes earlier linked-chart/history pending entries. Multi-day Replay and
+new strategy controls remain deferred.
+
+See the [linked-window/analytics implementation checkpoint](spec-phase21-swing-linked-analytics-plan.md#implementation-checkpoint--2026-10-12) for the latest delivered scope, formulas and remaining acceptance. Older remaining-work lists are historical checkpoints.

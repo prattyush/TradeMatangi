@@ -1,6 +1,8 @@
+import {updateDayScreens,pinnedSwingPortfolio} from './swingScreens'
+import SwingWindow from './SwingWindow'
 import SwingChart from './SwingChart'
 import type { SwingChartProps } from '../../shared/SwingWorkspace'
-import SwingPortfolioPanel, { type SwingRequest } from '../../shared/SwingPortfolioPanel'
+import { type SwingRequest } from '../../shared/SwingPortfolioPanel'
 import { SymbolSearch } from '../../shared/SymbolSearch'
 import { mergeRealTradingDayStatus } from "../../frontend/src/services/realTradingDayState"
 import type { RealTradingDayStatus } from "../../frontend/src/services/api"
@@ -16,7 +18,7 @@ import { ToolbarIcon } from './ToolbarIcon'
 import { ToolbarActionButton } from './ToolbarActionButton'
 import { TradingRefresh, TRADING_RECONCILE_MS } from './tradingRefresh'
 import { TradingSseDecoder, TradingStreamController, TradingStreamDrain, TradingStreamLifecycle } from './tradingStream'
-import { bounded, closeAfterSave, controlledScreens, SAVE_TIMEOUT_MS, journalKey, recoverState, type RecoveryJournal } from './windowLifecycle'
+import { bounded, createWindowCloser, controlledScreens, SAVE_TIMEOUT_MS, journalKey, recoverState, type RecoveryJournal } from './windowLifecycle'
 import { StepInput } from './StepInput'
 import { availableExitQuantity, isStopOrder, orderBusy, orderPosition } from './orderEditing'
 import { retainedPanes, compactLayout, type PreparedSession } from './sessionPreparation'
@@ -25,7 +27,7 @@ import { ticketSizingPayload, ticketSizingLabel, switchTicketSizing } from './ti
 import { entryUnavailableReason, equityEntryEnabled, entryQuantity, instrumentLotSize, validateEntryStop } from './tradingInstrument'
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction, type ReactNode } from 'react'
 import { invoke } from '@tauri-apps/api/core'
-import { listen, emit } from '@tauri-apps/api/event'
+import { listen, emit, emitTo } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { ChartTile } from './ChartTile'
 import { replayCandles } from './chartState'
@@ -47,7 +49,7 @@ interface OptionMetadata { expiries: string[]; strike_interval: number; rights: 
 interface TileConfig { id: string; kind: 'spot' | 'option'; symbol: string; interval: string; tradingDate: string; expiry: string; strike: string; right: string; selection_mode?: 'manual' | 'max_price'; max_price?: number | null }
 type Layout = '1' | '2-side' | '2-stacked' | '3-wide-top' | '4-grid' | '4-one-three' | '5-equal' | '5-wide-right'
 interface Screen { id: string; persistedId?: string; revision?: number; name: string; tiles: TileConfig[]; layout: Layout; saved?: PersistedScreenState }
-interface PersistedScreenState extends Record<string, unknown> { linked_primary_id?: string; linked_group_id?: string; id?: string; layout?: Layout; tiles?: TileConfig[]; indicators?: Record<string, string[]>; activeToolTileId?: string; mode?: DesktopMode; live_enabled?: boolean; session_id?: string; run_id?: string; live_stream_id?: string; owned?: boolean; run_date?: string; start_time?: string; speed?: string; tools_collapsed?: boolean }
+interface PersistedScreenState extends Record<string, unknown> { workspace_kind?: 'swing'; portfolio_id?:string; linked_primary_id?: string; linked_group_id?: string; id?: string; layout?: Layout; tiles?: TileConfig[]; indicators?: Record<string, string[]>; activeToolTileId?: string; mode?: DesktopMode; live_enabled?: boolean; session_id?: string; run_id?: string; live_stream_id?: string; owned?: boolean; run_date?: string; start_time?: string; speed?: string; tools_collapsed?: boolean }
 interface DesktopScreenRecord { screen_id: string; name: string; state: PersistedScreenState; revision: number; order: number; active?: boolean }
 interface ReplaySnapshot { run_id: string; event_id: number; cursor: number; state: string; mode: string; bar_index: number; interval_seconds: number; tile_states: Array<{ tile_id: string; availability: string; interval_minutes?: number; candle?: Candle }> }
 const replaySnapshotFromStream = (value: unknown): ReplaySnapshot | null => {
@@ -487,14 +489,28 @@ interface ScreenControllerProps {
 }
 
 export default function App() {
+  const assignedId = new URLSearchParams(window.location.search).get('screen_id')
   const [mainTab, setMainTab] = useState<'Workspace' | 'Analysis' | 'Swing'>('Workspace')
+  const [analysisPortfolio,setAnalysisPortfolio]=useState<string|undefined>()
+  useEffect(()=>{if(assignedId||!('__TAURI_INTERNALS__' in window))return;let cancelled=false;const listener=listen<{portfolioId:string}>('desktop-swing-analysis',event=>{if(!cancelled&&[...navigationGuards.current.values()].every(guard=>guard())){setAnalysisPortfolio(event.payload.portfolioId);setAnalysisVisited(true);setMainTab('Analysis')}});return()=>{cancelled=true;void listener.then(stop=>stop())}},[])
   const [analysisVisited, setAnalysisVisited] = useState(false)
   const [analysisContextDays,setAnalysisContextDays] = useState(2)
-  const assignedId = new URLSearchParams(window.location.search).get('screen_id')
   const [screens, setScreens] = useState<Screen[]>([newScreen(1)])
+  const setDayScreens=useCallback((update:Screen[]|((previous:Screen[])=>Screen[]))=>setScreens(previous=>updateDayScreens(previous,update)),[])
   const [selectedId, selectScreen] = useState(screens[0].id)
   const [loaded, setLoaded] = useState(false)
   const [external, setExternal] = useState<string[]>([])
+  const navigationGuards = useRef(new Map<string, () => boolean>());
+  const registerNavigationGuard = useCallback(
+    (id: string, guard: (() => boolean) | null) => {
+      if (guard) navigationGuards.current.set(id, guard);
+      else navigationGuards.current.delete(id);
+    },
+    [],
+  );
+  const mayNavigate = () =>
+    [...navigationGuards.current.values()].every((guard) => guard());
+  const [windowClosing, setWindowClosing] = useState(false);
   const saveHandlers = useRef(new Map<string, () => Promise<unknown>>())
   const registerSave = useCallback((id: string, save: (() => Promise<unknown>) | null) => { if (save) saveHandlers.current.set(id, save); else saveHandlers.current.delete(id) }, [])
   useEffect(() => {
@@ -502,24 +518,53 @@ export default function App() {
     let cancelled = false
     let stop: (() => void) | undefined
     void listen<{ screenId: string }>('desktop-focus-linked-primary', event => {
-      if (!cancelled) { selectScreen(event.payload.screenId); setMainTab('Workspace') }
+      if (!cancelled && [...navigationGuards.current.values()].every(guard=>guard())) { selectScreen(event.payload.screenId); setMainTab('Workspace') }
     }).then(unlisten => { if (cancelled) unlisten(); else stop = unlisten })
     return () => { cancelled = true; stop?.() }
   }, [assignedId])
   const [closeError, setCloseError] = useState('')
   useDismissMessage(closeError, setCloseError, 10_000)
+  const closeWindow = useMemo(
+    () =>
+      createWindowCloser(
+        () =>
+          Promise.all(
+            [...saveHandlers.current.values()].map((save) =>
+              Promise.resolve().then(save),
+            ),
+          ),
+        async () => {
+          setWindowClosing(true);
+          await new Promise<void>((resolve) =>
+            requestAnimationFrame(() => resolve()),
+          );
+          try {
+            await invoke("finish_window_close");
+          } catch (error) {
+            setWindowClosing(false);
+            throw error;
+          }
+        },
+        (error) => setCloseError(`Window close: ${String(error)}`),
+        () => [...navigationGuards.current.values()].every((guard) => guard()),
+      ),
+    [],
+  );
   useEffect(() => {
-    if (!('__TAURI_INTERNALS__' in window)) return
-    let disposed = false
-    const listener = getCurrentWindow().onCloseRequested(async event => {
-      event.preventDefault()
-      await closeAfterSave(Promise.all([...saveHandlers.current.values()].map(save => Promise.resolve().then(save))),
-        () => invoke('finish_window_close'), error => setCloseError(`Closing with locally recovered settings: ${String(error)}`))
-        .catch(error => setCloseError(String(error)))
-    })
-    void listener.then(unlisten => { if (disposed) unlisten() })
-    return () => { disposed = true; void listener.then(unlisten => unlisten()) }
-  }, [])
+    if (!("__TAURI_INTERNALS__" in window)) return;
+    let disposed = false;
+    const listener = getCurrentWindow().onCloseRequested((event) => {
+      event.preventDefault();
+      void closeWindow();
+    });
+    void listener.then((stop) => {
+      if (disposed) stop();
+    });
+    return () => {
+      disposed = true;
+      void listener.then((stop) => stop());
+    };
+  }, [closeWindow]);
   const [connection, setConnection] = useState<Connection>('authentication_required')
   const analysisUnauthorized = useCallback(() => setConnection('authentication_required'),[])
   const connectionRevision = useRef(-1)
@@ -610,6 +655,7 @@ export default function App() {
         return { id: state.id ?? record.screen_id, persistedId: record.screen_id, revision: record.revision, name: record.name, saved: state, layout: state.layout ?? '1', tiles: state.tiles?.length ? state.tiles : [newTile()] } as Screen
       })
       if (records.length) {
+        if(!restored.some(screen=>screen.saved?.workspace_kind!=='swing'))restored.push(newScreen(1))
         setScreens(restored)
         const active = assignedId ? restored.find(screen => screen.id === assignedId || screen.persistedId === assignedId) : restored.find(screen => records.find(record => record.screen_id === screen.persistedId)?.active) ?? restored[0]
         if (active) selectScreen(active.id)
@@ -624,17 +670,92 @@ export default function App() {
   useEffect(() => {
     if (connection === 'authentication_required') { setMainTab('Workspace'); setAnalysisVisited(false) }
   }, [connection, serverUrl, browserToken])
-  const visibleId = screens.some(screen => screen.id === selectedId) ? selectedId : screens[0]?.id
+  const visibleId = screens.some(screen => screen.id === selectedId && screen.saved?.workspace_kind!=='swing') ? selectedId : screens.find(screen=>screen.saved?.workspace_kind!=='swing')?.id ?? ''
   const assigned = screens.find(screen => screen.id === assignedId || screen.persistedId === assignedId)
-  const ownedScreens = controlledScreens(screens, assignedId, loaded, external)
+  const dayScreens=screens.filter(screen=>screen.saved?.workspace_kind!=='swing')
+  const ownedScreens = controlledScreens(dayScreens, assignedId, loaded, external)
+  const linkedSwing=screens.filter(screen=>screen.saved?.workspace_kind==='swing')
+  const [swingWindowError,setSwingWindowError]=useState('')
+  const openSwingWindow = async (portfolioId: string, existing?: Screen) => {
+    try {
+      if (existing && external.includes(existing.id)) {
+        await invoke("focus_screen_window", { screenId: existing.id });
+        return;
+      }
+      await saveHandlers.current.get("swing-primary")?.();
+      let id = existing?.id;
+      if (!id) {
+        id = crypto.randomUUID();
+        const headers = {
+          Authorization: `Bearer ${browserToken}`,
+          "Content-Type": "application/json",
+        };
+        const state = {
+          id,
+          workspace_kind: "swing" as const,
+          portfolio_id: portfolioId,
+          layout: "1" as const,
+          tiles: [newTile()],
+        };
+        const body = {
+          name: `Swing linked ${linkedSwing.length + 1}`,
+          order: screens.length,
+          state,
+          mutation_id: crypto.randomUUID(),
+        };
+        const record =
+          "__TAURI_INTERNALS__" in window
+            ? await invoke<DesktopScreenRecord>("desktop_drawing_request", {
+                baseUrl: serverUrl,
+                path: "screens",
+                method: "POST",
+                body,
+              })
+            : await fetch(`${serverUrl}/api/desktop/v1/screens`, {
+                method: "POST",
+                headers,
+                body: JSON.stringify(body),
+              }).then((response) => response.json());
+        const pref = await swingRequest<{
+          workspace: Record<string, unknown> | null;
+        }>(`${portfolioId}/charts/workspace?surface=desktop`, "GET");
+        if (pref.workspace)
+          await swingRequest(`${portfolioId}/charts/workspace`, "PUT", {
+            ...pref.workspace,
+            surface: "desktop",
+            workspace_id: id,
+          });
+        setScreens((previous) => [
+          ...previous,
+          {
+            id: id!,
+            persistedId: record.screen_id,
+            revision: record.revision,
+            name: record.name,
+            saved: state,
+            layout: "1",
+            tiles: state.tiles,
+          },
+        ]);
+      }
+      const token = crypto.randomUUID();
+      await invoke("open_screen_window", { screenId: id, handoffToken: token });
+      setSwingWindowError("");
+    } catch (cause) {
+      setSwingWindowError(String(cause));
+    }
+  };
   const viewSelector = !assignedId && connection !== 'authentication_required' ? <select
     className="desktop-view-select" aria-label="Desktop view" title="Switch between Workspace and Analysis"
     value={mainTab} onChange={event => {
-      const view = event.target.value as 'Workspace' | 'Analysis' | 'Swing'
-      if (view === 'Analysis') setAnalysisVisited(true)
-      setMainTab(view)
+      if(!mayNavigate())return;
+      const view=event.target.value as 'Workspace'|'Analysis'|'Swing'
+      const change=()=>{if(view==='Analysis'){setAnalysisPortfolio(undefined);setAnalysisVisited(true)}setMainTab(view)}
+      if(mainTab==='Swing'&&view!=='Swing')void bounded(Promise.resolve(saveHandlers.current.get('swing-primary')?.()),SAVE_TIMEOUT_MS).then(change).catch(cause=>setSwingWindowError(String(cause)))
+      else change()
     }}
   ><option value="Workspace">Workspace</option><option value="Analysis">Analysis</option><option value="Swing">Swing</option></select> : null
+  if(windowClosing)return null;
   return <div>
     {closeError && <p role="alert">{closeError}</p>}
     {loadFailed && <main role="alert">{loadError && <p>{loadError}</p>}<button onClick={() => setLoadAttempt(value => value + 1)}>Retry loading screens</button></main>}
@@ -642,10 +763,12 @@ export default function App() {
     {!assignedId && mainTab === 'Workspace' && external.includes(visibleId) && <main><header>{viewSelector}<nav className="screen-tabs">{screens.map(screen => <button key={screen.id} onClick={() => selectScreen(screen.id)}>{screen.name}{external.includes(screen.id) ? ' ↗' : ''}</button>)}</nav><button onClick={() => void invoke('focus_screen_window', { screenId: visibleId })}>Focus window</button><button onClick={() => void invoke('close_screen_window', { screenId: visibleId })}>Bring back</button></header><p>This screen is open in another window.</p></main>}
     {assignedId && loaded && !assigned && <main><p>Saved screen not found. Return to the main window.</p></main>}
     {ownedScreens.map(screen => <div key={screen.id} style={{ display: mainTab === 'Workspace' && (assignedId || screen.id === visibleId) ? 'contents' : 'none' }}>
-      <ScreenController viewSelector={viewSelector} workspaceVisible={Boolean(assignedId)||mainTab==='Workspace'} onAnalysisContextDays={setAnalysisContextDays} registerSave={registerSave} screenId={screen.id} screens={screens} setScreens={setScreens} selectedId={visibleId} selectScreen={selectScreen} loaded={loaded} external={external} assignedId={assignedId} connection={connection} setConnection={setConnection} browserToken={browserToken} setBrowserToken={setBrowserToken} serverUrl={serverUrl} setServerUrl={setServerUrl} />
+      <ScreenController viewSelector={viewSelector} workspaceVisible={Boolean(assignedId)||mainTab==='Workspace'} onAnalysisContextDays={setAnalysisContextDays} registerSave={registerSave} screenId={screen.id} screens={dayScreens} setScreens={setDayScreens} selectedId={visibleId} selectScreen={selectScreen} loaded={loaded} external={external} assignedId={assignedId} connection={connection} setConnection={setConnection} browserToken={browserToken} setBrowserToken={setBrowserToken} serverUrl={serverUrl} setServerUrl={setServerUrl} />
     </div>)}
-    {!assignedId && mainTab === 'Swing' && connection === 'connected' && <><header style={{height:48}}>{viewSelector}</header><SwingPortfolioPanel key={`${serverUrl}:${browserToken}`} request={swingRequest} loadSymbols={swingSymbols} renderChart={swingChart} surface="desktop" onDetach={() => setMainTab('Workspace')} /></>}
-    {!assignedId && analysisVisited && connection !== 'authentication_required' && <Suspense fallback={<p role="status">Loading Analysis…</p>}><DesktopAnalysis viewSelector={viewSelector} key={`${serverUrl}:${browserToken}`} baseUrl={serverUrl} token={browserToken} onUnauthorized={analysisUnauthorized} historicalDays={analysisContextDays} active={mainTab === 'Analysis'} onClose={() => setMainTab('Workspace')} /></Suspense>}
+    {!assignedId && mainTab === 'Swing' && connection === 'connected' && <><header style={{height:48}}>{viewSelector}{linkedSwing.map(screen=><button key={screen.id} onClick={()=>void openSwingWindow(screen.saved!.portfolio_id!,screen)}>{screen.name}{external.includes(screen.id)?' ↗':''}</button>)}</header>{swingWindowError&&<p role="alert">{swingWindowError}</p>}<SwingWindow registerNavigationGuard={registerNavigationGuard} onCloseWindow={closeWindow} key={`${serverUrl}:${browserToken}`} request={swingRequest} loadSymbols={swingSymbols} Renderer={swingChart} registerSave={registerSave} onCreateLinked={id=>void openSwingWindow(id)} onAnalyse={id=>{setAnalysisPortfolio(id);setAnalysisVisited(true);setMainTab('Analysis')}} onDetach={() => setMainTab('Workspace')} /></>}
+    {assignedId && assigned?.saved?.workspace_kind==='swing' && connection!=='connected' && <main><p>{connection==='authentication_required'?'Sign in in the main window to reconnect this portfolio.':'Waiting for the backend connection. The portfolio stays attached to its saved book.'}</p><button onClick={()=>void invoke('focus_main_window')}>Main window</button></main>}
+    {assignedId && assigned?.saved?.workspace_kind==='swing' && connection==='connected' && (pinnedSwingPortfolio(assigned)?<><header style={{height:48}}><strong>{assigned.name}</strong><button onClick={()=>void invoke('focus_main_window')}>Main window</button></header><SwingWindow registerNavigationGuard={registerNavigationGuard} onCloseWindow={closeWindow} key={`${serverUrl}:${assignedId}`} request={swingRequest} loadSymbols={swingSymbols} Renderer={swingChart} portfolioId={pinnedSwingPortfolio(assigned)!} workspaceId={assignedId} registerSave={registerSave} onAnalyse={id=>void emitTo('main','desktop-swing-analysis',{portfolioId:id})} onDetach={()=>{}}/></>:<p role="alert">This linked window has no portfolio identity. Reopen it from the main window.</p>)}
+    {!assignedId && analysisVisited && connection !== 'authentication_required' && <Suspense fallback={<p role="status">Loading Analysis…</p>}><DesktopAnalysis onNavigationReady={guard=>registerNavigationGuard("analysis",guard)} initialPortfolioId={analysisPortfolio} viewSelector={viewSelector} key={`${serverUrl}:${browserToken}`} baseUrl={serverUrl} token={browserToken} onUnauthorized={analysisUnauthorized} historicalDays={analysisContextDays} active={mainTab === 'Analysis'} onClose={() => setMainTab('Workspace')} /></Suspense>}
   </div>
 }
 
