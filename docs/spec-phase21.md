@@ -1,5 +1,23 @@
 # Phase 21 — Desktop UI implementation
 
+## Desktop toolbar scrollbar correction — 2026-10-12
+
+The main/preprod integration is merged in [PR #653](https://github.com/prattyush/TradeMatangi/pull/653)
+(preprod `0c82a7d`). Its Windows installer build is allowed to finish independently.
+
+The toolbar's invisible absolute tooltip pseudo-elements enlarged its scrollable
+width/height even when the controls fit. Remove those pseudo-elements and retain
+the buttons' existing native `title` hover labels and accessible names. The top
+workspace header clips vertical overflow while retaining horizontal `auto`
+scrolling for genuinely narrow windows; controls keep their order and dimensions.
+
+Browser reproduction: at 1,200px width, the old toolbar measured 1,334px scroll
+width and 67px scroll height against a 1,200×47px client area. The fixed toolbar
+measures 1,200×47px at rest, hover and focus. At 50px width, intentional horizontal
+overflow remains reachable. Desktop TypeScript and production build checks passed. The installer build for
+PR #653 completed successfully. This CSS-only fix requires no backend or trading
+behavior changes.
+
 ## Main → preprod integration — 2026-10-12
 
 PR #652 is merged into preprod (`49e92c8`); authenticated acceptance is in
