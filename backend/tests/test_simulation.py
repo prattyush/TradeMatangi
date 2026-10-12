@@ -67,7 +67,7 @@ class TestRunSession:
         with patch("app.services.data_loader.DATA_DIR", tmp_path), patch("app.services.data_loader.OHLCDATA_DIR", tmp_path / "ohlcdata"):
             s = sim.create_session("NIFTY", "2026-05-06", "09:15:00", 0.0)
             sim.start_session(s)
-            await asyncio.sleep(0.1)
+            await asyncio.wait_for(s.task, timeout=5)
 
         events = []
         while not s.queue.empty():

@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 import time
 import uuid
 from collections import deque
@@ -587,7 +588,28 @@ def rebuild_session_from_db(
 
     ledger_id = f"real:{date}" if session_type == "real" else (db_record.get("wallet_ledger_id") or f"sim:{date}")
     ledger_kind = "paper" if session_type == "paper" else ("real" if session_type == "real" else "sim")
-    session_capital = (starting_capital if starting_capital is not None else
+    restored_capital = starting_capital
+    if session_type in ("paper", "real"):
+        # Cash changes with positions/P&L; the saved session baseline does not.
+        saved_capital = db_record.get("session_capital")
+        try:
+            saved_capital = (
+                float(saved_capital)
+                if saved_capital is not None and not isinstance(saved_capital, bool)
+                else None
+            )
+        except (TypeError, ValueError, OverflowError):
+            saved_capital = None
+        if saved_capital is not None and math.isfinite(saved_capital):
+            # Real's explicit override is its authoritative frozen account/day baseline.
+            if session_type == "paper" or restored_capital is None:
+                restored_capital = saved_capital
+        else:
+            logger.warning(
+                "session_capital_resume_fallback session_id=%s type=%s source=%s",
+                session_id, session_type, "explicit" if starting_capital is not None else "wallet",
+            )
+    session_capital = (restored_capital if restored_capital is not None else
                        wallet_service.get_ledger_balance(user_id, date, ledger_id, ledger_kind))
 
     session = SimulationSession(

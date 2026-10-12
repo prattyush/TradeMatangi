@@ -66,6 +66,7 @@ def test_stop_without_local_engine_preserves_position_and_cancels_pending_order(
         "session_type": "paper", "source": "desktop_paper"})
     database.Table("Strategies").put_item(Item={"strategy_id": "auto-stop", "session_id": session_id,
         "user_id": user, "symbol": symbol, "status": "RUNNING"})
+    paper_wallet.move(user, date, -6501, "seed-entry", engine=(session_id, symbol, token))
     pending = Order(session_id=session_id, user_id=user, symbol=symbol, side=TradeSide.BUY,
         quantity=65, trigger_price=90, limit_price=90, created_at=1790673001,
         reserved_amount=5850, wallet_ledger_id=f"paper:{date}", wallet_ledger_kind="paper",
@@ -77,13 +78,30 @@ def test_stop_without_local_engine_preserves_position_and_cancels_pending_order(
     assert asyncio.run(desktop_trading.stop_stepwise(session_id, user_id=user)) == {"status": "stopped"}
     saved = database.Table("Orders").get_item(Key={"session_id": session_id, "order_id": pending.order_id})["Item"]
     assert saved["status"] == OrderStatus.CANCELLED.value
-    assert paper_wallet.balance(user, date) == 100_000
+    assert paper_wallet.balance(user, date) == 93_499
     assert len(database.Table("Trades").query(KeyConditionExpression=Key("session_id").eq(session_id))["Items"]) == 1
     assert database.Table("Strategies").get_item(Key={"strategy_id": "auto-stop"})["Item"]["status"] == "CANCELLED"
     assert paper_wallet.session_claim(user, date, symbol)["cleanup_pending"] is False
     candidate = asyncio.run(desktop_trading.candidate(symbol, date, "options", desktop_mode="paper", user_id=user))
     assert candidate.status == "stopped"
     assert candidate.stopped.cleanup_pending is False
+    assert candidate.stopped.session.session_capital == 100_000
+    assert candidate.stopped.wallet_balance == 93_499
+
+    # Rebuild from storage as on resume after a backend restart. Open trades and
+    # available cash remain intact while the original capital is persisted.
+    monkeypatch.setattr("app.services.guardrail_service.initialize_guardrails", lambda *_: None)
+    record = database.Table("Sessions").get_item(Key={"session_id": session_id})["Item"]
+    for _ in range(2):
+        simulation._sessions.clear()
+        restored = simulation.rebuild_session_from_db(record, user)
+        snapshot = desktop_trading._snapshot(restored, user)
+        assert snapshot.session.session_capital == 100_000
+        assert snapshot.wallet_balance == 93_499
+        assert len(snapshot.trades) == 1
+        assert snapshot.positions["CE"]["quantity"] == 65
+        record = database.Table("Sessions").get_item(Key={"session_id": session_id})["Item"]
+        assert record["session_capital"] == Decimal("100000")
 
 
 def test_stop_remains_stopped_when_cleanup_fails_then_retries(database, monkeypatch, caplog):
