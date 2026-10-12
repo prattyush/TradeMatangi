@@ -164,3 +164,26 @@
   action/order/strategy IDs remain strings. Broker snapshot encoding canonicalizes
   analytics back to DynamoDB numbers. Readers also handle existing numeric-string
   records, so a bulk migration is unnecessary.
+
+
+## Real Day/Swing ownership and funding
+
+- Broker/style slot ownership persists through pause, detach, outages and engine
+  lease expiry. Only verified closure atomically ends the book/funding participant
+  and releases its slot. Swing roots own slots; execution children never compete
+  for another slot. Missing parents/children and genuine conflicts remain pending.
+- Claim/renew execution authority during restoration, but do not reconcile as empty,
+  submit orders or verify closure until all persisted portfolio contexts are loaded.
+  Do not expose an unregistered or unsuccessfully restored child in usable runtime.
+- Funding snapshots must derive their balance from the current participant baseline
+  inside conditional-write retries. Reservations represent unfilled opening units;
+  confirmed investment and pending order commitment cannot both debit the same fill.
+- Persist broker-attempt time before new placements. `broker_submission_at` uses
+  actual UTC milliseconds; intention/tick timestamps retain IST wall-clock encoding.
+  Intention age cannot prove an unknown submission occurred on an earlier day.
+- Undated unknown attempts require explicit owned-order acknowledgement and fresh
+  scope-flat/no-pending verification. Known current-day uncertainty still blocks
+  closure. Preserve the history warning and acknowledgement; never invent fills.
+
+Full decisions, exclusions and acceptance gates:
+[Phase 21 Swing plan](spec-phase21-swing-trading-plan.md#code-review-and-fix-checkpoint--2026-10-11).

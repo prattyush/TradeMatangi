@@ -4,6 +4,7 @@ and margin utilities for naked short positions.
 """
 from __future__ import annotations
 
+from app.services.instrument_identity import strike_number
 import datetime
 import logging
 import os
@@ -30,6 +31,7 @@ STRIKE_INTERVALS: dict[str, int] = {
     "TATMOT": 5,
     "TATPOW": 5,
 }
+STRIKE_INTERVALS.update({key: value["strike_interval"] for key, value in SUPPORTED_SYMBOLS.items() if value.get("strike_interval")})
 
 # Concurrent chart panes and indicator requests can ask for the same missing
 # option contract at session start.  Keep one lock per on-disk daily cache key
@@ -117,18 +119,18 @@ def get_expiry_date(symbol: str, trading_date_str: str) -> str:
     return monthly
 
 
-def get_atm_strike(symbol: str, price: float, offset: int = 0) -> int:
+def get_atm_strike(symbol: str, price: float, offset: int = 0) -> int | float:
     """
     Compute the ATM strike for the given underlying price.
     offset: number of strike intervals above (+OTM call / -OTM put) or below.
     """
     interval = STRIKE_INTERVALS.get(symbol, 5)
     atm = round(price / interval) * interval
-    return int(atm + offset * interval)
+    return strike_number(atm + offset * interval)
 
 
 def options_parquet_path(
-    symbol: str, date: str, strike: int, expiry: str, right: str, *, force_refresh: bool = False
+    symbol: str, date: str, strike: int | float, expiry: str, right: str, *, force_refresh: bool = False
 ) -> Path:
     """
     Cache path for one options contract's daily data.
@@ -153,7 +155,7 @@ def _is_breeze_rate_limit_error(error: object) -> bool:
 
 
 def _fetch_options_day_paginated(
-    breeze, symbol: str, date: str, strike: int, expiry: str, right: str, *, cached=None
+    breeze, symbol: str, date: str, strike: int | float, expiry: str, right: str, *, cached=None
 ) -> list[dict]:
     """
     Fetch a full trading day of options OHLC data in 15-minute chunks
@@ -240,8 +242,8 @@ def _validate_options_gaps(df: pd.DataFrame, date: str, partial: bool = False) -
     else:
         end_ts = pd.Timestamp(f"{date} {get_market_close(date)}") - pd.Timedelta(seconds=1)
     full_index = pd.date_range(start=market_open, end=end_ts, freq="1s")
-    observed = df["observed"].reindex(full_index).fillna(False).astype(bool) if "observed" in df else None
-    df = df.reindex(full_index).ffill().bfill()
+    observed = df["observed"].reindex(full_index).astype("boolean").fillna(False).astype(bool) if "observed" in df else None
+    df = df.drop(columns=["observed"],errors="ignore").reindex(full_index).ffill().bfill()
     if observed is not None:
         df["observed"] = observed
     return df
@@ -252,7 +254,7 @@ _MIN_OPTIONS_DAY_ROWS = 20000  # complete day ≈ 22,500 rows; below → partial
 
 
 def _fetch_options_historical_unlocked(
-    symbol: str, date: str, strike: int, expiry: str, right: str, *, force_refresh: bool = False
+    symbol: str, date: str, strike: int | float, expiry: str, right: str, *, force_refresh: bool = False
 ) -> Path:
     """
     Ensure options OHLC data for the given contract and date is cached as Parquet.
@@ -343,9 +345,13 @@ def _fetch_options_historical_unlocked(
             f"Could not parse Breeze options data for {symbol} {right} {strike} on {date}."
         )
 
+    from app.services.data_loader import attach_observation_provenance
+    df=attach_observation_provenance(df)
+    native_interval=df.attrs['native_interval_seconds']
     if is_today and partial_pq is not None:
         from app.services.history_tail import merge_tail
         df = merge_tail(cached_df, df)
+    df.attrs['native_interval_seconds']=native_interval
 
     from app.services.data_loader import has_native_second_cadence
     # Do not manufacture second OHLC from a current-day minute source.
@@ -365,12 +371,12 @@ def _fetch_options_historical_unlocked(
 
 
 def _fetch_breeze_options_historical(
-    symbol: str, date: str, strike: int, expiry: str, right: str, *, force_refresh: bool = False
+    symbol: str, date: str, strike: int | float, expiry: str, right: str, *, force_refresh: bool = False
 ) -> Path:
     """Fetch one contract/day, coalescing simultaneous cache-miss requests."""
     right_key = "CE" if right.upper() in ("CE", "CALL") else "PE"
     requested = time.monotonic()
-    key = (symbol, date, int(strike), expiry, right_key, str(options_parquet_path(symbol, date, strike, expiry, right).resolve()))
+    key = (symbol, date, strike_number(strike), expiry, right_key, str(options_parquet_path(symbol, date, strike, expiry, right).resolve()))
     with _options_fetch_locks_guard:
         lock = _options_fetch_locks.setdefault(key, threading.Lock())
     with lock:
@@ -405,7 +411,7 @@ def _fetch_breeze_options_historical(
 
 
 def _load_breeze_options_dataframe(
-    symbol: str, date: str, strike: int, expiry: str, right: str
+    symbol: str, date: str, strike: int | float, expiry: str, right: str
 ) -> pd.DataFrame:
     """
     Load options OHLC data from Parquet cache.
@@ -436,7 +442,7 @@ def _load_breeze_options_dataframe(
 def options_iter_ticks(
     symbol: str,
     date: str,
-    strike: int,
+    strike: int | float,
     expiry: str,
     right: str,
     start_time: str = "09:15:00",
@@ -562,7 +568,7 @@ def find_strike_by_max_price(
 
 
 def _get_option_price_at(
-    symbol: str, date: str, strike: int, expiry: str, right: str, ref_ts: int
+    symbol: str, date: str, strike: int | float, expiry: str, right: str, ref_ts: int
 ) -> float | None:
     """
     Return the option contract close price at a specific Unix timestamp.
@@ -692,7 +698,7 @@ def _get_option_price_at(
     return None
 
 
-def fetch_options_historical(symbol: str, date: str, strike: int, expiry: str, right: str) -> Path:
+def fetch_options_historical(symbol: str, date: str, strike: int | float, expiry: str, right: str) -> Path:
     from app.services.historical_data_service import history_mode, load_history
     if history_mode() == "live":
         return load_history(symbol, date, strike, expiry, right).path
@@ -702,7 +708,7 @@ def fetch_options_historical(symbol: str, date: str, strike: int, expiry: str, r
     return _fetch_breeze_options_historical(symbol, date, strike, expiry, right)
 
 
-def load_options_dataframe(symbol: str, date: str, strike: int, expiry: str, right: str) -> pd.DataFrame:
+def load_options_dataframe(symbol: str, date: str, strike: int | float, expiry: str, right: str) -> pd.DataFrame:
     from app.services.historical_data_service import history_mode, load_history
     if history_mode() == "live":
         return load_history(symbol, date, strike, expiry, right).frame

@@ -25,6 +25,7 @@ def real(monkeypatch):
     broker = MagicMock()
     broker.place_sl_order.return_value = 'sl-broker'
     broker.place_limit_order.return_value = 'limit-broker'
+    broker.place_options_limit_order.return_value = 'options-limit-broker'
     broker.modify_sl_order.return_value = None
     broker.modify_sl_to_limit_order.return_value = None
     monkeypatch.setattr(simulation, 'get_session', lambda sid: session if sid == session.session_id else None)

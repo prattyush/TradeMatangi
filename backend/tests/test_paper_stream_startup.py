@@ -128,6 +128,9 @@ def test_staged_delivery_marks_overflow_for_bounded_async_queue():
 @pytest.mark.parametrize("resumed", [False, True])
 @pytest.mark.parametrize("session_type", ["paper", "real"])
 async def test_session_task_reaches_live_phase_and_sse_replay_buffer(resumed, session_type, monkeypatch):
+    from unittest.mock import AsyncMock
+    monkeypatch.setattr("app.services.real_broker_state.refresh", AsyncMock(return_value={}))
+    monkeypatch.setattr("app.services.real_close.unresolved", lambda session: False)
     s, adapter = session(resumed), Adapter()
     s.session_type = session_type
     s.resume_event.set()

@@ -254,12 +254,12 @@ def test_mixed_flatten_uses_quotes_and_correct_ledger_without_new_reservation(mo
 
 @pytest.mark.parametrize("failure", ["rejected", "submission"])
 def test_real_order_failure_refunds_owning_ledger(monkeypatch, failure):
-    from app.services.kotak_service import KotakError
+    from app.services.kotak_service import KotakOrderRejected
     session = _equity_session()
     session.session_type = "real"
     broker = Mock()
     if failure == "submission":
-        broker.place_limit_order.side_effect = KotakError("failed")
+        broker.place_limit_order.side_effect = KotakOrderRejected("failed")
     else:
         broker.place_limit_order.return_value = "broker-id"
     monkeypatch.setattr("app.services.kotak_service.get_service", lambda: broker)

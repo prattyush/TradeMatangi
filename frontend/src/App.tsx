@@ -1,3 +1,5 @@
+import SwingPortfolioPanel, { type SwingRequest } from '../../shared/SwingPortfolioPanel'
+import { _authHeaders } from './services/api'
 import ChartEntryTicket, { type EntryTicket as ContextMenuEntryTicket } from './components/ChartEntryTicket'
 import TradingSafetyActions from './components/TradingSafetyActions'
 import NotificationCenter from './components/NotificationCenter'
@@ -214,6 +216,16 @@ export default function App() {
 
 function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: string; email: string; isAdmin: boolean; accountName?: string }; onLogout: () => void; setAuthUser: React.Dispatch<React.SetStateAction<{ userId: string; email: string; isAdmin: boolean; accountName?: string } | null>> }) {
   const sim = useSimulation()
+  const [showSwing, setShowSwing] = useState(false)
+  const swingRequest = useCallback<SwingRequest>(async <T,>(path: string, method: 'GET' | 'POST', body?: Record<string, unknown>) => {
+    const response = await fetch(`${BACKEND_URL}/api/swing/portfolios${path ? '/' + path : ''}`, {
+      method, headers: { ..._authHeaders(), 'Content-Type': 'application/json' },
+      body: method === 'GET' ? undefined : JSON.stringify(body ?? {})
+    })
+    if (!response.ok) throw new Error((await response.json()).detail ?? `Swing request failed (${response.status})`)
+    return response.json() as Promise<T>
+  }, [])
+  const swingSymbols = useCallback(() => api.getSymbols(), [])
   const workspaceStorageKey = `tradematangi_workspace_${authUser.userId}`
   const chartRangeStorageKey = `${workspaceStorageKey}_ranges`
   const [chartRanges, setChartRanges] = useState<Record<string, ChartVisibleRange>>(() => {
@@ -2129,6 +2141,8 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
 
   const idle = sim.sessionState === 'idle' || sim.sessionState === 'ended'
 
+  if (showSwing) return <SwingPortfolioPanel key={authUser.userId} request={swingRequest} loadSymbols={swingSymbols} onDetach={() => setShowSwing(false)} />
+
   if (showPatternLibrary) {
     return (
       <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden' }}>
@@ -2200,6 +2214,7 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
             )}
           </div>
         )}
+        <button title="Open Swing portfolio" onClick={() => setShowSwing(true)}>Swing</button>
         {sim.sessionId && (sim.sessionState === 'running' || sim.sessionState === 'paused') && <TradingSafetyActions sessionId={sim.sessionId} sessionType={sim.sessionType} onOrdersRequested={async sessionId => { if (simRef.current.sessionId === sessionId) await simRef.current.refreshOpenOrders(sessionId) }} />}
         {(sim.sessionState === 'running' || sim.sessionState === 'paused') && !guardrailPopup?.type && (
           <button
@@ -2414,6 +2429,7 @@ function AppInner({ authUser, onLogout, setAuthUser }: { authUser: { userId: str
           isRealTradingUser={isRealTradingUser}
           sessionActive={sim.sessionState === 'running' || sim.sessionState === 'paused'}
           onWalletReset={sim.incrementWalletRefreshKey}
+          onAttachRealSession={async id => { await sim.attachToActiveSession(id) }}
           onSizingModeChange={(mode, fr, rr, slPct) => {
             setSizingMode(mode)
             setFundsRatios(fr)

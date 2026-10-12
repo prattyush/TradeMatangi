@@ -5,6 +5,10 @@ existing simulation, order, strategy, wallet, and trade services as the source
 of truth for Stepwise and desktop Replay trading.
 """
 from __future__ import annotations
+from app.routers.execution_brokers import AllocationRequest as RealAllocationRequest
+from app.services.real_recovery import CloseRequest
+from app.models.schemas import ContractModel
+from app.services.instrument_identity import strike_number
 from app.models.schemas import SplitOrderRequest
 
 import asyncio
@@ -71,7 +75,7 @@ HEARTBEAT_INTERVAL = 15
 _start_locks = WeakValueDictionary()
 
 
-class DesktopTradingSnapshot(BaseModel):
+class DesktopTradingSnapshot(ContractModel):
     version: int = 1
     created_for_request: bool | None = None
     event_cursor: int = 0
@@ -104,7 +108,7 @@ class DesktopTradingSnapshot(BaseModel):
     engine_generation: int | None = None
 
 
-class DesktopTradingCandidate(BaseModel):
+class DesktopTradingCandidate(ContractModel):
     status: str
     active: DesktopTradingSnapshot | None = None
     checkpoint: dict | None = None
@@ -112,10 +116,10 @@ class DesktopTradingCandidate(BaseModel):
     stopped: DesktopTradingSnapshot | None = None
 
 
-class DesktopOptionContract(BaseModel):
+class DesktopOptionContract(ContractModel):
     symbol: str
     expiry: str
-    strike: int
+    strike: int | float
     right: str
 
 
@@ -123,7 +127,7 @@ class AttachContractRequest(DesktopOptionContract):
     pass
 
 
-class ChartOrderIntent(BaseModel):
+class ChartOrderIntent(ContractModel):
     """An entry selected from a specific option chart.
 
     Market orders deliberately carry no renderer-computed price.  The server
@@ -131,7 +135,7 @@ class ChartOrderIntent(BaseModel):
     """
     symbol: str
     expiry: str | None = None
-    strike: int | None = None
+    strike: int | float | None = None
     right: str | None = None
     side: TradeSide
     intent: str = Field(pattern="^(market|limit|target)$")
@@ -146,53 +150,53 @@ class ChartOrderIntent(BaseModel):
     live_tile_id: str | None = None
 
 
-class LinkPaperLiveStreamRequest(BaseModel):
+class LinkPaperLiveStreamRequest(ContractModel):
     live_stream_id: str
 
 
-class DesktopStopRequest(BaseModel):
+class DesktopStopRequest(ContractModel):
     engine_generation: int | None = None
 
 
 class DesktopStartStrategyRequest(StartStrategyRequest):
-    strike: int | None = None
+    strike: int | float | None = None
     expiry: str | None = None
 
 
-class FlattenRequest(BaseModel):
+class FlattenRequest(ContractModel):
     right: str | None = None
-    strike: int | None = None
+    strike: int | float | None = None
     expiry: str | None = None
     emergency_offset_pct: float = Field(default=0.03, ge=0.001, le=0.25)
 
 
-class BulkChartConvertRequest(BaseModel):
+class BulkChartConvertRequest(ContractModel):
     new_order_type: OrderType
     right: str | None = None
-    strike: int | None = None
+    strike: int | float | None = None
     expiry: str | None = None
     price: float = Field(gt=0)
 
 
-class BulkChartUpdateSLRequest(BaseModel):
+class BulkChartUpdateSLRequest(ContractModel):
     trigger_price: float = Field(gt=0)
     right: str | None = None
-    strike: int | None = None
+    strike: int | float | None = None
     expiry: str | None = None
 
 
-class DesktopSettingsUpdateRequest(BaseModel):
+class DesktopSettingsUpdateRequest(ContractModel):
     settings: UserSettingsUpdateRequest
 
 
-class DesktopLabelMetadata(BaseModel):
+class DesktopLabelMetadata(ContractModel):
     categories: list[str] = []
     strategies: list[str] = []
     entry_tags: list[str] = []
     exit_tags: list[str] = []
 
 
-class DesktopTradeLabelRequest(BaseModel):
+class DesktopTradeLabelRequest(ContractModel):
     round_trip_index: int = Field(ge=0)
     expected_category: str = ""
     expected_strategy: str = ""
@@ -207,7 +211,7 @@ class DesktopTradingStartRequest(SimulationStartRequest):
     resume_bar_index: int | None = Field(default=None, ge=0)
 
 
-class PreparationPane(BaseModel):
+class PreparationPane(ContractModel):
     id: str = Field(min_length=1, max_length=100)
     kind: Literal["spot", "option"]
     symbol: str
@@ -220,7 +224,7 @@ class PreparationPane(BaseModel):
     max_price: float | None = Field(default=None, gt=0, allow_inf_nan=False)
 
 
-class PreparationRequest(BaseModel):
+class PreparationRequest(ContractModel):
     mode: Literal["paper", "real", "replay", "stepwise", "browse"]
     date: str
     reference_time: str = "09:15:00"
@@ -267,7 +271,7 @@ def _active_desktop_session_for_date(user_id: str, date: str, desktop_mode: str 
     for session in sim_svc._sessions.values():
         if session.user_id != user_id or session.date != date:
             continue
-        if session.state == sim_svc.SimulationState.ENDED:
+        if session.state == sim_svc.SimulationState.ENDED or getattr(session,"trading_style","intraday") == "swing":
             continue
         if _desktop_mode(session) in ("paper", "real", "replay", "stepwise") and (desktop_mode is None or _desktop_mode(session) == desktop_mode):
             return session
@@ -289,6 +293,8 @@ def _desktop_source(session) -> str:
 
 def _require_session(session_id: str, user_id: str):
     session = sim_svc.get_session(session_id)
+    if session and getattr(session, "trading_style", "intraday") == "swing":
+        raise HTTPException(409, "Use portfolio actions for a Swing book")
     if not session or session.user_id != user_id:
         raise HTTPException(status_code=404, detail="Session not found")
     return session
@@ -373,7 +379,7 @@ def _session_response(session) -> SimulationStartResponse:
     return simulation_router._session_response(session)
 
 
-def _contract_key(symbol: str, expiry: str | None, strike: int | None, right: str | None) -> str:
+def _contract_key(symbol: str, expiry: str | None, strike: int | float | None, right: str | None) -> str:
     return f"{symbol}:{expiry or ''}:{strike or ''}:{(right or '').upper()}"
 
 
@@ -392,20 +398,20 @@ def _normalise_contract(req: DesktopOptionContract) -> dict:
     return {
         "symbol": req.symbol,
         "expiry": req.expiry,
-        "strike": int(req.strike),
+        "strike": strike_number(req.strike),
         "right": right,
-        "contract_key": _contract_key(req.symbol, req.expiry, int(req.strike), right),
+        "contract_key": _contract_key(req.symbol, req.expiry, strike_number(req.strike), right),
     }
 
 
-def _get_registered_contract(session, right: str | None, strike: int | None, expiry: str | None) -> dict | None:
+def _get_registered_contract(session, right: str | None, strike: int | float | None, expiry: str | None) -> dict | None:
     if not right or strike is None or not expiry:
         return None
-    key = _contract_key(session.symbol, expiry, int(strike), right)
+    key = _contract_key(session.symbol, expiry, strike_number(strike), right)
     return next((item for item in _desktop_contracts(session) if item.get("contract_key") == key), None)
 
 
-def _require_registered_contract(session, right: str | None, strike: int | None, expiry: str | None) -> dict:
+def _require_registered_contract(session, right: str | None, strike: int | float | None, expiry: str | None) -> dict:
     contract = _get_registered_contract(session, right, strike, expiry)
     if not contract:
         raise HTTPException(status_code=400, detail="Option contract is not attached to this Stepwise session")
@@ -462,7 +468,7 @@ def _historical_contract_quote(session, contract: dict) -> dict | None:
     # historic CE/PE values as a compatibility fallback only for that exact
     # active contract.
     active_strike = session.strike_ce if contract["right"] == "CE" else session.strike_pe
-    if int(active_strike or 0) == int(contract["strike"]):
+    if strike_number(active_strike or 0) == strike_number(contract["strike"]):
         price = session.last_price_ce if contract["right"] == "CE" else session.last_price_pe
         if price:
             return {"price": float(price), "timestamp": current_time, "source": "historical_stepwise"}
@@ -507,7 +513,7 @@ def _paper_chart_quote(session, intent: ChartOrderIntent, contract: dict, user_i
         instrument.get("kind") != "option"
         or instrument.get("underlying") != contract["symbol"]
         or instrument.get("expiry") != contract["expiry"]
-        or int(instrument.get("strike") or 0) != contract["strike"]
+        or strike_number(instrument.get("strike") or 0) != contract["strike"]
         or instrument.get("right") != contract["right"]
     ):
         raise HTTPException(status_code=409, detail="Live chart no longer matches the selected option contract")
@@ -532,7 +538,7 @@ def _has_open_contract_risk(session, contract: dict) -> bool:
         if (
             order.symbol == contract["symbol"]
             and (order.right or "").upper() == contract["right"]
-            and int(order.strike or 0) == int(contract["strike"])
+            and strike_number(order.strike or 0) == strike_number(contract["strike"])
             and (order.expiry or "") == contract["expiry"]
         ):
             return True
@@ -621,7 +627,7 @@ def _strategy_response(instance) -> StrategyResponse:
     )
 
 
-def _last_price_for_right(session, right: str | None, strike: int | None = None, expiry: str | None = None) -> float:
+def _last_price_for_right(session, right: str | None, strike: int | float | None = None, expiry: str | None = None) -> float:
     if right is not None:
         contract = _get_registered_contract(session, right, strike, expiry)
         if contract:
@@ -631,7 +637,7 @@ def _last_price_for_right(session, right: str | None, strike: int | None = None,
         if session.session_type == "paper" and getattr(session, "desktop_live_stream_id", None):
             return 0.0
         active_strike = session.strike_ce if right == "CE" else session.strike_pe if right == "PE" else None
-        if (strike is not None and int(strike) != int(active_strike or 0)) or (expiry is not None and expiry != session.expiry):
+        if (strike is not None and strike_number(strike) != strike_number(active_strike or 0)) or (expiry is not None and expiry != session.expiry):
             return 0.0
         if right == "CE":
             return float(session.last_price_ce or 0)
@@ -641,7 +647,7 @@ def _last_price_for_right(session, right: str | None, strike: int | None = None,
     return float(session.last_price or 0)
 
 
-def _position_for(session, right: str | None, strike: int | None = None, expiry: str | None = None):
+def _position_for(session, right: str | None, strike: int | float | None = None, expiry: str | None = None):
     return trading_service.get_position(session.session_id, session.symbol, right=right, strike=strike, expiry=expiry)
 
 
@@ -651,7 +657,7 @@ def _estimate_exit_commission(session, side: TradeSide, price: float, quantity: 
     return trading_service.compute_commission(side, price, quantity, session.brokerage_per_order)
 
 
-def _position_pnl(session, right: str | None, strike: int | None = None, expiry: str | None = None) -> float:
+def _position_pnl(session, right: str | None, strike: int | float | None = None, expiry: str | None = None) -> float:
     position = _position_for(session, right, strike, expiry)
     price = _last_price_for_right(session, right, strike, expiry)
     if position.side == "FLAT" or price <= 0:
@@ -1038,7 +1044,7 @@ def _is_closing_order(order: Order, position) -> bool:
     )
 
 
-def _closing_orders(session, right: str | None, strike: int | None = None, expiry: str | None = None) -> list[Order]:
+def _closing_orders(session, right: str | None, strike: int | float | None = None, expiry: str | None = None) -> list[Order]:
     position = _position_for(session, right, strike, expiry)
     if position.side == "FLAT":
         return []
@@ -1051,7 +1057,7 @@ def _closing_orders(session, right: str | None, strike: int | None = None, expir
     ]
 
 
-def _target_scope(session, right: str | None, strike: int | None, expiry: str | None) -> tuple[str | None, int | None, str | None]:
+def _target_scope(session, right: str | None, strike: int | float | None, expiry: str | None) -> tuple[str | None, int | None, str | None]:
     scoped_right = right.upper() if right else None
     if scoped_right and strike is not None and expiry:
         contract = _require_registered_contract(session, scoped_right, strike, expiry)
@@ -1140,9 +1146,9 @@ async def resume_desktop_paper(session_id: str, user_id: str = Depends(get_deskt
     request = DesktopTradingStartRequest(
         symbol=record["symbol"], date=record["date"], start_time=record.get("start_time", "09:15:00"),
         instrument_type=record.get("instrument_type", "equity"),
-        strike=int(record["strike"]) if record.get("strike") is not None else None,
-        strike_ce=int(record["strike_ce"]) if record.get("strike_ce") is not None else None,
-        strike_pe=int(record["strike_pe"]) if record.get("strike_pe") is not None else None,
+        strike=strike_number(record["strike"]) if record.get("strike") is not None else None,
+        strike_ce=strike_number(record["strike_ce"]) if record.get("strike_ce") is not None else None,
+        strike_pe=strike_number(record["strike_pe"]) if record.get("strike_pe") is not None else None,
         expiry=record.get("expiry"), right=record.get("right"), desktop_mode="paper",
         session_type="paper", stepwise=False,
     )
@@ -1212,14 +1218,22 @@ async def candidate(
                 return DesktopTradingCandidate(status="remote", existing_session_id=record["session_id"],
                     stopped=_saved_paper_snapshot(record, user_id))
     session_type = "real" if desktop_mode == "real" else "paper" if desktop_mode == "paper" else "stepwise" if desktop_mode == "stepwise" else "sim"
+    selected_broker = None
+    if desktop_mode == "real":
+        from app.services.execution_broker import name
+        selected_broker = name((await asyncio.to_thread(get_settings, user_id, strict=True))["real_execution_broker"])
     for session in list(sim_svc._sessions.values()):
         if session.user_id != user_id or session.state == sim_svc.SimulationState.ENDED:
+            continue
+        if selected_broker and (getattr(session, "trading_style", "intraday") == "swing" or name(session) != selected_broker):
             continue
         if session.symbol == symbol and session.date == date and _desktop_mode(session) == desktop_mode:
             if session.instrument_type != instrument_type:
                 raise HTTPException(status_code=409, detail=f"Existing session {session.session_id} uses a different anchor instrument")
             return DesktopTradingCandidate(status="active", active=_snapshot(session, user_id))
     records = sim_svc.find_all_sessions_by_context(user_id, symbol, date, session_type, instrument_type)
+    if selected_broker:
+        records = [r for r in records if name(r.get("execution_broker")) == selected_broker and r.get("trading_style", "intraday") != "swing"]
     if not records:
         return DesktopTradingCandidate(status="none")
     checkpoints = [
@@ -1940,7 +1954,7 @@ async def done_real_day(session_id: str, user_id: str = Depends(preparation_user
     return await real_trading_day.done_for_day(user_id)
 
 
-class DesktopEventSnapshot(BaseModel):
+class DesktopEventSnapshot(ContractModel):
     event_id: str = Field(min_length=1, max_length=150)
     event: dict
 
@@ -1973,3 +1987,27 @@ async def real_day_status(user_id: str = Depends(preparation_user_id)):
     from app.services.real_trading_day import state
     require_real_trading_access(user_id)
     return await asyncio.to_thread(state, user_id)
+
+
+@router.post("/broker/{session_id}/allocation")
+async def change_real_allocation(session_id: str, req: RealAllocationRequest, user_id: str = Depends(get_desktop_user_id)):
+    from app.dependencies import require_real_trading_access
+    from app.routers.execution_brokers import change_allocation
+    require_real_trading_access(user_id)
+    return await change_allocation(session_id, req, user_id)
+
+
+@router.post("/broker/{session_id}/reconcile")
+async def reconcile_real_book(session_id: str, user_id: str = Depends(get_desktop_user_id)):
+    from app.dependencies import require_real_trading_access
+    require_real_trading_access(user_id)
+    from app.routers.execution_brokers import reconcile
+    return await reconcile(session_id, user_id)
+
+
+@router.post("/broker/{session_id}/stop")
+async def close_real_book(session_id: str, user_id: str = Depends(get_desktop_user_id), req: CloseRequest | None = None):
+    from app.dependencies import require_real_trading_access
+    require_real_trading_access(user_id)
+    from app.routers.execution_brokers import stop
+    return await stop(session_id, user_id, req)

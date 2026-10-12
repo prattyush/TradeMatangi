@@ -29,7 +29,7 @@ def unique_executions(session, executions, master=None):
         row['timestamp'] = int(row['timestamp'])
         if 'execution_sort_time' in row:
             row['execution_sort_time'] = int(row['execution_sort_time'])
-        if not reports.in_scope(session, row) or (not row.get('_live_delta') and datetime.fromtimestamp(row['timestamp'], timezone.utc).date().isoformat() != session.date):
+        if not reports.in_scope(session, row) or (getattr(session, 'trading_style', 'intraday') != 'swing' and not row.get('_live_delta') and datetime.fromtimestamp(row['timestamp'], timezone.utc).date().isoformat() != session.date):
             continue
         if row.get('side_known', True) is False or row['side'] not in ('BUY', 'SELL') or row['quantity'] <= 0 or not math.isfinite(row['price']) or row['price'] <= 0:
             raise ValueError('Invalid confirmed execution for FIFO reconstruction')
@@ -58,6 +58,12 @@ def positions(session, executions, master=None):
         totals[key]['quantity'] += row['quantity']
         totals[key]['value'] += row['quantity'] * row['price']
     lots = defaultdict(deque)
+    if getattr(session, 'trading_style', 'intraday') == 'swing':
+        for opening in getattr(session, 'opening_positions', []):
+            key = (opening.get('broker_exchange') or exchange_for(session), opening['product'],
+                   opening.get('right'), opening.get('strike'), opening.get('expiry'))
+            lots[key].append({'sign': 1, 'quantity': int(opening['quantity']),
+                              'price': float(opening['avg_entry_price']), 'fee': 0.0})
     for row in rows:
         key = scope(session, row, master)
         total = totals[(*key, broker_report_id(row), row['side'])]

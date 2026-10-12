@@ -54,7 +54,8 @@ def _strike_for_right(session, right: str | None) -> int | None:
 
 def _uses_equity_intraday_margin(session, right: str | None = None) -> bool:
     return (
-        right is None
+        getattr(session, "trading_style", "intraday") != "swing"
+        and right is None
         and session.instrument_type == "equity"
         and session.session_type in ("sim", "stepwise", "paper", "real")
     )
@@ -114,6 +115,8 @@ async def buy(req: TradeRequest):
     session = sim_svc.get_session(req.session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
+    if getattr(session, "trading_style", "intraday") == "swing":
+        raise HTTPException(409, "Use portfolio order actions for a Swing book")
     if session.current_time is None:
         raise HTTPException(status_code=400, detail="Simulation has not started yet")
 
@@ -176,6 +179,8 @@ async def sell(req: TradeRequest):
     session = sim_svc.get_session(req.session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
+    if getattr(session, "trading_style", "intraday") == "swing":
+        raise HTTPException(409, "Use portfolio order actions for a Swing book")
     if session.current_time is None:
         raise HTTPException(status_code=400, detail="Simulation has not started yet")
 
@@ -305,7 +310,7 @@ async def position_snapshot(session_id: str = Query(...), user_id: str = Depends
 
 @router.get("/position", response_model=Position)
 async def get_position(session_id: str = Query(...), right: str | None = Query(default=None),
-                       strike: int | None = Query(default=None), expiry: str | None = Query(default=None)):
+                       strike: int | float | None = Query(default=None), expiry: str | None = Query(default=None)):
     session = sim_svc.get_session(session_id)
     symbol = session.symbol if session else None
     # Resolve effective right: explicit param > session.right (Sprint 3 compat)

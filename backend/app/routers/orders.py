@@ -46,7 +46,7 @@ def _reservation_ledger_id(session) -> str | None:
 
 
 def _uses_equity_intraday_margin(session, order_right: str | None = None) -> bool:
-    if order_right is not None or session.instrument_type != "equity":
+    if getattr(session, "trading_style", "intraday") == "swing" or order_right is not None or session.instrument_type != "equity":
         return False
     return session.session_type in ("sim", "stepwise", "paper", "real")
 
@@ -71,7 +71,7 @@ def _get_closing_orders(session, right: str | None) -> list[Order]:
 def _stoploss_available_quantity(
     session,
     right: str | None,
-    strike: int | None,
+    strike: int | float | None,
     expiry: str | None,
     exclude_order_id: str | None = None,
 ) -> tuple[int, int]:
@@ -161,7 +161,7 @@ class MissingStoplossRequest(BaseModel):
     trigger_price: float = Field(gt=0, allow_inf_nan=False)
     request_id: str = Field(min_length=1, max_length=100)
     right: str | None = None
-    strike: int | None = None
+    strike: int | float | None = None
     expiry: str | None = None
 
 
@@ -499,7 +499,8 @@ async def _place_order_locked(req: PlaceOrderRequest):
         try:
             sim_svc._register_kotak_sl_for_order(session, order, asyncio.get_running_loop())
         except Exception as exc:
-            order_service.cancel_order(session.session_id, order.order_id, session.date)
+            if not order.broker_order_id and order.recovery_state not in ("submitting", "unknown"):
+                order_service.cancel_order(session.session_id, order.order_id, session.date)
             logger.warning("broker_exit_place_failed session=%s order=%s: %s", session.session_id, order.order_id, exc)
             raise HTTPException(status_code=502, detail=f"Broker exit placement failed: {exc}") from exc
 

@@ -341,6 +341,7 @@ async def _fallback(session, order, candidate, job, broker, queue):
             kwargs.update(trigger_price=candidate.trigger_price, limit_price=candidate.limit_price)
         if version != getattr(session, '_protection_revision', 0):
             raise RuntimeError('Position changed during replacement preparation; refresh required')
+        candidate.broker_submission_at = int(time.time() * 1000)
         job['tag'] = kwargs['tag']
         # Persist before a potentially ambiguous submission; never automatically repeat it.
         job['candidate'] = candidate.model_dump(mode='json')

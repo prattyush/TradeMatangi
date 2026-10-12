@@ -3,6 +3,7 @@
 Do not use the legacy find-strike helper: its ATM fallback and future-row lookup
 are unsuitable for a premium cap at a historical session clock.
 """
+from app.services.instrument_identity import strike_number
 from datetime import date as calendar_date
 from math import isfinite
 from dataclasses import replace
@@ -136,7 +137,7 @@ def prepare(mode, date, reference_time, panes):
                         if found is None:
                             raise ValueError("No observed premium at or below the cap within 30 strikes")
                         item["strike"] = str(found)
-                    strike = int(item["strike"])
+                    strike = strike_number(item["strike"])
                     if strike <= 0 or strike % STRIKE_INTERVALS[symbol]:
                         raise ValueError("Strike does not match the instrument interval")
                     history = history or _load(symbol, date, strike, item["expiry"], item["right"])

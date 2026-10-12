@@ -103,6 +103,10 @@ export interface BarCandle {
 export interface SymbolInfo {
   symbol: string
   display_name: string
+  nse_symbol?: string
+  chart_type?: string
+  option_eligible?: boolean
+  strike_interval?: number
 }
 
 export interface ConversionResult { order_id: string; state: string; message?: string | null }
@@ -151,6 +155,8 @@ export interface SimulationStartRequest {
   brokerage_per_order?: number  // flat brokerage per order (default 1)
   strategy_interval_secs?: number  // candle interval for all strategies (180=3min, 300=5min)
   session_type?: 'sim' | 'paper' | 'real' | 'stepwise'
+  execution_broker?: 'kotak' | 'kite'
+  allocation_pct?: number
   stepwise?: boolean
   override?: boolean
   group_id?: string

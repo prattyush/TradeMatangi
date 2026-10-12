@@ -4,6 +4,7 @@ per-session P&L summaries for the Trade Analysis screen.
 """
 from __future__ import annotations
 
+from app.services.instrument_identity import strike_number
 import logging
 from decimal import Decimal
 
@@ -166,7 +167,7 @@ def _serialize_trade(t: dict) -> dict:
         "timestamp": int(t.get("timestamp", 0)),
         "instrument_type": t.get("instrument_type", "equity"),
         "right": t.get("right"),
-        "strike": int(t.get("strike")) if t.get("strike") is not None else None,
+        "strike": strike_number(t.get("strike")) if t.get("strike") is not None else None,
         "expiry": t.get("expiry"),
         "commission": _safe_float(t.get("commission", 0)),
         "underlying_price": _safe_float(t.get("underlying_price")) if t.get("underlying_price") is not None else None,

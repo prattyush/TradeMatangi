@@ -366,7 +366,7 @@ def _get_capital_in_use(session: "SimulationSession") -> float:
 
 def _simulate_post_trade_capital(
     session: "SimulationSession", price: float, quantity: int, side: str,
-    right: str | None = None, strike: int | None = None, expiry: str | None = None,
+    right: str | None = None, strike: int | float | None = None, expiry: str | None = None,
 ) -> float:
     """Estimate margin/premium usage, closing only the targeted position first."""
     from app.services.trading import get_position
@@ -388,7 +388,7 @@ def _simulate_post_trade_capital(
 
 def check_maxsize(
     session: "SimulationSession", price: float, quantity: int, side: str,
-    right: str | None = None, strike: int | None = None, expiry: str | None = None,
+    right: str | None = None, strike: int | float | None = None, expiry: str | None = None,
 ) -> tuple[bool, str]:
     """
     Check whether executing this trade would exceed the MaxSize limit.

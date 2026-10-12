@@ -63,7 +63,9 @@ async def get_symbols():
     """Return all supported symbols with display names."""
     return SymbolsResponse(
         symbols=[
-            SymbolInfo(symbol=k, display_name=v["display_name"])
+            SymbolInfo(symbol=k, display_name=v["display_name"], nse_symbol=v.get("nse_symbol"),
+                chart_type="index" if v["options_only"] else "equity",
+                option_eligible="options_exchange_code" in v, strike_interval=v.get("strike_interval"))
             for k, v in SUPPORTED_SYMBOLS.items()
         ]
     )
@@ -181,7 +183,7 @@ async def get_options_historical(
     request: Request,
     symbol: str = Query(...),
     date: str = Query(...),
-    strike: int = Query(...),
+    strike: int | float = Query(...),
     expiry: str = Query(...),
     right: str = Query(...),
     interval_minutes: int = Query(default=CANDLE_INTERVAL_MINUTES, ge=1, le=60),

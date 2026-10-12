@@ -4,6 +4,7 @@ Round-trip computation, label persistence, stats aggregation, tag listing.
 """
 from __future__ import annotations
 
+from app.services.instrument_identity import strike_number
 import json
 import logging
 from collections import defaultdict, deque, Counter
@@ -94,7 +95,7 @@ def _contract_identity(trade: dict) -> tuple[str | None, int | None, str | None]
     strike = trade.get("strike")
     return (
         trade.get("right"),
-        int(strike) if strike is not None else None,
+        strike_number(strike) if strike is not None else None,
         trade.get("expiry"),
     )
 
@@ -219,7 +220,7 @@ def _serialize_rt_trade(t: dict) -> dict:
         "price": _safe_float(t.get("price")),
         "timestamp": int(t.get("timestamp", 0)),
         "right": t.get("right"),
-        "strike": int(t.get("strike")) if t.get("strike") is not None else None,
+        "strike": strike_number(t.get("strike")) if t.get("strike") is not None else None,
         "expiry": t.get("expiry"),
         "commission": _safe_float(t.get("commission")),
     }

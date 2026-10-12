@@ -1,3 +1,4 @@
+from app.services.instrument_identity import strike_number
 import asyncio
 import logging
 import time
@@ -39,6 +40,7 @@ def _session_response(session, group=None) -> SimulationStartResponse:
         state=session.state, stepwise=session.stepwise,
         execution_broker=session.execution_broker if session.session_type == "real" else None,
         broker_account_id=getattr(session, "broker_account_id", None),
+        trading_style=getattr(session, "trading_style", "intraday"), portfolio_id=getattr(session, "portfolio_id", None),
         total_bars=session.total_bars if session.stepwise else None,
         group_id=session.group_id, clock_family=group.get("clock_family") if group else None,
         group_state=group.get("state") if group else None,
@@ -154,8 +156,8 @@ def _normalise_option_contract_request(req: SimulationStartRequest) -> None:
             if strike is not None
         ]
         has_obvious_cross_symbol_strike = (
-            (req.symbol == "BSESEN" and any(int(strike) < 50000 for strike in requested_strikes)) or
-            (req.symbol == "NIFTY" and any(int(strike) > 50000 for strike in requested_strikes))
+            (req.symbol == "BSESEN" and any(strike_number(strike) < 50000 for strike in requested_strikes)) or
+            (req.symbol == "NIFTY" and any(strike_number(strike) > 50000 for strike in requested_strikes))
         )
 
         # Historical sim/stepwise sessions must have the selected symbol/date
@@ -184,7 +186,7 @@ def _normalise_option_contract_request(req: SimulationStartRequest) -> None:
 
         ce = req.strike_ce if req.strike_ce is not None else req.strike
         pe = req.strike_pe if req.strike_pe is not None else req.strike
-        stale = has_obvious_cross_symbol_strike or any(abs(int(strike) - atm) > max_distance for strike in (req.strike, ce, pe) if strike is not None)
+        stale = has_obvious_cross_symbol_strike or any(abs(strike_number(strike) - atm) > max_distance for strike in (req.strike, ce, pe) if strike is not None)
         if stale:
             logger.warning(
                 "start_simulation: correcting stale option strikes for %s %s underlying=%.2f atm=%s strike=%s ce=%s pe=%s",
@@ -225,7 +227,7 @@ def _ensure_session_data(symbol: str, date: str) -> None:
 
 
 def _ensure_options_data(
-    symbol: str, date: str, strike: int, expiry: str, right: str
+    symbol: str, date: str, strike: int | float, expiry: str, right: str
 ) -> None:
     """Validate options params and ensure options data is cached."""
     logger.info("start_simulation: fetching options data %s %s %s %s %s", symbol, date, strike, expiry, right)
@@ -274,7 +276,7 @@ async def start_with_paper_claim(req, user_id, *, desktop_independent=False, res
         req.date = group["date"]
     active = next((session for session in sim_svc._sessions.values()
         if session.user_id == user_id and session.date == req.date and session.symbol == req.symbol
-        and session.session_type == "paper" and session.state != SimulationState.ENDED), None)
+        and session.session_type == "paper" and getattr(session,"trading_style","intraday") != "swing" and session.state != SimulationState.ENDED), None)
     if active:
         if active.instrument_type != req.instrument_type:
             raise HTTPException(status_code=409, detail=f"Existing Paper session {active.session_id} has a different anchor; attach a compatible screen")
@@ -488,7 +490,7 @@ async def _start_simulation_impl(
         from app.services.execution_broker import get_service, name
         from app.services.user_settings_service import get_settings
         from app.services.kotak_service import KotakError
-        chosen_broker = name((await asyncio.to_thread(get_settings, user_id, strict=True))["real_execution_broker"])
+        chosen_broker = name(req.execution_broker or (await asyncio.to_thread(get_settings, user_id, strict=True))["real_execution_broker"])
         kotak_svc = get_service(chosen_broker)
         if not await asyncio.to_thread(kotak_svc.is_authenticated):
             raise HTTPException(status_code=401, detail=f"{chosen_broker.title()} authentication required before starting a Real session")
@@ -498,6 +500,14 @@ async def _start_simulation_impl(
             funds = account_wallet["session_capital"]
             broker_account = await asyncio.to_thread(kotak_svc.account_identity)
             real_ledger = f"real:{chosen_broker}:{broker_account}:{req.date}"
+            from app.services import swing_funding_store as funding_store, real_sessions
+            recovered = real_sessions.recovery_record()
+            reference = float(recovered.get("session_capital", funds)) if recovered else account_wallet.get("balance", funds)
+            pool = await asyncio.to_thread(funding_store.initialize, user_id, chosen_broker, broker_account, reference)
+            pool = await asyncio.to_thread(funding_store.start_participant, user_id, chosen_broker, broker_account,
+                pool["period_id"], "intraday", real_sessions.prepared_identity(), req.allocation_pct, session_record_id=real_sessions.prepared_identity())
+            funds = pool["funding"]["modes"]["intraday"]["capital"]
+            funding_period = pool["period_id"]
             if chosen_broker == "kite":
                 if req.instrument_type == 'options':
                     reference_right = req.right or 'CE'
@@ -508,6 +518,10 @@ async def _start_simulation_impl(
                 await asyncio.to_thread(kotak_svc.start_order_feed)
         except KotakError as exc:
             raise HTTPException(status_code=502, detail=f"Could not fetch Kotak funds: {exc}")
+        except HTTPException:
+            raise
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
         except Exception:
             logger.exception("Could not save real-session broker funds user_id=%s", user_id)
             raise HTTPException(status_code=503, detail="Could not save broker funds for real session")
@@ -562,9 +576,9 @@ async def _start_simulation_impl(
     # For sim: if the user restarts with new params (start_time, speed, OTM), stop the
     # old session and create a fresh one — the user wants a new practice run, not a resume.
     from app.services import real_sessions
-    existing_record = (real_sessions.recovery_record() if is_real else None) or paper_record or sim_svc.find_session_by_context(
+    existing_record = real_sessions.recovery_record() if is_real else (paper_record or sim_svc.find_session_by_context(
         user_id, req.symbol, req.date, internal_session_type, req.instrument_type
-    )
+    ))
     if is_real and existing_record:
         from app.services.execution_broker import name
         if name(existing_record.get("execution_broker")) != chosen_broker:
@@ -626,7 +640,9 @@ async def _start_simulation_impl(
             if is_real:
                 session.execution_broker = "KotakNeo" if chosen_broker == "kotak" else "Kite"
                 session.broker_account_id = broker_account
+                session.real_funding_period = funding_period
                 session.real_start_preparing = True
+                await real_sessions.bind_prepared(session)
                 if session.instrument_type == "options" or chosen_broker == "kite":
                     await _prepare_real_options_resume(session, kotak_svc)
                 session.session_capital = funds
@@ -670,10 +686,11 @@ async def _start_simulation_impl(
         group_id=group["group_id"],
         session_alias=req.session_alias,
         starting_capital=funds if is_real else None,
-        **({"execution_broker": "KotakNeo" if chosen_broker == "kotak" else "Kite", "broker_account_id": broker_account} if is_real else {}),
+        **({"execution_broker": "KotakNeo" if chosen_broker == "kotak" else "Kite", "broker_account_id": broker_account, "session_id": real_sessions.prepared_identity()} if is_real else {}),
         wallet_ledger_id=(f"paper:{req.date}" if internal_session_type == "paper" else real_ledger if internal_session_type == "real" else f"sim:{req.date}"),
     )
     if is_real:
+        session.real_funding_period = funding_period
         session.real_start_preparing = True
         session.execution_broker = "KotakNeo" if chosen_broker == "kotak" else "Kite"
         session.broker_account_id = broker_account
@@ -727,6 +744,8 @@ async def pause_simulation(req: SimulationControlRequest, user_id: str = Depends
         raise HTTPException(status_code=404, detail="Session not found")
     if session.user_id != user_id:
         raise HTTPException(status_code=403, detail="Session does not belong to this user")
+    if getattr(session, "trading_style", "intraday") == "swing":
+        raise HTTPException(409, "Use portfolio pause/resume or confirmed closure for Swing")
     if session.group_id:
         return await pause_group(session.group_id, user_id)
     sim_svc.pause_session(session)
@@ -740,6 +759,8 @@ async def resume_simulation(req: SimulationControlRequest, user_id: str = Depend
         raise HTTPException(status_code=404, detail="Session not found")
     if session.user_id != user_id:
         raise HTTPException(status_code=403, detail="Session does not belong to this user")
+    if getattr(session, "trading_style", "intraday") == "swing":
+        raise HTTPException(409, "Use portfolio pause/resume or confirmed closure for Swing")
     if session.group_id:
         return await resume_group(session.group_id, user_id)
     sim_svc.resume_session(session)
@@ -859,6 +880,8 @@ async def stop_simulation(req: SimulationControlRequest, user_id: str = Depends(
         return {"status": "stopped"}
     if session.user_id != user_id:
         raise HTTPException(status_code=403, detail="Session does not belong to this user")
+    if getattr(session, "trading_style", "intraday") == "swing":
+        raise HTTPException(409, "Use portfolio pause/resume or confirmed closure for Swing")
     if session.session_type == "real":
         from app.services.real_close import close
         return await close(session)

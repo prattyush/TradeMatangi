@@ -1,5 +1,14 @@
 # Phase 21 extension — Kite execution and desktop Real / linked screens
 
+## Later ownership and recovery revision
+
+This document records the original Kite/desktop extension. Its one-Real-session
+and broker-switch restrictions are superseded by the [current Phase 21 Swing
+ownership, funding and review decisions](spec-phase21-swing-trading-plan.md#current-review-status--2026-10-11).
+The current work is on `feature/phase21-swing-trading`; PRs target preprod and
+main/dev promotion remains manual after acceptance. Original delivery results
+below do not establish acceptance of the newer Swing/recovery work.
+
 ## Authority, delivery and current state
 
 Approved 2026-10-09. All work is based on preprod; delivery PRs target preprod.

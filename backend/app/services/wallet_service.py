@@ -121,6 +121,9 @@ def _ensure_ledger_table() -> None:
 
 def get_or_init_ledger(user_id: str, date: str, ledger_id: str, ledger_kind: str = "sim") -> float:
     """Use isolated dated practice funds; preserve the Real ledger path."""
+    if ledger_id.startswith("swing:"):
+        from app.services.swing_cash import read
+        return float(read(user_id, ledger_id.split(":", 1)[1])["current_balance"])
     if ledger_id.startswith("paper:"):
         from app.services.paper_wallet import balance
         return balance(user_id, date)
@@ -168,6 +171,9 @@ def get_ledger_balance(user_id: str, date: str, ledger_id: str, ledger_kind: str
 
 
 def debit_ledger(user_id: str, amount: float, date: str, ledger_id: str, ledger_kind: str = "sim", operation_id: str | None = None, allow_negative: bool = False, order=None, engine=None) -> float:
+    if ledger_id.startswith("swing:"):
+        from app.services.swing_cash import move
+        return move(user_id, ledger_id.split(":", 1)[1], -max(amount, 0), operation_id, allow_negative=allow_negative, order=order)
     if ledger_id.startswith("paper:"):
         from app.services.paper_wallet import move
         return move(user_id, date, -max(amount, 0), operation_id, allow_negative, order, engine)
@@ -181,6 +187,9 @@ def debit_ledger(user_id: str, amount: float, date: str, ledger_id: str, ledger_
 
 
 def credit_ledger(user_id: str, amount: float, date: str, ledger_id: str, ledger_kind: str = "sim", operation_id: str | None = None, order=None, engine=None, cleanup=None) -> float:
+    if ledger_id.startswith("swing:"):
+        from app.services.swing_cash import move
+        return move(user_id, ledger_id.split(":", 1)[1], max(amount, 0), operation_id, order=order)
     if ledger_id.startswith("paper:"):
         from app.services.paper_wallet import move
         return move(user_id, date, max(amount, 0), operation_id, order=order, engine=engine, cleanup=cleanup)

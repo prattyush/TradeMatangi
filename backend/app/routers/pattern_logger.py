@@ -282,7 +282,7 @@ async def ohlc_equity(
 async def ohlc_options(
     symbol: str = Query(...),
     date: str = Query(...),
-    strike: int = Query(...),
+    strike: int | float = Query(...),
     expiry: str = Query(...),
     right: str = Query(...),
     interval_minutes: int = Query(3, ge=1, le=60),

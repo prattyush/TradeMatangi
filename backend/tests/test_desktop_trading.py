@@ -1512,13 +1512,13 @@ def test_website_missing_sl_real_equity_submits_to_broker_and_fills(side):
 def test_website_missing_sl_real_rejection_is_not_reported_as_protection():
     from unittest.mock import Mock
     from app.routers.orders import MissingStoplossRequest, fill_missing_stoploss
-    from app.services.kotak_service import KotakError
+    from app.services.kotak_service import KotakOrderRejected
     session = _equity_session(session_id="missing-sl-real-rejection")
     session.session_type = "real"
     trading_service.record_trade(session.session_id, TradeSide.BUY, 100, 1778058900,
         quantity=100, symbol=session.symbol, user_id=session.user_id)
     broker = Mock()
-    broker.place_sl_order.side_effect = KotakError("rejected")
+    broker.place_sl_order.side_effect = KotakOrderRejected("rejected")
     request = MissingStoplossRequest(session_id=session.session_id, request_id="reject", trigger_price=90)
     try:
         with patch("app.services.kotak_service.get_service", return_value=broker):

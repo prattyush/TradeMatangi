@@ -575,6 +575,7 @@ async def _attempt(session, parent, operation, job, broker, *, bundle=None, rese
         if entry_intent:
             from app.services.execution_analytics import created
             created(child, session)
+        child.broker_submission_at = int(time.time() * 1000)
         record = {'state': 'submitting', 'order': child.model_dump(mode='json'), 'tag': tag, 'cancelled_parent_id': parent.kotak_order_id}
         if not await asyncio.to_thread(journal.store.claim, key, record):
             raise Deferred('Submission already claimed; reconcile before retrying')

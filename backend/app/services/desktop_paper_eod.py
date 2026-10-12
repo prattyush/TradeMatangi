@@ -47,7 +47,7 @@ def _open_contracts(session) -> list[tuple[str, str | None, int | None, str | No
     return result
 
 
-def _near_close_quote(session, symbol: str, right: str | None, strike: int | None, expiry: str | None):
+def _near_close_quote(session, symbol: str, right: str | None, strike: int | float | None, expiry: str | None):
     if right:
         if strike is None or not expiry:
             return None
@@ -69,7 +69,7 @@ def _near_close_quote(session, symbol: str, right: str | None, strike: int | Non
         "source": "historical_close", "right": right or "equity", "strike": strike or 0, "expiry": expiry or ""}
 
 
-def _chosen_quote(session, symbol: str, right: str | None, strike: int | None, expiry: str | None):
+def _chosen_quote(session, symbol: str, right: str | None, strike: int | float | None, expiry: str | None):
     contract = f"{symbol}:{expiry or '-'}:{strike or 0}:{right or 'EQ'}"
     key = {"user_id": session.user_id,
         "ledger_id": f"paper:{session.date}:eod:{session.session_id}:{contract}"}

@@ -51,7 +51,10 @@ def query_all(table, **params):
 
 
 def projection_id(session, account_id):
-    scope = f"{session.user_id}:{account_id}:{session.date}:{session.symbol}:{session.instrument_type}"
+    date = "swing" if getattr(session, "trading_style", "intraday") == "swing" else session.date
+    scope = f"{session.user_id}:{account_id}:{date}:{session.symbol}:{session.instrument_type}"
+    if isinstance(getattr(session, "real_funding_period", None), str) and session.real_funding_period:
+        scope += ":" + session.session_id  # Distinct funded books never reuse a previous user's/day-book projection.
     from app.services.execution_broker import name
     if name(session) == "kite":
         scope = "kite:" + scope
@@ -87,9 +90,9 @@ def aggregate(session, executions, account_id, master=None):
     from app.services.trading import compute_commission
     groups, seen = {}, set()
     for execution in executions:
-        if not reports.in_scope(session, execution):
+        if not reports.in_book(session, execution):
             continue
-        if datetime.fromtimestamp(execution["timestamp"], timezone.utc).date().isoformat() != session.date:
+        if getattr(session, "trading_style", "intraday") != "swing" and datetime.fromtimestamp(execution["timestamp"], timezone.utc).date().isoformat() != session.date:
             continue
         identity = (execution.get("exchange", ""), broker_report_id(execution), execution["execution_id"])
         if identity in seen:
@@ -112,22 +115,48 @@ def aggregate(session, executions, account_id, master=None):
             session_id=session.session_id, user_id=session.user_id, symbol=session.symbol,
             side=side, quantity=qty, price=price, timestamp=group["first"],
             instrument_type=session.instrument_type, session_type="real", source="broker",
+            trading_style=getattr(session, "trading_style", "intraday"), portfolio_id=getattr(session, "portfolio_id", None),
             commission=compute_commission(side, price, qty, session.brokerage_per_order),
             broker_order_id=order_id, execution_broker=getattr(session, "execution_broker", "KotakNeo"), broker_account_id=account_id, broker_exchange=exchange,
             broker_execution_ids=sorted(group["ids"]), **group["contract"]))
     return sorted(trades, key=lambda t: (t.timestamp, t.trade_id))
 
 
+def book_reports(session, raw_orders, executions):
+    """A replacement funded Day book must not count earlier closed-book fills again."""
+    from app.services import order_service
+    orders = [r for r in raw_orders if reports.in_book(session, r)]
+    fills = [r for r in executions if reports.in_book(session, r)]
+    if not isinstance(getattr(session, "real_funding_period", None), str) or not session.real_funding_period or not (getattr(session, "opening_inventory_captured_at", None) or session.created_at):
+        return orders, fills
+    # Broker timestamps encode IST wall clock as UTC; created_at is actual UTC ms.
+    cutoff = int(getattr(session, "opening_inventory_captured_at", None) or session.created_at) // 1000 + 19800
+    tracked = order_service.get_all_orders(session.session_id)
+    own_ids = {o.broker_order_id for o in tracked if o.broker_order_id}
+    own_tags = {(o.analytics or {}).get('broker_tag') for o in tracked} - {None, ''}
+    own_ids.update(reports.order_id(r) for r in orders if r.get('tag') in own_tags)
+    fills = [r for r in fills if reports.order_id(r) in own_ids or int(r['timestamp']) > cutoff]
+    eligible = own_ids | {reports.order_id(r) for r in fills}
+    def current_order(row):
+        if reports.order_id(row) in eligible or row.get('status') in OPEN:
+            return True
+        try:
+            return reports.wall_time(row.get('order_time', '')) > cutoff
+        except ValueError:
+            return False
+    return [r for r in orders if current_order(r)], fills
+
+
 def normalize_positions(session, raw_positions, master=None):
     positions = []
     for raw in raw_positions:
         row = reports.normalize_order(raw)
-        if not reports.in_scope(session, row):
+        if not reports.in_book(session, row):
             continue
         contract = reports.contract(session, row, master)
         buy = reports.number(raw.get("cfBuyQty")) + reports.number(raw.get("flBuyQty"))
         sell = reports.number(raw.get("cfSellQty")) + reports.number(raw.get("flSellQty"))
-        net = int(reports.number(raw.get("netQty", raw.get("net_quantity", buy - sell))))
+        net = int(reports.number(raw.get("netQty", raw.get("net_quantity", raw.get("quantity", buy - sell)))))
         avg = reports.number(raw.get("buyAvgPrc" if net > 0 else "sellAvgPrc") or raw.get("avgPrc") or raw.get("avg_entry_price"))
         if not avg and net:
             prefix = "Buy" if net > 0 else "Sell"
@@ -190,6 +219,30 @@ def build_orders(session, broker_orders, master=None):
     return result
 
 
+
+def rebuild_reservations(session, orders, positions):
+    """Reservations cover remaining opening quantity, never already confirmed fills."""
+    from app.config import EQUITY_MIS_MARGIN_RATE
+    if not isinstance(getattr(session, "real_funding_period", None), str) or not session.real_funding_period:
+        return
+    for order in orders.values():
+        if not order.broker_order_id:
+            continue
+        if order.status != OrderStatus.PENDING or order.is_stoploss:
+            order.reserved_amount = 0
+            continue
+        held = next((p for p in positions if (p.get("right"), p.get("strike"), p.get("expiry")) == (order.right, order.strike, order.expiry)), {})
+        remaining = max(0, order.quantity - order.broker_filled_quantity)
+        opposite = "SHORT" if order.side == TradeSide.BUY else "LONG"
+        closing = held.get("quantity", 0) if held.get("side") == opposite else 0
+        opening = max(0, remaining - closing)
+        rate = EQUITY_MIS_MARGIN_RATE if session.trading_style == "intraday" and session.instrument_type == "equity" else 1
+        order.reservation_margin_rate = rate
+        order.wallet_ledger_kind = "real"
+        order.wallet_ledger_id = session.wallet_ledger_id
+        order.reserved_amount = round(opening * order.limit_price * rate, 2)
+
+
 def stage(session, account_id, trades, broker_orders, positions, executions, orders):
     from app.services.db import get_dynamodb_resource
     db = get_dynamodb_resource()
@@ -199,7 +252,7 @@ def stage(session, account_id, trades, broker_orders, positions, executions, ord
     sessions = db.Table("Sessions")
     old = sessions.get_item(Key={"session_id": root}, ConsistentRead=True).get("Item", {})
     # Archive before replacement, leaving original partitions available for audit.
-    members = query_all(sessions, IndexName="UserIdIndex", KeyConditionExpression=Key("user_id").eq(session.user_id))
+    members = [] if getattr(session, "trading_style", "intraday") == "swing" or (isinstance(getattr(session, "real_funding_period", None), str) and session.real_funding_period) else query_all(sessions, IndexName="UserIdIndex", KeyConditionExpression=Key("user_id").eq(session.user_id))
     members = [r for r in members if r.get("session_type") == "real" and r.get("date") == session.date and r.get("symbol") == session.symbol and r.get("instrument_type", "equity") == session.instrument_type and r.get("broker_projection_id") in (None, root)]
     mapped_labels = []
     if old.get("active_partition"):
@@ -275,6 +328,9 @@ def fill_deferred(session, callback, *args):
 
 
 async def refresh(session, broker, *, protection=False, bundle=None):
+    if getattr(session, "trading_style", "intraday") == "swing":
+        from app.services.swing_real import refresh as refresh_swing
+        return await refresh_swing(session, protection=protection)
     from app.services import trading, order_service, wallet_service, simulation
     from app.services import kotak_reports
     from app.services.protection_recovery import Deferred
@@ -309,8 +365,7 @@ async def refresh(session, broker, *, protection=False, bundle=None):
         try:
             bundle = prefetched or await kotak_reports.fetch(broker, background=protection)
             raw_orders, executions, raw_positions = bundle.orders, bundle.executions, bundle.positions
-            scoped_orders = [r for r in raw_orders if reports.in_scope(session, r)]
-            scoped_executions = [r for r in executions if reports.in_scope(session, r)]
+            scoped_orders, scoped_executions = book_reports(session, raw_orders, executions)
             master = None
             try:
                 trades = aggregate(session, scoped_executions, account)
@@ -335,7 +390,7 @@ async def refresh(session, broker, *, protection=False, bundle=None):
                 checked = set()
                 for raw in raw_positions:
                     row = reports.normalize_order(raw)
-                    if not reports.in_scope(session, row) or not all(k in raw for k in ("flBuyQty", "flSellQty")):
+                    if not reports.in_book(session, row) or not all(k in raw for k in ("flBuyQty", "flSellQty")):
                         continue
                     contract = reports.contract(session, row, master)
                     key = (contract["right"], contract["strike"], contract["expiry"])
@@ -361,14 +416,14 @@ async def refresh(session, broker, *, protection=False, bundle=None):
                     raise Deferred('Broker reports are updating; retry entry protection after backoff')
                 bundle = await kotak_reports.fetch(broker, background=True, force=True)
                 raw_orders, executions, raw_positions = bundle.orders, bundle.executions, bundle.positions
-                scoped_orders = [r for r in raw_orders if reports.in_scope(session, r)]
-                scoped_executions = [r for r in executions if reports.in_scope(session, r)]
+                scoped_orders, scoped_executions = book_reports(session, raw_orders, executions)
                 trades = aggregate(session, scoped_executions, account, master)
                 positions = normalize_positions(session, raw_positions, master)
                 orders = build_orders(session, scoped_orders, master)
                 if not fifo_agrees():
                     raise ValueError("Kotak execution history/positions are incomplete or still updating; FIFO refresh was not applied")
             positions = verified_positions(session, scoped_executions, positions, master)
+            rebuild_reservations(session, orders, positions)
             kotak_reports.consistent(broker, root)
             # Persist resolved monthly expiry so restart/live FIFO needs no instrument download.
             scoped_executions = [{**row, **reports.contract(session, row, master)} for row in scoped_executions]
@@ -446,6 +501,9 @@ async def refresh(session, broker, *, protection=False, bundle=None):
                 real_accounting.apply_session_capital(session, account_wallet["session_capital"])
                 wallet_balance = account_wallet["balance"]
                 wallet_display_balance = account_wallet["display_balance"]
+                if getattr(session, "real_funding_period", None) and wallet_balance is not None:
+                    from app.services.real_funding import reconcile as reconcile_funding
+                    await asyncio.to_thread(reconcile_funding, session, wallet_balance, coherent=not any(o.recovery_state in ("submitting", "unknown") for o in order_service.get_all_orders(session.session_id)))
             except Exception as exc:
                 wallet_balance, wallet_error = None, f"Could not refresh Kotak wallet: {exc}"
                 logger.warning("broker_snapshot_wallet_failed session=%s: %s", session.session_id, exc)
@@ -522,11 +580,19 @@ def apply_position_fill(session, order, quantity, price):
             from app.services.db import get_dynamodb_resource
             db = get_dynamodb_resource()
             try:
-                db.Table("Orders").put_item(Item=encode({"session_id": partition,
-                    "order_id": "execution:" + execution["exchange"] + ":" + order.broker_order_id + ":" + execution["execution_id"], "broker_execution": execution}))
+                item = encode({"session_id": partition,
+                    "order_id": "execution:" + execution["exchange"] + ":" + order.broker_order_id + ":" + execution["execution_id"], "broker_execution": execution})
+                if getattr(session, "trading_style", "intraday") == "swing":
+                    from app.services.real_session_slots import fenced_put
+                    fenced_put(session, "Orders", item)
+                else:
+                    db.Table("Orders").put_item(Item=item)
                 for index, row in enumerate(session.broker_positions):
                     db.Table("Orders").put_item(Item=encode({"session_id": partition, "order_id": f"position:{index}", "broker_position": row}))
             except Exception:
+                if getattr(session, "trading_style", "intraday") == "swing":
+                    session.real_recovery_pending = True
+                    session.real_history_warning = "Live execution persistence failed; broker reconciliation required"
                 logger.exception("live_fifo_persistence_failed session=%s; refresh before reattachment", session.session_id)
         return
     # Legacy/unrefreshed open books keep broker basis until verified history is available.

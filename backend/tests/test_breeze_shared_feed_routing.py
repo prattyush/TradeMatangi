@@ -76,6 +76,9 @@ async def test_sensex_index_never_enters_primary_or_supplemental_option_feeds(se
 @pytest.mark.asyncio
 @pytest.mark.parametrize("session_type", ["paper", "real"])
 async def test_breeze_live_task_sse_and_order_evaluation_keep_option_premiums(session_type, monkeypatch):
+    from unittest.mock import AsyncMock
+    monkeypatch.setattr("app.services.real_broker_state.refresh", AsyncMock(return_value={}))
+    monkeypatch.setattr("app.services.real_close.unresolved", lambda session: False)
     import json
     from datetime import datetime, timezone
     hub = market_data.MarketDataHub(InlineBreezeAdapter())
