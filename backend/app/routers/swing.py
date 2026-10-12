@@ -6,7 +6,7 @@ import uuid
 from datetime import date as calendar_date
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import Field, model_validator
 
@@ -73,6 +73,7 @@ class ContextRequest(ContractModel):
 
 
 class PortfolioOrder(ContextRequest):
+    client: Literal["website", "desktop"] = "website"
     side: TradeSide
     order_type: OrderType = OrderType.LIMIT
     quantity: int = Field(gt=0)
@@ -124,6 +125,15 @@ async def start(req: StartPortfolio, user: str = Depends(get_desktop_user_id)):
             store.create, user, req.mode, req.capital, loss_limit_pct=req.loss_limit_pct
         )
     return service.snapshot(user, portfolio["session_id"])
+
+
+@router.get('/label-metadata')
+async def swing_label_metadata(user:str=Depends(get_desktop_user_id)):
+    from app.services import pattern_logger_service,trade_label_service
+    def read():
+        return {'categories':pattern_logger_service.list_category_names(user),'strategies':pattern_logger_service.list_strategy_names(user),'entry_tags':trade_label_service.list_entry_tags(user),'exit_tags':trade_label_service.list_exit_tags(user)}
+    return await asyncio.to_thread(read)
+
 
 
 @router.get("/{portfolio_id}")
@@ -217,7 +227,11 @@ async def place(
         )
         if saved:
             original_request = normalize_metadata((saved.get("analytics") or {}).get("swing_request"))
-            matching = original_request == req.model_dump(mode="json") if original_request else (
+            # Client attribution is not part of the economic order intent.
+            matching = (
+                {k: v for k, v in original_request.items() if k != "client"}
+                == req.model_dump(mode="json", exclude={"client"})
+            ) if original_request else (
                 saved.get("symbol") == req.symbol
                 and saved.get("side") == req.side.value
                 and saved.get("order_type") == req.order_type.value
@@ -270,7 +284,7 @@ async def place(
             strike=req.strike,
             expiry=req.expiry,
             user_id=user,
-            analytics={**decision_snapshot(child, quantity=req.quantity, price=req.price, side=req.side.value, margin_rate=1, entry_method=req.order_type.value, action_id=identifier),
+            analytics={**decision_snapshot(child, quantity=req.quantity, price=req.price, side=req.side.value, margin_rate=1, entry_method=req.order_type.value, action_id=identifier),"client":req.client,
                        "swing_request": req.model_dump(mode="json")},
             source="swing_real" if child.session_type == "real" else "swing_paper",
             order_id=identifier,
@@ -638,6 +652,7 @@ async def stop_chart_watch(
 
 
 class ChartWorkspace(ContractModel):
+    workspace_id: str | None = Field(default=None, pattern=r"^[A-Za-z0-9-]{1,64}$")
     surface: Literal["website", "desktop"]
     panes: list[ChartHistoryRequest] = Field(min_length=1, max_length=4)
     active: int = Field(default=0, ge=0, le=3)
@@ -653,12 +668,15 @@ class ChartWorkspace(ContractModel):
 async def load_workspace(
     portfolio_id: str,
     surface: Literal["website", "desktop"],
+    workspace_id: str | None = Query(default=None, pattern=r"^[A-Za-z0-9-]{1,64}$"),
     user: str = Depends(get_desktop_user_id),
 ):
     row = store.owned(user, portfolio_id)
     from app.services.desktop_persistence_service import _table
 
     key = f"swing-ui:{surface}:{row['mode']}:{row.get('execution_broker') or 'paper'}"
+    if workspace_id:
+        key += f":{portfolio_id}:{workspace_id}"
     result = await asyncio.to_thread(
         lambda: (
             _table("DesktopChartSettings")
@@ -681,6 +699,8 @@ async def save_workspace(
     key = (
         f"swing-ui:{req.surface}:{row['mode']}:{row.get('execution_broker') or 'paper'}"
     )
+    if req.workspace_id:
+        key += f":{portfolio_id}:{req.workspace_id}"
     for pane in req.panes:
         from app.services.swing_charts import instrument
 
@@ -697,3 +717,84 @@ async def save_workspace(
         )
     )
     return {"saved": True}
+
+
+@router.get('/{portfolio_id}/analytics')
+async def swing_analytics(
+    portfolio_id: str,
+    start_date: calendar_date | None = None,
+    end_date: calendar_date | None = None,
+    history: bool = True,
+    user: str = Depends(get_desktop_user_id),
+):
+    from app.services.swing_analytics import report
+
+    return await asyncio.to_thread(
+        report,
+        user,
+        portfolio_id,
+        start_date.isoformat() if start_date else None,
+        end_date.isoformat() if end_date else None,
+        history,
+    )
+
+
+@router.get('/{portfolio_id}/execution-history')
+async def execution_history(portfolio_id:str,user:str=Depends(get_desktop_user_id)):
+    from app.services.swing_analytics import cycles
+    from app.services.analysis_service import get_trades_for_session,get_stored_orders
+    parent=await asyncio.to_thread(store.owned,user,portfolio_id)
+    def read():
+        children=[{'session_id':sid,'trades':get_trades_for_session(sid),'orders':get_stored_orders({'session_id':sid,'session_type':parent['mode']})} for sid in parent['contexts'].values()]
+        return {'history_warning':parent.get('history_warning'),'cycles':cycles(parent),'contexts':children}
+    return await asyncio.to_thread(read)
+
+
+
+class SwingLabel(ContractModel):
+    session_id:str
+    analytics_cycle_id:str
+    expected_category:str=''
+    expected_strategy:str=''
+    actual_category:str=''
+    actual_strategy:str=''
+    entry_tag:str='AS_PER_PATTERN'
+    exit_tag:str='AS_PER_PATTERN'
+
+
+@router.post('/{portfolio_id}/labels')
+async def label_swing_cycle(
+    portfolio_id: str, req: SwingLabel, user: str = Depends(get_desktop_user_id)
+):
+    from app.services.swing_analytics import cycles
+    from app.services.trade_label_service import save_labels
+
+    parent = await asyncio.to_thread(store.owned, user, portfolio_id)
+    if req.session_id not in parent["contexts"].values():
+        raise HTTPException(404, "Trade cycle not found")
+    rows = await asyncio.to_thread(cycles, parent, True)
+    cycle = next(
+        (
+            c
+            for c in rows
+            if c["session_id"] == req.session_id
+            and c["cycle_id"] == req.analytics_cycle_id
+        ),
+        None,
+    )
+    if not cycle:
+        raise HTTPException(409, "Trade cycle changed; refresh before labelling")
+    try:
+        return await asyncio.to_thread(
+            save_labels,
+            req.session_id,
+            [
+                {
+                    **req.model_dump(),
+                    "round_trip_index": cycle.get("label_index", cycle["index"]),
+                }
+            ],
+            user,
+        )
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc

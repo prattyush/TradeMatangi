@@ -232,6 +232,7 @@ class SimulationSession:
     portfolio_id: str | None = None
     real_closing: bool = False
     opening_positions: list = field(default_factory=list)
+    opening_inventory_capital: float = 0
     opening_inventory_cost: float = 0
     opening_inventory_request_id: str | None = None
     opening_inventory_fingerprint: str | None = None
@@ -353,6 +354,7 @@ def _upsert_session_to_db(session: SimulationSession, *, strict: bool = False) -
             "acknowledged_undated_submission_ids": session.acknowledged_undated_submission_ids,
             "opening_positions": session.opening_positions,
             "opening_inventory_cost": session.opening_inventory_cost,
+            "opening_inventory_capital":session.opening_inventory_capital,
             "opening_inventory_request_id": session.opening_inventory_request_id,
             "opening_inventory_fingerprint": session.opening_inventory_fingerprint,
             "opening_inventory_captured_at": session.opening_inventory_captured_at,
@@ -712,6 +714,7 @@ def rebuild_session_from_db(
         acknowledged_undated_submission_ids=list(db_record.get("acknowledged_undated_submission_ids", [])),
         opening_positions=db_record.get("opening_positions", []),
         opening_inventory_cost=float(db_record.get("opening_inventory_cost", 0)),
+        opening_inventory_capital=float(db_record.get("opening_inventory_capital",0)),
         opening_inventory_request_id=db_record.get("opening_inventory_request_id"),
         opening_inventory_fingerprint=db_record.get("opening_inventory_fingerprint"),
         opening_inventory_captured_at=int(db_record["opening_inventory_captured_at"]) if db_record.get("opening_inventory_captured_at") is not None else None,

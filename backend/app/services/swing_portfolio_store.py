@@ -231,6 +231,7 @@ def reset_guardrail_reference(user, portfolio_id, capital, current_pnl):
             "guardrail_start_pnl": current_pnl,
             "guardrail_epoch": row["guardrail_epoch"] + 1,
             "guardrail_ban": False,
+            "capital_reference_history":[*row.get("capital_reference_history",[]),{"timestamp":int(time.time())+19800,"before":row["session_capital"],"after":capital,"cash_flow":0}],
         },
         row["version"],
     )

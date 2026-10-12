@@ -780,7 +780,7 @@ async def import_inventory(child, fingerprint, request_id):
                     "Update": {
                         "TableName": "Sessions",
                         "Key": slots.serialize({"session_id": child.session_id}),
-                        "UpdateExpression": "SET opening_positions = :positions, opening_inventory_cost = :cost, opening_inventory_request_id = :request, opening_inventory_fingerprint = :fingerprint, opening_inventory_captured_at = :captured",
+                        "UpdateExpression": "SET opening_positions = :positions, opening_inventory_cost = :cost, opening_inventory_request_id = :request, opening_inventory_fingerprint = :fingerprint, opening_inventory_captured_at = :captured, opening_inventory_capital = :capital",
                         "ConditionExpression": "user_id = :owner AND opening_inventory_cost = :zero",
                         "ExpressionAttributeValues": slots.serialize(
                             {
@@ -789,6 +789,7 @@ async def import_inventory(child, fingerprint, request_id):
                                 ":request": request_id,
                                 ":fingerprint": fingerprint,
                                 ":captured": captured_at,
+                            ":capital":child.session_capital,
                                 ":owner": child.user_id,
                                 ":zero": 0,
                             }
@@ -837,6 +838,7 @@ async def import_inventory(child, fingerprint, request_id):
         child.opening_inventory_request_id = request_id
         child.opening_inventory_fingerprint = fingerprint
         child.opening_inventory_captured_at = captured_at
+        child.opening_inventory_capital=child.session_capital
     await refresh(child)
 
 

@@ -311,6 +311,7 @@ function AppInner({ authUser, onLogout, setAuthUser, onOpenMessages }: { onOpenM
   } | null>(null)
 
   // ── Trade Analysis modal ────────────────────────────────────────────────────
+  const [swingAnalysisPortfolio,setSwingAnalysisPortfolio]=useState<string|undefined>()
   const [showAnalysis, setShowAnalysis] = useState(false)
 
   // ── Account name backfill popup for old accounts ─────────────────────────────
@@ -2140,7 +2141,7 @@ function AppInner({ authUser, onLogout, setAuthUser, onOpenMessages }: { onOpenM
 
   const idle = sim.sessionState === 'idle' || sim.sessionState === 'ended'
 
-  if (showSwing) return <SwingPortfolioPanel key={authUser.userId} request={swingRequest} loadSymbols={swingSymbols} renderChart={SwingChart} surface="website" onDetach={() => setShowSwing(false)} />
+  if (showSwing) return <><SwingPortfolioPanel key={authUser.userId} request={swingRequest} loadSymbols={swingSymbols} renderChart={SwingChart} surface="website" onAnalyse={id=>{setSwingAnalysisPortfolio(id);setShowAnalysis(true)}} onDetach={() => {setShowSwing(false);setShowAnalysis(false)}} />{showAnalysis&&<TradeAnalysis key={swingAnalysisPortfolio} initialPortfolioId={swingAnalysisPortfolio} onClose={()=>setShowAnalysis(false)} historicalDays={historicalDays}/>}</>
 
   if (showPatternLibrary) {
     return (

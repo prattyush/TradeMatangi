@@ -41,6 +41,8 @@ export interface SwingChartProps {
   picking: boolean;
   position?: any;
   orders: any[];
+  trades?: any[];
+  showHistoricalTrades?: boolean;
   onPick: (price: number) => void;
   onActivate: () => void;
   loadOlder: (
@@ -301,11 +303,17 @@ export default function SwingWorkspace({
   symbols,
   Renderer,
   surface,
+  workspaceId,
+  companion = false,
+  onSaveReady,
+  onCreateLinked,
   onSelect,
   onPick,
   picking,
   ticket,
   onManage,
+  onHistory,
+  onStats,
   onDetach,
   error,
   busy,
@@ -316,11 +324,17 @@ export default function SwingWorkspace({
   symbols: SymbolChoice[];
   Renderer: ComponentType<SwingChartProps>;
   surface: "website" | "desktop";
+  workspaceId?: string;
+  companion?: boolean;
+  onSaveReady?: (save: (() => Promise<unknown>) | null) => void;
+  onCreateLinked?: (portfolioId: string) => void;
   onSelect: (pane: SwingPane) => void;
   onPick: (price: number) => void;
   picking: boolean;
   ticket: ReactNode;
   onManage: () => void;
+  onHistory?: () => void;
+  onStats?: () => void;
   onDetach: () => void;
   error?: string;
   busy?: boolean;
@@ -371,7 +385,7 @@ export default function SwingWorkspace({
   useEffect(() => {
     let cancelled = false;
     void request<{ workspace: { panes: SwingPane[]; active: number } | null }>(
-      `${prefix}/charts/workspace?surface=${surface}`,
+      `${prefix}/charts/workspace?surface=${surface}${workspaceId ? `&workspace_id=${encodeURIComponent(workspaceId)}` : ""}`,
       "GET",
     )
       .then((value) => {
@@ -391,7 +405,7 @@ export default function SwingWorkspace({
     return () => {
       cancelled = true;
     };
-  }, [prefix, surface, request]);
+  }, [prefix, surface, workspaceId, request]);
   useEffect(() => {
     if (!restored) return;
     const timer = setTimeout(
@@ -400,11 +414,33 @@ export default function SwingWorkspace({
           surface,
           panes,
           active,
+          ...(workspaceId ? { workspace_id: workspaceId } : {}),
         }).catch((cause) => setNotice(`Workspace not saved: ${String(cause)}`)),
       700,
     );
     return () => clearTimeout(timer);
-  }, [paneSignature, active, restored, prefix, surface, request]);
+  }, [paneSignature, active, restored, prefix, surface, workspaceId, request]);
+  useEffect(() => {
+    if (!restored) return;
+    onSaveReady?.(() =>
+      request(`${prefix}/charts/workspace`, "PUT", {
+        surface,
+        panes,
+        active,
+        ...(workspaceId ? { workspace_id: workspaceId } : {}),
+      }),
+    );
+    return () => onSaveReady?.(null);
+  }, [
+    paneSignature,
+    active,
+    restored,
+    prefix,
+    surface,
+    workspaceId,
+    request,
+    onSaveReady,
+  ]);
   useEffect(() => {
     onSelect(current);
   }, [paneKey(current), active]);
@@ -558,11 +594,19 @@ export default function SwingWorkspace({
         <button
           disabled={busy || snapshot.portfolio.state !== "running"}
           onClick={onPause}
+          style={{ display: companion ? "none" : undefined }}
         >
           {snapshot.portfolio.entries_paused
             ? "Resume entries"
             : "Pause entries"}
         </button>
+        {!companion && onCreateLinked && (
+          <button onClick={() => onCreateLinked(prefix)}>
+            Create linked window
+          </button>
+        )}
+        {onHistory && <button onClick={onHistory}>Execution history</button>}
+        {onStats && <button onClick={onStats}>Swing Stats</button>}
         <button onClick={onManage}>Manage portfolio</button>
         <button onClick={onDetach}>Detach</button>
       </div>

@@ -24,6 +24,8 @@ def get_sessions_for_user(
     end_date: str | None = None,
     instrument_type: str | None = None,
     session_type: str | None = None,
+    trading_style: str | None = None,
+    portfolio_id:str|None=None,
 ) -> list[dict]:
     """
     Return sessions for a user, optionally filtered by symbol, date range,
@@ -43,15 +45,17 @@ def get_sessions_for_user(
             items.extend(resp.get("Items", []))
 
         raw_items = [s for s in items if s.get('user_id') == user_id]
-        items = raw_items
+        items = [s for s in raw_items if s.get("record_type")!="swing_portfolio"]
         items = [s for s in items if not s.get("broker_projection_owner") or s["broker_projection_owner"] == s["session_id"]]
         items = [{**s,'snapshot_session_ids':sorted({s['session_id'],*[alias['session_id'] for alias in raw_items if alias.get('broker_projection_owner') == s['session_id'] and alias.get('date') == s.get('date') and alias.get('symbol') == s.get('symbol') and alias.get('instrument_type','equity') == s.get('instrument_type','equity')]})} for s in items]
         if symbol:
             items = [s for s in items if s.get("symbol") == symbol]
+        if trading_style:items=[s for s in items if s.get("trading_style","intraday")==trading_style]
+        if portfolio_id:items=[s for s in items if s.get("portfolio_id")==portfolio_id]
         if start_date:
-            items = [s for s in items if s.get("date", "") >= start_date]
+            items = [s for s in items if s.get("trading_style")=="swing" or s.get("date", "") >= start_date]
         if end_date:
-            items = [s for s in items if s.get("date", "") <= end_date]
+            items = [s for s in items if s.get("trading_style")=="swing" or s.get("date", "") <= end_date]
         if instrument_type:
             items = [s for s in items if s.get("instrument_type") == instrument_type]
         if session_type:
@@ -95,8 +99,9 @@ def compute_session_summary(session: dict, trades: list[dict], cycles: list[dict
     """
     session_capital = _safe_float(session.get("session_capital", 0))
 
-    from app.services.performance_service import build_cycles
-    cycles = build_cycles(session, trades) if cycles is None else cycles
+    from app.services.performance_service import build_cycles,load_session_cycles
+    if cycles is None:
+        cycles=load_session_cycles(session,include_labels=False) if session.get("trading_style")=="swing" else build_cycles(session,trades)
     net_pnl = sum(c["net_pnl"] for c in cycles)
     total_commission = sum(_safe_float(t.get("commission", 0)) for t in trades)
     if session.get("session_type") == "real":
@@ -109,6 +114,10 @@ def compute_session_summary(session: dict, trades: list[dict], cycles: list[dict
 
 
     return {
+        "trading_style":session.get("trading_style","intraday"),
+        "portfolio_id":session.get("portfolio_id"),
+        "entry_date": min((c.get("entry_date") for c in cycles if c.get("entry_date")),default=None),
+        "exit_date": max((c.get("exit_date") for c in cycles if c.get("exit_date")),default=None),
         "session_id": session.get("session_id"),
         "user_id": session.get("user_id"),
         "symbol": session.get("symbol"),

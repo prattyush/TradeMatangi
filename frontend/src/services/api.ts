@@ -419,6 +419,7 @@ export interface AdminTokensResponse {
 // ── Analysis types ──────────────────────────────────────────────────────────
 
 export interface SessionSummary {
+  trading_style?: 'intraday'|'swing'; portfolio_id?:string; entry_date?:string|null;exit_date?:string|null;
   snapshot_session_ids?: string[]
   shared?: boolean
   owner_email?: string | null
@@ -499,6 +500,7 @@ export interface RoundTrip {
 }
 
 export interface TradeLabel {
+  analytics_cycle_id?:string;
   session_id: string
   round_trip_index: number
   expected_category: string
@@ -1431,6 +1433,8 @@ const api = {
   // ── Analysis ───────────────────────────────────────────────────────────────
 
   async getAnalysisSessions(opts: {
+    tradingStyle?: string
+    portfolioId?:string
     symbol?: string
     startDate?: string
     endDate?: string
@@ -1438,6 +1442,8 @@ const api = {
     sessionType?: string
   } = {}): Promise<SessionSummary[]> {
     const params = new URLSearchParams({include_shared:'true'})
+    if(opts.tradingStyle)params.set('trading_style',opts.tradingStyle)
+    if(opts.portfolioId)params.set('portfolio_id',opts.portfolioId)
     if (opts.symbol) params.set('symbol', opts.symbol)
     if (opts.startDate) params.set('start_date', opts.startDate)
     if (opts.endDate) params.set('end_date', opts.endDate)

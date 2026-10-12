@@ -15,6 +15,10 @@ router = APIRouter(prefix="/api/analysis", tags=["analysis"])
 
 
 class SessionSummary(BaseModel):
+    trading_style:str="intraday"
+    portfolio_id:str|None=None
+    entry_date:str|None=None
+    exit_date:str|None=None
     snapshot_session_ids: list[str] = []
     shared: bool = False
     owner_email: str | None = None
@@ -79,6 +83,8 @@ async def get_sessions(
     end_date: str | None = Query(default=None, description="YYYY-MM-DD"),
     instrument_type: str | None = Query(default=None),
     session_type: str | None = Query(default=None, description="sim, paper, real, or stepwise"),
+    trading_style:str|None=Query(default=None,pattern="^(intraday|swing)$"),
+    portfolio_id:str|None=None,
     include_shared: bool = False,
     user_id: str = Depends(get_request_user_id),
 ):
@@ -91,6 +97,8 @@ async def get_sessions(
             start_date=start_date, end_date=end_date,
             instrument_type=instrument_type,
             session_type=query_session_type,
+            **({"trading_style":trading_style} if trading_style else {}),
+            **({"portfolio_id":portfolio_id} if portfolio_id else {}),
         )
         result = []
         for s in sessions:
@@ -104,6 +112,12 @@ async def get_sessions(
                 import asyncio
                 from app.services.performance_service import load_session_cycles
                 cycles = load_session_cycles(s, include_labels=False)
+            if s.get("trading_style")=="swing":
+                from app.services.performance_service import load_session_cycles
+                from app.services import swing_market
+                cycles=cycles if cycles is not None else load_session_cycles(s,include_labels=False)
+                if (start_date or end_date) and not any((not end_date or c["entry_date"]<=end_date) and (not start_date or (c.get("exit_date") or swing_market.today())>=start_date) for c in cycles):
+                    continue
             summary = analysis_service.compute_session_summary(s, trades, cycles)
             result.append({**summary,"shared":s.get("shared",False),"owner_email":s.get("owner_email"),"snapshot_session_ids":s.get("snapshot_session_ids",[s["session_id"]])})
         return result

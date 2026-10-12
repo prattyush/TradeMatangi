@@ -1102,7 +1102,7 @@ fn valid_analysis_path(path: &str, method: &str) -> bool {
     if method != "GET" { return false; }
     let valid_id = |id: &str| !id.is_empty() && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
     match route {
-        "sessions" | "round-trips" | "labels" | "entry-tags" | "exit-tags" | "snapshots" | "performance" | "performance/cycles" | "performance/real-fees" |
+        "sessions" | "round-trips" | "labels" | "entry-tags" | "exit-tags" | "snapshots" | "performance" | "performance/swing" | "performance/cycles" | "performance/real-fees" |
         "data/historical" | "data/pre-session" | "data/options-historical" | "data/expiry" |
         "pattern/strategies" | "pattern/categories" | "pattern/chart/by-date" | "pattern/ohlc/equity" | "pattern/ohlc/options" => true,
         _ if route.starts_with("snapshots/") => route.strip_prefix("snapshots/").and_then(|p| p.strip_suffix("/candle")).map(valid_id).unwrap_or(false),
@@ -2117,6 +2117,15 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn swing_performance_is_read_only_in_native_analysis() {
+        assert!(super::valid_analysis_path("performance/swing?portfolio_id=book", "GET"));
+        for method in ["POST", "PUT", "PATCH", "DELETE"] {
+            assert!(!super::valid_analysis_path("performance/swing", method));
+        }
+        assert!(!super::valid_analysis_path("performance/swing/extra", "GET"));
+    }
+
     use super::*;
 
     #[test]

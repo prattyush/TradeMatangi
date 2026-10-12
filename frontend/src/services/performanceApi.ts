@@ -63,3 +63,5 @@ async function realFeesRequest(date: string, method = 'GET', account = '', amoun
 export const getRealFees = (date: string, signal?: AbortSignal) => realFeesRequest(date, 'GET', '', undefined, signal)
 export const saveRealFees = (date: string, account: string, amount: number, broker?: "kotak" | "kite") => realFeesRequest(date, 'POST', account, amount, undefined, broker)
 export const deleteRealFees = (date: string, account: string, broker?: "kotak" | "kite") => realFeesRequest(date, 'DELETE', account, undefined, undefined, broker)
+
+export const getSwingReport=(filters:PerformanceFilters,signal?:AbortSignal)=>request<any>("/swing",filters,signal);

@@ -34,6 +34,8 @@ export interface ChartVisibleRange {
 }
 
 interface Props {
+  candleAnchorSeconds?:number
+  defaultShowAllMarkers?:boolean
   externalCandles?: { time: number; open: number; high: number; low: number; close: number }[]
   externalLoading?: boolean
   externalMessage?: string
@@ -414,7 +416,7 @@ function RatioIndicatorPanel({ comparison, series, ratioMode, height, expanded, 
 }
 
 export default function Chart({
-  externalCandles, externalLoading, externalMessage, externalLoadOlder, drawingStorageKey,
+  candleAnchorSeconds=0, defaultShowAllMarkers=false, externalCandles, externalLoading, externalMessage, externalLoadOlder, drawingStorageKey,
   symbol, tradingDate, startTime, intervalMinutes, historyMode = 'replay',
   latestTick, completedBar, onPriceUpdate, height = 380,
   paneType = 'equity', strike, expiry, right,
@@ -482,9 +484,9 @@ export default function Chart({
   },[drawingStorageKey])
   const ignoreNextClickRef = useRef(false)
   const tradeMarkerPool = useRef(new Map<string, { object: ISeriesApi<'Line'>; signature: string }>())
-  const [showAllMarkers, setShowAllMarkers] = useState(false)
+  const [showAllMarkers, setShowAllMarkers] = useState(defaultShowAllMarkers)
   const visibleTrades = useMemo(() => showAllMarkers ? trades : openPositionTrades(trades), [trades, showAllMarkers])
-  useEffect(() => { setShowAllMarkers(false) }, [markerSessionKey, symbol, paneType, right, strike, expiry])
+  useEffect(() => { setShowAllMarkers(defaultShowAllMarkers) }, [markerSessionKey, symbol, paneType, right, strike, expiry])
   const orderPriceLinesRef = useRef<Map<string, IPriceLine>>(new Map())
   const strategyPriceLinesRef = useRef<Map<string, IPriceLine>>(new Map())
   const onPriceSelectRef = useRef<((price: number) => void) | null>(null)
@@ -1226,7 +1228,7 @@ export default function Chart({
       return matches && Number.isFinite(t.timestamp) && typeof price === 'number' && Number.isFinite(price)
     }).map(t => {
       const price = paneType === 'equity' && t.right && t.underlying_price !== undefined ? t.underlying_price : t.price
-      const time = Math.floor(t.timestamp / intervalSecs) * intervalSecs as Time
+      const time = (Math.floor((t.timestamp-candleAnchorSeconds) / intervalSecs) * intervalSecs+candleAnchorSeconds) as Time
       const style = paneType === 'equity' && t.right ? crossChartMarkerStyle(t.right, t.side)
         : { color: t.side === 'BUY' ? '#FFFFFF' : '#00AAFF', text: t.side === 'BUY' ? 'B' : 'S' }
       const input = { time, price, ...style }

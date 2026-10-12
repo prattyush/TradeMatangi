@@ -133,6 +133,8 @@ export default function SwingChart(
       </div>
       {drawingError && <p role="alert">{drawingError}</p>}
       <ChartTile
+        candleAnchorSeconds={pane.interval==='1D'?0:33300}
+        showHistoricalMarkers={props.showHistoricalTrades}
         hideWindowActions
         readOnlyOrders
         symbol={pane.symbol}
@@ -170,6 +172,7 @@ export default function SwingChart(
         onActivate={props.onActivate}
         position={props.position}
         openOrders={props.orders}
+        trades={props.trades}
         pricePickAction={props.picking ? { ticket: {} } : null}
         onPricePick={props.onPick}
       />

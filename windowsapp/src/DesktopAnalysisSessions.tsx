@@ -4,10 +4,10 @@ import type { SessionSummary } from '../../shared/analysis/api'
 import { useAnalysisEnvironment } from '../../shared/analysis/environment'
 
 const money=(n:number)=>`₹${n.toLocaleString('en-IN',{maximumFractionDigits:2})}`
-export default function DesktopAnalysisSessions() {
+export default function DesktopAnalysisSessions({initialPortfolioId}:{initialPortfolioId?:string}) {
   const environment=useAnalysisEnvironment(); const api=environment.api
   const today = new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Kolkata'}).format(new Date())
-  const [filters,setFilters]=useState({symbol:'',instrumentType:'',sessionType:'',startDate:new Date(Date.parse(today+'T00:00:00Z')-29*86400000).toISOString().slice(0,10),endDate:today})
+  const [filters,setFilters]=useState({tradingStyle:initialPortfolioId?'swing':'',portfolioId:initialPortfolioId??'',symbol:'',instrumentType:'',sessionType:'',startDate:new Date(Date.parse(today+'T00:00:00Z')-29*86400000).toISOString().slice(0,10),endDate:today})
   const [sessions,setSessions]=useState<SessionSummary[]>([])
   const [selected,setSelected]=useState('')
   const [error,setError]=useState('');const [loading,setLoading]=useState(false)
@@ -25,7 +25,8 @@ export default function DesktopAnalysisSessions() {
   const field=(key:keyof typeof filters,value:string)=>navigate(()=>setFilters(old=>({...old,[key]:value})))
   return <div className={`analysis-session-workspace ${collapsed?'navigator-collapsed':''}`} ref={root} style={{'--analysis-navigator-width':`${width}px`} as React.CSSProperties}>
     <header className="analysis-session-filters"><button aria-expanded={!collapsed} onClick={()=>setCollapsed(v=>!v)}>Sessions</button>
-      <label>Symbol<select aria-label="Analysis symbol" value={filters.symbol} onChange={e=>field('symbol',e.target.value)}><option value="">All symbols</option>{['NIFTY','BSESEN','TATPOW','TATMOT','RELIND'].map(s=><option key={s}>{s}</option>)}</select></label>
+      <label>Trading style<select aria-label="Analysis trading style" value={filters.tradingStyle} onChange={e=>{field('tradingStyle',e.target.value);field('portfolioId','')}}><option value="">All styles</option><option value="intraday">Day trading</option><option value="swing">Swing trading</option></select></label>{filters.tradingStyle==='swing'&&<label>Portfolio<select aria-label="Analysis portfolio" value={filters.portfolioId} onChange={e=>field('portfolioId',e.target.value)}><option value="">All</option>{[...new Set([filters.portfolioId,...sessions.map(s=>s.portfolio_id)].filter(Boolean))].map(id=><option key={id} value={id}>{id}</option>)}</select></label>}
+      <label>Symbol<select aria-label="Analysis symbol" value={filters.symbol} onChange={e=>field('symbol',e.target.value)}><option value="">All symbols</option>{[...new Set(['NIFTY','BSESEN','TATPOW','TATMOT','RELIND',...sessions.map(s=>s.symbol)])].map(s=><option key={s}>{s}</option>)}</select></label>
       <label>Instrument<select aria-label="Analysis instrument" value={filters.instrumentType} onChange={e=>field('instrumentType',e.target.value)}><option value="">All instruments</option><option value="equity">Equity</option><option value="options">Options</option></select></label>
       <label>Mode<select aria-label="Analysis mode" value={filters.sessionType} onChange={e=>field('sessionType',e.target.value)}><option value="">All modes</option><option value="paper">Paper</option><option value="real">Real</option><option value="sim">Replay</option><option value="stepwise">Stepwise</option></select></label>
       <label>From<input aria-label="Analysis from date" type="date" value={filters.startDate} onChange={e=>field('startDate',e.target.value)}/></label><label>Through<input aria-label="Analysis through date" type="date" value={filters.endDate} onChange={e=>field('endDate',e.target.value)}/></label>
