@@ -57,7 +57,7 @@ async def test_recovery_uses_only_valid_day_then_renews_at_current_quote(db):
     quote = {**tick("2026-11-04", 105)}
     recovery.before_quote(child, quote, loader=prices)
     assert windows == [
-        ("2026-11-02", stamp("2026-11-02T15:01:00"), stamp("2026-11-02T15:14:59"))
+        ("2026-11-02", stamp("2026-11-02T15:01:00"), stamp("2026-11-02T15:29:59"))
     ]
     assert order.status == OrderStatus.PENDING
     assert [a["date"] for a in order.swing_attempts] == ["2026-11-02", "2026-11-04"]
@@ -143,7 +143,8 @@ async def test_invalid_evidence_cannot_commit_an_earlier_possible_fill(db):
 
 def test_market_window_rejects_closed_hours_and_weekend():
     assert recovery.day_window(stamp("2026-11-02T09:15:00"))
-    assert not recovery.day_window(stamp("2026-11-02T15:15:00"))
+    assert recovery.day_window(stamp("2026-11-02T15:15:00"))
+    assert not recovery.day_window(stamp("2026-11-02T15:30:00"))
     assert not recovery.day_window(stamp("2026-11-07T10:00:00"))
 
 

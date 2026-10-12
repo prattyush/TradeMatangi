@@ -527,3 +527,173 @@ async def cash_correction(portfolio_id: str, req: CashCorrection, user: str = De
     from app.services.swing_real import correct_shortfall
     await funding_action(correct_shortfall(current, req.adjustment, req.reason, req.request_id, req.funding_version))
     return service.snapshot(user, portfolio_id)
+
+
+
+class ChartHistoryRequest(ContextRequest):
+    interval: Literal["1m", "3m", "5m", "15m", "30m", "1h", "1D"] = "1D"
+    as_of_date: calendar_date
+    follow_today: bool = False
+    before: int | None = Field(default=None, ge=0)
+    limit: int | None = Field(default=None, ge=1, le=500)
+
+
+class ChartWatch(ContractModel):
+    items: list[ChartHistoryRequest] = Field(max_length=4)
+
+
+@router.post("/{portfolio_id}/charts/history")
+async def chart_history(
+    portfolio_id: str,
+    req: ChartHistoryRequest,
+    user: str = Depends(get_desktop_user_id),
+):
+    from app.services import swing_charts
+
+    row = store.owned(user, portfolio_id)
+    if row["mode"] == "real":
+        from app.dependencies import require_real_trading_access
+
+        require_real_trading_access(user)
+    item = swing_charts.instrument(
+        req.symbol, req.instrument_type, req.right, req.strike, req.expiry
+    )
+    return await asyncio.to_thread(
+        swing_charts.history,
+        item,
+        req.interval,
+        req.as_of_date.isoformat(),
+        req.before,
+        req.limit,
+    )
+
+
+@router.post("/{portfolio_id}/charts/watch")
+async def chart_watch(
+    portfolio_id: str, req: ChartWatch, user: str = Depends(get_desktop_user_id)
+):
+    from app.services import swing_charts, swing_market
+
+    row = store.owned(user, portfolio_id)
+    if row["state"] == "ended":
+        raise HTTPException(409, "Closed portfolios have historical charts only")
+    if row["mode"] == "real":
+        from app.dependencies import require_real_trading_access
+
+        require_real_trading_access(user)
+    items = {
+        json.dumps(
+            swing_charts.instrument(
+                p.symbol, p.instrument_type, p.right, p.strike, p.expiry
+            ),
+            sort_keys=True,
+        )
+        for p in req.items
+        if p.as_of_date.isoformat() == swing_market.today()
+        and (not p.expiry or p.expiry >= swing_market.today())
+    }
+    identifier = str(uuid.uuid4())
+    swing_charts._viewers[identifier] = swing_charts.Viewer(
+        user,
+        portfolio_id,
+        [json.loads(item) for item in sorted(items)],
+        row["mode"] == "real",
+        identifier,
+    )
+    return {"watch_id": identifier}
+
+
+@router.get("/{portfolio_id}/charts/watch/{watch_id}")
+async def chart_quotes(
+    portfolio_id: str, watch_id: str, user: str = Depends(get_desktop_user_id)
+):
+    from app.services import swing_charts, swing_market
+    from app.services.market_data import selected_provider
+
+    viewer = swing_charts._viewers.get(watch_id)
+    if not viewer or viewer.user != user or viewer.portfolio != portfolio_id:
+        raise HTTPException(404, "Chart viewer expired")
+    viewer.last_seen = __import__("time").monotonic()
+    if viewer.task.done() and store.owned(user, portfolio_id)["state"] != "ended":
+        viewer.task = asyncio.create_task(viewer.run())
+    return {
+        "quotes": list(viewer.quotes.values()),
+        "error": viewer.error,
+        "market_open": bool(swing_market.window(swing_market.now())),
+        "provider": viewer.actual or selected_provider(),
+    }
+
+
+@router.delete("/{portfolio_id}/charts/watch/{watch_id}")
+async def stop_chart_watch(
+    portfolio_id: str, watch_id: str, user: str = Depends(get_desktop_user_id)
+):
+    from app.services import swing_charts
+
+    viewer = swing_charts._viewers.get(watch_id)
+    if viewer and (viewer.user != user or viewer.portfolio != portfolio_id):
+        raise HTTPException(404, "Chart viewer not found")
+    swing_charts.stop_viewer(watch_id, user)
+    return {"stopped": True}
+
+
+class ChartWorkspace(ContractModel):
+    surface: Literal["website", "desktop"]
+    panes: list[ChartHistoryRequest] = Field(min_length=1, max_length=4)
+    active: int = Field(default=0, ge=0, le=3)
+
+    @model_validator(mode="after")
+    def active_pane_exists(self):
+        if self.active >= len(self.panes):
+            raise ValueError("Active chart must exist in the workspace")
+        return self
+
+
+@router.get("/{portfolio_id}/charts/workspace")
+async def load_workspace(
+    portfolio_id: str,
+    surface: Literal["website", "desktop"],
+    user: str = Depends(get_desktop_user_id),
+):
+    row = store.owned(user, portfolio_id)
+    from app.services.desktop_persistence_service import _table
+
+    key = f"swing-ui:{surface}:{row['mode']}:{row.get('execution_broker') or 'paper'}"
+    result = await asyncio.to_thread(
+        lambda: (
+            _table("DesktopChartSettings")
+            .get_item(Key={"user_id": user, "record_id": key}, ConsistentRead=True)
+            .get("Item", {})
+        )
+    )
+    from app.services.swing_funding_store import decode
+
+    return {"workspace": decode(result.get("workspace"))}
+
+
+@router.put("/{portfolio_id}/charts/workspace")
+async def save_workspace(
+    portfolio_id: str, req: ChartWorkspace, user: str = Depends(get_desktop_user_id)
+):
+    row = store.owned(user, portfolio_id)
+    from app.services.desktop_persistence_service import _table, _dynamodb_safe
+
+    key = (
+        f"swing-ui:{req.surface}:{row['mode']}:{row.get('execution_broker') or 'paper'}"
+    )
+    for pane in req.panes:
+        from app.services.swing_charts import instrument
+
+        instrument(
+            pane.symbol, pane.instrument_type, pane.right, pane.strike, pane.expiry
+        )
+    await asyncio.to_thread(
+        lambda: _table("DesktopChartSettings").put_item(
+            Item={
+                "user_id": user,
+                "record_id": key,
+                "workspace": _dynamodb_safe(req.model_dump(mode="json")),
+            }
+        )
+    )
+    return {"saved": True}

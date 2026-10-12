@@ -52,6 +52,7 @@ def runtime(user, portfolio_id):
 
 
 def snapshot(user, portfolio_id):
+    from app.services import swing_market
     row = store.owned(user, portfolio_id)
     current = runtime(user, portfolio_id)
     positions, orders, executions = [], [], []
@@ -91,6 +92,10 @@ def snapshot(user, portfolio_id):
                 net += (
                     position.quantity * price * (1 if position.side == "LONG" else -1)
                 )
+            invested = position.quantity * position.avg_entry_price
+            unrealized = (position.quantity * (price - position.avg_entry_price) - position.entry_commission) if price is not None else None
+            if session.session_type == "real" and session.real_recovery_pending: unrealized = None
+            quote_time = quote.get("timestamp") if contract["right"] else getattr(session, "swing_mark_time", None)
             positions.append(
                 {
                     "session_id": session.session_id,
@@ -98,6 +103,11 @@ def snapshot(user, portfolio_id):
                     **contract,
                     **position.model_dump(mode="json"),
                     "mark_price": price,
+                    "mark_time": quote_time,
+                    "quote_status": "unavailable" if price is None else "live" if quote_time and swing_market.window(swing_market.now()) and 0 <= swing_market.now() - int(quote_time) < 120 else "stale",
+                    "invested_value": round(invested, 2),
+                    "unrealized_pnl": round(unrealized, 2) if unrealized is not None else None,
+                    "unrealized_pnl_pct": round(unrealized / invested * 100, 4) if unrealized is not None and invested else None,
                 }
             )
     for trade in executions:
@@ -165,6 +175,7 @@ def snapshot(user, portfolio_id):
     }
 
 
+
 def require_entry_allowed(
     session, side, quantity, right=None, strike=None, expiry=None
 ):
@@ -188,19 +199,10 @@ def require_entry_allowed(
         from app.services.real_funding import require_entry
         require_entry(session)
     if expiry and session.session_type != "real":
-        from app.config import get_market_close
+        from app.services.swing_market import closing
 
         stamp = int(session.current_time or 0)
-        cutoff = (
-            int(
-                datetime.fromisoformat(
-                    session.date + "T" + get_market_close(session.date)
-                )
-                .replace(tzinfo=timezone.utc)
-                .timestamp()
-            )
-            - 900
-        )
+        cutoff = closing(session.date) - 900
         if expiry < session.date or (expiry == session.date and stamp >= cutoff):
             raise HTTPException(
                 400, "Paper Swing option entries are closed for this expiry"
@@ -471,45 +473,108 @@ async def _restore(user, portfolio_id, *, subscribe=True):
     return runtime(user, portfolio_id)
 
 
+def required_contracts(session):
+    contracts = (
+        trading.get_open_option_contracts(session.session_id, session.symbol)
+        if session.instrument_type == "options"
+        else []
+    )
+    contracts += [
+        {"right": o.right, "strike": o.strike, "expiry": o.expiry}
+        for o in order_service.get_open_orders(session.session_id)
+        if o.right
+    ]
+    keys = {(c["right"], c["strike"], c["expiry"]) for c in contracts}
+    return [
+        c
+        for c in getattr(session, "desktop_contracts", [])
+        if (c["right"], c["strike"], c["expiry"]) in keys
+    ]
+
+
 async def _consume(current, session):
     from app.services.market_data import get_hub, FeedGroup, selected_provider
+    from app.services import swing_market
     from app.config import SUPPORTED_SYMBOLS
-    from app.services.real_trading_day import market_date
 
+    handles, subscribed = [], None
+    active, next_owner_check = True, 0
     try:
         while session.state != SimulationState.ENDED:
-            handles = []
             try:
-                session.swing_recovery_required = True
-                group = FeedGroup(selected_provider(), False)
-                session.market_feed_group = group
-                definition = SUPPORTED_SYMBOLS[session.symbol]
-                underlying = {
-                    "kind": "index" if definition["options_only"] else "equity",
-                    "exchange": definition["exchange_code"],
-                    "symbol": session.symbol,
-                }
-                handles.append(
-                    await get_hub().subscribe(
-                        underlying, session.session_id, group, session.paper_tick_queue
-                    )
+                if asyncio.get_running_loop().time() >= next_owner_check:
+                    active = (
+                        await asyncio.to_thread(
+                            store.owned, current.user, current.portfolio_id
+                        )
+                    )["state"] != "ended"
+                    next_owner_check = asyncio.get_running_loop().time() + 15
+                held = (
+                    trading.get_position(session.session_id, session.symbol).quantity
+                    if session.instrument_type == "equity"
+                    else bool(required_contracts(session))
                 )
-                session.paper_stream_source = group.actual
-                # Subscription comes from exact attached contracts, not an old
-                # month's single primary strike. This survives option rollover.
-                for contract in getattr(session, "desktop_contracts", []):
-                    if contract["expiry"] < market_date():
-                        continue
-                    task = simulation.subscribe_desktop_option_contract(
-                        session, contract
-                    )
-                    if task:
-                        await task
-                session.stream_manager = SimpleNamespace(
-                    stop=lambda: [h.close() for h in handles]
+                needed = active and (
+                    held or order_service.get_open_orders(session.session_id)
                 )
-                while session.state != SimulationState.ENDED:
-                    event = await session.paper_tick_queue.get()
+                contracts = required_contracts(session)
+                signature = (
+                    (
+                        selected_provider(),
+                        tuple(
+                            (c["right"], c["strike"], c["expiry"]) for c in contracts
+                        ),
+                    )
+                    if needed and swing_market.window(swing_market.now())
+                    else None
+                )
+                if signature != subscribed:
+                    for handle in handles:
+                        handle.close()
+                    handles = []
+                    simulation._stop_desktop_option_subscriptions(session)
+                    subscribed = None
+                    if signature:
+                        session.swing_recovery_required = True
+                        group = FeedGroup(signature[0], session.session_type == "real")
+                        session.market_feed_group = group
+                        definition = SUPPORTED_SYMBOLS[session.symbol]
+                        underlying = {
+                            "kind": "index" if definition["options_only"] else "equity",
+                            "exchange": definition["exchange_code"],
+                            "symbol": session.symbol,
+                        }
+                        handles.append(
+                            await get_hub().subscribe(
+                                underlying,
+                                session.session_id,
+                                group,
+                                session.paper_tick_queue,
+                            )
+                        )
+                        session.paper_stream_source = group.actual
+                        for contract in contracts:
+                            if contract["expiry"] < swing_market.today():
+                                continue
+                            task = simulation.subscribe_desktop_option_contract(
+                                session, contract
+                            )
+                            if task:
+                                await task
+                        session.stream_manager = SimpleNamespace(
+                            stop=lambda: [h.close() for h in handles]
+                        )
+                        subscribed = signature
+                try:
+                    event = await asyncio.wait_for(
+                        session.paper_tick_queue.get(), timeout=15
+                    )
+                except TimeoutError:
+                    continue
+                if signature and (
+                    event.get("type") != "tick"
+                    or 0 <= swing_market.now() - int(event.get("time", 0)) < 120
+                ):
                     await on_tick(current, session, event)
             except asyncio.CancelledError:
                 raise
@@ -523,11 +588,12 @@ async def _consume(current, session):
                 )
                 for handle in handles:
                     handle.close()
+                handles, subscribed = [], None
                 simulation._stop_desktop_option_subscriptions(session)
                 await asyncio.sleep(10)
     finally:
-        if session.stream_manager:
-            session.stream_manager.stop()
+        for handle in handles:
+            handle.close()
         simulation._stop_desktop_option_subscriptions(session)
         current.tasks.pop(session.session_id, None)
 
@@ -600,13 +666,8 @@ async def on_tick(current, session, event):
     )
     expiry_exit = False
     if session.session_type != "real" and event.get("right") and event.get("expiry"):
-        from app.config import get_market_close
-
-        close_time = int(
-            datetime.fromisoformat(date + "T" + get_market_close(date))
-            .replace(tzinfo=timezone.utc)
-            .timestamp()
-        )
+        from app.services.swing_market import window
+        close_time = window(timestamp)["closing"]
         expiry_exit = event["expiry"] < date or (
             event["expiry"] == date and timestamp >= close_time - 900
         )
@@ -652,6 +713,8 @@ async def on_tick(current, session, event):
 
 
 async def shutdown():
+    from app.services import swing_charts
+    await swing_charts.shutdown()
     global _startup_task
     if _startup_task:
         _startup_task.cancel()
@@ -837,24 +900,34 @@ def _active_paper_rows():
 
 
 async def restore_active_portfolios():
-    try:
-        rows = await asyncio.to_thread(_active_paper_rows)
-    except Exception:
-        logger.exception("Could not read active Swing portfolios at startup")
-        return
-    for row in rows:
+    while True:
         try:
-            await ensure(row["user_id"], row["session_id"])
+            rows = await asyncio.to_thread(_active_paper_rows)
+            break
         except Exception:
-            logger.exception(
-                "Swing portfolio restoration needs reconciliation: %s",
-                row["session_id"],
-            )
+            logger.exception("Could not read active Swing portfolios at startup")
+            await asyncio.sleep(15)
+    pending = rows
+    while pending:
+        retry = []
+        for row in pending:
+            try:
+                await ensure(row["user_id"], row["session_id"])
+            except Exception:
+                logger.exception(
+                    "Swing portfolio restoration needs reconciliation: %s",
+                    row["session_id"],
+                )
+                retry.append(row)
+        pending = retry
+        if pending:
+            await asyncio.sleep(15)
 
 
 def update_current_mark(session, event, timestamp):
     if not event.get("right"):
         session.last_price = float(event["close"])
+        session.swing_mark_time = timestamp
         session.swing_quote_seen = True
     if event.get("right"):
         key = f"{session.symbol}:{event.get('expiry')}:{event.get('strike')}:{event['right']}"

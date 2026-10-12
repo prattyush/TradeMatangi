@@ -32,23 +32,8 @@ def initial_attempt(timestamp, order=None):
 
 
 def day_window(timestamp):
-    from app.config import MARKET_OPEN, get_market_close
-    from app.utils import is_trading_day
-
-    date = datetime.fromtimestamp(timestamp, timezone.utc).date()
-    if not is_trading_day(date):
-        return None
-    stamp = lambda clock: int(
-        datetime.fromisoformat(date.isoformat() + "T" + clock)
-        .replace(tzinfo=timezone.utc)
-        .timestamp()
-    )
-    opening, closing = stamp(MARKET_OPEN), stamp(get_market_close(date.isoformat()))
-    return (
-        {"date": date.isoformat(), "opening": opening, "closing": closing}
-        if opening <= timestamp < closing
-        else None
-    )
+    from app.services.swing_market import window
+    return window(timestamp)
 
 
 def broker_owned(order):
