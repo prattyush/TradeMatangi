@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, type ComponentType } from 'react'
+import SwingWorkspace, { type SwingChartProps, type SwingPane } from './SwingWorkspace'
 import { SymbolSearch, type SymbolChoice } from './SymbolSearch'
 
-export type SwingRequest = <T>(path: string, method: 'GET' | 'POST', body?: Record<string, unknown>) => Promise<T>
+export type SwingRequest = <T>(path: string, method: 'GET' | 'POST' | 'PUT' | 'DELETE', body?: Record<string, unknown>) => Promise<T>
 interface Portfolio { mode?: string; execution_broker?: string; history_warning?: string; session_id: string; state: string; entries_paused: boolean; guardrail_ban?: boolean; session_capital: number; guardrail_epoch: number }
 interface Position { symbol: string; right?: string; strike?: number; expiry?: string; quantity: number; avg_entry_price: number; mark_price?: number }
 interface ListedContract { strike: number; expiry: string; right: string; lot_size: number }
@@ -10,9 +11,12 @@ interface Snapshot { current_submission_ids?: string[]; undated_submission_ids?:
 const money = (value?: number | null) => value == null ? 'Waiting for prices' : value.toLocaleString('en-IN', { maximumFractionDigits: 2 })
 
 /** Account-owned controls: dismissing this view never stops the portfolio. */
-export default function SwingPortfolioPanel({ request, loadSymbols, onDetach }: {
-  request: SwingRequest; loadSymbols: () => Promise<SymbolChoice[]>; onDetach: () => void
+export default function SwingPortfolioPanel({ request, loadSymbols, onDetach, renderChart, surface = "website" }: {
+  request: SwingRequest; loadSymbols: () => Promise<SymbolChoice[]>; onDetach: () => void; renderChart?: ComponentType<SwingChartProps>; surface?: "website" | "desktop"
 }) {
+  const [managementOpen, setManagementOpen] = useState(false)
+  const [picking, setPicking] = useState(false)
+  const requestedContract = useRef<SwingPane | null>(null)
   const [mode, setMode] = useState<'paper' | 'real'>('paper')
   const [broker, setBroker] = useState('kite')
   const [allocation, setAllocation] = useState('100')
@@ -109,7 +113,11 @@ export default function SwingPortfolioPanel({ request, loadSymbols, onDetach }: 
     setMetadataLoading(true); setContracts([]); setStrike('')
     void request<{ contracts: ListedContract[] }>(`contracts/metadata?symbol=${encodeURIComponent(symbol)}`, 'GET').then(value => {
       if (!active) return
-      setContracts(value.contracts); setExpiry(value.contracts[0]?.expiry ?? '')
+      setContracts(value.contracts)
+      const wanted = requestedContract.current
+      const matched = wanted?.symbol === symbol ? value.contracts.find(c => c.strike === wanted.strike && c.expiry === wanted.expiry && c.right === wanted.right) : undefined
+      if (matched) {setExpiry(matched.expiry);setStrike(String(matched.strike));setRight(matched.right)}
+      else setExpiry(value.contracts[0]?.expiry ?? '')
     }).catch(reason => { if (active) setError(String(reason)) }).finally(() => { if (active) setMetadataLoading(false) })
     return () => { active = false }
   }, [kind, symbol, request])
@@ -118,7 +126,29 @@ export default function SwingPortfolioPanel({ request, loadSymbols, onDetach }: 
   }, [selectedContract])
   // Editing instructions starts a new request; retrying unchanged instructions preserves identity.
   useEffect(() => { requestIdentity.current = null }, [symbol, kind, right, strike, expiry, side, type, quantity, price])
-  return <section aria-label="Swing portfolio" style={{ padding: 20, color: '#e5e7eb', background: '#0d1117', minHeight: 360, height: 'calc(100vh - 50px)', overflowY: 'auto', boxSizing: 'border-box' }}>
+  const chooseChart = (pane: SwingPane) => {
+    requestedContract.current = pane
+    setPicking(false)
+    setSymbol(pane.symbol); setKind(pane.instrument_type)
+    setPrice('');setRight(pane.right ?? 'CE');setStrike(pane.strike == null ? '' : String(pane.strike));setExpiry(pane.expiry ?? '')
+  }
+  const tradeTicket = portfolio?.state === 'running' && <form onSubmit={event => { event.preventDefault(); void order() }} style={{ display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'center' }}>
+        {!renderChart && <SymbolSearch value={symbol} options={symbols} onChange={setSymbol} />}
+        {!renderChart && <label>Instrument <select aria-label="Instrument" value={kind} onChange={event => setKind(event.target.value as 'equity' | 'options')}><option value="equity" disabled={selectedSymbol?.chart_type === 'index'}>Equity</option><option value="options" disabled={selectedSymbol?.option_eligible === false}>Options</option></select></label>}
+        {kind === 'options' && !renderChart && <><label>Right <select aria-label="Right" value={right} onChange={event => { setRight(event.target.value); setStrike('') }}><option>CE</option><option>PE</option></select></label><label>Expiry <select aria-label="Expiry" required disabled={metadataLoading} value={expiry} onChange={event => { setExpiry(event.target.value); setStrike('') }}><option value="">Choose expiry</option>{[...new Set(contracts.map(item => item.expiry))].map(value => <option key={value}>{value}</option>)}</select></label><label>Strike <select aria-label="Strike" required disabled={metadataLoading} value={strike} onChange={event => setStrike(event.target.value)}><option value="">{metadataLoading ? 'Loading contracts…' : 'Choose strike'}</option>{contracts.filter(item => item.expiry === expiry && item.right === right).map(item => <option key={item.strike} value={item.strike}>{item.strike}</option>)}</select></label><span>{selectedContract ? `Lot ${selectedContract.lot_size}` : 'Select a listed contract'}</span></>}
+        {kind==='options'&&renderChart&&<span>{selectedContract ? `Lot ${selectedContract.lot_size}` : 'Select a listed contract'}</span>}
+        <label>Side <select aria-label="Side" value={side} onChange={event => { setSide(event.target.value); if (event.target.value === 'SELL' && type === 'TARGET') setType('LIMIT') }}><option>BUY</option><option>SELL</option></select></label>
+        <label>Order <select aria-label="Order" value={type} onChange={event => setType(event.target.value)}><option>LIMIT</option>{side === 'BUY' && <option>TARGET</option>}{side === 'SELL' && <option>STOPLOSS</option>}</select></label>
+        <label>Quantity <input type="number" min={selectedContract?.lot_size ?? 1} step={selectedContract?.lot_size ?? 1} required value={quantity} onChange={event => setQuantity(event.target.value)} /></label>
+        <label>{type === 'LIMIT' ? 'Limit' : 'Trigger'} ₹ <input type="number" min="0.01" step="0.01" required value={price} onChange={event => setPrice(event.target.value)} /></label>
+        <button type="button" disabled={busy} onClick={() => setPicking(v => !v)}>{picking ? "Cancel price pick" : "Pick price on chart"}</button>
+        <button disabled={busy || (kind === 'options' && !selectedContract) || (side === 'BUY' && (portfolio.entries_paused || portfolio.guardrail_ban || Boolean(snapshot?.reconciliation_pending?.length) || (mode === 'real' && !snapshot?.funding_status?.entries_allowed)))}>Place intention</button>
+      </form>
+  const chartWorkspace = portfolio && renderChart ? <SwingWorkspace key={`${prefix}:${mode}:${broker}`} request={request} snapshot={snapshot} symbols={symbols} Renderer={renderChart} surface={surface} onSelect={chooseChart} onPick={value => {if(Number.isFinite(value)&&value>0)setPrice(value.toFixed(2));setPicking(false)}} picking={picking} ticket={tradeTicket} onManage={() => setManagementOpen(v=>!v)} onDetach={onDetach} error={error} busy={busy} onPause={() => void act(`${prefix}/pause`,{paused:!portfolio.entries_paused})}/> : null
+  return <section aria-label="Swing portfolio" style={{ position: "relative", padding: chartWorkspace ? 0 : 20, color: '#e5e7eb', background: '#0d1117', minHeight: 360, height: surface==='website'?'100vh':'calc(100vh - 48px)', overflowY: chartWorkspace?'hidden':'auto', boxSizing: 'border-box' }}>
+    {chartWorkspace}
+    <div className={chartWorkspace ? "swing-management" : undefined} style={{display:chartWorkspace&&!managementOpen ? "none" : undefined}}>
+    {chartWorkspace && <button onClick={() => setManagementOpen(false)}>Close management</button>}
     <header style={{ display: 'flex', gap: 16, alignItems: 'center' }}><h2>{mode === 'real' ? 'Real' : 'Paper'} Swing</h2><button title="Detach screen; keep portfolio running" onClick={onDetach}>Detach screen</button></header>
     <label>Mode <select aria-label="Swing mode" disabled={busy} value={mode} onChange={event => { revision.current++; setSnapshot(null); setMode(event.target.value as 'paper' | 'real') }}><option value="paper">Paper</option>{realEnabled && <option value="real">Real</option>}</select></label>{' '}
     {mode === 'real' && <label>Broker <select aria-label="Swing broker" disabled={busy} value={broker} onChange={event => { revision.current++; setSnapshot(null); setBroker(event.target.value) }}><option value="kite">Kite</option><option value="kotak">Kotak</option></select></label>}
@@ -155,21 +185,13 @@ export default function SwingPortfolioPanel({ request, loadSymbols, onDetach }: 
       {snapshot.positions?.length ? <table><thead><tr><th>Instrument</th><th>Quantity</th><th>Average</th><th>Current</th></tr></thead><tbody>{snapshot.positions.map(position => <tr key={`${position.symbol}:${position.right}:${position.strike}:${position.expiry}`}><td>{position.symbol} {position.right} {position.strike} {position.expiry}</td><td>{position.quantity}</td><td>{money(position.avg_entry_price)}</td><td>{money(position.mark_price)}</td></tr>)}</tbody></table> : <p>No open positions.</p>}
       <h3>Pending intentions</h3>
       {snapshot.open_orders?.length ? <table><thead><tr><th>Instrument</th><th>Side</th><th>Type</th><th>Quantity</th><th>Limit</th><th>Action</th></tr></thead><tbody>{snapshot.open_orders.map(order => <tr key={order.order_id}><td>{order.symbol} {order.right} {order.strike} {order.expiry}</td><td>{order.side}</td><td>{order.order_type}</td><td>{order.quantity}</td><td>{money(order.limit_price)}</td><td><button disabled={busy} onClick={() => void act(`${prefix}/orders/${order.order_id}/cancel`)}>Cancel</button></td></tr>)}</tbody></table> : <p>No pending orders.</p>}
-      {portfolio.state === 'running' && <form onSubmit={event => { event.preventDefault(); void order() }} style={{ display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'center' }}>
-        <SymbolSearch value={symbol} options={symbols} onChange={setSymbol} />
-        <label>Instrument <select aria-label="Instrument" value={kind} onChange={event => setKind(event.target.value as 'equity' | 'options')}><option value="equity" disabled={selectedSymbol?.chart_type === 'index'}>Equity</option><option value="options" disabled={selectedSymbol?.option_eligible === false}>Options</option></select></label>
-        {kind === 'options' && <><label>Right <select aria-label="Right" value={right} onChange={event => { setRight(event.target.value); setStrike('') }}><option>CE</option><option>PE</option></select></label><label>Expiry <select aria-label="Expiry" required disabled={metadataLoading} value={expiry} onChange={event => { setExpiry(event.target.value); setStrike('') }}><option value="">Choose expiry</option>{[...new Set(contracts.map(item => item.expiry))].map(value => <option key={value}>{value}</option>)}</select></label><label>Strike <select aria-label="Strike" required disabled={metadataLoading} value={strike} onChange={event => setStrike(event.target.value)}><option value="">{metadataLoading ? 'Loading contracts…' : 'Choose strike'}</option>{contracts.filter(item => item.expiry === expiry && item.right === right).map(item => <option key={item.strike} value={item.strike}>{item.strike}</option>)}</select></label><span>{selectedContract ? `Lot ${selectedContract.lot_size}` : 'Select a listed contract'}</span></>}
-        <label>Side <select aria-label="Side" value={side} onChange={event => { setSide(event.target.value); if (event.target.value === 'SELL' && type === 'TARGET') setType('LIMIT') }}><option>BUY</option><option>SELL</option></select></label>
-        <label>Order <select aria-label="Order" value={type} onChange={event => setType(event.target.value)}><option>LIMIT</option>{side === 'BUY' && <option>TARGET</option>}{side === 'SELL' && <option>STOPLOSS</option>}</select></label>
-        <label>Quantity <input type="number" min={selectedContract?.lot_size ?? 1} step={selectedContract?.lot_size ?? 1} required value={quantity} onChange={event => setQuantity(event.target.value)} /></label>
-        <label>{type === 'LIMIT' ? 'Limit' : 'Trigger'} ₹ <input type="number" min="0.01" step="0.01" required value={price} onChange={event => setPrice(event.target.value)} /></label>
-        <button disabled={busy || (kind === 'options' && !selectedContract) || (side === 'BUY' && (portfolio.entries_paused || portfolio.guardrail_ban || Boolean(snapshot.reconciliation_pending?.length) || (mode === 'real' && !snapshot.funding_status?.entries_allowed)))}>Place intention</button>
-      </form>}
+      {!renderChart && tradeTicket}
       {mode === 'real' && portfolio.state === 'running' && <div>
         <button disabled={busy || (kind === 'options' && !selectedContract)} onClick={() => void previewImport()}>Preview import for {symbol} {kind}</button>
         {importPreview && <div role="alertdialog" aria-label="Confirm opening inventory import"><p>Import all {symbol} {kind} inventory in this broker book at a total basis of ₹{money(importPreview.cost)}. No historical trades or broker cash debit will be created. The other session's allocation stays intact.</p>{importPreview.positions.map(position => <p key={`${position.right}:${position.strike}:${position.expiry}`}>{position.symbol} {position.right} {position.strike} {position.expiry} · {position.quantity} at ₹{money(position.avg_entry_price)}</p>)}<button disabled={busy} onClick={() => void act(`${prefix}/import`, { ...importPreview.body, fingerprint: importPreview.fingerprint }).then(ok => { if (ok) setImportPreview(null) })}>Confirm import</button><button onClick={() => setImportPreview(null)}>Cancel</button></div>}
       </div>}
       <p>Equity uses full purchase value. {mode === 'paper' ? 'Paper option exits start 15 minutes before expiry-day market close.' : 'Real options require broker-confirmed executions; settlement or authorization issues require broker reconciliation.'}</p>
     </>}
+    </div>
   </section>
 }

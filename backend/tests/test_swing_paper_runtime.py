@@ -227,6 +227,7 @@ async def test_expiry_quote_closes_paper_option_without_closing_equity_context(d
         option,
         {
             **tick("2026-11-03", 8),
+            "time": tick("2026-11-03", 8)["time"] + 900,
             "right": "CE",
             "strike": 125.5,
             "expiry": "2026-11-03",

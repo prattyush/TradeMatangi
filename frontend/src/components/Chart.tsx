@@ -34,6 +34,12 @@ export interface ChartVisibleRange {
 }
 
 interface Props {
+  externalCandles?: { time: number; open: number; high: number; low: number; close: number }[]
+  externalLoading?: boolean
+  externalMessage?: string
+  externalLoadOlder?: (before: number) => Promise<unknown>
+  drawingStorageKey?: string
+
   historyMode?: 'live' | 'replay'
   symbol: string
   tradingDate: string
@@ -408,6 +414,7 @@ function RatioIndicatorPanel({ comparison, series, ratioMode, height, expanded, 
 }
 
 export default function Chart({
+  externalCandles, externalLoading, externalMessage, externalLoadOlder, drawingStorageKey,
   symbol, tradingDate, startTime, intervalMinutes, historyMode = 'replay',
   latestTick, completedBar, onPriceUpdate, height = 380,
   paneType = 'equity', strike, expiry, right,
@@ -464,6 +471,15 @@ export default function Chart({
   const drawModeRef = useRef<DrawMode>('none')
   const drawPtsRef = useRef<{ time: number; price: number }[]>([])
   const drawingsRef = useRef<Drawing[]>([])
+  useEffect(() => {
+    if (!drawingStorageKey) return
+    const save = () => {
+      const drawings = drawingsRef.current.map(d => d.type==='hline'?{type:d.type,price:d.ref.options().price}:{type:d.type,lines:('refs' in d?d.refs:[d.ref]).map(ref=>ref.data())})
+      try { localStorage.setItem(drawingStorageKey,JSON.stringify(drawings)) } catch { /* Storage can be disabled. */ }
+    }
+    const timer=setInterval(save,1000)
+    return ()=>{clearInterval(timer);save()}
+  },[drawingStorageKey])
   const ignoreNextClickRef = useRef(false)
   const tradeMarkerPool = useRef(new Map<string, { object: ISeriesApi<'Line'>; signature: string }>())
   const [showAllMarkers, setShowAllMarkers] = useState(false)
@@ -483,11 +499,13 @@ export default function Chart({
   const onVisibleRangeChangeRef = useRef(onVisibleRangeChange)
   onVisibleRangeChangeRef.current = onVisibleRangeChange
 
-  const [showEma, setShowEma] = useState(true)
+  const readSwingIndicators = () => {try{return drawingStorageKey?JSON.parse(localStorage.getItem(`${drawingStorageKey}:indicators`)??'{}'):{}}catch{return {}}}
+  const [showEma, setShowEma] = useState<boolean>(()=>readSwingIndicators().showEma??true)
   const [activeRatioIndicators, setActiveRatioIndicators] = useState<RocComparisonKey[]>([])
   const [expandedRatioIndicator, setExpandedRatioIndicator] = useState<RocComparisonKey | null>(null)
   const [indicatorDropdownOpen, setIndicatorDropdownOpen] = useState(false)
-  const [showPositionLevels, setShowPositionLevels] = useState(false)
+  const [showPositionLevels, setShowPositionLevels] = useState<boolean>(()=>readSwingIndicators().showPositionLevels??false)
+  useEffect(()=>{if(drawingStorageKey)try{localStorage.setItem(`${drawingStorageKey}:indicators`,JSON.stringify({showEma,showPositionLevels}))}catch{/* Storage can be disabled. */}},[drawingStorageKey,showEma,showPositionLevels])
   const [chartVisibleRange, setChartVisibleRange] = useState<{ from: Time; to: Time } | null>(null)
   const [drawMode, setDrawMode] = useState<DrawMode>('none')
   const [drawStep, setDrawStep] = useState(0)
@@ -848,13 +866,18 @@ export default function Chart({
   }, [showEma])
 
   // ── Historical + pre-session — equity only ───────────────────────────────────
+  useEffect(() => {
+    if (!drawingStorageKey || !chartRef.current || !seriesRef.current) return
+    try { const saved=JSON.parse(localStorage.getItem(drawingStorageKey)??'[]');for(const d of saved){if(d.type==='hline'){const ref=seriesRef.current.createPriceLine({price:d.price,color:'#e6edf3',lineWidth:1,lineStyle:2,axisLabelVisible:true,title:''});drawingsRef.current.push({type:'hline',ref})}else{const refs=d.lines.map((data:LineData<Time>[])=>{const ref=chartRef.current!.addLineSeries({color:'#ffa657',lineWidth:1,priceLineVisible:false,lastValueVisible:false});ref.setData(data);return ref});drawingsRef.current.push({type:d.type,refs} as Drawing)}}setDrawingCount(saved.length)} catch { /* Ignore invalid old local drawings. */ }
+  },[drawingStorageKey])
+
   // Both fetches run in parallel and are combined into a single series.setData()
   // call. This eliminates the race where a live tick's series.update(09:18) arrives
   // before getPreSession resolves; a subsequent series.update(09:15) would throw
   // "Cannot update oldest data". With setData() the combined history is committed
   // atomically before any live tick can cause an ordering conflict.
   useEffect(() => {
-    if (paneType === 'options') return
+    if (externalCandles !== undefined || paneType === 'options') return
     const series = seriesRef.current
     const e9 = ema9Ref.current
     const e21 = ema21Ref.current
@@ -954,7 +977,7 @@ export default function Chart({
   // ── Historical data — options (full trading day, loads when session starts) ──
   // Backend caches options data during session start, so we wait for startTime.
   useEffect(() => {
-    if (paneType !== 'options' || !strike || !expiry || !right) return
+    if (externalCandles !== undefined || paneType !== 'options' || !strike || !expiry || !right) return
     if (!startTime) return
     const series = seriesRef.current
     const e9 = ema9Ref.current
@@ -1038,6 +1061,33 @@ export default function Chart({
       .catch(error => { if (!cancelled) flashError(error, 'Charts'); console.error(error) })
     return () => { cancelled = true }
   }, [historyMode, symbol, tradingDate, intervalMinutes, paneType, strike, expiry, right, startTime, liveFromTs, effectiveReloadKey, publishIndicatorCandles])
+
+  const externalDatasetRef = useRef('')
+  const externalFirstRef = useRef<number | undefined>(undefined)
+  useEffect(() => {
+    if (externalCandles === undefined || !seriesRef.current || !chartRef.current) return
+    const key = `${symbol}:${tradingDate}:${intervalMinutes}:${right}:${strike}:${expiry}`
+    const same = externalDatasetRef.current === key
+    const range = same ? chartRef.current.timeScale().getVisibleLogicalRange() : null
+    const previousFirst = externalFirstRef.current
+    const addedBefore = same && previousFirst !== undefined ? externalCandles.filter(row => row.time < previousFirst).length : 0
+    externalFirstRef.current = externalCandles[0]?.time
+    externalDatasetRef.current = key
+    seriesRef.current.setData(externalCandles.map(row => ({...row,time:row.time as Time})))
+    candleTimesRef.current = externalCandles.map(row => row.time)
+    const calculate = (period: number) => {let ema: number | null=null;const k=2/(period+1);return externalCandles.map(row=>{ema=ema===null?row.close:ema+(row.close-ema)*k;return{time:row.time as Time,value:ema}})}
+    ema9Ref.current?.setData(calculate(9));ema21Ref.current?.setData(calculate(21))
+    if (range) chartRef.current.timeScale().setVisibleLogicalRange({from:range.from+addedBefore,to:range.to+addedBefore})
+    else if(externalCandles.length) chartRef.current.timeScale().fitContent()
+  }, [externalCandles,symbol,tradingDate,intervalMinutes,right,strike,expiry])
+  useEffect(() => {
+    if (!externalLoadOlder || !chartRef.current) return
+    let loading=false
+    const chart=chartRef.current
+    const load = (range: {from:number;to:number}|null) => { if(range&&range.from<5&&!loading&&candleTimesRef.current[0]){loading=true;void externalLoadOlder(candleTimesRef.current[0]).catch(error=>flashError(error,'Swing charts')).finally(()=>{loading=false})} }
+    chart.timeScale().subscribeVisibleLogicalRangeChange(load)
+    return ()=>chart.timeScale().unsubscribeVisibleLogicalRangeChange(load)
+  }, [externalLoadOlder])
 
   // ── Live tick processing — latestTick is already filtered by caller ─────────
   const intervalSecs = CANDLE_INTERVAL_SECS(intervalMinutes)
@@ -1415,7 +1465,7 @@ export default function Chart({
   // Pane header label
   const paneLabel = paneType === 'options' && strike && expiry && right
     ? `${right} ${strike} | Exp: ${expiry}`
-    : `${symbol} ${intervalMinutes}m`
+    : `${symbol} ${intervalMinutes===1440?'1D':intervalMinutes+'m'}`
 
   const borderColor = isActive ? '#58a6ff' : '#30363d'
   const toggleRatioIndicator = (key: RocComparisonKey) => {
@@ -1734,6 +1784,6 @@ export default function Chart({
           {fmtPnlValue()}
         </div>
       )}
-    </div>
+    {externalCandles!==undefined&&externalLoading&&<div className="chart-loading">Loading Swing history…</div>}{externalCandles!==undefined&&externalMessage&&<div className="chart-loading chart-message">{externalMessage}</div>}</div>
   )
 }

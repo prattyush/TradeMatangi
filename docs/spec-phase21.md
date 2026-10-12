@@ -1098,3 +1098,30 @@ negative cash-correction preview and verified closure with history warnings.
 See the [full implementation checkpoint and exclusions](spec-phase21-swing-trading-plan.md#implementation-checkpoint--ownershiprecovery-revision-2026-10-11).
 Broader linked Swing charts, multi-day Replay and preprod/live acceptance remain
 explicitly outstanding; main/dev promotion remains manual after acceptance.
+
+
+### Swing Trading Improvements
+When I open swing trading I see a page with just numbers to enter or purchase without charts.
+1) Change the swing trading UI to support charts and maybe left panel has positions orders etc, or feel free to suggest great UI. Improve the UI, it literally has almost nothing, compared to day trading whicch is so great.
+2) The charts for swing need not be fine, so you can download from kite or kotak or icici breeze 1 minute candles.
+3) The charts would be in website and desktop both, in desktop it is KLine.
+4) I can take position from ccharts or at least use chart picker to pick entry (limit, target), stoploss etc.
+5) Positions should also some P&L.
+6) In swing charts, I can cchoose Day as a candle interval as well, at that time one has to download 1 min for 140 days right, depending on how many candles are to be shown. You can also be clever and download day level data for older days and store it or maybe 1 hour granularity and use it to show Day granularity candles. Feel free to optimize.
+
+### Swing improvements implementation plan
+
+The approved [Swing Improvements sprint/design record](spec-phase21-swing-improvements-plan.md)
+records portfolio-first 1–4 independent charts, confirmed chart picking, daily
+history, position P&L and backend-owned live pricing during 09:15–15:30 IST.
+This is a new sprint track; original Phase 21 status/history remains intact.
+
+
+### Swing Improvements implementation checkpoint — 2026-10-12
+
+Sprints 0–4 are implemented on `feature/swing-chart-workspace` for preprod.
+Sprint 5 automated review/build/browser checks are complete; broker and installed
+Windows acceptance follows preprod merge/deployment. See the [delivery decisions,
+interfaces, test evidence and remaining acceptance scope](spec-phase21-swing-improvements-plan.md#implementation-checkpoint--2026-10-12).
+Swing uses 09:15–15:30 IST for active Paper/Real pricing independently of screens;
+Paper expiry exits begin at 15:15. Main/dev promotion remains manual.

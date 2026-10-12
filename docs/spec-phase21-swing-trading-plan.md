@@ -651,3 +651,18 @@ Final verification of the reviewed code:
 
 Review fixes are implemented; authenticated preprod deployment/native/live
 acceptance and the broader outstanding Phase 21 sprints remain pending.
+
+## Swing chart improvements — 2026-10-12
+
+See the separate [improvements sprint plan](spec-phase21-swing-improvements-plan.md).
+This delivers chart workspaces and continuous active-book pricing; external
+linked Swing windows and multi-day Replay remain deferred. Existing ownership,
+funding and execution-history decisions stay authoritative.
+
+
+### Swing Improvements delivery — 2026-10-12
+
+The separate [Swing Improvements implementation checkpoint](spec-phase21-swing-improvements-plan.md#implementation-checkpoint--2026-10-12)
+records the implemented chart workspace, full-session pricing/restart behavior,
+review fixes and automated checks. Original funding/ownership/recovery rules remain
+in force. Preprod broker/Windows acceptance remains pending deployment.

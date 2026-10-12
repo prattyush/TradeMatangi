@@ -1,3 +1,5 @@
+import SwingChart from './SwingChart'
+import type { SwingChartProps } from '../../shared/SwingWorkspace'
 import SwingPortfolioPanel, { type SwingRequest } from '../../shared/SwingPortfolioPanel'
 import { SymbolSearch } from '../../shared/SymbolSearch'
 import { mergeRealTradingDayStatus } from "../../frontend/src/services/realTradingDayState"
@@ -523,7 +525,7 @@ export default function App() {
   const connectionRevision = useRef(-1)
   const [browserToken, setBrowserToken] = useState('')
   const [serverUrl, setServerUrl] = useState(() => localStorage.getItem('desktop-server-url') ?? 'http://localhost:8700')
-  const swingRequest = useCallback<SwingRequest>(async <T,>(path: string, method: 'GET' | 'POST', body?: Record<string, unknown>) => {
+  const swingRequest = useCallback<SwingRequest>(async <T,>(path: string, method: 'GET' | 'POST' | 'PUT' | 'DELETE', body?: Record<string, unknown>) => {
     const route = `swing/portfolios${path ? '/' + path : ''}`
     if ('__TAURI_INTERNALS__' in window) return invoke<T>('desktop_drawing_request', { baseUrl: serverUrl, path: route, method, body: body ?? {} })
     const response = await fetch(`${serverUrl.replace(/\/$/, '')}/api/desktop/v1/${route}`, {
@@ -533,6 +535,12 @@ export default function App() {
     if (!response.ok) throw new Error((await response.json()).detail ?? `Swing request failed (${response.status})`)
     return response.json() as Promise<T>
   }, [serverUrl, browserToken])
+  const swingDrawingRequest = useCallback(async (path: string, method: 'GET'|'POST'|'PUT'|'DELETE', body: Record<string,unknown> = {}) => {
+    if ('__TAURI_INTERNALS__' in window) return invoke('desktop_drawing_request',{baseUrl:serverUrl,path,method,body})
+    const response=await fetch(`${serverUrl.replace(/\/$/, '')}/api/desktop/v1/${path}`,{method,headers:{Authorization:`Bearer ${browserToken}`,'Content-Type':'application/json'},body:method==='GET'?undefined:JSON.stringify(body)})
+    if(!response.ok)throw new Error('Swing drawing request failed');return response.json()
+  },[serverUrl,browserToken])
+  const swingChart = useCallback((props:SwingChartProps)=><SwingChart {...props} drawingRequest={swingDrawingRequest}/>,[swingDrawingRequest])
   const swingSymbols = useCallback(async () => {
     const response = await fetch(`${serverUrl.replace(/\/$/, '')}/api/data/symbols`)
     if (!response.ok) throw new Error('Cannot load symbols')
@@ -636,7 +644,7 @@ export default function App() {
     {ownedScreens.map(screen => <div key={screen.id} style={{ display: mainTab === 'Workspace' && (assignedId || screen.id === visibleId) ? 'contents' : 'none' }}>
       <ScreenController viewSelector={viewSelector} workspaceVisible={Boolean(assignedId)||mainTab==='Workspace'} onAnalysisContextDays={setAnalysisContextDays} registerSave={registerSave} screenId={screen.id} screens={screens} setScreens={setScreens} selectedId={visibleId} selectScreen={selectScreen} loaded={loaded} external={external} assignedId={assignedId} connection={connection} setConnection={setConnection} browserToken={browserToken} setBrowserToken={setBrowserToken} serverUrl={serverUrl} setServerUrl={setServerUrl} />
     </div>)}
-    {!assignedId && mainTab === 'Swing' && connection === 'connected' && <><header>{viewSelector}</header><SwingPortfolioPanel key={`${serverUrl}:${browserToken}`} request={swingRequest} loadSymbols={swingSymbols} onDetach={() => setMainTab('Workspace')} /></>}
+    {!assignedId && mainTab === 'Swing' && connection === 'connected' && <><header style={{height:48}}>{viewSelector}</header><SwingPortfolioPanel key={`${serverUrl}:${browserToken}`} request={swingRequest} loadSymbols={swingSymbols} renderChart={swingChart} surface="desktop" onDetach={() => setMainTab('Workspace')} /></>}
     {!assignedId && analysisVisited && connection !== 'authentication_required' && <Suspense fallback={<p role="status">Loading Analysis…</p>}><DesktopAnalysis viewSelector={viewSelector} key={`${serverUrl}:${browserToken}`} baseUrl={serverUrl} token={browserToken} onUnauthorized={analysisUnauthorized} historicalDays={analysisContextDays} active={mainTab === 'Analysis'} onClose={() => setMainTab('Workspace')} /></Suspense>}
   </div>
 }
