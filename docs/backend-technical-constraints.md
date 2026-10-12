@@ -187,3 +187,18 @@
 
 Full decisions, exclusions and acceptance gates:
 [Phase 21 Swing plan](spec-phase21-swing-trading-plan.md#code-review-and-fix-checkpoint--2026-10-11).
+
+
+## Finalized Real Day analytics charges
+
+- Corrections are owner/date/broker/account scoped; missing broker in legacy
+  requests/rows means Kotak. Use broker-neutral order identities for Kite.
+- Legacy Kotak correction records may be read as a fallback; Kite must never
+  read that fallback. Reverting removes both legacy/current Kotak metadata
+  atomically, so a prior bill cannot reappear after a failed partial deletion.
+- Exclude Swing from both finalized-charge discovery and application. Its books
+  span execution dates; per-day Swing correction is deferred. Corrections apply
+  to analytics copies only, never Trades, execution journals, wallet/funding
+  balances, live sizing capital or guardrails.
+- Event-snapshot candle reconstruction must retain exact fractional strikes
+  and existing IST wall-clock timestamps; only observed cached seconds qualify.

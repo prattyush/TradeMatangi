@@ -1,15 +1,15 @@
 import { AnalysisHistoryCache } from './analysisHistoryCache'
 import type { AnalysisApi, AnalysisEnvironment } from '../../shared/analysis/environment'
-import type { PerformanceCycle, PerformanceFilters, PerformanceReport } from '../../shared/analysis/performance'
+import type { PerformanceCycle, PerformanceFilters, PerformanceReport, RealFeesDay } from '../../shared/analysis/performance'
 import type { SessionDetail } from '../../shared/analysis/api'
 
 export type AnalysisRequest = <T>(path: string, method: 'GET' | 'POST' | 'DELETE', body?: unknown, signal?: AbortSignal) => Promise<T>
 export function validAnalysisPath(path: string, method: string): boolean {
   const route = path.split('?')[0]
   if (!route || route.startsWith('/') || route.includes('%') || route.includes('#') || route.includes('\\') || route.split('/').some(p => p === '.' || p === '..')) return false
-  if (method === 'POST') return route === 'labels'
-  if (method === 'DELETE') return route === 'snapshots'
-  return method === 'GET' && /^(sessions(?:\/[A-Za-z0-9_-]+)?|round-trips|labels|entry-tags|exit-tags|snapshots|performance(?:\/cycles(?:\/[A-Za-z0-9_-]+)?)?|data\/(historical|pre-session|options-historical|expiry)|pattern\/(strategies|categories|chart\/by-date|ohlc\/(equity|options)))$/.test(route)
+  if (method === 'POST') return route === 'labels' || route === 'performance/real-fees'
+  if (method === 'DELETE') return route === 'snapshots' || route === 'performance/real-fees'
+  return method === 'GET' && /^(sessions(?:\/[A-Za-z0-9_-]+)?|round-trips|labels|entry-tags|exit-tags|snapshots(?:\/[A-Za-z0-9_-]+\/candle)?|performance(?:\/real-fees|\/cycles(?:\/[A-Za-z0-9_-]+)?)?|data\/(historical|pre-session|options-historical|expiry)|pattern\/(strategies|categories|chart\/by-date|ohlc\/(equity|options)))$/.test(route)
 }
 function awaitNative<T>(promise:Promise<T>,signal?:AbortSignal):Promise<T> {
   if(!signal)return promise
@@ -63,7 +63,7 @@ export function createAnalysisApi(request: AnalysisRequest) {
     } finally { pending.delete(controller); signal?.removeEventListener('abort', abort) }
   }
   const params = (values: Record<string, unknown>) => new URLSearchParams(Object.entries(values).filter(([,v]) => v !== undefined && v !== null && v !== '').map(([k,v]) => [k, String(v)])).toString()
-  type Result<K extends keyof AnalysisApi> = Awaited<ReturnType<AnalysisApi[K]>>
+  type Result<K extends keyof AnalysisApi> = Awaited<ReturnType<NonNullable<AnalysisApi[K]>>>
   const call = <K extends keyof AnalysisApi>(_key: K, path: string, query: Record<string, unknown> = {}, method: 'GET'|'POST'|'DELETE'='GET', body?:unknown):Promise<Result<K>> => {
     const url=`${path}?${params(query)}`
     const load=()=>scopedRequest<Result<K>>(url,method,body)
@@ -90,6 +90,7 @@ export function createAnalysisApi(request: AnalysisRequest) {
     getPreSession: async (symbol,date,time,interval=3) => (await history.get(`pre:${symbol}:${date}:${time}:${interval}`,()=>scopedRequest<{candles: Result<'getPreSession'>}>(`data/pre-session?${params({symbol,trading_date:date,start_time:time,interval_minutes:interval})}`,'GET'))).candles,
     getOptionsHistorical: (symbol,date,strike,expiry,right,interval=3,days=2) => call('getOptionsHistorical','data/options-historical',{symbol,date,strike,expiry,right,interval_minutes:interval,historical_days:days}),
     getExpiry: (symbol,date) => call('getExpiry','data/expiry',{symbol,date}),
+    getSnapshotCandle: (sessionId, eventId, instrument, signal) => scopedRequest(`snapshots/${encodeURIComponent(eventId)}/candle?${params({session_id:sessionId,instrument})}`, 'GET', undefined, signal),
     getSnapshots: id => call('getSnapshots','snapshots',{session_id:id}),
     deleteSnapshots: async id => { await call('deleteSnapshots','snapshots',{session_id:id},'DELETE') },
     patternListStrategies: () => call('patternListStrategies','pattern/strategies'),
@@ -99,6 +100,9 @@ export function createAnalysisApi(request: AnalysisRequest) {
     patternOhlcOptions: (symbol,date,strike,expiry,right,interval=3,days=2) => call('patternOhlcOptions','pattern/ohlc/options',{symbol,date,strike,expiry,right,interval_minutes:interval,days_back:days}),
   }
   const performance: AnalysisEnvironment['performance'] = {
+    getRealFees: (date, signal) => scopedRequest<RealFeesDay>(`performance/real-fees?${params({date})}`, 'GET', undefined, signal),
+    saveRealFees: (date, account_id, actual_total, execution_broker) => scopedRequest<RealFeesDay>('performance/real-fees', 'POST', {date, account_id, actual_total, ...(execution_broker ? {execution_broker} : {})}),
+    deleteRealFees: (date, account_id, execution_broker) => scopedRequest<RealFeesDay>(`performance/real-fees?${params({date, account_id, execution_broker})}`, 'DELETE'),
     getPerformance: (filters:PerformanceFilters,signal) => scopedRequest<PerformanceReport>(`performance?${params({...filters,include_shared:true})}`,'GET',undefined,signal),
     getPerformanceCycles: async (filters,offset=0,signal) => { const current=generation; const page=await scopedRequest<{items:PerformanceCycle[];total:number;next_offset:number|null}>(`performance/cycles?${params({...filters,offset,include_shared:true})}`,'GET',undefined,signal); if(current===generation) page.items.forEach(remember); return page },
     getPerformanceDetail: async (cycle,enrich=false,signal) => { const current=generation; const detail=await scopedRequest<PerformanceCycle>(`performance/cycles/${encodeURIComponent(cycle.cycle_id)}?${params({session_id:cycle.session_id,enrich})}`,'GET',undefined,signal); if(current===generation) remember(detail); return detail },

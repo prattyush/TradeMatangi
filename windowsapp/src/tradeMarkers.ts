@@ -36,7 +36,7 @@ export const buildTradeMarkers = (
     if (isOption) {
       if (trade.right !== right || Number(trade.strike) !== strike) return []
       const style = markerStyle(trade.side)
-      return [{ id: trade.trade_id, timestamp: Math.floor(trade.timestamp / intervalSeconds) * intervalSeconds, price: trade.price, ...style }]
+      return [{ id: trade.trade_id, timestamp: Math.floor(trade.timestamp / intervalSeconds) * intervalSeconds, price: trade.price, ...style, text: '' }]
     }
     if (trade.right && (!Number.isFinite(Number(trade.underlying_price)) || Number(trade.underlying_price) <= 0)) return []
     const style = trade.right ? crossChartMarkerStyle(trade.right, trade.side) : markerStyle(trade.side)

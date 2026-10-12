@@ -69,3 +69,46 @@ it('reports active native authentication expiry',async()=>{
   await expect(analysisRequest('http://localhost','',native,unauthorized)('sessions','GET')).rejects.toThrow('401')
   expect(unauthorized).toHaveBeenCalledTimes(1)
 })
+
+
+describe('Real analytics fee metadata routes', () => {
+  it('permits only the exact correction endpoint and scopes its transport', async () => {
+    for (const method of ['GET', 'POST', 'DELETE']) expect(validAnalysisPath('performance/real-fees?date=2026-10-09', method)).toBe(true)
+    expect(validAnalysisPath('performance/real-fees/orders', 'POST')).toBe(false)
+    expect(validAnalysisPath('performance/cycles', 'POST')).toBe(false)
+    const request = vi.fn().mockResolvedValue({date:'2026-10-09',accounts:[]}) as unknown as AnalysisRequest
+    const adapter = createAnalysisApi(request)
+    await adapter.performance.saveRealFees!('2026-10-09','account',12.34)
+    expect(request).toHaveBeenCalledWith('performance/real-fees','POST',{date:'2026-10-09',account_id:'account',actual_total:12.34},expect.any(AbortSignal))
+  })
+})
+
+
+describe('snapshot candle transport', () => {
+  it('allows only the exact read route and carries event, session and contract side', async () => {
+    expect(validAnalysisPath('snapshots/event-one/candle?session_id=s&instrument=CE','GET')).toBe(true)
+    for(const method of ['POST','DELETE','PUT'])expect(validAnalysisPath('snapshots/event-one/candle',method)).toBe(false)
+    for(const path of ['snapshots/event-one','snapshots/../candle','snapshots/event-one/candle/extra'])expect(validAnalysisPath(path,'GET')).toBe(false)
+    const request=vi.fn().mockResolvedValue({candle:null}) as unknown as AnalysisRequest
+    const adapter=createAnalysisApi(request)
+    await adapter.api.getSnapshotCandle!('session-one','event-one','PE')
+    expect(request).toHaveBeenCalledWith('snapshots/event-one/candle?session_id=session-one&instrument=PE','GET',undefined,expect.any(AbortSignal))
+  })
+  it('rejects an event candle reply after an account change', async () => {
+    let resolve!:(value:unknown)=>void
+    const request=(()=>new Promise(r=>{resolve=r})) as AnalysisRequest
+    const adapter=createAnalysisApi(request)
+    const pending=adapter.api.getSnapshotCandle!('s','e','underlying')
+    adapter.dispose();resolve({candle:null})
+    await expect(pending).rejects.toMatchObject({name:'AbortError'})
+  })
+})
+
+it('sends broker scope for Day charges without changing legacy requests', async () => {
+  const request = vi.fn().mockResolvedValue({date:'2026-10-09',accounts:[]}) as unknown as AnalysisRequest
+  const adapter = createAnalysisApi(request)
+  await adapter.performance.saveRealFees!('2026-10-09','shared-id',12,'kite')
+  expect(request).toHaveBeenCalledWith('performance/real-fees','POST',{date:'2026-10-09',account_id:'shared-id',actual_total:12,execution_broker:'kite'},expect.any(AbortSignal))
+  await adapter.performance.deleteRealFees!('2026-10-09','shared-id','kite')
+  expect(request).toHaveBeenCalledWith('performance/real-fees?date=2026-10-09&account_id=shared-id&execution_broker=kite','DELETE',undefined,expect.any(AbortSignal))
+})

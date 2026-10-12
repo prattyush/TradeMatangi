@@ -5,6 +5,19 @@ are reviewed into preprod. Deployment/runtime acceptance follows preprod merge;
 main/dev promotion remains manual. The original Sprint 0 design and subsequent
 implementation/review checkpoints are retained here.
 
+## Integration update — 2026-10-12
+
+The Swing delivery is merged to preprod through PR #652 and is being tested.
+The [main → preprod integration](spec-phase21.md#main--preprod-integration--2026-10-12)
+preserves these ownership, funding and recovery decisions while importing the
+later main/dev improvements. Finalized Real charges apply to **Day analytics
+only**; Swing remains estimated until explicit per-execution-date support is
+implemented. The combined backend suite passed 2,189 tests (two known local
+ICICI failures); desktop 194, native Rust 19 and both client builds passed.
+Mocked browser checks do not establish authenticated runtime acceptance. This correction UI is separate from shared cash reconciliation and
+cannot resize capital, change live P&L guardrails or move funding. No broad Swing
+charge-history scan, new fill reconstruction or live broker validation is implied.
+
 ## Current review status — 2026-10-11
 
 Authoritative status for this revision is this section and the review checkpoint

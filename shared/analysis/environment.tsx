@@ -1,15 +1,21 @@
 import { createContext, useContext, useEffect, type ComponentType, type ReactNode } from 'react'
+import type { OHLCCandle } from './api'
 import type websiteApi from '../../frontend/src/services/api'
-import type { PerformanceCycle, PerformanceFilters, PerformanceReport } from './performance'
+import type { PerformanceCycle, PerformanceFilters, PerformanceReport, RealFeesDay } from './performance'
 
 export type AnalysisApi = Pick<typeof websiteApi,
   'getAnalysisSessions' | 'getSessionDetail' | 'getRoundTrips' | 'getLabels' | 'saveLabels' |
   'getEntryTags' | 'getExitTags' | 'getHistorical' | 'getPreSession' | 'getOptionsHistorical' |
   'getExpiry' | 'getSnapshots' | 'deleteSnapshots' | 'patternListStrategies' |
-  'patternListCategories' | 'patternGetChartByDate' | 'patternOhlcEquity' | 'patternOhlcOptions'>
+  'patternListCategories' | 'patternGetChartByDate' | 'patternOhlcEquity' | 'patternOhlcOptions'> & {
+  getSnapshotCandle?: (sessionId: string, eventId: string, instrument: 'underlying' | 'CE' | 'PE', signal?: AbortSignal) => Promise<{candle: OHLCCandle | null}>
+}
 export interface AnalysisEnvironment {
   api: AnalysisApi
   performance: {
+    getRealFees?: (date: string, signal?: AbortSignal) => Promise<RealFeesDay>
+    saveRealFees?: (date: string, account: string, amount: number, broker?: "kotak" | "kite") => Promise<RealFeesDay>
+    deleteRealFees?: (date: string, account: string, broker?: "kotak" | "kite") => Promise<RealFeesDay>
     getPerformance: (filters: PerformanceFilters, signal?: AbortSignal) => Promise<PerformanceReport>
     getPerformanceCycles: (filters: PerformanceFilters, offset?: number, signal?: AbortSignal) => Promise<{ items: PerformanceCycle[]; total: number; next_offset: number | null }>
     getPerformanceDetail: (cycle: PerformanceCycle, enrich?: boolean, signal?: AbortSignal) => Promise<PerformanceCycle>
