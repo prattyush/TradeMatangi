@@ -666,3 +666,9 @@ The separate [Swing Improvements implementation checkpoint](spec-phase21-swing-i
 records the implemented chart workspace, full-session pricing/restart behavior,
 review fixes and automated checks. Original funding/ownership/recovery rules remain
 in force. Preprod broker/Windows acceptance remains pending deployment.
+
+### Linked windows and analytics extension — 2026-10-12
+
+[The approved implementation plan](spec-phase21-swing-linked-analytics-plan.md)
+supersedes earlier linked-chart/history pending entries. Multi-day Replay and
+new strategy controls remain deferred.
