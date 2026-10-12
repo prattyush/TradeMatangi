@@ -141,6 +141,7 @@ function PaneChart({
   pane,
   request,
   prefix,
+  drawingScope,
   Renderer,
   quote,
   marketOpen,
@@ -155,6 +156,7 @@ function PaneChart({
   pane: SwingPane;
   request: SwingRequest;
   prefix: string;
+  drawingScope: string;
   Renderer: ComponentType<SwingChartProps>;
   quote?: Quote;
   marketOpen: boolean;
@@ -269,7 +271,7 @@ function PaneChart({
       <Renderer
         key={`${paneKey(pane)}:${pane.interval}`}
         pane={pane}
-        drawingScope={prefix}
+        drawingScope={drawingScope}
         chartKind={chartKind}
         candles={history.candles}
         loading={loading}
@@ -814,6 +816,7 @@ export default function SwingWorkspace({
                   pane={pane}
                   request={request}
                   prefix={prefix}
+                  drawingScope={`swing:${prefix}:${workspaceId ?? "primary"}`}
                   Renderer={Renderer}
                   quote={quote}
                   marketOpen={marketOpen}

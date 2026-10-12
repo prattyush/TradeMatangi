@@ -180,12 +180,12 @@ certification or complete broker contract-note accounting.
 
 ### Verification and rollout
 
-The delivery PR records final command counts. Final full backend run: **2,229
+The delivery PR records final command counts. Final full backend run: **2,234
 passed and two existing local ICICI credential failures** (`test_missing_strike_returns_400`
 and `test_invalid_right_returns_400`). Final focused backend check: **125 passed**, including rupee-drawdown, legacy
 non-flow corrections and cross-surface legacy order retries. Client attribution
 is recorded for analysis but excluded from economic order identity, so moving a
-retry between website and desktop cannot duplicate or reject an unchanged order. Desktop: **203 passed**. Native
+retry between website and desktop cannot duplicate or reject an unchanged order. Desktop: **206 passed**. Native
 Rust: **20 passed**. Website/desktop TypeScript checks and production builds pass.
 New modules/tests pass Ruff and whitespace checks.
 
@@ -208,3 +208,47 @@ Promote main/dev manually only after acceptance.
 
 References: [GIPS performance calculation conventions](https://www.gipsstandards.org/standards/gips-standards-for-firms/gips-standards-handbook-for-firms/),
 [CFA portfolio performance evaluation](https://www.cfainstitute.org/insights/professional-learning/refresher-readings/2026/portfolio-performance-evaluation).
+
+
+### PR #656 review corrections — 2026-10-12
+
+The follow-up review found seven issues, now corrected on the same delivery branch:
+
+- History opened with a cycle from Stats now initializes after committed history
+  arrives. Clean drafts refresh from saved labels; edited drafts survive refresh.
+  A changed/removed selection requires explicit discard, and saving waits for
+  initialization. Responses are fenced to their original selection and mount.
+- Portfolio valuation uses the same execution chronology as FIFO cycles, including
+  microsecond sort evidence and numeric execution IDs. Same-second BUY/SELL fills
+  no longer leave phantom remaining purchase basis or unrealized losses.
+- The first daily valuation consuming imported basis has unknown return attribution,
+  even when import capture occurred after close or on a non-trading day. Later
+  complete valuations provide a baseline; no pre-import gain is invented.
+- Drawing and indicator scope identifies the portfolio and primary/companion
+  workspace; History has a separate portfolio history scope. Desktop carries
+  optional `drawing_scope` within the existing persistence instrument dictionary.
+  Trading instrument identity and unscoped Day drawings are unchanged. Legacy
+  global drawings cannot reliably be assigned to a Swing window, so no automatic
+  migration/copy is performed. The drawing error callback is stable to avoid
+  reloading overlays on every portfolio snapshot.
+- Swing History/Stats report dirty/saving state to their hosts. Session/search,
+  group collapse, portfolio/style filters, Analysis navigation, drawer close,
+  detach and desktop view changes protect edited labels and block navigation during
+  a save. Approved discard resets editors; inactive Swing analysis editors unmount.
+- Switching Stats to Day clears the Swing portfolio filter atomically. Returning
+  to Swing restores the selected portfolio; editors cannot follow an old portfolio
+  into a newly selected report.
+- The desktop root owns one close sequence for native close events and companion
+  Detach. Duplicate requests share its promise; preference saves remain bounded.
+  Native close failures permit retry, and failed/timed-out settings saves still
+  permit closure. The portfolio is never closed by this sequence.
+
+Focused backend checks: **120 passed**. Full backend: **2,234 passed**, with the
+same two missing-local-ICICI-configuration failures. Desktop: **206 passed**,
+including three new single-close/guard/retry tests. Browser fixtures now cover
+Stats-to-History initialization, dirty refresh/discard, saving navigation fences,
+Day/Swing filter switching, website Analysis search/collapse/close guards and
+separate companion drawing namespaces. Existing Analysis and portfolio management
+checks remain part of verification. Installed Windows handoff/closure and real
+broker acceptance remain post-merge requirements; browser/native-host fixtures
+cannot substitute for them.

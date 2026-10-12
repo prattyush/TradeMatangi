@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { ChartTile } from "./ChartTile";
 import type { SwingChartProps } from "../../shared/SwingWorkspace";
 const settings = {
@@ -30,6 +30,10 @@ export default function SwingChart(
 ) {
   const storageKey = `swing-indicators:${props.drawingScope}:${props.pane.symbol}:${props.pane.right}:${props.pane.strike}:${props.pane.expiry}:${props.pane.interval}`;
   const [drawingError, setDrawingError] = useState("");
+  const reportDrawingError = useCallback(
+    (error: unknown) => setDrawingError(String(error)),
+    [],
+  );
   const [indicator, setIndicator] = useState<string[]>(() => {
       try {
         return JSON.parse(localStorage.getItem(storageKey) ?? "[]");
@@ -133,7 +137,8 @@ export default function SwingChart(
       </div>
       {drawingError && <p role="alert">{drawingError}</p>}
       <ChartTile
-        candleAnchorSeconds={pane.interval==='1D'?0:33300}
+        drawingScope={props.drawingScope}
+        candleAnchorSeconds={pane.interval === "1D" ? 0 : 33300}
         showHistoricalMarkers={props.showHistoricalTrades}
         hideWindowActions
         readOnlyOrders
@@ -159,7 +164,7 @@ export default function SwingChart(
         instrument={instrument}
         baseUrl=""
         drawingRequest={props.drawingRequest}
-        onDrawingError={(error) => setDrawingError(String(error))}
+        onDrawingError={reportDrawingError}
         onConfigure={() => {}}
         onMaximize={() => {}}
         maximized={false}

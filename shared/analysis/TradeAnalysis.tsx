@@ -130,10 +130,11 @@ function TradeTable({ trades }: { trades: AnalysisTrade[] }) {
 
 // ── Group card ────────────────────────────────────────────────────────────────
 
-export function GroupCard({ group, historicalDays = 2, initiallyExpanded = false }: { group: SessionGroup; historicalDays?: number; initiallyExpanded?: boolean }) {
+export function GroupCard({ group, historicalDays = 2, initiallyExpanded = false,onSwingDraftStateChange }: {onSwingDraftStateChange?:(state:{dirty:boolean;saving:boolean})=>void; group: SessionGroup; historicalDays?: number; initiallyExpanded?: boolean }) {
   const api = useAnalysisApi()
   const environment = useAnalysisEnvironment()
 
+  const swingDraft=useRef({dirty:false,saving:false});
   const [expanded, setExpanded] = useState(false)
   const [details, setDetails] = useState<Map<string, SessionDetail>>(new Map())
   const [loading, setLoading] = useState(false)
@@ -145,7 +146,9 @@ export function GroupCard({ group, historicalDays = 2, initiallyExpanded = false
   const [showComparison, setShowComparison] = useState(false)
 
   const handleExpand = async () => {
-    if (expanded && environment.confirmDiscard?.() === false) return
+    if (expanded && group.trading_style==='swing') {
+      if(swingDraft.current.saving || (swingDraft.current.dirty && !window.confirm('Discard unsaved trade labels?')))return;
+    } else if (expanded && environment.confirmDiscard?.() === false) return
     if (!expanded && details.size === 0) {
       setLoading(true)
       try {
@@ -320,7 +323,7 @@ export function GroupCard({ group, historicalDays = 2, initiallyExpanded = false
 
       {detailError && <div role="alert">{detailError}<button onClick={() => { setDetailError(''); setExpanded(false); void handleExpand() }}>Retry</button></div>}
       {/* Expanded detail */}
-      {expanded&&group.trading_style==='swing'&&group.portfolio_id&&!group.sessions[0]?.shared&&environment.swingRequest&&environment.charts?.SwingChart?<SwingHistory request={environment.swingRequest} portfolioId={group.portfolio_id} sessionId={group.sessions[0]?.session_id} Renderer={environment.charts.SwingChart as ComponentType<SwingChartProps>} onClose={()=>setExpanded(false)}/>:expanded && details.size > 0 && (
+      {expanded&&group.trading_style==='swing'&&group.portfolio_id&&!group.sessions[0]?.shared&&environment.swingRequest&&environment.charts?.SwingChart?(environment.active===false?null:<SwingHistory onDraftStateChange={state=>{swingDraft.current=state;onSwingDraftStateChange?.(state);environment.onDirtyChange?.(state.dirty);environment.onLabelSavingChange?.(state.saving)}} request={environment.swingRequest} portfolioId={group.portfolio_id} sessionId={group.sessions[0]?.session_id} Renderer={environment.charts.SwingChart as ComponentType<SwingChartProps>} onClose={()=>setExpanded(false)}/>):expanded && details.size > 0 && (
         <div style={{ padding: '0 16px 16px', borderTop: '1px solid #21262d' }}>
           {/* Tab bar */}
           <div style={{ display: 'flex', gap: 0, marginTop: 12, marginBottom: 12 }}>
@@ -431,7 +434,22 @@ export default function TradeAnalysis({ onClose, historicalDays = 2,initialPortf
   const [statsOpen, setStatsOpen] = useState(false)
 
   const searchGeneration = useRef(0)
+  const swingDrafts = useRef(
+    new Map<string, { dirty: boolean; saving: boolean }>(),
+  );
+  const [draftReset, setDraftReset] = useState(0);
+  const canNavigate = () => {
+    const states = [...swingDrafts.current.values()];
+    if (states.some((state) => state.saving)) return false;
+    if (states.some((state) => state.dirty)) {
+      if (!window.confirm("Discard unsaved trade labels?")) return false;
+      swingDrafts.current.clear();
+      setDraftReset((n) => n + 1);
+    }
+    return true;
+  };
   const handleSearch = useCallback(async () => {
+    if(!canNavigate())return;
     const revision = ++searchGeneration.current
     setLoading(true)
     setError(null)
@@ -491,7 +509,7 @@ export default function TradeAnalysis({ onClose, historicalDays = 2,initialPortf
           <span style={{ fontSize: 16, fontWeight: 700, color: '#58a6ff' }}>Trade Analysis</span>
           <div style={{ flex: 1 }} />
           <button
-            onClick={onClose}
+            onClick={()=>{if(canNavigate())onClose();}}
             style={{ background: 'none', border: 'none', color: '#8b949e', cursor: 'pointer', fontSize: 18 }}
           >✕</button>
         </div>
@@ -553,7 +571,7 @@ export default function TradeAnalysis({ onClose, historicalDays = 2,initialPortf
           </button>
 
           <button
-            onClick={() => setStatsOpen(true)}
+            onClick={() => {if(canNavigate())setStatsOpen(true)}}
             style={{
               background: '#21262d', border: '1px solid #30363d',
               color: '#d29922', borderRadius: 6,
@@ -613,7 +631,7 @@ export default function TradeAnalysis({ onClose, historicalDays = 2,initialPortf
           )}
 
           {groups.map(g => (
-            <GroupCard key={g.key} group={g} historicalDays={historicalDays} />
+            <GroupCard key={`${g.key}:${draftReset}`} onSwingDraftStateChange={state=>{if(state.dirty||state.saving)swingDrafts.current.set(g.key,state);else swingDrafts.current.delete(g.key)}} group={g} historicalDays={historicalDays} />
           ))}
         </div>
       </div>

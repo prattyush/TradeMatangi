@@ -14,8 +14,11 @@ const percent = (value?: number | null) =>
 export interface SwingStatsProps {
   load: (filters: Record<string, string>, signal?: AbortSignal) => Promise<any>;
   portfolioId?: string;
+  initialPortfolioId?: string;
+  onPortfolioChange?: (id: string) => void;
   onCycle?: (cycle: any) => void;
   onClose?: () => void;
+  onDraftStateChange?: (state: { dirty: boolean; saving: boolean }) => void;
   saveLabel?: (cycle: any, draft: Record<string, string>) => Promise<unknown>;
 }
 function Curve({
@@ -99,13 +102,16 @@ function Curve({
 export default function SwingStats({
   load,
   portfolioId,
+  initialPortfolioId,
+  onPortfolioChange,
   onCycle,
   onClose,
   saveLabel,
+  onDraftStateChange,
 }: SwingStatsProps) {
   const today = swingToday(),
     [filters, setFilters] = useState({
-      portfolio_id: portfolioId ?? "",
+      portfolio_id: portfolioId ?? initialPortfolioId ?? "",
       start_date: "",
       end_date: today,
       session_type: "",
@@ -119,6 +125,38 @@ export default function SwingStats({
     [selectedCycle, setSelectedCycle] = useState<any>(null),
     [draft, setDraft] = useState<Record<string, string>>({}),
     [saving, setSaving] = useState(false);
+  const [baseline, setBaseline] = useState("{}");
+  const dirty = Boolean(selectedCycle) && JSON.stringify(draft) !== baseline;
+  const notify = useRef(onDraftStateChange);
+  notify.current = onDraftStateChange;
+  useEffect(() => {
+    notify.current?.({ dirty, saving });
+  }, [dirty, saving]);
+  useEffect(() => () => notify.current?.({ dirty: false, saving: false }), []);
+  const savingRef = useRef(false);
+  const alive = useRef(false);
+  useEffect(() => {
+    alive.current = true;
+    return () => {
+      alive.current = false;
+    };
+  }, []);
+  const navigate = (action: () => void) => {
+    if (
+      savingRef.current ||
+      (dirty && !window.confirm("Discard unsaved trade labels?"))
+    )
+      return;
+    setSelectedCycle(null);
+    setDraft({});
+    setBaseline("{}");
+    action();
+  };
+  const portfolioNotify = useRef(onPortfolioChange);
+  portfolioNotify.current = onPortfolioChange;
+  useEffect(() => {
+    portfolioNotify.current?.(filters.portfolio_id);
+  }, [filters.portfolio_id]);
   const revision = useRef(0);
   useEffect(() => {
     const controller = new AbortController(),
@@ -156,16 +194,17 @@ export default function SwingStats({
   const report = data?.report,
     metrics = report?.closed_trades,
     nav = report?.portfolio_performance;
-  const field = (key: string, value: string) => {
-    setData(null);
-    setFilters((previous) => ({
-      ...previous,
-      [key]: value,
-      ...(["session_type", "execution_broker"].includes(key)
-        ? { portfolio_id: portfolioId ?? "" }
-        : {}),
-    }));
-  };
+  const field = (key: string, value: string) =>
+    navigate(() => {
+      setData(null);
+      setFilters((previous) => ({
+        ...previous,
+        [key]: value,
+        ...(["session_type", "execution_broker"].includes(key)
+          ? { portfolio_id: portfolioId ?? "" }
+          : {}),
+      }));
+    });
   const card = (label: string, value: string, hint: string) => (
     <article className="swing-stat-card" key={label} title={hint}>
       <small>{label}</small>
@@ -176,7 +215,9 @@ export default function SwingStats({
     <section className="swing-statistics" aria-label="Swing statistics">
       <header>
         <h2>Swing performance</h2>
-        {onClose && <button onClick={onClose}>Close statistics</button>}
+        {onClose && (
+          <button onClick={() => navigate(onClose)}>Close statistics</button>
+        )}
       </header>
       <div className="swing-stat-filters">
         <label>
@@ -242,14 +283,16 @@ export default function SwingStats({
             </label>
           </>
         )}
-        <button onClick={() => setRetry((n) => n + 1)}>Refresh</button>
+        <button onClick={() => navigate(() => setRetry((n) => n + 1))}>
+          Refresh
+        </button>
       </div>
       <nav>
         {["Overview", "Trades", "Exposure"].map((name) => (
           <button
             key={name}
             aria-pressed={view === name}
-            onClick={() => setView(name)}
+            onClick={() => navigate(() => setView(name))}
           >
             {name}
           </button>
@@ -258,7 +301,10 @@ export default function SwingStats({
       {busy && <p role="status">Reading executions and daily valuations…</p>}
       {error && (
         <p role="alert">
-          {error} <button onClick={() => setRetry((n) => n + 1)}>Retry</button>
+          {error}{" "}
+          <button onClick={() => navigate(() => setRetry((n) => n + 1))}>
+            Retry
+          </button>
         </p>
       )}
       {!busy && !report && !error && (
@@ -507,12 +553,12 @@ export default function SwingStats({
                       <tr key={c.cycle_id}>
                         <td>
                           <button
-                            onClick={() => {
-                              if (onCycle) onCycle(c);
-                              else {
-                                setSelectedCycle(c);
-                                setDraft(
-                                  Object.fromEntries(
+                            onClick={() =>
+                              navigate(() => {
+                                if (onCycle) onCycle(c);
+                                else {
+                                  setSelectedCycle(c);
+                                  const nextDraft = Object.fromEntries(
                                     [
                                       "expected_category",
                                       "expected_strategy",
@@ -527,10 +573,12 @@ export default function SwingStats({
                                           ? "AS_PER_PATTERN"
                                           : ""),
                                     ]),
-                                  ),
-                                );
-                              }
-                            }}
+                                  );
+                                  setDraft(nextDraft);
+                                  setBaseline(JSON.stringify(nextDraft));
+                                }
+                              })
+                            }
                             disabled={!onCycle && !saveLabel}
                           >
                             {c.symbol} {c.right} {c.strike}
@@ -571,21 +619,30 @@ export default function SwingStats({
                 <button
                   disabled={saving}
                   onClick={() => {
+                    if (savingRef.current) return;
+                    savingRef.current = true;
                     setSaving(true);
                     void saveLabel(selectedCycle, draft)
                       .then(() => {
+                        if (!alive.current) return;
+                        setBaseline(JSON.stringify(draft));
                         setSelectedCycle(null);
                         setRetry((n) => n + 1);
                       })
-                      .catch((cause) => setError(String(cause)))
-                      .finally(() => setSaving(false));
+                      .catch((cause) => {
+                        if (alive.current) setError(String(cause));
+                      })
+                      .finally(() => {
+                        savingRef.current = false;
+                        if (alive.current) setSaving(false);
+                      });
                   }}
                 >
                   Save trade label
                 </button>
                 <button
                   disabled={saving}
-                  onClick={() => setSelectedCycle(null)}
+                  onClick={() => navigate(() => setSelectedCycle(null))}
                 >
                   Cancel label
                 </button>

@@ -248,6 +248,25 @@ export default function PerformanceDashboard(props: Props) {
         : props.defaultSessionType,
   });
   const [tradingStyle,setTradingStyle]=useState(props.defaultTradingStyle??'intraday');
+  const swingLabels = useRef({ dirty: false, saving: false });
+  const swingPortfolio = useRef(props.defaultPortfolioId ?? "");
+  const changeTradingStyle = (style: string) => {
+    if (
+      swingLabels.current.saving ||
+      (swingLabels.current.dirty &&
+        !window.confirm("Discard unsaved trade labels?"))
+    )
+      return;
+    swingLabels.current = { dirty: false, saving: false };
+    environment.onDirtyChange?.(false);
+    environment.onLabelSavingChange?.(false);
+    setTradingStyle(style);
+    setFilters((previous) => ({
+      ...previous,
+      trading_style: style,
+      portfolio_id: style === "intraday" ? "" : swingPortfolio.current,
+    }));
+  };
   const [view, setView] = useState<View>("Overview");
   const [report, setReport] = useState<PerformanceReport | null>(null);
   const [cycles, setCycles] = useState<PerformanceCycle[]>([]);
@@ -486,7 +505,8 @@ export default function PerformanceDashboard(props: Props) {
     </section>
   );
 
-  if(tradingStyle==='swing')return <div className="pa-overlay" role="dialog" aria-label="Trading performance"><div className="pa-filters"><label>Trading style <select aria-label="Stats trading style" value={tradingStyle} onChange={event=>{setTradingStyle(event.target.value);field('trading_style',event.target.value)}}><option value="intraday">Day trading</option><option value="swing">Swing trading</option></select></label></div>{environment.performance.getSwingReport?<SwingStats load={environment.performance.getSwingReport} portfolioId={props.defaultPortfolioId} onClose={props.onClose} saveLabel={async(cycle,draft)=>{await environment.api.saveLabels([{session_id:cycle.session_id,round_trip_index:cycle.index,analytics_cycle_id:cycle.cycle_id,expected_category:draft.expected_category??'',expected_strategy:draft.expected_strategy??'',actual_category:draft.actual_category??'',actual_strategy:draft.actual_strategy??'',entry_tag:draft.entry_tag??'AS_PER_PATTERN',exit_tag:draft.exit_tag??'AS_PER_PATTERN'}])}}/>:<p>Swing statistics are unavailable in this client.</p>}</div>
+  if(tradingStyle==='swing' && environment.active===false)return null;
+  if(tradingStyle==='swing')return <div className="pa-overlay" role="dialog" aria-label="Trading performance"><div className="pa-filters"><label>Trading style <select aria-label="Stats trading style" value={tradingStyle} onChange={event=>changeTradingStyle(event.target.value)}><option value="intraday">Day trading</option><option value="swing">Swing trading</option></select></label></div>{environment.performance.getSwingReport?<SwingStats initialPortfolioId={swingPortfolio.current} onPortfolioChange={id=>{swingPortfolio.current=id;}} onDraftStateChange={state=>{swingLabels.current=state;environment.onDirtyChange?.(state.dirty);environment.onLabelSavingChange?.(state.saving)}} load={environment.performance.getSwingReport} portfolioId={props.defaultPortfolioId} onClose={props.onClose} saveLabel={async(cycle,draft)=>{await environment.api.saveLabels([{session_id:cycle.session_id,round_trip_index:cycle.index,analytics_cycle_id:cycle.cycle_id,expected_category:draft.expected_category??'',expected_strategy:draft.expected_strategy??'',actual_category:draft.actual_category??'',actual_strategy:draft.actual_strategy??'',entry_tag:draft.entry_tag??'AS_PER_PATTERN',exit_tag:draft.exit_tag??'AS_PER_PATTERN'}])}}/>:<p>Swing statistics are unavailable in this client.</p>}</div>
   return (
     <div
       className="pa-overlay"
@@ -512,7 +532,7 @@ export default function PerformanceDashboard(props: Props) {
         </button>
       </header>
       <div className="pa-filters">
-        <label>Trading style <select aria-label="Stats trading style" value={tradingStyle} onChange={event=>{setTradingStyle(event.target.value);field('trading_style',event.target.value)}}><option value="intraday">Day trading</option><option value="swing">Swing trading</option></select></label>
+        <label>Trading style <select aria-label="Stats trading style" value={tradingStyle} onChange={event=>changeTradingStyle(event.target.value)}><option value="intraday">Day trading</option><option value="swing">Swing trading</option></select></label>
         <label>
           From
           <input

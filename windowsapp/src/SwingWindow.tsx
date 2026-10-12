@@ -1,4 +1,4 @@
-import { bounded, closeAfterSave, SAVE_TIMEOUT_MS } from "./windowLifecycle";
+import { bounded, SAVE_TIMEOUT_MS } from "./windowLifecycle";
 import {
   useCallback,
   useEffect,
@@ -7,7 +7,6 @@ import {
   type ComponentType,
 } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { getCurrentWindow } from "@tauri-apps/api/window";
 import SwingPortfolioPanel, {
   type SwingRequest,
 } from "../../shared/SwingPortfolioPanel";
@@ -24,6 +23,8 @@ export default function SwingWindow({
   onCreateLinked,
   registerSave,
   onAnalyse,
+  onCloseWindow,
+  registerNavigationGuard,
 }: {
   request: SwingRequest;
   loadSymbols: () => Promise<SymbolChoice[]>;
@@ -34,9 +35,11 @@ export default function SwingWindow({
   onCreateLinked?: (id: string) => void;
   registerSave: (id: string, save: (() => Promise<unknown>) | null) => void;
   onAnalyse?: (id: string, sid?: string) => void;
+  onCloseWindow: () => Promise<void>;
+  registerNavigationGuard: (id: string, guard: (() => boolean) | null) => void;
 }) {
-  const [error, setError] = useState(""),
-    [closing, setClosing] = useState(false);
+  const [error, setError] = useState("");
+  const labels = useRef({ dirty: false, saving: false });
   const save = useRef<(() => Promise<unknown>) | null>(null),
     acknowledged = useRef(false);
   const native = "__TAURI_INTERNALS__" in window;
@@ -65,27 +68,16 @@ export default function SwingWindow({
     });
   }, [workspaceId, native]);
   useEffect(() => {
-    if (!workspaceId || !native) return;
-    const listener = getCurrentWindow().onCloseRequested(async (event) => {
-      event.preventDefault();
-      await closeAfterSave(
-        Promise.resolve(save.current?.()),
-        async () => {
-          setClosing(true);
-          await new Promise<void>((resolve) =>
-            requestAnimationFrame(() => resolve()),
-          );
-          await invoke("finish_window_close");
-        },
-        (cause) => setError(`Settings could not be saved: ${String(cause)}`),
-      );
-    });
-    return () => {
-      void listener.then((stop) => stop());
-    };
-  }, [workspaceId, native]);
+    registerNavigationGuard(
+      key,
+      () =>
+        !labels.current.saving &&
+        (!labels.current.dirty ||
+          window.confirm("Discard unsaved trade labels?")),
+    );
+    return () => registerNavigationGuard(key, null);
+  }, [key, registerNavigationGuard]);
   useEffect(() => () => registerSave(key, null), [key, registerSave]);
-  if (closing) return null;
   return (
     <>
       {error && <p role="alert">{error}</p>}
@@ -101,14 +93,16 @@ export default function SwingWindow({
         onSaveReady={onSaveReady}
         onCreateLinked={native ? onCreateLinked : undefined}
         onAnalyse={onAnalyse}
+        onDraftStateChange={(state) => {
+          labels.current = state;
+        }}
         onDetach={() => {
+          if (workspaceId && native) {
+            void onCloseWindow();
+            return;
+          }
           void bounded(Promise.resolve(save.current?.()), SAVE_TIMEOUT_MS)
-            .then(() => {
-              if (workspaceId && native) {
-                setClosing(true);
-                requestAnimationFrame(() => void invoke("finish_window_close"));
-              } else onDetach();
-            })
+            .then(onDetach)
             .catch((cause) =>
               setError(`Settings could not be saved: ${String(cause)}`),
             );

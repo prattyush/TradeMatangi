@@ -517,3 +517,75 @@ def test_legacy_initial_capture_and_reference_only_receipts_do_not_fake_missing_
         }
     )
     assert complete and flows == []
+
+
+def test_valuation_preserves_same_second_execution_chronology(monkeypatch):
+    monkeypatch.setattr(swing_market, "today", lambda: "2026-10-08")
+    rows = [
+        trade("z", "BUY", 100, 1, "2026-10-06"),
+        trade("a", "SELL", 110, 1, "2026-10-06"),
+    ]
+    for index, row in enumerate(rows):
+        row["execution_sort_time"] = row["timestamp"] * 1_000_000 + index
+    session = {"session_id": "child", "symbol": "HDFCBANK", "trading_style": "swing"}
+    cycles = [analytics.decorate(c) for c in performance.build_cycles(session, rows)]
+    result = analytics.valuation_series(
+        book(), cycles, "2026-10-06", "2026-10-07", loader=lambda *args: {}
+    )
+    assert result["unrealized_pnl_at_end"] == 0
+    assert result["series"][-1]["nav"] == 2008
+
+
+@pytest.mark.parametrize(
+    "captured", ["2026-10-06T08:00:00", "2026-10-06T17:00:00", "2026-10-10T12:00:00"]
+)
+def test_import_invalidates_first_consuming_valuation_even_outside_market(
+    monkeypatch, captured
+):
+    monkeypatch.setattr(swing_market, "today", lambda: "2026-10-14")
+    row = trade("opening", "BUY", 100, 1, captured[:10])
+    row.update(
+        timestamp=int(datetime.fromisoformat(captured).replace(tzinfo=UTC).timestamp()),
+        opening_basis=True,
+        commission=0,
+    )
+    cycle = analytics.decorate(
+        performance.build_cycles(
+            {"session_id": "child", "symbol": "HDFCBANK", "trading_style": "swing"},
+            [row],
+        )[0]
+    )
+    consumed = (
+        "2026-10-06"
+        if captured[11:] < "15:30:00" and captured[:10] == "2026-10-06"
+        else "2026-10-07"
+        if captured[:10] == "2026-10-06"
+        else "2026-10-12"
+    )
+    prices = {
+        day: 150
+        for day in (
+            "2026-10-06",
+            "2026-10-07",
+            "2026-10-08",
+            "2026-10-09",
+            "2026-10-12",
+            "2026-10-13",
+        )
+    }
+    result = analytics.valuation_series(
+        book(), [cycle], "2026-10-06", "2026-10-13", loader=lambda *args: prices
+    )
+    assert not result["coverage_complete"] and result["return_pct"] is None
+    assert (
+        next(r for r in result["series"] if r["date"] == consumed)["return_pct"] is None
+    )
+    assert any(
+        m["date"] == consumed and m["symbol"] == "Imported inventory"
+        for m in result["missing"]
+    )
+    later = "2026-10-08" if consumed < "2026-10-08" else "2026-10-13"
+    recovered = analytics.valuation_series(
+        book(), [cycle], later, "2026-10-13", loader=lambda *args: prices
+    )
+    assert recovered["coverage_complete"] and recovered["return_pct"] == 0

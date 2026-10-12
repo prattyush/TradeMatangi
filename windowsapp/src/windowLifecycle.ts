@@ -29,3 +29,26 @@ export async function closeAfterSave(save: Promise<unknown>, close: () => Promis
   catch (error) { onError(error) }
   finally { await close() }
 }
+
+/** One close sequence for native close events and explicit Detach requests. */
+export function createWindowCloser(
+  save: () => Promise<unknown>,
+  close: () => Promise<unknown>,
+  onError: (error: unknown) => void,
+  canClose: () => boolean = () => true,
+): () => Promise<void> {
+  let pending: Promise<void> | null = null;
+  return () => {
+    if (pending) return pending;
+    if (!canClose()) return Promise.resolve();
+    pending = closeAfterSave(
+      Promise.resolve().then(save),
+      close,
+      onError,
+    ).catch((error) => {
+      pending = null;
+      onError(error);
+    });
+    return pending;
+  };
+}

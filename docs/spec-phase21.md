@@ -1144,3 +1144,10 @@ Work is on the new `feature/swing-linked-analytics` branch targeting preprod;
 installed-Windows and authenticated broker acceptance follows merge/deployment.
 Multi-day Replay, website popups, new strategies and finalized Swing charges remain
 deferred; earlier linked-chart/history pending notes are superseded.
+
+
+PR #656 follow-up review corrections are recorded in the
+[linked Swing delivery record](spec-phase21-swing-linked-analytics-plan.md#pr-656-review-corrections--2026-10-12):
+History initialization, valuation chronology/import attribution, independent drawing
+scopes, label navigation, Day/Swing filters and a single native window close owner.
+Installed Windows and broker acceptance remain after preprod deployment.

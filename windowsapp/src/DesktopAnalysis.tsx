@@ -14,7 +14,7 @@ import { analysisRequest, createAnalysisApi, type AnalysisRequest } from './anal
 import ExecutionInspector from './ExecutionInspector'
 import './desktopAnalysis.css'
 
-export default function DesktopAnalysis({ viewSelector, baseUrl, token, active, onClose, onUnauthorized, historicalDays=2,initialPortfolioId }:  { initialPortfolioId?:string; viewSelector?: ReactNode; historicalDays?:number; onUnauthorized?:()=>void; baseUrl: string; token: string; active: boolean; onClose: () => void }) {
+export default function DesktopAnalysis({ viewSelector, baseUrl, token, active, onClose, onUnauthorized, historicalDays=2,initialPortfolioId,onNavigationReady }:  { onNavigationReady?:(guard:(()=>boolean)|null)=>void;initialPortfolioId?:string; viewSelector?: ReactNode; historicalDays?:number; onUnauthorized?:()=>void; baseUrl: string; token: string; active: boolean; onClose: () => void }) {
   const adapter = useMemo(() => {
     const native: AnalysisRequest | undefined = '__TAURI_INTERNALS__' in window
       ? <T,>(path: string, method: string, body?: unknown) => invoke<T>('desktop_analysis_request', { baseUrl, path, method, body: body ?? {} }) : undefined
@@ -68,8 +68,16 @@ export default function DesktopAnalysis({ viewSelector, baseUrl, token, active, 
     confirmDiscard: () => { if(labelSaving.current){setNavigationMessage('Labels are saving. Wait for the result before changing sessions.');return false}; if (!dirty.current || window.confirm('Discard unsaved labels?')) { dirty.current = false; return true }; return false },
     onSelectionContextChange: () => setTrade(null),
   }), [adapter, active, dataRevision,historicalDays,swingRequest,swingRenderer])
+  const navigationReady = useRef(onNavigationReady);
+  navigationReady.current = onNavigationReady;
+  const guard = useRef(environment.confirmDiscard);
+  guard.current = environment.confirmDiscard;
+  useEffect(() => {
+    navigationReady.current?.(() => guard.current?.() !== false);
+    return () => navigationReady.current?.(null);
+  }, []);
   return <AnalysisProvider value={environment}><div className="desktop-analysis" hidden={!active}>
-    <nav className="analysis-navigation" aria-label="Analysis views">{viewSelector}<button aria-pressed={view === 'Sessions'} onClick={() => setView('Sessions')}>Sessions</button><button aria-pressed={view === 'Stats'} onClick={() => { setStatsVisited(true); setView('Stats') }}>Stats</button>{!viewSelector && <button onClick={onClose}>Return to Workspace</button>}</nav>
+    <nav className="analysis-navigation" aria-label="Analysis views">{viewSelector}<button aria-pressed={view === 'Sessions'} onClick={() => {if(environment.confirmDiscard?.()!==false)setView('Sessions')}}>Sessions</button><button aria-pressed={view === 'Stats'} onClick={() => { if(environment.confirmDiscard?.()===false)return;setStatsVisited(true); setView('Stats') }}>Stats</button>{!viewSelector && <button onClick={()=>{if(environment.confirmDiscard?.()!==false)onClose()}}>Return to Workspace</button>}</nav>
     {navigationMessage && <p className="analysis-navigation-message" role="status">{navigationMessage}</p>}
     <div className="analysis-sessions" hidden={view !== 'Sessions'}><AnalysisProvider value={{...environment, active: active && view === 'Sessions'}}><DesktopAnalysisSessions key={initialPortfolioId??'all'} initialPortfolioId={initialPortfolioId}/></AnalysisProvider></div>
     <div className="analysis-stats" hidden={view !== 'Stats'}>{statsVisited && <AnalysisProvider value={{...environment, active: active && view === 'Stats'}}><PerformanceDashboard key={initialPortfolioId??'all'} onClose={() => setView('Sessions')} defaultSymbol="" defaultStartDate="" defaultEndDate="" defaultInstrumentType="" defaultSessionType="" defaultTradingStyle={initialPortfolioId?'swing':undefined} defaultPortfolioId={initialPortfolioId} selectedCycle={cycle} /></AnalysisProvider>}</div>

@@ -97,6 +97,7 @@ export default function SwingPortfolioPanel({
   onSaveReady,
   onCreateLinked,
   onAnalyse,
+  onDraftStateChange,
 }: {
   request: SwingRequest;
   loadSymbols: () => Promise<SymbolChoice[]>;
@@ -110,11 +111,15 @@ export default function SwingPortfolioPanel({
   onSaveReady?: (save: (() => Promise<unknown>) | null) => void;
   onCreateLinked?: (portfolioId: string) => void;
   onAnalyse?: (portfolioId: string, sessionId?: string) => void;
+  onDraftStateChange?: (state:{dirty:boolean;saving:boolean})=>void;
 }) {
   const [analyticsOpen, setAnalyticsOpen] = useState<
       "stats" | "history" | null
     >(null),
     [selectedCycle, setSelectedCycle] = useState<string | undefined>();
+  const labelState = useRef({dirty:false,saving:false});
+  const reportDraft = (state:{dirty:boolean;saving:boolean}) => {labelState.current=state;onDraftStateChange?.(state);};
+  const mayNavigate = () => !labelState.current.saving && (!labelState.current.dirty || window.confirm('Discard unsaved trade labels?'));
   const [managementOpen, setManagementOpen] = useState(false);
   const [picking, setPicking] = useState(false);
   const requestedContract = useRef<SwingPane | null>(null);
@@ -630,10 +635,10 @@ export default function SwingPortfolioPanel({
         }}
         picking={picking}
         ticket={tradeTicket}
-        onHistory={() => setAnalyticsOpen("history")}
-        onStats={() => setAnalyticsOpen("stats")}
+        onHistory={() => {if(mayNavigate())setAnalyticsOpen("history");}}
+        onStats={() => {if(mayNavigate())setAnalyticsOpen("stats");}}
         onManage={() => setManagementOpen((v) => !v)}
-        onDetach={onDetach}
+        onDetach={() => {if(companion || mayNavigate())onDetach();}}
         error={error}
         busy={busy}
         onPause={() =>
@@ -660,6 +665,7 @@ export default function SwingPortfolioPanel({
         <div className="swing-analytics-drawer">
           {analyticsOpen === "stats" ? (
             <SwingStats
+              onDraftStateChange={reportDraft}
               load={statsLoad}
               portfolioId={prefix}
               onClose={() => setAnalyticsOpen(null)}
@@ -671,6 +677,7 @@ export default function SwingPortfolioPanel({
           ) : (
             renderChart && (
               <SwingHistory
+                onDraftStateChange={reportDraft}
                 request={request}
                 portfolioId={portfolio.session_id}
                 Renderer={renderChart}
@@ -721,6 +728,8 @@ export default function SwingPortfolioPanel({
               disabled={busy}
               value={mode}
               onChange={(event) => {
+                if(!mayNavigate())return;
+                setAnalyticsOpen(null);
                 revision.current++;
                 setSnapshot(null);
                 setMode(event.target.value as "paper" | "real");
@@ -739,6 +748,8 @@ export default function SwingPortfolioPanel({
               disabled={busy}
               value={broker}
               onChange={(event) => {
+                if(!mayNavigate())return;
+                setAnalyticsOpen(null);
                 revision.current++;
                 setSnapshot(null);
                 setBroker(event.target.value);

@@ -18,7 +18,7 @@ import { ToolbarIcon } from './ToolbarIcon'
 import { ToolbarActionButton } from './ToolbarActionButton'
 import { TradingRefresh, TRADING_RECONCILE_MS } from './tradingRefresh'
 import { TradingSseDecoder, TradingStreamController, TradingStreamDrain, TradingStreamLifecycle } from './tradingStream'
-import { bounded, closeAfterSave, controlledScreens, SAVE_TIMEOUT_MS, journalKey, recoverState, type RecoveryJournal } from './windowLifecycle'
+import { bounded, createWindowCloser, controlledScreens, SAVE_TIMEOUT_MS, journalKey, recoverState, type RecoveryJournal } from './windowLifecycle'
 import { StepInput } from './StepInput'
 import { availableExitQuantity, isStopOrder, orderBusy, orderPosition } from './orderEditing'
 import { retainedPanes, compactLayout, type PreparedSession } from './sessionPreparation'
@@ -492,7 +492,7 @@ export default function App() {
   const assignedId = new URLSearchParams(window.location.search).get('screen_id')
   const [mainTab, setMainTab] = useState<'Workspace' | 'Analysis' | 'Swing'>('Workspace')
   const [analysisPortfolio,setAnalysisPortfolio]=useState<string|undefined>()
-  useEffect(()=>{if(assignedId||!('__TAURI_INTERNALS__' in window))return;let cancelled=false;const listener=listen<{portfolioId:string}>('desktop-swing-analysis',event=>{if(!cancelled){setAnalysisPortfolio(event.payload.portfolioId);setAnalysisVisited(true);setMainTab('Analysis')}});return()=>{cancelled=true;void listener.then(stop=>stop())}},[])
+  useEffect(()=>{if(assignedId||!('__TAURI_INTERNALS__' in window))return;let cancelled=false;const listener=listen<{portfolioId:string}>('desktop-swing-analysis',event=>{if(!cancelled&&[...navigationGuards.current.values()].every(guard=>guard())){setAnalysisPortfolio(event.payload.portfolioId);setAnalysisVisited(true);setMainTab('Analysis')}});return()=>{cancelled=true;void listener.then(stop=>stop())}},[])
   const [analysisVisited, setAnalysisVisited] = useState(false)
   const [analysisContextDays,setAnalysisContextDays] = useState(2)
   const [screens, setScreens] = useState<Screen[]>([newScreen(1)])
@@ -500,6 +500,17 @@ export default function App() {
   const [selectedId, selectScreen] = useState(screens[0].id)
   const [loaded, setLoaded] = useState(false)
   const [external, setExternal] = useState<string[]>([])
+  const navigationGuards = useRef(new Map<string, () => boolean>());
+  const registerNavigationGuard = useCallback(
+    (id: string, guard: (() => boolean) | null) => {
+      if (guard) navigationGuards.current.set(id, guard);
+      else navigationGuards.current.delete(id);
+    },
+    [],
+  );
+  const mayNavigate = () =>
+    [...navigationGuards.current.values()].every((guard) => guard());
+  const [windowClosing, setWindowClosing] = useState(false);
   const saveHandlers = useRef(new Map<string, () => Promise<unknown>>())
   const registerSave = useCallback((id: string, save: (() => Promise<unknown>) | null) => { if (save) saveHandlers.current.set(id, save); else saveHandlers.current.delete(id) }, [])
   useEffect(() => {
@@ -507,24 +518,53 @@ export default function App() {
     let cancelled = false
     let stop: (() => void) | undefined
     void listen<{ screenId: string }>('desktop-focus-linked-primary', event => {
-      if (!cancelled) { selectScreen(event.payload.screenId); setMainTab('Workspace') }
+      if (!cancelled && [...navigationGuards.current.values()].every(guard=>guard())) { selectScreen(event.payload.screenId); setMainTab('Workspace') }
     }).then(unlisten => { if (cancelled) unlisten(); else stop = unlisten })
     return () => { cancelled = true; stop?.() }
   }, [assignedId])
   const [closeError, setCloseError] = useState('')
   useDismissMessage(closeError, setCloseError, 10_000)
+  const closeWindow = useMemo(
+    () =>
+      createWindowCloser(
+        () =>
+          Promise.all(
+            [...saveHandlers.current.values()].map((save) =>
+              Promise.resolve().then(save),
+            ),
+          ),
+        async () => {
+          setWindowClosing(true);
+          await new Promise<void>((resolve) =>
+            requestAnimationFrame(() => resolve()),
+          );
+          try {
+            await invoke("finish_window_close");
+          } catch (error) {
+            setWindowClosing(false);
+            throw error;
+          }
+        },
+        (error) => setCloseError(`Window close: ${String(error)}`),
+        () => [...navigationGuards.current.values()].every((guard) => guard()),
+      ),
+    [],
+  );
   useEffect(() => {
-    if (!('__TAURI_INTERNALS__' in window)) return
-    let disposed = false
-    const listener = getCurrentWindow().onCloseRequested(async event => {
-      event.preventDefault()
-      await closeAfterSave(Promise.all([...saveHandlers.current.values()].map(save => Promise.resolve().then(save))),
-        () => invoke('finish_window_close'), error => setCloseError(`Closing with locally recovered settings: ${String(error)}`))
-        .catch(error => setCloseError(String(error)))
-    })
-    void listener.then(unlisten => { if (disposed) unlisten() })
-    return () => { disposed = true; void listener.then(unlisten => unlisten()) }
-  }, [])
+    if (!("__TAURI_INTERNALS__" in window)) return;
+    let disposed = false;
+    const listener = getCurrentWindow().onCloseRequested((event) => {
+      event.preventDefault();
+      void closeWindow();
+    });
+    void listener.then((stop) => {
+      if (disposed) stop();
+    });
+    return () => {
+      disposed = true;
+      void listener.then((stop) => stop());
+    };
+  }, [closeWindow]);
   const [connection, setConnection] = useState<Connection>('authentication_required')
   const analysisUnauthorized = useCallback(() => setConnection('authentication_required'),[])
   const connectionRevision = useRef(-1)
@@ -708,12 +748,14 @@ export default function App() {
   const viewSelector = !assignedId && connection !== 'authentication_required' ? <select
     className="desktop-view-select" aria-label="Desktop view" title="Switch between Workspace and Analysis"
     value={mainTab} onChange={event => {
+      if(!mayNavigate())return;
       const view=event.target.value as 'Workspace'|'Analysis'|'Swing'
       const change=()=>{if(view==='Analysis'){setAnalysisPortfolio(undefined);setAnalysisVisited(true)}setMainTab(view)}
       if(mainTab==='Swing'&&view!=='Swing')void bounded(Promise.resolve(saveHandlers.current.get('swing-primary')?.()),SAVE_TIMEOUT_MS).then(change).catch(cause=>setSwingWindowError(String(cause)))
       else change()
     }}
   ><option value="Workspace">Workspace</option><option value="Analysis">Analysis</option><option value="Swing">Swing</option></select> : null
+  if(windowClosing)return null;
   return <div>
     {closeError && <p role="alert">{closeError}</p>}
     {loadFailed && <main role="alert">{loadError && <p>{loadError}</p>}<button onClick={() => setLoadAttempt(value => value + 1)}>Retry loading screens</button></main>}
@@ -723,10 +765,10 @@ export default function App() {
     {ownedScreens.map(screen => <div key={screen.id} style={{ display: mainTab === 'Workspace' && (assignedId || screen.id === visibleId) ? 'contents' : 'none' }}>
       <ScreenController viewSelector={viewSelector} workspaceVisible={Boolean(assignedId)||mainTab==='Workspace'} onAnalysisContextDays={setAnalysisContextDays} registerSave={registerSave} screenId={screen.id} screens={dayScreens} setScreens={setDayScreens} selectedId={visibleId} selectScreen={selectScreen} loaded={loaded} external={external} assignedId={assignedId} connection={connection} setConnection={setConnection} browserToken={browserToken} setBrowserToken={setBrowserToken} serverUrl={serverUrl} setServerUrl={setServerUrl} />
     </div>)}
-    {!assignedId && mainTab === 'Swing' && connection === 'connected' && <><header style={{height:48}}>{viewSelector}{linkedSwing.map(screen=><button key={screen.id} onClick={()=>void openSwingWindow(screen.saved!.portfolio_id!,screen)}>{screen.name}{external.includes(screen.id)?' ↗':''}</button>)}</header>{swingWindowError&&<p role="alert">{swingWindowError}</p>}<SwingWindow key={`${serverUrl}:${browserToken}`} request={swingRequest} loadSymbols={swingSymbols} Renderer={swingChart} registerSave={registerSave} onCreateLinked={id=>void openSwingWindow(id)} onAnalyse={id=>{setAnalysisPortfolio(id);setAnalysisVisited(true);setMainTab('Analysis')}} onDetach={() => setMainTab('Workspace')} /></>}
+    {!assignedId && mainTab === 'Swing' && connection === 'connected' && <><header style={{height:48}}>{viewSelector}{linkedSwing.map(screen=><button key={screen.id} onClick={()=>void openSwingWindow(screen.saved!.portfolio_id!,screen)}>{screen.name}{external.includes(screen.id)?' ↗':''}</button>)}</header>{swingWindowError&&<p role="alert">{swingWindowError}</p>}<SwingWindow registerNavigationGuard={registerNavigationGuard} onCloseWindow={closeWindow} key={`${serverUrl}:${browserToken}`} request={swingRequest} loadSymbols={swingSymbols} Renderer={swingChart} registerSave={registerSave} onCreateLinked={id=>void openSwingWindow(id)} onAnalyse={id=>{setAnalysisPortfolio(id);setAnalysisVisited(true);setMainTab('Analysis')}} onDetach={() => setMainTab('Workspace')} /></>}
     {assignedId && assigned?.saved?.workspace_kind==='swing' && connection!=='connected' && <main><p>{connection==='authentication_required'?'Sign in in the main window to reconnect this portfolio.':'Waiting for the backend connection. The portfolio stays attached to its saved book.'}</p><button onClick={()=>void invoke('focus_main_window')}>Main window</button></main>}
-    {assignedId && assigned?.saved?.workspace_kind==='swing' && connection==='connected' && (pinnedSwingPortfolio(assigned)?<><header style={{height:48}}><strong>{assigned.name}</strong><button onClick={()=>void invoke('focus_main_window')}>Main window</button></header><SwingWindow key={`${serverUrl}:${assignedId}`} request={swingRequest} loadSymbols={swingSymbols} Renderer={swingChart} portfolioId={pinnedSwingPortfolio(assigned)!} workspaceId={assignedId} registerSave={registerSave} onAnalyse={id=>void emitTo('main','desktop-swing-analysis',{portfolioId:id})} onDetach={()=>{}}/></>:<p role="alert">This linked window has no portfolio identity. Reopen it from the main window.</p>)}
-    {!assignedId && analysisVisited && connection !== 'authentication_required' && <Suspense fallback={<p role="status">Loading Analysis…</p>}><DesktopAnalysis initialPortfolioId={analysisPortfolio} viewSelector={viewSelector} key={`${serverUrl}:${browserToken}`} baseUrl={serverUrl} token={browserToken} onUnauthorized={analysisUnauthorized} historicalDays={analysisContextDays} active={mainTab === 'Analysis'} onClose={() => setMainTab('Workspace')} /></Suspense>}
+    {assignedId && assigned?.saved?.workspace_kind==='swing' && connection==='connected' && (pinnedSwingPortfolio(assigned)?<><header style={{height:48}}><strong>{assigned.name}</strong><button onClick={()=>void invoke('focus_main_window')}>Main window</button></header><SwingWindow registerNavigationGuard={registerNavigationGuard} onCloseWindow={closeWindow} key={`${serverUrl}:${assignedId}`} request={swingRequest} loadSymbols={swingSymbols} Renderer={swingChart} portfolioId={pinnedSwingPortfolio(assigned)!} workspaceId={assignedId} registerSave={registerSave} onAnalyse={id=>void emitTo('main','desktop-swing-analysis',{portfolioId:id})} onDetach={()=>{}}/></>:<p role="alert">This linked window has no portfolio identity. Reopen it from the main window.</p>)}
+    {!assignedId && analysisVisited && connection !== 'authentication_required' && <Suspense fallback={<p role="status">Loading Analysis…</p>}><DesktopAnalysis onNavigationReady={guard=>registerNavigationGuard("analysis",guard)} initialPortfolioId={analysisPortfolio} viewSelector={viewSelector} key={`${serverUrl}:${browserToken}`} baseUrl={serverUrl} token={browserToken} onUnauthorized={analysisUnauthorized} historicalDays={analysisContextDays} active={mainTab === 'Analysis'} onClose={() => setMainTab('Workspace')} /></Suspense>}
   </div>
 }
 

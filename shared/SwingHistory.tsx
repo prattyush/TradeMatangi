@@ -21,6 +21,7 @@ export default function SwingHistory({
   onClose,
   onAnalyse,
   onReconcile,
+  onDraftStateChange,
 }: {
   request: SwingRequest;
   portfolioId: string;
@@ -30,6 +31,7 @@ export default function SwingHistory({
   onClose: () => void;
   onAnalyse?: (pid: string, sid?: string) => void;
   onReconcile?: () => Promise<unknown>;
+  onDraftStateChange?: (state: { dirty: boolean; saving: boolean }) => void;
 }) {
   const [data, setData] = useState<any>(null),
     [selected, setSelected] = useState(initialCycleId ?? ""),
@@ -45,9 +47,33 @@ export default function SwingHistory({
     [metadata, setMetadata] = useState<any>({});
   const owner = useRef(0);
   const savedDraft = useRef("{}");
+  const initialized = useRef("");
+  const [baseline, setBaseline] = useState("{}");
+  const dirty = JSON.stringify(draft) !== baseline;
+  const notify = useRef(onDraftStateChange);
+  notify.current = onDraftStateChange;
+  useEffect(() => {
+    notify.current?.({ dirty, saving: busy });
+  }, [dirty, busy]);
+  useEffect(() => () => notify.current?.({ dirty: false, saving: false }), []);
+  const identity = `${portfolioId}:${selected}`;
+  const liveIdentity = useRef(identity);
+  liveIdentity.current = identity;
+  const alive = useRef(false);
+  useEffect(() => {
+    alive.current = true;
+    return () => {
+      alive.current = false;
+    };
+  }, []);
+  const draftNow = useRef(draft);
+  draftNow.current = draft;
+  const selectedNow = useRef(selected);
+  selectedNow.current = selected;
   const discard = () =>
-    JSON.stringify(draft) === savedDraft.current ||
-    window.confirm("Discard unsaved trade labels?");
+    !busy &&
+    (JSON.stringify(draft) === savedDraft.current ||
+      window.confirm("Discard unsaved trade labels?"));
   useEffect(() => {
     let cancelled = false;
     void request<any>(`${portfolioId}/execution-history`, "GET")
@@ -62,6 +88,25 @@ export default function SwingHistory({
             ? value.contexts.filter((c: any) => c.session_id === sessionId)
             : value.contexts,
         };
+        if (
+          !value.cycles.some((c: any) => c.cycle_id === selectedNow.current) &&
+          JSON.stringify(draftNow.current) !== savedDraft.current
+        ) {
+          if (
+            !window.confirm(
+              "The selected cycle changed. Discard unsaved trade labels?",
+            )
+          ) {
+            setError(
+              "History changed. Save or discard your draft before selecting another cycle.",
+            );
+            return;
+          }
+          setDraft({});
+          setBaseline("{}");
+          savedDraft.current = "{}";
+          initialized.current = "";
+        }
         setData(value);
         setError("");
         setSelected((previous) =>
@@ -91,27 +136,20 @@ export default function SwingHistory({
   const cycle = data?.cycles.find((c: any) => c.cycle_id === selected);
   useEffect(() => {
     if (!cycle) return;
-    setDate(cycle.exit_date ?? swingToday());
-    setDraft(
-      Object.fromEntries(
-        fields.map((name) => [
-          name,
-          cycle.label?.[name] ??
-            (name.endsWith("_tag") ? "AS_PER_PATTERN" : ""),
-        ]),
-      ),
+    const fresh = initialized.current !== identity;
+    if (!fresh && (dirty || busy)) return;
+    const next = Object.fromEntries(
+      fields.map((name) => [
+        name,
+        cycle.label?.[name] ?? (name.endsWith("_tag") ? "AS_PER_PATTERN" : ""),
+      ]),
     );
-    savedDraft.current = JSON.stringify(
-      Object.fromEntries(
-        fields.map((name) => [
-          name,
-          cycle.label?.[name] ??
-            (name.endsWith("_tag") ? "AS_PER_PATTERN" : ""),
-        ]),
-      ),
-    );
-    setError("");
-  }, [selected]);
+    if (fresh) setDate(cycle.exit_date ?? swingToday());
+    initialized.current = identity;
+    savedDraft.current = JSON.stringify(next);
+    setBaseline(savedDraft.current);
+    setDraft(next);
+  }, [cycle, identity]);
   const pane: SwingPane = {
     symbol: cycle?.symbol ?? "HDFCBANK",
     instrument_type: cycle?.right ? "options" : "equity",
@@ -146,7 +184,8 @@ export default function SwingHistory({
     };
   }, [request, portfolioId, selected, date, interval]);
   const save = async () => {
-    if (!cycle) return;
+    if (!cycle || busy || initialized.current !== identity) return;
+    const savingIdentity = identity;
     setBusy(true);
     try {
       await request(`${portfolioId}/labels`, "POST", {
@@ -154,13 +193,17 @@ export default function SwingHistory({
         analytics_cycle_id: cycle.cycle_id,
         ...draft,
       });
+      if (!alive.current || liveIdentity.current !== savingIdentity) return;
       savedDraft.current = JSON.stringify(draft);
+      setBaseline(savedDraft.current);
       setRetry((n) => n + 1);
       setError("");
     } catch (cause) {
-      setError(String(cause));
+      if (alive.current && liveIdentity.current === savingIdentity)
+        setError(String(cause));
     } finally {
-      setBusy(false);
+      if (alive.current && liveIdentity.current === savingIdentity)
+        setBusy(false);
     }
   };
   const rows = (data?.contexts ?? [])
@@ -276,7 +319,10 @@ export default function SwingHistory({
                     </datalist>
                   </label>
                 ))}
-                <button disabled={busy} onClick={() => void save()}>
+                <button
+                  disabled={busy || initialized.current !== identity}
+                  onClick={() => void save()}
+                >
                   {busy ? "Saving…" : "Save trade label"}
                 </button>
               </div>
@@ -315,7 +361,7 @@ export default function SwingHistory({
                 <Renderer
                   key={`${selected}:${interval}`}
                   pane={pane}
-                  drawingScope={portfolioId}
+                  drawingScope={`swing:${portfolioId}:history`}
                   candles={candles}
                   loading={loading}
                   message={chartError}

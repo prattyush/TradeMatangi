@@ -14,12 +14,13 @@ const { chromium } = await import(
 const dir = await mkdtemp(tmpdir() + "/swing-linked-analytics-");
 await build({
   stdin: {
-    contents: `import React,{useCallback} from 'react';import{createRoot}from'react-dom/client';import Panel from '${root}/shared/SwingPortfolioPanel';import Web from '${root}/frontend/src/components/SwingChart';import Native from '${root}/windowsapp/src/SwingChart';import '${root}/windowsapp/src/styles.css';
+    contents: `import React,{useCallback} from 'react';import{createRoot}from'react-dom/client';import Panel from '${root}/shared/SwingPortfolioPanel';import Dashboard from '${root}/shared/analysis/PerformanceDashboard';import TradeAnalysis from '${root}/shared/analysis/TradeAnalysis';import{AnalysisProvider}from'${root}/shared/analysis/environment';import Web from '${root}/frontend/src/components/SwingChart';import Native from '${root}/windowsapp/src/SwingChart';import '${root}/windowsapp/src/styles.css';
 const query=new URLSearchParams(location.search),surface=query.get('surface')??'website',child=query.get('child');window.calls=[];
 const request=async(path,method,body)=>{window.calls.push({path,method,body});const response=await fetch('/fixture',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({path,method,body})});if(!response.ok)throw new Error('Fixture rejected');return response.json()};
-const drawing=async(path)=>path==='chart-settings'?{settings:{}}:{drawings:[]};const renderer=props=><Native {...props} drawingRequest={drawing}/>;
+const drawing=async(path,method,body)=>{window.calls.push({path:"drawing:"+path,drawingPath:path,method,body});return path==='chart-settings'?{settings:{}}:{drawings:[]}};const renderer=props=><Native {...props} drawingRequest={drawing}/>;
 const symbols=async()=>[{symbol:'HDFCBANK',display_name:'HDFC Bank',chart_type:'equity',option_eligible:true},{symbol:'RELIND',display_name:'Reliance',chart_type:'equity',option_eligible:true}];
-function App(){const create=useCallback(()=>{window.open(location.pathname+'?surface='+surface+'&child=child-one','swing-child')},[]);return <Panel request={request} loadSymbols={symbols} renderChart={surface==='desktop'?renderer:Web} surface={surface} portfolioId={child?'portfolio':undefined} workspaceId={child??undefined} companion={Boolean(child)} onCreateLinked={surface==='desktop'&&!child?create:undefined} onDetach={()=>{window.detached=true}}/>}createRoot(document.getElementById('root')).render(<App/>);`,
+const summary={session_id:'child',user_id:'u',symbol:'RELIND',date:'2026-10-06',instrument_type:'equity',session_type:'paper',trading_style:'swing',portfolio_id:'portfolio',trade_count:1,round_trip_count:0,net_pnl:0,total_commission:1,session_capital:10000};const environment={swingRequest:request,charts:{SwingChart:surface==='desktop'?renderer:Web},api:{getAnalysisSessions:async()=>[summary],getSessionDetail:async()=>({...summary,trades:[],cycles:[]}),patternGetChartByDate:async()=>{throw new Error('no pattern')},saveLabels:labels=>request('portfolio/labels','POST',labels[0])},performance:{getSwingReport:async filters=>({portfolios:[{portfolio_id:'portfolio',mode:'paper',state:'running'}],report:await request('portfolio/analytics?'+new URLSearchParams(filters),'GET')}),getPerformance:filters=>{window.dayFilters=filters;return Promise.reject(new Error('Day fixture'))},getPerformanceCycles:async()=>({items:[],total:0,next_offset:null}),getPerformanceDetail:async()=>({})},onDirtyChange:value=>{window.dirty=value},onLabelSavingChange:value=>{window.saving=value}};
+function App(){const create=useCallback(()=>{window.open(location.pathname+'?surface='+surface+'&child=child-one','swing-child')},[]);if(query.get('sessions'))return <AnalysisProvider value={environment}><TradeAnalysis initialPortfolioId='portfolio' onClose={()=>{window.detached=true}}/></AnalysisProvider>;if(query.get('global'))return <AnalysisProvider value={environment}><Dashboard defaultTradingStyle='swing' defaultPortfolioId='portfolio' onClose={()=>{window.detached=true}}/></AnalysisProvider>;return <Panel request={request} loadSymbols={symbols} renderChart={surface==='desktop'?renderer:Web} surface={surface} portfolioId={child?'portfolio':undefined} workspaceId={child??undefined} companion={Boolean(child)} onCreateLinked={surface==='desktop'&&!child?create:undefined} onDetach={()=>{window.detached=true}}/>}createRoot(document.getElementById('root')).render(<App/>);`,
     resolveDir: root + "/windowsapp",
     loader: "tsx",
   },
@@ -42,6 +43,7 @@ const today = new Intl.DateTimeFormat("en-CA", {
   }).format(new Date()),
   now = Date.parse(today + "T10:00:00Z") / 1000;
 let book, cycle, prefs, calls;
+let saveDelay = 0;
 function reset() {
   book = {
     portfolio: {
@@ -165,6 +167,8 @@ const server = createServer(async (req, res) => {
           ],
         };
       else if (path.endsWith("/labels")) {
+        if (saveDelay)
+          await new Promise((resolve) => setTimeout(resolve, saveDelay));
         assert.equal(body.analytics_cycle_id, cycle.cycle_id);
         cycle = { ...cycle, label: body };
         value = [body];
@@ -283,6 +287,53 @@ try {
       .last()
       .click();
     await page.getByText("Completed cycles", { exact: true }).waitFor();
+    await page
+      .getByRole("region", { name: "Swing statistics" })
+      .getByRole("button", { name: "RELIND", exact: true })
+      .click();
+    await page
+      .getByRole("button", { name: "Save trade label", exact: true })
+      .waitFor();
+    await page.waitForFunction(
+      () =>
+        document.querySelector('[aria-label="Swing history chart date"]')
+          ?.value,
+    );
+    assert.equal(
+      await page.getByLabel("actual strategy", { exact: true }).inputValue(),
+      "Breakout",
+    );
+    assert.equal(
+      await page.getByLabel("Swing history chart date").inputValue(),
+      today,
+    );
+    await page.getByLabel("actual strategy", { exact: true }).fill("Unsaved");
+    await page
+      .getByRole("button", { name: "Refresh history", exact: true })
+      .click();
+    await page.waitForTimeout(200);
+    assert.equal(
+      await page.getByLabel("actual strategy", { exact: true }).inputValue(),
+      "Unsaved",
+    );
+    page.once("dialog", (dialog) => dialog.dismiss());
+    await page
+      .getByRole("button", { name: "Close history", exact: true })
+      .click();
+    assert.equal(
+      await page
+        .getByRole("region", { name: "Swing execution history" })
+        .count(),
+      1,
+    );
+    page.once("dialog", (dialog) => dialog.accept());
+    await page
+      .getByRole("button", { name: "Close history", exact: true })
+      .click();
+    await page
+      .getByRole("button", { name: "Swing Stats", exact: true })
+      .click();
+    await page.getByText("Daily portfolio value", { exact: true }).waitFor();
     await page.getByRole("button", { name: "Exposure", exact: true }).click();
     await page.getByText("Invested cost", { exact: true }).waitFor();
     await page
@@ -350,6 +401,33 @@ try {
         .locator(".swing-portfolio-rail")
         .getByText("11 at ₹100", { exact: false })
         .waitFor();
+      const mainDrawing = (await page.evaluate(() => window.calls))
+        .filter((c) => c.drawingPath?.startsWith("drawings?"))
+        .map((c) =>
+          JSON.parse(
+            new URLSearchParams(c.drawingPath.split("?")[1]).get("instrument"),
+          ),
+        );
+      const childDrawing = (await child.evaluate(() => window.calls))
+        .filter((c) => c.drawingPath?.startsWith("drawings?"))
+        .map((c) =>
+          JSON.parse(
+            new URLSearchParams(c.drawingPath.split("?")[1]).get("instrument"),
+          ),
+        );
+      assert(
+        mainDrawing.some((i) => i.drawing_scope === "swing:portfolio:primary"),
+      );
+      assert(
+        childDrawing.some(
+          (i) => i.drawing_scope === "swing:portfolio:child-one",
+        ),
+      );
+      assert(
+        !childDrawing.some(
+          (i) => i.drawing_scope === "swing:portfolio:primary",
+        ),
+      );
       const childCalls = await child.evaluate(() => window.calls);
       assert(!childCalls.some((c) => c.path.startsWith("active?")));
       await child.close();
@@ -373,6 +451,105 @@ try {
     });
     await context.close();
   }
+  reset();
+  const globalPage = await browser.newPage();
+  await globalPage.goto(`http://127.0.0.1:${server.address().port}?global=1`);
+  await globalPage
+    .getByText("Daily portfolio value", { exact: true })
+    .waitFor();
+  await globalPage.getByRole("button", { name: "Trades", exact: true }).click();
+  await globalPage.getByRole("button", { name: "RELIND", exact: true }).click();
+  await globalPage.getByLabel("actual strategy", { exact: true }).fill("Draft");
+  globalPage.once("dialog", (dialog) => dialog.dismiss());
+  await globalPage.getByLabel("Stats trading style").selectOption("intraday");
+  assert.equal(
+    await globalPage.getByLabel("Stats trading style").inputValue(),
+    "swing",
+  );
+  globalPage.once("dialog", (dialog) => dialog.dismiss());
+  await globalPage.getByLabel("Swing stats through").fill("2026-10-09");
+  assert.equal(
+    await globalPage.getByLabel("Swing stats through").inputValue(),
+    today,
+  );
+  globalPage.once("dialog", (dialog) => dialog.accept());
+  await globalPage.getByLabel("Stats trading style").selectOption("intraday");
+  await globalPage.waitForFunction(() => window.dayFilters);
+  assert.equal(
+    (await globalPage.evaluate(() => window.dayFilters)).portfolio_id,
+    "",
+  );
+  await globalPage.getByLabel("Stats trading style").selectOption("swing");
+  await globalPage
+    .getByText("Daily portfolio value", { exact: true })
+    .waitFor();
+  assert.equal(
+    await globalPage.getByLabel("Swing stats portfolio").inputValue(),
+    "portfolio",
+  );
+  await globalPage.getByRole("button", { name: "Trades", exact: true }).click();
+  await globalPage.getByRole("button", { name: "RELIND", exact: true }).click();
+  await globalPage.getByLabel("actual strategy", { exact: true }).fill("Saved");
+  saveDelay = 600;
+  await globalPage
+    .getByRole("button", { name: "Save trade label", exact: true })
+    .click();
+  await globalPage.waitForFunction(() => window.saving === true);
+  await globalPage.getByLabel("Stats trading style").selectOption("intraday");
+  assert.equal(
+    await globalPage.getByLabel("Stats trading style").inputValue(),
+    "swing",
+  );
+  await globalPage.waitForFunction(() => window.saving === false);
+  assert.equal(cycle.label.actual_strategy, "Saved");
+  await globalPage.close();
+  saveDelay = 0;
+  reset();
+  const sessionsPage = await browser.newPage();
+  await sessionsPage.goto(
+    `http://127.0.0.1:${server.address().port}?sessions=1`,
+  );
+  await sessionsPage.getByText("Paper · Swing", { exact: true }).click();
+  await sessionsPage
+    .getByLabel("actual strategy", { exact: true })
+    .fill("Session draft");
+  sessionsPage.once("dialog", (dialog) => dialog.dismiss());
+  await sessionsPage
+    .getByRole("button", { name: "Search", exact: true })
+    .click();
+  assert.equal(
+    await sessionsPage
+      .getByLabel("actual strategy", { exact: true })
+      .inputValue(),
+    "Session draft",
+  );
+  sessionsPage.once("dialog", (dialog) => dialog.dismiss());
+  await sessionsPage.getByText("Paper · Swing", { exact: true }).click();
+  assert.equal(
+    await sessionsPage
+      .getByRole("region", { name: "Swing execution history" })
+      .count(),
+    1,
+  );
+  sessionsPage.once("dialog", (dialog) => dialog.dismiss());
+  await sessionsPage.getByRole("button", { name: "✕", exact: true }).click();
+  assert.equal(
+    await sessionsPage.evaluate(() => Boolean(window.detached)),
+    false,
+  );
+  sessionsPage.once("dialog", (dialog) => dialog.accept());
+  await sessionsPage
+    .getByRole("button", { name: "Search", exact: true })
+    .click();
+  await sessionsPage.getByText("Paper · Swing", { exact: true }).click();
+  await sessionsPage.getByLabel("actual strategy", { exact: true }).waitFor();
+  assert.equal(
+    await sessionsPage
+      .getByLabel("actual strategy", { exact: true })
+      .inputValue(),
+    "",
+  );
+  await sessionsPage.close();
   console.log(JSON.stringify(results));
 } finally {
   await browser.close();

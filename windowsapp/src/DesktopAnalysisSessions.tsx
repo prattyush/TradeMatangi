@@ -37,7 +37,7 @@ export default function DesktopAnalysisSessions({initialPortfolioId}:{initialPor
     <div className="analysis-selected-session" aria-label="Selected session">
       {loading&&<p role="status">Reading sessions…</p>}{error&&<p role="alert">{error}<button onClick={()=>setRefresh(n=>n+1)}>Retry</button></p>}
       {!loading&&!error&&!current&&<p>No executions for these filters.</p>}
-      {current&&!error&&<GroupCard key={`${current.key}:${refresh}`} group={current} historicalDays={environment.historicalDays} initiallyExpanded />}
+      {current&&!error&&<GroupCard key={`${current.key}:${refresh}:${JSON.stringify(filters)}`} group={current} historicalDays={environment.historicalDays} initiallyExpanded />}
     </div>
   </div>
 }

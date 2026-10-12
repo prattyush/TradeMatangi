@@ -376,9 +376,7 @@ def valuation_series(parent, all_cycles, start, end, loader=price_history):
                 )
             except Exception:  # noqa: BLE001 — disclose unavailable provider data as gaps
                 prices[key] = {}
-    executions.sort(
-        key=lambda r: (r["timestamp"], r.get("execution_id") or r.get("trade_id") or "")
-    )
+    executions.sort(key=performance.execution_order_key)
     cash = float(parent["starting_capital"])
     holdings = defaultdict(int)
     lots = defaultdict(deque)
@@ -424,7 +422,7 @@ def valuation_series(parent, all_cycles, start, end, loader=price_history):
             and executions[execution_index]["timestamp"] <= closing
         ):
             row = executions[execution_index]
-            if row.get("opening_basis") and date_of(row["timestamp"]) == date:
+            if row.get("opening_basis"):
                 imported_today = True
             quantity = int(row["quantity"])
             value = quantity * float(row["price"])
