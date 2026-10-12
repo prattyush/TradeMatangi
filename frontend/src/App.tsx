@@ -1,3 +1,4 @@
+import SwingChart from './components/SwingChart'
 import SwingPortfolioPanel, { type SwingRequest } from '../../shared/SwingPortfolioPanel'
 import { _authHeaders } from './services/api'
 import ChartEntryTicket, { type EntryTicket as ContextMenuEntryTicket } from './components/ChartEntryTicket'
@@ -220,7 +221,7 @@ export default function App() {
 function AppInner({ authUser, onLogout, setAuthUser, onOpenMessages }: { onOpenMessages:(id?:string)=>void; authUser: { userId: string; email: string; isAdmin: boolean; accountName?: string }; onLogout: () => void; setAuthUser: React.Dispatch<React.SetStateAction<{ userId: string; email: string; isAdmin: boolean; accountName?: string } | null>> }) {
   const sim = useSimulation()
   const [showSwing, setShowSwing] = useState(false)
-  const swingRequest = useCallback<SwingRequest>(async <T,>(path: string, method: 'GET' | 'POST', body?: Record<string, unknown>) => {
+  const swingRequest = useCallback<SwingRequest>(async <T,>(path: string, method: 'GET' | 'POST' | 'PUT' | 'DELETE', body?: Record<string, unknown>) => {
     const response = await fetch(`${BACKEND_URL}/api/swing/portfolios${path ? '/' + path : ''}`, {
       method, headers: { ..._authHeaders(), 'Content-Type': 'application/json' },
       body: method === 'GET' ? undefined : JSON.stringify(body ?? {})
@@ -2139,7 +2140,7 @@ function AppInner({ authUser, onLogout, setAuthUser, onOpenMessages }: { onOpenM
 
   const idle = sim.sessionState === 'idle' || sim.sessionState === 'ended'
 
-  if (showSwing) return <SwingPortfolioPanel key={authUser.userId} request={swingRequest} loadSymbols={swingSymbols} onDetach={() => setShowSwing(false)} />
+  if (showSwing) return <SwingPortfolioPanel key={authUser.userId} request={swingRequest} loadSymbols={swingSymbols} renderChart={SwingChart} surface="website" onDetach={() => setShowSwing(false)} />
 
   if (showPatternLibrary) {
     return (
