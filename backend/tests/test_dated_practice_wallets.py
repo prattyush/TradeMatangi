@@ -139,7 +139,7 @@ def test_reset_storage_failure_preserves_balance_and_history(db, monkeypatch):
     assert paper_wallet.balance(USER, DATE) == 140000
 
 
-def test_stopped_empty_paper_preparation_and_resume_use_updated_wallet(db, monkeypatch):
+def test_stopped_empty_paper_resume_preserves_capital_with_updated_wallet(db, monkeypatch):
     from app.routers import desktop_trading as routes
     from app.services.desktop_auth_service import _access_token
     from app.routers import simulation as start_routes
@@ -181,7 +181,7 @@ def test_stopped_empty_paper_preparation_and_resume_use_updated_wallet(db, monke
     assert resumed.status_code == 200, resumed.text
     assert resumed.json()["session"]["session_id"] == session_id
     assert resumed.json()["session"]["state"] == "running"
-    assert resumed.json()["session"]["session_capital"] == 180000
+    assert resumed.json()["session"]["session_capital"] == 150000
     assert resumed.json()["wallet_balance"] == 180000
     assert resumed.json()["trades"] == []
     assert resumed.json()["open_orders"] == []
@@ -285,7 +285,9 @@ def test_website_empty_stopped_paper_restarts_without_trades_or_erase(db, monkey
         "symbol": "TATPOW", "date": DATE, "session_type": "paper", "instrument_type": "equity", "override": override})
     assert response.status_code == 200, response.text
     assert response.json()["session_id"] == sid
-    assert response.json()["session_capital"] == 190000
+    assert response.json()["session_capital"] == 150000
+    assert paper_wallet.balance(USER, DATE) == 190000
+    assert db.Table("Sessions").get_item(Key={"session_id": sid})["Item"]["session_capital"] == 150000
     assert simulation.get_session(sid).state == simulation.SimulationState.RUNNING
     assert db.Table("Trades").scan()["Count"] == 0
     assert db.Table("Sessions").get_item(Key={"session_id": sid})["Item"]["session_id"] == sid

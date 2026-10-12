@@ -562,8 +562,9 @@ Comprehensive review outcome:
   candles on page refresh while wallet responses are pending.
 - Desktop empty stopped Paper resumes the saved identity without a redundant
   confirmation; preparation accepts the owned persisted session. Completed stopped
-  history no longer prevents the Wallet popup reset. Reset funds are used on resume,
-  with existing same-date/market-time guards and trading history retained.
+  history no longer prevents the Wallet popup reset. Reset funds remain available
+  on resume, with existing same-date/market-time guards and trading history retained.
+  The capital follow-up below preserves the saved session baseline separately.
 - Desktop Replay Market execution and exact-contract quote routing, CE/PE option
   lot sizing, pending-order edit increments and protective Stoploss submission are
   covered by backend and browser checks. Popup Stoploss includes the required
@@ -874,6 +875,37 @@ non-mutating Cancel, pending controls, deletion failure/retry, and line removal.
 Artifacts: `.cache/desktop-strategy-menu/` and `.cache/desktop-tp-editor/`.
 [PR #648](https://github.com/prattyush/TradeMatangi/pull/648) targets dev and awaits
 review; rebuild the desktop client to apply. Main merge/deployment remain manual.
+
+## Paper/Real resumed session capital — 2026-10-12
+
+Implemented and validated. The shared storage restore path previously took current
+wallet cash as session capital, then persisted that reduced baseline. Desktop Paper
+resumes, stopped-session previews and website Paper restoration now retain the
+saved finite `session_capital`, including zero. Positions, trades, available wallet
+cash and P&L continue to use their existing values. For example, a ₹1,00,000 session
+with a ₹6,501 open-position debit resumes with ₹1,00,000 capital and ₹93,499 cash.
+
+Real restoration retains an explicitly supplied frozen broker account/day baseline;
+without that override it uses the saved session capital. Missing or invalid legacy
+capital falls back to the existing explicit-capital/wallet logic and logs
+`session_capital_resume_fallback`. No new API, fields, migration, historical scan
+or client calculation was introduced. Already overwritten original capital cannot
+be reconstructed reliably from current cash; no automatic repair is attempted.
+
+Wallet reset rules are unchanged. Resuming the same Paper session after reset keeps
+that session's original capital while exposing the updated available balance. A
+new session still starts from the existing wallet rules. Replay/Stepwise start,
+pause/resume, stop/checkpoint and position-flattening behavior remain unchanged.
+
+Validation: **162 focused backend tests**, **46 related backend tests**, **49 website
+tests**, **191 desktop tests**, and both TypeScript checks pass. Coverage includes
+open-position stop/restoration, repeated server-memory loss, persisted capital,
+read-only preview, empty-session desktop/website resume after reset, zero and
+invalid legacy values, Real frozen daily balances, and unchanged Replay/Stepwise
+capital rules. The existing replay completion test now awaits the engine task
+with a bounded timeout instead of assuming it finishes in 100ms. Artifacts:
+`.cache/resume-session-capital/`. Delivery PR targets dev; main merge/deployment
+remain manual. Restart the backend to apply; no client rebuild is needed.
 
 ## Original requirements
 
