@@ -243,6 +243,19 @@ def reconcile(session, available, *, coherent=True):
     invested, cash, commissions = 0.0, 0.0, 0.0
     tickets = {}
     for child in sessions:
+        if child.instrument_type == "futures":
+            from app.services.futures_ledger import read, values
+            state = read(child)["ledger"]
+            metrics = values(state)
+            cash += metrics["cash_profit"]
+            commissions += metrics["fees"]
+            invested += metrics["held_margin"]
+            coherent = coherent and not getattr(child,"futures_settlement_pending",False) and not getattr(child,"futures_margin_pending",False)
+            for order in order_service.get_open_orders(child.session_id):
+                if order.reserved_amount:
+                    tickets[f"{child.session_id}:{order.order_id}"] = {"mode":session.trading_style,
+                        "amount":order.reserved_amount,"owner":"broker" if order.broker_order_id or order.recovery_state in ("submitting","unknown") else "local"}
+            continue
         cash -= getattr(child, "opening_inventory_cost", 0)
         for trade in trading.get_trades(child.session_id):
             cash += (

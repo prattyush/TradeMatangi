@@ -50,3 +50,9 @@ describe('desktop trade markers', () => {
     ])
   })
 })
+
+it('matches Futures expiry and keeps Futures prices off underlying charts', () => {
+  const rows = [trade({ instrument_type: 'futures', expiry: '2026-10-27' }), trade({trade_id:'next',instrument_type:'futures',expiry:'2026-11-24'})]
+  expect(buildTradeMarkers(rows,{kind:'future',underlying:'NIFTY',expiry:'2026-10-27'},180).map(m=>m.id)).toEqual(['t1'])
+  expect(buildTradeMarkers(rows,{kind:'index',symbol:'NIFTY'},180)).toEqual([])
+})

@@ -62,7 +62,7 @@ def active(user, mode, broker=None):
     )
 
 
-def create(user, mode, capital, *, broker=None, account=None, loss_limit_pct=None, allocation_pct=None, funding_period=None):
+def create(user, mode, capital, *, broker=None, account=None, loss_limit_pct=None, allocation_pct=None, funding_period=None, paper_broker="kite"):
     from app.services.db import get_dynamodb_client
     from boto3.dynamodb.types import TypeSerializer
 
@@ -90,6 +90,7 @@ def create(user, mode, capital, *, broker=None, account=None, loss_limit_pct=Non
         "loss_limit_pct": loss_limit_pct,
         "version": 0,
         "execution_broker": broker,
+        "paper_broker": paper_broker if mode == "paper" else None,
         "broker_account_id": account,
         "created_at": int(time.time() * 1000),
     }
@@ -183,6 +184,7 @@ def update(user, portfolio_id, changes, version):
         "date",
         "starting_capital",
         "execution_broker",
+        "paper_broker",
         "broker_account_id",
         "version",
         "created_at",

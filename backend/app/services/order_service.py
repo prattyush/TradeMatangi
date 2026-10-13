@@ -349,6 +349,12 @@ def place_order(
     if getattr(entry_scope, 'trading_style', 'intraday') == 'swing':
         from app.services.swing_portfolio_service import require_entry_allowed
         require_entry_allowed(entry_scope, side, quantity, right, strike, expiry)
+    if getattr(entry_scope, "instrument_type", None) == "futures":
+        from app.services.swing_futures import is_exit
+        if not (analytics or {}).get("futures") or not is_exit(entry_scope, side, quantity):
+            raise ValueError("Futures entries require the portfolio margin preview; cancel and replace through the Swing ticket")
+        # Covering a short releases held margin; it never reserves BUY notional.
+        margin_rate = 0.0
     is_real = execution.real_session(session_id, wallet_ledger_kind)
     if is_real:
         from app.services import simulation, real_trading_day
@@ -567,6 +573,12 @@ def update_order(
     order = _orders.get(session_id, {}).get(order_id)
     if order is None or order.status != OrderStatus.PENDING:
         return None
+    from app.services.simulation import get_session
+    scope = get_session(session_id)
+    if getattr(scope, "instrument_type", None) == "futures":
+        from app.services.swing_futures import is_exit
+        if order.execution_role != "exit" or not is_exit(scope, order.side, quantity if quantity is not None else order.quantity):
+            raise ValueError("Futures entries must be cancelled and replaced after a fresh margin preview")
     from app.services.swing_paper_recovery import require_amendable, amend_attempt
     require_amendable(order)
 
@@ -631,6 +643,12 @@ def convert_order(
     order = _orders.get(session_id, {}).get(order_id)
     if order is None or order.status != OrderStatus.PENDING:
         return None
+    from app.services.simulation import get_session
+    scope = get_session(session_id)
+    if getattr(scope, "instrument_type", None) == "futures":
+        from app.services.swing_futures import is_exit
+        if order.execution_role != "exit" or not is_exit(scope, order.side, order.quantity):
+            raise ValueError("Futures entries must be cancelled and replaced after a fresh margin preview")
     from app.services.swing_paper_recovery import require_amendable, amend_attempt
     require_amendable(order)
     if new_order_type == order.order_type:

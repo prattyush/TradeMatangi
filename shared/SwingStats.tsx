@@ -322,6 +322,53 @@ export default function SwingStats({
               unresolved.
             </p>
           )}
+          {report.futures &&
+          (report.futures.completed_cycles ||
+            report.futures.long_cycles ||
+            report.futures.short_cycles) ? (
+            <section className="swing-stat-card">
+              <h3>Futures · margin and exposure</h3>
+              <div className="swing-stat-grid">
+                {card(
+                  "Return on margin",
+                  percent(report.futures.average_return_on_margin_pct),
+                  "Average net result divided by captured entry margin for completed Futures cycles.",
+                )}
+                {card(
+                  "Held margin",
+                  swingMoney(report.futures.held_margin),
+                  "Collateral held for open Futures; a margin transfer is not a trading expense.",
+                )}
+                {card(
+                  "Margin utilization",
+                  percent(report.futures.margin_utilization_pct),
+                  "Held margin relative to portfolio capital.",
+                )}
+                {card(
+                  "Notional exposure",
+                  swingMoney(report.futures.notional_exposure),
+                  "Contract price times units; this is exposure, not a NAV asset.",
+                )}
+                {card(
+                  "Settled MTM",
+                  swingMoney(report.futures.settled_mtm),
+                  "Official settlement movements already accounted for; not additional profit.",
+                )}
+                {card(
+                  "Unsettled P&L",
+                  swingMoney(report.futures.unsettled_pnl),
+                  "Movement since the last settlement basis.",
+                )}
+              </div>
+              <p>
+                {report.futures.long_cycles} long ·{" "}
+                {report.futures.short_cycles} short ·{" "}
+                {report.futures.index_cycles} index ·{" "}
+                {report.futures.stock_cycles} stock cycles.{" "}
+                {report.futures.fee_basis}
+              </p>
+            </section>
+          ) : null}
           {view === "Overview" && (
             <>
               <p>
@@ -473,7 +520,7 @@ export default function SwingStats({
                   ["Profit factor", number(metrics.profit_factor)],
                   ["Expectancy", swingMoney(metrics.expectancy)],
                   [
-                    "Mean trade return %",
+                    "Mean return on cost %",
                     percent(metrics.average_return_on_cost_pct),
                   ],
                   ["Median holding days", number(metrics.median_holding_days)],

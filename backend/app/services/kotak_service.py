@@ -530,6 +530,33 @@ class KotakNeoService:
 
     # ── Order placement ───────────────────────────────────────────────────────
 
+    def _place_futures(self, contract, side, qty, price, trigger=None, tag=None):
+        if contract.get("provider") != "kotak" or contract["exchange"] not in ("NFO","BFO"):
+            raise KotakOrderRejected("Kotak Futures requires its exact listed contract metadata")
+        if not isinstance(qty,int) or qty<=0 or qty % contract["lot_size"]:
+            raise KotakOrderRejected("Futures quantity must be complete listed lots")
+        if side not in ("B","S","BUY","SELL"):
+            raise KotakOrderRejected("Futures side must be BUY or SELL")
+        for value in (price,trigger) if trigger is not None else (price,):
+            if not math.isfinite(value) or value <=0 or abs(value/contract["tick_size"]-round(value/contract["tick_size"]))>1e-6:
+                raise KotakOrderRejected("Futures price must match the listed tick")
+        try:
+            response=self._get_client().place_order(exchange_segment="bse_fo" if contract["exchange"]=="BFO" else "nse_fo",
+                product="NRML",price=str(price),order_type="SL" if trigger is not None else "L",quantity=str(qty),
+                validity="DAY",trading_symbol=contract["trading_symbol"],transaction_type="B" if side in ("B","BUY") else "S",
+                amo="NO",disclosed_quantity="0",trigger_price=str(trigger) if trigger is not None else "0",tag=tag)
+            return self._extract_order_id(response)
+        except KotakError:
+            raise
+        except Exception as exc:
+            raise KotakError(f"Futures acknowledgement is uncertain: {exc}") from exc
+
+    def place_futures_limit_order(self, contract, side, qty, price, tag=None):
+        return self._place_futures(contract,side,qty,price,tag=tag)
+
+    def place_futures_sl_order(self, contract, side, qty, trigger_price, limit_price, tag=None):
+        return self._place_futures(contract,side,qty,limit_price,trigger=trigger_price,tag=tag)
+
     def place_limit_order(
         self,
         symbol: str,

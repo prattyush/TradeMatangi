@@ -392,11 +392,15 @@ async def refresh(session, *, protection=False):
             positions = fifo_positions.verified_positions(
                 session, ledger, reported, master
             )
-            if any(p["side"] == "SHORT" for p in positions):
+            if session.instrument_type != "futures" and any(p["side"] == "SHORT" for p in positions):
                 raise ValueError(
                     "Swing supports long positions; reconcile this short at the broker"
                 )
-            trades = state.aggregate(session, ledger, account, master)
+            if session.instrument_type == "futures":
+                from app.services.futures_real import confirmed_trades
+                trades = confirmed_trades(session,ledger,orders)
+            else:
+                trades = state.aggregate(session, ledger, account, master)
             for report in scoped_orders:
                 expired = report["status"] == "expired" or (
                     "expir" in report.get("reject_reason", "").lower()
@@ -413,7 +417,7 @@ async def refresh(session, *, protection=False):
                 if (
                     expired
                     and order
-                    and order.side.value == "SELL"
+                    and (order.side.value == "SELL" or session.instrument_type == "futures" and order.execution_role == "exit")
                     and not order.cancel_request_id
                 ) and (
                     not order.swing_attempts
@@ -459,6 +463,9 @@ async def refresh(session, *, protection=False):
             }
             session._fifo_executions = ledger
             session.broker_positions = positions
+            if session.instrument_type == "futures":
+                from app.services.futures_real import rebuild
+                await asyncio.to_thread(rebuild,session)
             session._broker_state_version = (
                 getattr(session, "_broker_state_version", 0) + 1
             )
@@ -566,6 +573,10 @@ async def verify_close(current):
     )
     if requirements["closure_blocked"]:
         return False
+    from app.services.futures_real import delivery_review_contexts
+    delivery=delivery_review_contexts(current)
+    if not set(delivery)<=set(row.get("acknowledged_delivery_context_ids",[])):
+        return False  # Flat derivative reports alone do not prove stock delivery/payment obligations.
     results = [
         await real_recovery.verify(child) for child in list(current.contexts.values())
     ]
@@ -582,8 +593,10 @@ async def verify_close(current):
         if row.get("acknowledged_undated_submission_ids")
         else None
     )
+    if delivery:
+        warning="Broker derivative exposure is verified flat. Stock Futures delivery/settlement was reviewed by the owner; historical cash, delivery and P&L evidence may remain incomplete."
     for child in current.contexts.values():
-        if child.real_recovery_pending:
+        if child.real_recovery_pending and not delivery:
             warning = "Current broker exposure is flat; historical execution/P&L gaps remain unresolved."
         # Current broker evidence proves no order remains active, including an old
         # DAY attempt. Clear reservations only after that proof, not on lease expiry.
@@ -666,6 +679,8 @@ def inventory_fingerprint(positions):
 
 
 async def inventory_preview(child):
+    if child.instrument_type == "futures":
+        raise HTTPException(409, "Existing external Futures require broker reconciliation; opening-inventory import is not supported")
     from app.services.real_recovery import verify
 
     verification = await verify(child)
@@ -1105,7 +1120,7 @@ async def renew_protection_on_quote(session, event):
     for old in list(order_service.get_all_orders(session.session_id)):
         if (
             old.status != OrderStatus.CANCELLED
-            or old.side != TradeSide.SELL
+            or (old.side != TradeSide.SELL and not (session.instrument_type == "futures" and old.execution_role == "exit"))
             or not old.broker_order_id
         ):
             continue
@@ -1117,7 +1132,7 @@ async def renew_protection_on_quote(session, event):
             or latest.get("date", session.date) >= session.date
         ):
             continue
-        if old.expiry and old.expiry <= session.date:
+        if old.expiry and (old.expiry < session.date if session.instrument_type == "futures" else old.expiry <= session.date):
             continue  # Expiry/settlement must be reconciled; never renew an expired contract.
         held = trading.get_position(
             session.session_id, session.symbol, old.right, old.strike, old.expiry
@@ -1125,7 +1140,7 @@ async def renew_protection_on_quote(session, event):
         covered = sum(
             max(0, o.quantity - o.broker_filled_quantity)
             for o in order_service.get_open_orders(session.session_id)
-            if o.side == TradeSide.SELL and (o.right, o.strike, o.expiry) == exact
+            if o.side == old.side and (o.right, o.strike, o.expiry) == exact
         )
         remaining = min(
             max(0, old.quantity - old.broker_filled_quantity),
@@ -1138,6 +1153,10 @@ async def renew_protection_on_quote(session, event):
         )
         if order_service.get_order(session.session_id, identifier):
             continue  # Includes unknown ACK and known rejection; no blind retry.
+        if session.instrument_type == "futures":
+            from app.services.futures_real import renew_exit
+            await renew_exit(session,old,remaining,identifier,event)
+            continue
         renewal = order_service.place_order(
             session.session_id,
             session.symbol,

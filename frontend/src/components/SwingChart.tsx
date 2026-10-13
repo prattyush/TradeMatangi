@@ -35,7 +35,7 @@ export default function SwingChart(props: SwingChartProps) {
         startTime={null}
         intervalMinutes={minutes}
         historyMode="live"
-        paneType={pane.instrument_type === "options" ? "options" : "equity"}
+        paneType={pane.instrument_type}
         right={pane.right as "CE" | "PE"}
         strike={pane.strike}
         expiry={pane.expiry}

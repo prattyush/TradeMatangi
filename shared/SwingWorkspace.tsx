@@ -14,7 +14,7 @@ import "./swingWorkspace.css";
 export type SwingInterval = "1m" | "3m" | "5m" | "15m" | "30m" | "1h" | "1D";
 export interface SwingPane {
   symbol: string;
-  instrument_type: "equity" | "options";
+  instrument_type: "equity" | "options" | "futures";
   right?: string;
   strike?: number;
   expiry?: string;
@@ -96,7 +96,12 @@ function fromRow(row: any, base: SwingPane): SwingPane {
   return {
     ...base,
     symbol: row.symbol,
-    instrument_type: row.right ? "options" : "equity",
+    instrument_type:
+      row.instrument_type === "futures" || row.analytics?.futures
+        ? "futures"
+        : row.right
+          ? "options"
+          : "equity",
     right: row.right ?? undefined,
     strike: row.strike ?? undefined,
     expiry: row.expiry ?? undefined,
@@ -193,12 +198,13 @@ function PaneChart({
   const more = useRef(false);
   const latestQuote = useRef(quote);
   latestQuote.current = quote;
-  const key = JSON.stringify({...pane, marker_mode: undefined});
+  const key = JSON.stringify({ ...pane, marker_mode: undefined });
   useEffect(() => {
     const version = ++owner.current;
     if (
-      pane.instrument_type === "options" &&
-      !(pane.right && pane.strike && pane.expiry)
+      (pane.instrument_type === "options" &&
+        !(pane.right && pane.strike && pane.expiry)) ||
+      (pane.instrument_type === "futures" && !pane.expiry)
     ) {
       setLoading(false);
       setHistory({ candles: [], provider: "", more: false, partial: false });
@@ -269,17 +275,25 @@ function PaneChart({
   };
   return (
     <>
-      {(surface !== "desktop" || error) && <div className="swing-data-label">
-        {surface !== "desktop" && <>{loading ? "Loading" : history.provider || "History"} ·{" "}
-        {pane.as_of_date === swingToday()
-          ? quote
-            ? marketOpen && Date.now() / 1000 + 19800 - quote.time < 120
-              ? "Live quote"
-              : "Last quote"
-            : "Today"
-          : "Historical"}</>}
-        {error && <button onClick={() => setRetry((v) => v + 1)}>Retry</button>}
-      </div>}
+      {(surface !== "desktop" || error) && (
+        <div className="swing-data-label">
+          {surface !== "desktop" && (
+            <>
+              {loading ? "Loading" : history.provider || "History"} ·{" "}
+              {pane.as_of_date === swingToday()
+                ? quote
+                  ? marketOpen && Date.now() / 1000 + 19800 - quote.time < 120
+                    ? "Live quote"
+                    : "Last quote"
+                  : "Today"
+                : "Historical"}
+            </>
+          )}
+          {error && (
+            <button onClick={() => setRetry((v) => v + 1)}>Retry</button>
+          )}
+        </div>
+      )}
       <Renderer
         key={`${paneKey(pane)}:${pane.interval}`}
         pane={pane}
@@ -304,7 +318,12 @@ function PaneChart({
         picking={picking}
         position={position}
         orders={orders}
-        trades={swingMarkerTrades(trades, pane, pane.marker_mode ?? "open", markerBasis)}
+        trades={swingMarkerTrades(
+          trades,
+          pane,
+          pane.marker_mode ?? "open",
+          markerBasis,
+        )}
         showHistoricalTrades
         onPick={onPick}
         onActivate={onActivate}
@@ -366,7 +385,12 @@ export default function SwingWorkspace({
   const [panes, setPanes] = useState<SwingPane[]>([
     {
       symbol: snapshot.positions?.[0]?.symbol ?? "HDFCBANK",
-      instrument_type: snapshot.positions?.[0]?.right ? "options" : "equity",
+      instrument_type:
+        snapshot.positions?.[0]?.instrument_type === "futures"
+          ? "futures"
+          : snapshot.positions?.[0]?.right
+            ? "options"
+            : "equity",
       right: snapshot.positions?.[0]?.right,
       strike: snapshot.positions?.[0]?.strike,
       expiry: snapshot.positions?.[0]?.expiry,
@@ -387,9 +411,12 @@ export default function SwingWorkspace({
     [feed, setFeed] = useState(""),
     [notice, setNotice] = useState("");
   useEffect(() => {
-    if (surface === "desktop" && notice) flashError(notice, "Desktop Swing workspace", {sessionId: prefix});
+    if (surface === "desktop" && notice)
+      flashError(notice, "Desktop Swing workspace", { sessionId: prefix });
   }, [notice, surface, prefix]);
-  const [toolsContainer, setToolsContainer] = useState<HTMLDivElement | null>(null);
+  const [toolsContainer, setToolsContainer] = useState<HTMLDivElement | null>(
+    null,
+  );
   const [metadata, setMetadata] = useState<any[]>([]);
   const current = panes[active] ?? panes[0];
   const currentSymbol = symbols.find((s) => s.symbol === current.symbol);
@@ -411,7 +438,15 @@ export default function SwingWorkspace({
   }, []);
   useEffect(() => {
     let cancelled = false;
-    void request<{ workspace: { panes: SwingPane[]; active: number; rail_open?: boolean; ticket_open?: boolean; tools_collapsed?: boolean } | null }>(
+    void request<{
+      workspace: {
+        panes: SwingPane[];
+        active: number;
+        rail_open?: boolean;
+        ticket_open?: boolean;
+        tools_collapsed?: boolean;
+      } | null;
+    }>(
       `${prefix}/charts/workspace?surface=${surface}${workspaceId ? `&workspace_id=${encodeURIComponent(workspaceId)}` : ""}`,
       "GET",
     )
@@ -452,7 +487,18 @@ export default function SwingWorkspace({
       700,
     );
     return () => clearTimeout(timer);
-  }, [paneSignature, active, railOpen, ticketOpen, toolsCollapsed, restored, prefix, surface, workspaceId, request]);
+  }, [
+    paneSignature,
+    active,
+    railOpen,
+    ticketOpen,
+    toolsCollapsed,
+    restored,
+    prefix,
+    surface,
+    workspaceId,
+    request,
+  ]);
   useEffect(() => {
     if (!restored) return;
     onSaveReady?.(() =>
@@ -486,9 +532,11 @@ export default function SwingWorkspace({
   useEffect(() => {
     let cancelled = false;
     setMetadata([]);
-    if (current.instrument_type === "options")
+    if (current.instrument_type !== "equity")
       void request<{ contracts: any[] }>(
-        `contracts/metadata?symbol=${encodeURIComponent(current.symbol)}`,
+        current.instrument_type === "futures"
+          ? `contracts/futures?symbol=${encodeURIComponent(current.symbol)}&provider=${snapshot.portfolio.execution_broker ?? snapshot.portfolio.paper_broker ?? "kite"}`
+          : `contracts/metadata?symbol=${encodeURIComponent(current.symbol)}`,
         "GET",
       )
         .then((value) => {
@@ -500,14 +548,24 @@ export default function SwingWorkspace({
     return () => {
       cancelled = true;
     };
-  }, [current.symbol, current.instrument_type, request]);
+  }, [
+    current.symbol,
+    current.instrument_type,
+    snapshot.portfolio.execution_broker,
+    snapshot.portfolio.paper_broker,
+    request,
+  ]);
   const watchSignature = JSON.stringify(
-    panes.filter(
-      (p) =>
-        p.as_of_date === clock &&
-        (p.instrument_type === "equity" ||
-          Boolean(p.right && p.strike && p.expiry)),
-    ).map(({marker_mode: _markerMode, ...pane}) => pane),
+    panes
+      .filter(
+        (p) =>
+          p.as_of_date === clock &&
+          (p.instrument_type === "equity" ||
+            (p.instrument_type === "futures"
+              ? Boolean(p.expiry)
+              : Boolean(p.right && p.strike && p.expiry))),
+      )
+      .map(({ marker_mode: _markerMode, ...pane }) => pane),
   );
   useEffect(() => {
     let cancelled = false,
@@ -630,8 +688,23 @@ export default function SwingWorkspace({
             </option>
           ))}
         </select>
-        {surface === "desktop" && <button type="button" aria-expanded={railOpen} title={railOpen ? "Hide portfolio panel" : "Show portfolio panel"} onClick={() => setRailOpen(v => !v)}>Portfolio panel</button>}
-        <button type="button" aria-expanded={ticketOpen} onClick={() => setTicketOpen((v) => !v)}>Trade ticket</button>
+        {surface === "desktop" && (
+          <button
+            type="button"
+            aria-expanded={railOpen}
+            title={railOpen ? "Hide portfolio panel" : "Show portfolio panel"}
+            onClick={() => setRailOpen((v) => !v)}
+          >
+            Portfolio panel
+          </button>
+        )}
+        <button
+          type="button"
+          aria-expanded={ticketOpen}
+          onClick={() => setTicketOpen((v) => !v)}
+        >
+          Trade ticket
+        </button>
         <button
           disabled={busy || snapshot.portfolio.state !== "running"}
           onClick={onPause}
@@ -661,18 +734,46 @@ export default function SwingWorkspace({
         <button onClick={onManage}>Manage portfolio</button>
         <button onClick={onDetach}>Detach</button>
       </div>
-      {surface === "desktop" && <div className="swing-tools-bar" aria-label="Active chart tools">
-        <button type="button" aria-expanded={!toolsCollapsed} title={toolsCollapsed ? "Show chart tools" : "Hide chart tools"} onClick={() => setToolsCollapsed(v => !v)}>{toolsCollapsed ? "▸" : "▾"} Chart {active + 1} tools</button>
-        <select aria-label="Active chart markers" value={current.marker_mode ?? "open"} onChange={e => update({marker_mode: e.target.value as SwingMarkerMode})}>
-          <option value="open">Open markers</option><option value="all">All markers</option><option value="off">Markers off</option>
-        </select>
-        <div ref={setToolsContainer} className="swing-tools-slot" style={{display: toolsCollapsed ? "none" : "flex"}} />
-      </div>}
+      {surface === "desktop" && (
+        <div className="swing-tools-bar" aria-label="Active chart tools">
+          <button
+            type="button"
+            aria-expanded={!toolsCollapsed}
+            title={toolsCollapsed ? "Show chart tools" : "Hide chart tools"}
+            onClick={() => setToolsCollapsed((v) => !v)}
+          >
+            {toolsCollapsed ? "▸" : "▾"} Chart {active + 1} tools
+          </button>
+          <select
+            aria-label="Active chart markers"
+            value={current.marker_mode ?? "open"}
+            onChange={(e) =>
+              update({ marker_mode: e.target.value as SwingMarkerMode })
+            }
+          >
+            <option value="open">Open markers</option>
+            <option value="all">All markers</option>
+            <option value="off">Markers off</option>
+          </select>
+          <div
+            ref={setToolsContainer}
+            className="swing-tools-slot"
+            style={{ display: toolsCollapsed ? "none" : "flex" }}
+          />
+        </div>
+      )}
       {error && (
         <p role="alert" className="swing-hint">
           {error}
         </p>
       )}
+      {(snapshot.futures ?? [])
+        .filter((f: any) => f.warning)
+        .map((f: any) => (
+          <p key={f.session_id} role="status" className="swing-hint">
+            {f.symbol} {f.expiry} · {f.warning}
+          </p>
+        ))}
       {snapshot.portfolio.history_warning && (
         <p role="status" className="swing-hint">
           {snapshot.portfolio.history_warning}
@@ -685,7 +786,10 @@ export default function SwingWorkspace({
         </p>
       )}
       <div className="swing-workspace-body">
-        <aside className="swing-portfolio-rail" hidden={surface === "desktop" && !railOpen}>
+        <aside
+          className="swing-portfolio-rail"
+          hidden={surface === "desktop" && !railOpen}
+        >
           <nav>
             {["Positions", "Orders", "Trades"].map((value) => (
               <button
@@ -706,7 +810,9 @@ export default function SwingWorkspace({
                   onClick={() => selectRow(p)}
                 >
                   <strong>
-                    {p.symbol} {p.right} {p.strike}
+                    {p.symbol}{" "}
+                    {p.instrument_type === "futures" ? "FUT" : p.right}{" "}
+                    {p.strike}
                   </strong>
                   <small>
                     {p.expiry} · {p.quantity} at ₹{money(p.avg_entry_price)}
@@ -771,8 +877,10 @@ export default function SwingWorkspace({
               <p>No recorded trades.</p>
             ))}
           <p className="swing-muted">
-            Position % is relative to cost. Pause and detach keep portfolio
-            protection active.
+            {snapshot.futures?.length
+              ? "Futures % uses held margin; other positions use cost."
+              : "Position % is relative to cost."}{" "}
+            Pause and detach keep portfolio protection active.
           </p>
         </aside>
         <section
@@ -804,9 +912,29 @@ export default function SwingWorkspace({
                   <strong>
                     {pane.symbol} {pane.right} {pane.strike}
                   </strong>
-                  {surface === "website" && <select aria-label={`Chart ${index + 1} markers`} value={pane.marker_mode ?? "open"} onChange={e => setPanes(previous => previous.map((p, i) => i === index ? {...p, marker_mode: e.target.value as SwingMarkerMode} : p))}>
-                    <option value="open">Open markers</option><option value="all">All markers</option><option value="off">Markers off</option>
-                  </select>}
+                  {surface === "website" && (
+                    <select
+                      aria-label={`Chart ${index + 1} markers`}
+                      value={pane.marker_mode ?? "open"}
+                      onChange={(e) =>
+                        setPanes((previous) =>
+                          previous.map((p, i) =>
+                            i === index
+                              ? {
+                                  ...p,
+                                  marker_mode: e.target
+                                    .value as SwingMarkerMode,
+                                }
+                              : p,
+                          ),
+                        )
+                      }
+                    >
+                      <option value="open">Open markers</option>
+                      <option value="all">All markers</option>
+                      <option value="off">Markers off</option>
+                    </select>
+                  )}
                   <input
                     aria-label={`Chart ${index + 1} date`}
                     type="date"
@@ -927,7 +1055,8 @@ export default function SwingWorkspace({
                 value={current.instrument_type}
                 onChange={(e) =>
                   update({
-                    instrument_type: e.target.value as "equity" | "options",
+                    instrument_type: e.target
+                      .value as SwingPane["instrument_type"],
                     right: undefined,
                     strike: undefined,
                     expiry: undefined,
@@ -946,13 +1075,18 @@ export default function SwingWorkspace({
                 >
                   Options
                 </option>
+                <option value="futures">Futures</option>
               </select>
             </label>
-            {current.instrument_type === "options" && (
+            {current.instrument_type !== "equity" && (
               <label>
                 Listed contract{" "}
                 <select
-                  aria-label="Chart option contract"
+                  aria-label={
+                    current.instrument_type === "futures"
+                      ? "Chart Futures contract"
+                      : "Chart option contract"
+                  }
                   value={metadata.findIndex(
                     (c) =>
                       c.right === current.right &&
@@ -974,8 +1108,16 @@ export default function SwingWorkspace({
                     <option
                       key={`${c.expiry}:${c.strike}:${c.right}`}
                       value={i}
+                      disabled={
+                        current.instrument_type === "futures" &&
+                        c.entry_eligible === false
+                      }
                     >
-                      {c.expiry} {c.strike} {c.right} · lot {c.lot_size}
+                      {c.expiry}{" "}
+                      {current.instrument_type === "futures"
+                        ? "FUT"
+                        : `${c.strike} ${c.right}`}{" "}
+                      · lot {c.lot_size}
                     </option>
                   ))}
                 </select>

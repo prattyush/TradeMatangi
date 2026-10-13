@@ -64,6 +64,7 @@ def move(
     allow_negative=False,
     order=None,
     trade=None,
+    extra_actions=None,
 ):
     from boto3.dynamodb.types import TypeSerializer
     from app.services.db import get_dynamodb_client
@@ -136,6 +137,8 @@ def move(
                     }
                 }
             )
+        if extra_actions:
+            tx.extend(extra_actions)
         try:
             get_dynamodb_client().transact_write_items(TransactItems=tx)
             return balance

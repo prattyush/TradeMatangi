@@ -1,8 +1,10 @@
 """Exact monthly equity/index Futures metadata. This module never places orders."""
 
 import csv
+import json
 import math
 import time
+import uuid
 from datetime import UTC, date, datetime
 
 from app.config import DATA_DIR, SUPPORTED_SYMBOLS
@@ -118,4 +120,51 @@ def listed_contracts(symbol, provider, as_of):
         raise ValueError("Futures metadata supports Kite and Kotak")
     if not rows:
         raise RuntimeError("Futures instrument master is unavailable")
-    return parse_contracts(symbol, provider, rows, as_of)
+    contracts = parse_contracts(symbol, provider, rows, as_of)
+    for contract in contracts:
+        path = archive_path(symbol, contract["expiry"], provider)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = path.with_suffix(f".{uuid.uuid4().hex}.tmp")
+        try:
+            temporary.write_text(json.dumps(contract))
+            temporary.replace(path)
+        finally:
+            temporary.unlink(missing_ok=True)
+    return contracts
+
+
+def archive_path(symbol, expiry, provider):
+    if symbol not in SUPPORTED_SYMBOLS or provider not in ("kite", "kotak"):
+        raise ValueError("Unsupported Futures identity")
+    expiry = date.fromisoformat(expiry).isoformat()
+    return DATA_DIR / "futures-contracts" / provider / symbol / f"{expiry}.json"
+
+
+def resolve_contract(symbol, expiry, provider, *, historical=False):
+    from app.services.swing_market import today
+
+    current = date.fromisoformat(today())
+    expired = date.fromisoformat(expiry) < current
+    if expired:
+        if not historical:
+            raise ValueError(
+                "Expired Futures require settlement reconciliation, not live entry"
+            )
+        path = archive_path(symbol, expiry, provider)
+        if not path.exists():
+            raise ValueError("Archived exact Futures metadata is unavailable")
+        # Purged/reused Kite tokens cannot safely establish new expired-contract history.
+        raise ValueError(
+            "Use captured contract history or exact-expiry provider history for expired Futures"
+        )
+    contract = next(
+        (
+            row
+            for row in listed_contracts(symbol, provider, current)
+            if row["expiry"] == expiry
+        ),
+        None,
+    )
+    if contract is None:
+        raise ValueError("Exact Futures contract is not listed by this provider")
+    return contract

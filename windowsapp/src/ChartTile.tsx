@@ -147,7 +147,9 @@ export function ChartTile({ externalTradeMarkers=false, legacyDrawingScope, draw
   const drawingBusyRef = useRef(0)
   const drawingGestureRef = useRef(false)
   const latestPositionFill = trades.reduce((latest, trade) => {
-    const matches = instrument.kind === 'option'
+    const matches = instrument.kind === 'future'
+      ? trade.instrument_type === 'futures' && trade.symbol === instrument.underlying && trade.expiry === instrument.expiry
+      : instrument.kind === 'option'
       ? trade.symbol === instrument.underlying && trade.right === instrument.right && trade.strike === instrument.strike && (!trade.expiry || trade.expiry === instrument.expiry)
       : trade.symbol === instrument.symbol && !trade.right
     return matches ? Math.max(latest, trade.timestamp) : latest

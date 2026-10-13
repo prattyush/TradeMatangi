@@ -75,7 +75,9 @@ export default function SwingChart(
   }, [props.drawingRequest]);
   const pane = props.pane;
   const instrument =
-    pane.instrument_type === "options"
+    pane.instrument_type === "futures"
+      ? {kind: "future", underlying: pane.symbol, exchange: pane.symbol === "BSESEN" ? "BFO" : "NFO", expiry: pane.expiry}
+      : pane.instrument_type === "options"
       ? {
           kind: "option",
           underlying: pane.symbol,

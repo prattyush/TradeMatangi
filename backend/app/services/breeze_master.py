@@ -233,3 +233,22 @@ def listed_option_contract(symbol,strike,expiry,right):
         (item['strike'],item['expiry'],item['right'])==(strike_number(strike),expiry,right)),None)
     if match is None:raise ValueError('Contract is not listed in the current option master')
     return match
+
+
+def future_scrip_codes(stock_code, exchange_code, expiry):
+    """Only exact listed Futures codes can be routed from the shared Breeze socket."""
+    path = ensure_security_master_downloaded(exchange_code)
+    if not path or not path.exists():
+        raise FileNotFoundError("Breeze Futures master is unavailable")
+    result = set()
+    with path.open(newline="") as handle:
+        for row in csv.DictReader(handle):
+            if (row.get("ShortName", "").upper() == stock_code.upper()
+                and row.get("Series", "").upper() in ("FUTURE", "FUTURES")
+                and _normalise_expiry(row.get("ExpiryDate")) == _normalise_expiry(expiry)):
+                token = str(row.get("Token") or "").strip()
+                if token:
+                    result.add(token)
+    if not result:
+        raise ValueError("Exact Futures contract is not listed in Breeze master")
+    return result

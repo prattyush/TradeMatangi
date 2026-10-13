@@ -26,6 +26,12 @@ def instrument(symbol, kind="equity", right=None, strike=None, expiry=None):
     if symbol not in SUPPORTED_SYMBOLS:
         raise HTTPException(422, "Unsupported chart symbol")
     definition = SUPPORTED_SYMBOLS[symbol]
+    if kind == "futures":
+        if not expiry or right is not None or strike is not None:
+            raise HTTPException(422, "An exact Futures expiry is required")
+        pd.Timestamp(expiry)
+        return {"kind": "future", "underlying": symbol,
+                "exchange": definition["options_exchange_code"], "expiry": expiry}
     if kind == "options":
         if (
             right not in ("CE", "PE")
@@ -62,6 +68,7 @@ def bucket(timestamp, interval):
 def _fetch(provider, item, start, end, daily):
     symbol = item.get("underlying") or item["symbol"]
     option = item["kind"] == "option"
+    future = item["kind"] == "future"
     if provider == "kite":
         from app.services import kite_service as sdk
 
@@ -70,8 +77,11 @@ def _fetch(provider, item, start, end, daily):
                 symbol, item["expiry"], item["strike"], item["right"]
             )
             if option
-            else sdk.fetch_equity_instrument_token(symbol)[1]
+            else None if future else sdk.fetch_equity_instrument_token(symbol)[1]
         )
+        if future:
+            from app.services.futures_contracts import resolve_contract
+            token = int(resolve_contract(symbol, item["expiry"], "kite", historical=True)["instrument_token"])
         rows = sdk._kite_request(
             sdk._get_kite(),
             "historical",
@@ -97,8 +107,12 @@ def _fetch(provider, item, start, end, daily):
                 symbol, item["expiry"], item["strike"], item["right"], client=client
             )
             if option
-            else fetch_kotak_equity_instrument_token(symbol, client=client)
+            else (None, None) if future else fetch_kotak_equity_instrument_token(symbol, client=client)
         )
+        if future:
+            from app.services.futures_contracts import resolve_contract
+            contract = resolve_contract(symbol, item["expiry"], "kotak", historical=True)
+            token, exchange = contract["instrument_token"], "bse_fo" if contract["exchange"] == "BFO" else "nse_fo"
         response = sdk._request(
             client,
             neosymbol=f"{exchange}|{token}",
@@ -126,9 +140,9 @@ def _fetch(provider, item, start, end, daily):
         "to_date": end.strftime("%Y-%m-%d %H:%M:%S"),
         "stock_code": definition["breeze_stock_code"],
         "exchange_code": definition["options_exchange_code"]
-        if option
+        if option or future
         else definition["exchange_code"],
-        "product_type": "options" if option else definition["product_type"],
+        "product_type": "options" if option else "futures" if future else definition["product_type"],
     }
     if option:
         kwargs.update(
@@ -136,6 +150,8 @@ def _fetch(provider, item, start, end, daily):
             strike_price=str(item["strike"]),
             right="call" if item["right"] == "CE" else "put",
         )
+    if future:
+        kwargs.update(expiry_date=item["expiry"] + "T06:00:00.000Z", right="others", strike_price="0")
     response = request_history(_get_breeze(), **kwargs)
     if (
         not isinstance(response, dict)
@@ -257,7 +273,7 @@ def history(item, interval, date, before=None, limit=None):
     end = pd.Timestamp(date + "T15:30:00")
     if before is not None:
         end = min(end, pd.Timestamp(int(before), unit="s") - pd.Timedelta(seconds=1))
-    if item["kind"] == "option":
+    if item["kind"] in ("option", "future"):
         end = min(end, pd.Timestamp(item["expiry"] + "T15:30:00"))
     days = min(
         550, math.ceil(limit * (1.6 if daily else INTERVALS[interval] / 375 * 1.6)) + 7

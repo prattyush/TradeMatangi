@@ -11,11 +11,11 @@ Phase 21 requirements. Planned validation is distinct from actual results below.
 | 0 | Full design, decisions and scope | Complete |
 | 1 | Desktop workspace, controls, messages and navigation | Implemented; installed acceptance in Sprint 7 |
 | 2 | Selected-date markers and desktop drawing sharing | Implemented; native cross-window acceptance in Sprint 7 |
-| 3 | Futures contracts, data, previews and risk settings | In progress: discovery and equity/options percentage sizing implemented |
-| 4 | Paper Futures ledger, MTM, offline and expiry lifecycle | Pending |
-| 5 | Kite/Kotak Real Futures and reconciliation | Pending |
-| 6 | Futures Stats, Analysis and markers | Pending |
-| 7 | Review, regression and installed/broker acceptance | Pending |
+| 3 | Futures contracts, data, previews and risk settings | Implemented and automatically validated |
+| 4 | Paper Futures ledger, MTM, offline and expiry lifecycle | Implemented and automatically validated |
+| 5 | Kite/Kotak Real Futures and reconciliation | Implemented; independent Real gates await broker acceptance |
+| 6 | Futures Stats, Analysis and markers | Implemented and automatically validated |
+| 7 | Review, regression and installed/broker acceptance | Code review and automated regression complete; installed/broker acceptance remains manual |
 
 ## Agreed decisions
 
@@ -91,7 +91,8 @@ First-class `futures` throughout charts, orders, feeds and broker interfaces; no
 equity disguise or option right FUT. Canonical exchange/underlying/kind/expiry;
 preserve legacy equity/options keys and cycle IDs. One execution child per exact
 contract shares root cash and existing broker/style slot. Resolve FUTIDX/FUTSTK
-metadata and archive tokens for expired history. Actual contract quotes/history,
+metadata and archive identity evidence. Expired token reuse is unsafe: use captured
+exact-contract cache or an exact-expiry historical provider. Actual contract quotes/history,
 no spot/continuous-series execution substitutes. Respect Admin data provider policy.
 
 Owned order preview binds portfolio/contract/side/price/quantity/capital revision;
@@ -190,7 +191,7 @@ RMS and contract notes remain authoritative for Real costs and obligations.
 
 ## Actual implementation and validation
 
-### 2026-10-13 — Sprints 0–2 and initial Sprint 3 work
+### Earlier checkpoint — Sprints 0–2 and initial Sprint 3 work
 
 Implemented:
 
@@ -254,16 +255,150 @@ Actual verification:
   mocked in browser checks; installed Windows handoff/event synchronization and
   authorized broker acceptance remain in Sprint 7.
 
-Remaining work — not implemented and not ready for Futures trading:
+That checkpoint has been superseded by the completed implementation below.
 
-1. Finish Sprint 3: client contract selection/first-class instrument propagation,
-   exact contract feed/history/archive, live broker margin normalization, Admin
-   dated estimates/fee settings, Futures margin-budget previews and gates.
-2. Sprint 4: Paper Futures ledger, long/short lifecycle, official settlement/MTM,
-   offline reservations, expiry exit and restart recovery.
-3. Sprint 5: Kite/Kotak NRML Futures routing, authoritative cash/MTM reconciliation,
-   protective exits, unknown acknowledgments and expiry/delivery reconciliation.
-4. Sprint 6: Futures Stats/Analysis and exact-contract marker integration.
-5. Sprint 7: final integrated review/regression and installed/broker acceptance.
+### 2026-10-13 — Sprints 3–7 implementation and review
 
-No PR is claimed ready for the complete Futures scope at this stage.
+All planned application work is implemented on `feat/phase21-swing-futures` for
+`preprod`. Automated validation is complete. Installed Windows handoff and actual
+broker acceptance require deployment and user testing; they are not claimed done.
+Paper Futures defaults on for new settings. Kite Real and Kotak Real default off,
+with separate Admin switches for the agreed broker-specific acceptance rollout.
+Existing saved switch values remain authoritative.
+
+#### Contracts, data, sizing and settings
+
+- Exact Futures identity survives chart/history/live feed, persistence/restart,
+  order routing, execution history, Stats and Analysis on website and desktop.
+  Futures are Swing only. Actual lot, tick, venue and expiry come from the masters.
+- `GET /contracts/futures` now returns `paper_enabled`, `real_enabled` and their
+  combined `execution_enabled`. Placement checks the portfolio's actual mode gate;
+  discovery does not reserve cash, claim slots or submit orders.
+- Margin previews use Kite basket initial requirement with `consider_positions=false`
+  and Neo `ordMrgn`; zero `reqdMrgn` is not interpreted as free margin. Missing,
+  zero, nonfinite and error responses cannot authorize an entry. Preview evidence
+  records source/time; Admin estimates additionally record their observation date.
+- Admin Futures settings include separate enable switches, dated observations,
+  broker fee profiles and off-hours refresh. Existing Dynamo tables and version
+  checks are reused. Refresh/cache failure retains old observations and does not
+  invalidate fresh broker evidence. No new database or infrastructure is required.
+- Capital % floors whole lots against margin plus fees. Confirmation carries explicit
+  quantity, budget, fee hash and capital revision. Submission recalculates; trigger
+  execution also checks fresh price/margin, funds, capital revision and guardrails.
+  No silent resizing or extra orders to use leftover budget.
+- Paper broker profile is immutable per portfolio, defaults to Kite for old books,
+  and never takes a Real broker slot. Equity/options cost behavior is unchanged.
+
+#### Paper ledger and recovery
+
+- Cash, pending reservations, held margin, official settled MTM, unsettled movement,
+  execution fees and economic P&L have separate evidence. A margin lock is collateral,
+  not an expense; Futures notional is exposure, not a NAV asset.
+- Fills atomically write cash receipt, Order, Trade and versioned Futures ledger.
+  Original economic entry price and latest settlement basis stay separate. Partial
+  long/short closes release proportional margin and post only remaining unsettled
+  movement. Exit fees are accounted for once; BUY covers a short without BUY notional.
+- Official NSE UDiFF ZIP and BSE UDiFF CSV use exact symbol/actual expiry and
+  `SttlmPric`, never OHLC close. Files cache atomically; unavailable publication retries
+  with a cooldown. Contract/date settlements are idempotent across restart.
+- Offline intentions reserve a dated estimate and the next eligible trading session;
+  actual fills wait for live exact-contract price and usable broker margin. An
+  increased cost may use funds only within the approved budget. Over-budget or
+  insufficient funds needs review/cancel-and-replace; no fake fills or size changes.
+- Entries have DAY validity. Paper expiry/portfolio close uses a subsequent actual
+  quote; expiry close attempts from 15:15. No quote means a pending position, not a
+  fabricated exit. Missing settlement/margin or repair blocks new entries while
+  held positions/exits remain manageable. Startup restores the durable ledger/book
+  before market-hour subscriptions resume, using the Admin data-provider policy.
+
+#### Real execution and protection
+
+- Kite/Neo Futures use exact listed ticker, correct FO venue, NRML and DAY. Day MIS,
+  equity CNC and existing options NRML routing remain separate. Shared NRML report
+  cache stays complete; exact contract filtering happens after cache retrieval.
+- Confirmed individual executions preserve FIFO for interleaved partial fills.
+  Fees are allocated once per broker order. Ledger rebuild uses the durable journal,
+  official settlement events and held-margin adjustments. Broker balances remain
+  authoritative; legitimate MTM/margin changes update the existing funding model.
+- Unknown/submitting acknowledgments remain reconciliation barriers and are never
+  blindly retried. Known rejected triggered orders are cancelled. Fill callbacks
+  request confirmed journal refresh instead of using legacy synthetic spot fills.
+- Futures entry amendments require cancel-and-replace with a fresh preview. Owned
+  exits retain safe conversion paths; quantity cannot cross flat. Protective DAY
+  renewal keeps exact expiry and short BUY/long SELL direction, deterministic identity
+  and fresh quote checks; prior cancel/conversion/split state is cleared on renewal.
+- Expiry rollover is manual. Stock delivery review needs an owned acknowledgment and
+  verified current derivative flatness before closing. Historical delivery/cash/P&L
+  warnings remain; no shares or executions are fabricated to make the book appear flat.
+
+#### Stats, Analysis and charts
+
+- Futures filter and exact-expiry execution charts are supported in global Analysis,
+  portfolio History and both chart renderers. Swing labels/outcome metrics remain.
+- Futures Stats distinguish captured return on margin, held margin/utilization,
+  notional exposure, settled MTM, unsettled P&L, long/short and index/stock cycles.
+  Missing margin/basis is unknown rather than an invented zero return.
+- Daily portfolio NAV uses economic FIFO P&L and actual contract marks; it does not
+  debit/add notional or count settled MTM twice. Its cash component is an economic
+  valuation model, not a historical broker-available-margin statement.
+- Open/All markers use the selected chart date and exact contract. Futures execution
+  prices stay off underlying charts without captured underlying evidence. Existing
+  drawing sharing, independent panels, toolbar collapse and Day/Swing windows remain.
+
+#### Review findings fixed
+
+The review fixed short-cover notional reservation, generic entry-edit bypasses,
+missing persisted expiry, Futures initial-pane restoration, mixed NRML cache scope,
+Breeze cash/Futures route collision, stale post-margin quotes, renewed cancellation
+state, capital-change trigger handling and Futures prices appearing on underlying
+charts. It also moved non-Real malformed option validation ahead of broker data
+fetches. Exit management is not blocked by a changed entry fee hash or enable gate.
+
+#### Actual validation
+
+- Full backend regression: **2,307 passed**. Additional Real ledger/renewal coverage
+  was added afterward; the full Futures evidence file passed **22 tests**.
+  Final affected backend regression passed **121 tests**; a subsequently added
+  emergency short-cover regression passed with all **8 Paper Futures tests**.
+- Both client TypeScript checks and production builds passed. **213 desktop tests**
+  and **14 notification tests** passed. Built desktop Kotak login regression passed
+  for popup, cancellation, validation, retry, busy submissions and Kite isolation.
+- Shared workspace browser checks passed on both actual renderers, including exact
+  Futures selection, short entry, whole quantity, budget/fee confirmation, price
+  picking, independent dates, panel/tool collapse and existing percentage orders.
+- Linked Analytics browser checks passed on both renderers: labels/Stats and pinned
+  shared desktop portfolios. Native Tauri hosting is mocked for these checks.
+- New Futures services/tests pass Ruff. Synthetic brokers/exchange files were used;
+  no live authentication codes or broker orders were sent.
+
+#### Limits and manual preprod acceptance
+
+1. Deploy backend before clients. Test Paper first, then enable/test Kite and Neo
+   Real independently in Admin. Verify real margin responses, partial execution,
+   cancellation, unknown acknowledgment, DAY renewal and account cash/MTM against
+   broker reports before treating Real Futures as accepted.
+2. Installed Windows: verify Day and Swing side by side, pop-out/linked windows,
+   panel sizing, drawing synchronization after reopen and account-isolated messages.
+3. Expired Kite/Neo token IDs can be reused/purged. Archived metadata preserves
+   identity, not safe provider access. Captured exact-contract cache can be read;
+   uncached expired history needs an allowed exact-expiry provider such as Breeze.
+   Missing data is disclosed, never substituted with spot/continuous history.
+4. No Day Futures, commodity/currency futures, synthetic Nifty 100 index contract,
+   automatic rollover, automated physical delivery or external Futures opening-
+   inventory adoption. Reconcile external broker positions explicitly. No invented
+   settlement, fills or physical-delivery P&L. Ordinary Paper entry fills are full
+   confirmed quantity; partial closes and Real partial executions are supported.
+5. Positive standalone margin is deliberately conservative. This is not a complete
+   account-wide SPAN/hedge/RMS replica. Final fees and delivery obligations follow
+   broker contract notes; Admin estimates are editable and captured per order.
+6. Existing exchange holiday coverage must be maintained annually. The next-month
+   window is the agreed **seven calendar days before actual listed expiry**, replacing
+   the original two-day request. Long equity/options behavior stays unchanged.
+
+Primary references: [Kite margins](https://kite.trade/docs/connect/v3/margins/),
+[Kite orders](https://kite.trade/docs/connect/v3/orders/),
+[Zerodha charges](https://zerodha.com/charges/),
+[Neo SDK](https://github.com/Kotak-Neo/Kotak-neo-api-v2), and exact-date official
+NSE/BSE bhavcopy URLs captured in each settlement event. Publication formats were
+checked read-only against 2026-10-12 exchange files; this does not constitute
+live trading acceptance.

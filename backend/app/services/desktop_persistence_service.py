@@ -53,7 +53,9 @@ def _dynamodb_safe(value):
 
 def canonical_instrument_id(instrument: dict) -> str:
     """A stable cross-screen identity; interval and viewport never participate."""
-    if instrument.get("kind") == "option":
+    if instrument.get("kind") == "future":
+        required = ("kind", "underlying", "expiry", "exchange")
+    elif instrument.get("kind") == "option":
         required = ("underlying", "expiry", "strike", "right", "exchange")
     else:
         required = ("kind", "symbol", "exchange")

@@ -387,6 +387,8 @@ def test_percentage_preview_options_uses_listed_lots_without_creating_context(cl
 
 
 def test_futures_discovery_is_authenticated_read_only_and_execution_remains_gated(client, monkeypatch):
+    from app.services import futures_risk
+    monkeypatch.setattr(futures_risk, "settings", lambda: futures_risk.RiskSettings(paper_enabled=False))
     monkeypatch.setattr("app.services.futures_contracts.listed_contracts", lambda *a: [{"symbol":"NIFTY","instrument_type":"futures","expiry":"2026-10-27","lot_size":65}])
     route = "/api/swing/portfolios/contracts/futures?symbol=NIFTY&provider=kite"
     assert client.get(route).status_code == 401
@@ -394,4 +396,4 @@ def test_futures_discovery_is_authenticated_read_only_and_execution_remains_gate
     assert response.status_code == 200 and response.json()["execution_enabled"] is False
     path = start(client)
     body = {"symbol":"NIFTY", "instrument_type":"futures", "expiry":"2026-10-27", "side":"BUY", "quantity":65, "price":22000, "request_id":"gated"}
-    assert client.post(path + "/orders", json=body, headers={"X-User-Id":"u"}).status_code == 422
+    assert client.post(path + "/orders", json=body, headers={"X-User-Id":"u"}).status_code == 403

@@ -1293,10 +1293,19 @@ existing view switching. View changes and window close never close trading books
 ### Swing/Futures sprint progress — 2026-10-13
 
 [Full implementation status and decisions](spec-phase21-swing-futures-plan.md#actual-implementation-and-validation).
-Sprints 0–2 are implemented with automated validation; installed desktop acceptance
-remains in Sprint 7. Initial Sprint 3 work adds current equity/options Capital %
-sizing and read-only Kite/Kotak Futures discovery. **Futures execution is still
-disabled**: contract data/margin settings, Paper MTM, Real execution/reconciliation
-and Futures Stats remain for Sprints 3–6. Backend changes must precede client rollout.
-Latest checks: 299 backend tests, 212 desktop tests, both builds, notification tests
-and shared workspace/linked analytics browser acceptance passed. No live orders sent.
+Sprints 0–6 application work is implemented. Sprint 7 code review and automated
+regression are complete; installed Windows and actual broker acceptance remain
+manual after preprod deployment. Paper Futures is enabled by default for new
+settings; Kite and Kotak Real have independent Admin gates, disabled by default.
+
+Website and desktop support exact Futures contracts, long/short margin sizing,
+offline Paper intentions, official MTM, restart recovery, NRML routing/protection,
+selected-date markers and Futures Stats/Analysis. The linked plan records scope,
+design, review fixes, assumptions and intentionally left-out items. The agreed
+next-month entry window is seven calendar days before actual listed expiry; Nifty
+100 support means eligible constituent stocks, not an invented index contract.
+
+Latest full backend regression: **2,307 passed**. Both client TypeScript checks and
+production builds, **213 desktop tests**, **14 notification tests**, shared
+workspace/linked Analytics and built desktop Kotak login browser checks passed.
+Deploy backend before clients; no live broker orders were sent during validation.

@@ -20,6 +20,7 @@ export type SwingRequest = <T>(
   body?: Record<string, unknown>,
 ) => Promise<T>;
 interface Portfolio {
+  paper_broker?: "kite" | "kotak";
   mode?: string;
   execution_broker?: string;
   history_warning?: string;
@@ -31,6 +32,8 @@ interface Portfolio {
   guardrail_epoch: number;
 }
 interface Position {
+  side?: "LONG" | "SHORT" | "FLAT";
+  instrument_type?: string;
   symbol: string;
   right?: string;
   strike?: number;
@@ -40,10 +43,12 @@ interface Position {
   mark_price?: number;
 }
 interface ListedContract {
-  strike: number;
+  strike?: number;
   expiry: string;
-  right: string;
+  right?: string;
   lot_size: number;
+  tick_size?: number;
+  entry_eligible?: boolean;
 }
 interface PendingOrder {
   order_id: string;
@@ -57,6 +62,7 @@ interface PendingOrder {
   expiry?: string;
 }
 interface Snapshot {
+  delivery_review_context_ids?: string[];
   current_submission_ids?: string[];
   undated_submission_ids?: string[];
   closure_blocked?: boolean;
@@ -138,6 +144,7 @@ export default function SwingPortfolioPanel({
   const requestedContract = useRef<SwingPane | null>(null);
   const [mode, setMode] = useState<"paper" | "real">("paper");
   const [broker, setBroker] = useState("kite");
+  const [paperBroker, setPaperBroker] = useState("kite");
   const [allocation, setAllocation] = useState("100");
   const [connectionRetry, setConnectionRetry] = useState(0);
   const [brokerConnection, setBrokerConnection] = useState<{
@@ -200,15 +207,18 @@ export default function SwingPortfolioPanel({
   const [symbols, setSymbols] = useState<SymbolChoice[]>([]);
   const [error, setError] = useState("");
   useEffect(() => {
-    if (surface === "desktop" && error) flashError(error, "Desktop Swing", {
-      sessionId: snapshot?.portfolio?.session_id, symbol, mode,
-    });
+    if (surface === "desktop" && error)
+      flashError(error, "Desktop Swing", {
+        sessionId: snapshot?.portfolio?.session_id,
+        symbol,
+        mode,
+      });
   }, [error, surface]);
   const [busy, setBusy] = useState(false);
   const [capital, setCapital] = useState("100000");
   const [loss, setLoss] = useState("");
   const [symbol, setSymbol] = useState("HDFCBANK");
-  const [kind, setKind] = useState<"equity" | "options">("equity");
+  const [kind, setKind] = useState<SwingPane["instrument_type"]>("equity");
   const [right, setRight] = useState("CE");
   const [strike, setStrike] = useState("");
   const [expiry, setExpiry] = useState("");
@@ -218,36 +228,135 @@ export default function SwingPortfolioPanel({
   const [type, setType] = useState("LIMIT");
   const [quantity, setQuantity] = useState("1");
   const [price, setPrice] = useState("");
-  const [sizingMode, setSizingMode] = useState<"quantity" | "capital_pct">("quantity");
+  const [sizingMode, setSizingMode] = useState<"quantity" | "capital_pct">(
+    "quantity",
+  );
   const [capitalPct, setCapitalPct] = useState("10");
-  const [sizingPreview, setSizingPreview] = useState<{quantity: number; lot_size: number; budget: number; fees: number; required_funds: number; unused_budget: number; minimum_funds: number; capital_revision: number} | null>(null);
+  const [sizingPreview, setSizingPreview] = useState<{
+    quantity: number;
+    lot_size: number;
+    budget: number;
+    fees: number;
+    required_funds: number;
+    unused_budget: number;
+    minimum_funds: number;
+    capital_revision: number;
+    execution_enabled?: boolean;
+    fee_hash?: string;
+    evidence?: { live: boolean; source: string; as_of?: string };
+    margin?: number;
+  } | null>(null);
   const [sizingError, setSizingError] = useState("");
   const [sizingLoading, setSizingLoading] = useState(false);
   useEffect(() => {
-    if (surface === "desktop" && sizingError) flashError(sizingError, "Desktop Swing sizing", {sessionId: prefix, symbol, mode});
+    if (surface === "desktop" && sizingError)
+      flashError(sizingError, "Desktop Swing sizing", {
+        sessionId: prefix,
+        symbol,
+        mode,
+      });
   }, [sizingError, surface]);
-  const percentageSizing = sizingMode === "capital_pct" && side === "BUY";
-  const sizingKey = JSON.stringify([prefix, symbol, kind, right, strike, expiry, type, price, capitalPct, snapshot?.portfolio?.guardrail_epoch, percentageSizing]);
+  const futureExit =
+    kind === "futures" &&
+    Boolean(
+      snapshot?.positions?.some(
+        (p) =>
+          p.instrument_type === "futures" &&
+          p.symbol === symbol &&
+          p.expiry === expiry &&
+          ((p.side === "LONG" && side === "SELL") ||
+            (p.side === "SHORT" && side === "BUY")),
+      ),
+    );
+  const entryIntent = kind === "futures" ? !futureExit : side === "BUY";
+  const percentageSizing = sizingMode === "capital_pct" && entryIntent;
+  const previewSizing = percentageSizing || kind === "futures";
+  useEffect(() => {
+    if (
+      (!entryIntent && type === "TARGET") ||
+      (entryIntent && type === "STOPLOSS")
+    )
+      setType("LIMIT");
+  }, [entryIntent, type]);
+  const sizingKey = JSON.stringify([
+    prefix,
+    symbol,
+    kind,
+    right,
+    strike,
+    expiry,
+    type,
+    price,
+    capitalPct,
+    snapshot?.portfolio?.guardrail_epoch,
+    percentageSizing,
+    quantity,
+    side,
+  ]);
   const [previewKey, setPreviewKey] = useState("");
   useEffect(() => {
     let cancelled = false;
-    setSizingPreview(null); setSizingError(""); setPreviewKey(""); setSizingLoading(false);
-    if (!percentageSizing || !snapshot?.portfolio) return;
-    if (!(Number(price) > 0) || !(Number(capitalPct) > 0 && Number(capitalPct) <= 100) || (kind === "options" && !(right && strike && expiry))) return;
+    setSizingPreview(null);
+    setSizingError("");
+    setPreviewKey("");
+    setSizingLoading(false);
+    if (!previewSizing || !snapshot?.portfolio) return;
+    if (
+      !(Number(price) > 0) ||
+      (percentageSizing &&
+        !(Number(capitalPct) > 0 && Number(capitalPct) <= 100)) ||
+      (kind === "options" && !(right && strike && expiry)) ||
+      (kind === "futures" && !expiry)
+    )
+      return;
     setSizingLoading(true);
-    const timer = window.setTimeout(() => void request<typeof sizingPreview & {}>(`${prefix}/order-preview`, "POST", {
-      symbol, instrument_type: kind, side: "BUY", order_type: type, price: Number(price), quantity: 1,
-      capital_pct: Number(capitalPct) / 100, capital_revision: snapshot.portfolio!.guardrail_epoch,
-      request_id: "preview", client: surface,
-      ...(kind === "options" ? {right, strike: Number(strike), expiry} : {}),
-    }).then(value => {
-      if (!cancelled) { setSizingPreview(value); setPreviewKey(sizingKey); }
-    }).catch(reason => { if (!cancelled) setSizingError(String(reason)); })
-      .finally(() => { if (!cancelled) setSizingLoading(false); }), 300);
-    return () => { cancelled = true; window.clearTimeout(timer); };
+    const timer = window.setTimeout(
+      () =>
+        void request<typeof sizingPreview & {}>(
+          `${prefix}/order-preview`,
+          "POST",
+          {
+            symbol,
+            instrument_type: kind,
+            side: kind === "futures" ? side : "BUY",
+            order_type: type,
+            price: Number(price),
+            quantity: percentageSizing ? 1 : Number(quantity),
+            ...(percentageSizing
+              ? { capital_pct: Number(capitalPct) / 100 }
+              : {}),
+            capital_revision: snapshot.portfolio!.guardrail_epoch,
+            request_id: "preview",
+            client: surface,
+            ...(kind === "options"
+              ? { right, strike: Number(strike), expiry }
+              : kind === "futures"
+                ? { expiry }
+                : {}),
+          },
+        )
+          .then((value) => {
+            if (!cancelled) {
+              setSizingPreview(value);
+              setPreviewKey(sizingKey);
+            }
+          })
+          .catch((reason) => {
+            if (!cancelled) setSizingError(String(reason));
+          })
+          .finally(() => {
+            if (!cancelled) setSizingLoading(false);
+          }),
+      300,
+    );
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
   }, [sizingKey, request, surface]);
   const [confirmClose, setConfirmClose] = useState(false);
   const [acknowledgeUndated, setAcknowledgeUndated] = useState(false);
+  const [acknowledgeDelivery, setAcknowledgeDelivery] = useState(false);
   const [importPreview, setImportPreview] = useState<{
     positions: Position[];
     cost: number;
@@ -385,6 +494,7 @@ export default function SwingPortfolioPanel({
   };
   useEffect(() => {
     setAcknowledgeUndated(false);
+    setAcknowledgeDelivery(false);
     setConfirmClose(false);
   }, [prefix, mode, broker]);
   useEffect(() => {
@@ -403,8 +513,12 @@ export default function SwingPortfolioPanel({
     correctionReason,
   ]);
   const order = async () => {
-    if (percentageSizing && (!sizingPreview?.quantity || previewKey !== sizingKey || sizingLoading)) {
-      setError("Review a valid capital sizing estimate before placing"); return;
+    if (
+      previewSizing &&
+      (!sizingPreview?.quantity || previewKey !== sizingKey || sizingLoading)
+    ) {
+      setError("Review a valid capital sizing estimate before placing");
+      return;
     }
     requestIdentity.current ??= crypto.randomUUID();
     const sent = await act(`${prefix}/orders`, {
@@ -413,8 +527,21 @@ export default function SwingPortfolioPanel({
       side,
       order_type: type,
       client: surface,
-      quantity: percentageSizing ? sizingPreview?.quantity : Number(quantity),
-      ...(percentageSizing ? {capital_pct: Number(capitalPct) / 100, capital_revision: sizingPreview?.capital_revision} : {}),
+      quantity: previewSizing ? sizingPreview?.quantity : Number(quantity),
+      ...(percentageSizing
+        ? {
+            capital_pct: Number(capitalPct) / 100,
+            capital_revision: sizingPreview?.capital_revision,
+          }
+        : {}),
+      ...(kind === "futures"
+        ? {
+            expiry,
+            approved_budget: sizingPreview?.budget,
+            fee_hash: sizingPreview?.fee_hash,
+            capital_revision: sizingPreview?.capital_revision,
+          }
+        : {}),
       price: Number(price),
       request_id: requestIdentity.current,
       ...(kind === "options" ? { right, strike: Number(strike), expiry } : {}),
@@ -425,15 +552,16 @@ export default function SwingPortfolioPanel({
   const selectedContract = contracts.find(
     (item) =>
       item.expiry === expiry &&
-      item.right === right &&
-      item.strike === Number(strike),
+      (kind === "futures" ||
+        (item.right === right && item.strike === Number(strike))),
   );
   useEffect(() => {
-    if (selectedSymbol?.chart_type === "index") setKind("options");
+    if (selectedSymbol?.chart_type === "index" && kind === "equity")
+      setKind("options");
     else if (selectedSymbol?.option_eligible === false) setKind("equity");
   }, [selectedSymbol]);
   useEffect(() => {
-    if (kind !== "options") {
+    if (kind === "equity") {
       setContracts([]);
       return;
     }
@@ -442,7 +570,9 @@ export default function SwingPortfolioPanel({
     setContracts([]);
     setStrike("");
     void request<{ contracts: ListedContract[] }>(
-      `contracts/metadata?symbol=${encodeURIComponent(symbol)}`,
+      kind === "futures"
+        ? `contracts/futures?symbol=${encodeURIComponent(symbol)}&provider=${portfolio?.execution_broker ?? portfolio?.paper_broker ?? "kite"}`
+        : `contracts/metadata?symbol=${encodeURIComponent(symbol)}`,
       "GET",
     )
       .then((value) => {
@@ -460,8 +590,8 @@ export default function SwingPortfolioPanel({
             : undefined;
         if (matched) {
           setExpiry(matched.expiry);
-          setStrike(String(matched.strike));
-          setRight(matched.right);
+          setStrike(matched.strike == null ? "" : String(matched.strike));
+          setRight(matched.right ?? "CE");
         } else setExpiry(value.contracts[0]?.expiry ?? "");
       })
       .catch((reason) => {
@@ -473,7 +603,13 @@ export default function SwingPortfolioPanel({
     return () => {
       active = false;
     };
-  }, [kind, symbol, request]);
+  }, [
+    kind,
+    symbol,
+    portfolio?.execution_broker,
+    portfolio?.paper_broker,
+    request,
+  ]);
   useEffect(() => {
     if (selectedContract && Number(quantity) % selectedContract.lot_size !== 0)
       setQuantity(String(selectedContract.lot_size));
@@ -481,7 +617,20 @@ export default function SwingPortfolioPanel({
   // Editing instructions starts a new request; retrying unchanged instructions preserves identity.
   useEffect(() => {
     requestIdentity.current = null;
-  }, [symbol, kind, right, strike, expiry, side, type, quantity, price, sizingMode, capitalPct, snapshot?.portfolio?.guardrail_epoch]);
+  }, [
+    symbol,
+    kind,
+    right,
+    strike,
+    expiry,
+    side,
+    type,
+    quantity,
+    price,
+    sizingMode,
+    capitalPct,
+    snapshot?.portfolio?.guardrail_epoch,
+  ]);
   const chooseChart = (pane: SwingPane) => {
     requestedContract.current = pane;
     setPicking(false);
@@ -515,7 +664,7 @@ export default function SwingPortfolioPanel({
             aria-label="Instrument"
             value={kind}
             onChange={(event) =>
-              setKind(event.target.value as "equity" | "options")
+              setKind(event.target.value as SwingPane["instrument_type"])
             }
           >
             <option
@@ -530,6 +679,28 @@ export default function SwingPortfolioPanel({
             >
               Options
             </option>
+            <option value="futures">Futures</option>
+          </select>
+        </label>
+      )}
+      {kind === "futures" && !renderChart && (
+        <label>
+          Futures expiry{" "}
+          <select
+            aria-label="Futures expiry"
+            value={expiry}
+            onChange={(e) => setExpiry(e.target.value)}
+          >
+            <option value="">Choose contract</option>
+            {contracts.map((c) => (
+              <option
+                key={c.expiry}
+                disabled={c.entry_eligible === false}
+                value={c.expiry}
+              >
+                {c.expiry} · lot {c.lot_size}
+              </option>
+            ))}
           </select>
         </label>
       )}
@@ -606,6 +777,17 @@ export default function SwingPortfolioPanel({
             : "Select a listed contract"}
         </span>
       )}
+      {kind === "futures" && (
+        <p className="swing-hint">
+          Futures use overnight margin.{" "}
+          {sizingPreview?.evidence?.live
+            ? "Broker margin quoted"
+            : "Offline intentions wait for a live quote and margin"}
+          .{" "}
+          {sizingPreview?.execution_enabled === false &&
+            "Entries are disabled in Admin Futures settings."}
+        </p>
+      )}
       <label>
         Side{" "}
         <select
@@ -613,7 +795,11 @@ export default function SwingPortfolioPanel({
           value={side}
           onChange={(event) => {
             setSide(event.target.value);
-            if (event.target.value === "SELL" && type === "TARGET")
+            if (
+              kind !== "futures" &&
+              event.target.value === "SELL" &&
+              type === "TARGET"
+            )
               setType("LIMIT");
           }}
         >
@@ -629,25 +815,53 @@ export default function SwingPortfolioPanel({
           onChange={(event) => setType(event.target.value)}
         >
           <option>LIMIT</option>
-          {side === "BUY" && <option>TARGET</option>}
-          {side === "SELL" && <option>STOPLOSS</option>}
+          {entryIntent && <option>TARGET</option>}
+          {!entryIntent && <option>STOPLOSS</option>}
         </select>
       </label>
-      {side === "BUY" && <label>Size by <select aria-label="Swing sizing mode" value={sizingMode} onChange={e => setSizingMode(e.target.value as "quantity" | "capital_pct")}>
-        <option value="quantity">Quantity</option><option value="capital_pct">Capital %</option>
-      </select></label>}
-      {percentageSizing && <label>Portfolio capital % <input aria-label="Portfolio capital percentage" type="number" required min="0.01" max="100" step="0.01" value={capitalPct} onChange={e => setCapitalPct(e.target.value)} /></label>}
-      {!percentageSizing && <label>
-        Quantity{" "}
-        <input
-          type="number"
-          min={selectedContract?.lot_size ?? 1}
-          step={selectedContract?.lot_size ?? 1}
-          required
-          value={quantity}
-          onChange={(event) => setQuantity(event.target.value)}
-        />
-      </label>}
+      {entryIntent && (
+        <label>
+          Size by{" "}
+          <select
+            aria-label="Swing sizing mode"
+            value={sizingMode}
+            onChange={(e) =>
+              setSizingMode(e.target.value as "quantity" | "capital_pct")
+            }
+          >
+            <option value="quantity">Quantity</option>
+            <option value="capital_pct">Capital %</option>
+          </select>
+        </label>
+      )}
+      {percentageSizing && (
+        <label>
+          Portfolio capital %{" "}
+          <input
+            aria-label="Portfolio capital percentage"
+            type="number"
+            required
+            min="0.01"
+            max="100"
+            step="0.01"
+            value={capitalPct}
+            onChange={(e) => setCapitalPct(e.target.value)}
+          />
+        </label>
+      )}
+      {!percentageSizing && (
+        <label>
+          Quantity{" "}
+          <input
+            type="number"
+            min={selectedContract?.lot_size ?? 1}
+            step={selectedContract?.lot_size ?? 1}
+            required
+            value={quantity}
+            onChange={(event) => setQuantity(event.target.value)}
+          />
+        </label>
+      )}
       <label>
         {type === "LIMIT" ? "Limit" : "Trigger"} ₹{" "}
         <input
@@ -659,10 +873,16 @@ export default function SwingPortfolioPanel({
           onChange={(event) => setPrice(event.target.value)}
         />
       </label>
-      {percentageSizing && <div aria-live="polite" className="swing-muted">
-        {sizingLoading ? "Calculating size…" : sizingError || (sizingPreview && previewKey === sizingKey ?
-          `${sizingPreview.quantity} units · budget ₹${money(sizingPreview.budget)} · estimated cost ₹${money(sizingPreview.required_funds)} (fees ₹${money(sizingPreview.fees)}) · unused ₹${money(sizingPreview.unused_budget)}${sizingPreview.quantity === 0 ? ` · Minimum ₹${money(sizingPreview.minimum_funds)} for one lot` : ""}` : "Enter a valid percentage and price to calculate size")}
-      </div>}
+      {previewSizing && (
+        <div aria-live="polite" className="swing-muted">
+          {sizingLoading
+            ? "Calculating size…"
+            : sizingError ||
+              (sizingPreview && previewKey === sizingKey
+                ? `${sizingPreview.quantity} units · budget ₹${money(sizingPreview.budget)} · estimated cost ₹${money(sizingPreview.required_funds)} (fees ₹${money(sizingPreview.fees)}) · unused ₹${money(sizingPreview.unused_budget)}${sizingPreview.quantity === 0 ? ` · Minimum ₹${money(sizingPreview.minimum_funds)} for one lot` : ""}`
+                : "Enter a valid percentage and price to calculate size")}
+        </div>
+      )}
       <button
         type="button"
         title={picking ? "Cancel price pick" : "Pick price on chart"}
@@ -671,14 +891,35 @@ export default function SwingPortfolioPanel({
         disabled={busy}
         onClick={() => setPicking((v) => !v)}
       >
-        {surface === "desktop" ? <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M12 3v18M3 12h18"/><circle cx="12" cy="12" r="6"/></svg> : (picking ? "Cancel price pick" : "Pick price on chart")}
+        {surface === "desktop" ? (
+          <svg
+            aria-hidden="true"
+            width="18"
+            height="18"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.8"
+          >
+            <path d="M12 3v18M3 12h18" />
+            <circle cx="12" cy="12" r="6" />
+          </svg>
+        ) : picking ? (
+          "Cancel price pick"
+        ) : (
+          "Pick price on chart"
+        )}
       </button>
       <button
         disabled={
           busy ||
-          (percentageSizing && (sizingLoading || previewKey !== sizingKey || !sizingPreview?.quantity)) ||
+          (kind === "futures" && !sizingPreview?.execution_enabled) ||
+          (previewSizing &&
+            (sizingLoading ||
+              previewKey !== sizingKey ||
+              !sizingPreview?.quantity)) ||
           (kind === "options" && !selectedContract) ||
-          (side === "BUY" &&
+          (entryIntent &&
             (portfolio.entries_paused ||
               portfolio.guardrail_ban ||
               Boolean(snapshot?.reconciliation_pending?.length) ||
@@ -687,7 +928,21 @@ export default function SwingPortfolioPanel({
         title="Place intention"
         aria-label="Place intention"
       >
-        {surface === "desktop" ? <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M4 12l5 5L20 6"/></svg> : "Place intention"}
+        {surface === "desktop" ? (
+          <svg
+            aria-hidden="true"
+            width="18"
+            height="18"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.8"
+          >
+            <path d="M4 12l5 5L20 6" />
+          </svg>
+        ) : (
+          "Place intention"
+        )}
       </button>
     </form>
   );
@@ -768,6 +1023,7 @@ export default function SwingPortfolioPanel({
     await act("", {
       mode,
       execution_broker: broker,
+      paper_broker: paperBroker,
       allocation_pct: Number(allocation) / 100,
       capital: Number(capital),
       ...(loss ? { loss_limit_pct: Number(loss) / 100 } : {}),
@@ -792,6 +1048,20 @@ export default function SwingPortfolioPanel({
           </select>
         </label>
       )}{" "}
+      {!portfolioId && mode === "paper" && (
+        <label>
+          Futures model{" "}
+          <select
+            aria-label="Paper Futures broker"
+            disabled={busy || Boolean(portfolio && portfolio.state !== "ended")}
+            value={portfolio?.paper_broker ?? paperBroker}
+            onChange={(e) => setPaperBroker(e.target.value)}
+          >
+            <option value="kite">Kite</option>
+            <option value="kotak">Kotak Neo</option>
+          </select>
+        </label>
+      )}
       {!portfolioId && mode === "real" && (
         <label>
           Broker{" "}
@@ -1116,10 +1386,25 @@ export default function SwingPortfolioPanel({
                     history warning.
                   </label>
                 )}
+                {Boolean(snapshot.delivery_review_context_ids?.length) && (
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={acknowledgeDelivery}
+                      onChange={(e) => setAcknowledgeDelivery(e.target.checked)}
+                    />
+                    I reviewed stock Futures delivery and settlement obligations
+                    at the broker. Close only after derivative exposure is
+                    verified flat, and retain the history warning.
+                  </label>
+                )}
                 <button
                   disabled={busy}
                   onClick={() =>
                     void act(`${prefix}/close`, {
+                      acknowledge_delivery_context_ids: acknowledgeDelivery
+                        ? (snapshot.delivery_review_context_ids ?? [])
+                        : [],
                       acknowledge_undated_submission_ids: acknowledgeUndated
                         ? (snapshot.undated_submission_ids ?? [])
                         : [],

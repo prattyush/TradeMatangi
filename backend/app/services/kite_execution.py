@@ -125,6 +125,24 @@ class KiteExecutionService:
             quantity=qty, product=product, order_type='SL' if trigger is not None else 'LIMIT', validity='DAY',
             price=self._price(price, tick), trigger_price=self._price(trigger, tick) if trigger is not None else 0, tag=tag)
 
+    def _place_futures(self, contract, side, qty, price, trigger=None, tag=None):
+        if contract.get("provider") != "kite" or contract["exchange"] not in ("NFO","BFO"):
+            raise KotakOrderRejected("Kite Futures requires its exact listed contract metadata")
+        if not isinstance(qty,int) or qty<=0 or qty % contract["lot_size"]:
+            raise KotakOrderRejected("Futures quantity must be complete listed lots")
+        if side not in ("B","S","BUY","SELL"):
+            raise KotakOrderRejected("Futures side must be BUY or SELL")
+        return self._write("place_order",variety="regular",exchange=contract["exchange"],
+            tradingsymbol=contract["trading_symbol"],transaction_type="BUY" if side in ("B","BUY") else "SELL",
+            quantity=qty,product="NRML",order_type="SL" if trigger is not None else "LIMIT",validity="DAY",
+            price=self._price(price,contract["tick_size"]),trigger_price=self._price(trigger,contract["tick_size"]) if trigger is not None else 0,tag=tag)
+
+    def place_futures_limit_order(self, contract, side, qty, price, tag=None):
+        return self._place_futures(contract,side,qty,price,tag=tag)
+
+    def place_futures_sl_order(self, contract, side, qty, trigger_price, limit_price, tag=None):
+        return self._place_futures(contract,side,qty,limit_price,trigger=trigger_price,tag=tag)
+
     def place_limit_order(self, symbol, side, qty, price, tag=None, *, product="MIS"):
         return self._place(symbol, side, qty, price, tag=tag, product=product)
 

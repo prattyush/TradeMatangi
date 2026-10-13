@@ -76,7 +76,28 @@ class DeliveryBroker:
         return self.base._report("holdings")
 
 
-def bind(broker, instrument_type):
+@dataclass(frozen=True)
+class FuturesBroker(DeliveryBroker):
+    contract: dict
+
+    def place_limit_order(self, symbol, side, qty, price, tag=None, **kwargs):
+        if kwargs.get("product","NRML") != "NRML":
+            raise ValueError("Futures Swing requires NRML")
+        return self.base.place_futures_limit_order(self.contract,side,qty,price,tag=tag)
+
+    def place_sl_order(self, symbol, side, qty, trigger_price, limit_price, tag=None, **kwargs):
+        if kwargs.get("product","NRML") != "NRML":
+            raise ValueError("Futures Swing requires NRML")
+        return self.base.place_futures_sl_order(self.contract,side,qty,trigger_price,limit_price,tag=tag)
+
+
+
+def bind(broker, instrument_type, contract=None):
+    if instrument_type == "futures":
+        if not contract:
+            raise ValueError("Exact Futures metadata is required for broker routing")
+        return FuturesBroker(broker,"NRML",contract)
+
     if instrument_type not in ("equity", "options"):
         raise ValueError("Swing supports equity and long options")
     return DeliveryBroker(broker, "CNC" if instrument_type == "equity" else "NRML")

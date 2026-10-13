@@ -476,6 +476,13 @@ async def _start_simulation_impl(
     if group["clock_family"] == "stepwise":
         req.strategy_interval_secs = int(group["strategy_interval_secs"])
 
+    # Real resume can recover strikes from broker reports below. Other modes
+    # reject malformed tickets before metadata normalization fetches data.
+    if req.instrument_type == "options" and not is_real:
+        if req.strike is None or req.expiry is None:
+            raise HTTPException(400, "strike and expiry are required for options sessions")
+        if req.right is not None and req.right.upper() not in ("CE", "PE"):
+            raise HTTPException(400, "right must be 'CE', 'PE', or null (dual-stream)")
     if not (paper_record and paper_record.get("desktop_origin") == "desktop_paper"):
         _normalise_option_contract_request(req)
 

@@ -42,6 +42,7 @@ def portfolio_order(*args, **kwargs):
 
 
 class StartPortfolio(ContractModel):
+    paper_broker: Literal["kite", "kotak"] = "kite"
     mode: Literal["paper", "real"] = "paper"
     execution_broker: Literal["kotak", "kite"] | None = None
     allocation_pct: float = Field(default=1, gt=0, le=1, allow_inf_nan=False)
@@ -51,7 +52,7 @@ class StartPortfolio(ContractModel):
 
 class ContextRequest(ContractModel):
     symbol: str
-    instrument_type: Literal["equity", "options"] = "equity"
+    instrument_type: Literal["equity", "options", "futures"] = "equity"
     right: Literal["CE", "PE"] | None = None
     strike: int | float | None = Field(default=None, gt=0)
     expiry: str | None = None
@@ -65,6 +66,10 @@ class ContextRequest(ContractModel):
                 raise ValueError(
                     "Equity requests cannot include option contract fields"
                 )
+        elif self.instrument_type == "futures":
+            if self.right is not None or self.strike is not None or not self.expiry:
+                raise ValueError("Futures require expiry without option right/strike")
+            calendar_date.fromisoformat(self.expiry)
         else:
             if self.right is None or self.strike is None or not self.expiry:
                 raise ValueError("Options require right, strike and expiry")
@@ -81,12 +86,18 @@ class PortfolioOrder(ContextRequest):
     request_id: str = Field(min_length=1, max_length=100)
     capital_pct: float | None = Field(default=None, gt=0, le=1, allow_inf_nan=False)
     capital_revision: int | None = Field(default=None, ge=0)
+    approved_budget: float | None = Field(default=None, gt=0, allow_inf_nan=False)
+    fee_hash: str | None = Field(default=None, min_length=64, max_length=64)
 
     @model_validator(mode="after")
     def percentage_entry(self):
-        if self.capital_pct is not None and (self.side != TradeSide.BUY or self.capital_revision is None):
+        if self.capital_pct is not None and ((self.side != TradeSide.BUY and self.instrument_type != "futures") or self.capital_revision is None):
             raise ValueError("Capital percentage is for BUY entries and requires the capital revision")
         return self
+
+
+class SwingCloseRequest(CloseRequest):
+    acknowledge_delivery_context_ids: list[str] = Field(default_factory=list,max_length=250)
 
 
 class PauseRequest(ContractModel):
@@ -146,7 +157,7 @@ async def start(req: StartPortfolio, user: str = Depends(get_desktop_user_id)):
         await service.ensure(user, portfolio["session_id"])
     else:
         portfolio = await asyncio.to_thread(
-            store.create, user, req.mode, req.capital, loss_limit_pct=req.loss_limit_pct
+            store.create, user, req.mode, req.capital, loss_limit_pct=req.loss_limit_pct, paper_broker=req.paper_broker
         )
     return service.snapshot(user, portfolio["session_id"])
 
@@ -221,7 +232,7 @@ async def capital_sizing(user, portfolio_id, req):
 def economic_instructions(body):
     # New optional sizing fields must not change the identity of legacy retries.
     return {k: v for k, v in body.items()
-            if k != "client" and not (k in ("capital_pct", "capital_revision") and v is None)}
+            if k != "client" and not (k in ("capital_pct", "capital_revision", "approved_budget", "fee_hash") and v is None)}
 
 
 @router.post("/{portfolio_id}/order-preview")
@@ -231,6 +242,9 @@ async def preview_order(
     from app.config import SUPPORTED_SYMBOLS
 
     await service.ensure(user, portfolio_id)
+    if req.instrument_type == "futures":
+        from app.services.futures_preview import preview
+        return await asyncio.to_thread(preview, user, portfolio_id, req)
     if req.capital_pct is None:
         raise HTTPException(422, "Select capital percentage sizing")
     definition = SUPPORTED_SYMBOLS.get(req.symbol)
@@ -253,6 +267,9 @@ async def place(
 ):
     import uuid
 
+    if req.instrument_type == "futures":
+        from app.services.swing_futures import place as future_place
+        return await future_place(user,portfolio_id,req)
     await service.ensure(user, portfolio_id)
     await prepare_listed_contract(user, portfolio_id, req)
     child = service.attach_context(
@@ -445,8 +462,8 @@ async def reset_capital(
 
 
 @router.post("/{portfolio_id}/close")
-async def close(portfolio_id: str, user: str = Depends(get_desktop_user_id), req: CloseRequest | None = None):
-    await service.close_portfolio(user, portfolio_id, req.acknowledge_undated_submission_ids if req else None)
+async def close(portfolio_id: str, user: str = Depends(get_desktop_user_id), req: SwingCloseRequest | None = None):
+    await service.close_portfolio(user, portfolio_id, req.acknowledge_undated_submission_ids if req else None, acknowledge_delivery_context_ids=req.acknowledge_delivery_context_ids if req else None)
     return service.snapshot(user, portfolio_id)
 
 
@@ -516,8 +533,12 @@ async def futures_metadata(
         raise HTTPException(422, str(exc)) from exc
     except Exception as exc:
         raise HTTPException(503, "Futures metadata unavailable; retry after provider recovery") from exc
-    # Metadata can be reviewed now. Execution awaits margin/MTM/reconciliation sprints.
-    return {"symbol": symbol, "provider": provider, "contracts": contracts, "execution_enabled": False}
+    from app.services.futures_risk import settings
+    config = await asyncio.to_thread(settings)
+    return {"symbol": symbol, "provider": provider, "contracts": contracts,
+            "paper_enabled": config.paper_enabled,
+            "real_enabled": getattr(config, f"{provider}_real_enabled"),
+            "execution_enabled": config.paper_enabled or getattr(config, f"{provider}_real_enabled") }
 
 
 @router.get("/contracts/metadata")

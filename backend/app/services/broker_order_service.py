@@ -257,6 +257,12 @@ def register_callbacks(session, order, broker, loop):
                 task = asyncio.create_task(real_broker_state.refresh(session, broker))
                 task.add_done_callback(lambda t: t.exception() if not t.cancelled() else None)
             return
+        if session.instrument_type == "futures":
+            from app.services.futures_real import refresh_after_event
+            task=getattr(session,"futures_refresh_task",None)
+            if task is None or task.done():
+                session.futures_refresh_task=asyncio.create_task(refresh_after_event(session))
+            return
         from app.services import protection_recovery
         before = trading.get_position(session.session_id, session.symbol, right=current.right, strike=current.strike, expiry=current.expiry)
         before_net = before.quantity * (1 if before.side == "LONG" else -1 if before.side == "SHORT" else 0)
@@ -400,13 +406,32 @@ def submit_immediate(session, order, loop):
     logger.info("broker_immediate_submitted session=%s order=%s role=%s", session.session_id, order.order_id, role)
 
 
+async def submit_immediate_async(session,order):
+    """Broker I/O leaves the event loop; callback registration stays on it."""
+    from app.services.execution_broker import get_service
+    from app.services.simulation import _is_position_exit
+    await asyncio.to_thread(require_entry_allowed,session,order)
+    broker=await asyncio.to_thread(get_service,session)
+    role="exit" if _is_position_exit(session,order) else "entry"
+    kwargs=dict(symbol=session.symbol,side="B" if order.side==TradeSide.BUY else "S",qty=order.quantity,price=order.limit_price)
+    if order.right:
+        kwargs.update(right=order.right,strike=order.strike,expiry=order.expiry)
+    method=broker.place_options_limit_order if order.right else broker.place_limit_order
+    identifier=await asyncio.to_thread(submit_once,session,order,method,**kwargs)
+    order.execution_role=role
+    order.broker_order_id=identifier
+    session.kotak_order_map[order.order_id]=identifier
+    await persist_order_async(order,strict=True)
+    register_callbacks(session,order,broker,asyncio.get_running_loop())
+
+
 def submit_once(session, order, method, **kwargs):
     """Persist broker intent before sending a write; uncertainty is never a retry."""
     from app.services.execution_broker import name
     from app.services.kotak_service import KotakError, KotakOrderRejected
     order.trading_style = 'swing' if getattr(session,'trading_style',None)=='swing' else 'intraday'
     order.portfolio_id = getattr(session,'portfolio_id',None) if order.trading_style=='swing' else None
-    order.broker_product=('NRML' if order.right else 'CNC') if order.trading_style=='swing' else 'MIS'
+    order.broker_product=('NRML' if order.right or session.instrument_type == 'futures' else 'CNC') if order.trading_style=='swing' else 'MIS'
     order.execution_broker = name(session)
     order.broker_account_id = getattr(session, 'broker_account_id', None)
     if order.recovery_state in ('submitting', 'unknown'):

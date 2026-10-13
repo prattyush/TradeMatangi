@@ -1,3 +1,4 @@
+import FuturesRiskSettings from "./FuturesRiskSettings"
 import RealSessionList, { type RealBookRequest } from '../../../shared/RealSessionList'
 import { NIFTY_PREMIUM_PRESETS as THRESHOLD_VALUES_NIFTY, SENSEX_PREMIUM_PRESETS as THRESHOLD_VALUES_SENSEX, withSavedPremium } from '../../../shared/optionPremiumPresets'
 import HistorySharingSettings, { type HistorySharingState } from '../../../shared/analysis/HistorySharingSettings'
@@ -2352,6 +2353,7 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
                   </div>
                 </div>
 
+                <FuturesRiskSettings />
                 {/* Live Streaming Source */}
                 <div style={{ borderTop: '1px solid #21262d', paddingTop: 16 }}>
                   <div style={{ fontSize: 12, color: '#f0883e', fontWeight: 600, marginBottom: 10 }}>

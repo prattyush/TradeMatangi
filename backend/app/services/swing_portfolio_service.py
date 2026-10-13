@@ -56,6 +56,7 @@ def snapshot(user, portfolio_id):
     row = store.owned(user, portfolio_id)
     current = runtime(user, portfolio_id)
     positions, orders, executions, marker_basis = [], [], [], []
+    futures = []
     net = 0.0
     complete = True
     for session in current.contexts.values():
@@ -68,6 +69,26 @@ def snapshot(user, portfolio_id):
                                  "timestamp": int(captured) // 1000 + 19800}
                                 for holding in getattr(session, "opening_positions", []))
         orders.extend(order_service.get_open_orders(session.session_id))
+        if session.instrument_type == "futures":
+            from app.services.futures_ledger import read, values
+            mark = session.last_price if getattr(session,"swing_quote_seen",False) else None
+            metrics = values(read(session)["ledger"],mark)
+            futures.append({"session_id":session.session_id,"symbol":session.symbol,"expiry":session.expiry,
+                            **metrics,"warning":getattr(session,"futures_warning","")})
+            if metrics["economic_pnl"] is None:
+                complete = False
+            else:
+                net += metrics["economic_pnl"]
+            if metrics["quantity"]:
+                positions.append({"session_id":session.session_id,"symbol":session.symbol,"instrument_type":"futures",
+                    "expiry":session.expiry,"right":None,"strike":None,"quantity":metrics["quantity"],
+                    "side":metrics["side"],"avg_entry_price":metrics["avg_entry_price"],"mark_price":mark,
+                    "mark_time":getattr(session,"swing_mark_time",None),"quote_status":"live" if mark and swing_market.window(swing_market.now()) and 0 <= swing_market.now()-int(getattr(session,"swing_mark_time",0) or 0)<120 else "stale" if mark else "unavailable",
+                    "invested_value":metrics["held_margin"],"held_margin":metrics["held_margin"],
+                    "unrealized_pnl":metrics["economic_open_pnl"],"unrealized_pnl_pct":round(metrics["economic_open_pnl"]/metrics["held_margin"]*100,4) if metrics["held_margin"] and metrics["economic_open_pnl"] is not None else None,
+                    "notional_exposure":mark*metrics["quantity"] if mark else None,
+                    "unsettled_pnl":metrics["unsettled_pnl"],"settled_mtm":metrics["settled_mtm"]})
+            continue
         contracts = (
             trading.get_open_option_contracts(session.session_id, session.symbol)
             if session.instrument_type == "options"
@@ -117,6 +138,8 @@ def snapshot(user, portfolio_id):
                 }
             )
     for trade in executions:
+        if trade.instrument_type == "futures":
+            continue
         net += (
             trade.price * trade.quantity * (1 if trade.side == TradeSide.SELL else -1)
             - trade.commission
@@ -144,8 +167,13 @@ def snapshot(user, portfolio_id):
     if row["mode"] == "real":
         from app.services.real_recovery import closure_requirements
         requirements = closure_requirements(list(current.contexts.values()), row.get("acknowledged_undated_submission_ids", []))
+    delivery_review=[]
+    if row["mode"]=="real" and current.contexts:
+        from app.services.futures_real import delivery_review_contexts
+        delivery_review=delivery_review_contexts(current)
     return {
         "portfolio": row,
+        "delivery_review_context_ids":delivery_review,
         **requirements,
         "wallet_balance": wallet_balance,
         "funding_status": {key: value for key, value in funding_status.items() if key != "modes"} if funding_status else None,
@@ -154,6 +182,7 @@ def snapshot(user, portfolio_id):
         "open_orders": [o.model_dump(mode="json") for o in orders],
         "trades": [t.model_dump(mode="json") for t in executions],
         "marker_basis": marker_basis,
+        "futures": futures,
         "contexts": [
             {
                 "session_id": s.session_id,
@@ -164,7 +193,7 @@ def snapshot(user, portfolio_id):
             }
             for s in current.contexts.values()
         ],
-        "reconciliation_pending": (["portfolio:" + portfolio_id] if row["mode"] == "real" and not current.real_ready else []) + [
+        "reconciliation_pending": ["settlement:"+s.session_id for s in current.contexts.values() if getattr(s,"futures_settlement_pending",False) or getattr(s,"futures_margin_pending",False)] + (["portfolio:" + portfolio_id] if row["mode"] == "real" and not current.real_ready else []) + [
             o.order_id for o in orders if o.swing_reconcile_pending
         ]
         + [
@@ -189,10 +218,9 @@ def require_entry_allowed(
     position = trading.get_position(
         session.session_id, session.symbol, right, strike, expiry
     )
-    exit_order = (
-        side == TradeSide.SELL
-        and position.side == "LONG"
-        and quantity <= position.quantity
+    exit_order = quantity <= position.quantity and (
+        (side == TradeSide.SELL and position.side == "LONG") or
+        (session.instrument_type == "futures" and side == TradeSide.BUY and position.side == "SHORT")
     )
     if session.session_type == "real":
         current = _runtimes.get(session.portfolio_id)
@@ -214,7 +242,7 @@ def require_entry_allowed(
             raise HTTPException(
                 400, "Paper Swing option entries are closed for this expiry"
             )
-    if side != TradeSide.BUY:
+    if side != TradeSide.BUY and session.instrument_type != "futures":
         raise HTTPException(
             400,
             "Swing supports long positions only; SELL quantity cannot exceed the held position",
@@ -223,7 +251,7 @@ def require_entry_allowed(
     current = _runtimes.get(session.portfolio_id)
     if current and (
         any(
-            getattr(child, "swing_book_needs_repair", False) or (child.session_type == "real" and child.real_recovery_pending)
+            getattr(child, "futures_margin_pending", False) or getattr(child, "futures_settlement_pending", False) or getattr(child, "swing_book_needs_repair", False) or (child.session_type == "real" and child.real_recovery_pending)
             for child in current.contexts.values()
         )
         or any(
@@ -257,19 +285,21 @@ def attach_context(
     right=None,
     *,
     subscribe=True,
+    future_contract=None,
 ):
     from app.config import SUPPORTED_SYMBOLS
 
     row = store.owned(user, portfolio_id)
     if row["mode"] not in ("paper", "real"):
         raise HTTPException(409, "Unsupported portfolio mode")
+    context_key = f"{symbol}:futures:{expiry}" if instrument_type == "futures" else f"{symbol}:{instrument_type}"
     if row["state"] == "ended" or (
         row["state"] == "closing"
-        and f"{symbol}:{instrument_type}" not in row["contexts"]
+        and context_key not in row["contexts"]
     ):
         raise HTTPException(409, "Cannot attach a new context while closing")
     definition = SUPPORTED_SYMBOLS.get(symbol)
-    if not definition or instrument_type not in ("equity", "options"):
+    if not definition or instrument_type not in ("equity", "options", "futures"):
         raise HTTPException(422, "Unsupported portfolio instrument")
     if instrument_type == "equity" and definition.get("options_only"):
         raise HTTPException(422, "An index cannot be bought as equity")
@@ -284,7 +314,7 @@ def attach_context(
             422, "Listed options require an exact right, strike and expiry"
         )
     current = runtime(user, portfolio_id)
-    key = f"{symbol}:{instrument_type}"
+    key = context_key
     session = current.contexts.get(key)
     saved = None
     if session is None:
@@ -300,6 +330,12 @@ def attach_context(
             .get("Item")
         )
     metadata = None
+    if instrument_type == "futures":
+        if not expiry or right is not None or strike is not None:
+            raise HTTPException(422, "Futures require an exact expiry without option fields")
+        metadata = future_contract or getattr(session,"future_contract",None) or (saved or {}).get("future_contract")
+        if not metadata:
+            raise HTTPException(503, "Listed Futures metadata must be resolved before creating the context")
     if instrument_type == "options":
         existing = next(
             (
@@ -339,6 +375,7 @@ def attach_context(
                 1,
                 user_id=user,
                 instrument_type=instrument_type,
+                future_contract=metadata if instrument_type == "futures" else None,
                 strike=strike,
                 expiry=expiry,
                 right=right,
@@ -398,9 +435,11 @@ def attach_context(
         if session.paper_stream_source:
             simulation.subscribe_desktop_option_contract(session, contract)
     if subscribe and (session.session_id not in current.tasks or current.tasks[session.session_id].done()):
-        current.tasks[session.session_id] = asyncio.create_task(
-            _consume(current, session)
-        )
+        if session.instrument_type == "futures":
+            from app.services.swing_futures import consume
+            current.tasks[session.session_id] = asyncio.create_task(consume(current,session))
+        else:
+            current.tasks[session.session_id] = asyncio.create_task(_consume(current,session))
     return session
 
 
@@ -450,6 +489,8 @@ async def _restore(user, portfolio_id, *, subscribe=True):
         return current
     for key, sid in row["contexts"].items():
         symbol, kind = key.rsplit(":", 1)
+        if ":futures:" in key:
+            symbol, kind, _expiry = key.split(":", 2)
         from app.services.db import get_dynamodb_resource
 
         saved = await asyncio.to_thread(
@@ -470,7 +511,7 @@ async def _restore(user, portfolio_id, *, subscribe=True):
             symbol,
             kind,
             saved.get("strike"),
-            saved.get("expiry"),
+            saved.get("expiry") or (saved.get("future_contract") or {}).get("expiry"),
             saved.get("right"),
             subscribe=subscribe,
         )
@@ -606,6 +647,10 @@ async def _consume(current, session):
 
 
 async def on_tick(current, session, event):
+    if session.instrument_type == "futures":
+        from app.services.swing_futures import on_quote
+        await on_quote(current,session,event)
+        return
     if getattr(session, "swing_book_needs_repair", False):
         restore_execution_book(session)
         session.swing_book_needs_repair = False
@@ -722,7 +767,11 @@ async def on_tick(current, session, event):
 async def shutdown():
     from app.services import swing_charts
     await swing_charts.shutdown()
-    global _startup_task
+    global _startup_task, _risk_refresh_task
+    if _risk_refresh_task:
+        _risk_refresh_task.cancel()
+        await asyncio.gather(_risk_refresh_task,return_exceptions=True)
+        _risk_refresh_task=None
     if _startup_task:
         _startup_task.cancel()
         await asyncio.gather(_startup_task, return_exceptions=True)
@@ -769,7 +818,7 @@ def close_position_on_quote(session, event):
     )
 
 
-async def close_portfolio(user, portfolio_id, acknowledge_undated_submission_ids=None):
+async def close_portfolio(user, portfolio_id, acknowledge_undated_submission_ids=None, *, acknowledge_delivery_context_ids=None):
     row = store.owned(user, portfolio_id)
     if row["state"] == "ended":
         return row
@@ -779,6 +828,14 @@ async def close_portfolio(user, portfolio_id, acknowledge_undated_submission_ids
         accepted = validate_acknowledgements(list(current.contexts.values()), acknowledge_undated_submission_ids)
         row = store.owned(user, portfolio_id)
         row = store.update(user, portfolio_id, {"acknowledged_undated_submission_ids": sorted(set(row.get("acknowledged_undated_submission_ids", [])) | set(accepted))}, row["version"])
+    if row["mode"]=="real" and acknowledge_delivery_context_ids:
+        from app.services.futures_real import delivery_review_contexts
+        current=await ensure(user,portfolio_id)
+        needed=set(delivery_review_contexts(current))
+        if not set(acknowledge_delivery_context_ids)<=needed:
+            raise HTTPException(409,"Delivery review identities changed; review the owned portfolio again")
+        row=store.owned(user,portfolio_id)
+        row=store.update(user,portfolio_id,{"acknowledged_delivery_context_ids":sorted(set(row.get("acknowledged_delivery_context_ids",[]))|set(acknowledge_delivery_context_ids))},row["version"])
     if row["state"] != "closing":
         row = store.update(
             user,
@@ -828,6 +885,10 @@ def stop_runtime(current):
 
 
 def restore_execution_book(session):
+    if session.instrument_type == "futures":
+        from app.services.swing_futures import restore
+        restore(session)
+        return
     """Repair only fills atomically committed with cash, never guessed executions."""
     from boto3.dynamodb.conditions import Key
     from app.services.db import get_dynamodb_resource
@@ -879,9 +940,15 @@ def restore_execution_book(session):
     order_service._orders[session.session_id] = orders
 
 
+_risk_refresh_task = None
+
+
 def startup():
     """Restore active persistent Paper books independently of attached screens."""
-    global _startup_task
+    global _startup_task, _risk_refresh_task
+    from app.services.futures_risk import refresh_offhours
+    if _risk_refresh_task is None or _risk_refresh_task.done():
+        _risk_refresh_task = asyncio.create_task(refresh_offhours())
     if _startup_task is None or _startup_task.done():
         _startup_task = asyncio.create_task(restore_active_portfolios())
 

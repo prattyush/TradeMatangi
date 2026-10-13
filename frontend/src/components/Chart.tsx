@@ -53,7 +53,7 @@ interface Props {
   onPriceUpdate?: (price: number) => void
   height?: number
   // Options pane config
-  paneType?: PaneType
+  paneType?: PaneType | "futures"
   strike?: number
   expiry?: string
   right?: 'CE' | 'PE'
@@ -270,7 +270,7 @@ function orderLineTypeLabel(order: Order): string {
   return order.order_type === 'LIMIT' ? 'L' : 'T'
 }
 
-function indicatorKeysForPane(paneType: PaneType, right?: 'CE' | 'PE'): RocComparisonKey[] {
+function indicatorKeysForPane(paneType: PaneType | "futures", right?: 'CE' | 'PE'): RocComparisonKey[] {
   if (paneType === 'equity') return ['underlying_ce', 'underlying_pe', 'ce_ul_pe_ul']
   if (right === 'CE') return ['underlying_ce', 'ce_pe', 'ce_ul_pe_ul']
   if (right === 'PE') return ['underlying_pe', 'ce_pe', 'ce_ul_pe_ul']
@@ -1223,7 +1223,7 @@ export default function Chart({
     const chart = chartRef.current
     if (!chart) return
     const inputs = visibleTrades.filter(t => {
-      const matches = paneType === 'equity' ? !t.right || t.underlying_price !== undefined
+      const matches = paneType === 'futures' ? t.instrument_type === 'futures' && t.expiry === expiry : paneType === 'equity' ? t.instrument_type !== 'futures' && (!t.right || t.underlying_price !== undefined)
         : t.right === right && t.strike === strike && (!t.expiry || t.expiry === expiry)
       const price = paneType === 'equity' && t.right ? t.underlying_price : t.price
       return matches && Number.isFinite(t.timestamp) && typeof price === 'number' && Number.isFinite(price)
@@ -1253,7 +1253,7 @@ export default function Chart({
 
     const pending = (openOrders ?? []).filter(o => {
       if (o.status !== 'PENDING') return false
-      return paneType === 'equity' ? !o.right : o.right === right && (o.strike == null || o.strike === strike) && (!o.expiry || o.expiry === expiry)
+      return paneType === 'futures' ? o.expiry === expiry && !o.right : paneType === 'equity' ? !o.right : o.right === right && (o.strike == null || o.strike === strike) && (!o.expiry || o.expiry === expiry)
     })
 
     const wanted = new Set(pending.map(order => order.order_id))
