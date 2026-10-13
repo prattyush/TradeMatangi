@@ -285,3 +285,11 @@ input { width: 160px; }
 .wallet-button { display: inline-flex; align-items: center; gap: 4px; }
 .target-profit-editor .target-profit-icon { width: 28px; height: 26px; padding: 3px; display: inline-flex; align-items: center; justify-content: center; }
 .target-profit-editor .target-profit-delete { color: #f87171; }
+
+.kotak-login-backdrop { z-index: 150; }
+.kotak-login-dialog { width: min(420px, 90vw); padding: 20px; border: 1px solid #475569; border-radius: 10px; background: #151a23; color: #e5e7eb; box-shadow: 0 16px 48px #0008; }
+.kotak-login-dialog header, .kotak-login-dialog footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.kotak-login-dialog p { font-size: 13px; line-height: 1.5; }
+.kotak-login-dialog label { display: flex; flex-direction: column; gap: 8px; }
+.kotak-login-dialog input { font-size: 20px; letter-spacing: .2em; margin-bottom: 16px; }
+.kotak-login-dialog footer { justify-content: flex-end; }

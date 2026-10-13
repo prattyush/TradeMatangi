@@ -1,3 +1,4 @@
+import KotakLoginDialog from './KotakLoginDialog'
 import RealSessionList, { type RealBookRequest } from '../../shared/RealSessionList'
 import HistorySharingSettings, { type HistorySharingState } from '../../shared/analysis/HistorySharingSettings'
 import { useCallback, useEffect, useState } from 'react'
@@ -187,7 +188,7 @@ export function DesktopSettingsModal({
   const [status, setStatus] = useState('')
   const [attempt, setAttempt] = useState(0)
   const [walletAmount, setWalletAmount] = useState('150000')
-  const [totp, setTotp] = useState('')
+  const [showKotakLogin, setShowKotakLogin] = useState(false)
   const [brokerStatus, setBrokerStatus] = useState<Record<string, boolean>>({})
   const [realActiveSession, setRealActiveSession] = useState(false)
   const realBookRequest = useCallback<RealBookRequest>(<T,>(path: string, method: 'GET' | 'POST', body?: Record<string, unknown>) => accountRequest<T>(`broker/${path}`, method, body), [accountRequest])
@@ -344,31 +345,8 @@ export function DesktopSettingsModal({
         .
       </p>
       {brokerError && <p role="alert">{brokerError}</p>}
-      <label>
-        Kotak TOTP
-        <input
-          inputMode="numeric"
-          maxLength={6}
-          autoComplete="one-time-code"
-          value={totp}
-          onChange={(e) =>
-            setTotp(e.target.value.replace(/\D/g, '').slice(0, 6))
-          }
-        />
-      </label>
-      <button
-        type="button"
-        disabled={totp.length !== 6}
-        onClick={() =>
-          void action(async () => {
-            await accountRequest('kotak/login', 'POST', { totp })
-            setTotp('')
-            setBrokerStatus((current) => ({ ...current, kotak: true }))
-          }, 'Kotak connected')
-        }
-      >
-        Connect Kotak Neo
-      </button>
+      <button type="button" disabled={loading || loadFailed || saving} onClick={()=>setShowKotakLogin(true)}>Connect Kotak Neo</button>
+      {showKotakLogin && <KotakLoginDialog request={accountRequest} onCancel={()=>setShowKotakLogin(false)} onConnected={()=>{setShowKotakLogin(false);setBrokerStatus(current=>({...current,kotak:true}));setBrokerError('');setStatus('Kotak connected')}}/>}
     </section>
   )
   const tabs = [

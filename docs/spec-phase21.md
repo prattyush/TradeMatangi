@@ -1197,3 +1197,31 @@ Validation for this follow-up: **244 focused backend checks passed**; full backe
 **206 tests passed**, TypeScript check/build passed, and portfolio-management
 browser acceptance passed. The broker handover fixture uses Moto and mocked broker
 reports; authenticated Kotak acceptance is still required after deployment.
+
+
+### Desktop Kotak authentication dialog — 2026-10-13
+
+Desktop Real toolbar previously only checked broker status, and Settings required
+an inline TOTP before its disabled Connect button could be used. Both now open a
+Kotak login dialog using the existing authenticated desktop settings login route.
+The dialog accepts six digits from the authenticator app, focuses the input,
+supports Enter/Cancel/Escape and keyboard focus containment, disables dismissal
+and duplicate submission while connecting, and shows retryable backend errors.
+Codes stay in component memory and are cleared on failure/success/dismissal;
+there is no new credential storage or broker API. The dialog uses a portal so
+Settings cannot accidentally submit/save its own form when login is submitted.
+
+Real startup refreshes authentication before preparing a session. If a cached Kotak
+connection has expired, it opens login and returns without starting a session.
+After login, the user explicitly starts Real trading; no entry/order is retried
+or submitted automatically. Toolbar status is refreshed after connection, and
+Kite retains its token-based connection flow without a Kotak code prompt.
+
+
+Validation: desktop TypeScript/production build and **206 tests passed**. The
+built-app Kotak browser check covers toolbar and Settings prompts, code validation,
+Cancel/Escape, retry and keyboard focus, duplicate/busy submissions, expired cached
+authentication, status refresh, no implicit settings save/session start and Kite
+isolation. Existing Real/Stepwise/Replay/Paper linked-trading browser checks passed.
+Broker responses are synthetic; installed desktop plus real Kotak login acceptance
+remains after preprod deployment. No real authentication codes or orders were used.
