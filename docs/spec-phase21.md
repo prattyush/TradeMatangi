@@ -1305,7 +1305,20 @@ design, review fixes, assumptions and intentionally left-out items. The agreed
 next-month entry window is seven calendar days before actual listed expiry; Nifty
 100 support means eligible constituent stocks, not an invented index contract.
 
-Latest full backend regression: **2,307 passed**. Both client TypeScript checks and
-production builds, **213 desktop tests**, **14 notification tests**, shared
-workspace/linked Analytics and built desktop Kotak login browser checks passed.
+Latest post-review backend regression: **2,331 passed**. Both client TypeScript
+checks and production builds, **216 desktop tests**, shared workspace/linked
+Analytics, actual Day/Swing option drawing sharing, older desktop trading flows,
+website notification and built desktop Kotak login browser checks passed.
 Deploy backend before clients; no live broker orders were sent during validation.
+
+
+### Swing/Futures follow-up review — 2026-10-13
+
+PR #659 now includes fixes for overnight owned execution recovery, expired-entry
+renewal and reopened-position protection, Day/Swing option drawing namespace
+compatibility, and configured Futures SL buffers/ticks. The notification browser
+harness was repaired as well. [Detailed findings, decisions and validation](spec-phase21-swing-futures-plan.md#2026-10-13--follow-up-review-fixes-and-older-feature-regression)
+include **21 new backend regression cases**. Existing Real/Paper/Replay/Stepwise,
+linked PE candles after Fibonacci edits, labels/Stats and broker authentication UI
+passed the exercised regression checks. Installed Windows/live broker acceptance
+remain after preprod deployment; Real Futures gates default off.

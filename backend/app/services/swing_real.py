@@ -396,6 +396,16 @@ async def refresh(session, *, protection=False):
                 raise ValueError(
                     "Swing supports long positions; reconcile this short at the broker"
                 )
+            # Prior DAY orders stay archived. Their unknown state remains a barrier,
+            # rather than assuming that absence from today's report means cancelled.
+            current_ids = {row["broker_order_id"] for row in scoped_orders}
+            for old in order_service.get_all_orders(session.session_id):
+                if old.broker_order_id and old.broker_order_id not in current_ids:
+                    preserved = old.model_copy(deep=True)
+                    if preserved.status.value == "PENDING":
+                        preserved.swing_reconcile_pending = True
+                        preserved.swing_reconcile_reason = "Previous DAY attempt is absent from current broker reports; verify before replacement"
+                    orders[old.order_id] = preserved
             if session.instrument_type == "futures":
                 from app.services.futures_real import confirmed_trades
                 trades = confirmed_trades(session,ledger,orders)
@@ -432,16 +442,6 @@ async def refresh(session, *, protection=False):
                         }
                     )
 
-            # Prior DAY orders stay archived. Their unknown state remains a barrier,
-            # rather than assuming that absence from today's report means cancelled.
-            current_ids = {row["broker_order_id"] for row in scoped_orders}
-            for old in order_service.get_all_orders(session.session_id):
-                if old.broker_order_id and old.broker_order_id not in current_ids:
-                    preserved = old.model_copy(deep=True)
-                    if preserved.status.value == "PENDING":
-                        preserved.swing_reconcile_pending = True
-                        preserved.swing_reconcile_reason = "Previous DAY attempt is absent from current broker reports; verify before replacement"
-                    orders[old.order_id] = preserved
             state.rebuild_reservations(session, orders, positions)
             manifest, _members = await asyncio.to_thread(
                 state.stage,
@@ -1120,7 +1120,7 @@ async def renew_protection_on_quote(session, event):
     for old in list(order_service.get_all_orders(session.session_id)):
         if (
             old.status != OrderStatus.CANCELLED
-            or (old.side != TradeSide.SELL and not (session.instrument_type == "futures" and old.execution_role == "exit"))
+            or (old.execution_role != "exit" if session.instrument_type == "futures" else old.side != TradeSide.SELL)
             or not old.broker_order_id
         ):
             continue
@@ -1137,6 +1137,11 @@ async def renew_protection_on_quote(session, event):
         held = trading.get_position(
             session.session_id, session.symbol, old.right, old.strike, old.expiry
         )
+        if session.instrument_type == "futures":
+            from app.services.futures_real import exit_belongs_to_position
+            closing_side = TradeSide.SELL if held.side == "LONG" else TradeSide.BUY if held.side == "SHORT" else None
+            if old.side != closing_side or not exit_belongs_to_position(session, old):
+                continue
         covered = sum(
             max(0, o.quantity - o.broker_filled_quantity)
             for o in order_service.get_open_orders(session.session_id)

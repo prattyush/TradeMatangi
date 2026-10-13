@@ -402,3 +402,59 @@ Primary references: [Kite margins](https://kite.trade/docs/connect/v3/margins/),
 NSE/BSE bhavcopy URLs captured in each settlement event. Publication formats were
 checked read-only against 2026-10-12 exchange files; this does not constitute
 live trading acceptance.
+
+
+### 2026-10-13 — Follow-up review fixes and older-feature regression
+
+The follow-up review reproduced four defects despite the initial green suite.
+All four and the notification browser harness have now been fixed on the same
+branch/PR #659, targeting `preprod`.
+
+- **Overnight Real Futures:** preserved prior-day owned orders now enter the order
+  map before individual execution reconstruction. Historical owned fills remain
+  attributable after next-day refresh and saved-projection restart. Genuine external
+  executions and uncertain prior DAY attempts remain reconciliation barriers.
+- **DAY renewal:** Futures require an explicit recorded exit role and the actual
+  current closing side. Expired SELL entries cannot be resubmitted as protection.
+  The existing confirmed in-memory journal also rejects an exit if its position
+  became flat/reversed after the exit intention. Partial held quantity and existing
+  coverage limit renewal quantity. Unverifiable/obsolete exits are not automatically
+  recreated. Same-second flat transitions are conservative; review/place fresh
+  protection rather than assume the old order belongs to a reopened position.
+  Equity/options retain their previous renewal rules; no historical DB scan was added.
+- **Option drawing sharing:** Swing feed identity keeps NFO/BFO, while new drawing
+  writes use Day's NSE/BSE namespace. Legacy current-window private FO drawings and
+  earlier unscoped FO records remain readable under their original identities.
+  Private records are not migrated or exposed in Day. Creation/deletion propagates
+  through the existing drawing event; existing Day records and keys are untouched.
+  No database migration or bulk rewrite is required.
+- **Futures SL pricing:** initial and renewed SL submissions explicitly apply the
+  configured stoploss gap. Repricing/conversion uses the frozen contract tick;
+  urgent exits and crossed-stop renewal also use that tick. Other trading modes
+  retain the existing 0.05 default. Broker intent is still persisted before submission,
+  and unknown acknowledgments are not blindly retried.
+- **Notification verification:** the website browser harness explicitly resolves
+  React/react-dom for shared components; the production notification behavior is
+  unchanged. Its actual order-panel clickability/history/FIFO check passes again.
+
+Actual post-fix validation:
+
+- Full backend regression: **2,331 passed**, including **21 new review regressions**.
+  Focused Futures/Real recovery/conversion run: **85 passed**.
+- Desktop regression: **216 passed**, including three drawing-identity cases for
+  NSE/NFO, BSE/BFO and preserved Day/Futures identities.
+- Both client TypeScript checks and production builds passed.
+- New actual-renderer Day/Swing option drawing check passed: existing shared/private/
+  unscoped records, new Swing drawing visible in Day, propagated deletion and reopen.
+- Built desktop linked **Real/Paper/Replay/Stepwise** checks and desktop ticket/edit
+  acceptance passed. The linked underlying/PE Replay check passed after Fibonacci
+  creation/deletion with snapshot polling suspended.
+- Both actual renderers passed Swing workspace and linked Analytics checks, including
+  exact Futures short entries, budget/fee confirmation, labels, Stats and pinned books.
+- Built desktop Kotak login and website notification browser checks passed. New
+  services/tests pass focused lint; diff whitespace check passed.
+
+All brokerage evidence in these checks is synthetic. Installed Windows cross-window
+hosting and actual broker acceptance remain manual after deployment; these results
+are not a claim that live trading has been exercised. Real Futures gates remain
+disabled by default. No merge or main/dev promotion was performed.

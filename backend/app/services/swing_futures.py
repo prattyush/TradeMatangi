@@ -328,7 +328,7 @@ async def place(user, portfolio_id, req):
                 if order.order_type == OrderType.LIMIT:
                     await submit_immediate_async(child, order)
                 elif order.order_type == OrderType.STOPLOSS:
-                    await sync_order_edit_async(child, order, OrderType.STOPLOSS)
+                    await sync_order_edit_async(child, order, OrderType.STOPLOSS, reprice=True)
             except Exception as exc:
                 if (
                     order.recovery_state not in ("submitting", "unknown")

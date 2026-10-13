@@ -68,7 +68,7 @@ async def create_exit(session, target, side, quantity, price):
         session_id=session.session_id, user_id=session.user_id, symbol=session.symbol,
         side=side, order_type=OrderType.LIMIT, quantity=quantity,
         created_at=int(session.current_time or 0), trading_date=session.date,
-        limit_price=limit_price(side, price, EMERGENCY_GAP), is_stoploss=True,
+        limit_price=limit_price(side, price, EMERGENCY_GAP, (getattr(session, "future_contract", None) or {}).get("tick_size", 0.05)), is_stoploss=True,
         market_order=False, quote_price=price, source='emergency_exit',
         wallet_ledger_id=session.wallet_ledger_id,
         wallet_ledger_kind='real' if session.session_type == 'real' else 'paper' if session.session_type == 'paper' else 'sim',
@@ -141,7 +141,7 @@ async def exit_contract(session, target):
             raise ValueError('Existing exits exceed remaining position; refresh broker state before retrying')
         if any(order.recovery_state in ('prepared', 'submitting', 'unknown') for order in closing):
             raise ValueError('An exit acknowledgement is uncertain; refresh and verify broker orders before retrying')
-        urgent_price = limit_price(side, price, EMERGENCY_GAP)
+        urgent_price = limit_price(side, price, EMERGENCY_GAP, (getattr(session, "future_contract", None) or {}).get("tick_size", 0.05))
         for order in closing:
             if busy(order):
                 row['pending'].append(order.order_id)

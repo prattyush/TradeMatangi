@@ -1,3 +1,4 @@
+import { canonicalDrawingKey as canonicalInstrumentKey, drawingIdentity } from "./drawingIdentity"
 import { announceDrawingChange, watchDrawingChanges } from "./drawingChanges"
 import { useEffect, useRef, useState } from 'react'
 import { useDismissMessage } from './useDismissMessage'
@@ -62,7 +63,6 @@ const reportChartDiagnostic = (kind: string, payload: Record<string, unknown>) =
 }
 const overlayName = (tool: string) => tool === 'Trend' ? 'segment' : tool === 'Horizontal' ? 'horizontalStraightLine' : tool === 'Fib Retracement' ? 'fibonacciLine' : tool
 const drawingPoints = (drawing: PersistedDrawing) => drawing.points.map(point => ({ timestamp: point.timestamp * 1000, value: point.price }))
-const canonicalInstrumentKey = (instrument: Record<string, unknown>) => JSON.stringify(Object.fromEntries(Object.entries(instrument).sort(([left], [right]) => left.localeCompare(right))))
 const orderPrice = (order: DesktopOrder) => order.order_type === 'LIMIT' ? order.limit_price : order.trigger_price
 const orderLineLabel = (order: DesktopOrder, position?: DesktopPosition | null, settings?: DesktopTradingSettings | null, sessionCapital = 0) => {
   const qty = compactQty(order.quantity)
@@ -89,7 +89,7 @@ const placeNearPoint = (x: number, y: number, width: number, height: number) => 
   }
 }
 
-export function ChartTile({ externalTradeMarkers=false, legacyDrawingScope, drawingScope, candleAnchorSeconds=0, hideWindowActions = false, readOnlyOrders = false, symbol, interval, supportedIntervals, onIntervalChange, candles = demo, loadOlder, viewportResetKey, loading, message, settings, isReplaying, isLive, instrument, baseUrl, drawingRequest, onDrawingError, onConfigure, onMaximize, maximized, active, indicators, drawingCommand, drawingAction, drawingMode, onDrawingComplete, onActivate, trades = [], openOrders = [], strategies = [], position = null, levelsPosition = null, brokeragePerOrder = 1, aggregatePnl, positionMarkPrice, sessionCapital = 0, lotSize = 1, tradingSettings = null, tradingEnabled = false, orderEntryEnabled = false, entryUnavailableReason = null, shortEntryEnabled = false, underlyingStrategyEnabled = false, showHistoricalMarkers = false, onToggleHistoricalMarkers, pricePickAction = null, onPricePick, onOrderDrag, onStrategyDrag, onStrategyTargetProfitPct, onStrategyCancel, onOrderCancel, onOrderConvertRequest, onOrderQuantityUpdate, onChartOrderAction, swapTargets = [] }: { externalTradeMarkers?:boolean; legacyDrawingScope?:string; drawingScope?:string; candleAnchorSeconds?:number; hideWindowActions?: boolean; readOnlyOrders?: boolean; symbol: string; interval: string; supportedIntervals: number[]; onIntervalChange: (interval: string) => void; candles?: Candle[]; loadOlder?: (beforeTimestamp: number) => Promise<{ candles: Candle[]; more: boolean }>; viewportResetKey?: string; loading: boolean; message: string; settings: ChartSettings; isReplaying: boolean; isLive: boolean; replayDatasetKey?: string; instrument: Record<string, unknown>; baseUrl: string; drawingRequest: DrawingRequest; onDrawingError?: (error: unknown) => void; onConfigure: () => void; onMaximize: () => void; maximized: boolean; active: boolean; indicators: string[]; drawingCommand: DrawingCommand | null; drawingAction: DrawingAction | null; drawingMode: DrawingMode; onDrawingComplete: (commandId: number, tool: string) => void; onActivate: () => void; trades?: DesktopTrade[]; openOrders?: DesktopOrder[]; strategies?: DesktopStrategy[]; position?: DesktopPosition | null; levelsPosition?: DesktopPosition | null; brokeragePerOrder?: number; aggregatePnl?: number; positionMarkPrice?: number; sessionCapital?: number; lotSize?: number; tradingSettings?: DesktopTradingSettings | null; tradingEnabled?: boolean; orderEntryEnabled?: boolean; entryUnavailableReason?: string | null; shortEntryEnabled?: boolean; underlyingStrategyEnabled?: boolean; showHistoricalMarkers?: boolean; onToggleHistoricalMarkers?: () => void; pricePickAction?: PricePickAction | null; onPricePick?: (price: number) => void; onOrderDrag?: (order: DesktopOrder, price: number) => void; onStrategyDrag?: (strategyId: string, price: number) => void; onStrategyTargetProfitPct?: (strategyId: string, percentage: number) => Promise<void>; onStrategyCancel?: (strategyId: string) => Promise<void>; onOrderCancel?: (order: DesktopOrder) => void; onOrderConvertRequest?: (order: DesktopOrder, target: ConversionTarget) => void; onOrderQuantityUpdate?: (order: DesktopOrder, quantity: number) => Promise<void>; onChartOrderAction?: (action: OrderAction, price: number, anchor: { x: number; y: number }) => void; swapTargets?: TileSwap[] }) {
+export function ChartTile({ shareDayDrawings=false, externalTradeMarkers=false, legacyDrawingScope, drawingScope, candleAnchorSeconds=0, hideWindowActions = false, readOnlyOrders = false, symbol, interval, supportedIntervals, onIntervalChange, candles = demo, loadOlder, viewportResetKey, loading, message, settings, isReplaying, isLive, instrument, baseUrl, drawingRequest, onDrawingError, onConfigure, onMaximize, maximized, active, indicators, drawingCommand, drawingAction, drawingMode, onDrawingComplete, onActivate, trades = [], openOrders = [], strategies = [], position = null, levelsPosition = null, brokeragePerOrder = 1, aggregatePnl, positionMarkPrice, sessionCapital = 0, lotSize = 1, tradingSettings = null, tradingEnabled = false, orderEntryEnabled = false, entryUnavailableReason = null, shortEntryEnabled = false, underlyingStrategyEnabled = false, showHistoricalMarkers = false, onToggleHistoricalMarkers, pricePickAction = null, onPricePick, onOrderDrag, onStrategyDrag, onStrategyTargetProfitPct, onStrategyCancel, onOrderCancel, onOrderConvertRequest, onOrderQuantityUpdate, onChartOrderAction, swapTargets = [] }: { shareDayDrawings?:boolean; externalTradeMarkers?:boolean; legacyDrawingScope?:string; drawingScope?:string; candleAnchorSeconds?:number; hideWindowActions?: boolean; readOnlyOrders?: boolean; symbol: string; interval: string; supportedIntervals: number[]; onIntervalChange: (interval: string) => void; candles?: Candle[]; loadOlder?: (beforeTimestamp: number) => Promise<{ candles: Candle[]; more: boolean }>; viewportResetKey?: string; loading: boolean; message: string; settings: ChartSettings; isReplaying: boolean; isLive: boolean; replayDatasetKey?: string; instrument: Record<string, unknown>; baseUrl: string; drawingRequest: DrawingRequest; onDrawingError?: (error: unknown) => void; onConfigure: () => void; onMaximize: () => void; maximized: boolean; active: boolean; indicators: string[]; drawingCommand: DrawingCommand | null; drawingAction: DrawingAction | null; drawingMode: DrawingMode; onDrawingComplete: (commandId: number, tool: string) => void; onActivate: () => void; trades?: DesktopTrade[]; openOrders?: DesktopOrder[]; strategies?: DesktopStrategy[]; position?: DesktopPosition | null; levelsPosition?: DesktopPosition | null; brokeragePerOrder?: number; aggregatePnl?: number; positionMarkPrice?: number; sessionCapital?: number; lotSize?: number; tradingSettings?: DesktopTradingSettings | null; tradingEnabled?: boolean; orderEntryEnabled?: boolean; entryUnavailableReason?: string | null; shortEntryEnabled?: boolean; underlyingStrategyEnabled?: boolean; showHistoricalMarkers?: boolean; onToggleHistoricalMarkers?: () => void; pricePickAction?: PricePickAction | null; onPricePick?: (price: number) => void; onOrderDrag?: (order: DesktopOrder, price: number) => void; onStrategyDrag?: (strategyId: string, price: number) => void; onStrategyTargetProfitPct?: (strategyId: string, percentage: number) => Promise<void>; onStrategyCancel?: (strategyId: string) => Promise<void>; onOrderCancel?: (order: DesktopOrder) => void; onOrderConvertRequest?: (order: DesktopOrder, target: ConversionTarget) => void; onOrderQuantityUpdate?: (order: DesktopOrder, quantity: number) => Promise<void>; onChartOrderAction?: (action: OrderAction, price: number, anchor: { x: number; y: number }) => void; swapTargets?: TileSwap[] }) {
   void baseUrl
   const element = useRef<HTMLDivElement>(null)
   const [historicalMarkersVisible, setHistoricalMarkersVisible] = useState(showHistoricalMarkers)
@@ -139,9 +139,9 @@ export function ChartTile({ externalTradeMarkers=false, legacyDrawingScope, draw
   const tradingEnabledRef = useRef(tradingEnabled)
   const onChartOrderActionRef = useRef(onChartOrderAction)
   const lastPointerRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 })
-  const drawingInstrument = drawingScope ? {...instrument, drawing_scope:drawingScope} : instrument
+  const {writeInstrument: drawingInstrument, readKeys: drawingReadKeys} = drawingIdentity(instrument, drawingScope, legacyDrawingScope, shareDayDrawings)
   const drawingInstrumentKey = canonicalInstrumentKey(drawingInstrument)
-  const legacyDrawingKey = legacyDrawingScope ? canonicalInstrumentKey({...instrument, drawing_scope: legacyDrawingScope}) : ''
+  const drawingReadSignature = JSON.stringify(drawingReadKeys)
   const drawingOwner = useRef(crypto.randomUUID())
   const reloadDrawingsRef = useRef<() => void>(() => undefined)
   const drawingBusyRef = useRef(0)
@@ -411,7 +411,7 @@ export function ChartTile({ externalTradeMarkers=false, legacyDrawingScope, draw
     try {
       drawingBusyRef.current++
       const result = await drawingRequest(path, method, { instrument: drawingInstrument, drawing, revision, mutation_id: crypto.randomUUID() }) as DrawingRecord
-      announceDrawingChange({owner: drawingOwner.current, keys: [drawingInstrumentKey, legacyDrawingKey].filter(Boolean)})
+      announceDrawingChange({owner: drawingOwner.current, keys: drawingReadKeys})
       return result
     } catch (error) {
       onDrawingError?.(error)
@@ -465,7 +465,7 @@ export function ChartTile({ externalTradeMarkers=false, legacyDrawingScope, draw
         return
       }
       const version = ++generation
-      const keys = [...new Set([drawingInstrumentKey, legacyDrawingKey].filter(Boolean))]
+      const keys = JSON.parse(drawingReadSignature) as string[]
       void Promise.all(keys.map(key => drawingRequest(`drawings?instrument=${encodeURIComponent(key)}`, 'GET'))).then(values => {
         if (disposed || version !== generation) return
         if (drawingBusyRef.current || drawingGestureRef.current) { refresh(); return }
@@ -479,9 +479,9 @@ export function ChartTile({ externalTradeMarkers=false, legacyDrawingScope, draw
     }
     reloadDrawingsRef.current = refresh
     refresh()
-    const stop = watchDrawingChanges(drawingOwner.current, [drawingInstrumentKey, legacyDrawingKey].filter(Boolean), refresh)
+    const stop = watchDrawingChanges(drawingOwner.current, drawingReadKeys, refresh)
     return () => { disposed = true; window.clearTimeout(retryTimer); stop(); reloadDrawingsRef.current = () => undefined }
-  }, [drawingInstrumentKey, legacyDrawingKey, drawingRequest, onDrawingError])
+  }, [drawingReadSignature, drawingRequest, onDrawingError])
   useEffect(() => {
     const shortcuts = (event: KeyboardEvent) => {
       if (!active || (event.target instanceof HTMLElement && event.target.closest('input,textarea,select,[contenteditable=true]'))) return

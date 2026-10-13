@@ -153,6 +153,7 @@ export default function SwingChart(
       {props.toolsContainer === undefined ? tools : props.active && props.toolsContainer && createPortal(tools, props.toolsContainer)}
       {drawingError && <p role="alert">{drawingError}</p>}
       <ChartTile
+        shareDayDrawings
         legacyDrawingScope={props.drawingScope}
         candleAnchorSeconds={pane.interval === "1D" ? 0 : 33300}
         showHistoricalMarkers={props.showHistoricalTrades}

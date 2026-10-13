@@ -280,6 +280,44 @@ async def refresh_after_event(session):
     )
 
 
+def exit_belongs_to_position(session, order):
+    """A prior exit cannot protect a position closed/reopened after that intention.
+
+    Use the already-confirmed in-memory journal, without a historical DB scan.
+    Same-second flat transitions are deliberately ambiguous and require review.
+    """
+    net = 0
+    fills = sorted(
+        (
+            trade
+            for trade in trading.get_trades(session.session_id)
+            if trade.instrument_type == "futures"
+            and trade.symbol == session.symbol
+            and trade.expiry == order.expiry
+        ),
+        key=lambda trade: (
+            trade.execution_sort_time or trade.timestamp * 1_000_000,
+            trade.trade_id,
+        ),
+    )
+    for trade in fills:
+        after = net + trade.quantity * (1 if trade.side == TradeSide.BUY else -1)
+        if (
+            net
+            and (not after or net * after < 0)
+            and trade.timestamp >= order.created_at
+        ):
+            return False
+        net = after
+    return bool(
+        net
+        and (
+            (net > 0 and order.side == TradeSide.SELL)
+            or (net < 0 and order.side == TradeSide.BUY)
+        )
+    )
+
+
 async def renew_exit(session, old, quantity, identifier, event):
     from app.models.schemas import OrderStatus, OrderType
     from app.services.broker_order_service import (
@@ -328,7 +366,9 @@ async def renew_exit(session, old, quantity, identifier, event):
         renewed.order_type = OrderType.LIMIT
         renewed.is_stoploss = False
         renewed.limit_price = KiteExecutionService._price(
-            limit_price(renewed.side, event["close"], 0.03),
+            limit_price(
+                renewed.side, event["close"], 0.03, session.future_contract["tick_size"]
+            ),
             session.future_contract["tick_size"],
         )
     order_service._write_order_to_db(renewed, strict=True)
@@ -343,7 +383,7 @@ async def renew_exit(session, old, quantity, identifier, event):
     )
     order_service._write_order_to_db(old, strict=True)
     if renewed.order_type == OrderType.STOPLOSS:
-        await sync_order_edit_async(session, renewed, OrderType.STOPLOSS)
+        await sync_order_edit_async(session, renewed, OrderType.STOPLOSS, reprice=True)
     else:
         await submit_immediate_async(session, renewed)
 
