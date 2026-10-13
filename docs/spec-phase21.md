@@ -1151,3 +1151,49 @@ PR #656 follow-up review corrections are recorded in the
 History initialization, valuation chronology/import attribution, independent drawing
 scopes, label navigation, Day/Swing filters and a single native window close owner.
 Installed Windows and broker acceptance remain after preprod deployment.
+
+
+### Day ownership handover and practice wallet isolation — 2026-10-13
+
+Follow-up to merged PR #656, on `fix/real-day-handover-practice-wallet` from
+preprod `2b2b14a`; delivery PR targets preprod.
+
+“Done for the day” now waits for broker-confirmed flat positions, no pending or
+unresolved orders, durable closure of every live alias, authoritative Day slot
+release and funding participant completion before publishing the final day lock.
+Closed history cannot replace the active owner during verification. Aliases stop
+before releasing the owner, so the next user's session cannot be managed by an old
+viewer. A failed release remains pending and retries; a failed final day-lock write
+can complete after the runtime has ended, provided no outstanding current-day slot
+remains. The original user's IST-day entry barrier is retained.
+
+The daily close intent is persisted. Startup recognizes both closing day locks and
+legacy done locks with outstanding ownership, restores the owned session and
+resumes existing verified closure instead of creating entries. Status reads and
+repeated Done requests resume pending repair. A cross-user start also nudges repair
+when the former owner already requested day completion; it still returns 409 until
+ownership is actually released. Missing/unverifiable metadata retains ownership;
+there is no forced unlock, broad historical scan or new trading lock.
+
+Practice-wallet reset blocking now checks the specific dated ledger used by active
+Day practice sessions. Explicit saved wallet identity takes precedence, with a
+legacy fallback from session type/date. Real books, Swing portfolios, other dated
+wallets and chart-only Live Browse do not block a Day practice wallet. Active or
+paused sessions using that wallet still block it; Paper startup leases and wallet
+revision guards remain unchanged. Broker funds are never reset by this API.
+
+Desktop polls the daily status while closing, including after the session-end
+stream stops, so it can display final completion after ownership release.
+Regression coverage includes release failure/retry, live-owner selection over
+closed history, aliases, restart with closing/done locks, no-runtime outstanding
+ownership, shared Kotak account handover across users, and website/desktop practice
+wallet reads/resets while a separate Real book is active. Deployment to preprod
+and authorized broker acceptance remain required; no live orders were placed.
+
+
+Validation for this follow-up: **244 focused backend checks passed**; full backend
+**2,245 passed**, with the two existing local ICICI-configuration failures
+(`test_missing_strike_returns_400` and `test_invalid_right_returns_400`). Desktop:
+**206 tests passed**, TypeScript check/build passed, and portfolio-management
+browser acceptance passed. The broker handover fixture uses Moto and mocked broker
+reports; authenticated Kotak acceptance is still required after deployment.

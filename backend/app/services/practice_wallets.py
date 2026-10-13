@@ -97,11 +97,24 @@ def claims(user, date):
 
 
 def blocked(user, date, kind):
-    """Reset is allowed unless this user has a session on; no history scans."""
+    """Only an active Day run using this dated practice ledger blocks reset."""
     from app.services import simulation
-    if any(session.user_id == user and session.state != simulation.SimulationState.ENDED
-           for session in list(simulation._sessions.values())):
-        return "Wallet cannot be changed while a session is on; stop it first"
+
+    target = f"{kind}:{date}"
+    for session in list(simulation._sessions.values()):
+        if (
+            session.user_id != user
+            or session.state == simulation.SimulationState.ENDED
+            or session.session_type == "real"
+            or getattr(session, "trading_style", "intraday") == "swing"
+        ):
+            continue
+        ledger = getattr(session, "wallet_ledger_id", None)
+        if not ledger:
+            session_kind = "paper" if session.session_type == "paper" else "sim"
+            ledger = f"{session_kind}:{session.date}"
+        if ledger == target:
+            return "Wallet cannot be changed while a session is on; stop it first"
     return None
 
 

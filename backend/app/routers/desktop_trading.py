@@ -1984,9 +1984,12 @@ async def capture_event_snapshot(session_id: str, req: DesktopEventSnapshot, use
 @router.get('/real-day-status')
 async def real_day_status(user_id: str = Depends(preparation_user_id)):
     from app.dependencies import require_real_trading_access
-    from app.services.real_trading_day import state
+    from app.services.real_trading_day import state, monitor
     require_real_trading_access(user_id)
-    return await asyncio.to_thread(state, user_id)
+    status = await asyncio.to_thread(state, user_id)
+    if status['state'] in ('closing', 'done'):
+        monitor(user_id)
+    return status
 
 
 @router.post("/broker/{session_id}/allocation")

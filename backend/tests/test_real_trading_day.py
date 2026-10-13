@@ -8,6 +8,7 @@ from app.routers import trading as routes
 @pytest.fixture
 def user(monkeypatch):
     session=simulation.SimulationSession(session_id='day-test',symbol='RELIND',date='2026-10-07',start_time='09:15:00',speed=1,user_id='day-user',session_type='real',session_capital=10000)
+    monkeypatch.setattr(day,'has_outstanding_day_slot',lambda *_:False)
     monkeypatch.setattr(day,'market_date',lambda:'2026-10-07')
     monkeypatch.setattr(day,'state',lambda *a:{'date':'2026-10-07','state':'closing'})
     monkeypatch.setattr(trading,'get_position',lambda *a,**k:Position(symbol='RELIND',side='LONG',quantity=10,avg_entry_price=100))
@@ -57,7 +58,7 @@ async def test_completion_waits_for_flat_and_broker_verification(user,monkeypatc
     monkeypatch.setattr(day,'finish',lambda *a:calls.append('done'))
     monkeypatch.setattr(day,'broadcast',lambda *a:None)
     await day.complete_when_flat(user.user_id)
-    assert calls==['verified','done','stopped']
+    assert calls==['verified','stopped','done']
 
 def test_persisted_day_lock_survives_cache_clear_and_rollover(monkeypatch):
     rows={};date=['2026-10-07'];table=MagicMock()
@@ -194,3 +195,132 @@ async def test_current_day_verified_flat_fallback_retains_history_warning(user, 
     finished.assert_awaited_once_with(user)
     assert 'unverified' in user.real_history_warning
     simulation._upsert_session_to_db.assert_called_with(user, strict=True)
+
+
+@pytest.mark.asyncio
+async def test_done_waits_for_durable_release_and_retries(user, monkeypatch):
+    from unittest.mock import AsyncMock
+
+    from app.services import (
+        emergency_exit,
+        execution_broker,
+        real_broker_state,
+        real_close,
+    )
+
+    monkeypatch.setattr(day, "sessions_for", lambda *_: [user])
+    monkeypatch.setattr(execution_broker, "get_service", lambda *_: object())
+    monkeypatch.setattr(real_broker_state, "refresh", AsyncMock())
+    monkeypatch.setattr(
+        emergency_exit,
+        "position",
+        lambda *_: Position(
+            symbol=user.symbol, side="FLAT", quantity=0, avg_entry_price=0
+        ),
+    )
+    monkeypatch.setattr(order_service, "get_open_orders", lambda *_: [])
+    monkeypatch.setattr(real_close, "unresolved", lambda *_: False)
+    monkeypatch.setattr(day, "broadcast", lambda *_: None)
+    finished = MagicMock()
+    monkeypatch.setattr(day, "finish", finished)
+    attempts = []
+
+    async def release(session):
+        assert not finished.called
+        attempts.append(session.session_id)
+        if len(attempts) == 1:
+            raise RuntimeError("Release transaction unavailable")
+
+    monkeypatch.setattr(real_close, "finish", release)
+    monkeypatch.setattr(day.asyncio, "sleep", AsyncMock())
+    await day.complete_when_flat(user.user_id)
+    assert attempts == [user.session_id, user.session_id]
+    finished.assert_called_once_with(user.user_id, user.date)
+
+
+@pytest.mark.asyncio
+async def test_done_closes_authoritative_owner_and_all_live_aliases(user, monkeypatch):
+    from unittest.mock import AsyncMock
+
+    from app.services import (
+        emergency_exit,
+        execution_broker,
+        real_broker_state,
+        real_close,
+    )
+
+    alias = simulation.SimulationSession(
+        session_id="alias",
+        symbol=user.symbol,
+        date=user.date,
+        start_time="09:15:00",
+        speed=1,
+        user_id=user.user_id,
+        session_type="real",
+    )
+    old = simulation.SimulationSession(
+        session_id="old",
+        symbol=user.symbol,
+        date=user.date,
+        start_time="09:15:00",
+        speed=1,
+        user_id=user.user_id,
+        session_type="real",
+    )
+    old.state = simulation.SimulationState.ENDED
+    user.real_active_claim = True
+    monkeypatch.setattr(
+        simulation, "_sessions", {"old": old, "alias": alias, "owner": user}
+    )
+    assert old not in day.sessions_for(user.user_id)
+    assert day.unique_books(day.sessions_for(user.user_id)) == [user]
+    monkeypatch.setattr(execution_broker, "get_service", lambda *_: object())
+    monkeypatch.setattr(real_broker_state, "refresh", AsyncMock())
+    monkeypatch.setattr(
+        emergency_exit,
+        "position",
+        lambda *_: Position(
+            symbol=user.symbol, side="FLAT", quantity=0, avg_entry_price=0
+        ),
+    )
+    monkeypatch.setattr(order_service, "get_open_orders", lambda *_: [])
+    monkeypatch.setattr(real_close, "unresolved", lambda *_: False)
+    calls = []
+
+    async def release(session):
+        calls.append(session.session_id)
+
+    monkeypatch.setattr(real_close, "finish", release)
+    monkeypatch.setattr(day, "finish", lambda *_: calls.append("done"))
+    monkeypatch.setattr(day, "broadcast", lambda *_: None)
+    await day.complete_when_flat(user.user_id)
+    assert calls == ["alias", user.session_id, "done"]
+
+
+@pytest.mark.asyncio
+async def test_done_empty_runtime_waits_for_outstanding_slot(user, monkeypatch):
+    import asyncio
+
+    monkeypatch.setattr(simulation, "_sessions", {})
+    monkeypatch.setattr(day, "has_outstanding_day_slot", lambda *_: True)
+    finished = MagicMock()
+    monkeypatch.setattr(day, "finish", finished)
+    monkeypatch.setattr(day, "broadcast", lambda *_: None)
+
+    async def stop(*_):
+        raise asyncio.CancelledError()
+
+    monkeypatch.setattr(day.asyncio, "sleep", stop)
+    with pytest.raises(asyncio.CancelledError):
+        await day.complete_when_flat(user.user_id)
+    finished.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_old_done_status_restarts_release_repair(user, monkeypatch):
+    monkeypatch.setattr(day, "begin", lambda *_: {"date": user.date, "state": "done"})
+    resume = MagicMock()
+    monkeypatch.setattr(day, "monitor", resume)
+    result = await day.done_for_day(user.user_id)
+    assert result["state"] == "done"
+    resume.assert_called_once_with(user.user_id)

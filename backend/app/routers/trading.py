@@ -332,7 +332,7 @@ async def exit_all_now(session_id: str, user_id: str = Depends(get_request_user_
 async def real_day_status(user_id: str = Depends(get_request_user_id)):
     from app.services import real_trading_day
     status = await asyncio.to_thread(real_trading_day.state, user_id)
-    if status['state'] == 'closing':
+    if status['state'] in ('closing', 'done'):
         real_trading_day.monitor(user_id)
     return status
 

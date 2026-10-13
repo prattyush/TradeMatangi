@@ -2490,6 +2490,15 @@ function ScreenController(props: ScreenControllerProps) {
     }).catch(() => { if (!cancelled) { setRealEnabled(false); setRealBroker(null) } })
     return () => { cancelled = true }
   }, [connection, serverUrl, browserToken, sharedPreferences.real_execution_broker])
+  useEffect(() => {
+    if(connection!=='connected' || realDay?.state!=='closing')return;
+    let cancelled=false;
+    const refresh=()=>void desktopTradingRequest<RealTradingDayStatus>('real-day-status','GET').then(value=>{
+      if(!cancelled)setRealDay(previous=>mergeRealTradingDayStatus(previous,value));
+    }).catch(()=>{});
+    refresh();const timer=setInterval(refresh,5000);
+    return()=>{cancelled=true;clearInterval(timer);};
+  },[connection,realDay?.state,realDay?.date,serverUrl,browserToken]);
   useEffect(() => { if (trading?.session.state === 'ended') setRealClosing(false) }, [trading?.session.state])
   useEffect(() => { setSnapshotsActive(Boolean(sharedPreferences.auto_start_event_snapshots) && !companion) }, [trading?.session.session_id, companion, sharedPreferences.auto_start_event_snapshots])
   const ticketSizeOptions = () => tradeTicket?.settings?.desktop_order_size_mode === 'quantity' ? ['1', '2', '3'] : ['l', 'm', 'h']

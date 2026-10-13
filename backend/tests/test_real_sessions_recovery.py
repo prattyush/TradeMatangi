@@ -198,3 +198,132 @@ def test_funding_admission_cannot_reopen_a_concurrently_closed_swing_book(db):
     assert funding.read('u', 'kite', 'account')['participants'] == {}
     ended = portfolios.owned('u', parent['session_id'])
     assert ended['state'] == 'ended' and not ended.get('real_funding_period')
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", ["closing", "done"])
+async def test_restart_resumes_day_closure_instead_of_starting_entries(
+    db, monkeypatch, status
+):
+    import asyncio
+    from unittest.mock import AsyncMock, MagicMock
+
+    from app.routers import simulation as routes
+    from app.services import real_close
+    from app.services import real_trading_day as day
+
+    saved = record(date="2026-10-13")
+    db.Table("Sessions").put_item(Item=saved)
+    row = {
+        "session_id": "book",
+        "owner_user_id": "u",
+        "style": "intraday",
+        "state": "running",
+        "engine_until": 0,
+    }
+    monkeypatch.setattr(real_sessions, "_ready", True)
+    monkeypatch.setattr(real_sessions, "_outstanding", lambda: [row])
+    monkeypatch.setattr(simulation, "get_session", lambda *_: None)
+    monkeypatch.setattr(day, "market_date", lambda: "2026-10-13")
+    monkeypatch.setattr(
+        day, "state", lambda *_: {"date": "2026-10-13", "state": status}
+    )
+    restored = SimpleNamespace(session_id="book")
+    restore = AsyncMock(return_value=restored)
+    close = AsyncMock()
+    start = AsyncMock()
+    monkeypatch.setattr(real_sessions, "restore_for_close", restore)
+    monkeypatch.setattr(real_close, "close", close)
+    monkeypatch.setattr(routes, "start_with_paper_claim", start)
+    monitor = MagicMock()
+    monkeypatch.setattr(day, "monitor", monitor)
+
+    async def stop(*_):
+        raise asyncio.CancelledError()
+
+    monkeypatch.setattr(real_sessions.asyncio, "sleep", stop)
+    with pytest.raises(asyncio.CancelledError):
+        await real_sessions._recover_outstanding()
+    restore.assert_awaited_once_with(saved, "u")
+    close.assert_awaited_once_with(restored)
+    start.assert_not_called()
+    assert monitor.call_count == (1 if status == "closing" else 0)
+
+
+@pytest.mark.asyncio
+async def test_confirmed_day_completion_releases_shared_kotak_account_for_next_user(
+    db, monkeypatch
+):
+    from unittest.mock import AsyncMock
+
+    from app.models.schemas import Position
+    from app.services import (
+        emergency_exit,
+        execution_broker,
+        order_service,
+        real_broker_state,
+        real_close,
+        trading,
+    )
+    from app.services import real_trading_day as day
+
+    date = "2026-10-13"
+    saved = record("kotak-book", execution_broker="kotak", date=date)
+    slots.claim(
+        "u", "kotak", "account", "intraday", "kotak-book", "token", record=saved
+    )
+    pool = funding.initialize("u", "kotak", "account", 100000)
+    funding.start_participant(
+        "u", "kotak", "account", pool["period_id"], "intraday", "kotak-book", 1
+    )
+    session = simulation.SimulationSession(
+        session_id="kotak-book",
+        symbol="HDFCBANK",
+        date=date,
+        start_time="09:15:00",
+        speed=1,
+        user_id="u",
+        session_type="real",
+        execution_broker="kotak",
+        broker_account_id="account",
+    )
+    session.real_active_claim = True
+    session.real_claim_token = "token"
+    session.real_funding_period = pool["period_id"]
+    monkeypatch.setattr(simulation, "_sessions", {session.session_id: session})
+    monkeypatch.setattr(day, "market_date", lambda: date)
+    monkeypatch.setattr(day, "table", lambda: db.Table("WalletLedgers"))
+    monkeypatch.setattr(day, "broadcast", lambda *_: None)
+    monkeypatch.setattr(execution_broker, "get_service", lambda *_: object())
+    monkeypatch.setattr(real_broker_state, "refresh", AsyncMock())
+    monkeypatch.setattr(
+        emergency_exit,
+        "position",
+        lambda *_: Position(
+            symbol=session.symbol, side="FLAT", quantity=0, avg_entry_price=0
+        ),
+    )
+    monkeypatch.setattr(trading, "get_trades", lambda *_: [])
+    monkeypatch.setattr(order_service, "get_open_orders", lambda *_: [])
+    monkeypatch.setattr(real_close, "unresolved", lambda *_: False)
+    monkeypatch.setattr(
+        simulation,
+        "stop_session",
+        lambda s, **_: setattr(s, "state", simulation.SimulationState.ENDED),
+    )
+    monkeypatch.setattr(
+        "app.services.broker_order_service.refresh_account_peers", lambda *_: None
+    )
+    day._terminal.discard(("u", date))
+    day.begin("u")
+    await day.complete_when_flat("u")
+    assert day.state("u")["state"] == "done"
+    assert slots.read("kotak", "account", "intraday") is None
+    assert not funding.read("u", "kotak", "account")["participants"]["intraday"][
+        "active"
+    ]
+    slots.claim(
+        "next-user", "kotak", "account", "intraday", "desktop-book", "next-token"
+    )
+    assert slots.read("kotak", "account", "intraday")["owner_user_id"] == "next-user"
+    day._terminal.discard(("u", date))

@@ -39,7 +39,7 @@ async def finish(session):
     flat = Position(symbol=session.symbol, side="FLAT", quantity=0, avg_entry_price=0).model_dump(mode='json')
     net = sum((t['quantity'] * t['price'] * (1 if t['side'] == 'SELL' else -1) - t.get('commission', 0)) for t in trades)
     capital = session.session_capital
-    if getattr(session, "real_active_claim", False):
+    if getattr(session, "real_active_claim", False) and not session.real_verified_closed:
         await asyncio.to_thread(real_sessions.release, session)
         session.real_verified_closed = True
     event = {'type': 'session_ended', 'session_id': session.session_id,

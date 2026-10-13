@@ -100,16 +100,19 @@ def test_default_today_is_paper_and_selected_historical_date_is_sim(db):
     assert client.get("/api/wallet?date=2020-01-02", headers=headers).json()["balance"] == 190000
 
 
-@pytest.mark.parametrize("session_type", ["paper", "sim", "stepwise", "real"])
+@pytest.mark.parametrize("session_type", ["paper", "sim", "stepwise"])
 @pytest.mark.parametrize("state", [simulation.SimulationState.RUNNING, simulation.SimulationState.PAUSED])
-def test_any_on_session_blocks_reset_but_stopped_history_does_not(db, session_type, state):
+def test_same_wallet_on_session_blocks_reset_but_other_wallets_and_history_do_not(db, session_type, state):
     from types import SimpleNamespace
     session = SimpleNamespace(user_id=USER, date=DATE, session_type=session_type, state=state)
     simulation._sessions["on"] = session
-    for kind in ("sim", "paper"):
-        with pytest.raises(HTTPException) as error:
-            wallets.reset(USER, "2026-10-08", kind, 123000)
-        assert error.value.status_code == 409
+    kind = "paper" if session_type == "paper" else "sim"
+    with pytest.raises(HTTPException) as error:
+        wallets.reset(USER, DATE, kind, 123000)
+    assert error.value.status_code == 409
+    other = "sim" if kind == "paper" else "paper"
+    assert wallets.reset(USER, DATE, other, 123000) == 123000
+    assert wallets.reset(USER, "2026-10-08", kind, 123000) == 123000
     session.state = simulation.SimulationState.ENDED
     db.Table("Sessions").put_item(Item={"session_id": "old", "user_id": USER, "date": DATE, "session_type": "sim", "state": "running"})
     db.Table("Orders").put_item(Item={"session_id": "old", "order_id": "old-order", "user_id": USER, "status": "PENDING", "wallet_ledger_id": f"sim:{DATE}"})
@@ -378,3 +381,68 @@ def test_paper_start_revision_fences_reset_without_enumerating_new_symbol(db):
     assert error.value.status_code == 409
     paper_wallet.finish_session_claim(USER, DATE, 'HDFCBANK', token)
     assert wallets.reset(USER, DATE, 'paper', 250000) == 250000
+
+
+@pytest.mark.parametrize(
+    "session_type,trading_style",
+    [("real", "intraday"), ("real", "swing"), ("paper", "swing")],
+)
+def test_separate_real_and_swing_books_do_not_lock_day_practice_wallet(
+    db, session_type, trading_style
+):
+    from types import SimpleNamespace
+
+    simulation._sessions["separate"] = SimpleNamespace(
+        user_id=USER,
+        date=DATE,
+        session_type=session_type,
+        trading_style=trading_style,
+        state=simulation.SimulationState.RUNNING,
+    )
+    assert wallets.blocked(USER, DATE, "paper") is None
+    assert wallets.reset(USER, DATE, "paper", 123000) == 123000
+    assert wallets.reset(USER, DATE, "sim", 234000) == 234000
+
+
+@pytest.mark.parametrize("kind", ["paper", "sim"])
+def test_explicit_wallet_identity_is_authoritative_for_active_practice_runs(db, kind):
+    from types import SimpleNamespace
+
+    simulation._sessions["active"] = SimpleNamespace(
+        user_id=USER,
+        date="2020-01-01",
+        session_type="sim",
+        wallet_ledger_id=f"{kind}:{DATE}",
+        state=simulation.SimulationState.RUNNING,
+    )
+    assert wallets.blocked(USER, DATE, kind) is not None
+    assert wallets.blocked(USER, "2020-01-01", kind) is None
+
+
+def test_desktop_and_website_paper_wallet_reset_ignore_active_real_book(db):
+    from types import SimpleNamespace
+
+    simulation._sessions["real"] = SimpleNamespace(
+        user_id=USER,
+        date=DATE,
+        session_type="real",
+        state=simulation.SimulationState.RUNNING,
+    )
+    client = TestClient(app)
+    headers = {"X-User-Id": USER}
+    for get_path, reset_path in [
+        (
+            f"/api/wallet?date={DATE}&mode=paper&include_reset_status=true",
+            f"/api/wallet/reset?date={DATE}&mode=paper",
+        ),
+        (
+            f"/api/desktop/v1/trading/wallet?date={DATE}&desktop_mode=paper",
+            f"/api/desktop/v1/trading/wallet/reset?date={DATE}&desktop_mode=paper",
+        ),
+    ]:
+        status = client.get(get_path, headers=headers)
+        assert status.status_code == 200, status.text
+        assert not status.json().get("locked", False)
+        response = client.post(reset_path, headers=headers, json={"amount": 123000})
+        assert response.status_code == 200, response.text
+        assert response.json()["balance"] == 123000
