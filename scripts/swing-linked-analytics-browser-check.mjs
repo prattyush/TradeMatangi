@@ -20,7 +20,7 @@ const request=async(path,method,body)=>{window.calls.push({path,method,body});co
 const drawing=async(path,method,body)=>{window.calls.push({path:"drawing:"+path,drawingPath:path,method,body});return path==='chart-settings'?{settings:{}}:{drawings:[]}};const renderer=props=><Native {...props} drawingRequest={drawing}/>;
 const symbols=async()=>[{symbol:'HDFCBANK',display_name:'HDFC Bank',chart_type:'equity',option_eligible:true},{symbol:'RELIND',display_name:'Reliance',chart_type:'equity',option_eligible:true}];
 const summary={session_id:'child',user_id:'u',symbol:'RELIND',date:'2026-10-06',instrument_type:'equity',session_type:'paper',trading_style:'swing',portfolio_id:'portfolio',trade_count:1,round_trip_count:0,net_pnl:0,total_commission:1,session_capital:10000};const environment={swingRequest:request,charts:{SwingChart:surface==='desktop'?renderer:Web},api:{getAnalysisSessions:async()=>[summary],getSessionDetail:async()=>({...summary,trades:[],cycles:[]}),patternGetChartByDate:async()=>{throw new Error('no pattern')},saveLabels:labels=>request('portfolio/labels','POST',labels[0])},performance:{getSwingReport:async filters=>({portfolios:[{portfolio_id:'portfolio',mode:'paper',state:'running'}],report:await request('portfolio/analytics?'+new URLSearchParams(filters),'GET')}),getPerformance:filters=>{window.dayFilters=filters;return Promise.reject(new Error('Day fixture'))},getPerformanceCycles:async()=>({items:[],total:0,next_offset:null}),getPerformanceDetail:async()=>({})},onDirtyChange:value=>{window.dirty=value},onLabelSavingChange:value=>{window.saving=value}};
-function App(){const create=useCallback(()=>{window.open(location.pathname+'?surface='+surface+'&child=child-one','swing-child')},[]);if(query.get('sessions'))return <AnalysisProvider value={environment}><TradeAnalysis initialPortfolioId='portfolio' onClose={()=>{window.detached=true}}/></AnalysisProvider>;if(query.get('global'))return <AnalysisProvider value={environment}><Dashboard defaultTradingStyle='swing' defaultPortfolioId='portfolio' onClose={()=>{window.detached=true}}/></AnalysisProvider>;return <Panel request={request} loadSymbols={symbols} renderChart={surface==='desktop'?renderer:Web} surface={surface} portfolioId={child?'portfolio':undefined} workspaceId={child??undefined} companion={Boolean(child)} onCreateLinked={surface==='desktop'&&!child?create:undefined} onDetach={()=>{window.detached=true}}/>}createRoot(document.getElementById('root')).render(<App/>);`,
+function App(){const create=useCallback(()=>{window.open(location.pathname+'?surface='+surface+'&child=child-one','swing-child')},[]);if(query.get('sessions'))return <AnalysisProvider value={environment}><TradeAnalysis initialPortfolioId='portfolio' onClose={()=>{window.detached=true}}/></AnalysisProvider>;if(query.get('global'))return <AnalysisProvider value={environment}><Dashboard defaultTradingStyle='swing' defaultPortfolioId='portfolio' onClose={()=>{window.detached=true}}/></AnalysisProvider>;return <Panel request={request} loadSymbols={symbols} renderChart={surface==='desktop'?renderer:Web} surface={surface} portfolioId={child?'portfolio':undefined} workspaceId={child??undefined} companion={Boolean(child)} onPopOut={surface==='desktop'&&!child?()=>{create();window.mainView='day'}:undefined} onCreateLinked={surface==='desktop'&&!child?create:undefined} onDetach={()=>{window.detached=true}}/>}createRoot(document.getElementById('root')).render(<App/>);`,
     resolveDir: root + "/windowsapp",
     loader: "tsx",
   },
@@ -342,8 +342,9 @@ try {
     if (surface === "desktop") {
       const popup = context.waitForEvent("page");
       await page
-        .getByRole("button", { name: "Create linked window", exact: true })
+        .getByRole("button", { name: "Pop out Swing", exact: true })
         .click();
+      assert.equal(await page.evaluate(() => window.mainView), "day");
       const child = await popup;
       await child.locator(".swing-workspace").waitFor();
       await child.getByLabel("Swing chart layout").selectOption("2");
@@ -427,6 +428,14 @@ try {
         !childDrawing.some(
           (i) => i.drawing_scope === "swing:portfolio:primary",
         ),
+      );
+      assert.equal(await child.getByLabel("Swing mode").count(), 0);
+      assert.equal(await child.getByLabel("Swing broker").count(), 0);
+      assert.equal(
+        await child
+          .getByRole("button", { name: "Pop out Swing", exact: true })
+          .count(),
+        0,
       );
       const childCalls = await child.evaluate(() => window.calls);
       assert(!childCalls.some((c) => c.path.startsWith("active?")));

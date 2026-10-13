@@ -306,9 +306,11 @@ export default function SwingWorkspace({
   Renderer,
   surface,
   workspaceId,
+  portfolioControls,
   companion = false,
   onSaveReady,
   onCreateLinked,
+  onPopOut,
   onSelect,
   onPick,
   picking,
@@ -327,9 +329,11 @@ export default function SwingWorkspace({
   Renderer: ComponentType<SwingChartProps>;
   surface: "website" | "desktop";
   workspaceId?: string;
+  portfolioControls?: ReactNode;
   companion?: boolean;
   onSaveReady?: (save: (() => Promise<unknown>) | null) => void;
   onCreateLinked?: (portfolioId: string) => void;
+  onPopOut?: (portfolioId: string) => void;
   onSelect: (pane: SwingPane) => void;
   onPick: (price: number) => void;
   picking: boolean;
@@ -547,6 +551,7 @@ export default function SwingWorkspace({
   return (
     <div className="swing-workspace">
       <div className="swing-workspace-bar">
+        {portfolioControls}
         <strong>
           {snapshot.portfolio.mode === "real"
             ? `${snapshot.portfolio.execution_broker} Real`
@@ -602,6 +607,16 @@ export default function SwingWorkspace({
             ? "Resume entries"
             : "Pause entries"}
         </button>
+        {!companion && onPopOut && (
+          <button
+            type="button"
+            title="Open Swing in its own window and return to the Day workspace"
+            disabled={busy}
+            onClick={() => onPopOut(prefix)}
+          >
+            Pop out Swing
+          </button>
+        )}
         {!companion && onCreateLinked && (
           <button onClick={() => onCreateLinked(prefix)}>
             Create linked window

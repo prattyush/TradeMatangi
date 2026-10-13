@@ -1,3 +1,4 @@
+import KotakTOTPModal from './components/KotakTOTPModal'
 import SwingChart from './components/SwingChart'
 import SwingPortfolioPanel, { type SwingRequest } from '../../shared/SwingPortfolioPanel'
 import { _authHeaders } from './services/api'
@@ -221,6 +222,7 @@ export default function App() {
 function AppInner({ authUser, onLogout, setAuthUser, onOpenMessages }: { onOpenMessages:(id?:string)=>void; authUser: { userId: string; email: string; isAdmin: boolean; accountName?: string }; onLogout: () => void; setAuthUser: React.Dispatch<React.SetStateAction<{ userId: string; email: string; isAdmin: boolean; accountName?: string } | null>> }) {
   const sim = useSimulation()
   const [showSwing, setShowSwing] = useState(false)
+  const [showSwingKotakLogin,setShowSwingKotakLogin]=useState(false),[swingBrokerRevision,setSwingBrokerRevision]=useState(0)
   const swingRequest = useCallback<SwingRequest>(async <T,>(path: string, method: 'GET' | 'POST' | 'PUT' | 'DELETE', body?: Record<string, unknown>) => {
     const response = await fetch(`${BACKEND_URL}/api/swing/portfolios${path ? '/' + path : ''}`, {
       method, headers: { ..._authHeaders(), 'Content-Type': 'application/json' },
@@ -2141,7 +2143,7 @@ function AppInner({ authUser, onLogout, setAuthUser, onOpenMessages }: { onOpenM
 
   const idle = sim.sessionState === 'idle' || sim.sessionState === 'ended'
 
-  if (showSwing) return <><SwingPortfolioPanel key={authUser.userId} request={swingRequest} loadSymbols={swingSymbols} renderChart={SwingChart} surface="website" onAnalyse={id=>{setSwingAnalysisPortfolio(id);setShowAnalysis(true)}} onDetach={() => {setShowSwing(false);setShowAnalysis(false)}} />{showAnalysis&&<TradeAnalysis key={swingAnalysisPortfolio} initialPortfolioId={swingAnalysisPortfolio} onClose={()=>setShowAnalysis(false)} historicalDays={historicalDays}/>}</>
+  if (showSwing) return <><SwingPortfolioPanel key={authUser.userId} request={swingRequest} brokerRevision={swingBrokerRevision} onConnectBroker={broker=>{if(broker==='kotak')setShowSwingKotakLogin(true)}} loadSymbols={swingSymbols} renderChart={SwingChart} surface="website" onAnalyse={id=>{setSwingAnalysisPortfolio(id);setShowAnalysis(true)}} onDetach={() => {setShowSwing(false);setShowAnalysis(false)}} />{showSwingKotakLogin&&<KotakTOTPModal onCancel={()=>setShowSwingKotakLogin(false)} onSuccess={()=>{setShowSwingKotakLogin(false);setSwingBrokerRevision(n=>n+1)}}/>}{showAnalysis&&<TradeAnalysis key={swingAnalysisPortfolio} initialPortfolioId={swingAnalysisPortfolio} onClose={()=>setShowAnalysis(false)} historicalDays={historicalDays}/>}</>
 
   if (showPatternLibrary) {
     return (

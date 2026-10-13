@@ -96,8 +96,11 @@ export default function SwingPortfolioPanel({
   onPortfolioReady,
   onSaveReady,
   onCreateLinked,
+  onPopOut,
   onAnalyse,
   onDraftStateChange,
+  onConnectBroker,
+  brokerRevision = 0,
 }: {
   request: SwingRequest;
   loadSymbols: () => Promise<SymbolChoice[]>;
@@ -110,22 +113,64 @@ export default function SwingPortfolioPanel({
   onPortfolioReady?: (portfolio: Portfolio) => void;
   onSaveReady?: (save: (() => Promise<unknown>) | null) => void;
   onCreateLinked?: (portfolioId: string) => void;
+  onPopOut?: (portfolioId: string) => void;
   onAnalyse?: (portfolioId: string, sessionId?: string) => void;
-  onDraftStateChange?: (state:{dirty:boolean;saving:boolean})=>void;
+  onDraftStateChange?: (state: { dirty: boolean; saving: boolean }) => void;
+  onConnectBroker?: (broker: "kotak" | "kite") => void;
+  brokerRevision?: number;
 }) {
   const [analyticsOpen, setAnalyticsOpen] = useState<
       "stats" | "history" | null
     >(null),
     [selectedCycle, setSelectedCycle] = useState<string | undefined>();
-  const labelState = useRef({dirty:false,saving:false});
-  const reportDraft = (state:{dirty:boolean;saving:boolean}) => {labelState.current=state;onDraftStateChange?.(state);};
-  const mayNavigate = () => !labelState.current.saving && (!labelState.current.dirty || window.confirm('Discard unsaved trade labels?'));
+  const labelState = useRef({ dirty: false, saving: false });
+  const reportDraft = (state: { dirty: boolean; saving: boolean }) => {
+    labelState.current = state;
+    onDraftStateChange?.(state);
+  };
+  const mayNavigate = () =>
+    !labelState.current.saving &&
+    (!labelState.current.dirty ||
+      window.confirm("Discard unsaved trade labels?"));
   const [managementOpen, setManagementOpen] = useState(false);
   const [picking, setPicking] = useState(false);
   const requestedContract = useRef<SwingPane | null>(null);
   const [mode, setMode] = useState<"paper" | "real">("paper");
   const [broker, setBroker] = useState("kite");
   const [allocation, setAllocation] = useState("100");
+  const [connectionRetry, setConnectionRetry] = useState(0);
+  const [brokerConnection, setBrokerConnection] = useState<{
+    broker: string;
+    authenticated: boolean;
+  } | null>(null);
+  const [connectionError, setConnectionError] = useState("");
+  useEffect(() => {
+    let active = true;
+    setBrokerConnection(null);
+    setConnectionError("");
+    if (mode !== "real" || portfolioId) return;
+    void request<{ broker: string; authenticated: boolean }>(
+      `broker-status?execution_broker=${broker}`,
+      "GET",
+    )
+      .then((value) => {
+        if (active) setBrokerConnection(value);
+      })
+      .catch((cause) => {
+        if (active) setConnectionError(String(cause));
+      });
+    return () => {
+      active = false;
+    };
+  }, [request, mode, broker, portfolioId, brokerRevision, connectionRetry]);
+  const workspaceSave = useRef<(() => Promise<unknown>) | null>(null);
+  const registerWorkspaceSave = useCallback(
+    (save: (() => Promise<unknown>) | null) => {
+      workspaceSave.current = save;
+      onSaveReady?.(save);
+    },
+    [onSaveReady],
+  );
   const [realEnabled, setRealEnabled] = useState(false);
   useEffect(() => {
     let active = true;
@@ -185,6 +230,14 @@ export default function SwingPortfolioPanel({
   const mounted = useRef(false);
   const mutation = useRef(false);
   const revision = useRef(0);
+  const priorBrokerRevision = useRef(brokerRevision);
+  useEffect(() => {
+    if (priorBrokerRevision.current !== brokerRevision) {
+      priorBrokerRevision.current = brokerRevision;
+      revision.current++;
+      setError("");
+    }
+  }, [brokerRevision]);
   const refresh = useCallback(async () => {
     const started = revision.current;
     const value = await request<Snapshot>(
@@ -200,17 +253,18 @@ export default function SwingPortfolioPanel({
           ? previous
           : value,
       );
-  }, [request, mode, broker, portfolioId]);
+  }, [request, mode, broker, portfolioId, brokerRevision]);
   useEffect(() => {
     mounted.current = true;
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout>;
     const poll = async () => {
       if (cancelled) return;
+      const pollRevision = revision.current;
       try {
         await refresh();
       } catch (reason) {
-        if (mounted.current) {
+        if (mounted.current && pollRevision === revision.current) {
           if (portfolioId) setSnapshot(null);
           setError(String(reason));
         }
@@ -615,6 +669,124 @@ export default function SwingPortfolioPanel({
       mode,
     ],
   );
+  const switchBook = async (nextMode: "paper" | "real", nextBroker: string) => {
+    if (mutation.current || !mayNavigate()) return;
+    mutation.current = true;
+    revision.current++;
+    setBusy(true);
+    setError("");
+    try {
+      await workspaceSave.current?.();
+      if (!mounted.current) return;
+      setAnalyticsOpen(null);
+      setManagementOpen(false);
+      setSnapshot(null);
+      setMode(nextMode);
+      setBroker(nextBroker);
+    } catch (cause) {
+      if (mounted.current)
+        setError(`Workspace could not be saved: ${String(cause)}`);
+    } finally {
+      mutation.current = false;
+      if (mounted.current) setBusy(false);
+    }
+  };
+  const startPortfolio = async () => {
+    if (mutation.current) return;
+    const version = revision.current;
+    if (mode === "real") {
+      try {
+        const status = await request<{
+          broker: string;
+          authenticated: boolean;
+        }>(`broker-status?execution_broker=${broker}`, "GET");
+        if (!mounted.current || version !== revision.current) return;
+        setBrokerConnection(status);
+        if (!status.authenticated) {
+          onConnectBroker?.(broker as "kotak" | "kite");
+          return;
+        }
+      } catch (cause) {
+        setConnectionError(String(cause));
+        return;
+      }
+    }
+    if (!mounted.current || version !== revision.current) return;
+    await act("", {
+      mode,
+      execution_broker: broker,
+      allocation_pct: Number(allocation) / 100,
+      capital: Number(capital),
+      ...(loss ? { loss_limit_pct: Number(loss) / 100 } : {}),
+    });
+  };
+  const portfolioControls = (
+    <>
+      {!portfolioId && (
+        <label>
+          Mode{" "}
+          <select
+            aria-label="Swing mode"
+            title="Switch portfolio views without closing the other portfolio"
+            disabled={busy}
+            value={mode}
+            onChange={(event) => {
+              void switchBook(event.target.value as "paper" | "real", broker);
+            }}
+          >
+            <option value="paper">Paper</option>
+            {realEnabled && <option value="real">Real</option>}
+          </select>
+        </label>
+      )}{" "}
+      {!portfolioId && mode === "real" && (
+        <label>
+          Broker{" "}
+          <select
+            aria-label="Swing broker"
+            disabled={busy}
+            value={broker}
+            onChange={(event) => {
+              void switchBook(mode, event.target.value);
+            }}
+          >
+            <option value="kite">Kite</option>
+            <option value="kotak">Kotak</option>
+          </select>
+        </label>
+      )}
+      {!portfolioId && mode === "real" && (
+        <span className="swing-broker-connection">
+          <span role="status">
+            {brokerConnection?.broker === broker
+              ? `${broker === "kotak" ? "Kotak Neo" : "Kite"} · ${brokerConnection.authenticated ? "Connected" : "Authentication required"}`
+              : connectionError || "Checking broker connection…"}
+          </span>
+          {broker === "kotak" &&
+            !brokerConnection?.authenticated &&
+            onConnectBroker && (
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => onConnectBroker("kotak")}
+              >
+                Connect Kotak Neo
+              </button>
+            )}
+          {broker === "kite" && brokerConnection?.authenticated === false && (
+            <small>Ask Admin to update the Kite token, then refresh.</small>
+          )}
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => setConnectionRetry((n) => n + 1)}
+          >
+            Refresh broker connection
+          </button>
+        </span>
+      )}
+    </>
+  );
   const chartWorkspace =
     portfolio && renderChart ? (
       <SwingWorkspace
@@ -626,8 +798,10 @@ export default function SwingPortfolioPanel({
         surface={surface}
         workspaceId={workspaceId}
         companion={companion}
-        onSaveReady={onSaveReady}
+        onSaveReady={registerWorkspaceSave}
         onCreateLinked={onCreateLinked}
+        onPopOut={onPopOut}
+        portfolioControls={portfolioControls}
         onSelect={chooseChart}
         onPick={(value) => {
           if (Number.isFinite(value) && value > 0) setPrice(value.toFixed(2));
@@ -635,10 +809,16 @@ export default function SwingPortfolioPanel({
         }}
         picking={picking}
         ticket={tradeTicket}
-        onHistory={() => {if(mayNavigate())setAnalyticsOpen("history");}}
-        onStats={() => {if(mayNavigate())setAnalyticsOpen("stats");}}
+        onHistory={() => {
+          if (mayNavigate()) setAnalyticsOpen("history");
+        }}
+        onStats={() => {
+          if (mayNavigate()) setAnalyticsOpen("stats");
+        }}
         onManage={() => setManagementOpen((v) => !v)}
-        onDetach={() => {if(companion || mayNavigate())onDetach();}}
+        onDetach={() => {
+          if (companion || mayNavigate()) onDetach();
+        }}
         error={error}
         busy={busy}
         onPause={() =>
@@ -661,6 +841,7 @@ export default function SwingPortfolioPanel({
       }}
     >
       {chartWorkspace}
+      {!chartWorkspace && portfolioControls}
       {analyticsOpen && portfolio && (
         <div className="swing-analytics-drawer">
           {analyticsOpen === "stats" ? (
@@ -720,46 +901,6 @@ export default function SwingPortfolioPanel({
             Detach screen
           </button>
         </header>
-        {!portfolioId && (
-          <label>
-            Mode{" "}
-            <select
-              aria-label="Swing mode"
-              disabled={busy}
-              value={mode}
-              onChange={(event) => {
-                if(!mayNavigate())return;
-                setAnalyticsOpen(null);
-                revision.current++;
-                setSnapshot(null);
-                setMode(event.target.value as "paper" | "real");
-              }}
-            >
-              <option value="paper">Paper</option>
-              {realEnabled && <option value="real">Real</option>}
-            </select>
-          </label>
-        )}{" "}
-        {!portfolioId && mode === "real" && (
-          <label>
-            Broker{" "}
-            <select
-              aria-label="Swing broker"
-              disabled={busy}
-              value={broker}
-              onChange={(event) => {
-                if(!mayNavigate())return;
-                setAnalyticsOpen(null);
-                revision.current++;
-                setSnapshot(null);
-                setBroker(event.target.value);
-              }}
-            >
-              <option value="kite">Kite</option>
-              <option value="kotak">Kotak</option>
-            </select>
-          </label>
-        )}
         {error && <p role="alert">{error}</p>}
         {!snapshot ? (
           <p role="status">Loading portfolio…</p>
@@ -770,13 +911,7 @@ export default function SwingPortfolioPanel({
             <form
               onSubmit={(event) => {
                 event.preventDefault();
-                void act("", {
-                  mode,
-                  execution_broker: broker,
-                  allocation_pct: Number(allocation) / 100,
-                  capital: Number(capital),
-                  ...(loss ? { loss_limit_pct: Number(loss) / 100 } : {}),
-                });
+                void startPortfolio();
               }}
             >
               <p>Hold shares and long options across days in one portfolio.</p>
@@ -819,7 +954,16 @@ export default function SwingPortfolioPanel({
                   placeholder="Optional"
                 />
               </label>{" "}
-              <button disabled={busy}>Start portfolio</button>
+              <button
+                disabled={
+                  busy ||
+                  (mode === "real" &&
+                    (!brokerConnection?.authenticated ||
+                      brokerConnection.broker !== broker))
+                }
+              >
+                Start portfolio
+              </button>
             </form>
           )
         ) : (

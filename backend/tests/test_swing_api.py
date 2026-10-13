@@ -288,3 +288,55 @@ def test_legacy_order_retry_from_another_surface_does_not_duplicate(client):
     assert retry.json()["wallet_balance"] == placed.json()["wallet_balance"]
     changed = client.post(path + "/orders", json={**request, "client": "desktop", "quantity": 2}, headers=headers)
     assert changed.status_code == 409
+
+
+@pytest.mark.parametrize("broker", ["kotak", "kite"])
+@pytest.mark.parametrize("authenticated", [False, True])
+def test_selected_swing_broker_status_is_read_only_and_access_controlled(
+    client, monkeypatch, broker, authenticated
+):
+    from unittest.mock import MagicMock
+
+    from app import dependencies
+    from app.services import execution_broker
+
+    paper_path = start(client)
+    denied = client.get(
+        f"/api/swing/portfolios/broker-status?execution_broker={broker}",
+        headers={"X-User-Id": "u"},
+    )
+    assert denied.status_code == 403
+    monkeypatch.setattr(dependencies, "require_real_trading_access", lambda _: None)
+    service = MagicMock()
+    service.is_authenticated.return_value = authenticated
+    resolve = MagicMock(return_value=service)
+    monkeypatch.setattr(execution_broker, "get_service", resolve)
+    response = client.get(
+        f"/api/swing/portfolios/broker-status?execution_broker={broker}",
+        headers={"X-User-Id": "u"},
+    )
+    assert response.status_code == 200 and response.json() == {
+        "broker": broker,
+        "authenticated": authenticated,
+    }
+    resolve.assert_called_once_with(broker)
+    service.is_authenticated.assert_called_once()
+    service.get_funds.assert_not_called()
+    service.login_with_totp.assert_not_called()
+    paper = client.get(paper_path, headers={"X-User-Id": "u"}).json()
+    assert (
+        paper["portfolio"]["state"] == "running" and paper["wallet_balance"] == 100000
+    )
+    assert (
+        client.get(
+            "/api/swing/portfolios/broker-status?execution_broker=other",
+            headers={"X-User-Id": "u"},
+        ).status_code
+        == 422
+    )
+    assert (
+        client.get(
+            f"/api/swing/portfolios/broker-status?execution_broker={broker}"
+        ).status_code
+        == 401
+    )
