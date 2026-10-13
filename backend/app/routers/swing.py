@@ -100,6 +100,22 @@ async def capabilities(user: str = Depends(get_desktop_user_id)):
     return {"real_trading_enabled": True}
 
 
+@router.get("/broker-status")
+async def broker_status(
+    execution_broker: Literal["kotak", "kite"], user: str = Depends(get_desktop_user_id)
+):
+    from app.dependencies import require_real_trading_access
+    from app.services import execution_broker as brokers
+
+    require_real_trading_access(user)
+
+    def read():
+        broker = brokers.get_service(execution_broker)
+        return {"broker": execution_broker, "authenticated": broker.is_authenticated()}
+
+    return await asyncio.to_thread(read)
+
+
 @router.get("/active")
 async def active(mode: Literal["paper", "real"] = "paper", execution_broker: Literal["kotak", "kite"] | None = None, user: str = Depends(get_desktop_user_id)):
     if mode == "real":

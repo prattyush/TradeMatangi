@@ -1,3 +1,5 @@
+import KotakLoginDialog from "./KotakLoginDialog";
+import type { AccountRequest } from "./DesktopSettingsModal";
 import { bounded, SAVE_TIMEOUT_MS } from "./windowLifecycle";
 import {
   useCallback,
@@ -21,24 +23,30 @@ export default function SwingWindow({
   workspaceId,
   onDetach,
   onCreateLinked,
+  onPopOut,
   registerSave,
   onAnalyse,
   onCloseWindow,
   registerNavigationGuard,
+  brokerRequest,
 }: {
   request: SwingRequest;
+  brokerRequest: AccountRequest;
   loadSymbols: () => Promise<SymbolChoice[]>;
   Renderer: ComponentType<SwingChartProps>;
   portfolioId?: string;
   workspaceId?: string;
   onDetach: () => void;
   onCreateLinked?: (id: string) => void;
+  onPopOut?: (id: string) => void;
   registerSave: (id: string, save: (() => Promise<unknown>) | null) => void;
   onAnalyse?: (id: string, sid?: string) => void;
   onCloseWindow: () => Promise<void>;
   registerNavigationGuard: (id: string, guard: (() => boolean) | null) => void;
 }) {
   const [error, setError] = useState("");
+  const [kotakLogin, setKotakLogin] = useState(false),
+    [brokerRevision, setBrokerRevision] = useState(0);
   const labels = useRef({ dirty: false, saving: false });
   const save = useRef<(() => Promise<unknown>) | null>(null),
     acknowledged = useRef(false);
@@ -81,8 +89,22 @@ export default function SwingWindow({
   return (
     <>
       {error && <p role="alert">{error}</p>}
+      {kotakLogin && (
+        <KotakLoginDialog
+          request={brokerRequest}
+          onCancel={() => setKotakLogin(false)}
+          onConnected={() => {
+            setKotakLogin(false);
+            setBrokerRevision((n) => n + 1);
+          }}
+        />
+      )}
       <SwingPortfolioPanel
         request={request}
+        brokerRevision={brokerRevision}
+        onConnectBroker={(broker) => {
+          if (broker === "kotak") setKotakLogin(true);
+        }}
         loadSymbols={loadSymbols}
         renderChart={Renderer}
         surface="desktop"
@@ -92,6 +114,7 @@ export default function SwingWindow({
         onPortfolioReady={onReady}
         onSaveReady={onSaveReady}
         onCreateLinked={native ? onCreateLinked : undefined}
+        onPopOut={native ? onPopOut : undefined}
         onAnalyse={onAnalyse}
         onDraftStateChange={(state) => {
           labels.current = state;

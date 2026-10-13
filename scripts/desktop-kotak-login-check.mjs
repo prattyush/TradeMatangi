@@ -38,6 +38,23 @@ const page = await browser.newPage({ viewport: { width: 1400, height: 900 } }),
   errors = [],
   calls = [];
 page.on("pageerror", (error) => errors.push(String(error)));
+const paperBook = {
+  portfolio: {
+    session_id: "paper-book",
+    mode: "paper",
+    state: "running",
+    entries_paused: false,
+    session_capital: 100000,
+    guardrail_epoch: 0,
+  },
+  wallet_balance: 100000,
+  pnl: 0,
+  positions: [],
+  open_orders: [],
+  trades: [],
+};
+let realBook = null;
+const swingPrefs = {};
 let connected = false,
   chosen = "kotak",
   loginCount = 0;
@@ -49,7 +66,49 @@ try {
       body = method === "GET" ? {} : req.postDataJSON() || {};
     calls.push({ path, method });
     let value = {};
-    if (path.endsWith("/kotak/login")) {
+    if (path.includes("/swing/portfolios")) {
+      const selected = new URL(req.url()).searchParams.get("execution_broker");
+      if (path.endsWith("/capabilities"))
+        value = { real_trading_enabled: true };
+      else if (path.endsWith("/broker-status"))
+        value = {
+          broker: selected,
+          authenticated: selected === "kotak" && connected,
+        };
+      else if (path.endsWith("/active"))
+        value =
+          new URL(req.url()).searchParams.get("mode") === "paper"
+            ? paperBook
+            : (realBook ?? { portfolio: null });
+      else if (path.endsWith("/charts/workspace")) {
+        const kind = path.includes("real-book") ? "real" : "paper";
+        if (method === "PUT") swingPrefs[kind] = body;
+        value =
+          method === "GET"
+            ? { workspace: swingPrefs[kind] ?? null }
+            : { saved: true };
+      } else if (path.endsWith("/charts/history"))
+        value = { candles: [], more: false, provider: "kite" };
+      else if (path.endsWith("/charts/watch")) value = { watch_id: "viewer" };
+      else if (path.includes("/charts/watch/"))
+        value = { quotes: [], market_open: false, provider: "kite" };
+      else if (path.endsWith("/portfolios") && method === "POST") {
+        assert.equal(body.mode, "real");
+        assert.equal(body.execution_broker, "kotak");
+        assert(connected);
+        realBook = {
+          ...paperBook,
+          portfolio: {
+            ...paperBook.portfolio,
+            session_id: "real-book",
+            mode: "real",
+            execution_broker: "kotak",
+          },
+          funding_status: { entries_allowed: true, state: "healthy" },
+        };
+        value = realBook;
+      } else value = path.includes("real-book") ? realBook : paperBook;
+    } else if (path.endsWith("/kotak/login")) {
       loginCount++;
       assert(/^\d{6}$/.test(body.totp));
       await new Promise((resolve) => setTimeout(resolve, 300));
@@ -236,6 +295,45 @@ try {
     await page.getByRole("dialog", { name: "Kotak Neo login" }).count(),
     0,
   );
+  connected = false;
+  await page.getByLabel("Desktop view").selectOption("Swing");
+  await page.locator(".swing-workspace").waitFor();
+  assert(await page.getByLabel("Swing mode").isVisible());
+  await page.getByLabel("Swing chart layout").selectOption("2");
+  await page.getByLabel("Swing mode").selectOption("real");
+  await page.getByLabel("Swing broker").selectOption("kotak");
+  await page
+    .getByRole("button", { name: "Connect Kotak Neo", exact: true })
+    .click();
+  dialog = page.getByRole("dialog", { name: "Kotak Neo login" });
+  await dialog.waitFor();
+  assert.equal(realBook, null);
+  assert.equal(paperBook.portfolio.state, "running");
+  await page.getByLabel("Kotak authentication code").fill("456789");
+  await page.getByLabel("Kotak authentication code").press("Enter");
+  await dialog.waitFor({ state: "hidden" });
+  await page.waitForFunction(() =>
+    [...document.querySelectorAll("button")].some(
+      (b) => b.textContent === "Start portfolio" && !b.disabled,
+    ),
+  );
+  assert.equal(realBook, null);
+  await page
+    .getByRole("button", { name: "Start portfolio", exact: true })
+    .click();
+  await page.locator(".swing-workspace").waitFor();
+  assert.equal(realBook.portfolio.mode, "real");
+  assert.equal(paperBook.portfolio.state, "running");
+  await page.getByLabel("Swing mode").selectOption("paper");
+  await page.locator(".swing-workspace").waitFor();
+  await page.waitForFunction(
+    () =>
+      document.querySelector('[aria-label="Swing chart layout"]')?.value ===
+      "2",
+  );
+  assert.equal(realBook.portfolio.state, "running");
+  assert.equal(paperBook.portfolio.state, "running");
+  assert(!calls.some((c) => c.method === "POST" && c.path.endsWith("/close")));
   assert.deepEqual(errors, []);
   console.log(
     "Desktop Kotak popup: toolbar/settings, cancel, validation, retry, duplicate submission, status refresh and Kite isolation passed",

@@ -1225,3 +1225,43 @@ authentication, status refresh, no implicit settings save/session start and Kite
 isolation. Existing Real/Stepwise/Replay/Paper linked-trading browser checks passed.
 Broker responses are synthetic; installed desktop plus real Kotak login acceptance
 remains after preprod deployment. No real authentication codes or orders were used.
+
+
+### Swing connection controls and Day/Swing desktop windows — 2026-10-13
+
+Paper/Real selection is now visible in the main Swing chart toolbar instead of
+being hidden in portfolio management. Switching views saves the current workspace
+and leaves its portfolio, positions, cash, guardrails and backend protection active.
+Paper, Real Kite and Real Kotak retain separate books; changing the visible book
+never migrates positions or closes another portfolio. Dirty labels and failed
+workspace saves still guard navigation. Linked windows keep their pinned portfolio
+and cannot change mode/broker.
+
+The selected Real broker has a read-only authenticated status check through
+`GET /swing/portfolios/broker-status?execution_broker=kotak|kite`, also available
+through the existing desktop facade. It requires Real access and returns only the
+broker name/authenticated flag, without funds reads, slot claims or login. The
+status follows the Swing selection, independently of the user's default Day broker.
+Kotak login is available directly in Swing on desktop and website. Kite gives the
+existing Admin-token guidance. Authentication is rechecked before creating a Real
+portfolio; successful login refreshes status but does not create a portfolio or
+retry an order. Deploy the backend route before using the updated clients.
+
+Native desktop main Swing also offers **Pop out Swing**: open an owned, pinned
+window using existing handoff/preferences storage, then return the main window to
+its Day workspace after successful opening. Existing Day sessions remain mounted
+and running. The popped-out Swing book continues independently, so Day Paper and
+Swing Paper can be used side by side. Failed handoff leaves the main Swing view
+available. **Create linked window** remains for additional Swing views. Pop-out is
+native-desktop-only; closing a window does not close either trading book.
+
+
+Validation for this extension: **68 focused backend checks passed**, including
+selected-broker authentication/authorization and unchanged active Paper balances.
+Both client TypeScript checks/builds and **206 desktop tests passed**. Built desktop
+acceptance covers an open Paper book, direct Kotak login, explicit Real creation,
+return to the saved Paper layout and neither book closing. Shared workspace and
+linked analytics browser checks pass for both renderers, including Pop out Swing
+and pinned companion controls. Native hosting is mocked in browser tests; installed
+Windows handoff, concurrent Day/Swing execution and authorized broker acceptance
+remain after backend/client deployment. No live orders were sent.
