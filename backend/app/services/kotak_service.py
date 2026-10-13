@@ -110,6 +110,21 @@ def _get_instruments_cache_path():
     return DATA_DIR / "kotak_instruments.json"
 
 
+def _master_tick(row):
+    """Retain price-unit ticks without letting an invalid row break master parsing."""
+    try:
+        if row.get("tick_size") is not None:
+            value = float(row["tick_size"])
+        else:
+            precision = int(row["lPrecision"])
+            if not 0 <= precision <= 8:
+                return None
+            value = float(row["dTickSize"]) / (10 ** precision)
+        return value if math.isfinite(value) and value > 0 else None
+    except (KeyError, TypeError, ValueError, OverflowError):
+        return None
+
+
 def _load_kotak_master_from_api(*, client=None) -> list[dict]:
     """
     Download the Kotak Neo instrument master via neo_api_client and cache to disk.
@@ -186,6 +201,9 @@ def _load_kotak_master_from_api(*, client=None) -> list[dict]:
                         "expiry": row.get("pExpiryDate") or row.get("expiry") or row.get("expDt") or "",
                         "strike": row.get("dStrikePrice") or row.get("stkPrc") or "",
                         "right": row.get("pOptionType") or row.get("optTp") or "",
+                        "lot_size": row.get("lLotSize") or row.get("iLotSize") or row.get("lot_size"),
+                        # Raw ticks are scaled by master precision, matching order price units.
+                        "tick_size": _master_tick(row),
                     })
                     count += 1
             logger.info(

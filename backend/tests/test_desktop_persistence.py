@@ -142,3 +142,30 @@ def test_swing_drawing_scopes_isolate_windows_history_and_legacy(monkeypatch):
     assert persistence.list_drawings("u",records[1][0]) == []
     assert persistence.list_drawings("u",records[2][0])[0]["drawing_id"] == records[2][1]["drawing_id"]
     assert persistence.list_drawings("u",equity())[0]["drawing_id"] == records[0][1]["drawing_id"]
+
+
+def test_drawings_include_later_query_pages_without_cross_instrument_leakage():
+    wanted = equity()
+    records = [
+        {"instrument_id": persistence.canonical_instrument_id(equity("RELIND")), "drawing_id": "other"},
+        {"instrument_id": persistence.canonical_instrument_id(wanted), "drawing_id": "wanted"},
+    ]
+
+    class Pages:
+        def query(self, **kwargs):
+            if kwargs.get("ExclusiveStartKey"):
+                return {"Items": [records[1]]}
+            return {"Items": [records[0]], "LastEvaluatedKey": {"user_id": "u", "record_id": "other"}}
+
+    with patch.object(persistence, "_table", return_value=Pages()):
+        assert [row["drawing_id"] for row in persistence.list_drawings("u", wanted)] == ["wanted"]
+
+
+def test_drawing_conditional_write_conflict_is_normalized():
+    class Contended(FakeTable):
+        def put_item(self, Item, **kwargs):
+            raise ClientError({"Error": {"Code": "ConditionalCheckFailedException"}}, "PutItem")
+    table = Contended()
+    table.items[("u", "drawing")] = {"drawing_id": "drawing", "revision": 1}
+    with patch.object(persistence, "_table", return_value=table), pytest.raises(ValueError, match="revision_conflict"):
+        persistence.update_drawing("u", "drawing", line(), 1, "mutation")

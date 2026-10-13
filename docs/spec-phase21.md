@@ -1101,6 +1101,7 @@ explicitly outstanding; main/dev promotion remains manual after acceptance.
 
 
 ### Swing Trading Improvements
+
 When I open swing trading I see a page with just numbers to enter or purchase without charts.
 1) Change the swing trading UI to support charts and maybe left panel has positions orders etc, or feel free to suggest great UI. Improve the UI, it literally has almost nothing, compared to day trading whicch is so great.
 2) The charts for swing need not be fine, so you can download from kite or kotak or icici breeze 1 minute candles.
@@ -1265,3 +1266,37 @@ linked analytics browser checks pass for both renderers, including Pop out Swing
 and pinned companion controls. Native hosting is mocked in browser tests; installed
 Windows handoff, concurrent Day/Swing execution and authorized broker acceptance
 remain after backend/client deployment. No live orders were sent.
+
+
+
+### Swing Trading Improvements
+
+Implementation: [full sprint design and status](spec-phase21-swing-futures-plan.md).
+Separate desktop Day/Swing screens and Swing pop-out are included; website retains
+existing view switching. View changes and window close never close trading books.
+
+1. Swing Trading Entries should support percentage entry, percentage of capital, session or portfolio capital.
+2. Does desktop has similar error display mechanism that website has which doesn't block the trading UI. If not add them.
+3. The chart lines or drawings done are saved and will be shown across day trading and Swing Trading.
+4. In desktop for the markets and indicators, can you take the row out of the charts and show similar to what we have in day trading, collapsable one. It is taking up space in the charts display. And no need of this line "kite · Live quote" It is also taking up space. Sorry adding requirements in runtime.
+5. Change Pick on chart to icon and Place intimidation to icon in desktop. Support Futures in both website and desktop. In desktop can you make the right panel collapsable and left panel too, so that we get more area for charts.
+
+### Supporting Futures Trading in Swing Trading.
+1. Support Futures contracts for current month and when 2 days away from expiry, next month as well.
+2. Currently all futures contracts are monthly expiry.
+3. Support Future contracts for all indices symbols, NIFTY, SENSEX and NIFTY 100 as well.
+4. Calculate the future margin required from web.
+5. Support Futures for paper trading and real trading for both brokers
+6. Support Futures in Stats as well.
+
+
+### Swing/Futures sprint progress — 2026-10-13
+
+[Full implementation status and decisions](spec-phase21-swing-futures-plan.md#actual-implementation-and-validation).
+Sprints 0–2 are implemented with automated validation; installed desktop acceptance
+remains in Sprint 7. Initial Sprint 3 work adds current equity/options Capital %
+sizing and read-only Kite/Kotak Futures discovery. **Futures execution is still
+disabled**: contract data/margin settings, Paper MTM, Real execution/reconciliation
+and Futures Stats remain for Sprints 3–6. Backend changes must precede client rollout.
+Latest checks: 299 backend tests, 212 desktop tests, both builds, notification tests
+and shared workspace/linked analytics browser acceptance passed. No live orders sent.

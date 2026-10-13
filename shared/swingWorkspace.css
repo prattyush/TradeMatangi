@@ -215,3 +215,8 @@
   flex: 1;
   min-height: 0;
 }
+
+.swing-portfolio-rail[hidden] { display: none; }
+.swing-tools-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; padding: 4px 8px; background: #161e2a; border-bottom: 1px solid #334155; font-size: 11px; }
+.swing-tools-slot { min-width: 0; flex: 1; }
+.swing-tools-slot .swing-pane-bar { flex-wrap: wrap; overflow: visible; padding: 0; }

@@ -1,3 +1,5 @@
+import NotificationCenter from "../../shared/NotificationCenter"
+import { flashError, setNotificationAccount } from "../../shared/notifications"
 import KotakLoginDialog from './KotakLoginDialog'
 import {updateDayScreens,pinnedSwingPortfolio} from './swingScreens'
 import SwingWindow from './SwingWindow'
@@ -588,6 +590,14 @@ export default function App() {
     if(!response.ok)throw new Error('Swing drawing request failed');return response.json()
   },[serverUrl,browserToken])
   const swingChart = useCallback((props:SwingChartProps)=><SwingChart {...props} drawingRequest={swingDrawingRequest}/>,[swingDrawingRequest])
+  useEffect(() => {
+    let disposed = false;
+    setNotificationAccount(null);
+    if (connection === 'connected') void swingRequest<{ user_id?: string }>('capabilities', 'GET').then(value => {
+      if (!disposed && value.user_id) setNotificationAccount(value.user_id, `desktop:${serverUrl}:${assignedId ?? 'main'}`);
+    }).catch(() => undefined);
+    return () => { disposed = true; setNotificationAccount(null); };
+  }, [connection, serverUrl, browserToken, assignedId, swingRequest]);
   const swingSymbols = useCallback(async () => {
     const response = await fetch(`${serverUrl.replace(/\/$/, '')}/api/data/symbols`)
     if (!response.ok) throw new Error('Cannot load symbols')
@@ -761,6 +771,7 @@ export default function App() {
   ><option value="Workspace">Workspace</option><option value="Analysis">Analysis</option><option value="Swing">Swing</option></select> : null
   if(windowClosing)return null;
   return <div>
+    <div className="desktop-messages"><NotificationCenter source="Desktop" /></div>
     {closeError && <p role="alert">{closeError}</p>}
     {loadFailed && <main role="alert">{loadError && <p>{loadError}</p>}<button onClick={() => setLoadAttempt(value => value + 1)}>Retry loading screens</button></main>}
     {assignedId && !loaded && <main><p>{connection === 'authentication_required' ? 'Sign in in the main window to reconnect this screen.' : 'Loading popped-out screen…'}</p><button onClick={() => void invoke('focus_main_window')}>Main window</button></main>}
@@ -866,6 +877,7 @@ function ScreenController(props: ScreenControllerProps) {
     return () => window.clearTimeout(timer)
   }, [guardrailPopup])
   const reportTradingError = useCallback((error: unknown) => {
+    flashError(error, "Desktop Day");
     const feedback = parseGuardrailError(error)
     if (feedback) { setGuardrailPopup(feedback); return }
     const message = String(error)

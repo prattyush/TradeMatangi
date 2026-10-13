@@ -1,3 +1,5 @@
+import { flashError } from "./notifications";
+import { swingMarkerTrades, type SwingMarkerMode } from "./swingMarkers";
 import {
   useEffect,
   useRef,
@@ -19,6 +21,7 @@ export interface SwingPane {
   interval: SwingInterval;
   as_of_date: string;
   follow_today?: boolean;
+  marker_mode?: SwingMarkerMode;
 }
 export interface SwingCandle {
   time: number;
@@ -43,6 +46,7 @@ export interface SwingChartProps {
   orders: any[];
   trades?: any[];
   showHistoricalTrades?: boolean;
+  toolsContainer?: HTMLElement | null;
   onPick: (price: number) => void;
   onActivate: () => void;
   loadOlder: (
@@ -150,6 +154,10 @@ function PaneChart({
   picking,
   position,
   orders,
+  trades,
+  markerBasis,
+  surface,
+  toolsContainer,
   onPick,
   onActivate,
 }: {
@@ -165,6 +173,10 @@ function PaneChart({
   picking: boolean;
   position?: any;
   orders: any[];
+  trades: any[];
+  markerBasis: any[];
+  surface: "website" | "desktop";
+  toolsContainer?: HTMLElement | null;
   onPick: (price: number) => void;
   onActivate: () => void;
 }) {
@@ -181,7 +193,7 @@ function PaneChart({
   const more = useRef(false);
   const latestQuote = useRef(quote);
   latestQuote.current = quote;
-  const key = JSON.stringify(pane);
+  const key = JSON.stringify({...pane, marker_mode: undefined});
   useEffect(() => {
     const version = ++owner.current;
     if (
@@ -257,21 +269,22 @@ function PaneChart({
   };
   return (
     <>
-      <div className="swing-data-label">
-        {loading ? "Loading" : history.provider || "History"} ·{" "}
+      {(surface !== "desktop" || error) && <div className="swing-data-label">
+        {surface !== "desktop" && <>{loading ? "Loading" : history.provider || "History"} ·{" "}
         {pane.as_of_date === swingToday()
           ? quote
             ? marketOpen && Date.now() / 1000 + 19800 - quote.time < 120
               ? "Live quote"
               : "Last quote"
             : "Today"
-          : "Historical"}
+          : "Historical"}</>}
         {error && <button onClick={() => setRetry((v) => v + 1)}>Retry</button>}
-      </div>
+      </div>}
       <Renderer
         key={`${paneKey(pane)}:${pane.interval}`}
         pane={pane}
         drawingScope={drawingScope}
+        toolsContainer={toolsContainer}
         chartKind={chartKind}
         candles={history.candles}
         loading={loading}
@@ -291,6 +304,8 @@ function PaneChart({
         picking={picking}
         position={position}
         orders={orders}
+        trades={swingMarkerTrades(trades, pane, pane.marker_mode ?? "open", markerBasis)}
+        showHistoricalTrades
         onPick={onPick}
         onActivate={onActivate}
         loadOlder={loadOlder}
@@ -364,11 +379,17 @@ export default function SwingWorkspace({
     [maximized, setMaximized] = useState<number | null>(null),
     [tab, setTab] = useState("Positions"),
     [ticketOpen, setTicketOpen] = useState(true),
+    [railOpen, setRailOpen] = useState(true),
+    [toolsCollapsed, setToolsCollapsed] = useState(false),
     [restored, setRestored] = useState(false),
     [quotes, setQuotes] = useState<Quote[]>([]),
     [marketOpen, setMarketOpen] = useState(false),
     [feed, setFeed] = useState(""),
     [notice, setNotice] = useState("");
+  useEffect(() => {
+    if (surface === "desktop" && notice) flashError(notice, "Desktop Swing workspace", {sessionId: prefix});
+  }, [notice, surface, prefix]);
+  const [toolsContainer, setToolsContainer] = useState<HTMLDivElement | null>(null);
   const [metadata, setMetadata] = useState<any[]>([]);
   const current = panes[active] ?? panes[0];
   const currentSymbol = symbols.find((s) => s.symbol === current.symbol);
@@ -390,7 +411,7 @@ export default function SwingWorkspace({
   }, []);
   useEffect(() => {
     let cancelled = false;
-    void request<{ workspace: { panes: SwingPane[]; active: number } | null }>(
+    void request<{ workspace: { panes: SwingPane[]; active: number; rail_open?: boolean; ticket_open?: boolean; tools_collapsed?: boolean } | null }>(
       `${prefix}/charts/workspace?surface=${surface}${workspaceId ? `&workspace_id=${encodeURIComponent(workspaceId)}` : ""}`,
       "GET",
     )
@@ -400,6 +421,9 @@ export default function SwingWorkspace({
             ...p,
             as_of_date: p.follow_today ? swingToday() : p.as_of_date,
           }));
+          setRailOpen(value.workspace.rail_open ?? true);
+          setTicketOpen(value.workspace.ticket_open ?? true);
+          setToolsCollapsed(value.workspace.tools_collapsed ?? false);
           setPanes(saved);
           setActive(Math.min(value.workspace.active, saved.length - 1));
         }
@@ -420,12 +444,15 @@ export default function SwingWorkspace({
           surface,
           panes,
           active,
+          rail_open: railOpen,
+          ticket_open: ticketOpen,
+          tools_collapsed: toolsCollapsed,
           ...(workspaceId ? { workspace_id: workspaceId } : {}),
         }).catch((cause) => setNotice(`Workspace not saved: ${String(cause)}`)),
       700,
     );
     return () => clearTimeout(timer);
-  }, [paneSignature, active, restored, prefix, surface, workspaceId, request]);
+  }, [paneSignature, active, railOpen, ticketOpen, toolsCollapsed, restored, prefix, surface, workspaceId, request]);
   useEffect(() => {
     if (!restored) return;
     onSaveReady?.(() =>
@@ -433,6 +460,9 @@ export default function SwingWorkspace({
         surface,
         panes,
         active,
+        rail_open: railOpen,
+        ticket_open: ticketOpen,
+        tools_collapsed: toolsCollapsed,
         ...(workspaceId ? { workspace_id: workspaceId } : {}),
       }),
     );
@@ -440,6 +470,9 @@ export default function SwingWorkspace({
   }, [
     paneSignature,
     active,
+    railOpen,
+    ticketOpen,
+    toolsCollapsed,
     restored,
     prefix,
     surface,
@@ -474,7 +507,7 @@ export default function SwingWorkspace({
         p.as_of_date === clock &&
         (p.instrument_type === "equity" ||
           Boolean(p.right && p.strike && p.expiry)),
-    ),
+    ).map(({marker_mode: _markerMode, ...pane}) => pane),
   );
   useEffect(() => {
     let cancelled = false,
@@ -597,7 +630,8 @@ export default function SwingWorkspace({
             </option>
           ))}
         </select>
-        <button onClick={() => setTicketOpen((v) => !v)}>Trade ticket</button>
+        {surface === "desktop" && <button type="button" aria-expanded={railOpen} title={railOpen ? "Hide portfolio panel" : "Show portfolio panel"} onClick={() => setRailOpen(v => !v)}>Portfolio panel</button>}
+        <button type="button" aria-expanded={ticketOpen} onClick={() => setTicketOpen((v) => !v)}>Trade ticket</button>
         <button
           disabled={busy || snapshot.portfolio.state !== "running"}
           onClick={onPause}
@@ -627,6 +661,13 @@ export default function SwingWorkspace({
         <button onClick={onManage}>Manage portfolio</button>
         <button onClick={onDetach}>Detach</button>
       </div>
+      {surface === "desktop" && <div className="swing-tools-bar" aria-label="Active chart tools">
+        <button type="button" aria-expanded={!toolsCollapsed} title={toolsCollapsed ? "Show chart tools" : "Hide chart tools"} onClick={() => setToolsCollapsed(v => !v)}>{toolsCollapsed ? "▸" : "▾"} Chart {active + 1} tools</button>
+        <select aria-label="Active chart markers" value={current.marker_mode ?? "open"} onChange={e => update({marker_mode: e.target.value as SwingMarkerMode})}>
+          <option value="open">Open markers</option><option value="all">All markers</option><option value="off">Markers off</option>
+        </select>
+        <div ref={setToolsContainer} className="swing-tools-slot" style={{display: toolsCollapsed ? "none" : "flex"}} />
+      </div>}
       {error && (
         <p role="alert" className="swing-hint">
           {error}
@@ -644,7 +685,7 @@ export default function SwingWorkspace({
         </p>
       )}
       <div className="swing-workspace-body">
-        <aside className="swing-portfolio-rail">
+        <aside className="swing-portfolio-rail" hidden={surface === "desktop" && !railOpen}>
           <nav>
             {["Positions", "Orders", "Trades"].map((value) => (
               <button
@@ -763,6 +804,9 @@ export default function SwingWorkspace({
                   <strong>
                     {pane.symbol} {pane.right} {pane.strike}
                   </strong>
+                  {surface === "website" && <select aria-label={`Chart ${index + 1} markers`} value={pane.marker_mode ?? "open"} onChange={e => setPanes(previous => previous.map((p, i) => i === index ? {...p, marker_mode: e.target.value as SwingMarkerMode} : p))}>
+                    <option value="open">Open markers</option><option value="all">All markers</option><option value="off">Markers off</option>
+                  </select>}
                   <input
                     aria-label={`Chart ${index + 1} date`}
                     type="date"
@@ -833,6 +877,8 @@ export default function SwingWorkspace({
                   prefix={prefix}
                   drawingScope={`swing:${prefix}:${workspaceId ?? "primary"}`}
                   Renderer={Renderer}
+                  surface={surface}
+                  toolsContainer={toolsContainer}
                   quote={quote}
                   marketOpen={marketOpen}
                   chartKind={
@@ -845,6 +891,8 @@ export default function SwingWorkspace({
                   position={snapshot.positions?.find((p: any) =>
                     exact(pane, p),
                   )}
+                  trades={snapshot.trades ?? []}
+                  markerBasis={snapshot.marker_basis ?? []}
                   orders={(snapshot.open_orders ?? []).filter((o: any) =>
                     exact(pane, o),
                   )}

@@ -79,6 +79,14 @@ class PortfolioOrder(ContextRequest):
     quantity: int = Field(gt=0)
     price: float = Field(gt=0, allow_inf_nan=False)
     request_id: str = Field(min_length=1, max_length=100)
+    capital_pct: float | None = Field(default=None, gt=0, le=1, allow_inf_nan=False)
+    capital_revision: int | None = Field(default=None, ge=0)
+
+    @model_validator(mode="after")
+    def percentage_entry(self):
+        if self.capital_pct is not None and (self.side != TradeSide.BUY or self.capital_revision is None):
+            raise ValueError("Capital percentage is for BUY entries and requires the capital revision")
+        return self
 
 
 class PauseRequest(ContractModel):
@@ -96,8 +104,8 @@ async def capabilities(user: str = Depends(get_desktop_user_id)):
     try:
         require_real_trading_access(user)
     except HTTPException:
-        return {"real_trading_enabled": False}
-    return {"real_trading_enabled": True}
+        return {"real_trading_enabled": False, "user_id": user}
+    return {"real_trading_enabled": True, "user_id": user}
 
 
 @router.get("/broker-status")
@@ -176,6 +184,69 @@ async def attach(
     return {"session_id": child.session_id, **service.snapshot(user, portfolio_id)}
 
 
+async def capital_sizing(user, portfolio_id, req):
+    from app.services.swing_sizing import capital_quantity
+
+    row = store.owned(user, portfolio_id)
+    if row["guardrail_epoch"] != req.capital_revision:
+        raise HTTPException(409, "Portfolio capital changed; review sizing again")
+    lot_size = 1
+    current = service.runtime(user, portfolio_id)
+    child = current.contexts.get(req.symbol + ":" + req.instrument_type)
+    if req.instrument_type == "options":
+        contract = next(
+            (c for c in getattr(child, "desktop_contracts", [])
+             if (c.get("strike"), c.get("expiry"), c.get("right"))
+             == (req.strike, req.expiry, req.right)),
+            None,
+        )
+        if contract is None:
+            from app.services.breeze_master import listed_option_contract
+
+            try:
+                contract = await asyncio.to_thread(
+                    listed_option_contract, req.symbol, req.strike, req.expiry, req.right
+                )
+            except FileNotFoundError as exc:
+                raise HTTPException(503, "Option contract metadata is unavailable") from exc
+            except ValueError as exc:
+                raise HTTPException(422, str(exc)) from exc
+        lot_size = int(contract["lot_size"])
+    return capital_quantity(
+        row["session_capital"], req.capital_pct, req.price, lot_size,
+        getattr(child, "brokerage_per_order", 1.0),
+    )
+
+
+def economic_instructions(body):
+    # New optional sizing fields must not change the identity of legacy retries.
+    return {k: v for k, v in body.items()
+            if k != "client" and not (k in ("capital_pct", "capital_revision") and v is None)}
+
+
+@router.post("/{portfolio_id}/order-preview")
+async def preview_order(
+    portfolio_id: str, req: PortfolioOrder, user: str = Depends(get_desktop_user_id)
+):
+    from app.config import SUPPORTED_SYMBOLS
+
+    await service.ensure(user, portfolio_id)
+    if req.capital_pct is None:
+        raise HTTPException(422, "Select capital percentage sizing")
+    definition = SUPPORTED_SYMBOLS.get(req.symbol)
+    if not definition or (req.instrument_type == "equity" and definition.get("options_only")):
+        raise HTTPException(422, "Select a supported tradable instrument")
+    if req.order_type == OrderType.STOPLOSS:
+        raise HTTPException(422, "Capital percentage is for Limit or Target entries")
+    sizing = await capital_sizing(user, portfolio_id, req)
+    return {
+        **sizing,
+        "capital_revision": req.capital_revision,
+        "source": "existing-swing-cost-model",
+        "message": "Limit/trigger price estimate; execution and available funds are checked at submission",
+    }
+
+
 @router.post("/{portfolio_id}/orders")
 async def place(
     portfolio_id: str, req: PortfolioOrder, user: str = Depends(get_desktop_user_id)
@@ -245,8 +316,8 @@ async def place(
             original_request = normalize_metadata((saved.get("analytics") or {}).get("swing_request"))
             # Client attribution is not part of the economic order intent.
             matching = (
-                {k: v for k, v in original_request.items() if k != "client"}
-                == req.model_dump(mode="json", exclude={"client"})
+                economic_instructions(original_request)
+                == economic_instructions(req.model_dump(mode="json"))
             ) if original_request else (
                 saved.get("symbol") == req.symbol
                 and saved.get("side") == req.side.value
@@ -268,6 +339,15 @@ async def place(
         held = trading.get_position(
             child.session_id, child.symbol, req.right, req.strike, req.expiry
         )
+        if req.capital_pct is not None:
+            sizing = await capital_sizing(user, portfolio_id, req)
+            if not sizing["quantity"]:
+                raise HTTPException(422, f"Budget cannot buy one lot; minimum funds {sizing['minimum_funds']}")
+            if sizing["quantity"] != req.quantity:
+                raise HTTPException(409, "Sizing estimate changed; review quantity before placing")
+            # No await between this final capital check and order placement below.
+            if store.owned(user, portfolio_id)["guardrail_epoch"] != req.capital_revision:
+                raise HTTPException(409, "Portfolio capital changed; review sizing again")
         if req.side == TradeSide.SELL:
             outstanding = sum(
                 max(0, o.quantity - o.broker_filled_quantity)
@@ -421,6 +501,25 @@ async def cancel(
     raise HTTPException(404, "Portfolio order not found")
 
 
+@router.get("/contracts/futures")
+async def futures_metadata(
+    symbol: str,
+    provider: Literal["kite", "kotak"] = "kite",
+    user: str = Depends(get_desktop_user_id),
+):
+    from app.services.futures_contracts import listed_contracts
+    from app.services.swing_market import today
+
+    try:
+        contracts = await asyncio.to_thread(listed_contracts, symbol, provider, calendar_date.fromisoformat(today()))
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(503, "Futures metadata unavailable; retry after provider recovery") from exc
+    # Metadata can be reviewed now. Execution awaits margin/MTM/reconciliation sprints.
+    return {"symbol": symbol, "provider": provider, "contracts": contracts, "execution_enabled": False}
+
+
 @router.get("/contracts/metadata")
 async def option_metadata(symbol: str, user: str = Depends(get_desktop_user_id)):
     from app.services.breeze_master import listed_option_contracts
@@ -566,6 +665,7 @@ class ChartHistoryRequest(ContextRequest):
     follow_today: bool = False
     before: int | None = Field(default=None, ge=0)
     limit: int | None = Field(default=None, ge=1, le=500)
+    marker_mode: Literal["open", "all", "off"] = "open"
 
 
 class ChartWatch(ContractModel):
@@ -672,6 +772,9 @@ class ChartWorkspace(ContractModel):
     surface: Literal["website", "desktop"]
     panes: list[ChartHistoryRequest] = Field(min_length=1, max_length=4)
     active: int = Field(default=0, ge=0, le=3)
+    rail_open: bool = True
+    ticket_open: bool = True
+    tools_collapsed: bool = False
 
     @model_validator(mode="after")
     def active_pane_exists(self):

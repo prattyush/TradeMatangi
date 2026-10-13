@@ -230,6 +230,11 @@ async def test_import_is_atomic_inventory_evidence_without_fake_trade_or_cash_de
     await swing_real.import_inventory(child, preview["fingerprint"], "import-once")
     assert funding.read("u", "kite", "account")["version"] == before
     assert child.opening_inventory_cost == 1000
+    view = service.snapshot("u", _current.portfolio_id)
+    assert view["trades"] == []
+    assert view["marker_basis"][0]["quantity"] == 10
+    assert view["marker_basis"][0]["session_id"] == child.session_id
+    assert view["marker_basis"][0]["timestamp"] == child.opening_inventory_captured_at // 1000 + 19800
 
 
 @pytest.mark.asyncio

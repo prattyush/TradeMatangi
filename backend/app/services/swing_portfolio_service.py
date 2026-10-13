@@ -55,12 +55,18 @@ def snapshot(user, portfolio_id):
     from app.services import swing_market
     row = store.owned(user, portfolio_id)
     current = runtime(user, portfolio_id)
-    positions, orders, executions = [], [], []
+    positions, orders, executions, marker_basis = [], [], [], []
     net = 0.0
     complete = True
     for session in current.contexts.values():
         net -= getattr(session, "opening_inventory_cost", 0)
         executions.extend(trading.get_trades(session.session_id))
+        captured = getattr(session, "opening_inventory_captured_at", 0)
+        if captured:
+            marker_basis.extend({**holding, "session_id": session.session_id,
+                                 "symbol": session.symbol, "instrument_type": session.instrument_type,
+                                 "timestamp": int(captured) // 1000 + 19800}
+                                for holding in getattr(session, "opening_positions", []))
         orders.extend(order_service.get_open_orders(session.session_id))
         contracts = (
             trading.get_open_option_contracts(session.session_id, session.symbol)
@@ -147,6 +153,7 @@ def snapshot(user, portfolio_id):
         "positions": positions,
         "open_orders": [o.model_dump(mode="json") for o in orders],
         "trades": [t.model_dump(mode="json") for t in executions],
+        "marker_basis": marker_basis,
         "contexts": [
             {
                 "session_id": s.session_id,

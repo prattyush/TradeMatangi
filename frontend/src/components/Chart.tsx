@@ -36,6 +36,7 @@ export interface ChartVisibleRange {
 interface Props {
   candleAnchorSeconds?:number
   defaultShowAllMarkers?:boolean
+  externalTradeMarkers?: boolean
   externalCandles?: { time: number; open: number; high: number; low: number; close: number }[]
   externalLoading?: boolean
   externalMessage?: string
@@ -416,7 +417,7 @@ function RatioIndicatorPanel({ comparison, series, ratioMode, height, expanded, 
 }
 
 export default function Chart({
-  candleAnchorSeconds=0, defaultShowAllMarkers=false, externalCandles, externalLoading, externalMessage, externalLoadOlder, drawingStorageKey,
+  candleAnchorSeconds=0, defaultShowAllMarkers=false, externalTradeMarkers=false, externalCandles, externalLoading, externalMessage, externalLoadOlder, drawingStorageKey,
   symbol, tradingDate, startTime, intervalMinutes, historyMode = 'replay',
   latestTick, completedBar, onPriceUpdate, height = 380,
   paneType = 'equity', strike, expiry, right,
@@ -485,7 +486,7 @@ export default function Chart({
   const ignoreNextClickRef = useRef(false)
   const tradeMarkerPool = useRef(new Map<string, { object: ISeriesApi<'Line'>; signature: string }>())
   const [showAllMarkers, setShowAllMarkers] = useState(defaultShowAllMarkers)
-  const visibleTrades = useMemo(() => showAllMarkers ? trades : openPositionTrades(trades), [trades, showAllMarkers])
+  const visibleTrades = useMemo(() => (externalTradeMarkers || showAllMarkers) ? trades : openPositionTrades(trades), [trades, showAllMarkers, externalTradeMarkers])
   useEffect(() => { setShowAllMarkers(defaultShowAllMarkers) }, [markerSessionKey, symbol, paneType, right, strike, expiry])
   const orderPriceLinesRef = useRef<Map<string, IPriceLine>>(new Map())
   const strategyPriceLinesRef = useRef<Map<string, IPriceLine>>(new Map())
@@ -1696,13 +1697,13 @@ export default function Chart({
             {dir}
           </button>
         ))}
-        <button
+        {!externalTradeMarkers && <button
           onClick={e => { e.stopPropagation(); setShowAllMarkers(value => !value) }}
           title={showAllMarkers ? 'Hide closed-trade markers; show open positions only' : 'Show all executed-trade markers'}
           aria-label="All markers"
           aria-pressed={showAllMarkers}
           style={toolbarBtnStyle(showAllMarkers)}
-        >All markers</button>
+        >All markers</button>}
         {onMaximize && (
           <button
             onClick={e => { e.stopPropagation(); onMaximize() }}
