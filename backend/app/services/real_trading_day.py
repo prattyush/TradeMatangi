@@ -103,7 +103,19 @@ def require_entry_allowed(session, side, quantity, right=None, strike=None, expi
 
 def sessions_for(user_id):
     from app.services import simulation
-    return [s for s in simulation._sessions.values() if s.user_id == user_id and s.session_type == 'real' and getattr(s,'trading_style','intraday') != 'swing' and s.date == market_date()]
+
+    return [
+        s
+        for s in simulation._sessions.values()
+        if s.user_id == user_id
+        and s.session_type == "real"
+        and getattr(s, "trading_style", "intraday") != "swing"
+        and s.date == market_date()
+        and (
+            s.state != simulation.SimulationState.ENDED
+            or (getattr(s, "real_active_claim", False) and not s.real_verified_closed)
+        )
+    ]
 
 
 def unique_books(sessions):
@@ -111,8 +123,18 @@ def unique_books(sessions):
     # merely because the user has another runtime view of that symbol/mode.
     result = {}
     for session in sessions:
-        key = (session.execution_broker, session.broker_account_id, session.symbol, session.instrument_type)
-        result.setdefault(key, session)
+        key = (
+            session.execution_broker,
+            session.broker_account_id,
+            session.symbol,
+            session.instrument_type,
+        )
+        previous = result.get(key)
+        if previous is None or (
+            getattr(session, "real_active_claim", False)
+            and not getattr(previous, "real_active_claim", False)
+        ):
+            result[key] = session
     return list(result.values())
 
 
@@ -121,42 +143,100 @@ def broadcast(user_id, status, message):
         session.queue.put_nowait(json.dumps({'type':'real_trading_day_status','session_id':session.session_id,**status,'message':message}))
 
 
+def has_outstanding_day_slot(user_id, date):
+    """Four canonical broker/style rows plus owned session point reads; no scans."""
+    from app.services import real_sessions
+    from app.services.db import get_dynamodb_resource
+
+    rows = [
+        row for row in real_sessions.active_all(user_id) if row["style"] == "intraday"
+    ]
+    if not rows:
+        return False
+    sessions = get_dynamodb_resource().Table("Sessions")
+    for row in rows:
+        record = sessions.get_item(
+            Key={"session_id": row["session_id"]}, ConsistentRead=True
+        ).get("Item")
+        if (
+            not record
+            or record.get("user_id") != user_id
+            or record.get("date") in (None, date)
+        ):
+            return True
+    return False
+
+
 async def complete_when_flat(user_id):
-    from app.services import emergency_exit, real_broker_state
+    from app.services import emergency_exit, real_broker_state, real_close
     from app.services.execution_broker import get_service
+
     date = market_date()
     try:
         while market_date() == date:
-            sessions = unique_books(sessions_for(user_id))
-            if sessions:
-                try:
-                    # Acknowledgements and local quantities are not proof of flat.
-                    # Reuse the coherent broker orders/executions/positions refresh.
-                    exit_attempted = False
-                    for session in sessions:
-                        await real_broker_state.refresh(session, get_service(session))
-                        await cancel_entries(session)
-                        if any(emergency_exit.position(session, target).quantity for target in emergency_exit.targets(session)):
-                            exit_attempted = True
-                            await emergency_exit.exit_all(session)
-                    still_open = any(emergency_exit.position(s, target).quantity for s in sessions for target in emergency_exit.targets(s))
-                    pending = any(o.status.value == 'PENDING' for s in sessions for o in order_service.get_open_orders(s.session_id))
-                    from app.services import real_close
-                    if not exit_attempted and not still_open and not pending and not any(real_close.unresolved(s) for s in sessions):
+            all_sessions = sessions_for(user_id)
+            sessions = unique_books(all_sessions)
+            try:
+                exit_attempted = False
+                for session in sessions:
+                    await real_broker_state.refresh(session, get_service(session))
+                for session in all_sessions:
+                    await cancel_entries(session)
+                for session in sessions:
+                    if any(
+                        emergency_exit.position(session, target).quantity
+                        for target in emergency_exit.targets(session)
+                    ):
+                        exit_attempted = True
+                        await emergency_exit.exit_all(session)
+                still_open = any(
+                    emergency_exit.position(s, target).quantity
+                    for s in sessions
+                    for target in emergency_exit.targets(s)
+                )
+                pending = any(
+                    order_service.get_open_orders(s.session_id) for s in all_sessions
+                )
+                if (
+                    not exit_attempted
+                    and not still_open
+                    and not pending
+                    and not any(real_close.unresolved(s) for s in all_sessions)
+                ):
+                    # Stop aliases first; only then release the authoritative
+                    # owner, so no old viewer can interfere with the next user.
+                    for session in sorted(
+                        all_sessions,
+                        key=lambda s: getattr(s, "real_active_claim", False),
+                    ):
+                        await real_close.finish(session)
+                    if not await asyncio.to_thread(
+                        has_outstanding_day_slot, user_id, date
+                    ):
                         await asyncio.to_thread(finish, user_id, date)
-                        broadcast(user_id, {'date':date,'state':'done'}, 'Done for day: all positions confirmed closed; real trading locked for today')
-                        for session in sessions:
-                            await real_close.finish(session)
+                        broadcast(
+                            user_id,
+                            {"date": date, "state": "done"},
+                            "Done for day: all positions confirmed closed; real trading locked for today",
+                        )
                         return
-                except Exception as exc:
-                    logger.warning('real_day_completion_pending user=%s: %s', user_id, exc)
-                    broadcast(user_id, {'date':date,'state':'closing'}, f'Waiting to verify all positions closed: {exc}')
+            except Exception as exc:
+                logger.warning("real_day_completion_pending user=%s: %s", user_id, exc)
+                broadcast(
+                    user_id,
+                    {"date": date, "state": "closing"},
+                    f"Waiting to verify all positions closed: {exc}",
+                )
             await asyncio.sleep(5)
     except Exception as exc:
-        logger.exception('real_day_completion_failed user=%s', user_id)
-        broadcast(user_id, {'date':date,'state':'closing'}, f'Day closure needs attention: {exc}')
+        logger.exception("real_day_completion_failed user=%s", user_id)
+        broadcast(
+            user_id,
+            {"date": date, "state": "closing"},
+            f"Day closure needs attention: {exc}",
+        )
     finally:
-        _jobs.pop(user_id,None)
+        _jobs.pop(user_id, None)
 
 
 def monitor(user_id):
@@ -184,32 +264,61 @@ async def cancel_entries(session):
 
 
 async def done_for_day(user_id):
-    from app.services import emergency_exit, strategy_service
+    from app.services import emergency_exit, simulation, strategy_service
+
     status = await asyncio.to_thread(begin, user_id)
-    if status['state'] == 'done':
-        return {**status, 'results':[]}
-    logger.info('real_day_closure_requested user=%s date=%s state=%s', user_id, status['date'], status['state'])
+    if status["state"] == "done":
+        # Repair old 'done before release' failures without lifting the day barrier.
+        monitor(user_id)
+        return {**status, "results": []}
+    logger.info(
+        "real_day_closure_requested user=%s date=%s state=%s",
+        user_id,
+        status["date"],
+        status["state"],
+    )
     results = []
     # Cancel entries/strategies on every alias, but submit exits once per book.
     sessions = sessions_for(user_id)
     for session in sessions:
         session.real_day_closing = True
+        session.real_closing = True
+        try:
+            await asyncio.to_thread(
+                simulation._upsert_session_to_db, session, strict=True
+            )
+        except Exception as exc:
+            results.append({"session_id": session.session_id, "error": str(exc)})
         try:
             strategy_service.cancel_all(session.session_id)
         except Exception as exc:
-            results.append({'session_id':session.session_id,'error':str(exc)})
+            results.append({"session_id": session.session_id, "error": str(exc)})
         try:
             await cancel_entries(session)
         except Exception as exc:
-            results.append({'session_id':session.session_id,'error':str(getattr(exc,'detail',exc))})
+            results.append(
+                {
+                    "session_id": session.session_id,
+                    "error": str(getattr(exc, "detail", exc)),
+                }
+            )
     for session in unique_books(sessions):
         try:
             results.append(await emergency_exit.exit_all(session))
         except Exception as exc:
-            results.append({'session_id':session.session_id,'error':str(getattr(exc,'detail',exc))})
+            results.append(
+                {
+                    "session_id": session.session_id,
+                    "error": str(getattr(exc, "detail", exc)),
+                }
+            )
     monitor(user_id)
-    broadcast(user_id,status,'Done for day requested: closing positions; new real entries blocked')
-    return {**status,'results':results}
+    broadcast(
+        user_id,
+        status,
+        "Done for day requested: closing positions; new real entries blocked",
+    )
+    return {**status, "results": results}
 
 
 async def shutdown():

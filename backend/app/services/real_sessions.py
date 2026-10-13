@@ -169,6 +169,16 @@ async def start(req, user_id, create):
         )
         slot = await asyncio.to_thread(slots.read, chosen, account, "intraday")
         if slot and slot["owner_user_id"] != user_id:
+            from app.services import real_trading_day
+
+            try:
+                previous_day = await asyncio.to_thread(
+                    real_trading_day.state, slot["owner_user_id"]
+                )
+                if previous_day["state"] in ("closing", "done"):
+                    real_trading_day.monitor(slot["owner_user_id"])
+            except Exception:
+                pass  # Storage trouble never bypasses the existing ownership barrier.
             raise HTTPException(
                 409,
                 f"{chosen.title()} Day already has an outstanding Real session owned by another user",
@@ -725,10 +735,16 @@ async def _recover_outstanding():
 
                         await ensure(row["owner_user_id"], row["session_id"])
                         continue
+                    from app.services import real_trading_day
                     from app.services.real_trading_day import market_date
 
+                    day_status = await asyncio.to_thread(
+                        real_trading_day.state, row["owner_user_id"]
+                    )
+
                     if (
-                        record.get("real_closing")
+                        day_status["state"] in ("closing", "done")
+                        or record.get("real_closing")
                         or row["state"] == "closing"
                         or record["date"] != market_date()
                     ):
@@ -737,6 +753,11 @@ async def _recover_outstanding():
                         restored = await restore_for_close(record, row["owner_user_id"])
                         # Previous-day recovery requests verification/closure, never replays entries.
                         await close(restored)
+                        if (
+                            record["date"] == market_date()
+                            and day_status["state"] == "closing"
+                        ):
+                            real_trading_day.monitor(row["owner_user_id"])
                     else:
                         from app.routers.simulation import start_with_paper_claim
 
