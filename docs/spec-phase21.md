@@ -1101,6 +1101,7 @@ explicitly outstanding; main/dev promotion remains manual after acceptance.
 
 
 ### Swing Trading Improvements
+
 When I open swing trading I see a page with just numbers to enter or purchase without charts.
 1) Change the swing trading UI to support charts and maybe left panel has positions orders etc, or feel free to suggest great UI. Improve the UI, it literally has almost nothing, compared to day trading whicch is so great.
 2) The charts for swing need not be fine, so you can download from kite or kotak or icici breeze 1 minute candles.
@@ -1265,3 +1266,59 @@ linked analytics browser checks pass for both renderers, including Pop out Swing
 and pinned companion controls. Native hosting is mocked in browser tests; installed
 Windows handoff, concurrent Day/Swing execution and authorized broker acceptance
 remain after backend/client deployment. No live orders were sent.
+
+
+
+### Swing Trading Improvements
+
+Implementation: [full sprint design and status](spec-phase21-swing-futures-plan.md).
+Separate desktop Day/Swing screens and Swing pop-out are included; website retains
+existing view switching. View changes and window close never close trading books.
+
+1. Swing Trading Entries should support percentage entry, percentage of capital, session or portfolio capital.
+2. Does desktop has similar error display mechanism that website has which doesn't block the trading UI. If not add them.
+3. The chart lines or drawings done are saved and will be shown across day trading and Swing Trading.
+4. In desktop for the markets and indicators, can you take the row out of the charts and show similar to what we have in day trading, collapsable one. It is taking up space in the charts display. And no need of this line "kite · Live quote" It is also taking up space. Sorry adding requirements in runtime.
+5. Change Pick on chart to icon and Place intimidation to icon in desktop. Support Futures in both website and desktop. In desktop can you make the right panel collapsable and left panel too, so that we get more area for charts.
+
+### Supporting Futures Trading in Swing Trading.
+1. Support Futures contracts for current month and when 2 days away from expiry, next month as well.
+2. Currently all futures contracts are monthly expiry.
+3. Support Future contracts for all indices symbols, NIFTY, SENSEX and NIFTY 100 as well.
+4. Calculate the future margin required from web.
+5. Support Futures for paper trading and real trading for both brokers
+6. Support Futures in Stats as well.
+
+
+### Swing/Futures sprint progress — 2026-10-13
+
+[Full implementation status and decisions](spec-phase21-swing-futures-plan.md#actual-implementation-and-validation).
+Sprints 0–6 application work is implemented. Sprint 7 code review and automated
+regression are complete; installed Windows and actual broker acceptance remain
+manual after preprod deployment. Paper Futures is enabled by default for new
+settings; Kite and Kotak Real have independent Admin gates, disabled by default.
+
+Website and desktop support exact Futures contracts, long/short margin sizing,
+offline Paper intentions, official MTM, restart recovery, NRML routing/protection,
+selected-date markers and Futures Stats/Analysis. The linked plan records scope,
+design, review fixes, assumptions and intentionally left-out items. The agreed
+next-month entry window is seven calendar days before actual listed expiry; Nifty
+100 support means eligible constituent stocks, not an invented index contract.
+
+Latest post-review backend regression: **2,331 passed**. Both client TypeScript
+checks and production builds, **216 desktop tests**, shared workspace/linked
+Analytics, actual Day/Swing option drawing sharing, older desktop trading flows,
+website notification and built desktop Kotak login browser checks passed.
+Deploy backend before clients; no live broker orders were sent during validation.
+
+
+### Swing/Futures follow-up review — 2026-10-13
+
+PR #659 now includes fixes for overnight owned execution recovery, expired-entry
+renewal and reopened-position protection, Day/Swing option drawing namespace
+compatibility, and configured Futures SL buffers/ticks. The notification browser
+harness was repaired as well. [Detailed findings, decisions and validation](spec-phase21-swing-futures-plan.md#2026-10-13--follow-up-review-fixes-and-older-feature-regression)
+include **21 new backend regression cases**. Existing Real/Paper/Replay/Stepwise,
+linked PE candles after Fibonacci edits, labels/Stats and broker authentication UI
+passed the exercised regression checks. Installed Windows/live broker acceptance
+remain after preprod deployment; Real Futures gates default off.

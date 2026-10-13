@@ -152,7 +152,7 @@ export default function SwingHistory({
   }, [cycle, identity]);
   const pane: SwingPane = {
     symbol: cycle?.symbol ?? "HDFCBANK",
-    instrument_type: cycle?.right ? "options" : "equity",
+    instrument_type: cycle?.instrument_type === "futures" ? "futures" : cycle?.right ? "options" : "equity",
     right: cycle?.right ?? undefined,
     strike: cycle?.strike ?? undefined,
     expiry: cycle?.expiry ?? undefined,

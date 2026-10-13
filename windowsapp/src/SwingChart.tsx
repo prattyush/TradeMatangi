@@ -1,4 +1,6 @@
-import { useCallback, useEffect, useState } from "react";
+import { flashError } from "../../shared/notifications";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { ChartTile } from "./ChartTile";
 import type { SwingChartProps } from "../../shared/SwingWorkspace";
 const settings = {
@@ -31,7 +33,7 @@ export default function SwingChart(
   const storageKey = `swing-indicators:${props.drawingScope}:${props.pane.symbol}:${props.pane.right}:${props.pane.strike}:${props.pane.expiry}:${props.pane.interval}`;
   const [drawingError, setDrawingError] = useState("");
   const reportDrawingError = useCallback(
-    (error: unknown) => setDrawingError(String(error)),
+    (error: unknown) => { setDrawingError(String(error)); flashError(error, "Desktop Swing drawings"); },
     [],
   );
   const [indicator, setIndicator] = useState<string[]>(() => {
@@ -47,7 +49,16 @@ export default function SwingChart(
       action: "delete" | "hide" | "lock";
     } | null>(null),
     [chartSettings, setChartSettings] = useState(settings);
+  const lastIndicatorKey = useRef(storageKey);
   useEffect(() => {
+    if (lastIndicatorKey.current !== storageKey) {
+      lastIndicatorKey.current = storageKey;
+      try {
+        const saved: unknown = JSON.parse(localStorage.getItem(storageKey) ?? "[]");
+        setIndicator(Array.isArray(saved) ? saved.filter((name): name is string => typeof name === "string") : []);
+      } catch { setIndicator([]); }
+      return;
+    }
     try {
       localStorage.setItem(storageKey, JSON.stringify(indicator));
     } catch {
@@ -64,7 +75,9 @@ export default function SwingChart(
   }, [props.drawingRequest]);
   const pane = props.pane;
   const instrument =
-    pane.instrument_type === "options"
+    pane.instrument_type === "futures"
+      ? {kind: "future", underlying: pane.symbol, exchange: pane.symbol === "BSESEN" ? "BFO" : "NFO", expiry: pane.expiry}
+      : pane.instrument_type === "options"
       ? {
           kind: "option",
           underlying: pane.symbol,
@@ -78,12 +91,8 @@ export default function SwingChart(
           symbol: pane.symbol,
           exchange: pane.symbol === "BSESEN" ? "BSE" : "NSE",
         };
-  return (
-    <div
-      className="swing-renderer"
-      style={{ display: "flex", flexDirection: "column", minHeight: 0 }}
-    >
-      <div className="swing-pane-bar">
+  const tools = (
+<div className="swing-pane-bar">
         <select
           aria-label="Add chart indicator"
           value=""
@@ -135,11 +144,20 @@ export default function SwingChart(
           Delete selected
         </button>
       </div>
+  );
+  return (
+    <div
+      className="swing-renderer"
+      style={{ display: "flex", flexDirection: "column", minHeight: 0 }}
+    >
+      {props.toolsContainer === undefined ? tools : props.active && props.toolsContainer && createPortal(tools, props.toolsContainer)}
       {drawingError && <p role="alert">{drawingError}</p>}
       <ChartTile
-        drawingScope={props.drawingScope}
+        shareDayDrawings
+        legacyDrawingScope={props.drawingScope}
         candleAnchorSeconds={pane.interval === "1D" ? 0 : 33300}
         showHistoricalMarkers={props.showHistoricalTrades}
+        externalTradeMarkers={props.showHistoricalTrades === true}
         hideWindowActions
         readOnlyOrders
         symbol={pane.symbol}

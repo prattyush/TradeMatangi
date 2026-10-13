@@ -589,3 +589,21 @@ def test_import_invalidates_first_consuming_valuation_even_outside_market(
         book(), [cycle], later, "2026-10-13", loader=lambda *args: prices
     )
     assert recovered["coverage_complete"] and recovered["return_pct"] == 0
+
+
+def test_future_short_nav_uses_economic_pnl_not_notional_asset(monkeypatch):
+    monkeypatch.setattr(swing_market,"today",lambda:"2026-10-13")
+    rows=[trade("short","SELL",100,10,"2026-10-06"),trade("half","BUY",90,5,"2026-10-07"),trade("cover","BUY",80,5,"2026-10-12")]
+    for row in rows:
+        row.update(instrument_type="futures",expiry="2026-10-27",product="NRML")
+        row["analytics"]["futures"]={"entry_margin":200 if row["side"]=="SELL" else 0,"contract":{"category":"index"}}
+    session={"session_id":"child","user_id":"u","symbol":"HDFCBANK","instrument_type":"futures",
+             "session_type":"paper","trading_style":"swing","portfolio_id":"portfolio"}
+    cycles=[analytics.decorate(c) for c in performance.build_cycles(session,rows)]
+    cycle=cycles[0]
+    assert cycle["net_pnl"]==147 and cycle["return_on_cost_pct"] is None
+    assert cycle["return_on_margin_pct"]==73.5
+    prices={"2026-10-06":95,"2026-10-07":90,"2026-10-08":85,"2026-10-09":80}
+    result=analytics.valuation_series(book(),cycles,"2026-10-06","2026-10-12",loader=lambda *a:prices)
+    assert [r["nav"] for r in result["series"]]==[2049,2098,2123,2148,2147]
+    assert result["coverage_complete"]

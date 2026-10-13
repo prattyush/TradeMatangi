@@ -515,7 +515,7 @@ async def test_swing_close_endpoint_passes_owned_acknowledgements(
             headers={"X-User-Id": "u"},
         )
     assert response.status_code == 200
-    close.assert_awaited_once_with("u", current.portfolio_id, ["old-order"])
+    close.assert_awaited_once_with("u", current.portfolio_id, ["old-order"], acknowledge_delivery_context_ids=[])
 
 
 def test_reservation_decrease_is_allowed_while_funding_pending(real_book):

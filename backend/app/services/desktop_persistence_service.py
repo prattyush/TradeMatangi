@@ -53,7 +53,9 @@ def _dynamodb_safe(value):
 
 def canonical_instrument_id(instrument: dict) -> str:
     """A stable cross-screen identity; interval and viewport never participate."""
-    if instrument.get("kind") == "option":
+    if instrument.get("kind") == "future":
+        required = ("kind", "underlying", "expiry", "exchange")
+    elif instrument.get("kind") == "option":
         required = ("underlying", "expiry", "strike", "right", "exchange")
     else:
         required = ("kind", "symbol", "exchange")
@@ -134,7 +136,16 @@ def save_chart_settings(user_id: str, settings: dict) -> dict:
 
 def list_drawings(user_id: str, instrument: dict, include_deleted: bool = False) -> list[dict]:
     instrument_id = canonical_instrument_id(instrument)
-    records = _table(_DRAWINGS_TABLE).query(KeyConditionExpression=Key("user_id").eq(user_id)).get("Items", [])
+    table = _table(_DRAWINGS_TABLE)
+    query = {"KeyConditionExpression": Key("user_id").eq(user_id), "ConsistentRead": True}
+    records = []
+    while True:
+        page = table.query(**query)
+        records.extend(page.get("Items", []))
+        cursor = page.get("LastEvaluatedKey")
+        if not cursor:
+            break
+        query["ExclusiveStartKey"] = cursor
     return [record for record in records if record["instrument_id"] == instrument_id and (include_deleted or not record.get("deleted", False))]
 
 
@@ -155,5 +166,10 @@ def update_drawing(user_id: str, drawing_id: str, drawing: dict, revision: int, 
     if existing["revision"] != revision:
         raise ValueError("revision_conflict")
     item = {**existing, "drawing": _dynamodb_safe(drawing), "revision": revision + 1, "mutation_id": mutation_id, "deleted": deleted, "updated_at": _now()}
-    table.put_item(Item=item, ConditionExpression="revision = :revision", ExpressionAttributeValues={":revision": revision})
+    try:
+        table.put_item(Item=item, ConditionExpression="revision = :revision", ExpressionAttributeValues={":revision": revision})
+    except ClientError as error:
+        if error.response.get("Error", {}).get("Code") == "ConditionalCheckFailedException":
+            raise ValueError("revision_conflict") from error
+        raise
     return item

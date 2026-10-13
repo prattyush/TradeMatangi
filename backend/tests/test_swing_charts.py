@@ -351,6 +351,9 @@ def test_workspace_is_user_surface_and_broker_scoped(db, monkeypatch):
             }
         ],
         "active": 0,
+        "rail_open": False,
+        "ticket_open": False,
+        "tools_collapsed": True,
     }
     with TestClient(app) as client:
         assert (
@@ -363,6 +366,9 @@ def test_workspace_is_user_surface_and_broker_scoped(db, monkeypatch):
             saved["surface"] == "desktop"
             and saved["panes"][0]["symbol"] == "HDFCBANK"
             and saved["panes"][0]["follow_today"]
+            and saved["rail_open"] is False
+            and saved["ticket_open"] is False
+            and saved["tools_collapsed"] is True
         )
         assert (
             client.get(prefix + "?surface=website", headers={"X-User-Id": "u"}).json()[

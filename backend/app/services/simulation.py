@@ -221,7 +221,8 @@ class SimulationSession:
     last_price_pe: float = 0.0        # PE price (dual-stream options only)
     session_capital: float = 0.0      # wallet balance snapshotted at session start
     desktop_sizing_settings: Optional[dict] = None  # frozen on first desktop start/attachment
-    instrument_type: str = "equity"   # "equity" or "options"
+    instrument_type: str = "equity"   # equity, options, or Swing futures
+    future_contract: dict | None = None
     strike: Optional[int | float] = None       # options: ATM/reference strike
     expiry: Optional[str] = None       # options only (YYYY-MM-DD)
     right: Optional[str] = None        # options only: "CE", "PE", or None (dual-stream)
@@ -343,6 +344,7 @@ def _upsert_session_to_db(session: SimulationSession, *, strict: bool = False) -
             "strategy_interval_secs": session.strategy_interval_secs,
             "brokerage_per_order": Decimal(str(session.brokerage_per_order)),
             "instrument_type": session.instrument_type,
+            "future_contract": session.future_contract,
             "session_type": session.session_type,
             "trading_style": session.trading_style,
             "portfolio_id": session.portfolio_id,
@@ -417,6 +419,8 @@ def _upsert_session_to_db(session: SimulationSession, *, strict: bool = False) -
             item["desktop_checkpoint_bar_index"] = int(getattr(session, "desktop_checkpoint_bar_index", 0) or 0)
             item["desktop_checkpoint_mode"] = str(getattr(session, "desktop_checkpoint_mode", desktop_mode or ""))
             item["desktop_checkpoint_contracts"] = getattr(session, "desktop_contracts", []) or []
+        if session.instrument_type == "futures":
+            item["expiry"] = session.expiry
         if session.instrument_type == "options":
             item["strike"] = session.strike
             item["expiry"] = session.expiry
@@ -691,6 +695,7 @@ def rebuild_session_from_db(
         user_id=user_id,
         session_capital=session_capital,
         instrument_type=instrument_type,
+        future_contract=db_record.get("future_contract"),
         strike=strike,
         expiry=expiry,
         right=right,
@@ -721,6 +726,9 @@ def rebuild_session_from_db(
         real_funding_period=db_record.get("real_funding_period"),
         real_entries_paused=bool(db_record.get("real_entries_paused", db_record.get("state") == "paused")),
     )
+    if session.future_contract:
+        from app.services.swing_funding_store import decode
+        session.future_contract = decode(session.future_contract)
     session.desktop_contracts = [
         {**contract, "strike": strike_number(contract["strike"])} if isinstance(contract.get("strike"), Decimal) else contract
         for contract in db_record.get("desktop_contracts", [])

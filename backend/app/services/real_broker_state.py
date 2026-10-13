@@ -237,6 +237,10 @@ def rebuild_reservations(session, orders, positions):
         closing = held.get("quantity", 0) if held.get("side") == opposite else 0
         opening = max(0, remaining - closing)
         rate = EQUITY_MIS_MARGIN_RATE if session.trading_style == "intraday" and session.instrument_type == "equity" else 1
+        if session.instrument_type == "futures":
+            info=(order.analytics or {}).get("futures",{})
+            required=float(info.get("reserved_requirement",info.get("margin",0)))
+            rate=required/(order.quantity*order.limit_price) if order.quantity*order.limit_price else 0
         order.reservation_margin_rate = rate
         order.wallet_ledger_kind = "real"
         order.wallet_ledger_id = session.wallet_ledger_id

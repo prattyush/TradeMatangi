@@ -429,6 +429,8 @@ try {
           (i) => i.drawing_scope === "swing:portfolio:primary",
         ),
       );
+      assert(mainDrawing.some(i => !i.drawing_scope && i.symbol === 'RELIND'));
+      assert(childDrawing.some(i => !i.drawing_scope && i.symbol === 'RELIND'));
       assert.equal(await child.getByLabel("Swing mode").count(), 0);
       assert.equal(await child.getByLabel("Swing broker").count(), 0);
       assert.equal(

@@ -650,6 +650,7 @@ export class InsufficientFundsError extends Error {
 }
 
 export interface Trade {
+  instrument_type?: "equity" | "options" | "futures"
   execution_broker?: string | null
   broker_order_id?: string | null
   broker_account_id?: string | null
@@ -1770,6 +1771,16 @@ const api = {
     return res.json()
   },
 
+  async getFuturesRisk(): Promise<Record<string, any>> {
+    const res = await fetch(`${BACKEND_URL}/api/admin/futures-risk`, {headers:_authHeaders()})
+    if (!res.ok) throw new Error(`Futures settings fetch failed (${res.status})`)
+    return res.json()
+  },
+  async setFuturesRisk(settings: Record<string, any>): Promise<Record<string, any>> {
+    const res = await fetch(`${BACKEND_URL}/api/admin/futures-risk`, {method:'PUT',headers:{'Content-Type':'application/json',..._authHeaders()},body:JSON.stringify(settings)})
+    if (!res.ok) {const error=await res.json().catch(()=>({}));throw new Error(error.detail??`Futures settings save failed (${res.status})`)}
+    return res.json()
+  },
   async getStreamSource(): Promise<{ source: 'fyers' | 'kite' | 'kotak' | 'breeze' }> {
     const res = await fetch(`${BACKEND_URL}/api/admin/stream-source`, {
       headers: _authHeaders(),

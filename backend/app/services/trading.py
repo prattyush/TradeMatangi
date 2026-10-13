@@ -175,7 +175,7 @@ def _write_trade_to_db(trade: Trade) -> None:
         if trade.underlying_price is not None:
             item["underlying_price"] = Decimal(str(trade.underlying_price))
 
-        if trade.instrument_type == "options":
+        if trade.instrument_type in ("options", "futures"):
             if trade.strike is not None:
                 item["strike"] = trade.strike
             if trade.expiry is not None:

@@ -126,6 +126,8 @@ def option_base(session):
 def in_scope(session, row: dict) -> bool:
     from app.services.kotak_service import _SYMBOL_MAP
     symbol = str(row.get("symbol", "")).upper()
+    if session.instrument_type == "futures":
+        return symbol == session.future_contract["trading_symbol"].upper()
     if session.instrument_type != "options":
         from app.services.execution_broker import name
         if name(session) == 'kite':
@@ -139,6 +141,10 @@ def in_scope(session, row: dict) -> bool:
 
 
 def contract(session, row: dict, master=None) -> dict:
+    if session.instrument_type == "futures":
+        if not in_scope(session,row):
+            raise UnknownContractError("Futures report belongs to another exact contract")
+        return {"right":None,"strike":None,"expiry":session.expiry}
     if session.instrument_type != "options":
         return {"right": None, "strike": None, "expiry": None}
     symbol = row["symbol"].upper()
@@ -167,7 +173,7 @@ def in_book(session, row: dict) -> bool:
     if row.get('product_known') is False and (getattr(session, 'trading_style', 'intraday') == 'swing' or isinstance(getattr(session, 'real_funding_period', None), str) and session.real_funding_period):
         raise ValueError('Broker product is missing; account book reconciliation is pending')
     product = str(row.get("product") or "MIS").upper()
-    expected_product = ("NRML" if session.instrument_type == "options" else "CNC") if getattr(session, "trading_style", "intraday") == "swing" else "MIS"
+    expected_product = ("NRML" if session.instrument_type in ("options","futures") else "CNC") if getattr(session, "trading_style", "intraday") == "swing" else "MIS"
     if product != expected_product:
         return False
     return in_scope(session, row)

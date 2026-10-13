@@ -30,11 +30,12 @@ export default function SwingChart(props: SwingChartProps) {
         symbol={pane.symbol}
         candleAnchorSeconds={pane.interval==='1D'?0:33300}
         defaultShowAllMarkers={props.showHistoricalTrades}
+        externalTradeMarkers={props.showHistoricalTrades === true}
         tradingDate={pane.as_of_date}
         startTime={null}
         intervalMinutes={minutes}
         historyMode="live"
-        paneType={pane.instrument_type === "options" ? "options" : "equity"}
+        paneType={pane.instrument_type}
         right={pane.right as "CE" | "PE"}
         strike={pane.strike}
         expiry={pane.expiry}

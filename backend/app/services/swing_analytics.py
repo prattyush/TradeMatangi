@@ -66,7 +66,7 @@ def cycle_inputs(session, rows):
     """Opening basis is internal analytics evidence, never an inserted execution."""
     if session.get("trading_style") != "swing":
         return rows
-    product = "NRML" if session.get("instrument_type") == "options" else "CNC"
+    product = "NRML" if session.get("instrument_type") in ("options","futures") else "CNC"
     result = [
         {
             **r,
@@ -128,6 +128,19 @@ def decorate(cycle):
         if purchased > 0 and cycle["state"] == "closed"
         else None
     )
+    if cycle.get("instrument_type") == "futures":
+        margins=[]
+        contracts=[]
+        for row in cycle["executions"]:
+            info=(row.get("analytics") or {}).get("futures",{})
+            if row.get("role")=="entry" and info.get("entry_margin") is not None:
+                margins.append(float(info["entry_margin"]))
+            if info.get("contract"):
+                contracts.append(info["contract"])
+        margin=sum(margins) if margins else None
+        cycle.update(captured_margin=margin,notional_entry_value=purchased,
+            return_on_margin_pct=cycle["net_pnl"]/margin*100 if margin and cycle["state"]=="closed" else None,
+            return_on_cost_pct=None,futures_category=contracts[0].get("category") if contracts else None)
     if any(row.get("opening_basis") for row in cycle["executions"]):
         cycle["imported"] = True
         cycle["acquisition_date"] = None
@@ -348,8 +361,11 @@ def valuation_series(parent, all_cycles, start, end, loader=price_history):
     executions = []
     prices = {}
     missing = []
+    future_keys=set()
     for c in all_cycles:
         key = (c["symbol"], c["right"], c["strike"], c["expiry"])
+        if c.get("instrument_type")=="futures":
+            future_keys.add(key)
         for r in c["executions"]:
             executions.append({**r, "key": key})
         if key not in prices:
@@ -366,7 +382,7 @@ def valuation_series(parent, all_cycles, start, end, loader=price_history):
                 prices[key] = loader(
                     swing_charts.instrument(
                         c["symbol"],
-                        "options" if c["right"] else "equity",
+                        "futures" if c.get("instrument_type")=="futures" else "options" if c["right"] else "equity",
                         c["right"],
                         c["strike"],
                         c["expiry"],
@@ -427,12 +443,27 @@ def valuation_series(parent, all_cycles, start, end, loader=price_history):
             quantity = int(row["quantity"])
             value = quantity * float(row["price"])
             buy = row["side"] == "BUY"
-            cash += (-value if buy else value) - float(row.get("commission") or 0)
+            future=row["key"] in future_keys
+            cash += (-value if buy else value) - float(row.get("commission") or 0) if not future else -float(row.get("commission") or 0)
             holdings[row["key"]] += quantity if buy else -quantity
             fee = float(row.get("commission") or 0)
             if start <= date_of(row["timestamp"]) <= end:
                 period_fees += fee
-            if buy:
+            if future:
+                direction=1 if buy else -1
+                remaining=quantity
+                queue=lots[row["key"]]
+                while remaining and queue and queue[0][3] != direction:
+                    batch=queue[0]
+                    used=min(remaining,batch[0])
+                    cash+=(float(row["price"])-batch[1])*used*batch[3]
+                    batch[0]-=used
+                    remaining-=used
+                    if not batch[0]:
+                        queue.popleft()
+                if remaining:
+                    queue.append([remaining,float(row["price"]),fee/quantity,direction])
+            elif buy:
                 lots[row["key"]].append([quantity, float(row["price"]), fee / quantity])
             else:
                 remaining = quantity
@@ -450,7 +481,7 @@ def valuation_series(parent, all_cycles, start, end, loader=price_history):
             if not quantity:
                 continue
             mark = prices[key].get(date)
-            if mark is None or quantity < 0:
+            if mark is None or (quantity < 0 and key not in future_keys):
                 gap = True
                 missing.append(
                     {
@@ -459,6 +490,8 @@ def valuation_series(parent, all_cycles, start, end, loader=price_history):
                         "reason": "Held instrument has no valid daily valuation",
                     }
                 )
+            elif key in future_keys:
+                value += sum((mark-batch[1])*batch[0]*batch[3] for batch in lots[key])
             else:
                 value += quantity * mark
         nav = (
@@ -470,9 +503,9 @@ def valuation_series(parent, all_cycles, start, end, loader=price_history):
             value
             - sum(
                 q * (price + fee)
-                for batches in lots.values()
+                for key,batches in lots.items() if key not in future_keys
                 for q, price, fee in batches
-            )
+            ) - sum(batch[0]*batch[2] for key,batches in lots.items() if key in future_keys for batch in batches)
             if nav is not None
             else None
         )
@@ -544,6 +577,7 @@ def valuation_series(parent, all_cycles, start, end, loader=price_history):
                     "cash": round(cash, 2)
                     if flow_complete and not parent.get("history_warning")
                     else None,
+                    "cash_basis": "economic cash before Futures margin/MTM transfers" if future_keys else "fully funded cash",
                     "invested_value": round(value, 2) if not gap else None,
                     "return_pct": daily * 100 if daily is not None else None,
                     "growth": wealth if continuous else None,
@@ -667,7 +701,8 @@ def report(user, pid, start=None, end=None, include_history=True):
                     "strike": cycle["strike"],
                     "expiry": cycle["expiry"],
                     "quantity": quantity,
-                    "invested_value": quantity * basis,
+                    "instrument_type":cycle["instrument_type"],
+                    "invested_value": (cycle.get("captured_margin")*quantity/sum(int(r["quantity"]) for r in entries) if cycle.get("captured_margin") else None) if cycle["instrument_type"]=="futures" else quantity*basis,
                     "mark_price": None,
                     "unrealized_pnl": None,
                     "quote_status": "unavailable",
@@ -693,19 +728,22 @@ def report(user, pid, start=None, end=None, include_history=True):
         )
         position["holding_days"] = matching.get("holding_days") if matching else None
         position["market_value"] = (
+            (position.get("held_margin",position.get("invested_value")) + position.get("unsettled_pnl",0)) if position.get("instrument_type")=="futures" and position.get("invested_value") is not None and position.get("unsettled_pnl") is not None else
             position["quantity"] * position["mark_price"]
             if position.get("mark_price") is not None
             else None
         )
-    total = sum(p["invested_value"] for p in positions)
+    total = sum(p.get("invested_value") or 0 for p in positions)
+    exposure_known = all(p.get("invested_value") is not None for p in positions)
     result["funding_status"] = current.get("funding_status")
     result["exposure"] = {
         "as_of": swing_market.now(),
         "cash": current["wallet_balance"],
         "positions": positions,
-        "invested_cost": round(total, 2),
+        "invested_cost": round(total, 2) if exposure_known else None,
+        "coverage_complete":exposure_known,
         "largest_position_pct": max(
-            (p["invested_value"] / total * 100 for p in positions), default=0
+            ((p.get("invested_value") or 0) / total * 100 for p in positions), default=0
         )
         if total
         else 0,
@@ -713,14 +751,30 @@ def report(user, pid, start=None, end=None, include_history=True):
             {
                 "kind": kind,
                 "cost": sum(
-                    p["invested_value"]
+                    p.get("invested_value") or 0
                     for p in positions
-                    if bool(p.get("right")) == (kind == "options")
+                    if ("futures" if p.get("instrument_type")=="futures" else "options" if p.get("right") else "equity") == kind
                 ),
             }
-            for kind in ("equity", "options")
+            for kind in ("equity", "options", "futures")
         ],
     }
+    future_cycles=[c for c in rows if c["instrument_type"]=="futures"]
+    completed=[c for c in future_cycles if c["state"]=="closed" and start<=c["exit_date"]<=end]
+    returns=[c["return_on_margin_pct"] for c in completed if c.get("return_on_margin_pct") is not None]
+    future_positions=[p for p in positions if p.get("instrument_type")=="futures"]
+    held=sum(p.get("held_margin",p.get("invested_value")) or 0 for p in future_positions)
+    result["futures"]={"completed_cycles":len(completed),"long_cycles":sum(c["direction"]=="LONG" for c in future_cycles),
+        "short_cycles":sum(c["direction"]=="SHORT" for c in future_cycles),
+        "index_cycles":sum(c.get("futures_category")=="index" for c in future_cycles),
+        "stock_cycles":sum(c.get("futures_category")=="stock" for c in future_cycles),
+        "average_return_on_margin_pct":statistics.mean(returns) if returns else None,
+        "known_margin_cycles":len(returns),"held_margin":round(held,2),
+        "margin_utilization_pct":held/parent["session_capital"]*100 if parent["session_capital"] else None,
+        "notional_exposure":sum(p.get("notional_exposure") or 0 for p in future_positions) if all(p.get("notional_exposure") is not None for p in future_positions) else None,
+        "settled_mtm":sum(f.get("settled_mtm",0) for f in current.get("futures",[])) if "futures" in current else None,
+        "unsettled_pnl":sum(f.get("unsettled_pnl") or 0 for f in current.get("futures",[])) if "futures" in current and all(f.get("unsettled_pnl") is not None or not f.get("quantity") for f in current.get("futures",[])) else None,
+        "fee_basis":"Captured broker fee estimates; broker contract notes remain authoritative"}
     result["portfolio_performance"] = (
         valuation_series(parent, rows, start, end) if include_history else None
     )

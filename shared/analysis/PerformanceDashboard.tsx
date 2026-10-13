@@ -1,8 +1,9 @@
-import SwingStats from '../SwingStats'
-import RealChargesEditor from './RealChargesEditor'
-import { completeCycleExport } from './exportCycles'
-import { useAnalysisError } from './environment'
-import { useAnalysisEnvironment } from './environment'
+import FuturesExecutionChart from "../FuturesExecutionChart";
+import SwingStats from "../SwingStats";
+import RealChargesEditor from "./RealChargesEditor";
+import { completeCycleExport } from "./exportCycles";
+import { useAnalysisError } from "./environment";
+import { useAnalysisEnvironment } from "./environment";
 import { AnalysisChart, OptionsChart } from "./TradeAnalysis";
 import type { AnalysisTrade } from "./api";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -16,7 +17,8 @@ import {
 import "./performance.css";
 
 interface Props {
-  defaultTradingStyle?:string; defaultPortfolioId?:string;
+  defaultTradingStyle?: string;
+  defaultPortfolioId?: string;
   selectedCycle?: PerformanceCycle;
   onChargesChanged?: () => void;
   onClose: () => void;
@@ -233,21 +235,24 @@ function Curve({
 }
 
 export default function PerformanceDashboard(props: Props) {
-  const environment = useAnalysisEnvironment()
-  const { getPerformance, getPerformanceCycles, getPerformanceDetail } = environment.performance
+  const environment = useAnalysisEnvironment();
+  const { getPerformance, getPerformanceCycles, getPerformanceDetail } =
+    environment.performance;
   const [filters, setFilters] = useState<PerformanceFilters>({
     symbol: props.defaultSymbol,
     start_date: props.defaultStartDate || dateAgo(29),
     end_date: props.defaultEndDate || dateAgo(0),
     instrument_type: props.defaultInstrumentType,
-    trading_style:props.defaultTradingStyle??'intraday',
-    portfolio_id:props.defaultPortfolioId??'',
+    trading_style: props.defaultTradingStyle ?? "intraday",
+    portfolio_id: props.defaultPortfolioId ?? "",
     session_type:
       props.defaultSessionType === "desktop_stepwise"
         ? "stepwise"
         : props.defaultSessionType,
   });
-  const [tradingStyle,setTradingStyle]=useState(props.defaultTradingStyle??'intraday');
+  const [tradingStyle, setTradingStyle] = useState(
+    props.defaultTradingStyle ?? "intraday",
+  );
   const swingLabels = useRef({ dirty: false, saving: false });
   const swingPortfolio = useRef(props.defaultPortfolioId ?? "");
   const changeTradingStyle = (style: string) => {
@@ -274,10 +279,10 @@ export default function PerformanceDashboard(props: Props) {
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  useAnalysisError(error, 'PerformanceDashboard')
+  useAnalysisError(error, "PerformanceDashboard");
   const [detail, setDetail] = useState<PerformanceCycle | null>(null);
   const [detailError, setDetailError] = useState("");
-  useAnalysisError(detailError, 'PerformanceDashboard')
+  useAnalysisError(detailError, "PerformanceDashboard");
   const [showChart, setShowChart] = useState(false);
   const [detailBusy, setDetailBusy] = useState(false);
   const [focus, setFocus] = useState<{
@@ -291,7 +296,7 @@ export default function PerformanceDashboard(props: Props) {
   const detailGeneration = useRef(0);
   const exportController = useRef<AbortController | null>(null);
   useEffect(() => {
-    if(tradingStyle==='swing')return;
+    if (tradingStyle === "swing") return;
     const controller = new AbortController();
     const revision = ++generation.current;
     exportController.current?.abort();
@@ -324,7 +329,7 @@ export default function PerformanceDashboard(props: Props) {
       exportController.current?.abort();
       detailGeneration.current++;
     };
-  }, [filters, refresh, environment.dataRevision,tradingStyle]);
+  }, [filters, refresh, environment.dataRevision, tradingStyle]);
   const select = (key: string, dimension?: string) =>
     setFocus({ key, dimension });
   const showDetail = async (c: PerformanceCycle, enrich = false) => {
@@ -365,8 +370,14 @@ export default function PerformanceDashboard(props: Props) {
     exportController.current = controller;
     setExporting(true);
     try {
-      const rows = await completeCycleExport(cycles,nextOffset,total,offset=>getPerformanceCycles(filters,offset,controller.signal),controller.signal);
-      if(revision!==generation.current)return;
+      const rows = await completeCycleExport(
+        cycles,
+        nextOffset,
+        total,
+        (offset) => getPerformanceCycles(filters, offset, controller.signal),
+        controller.signal,
+      );
+      if (revision !== generation.current) return;
       const url = URL.createObjectURL(
         new Blob([cyclesCsv(rows)], { type: "text/csv;charset=utf-8" }),
       );
@@ -376,12 +387,18 @@ export default function PerformanceDashboard(props: Props) {
       a.click();
       URL.revokeObjectURL(url);
     } catch (e) {
-      if (!controller.signal.aborted && revision === generation.current) setError(String(e));
+      if (!controller.signal.aborted && revision === generation.current)
+        setError(String(e));
     } finally {
-      if (exportController.current === controller) { exportController.current = null; setExporting(false) }
+      if (exportController.current === controller) {
+        exportController.current = null;
+        setExporting(false);
+      }
     }
   };
-  useEffect(() => { if (props.selectedCycle) void showDetail(props.selectedCycle) }, [props.selectedCycle]);
+  useEffect(() => {
+    if (props.selectedCycle) void showDetail(props.selectedCycle);
+  }, [props.selectedCycle]);
   const visible = useMemo(
     () =>
       cycles.filter(
@@ -392,35 +409,36 @@ export default function PerformanceDashboard(props: Props) {
                 (m) => `${m.entry_method} → ${m.exit_method}` === focus.key,
               )
             : focus.dimension === "account"
-              ? (c.shared ? c.owner_email || c.user_id : 'Own account') === focus.key
-            : focus.dimension === "entry_method"
-              ? c.entries.some((e) => e.entry_method === focus.key)
-              : focus.dimension === "exit_method"
-                ? c.matches.some((m) => m.exit_method === focus.key)
-                : focus.dimension === "requested_size"
-                  ? c.matches.some((m) => m.requested_size === focus.key)
-                  : focus.dimension === "sizing_method"
-                    ? c.entries.some((e) => e.sizing_method === focus.key)
-                    : focus.dimension === "requested_pct"
-                      ? c.entries.some(
-                          (e) => String(e.requested_pct) === focus.key,
-                        )
-                      : focus.dimension === "client"
-                        ? c.entries.some((e) => e.client === focus.key)
-                        : focus.dimension === "mode"
-                          ? c.mode === focus.key
-                          : focus.dimension === "date"
-                            ? c.date === focus.key
-                            : focus.dimension?.startsWith("label:")
-                              ? (c.label?.[focus.dimension.slice(6)] ||
-                                  "Unlabeled") === focus.key
-                              : focus.dimension === "cycle"
-                                ? c.cycle_id === focus.key
-                                : c.behavior?.some(
-                                    (b) =>
-                                      b.dimension === focus.dimension &&
-                                      b.key === focus.key,
-                                  )),
+              ? (c.shared ? c.owner_email || c.user_id : "Own account") ===
+                focus.key
+              : focus.dimension === "entry_method"
+                ? c.entries.some((e) => e.entry_method === focus.key)
+                : focus.dimension === "exit_method"
+                  ? c.matches.some((m) => m.exit_method === focus.key)
+                  : focus.dimension === "requested_size"
+                    ? c.matches.some((m) => m.requested_size === focus.key)
+                    : focus.dimension === "sizing_method"
+                      ? c.entries.some((e) => e.sizing_method === focus.key)
+                      : focus.dimension === "requested_pct"
+                        ? c.entries.some(
+                            (e) => String(e.requested_pct) === focus.key,
+                          )
+                        : focus.dimension === "client"
+                          ? c.entries.some((e) => e.client === focus.key)
+                          : focus.dimension === "mode"
+                            ? c.mode === focus.key
+                            : focus.dimension === "date"
+                              ? c.date === focus.key
+                              : focus.dimension?.startsWith("label:")
+                                ? (c.label?.[focus.dimension.slice(6)] ||
+                                    "Unlabeled") === focus.key
+                                : focus.dimension === "cycle"
+                                  ? c.cycle_id === focus.key
+                                  : c.behavior?.some(
+                                      (b) =>
+                                        b.dimension === focus.dimension &&
+                                        b.key === focus.key,
+                                    )),
       ),
     [cycles, focus],
   );
@@ -441,9 +459,7 @@ export default function PerformanceDashboard(props: Props) {
           </p>
         </div>
         {focus && (
-          <button onClick={() => setFocus(null)}>
-            Clear selection
-          </button>
+          <button onClick={() => setFocus(null)}>Clear selection</button>
         )}
       </div>
       <div className="pa-table-wrap">
@@ -475,16 +491,27 @@ export default function PerformanceDashboard(props: Props) {
                 <td>
                   {c.entry_count} / {c.exit_count}
                 </td>
-                <td className={tint(c.net_pnl)}>{money(c.net_pnl)}{c.mode === 'real' && <small>{c.fee_source === 'allocated_actual' ? 'Allocated actual charges' : c.fee_source === 'mixed' ? 'Mixed charge sources' : c.fee_source === 'estimated_history_changed' ? 'Estimate · history changed' : 'Estimated charges'}</small>}</td>
+                <td className={tint(c.net_pnl)}>
+                  {money(c.net_pnl)}
+                  {c.mode === "real" && (
+                    <small>
+                      {c.fee_source === "allocated_actual"
+                        ? "Allocated actual charges"
+                        : c.fee_source === "mixed"
+                          ? "Mixed charge sources"
+                          : c.fee_source === "estimated_history_changed"
+                            ? "Estimate · history changed"
+                            : "Estimated charges"}
+                    </small>
+                  )}
+                </td>
                 <td>{pct(c.pnl_pct)}</td>
                 <td>
                   {c.state}
                   {c.open_quantity > 0 && ` · ${c.open_quantity} open`}
                 </td>
                 <td>
-                  <button onClick={() => void showDetail(c)}>
-                    Details →
-                  </button>
+                  <button onClick={() => void showDetail(c)}>Details →</button>
                 </td>
               </tr>
             ))}
@@ -493,8 +520,8 @@ export default function PerformanceDashboard(props: Props) {
       </div>
       {!visible.length && (
         <p>
-          No loaded cycles match this selection. Load more cycles below
-          if available.
+          No loaded cycles match this selection. Load more cycles below if
+          available.
         </p>
       )}
       {nextOffset != null && (
@@ -505,8 +532,62 @@ export default function PerformanceDashboard(props: Props) {
     </section>
   );
 
-  if(tradingStyle==='swing' && environment.active===false)return null;
-  if(tradingStyle==='swing')return <div className="pa-overlay" role="dialog" aria-label="Trading performance"><div className="pa-filters"><label>Trading style <select aria-label="Stats trading style" value={tradingStyle} onChange={event=>changeTradingStyle(event.target.value)}><option value="intraday">Day trading</option><option value="swing">Swing trading</option></select></label></div>{environment.performance.getSwingReport?<SwingStats initialPortfolioId={swingPortfolio.current} onPortfolioChange={id=>{swingPortfolio.current=id;}} onDraftStateChange={state=>{swingLabels.current=state;environment.onDirtyChange?.(state.dirty);environment.onLabelSavingChange?.(state.saving)}} load={environment.performance.getSwingReport} portfolioId={props.defaultPortfolioId} onClose={props.onClose} saveLabel={async(cycle,draft)=>{await environment.api.saveLabels([{session_id:cycle.session_id,round_trip_index:cycle.index,analytics_cycle_id:cycle.cycle_id,expected_category:draft.expected_category??'',expected_strategy:draft.expected_strategy??'',actual_category:draft.actual_category??'',actual_strategy:draft.actual_strategy??'',entry_tag:draft.entry_tag??'AS_PER_PATTERN',exit_tag:draft.exit_tag??'AS_PER_PATTERN'}])}}/>:<p>Swing statistics are unavailable in this client.</p>}</div>
+  if (tradingStyle === "swing" && environment.active === false) return null;
+  if (tradingStyle === "swing")
+    return (
+      <div
+        className="pa-overlay"
+        role="dialog"
+        aria-label="Trading performance"
+      >
+        <div className="pa-filters">
+          <label>
+            Trading style{" "}
+            <select
+              aria-label="Stats trading style"
+              value={tradingStyle}
+              onChange={(event) => changeTradingStyle(event.target.value)}
+            >
+              <option value="intraday">Day trading</option>
+              <option value="swing">Swing trading</option>
+            </select>
+          </label>
+        </div>
+        {environment.performance.getSwingReport ? (
+          <SwingStats
+            initialPortfolioId={swingPortfolio.current}
+            onPortfolioChange={(id) => {
+              swingPortfolio.current = id;
+            }}
+            onDraftStateChange={(state) => {
+              swingLabels.current = state;
+              environment.onDirtyChange?.(state.dirty);
+              environment.onLabelSavingChange?.(state.saving);
+            }}
+            load={environment.performance.getSwingReport}
+            portfolioId={props.defaultPortfolioId}
+            onClose={props.onClose}
+            saveLabel={async (cycle, draft) => {
+              await environment.api.saveLabels([
+                {
+                  session_id: cycle.session_id,
+                  round_trip_index: cycle.index,
+                  analytics_cycle_id: cycle.cycle_id,
+                  expected_category: draft.expected_category ?? "",
+                  expected_strategy: draft.expected_strategy ?? "",
+                  actual_category: draft.actual_category ?? "",
+                  actual_strategy: draft.actual_strategy ?? "",
+                  entry_tag: draft.entry_tag ?? "AS_PER_PATTERN",
+                  exit_tag: draft.exit_tag ?? "AS_PER_PATTERN",
+                },
+              ]);
+            }}
+          />
+        ) : (
+          <p>Swing statistics are unavailable in this client.</p>
+        )}
+      </div>
+    );
   return (
     <div
       className="pa-overlay"
@@ -532,7 +613,17 @@ export default function PerformanceDashboard(props: Props) {
         </button>
       </header>
       <div className="pa-filters">
-        <label>Trading style <select aria-label="Stats trading style" value={tradingStyle} onChange={event=>changeTradingStyle(event.target.value)}><option value="intraday">Day trading</option><option value="swing">Swing trading</option></select></label>
+        <label>
+          Trading style{" "}
+          <select
+            aria-label="Stats trading style"
+            value={tradingStyle}
+            onChange={(event) => changeTradingStyle(event.target.value)}
+          >
+            <option value="intraday">Day trading</option>
+            <option value="swing">Swing trading</option>
+          </select>
+        </label>
         <label>
           From
           <input
@@ -595,6 +686,7 @@ export default function PerformanceDashboard(props: Props) {
             <option value="">All</option>
             <option value="equity">Equity</option>
             <option value="options">Options</option>
+            <option value="futures">Futures</option>
           </select>
         </label>
         <label>
@@ -741,8 +833,28 @@ export default function PerformanceDashboard(props: Props) {
         )}
       </nav>
       <main className="pa-main">
-        {filters.session_type === 'real' && environment.performance.getRealFees && environment.performance.saveRealFees && environment.performance.deleteRealFees && <button onClick={() => setChargesOpen(value => !value)}>Actual Real charges</button>}
-        {chargesOpen && filters.session_type === 'real' && environment.performance.getRealFees && environment.performance.saveRealFees && environment.performance.deleteRealFees && <RealChargesEditor initialDate={filters.end_date || dateAgo(0)} onClose={() => setChargesOpen(false)} onSaved={() => { setRefresh(value => value + 1); props.onChargesChanged?.() }} />}
+        {filters.session_type === "real" &&
+          environment.performance.getRealFees &&
+          environment.performance.saveRealFees &&
+          environment.performance.deleteRealFees && (
+            <button onClick={() => setChargesOpen((value) => !value)}>
+              Actual Real charges
+            </button>
+          )}
+        {chargesOpen &&
+          filters.session_type === "real" &&
+          environment.performance.getRealFees &&
+          environment.performance.saveRealFees &&
+          environment.performance.deleteRealFees && (
+            <RealChargesEditor
+              initialDate={filters.end_date || dateAgo(0)}
+              onClose={() => setChargesOpen(false)}
+              onSaved={() => {
+                setRefresh((value) => value + 1);
+                props.onChargesChanged?.();
+              }}
+            />
+          )}
         {error && !environment.reportError && (
           <div role="alert" className="pa-error">
             {error}
@@ -855,7 +967,14 @@ export default function PerformanceDashboard(props: Props) {
                   </section>
                 </div>
                 {tradesPanel}
-                {report.comparisons.accounts && <ComparisonTable title="Accounts — real versus practice" dimension="account" rows={report.comparisons.accounts} onSelect={select} />}
+                {report.comparisons.accounts && (
+                  <ComparisonTable
+                    title="Accounts — real versus practice"
+                    dimension="account"
+                    rows={report.comparisons.accounts}
+                    onSelect={select}
+                  />
+                )}
                 <ComparisonTable
                   rows={report.comparisons.modes}
                   title="Keep trading modes in perspective"
@@ -1186,7 +1305,12 @@ export default function PerformanceDashboard(props: Props) {
                   session_id: detail.session_id,
                   user_id: "",
                   symbol: detail.symbol,
-                  instrument_type: detail.right ? "options" : "equity",
+                  instrument_type:
+                    detail.instrument_type === "futures"
+                      ? "futures"
+                      : detail.right
+                        ? "options"
+                        : "equity",
                   right: detail.right,
                   strike: detail.strike,
                   expiry: detail.expiry,
@@ -1194,7 +1318,24 @@ export default function PerformanceDashboard(props: Props) {
               );
               return (
                 <section className="pa-card">
-                  {detail.right && detail.strike && detail.expiry ? (
+                  {detail.instrument_type === "futures" ? (
+                    environment.swingRequest &&
+                    environment.charts?.SwingChart &&
+                    detail.portfolio_id &&
+                    !detail.shared ? (
+                      <FuturesExecutionChart
+                        request={environment.swingRequest}
+                        Renderer={environment.charts.SwingChart}
+                        cycle={detail}
+                        trades={trades}
+                      />
+                    ) : (
+                      <p>
+                        Exact Futures history requires access to its owned Swing
+                        portfolio.
+                      </p>
+                    )
+                  ) : detail.right && detail.strike && detail.expiry ? (
                     <OptionsChart
                       symbol={detail.symbol}
                       date={detail.date}

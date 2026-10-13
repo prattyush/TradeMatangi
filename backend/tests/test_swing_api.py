@@ -340,3 +340,60 @@ def test_selected_swing_broker_status_is_read_only_and_access_controlled(
         ).status_code
         == 401
     )
+
+
+def test_capital_percentage_preview_is_read_only_and_submission_is_revalidated(client):
+    from app.services import swing_portfolio_store as store
+    path = start(client)
+    headers = {"X-User-Id": "u"}
+    body = {"symbol": "HDFCBANK", "side": "BUY", "order_type": "LIMIT", "quantity": 1,
+            "price": 100, "request_id": "capital-size", "capital_pct": .1, "capital_revision": 0}
+    preview = client.post(path + "/order-preview", json=body, headers=headers)
+    assert preview.status_code == 200, preview.text
+    sizing = preview.json()
+    assert sizing["quantity"] == 99 and sizing["required_funds"] <= 10000
+    parent_id = path.rsplit("/", 1)[-1]
+    assert store.owned("u", parent_id)["contexts"] == {}
+    assert client.get(path, headers=headers).json()["wallet_balance"] == 100000
+    assert client.post(path + "/order-preview", json=body, headers={"X-User-Id": "other"}).status_code == 404
+    assert client.post(path + "/orders", json=body, headers=headers).status_code == 409
+    body["quantity"] = sizing["quantity"]
+    first = client.post(path + "/orders", json=body, headers=headers)
+    assert first.status_code == 200, first.text
+    balance = first.json()["wallet_balance"]
+    row = store.owned("u", parent_id)
+    store.update("u", parent_id, {"guardrail_epoch": 1, "session_capital": 50000}, row["version"])
+    retry = client.post(path + "/orders", json=body, headers=headers)
+    assert retry.status_code == 200, retry.text
+    assert retry.json()["order_id"] == first.json()["order_id"]
+    assert retry.json()["wallet_balance"] == balance
+    assert client.post(path + "/orders", json={**body, "request_id": "new"}, headers=headers).status_code == 409
+    assert client.post(path + "/order-preview", json=body, headers=headers).status_code == 409
+
+
+def test_percentage_preview_options_uses_listed_lots_without_creating_context(client, monkeypatch):
+    from app.services import swing_portfolio_store as store
+    path = start(client)
+    headers = {"X-User-Id": "u"}
+    monkeypatch.setattr("app.services.breeze_master.listed_option_contract", lambda *a: {"lot_size": 25})
+    body = {"symbol": "CANBK", "instrument_type": "options", "right": "CE", "strike": 125.5,
+            "expiry": "2026-10-27", "side": "BUY", "quantity": 1, "price": 100,
+            "request_id": "preview", "capital_pct": .1, "capital_revision": 0}
+    response = client.post(path + "/order-preview", json=body, headers=headers)
+    assert response.status_code == 200, response.text
+    assert response.json()["quantity"] == 75
+    assert store.owned("u", path.rsplit("/", 1)[-1])["contexts"] == {}
+    assert client.post(path + "/order-preview", json={**body, "side": "SELL"}, headers=headers).status_code == 422
+
+
+def test_futures_discovery_is_authenticated_read_only_and_execution_remains_gated(client, monkeypatch):
+    from app.services import futures_risk
+    monkeypatch.setattr(futures_risk, "settings", lambda: futures_risk.RiskSettings(paper_enabled=False))
+    monkeypatch.setattr("app.services.futures_contracts.listed_contracts", lambda *a: [{"symbol":"NIFTY","instrument_type":"futures","expiry":"2026-10-27","lot_size":65}])
+    route = "/api/swing/portfolios/contracts/futures?symbol=NIFTY&provider=kite"
+    assert client.get(route).status_code == 401
+    response = client.get(route, headers={"X-User-Id":"u"})
+    assert response.status_code == 200 and response.json()["execution_enabled"] is False
+    path = start(client)
+    body = {"symbol":"NIFTY", "instrument_type":"futures", "expiry":"2026-10-27", "side":"BUY", "quantity":65, "price":22000, "request_id":"gated"}
+    assert client.post(path + "/orders", json=body, headers={"X-User-Id":"u"}).status_code == 403

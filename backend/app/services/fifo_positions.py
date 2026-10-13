@@ -8,7 +8,7 @@ from app.services import broker_reports as reports
 
 
 def exchange_for(session):
-    if session.instrument_type == 'options':
+    if session.instrument_type in ('options','futures'):
         return 'bse_fo' if session.symbol == 'BSESEN' else 'nse_fo'
     from app.services.kotak_service import _SYMBOL_MAP
     return _SYMBOL_MAP.get(session.symbol, (session.symbol, 'nse_cm'))[1]

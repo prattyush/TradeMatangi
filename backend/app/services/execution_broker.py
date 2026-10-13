@@ -50,7 +50,7 @@ def get_service(session=None, *, allow_expired=False):
             if session.session_id not in portfolio['contexts'].values():
                 raise RuntimeError('Swing context registration is incomplete; reconnect before broker operations')
         from app.services.swing_execution_broker import bind
-        return bind(broker, session.instrument_type)
+        return bind(broker, session.instrument_type, getattr(session,"future_contract",None))
     return broker
 
 

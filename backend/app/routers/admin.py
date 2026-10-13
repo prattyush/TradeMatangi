@@ -25,6 +25,26 @@ def _require_admin(user_id: str = Depends(get_request_user_id)) -> str:
     return user_id
 
 
+from app.services.futures_risk import RiskSettings
+
+
+@router.get("/futures-risk")
+async def get_futures_risk(user_id: str = Depends(_require_admin)):
+    import asyncio
+    from app.services.futures_risk import settings
+    return (await asyncio.to_thread(settings)).model_dump(mode="json")
+
+
+@router.put("/futures-risk")
+async def put_futures_risk(req: RiskSettings, user_id: str = Depends(_require_admin)):
+    import asyncio
+    from app.services.futures_risk import save
+    try:
+        return (await asyncio.to_thread(save, req)).model_dump(mode="json")
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
 class TokensResponse(BaseModel):
     icici_session: str | None = None
     kite_access: str | None = None

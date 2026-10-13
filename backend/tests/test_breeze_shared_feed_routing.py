@@ -156,3 +156,28 @@ async def test_breeze_live_task_sse_and_order_evaluation_keep_option_premiums(se
             await task
             simulation._sessions.pop(s.session_id, None)
             hub.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_futures_exact_expiries_never_share_cash_or_next_month_ticks(monkeypatch):
+    from app.services.breeze_service import BreezeStreamManager
+    monkeypatch.setattr("app.services.breeze_master.future_scrip_codes",lambda stock,exch,expiry:{"near" if "27" in expiry else "next"})
+    queues=[asyncio.Queue() for _ in range(3)]
+    instruments=[{"exchange_code":"NFO","stock_code":"NIFTY","product_type":"futures","expiry_date":"2026-10-27"},
+                 {"exchange_code":"NFO","stock_code":"NIFTY","product_type":"futures","expiry_date":"2026-11-24"},
+                 {"exchange_code":"NSE","stock_code":"NIFTY","product_type":"cash"}]
+    managers=[BreezeStreamManager() for _ in instruments]
+    assert len({manager.instrument_route_key(inst) for manager,inst in zip(managers,instruments)})==3
+    with patch("app.services.broker_service._get_breeze",return_value=MagicMock()),patch.object(breeze._time,"time",return_value=1000) as clock:
+        try:
+            for manager,inst,queue in zip(managers,instruments,queues):
+                manager.start(queue,asyncio.get_running_loop(),[inst])
+            for code,price,time in [("near",100,1000),("next",200,1002),("near",101,1004),("next",201,1006)]:
+                clock.return_value=time
+                breeze._dispatch_multiplexed_ticks({"symbol":"4.1!"+code,"OI":10,"last":price})
+                await asyncio.sleep(0)
+            near=queues[0].get_nowait();next_month=queues[1].get_nowait()
+            assert near["close"]==100 and next_month["close"]==200
+            assert queues[2].empty()
+        finally:
+            for manager in managers:manager.stop()

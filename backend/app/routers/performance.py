@@ -19,7 +19,7 @@ def filters(
     portfolio_id: str | None = None,
     symbol: str | None = None,
     session_type: Literal["sim", "paper", "stepwise", "real"] | None = None,
-    instrument_type: Literal["equity", "options"] | None = None,
+    instrument_type: Literal["equity", "options", "futures"] | None = None,
     client: Literal["website", "desktop"] | None = None,
     direction: Literal["LONG", "SHORT"] | None = None,
     entry_method: str | None = None,
