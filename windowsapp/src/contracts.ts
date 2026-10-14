@@ -53,6 +53,7 @@ export interface DesktopStrategy {
 }
 
 export interface DesktopTradingSession {
+  execution_broker?: string | null; broker_account_id?: string | null
   session_id: string; symbol: string; date: string; start_time: string
   speed: number; session_capital: number; instrument_type: 'equity' | 'options'
   strike: number | null; expiry: string | null; right: 'CE' | 'PE' | null
@@ -78,6 +79,7 @@ export interface DesktopTradingSettings {
 }
 
 export interface DesktopTradingSnapshot {
+  broker_funds_updated_at?: number | null
   created_for_request?: boolean | null
   paper_status?: 'running' | 'stopped' | 'settled' | null
   cleanup_pending?: boolean

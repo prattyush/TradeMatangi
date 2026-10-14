@@ -287,6 +287,7 @@ def test_labels_remap_only_exact_round_trip(env):
     assert state.remap_labels(old, labels, new)[0]['entry_tag'] == 'pattern'
     old[0]['timestamp'] += 60
     old[0]['kotak_order_id'] = None
+    old[0]['broker_order_id'] = None
     assert state.remap_labels(old, labels, new) == []
 
 

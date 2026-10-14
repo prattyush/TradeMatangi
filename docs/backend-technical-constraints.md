@@ -164,3 +164,41 @@
   action/order/strategy IDs remain strings. Broker snapshot encoding canonicalizes
   analytics back to DynamoDB numbers. Readers also handle existing numeric-string
   records, so a bulk migration is unnecessary.
+
+
+## Real Day/Swing ownership and funding
+
+- Broker/style slot ownership persists through pause, detach, outages and engine
+  lease expiry. Only verified closure atomically ends the book/funding participant
+  and releases its slot. Swing roots own slots; execution children never compete
+  for another slot. Missing parents/children and genuine conflicts remain pending.
+- Claim/renew execution authority during restoration, but do not reconcile as empty,
+  submit orders or verify closure until all persisted portfolio contexts are loaded.
+  Do not expose an unregistered or unsuccessfully restored child in usable runtime.
+- Funding snapshots must derive their balance from the current participant baseline
+  inside conditional-write retries. Reservations represent unfilled opening units;
+  confirmed investment and pending order commitment cannot both debit the same fill.
+- Persist broker-attempt time before new placements. `broker_submission_at` uses
+  actual UTC milliseconds; intention/tick timestamps retain IST wall-clock encoding.
+  Intention age cannot prove an unknown submission occurred on an earlier day.
+- Undated unknown attempts require explicit owned-order acknowledgement and fresh
+  scope-flat/no-pending verification. Known current-day uncertainty still blocks
+  closure. Preserve the history warning and acknowledgement; never invent fills.
+
+Full decisions, exclusions and acceptance gates:
+[Phase 21 Swing plan](spec-phase21-swing-trading-plan.md#code-review-and-fix-checkpoint--2026-10-11).
+
+
+## Finalized Real Day analytics charges
+
+- Corrections are owner/date/broker/account scoped; missing broker in legacy
+  requests/rows means Kotak. Use broker-neutral order identities for Kite.
+- Legacy Kotak correction records may be read as a fallback; Kite must never
+  read that fallback. Reverting removes both legacy/current Kotak metadata
+  atomically, so a prior bill cannot reappear after a failed partial deletion.
+- Exclude Swing from both finalized-charge discovery and application. Its books
+  span execution dates; per-day Swing correction is deferred. Corrections apply
+  to analytics copies only, never Trades, execution journals, wallet/funding
+  balances, live sizing capital or guardrails.
+- Event-snapshot candle reconstruction must retain exact fractional strikes
+  and existing IST wall-clock timestamps; only observed cached seconds qualify.

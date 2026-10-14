@@ -196,6 +196,9 @@ async def obtain_quote(session, order, operation):
         from app.services.market_data import get_hub
         instrument = {'kind': 'option', 'underlying': session.symbol, 'right': order.right,
                       'strike': order.strike, 'expiry': order.expiry} if order.right else {'kind': 'equity', 'symbol': session.symbol}
+        if session.instrument_type == 'futures':
+            instrument = {'kind':'future','underlying':session.symbol,'expiry':session.expiry}
+
         try:
             handle = await get_hub().subscribe(instrument, f'{operation}:quote', group, asyncio.Queue(maxsize=2))
         except Exception as exc:
@@ -575,6 +578,7 @@ async def _attempt(session, parent, operation, job, broker, *, bundle=None, rese
         if entry_intent:
             from app.services.execution_analytics import created
             created(child, session)
+        child.broker_submission_at = int(time.time() * 1000)
         record = {'state': 'submitting', 'order': child.model_dump(mode='json'), 'tag': tag, 'cancelled_parent_id': parent.kotak_order_id}
         if not await asyncio.to_thread(journal.store.claim, key, record):
             raise Deferred('Submission already claimed; reconcile before retrying')

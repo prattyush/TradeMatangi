@@ -73,7 +73,7 @@ def _is_monthly_expiry(expiry_dt: date, symbol: str) -> bool:
     return (expiry_dt + timedelta(days=7)).month != expiry_dt.month
 
 
-def _build_options_trading_symbol(base: str, expiry: str, strike: int, right: str, symbol: str) -> str:
+def _build_options_trading_symbol(base: str, expiry: str, strike: int | float, right: str, symbol: str) -> str:
     """
     Construct the Kotak / NSE-BSE options trading symbol string.
 
@@ -108,6 +108,21 @@ class KotakOrderRejected(KotakError):
 def _get_instruments_cache_path():
     from app.config import DATA_DIR
     return DATA_DIR / "kotak_instruments.json"
+
+
+def _master_tick(row):
+    """Retain price-unit ticks without letting an invalid row break master parsing."""
+    try:
+        if row.get("tick_size") is not None:
+            value = float(row["tick_size"])
+        else:
+            precision = int(row["lPrecision"])
+            if not 0 <= precision <= 8:
+                return None
+            value = float(row["dTickSize"]) / (10 ** precision)
+        return value if math.isfinite(value) and value > 0 else None
+    except (KeyError, TypeError, ValueError, OverflowError):
+        return None
 
 
 def _load_kotak_master_from_api(*, client=None) -> list[dict]:
@@ -186,6 +201,9 @@ def _load_kotak_master_from_api(*, client=None) -> list[dict]:
                         "expiry": row.get("pExpiryDate") or row.get("expiry") or row.get("expDt") or "",
                         "strike": row.get("dStrikePrice") or row.get("stkPrc") or "",
                         "right": row.get("pOptionType") or row.get("optTp") or "",
+                        "lot_size": row.get("lLotSize") or row.get("iLotSize") or row.get("lot_size"),
+                        # Raw ticks are scaled by master precision, matching order price units.
+                        "tick_size": _master_tick(row),
                     })
                     count += 1
             logger.info(
@@ -305,7 +323,7 @@ def fetch_kotak_equity_instrument_token(symbol: str, *, client=None) -> tuple[st
 def fetch_kotak_options_instrument_token(
     symbol: str,
     expiry: str,
-    strike: int,
+    strike: int | float,
     right: str,
     *, client=None,
 ) -> tuple[str, str]:
@@ -388,16 +406,21 @@ _SYMBOL_MAP: dict[str, tuple[str, str]] = {
 }
 
 
+from app.config import SUPPORTED_SYMBOLS as _catalogue
+_SYMBOL_MAP.update({key: (value["nse_symbol"] + "-EQ", "nse_cm") for key, value in _catalogue.items() if value.get("nse_symbol")})
+
 # ---------------------------------------------------------------------------
 # Main service class
 # ---------------------------------------------------------------------------
 
 class KotakNeoService:
+    execution_broker = "kotak"
     """Thread-safe singleton wrapping neo_api_client.NeoAPI."""
 
     def __init__(self) -> None:
         self._client: Any = None
         self._authenticated = False
+        self._authenticated_account = None
         self._lock = threading.Lock()
         self._login_lock = threading.Lock()
         self._feed_lock = threading.Lock()
@@ -435,6 +458,7 @@ class KotakNeoService:
                 self._generation += 1
                 self._position_events.clear()
                 self._authenticated = False
+                self._authenticated_account = None
                 client, self._client = self._client, None
                 bridge, self._bridge = self._bridge, None
         try:
@@ -469,6 +493,8 @@ class KotakNeoService:
                 with self._lock:
                     self._client = client
                     self._authenticated = True
+                    import hashlib
+                    self._authenticated_account = hashlib.sha256(creds["ucc"].encode()).hexdigest()[:16]
                     self._pending_fills.clear()
                 self._start_order_feed()
                 # Re-login restores only subscriptions still owned by consumers.
@@ -504,6 +530,33 @@ class KotakNeoService:
 
     # ── Order placement ───────────────────────────────────────────────────────
 
+    def _place_futures(self, contract, side, qty, price, trigger=None, tag=None):
+        if contract.get("provider") != "kotak" or contract["exchange"] not in ("NFO","BFO"):
+            raise KotakOrderRejected("Kotak Futures requires its exact listed contract metadata")
+        if not isinstance(qty,int) or qty<=0 or qty % contract["lot_size"]:
+            raise KotakOrderRejected("Futures quantity must be complete listed lots")
+        if side not in ("B","S","BUY","SELL"):
+            raise KotakOrderRejected("Futures side must be BUY or SELL")
+        for value in (price,trigger) if trigger is not None else (price,):
+            if not math.isfinite(value) or value <=0 or abs(value/contract["tick_size"]-round(value/contract["tick_size"]))>1e-6:
+                raise KotakOrderRejected("Futures price must match the listed tick")
+        try:
+            response=self._get_client().place_order(exchange_segment="bse_fo" if contract["exchange"]=="BFO" else "nse_fo",
+                product="NRML",price=str(price),order_type="SL" if trigger is not None else "L",quantity=str(qty),
+                validity="DAY",trading_symbol=contract["trading_symbol"],transaction_type="B" if side in ("B","BUY") else "S",
+                amo="NO",disclosed_quantity="0",trigger_price=str(trigger) if trigger is not None else "0",tag=tag)
+            return self._extract_order_id(response)
+        except KotakError:
+            raise
+        except Exception as exc:
+            raise KotakError(f"Futures acknowledgement is uncertain: {exc}") from exc
+
+    def place_futures_limit_order(self, contract, side, qty, price, tag=None):
+        return self._place_futures(contract,side,qty,price,tag=tag)
+
+    def place_futures_sl_order(self, contract, side, qty, trigger_price, limit_price, tag=None):
+        return self._place_futures(contract,side,qty,limit_price,trigger=trigger_price,tag=tag)
+
     def place_limit_order(
         self,
         symbol: str,
@@ -511,14 +564,18 @@ class KotakNeoService:
         qty: int,
         price: float,
         tag: str | None = None,
+        *,
+        product: str = "MIS",
     ) -> str:
         """Place a limit order. Returns the Kotak order ID (nOrdNo)."""
+        from app.services.swing_execution_broker import validate_product
+        validate_product(product,False)
         client = self._get_client()
         kotak_sym, exchange_seg = self._resolve_symbol(symbol)
         try:
             resp = client.place_order(
                 exchange_segment=exchange_seg,
-                product="MIS",
+                product=product,
                 price=str(_round_to_tick(price)),
                 order_type="L",
                 quantity=str(qty),
@@ -544,14 +601,18 @@ class KotakNeoService:
         trigger_price: float,
         limit_price: float,
         tag: str | None = None,
+        *,
+        product: str = "MIS",
     ) -> str:
         """Place a stop-loss limit order. Returns the Kotak order ID."""
+        from app.services.swing_execution_broker import validate_product
+        validate_product(product,False)
         client = self._get_client()
         kotak_sym, exchange_seg = self._resolve_symbol(symbol)
         try:
             resp = client.place_order(
                 exchange_segment=exchange_seg,
-                product="MIS",
+                product=product,
                 price=str(_round_to_tick(limit_price)),
                 order_type="SL",
                 quantity=str(qty),
@@ -573,20 +634,24 @@ class KotakNeoService:
         self,
         symbol: str,
         right: str,     # "CE" or "PE"
-        strike: int,
+        strike: int | float,
         expiry: str,    # "YYYY-MM-DD"
         side: str,      # "B" or "S"
         qty: int,
         price: float,
         tag: str | None = None,
+        *,
+        product: str = "MIS",
     ) -> str:
         """Place a limit order on an options contract. Returns the Kotak order ID."""
+        from app.services.swing_execution_broker import validate_product
+        validate_product(product,True)
         client = self._get_client()
         kotak_sym, exchange_seg = self._resolve_options_symbol(symbol, right, strike, expiry)
         try:
             resp = client.place_order(
                 exchange_segment=exchange_seg,
-                product="MIS",
+                product=product,
                 price=str(_round_to_tick(price)),
                 order_type="L",
                 quantity=str(qty),
@@ -608,21 +673,25 @@ class KotakNeoService:
         self,
         symbol: str,
         right: str,     # "CE" or "PE"
-        strike: int,
+        strike: int | float,
         expiry: str,    # "YYYY-MM-DD"
         side: str,      # "B" or "S"
         qty: int,
         trigger_price: float,
         limit_price: float,
         tag: str | None = None,
+        *,
+        product: str = "MIS",
     ) -> str:
         """Place an SL limit order on an options contract. Returns the Kotak order ID."""
+        from app.services.swing_execution_broker import validate_product
+        validate_product(product,True)
         client = self._get_client()
         kotak_sym, exchange_seg = self._resolve_options_symbol(symbol, right, strike, expiry)
         try:
             resp = client.place_order(
                 exchange_segment=exchange_seg,
-                product="MIS",
+                product=product,
                 price=str(_round_to_tick(limit_price)),
                 order_type="SL",
                 quantity=str(qty),
@@ -796,6 +865,10 @@ class KotakNeoService:
         except ValueError as exc:
             raise KotakError(str(exc)) from exc
 
+    def get_recovery_reports(self):
+        """Read current orders/exposure independently of unavailable older executions."""
+        return {'orders': self._report('order_report'), 'positions': self._report('positions')}
+
     def get_positions(self) -> list[dict]:
         rows = self._report("positions")
         for row in rows:
@@ -806,6 +879,9 @@ class KotakNeoService:
     def account_identity(self) -> str:
         # Stable opaque identity; never return credentials in diagnostics or responses.
         import hashlib
+        with self._lock:
+            if self._authenticated_account:
+                return self._authenticated_account
         ucc = _read_kotak_credentials()["ucc"]
         if not ucc:
             raise KotakError("Kotak account identity is missing")
@@ -1120,7 +1196,7 @@ class KotakNeoService:
 
     # ── Helpers ───────────────────────────────────────────────────────────────
 
-    def _resolve_options_symbol(self, symbol: str, right: str, strike: int, expiry: str) -> tuple[str, str]:
+    def _resolve_options_symbol(self, symbol: str, right: str, strike: int | float, expiry: str) -> tuple[str, str]:
         """Return (kotak_trading_symbol, exchange_segment) for an options contract."""
         from app.config import SUPPORTED_SYMBOLS
         if symbol == "NIFTY":

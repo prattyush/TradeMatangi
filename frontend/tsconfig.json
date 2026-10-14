@@ -29,6 +29,9 @@
       ],
       "lightweight-charts": [
         "../frontend/node_modules/lightweight-charts"
+      ],
+      "react-dom": [
+        "node_modules/@types/react-dom"
       ]
     }
   },

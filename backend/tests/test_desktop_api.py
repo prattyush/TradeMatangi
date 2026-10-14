@@ -23,11 +23,12 @@ def test_capabilities_are_versioned_and_advertise_stepwise_trading():
     assert "flatten" in data["trading_capabilities"]
 
 
-def test_initial_catalogue_is_the_five_chart_symbols():
+def test_catalogue_has_nifty100_and_preserves_legacy_chart_keys():
     response = client.get("/api/desktop/v1/catalogue", headers=HEADERS)
     assert response.status_code == 200
     instruments = response.json()["instruments"]
-    assert {item["symbol"] for item in instruments} == {"NIFTY", "BSESEN", "TATPOW", "TATMOT", "RELIND"}
+    assert len(instruments) == 102
+    assert {"NIFTY", "BSESEN", "TATPOW", "TATMOT", "RELIND", "HDFCBANK", "INFY"} <= {item["symbol"] for item in instruments}
     assert next(item for item in instruments if item["symbol"] == "NIFTY")["chart_type"] == "index"
 
 

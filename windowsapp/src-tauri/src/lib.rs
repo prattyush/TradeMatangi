@@ -742,7 +742,7 @@ async fn desktop_option_historical_page(
     symbol: String,
     trading_date: String,
     expiry: String,
-    strike: u32,
+    strike: f64,
     right: String,
     interval_minutes: u32,
     host: tauri::State<'_, HostState>,
@@ -1102,7 +1102,7 @@ fn valid_analysis_path(path: &str, method: &str) -> bool {
     if method != "GET" { return false; }
     let valid_id = |id: &str| !id.is_empty() && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
     match route {
-        "sessions" | "round-trips" | "labels" | "entry-tags" | "exit-tags" | "snapshots" | "performance" | "performance/cycles" | "performance/real-fees" |
+        "sessions" | "round-trips" | "labels" | "entry-tags" | "exit-tags" | "snapshots" | "performance" | "performance/swing" | "performance/cycles" | "performance/real-fees" |
         "data/historical" | "data/pre-session" | "data/options-historical" | "data/expiry" |
         "pattern/strategies" | "pattern/categories" | "pattern/chart/by-date" | "pattern/ohlc/equity" | "pattern/ohlc/options" => true,
         _ if route.starts_with("snapshots/") => route.strip_prefix("snapshots/").and_then(|p| p.strip_suffix("/candle")).map(valid_id).unwrap_or(false),
@@ -1863,9 +1863,13 @@ fn parse_sse_frame(frame: &str) -> (Option<u64>, Option<String>, Option<String>)
 }
 
 fn trading_event_wakes_renderer(key: &str, payload: &serde_json::Value) -> bool {
-    // Chart replay and quote ticks stay batched; committed trading changes wake
+    // Quote ticks stay batched; committed trading changes wake
     // only the owning renderer, which drains the ordered native event buffer.
     key.starts_with("paper:") && payload.get("type").and_then(|value| value.as_str()) != Some("tick")
+}
+
+fn replay_event_wakes_renderer(key: &str) -> bool {
+    key.starts_with("replay:")
 }
 
 #[tauri::command]
@@ -1944,9 +1948,11 @@ async fn start_desktop_stream(
                                         }));
                                     }
                                     let wake = trading_event_wakes_renderer(&stream_key, &payload);
+                                    let replay_wake = replay_event_wakes_renderer(&stream_key);
                                     stream_host.record_stream(&stream_key, event_id, payload);
-                                    if wake && stream_host.owns_stream(&stream_label, &stream_key) {
-                                        let _ = stream_app.emit_to(stream_label.as_str(), "desktop-trading-events-available", serde_json::json!({
+                                    if (wake || replay_wake) && stream_host.owns_stream(&stream_label, &stream_key) {
+                                        let event_name = if replay_wake { "desktop-replay-events-available" } else { "desktop-trading-events-available" };
+                                        let _ = stream_app.emit_to(stream_label.as_str(), event_name, serde_json::json!({
                                             "key": &stream_key, "event_id": event_id,
                                         }));
                                     }
@@ -2111,6 +2117,15 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn swing_performance_is_read_only_in_native_analysis() {
+        assert!(super::valid_analysis_path("performance/swing?portfolio_id=book", "GET"));
+        for method in ["POST", "PUT", "PATCH", "DELETE"] {
+            assert!(!super::valid_analysis_path("performance/swing", method));
+        }
+        assert!(!super::valid_analysis_path("performance/swing/extra", "GET"));
+    }
+
     use super::*;
 
     #[test]
@@ -2357,6 +2372,14 @@ mod screen_window_tests {
             assert!(trading_event_wakes_renderer("paper:one:session", &serde_json::json!({"type": event})));
         }
         assert!(trading_event_wakes_renderer("paper:one:session", &serde_json::json!({"session": {"session_id": "session"}})));
+    }
+
+    #[test]
+    fn replay_snapshots_wake_the_renderer_independently_of_trading_changes() {
+        assert!(replay_event_wakes_renderer("replay:linked-pe:run"));
+        assert!(replay_event_wakes_renderer("replay:primary-ce:run"));
+        assert!(!replay_event_wakes_renderer("paper:linked-pe:session"));
+        assert!(!replay_event_wakes_renderer("browse-live:screen:stream"));
     }
 
     fn opening(host: &HostState, id: &str, token: &str) {

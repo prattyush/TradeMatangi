@@ -1,5 +1,7 @@
 """Execution-based performance analysis, independent of labels and order display rows."""
 
+from app.services.instrument_identity import strike_number
+from app.services.broker_reports import order_id as broker_report_id
 from collections import defaultdict, deque
 from copy import deepcopy
 from datetime import datetime, timezone
@@ -31,7 +33,7 @@ def _identity(session, row):
         row.get("broker_exchange") or row.get("exchange") or "",
         (row.get("product") or row.get("broker_product") or "MIS").upper(),
         row.get("right"),
-        int(strike) if strike is not None else None,
+        strike_number(strike) if strike is not None else None,
         row.get("expiry"),
     )
 
@@ -48,6 +50,7 @@ def execution_order_key(row):
 def build_cycles(session, executions):
     """Consume fills once; crossing flat splits a reversal and its commissions."""
     books, cycles, seen = {}, [], {}
+    swing_openings=defaultdict(int)
     rows = sorted(executions, key=execution_order_key)
     for row in rows:
         quantity = int(row.get("quantity", 0))
@@ -57,7 +60,7 @@ def build_cycles(session, executions):
             raise ValueError("Invalid analytics execution")
         key = _identity(session, row)
         identifier = str(row.get("execution_id", row.get("trade_id", "")))
-        identity = (key, row.get("kotak_order_id"), identifier)
+        identity = (key, (row.get("broker_order_id") or row.get("kotak_order_id")), identifier)
         fingerprint = (
             side,
             quantity,
@@ -77,7 +80,7 @@ def build_cycles(session, executions):
         capital = number(meta.get("capital", session.get("session_capital")))
         action = str(
             meta.get("action_id")
-            or row.get("kotak_order_id")
+            or (row.get("broker_order_id") or row.get("kotak_order_id"))
             or row.get("trade_id")
             or identifier
         )
@@ -89,11 +92,16 @@ def build_cycles(session, executions):
                 scope = session.get("broker_projection_id") or session.get(
                     "session_id", ""
                 )
-                cycle_id = hashlib.sha256(
-                    repr((scope, key, identifier)).encode()
-                ).hexdigest()[:24]
+                cycle_identity=(scope,key,identifier)
+                if session.get("trading_style")=="swing":
+                    opening_id=str(row.get("broker_order_id") or row.get("kotak_order_id") or identifier)
+                    occurrence=swing_openings[(key,opening_id)]
+                    swing_openings[(key,opening_id)]+=1
+                    cycle_identity=(scope,key,opening_id,occurrence)
+                cycle_id=hashlib.sha256(repr(cycle_identity).encode()).hexdigest()[:24]
                 state = dict(
                     cycle_id=cycle_id,
+                    legacy_cycle_id=hashlib.sha256(repr((scope,key,identifier)).encode()).hexdigest()[:24] if session.get("trading_style")=="swing" else None,
                     session_id=session.get("session_id"),
                     user_id=session.get("user_id"),
                     index=len(cycles),
@@ -105,7 +113,11 @@ def build_cycles(session, executions):
                     expiry=key[5],
                     instrument_type=session.get("instrument_type", "equity"),
                     mode=session.get("session_type", "sim"),
+                    execution_broker=row.get("execution_broker") or (session.get("execution_broker") if session.get("session_type") == "real" else None),
+                    broker_account_id=row.get("broker_account_id") or session.get("broker_account_id"),
                     date=session.get("date", ""),
+                    trading_style=session.get("trading_style", "intraday"),
+                    portfolio_id=session.get("portfolio_id"),
                     book_id=session.get("broker_projection_id")
                     or session.get("wallet_ledger_id")
                     or session.get("session_id"),
@@ -727,7 +739,7 @@ def load_session_cycles(session, include_labels=True, apply_fee_correction=True)
         orders[
             (
                 order_row.get("broker_exchange") or order_row.get("exchange") or "",
-                str(order_row.get("kotak_order_id") or order_row.get("order_id")),
+                str((order_row.get("broker_order_id") or order_row.get("kotak_order_id")) or order_row.get("order_id")),
             )
         ] = order_row
     executions = [
@@ -738,17 +750,17 @@ def load_session_cycles(session, include_labels=True, apply_fee_correction=True)
         # fees by value and its flat fee by quantity, matching Phase 19 FIFO.
         totals = defaultdict(lambda: [0, 0.0])
         for r in executions:
-            totals[(r.get("exchange"), r["kotak_order_id"])][0] += int(r["quantity"])
-            totals[(r.get("exchange"), r["kotak_order_id"])][1] += int(
+            totals[(r.get("exchange"), broker_report_id(r))][0] += int(r["quantity"])
+            totals[(r.get("exchange"), broker_report_id(r))][1] += int(
                 r["quantity"]
             ) * number(r["price"])
         trade_map = {
             (
                 t.get("broker_exchange") or t.get("exchange") or "",
-                str(t["kotak_order_id"]),
+                str(broker_report_id(t)),
             ): t
             for t in trades
-            if t.get("kotak_order_id")
+            if (t.get("broker_order_id") or t.get("kotak_order_id"))
         }
         if set(trade_map) != {
             (exchange or "", str(order_id)) for exchange, order_id in totals
@@ -757,8 +769,8 @@ def load_session_cycles(session, include_labels=True, apply_fee_correction=True)
                 "Execution membership changed during analytics read; retry"
             )
         for r in executions:
-            t = trade_map.get((r.get("exchange") or "", str(r["kotak_order_id"])), {})
-            q, v = totals[(r.get("exchange"), r["kotak_order_id"])]
+            t = trade_map.get((r.get("exchange") or "", str(broker_report_id(r))), {})
+            q, v = totals[(r.get("exchange"), broker_report_id(r))]
             if (
                 not t
                 or int(t["quantity"]) != q
@@ -778,13 +790,14 @@ def load_session_cycles(session, include_labels=True, apply_fee_correction=True)
             r["commission"] = (number(t.get("commission")) - flat) * int(
                 r["quantity"]
             ) * number(r["price"]) / v + flat * int(r["quantity"]) / q
-            r["trade_id"] = t.get("trade_id", str(r["kotak_order_id"]))
+            r["trade_id"] = t.get("trade_id", str(broker_report_id(r)))
             r["symbol"] = session["symbol"]
             r["broker_exchange"] = r.get("exchange")
             r["broker_account_id"] = t.get("broker_account_id")
+            r["execution_broker"] = t.get("execution_broker") or session.get("execution_broker") or "kotak"
             if not r.get("analytics"):
                 order = orders.get(
-                    (r.get("exchange") or "", str(r["kotak_order_id"])), {}
+                    (r.get("exchange") or "", str(broker_report_id(r))), {}
                 )
                 from app.services.execution_analytics import normalize_metadata
                 meta = normalize_metadata(order.get("analytics") or t.get("analytics") or {})
@@ -809,7 +822,7 @@ def load_session_cycles(session, include_labels=True, apply_fee_correction=True)
             order = orders.get(
                 (
                     t.get("broker_exchange") or t.get("exchange") or "",
-                    str(t.get("kotak_order_id") or t.get("trade_id")),
+                    str((t.get("broker_order_id") or t.get("kotak_order_id")) or t.get("trade_id")),
                 ),
                 {},
             )
@@ -826,7 +839,13 @@ def load_session_cycles(session, include_labels=True, apply_fee_correction=True)
     if apply_fee_correction and session.get("session_type") == "real":
         from app.services.real_analysis_fees import apply_rows
         rows = apply_rows(session, rows)
+    if session.get("trading_style")=="swing":
+        from app.services.swing_analytics import cycle_inputs
+        rows=cycle_inputs(session,rows)
     cycles = build_cycles(session, rows)
+    if session.get("trading_style")=="swing":
+        from app.services.swing_analytics import decorate
+        cycles=[decorate(c) for c in cycles]
     if session.get("session_type") == "real":
         for cycle in cycles:
             sources = {row.get("fee_source", "estimated") for row in cycle["executions"]}
@@ -846,13 +865,13 @@ def load_session_cycles(session, include_labels=True, apply_fee_correction=True)
         return (
             tuple(
                 sorted(
-                    (str(r.get("kotak_order_id") or r["trade_id"]), int(r["quantity"]))
+                    (str((r.get("broker_order_id") or r.get("kotak_order_id")) or r["trade_id"]), int(r["quantity"]))
                     for r in entry_rows
                 )
             ),
             tuple(
                 sorted(
-                    (str(r.get("kotak_order_id") or r["trade_id"]), int(r["quantity"]))
+                    (str((r.get("broker_order_id") or r.get("kotak_order_id")) or r["trade_id"]), int(r["quantity"]))
                     for r in exit_rows
                 )
             ),
@@ -860,7 +879,7 @@ def load_session_cycles(session, include_labels=True, apply_fee_correction=True)
 
     old_signatures = {}
     original_ids = {
-        str(t["trade_id"]): str(t.get("kotak_order_id") or t["trade_id"])
+        str(t["trade_id"]): str((t.get("broker_order_id") or t.get("kotak_order_id")) or t["trade_id"])
         for t in trades
     }
     for rt in completed + opened:
@@ -884,7 +903,7 @@ def load_session_cycles(session, include_labels=True, apply_fee_correction=True)
         quantities = defaultdict(int)
         for r in c["executions"]:
             quantities[
-                (r["role"], str(r.get("kotak_order_id") or r.get("trade_id")))
+                (r["role"], str((r.get("broker_order_id") or r.get("kotak_order_id")) or r.get("trade_id")))
             ] += int(r["quantity"])
         es = [
             dict(trade_id=k[1], quantity=q)
@@ -898,10 +917,11 @@ def load_session_cycles(session, include_labels=True, apply_fee_correction=True)
         ]
         indexes = old_signatures.get(signature(es, xs), [])
         if len(indexes) == 1:
+            candidate=next((l for l in labels if int(l["round_trip_index"])==indexes[0]),None)
+            if session.get("trading_style")=="swing" and (not candidate or candidate.get("analytics_cycle_id") not in (None,c.get("legacy_cycle_id"))):
+                continue
             c["label_index"] = indexes[0]
-            c["label"] = next(
-                (l for l in labels if int(l["round_trip_index"]) == indexes[0]), None
-            )
+            c["label"] = candidate
     return cycles
 
 
@@ -927,24 +947,28 @@ def load_cycles(user_id, **filters):
             != session["session_id"]
         ):
             continue
+        if session.get("record_type")=="swing_portfolio":
+            continue
         if ":archive:" in session["session_id"]:
             continue
         if any(
             filters.get(k)
-            and session.get(k, "sim" if k == "session_type" else None) != filters[k]
-            for k in ("symbol", "instrument_type", "session_type")
+            and session.get(k, "sim" if k == "session_type" else "intraday" if k=="trading_style" else None) != filters[k]
+            for k in ("symbol", "instrument_type", "session_type", "trading_style", "portfolio_id")
         ):
             continue
         date = session.get("date", "")
-        if filters.get("start_date") and date < filters["start_date"]:
+        if session.get("trading_style")!="swing" and filters.get("start_date") and date < filters["start_date"]:
             continue
-        if filters.get("end_date") and date > filters["end_date"]:
+        if session.get("trading_style")!="swing" and filters.get("end_date") and date > filters["end_date"]:
             continue
         owner = session.get("broker_projection_id") or session["session_id"]
         if owner in owners:
             continue
         owners.add(owner)
         for c in load_session_cycles(session):
+            if session.get("trading_style")=="swing" and ((filters.get("start_date") and c["date"]<filters["start_date"]) or (filters.get("end_date") and c["date"]>filters["end_date"])):
+                continue
             c.update(shared=session.get("shared",False),owner_email=session.get("owner_email"))
             if filters.get("client") and not any(
                 e["client"] == filters["client"] for e in c["entries"]

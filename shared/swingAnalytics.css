@@ -1,0 +1,157 @@
+.swing-statistics {
+  padding: 16px;
+  color: #dce5ef;
+  background: #0d1117;
+  overflow: auto;
+  box-sizing: border-box;
+  height: 100%;
+  font-size: 13px;
+}
+.swing-statistics header,
+.swing-stat-filters,
+.swing-statistics nav {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+.swing-statistics h2 {
+  margin-right: auto;
+}
+.swing-statistics button,
+.swing-statistics select,
+.swing-statistics input,
+.swing-history button,
+.swing-history input {
+  background: #1b2635;
+  border: 1px solid #334155;
+  color: inherit;
+  border-radius: 5px;
+  padding: 6px;
+}
+.swing-stat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 12px;
+  margin: 12px 0;
+}
+.swing-stat-card {
+  background: #161e2a;
+  border: 1px solid #334155;
+  border-radius: 8px;
+  padding: 14px;
+  min-width: 0;
+}
+.swing-stat-card > strong {
+  display: block;
+  font-size: 22px;
+  margin-top: 8px;
+}
+.swing-stat-card svg {
+  width: 100%;
+  min-height: 180px;
+}
+.swing-statistics table,
+.swing-history table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+}
+.swing-statistics td,
+.swing-statistics th,
+.swing-history td,
+.swing-history th {
+  padding: 8px;
+  border-bottom: 1px solid #334155;
+}
+.swing-months {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.swing-months article {
+  background: #1b2635;
+  padding: 12px;
+  border-radius: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.swing-history {
+  padding: 16px;
+  height: 100%;
+  box-sizing: border-box;
+  overflow: auto;
+  color: #dce5ef;
+  background: #0d1117;
+}
+.swing-history header {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+.swing-history header h2 {
+  margin-right: auto;
+}
+.swing-history-grid {
+  display: grid;
+  grid-template-columns: 230px minmax(0, 1fr);
+  gap: 12px;
+}
+.swing-history-list button {
+  display: block;
+  width: 100%;
+  margin: 6px 0;
+  text-align: left;
+}
+.swing-history-label {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 15px 0;
+}
+.swing-history-label label {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.swing-analytics-drawer {
+  position: absolute;
+  inset: 0;
+  z-index: 40;
+  background: #0d1117;
+  overflow: auto;
+}
+.swing-history-chart {
+  height: 420px;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.swing-history-chart .swing-renderer {
+  flex: 1;
+  min-height: 0;
+}
+@media (max-width: 760px) {
+  .swing-history-grid {
+    grid-template-columns: 1fr;
+  }
+  .swing-history-list {
+    max-height: 180px;
+    overflow: auto;
+  }
+  .swing-statistics table,
+  .swing-history table {
+    display: block;
+    overflow-x: auto;
+  }
+}
+.swing-stat-curves {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 360px), 1fr));
+}
+.pa-overlay > .swing-statistics {
+  flex: 1;
+  min-height: 0;
+  height: auto;
+}

@@ -1,0 +1,222 @@
+.swing-workspace {
+  height: 100%;
+  min-height: 360px;
+  display: flex;
+  flex-direction: column;
+  background: #0d1117;
+  color: #dce5ef;
+}
+.swing-workspace-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  padding: 10px 12px;
+  background: #161e2a;
+  border-bottom: 1px solid #334155;
+  font-size: 12px;
+}
+.swing-workspace button,
+.swing-workspace select,
+.swing-workspace input {
+  font: inherit;
+  color: inherit;
+  background: #1b2635;
+  border: 1px solid #334155;
+  border-radius: 5px;
+  padding: 5px 7px;
+}
+.swing-workspace button {
+  cursor: pointer;
+}
+.swing-workspace-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+.swing-portfolio-rail {
+  flex: 0 0 220px;
+  min-height: 0;
+  overflow: auto;
+  padding: 10px;
+  border-right: 1px solid #334155;
+  font-size: 12px;
+}
+.swing-portfolio-rail nav {
+  display: flex;
+  gap: 3px;
+  margin-bottom: 10px;
+}
+.swing-portfolio-rail nav button {
+  flex: 1;
+  padding: 5px 3px;
+}
+.swing-position-row {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  text-align: left;
+  margin-bottom: 8px;
+  padding: 10px !important;
+}
+.swing-profit {
+  color: #34d399;
+}
+.swing-loss {
+  color: #fb7185;
+}
+.swing-muted {
+  color: #94a3b8;
+}
+.swing-chart-deck {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  gap: 5px;
+  padding: 5px;
+  position: relative;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.swing-panes-1 {
+  grid-template-columns: minmax(0, 1fr);
+}
+.swing-panes-3 {
+  grid-template-rows: repeat(2, minmax(0, 1fr));
+}
+.swing-panes-3 > .swing-chart-pane:first-child {
+  grid-column: 1/-1;
+}
+.swing-panes-4 {
+  grid-template-rows: repeat(2, minmax(0, 1fr));
+}
+.swing-chart-pane {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid #334155;
+  overflow: hidden;
+  border-radius: 6px;
+}
+.swing-chart-pane > section,
+.swing-chart-pane > .swing-renderer {
+  flex: 1;
+  min-height: 0;
+}
+.swing-pane-active {
+  border-color: #38bdf8;
+  box-shadow: inset 0 0 0 1px #38bdf8;
+}
+.swing-maximized {
+  position: absolute;
+  inset: 5px;
+  z-index: 5;
+}
+.swing-pane-bar {
+  display: flex;
+  gap: 5px;
+  align-items: center;
+  padding: 5px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  font-size: 11px;
+  background: #161e2a;
+  flex-shrink: 0;
+}
+.swing-pane-bar input {
+  width: 115px;
+}
+.swing-pane-bar strong {
+  margin-right: auto;
+  white-space: nowrap;
+}
+.swing-data-label {
+  font-size: 10px;
+  color: #94a3b8;
+  padding: 3px 8px;
+}
+.swing-trade-ticket {
+  flex: 0 0 270px;
+  padding: 12px;
+  min-height: 0;
+  overflow: auto;
+  border-left: 1px solid #334155;
+  font-size: 12px;
+}
+.swing-trade-ticket label {
+  display: block;
+  margin: 8px 0;
+}
+.swing-trade-ticket input {
+  max-width: 100%;
+}
+.swing-trade-ticket form {
+  display: flex !important;
+  flex-direction: column;
+  align-items: stretch !important;
+  gap: 7px !important;
+}
+.swing-trade-ticket form label {
+  margin: 0;
+}
+.swing-hint {
+  padding: 8px;
+  background: #243243;
+  color: #fde68a;
+}
+.swing-management {
+  position: absolute;
+  inset: 0 0 0 auto;
+  width: min(600px, 100%);
+  padding: 16px;
+  overflow: auto;
+  z-index: 30;
+  background: #111827;
+  box-shadow: -10px 0 40px #0008;
+}
+@media (max-width: 1000px) {
+  .swing-portfolio-rail {
+    flex-basis: 170px;
+  }
+  .swing-trade-ticket {
+    flex-basis: 230px;
+  }
+}
+@media (max-width: 760px) {
+  .swing-workspace-body {
+    flex-wrap: wrap;
+    overflow: auto;
+  }
+  .swing-portfolio-rail {
+    flex: 0 0 100%;
+    max-height: 160px;
+  }
+  .swing-chart-deck {
+    flex: 1 0 100%;
+    height: 500px;
+  }
+  .swing-trade-ticket {
+    flex: 1 0 100%;
+  }
+  .swing-workspace {
+    height: auto;
+    min-height: calc(100vh - 48px);
+  }
+}
+
+.swing-renderer > div:not(.swing-pane-bar) {
+  min-width: 0;
+  flex: 1;
+}
+
+.swing-renderer > .chart {
+  flex: 1;
+  min-height: 0;
+}
+
+.swing-portfolio-rail[hidden] { display: none; }
+.swing-tools-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; padding: 4px 8px; background: #161e2a; border-bottom: 1px solid #334155; font-size: 11px; }
+.swing-tools-slot { min-width: 0; flex: 1; }
+.swing-tools-slot .swing-pane-bar { flex-wrap: wrap; overflow: visible; padding: 0; }

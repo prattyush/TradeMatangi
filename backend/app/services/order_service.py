@@ -11,6 +11,7 @@ STOPLOSS: same trigger logic as TARGET; real limit uses the account stoploss gap
 """
 from __future__ import annotations
 
+from app.services.instrument_identity import strike_number
 import threading
 import logging
 import math
@@ -182,6 +183,7 @@ def _order_db_item(order: Order) -> dict:
         "order_id": order.order_id,
         "user_id": order.user_id,
         "symbol": order.symbol,
+        "trading_style": order.trading_style,
         "side": order.side.value,
         "order_type": order.order_type.value,
         "quantity": order.quantity,
@@ -193,6 +195,14 @@ def _order_db_item(order: Order) -> dict:
         "is_stoploss": order.is_stoploss,
         "is_autostop": order.is_autostop,
     }
+    if order.trading_style == "swing":
+        item["swing_attempts"] = order.swing_attempts
+        item["swing_reconcile_pending"] = order.swing_reconcile_pending
+        item["swing_reconcile_reason"] = order.swing_reconcile_reason
+    if order.stop_triggered_at is not None:
+        item["stop_triggered_at"] = order.stop_triggered_at
+    if order.portfolio_id:
+        item["portfolio_id"] = order.portfolio_id
     from app.services import simulation
     session = simulation.get_session(order.session_id)
     if session and session.session_type == "real":
@@ -202,7 +212,7 @@ def _order_db_item(order: Order) -> dict:
         value = getattr(order, name)
         if value is not None:
             item[name] = Decimal(str(value)) if isinstance(value, float) else value
-    for name in ("cancellation_status", "cancellation_reason", "cancelled_at", "cancel_request_id", "cancel_initiator", "cancel_purpose", "recovery_operation_id", "recovery_parent_order_id", "recovery_state", "recovery_attempt", "protection_group", "protection_suppressed_quantity"):
+    for name in ("cancellation_status", "cancellation_reason", "cancelled_at", "cancel_request_id", "cancel_initiator", "cancel_purpose", "recovery_operation_id", "recovery_parent_order_id", "recovery_state", "broker_submission_at", "recovery_attempt", "protection_group", "protection_suppressed_quantity"):
         value = getattr(order, name, None)
         if value is not None:
             item[name] = Decimal(str(value)) if isinstance(value, float) else value
@@ -217,8 +227,10 @@ def _order_db_item(order: Order) -> dict:
     if order.broker_conversion is not None:
         from app.services.real_broker_state import encode
         item["broker_conversion"] = encode(order.broker_conversion)
-    if order.kotak_order_id:
-        item["kotak_order_id"] = order.kotak_order_id
+    for field in ("execution_broker", "broker_account_id", "broker_order_id", "kotak_order_id"):
+        value = getattr(order, field)
+        if value:
+            item[field] = value
     if order.kotak_fill_confirmed:
         item["kotak_fill_confirmed"] = True
     if order.filled_at is not None:
@@ -258,7 +270,8 @@ def _order_db_item(order: Order) -> dict:
         item["quote_timestamp"] = order.quote_timestamp
     if order.quote_source is not None:
         item["quote_source"] = order.quote_source
-    return item
+    from app.services.real_broker_state import encode
+    return encode(item)
 
 
 def _write_order_to_db(order: Order, *, strict: bool = False) -> None:
@@ -266,7 +279,12 @@ def _write_order_to_db(order: Order, *, strict: bool = False) -> None:
         from app.services.db import get_dynamodb_resource
         table = get_dynamodb_resource().Table("Orders")
         item = _order_db_item(order)
-        if order.source == "desktop_paper" and (order.wallet_ledger_id or "").startswith("paper:"):
+        from app.services.simulation import get_session
+        session = get_session(order.session_id)
+        if session and session.session_type == "real" and session.trading_style == "swing" and getattr(session, "real_claim_token", None):
+            from app.services.real_session_slots import fenced_put
+            fenced_put(session, "Orders", item)
+        elif order.source == "desktop_paper" and (order.wallet_ledger_id or "").startswith("paper:"):
             from app.services import paper_wallet
             context = paper_wallet.desktop_write_context(order.session_id, order.user_id,
                 order.wallet_ledger_id.removeprefix("paper:"), order.symbol)
@@ -297,7 +315,7 @@ def place_order(
     limit_price: float | None = None,
     is_stoploss: bool = False,
     right: str | None = None,
-    strike: int | None = None,
+    strike: int | float | None = None,
     expiry: str | None = None,
     target_deviation_pct: float = _TARGET_DEVIATION,
     user_id: str = FIXED_USER_ID,
@@ -326,6 +344,17 @@ def place_order(
         return existing
 
     from app.services import execution_price_service as execution
+    from app.services.simulation import get_session
+    entry_scope = get_session(session_id)
+    if getattr(entry_scope, 'trading_style', 'intraday') == 'swing':
+        from app.services.swing_portfolio_service import require_entry_allowed
+        require_entry_allowed(entry_scope, side, quantity, right, strike, expiry)
+    if getattr(entry_scope, "instrument_type", None) == "futures":
+        from app.services.swing_futures import is_exit
+        if not (analytics or {}).get("futures") or not is_exit(entry_scope, side, quantity):
+            raise ValueError("Futures entries require the portfolio margin preview; cancel and replace through the Swing ticket")
+        # Covering a short releases held margin; it never reserves BUY notional.
+        margin_rate = 0.0
     is_real = execution.real_session(session_id, wallet_ledger_kind)
     if is_real:
         from app.services import simulation, real_trading_day
@@ -371,14 +400,21 @@ def place_order(
                 symbol=symbol, side=side, quantity=quantity, right=right, strike=strike, expiry=expiry))
         reserved_amount = round(reserve_quantity * actual_limit * margin_rate, 2)
         from app.services import wallet_service
-        if wallet_ledger_id and wallet_ledger_id.startswith("paper:"):
+        if wallet_ledger_kind == "real" and getattr(entry_scope, "real_funding_period", None):
+            from app.services.real_funding import reserve
+            reserve(entry_scope, order_id, reserved_amount)
+        elif wallet_ledger_id and wallet_ledger_id.startswith(("paper:", "swing:")):
             pass  # committed together with the order below
         elif wallet_ledger_id:
             wallet_service.debit_ledger(user_id, reserved_amount, trading_date, wallet_ledger_id, wallet_ledger_kind or "sim", operation_id=f"order:{order_id}:reserve")
         else:
             wallet_service.debit(user_id, reserved_amount, trading_date)
 
+    from app.services.simulation import get_session
+    scope = get_session(session_id)
     order = Order(
+        trading_style="swing" if getattr(scope, "trading_style", None) == "swing" else "intraday",
+        portfolio_id=getattr(scope, "portfolio_id", None) if getattr(scope, "trading_style", None) == "swing" else None,
         analytics=analytics,
         order_id=order_id,
         session_id=session_id,
@@ -412,9 +448,17 @@ def place_order(
         exit_position_side=exit_position_side,
         exit_allocation_role=exit_allocation_role,
     )
+    if order.trading_style == 'swing' and getattr(scope,'session_type',None)=='paper':
+        from app.services.swing_paper_recovery import initial_attempt, broker_owned
+        if broker_owned(order):
+            attempt=initial_attempt(created_at,order)
+            if attempt and attempt['date']==trading_date:order.swing_attempts.append(attempt)
     from app.services.execution_analytics import created
     from app.services.simulation import get_session
     created(order, get_session(session_id))
+    if wallet_ledger_id and wallet_ledger_id.startswith("swing:"):
+        from app.services.swing_cash import move
+        move(user_id, wallet_ledger_id.split(":",1)[1], -reserved_amount, f"order:{order_id}:reserve", order=order)
     if wallet_ledger_id and wallet_ledger_id.startswith("paper:"):
         from app.services import paper_wallet
         from app.services import simulation as sim_svc
@@ -422,7 +466,7 @@ def place_order(
         engine = (session_id, symbol, session.paper_engine_token) if session and getattr(session, "desktop_origin", None) == "desktop_paper" and getattr(session, "paper_engine_token", None) else None
         paper_wallet.move(user_id, trading_date, -reserved_amount, f"order:{order_id}:reserve", order=order, engine=engine)
     _orders[session_id][order.order_id] = order
-    _write_order_to_db(order, strict=bool(exit_allocation_id))
+    _write_order_to_db(order, strict=is_real or bool(exit_allocation_id) or order.trading_style == "swing")
     return order
 
 
@@ -446,6 +490,10 @@ def _credit_reservation(order: Order, amount: float, trading_date: str, persiste
     from app.services import simulation as sim_svc
     session = sim_svc.get_session(order.session_id)
     engine = (order.session_id, order.symbol, session.paper_engine_token) if session and getattr(session, "desktop_origin", None) == "desktop_paper" and getattr(session, "paper_engine_token", None) else None
+    if session and order.wallet_ledger_kind == "real" and getattr(session, "real_funding_period", None):
+        from app.services.real_funding import reserve
+        reserve(session, order.order_id, max(0, round(order.reserved_amount - amount, 2)), owner="broker" if order.broker_order_id else "local")
+        return
     cleanup = (order.session_id, order.symbol) if not session and order.source == "desktop_paper" and persisted_order is not None and persisted_order.status == OrderStatus.CANCELLED else None
     if order.wallet_ledger_id:
         wallet_service.credit_ledger(order.user_id, amount, trading_date, order.wallet_ledger_id, order.wallet_ledger_kind or "sim", operation_id=f"order:{order.order_id}:adjust:{order.reservation_revision}", order=persisted_order, engine=engine, cleanup=cleanup)
@@ -458,6 +506,10 @@ def _debit_reservation(order: Order, amount: float, trading_date: str, persisted
     from app.services import simulation as sim_svc
     session = sim_svc.get_session(order.session_id)
     engine = (order.session_id, order.symbol, session.paper_engine_token) if session and getattr(session, "desktop_origin", None) == "desktop_paper" and getattr(session, "paper_engine_token", None) else None
+    if session and order.wallet_ledger_kind == "real" and getattr(session, "real_funding_period", None):
+        from app.services.real_funding import reserve
+        reserve(session, order.order_id, round(order.reserved_amount + amount, 2), owner="broker" if order.broker_order_id else "local")
+        return
     if order.wallet_ledger_id:
         wallet_service.debit_ledger(order.user_id, amount, trading_date, order.wallet_ledger_id, order.wallet_ledger_kind or "sim", operation_id=f"order:{order.order_id}:adjust:{order.reservation_revision}", order=persisted_order, engine=engine)
     else:
@@ -502,7 +554,7 @@ def cancel_order(session_id: str, order_id: str, trading_date: str) -> Order | N
             raise
         order.reserved_amount = 0.0
     order.status = OrderStatus.CANCELLED
-    _write_order_to_db(order, strict=order.source == "desktop_paper")
+    _write_order_to_db(order, strict=order.source == "desktop_paper" or order.trading_style == "swing")
     return order
 
 
@@ -521,6 +573,14 @@ def update_order(
     order = _orders.get(session_id, {}).get(order_id)
     if order is None or order.status != OrderStatus.PENDING:
         return None
+    from app.services.simulation import get_session
+    scope = get_session(session_id)
+    if getattr(scope, "instrument_type", None) == "futures":
+        from app.services.swing_futures import is_exit
+        if order.execution_role != "exit" or not is_exit(scope, order.side, quantity if quantity is not None else order.quantity):
+            raise ValueError("Futures entries must be cancelled and replaced after a fresh margin preview")
+    from app.services.swing_paper_recovery import require_amendable, amend_attempt
+    require_amendable(order)
 
     from app.services import execution_price_service as execution
     is_real = execution.real_session(session_id, order.wallet_ledger_kind)
@@ -561,6 +621,7 @@ def update_order(
     if trigger_price is not None or limit_price is not None:
         from app.services.execution_analytics import applied_controller
         applied_controller(order)
+    amend_attempt(order)
     if persist:
         _write_order_to_db(order)
     return order
@@ -582,6 +643,14 @@ def convert_order(
     order = _orders.get(session_id, {}).get(order_id)
     if order is None or order.status != OrderStatus.PENDING:
         return None
+    from app.services.simulation import get_session
+    scope = get_session(session_id)
+    if getattr(scope, "instrument_type", None) == "futures":
+        from app.services.swing_futures import is_exit
+        if order.execution_role != "exit" or not is_exit(scope, order.side, order.quantity):
+            raise ValueError("Futures entries must be cancelled and replaced after a fresh margin preview")
+    from app.services.swing_paper_recovery import require_amendable, amend_attempt
+    require_amendable(order)
     if new_order_type == order.order_type:
         return order  # no-op
 
@@ -648,6 +717,7 @@ def convert_order(
 
     from app.services.execution_analytics import applied_controller
     applied_controller(order)
+    amend_attempt(order)
     if persist:
         _write_order_to_db(order)
     logger.info(
@@ -664,7 +734,7 @@ def check_orders(
     current_time: int,
     trading_date: str = "",
     tick_right: str | None = None,
-    tick_strike: int | None = None,
+    tick_strike: int | float | None = None,
     tick_expiry: str | None = None,
     settle_wallet: bool = True,
     only_order_id: str | None = None,
@@ -685,15 +755,26 @@ def check_orders(
             continue
         if order.status != OrderStatus.PENDING:
             continue
+        if order.swing_reconcile_pending or (order.trading_style == "swing" and current_time < order.created_at):
+            continue
+        from app.services.simulation import get_session
+        entry_scope = get_session(session_id)
+        if getattr(entry_scope, 'trading_style', 'intraday') == 'swing':
+            from app.services.swing_portfolio_service import require_entry_allowed
+            from fastapi import HTTPException
+            try:
+                require_entry_allowed(entry_scope, order.side, order.quantity, order.right, order.strike, order.expiry)
+            except HTTPException:
+                continue
         # Skip orders placed directly on Kotak broker; fills arrive via order-feed WebSocket.
-        if order.kotak_order_id or (order.split_operation or {}).get("state") in ("prepared", "modifying", "submitting", "unknown") or order.recovery_state in ("prepared", "submitting", "unknown"):
+        if order.broker_order_id or (order.split_operation or {}).get("state") in ("prepared", "modifying", "submitting", "unknown") or order.recovery_state in ("prepared", "submitting", "unknown"):
             continue
         # For options ticks: only check orders for the same contract.
         # For equity ticks (tick_right=None): only check orders with right=None.
         if order.right != tick_right:
             continue
         if tick_right is not None:
-            if tick_strike is not None and order.strike is not None and int(order.strike) != int(tick_strike):
+            if tick_strike is not None and order.strike is not None and strike_number(order.strike) != strike_number(tick_strike):
                 continue
             if tick_expiry is not None and order.expiry is not None and order.expiry != tick_expiry:
                 continue
@@ -710,6 +791,26 @@ def check_orders(
             ) or (
                 order.side == TradeSide.SELL and current_price >= order.limit_price
             )
+
+        if getattr(entry_scope, 'trading_style', 'intraday') == 'swing' and order.side == TradeSide.SELL:
+            if order.order_type == OrderType.STOPLOSS:
+                if triggered and order.stop_triggered_at is None:
+                    order.stop_triggered_at=current_time
+                    _write_order_to_db(order,strict=True)
+                triggered=order.stop_triggered_at is not None and order.stop_triggered_at<=current_time and current_price>=order.limit_price
+            if triggered:
+                from app.services.trading import get_position
+                position=get_position(
+                    session_id,order.symbol,order.right,order.strike,order.expiry)
+                key=(order.symbol,order.right,order.strike,order.expiry)
+                prior=sum(item.quantity if item.side==TradeSide.SELL else -item.quantity for item in filled
+                    if (item.symbol,item.right,item.strike,item.expiry)==key)
+                available=max(0,position.quantity-prior) if position.side=='LONG' else 0
+                if available<=0:
+                    cancel_order(session_id,order.order_id,trading_date)
+                    continue
+                if order.quantity>available:
+                    update_order(session_id,order.order_id,trading_date,quantity=available)
 
         retrying_paper_fill = (order.wallet_ledger_id or "").startswith("paper:") and order.filled_price is not None
         if triggered or retrying_paper_fill:
@@ -736,7 +837,7 @@ def check_orders(
             # after the position is fully closed.
             if settle_wallet and order.side == TradeSide.SELL and trading_date:
                 _credit_reservation(order, round(order.quantity * current_price, 2), trading_date)
-            if settle_wallet or not (order.wallet_ledger_id or "").startswith("paper:"):
+            if settle_wallet or not (order.wallet_ledger_id or "").startswith(("paper:", "swing:")):
                 _write_order_to_db(order)
             filled.append(order)
     return filled
@@ -792,15 +893,16 @@ def _reconcile_allocated_exits(session_id: str, symbol: str, right, strike, expi
         if order.source == "broker_external" or allowed == remaining:
             continue
         quantity = allowed + order.broker_filled_quantity if allowed else 0
-        if order.kotak_order_id:
-            from app.services.kotak_service import get_service
-            broker = get_service()
+        if order.broker_order_id:
+            from app.services.execution_broker import get_service
+            from app.services.simulation import get_session
+            broker = get_service(get_session(session_id))
             if not quantity:
-                broker.cancel_order(order.kotak_order_id, purpose="position_resize")
+                broker.cancel_order(order.broker_order_id, purpose="position_resize")
             elif order.order_type == OrderType.LIMIT:
-                broker.modify_sl_to_limit_order(order.kotak_order_id, order.limit_price, quantity)
+                broker.modify_sl_to_limit_order(order.broker_order_id, order.limit_price, quantity)
             else:
-                broker.modify_sl_order(order.kotak_order_id, order.trigger_price, order.limit_price, quantity)
+                broker.modify_sl_order(order.broker_order_id, order.trigger_price, order.limit_price, quantity)
         if quantity:
             update_order(session_id, order.order_id, trading_date, quantity=quantity)
         else:

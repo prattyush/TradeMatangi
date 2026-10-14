@@ -121,7 +121,7 @@ async def test_first_start_with_balance_and_sdk_no_data_reports(isolated, monkey
         result = await accounting.refresh(USER, DATE, broker, reason="start")
         assert result == {"balance": 18000, "display_balance": 18000, "session_capital": 18000}
         assert sorted(requests) == ["/limits", "/positions", "/trade_report"]
-        assert wallet_service.get_real_wallet_snapshot(USER, DATE)["balance"] == 18000
+        assert wallet_service.get_real_wallet_snapshot(USER, DATE, f"real:kotak:account:{DATE}")["balance"] == 18000
     finally:
         broker.shutdown()
 

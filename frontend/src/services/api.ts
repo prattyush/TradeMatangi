@@ -103,6 +103,10 @@ export interface BarCandle {
 export interface SymbolInfo {
   symbol: string
   display_name: string
+  nse_symbol?: string
+  chart_type?: string
+  option_eligible?: boolean
+  strike_interval?: number
 }
 
 export interface ConversionResult { order_id: string; state: string; message?: string | null }
@@ -151,6 +155,8 @@ export interface SimulationStartRequest {
   brokerage_per_order?: number  // flat brokerage per order (default 1)
   strategy_interval_secs?: number  // candle interval for all strategies (180=3min, 300=5min)
   session_type?: 'sim' | 'paper' | 'real' | 'stepwise'
+  execution_broker?: 'kotak' | 'kite'
+  allocation_pct?: number
   stepwise?: boolean
   override?: boolean
   group_id?: string
@@ -158,6 +164,7 @@ export interface SimulationStartRequest {
 }
 
 export interface UserSettingsResponse {
+  real_execution_broker?: "kotak" | "kite"
   brokerage_per_order?: number
   strategy_interval_secs?: 120 | 180 | 300
   autostop_trigger_type?: 'bar' | 'deviation'
@@ -234,6 +241,8 @@ export interface StartStrategyRequest {
 }
 
 export interface SimulationStartResponse {
+  execution_broker?: string | null
+  broker_account_id?: string | null
   session_id: string
   symbol: string
   date: string
@@ -410,6 +419,7 @@ export interface AdminTokensResponse {
 // ── Analysis types ──────────────────────────────────────────────────────────
 
 export interface SessionSummary {
+  trading_style?: 'intraday'|'swing'; portfolio_id?:string; entry_date?:string|null;exit_date?:string|null;
   snapshot_session_ids?: string[]
   shared?: boolean
   owner_email?: string | null
@@ -433,6 +443,8 @@ export interface SessionSummary {
 }
 
 export interface AnalysisTrade {
+  execution_broker?: string | null
+  broker_order_id?: string | null
   captured_only?: boolean
   stored_trade_id?: string
   analysis_cycle_id?: string
@@ -488,6 +500,7 @@ export interface RoundTrip {
 }
 
 export interface TradeLabel {
+  analytics_cycle_id?:string;
   session_id: string
   round_trip_index: number
   expected_category: string
@@ -637,6 +650,10 @@ export class InsufficientFundsError extends Error {
 }
 
 export interface Trade {
+  instrument_type?: "equity" | "options" | "futures"
+  execution_broker?: string | null
+  broker_order_id?: string | null
+  broker_account_id?: string | null
   trade_id: string
   user_id: string
   symbol: string
@@ -832,6 +849,16 @@ export interface EmergencyExitResult {
 export interface RealTradingDayStatus { date: string; state: 'active' | 'closing' | 'done'; message?: string }
 
 const api = {
+  async executionBrokerStatus(): Promise<{ broker: 'kotak' | 'kite'; authenticated: boolean; active_session_id?: string | null }> {
+    const res = await fetch(`${BACKEND_URL}/api/brokers/status`, { headers: _authHeaders() })
+    if (!res.ok) throw new ApiError((await res.json().catch(() => ({}))).detail || 'Could not load execution broker status', res.status)
+    return res.json()
+  },
+  async realCloseSummary(sessionId: string): Promise<{ position_count: number; pending_order_count: number }> {
+    const res = await fetch(`${BACKEND_URL}/api/brokers/${encodeURIComponent(sessionId)}/close-summary`, { headers: _authHeaders() })
+    if (!res.ok) throw new ApiError('Could not inspect Real positions before confirmation', res.status)
+    return res.json()
+  },
   async exitAllPositions(sessionId: string): Promise<EmergencyExitResult> {
     const response = await fetch(`${BACKEND_URL}/api/trades/sessions/${encodeURIComponent(sessionId)}/exit-all`, { method: 'POST', headers: _authHeaders() })
     if (!response.ok) throw new ApiError((await response.json().catch(() => ({}))).detail || 'Could not request all exits', response.status)
@@ -1014,12 +1041,14 @@ const api = {
     return res.json()
   },
 
-  async stopSimulation(session_id: string): Promise<void> {
-    await fetch(`${BACKEND_URL}/api/simulation/stop`, {
+  async stopSimulation(session_id: string): Promise<{ status?: string }> {
+    const response = await fetch(`${BACKEND_URL}/api/simulation/stop`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ..._authHeaders() },
       body: JSON.stringify({ session_id }),
     })
+    if (!response.ok) throw new ApiError((await response.json().catch(() => ({}))).detail || 'Could not stop session', response.status)
+    return response.json()
   },
 
   async pauseSimulation(session_id: string): Promise<void> {
@@ -1405,6 +1434,8 @@ const api = {
   // ── Analysis ───────────────────────────────────────────────────────────────
 
   async getAnalysisSessions(opts: {
+    tradingStyle?: string
+    portfolioId?:string
     symbol?: string
     startDate?: string
     endDate?: string
@@ -1412,6 +1443,8 @@ const api = {
     sessionType?: string
   } = {}): Promise<SessionSummary[]> {
     const params = new URLSearchParams({include_shared:'true'})
+    if(opts.tradingStyle)params.set('trading_style',opts.tradingStyle)
+    if(opts.portfolioId)params.set('portfolio_id',opts.portfolioId)
     if (opts.symbol) params.set('symbol', opts.symbol)
     if (opts.startDate) params.set('start_date', opts.startDate)
     if (opts.endDate) params.set('end_date', opts.endDate)
@@ -1670,7 +1703,7 @@ const api = {
 
   async reconcileKotakOrders(sessionId: string): Promise<BrokerSnapshot> {
     const res = await fetch(
-      `${BACKEND_URL}/api/kotak/reconcile?session_id=${sessionId}`,
+      `${BACKEND_URL}/api/brokers/${encodeURIComponent(sessionId)}/reconcile`,
       { method: 'POST', headers: _authHeaders() }
     )
     if (!res.ok) {
@@ -1738,6 +1771,16 @@ const api = {
     return res.json()
   },
 
+  async getFuturesRisk(): Promise<Record<string, any>> {
+    const res = await fetch(`${BACKEND_URL}/api/admin/futures-risk`, {headers:_authHeaders()})
+    if (!res.ok) throw new Error(`Futures settings fetch failed (${res.status})`)
+    return res.json()
+  },
+  async setFuturesRisk(settings: Record<string, any>): Promise<Record<string, any>> {
+    const res = await fetch(`${BACKEND_URL}/api/admin/futures-risk`, {method:'PUT',headers:{'Content-Type':'application/json',..._authHeaders()},body:JSON.stringify(settings)})
+    if (!res.ok) {const error=await res.json().catch(()=>({}));throw new Error(error.detail??`Futures settings save failed (${res.status})`)}
+    return res.json()
+  },
   async getStreamSource(): Promise<{ source: 'fyers' | 'kite' | 'kotak' | 'breeze' }> {
     const res = await fetch(`${BACKEND_URL}/api/admin/stream-source`, {
       headers: _authHeaders(),

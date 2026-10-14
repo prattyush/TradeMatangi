@@ -6,6 +6,7 @@ repeated for each screen or user. This boundary can later move to a feed process
 """
 from __future__ import annotations
 
+from app.services.instrument_identity import strike_number
 import asyncio
 import logging
 import inspect
@@ -20,9 +21,13 @@ def normalize_instrument(instrument: dict) -> dict:
     from app.config import SUPPORTED_SYMBOLS
     symbol = instrument.get("underlying") or instrument.get("symbol")
     info = SUPPORTED_SYMBOLS[symbol]
+    if instrument.get("kind") == "future":
+        from datetime import date
+        expiry = date.fromisoformat(instrument["expiry"]).isoformat()
+        return {"kind": "future", "exchange": info["options_exchange_code"], "underlying": symbol, "expiry": expiry}
     if instrument.get("kind") == "option":
         return {"kind": "option", "exchange": info["options_exchange_code"], "underlying": symbol,
-                "expiry": instrument["expiry"], "strike": int(instrument["strike"]), "right": instrument["right"].upper()}
+                "expiry": instrument["expiry"], "strike": strike_number(instrument["strike"]), "right": instrument["right"].upper()}
     return {"kind": "index" if info.get("options_only") else "equity", "exchange": info["exchange_code"], "symbol": symbol}
 
 
@@ -107,11 +112,15 @@ class ProviderAdapter:
         from app.config import SUPPORTED_SYMBOLS
         symbol = instrument.get("underlying") or instrument.get("symbol")
         right = instrument.get("right")
+        future = instrument.get("kind") == "future"
         sid = f"feed:{source}:{uuid.uuid4()}"
         if source == "kite":
             from app.services import kite_service as service
-            token = (service.fetch_options_instrument_token(symbol, instrument["expiry"], int(instrument["strike"]), right)
-                     if right else service.fetch_equity_instrument_token(symbol)[1])
+            token = (service.fetch_options_instrument_token(symbol, instrument["expiry"], strike_number(instrument["strike"]), right)
+                     if right else None if future else service.fetch_equity_instrument_token(symbol)[1])
+            if future:
+                from app.services.futures_contracts import resolve_contract
+                token = int(resolve_contract(symbol, instrument["expiry"], source)["instrument_token"])
             manager = service.get_broadcaster()
             try:
                 manager.register(sid, [token], [right], delivery, loop)
@@ -120,8 +129,10 @@ class ProviderAdapter:
                 raise
             return lambda: manager.unregister(sid)
         if source == "fyers":
+            if future:
+                raise RuntimeError("Exact Futures feed is not available from Fyers; use the configured fallback")
             from app.services import fyers_service as service
-            name = (service._fyers_options_symbol(symbol, instrument["expiry"], int(instrument["strike"]), right)
+            name = (service._fyers_options_symbol(symbol, instrument["expiry"], strike_number(instrument["strike"]), right)
                     if right else service._fyers_index_symbol(symbol) if instrument["kind"] == "index"
                     else service._fyers_equity_symbol(symbol))
             manager = service.get_fyers_broadcaster()
@@ -136,8 +147,12 @@ class ProviderAdapter:
             manager = service.get_kotak_broadcaster()
             if not manager.is_ready():
                 raise RuntimeError("Kotak is not authenticated")
-            token, exchange = (service.fetch_kotak_options_instrument_token(symbol, instrument["expiry"], int(instrument["strike"]), right)
-                               if right else service.fetch_kotak_equity_instrument_token(symbol))
+            token, exchange = (service.fetch_kotak_options_instrument_token(symbol, instrument["expiry"], strike_number(instrument["strike"]), right)
+                               if right else (None, None) if future else service.fetch_kotak_equity_instrument_token(symbol))
+            if future:
+                from app.services.futures_contracts import resolve_contract
+                contract = resolve_contract(symbol, instrument["expiry"], source)
+                token, exchange = contract["instrument_token"], "bse_fo" if contract["exchange"] == "BFO" else "nse_fo"
             try:
                 manager.register(sid, [token], [exchange], [right], delivery, loop,
                                  is_indices=[instrument["kind"] == "index"])
@@ -153,6 +168,9 @@ class ProviderAdapter:
         if right:
             spec.update(expiry_date=f"{instrument['expiry']}T06:00:00.000Z",
                         strike_price=str(instrument["strike"]), right="call" if right == "CE" else "put")
+        if future:
+            spec.update(product_type="futures", exchange_code=info["options_exchange_code"],
+                        expiry_date=f"{instrument['expiry']}T06:00:00.000Z", right="others", strike_price="0")
         manager = BreezeStreamManager()
         try:
             manager.start(delivery, loop, [spec], session_id=sid)
@@ -254,6 +272,8 @@ class MarketDataHub:
         for handle in list(feed["consumers"].values()):
             instrument = feed["instrument"]
             payload = {**tick, "provider": key[0], "instrument_id": key[1], "feed_generation": handle.group.generation}
+            if instrument.get("kind") == "future":
+                payload.update(expiry=instrument["expiry"], instrument_type="futures")
             if instrument.get("right"):
                 payload.update(right=instrument["right"], strike=instrument["strike"], expiry=instrument["expiry"])
             if tick.get("type") == "broker_error":
@@ -413,7 +433,7 @@ def session_instruments(session):
             if strike and session.right in (None, right):
                 instruments.append({"kind": "option", "exchange": info["options_exchange_code"],
                                     "underlying": session.symbol, "expiry": session.expiry,
-                                    "strike": int(strike), "right": right})
+                                    "strike": strike_number(strike), "right": right})
     return instruments
 
 

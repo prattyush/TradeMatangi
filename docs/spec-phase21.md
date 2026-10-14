@@ -1,5 +1,113 @@
 # Phase 21 — Desktop UI implementation
 
+## Desktop toolbar scrollbar correction — 2026-10-12
+
+The main/preprod integration is merged in [PR #653](https://github.com/prattyush/TradeMatangi/pull/653)
+(preprod `0c82a7d`). Its Windows installer build is allowed to finish independently.
+
+The toolbar's invisible absolute tooltip pseudo-elements enlarged its scrollable
+width/height even when the controls fit. Remove those pseudo-elements and retain
+the buttons' existing native `title` hover labels and accessible names. The top
+workspace header clips vertical overflow while retaining horizontal `auto`
+scrolling for genuinely narrow windows; controls keep their order and dimensions.
+
+Browser reproduction: at 1,200px width, the old toolbar measured 1,334px scroll
+width and 67px scroll height against a 1,200×47px client area. The fixed toolbar
+measures 1,200×47px at rest, hover and focus. At 50px width, intentional horizontal
+overflow remains reachable. Desktop TypeScript and production build checks passed. The installer build for
+PR #653 completed successfully. This CSS-only fix requires no backend or trading
+behavior changes.
+
+## Main → preprod integration — 2026-10-12
+
+PR #652 is merged into preprod (`49e92c8`); authenticated acceptance is in
+progress, not declared complete. Integration work starts from that revision on
+`integration/main-into-preprod` and merges main `d10ab97` (which contains dev
+`dfa878d`). Main/dev source contents match; six older script executable-mode
+changes exist only in main and remain preserved. Main/dev are not modified.
+
+The integration brings authoritative website live-mode labels, finalized Real
+Day charges, event-second snapshot candles, retained snapshot viewport/zoom,
+option marker cleanup, sequential header errors, desktop strategy submenu/Take
+Profit actions and saved Paper/Real capital restoration. It retains preprod's
+Kite/Real execution, four broker/style slots, shared funding, Swing runtime,
+linked Replay refresh, toolbar icons/tooltips and compact date/time controls.
+
+Four textual conflicts are resolved by retaining both behaviors: this document,
+shared performance broker/account/fee-source fields, the desktop workspace's
+Real/companion routing and strategy callbacks, and both CSS additions. Automatic
+merges are reviewed for account-scoped ledgers, frozen sizing capital, fractional
+option identity and native analysis allowlists.
+
+Finalized-charge corrections are **Day-only** for now, as explicitly selected.
+Swing histories keep estimates and are excluded from charge discovery/application;
+per-day Swing billing remains deferred. Corrections are owner/date/broker/account
+scoped and analytics-only. Legacy Kotak requests/records remain supported; Kite
+uses explicit broker scope. Legacy/current correction metadata is deleted together
+so reverting cannot revive an older bill. No trading, wallet or funding records
+are altered by charge correction.
+
+Integration verification:
+
+- Backend: **2,189 passed**, with the two known local ICICI configuration failures
+  in options-start validation (`test_missing_strike_returns_400` and
+  `test_invalid_right_returns_400`). No new integration failures. The incoming
+  pattern-logger test setup removes the other two former local failures.
+- Desktop: **194 tests passed**. Website notification tests: **14 passed**.
+  Both TypeScript checks and production builds passed.
+- Native Linux Rust: `cargo check --locked --offline` passed; **19 library tests
+  passed**. This does not replace building/testing the Windows executable.
+- Mocked browser checks passed for Day charges (separate Kite/Kotak scopes),
+  strategy submenu/Take Profit controls, snapshot candles/viewport navigation,
+  header notifications, running mode labels and Real/linked Replay controls.
+  No page errors or live broker orders were produced.
+- Python compilation, reviewed new-service lint and diff checks passed.
+
+PR delivery is recorded below. Delivery targets
+preprod; deployment and native Windows/authenticated broker acceptance remain
+manual. The original testing checkout is not modified by integration work.
+
+## Current Swing review status — 2026-10-11
+
+The ownership/funding/recovery self-review and fixes are on
+`feature/phase21-swing-trading`. See the [authoritative current status and review
+checkpoint](spec-phase21-swing-trading-plan.md#current-review-status--2026-10-11).
+Four broker/style slots supersede the earlier one-Real-session-per-user restriction.
+Running books keep their broker/account when the default setting changes.
+
+The review fixed startup child adoption/readiness, interrupted-start persistence,
+concurrent funding edits, partial-fill commitments, pending entry checks, unknown
+submission timing and empty cash correction. Undated attempts require explicit
+owned-order acknowledgement plus verified-flat closure; current-day unknown
+attempts remain blocked. History warnings persist. Earlier delivery/checkpoint
+sections below describe their original revisions.
+
+Verification: **2,121 backend tests passed** with four known local ICICI
+configuration failures; **184 desktop tests passed**. Both client TypeScript
+checks/builds and mocked acknowledgement controls passed.
+
+The branch and all PRs target **preprod**. Backend/native live acceptance follows
+merge and deployment; main/dev promotion is manual. Linked Swing views, multi-day
+Replay, remaining Paper edges and live/native acceptance are not declared complete.
+
+## Current extension — Kite and desktop Real / linked screens
+
+The approved [complete extension specification and sprint plan](spec-phase21-real-trading-plan.md)
+records scope, exclusions, decisions, broker/books/session design, desktop UI and
+linked-window lifecycle, failure cases and acceptance gates. Sprint 0 writes this
+handoff before trading-code changes. All extension work and PRs target **preprod**;
+main/dev promotion is manual after acceptance. The original extension used one
+active Real session per user; the current Swing ownership revision above supersedes
+that limit and allows changing the default broker while books remain pinned. Funds and history stay
+broker-account separate. Earlier Kite/desktop Real deferrals and dev-delivery rules
+below describe the previous delivery and are superseded for this extension only.
+
+
+Extension implementation is on `feature/phase21-real-desktop` in ready-for-review
+[PR #632](https://github.com/prattyush/TradeMatangi/pull/632), targeting preprod.
+See the linked specification for delivered sprints, automated results and remaining
+Windows/native and live-broker acceptance gates. No main/dev promotion is included.
+
 ## Current delivery status — 2026-10-12
 
 PR #619 merged to dev on 2026-10-08 (merge e1938ce). Main includes that delivery
@@ -920,13 +1028,297 @@ backend to apply; no client rebuild is needed.
 5) One other requirement in the edit options, which are present in the left panel, where I can change the quantity of already present orders. If you check in website, the similar option respects the option lot sizes, which are currently not respected in the left panel in desktop. That is with respect to scrolling. So if I scroll, the lot prices should change. Just look over into the website, edit options and how they're handled for options, or price change and quantity change, and try to duplicate that during edit options in left panel in desktop.
 
 ### Kite Broker For Real Trading
-Supporting Kite for Real Trading API's, all the their is feature parity with Kotak Neo. With exactly the same implementation.
+Supporting Kite for Real Trading API's, all the their is feature parity with Kotak Neo. With exactly the same implementation. The cancellation optimization present for Kotak Broker need not be applied in Kite Broker. Rest all the mechanism in which orders are placed, target, strategies should be same as currently with website and Kotak.
+
+The Admin can choose whether to use Kotak for real trading or Kite.
+
 
 ### Supporting Real Trading In Desktop Client
 Support Real Trading in Desktop Client, with same support as with Website Real Trading, like trade history refresh button and others.
 
+It should support all features currently supported in website for real trading. Do discuss if you find things need discussion.
+
+### Real Trading or All Trading in Option supporting multiple strike prices.
+1) We can have 2 CE Strike Prices, with orders and stoploss and target profit strategy at the same time.
+2) The 3 charts (One PE and 2 CE), can be in the 5 pane layout both desktop and website.
+3) For Kotak, with 2 strike prices, all optimizations, including auto cancellations handling should be done.
+4) For resume an old session which has open orders, during resuming a paper or real trading session, display definitely those open orders' Strike Prices. (one or 2).
+5) Support in website a similar seaerch feature as in desktop, to choose a chart with a specific strike price. It can be limited search, only for that underlying symbol. Or a much simpler can be just a dropdown to change strike price, or when search button cilck,  option to change the chart either a underlying or CE or PE with specific strike prices. This is required as currently during session starts
+the strike price is auto choosen based on under 50 rupees etc (current price), for 2 strike prices, it has to choosen manually.
+
+### Desktop Split Screen Trading
+ Support in Desktop, if split screen, both screens can have same session. So one option where user can clicks the current replay trading, or paper or real trading and ask it to  split screen, the second screen will be the same paper trading or replay trading. It may have different strike prices of CE /PE etc. We can plan to make it simple, such that no wallet shown or orders only in one. I am open to suggestions.
+
+
+## Nifty 100 and Swing implementation
+
+The approved decisions and sprint implementation record are in
+[the Swing Trading specification](spec-phase21-swing-trading-plan.md).
+All work and review PRs target preprod.
+
+### Expanding Supported Symbols to Nifty 100
+1) Support Nifty 100 symbols.
+2) Make sure it is supported for both website and desktop.
+3) Make sure it is supported for real trading brokers, Kite and Kotak and ICICI Direct for replay trading, paper trading and stepwise.
+4) Support in all forms of trading types, paper, real, step, replay.
+5) Generate scripts to whether you can get historical data for all 100 nifty symbols, in Kotak, Kite and ICICI to know that the symbols mapping is present. Just either fetch latest price or smallest historical data, to know that all symbols mapping are correct. For scripts credentials are present in ddb local.
+6) Extend the symbol chooser in both website and desktop to handle. Don't add dropdown, as we have 2 sectios now, indices and equity symbols. Further in both the symbol selection fields, make it type and options comes, like I type TATA and all tata symbols will come. For quick selection. Feel free for UI suggestions.
+7) Also, support Options if available for these 100 symbols. And you can fix it to NIFTY 100, no need of SENSEX 100. Only nifty is fine.
+
+### Swing Trading Support
+This requirement is for supporting positions across days, and also in multiple symbols, for now only equity, maybe options. Support right now is required right now for paper and real, and replay. Replay is secondary, paper and real are more required.
+
+The thought behind is testing swing trading strategies, that is taking a position in long. In Indian Stock Market short position cannot be across days. Or PE Contract Long in that symbol for taking benefit of bear movement in the stock. 
+
+The session can be long lived, and once a capital is captured, honor it for percentages. For real trading scenario, do the same or now. For real do give the option, for uer to change session capital.
+When system detects mismatch betwween capital and P&L and orders, specially decrease, incerase is fine, then ask user to update session capital. Required for perccentage postion and % P&L Calculation.
+
+Point to note in multiple day trades, there is no leverage in equity.
+
+
+### Real broker/style ownership and downtime recovery
+
+The 2026-10-11 revision in [the Swing implementation plan](spec-phase21-swing-trading-plan.md#real-ownership-and-outage-recovery-revision--2026-10-11-sprint-0)
+supersedes the earlier one-broker/one-operator assumptions. Real accounts permit
+one Day session and one Swing portfolio across users; one user can occupy all
+four Kite/Kotak style combinations. Each account has one shared capital pool.
+Unclosed books retain ownership through outages, pause and screen detach, and
+require reconciliation/verified closure before their slot can be reused. Paper
+and Replay restrictions are unchanged. Implementation and testing status remains
+in the linked document; Real Swing runtime acceptance is not implied by slot or
+funding-helper tests alone.
+
+
+### Ownership and recovery implementation checkpoint (2026-10-11)
+
+Real Day/Swing broker-style slots, shared account funding and Real Swing runtime
+are now connected on the existing feature branch. Website/desktop controls include
+broker reconciliation, opening inventory preview/import, selected funding edits,
+negative cash-correction preview and verified closure with history warnings.
+See the [full implementation checkpoint and exclusions](spec-phase21-swing-trading-plan.md#implementation-checkpoint--ownershiprecovery-revision-2026-10-11).
+Broader linked Swing charts, multi-day Replay and preprod/live acceptance remain
+explicitly outstanding; main/dev promotion remains manual after acceptance.
+
+
+### Swing Trading Improvements
+
+When I open swing trading I see a page with just numbers to enter or purchase without charts.
+1) Change the swing trading UI to support charts and maybe left panel has positions orders etc, or feel free to suggest great UI. Improve the UI, it literally has almost nothing, compared to day trading whicch is so great.
+2) The charts for swing need not be fine, so you can download from kite or kotak or icici breeze 1 minute candles.
+3) The charts would be in website and desktop both, in desktop it is KLine.
+4) I can take position from ccharts or at least use chart picker to pick entry (limit, target), stoploss etc.
+5) Positions should also some P&L.
+6) In swing charts, I can cchoose Day as a candle interval as well, at that time one has to download 1 min for 140 days right, depending on how many candles are to be shown. You can also be clever and download day level data for older days and store it or maybe 1 hour granularity and use it to show Day granularity candles. Feel free to optimize.
+
+### Swing improvements implementation plan
+
+The approved [Swing Improvements sprint/design record](spec-phase21-swing-improvements-plan.md)
+records portfolio-first 1–4 independent charts, confirmed chart picking, daily
+history, position P&L and backend-owned live pricing during 09:15–15:30 IST.
+This is a new sprint track; original Phase 21 status/history remains intact.
+
+
+### Swing Improvements implementation checkpoint — 2026-10-12
+
+Sprints 0–4 are implemented on `feature/swing-chart-workspace` for preprod.
+Sprint 5 automated review/build/browser checks are complete; broker and installed
+Windows acceptance follows preprod merge/deployment. See the [delivery decisions,
+interfaces, test evidence and remaining acceptance scope](spec-phase21-swing-improvements-plan.md#implementation-checkpoint--2026-10-12).
+Swing uses 09:15–15:30 IST for active Paper/Real pricing independently of screens;
+Paper expiry exits begin at 15:15. Main/dev promotion remains manual.
+
+### Linked Swing windows and analytics — 2026-10-12
+
+The approved [linked-window and Swing analytics plan](spec-phase21-swing-linked-analytics-plan.md)
+adds desktop portfolio companions and Swing-aware history, labels, Analysis and
+Stats. The previous chart workspace was merged through PR #655. This extension
+uses a new branch and targets preprod.
+
+
+### Linked windows and Swing Stats implementation checkpoint — 2026-10-12
+
+Desktop companions now share one exact portfolio with independent chart workspaces.
+Both clients have execution history, stable open/closed trade labels, Swing-aware
+Analysis and portfolio/trade/exposure Stats. See the [implementation details,
+accounting conventions and test/acceptance record](spec-phase21-swing-linked-analytics-plan.md#implementation-checkpoint--2026-10-12).
+Work is on the new `feature/swing-linked-analytics` branch targeting preprod;
+installed-Windows and authenticated broker acceptance follows merge/deployment.
+Multi-day Replay, website popups, new strategies and finalized Swing charges remain
+deferred; earlier linked-chart/history pending notes are superseded.
+
+
+PR #656 follow-up review corrections are recorded in the
+[linked Swing delivery record](spec-phase21-swing-linked-analytics-plan.md#pr-656-review-corrections--2026-10-12):
+History initialization, valuation chronology/import attribution, independent drawing
+scopes, label navigation, Day/Swing filters and a single native window close owner.
+Installed Windows and broker acceptance remain after preprod deployment.
+
+
+### Day ownership handover and practice wallet isolation — 2026-10-13
+
+Follow-up to merged PR #656, on `fix/real-day-handover-practice-wallet` from
+preprod `2b2b14a`; delivery PR targets preprod.
+
+“Done for the day” now waits for broker-confirmed flat positions, no pending or
+unresolved orders, durable closure of every live alias, authoritative Day slot
+release and funding participant completion before publishing the final day lock.
+Closed history cannot replace the active owner during verification. Aliases stop
+before releasing the owner, so the next user's session cannot be managed by an old
+viewer. A failed release remains pending and retries; a failed final day-lock write
+can complete after the runtime has ended, provided no outstanding current-day slot
+remains. The original user's IST-day entry barrier is retained.
+
+The daily close intent is persisted. Startup recognizes both closing day locks and
+legacy done locks with outstanding ownership, restores the owned session and
+resumes existing verified closure instead of creating entries. Status reads and
+repeated Done requests resume pending repair. A cross-user start also nudges repair
+when the former owner already requested day completion; it still returns 409 until
+ownership is actually released. Missing/unverifiable metadata retains ownership;
+there is no forced unlock, broad historical scan or new trading lock.
+
+Practice-wallet reset blocking now checks the specific dated ledger used by active
+Day practice sessions. Explicit saved wallet identity takes precedence, with a
+legacy fallback from session type/date. Real books, Swing portfolios, other dated
+wallets and chart-only Live Browse do not block a Day practice wallet. Active or
+paused sessions using that wallet still block it; Paper startup leases and wallet
+revision guards remain unchanged. Broker funds are never reset by this API.
+
+Desktop polls the daily status while closing, including after the session-end
+stream stops, so it can display final completion after ownership release.
+Regression coverage includes release failure/retry, live-owner selection over
+closed history, aliases, restart with closing/done locks, no-runtime outstanding
+ownership, shared Kotak account handover across users, and website/desktop practice
+wallet reads/resets while a separate Real book is active. Deployment to preprod
+and authorized broker acceptance remain required; no live orders were placed.
+
+
+Validation for this follow-up: **244 focused backend checks passed**; full backend
+**2,245 passed**, with the two existing local ICICI-configuration failures
+(`test_missing_strike_returns_400` and `test_invalid_right_returns_400`). Desktop:
+**206 tests passed**, TypeScript check/build passed, and portfolio-management
+browser acceptance passed. The broker handover fixture uses Moto and mocked broker
+reports; authenticated Kotak acceptance is still required after deployment.
+
+
+### Desktop Kotak authentication dialog — 2026-10-13
+
+Desktop Real toolbar previously only checked broker status, and Settings required
+an inline TOTP before its disabled Connect button could be used. Both now open a
+Kotak login dialog using the existing authenticated desktop settings login route.
+The dialog accepts six digits from the authenticator app, focuses the input,
+supports Enter/Cancel/Escape and keyboard focus containment, disables dismissal
+and duplicate submission while connecting, and shows retryable backend errors.
+Codes stay in component memory and are cleared on failure/success/dismissal;
+there is no new credential storage or broker API. The dialog uses a portal so
+Settings cannot accidentally submit/save its own form when login is submitted.
+
+Real startup refreshes authentication before preparing a session. If a cached Kotak
+connection has expired, it opens login and returns without starting a session.
+After login, the user explicitly starts Real trading; no entry/order is retried
+or submitted automatically. Toolbar status is refreshed after connection, and
+Kite retains its token-based connection flow without a Kotak code prompt.
+
+
+Validation: desktop TypeScript/production build and **206 tests passed**. The
+built-app Kotak browser check covers toolbar and Settings prompts, code validation,
+Cancel/Escape, retry and keyboard focus, duplicate/busy submissions, expired cached
+authentication, status refresh, no implicit settings save/session start and Kite
+isolation. Existing Real/Stepwise/Replay/Paper linked-trading browser checks passed.
+Broker responses are synthetic; installed desktop plus real Kotak login acceptance
+remains after preprod deployment. No real authentication codes or orders were used.
+
+
+### Swing connection controls and Day/Swing desktop windows — 2026-10-13
+
+Paper/Real selection is now visible in the main Swing chart toolbar instead of
+being hidden in portfolio management. Switching views saves the current workspace
+and leaves its portfolio, positions, cash, guardrails and backend protection active.
+Paper, Real Kite and Real Kotak retain separate books; changing the visible book
+never migrates positions or closes another portfolio. Dirty labels and failed
+workspace saves still guard navigation. Linked windows keep their pinned portfolio
+and cannot change mode/broker.
+
+The selected Real broker has a read-only authenticated status check through
+`GET /swing/portfolios/broker-status?execution_broker=kotak|kite`, also available
+through the existing desktop facade. It requires Real access and returns only the
+broker name/authenticated flag, without funds reads, slot claims or login. The
+status follows the Swing selection, independently of the user's default Day broker.
+Kotak login is available directly in Swing on desktop and website. Kite gives the
+existing Admin-token guidance. Authentication is rechecked before creating a Real
+portfolio; successful login refreshes status but does not create a portfolio or
+retry an order. Deploy the backend route before using the updated clients.
+
+Native desktop main Swing also offers **Pop out Swing**: open an owned, pinned
+window using existing handoff/preferences storage, then return the main window to
+its Day workspace after successful opening. Existing Day sessions remain mounted
+and running. The popped-out Swing book continues independently, so Day Paper and
+Swing Paper can be used side by side. Failed handoff leaves the main Swing view
+available. **Create linked window** remains for additional Swing views. Pop-out is
+native-desktop-only; closing a window does not close either trading book.
+
+
+Validation for this extension: **68 focused backend checks passed**, including
+selected-broker authentication/authorization and unchanged active Paper balances.
+Both client TypeScript checks/builds and **206 desktop tests passed**. Built desktop
+acceptance covers an open Paper book, direct Kotak login, explicit Real creation,
+return to the saved Paper layout and neither book closing. Shared workspace and
+linked analytics browser checks pass for both renderers, including Pop out Swing
+and pinned companion controls. Native hosting is mocked in browser tests; installed
+Windows handoff, concurrent Day/Swing execution and authorized broker acceptance
+remain after backend/client deployment. No live orders were sent.
 
 
 
+### Swing Trading Improvements
+
+Implementation: [full sprint design and status](spec-phase21-swing-futures-plan.md).
+Separate desktop Day/Swing screens and Swing pop-out are included; website retains
+existing view switching. View changes and window close never close trading books.
+
+1. Swing Trading Entries should support percentage entry, percentage of capital, session or portfolio capital.
+2. Does desktop has similar error display mechanism that website has which doesn't block the trading UI. If not add them.
+3. The chart lines or drawings done are saved and will be shown across day trading and Swing Trading.
+4. In desktop for the markets and indicators, can you take the row out of the charts and show similar to what we have in day trading, collapsable one. It is taking up space in the charts display. And no need of this line "kite · Live quote" It is also taking up space. Sorry adding requirements in runtime.
+5. Change Pick on chart to icon and Place intimidation to icon in desktop. Support Futures in both website and desktop. In desktop can you make the right panel collapsable and left panel too, so that we get more area for charts.
+
+### Supporting Futures Trading in Swing Trading.
+1. Support Futures contracts for current month and when 2 days away from expiry, next month as well.
+2. Currently all futures contracts are monthly expiry.
+3. Support Future contracts for all indices symbols, NIFTY, SENSEX and NIFTY 100 as well.
+4. Calculate the future margin required from web.
+5. Support Futures for paper trading and real trading for both brokers
+6. Support Futures in Stats as well.
 
 
+### Swing/Futures sprint progress — 2026-10-13
+
+[Full implementation status and decisions](spec-phase21-swing-futures-plan.md#actual-implementation-and-validation).
+Sprints 0–6 application work is implemented. Sprint 7 code review and automated
+regression are complete; installed Windows and actual broker acceptance remain
+manual after preprod deployment. Paper Futures is enabled by default for new
+settings; Kite and Kotak Real have independent Admin gates, disabled by default.
+
+Website and desktop support exact Futures contracts, long/short margin sizing,
+offline Paper intentions, official MTM, restart recovery, NRML routing/protection,
+selected-date markers and Futures Stats/Analysis. The linked plan records scope,
+design, review fixes, assumptions and intentionally left-out items. The agreed
+next-month entry window is seven calendar days before actual listed expiry; Nifty
+100 support means eligible constituent stocks, not an invented index contract.
+
+Latest post-review backend regression: **2,331 passed**. Both client TypeScript
+checks and production builds, **216 desktop tests**, shared workspace/linked
+Analytics, actual Day/Swing option drawing sharing, older desktop trading flows,
+website notification and built desktop Kotak login browser checks passed.
+Deploy backend before clients; no live broker orders were sent during validation.
+
+
+### Swing/Futures follow-up review — 2026-10-13
+
+PR #659 now includes fixes for overnight owned execution recovery, expired-entry
+renewal and reopened-position protection, Day/Swing option drawing namespace
+compatibility, and configured Futures SL buffers/ticks. The notification browser
+harness was repaired as well. [Detailed findings, decisions and validation](spec-phase21-swing-futures-plan.md#2026-10-13--follow-up-review-fixes-and-older-feature-regression)
+include **21 new backend regression cases**. Existing Real/Paper/Replay/Stepwise,
+linked PE candles after Fibonacci edits, labels/Stats and broker authentication UI
+passed the exercised regression checks. Installed Windows/live broker acceptance
+remain after preprod deployment; Real Futures gates default off.

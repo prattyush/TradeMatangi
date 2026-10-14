@@ -7,17 +7,25 @@ from app.services import order_service
 logger = logging.getLogger(__name__)
 
 
+def require_entry_allowed(session, order):
+    if getattr(session, "trading_style", "intraday") == "swing":
+        from app.services.swing_portfolio_service import require_entry_allowed as guard
+    else:
+        from app.services.real_trading_day import require_entry_allowed as guard
+    guard(session, order.side, max(0, order.quantity - order.broker_filled_quantity), order.right, order.strike, order.expiry)
+
+
 async def sync_order_edit_async(session, order: Order, new_order_type: OrderType, *, reprice: bool = False, split_operation_id: str | None = None) -> None:
     """Run broker I/O off-loop; keep identity and callback changes on the loop."""
     if session.session_type != "real":
         return
-    from app.services.kotak_service import get_service, KotakError
+    from app.services.execution_broker import get_service
+    from app.services.kotak_service import KotakError
     from app.services.execution_price_service import reprice_trigger
     from app.services.simulation import _is_position_exit
     if getattr(session, "broker_refresh_events", None) is not None:
         raise KotakError("Broker refresh is in progress; retry the edit shortly")
-    from app.services.real_trading_day import require_entry_allowed
-    require_entry_allowed(session, order.side, max(0, order.quantity - order.broker_filled_quantity), order.right, order.strike, order.expiry)
+    require_entry_allowed(session, order)
     previous = order_service.get_order(session.session_id, order.order_id)
     from app.services.order_split import ACTIVE
     split_job = (previous.split_operation if previous else order.split_operation) or {}
@@ -25,9 +33,16 @@ async def sync_order_edit_async(session, order: Order, new_order_type: OrderType
         raise KotakError('Order split is unconfirmed; refresh broker orders before editing')
     if reprice or previous is None or previous.order_type != order.order_type or previous.trigger_price != order.trigger_price:
         await asyncio.to_thread(reprice_trigger, order)
-    broker = get_service()
+    if isinstance(getattr(session, "real_funding_period", None), str) and session.real_funding_period and not _is_position_exit(session, order):
+        from app.services import real_funding, swing_accounting
+        funded = real_funding.pool(session)
+        ticket = f"{session.session_id}:{order.order_id}"
+        held = funded["funding"].get("reservations", {}).get(ticket, {}).get("amount", 0)
+        if order_service._reservation_for(order, order.limit_price) > swing_accounting.mode_available(funded["funding"], session.trading_style) + held:
+            raise KotakError("Edit exceeds the remaining allocation for this trading mode")
+    broker = get_service(session)
     loop = asyncio.get_running_loop()
-    old_id = order.kotak_order_id
+    old_id = order.broker_order_id
     try:
         replacement = None
         if old_id:
@@ -41,12 +56,12 @@ async def sync_order_edit_async(session, order: Order, new_order_type: OrderType
                 broker.deregister_reject_callback(old_id)
                 broker.deregister_cancel_callback(old_id)
                 session.kotak_order_map.pop(order.order_id, None)
-                order.kotak_order_id = None
+                order.broker_order_id = None
             if isinstance(replacement, str) and replacement and replacement != old_id:
                 broker.deregister_fill_callback(old_id)
                 broker.deregister_reject_callback(old_id)
                 broker.deregister_cancel_callback(old_id)
-                order.kotak_order_id = replacement
+                order.broker_order_id = replacement
                 session.kotak_order_map[order.order_id] = replacement
         elif new_order_type in (OrderType.LIMIT, OrderType.STOPLOSS) and _is_position_exit(session, order):
             kwargs = dict(symbol=session.symbol, side="B" if order.side == TradeSide.BUY else "S", qty=order.quantity)
@@ -58,15 +73,15 @@ async def sync_order_edit_async(session, order: Order, new_order_type: OrderType
             else:
                 method = broker.place_options_sl_order if order.right else broker.place_sl_order
                 kwargs.update(trigger_price=order.trigger_price, limit_price=order.limit_price)
-            order.kotak_order_id = await asyncio.to_thread(method, **kwargs)
+            order.broker_order_id = await asyncio.to_thread(submit_once, session, order, method, **kwargs)
             order.execution_role = "exit"
-            session.kotak_order_map[order.order_id] = order.kotak_order_id
+            session.kotak_order_map[order.order_id] = order.broker_order_id
         # Publish the broker identity before registering callbacks: a callback may
         # already be waiting when a replacement/new order is acknowledged.
         if previous is not None:
-            previous.kotak_order_id = order.kotak_order_id
+            previous.broker_order_id = order.broker_order_id
             previous.execution_role = order.execution_role
-        if order.kotak_order_id and order.kotak_order_id != old_id:
+        if order.broker_order_id and order.broker_order_id != old_id:
             register_callbacks(session, order, broker, loop)
     except Exception as exc:
         logger.warning("broker_order_edit_failed session=%s order=%s: %s", session.session_id, order.order_id, exc)
@@ -88,7 +103,7 @@ async def persist_order_async(order, *, strict=False):
 
 
 async def convert_order_async(session, order, new_type, price=None):
-    if session.session_type == "real" and order.kotak_order_id and new_type in (OrderType.LIMIT, OrderType.STOPLOSS) and new_type != order.order_type:
+    if session.session_type == "real" and order.broker_order_id and new_type in (OrderType.LIMIT, OrderType.STOPLOSS) and new_type != order.order_type:
         from app.services.broker_conversion import start
         return await start(session, order, new_type, price)
     candidate = order.model_copy(deep=True)
@@ -113,7 +128,7 @@ async def convert_order_async(session, order, new_type, price=None):
     else:
         result = order_service.convert_order(session.session_id, order.order_id, new_type, session.date, price, persist=False, execution_gap_pct=candidate.execution_gap_pct)
     if result:
-        result.kotak_order_id = candidate.kotak_order_id
+        result.broker_order_id = candidate.broker_order_id
         result.execution_role = candidate.execution_role
         if session.session_type == "real":
             result.limit_price = candidate.limit_price
@@ -130,7 +145,11 @@ def sync_order_edit(session, order: Order, new_order_type: OrderType, *, reprice
     if getattr(session, "broker_refresh_events", None) is not None:
         from app.services.kotak_service import KotakError
         raise KotakError("Broker refresh is in progress; retry the edit shortly")
-    from app.services.kotak_service import get_service as get_kotak, KotakError
+    period = getattr(session, "real_funding_period", None)
+    if getattr(session, "trading_style", None) == "swing" or isinstance(period, str) and period:
+        require_entry_allowed(session, order)
+    from app.services.execution_broker import get_service as get_kotak
+    from app.services.kotak_service import KotakError
     from app.services.simulation import _register_kotak_sl_for_order
     from app.services.execution_price_service import reprice_trigger
     previous = order_service.get_order(session.session_id, order.order_id)
@@ -140,27 +159,27 @@ def sync_order_edit(session, order: Order, new_order_type: OrderType, *, reprice
     if reprice or previous is None or previous.order_type != order.order_type or previous.trigger_price != order.trigger_price:
         reprice_trigger(order)
     try:
-        if order.kotak_order_id:
-            broker = get_kotak()
-            old_id = order.kotak_order_id
+        if order.broker_order_id:
+            broker = get_kotak(session)
+            old_id = order.broker_order_id
             replacement = None
             if new_order_type == OrderType.LIMIT:
-                replacement = broker.modify_sl_to_limit_order(order.kotak_order_id, order.limit_price, order.quantity)
+                replacement = broker.modify_sl_to_limit_order(order.broker_order_id, order.limit_price, order.quantity)
             elif new_order_type == OrderType.STOPLOSS:
-                replacement = broker.modify_sl_order(order.kotak_order_id, order.trigger_price,
+                replacement = broker.modify_sl_order(order.broker_order_id, order.trigger_price,
                                        order.limit_price, order.quantity)
             else:
-                broker.cancel_order(order.kotak_order_id, purpose="conversion")
-                broker.deregister_fill_callback(order.kotak_order_id)
-                broker.deregister_reject_callback(order.kotak_order_id)
-                broker.deregister_cancel_callback(order.kotak_order_id)
+                broker.cancel_order(order.broker_order_id, purpose="conversion")
+                broker.deregister_fill_callback(order.broker_order_id)
+                broker.deregister_reject_callback(order.broker_order_id)
+                broker.deregister_cancel_callback(order.broker_order_id)
                 session.kotak_order_map.pop(order.order_id, None)
-                order.kotak_order_id = None
+                order.broker_order_id = None
             if isinstance(replacement, str) and replacement and replacement != old_id:
                 broker.deregister_fill_callback(old_id)
                 broker.deregister_reject_callback(old_id)
                 broker.deregister_cancel_callback(old_id)
-                order.kotak_order_id = replacement
+                order.broker_order_id = replacement
                 session.kotak_order_map[order.order_id] = replacement
                 register_callbacks(session, order, broker, asyncio.get_running_loop())
         elif new_order_type in (OrderType.LIMIT, OrderType.STOPLOSS):
@@ -172,7 +191,7 @@ def sync_order_edit(session, order: Order, new_order_type: OrderType, *, reprice
 
 
 def convert_order(session, order, new_type, price=None):
-    if session.session_type == "real" and order.kotak_order_id and new_type in (OrderType.LIMIT, OrderType.STOPLOSS) and new_type != order.order_type:
+    if session.session_type == "real" and order.broker_order_id and new_type in (OrderType.LIMIT, OrderType.STOPLOSS) and new_type != order.order_type:
         # Legacy strategy callers already run on the application loop. Schedule the
         # shared worker and keep the confirmed state until its event arrives.
         from app.services.broker_conversion import enqueue
@@ -199,7 +218,7 @@ def convert_order(session, order, new_type, price=None):
     else:
         result = order_service.convert_order(session.session_id, order.order_id, new_type, session.date, price)
     if result:
-        result.kotak_order_id = candidate.kotak_order_id
+        result.broker_order_id = candidate.broker_order_id
         result.execution_role = candidate.execution_role
         if session.session_type == "real":
             result.limit_price = candidate.limit_price
@@ -219,10 +238,30 @@ def register_callbacks(session, order, broker, loop):
     from app.services import trading, real_broker_state
 
     def fill(k_id, side, quantity, price):
+        from app.models.schemas import SimulationState
+        if getattr(session, "real_verified_closed", False) is True or session.state == SimulationState.ENDED:
+            return
+        if getattr(session, 'real_engine_lease_required', False):
+            import time
+            if time.monotonic() >= session.real_engine_valid_until:
+                return
         if real_broker_state.fill_deferred(session, fill, k_id, side, quantity, price):
             return
         current = order_service.get_order(session.session_id, order.order_id)
-        if current is None or current.kotak_order_id != k_id or quantity <= current.broker_filled_quantity or price <= 0:
+        if current is None or current.broker_order_id != k_id or price <= 0 or quantity < current.broker_filled_quantity:
+            return
+        if quantity == current.broker_filled_quantity:
+            if price != current.filled_price:
+                from app.services.kotak_reports import invalidate
+                invalidate(broker)
+                task = asyncio.create_task(real_broker_state.refresh(session, broker))
+                task.add_done_callback(lambda t: t.exception() if not t.cancelled() else None)
+            return
+        if session.instrument_type == "futures":
+            from app.services.futures_real import refresh_after_event
+            task=getattr(session,"futures_refresh_task",None)
+            if task is None or task.done():
+                session.futures_refresh_task=asyncio.create_task(refresh_after_event(session))
             return
         from app.services import protection_recovery
         before = trading.get_position(session.session_id, session.symbol, right=current.right, strike=current.strike, expiry=current.expiry)
@@ -234,6 +273,12 @@ def register_callbacks(session, order, broker, loop):
         delta = quantity - previous_quantity
         value = quantity * price
         delta_price = (value - previous_value) / delta
+        if delta_price <= 0:
+            from app.services.kotak_reports import invalidate
+            invalidate(broker)
+            task = asyncio.create_task(real_broker_state.refresh(session, broker))
+            task.add_done_callback(lambda t: t.exception() if not t.cancelled() else None)
+            return
         current.broker_filled_quantity = quantity
         current.broker_filled_value = value
         current.filled_price = price
@@ -254,7 +299,7 @@ def register_callbacks(session, order, broker, loop):
             right=current.right, strike=current.strike, expiry=current.expiry,
             brokerage_per_order=session.brokerage_per_order, user_id=session.user_id,
             session_type="real", source=current.source,
-            trade_id="kotak-live:" + k_id, kotak_order_id=k_id, cumulative=True, defer_exit_reconciliation=True)
+            trade_id=f"{order.execution_broker or 'kotak'}-live:" + k_id, broker_order_id=k_id, cumulative=True, defer_exit_reconciliation=True)
         positions = getattr(session, "broker_positions", None)
         if positions is not None or getattr(session, '_fifo_executions', None) is not None:
             real_broker_state.apply_position_fill(session, current, delta, delta_price)
@@ -271,16 +316,24 @@ def register_callbacks(session, order, broker, loop):
             session.queue.put_nowait(json.dumps({"type": "position_snapshot", "session_id": session.session_id,
                 "positions": session.broker_positions, "state_version": session._broker_state_version,
                 "state_generation": real_broker_state.STATE_GENERATION, "trade": snapshot_trade if isinstance(snapshot_trade, dict) else None}))
+        refresh_funding_after_broker_event(session)
         session.queue.put_nowait(json.dumps({"type": "order_filled" if current.kotak_fill_confirmed else "order_updated",
             "order_id": current.order_id, "side": current.side.value, "quantity": quantity,
             "trigger_price": current.trigger_price, "filled_price": price,
             "filled_at": current.filled_at, "right": current.right}))
 
     def rejected(k_id, reason):
+        from app.models.schemas import SimulationState
+        if getattr(session, "real_verified_closed", False) is True or session.state == SimulationState.ENDED:
+            return
+        if getattr(session, 'real_engine_lease_required', False):
+            import time
+            if time.monotonic() >= session.real_engine_valid_until:
+                return
         if real_broker_state.fill_deferred(session, rejected, k_id, reason):
             return
         current = order_service.get_order(session.session_id, order.order_id)
-        if current is None or current.kotak_order_id != k_id or current.kotak_fill_confirmed or current.status == OrderStatus.CANCELLED:
+        if current is None or current.broker_order_id != k_id or current.kotak_fill_confirmed or current.status == OrderStatus.CANCELLED:
             return
         if current.reserved_amount:
             order_service._credit_reservation(current, current.reserved_amount, session.date)
@@ -288,7 +341,8 @@ def register_callbacks(session, order, broker, loop):
         current.status = OrderStatus.CANCELLED
         order_service._write_order_to_db(current)
         session.queue.put_nowait(json.dumps({"type": "order_cancelled", "order_id": current.order_id}))
-        session.queue.put_nowait(json.dumps({"type": "broker_error", "message": f"Kotak rejected order: {reason}"}))
+        session.queue.put_nowait(json.dumps({"type": "broker_error", "message": f"Broker rejected order: {reason}"}))
+        refresh_funding_after_broker_event(session)
         logger.warning("broker_order_rejected session=%s order=%s reason=%s", session.session_id, current.order_id, reason)
         if current.source == "cancellation_recovery":
             from app.services.protection_recovery import note_cancel
@@ -298,10 +352,17 @@ def register_callbacks(session, order, broker, loop):
             note_cancel(session, current, {"status": "rejected", "raw_reason": reason, "received_at": current.cancelled_at, "raw": {}})
 
     def cancelled(k_id, metadata):
+        from app.models.schemas import SimulationState
+        if getattr(session, "real_verified_closed", False) is True or session.state == SimulationState.ENDED:
+            return
+        if getattr(session, 'real_engine_lease_required', False):
+            import time
+            if time.monotonic() >= session.real_engine_valid_until:
+                return
         if real_broker_state.fill_deferred(session, cancelled, k_id, metadata):
             return
         current = order_service.get_order(session.session_id, order.order_id)
-        if current is None or current.kotak_order_id != k_id or current.kotak_fill_confirmed or current.status == OrderStatus.CANCELLED:
+        if current is None or current.broker_order_id != k_id or current.kotak_fill_confirmed or current.status == OrderStatus.CANCELLED:
             return
         if current.broker_conversion and current.broker_conversion.get("state") in ("cancelling", "replacing"):
             # Conversion worker observes cancellation; fills still use the ordinary handler.
@@ -315,31 +376,143 @@ def register_callbacks(session, order, broker, loop):
         current.cancelled_at = metadata.get("received_at")
         from app.services import protection_recovery
         protection_recovery.note_cancel(session, current, metadata)
+        refresh_funding_after_broker_event(session)
         session.queue.put_nowait(json.dumps({"type": "order_cancelled", "order_id": current.order_id, "reason": current.cancellation_reason, "broker_status": "cancelled"}))
 
-    broker.register_fill_callback(order.kotak_order_id, fill, loop)
-    broker.register_cancel_callback(order.kotak_order_id, cancelled, loop)
-    broker.register_reject_callback(order.kotak_order_id, rejected, loop)
+    broker.register_fill_callback(order.broker_order_id, fill, loop)
+    broker.register_cancel_callback(order.broker_order_id, cancelled, loop)
+    broker.register_reject_callback(order.broker_order_id, rejected, loop)
 
 
 def submit_immediate(session, order, loop):
     """Submit a marketable LIMIT now, retaining exact contract and entry intent."""
-    from app.services.kotak_service import get_service
+    from app.services.execution_broker import get_service
     from app.services.simulation import _is_position_exit
-    from app.services.real_trading_day import require_entry_allowed
-    require_entry_allowed(session, order.side, order.quantity, order.right, order.strike, order.expiry)
-    broker = get_service()
+    require_entry_allowed(session, order)
+    broker = get_service(session)
     role = "exit" if _is_position_exit(session, order) else "entry"
     kwargs = dict(symbol=session.symbol, side="B" if order.side == TradeSide.BUY else "S",
                   qty=order.quantity, price=order.limit_price)
     if order.right:
         kwargs.update(right=order.right, strike=order.strike, expiry=order.expiry)
-        broker_id = broker.place_options_limit_order(**kwargs)
+        broker_id = submit_once(session, order, broker.place_options_limit_order, **kwargs)
     else:
-        broker_id = broker.place_limit_order(**kwargs)
+        broker_id = submit_once(session, order, broker.place_limit_order, **kwargs)
     order.execution_role = role
-    order.kotak_order_id = broker_id
+    order.broker_order_id = broker_id
     session.kotak_order_map[order.order_id] = broker_id
     order_service._write_order_to_db(order)
     register_callbacks(session, order, broker, loop)
     logger.info("broker_immediate_submitted session=%s order=%s role=%s", session.session_id, order.order_id, role)
+
+
+async def submit_immediate_async(session,order):
+    """Broker I/O leaves the event loop; callback registration stays on it."""
+    from app.services.execution_broker import get_service
+    from app.services.simulation import _is_position_exit
+    await asyncio.to_thread(require_entry_allowed,session,order)
+    broker=await asyncio.to_thread(get_service,session)
+    role="exit" if _is_position_exit(session,order) else "entry"
+    kwargs=dict(symbol=session.symbol,side="B" if order.side==TradeSide.BUY else "S",qty=order.quantity,price=order.limit_price)
+    if order.right:
+        kwargs.update(right=order.right,strike=order.strike,expiry=order.expiry)
+    method=broker.place_options_limit_order if order.right else broker.place_limit_order
+    identifier=await asyncio.to_thread(submit_once,session,order,method,**kwargs)
+    order.execution_role=role
+    order.broker_order_id=identifier
+    session.kotak_order_map[order.order_id]=identifier
+    await persist_order_async(order,strict=True)
+    register_callbacks(session,order,broker,asyncio.get_running_loop())
+
+
+def submit_once(session, order, method, **kwargs):
+    """Persist broker intent before sending a write; uncertainty is never a retry."""
+    from app.services.execution_broker import name
+    from app.services.kotak_service import KotakError, KotakOrderRejected
+    order.trading_style = 'swing' if getattr(session,'trading_style',None)=='swing' else 'intraday'
+    order.portfolio_id = getattr(session,'portfolio_id',None) if order.trading_style=='swing' else None
+    order.broker_product=('NRML' if order.right or session.instrument_type == 'futures' else 'CNC') if order.trading_style=='swing' else 'MIS'
+    order.execution_broker = name(session)
+    order.broker_account_id = getattr(session, 'broker_account_id', None)
+    if order.recovery_state in ('submitting', 'unknown'):
+        raise KotakError('Submission is unconfirmed; refresh broker orders before retrying')
+    period = getattr(session, 'real_funding_period', None)
+    if getattr(session, 'session_type', None) == 'real' and isinstance(period, str) and period:
+        require_entry_allowed(session, order)
+    tag = 'tm' + order.order_id.replace('-', '')[:18]
+    order.analytics = {**(order.analytics or {}), 'broker_tag': tag}
+    import time
+    order.broker_submission_at = int(time.time() * 1000)
+    order.recovery_state = 'submitting'
+    cached = order_service.get_order(order.session_id, order.order_id)
+    def mirror():
+        if cached is not None and cached is not order:
+            cached.recovery_state = order.recovery_state
+            cached.broker_submission_at = order.broker_submission_at
+            cached.analytics = order.analytics
+            cached.broker_order_id = order.broker_order_id
+    mirror()
+    order_service._write_order_to_db(order, strict=True)
+    if isinstance(getattr(session, 'real_funding_period', None), str) and session.real_funding_period:
+        from app.services.real_funding import mark_pending
+        mark_pending(session)
+    try:
+        identifier = method(**kwargs, tag=tag)
+        if not isinstance(identifier, str) or not identifier:
+            raise KotakError('Broker acknowledgement has no order identity')
+    except Exception as exc:
+        order.recovery_state = 'failed' if isinstance(exc, KotakOrderRejected) else 'unknown'
+        mirror()
+        order_service._write_order_to_db(order, strict=True)
+        refresh_funding_after_broker_event(session)
+        raise
+    order.broker_order_id = identifier
+    order.recovery_state = None
+    mirror()
+    order_service._write_order_to_db(order, strict=True)
+    refresh_funding_after_broker_event(session)
+    return identifier
+
+
+def refresh_funding_after_broker_event(session):
+    """A bounded Day refresh clears confirmed ACK/fill funding effects for both owners."""
+    period = getattr(session, 'real_funding_period', None)
+    if isinstance(period, str) and period and getattr(session, "real_engine_lease_required", False) is True and not getattr(session, "real_verified_closed", False):
+        from app.services.real_funding import mark_pending
+        try:
+            mark_pending(session)
+        except Exception:
+            session.real_recovery_pending = True
+            logger.exception("Broker funding update remains pending session=%s", session.session_id)
+    if not isinstance(period, str) or not period or getattr(session, 'trading_style', 'intraday') == 'swing':
+        return  # Swing's persistent engine already refreshes its complete journal.
+    task = getattr(session, 'real_funding_refresh_task', None)
+    session.real_funding_refresh_dirty = True
+    if task and not task.done():
+        return
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return
+    async def run():
+        from app.services import execution_broker, real_broker_state
+        from app.models.schemas import SimulationState
+        for _ in range(3):
+            await asyncio.sleep(2)
+            if session.state == SimulationState.ENDED:
+                return
+            session.real_funding_refresh_dirty = False
+            try:
+                await real_broker_state.refresh(session, execution_broker.get_service(session))
+                if not session.real_funding_refresh_dirty:
+                    return
+            except Exception as exc:  # noqa: BLE001 - keep the pending entry barrier on incomplete broker reports
+                logger.warning('real_funding_refresh_pending session=%s reason=%s', session.session_id, exc)
+    session.real_funding_refresh_task = loop.create_task(run())
+
+
+def refresh_account_peers(session):
+    from app.services import simulation
+    for peer in list(simulation._sessions.values()):
+        if peer.session_type == "real" and peer.session_id != session.session_id and peer.execution_broker == session.execution_broker and peer.broker_account_id == session.broker_account_id and peer.state.value != "ended" and not peer.real_verified_closed:
+            refresh_funding_after_broker_event(peer)

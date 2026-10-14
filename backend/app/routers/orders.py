@@ -46,7 +46,7 @@ def _reservation_ledger_id(session) -> str | None:
 
 
 def _uses_equity_intraday_margin(session, order_right: str | None = None) -> bool:
-    if order_right is not None or session.instrument_type != "equity":
+    if getattr(session, "trading_style", "intraday") == "swing" or order_right is not None or session.instrument_type != "equity":
         return False
     return session.session_type in ("sim", "stepwise", "paper", "real")
 
@@ -71,7 +71,7 @@ def _get_closing_orders(session, right: str | None) -> list[Order]:
 def _stoploss_available_quantity(
     session,
     right: str | None,
-    strike: int | None,
+    strike: int | float | None,
     expiry: str | None,
     exclude_order_id: str | None = None,
 ) -> tuple[int, int]:
@@ -161,7 +161,7 @@ class MissingStoplossRequest(BaseModel):
     trigger_price: float = Field(gt=0, allow_inf_nan=False)
     request_id: str = Field(min_length=1, max_length=100)
     right: str | None = None
-    strike: int | None = None
+    strike: int | float | None = None
     expiry: str | None = None
 
 
@@ -490,7 +490,7 @@ async def _place_order_locked(req: PlaceOrderRequest):
             from app.services.broker_order_service import submit_immediate
             submit_immediate(session, order, asyncio.get_running_loop())
         except Exception as exc:
-            if not order.kotak_order_id:
+            if not order.broker_order_id and order.recovery_state not in ("submitting", "unknown"):
                 order_service.cancel_order(session.session_id, order.order_id, session.date)
             raise HTTPException(status_code=502, detail=f"Broker placement failed: {exc}") from exc
 
@@ -499,7 +499,8 @@ async def _place_order_locked(req: PlaceOrderRequest):
         try:
             sim_svc._register_kotak_sl_for_order(session, order, asyncio.get_running_loop())
         except Exception as exc:
-            order_service.cancel_order(session.session_id, order.order_id, session.date)
+            if not order.broker_order_id and order.recovery_state not in ("submitting", "unknown"):
+                order_service.cancel_order(session.session_id, order.order_id, session.date)
             logger.warning("broker_exit_place_failed session=%s order=%s: %s", session.session_id, order.order_id, exc)
             raise HTTPException(status_code=502, detail=f"Broker exit placement failed: {exc}") from exc
 
@@ -586,7 +587,7 @@ async def _place_order_locked(req: PlaceOrderRequest):
                 except Exception:
                     pass
             except Exception as exc:
-                if extra_order and not extra_order.kotak_order_id:
+                if extra_order and not extra_order.broker_order_id:
                     order_service.cancel_order(session.session_id, extra_order.order_id, session.date)
                 logger.warning("broker_split_exit_failed session=%s quantity=%d: %s", session.session_id, extra_qty, exc)
                 session.queue.put_nowait(json.dumps({"type": "broker_error", "message": f"Additional exit chunk ({extra_qty}) failed: {exc}"}))
@@ -618,12 +619,12 @@ async def _cancel_order_locked(order_id, session_id, session):
     if existing is None or existing.status != order_service.OrderStatus.PENDING:
         raise HTTPException(status_code=404, detail="Order not found or already closed")
     _require_confirmed_recovery(existing)
-    if existing.kotak_order_id:
+    if existing.broker_order_id:
         from app.services.kotak_protection import suppress, rollback_suppression, definitive_refusal
         previous = await suppress(session, existing, max(0, existing.quantity - existing.broker_filled_quantity))
         try:
-            from app.services.kotak_service import get_service as get_kotak
-            await asyncio.to_thread(get_kotak().cancel_order, existing.kotak_order_id, initiator="user", purpose="user_cancel", context={"session_id": session_id, "order_id": order_id, "user_id": session.user_id})
+            from app.services.execution_broker import get_service as get_kotak
+            await asyncio.to_thread(get_kotak(session).cancel_order, existing.broker_order_id, initiator="user", purpose="user_cancel", context={"session_id": session_id, "order_id": order_id, "user_id": session.user_id})
         except Exception as exc:
             if definitive_refusal(exc):
                 await rollback_suppression(existing, previous)
@@ -798,7 +799,7 @@ async def _update_order_locked(session, order_id, req, session_id):
     if order is None:
         raise HTTPException(status_code=404, detail="Order not found or not pending")
 
-    order.kotak_order_id = candidate.kotak_order_id
+    order.broker_order_id = candidate.broker_order_id
     order.execution_role = candidate.execution_role
     await persist_order_async(order)
     return order

@@ -126,6 +126,9 @@ _KITE_NAMES: dict[str, str] = {
 }
 
 
+from app.config import SUPPORTED_SYMBOLS as _catalogue
+_KITE_NAMES.update({key: value["nse_symbol"] for key, value in _catalogue.items() if value.get("nse_symbol")})
+
 def fetch_equity_instrument_token(symbol: str) -> tuple[str, int]:
     """
     Return (exchange, instrument_token) for an equity symbol.
@@ -148,7 +151,7 @@ def fetch_equity_instrument_token(symbol: str) -> tuple[str, int]:
     raise ValueError(f"Instrument token not found for {symbol} on NSE")
 
 
-def fetch_options_instrument_token(symbol: str, expiry: str, strike: int, right: str) -> int:
+def fetch_options_instrument_token(symbol: str, expiry: str, strike: int | float, right: str) -> int:
     """
     Return the Kite instrument_token for an options contract.
     expiry: YYYY-MM-DD  |  right: "CE" or "PE"
@@ -174,7 +177,7 @@ def fetch_options_instrument_token(symbol: str, expiry: str, strike: int, right:
     )
 
 
-def _lookup_options_token(cache_path: Path, symbol: str, expiry: str, strike: int, right: str) -> int | None:
+def _lookup_options_token(cache_path: Path, symbol: str, expiry: str, strike: int | float, right: str) -> int | None:
     if not cache_path.exists():
         return None
     right_upper = right.upper()
@@ -195,7 +198,7 @@ def _lookup_options_token(cache_path: Path, symbol: str, expiry: str, strike: in
             if (
                 row.get("name", "").upper() == kite_name
                 and row_expiry == expiry_dt
-                and abs(row_strike - strike) < 0.5
+                and abs(row_strike - strike) < 1e-8
             ):
                 return int(row["instrument_token"])
     return None
@@ -338,7 +341,7 @@ def fetch_kite_1min(symbol: str, date: str) -> "pd.DataFrame":
     return df
 
 
-def fetch_kite_1min_options(symbol: str, date: str, strike: int, expiry: str, right: str) -> "pd.DataFrame":
+def fetch_kite_1min_options(symbol: str, date: str, strike: int | float, expiry: str, right: str) -> "pd.DataFrame":
     """
     Fetch native Kite 1-minute options OHLC for today's historical policy.
     Cache: data/ohlcdata/{SYMBOL}-{CE|PE}-{STRIKE}-{EXPIRY_COMPACT}-{DD-MM-YYYY}-kite1m.parquet

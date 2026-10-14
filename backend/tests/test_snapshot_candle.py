@@ -152,3 +152,15 @@ async def test_reconstruction_file_read_runs_off_event_loop(monkeypatch):
     monkeypatch.setattr('app.services.snapshot_candle_service.reconstruct_candle', read)
     assert await snapshots.snapshot_candle('event-one',session_id='session',instrument='underlying',user_id='alice') == {'candle':None}
     assert threads and threads[0] != thread
+
+
+
+def test_fractional_snapshot_strike_keeps_exact_cache_identity(cached):
+    from decimal import Decimal
+    path, frame = cached
+    frame.to_parquet(path)
+    captured = snapshot()
+    captured['snapshot']['strike_ce'] = Decimal('25000.5')
+    with patch('app.services.historical_data_service._path',return_value=path) as lookup:
+        assert reconstruct_candle(captured,'CE')['close']==102
+    lookup.assert_called_once_with('breeze','NIFTY',DATE,25000.5,'2026-10-13','CE')

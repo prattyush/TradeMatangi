@@ -3,6 +3,7 @@
 body { margin: 0; overflow: hidden; }
 main { height: 100vh; display: grid; grid-template-rows: 48px minmax(0, 1fr); }
 header { display: flex; align-items: center; gap: 8px; padding: 0 12px; background: #181d27; border-bottom: 1px solid #293142; white-space: nowrap; overflow-x: auto; }
+main > header { overflow-y: hidden; }
 button, select, input { color: inherit; background: #252c39; border: 1px solid #3b4659; border-radius: 4px; padding: 6px 9px; }
 button { position: relative; cursor: pointer; transition: background-color .12s ease, border-color .12s ease, box-shadow .12s ease; }
 button:hover:not(:disabled) { background: #30394a; border-color: #64748b; }
@@ -28,6 +29,10 @@ input { width: 160px; }
 .live-controls button { background: #1d4ed8; border-color: #3b82f6; color: #fff; font-weight: 600; }
 .live-controls button:hover:not(:disabled) { background: #2563eb; }
 .run-controls input { width: 124px; padding: 3px 5px; font-size: .72rem; }
+.run-controls input[type="date"] { width: 112px; }
+.run-controls input[type="time"] { width: 87px; padding-inline: 2px; }
+.run-controls input[type="time"]::-webkit-datetime-edit { padding: 0; }
+.run-controls input[type="time"]::-webkit-calendar-picker-indicator { width: 12px; padding: 0; margin: 0; }
 .run-error { position: fixed; z-index: 5; top: 50px; left: 12px; margin: 0; padding: 5px 8px; background: #7f1d1d; color: #fecaca; font-size: .75rem; }
 .run-notice { position: fixed; z-index: 5; top: 50px; left: 12px; margin: 0; padding: 5px 8px; background: #14532d; color: #bbf7d0; font-size: .75rem; }
 .layout-control { margin-left: auto; display: flex; align-items: center; gap: 5px; font-size: .78rem; }
@@ -275,5 +280,16 @@ input { width: 160px; }
 .desktop-order-price-controls { display: flex; align-items: center; gap: 3px; }
 .desktop-order-price-controls input { flex: 1; width: 65px; }
 
+.toolbar-icon-button { position: relative; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.toolbar-icon-button[aria-pressed="true"] { background: #134e4a; border-color: #2dd4bf; color: #99f6e4; }
+.wallet-button { display: inline-flex; align-items: center; gap: 4px; }
 .target-profit-editor .target-profit-icon { width: 28px; height: 26px; padding: 3px; display: inline-flex; align-items: center; justify-content: center; }
 .target-profit-editor .target-profit-delete { color: #f87171; }
+
+.kotak-login-backdrop { z-index: 150; }
+.kotak-login-dialog { width: min(420px, 90vw); padding: 20px; border: 1px solid #475569; border-radius: 10px; background: #151a23; color: #e5e7eb; box-shadow: 0 16px 48px #0008; }
+.kotak-login-dialog header, .kotak-login-dialog footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.kotak-login-dialog p { font-size: 13px; line-height: 1.5; }
+.kotak-login-dialog label { display: flex; flex-direction: column; gap: 8px; }
+.kotak-login-dialog input { font-size: 20px; letter-spacing: .2em; margin-bottom: 16px; }
+.kotak-login-dialog footer { justify-content: flex-end; }

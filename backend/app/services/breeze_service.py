@@ -19,6 +19,7 @@ Usage (primary stream source — paper/real sessions):
 """
 from __future__ import annotations
 
+from app.services.instrument_identity import strike_number
 import asyncio
 import logging
 import threading
@@ -183,6 +184,7 @@ class BreezeStreamManager:
         self._option_scrip_map: dict[str, tuple[int, str]] = {}
         # ScripCode → the exact desktop/paper route owned by this manager.
         self._option_scrip_routes: dict[str, str] = {}
+        self._future_scrip_routes: dict[str, str] = {}
         # A provider instrument can be used by multiple desktop tiles (for
         # example NIFTY 3m and NIFTY 5m). Keep every destination for a route.
         self._route_queues: dict[str, list[asyncio.Queue]] = {}
@@ -219,7 +221,13 @@ class BreezeStreamManager:
         # us; only these exact ScripCodes may be accepted below.
         self._option_scrip_map.clear()
         self._option_scrip_routes.clear()
+        self._future_scrip_routes.clear()
         for inst in instruments:
+            if inst.get("product_type") == "futures":
+                from app.services.breeze_master import future_scrip_codes
+                for code in future_scrip_codes(inst["stock_code"], inst["exchange_code"], _feed_spec(inst)["expiry_date"]):
+                    self._future_scrip_routes[code] = self.instrument_route_key(inst)
+                continue
             if inst.get("product_type") != "options" or not inst.get("right"):
                 continue
             expiry_raw = _feed_spec(inst)["expiry_date"]
@@ -228,7 +236,7 @@ class BreezeStreamManager:
                 scrip_map = self._build_scrip_map(
                     inst["stock_code"],
                     inst["exchange_code"],
-                    int(float(inst["strike_price"])),
+                    strike_number(float(inst["strike_price"])),
                     right_label,
                     expiry_raw,
                 )
@@ -364,7 +372,7 @@ class BreezeStreamManager:
         self,
         stock_code: str,
         exchange_code: str,
-        strike: int,
+        strike: int | float,
         right: str,
         expiry_breeze: str,
     ) -> dict[str, tuple[int, str]]:
@@ -421,6 +429,9 @@ class BreezeStreamManager:
 
     @staticmethod
     def instrument_route_key(instrument: dict) -> str:
+        if instrument.get("product_type") == "futures":
+            spec = _feed_spec(instrument)
+            return f"future:{spec['exchange_code']}:{spec['stock_code']}:{spec['expiry_date']}"
         if instrument.get("product_type") == "options":
             spec = _feed_spec(instrument)
             right = _normalise_right(spec["right"])
@@ -458,6 +469,9 @@ class BreezeStreamManager:
                 right = _normalise_right(tick.get("right")) or None
                 scrip_code = _scrip_code(tick)
                 mapped = self._option_scrip_map.get(scrip_code)
+                future_route = self._future_scrip_routes.get(scrip_code)
+                if future_route:
+                    right = None
 
                 # Breeze option ticks (especially BFO / SENSEX) omit
                 # right/strike_price; identify options by the presence of
@@ -466,7 +480,7 @@ class BreezeStreamManager:
                 # Note: Breeze index ticks ALSO carry quotes: "Quotes Data"
                 # but lack OI/CHNGOI — using OI/CHNGOI as the option
                 # discriminator avoids misclassifying the index tick.
-                is_option_tick = (
+                is_option_tick = not future_route and (
                     "OI" in tick
                     or "CHNGOI" in tick
                     or bool(right)
@@ -515,9 +529,9 @@ class BreezeStreamManager:
                 # instead of only the first tile in the screen.
                 equity_instruments = [
                     instrument for instrument in self._instruments
-                    if instrument.get("product_type") != "options"
+                    if instrument.get("product_type", "cash") == "cash"
                 ]
-                if not right:
+                if not right and not future_route:
                     # The shared callback includes index ticks even for an
                     # option-only manager. Never forward an unowned cash tick
                     # for the hub to relabel as that manager's option contract.
@@ -547,7 +561,7 @@ class BreezeStreamManager:
                 if right:
                     route_key = self._option_scrip_routes.get(scrip_code)
                 else:
-                    route_key = equity_route_key
+                    route_key = future_route or equity_route_key
 
                 # Keep OHLC accumulators independent for different tiles,
                 # especially options with the same underlying and right but

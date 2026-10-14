@@ -98,3 +98,10 @@ async def history_sharing(user_id: str = Depends(get_analysis_user_id)):
 @router.put('/real-history-sharing')
 async def save_history_sharing(req: HistorySharingRequest, user_id: str = Depends(get_analysis_user_id)):
     return await users.save_history_sharing(req, user_id)
+
+
+@router.get("/broker/status")
+async def execution_status(user_id: str = Depends(get_analysis_user_id)):
+    require_real_trading_access(user_id)
+    from app.routers.execution_brokers import status_for
+    return await status_for(user_id)

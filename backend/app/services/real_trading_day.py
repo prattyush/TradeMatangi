@@ -66,13 +66,25 @@ def finish(user_id, date):
 
 
 def require_entry_allowed(session, side, quantity, right=None, strike=None, expiry=None):
-    if session.session_type != 'real':
+    if session.session_type != 'real' or getattr(session,'trading_style','intraday') == 'swing':
         return
+    if getattr(session, 'real_start_preparing', False) and session.state.value == 'idle' and not session.real_closing:
+        raise HTTPException(409, 'Real startup is not complete; recover or close the session before trading')
     from app.services.trading import get_position
     position = get_position(session.session_id, session.symbol, right=right, strike=strike, expiry=expiry, exact_contract=True)
     name = getattr(side, 'value', side)
     closing = (position.side == 'LONG' and name == 'SELL') or (position.side == 'SHORT' and name == 'BUY')
     pure_exit = closing and 0 < quantity <= position.quantity
+    if not pure_exit and (getattr(session, 'real_entries_paused', False) or getattr(session, 'real_recovery_pending', False)):
+        raise HTTPException(409, 'Real entries are paused or recovering; existing positions remain manageable')
+    if not pure_exit:
+        from app.services.real_close import unresolved
+        if unresolved(session):
+            raise HTTPException(409, 'A Real broker operation is unconfirmed; reconcile before submitting new entries')
+        from app.services.real_funding import require_entry
+        require_entry(session)
+    if not pure_exit and getattr(session, 'real_recovery_pending', False):
+        raise HTTPException(409, 'Real recovery is pending; entries wait for broker reconciliation')
     try:
         status = state(session.user_id)
     except Exception as exc:
@@ -80,6 +92,10 @@ def require_entry_allowed(session, side, quantity, right=None, strike=None, expi
             logger.warning('real_day_storage_unavailable_exit_allowed user=%s session=%s',session.user_id,session.session_id)
             return  # DB outage cannot strand protection while entries fail closed.
         raise HTTPException(503, 'Could not verify daily real-trading lock; no new entry submitted') from exc
+    if getattr(session, 'real_active_claim', False) and status.get('date') and status['date'] != session.date:
+        raise HTTPException(403, 'Previous-day Real sessions are read-only; verify closure before starting today')
+    if getattr(session, 'real_closing', False) and not pure_exit:
+        raise HTTPException(403, 'Real session is closing; new entries are blocked')
     if status['state'] == 'active' or (status['state'] == 'closing' and pure_exit):
         return
     raise HTTPException(403, f'Real trading is {status["state"]} for {status["date"]}; Done for day cannot be undone')
@@ -87,7 +103,19 @@ def require_entry_allowed(session, side, quantity, right=None, strike=None, expi
 
 def sessions_for(user_id):
     from app.services import simulation
-    return [s for s in simulation._sessions.values() if s.user_id == user_id and s.session_type == 'real' and s.date == market_date()]
+
+    return [
+        s
+        for s in simulation._sessions.values()
+        if s.user_id == user_id
+        and s.session_type == "real"
+        and getattr(s, "trading_style", "intraday") != "swing"
+        and s.date == market_date()
+        and (
+            s.state != simulation.SimulationState.ENDED
+            or (getattr(s, "real_active_claim", False) and not s.real_verified_closed)
+        )
+    ]
 
 
 def unique_books(sessions):
@@ -95,8 +123,18 @@ def unique_books(sessions):
     # merely because the user has another runtime view of that symbol/mode.
     result = {}
     for session in sessions:
-        key = (getattr(session, '_fifo_account', None), session.symbol, session.instrument_type)
-        result.setdefault(key, session)
+        key = (
+            session.execution_broker,
+            session.broker_account_id,
+            session.symbol,
+            session.instrument_type,
+        )
+        previous = result.get(key)
+        if previous is None or (
+            getattr(session, "real_active_claim", False)
+            and not getattr(previous, "real_active_claim", False)
+        ):
+            result[key] = session
     return list(result.values())
 
 
@@ -105,35 +143,100 @@ def broadcast(user_id, status, message):
         session.queue.put_nowait(json.dumps({'type':'real_trading_day_status','session_id':session.session_id,**status,'message':message}))
 
 
+def has_outstanding_day_slot(user_id, date):
+    """Four canonical broker/style rows plus owned session point reads; no scans."""
+    from app.services import real_sessions
+    from app.services.db import get_dynamodb_resource
+
+    rows = [
+        row for row in real_sessions.active_all(user_id) if row["style"] == "intraday"
+    ]
+    if not rows:
+        return False
+    sessions = get_dynamodb_resource().Table("Sessions")
+    for row in rows:
+        record = sessions.get_item(
+            Key={"session_id": row["session_id"]}, ConsistentRead=True
+        ).get("Item")
+        if (
+            not record
+            or record.get("user_id") != user_id
+            or record.get("date") in (None, date)
+        ):
+            return True
+    return False
+
+
 async def complete_when_flat(user_id):
-    from app.services import emergency_exit, real_broker_state
-    from app.services.kotak_service import get_service
+    from app.services import emergency_exit, real_broker_state, real_close
+    from app.services.execution_broker import get_service
+
     date = market_date()
     try:
         while market_date() == date:
-            sessions = unique_books(sessions_for(user_id))
-            open_positions = any(emergency_exit.position(s, target).quantity for s in sessions for target in emergency_exit.targets(s))
-            if not open_positions and sessions:
-                try:
-                    # Acknowledgements and local quantities are not proof of flat.
-                    # Reuse the coherent broker orders/executions/positions refresh.
-                    for session in sessions:
-                        await real_broker_state.refresh(session, get_service())
-                    still_open = any(emergency_exit.position(s, target).quantity for s in sessions for target in emergency_exit.targets(s))
-                    pending = any(o.status.value == 'PENDING' for s in sessions for o in order_service.get_open_orders(s.session_id))
-                    if not still_open and not pending:
+            all_sessions = sessions_for(user_id)
+            sessions = unique_books(all_sessions)
+            try:
+                exit_attempted = False
+                for session in sessions:
+                    await real_broker_state.refresh(session, get_service(session))
+                for session in all_sessions:
+                    await cancel_entries(session)
+                for session in sessions:
+                    if any(
+                        emergency_exit.position(session, target).quantity
+                        for target in emergency_exit.targets(session)
+                    ):
+                        exit_attempted = True
+                        await emergency_exit.exit_all(session)
+                still_open = any(
+                    emergency_exit.position(s, target).quantity
+                    for s in sessions
+                    for target in emergency_exit.targets(s)
+                )
+                pending = any(
+                    order_service.get_open_orders(s.session_id) for s in all_sessions
+                )
+                if (
+                    not exit_attempted
+                    and not still_open
+                    and not pending
+                    and not any(real_close.unresolved(s) for s in all_sessions)
+                ):
+                    # Stop aliases first; only then release the authoritative
+                    # owner, so no old viewer can interfere with the next user.
+                    for session in sorted(
+                        all_sessions,
+                        key=lambda s: getattr(s, "real_active_claim", False),
+                    ):
+                        await real_close.finish(session)
+                    if not await asyncio.to_thread(
+                        has_outstanding_day_slot, user_id, date
+                    ):
                         await asyncio.to_thread(finish, user_id, date)
-                        broadcast(user_id, {'date':date,'state':'done'}, 'Done for day: all positions confirmed closed; real trading locked for today')
+                        broadcast(
+                            user_id,
+                            {"date": date, "state": "done"},
+                            "Done for day: all positions confirmed closed; real trading locked for today",
+                        )
                         return
-                except Exception as exc:
-                    logger.warning('real_day_completion_pending user=%s: %s', user_id, exc)
-                    broadcast(user_id, {'date':date,'state':'closing'}, f'Waiting to verify all positions closed: {exc}')
+            except Exception as exc:
+                logger.warning("real_day_completion_pending user=%s: %s", user_id, exc)
+                broadcast(
+                    user_id,
+                    {"date": date, "state": "closing"},
+                    f"Waiting to verify all positions closed: {exc}",
+                )
             await asyncio.sleep(5)
     except Exception as exc:
-        logger.exception('real_day_completion_failed user=%s', user_id)
-        broadcast(user_id, {'date':date,'state':'closing'}, f'Day closure needs attention: {exc}')
+        logger.exception("real_day_completion_failed user=%s", user_id)
+        broadcast(
+            user_id,
+            {"date": date, "state": "closing"},
+            f"Day closure needs attention: {exc}",
+        )
     finally:
-        _jobs.pop(user_id,None)
+        _jobs.pop(user_id, None)
 
 
 def monitor(user_id):
@@ -141,43 +244,81 @@ def monitor(user_id):
         _jobs[user_id] = asyncio.create_task(complete_when_flat(user_id))
 
 
-async def done_for_day(user_id):
-    from app.services import emergency_exit, strategy_service, order_service
+async def cancel_entries(session):
+    """Retry entry cancellations while retaining exits for confirmed conversion."""
     from app.routers.orders import cancel_order
+    from app.services.simulation import _is_position_exit
+    from app.services.trading import get_position
+    error = None
+    for order in list(order_service.get_open_orders(session.session_id)):
+        pos = get_position(session.session_id, session.symbol, right=order.right,
+            strike=order.strike, expiry=order.expiry, exact_contract=True)
+        if _is_position_exit(session, order) and max(0, order.quantity - order.broker_filled_quantity) <= pos.quantity:
+            continue
+        try:
+            await cancel_order(order.order_id, session.session_id)
+        except Exception as exc:
+            error = exc
+    if error is not None:
+        raise error
+
+
+async def done_for_day(user_id):
+    from app.services import emergency_exit, simulation, strategy_service
+
     status = await asyncio.to_thread(begin, user_id)
-    if status['state'] == 'done':
-        return {**status, 'results':[]}
-    logger.info('real_day_closure_requested user=%s date=%s state=%s', user_id, status['date'], status['state'])
+    if status["state"] == "done":
+        # Repair old 'done before release' failures without lifting the day barrier.
+        monitor(user_id)
+        return {**status, "results": []}
+    logger.info(
+        "real_day_closure_requested user=%s date=%s state=%s",
+        user_id,
+        status["date"],
+        status["state"],
+    )
     results = []
     # Cancel entries/strategies on every alias, but submit exits once per book.
     sessions = sessions_for(user_id)
     for session in sessions:
         session.real_day_closing = True
+        session.real_closing = True
+        try:
+            await asyncio.to_thread(
+                simulation._upsert_session_to_db, session, strict=True
+            )
+        except Exception as exc:
+            results.append({"session_id": session.session_id, "error": str(exc)})
         try:
             strategy_service.cancel_all(session.session_id)
         except Exception as exc:
-            results.append({'session_id':session.session_id,'error':str(exc)})
-        # Remove unfilled entries so a local trigger cannot reopen a position.
-        # Existing exits remain in place for emergency conversion/confirmation.
-        for order in list(order_service.get_open_orders(session.session_id)):
-            from app.services.simulation import _is_position_exit
-            from app.services.trading import get_position
-            pos = get_position(session.session_id,session.symbol,right=order.right,strike=order.strike,expiry=order.expiry,exact_contract=True)
-            if _is_position_exit(session,order) and max(0,order.quantity-order.broker_filled_quantity) <= pos.quantity:
-                continue
-            try:
-                await cancel_order(order.order_id, session.session_id)
-            except Exception as exc:
-                logger.exception('real_day_entry_cancel_failed user=%s order=%s',user_id,order.order_id)
-                results.append({'session_id':session.session_id,'error':str(getattr(exc,'detail',exc))})
+            results.append({"session_id": session.session_id, "error": str(exc)})
+        try:
+            await cancel_entries(session)
+        except Exception as exc:
+            results.append(
+                {
+                    "session_id": session.session_id,
+                    "error": str(getattr(exc, "detail", exc)),
+                }
+            )
     for session in unique_books(sessions):
         try:
             results.append(await emergency_exit.exit_all(session))
         except Exception as exc:
-            results.append({'session_id':session.session_id,'error':str(getattr(exc,'detail',exc))})
+            results.append(
+                {
+                    "session_id": session.session_id,
+                    "error": str(getattr(exc, "detail", exc)),
+                }
+            )
     monitor(user_id)
-    broadcast(user_id,status,'Done for day requested: closing positions; new real entries blocked')
-    return {**status,'results':results}
+    broadcast(
+        user_id,
+        status,
+        "Done for day requested: closing positions; new real entries blocked",
+    )
+    return {**status, "results": results}
 
 
 async def shutdown():

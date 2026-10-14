@@ -54,7 +54,8 @@ def _strike_for_right(session, right: str | None) -> int | None:
 
 def _uses_equity_intraday_margin(session, right: str | None = None) -> bool:
     return (
-        right is None
+        getattr(session, "trading_style", "intraday") != "swing"
+        and right is None
         and session.instrument_type == "equity"
         and session.session_type in ("sim", "stepwise", "paper", "real")
     )
@@ -84,10 +85,10 @@ def _place_kotak_direct(session, side: TradeSide, price: float, lot_size: int, r
     try:
         submit_immediate(session, order, asyncio.get_running_loop())
     except Exception as exc:
-        if not order.kotak_order_id:
+        if not order.broker_order_id and order.recovery_state not in ("submitting", "unknown"):
             order_service._orders[session.session_id].pop(order.order_id, None)
         raise HTTPException(status_code=502, detail=str(exc)) from exc
-    return JSONResponse(status_code=202, content={"status": "broker_pending", "kotak_order_id": order.kotak_order_id})
+    return JSONResponse(status_code=202, content={"status": "broker_pending", "kotak_order_id": order.broker_order_id})
 
 
 def _direct_trade_quantity(session, right, price, funds_ratio_pct):
@@ -114,6 +115,8 @@ async def buy(req: TradeRequest):
     session = sim_svc.get_session(req.session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
+    if getattr(session, "trading_style", "intraday") == "swing":
+        raise HTTPException(409, "Use portfolio order actions for a Swing book")
     if session.current_time is None:
         raise HTTPException(status_code=400, detail="Simulation has not started yet")
 
@@ -176,6 +179,8 @@ async def sell(req: TradeRequest):
     session = sim_svc.get_session(req.session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
+    if getattr(session, "trading_style", "intraday") == "swing":
+        raise HTTPException(409, "Use portfolio order actions for a Swing book")
     if session.current_time is None:
         raise HTTPException(status_code=400, detail="Simulation has not started yet")
 
@@ -305,7 +310,7 @@ async def position_snapshot(session_id: str = Query(...), user_id: str = Depends
 
 @router.get("/position", response_model=Position)
 async def get_position(session_id: str = Query(...), right: str | None = Query(default=None),
-                       strike: int | None = Query(default=None), expiry: str | None = Query(default=None)):
+                       strike: int | float | None = Query(default=None), expiry: str | None = Query(default=None)):
     session = sim_svc.get_session(session_id)
     symbol = session.symbol if session else None
     # Resolve effective right: explicit param > session.right (Sprint 3 compat)
@@ -327,7 +332,7 @@ async def exit_all_now(session_id: str, user_id: str = Depends(get_request_user_
 async def real_day_status(user_id: str = Depends(get_request_user_id)):
     from app.services import real_trading_day
     status = await asyncio.to_thread(real_trading_day.state, user_id)
-    if status['state'] == 'closing':
+    if status['state'] in ('closing', 'done'):
         real_trading_day.monitor(user_id)
     return status
 
@@ -339,5 +344,7 @@ async def done_for_day(session_id: str, user_id: str = Depends(get_request_user_
         raise HTTPException(404, 'Session not found')
     if session.session_type != 'real':
         raise HTTPException(400, 'Done for day applies only to real trading')
-    from app.services.real_trading_day import done_for_day as finish_day
+    from app.services.real_trading_day import done_for_day as finish_day, market_date
+    if session.date != market_date():
+        raise HTTPException(409, "Close the previous-day session before finishing today")
     return await finish_day(user_id)

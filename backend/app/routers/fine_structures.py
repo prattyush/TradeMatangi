@@ -321,7 +321,7 @@ async def get_ohlc(
 async def get_ohlc_options(
     symbol: str,
     date: str,
-    strike: int = Query(...),
+    strike: int | float = Query(...),
     expiry: str = Query(None),
     right: str = Query(...),
     interval_minutes: int = Query(3, ge=1, le=60),

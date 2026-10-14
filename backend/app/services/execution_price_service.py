@@ -41,7 +41,10 @@ def reprice_trigger(order) -> None:
     """Prepare a candidate before broker acknowledgement; never alter the cached order."""
     if order.order_type in (OrderType.TARGET, OrderType.STOPLOSS):
         order.execution_gap_pct = gap_for(order.user_id, order.order_type == OrderType.STOPLOSS)
-        order.limit_price = limit_price(order.side, order.trigger_price, order.execution_gap_pct)
+        from app.services.simulation import get_session
+        session = get_session(getattr(order, "session_id", None))
+        tick = session.future_contract["tick_size"] if getattr(session, "instrument_type", None) == "futures" else 0.05
+        order.limit_price = limit_price(order.side, order.trigger_price, order.execution_gap_pct, tick)
     else:
         order.execution_gap_pct = None
         order.market_order = False
