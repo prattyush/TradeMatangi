@@ -24,6 +24,12 @@ from app.services import (
 router = APIRouter(prefix="/swing/portfolios", tags=["swing"])
 
 
+def publish_snapshot(user, portfolio_id):
+    value = service.snapshot(user, portfolio_id)
+    service.runtime(user, portfolio_id).emit({"type": "portfolio_snapshot", **value})
+    return value
+
+
 async def funding_action(action):
     try:
         return await action
@@ -192,7 +198,7 @@ async def attach(
         req.expiry,
         req.right,
     )
-    return {"session_id": child.session_id, **service.snapshot(user, portfolio_id)}
+    return {"session_id": child.session_id, **publish_snapshot(user, portfolio_id)}
 
 
 async def capital_sizing(user, portfolio_id, req):
@@ -444,7 +450,7 @@ async def reset_capital(
     if store.owned(user, portfolio_id)["mode"] == "real":
         from app.services.swing_real import reset_capital as reset_real_capital
         await funding_action(reset_real_capital(service.runtime(user, portfolio_id), req.capital, req.request_id))
-        return service.snapshot(user, portfolio_id)
+        return publish_snapshot(user, portfolio_id)
     current = service.snapshot(user, portfolio_id)
     if current["pnl"] is None:
         raise HTTPException(
@@ -464,7 +470,7 @@ async def reset_capital(
 @router.post("/{portfolio_id}/close")
 async def close(portfolio_id: str, user: str = Depends(get_desktop_user_id), req: SwingCloseRequest | None = None):
     await service.close_portfolio(user, portfolio_id, req.acknowledge_undated_submission_ids if req else None, acknowledge_delivery_context_ids=req.acknowledge_delivery_context_ids if req else None)
-    return service.snapshot(user, portfolio_id)
+    return publish_snapshot(user, portfolio_id)
 
 
 @router.get("/{portfolio_id}/events")
@@ -497,7 +503,7 @@ async def events(portfolio_id: str, user: str = Depends(get_desktop_user_id)):
             if queue in current.subscribers:
                 current.subscribers.remove(queue)
 
-    return StreamingResponse(stream(), media_type="text/event-stream")
+    return StreamingResponse(stream(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
 @router.post("/{portfolio_id}/orders/{order_id}/cancel")
@@ -604,10 +610,10 @@ async def reconcile_portfolio(portfolio_id: str, user: str = Depends(get_desktop
                 await refresh(child)
             except (ValueError, TypeError) as exc:
                 issues.append({"session_id": child.session_id, "message": str(exc), **verification})
-        result = service.snapshot(user, portfolio_id)
+        result = publish_snapshot(user, portfolio_id)
         result["recovery_issues"] = issues
         return result
-    return service.snapshot(user, portfolio_id)
+    return publish_snapshot(user, portfolio_id)
 
 
 class ImportInventory(ContextRequest):
@@ -649,7 +655,7 @@ async def change_allocation(portfolio_id: str, req: AllocationRequest, user: str
         raise HTTPException(409, 'Shared allocations apply only to Real portfolios')
     from app.services.swing_real import allocation
     await funding_action(allocation(current, req.fraction, req.request_id))
-    return service.snapshot(user, portfolio_id)
+    return publish_snapshot(user, portfolio_id)
 
 
 class CashCorrection(ContractModel):
@@ -676,7 +682,7 @@ async def cash_correction(portfolio_id: str, req: CashCorrection, user: str = De
         raise HTTPException(409, 'Review a Real funding correction preview first')
     from app.services.swing_real import correct_shortfall
     await funding_action(correct_shortfall(current, req.adjustment, req.reason, req.request_id, req.funding_version))
-    return service.snapshot(user, portfolio_id)
+    return publish_snapshot(user, portfolio_id)
 
 
 
@@ -709,7 +715,7 @@ async def chart_history(
     item = swing_charts.instrument(
         req.symbol, req.instrument_type, req.right, req.strike, req.expiry
     )
-    return await asyncio.to_thread(
+    result = await asyncio.to_thread(
         swing_charts.history,
         item,
         req.interval,
@@ -717,6 +723,12 @@ async def chart_history(
         req.before,
         req.limit,
     )
+
+    if row["mode"] == "paper" and req.before is None:
+        from app.services import swing_market
+        if req.as_of_date.isoformat() == swing_market.today() and result.get("valuation_quote"):
+            await service.apply_history_valuation(user, portfolio_id, item, result["valuation_quote"])
+    return result
 
 
 @router.post("/{portfolio_id}/charts/watch")
@@ -773,6 +785,39 @@ async def chart_quotes(
         "market_open": bool(swing_market.window(swing_market.now())),
         "provider": viewer.actual or selected_provider(),
     }
+
+
+@router.get("/{portfolio_id}/charts/watch/{watch_id}/events")
+async def chart_events(portfolio_id: str, watch_id: str, user: str = Depends(get_desktop_user_id)):
+    from app.services import swing_charts
+    # Authenticate/validate ownership before starting a streaming response.
+    await chart_quotes(portfolio_id, watch_id, user)
+    viewer = swing_charts._viewers[watch_id]
+
+    async def stream():
+        try:
+            while True:
+                if swing_charts._viewers.get(watch_id) is not viewer:
+                    yield 'data: {"type":"chart_watch_expired"}\n\n'
+                    return
+                viewer.changed.clear()
+                value = await chart_quotes(portfolio_id, watch_id, user)
+                yield "event: quotes\ndata: " + json.dumps({"type": "chart_quotes", **value}) + "\n\n"
+                while not viewer.changed.is_set():
+                    try:
+                        await asyncio.wait_for(viewer.changed.wait(), timeout=15)
+                    except TimeoutError:
+                        viewer.last_seen = __import__("time").monotonic()
+                        if viewer.task.done() or swing_charts._viewers.get(watch_id) is not viewer:
+                            yield 'data: {"type":"chart_watch_expired"}\n\n'
+                            return
+                        yield ": keepalive\n\n"
+        finally:
+            # The owned watch is also deleted by the client; expiration cleans up
+            # abrupt disconnects without affecting another viewer's subscriptions.
+            viewer.last_seen = __import__("time").monotonic()
+
+    return StreamingResponse(stream(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
 @router.delete("/{portfolio_id}/charts/watch/{watch_id}")

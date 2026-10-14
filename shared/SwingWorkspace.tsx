@@ -1,3 +1,4 @@
+import type { SwingSubscribe } from "./swingStream";
 import { SwingIconButton } from "./SwingIcon";
 import { flashError } from "./notifications";
 import { swingMarkerTrades, type SwingMarkerMode } from "./swingMarkers";
@@ -336,6 +337,7 @@ function PaneChart({
 
 export default function SwingWorkspace({
   request,
+  subscribe,
   snapshot,
   symbols,
   Renderer,
@@ -360,6 +362,7 @@ export default function SwingWorkspace({
   onPause,
 }: {
   request: SwingRequest;
+  subscribe: SwingSubscribe;
   snapshot: any;
   symbols: SymbolChoice[];
   Renderer: ComponentType<SwingChartProps>;
@@ -571,64 +574,41 @@ export default function SwingWorkspace({
       .map(({ marker_mode: _markerMode, ...pane }) => pane),
   );
   useEffect(() => {
-    let cancelled = false,
-      id: string | undefined,
-      timer: ReturnType<typeof setTimeout>;
+    let cancelled = false, id: string | undefined;
+    let stop: (() => void) | undefined;
+    let timer: ReturnType<typeof setTimeout>;
     setQuotes([]);
     if (snapshot.portfolio.state === "ended") return;
     const start = async () => {
       try {
-        const created = await request<{ watch_id: string }>(
-          `${prefix}/charts/watch`,
-          "POST",
-          { items: JSON.parse(watchSignature) },
-        );
+        const created = await request<{ watch_id: string }>(`${prefix}/charts/watch`, "POST", { items: JSON.parse(watchSignature) });
         id = created.watch_id;
-        if (cancelled) {
-          void request(`${prefix}/charts/watch/${id}`, "DELETE");
-          return;
-        }
-        await poll();
+        if (cancelled) { void request(`${prefix}/charts/watch/${id}`, "DELETE"); return; }
+        stop = subscribe(`${prefix}/charts/watch/${id}/events`, value => {
+          if (cancelled) return;
+          if (value.type === "chart_watch_expired") {
+            stop?.();
+            void request(`${prefix}/charts/watch/${id}`, "DELETE").catch(() => undefined);
+            timer = setTimeout(start, 1000);
+          } else if (value.quotes) {
+            setQuotes(value.quotes);
+            setMarketOpen(value.market_open);
+            setFeed(value.provider);
+            if (value.error) setNotice(value.error);
+          }
+        }, cause => { if (!cancelled) setNotice(String(cause)); });
       } catch (cause) {
-        if (!cancelled) {
-          setNotice(String(cause));
-          timer = setTimeout(start, 5000);
-        }
+        if (!cancelled) { setNotice(String(cause)); timer = setTimeout(start, 5000); }
       }
-    };
-    const poll = async () => {
-      if (cancelled || !id) return;
-      try {
-        const value = await request<{
-          quotes: Quote[];
-          market_open: boolean;
-          provider: string;
-          error?: string;
-        }>(`${prefix}/charts/watch/${id}`, "GET");
-        if (!cancelled) {
-          setQuotes(value.quotes);
-          setMarketOpen(value.market_open);
-          setFeed(value.provider);
-          if (value.error) setNotice(value.error);
-        }
-      } catch {
-        if (!cancelled) {
-          timer = setTimeout(start, 5000);
-          return;
-        }
-      }
-      if (!cancelled) timer = setTimeout(poll, 2000);
     };
     void start();
     return () => {
       cancelled = true;
       clearTimeout(timer);
-      if (id)
-        void request(`${prefix}/charts/watch/${id}`, "DELETE").catch(
-          () => undefined,
-        );
+      stop?.();
+      if (id) void request(`${prefix}/charts/watch/${id}`, "DELETE").catch(() => undefined);
     };
-  }, [watchSignature, prefix, request, snapshot.portfolio.state]);
+  }, [watchSignature, prefix, request, subscribe, snapshot.portfolio.state]);
   const update = (change: Partial<SwingPane>) => {
     setPanes((previous) =>
       previous.map((p, i) => (i === active ? { ...p, ...change } : p)),
@@ -771,6 +751,7 @@ export default function SwingWorkspace({
                 {snapshot.pnl != null && snapshot.portfolio.session_capital > 0 && <small> ({money((snapshot.pnl / snapshot.portfolio.session_capital) * 100)}%)</small>}
               </dd></div>
             </dl>
+            {snapshot.positions?.length > 0 && snapshot.valuation_status && <small className="swing-muted">{snapshot.valuation_status === "unavailable" ? "Waiting for position prices" : snapshot.valuation_status === "stale" || !marketOpen ? "P&L at last known prices" : "P&L at live prices"}</small>}
           </section>
           <nav>
             {["Positions", "Orders", "Trades"].map((value) => (
@@ -801,7 +782,7 @@ export default function SwingWorkspace({
                   </small>
                   <span
                     className={
-                      (p.unrealized_pnl ?? 0) >= 0
+                      p.unrealized_pnl == null ? "swing-muted" : p.unrealized_pnl >= 0
                         ? "swing-profit"
                         : "swing-loss"
                     }
@@ -811,7 +792,7 @@ export default function SwingWorkspace({
                       `(${money(p.unrealized_pnl_pct)}%)`}
                   </span>
                   <small>
-                    Mark ₹{money(p.mark_price)} · {p.quote_status ?? "Waiting"}
+                    Mark ₹{money(p.mark_price)} · {p.quote_status === "live" && !marketOpen ? "stale" : p.quote_status ?? "Waiting"}
                   </small>
                 </button>
               ))

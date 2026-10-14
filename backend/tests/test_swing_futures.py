@@ -290,3 +290,24 @@ async def test_emergency_short_cover_uses_future_ledger_without_notional_debit(
     assert view["wallet_balance"] == round(
         1000 - sum(t["commission"] for t in view["trades"]), 2
     )
+
+
+@pytest.mark.asyncio
+async def test_saved_future_mark_survives_restart_without_settlement_or_order_execution(future_book, monkeypatch):
+    from app.services import simulation, order_service
+    parent, contract, now = future_book
+    current = service.runtime("u", parent["session_id"])
+    await engine.place("u", parent["session_id"], request())
+    child = next(iter(current.contexts.values()))
+    await engine.on_quote(current, child, {"type":"tick", "time":now, "close":100})
+    monkeypatch.setattr("app.services.swing_market.now", lambda: now+1)
+    await engine.on_quote(current, child, {"type":"tick", "time":now+1, "close":110})
+    await service.persist_marks(child, force=True)
+    expected = service.snapshot("u", parent["session_id"])
+    service._runtimes.clear(); simulation._sessions.clear(); trading._trades.clear(); order_service._orders.clear()
+    await service.ensure("u", parent["session_id"], subscribe=False)
+    restored = service.snapshot("u", parent["session_id"])
+    assert restored["pnl"] == expected["pnl"]
+    assert restored["positions"][0]["mark_price"] == 110
+    assert restored["wallet_balance"] == expected["wallet_balance"]
+    assert len(restored["trades"]) == len(expected["trades"])

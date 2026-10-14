@@ -293,6 +293,8 @@ def history(item, interval, date, before=None, limit=None):
                 frame = frame[(frame.index >= start) & (frame.index <= end)]
                 if before is not None:
                     frame = frame[frame.index < pd.Timestamp(int(before), unit="s")]
+                valuation = {"price": float(frame.iloc[-1]["close"]),
+                             "timestamp": int(frame.index[-1].tz_localize("UTC").timestamp())}
                 if not daily:
                     # Session-anchored buckets retain full 09:15–15:30 coverage.
                     stamps = [
@@ -329,8 +331,10 @@ def history(item, interval, date, before=None, limit=None):
             else:
                 candles = []
                 all_count = 0
+                valuation = None
             return {
                 "candles": candles,
+                "valuation_quote": valuation if before is None else None,
                 "provider": provider,
                 "selected_provider": policy.source,
                 "interval": interval,
@@ -355,6 +359,7 @@ class Viewer:
         self.handles = []
         self.queues = []
         self.quotes = {}
+        self.changed = asyncio.Event()
         self.bars = {}
         self.signature = None
         self.last_seen = time.monotonic()
@@ -401,6 +406,7 @@ class Viewer:
                                 self.queues.append(queue)
                             self.signature = selected
                             self.actual = group.actual or selected
+                        self.changed.set()
                     for item, queue in zip(self.items, self.queues):
                         while not queue.empty():
                             event = queue.get_nowait()
@@ -417,6 +423,7 @@ class Viewer:
                     raise
                 except Exception:  # noqa: BLE001 — transient feed failures retry without stopping the portfolio
                     self.error = "Live data is reconnecting"
+                    self.changed.set()
                     for handle in self.handles:
                         handle.close()
                     self.handles, self.queues, self.signature = [], [], None
@@ -455,6 +462,8 @@ class Viewer:
             "candles": dict(ranges),
             "received_at": swing_market.now(),
         }
+
+        self.changed.set()
 
     def stop(self):
         self.task.cancel()

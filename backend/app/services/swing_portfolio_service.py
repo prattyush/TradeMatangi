@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 import json
 import logging
+import time
 from math import isfinite
 import uuid
 from types import SimpleNamespace
@@ -83,7 +84,7 @@ def snapshot(user, portfolio_id):
                 positions.append({"session_id":session.session_id,"symbol":session.symbol,"instrument_type":"futures",
                     "expiry":session.expiry,"right":None,"strike":None,"quantity":metrics["quantity"],
                     "side":metrics["side"],"avg_entry_price":metrics["avg_entry_price"],"mark_price":mark,
-                    "mark_time":getattr(session,"swing_mark_time",None),"quote_status":"live" if mark and swing_market.window(swing_market.now()) and 0 <= swing_market.now()-int(getattr(session,"swing_mark_time",0) or 0)<120 else "stale" if mark else "unavailable",
+                    "mark_time":getattr(session,"swing_mark_time",None),"quote_status":"live" if mark and getattr(session,"swing_mark_source","live") == "live" and swing_market.window(swing_market.now()) and 0 <= swing_market.now()-int(getattr(session,"swing_mark_time",0) or 0)<120 else "stale" if mark else "unavailable",
                     "invested_value":metrics["held_margin"],"held_margin":metrics["held_margin"],
                     "unrealized_pnl":metrics["economic_open_pnl"],"unrealized_pnl_pct":round(metrics["economic_open_pnl"]/metrics["held_margin"]*100,4) if metrics["held_margin"] and metrics["economic_open_pnl"] is not None else None,
                     "notional_exposure":mark*metrics["quantity"] if mark else None,
@@ -131,7 +132,7 @@ def snapshot(user, portfolio_id):
                     **position.model_dump(mode="json"),
                     "mark_price": price,
                     "mark_time": quote_time,
-                    "quote_status": "unavailable" if price is None else "live" if quote_time and swing_market.window(swing_market.now()) and 0 <= swing_market.now() - int(quote_time) < 120 else "stale",
+                    "quote_status": "unavailable" if price is None else "live" if (quote.get("mark_source", "live") if contract["right"] else getattr(session, "swing_mark_source", "live")) == "live" and quote_time and swing_market.window(swing_market.now()) and 0 <= swing_market.now() - int(quote_time) < 120 else "stale",
                     "invested_value": round(invested, 2),
                     "unrealized_pnl": round(unrealized, 2) if unrealized is not None else None,
                     "unrealized_pnl_pct": round(unrealized / invested * 100, 4) if unrealized is not None and invested else None,
@@ -201,6 +202,7 @@ def snapshot(user, portfolio_id):
             for child in current.contexts.values()
             if getattr(child, "swing_book_needs_repair", False)
         ],
+        "valuation_status": "unavailable" if pnl is None else "stale" if any(p.get("quote_status") != "live" for p in positions) else "live",
         "pnl": pnl,
         "pnl_pct": round(pnl / row["session_capital"] * 100, 4)
         if pnl is not None
@@ -400,6 +402,13 @@ def attach_context(
         session.swing_recovery_required = True
         session.swing_quote_seen = False
         session.desktop_contract_quotes = {}
+        if row["mode"] == "paper" and saved:
+            session.swing_marks = saved.get("swing_marks", {})
+            for mark in session.swing_marks.values():
+                update_current_mark(session, mark, int(mark["time"]))
+            # Older session rows already saved their last equity price/time.
+            if session.instrument_type in ("equity", "futures") and not session.swing_quote_seen and session.last_price > 0 and session.current_time:
+                update_current_mark(session, {"close": session.last_price, "mark_source": "saved"}, int(session.current_time))
         session.state = SimulationState.RUNNING
         session.resume_event.set()
         if row["mode"] == "paper":
@@ -689,6 +698,7 @@ async def on_tick(current, session, event):
 
     if price == 0 or not recovery.day_window(timestamp):
         update_current_mark(session, event, timestamp)
+        await persist_marks(session)
         current.emit(
             {
                 "type": "portfolio_snapshot",
@@ -699,6 +709,7 @@ async def on_tick(current, session, event):
     if session.session_type == "paper":
         await recovery.before_quote_async(session, event)
     update_current_mark(session, event, timestamp)
+    await persist_marks(session)
     row = store.owned(current.user, current.portfolio_id)
     session.session_capital = row["session_capital"]
     before = snapshot(current.user, current.portfolio_id)
@@ -780,6 +791,7 @@ async def shutdown():
     for task in tasks:
         task.cancel()
     await asyncio.gather(*tasks, return_exceptions=True)
+    await asyncio.gather(*(persist_marks(session, force=True) for current in _runtimes.values() for session in current.contexts.values()))
     _runtimes.clear()
 
 
@@ -999,10 +1011,20 @@ async def restore_active_portfolios():
 
 
 def update_current_mark(session, event, timestamp):
+    price = float(event["close"])
+    if not isfinite(price) or price <= 0:
+        return
+    if session.session_type == "paper" and session.trading_style == "swing":
+        key = f"{event.get('expiry')}:{event.get('strike')}:{event.get('right')}"
+        marks = getattr(session, "swing_marks", {})
+        marks[key] = {"close": price, "time": timestamp,
+                      **{field: event[field] for field in ("right", "strike", "expiry", "mark_source") if field in event}}
+        session.swing_marks = marks
     if not event.get("right"):
         session.last_price = float(event["close"])
         session.swing_mark_time = timestamp
         session.swing_quote_seen = True
+        session.swing_mark_source = event.get("mark_source", "live")
     if event.get("right"):
         key = f"{session.symbol}:{event.get('expiry')}:{event.get('strike')}:{event['right']}"
         registry = getattr(session, "desktop_contract_quotes", {})
@@ -1012,3 +1034,56 @@ def update_current_mark(session, event, timestamp):
             "timestamp": timestamp,
         }
         session.desktop_contract_quotes = registry
+
+
+async def persist_marks(session, *, force=False):
+    """Checkpoint valuation only, once/minute and at shutdown, off the event loop."""
+    if session.session_type != "paper" or session.trading_style != "swing" or not getattr(session, "swing_marks", None):
+        return
+    now = time.monotonic()
+    if not force and now - getattr(session, "swing_marks_saved_at", -60) < 60:
+        return
+    from app.services.real_broker_state import encode
+    marks = encode(session.swing_marks)
+    def write():
+        from app.services.db import get_dynamodb_resource
+        get_dynamodb_resource().Table("Sessions").update_item(
+            Key={"session_id": session.session_id},
+            UpdateExpression="SET swing_marks = :marks",
+            ConditionExpression="user_id = :user",
+            ExpressionAttributeValues={":marks": marks, ":user": session.user_id})
+    try:
+        await asyncio.to_thread(write)
+        session.swing_marks_saved_at = now
+    except Exception:
+        session.swing_marks_saved_at = now  # don't retry storage failures every tick
+        logger.exception("Paper Swing valuation checkpoint failed session_id=%s", session.session_id)
+
+
+async def apply_history_valuation(user, portfolio_id, item, quote):
+    """Reuse already loaded chart history for valuation only; never execute orders."""
+    current = runtime(user, portfolio_id)
+    if store.owned(user, portfolio_id)["mode"] != "paper":
+        return
+    symbol = item.get("underlying", item.get("symbol"))
+    changed = False
+    for session in current.contexts.values():
+        if session.symbol != symbol or item["kind"] not in {"equity": ("equity", "index"), "options": ("option",), "futures": ("future",)}[session.instrument_type]:
+            continue
+        if session.instrument_type == "futures" and session.expiry != item.get("expiry"):
+            continue
+        fields = {field: item[field] for field in ("right", "strike", "expiry") if field in item}
+        if session.instrument_type == "options":
+            if (session.right, session.strike, session.expiry) != (fields.get("right"), fields.get("strike"), fields.get("expiry")):
+                continue
+            key = f"{symbol}:{fields['expiry']}:{fields['strike']}:{fields['right']}"
+            previous = getattr(session, "desktop_contract_quotes", {}).get(key, {}).get("timestamp", 0)
+        else:
+            previous = getattr(session, "swing_mark_time", 0) or 0
+        if previous >= quote["timestamp"]:
+            continue
+        update_current_mark(session, {"close": quote["price"], "mark_source": "history", **fields}, quote["timestamp"])
+        await persist_marks(session)
+        changed = True
+    if changed:
+        current.emit({"type": "portfolio_snapshot", **snapshot(user, portfolio_id)})
