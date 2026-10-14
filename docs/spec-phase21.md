@@ -1523,5 +1523,5 @@ collapse/reopen, chart layout/maximize, sizing, Pause/Resume and price-pick flow
 no page errors. Day/Swing shared drawing browser acceptance also passes after the
 desktop drawing controls changed. Rebuild both clients to apply.
 
-Both follow-ups will be delivered together in a review PR against dev. Main merge
-and deployment remain manual.
+Both follow-ups are delivered in [PR #663](https://github.com/prattyush/TradeMatangi/pull/663),
+which targets dev and awaits review. Main merge and deployment remain manual.
