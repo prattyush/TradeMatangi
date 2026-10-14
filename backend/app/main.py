@@ -168,6 +168,8 @@ async def health():
 
 
 if os.getenv("TRADING_PERFORMANCE_DIAGNOSTICS") == "1":
+    from app.services import performance_diagnostics as diagnostics
+
     @app.middleware("http")
     async def trading_request_timing(request, call_next):
         started = time.monotonic()
@@ -176,8 +178,9 @@ if os.getenv("TRADING_PERFORMANCE_DIAGNOSTICS") == "1":
         finally:
             path = request.url.path
             if path.startswith(("/api/orders", "/api/snapshots", "/api/data")):
-                logger.info("trading_performance method=%s route=%s duration_ms=%.1f",
-                            request.method, path, (time.monotonic() - started) * 1000)
+                category = path.split("/")[2]
+                diagnostics.count(category + "_request_calls")
+                diagnostics.observe(category + "_request_ms", (time.monotonic() - started) * 1000)
 
 # Phase 20 read-only analytics boundary.
 app.include_router(performance.router)

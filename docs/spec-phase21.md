@@ -1322,3 +1322,115 @@ include **21 new backend regression cases**. Existing Real/Paper/Replay/Stepwise
 linked PE candles after Fibonacci edits, labels/Stats and broker authentication UI
 passed the exercised regression checks. Installed Windows/live broker acceptance
 remain after preprod deployment; Real Futures gates default off.
+
+## Shared Kite feed load and freeze diagnostics — 2026-10-14
+
+Implemented and validated on dev after the preprod integration. Website Real
+prices/strategies and an independent desktop live browser were reported to pause
+together while website controls remained responsive. This points toward a shared
+feed/server delay, but live measurements are still required to establish the cause.
+
+### Sprint 1 — Quote batching: complete
+
+Kite raw prices still all enter the original one-second OHLC accumulator. Latest
+quote-cache updates now share a mailbox and one 100 ms drain per destination
+application loop: approximately 10 quote batches/second rather than one scheduled
+callback per incoming price/recipient. Completed candles use their existing direct
+publication path and do not wait for that timer. Strategy cadence, broker order
+updates, fills, cancellations and confirmations remain unchanged.
+
+Pending memory scales with active token/recipient registrations, including during
+an application-loop stall. Delivery checks registration identity and socket
+identity; removed/replaced subscriptions, closed loops and old sockets cannot
+revive quotes. Same-socket reconnect and shutdown invalidate pending batches.
+Each cache quote retains its actual receipt time; delayed publication cannot make
+an old quote appear freshly received. Older quote timestamps cannot replace newer
+cache data. The shared hub continues serving website and desktop consumers,
+including Paper/Real, underlying, CE/PE and other supported instruments. Replay
+and Stepwise execution behavior is unchanged.
+
+### Sprint 2 — Bounded diagnostics: complete
+
+Backend diagnostics remain opt-in through `TRADING_PERFORMANCE_DIAGNOSTICS=1`.
+Disabled diagnostics create no monitor task and skip operation timing/counters.
+Enabled diagnostics use fixed aggregate counters/maxima and a 30-second summary
+in `backend.log`; delay warnings are limited to one/category every 30 seconds.
+There are no per-tick logs, new broker requests, database writes or monitoring
+services. Ingress is counted by batch, callback duration sampled once/second,
+quote work measured at drains, and trading operations timed at existing boundaries.
+Existing diagnostic HTTP request timings now join the aggregate summaries instead
+of logging every request. Replacement pressure is inferred from ingress and delivered-quote counts rather
+than maintaining a costly per-quote replacement counter.
+
+| Evidence | Measurements |
+|---|---|
+| Upstream feed / local SDK thread | `kite_ticks`, `kite_batches`, `kite_arrival_gap_ms`, `kite_callback_ms`, `kite_reactor_lag_ms` |
+| Server scheduling / quote batching | `loop_lag_ms`, `quote_drains`, `quote_cache_deliveries`, `quote_pending`, `quote_delivery_ms`, `quote_drain_ms` |
+| Candle and consumer queues | `candle_publish_ms`, `tick_queue_age_ms`, `tick_queue_depth`, desktop equivalents |
+| Real engine / execution | `real_tick_processing_ms`, `broker_refresh_ms`, `real_ticks_suppressed_refresh`, `strategy_evaluation_ms`, `broker_submit_ms`, `order_db_write_ms` |
+| Website / desktop delivery | sampled event ID and UTC send/receipt times, receipt gap, next-frame delay, long tasks and chart-update duration |
+
+The monitor samples loop/reactor health once/second with only one outstanding
+reactor probe. Arrival-gap monitoring is restricted to an active connected Kite
+feed during regular market hours; recovery between monitor samples preserves the
+peak arrival gap. A gap is an investigation signal, not automatic proof of a
+broker fault or a reason to reconnect. A quiet instrument can be legitimate.
+Local delays over 500 ms and feed gaps over two seconds are warning candidates.
+Candle queue age is measured from actual enqueue time, excluding the normal
+one-second aggregation interval.
+
+Sampled SSE metadata is additive and never changes stored/replayed events. Website,
+desktop browse and desktop trading capture it in opt-in bounded client buffers;
+repeated native payloads are deduplicated. Native transport retains arbitrary JSON
+metadata. Client chart timings are sampled, and no observer/timer is created when
+client diagnostics are disabled. Cross-machine clock delta is approximate, not
+an exact network-latency measurement. Chart timestamps keep the existing IST-as-UTC
+convention; diagnostic clocks use real UTC/monotonic time.
+
+### Validation and operational use
+
+**622 backend test cases** exercised across focused feed, market-data repair,
+Paper/Real recovery/accounting, broker/strategy/protection, desktop trading and
+Phase 21 execution suites. A **239-check run with server diagnostics enabled**
+also passed, covering Take Profit, Real exits and desktop trading. **49 website tests** and **219 desktop tests** pass;
+both client TypeScript checks/production builds pass. Regression coverage includes
+10,000+ prices behind one pending drain with accurate OHLC, shared/separate owner
+loops, latest-quote recovery, immediate candle delivery, subscription/socket
+replacement, same-socket reconnect, failing consumers, preserved receipt age,
+bounded/deduplicated client data, disabled diagnostics, arrival-gap recovery and a
+stalled reactor with only one outstanding probe. Existing order/strategy suites
+verify preserved execution behavior. Artifacts: `.cache/live-feed-batching/`.
+
+`scripts/benchmark-kite-quote-batching.py` performs an isolated synthetic comparison
+without opening broker connections: 150,000 prices across three tokens, 500 ingress
+batches and ten owner-loop drains schedule ten quote callbacks rather than the
+previous calculated 150,000, plus 27 unchanged candle callbacks. The final
+candle-inclusive comparison measured **1.1% median CPU overhead** with diagnostics
+enabled and p95 scheduled-candle delay **40.8 ms disabled / 39.6 ms enabled**.
+The small timing difference should be treated as measurement noise, not a speedup.
+This satisfies the controlled <5% overhead / <=5 ms added p95 targets;
+it is not a live-server latency guarantee. The first per-quote diagnostic counter
+was removed after its benchmark exceeded the CPU budget.
+
+To investigate the next live occurrence:
+
+1. Start the backend with `TRADING_PERFORMANCE_DIAGNOSTICS=1` in its environment;
+   restart is required. The batching fix applies regardless of this flag.
+2. In each website/desktop WebView console, set
+   `localStorage.setItem('tradingPerformance', '1')`, then reload that client.
+   Download/copy `JSON.stringify(window.tradingPerformance)` after the occurrence.
+   Client measurements require the rebuilt website/desktop assets.
+3. Record the exact time, instrument/contract, and whether both clients paused.
+   Match client sampled UTC/event IDs against the backend summary window.
+4. Raw arrivals continuing with loop/queue delay implicates server processing;
+   delayed reactor probes implicate the local SDK thread. Missing arrivals with
+   healthy probes implicates the upstream feed/network path. Refresh suppression
+   or slow submission identifies the corresponding trading delay. Prompt server
+   delivery with delayed client receipt/painting points toward delivery/rendering.
+5. Disable server diagnostics and restart after capture; remove the client flag
+   with `localStorage.removeItem('tradingPerformance')` and reload each client.
+
+Broker-refresh safety suppression and synchronous submission behavior were measured,
+not rewritten. Any remaining freeze needs the captured evidence for a separate
+focused fix. Backend restart applies quote batching; rebuild clients for the new
+measurements. Delivery PR targets dev; main merge/deployment remain manual.

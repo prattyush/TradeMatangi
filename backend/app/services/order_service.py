@@ -11,6 +11,8 @@ STOPLOSS: same trigger logic as TARGET; real limit uses the account stoploss gap
 """
 from __future__ import annotations
 
+from app.services import performance_diagnostics as diagnostics
+
 from app.services.instrument_identity import strike_number
 import threading
 import logging
@@ -274,6 +276,7 @@ def _order_db_item(order: Order) -> dict:
     return encode(item)
 
 
+@diagnostics.timed("order_db_write")
 def _write_order_to_db(order: Order, *, strict: bool = False) -> None:
     try:
         from app.services.db import get_dynamodb_resource

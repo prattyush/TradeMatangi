@@ -1,3 +1,4 @@
+import { recordFeedReceipt } from './performanceDiagnostics'
 export interface SessionStreamOptions {
   sessionId: string
   url: (cursor: string | null) => string
@@ -43,6 +44,7 @@ export class SessionStream {
       if (!current()) return
       let payload: Record<string, unknown>
       try { payload = JSON.parse(event.data) as Record<string, unknown> } catch { return }
+      recordFeedReceipt(payload, `website:${this.options.sessionId}`)
       if (event.lastEventId) this.cursor = event.lastEventId
       if (payload.type === 'stream_reset') this.options.onReconnect()
       else this.options.onMessage({ ...payload, session_id: this.options.sessionId })

@@ -1,4 +1,5 @@
 """Shared broker-first edits for website, desktop and real exit strategies."""
+from app.services import performance_diagnostics as diagnostics
 import asyncio
 import logging
 from app.models.schemas import Order, OrderType, TradeSide
@@ -425,6 +426,7 @@ async def submit_immediate_async(session,order):
     register_callbacks(session,order,broker,asyncio.get_running_loop())
 
 
+@diagnostics.timed("broker_submit")
 def submit_once(session, order, method, **kwargs):
     """Persist broker intent before sending a write; uncertainty is never a retry."""
     from app.services.execution_broker import name

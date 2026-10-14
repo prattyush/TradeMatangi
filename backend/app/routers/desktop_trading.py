@@ -5,6 +5,7 @@ existing simulation, order, strategy, wallet, and trade services as the source
 of truth for Stepwise and desktop Replay trading.
 """
 from __future__ import annotations
+from app.services import performance_diagnostics as diagnostics
 from app.routers.execution_brokers import AllocationRequest as RealAllocationRequest
 from app.services.real_recovery import CloseRequest
 from app.models.schemas import ContractModel
@@ -1013,7 +1014,8 @@ async def _desktop_trading_event_source(session, user_id: str, last_event_id: in
             cursor = event_id
             sent += 1
             event_payload = json.dumps({**json.loads(payload), "event_id": event_id})
-            yield f"id: {event_id}\nevent: {_event_type(payload)}\ndata: {event_payload}\n\n"
+            outgoing = diagnostics.sample_sse(event_payload, event_id, f"desktop-trading:{session.session_id}")
+            yield f"id: {event_id}\nevent: {_event_type(payload)}\ndata: {outgoing}\n\n"
             if '"type": "session_ended"' in payload or '"type":"session_ended"' in payload:
                 break
         except asyncio.TimeoutError:

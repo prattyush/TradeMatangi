@@ -6,6 +6,8 @@ repeated for each screen or user. This boundary can later move to a feed process
 """
 from __future__ import annotations
 
+from app.services import performance_diagnostics as diagnostics
+
 from app.services.instrument_identity import strike_number
 import asyncio
 import logging
@@ -94,7 +96,10 @@ class _Delivery:
     def update_quote(self, quote):
         feed = self.hub.feeds.get(self.key)
         if feed and feed.get("delivery") is self:
-            self.hub.quotes[self.key] = {**quote, "received_at": time.time()}
+            previous = self.hub.quotes.get(self.key)
+            if previous and quote.get("time", 0) < previous.get("time", 0):
+                return
+            self.hub.quotes[self.key] = {**quote, "received_at": quote.get("received_at", time.time())}
 
 
 class ProviderAdapter:
@@ -261,6 +266,8 @@ class MarketDataHub:
         feed = self.feeds.get(key)
         if not feed:
             return
+        if diagnostics.ENABLED and "_diagnostic_queued_at" in tick:
+            diagnostics.observe("candle_publish_ms", (time.monotonic() - tick["_diagnostic_queued_at"]) * 1000)
         if tick.get("type") == "tick" and not self._accept_tick(key, feed, tick):
             return
         if tick.get("type") == "tick" and not feed["first_tick"]:
@@ -283,6 +290,8 @@ class MarketDataHub:
                 self._schedule_recovery(handle.group)
             elif tick.get("type") == "tick":
                 handle.group.connection, handle.group.reason = "connected", None
+            if diagnostics.ENABLED and payload.get("type") == "tick":
+                payload["_diagnostic_queued_at"] = time.monotonic()
             self._enqueue(handle, payload)
         for group, previous in groups.values():
             if group.status() != previous:

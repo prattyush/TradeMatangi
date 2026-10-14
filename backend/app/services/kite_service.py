@@ -27,6 +27,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from app.services import performance_diagnostics as diagnostics
 from app.services.kite_reactor import call as _reactor_call
 from app.services.kite_requests import request as _kite_request, is_auth_error
 
@@ -492,6 +493,8 @@ class KiteBroadcaster:
         self._first_candles = set()
         self._subscribed_at = {}
         self._quiet_warned = set()
+        # One mailbox/timer per owner loop; raw prices never build a callback backlog.
+        self._quote_batches = {}
 
     def register(
         self,
@@ -544,10 +547,18 @@ class KiteBroadcaster:
                         self._first_candles.discard(token)
                         self._quiet_warned.discard(token)
                         orphaned.append(token)
+                for batch in self._quote_batches.values():
+                    for key in list(batch["pending"]):
+                        if key[1] == session_id:
+                            batch["pending"].pop(key, None)
+                for owner_loop in list(self._quote_batches):
+                    if owner_loop.is_closed():
+                        self._quote_batches.pop(owner_loop, None)
                 ticker = self._ticker
                 stopped = not self._token_sessions
                 if stopped:
                     self._ticker = None
+                    self._quote_batches.clear()
                     self._connected = False
                     self._restart_generation += 1
                     self._restart_pending = False
@@ -599,6 +610,8 @@ class KiteBroadcaster:
             if old_token is not None and old_token != new_token:
                 self._token_sessions[old_token].pop(session_id, None)
                 self._session_tokens[session_id].discard(old_token)
+                for batch in self._quote_batches.values():
+                    batch["pending"].pop((old_token, session_id), None)
                 if not self._token_sessions.get(old_token):
                     self._token_sessions.pop(old_token, None)
                     orphaned.append(old_token)
@@ -812,6 +825,8 @@ class KiteBroadcaster:
             logger.info("kite_first_candle token=%s time=%s consumers=%d", token, candle["time"], len(sessions))
         for session_id, (queue, right, loop) in sessions.items():
             payload = {**candle, "provider_token": str(token)}
+            if diagnostics.ENABLED:
+                payload["_diagnostic_queued_at"] = _time.monotonic()
             if right:
                 payload["right"] = right
             try:
@@ -846,18 +861,77 @@ class KiteBroadcaster:
         for token, candle, sessions in completed:
             self._publish_candle(token, candle, sessions)
 
+    def _queue_quotes(self, token, quote, sessions):
+        starts = []
+        with self._lock:
+            for session_id, entry in sessions.items():
+                if self._token_sessions.get(token, {}).get(session_id) is not entry:
+                    continue
+                queue, _right, loop = entry
+                if not hasattr(queue, "update_quote") or loop.is_closed():
+                    continue
+                batch = self._quote_batches.get(loop)
+                if batch is None:
+                    batch = {"pending": {}}
+                    self._quote_batches[loop] = batch
+                    starts.append((loop, batch))
+                key = (token, session_id)
+                batch["pending"][key] = (entry, self._ticker, quote)
+        for loop, batch in starts:
+            try:
+                loop.call_soon_threadsafe(self._arm_quote_drain, loop, batch)
+            except RuntimeError:
+                with self._lock:
+                    if self._quote_batches.get(loop) is batch:
+                        self._quote_batches.pop(loop, None)
+
+    def _arm_quote_drain(self, loop, batch):
+        # The scheduled flag remains set until the timer drains, including while
+        # the application loop is blocked. No periodic task when the feed is idle.
+        with self._lock:
+            if self._quote_batches.get(loop) is not batch:
+                return
+        loop.call_later(.1, self._drain_quotes, loop, batch)
+
+    def _drain_quotes(self, loop, batch):
+        started = _time.monotonic() if diagnostics.ENABLED else None
+        with self._lock:
+            if self._quote_batches.get(loop) is not batch:
+                return
+            self._quote_batches.pop(loop, None)
+            pending = batch["pending"]
+            deliveries = [
+                (entry[0], quote) for (token, session_id), (entry, ticker, quote) in pending.items()
+                if ticker is self._ticker
+                and self._token_sessions.get(token, {}).get(session_id) is entry
+            ]
+        for queue, quote in deliveries:
+            try:
+                queue.update_quote(quote)
+                if diagnostics.ENABLED:
+                    diagnostics.observe("quote_delivery_ms", max(0, (_time.time() - quote["received_at"]) * 1000))
+            except Exception:
+                logger.exception("Kite quote cache delivery failed")
+        if started is not None:
+            diagnostics.count("quote_drains")
+            diagnostics.count("quote_cache_deliveries", len(deliveries))
+            diagnostics.observe("quote_pending", len(pending))
+            diagnostics.observe("quote_drain_ms", (_time.monotonic() - started) * 1000)
+
     def _on_ticks(self, ws, ticks):
         # LTP packets do not contain exchange timestamps. Receipt epoch is
         # converted once to the established IST-as-UTC chart convention.
         if ws is not None and ws is not self._ticker:
             return
+        received_at = _time.time()
+        sample = diagnostics.kite_batch(len(ticks or [])) if diagnostics.ENABLED else None
         for tick in ticks or []:
             token = tick.get("instrument_token")
             price = float(tick.get("last_price", 0))
             if token is None or price <= 0:
                 continue
             ex_ts = tick.get("exchange_timestamp")
-            ts_second = int(ex_ts.timestamp() if isinstance(ex_ts, datetime) else _time.time()) + 19800
+            ts_second = int(ex_ts.timestamp() if isinstance(ex_ts, datetime) else received_at) + 19800
             with self._lock:
                 if token not in self._token_sessions:
                     continue
@@ -874,12 +948,12 @@ class KiteBroadcaster:
                     self._finalized_seconds[token] = candle["time"]
                 sessions = dict(self._token_sessions.get(token, {}))
             quote = {"type": "quote", "time": ts_second, "open": price, "high": price,
-                     "low": price, "close": price, "provider_token": str(token)}
-            for queue, _right, loop in sessions.values():
-                if hasattr(queue, "update_quote"):
-                    loop.call_soon_threadsafe(queue.update_quote, quote)
+                     "low": price, "close": price, "provider_token": str(token), "received_at": received_at}
+            self._queue_quotes(token, quote, sessions)
             if candle:
                 self._publish_candle(token, candle, sessions)
+        if sample is not None:
+            diagnostics.observe("kite_callback_ms", (_time.monotonic() - sample) * 1000)
 
     def _on_error(self, ws, code, reason) -> None:
         if ws is not None and ws is not self._ticker:
@@ -906,6 +980,8 @@ class KiteBroadcaster:
             return
         logger.warning("KiteTicker closed — code=%s reason=%s", code, reason)
         self._connected = False
+        with self._lock:
+            self._quote_batches.clear()
         if self._starting:
             self._startup_error = f"Kite closed during startup: {code} {reason}"
             self._ready.set()
@@ -917,6 +993,8 @@ class KiteBroadcaster:
         if ws is not self._ticker:
             return
         self._connected = False
+        with self._lock:
+            self._quote_batches.clear()
         logger.warning("kite_reconnect_attempt attempt=%s", attempts)
         self._notify_sessions_error(f"Kite reconnecting (attempt {attempts})")
 
@@ -924,6 +1002,8 @@ class KiteBroadcaster:
         if ws is not self._ticker:
             return
         self._connected = False
+        with self._lock:
+            self._quote_batches.clear()
         self._startup_error = "Kite reconnect attempts exhausted"
         self._ready.set()
         self._notify_sessions_error(self._startup_error)

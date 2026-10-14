@@ -1,6 +1,8 @@
 """In-memory chart-only stream hub. It deliberately has no trading imports."""
 from __future__ import annotations
 
+from app.services import performance_diagnostics as diagnostics
+
 from app.services.instrument_identity import strike_number
 import asyncio
 from app.services.history_workers import run_history
@@ -317,6 +319,11 @@ async def _consume(stream: DesktopStream, tile: dict, queue: asyncio.Queue) -> N
     """Keep an interval-neutral latest provider second for one desktop tile."""
     while not stream.stopped:
         tick = await queue.get()
+        if diagnostics.ENABLED:
+            diagnostics.observe("desktop_tick_queue_depth", queue.qsize())
+            queued_at = tick.pop("_diagnostic_queued_at", None)
+            if queued_at is not None:
+                diagnostics.observe("desktop_tick_queue_age_ms", (time.monotonic() - queued_at) * 1000)
         if tick.get("type") == "feed_status":
             await publish(stream, "feed_status", tile["tile_id"], stream.feed_group.status())
             continue

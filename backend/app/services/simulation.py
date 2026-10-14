@@ -5,6 +5,8 @@ Supports pause/resume via asyncio.Event and speed multiplier.
 """
 from __future__ import annotations
 
+from app.services import performance_diagnostics as diagnostics
+
 from app.services.instrument_identity import strike_number
 import asyncio
 import json
@@ -2084,6 +2086,11 @@ async def _run_paper_session(session: SimulationSession) -> None:
                 session.queue.put_nowait(json.dumps({"type": "feed_status", "session_id": session.session_id, **status}))
             session.paper_stream_source = session.market_feed_group.actual
             tick_right: str | None = payload.get("right")
+            if diagnostics.ENABLED and payload.get("type") == "tick":
+                diagnostics.observe("tick_queue_depth", session.paper_tick_queue.qsize())
+                queued_at = payload.pop("_diagnostic_queued_at", None)
+                if queued_at is not None:
+                    diagnostics.observe("tick_queue_age_ms", (time.monotonic() - queued_at) * 1000)
             tick_type = payload.get("type", "tick")
             # Drop live ticks past market close (SEBI 15:15 effective 03 Aug 2026)
             tick_time = payload.get("time")
@@ -2268,6 +2275,11 @@ async def _run_real_session(session: SimulationSession) -> None:
             if payload is None:  # queue closed — session stopping
                 break
 
+            if diagnostics.ENABLED and payload.get("type") == "tick":
+                diagnostics.observe("tick_queue_depth", session.paper_tick_queue.qsize())
+                queued_at = payload.pop("_diagnostic_queued_at", None)
+                if queued_at is not None:
+                    diagnostics.observe("tick_queue_age_ms", (time.monotonic() - queued_at) * 1000)
             tick_type = payload.get("type", "tick")
             if tick_type == "feed_status":
                 session.queue.put_nowait(json.dumps({"type": "feed_status", "session_id": session.session_id, **session.market_feed_group.status()}))
@@ -2411,6 +2423,7 @@ def _register_kotak_sl_for_order(session: SimulationSession, order: Any, loop: A
     )
 
 
+@diagnostics.timed("real_tick_processing")
 def _emit_tick_and_check_orders_real(
     session: SimulationSession,
     tick: dict,
@@ -2426,6 +2439,8 @@ def _emit_tick_and_check_orders_real(
     from app.services.order_service import check_orders
     from app.services.trading import record_trade, settle_wallet_for_trade
     if getattr(session, "broker_refresh_events", None) is not None:
+        if diagnostics.ENABLED:
+            diagnostics.count("real_ticks_suppressed_refresh")
         return []
     from app.services.execution_broker import get_service as get_kotak
     from app.services.kotak_service import KotakError
