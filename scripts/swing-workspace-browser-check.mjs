@@ -18,9 +18,10 @@ await build({
 const today=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Kolkata'}).format(new Date());const day=Date.parse(today+'T00:00:00Z')/1000;window.calls=[];
 const position={session_id:'child',symbol:'RELIND',side:'LONG',quantity:10,avg_entry_price:100,mark_price:110,unrealized_pnl:99,unrealized_pnl_pct:9.9,quote_status:'live'};
 let book={portfolio:{session_id:'portfolio',mode:'paper',state:'running',entries_paused:false,session_capital:100000,guardrail_epoch:0},wallet_balance:99000,pnl:99,positions:[position],open_orders:[],trades:[],reconciliation_pending:[]};
+window.setSummary=(pnl,capital=100000)=>{book={...book,pnl,portfolio:{...book.portfolio,session_capital:capital}}};
 const request=async(path,method,body)=>{window.calls.push({path,method,body});if(path==='capabilities')return{real_trading_enabled:true};if(path.includes('/charts/workspace'))return method==='GET'?{workspace:null}:{saved:true};if(path.endsWith('/charts/watch'))return{watch_id:'viewer'};if(path.includes('/charts/watch/'))return{quotes:[],market_open:false,provider:'kite'};if(path.endsWith('/charts/history')){const end=Date.parse(body.as_of_date+'T00:00:00Z')/1000;return{candles:Array.from({length:260},(_,i)=>({time:end-(259-i)*86400,timestamp:end-(259-i)*86400,open:100,high:120,low:90,close:110,volume:100})),provider:'kite',more:false,partial:false}};if(path.includes('contracts/futures'))return{contracts:[{symbol:body?.symbol??'RELIND',instrument_type:'futures',expiry:'2026-10-27',lot_size:5,tick_size:.05,entry_eligible:true}]};if(path.includes('contracts/metadata'))return{contracts:[]};if(path.endsWith('/pause')){book={...book,portfolio:{...book.portfolio,entries_paused:body.paused}};return book};if(path.endsWith('/order-preview')){if(body.instrument_type==='futures'){const budget=body.capital_pct?book.portfolio.session_capital*body.capital_pct:201;const q=body.capital_pct?Math.floor((budget-1)/100)*5:body.quantity;return{quantity:q,lot_size:5,budget,fees:1,margin:q*20,required_funds:q*20+1,minimum_funds:101,capital_revision:0,fee_hash:'captured',execution_enabled:true,evidence:{live:false,source:'dated fixture'}}};if(window.failSizing)throw new Error('Sizing unavailable');const budget=book.portfolio.session_capital*body.capital_pct;const q=Math.max(0,Math.floor((budget-1)/(body.price*1.00006803)));return{quantity:q,lot_size:1,budget,fees:1,required_funds:q*body.price+1,unused_budget:budget-q*body.price-1,minimum_funds:body.price+1,capital_revision:book.portfolio.guardrail_epoch}};if(path.endsWith('/orders'))return book;return book};
 const drawing=async(path)=>path==='chart-settings'?{settings:{}}:{drawings:[]};const render=(props)=><Native {...props} drawingRequest={drawing}/>;
-const desktop=location.search.includes('desktop');createRoot(document.getElementById('root')).render(<Panel request={request} surface={desktop?'desktop':'website'} renderChart={desktop?render:Web} loadSymbols={async()=>[{symbol:'HDFCBANK',display_name:'HDFC Bank',chart_type:'equity',option_eligible:true},{symbol:'RELIND',display_name:'Reliance',chart_type:'equity',option_eligible:true}]} onDetach={()=>{window.detached=true}} onPopOut={id=>{window.poppedOut=id}} onCreateLinked={id=>{window.linked=id}}/>);`,
+const desktop=location.search.includes('desktop');createRoot(document.getElementById('root')).render(<Panel request={request} surface={desktop?'desktop':'website'} renderChart={desktop?render:Web} loadSymbols={async()=>[{symbol:'HDFCBANK',display_name:'HDFC Bank',chart_type:'equity',option_eligible:true},{symbol:'RELIND',display_name:'Reliance',chart_type:'equity',option_eligible:true}]} navigationControls={desktop?<select aria-label="Desktop view" defaultValue="Swing"><option>Swing</option><option>Workspace</option><option>Analysis</option></select>:undefined} onDetach={()=>{window.detached=true}} onPopOut={id=>{window.poppedOut=id}} onCreateLinked={id=>{window.linked=id}}/>);`,
     resolveDir: root + "/windowsapp",
     loader: "tsx",
   },
@@ -74,6 +75,32 @@ try {
     );
     await page.locator(".swing-workspace").waitFor();
     console.log("Checking", surface);
+    if (surface === "desktop") {
+      const nav = await page.getByLabel("Desktop view", { exact: true }).boundingBox();
+      const pause = await page.getByRole("button", { name: "Pause entries", exact: true }).boundingBox();
+      assert.ok(Math.abs(nav.y + nav.height / 2 - pause.y - pause.height / 2) < 2, "Navigation and icons must share a row");
+      assert.equal(await page.locator(".swing-workspace-bar").getByText(/Funds ₹/).count(), 0);
+      const summary = page.getByRole("region", { name: "Portfolio summary" });
+      assert.match(await summary.innerText(), /Funds.*99,000/s);
+      assert.match(await summary.innerText(), /Capital.*1,00,000/s);
+      assert.match(await summary.innerText(), /P&L.*99.*0.1%/s);
+      assert.equal(await summary.locator(".swing-profit").count(), 1);
+      const info = await summary.boundingBox();
+      const tabs = await page.locator(".swing-portfolio-rail nav").boundingBox();
+      assert.ok(info.y + info.height <= tabs.y, "Summary belongs above position/order/trade tabs");
+      await page.evaluate(() => window.setSummary(-99));
+      await summary.locator("dd.swing-loss").waitFor();
+      assert.match(await summary.innerText(), /-99/);
+      await page.evaluate(() => window.setSummary(0, 0));
+      await summary.locator("dd.swing-muted").waitFor();
+      assert.equal((await summary.innerText()).includes("Infinity"), false);
+      await page.evaluate(() => window.setSummary(99));
+      await summary.locator("dd.swing-profit").waitFor();
+    } else {
+      assert.equal(await page.getByRole("region", { name: "Portfolio summary" }).count(), 0);
+      assert.equal(await page.locator(".swing-workspace-bar").getByText(/Funds ₹/).count(), 1);
+    }
+
     await page.locator("canvas:visible").first().waitFor();
     await page.getByLabel("Swing chart layout").selectOption("4");
     await page.waitForFunction(

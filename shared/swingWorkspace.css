@@ -243,3 +243,11 @@
   .swing-panel-reopen { flex: 0 0 100%; display: flex; }
   .swing-panel-reopen-right { justify-content: flex-end; }
 }
+
+.swing-funds-info { margin-bottom: 12px; padding: 10px; background: #161e2a; border: 1px solid #334155; border-radius: 6px; }
+.swing-funds-info > strong { font-size: 11px; color: #94a3b8; }
+.swing-funds-info dl { margin: 8px 0 0; }
+.swing-funds-info dl > div { display: flex; justify-content: space-between; gap: 8px; margin-top: 7px; }
+.swing-funds-info dt { color: #94a3b8; }
+.swing-funds-info dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; }
+.swing-funds-info small { display: block; }

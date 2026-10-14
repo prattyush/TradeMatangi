@@ -25,3 +25,6 @@
 .notification-standalone { position: fixed; top: 12px; left: 12px; right: 12px; z-index: 20000; display: flex; background: #161b22; border-radius: 5px; padding: 5px 10px; }
 
 .desktop-messages .notification-standalone { top: auto; bottom: 10px; left: auto; width: min(380px, calc(100vw - 24px)); }
+
+.notification-icon-launcher { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 32px; min-width: 32px; width: 32px; height: 32px; padding: 0; background: transparent; border-color: transparent; }
+.notification-icon-unread { color: #f85149; }

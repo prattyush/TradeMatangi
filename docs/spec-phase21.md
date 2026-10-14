@@ -1525,3 +1525,34 @@ desktop drawing controls changed. Rebuild both clients to apply.
 
 Both follow-ups are delivered in [PR #663](https://github.com/prattyush/TradeMatangi/pull/663),
 which targets dev and awaits review. Main merge and deployment remain manual.
+
+## Desktop Swing layout and chart-safe message history — 2026-10-14
+
+Implemented and added to the same PR #663, pending review into dev. Desktop Swing
+now places Workspace/Analysis/Swing navigation alongside the existing toolbar
+actions rather than reserving a separate row. Linked and popped-out Swing windows
+use the same toolbar placement; navigation remains available while no portfolio
+workspace is loaded.
+
+Funds, original session Capital and P&L move into a compact Portfolio summary in
+the desktop left panel, above Positions/Orders/Trades. Profit is green, loss red,
+and zero or unavailable P&L neutral. Percentage is omitted when capital is zero.
+This reuses existing snapshot values and calculations; website summary placement
+and all trading behavior remain unchanged.
+
+Connected desktop Day, Analysis and Swing headers now contain a small message
+history icon with an unread alert count. The fixed bottom-right launcher and its
+empty headline background no longer cover chart candles or the price scale.
+Clicking the icon opens the existing history with full messages, read state,
+filters and download controls. Login and screen-load failures retain their
+standalone history launcher so diagnostics remain accessible without a header.
+
+Validation: 49 website and 219 desktop tests, TypeScript checks and both production
+builds pass. The existing Swing browser acceptance checks both actual renderers,
+same-row desktop navigation/actions, summary placement, positive/negative/zero
+P&L and zero-capital handling, while preserving website layout and existing
+trading/chart flows. New `scripts/desktop-notification-icon-check.mjs` verifies
+the header-only launcher, an unobstructed chart price scale, unread counts,
+keyboard history access, full messages, download, read state and reload persistence.
+Both browser checks pass without page errors. Artifacts: `.cache/swing-layout/`.
+Rebuild the desktop client to apply these additional layout changes.

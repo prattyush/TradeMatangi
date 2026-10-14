@@ -7,6 +7,7 @@ import {
   useRef,
   useState,
   type ComponentType,
+  type ReactNode,
 } from "react";
 import SwingWorkspace, {
   type SwingChartProps,
@@ -104,6 +105,7 @@ export default function SwingPortfolioPanel({
   onSaveReady,
   onCreateLinked,
   onPopOut,
+  navigationControls,
   onAnalyse,
   onDraftStateChange,
   onConnectBroker,
@@ -121,6 +123,7 @@ export default function SwingPortfolioPanel({
   onSaveReady?: (save: (() => Promise<unknown>) | null) => void;
   onCreateLinked?: (portfolioId: string) => void;
   onPopOut?: (portfolioId: string) => void;
+  navigationControls?: ReactNode;
   onAnalyse?: (portfolioId: string, sessionId?: string) => void;
   onDraftStateChange?: (state: { dirty: boolean; saving: boolean }) => void;
   onConnectBroker?: (broker: "kotak" | "kite") => void;
@@ -1124,6 +1127,7 @@ export default function SwingPortfolioPanel({
         onSaveReady={registerWorkspaceSave}
         onCreateLinked={onCreateLinked}
         onPopOut={onPopOut}
+        navigationControls={navigationControls}
         portfolioControls={portfolioControls}
         onSelect={chooseChart}
         onPick={(value) => {
@@ -1158,11 +1162,12 @@ export default function SwingPortfolioPanel({
         color: "#e5e7eb",
         background: "#0d1117",
         minHeight: 360,
-        height: surface === "website" ? "100vh" : "calc(100vh - 48px)",
+        height: surface === "website" || navigationControls ? "100vh" : "calc(100vh - 48px)",
         overflowY: chartWorkspace ? "hidden" : "auto",
         boxSizing: "border-box",
       }}
     >
+      {!chartWorkspace && navigationControls && <div className="swing-workspace-bar">{navigationControls}</div>}
       {chartWorkspace}
       {!chartWorkspace && portfolioControls}
       {analyticsOpen && portfolio && (

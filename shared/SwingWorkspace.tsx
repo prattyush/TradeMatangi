@@ -342,6 +342,7 @@ export default function SwingWorkspace({
   surface,
   workspaceId,
   portfolioControls,
+  navigationControls,
   companion = false,
   onSaveReady,
   onCreateLinked,
@@ -365,6 +366,7 @@ export default function SwingWorkspace({
   surface: "website" | "desktop";
   workspaceId?: string;
   portfolioControls?: ReactNode;
+  navigationControls?: ReactNode;
   companion?: boolean;
   onSaveReady?: (save: (() => Promise<unknown>) | null) => void;
   onCreateLinked?: (portfolioId: string) => void;
@@ -643,6 +645,7 @@ export default function SwingWorkspace({
   return (
     <div className="swing-workspace">
       <div className="swing-workspace-bar">
+        {navigationControls}
         {portfolioControls}
         <strong>
           {snapshot.portfolio.mode === "real"
@@ -650,6 +653,7 @@ export default function SwingWorkspace({
             : "Paper"}{" "}
           Swing
         </strong>
+        {surface !== "desktop" && (
         <span>
           Funds ₹{money(snapshot.wallet_balance)} · Capital ₹
           {money(snapshot.portfolio.session_capital)} · P&amp;L ₹
@@ -658,6 +662,7 @@ export default function SwingWorkspace({
             snapshot.portfolio.session_capital > 0 &&
             ` (${money((snapshot.pnl / snapshot.portfolio.session_capital) * 100)}%)`}
         </span>
+        )}
         <span className={marketOpen ? "swing-live" : "swing-muted"}>
           {marketOpen ? "Market open" : "Market closed"} · {feed}
         </span>
@@ -766,6 +771,17 @@ export default function SwingWorkspace({
             <strong>Portfolio</strong>
             <SwingIconButton label="Hide portfolio panel" icon="LeftHide" aria-expanded={true} onClick={() => setRailOpen(false)} />
           </div>
+          {surface === "desktop" && <section className="swing-funds-info" aria-label="Portfolio summary">
+            <strong>Portfolio summary</strong>
+            <dl>
+              <div><dt>Funds</dt><dd>₹{money(snapshot.wallet_balance)}</dd></div>
+              <div><dt>Capital</dt><dd>₹{money(snapshot.portfolio.session_capital)}</dd></div>
+              <div><dt>P&amp;L</dt><dd className={snapshot.pnl == null || snapshot.pnl === 0 ? "swing-muted" : snapshot.pnl > 0 ? "swing-profit" : "swing-loss"}>
+                ₹{money(snapshot.pnl)}
+                {snapshot.pnl != null && snapshot.portfolio.session_capital > 0 && <small> ({money((snapshot.pnl / snapshot.portfolio.session_capital) * 100)}%)</small>}
+              </dd></div>
+            </dl>
+          </section>}
           <nav>
             {["Positions", "Orders", "Trades"].map((value) => (
               <button
