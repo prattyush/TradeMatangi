@@ -1,3 +1,4 @@
+import { recordFeedReceipt, startPerformanceDiagnostics } from '../../frontend/src/services/performanceDiagnostics'
 import NotificationCenter from "../../shared/NotificationCenter"
 import { flashError, setNotificationAccount } from "../../shared/notifications"
 import KotakLoginDialog from './KotakLoginDialog'
@@ -492,6 +493,7 @@ interface ScreenControllerProps {
 }
 
 export default function App() {
+  useEffect(() => startPerformanceDiagnostics(), [])
   const assignedId = new URLSearchParams(window.location.search).get('screen_id')
   const [mainTab, setMainTab] = useState<'Workspace' | 'Analysis' | 'Swing'>('Workspace')
   const [analysisPortfolio,setAnalysisPortfolio]=useState<string|undefined>()
@@ -1377,6 +1379,8 @@ function ScreenController(props: ScreenControllerProps) {
     return snapshot
   }
   const applyLiveStreamPayload = (payload: unknown) => {
+    const streamId = payload && typeof payload === "object" && "stream_id" in payload ? String(payload.stream_id) : "unknown"
+    recordFeedReceipt(payload, `desktop-browse:${streamId}`)
     liveJournalRef.current.record(payload)
     updateLiveSnapshot(current => {
       const next = applyLiveStreamPayloadToSnapshot(current, payload)

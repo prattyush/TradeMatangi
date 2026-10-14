@@ -4,6 +4,8 @@ A manifest points to a complete revision; old local rows remain archived. Live
 sessions reference one day projection rather than duplicating the broker day.
 """
 from __future__ import annotations
+
+from app.services import performance_diagnostics as diagnostics
 from app.services.broker_reports import order_id as broker_report_id
 import asyncio
 import hashlib
@@ -331,6 +333,7 @@ def fill_deferred(session, callback, *args):
     return False
 
 
+@diagnostics.timed("broker_refresh")
 async def refresh(session, broker, *, protection=False, bundle=None):
     if getattr(session, "trading_style", "intraday") == "swing":
         from app.services.swing_real import refresh as refresh_swing

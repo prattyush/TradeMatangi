@@ -21,6 +21,8 @@ Cross-process cancellation:
 """
 from __future__ import annotations
 
+from app.services import performance_diagnostics as diagnostics
+
 from app.services.instrument_identity import strike_number
 from app.services.execution_analytics import strategy_context
 
@@ -545,6 +547,7 @@ def clear_session(session_id: str) -> None:
 
 # ── Tick hook (called from simulation._emit_tick_and_check_orders) ────────────
 
+@diagnostics.timed("strategy_evaluation")
 def on_tick(session, tick: dict, tick_right: str | None, loop=None) -> None:
     """
     Evaluate all strategies for the given session on a single tick.

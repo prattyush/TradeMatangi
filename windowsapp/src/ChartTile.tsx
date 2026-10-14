@@ -1,3 +1,4 @@
+import { beginPerformanceSample, endPerformanceSample } from '../../frontend/src/services/performanceDiagnostics'
 import { canonicalDrawingKey as canonicalInstrumentKey, drawingIdentity } from "./drawingIdentity"
 import { announceDrawingChange, watchDrawingChanges } from "./drawingChanges"
 import { useEffect, useRef, useState } from 'react'
@@ -364,48 +365,51 @@ export function ChartTile({ shareDayDrawings=false, externalTradeMarkers=false, 
     }
   }, [indicatorKey, levelsPosition?.side, levelsPosition?.quantity, levelsPosition?.avg_entry_price, levelsPosition?.entry_commission, sessionCapital, brokeragePerOrder, latestPositionFill, drawingInstrumentKey, interval, candles.length, candles[candles.length - 1]?.high, candles[candles.length - 1]?.low])
   useEffect(() => {
-    candlesRef.current = candles
-    const chart = chartRef.current
-    if (!chart) return
-    const resetViewport = viewportResetRef.current !== viewportResetKey
-    viewportResetRef.current = viewportResetKey
-    if ((!initialViewportRef.current || resetViewport) && candles.length > 0 && element.current) {
-      chart.setBarSpace(Math.max(1, element.current.clientWidth / Math.min(150, candles.length)))
-      chart.scrollToDataIndex(candles.length - 1, 0)
-      initialViewportRef.current = true
-    }
-    const latest = candles[candles.length - 1]
-    const previous = renderedCandlesRef.current
-    const sameCandle = (left: Candle, right: Candle) => left.timestamp === right.timestamp && left.open === right.open && left.high === right.high && left.low === right.low && left.close === right.close
-    // Live snapshots normally change only the current candle or append one
-    // candle. Feed those updates through KLineCharts' incremental loader so
-    // the user's scroll position and crosshair remain untouched.
-    // Replay and live snapshots commonly update the last candle in place. The
-    // previous implementation compared every candle, including that mutable
-    // last candle, so every replay tick fell back to resetData() and cleared
-    // the crosshair. Permit a same-length last-bar update, or one new bar,
-    // while still resetting when history/symbol data is replaced.
-    const sameLengthUpdate = candles.length === previous.length && previous.length > 0 && previous.slice(0, -1).every((candle, index) => sameCandle(candle, candles[index]))
-    const appendUpdate = candles.length === previous.length + 1 && previous.length > 0 && previous.every((candle, index) => sameCandle(candle, candles[index]))
-    const incremental = Boolean(subscribeBarRef.current && (sameLengthUpdate || appendUpdate))
+    const diagnosticStart = beginPerformanceSample("desktop-chart-update")
     try {
-      if (incremental && latest && subscribeBarRef.current) {
-        subscribeBarRef.current({ timestamp: latest.timestamp * 1000, open: latest.open, high: latest.high, low: latest.low, close: latest.close, volume:latest.volume ?? 0 })
-        renderedCandlesRef.current = candles
-        reportChartDiagnostic('chart_incremental_success', { symbol, instrument, interval, candle_count: candles.length, latest })
-        return
+      candlesRef.current = candles
+      const chart = chartRef.current
+      if (!chart) return
+      const resetViewport = viewportResetRef.current !== viewportResetKey
+      viewportResetRef.current = viewportResetKey
+      if ((!initialViewportRef.current || resetViewport) && candles.length > 0 && element.current) {
+        chart.setBarSpace(Math.max(1, element.current.clientWidth / Math.min(150, candles.length)))
+        chart.scrollToDataIndex(candles.length - 1, 0)
+        initialViewportRef.current = true
       }
-      const barSpace = chart.getBarSpace().bar
-      const range = chart.getVisibleRange()
-      const anchor = previous[Math.max(0, Math.min(previous.length - 1, Math.floor(range.to) - 1))]?.timestamp
-      chart.resetData()
-      chart.setBarSpace(barSpace)
-      if (anchor && !resetViewport) chart.scrollToTimestamp(anchor * 1000, 0)
-      renderedCandlesRef.current = candles
-      reportChartDiagnostic('chart_reset_success', { symbol, interval, candle_count: candles.length, latest: latest ?? null })
-    } catch (error) {
-      reportChartDiagnostic('chart_data_error', { symbol, interval, candle_count: candles.length, latest: latest ?? null, error: String(error), stack: error instanceof Error ? error.stack : undefined })
-    }
+      const latest = candles[candles.length - 1]
+      const previous = renderedCandlesRef.current
+      const sameCandle = (left: Candle, right: Candle) => left.timestamp === right.timestamp && left.open === right.open && left.high === right.high && left.low === right.low && left.close === right.close
+      // Live snapshots normally change only the current candle or append one
+      // candle. Feed those updates through KLineCharts' incremental loader so
+      // the user's scroll position and crosshair remain untouched.
+      // Replay and live snapshots commonly update the last candle in place. The
+      // previous implementation compared every candle, including that mutable
+      // last candle, so every replay tick fell back to resetData() and cleared
+      // the crosshair. Permit a same-length last-bar update, or one new bar,
+      // while still resetting when history/symbol data is replaced.
+      const sameLengthUpdate = candles.length === previous.length && previous.length > 0 && previous.slice(0, -1).every((candle, index) => sameCandle(candle, candles[index]))
+      const appendUpdate = candles.length === previous.length + 1 && previous.length > 0 && previous.every((candle, index) => sameCandle(candle, candles[index]))
+      const incremental = Boolean(subscribeBarRef.current && (sameLengthUpdate || appendUpdate))
+      try {
+        if (incremental && latest && subscribeBarRef.current) {
+          subscribeBarRef.current({ timestamp: latest.timestamp * 1000, open: latest.open, high: latest.high, low: latest.low, close: latest.close, volume:latest.volume ?? 0 })
+          renderedCandlesRef.current = candles
+          reportChartDiagnostic('chart_incremental_success', { symbol, instrument, interval, candle_count: candles.length, latest })
+          return
+        }
+        const barSpace = chart.getBarSpace().bar
+        const range = chart.getVisibleRange()
+        const anchor = previous[Math.max(0, Math.min(previous.length - 1, Math.floor(range.to) - 1))]?.timestamp
+        chart.resetData()
+        chart.setBarSpace(barSpace)
+        if (anchor && !resetViewport) chart.scrollToTimestamp(anchor * 1000, 0)
+        renderedCandlesRef.current = candles
+        reportChartDiagnostic('chart_reset_success', { symbol, interval, candle_count: candles.length, latest: latest ?? null })
+      } catch (error) {
+        reportChartDiagnostic('chart_data_error', { symbol, interval, candle_count: candles.length, latest: latest ?? null, error: String(error), stack: error instanceof Error ? error.stack : undefined })
+      }
+    } finally { endPerformanceSample("desktop-chart-update", diagnosticStart) }
   }, [candles, isReplaying, viewportResetKey])
   const persistDrawing = async (path: string, method: 'POST' | 'PUT' | 'DELETE', drawing: PersistedDrawing, revision?: number) => {
     try {
