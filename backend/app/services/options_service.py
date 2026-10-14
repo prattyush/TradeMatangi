@@ -18,9 +18,11 @@ import pandas as pd
 from app.config import DATA_DIR, OHLCDATA_DIR, MARKET_OPEN, MARKET_CLOSE, get_market_close, LOT_SIZES, SUPPORTED_SYMBOLS
 from app.utils import NSE_HOLIDAYS, is_trading_day as _is_trading_day
 
+from app.services.breeze_history import CHUNK_SECONDS
+
 logger = logging.getLogger(__name__)
 
-_CHUNK_MINUTES = 15
+_CHUNK_MINUTES = CHUNK_SECONDS / 60
 _CUTOFF_DATE = datetime.date(2025, 9, 1)  # From this date: Tuesday expiry; before: Thursday
 _BREEZE_RATE_LIMIT_BACKOFF_SECS = (5, 10, 20)
 
@@ -158,7 +160,7 @@ def _fetch_options_day_paginated(
     breeze, symbol: str, date: str, strike: int | float, expiry: str, right: str, *, cached=None
 ) -> list[dict]:
     """
-    Fetch a full trading day of options OHLC data in 15-minute chunks
+    Fetch a full trading day of options OHLC data in 16.5-minute chunks
     to stay under the Breeze API ~1000-record cap.
     right: "CE"/"CALL" or "PE"/"PUT"
     """
@@ -175,15 +177,19 @@ def _fetch_options_day_paginated(
     stock_code = sym_info.get("breeze_stock_code", symbol)
     options_exchange = sym_info.get("options_exchange_code", "NFO")
 
-    all_records: list[dict] = []
-    chunks = 0
+    windows = []
     current = from_ts
     while current < to_ts:
         chunk_end = min(current + chunk_delta, to_ts)
+        windows.append((current, chunk_end))
+        current = chunk_end
+
+    def fetch_chunk(window, cancelled):
+        current, chunk_end = window
         from app.services.breeze_history import request_history
         response = request_history(
             breeze,
-            interval="1second",
+            _cancelled=cancelled, interval="1second",
             from_date=current.strftime("%Y-%m-%d %H:%M:%S"),
             to_date=chunk_end.strftime("%Y-%m-%d %H:%M:%S"),
             stock_code=stock_code,
@@ -210,9 +216,11 @@ def _fetch_options_day_paginated(
                 f"Breeze API error for {symbol} options "
                 f"{current.strftime('%H:%M')}–{chunk_end.strftime('%H:%M')}: {error}"
             )
-        chunks += 1
-        all_records.extend(response.get("Success") or [])
-        current = chunk_end
+        return response.get("Success") or []
+
+    from app.services.breeze_history import fetch_chunks
+    all_records = fetch_chunks(windows, fetch_chunk)
+    chunks = len(windows)
     logger.info("breeze_options_download symbol=%s right=%s strike=%s date=%s chunks=%d rows=%d",
                 symbol, right, strike, date, chunks, len(all_records))
     return all_records

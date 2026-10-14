@@ -20,7 +20,7 @@ const position={session_id:'child',symbol:'RELIND',side:'LONG',quantity:10,avg_e
 let book={portfolio:{session_id:'portfolio',mode:'paper',state:'running',entries_paused:false,session_capital:100000,guardrail_epoch:0},wallet_balance:99000,pnl:99,positions:[position],open_orders:[],trades:[],reconciliation_pending:[]};
 const request=async(path,method,body)=>{window.calls.push({path,method,body});if(path==='capabilities')return{real_trading_enabled:true};if(path.includes('/charts/workspace'))return method==='GET'?{workspace:null}:{saved:true};if(path.endsWith('/charts/watch'))return{watch_id:'viewer'};if(path.includes('/charts/watch/'))return{quotes:[],market_open:false,provider:'kite'};if(path.endsWith('/charts/history')){const end=Date.parse(body.as_of_date+'T00:00:00Z')/1000;return{candles:Array.from({length:260},(_,i)=>({time:end-(259-i)*86400,timestamp:end-(259-i)*86400,open:100,high:120,low:90,close:110,volume:100})),provider:'kite',more:false,partial:false}};if(path.includes('contracts/futures'))return{contracts:[{symbol:body?.symbol??'RELIND',instrument_type:'futures',expiry:'2026-10-27',lot_size:5,tick_size:.05,entry_eligible:true}]};if(path.includes('contracts/metadata'))return{contracts:[]};if(path.endsWith('/pause')){book={...book,portfolio:{...book.portfolio,entries_paused:body.paused}};return book};if(path.endsWith('/order-preview')){if(body.instrument_type==='futures'){const budget=body.capital_pct?book.portfolio.session_capital*body.capital_pct:201;const q=body.capital_pct?Math.floor((budget-1)/100)*5:body.quantity;return{quantity:q,lot_size:5,budget,fees:1,margin:q*20,required_funds:q*20+1,minimum_funds:101,capital_revision:0,fee_hash:'captured',execution_enabled:true,evidence:{live:false,source:'dated fixture'}}};if(window.failSizing)throw new Error('Sizing unavailable');const budget=book.portfolio.session_capital*body.capital_pct;const q=Math.max(0,Math.floor((budget-1)/(body.price*1.00006803)));return{quantity:q,lot_size:1,budget,fees:1,required_funds:q*body.price+1,unused_budget:budget-q*body.price-1,minimum_funds:body.price+1,capital_revision:book.portfolio.guardrail_epoch}};if(path.endsWith('/orders'))return book;return book};
 const drawing=async(path)=>path==='chart-settings'?{settings:{}}:{drawings:[]};const render=(props)=><Native {...props} drawingRequest={drawing}/>;
-const desktop=location.search.includes('desktop');createRoot(document.getElementById('root')).render(<Panel request={request} surface={desktop?'desktop':'website'} renderChart={desktop?render:Web} loadSymbols={async()=>[{symbol:'HDFCBANK',display_name:'HDFC Bank',chart_type:'equity',option_eligible:true},{symbol:'RELIND',display_name:'Reliance',chart_type:'equity',option_eligible:true}]} onDetach={()=>{window.detached=true}}/>);`,
+const desktop=location.search.includes('desktop');createRoot(document.getElementById('root')).render(<Panel request={request} surface={desktop?'desktop':'website'} renderChart={desktop?render:Web} loadSymbols={async()=>[{symbol:'HDFCBANK',display_name:'HDFC Bank',chart_type:'equity',option_eligible:true},{symbol:'RELIND',display_name:'Reliance',chart_type:'equity',option_eligible:true}]} onDetach={()=>{window.detached=true}} onPopOut={id=>{window.poppedOut=id}} onCreateLinked={id=>{window.linked=id}}/>);`,
     resolveDir: root + "/windowsapp",
     loader: "tsx",
   },
@@ -79,6 +79,31 @@ try {
     await page.waitForFunction(
       () => document.querySelectorAll(".swing-chart-pane").length === 4,
     );
+    for (const label of ["Pause entries", "Pop out Swing", "Create linked window", "Execution history", "Swing Stats", "Manage portfolio", "Detach"]) {
+      const button = page.getByRole("button", { name: label, exact: true });
+      assert.equal(await button.locator("svg").count(), 1, label);
+      assert.equal((await button.textContent()).trim(), "", label);
+      assert.equal(await button.getAttribute("title"), label);
+    }
+    await page.getByRole("button", { name: "Pop out Swing", exact: true }).click();
+    await page.getByRole("button", { name: "Create linked window", exact: true }).click();
+    assert.equal(await page.evaluate(() => window.poppedOut), "portfolio");
+    assert.equal(await page.evaluate(() => window.linked), "portfolio");
+    for (const [panel, hide, show] of [[".swing-portfolio-rail", "Hide portfolio panel", "Show portfolio panel"], [".swing-trade-ticket", "Hide trade ticket", "Show trade ticket"]]) {
+      const button = page.getByRole("button", { name: hide, exact: true });
+      const before = await button.boundingBox();
+      const bounds = await page.locator(panel).boundingBox();
+      assert.ok(before.x >= bounds.x && before.x + before.width <= bounds.x + bounds.width + 1);
+      await button.hover();
+      assert.deepEqual(await button.boundingBox(), before, "Hover must not move the target");
+      await button.focus();
+      await button.press("Enter");
+      assert.equal(await page.locator(panel).isVisible(), false);
+      const reopen = page.getByRole("button", { name: show, exact: true });
+      assert.equal(await reopen.getAttribute("aria-expanded"), "false");
+      await reopen.click();
+      assert.equal(await page.locator(panel).isVisible(), true);
+    }
     if (surface === "desktop") {
       assert.equal(
         await page.locator(".swing-chart-pane .swing-data-label").count(),
@@ -96,29 +121,12 @@ try {
           .count(),
         1,
       );
-      await page
-        .getByRole("button", { name: "Portfolio panel", exact: true })
-        .click();
-      assert.equal(
-        await page.locator(".swing-portfolio-rail").isVisible(),
-        false,
-      );
-      await page
-        .getByRole("button", { name: "Portfolio panel", exact: true })
-        .click();
-      await page
-        .getByRole("button", { name: "Trade ticket", exact: true })
-        .click();
-      assert.equal(await page.locator(".swing-trade-ticket").count(), 0);
-      await page
-        .getByRole("button", { name: "Trade ticket", exact: true })
-        .click();
-      await page.getByRole("button", { name: /Chart 1 tools/ }).click();
+      await page.getByRole("button", { name: "Hide chart tools", exact: true }).click();
       assert.equal(
         await page.getByLabel("Add chart indicator").isVisible(),
         false,
       );
-      await page.getByRole("button", { name: /Chart 1 tools/ }).click();
+      await page.getByRole("button", { name: "Show chart tools", exact: true }).click();
       const historyCalls = await page.evaluate(
         () =>
           window.calls.filter((c) => c.path.endsWith("/charts/history")).length,

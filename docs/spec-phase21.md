@@ -1435,3 +1435,93 @@ not rewritten. Any remaining freeze needs the captured evidence for a separate
 focused fix. Backend restart applies quote batching; rebuild clients for the new
 measurements. [PR #662](https://github.com/prattyush/TradeMatangi/pull/662) targets
 dev and awaits review; main merge/deployment remain manual.
+
+## Breeze second-level history optimization and live window probe — 2026-10-14
+
+Implemented and validated on latest dev after PR #662 merged. ICICI's published
+limits remain [100 API calls/minute and 5,000/day](https://api.icicidirect.com/breezeapi/documents/index.html).
+The [official SDK documentation](https://pypi.org/project/breeze-connect/) specifies
+1,000 candles per historical response; installed/latest PyPI SDK is 1.0.69.
+
+The authorized read-only live probe used the DDB Local Breeze token for NIFTY
+2026-10-13, with eight paced historical requests and one SDK authentication. No
+orders, sockets, cache writes or DynamoDB updates were performed. Sanitized evidence
+is retained in `docs/validation/breeze-history-window-2026-10-14.json`; reusable
+probe is `scripts/probe-breeze-history-window.py`. It records counts/timestamps and
+status, not credentials, account details or OHLC rows. Run standalone probes after
+market hours because they authenticate separately from the app's shared client.
+
+| Requested window from 09:15 | Returned rows | Returned timestamps | Result |
+|---|---:|---|---|
+| 15 minutes | 901 | 09:15:00–09:30:00 | Complete |
+| 16m30s | 991 | 09:15:00–09:31:30 | Complete; all reference seconds present |
+| 30 minutes | 1,000 | 09:28:21–09:45:00 | 801 earlier reference seconds missing |
+| One hour | 1,000 | 09:58:21–10:15:00 | 2,601 earlier reference seconds missing |
+| Full day | 1,000 | 14:58:21–15:15:00 | Only the latest 1,000 seconds |
+
+All eight history responses reported API status 200. A successful larger-window
+response does **not** prove complete history: this endpoint silently truncates to
+the latest 1,000 candles. Keep windows below the cap rather than requesting a full
+day and forward/back-filling its missing earlier prices.
+
+Both equity/index and options downloaders now use **990-second windows**, at most
+991 inclusive one-second candles. This reduces a current six-hour day from 24 to
+22 requests, and an older 375-minute day from 25 to 23. Today-cache tail overlap
+uses the same chunk size; previous cached data remains compatible. Existing cache
+coalescing, timestamp convention, observed flags, boundary deduplication and partial
+cache fallback remain unchanged.
+
+HTTP reads overlap on one shared **three-worker** chunk pool. Each download keeps
+at most three chunks submitted; completed results are assembled chronologically.
+One process-wide semaphore also limits other Breeze history readers to three
+in-flight calls. Requests still start no faster than **one/second** (approximately
+60/minute), leaving headroom below the published API ceiling. The pacer rechecks
+actual dispatch time after waking instead of reserving future slots that could
+burst when delayed workers recover. Auth/validation failures stop further chunk
+submission; queued work is cancelled and already-running reads drain before cache
+handling returns. Cancellation interrupts pacing waits. A reported rate limit
+retains the existing shared 60-second cooldown. The same authenticated SDK client
+is reused; no per-worker session generation or SDK upgrade is introduced.
+
+Parallelism hides slow HTTP responses; it does not bypass broker limits. When
+responses are already faster than one second, pacing still dominates, so the main
+benefit is fewer chunks. Daily allowance remains broker-enforced and includes other
+API usage; there is no new persistent quota ledger or multi-process coordinator.
+
+Validation: **242 focused backend tests** pass, covering global concurrency,
+chronological assembly despite reordered completion, failure/cancellation, paced
+starts, cooldown, inclusive row caps and full-day coverage before/after the changed
+market close, live/tail cache policy, snapshot boundaries and startup isolation.
+Final concurrency checks also pass after draining only non-cancelled running work.
+A mock latency benchmark (nine 50 ms responses, 10 ms scaled pacing) measured
+456 ms serial / 175 ms parallel, **2.61×** faster, with peak concurrency three.
+This is controlled overlap evidence, not a promised live speedup. Artifacts:
+`.cache/breeze-history/`. Backend restart applies the downloader change.
+
+## Swing workspace icons and adjacent panel toggles — 2026-10-14
+
+Implemented in the shared website/desktop workspace. Pause/Resume entries, Pop out
+Swing, Create linked window, Execution history, Swing Stats, Manage portfolio and
+Detach now use compact SVG icon buttons with explicit tooltips/accessibility names.
+The Portfolio and Trade ticket controls are also icons: each hide control is inside
+its panel's heading; each show control remains in a narrow strip beside the same
+panel when collapsed. Website now uses the existing saved `rail_open` preference
+as desktop does. Existing ticket/rail state and persistence are reused.
+
+Today/Maximize/Restore controls are icons on both clients. Desktop tool collapse,
+moving-average, Horizontal/Trend/Fibonacci drawing and Delete selected controls use
+icons too. Positions/Orders/Trades tabs and rows, Buy/Sell and confirmations retain
+readable labels. Buttons have fixed 32px hit targets, keyboard focus and stable
+hover geometry; handlers, disabled state and companion-window eligibility are
+preserved. No trading endpoint or order semantics changes.
+
+Validation: **49 website tests**, **219 desktop tests**, both TypeScript checks and
+production builds pass. Updated `scripts/swing-workspace-browser-check.mjs` exercises
+both actual chart renderers, verifying icon-only toolbar actions, labels/tooltips,
+Pop out/linked callbacks, panel-local hit targets, stable hover geometry, keyboard
+collapse/reopen, chart layout/maximize, sizing, Pause/Resume and price-pick flows;
+no page errors. Day/Swing shared drawing browser acceptance also passes after the
+desktop drawing controls changed. Rebuild both clients to apply.
+
+Both follow-ups will be delivered together in a review PR against dev. Main merge
+and deployment remain manual.

@@ -428,12 +428,12 @@ class TestFetchOptionsDay:
             ],
         }
 
-    def test_makes_25_chunks(self):
+    def test_makes_23_chunks(self):
         breeze = MagicMock()
         breeze.get_historical_data_v2.return_value = self._make_success_response(0)
         _fetch_options_day_paginated(breeze, "NIFTY", "2026-05-06", 24000, "2026-05-19", "CE")
-        # 375 minutes / 15 = 25 chunks
-        assert breeze.get_historical_data_v2.call_count == 25
+        # 375 minutes / 16.5 = 23 chunks
+        assert breeze.get_historical_data_v2.call_count == 23
 
     def test_passes_correct_params(self):
         breeze = MagicMock()
@@ -468,7 +468,7 @@ class TestFetchOptionsDay:
         breeze = MagicMock()
         breeze.get_historical_data_v2.return_value = self._make_success_response(3)
         records = _fetch_options_day_paginated(breeze, "NIFTY", "2026-05-06", 24000, "2026-05-19", "CE")
-        assert len(records) == 25 * 3
+        assert len(records) == 23 * 3
 
 
 # ---------------------------------------------------------------------------
