@@ -79,27 +79,27 @@ try {
       const nav = await page.getByLabel("Desktop view", { exact: true }).boundingBox();
       const pause = await page.getByRole("button", { name: "Pause entries", exact: true }).boundingBox();
       assert.ok(Math.abs(nav.y + nav.height / 2 - pause.y - pause.height / 2) < 2, "Navigation and icons must share a row");
-      assert.equal(await page.locator(".swing-workspace-bar").getByText(/Funds ₹/).count(), 0);
-      const summary = page.getByRole("region", { name: "Portfolio summary" });
-      assert.match(await summary.innerText(), /Funds.*99,000/s);
-      assert.match(await summary.innerText(), /Capital.*1,00,000/s);
-      assert.match(await summary.innerText(), /P&L.*99.*0.1%/s);
-      assert.equal(await summary.locator(".swing-profit").count(), 1);
-      const info = await summary.boundingBox();
-      const tabs = await page.locator(".swing-portfolio-rail nav").boundingBox();
-      assert.ok(info.y + info.height <= tabs.y, "Summary belongs above position/order/trade tabs");
-      await page.evaluate(() => window.setSummary(-99));
-      await summary.locator("dd.swing-loss").waitFor();
-      assert.match(await summary.innerText(), /-99/);
-      await page.evaluate(() => window.setSummary(0, 0));
-      await summary.locator("dd.swing-muted").waitFor();
-      assert.equal((await summary.innerText()).includes("Infinity"), false);
-      await page.evaluate(() => window.setSummary(99));
-      await summary.locator("dd.swing-profit").waitFor();
-    } else {
-      assert.equal(await page.getByRole("region", { name: "Portfolio summary" }).count(), 0);
-      assert.equal(await page.locator(".swing-workspace-bar").getByText(/Funds ₹/).count(), 1);
     }
+    assert.equal(await page.locator(".swing-workspace-bar").getByText(/Funds ₹/).count(), 0);
+    const summary = page.getByRole("region", { name: "Portfolio summary" });
+    assert.match(await summary.innerText(), /Funds.*99,000/s);
+    assert.match(await summary.innerText(), /Capital.*1,00,000/s);
+    assert.match(await summary.innerText(), /P&L.*99.*0.1%/s);
+    assert.equal(await summary.locator(".swing-profit").count(), 1);
+    const info = await summary.boundingBox();
+    const tabs = await page.locator(".swing-portfolio-rail nav").boundingBox();
+    assert.ok(info.y + info.height <= tabs.y, "Summary belongs above position/order/trade tabs");
+    await page.evaluate(() => window.setSummary(-99));
+    await summary.locator("dd.swing-loss").waitFor();
+    assert.match(await summary.innerText(), /-99/);
+    await page.evaluate(() => window.setSummary(0, 0));
+    await summary.locator("dd.swing-muted").waitFor();
+    assert.equal((await summary.innerText()).includes("Infinity"), false);
+    await page.evaluate(() => window.setSummary(null));
+    await summary.getByText("₹—", { exact: true }).waitFor();
+    assert.equal(await summary.locator("dd.swing-muted").count(), 1);
+    await page.evaluate(() => window.setSummary(99));
+    await summary.locator("dd.swing-profit").waitFor();
 
     await page.locator("canvas:visible").first().waitFor();
     await page.getByLabel("Swing chart layout").selectOption("4");

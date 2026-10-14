@@ -1601,3 +1601,20 @@ checks remain applicable because this review changes only backend behavior/docs.
 Test output: `.cache/swing-layout/breeze-review-tests.log` and
 `.cache/swing-layout/breeze-review-sdk-tests.log`. Restart the backend to
 apply these recovery fixes. Main merge and deployment remain manual.
+
+## Consistent website/desktop Swing Portfolio summary — 2026-10-14
+
+Implemented as a follow-up to PR #663, which is now merged into dev. Website
+Swing moves Funds, Capital and P&L from the top toolbar into the same Portfolio
+summary above the left-panel Positions/Orders/Trades tabs used by desktop.
+Both clients render one shared component: profit is green, loss red, and zero or
+unavailable P&L neutral (`₹—` when unavailable); percentage is omitted for zero
+capital. Collapsing the Portfolio panel hides its summary with the panel, and
+reopening it restores both. Existing snapshot values and wallet calculations
+are unchanged.
+
+Validation: website TypeScript check passes. Updated Swing browser acceptance
+checks both actual renderers for summary placement, removal from the top row,
+profit/loss/zero/unavailable P&L, zero capital and existing panel/chart/trading
+behavior. No backend change or migration is required; rebuild the website to apply.
+Browser output: `.cache/swing-layout/shared-summary-browser.log`.

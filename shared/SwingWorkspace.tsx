@@ -653,16 +653,6 @@ export default function SwingWorkspace({
             : "Paper"}{" "}
           Swing
         </strong>
-        {surface !== "desktop" && (
-        <span>
-          Funds ₹{money(snapshot.wallet_balance)} · Capital ₹
-          {money(snapshot.portfolio.session_capital)} · P&amp;L ₹
-          {money(snapshot.pnl)}
-          {snapshot.pnl != null &&
-            snapshot.portfolio.session_capital > 0 &&
-            ` (${money((snapshot.pnl / snapshot.portfolio.session_capital) * 100)}%)`}
-        </span>
-        )}
         <span className={marketOpen ? "swing-live" : "swing-muted"}>
           {marketOpen ? "Market open" : "Market closed"} · {feed}
         </span>
@@ -771,7 +761,7 @@ export default function SwingWorkspace({
             <strong>Portfolio</strong>
             <SwingIconButton label="Hide portfolio panel" icon="LeftHide" aria-expanded={true} onClick={() => setRailOpen(false)} />
           </div>
-          {surface === "desktop" && <section className="swing-funds-info" aria-label="Portfolio summary">
+          <section className="swing-funds-info" aria-label="Portfolio summary">
             <strong>Portfolio summary</strong>
             <dl>
               <div><dt>Funds</dt><dd>₹{money(snapshot.wallet_balance)}</dd></div>
@@ -781,7 +771,7 @@ export default function SwingWorkspace({
                 {snapshot.pnl != null && snapshot.portfolio.session_capital > 0 && <small> ({money((snapshot.pnl / snapshot.portfolio.session_capital) * 100)}%)</small>}
               </dd></div>
             </dl>
-          </section>}
+          </section>
           <nav>
             {["Positions", "Orders", "Trades"].map((value) => (
               <button
