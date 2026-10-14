@@ -1556,3 +1556,48 @@ the header-only launcher, an unobstructed chart price scale, unread counts,
 keyboard history access, full messages, download, read state and reload persistence.
 Both browser checks pass without page errors. Artifacts: `.cache/swing-layout/`.
 Rebuild the desktop client to apply these additional layout changes.
+
+## Breeze compatibility review and recovery fixes — 2026-10-14
+
+Review completed; fixes added to PR #663, pending review into dev. The installed
+Breeze SDK 1.0.69 history implementation builds request parameters and headers
+locally and reads the existing authenticated session. Concurrent reads therefore
+keep contract parameters separate without generating extra sessions or changing
+WebSocket callbacks. The existing authentication lock/cache still authenticates
+once for unchanged credentials and replaces the client when credentials change.
+Three-worker overlap, one-second global pacing, cancellation, chronological
+assembly, 990-second candle windows and cache preservation remain in effect.
+
+Two issues were corrected:
+
+- The SDK history GET omitted an HTTP timeout. A stalled connection could hold a
+  worker indefinitely, and three stalled reads could exhaust the shared history
+  pool. A narrow wrapper of the SDK module's transport reference now supplies a
+  **10-second connect / 30-second read timeout** only for the history endpoint.
+  These are connection/read-inactivity limits, not a strict total-request deadline.
+  It retains SDK validation and authenticated headers and leaves login, other HTTP
+  endpoints, global Requests functions and WebSocket calls unchanged. Timeout
+  failures cancel the batch through the existing error path; subsequent downloads
+  can use the workers again. No automatic session regeneration is introduced.
+- Equity history previously accepted some responses carrying an error with status
+  200, or an unsuccessful status without an error field. It now rejects either
+  condition, matching options history, rather than treating the chunk as empty
+  successful data. Existing cache fallback remains available on failed downloads.
+
+Validation: **236 distinct backend tests passed** (235 in the review selection plus the
+additional SDK options case), including eight new tests using
+the installed SDK with mocked HTTP for actual validation/header construction,
+concurrent contract isolation, exact options expiry/strike/right/exchange forwarding,
+timeout propagation and worker recovery, transport
+scope, unchanged-credential authentication reuse and credential replacement, and
+error-response rejection. Existing history pacing/cancellation/coverage, equity
+and options cache, provider isolation, snapshot boundaries and Breeze live-feed
+routing checks also pass. SDK 1.0.54 source (the minimum allowed version) has the
+same endpoint constants and transport call; no dependency upgrade is required.
+No new live broker authentication or streaming interruption was performed during
+this review. The earlier saved live window probe remains the candle-cap evidence.
+Desktop/website code was also reviewed; their previously passing tests and browser
+checks remain applicable because this review changes only backend behavior/docs.
+Test output: `.cache/swing-layout/breeze-review-tests.log` and
+`.cache/swing-layout/breeze-review-sdk-tests.log`. Restart the backend to
+apply these recovery fixes. Main merge and deployment remain manual.

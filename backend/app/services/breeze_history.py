@@ -14,6 +14,31 @@ _in_flight = threading.BoundedSemaphore(_MAX_IN_FLIGHT)
 _executor = ThreadPoolExecutor(max_workers=_MAX_IN_FLIGHT, thread_name_prefix="breeze-chunks")
 
 
+class _HistoryRequests:
+    """Add a timeout only to the SDK's history GET; leave its other calls alone."""
+    def __init__(self, transport, history_url):
+        self._transport = transport
+        self._history_url = history_url
+
+    def __getattr__(self, name):
+        return getattr(self._transport, name)
+
+    def get(self, *args, **kwargs):
+        url = kwargs.get("url", args[0] if args else None)
+        if url == self._history_url:
+            kwargs.setdefault("timeout", (10, 30))
+        return self._transport.get(*args, **kwargs)
+
+
+def install_history_timeout():
+    # SDK 1.0.69 omits timeout and accepts no timeout argument. Wrap its module
+    # reference, not requests.get globally; SDK validation/auth remain intact.
+    import breeze_connect.breeze_connect as sdk
+    if not isinstance(sdk.requests, _HistoryRequests):
+        sdk.requests = _HistoryRequests(
+            sdk.requests, sdk.config.BREEZE_NEW_URL + sdk.api_endpoint.HIST_CHART.value)
+
+
 class BreezeHistoryRateLimitError(RuntimeError):
     pass
 

@@ -97,6 +97,8 @@ def _get_breeze_unlocked():
             "breeze-connect is not installed. Run: pip install breeze-connect"
         ) from e
 
+    from app.services.breeze_history import install_history_timeout
+    install_history_timeout()
     breeze = BreezeConnect(api_key=creds["api_key"])
     try:
         result = breeze.generate_session(
@@ -201,7 +203,7 @@ def _fetch_day_paginated(breeze, sym_info: dict, date: str, *, cached=None) -> l
                 "Please refresh session_token in data/accesskeys.ini."
             )
 
-        if status not in (200, None) and error:
+        if error or status not in (200, None):
             raise RuntimeError(
                 f"Breeze API error for {sym_info['breeze_stock_code']} "
                 f"{current.strftime('%H:%M')}–{chunk_end.strftime('%H:%M')}: {error}"
@@ -249,7 +251,7 @@ def _fetch_breeze_historical_unlocked(symbol: str, date: str, *, force_refresh: 
     Cache order:
       1. Parquet in ohlcdata/ with >= _MIN_DAY_ROWS rows — return immediately
       2. Legacy pickle in data/ with >= _MIN_DAY_ROWS rows — convert to parquet, return
-      3. Fetch from Breeze API (paginated 15-min chunks) — validate, save as parquet, return
+      3. Fetch from Breeze API (paginated 16.5-min chunks) — validate, save as parquet, return
 
     Raises BreezeTokenError on auth failure, BreezeSymbolError for unknown symbols.
     Today uses a ten-minute TTL; stale/explicit reads merge an overlapping tail.
