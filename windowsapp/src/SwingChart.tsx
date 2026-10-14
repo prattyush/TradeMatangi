@@ -1,3 +1,4 @@
+import { SwingIconButton } from "../../shared/SwingIcon";
 import { flashError } from "../../shared/notifications";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -129,20 +130,11 @@ export default function SwingChart(
             </option>
           ))}
         </select>
-        <button
-          aria-pressed={indicator.includes("MA")}
-          onClick={() => setIndicator((v) => (v.length ? [] : ["MA"]))}
-        >
-          MA
-        </button>
+        <SwingIconButton label="Toggle moving average" icon="Indicator" aria-pressed={indicator.includes("MA")} onClick={() => setIndicator((v) => (v.length ? [] : ["MA"]))} />
         {["Horizontal", "Trend", "Fib Retracement"].map((tool) => (
-          <button key={tool} onClick={() => setDraw({ id: Date.now(), tool })}>
-            {tool}
-          </button>
+          <SwingIconButton key={tool} label={tool} icon={tool === "Fib Retracement" ? "Fib" : tool === "Trend" ? "Trend" : "Horizontal"} onClick={() => setDraw({ id: Date.now(), tool })} />
         ))}
-        <button onClick={() => setAction({ id: Date.now(), action: "delete" })}>
-          Delete selected
-        </button>
+        <SwingIconButton label="Delete selected" icon="Delete" onClick={() => setAction({ id: Date.now(), action: "delete" })} />
       </div>
   );
   return (

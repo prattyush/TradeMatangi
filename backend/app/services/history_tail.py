@@ -2,6 +2,7 @@
 from datetime import datetime
 from zoneinfo import ZoneInfo
 import pandas as pd
+from app.services.breeze_history import CHUNK_SECONDS
 
 
 def fetch_window(date, cached=None):
@@ -14,8 +15,8 @@ def fetch_window(date, cached=None):
         if cached is not None and not cached.empty:
             last = cached.index.max().tz_localize(None)
             # One completed chunk before the last cached partial chunk.
-            chunks = max(0, int((last - start).total_seconds() // 900) - 1)
-            start += pd.Timedelta(minutes=15 * chunks)
+            chunks = max(0, int((last - start).total_seconds() // CHUNK_SECONDS) - 1)
+            start += pd.Timedelta(seconds=CHUNK_SECONDS * chunks)
     return start, end
 
 

@@ -1,5 +1,5 @@
 import { recordFeedReceipt, startPerformanceDiagnostics } from '../../frontend/src/services/performanceDiagnostics'
-import NotificationCenter from "../../shared/NotificationCenter"
+import NotificationCenter, { NotificationIcon, type HistoryRequest } from "../../shared/NotificationCenter"
 import { flashError, setNotificationAccount } from "../../shared/notifications"
 import KotakLoginDialog from './KotakLoginDialog'
 import {updateDayScreens,pinnedSwingPortfolio} from './swingScreens'
@@ -493,6 +493,7 @@ interface ScreenControllerProps {
 }
 
 export default function App() {
+  const [messageHistory, setMessageHistory] = useState<HistoryRequest | null>(null)
   useEffect(() => startPerformanceDiagnostics(), [])
   const assignedId = new URLSearchParams(window.location.search).get('screen_id')
   const [mainTab, setMainTab] = useState<'Workspace' | 'Analysis' | 'Swing'>('Workspace')
@@ -761,7 +762,7 @@ export default function App() {
       return false;
     }
   };
-  const viewSelector = !assignedId && connection !== 'authentication_required' ? <select
+  const viewSelector = <>{!assignedId && connection !== 'authentication_required' ? <select
     className="desktop-view-select" aria-label="Desktop view" title="Switch between Workspace and Analysis"
     value={mainTab} onChange={event => {
       if(!mayNavigate())return;
@@ -770,10 +771,10 @@ export default function App() {
       if(mainTab==='Swing'&&view!=='Swing')void bounded(Promise.resolve(saveHandlers.current.get('swing-primary')?.()),SAVE_TIMEOUT_MS).then(change).catch(cause=>setSwingWindowError(String(cause)))
       else change()
     }}
-  ><option value="Workspace">Workspace</option><option value="Analysis">Analysis</option><option value="Swing">Swing</option></select> : null
+  ><option value="Workspace">Workspace</option><option value="Analysis">Analysis</option><option value="Swing">Swing</option></select> : null}<NotificationIcon onOpenHistory={() => setMessageHistory({})} /></>
   if(windowClosing)return null;
   return <div>
-    <div className="desktop-messages"><NotificationCenter source="Desktop" /></div>
+    <div className="desktop-messages"><NotificationCenter source="Desktop" request={messageHistory} onRequestChange={setMessageHistory} showLauncher={connection === 'authentication_required' || loadFailed} /></div>
     {closeError && <p role="alert">{closeError}</p>}
     {loadFailed && <main role="alert">{loadError && <p>{loadError}</p>}<button onClick={() => setLoadAttempt(value => value + 1)}>Retry loading screens</button></main>}
     {assignedId && !loaded && <main><p>{connection === 'authentication_required' ? 'Sign in in the main window to reconnect this screen.' : 'Loading popped-out screen…'}</p><button onClick={() => void invoke('focus_main_window')}>Main window</button></main>}
@@ -782,9 +783,9 @@ export default function App() {
     {ownedScreens.map(screen => <div key={screen.id} style={{ display: mainTab === 'Workspace' && (assignedId || screen.id === visibleId) ? 'contents' : 'none' }}>
       <ScreenController viewSelector={viewSelector} workspaceVisible={Boolean(assignedId)||mainTab==='Workspace'} onAnalysisContextDays={setAnalysisContextDays} registerSave={registerSave} screenId={screen.id} screens={dayScreens} setScreens={setDayScreens} selectedId={visibleId} selectScreen={selectScreen} loaded={loaded} external={external} assignedId={assignedId} connection={connection} setConnection={setConnection} browserToken={browserToken} setBrowserToken={setBrowserToken} serverUrl={serverUrl} setServerUrl={setServerUrl} />
     </div>)}
-    {!assignedId && mainTab === 'Swing' && connection === 'connected' && <><header style={{height:48}}>{viewSelector}{linkedSwing.map(screen=><button key={screen.id} onClick={()=>void openSwingWindow(screen.saved!.portfolio_id!,screen)}>{screen.name}{external.includes(screen.id)?' ↗':''}</button>)}</header>{swingWindowError&&<p role="alert">{swingWindowError}</p>}<SwingWindow brokerRequest={swingBrokerRequest} registerNavigationGuard={registerNavigationGuard} onCloseWindow={closeWindow} key={`${serverUrl}:${browserToken}`} request={swingRequest} loadSymbols={swingSymbols} Renderer={swingChart} registerSave={registerSave} onCreateLinked={id=>void openSwingWindow(id)} onPopOut={id=>{if(!mayNavigate())return;void openSwingWindow(id).then(opened=>{if(opened)setMainTab('Workspace')})}} onAnalyse={id=>{setAnalysisPortfolio(id);setAnalysisVisited(true);setMainTab('Analysis')}} onDetach={() => setMainTab('Workspace')} /></>}
+    {!assignedId && mainTab === 'Swing' && connection === 'connected' && <>{swingWindowError&&<p role="alert">{swingWindowError}</p>}<SwingWindow brokerRequest={swingBrokerRequest} registerNavigationGuard={registerNavigationGuard} onCloseWindow={closeWindow} key={`${serverUrl}:${browserToken}`} navigationControls={<>{viewSelector}{linkedSwing.map(screen=><button key={screen.id} onClick={()=>void openSwingWindow(screen.saved!.portfolio_id!,screen)}>{screen.name}{external.includes(screen.id)?' ↗':''}</button>)}</>} request={swingRequest} loadSymbols={swingSymbols} Renderer={swingChart} registerSave={registerSave} onCreateLinked={id=>void openSwingWindow(id)} onPopOut={id=>{if(!mayNavigate())return;void openSwingWindow(id).then(opened=>{if(opened)setMainTab('Workspace')})}} onAnalyse={id=>{setAnalysisPortfolio(id);setAnalysisVisited(true);setMainTab('Analysis')}} onDetach={() => setMainTab('Workspace')} /></>}
     {assignedId && assigned?.saved?.workspace_kind==='swing' && connection!=='connected' && <main><p>{connection==='authentication_required'?'Sign in in the main window to reconnect this portfolio.':'Waiting for the backend connection. The portfolio stays attached to its saved book.'}</p><button onClick={()=>void invoke('focus_main_window')}>Main window</button></main>}
-    {assignedId && assigned?.saved?.workspace_kind==='swing' && connection==='connected' && (pinnedSwingPortfolio(assigned)?<><header style={{height:48}}><strong>{assigned.name}</strong><button onClick={()=>void invoke('focus_main_window')}>Main window</button></header><SwingWindow brokerRequest={swingBrokerRequest} registerNavigationGuard={registerNavigationGuard} onCloseWindow={closeWindow} key={`${serverUrl}:${assignedId}`} request={swingRequest} loadSymbols={swingSymbols} Renderer={swingChart} portfolioId={pinnedSwingPortfolio(assigned)!} workspaceId={assignedId} registerSave={registerSave} onAnalyse={id=>void emitTo('main','desktop-swing-analysis',{portfolioId:id})} onDetach={()=>{}}/></>:<p role="alert">This linked window has no portfolio identity. Reopen it from the main window.</p>)}
+    {assignedId && assigned?.saved?.workspace_kind==='swing' && connection==='connected' && (pinnedSwingPortfolio(assigned)?<><SwingWindow brokerRequest={swingBrokerRequest} registerNavigationGuard={registerNavigationGuard} onCloseWindow={closeWindow} key={`${serverUrl}:${assignedId}`} navigationControls={<><strong>{assigned.name}</strong><button onClick={()=>void invoke('focus_main_window')}>Main window</button><NotificationIcon onOpenHistory={() => setMessageHistory({})} /></>} request={swingRequest} loadSymbols={swingSymbols} Renderer={swingChart} portfolioId={pinnedSwingPortfolio(assigned)!} workspaceId={assignedId} registerSave={registerSave} onAnalyse={id=>void emitTo('main','desktop-swing-analysis',{portfolioId:id})} onDetach={()=>{}}/></>:<p role="alert">This linked window has no portfolio identity. Reopen it from the main window.</p>)}
     {!assignedId && analysisVisited && connection !== 'authentication_required' && <Suspense fallback={<p role="status">Loading Analysis…</p>}><DesktopAnalysis onNavigationReady={guard=>registerNavigationGuard("analysis",guard)} initialPortfolioId={analysisPortfolio} viewSelector={viewSelector} key={`${serverUrl}:${browserToken}`} baseUrl={serverUrl} token={browserToken} onUnauthorized={analysisUnauthorized} historicalDays={analysisContextDays} active={mainTab === 'Analysis'} onClose={() => setMainTab('Workspace')} /></Suspense>}
   </div>
 }

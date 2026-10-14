@@ -19,7 +19,9 @@ from pathlib import Path
 from app.config import DATA_DIR, MARKET_OPEN, MARKET_CLOSE, get_market_close, SUPPORTED_SYMBOLS
 from app.services.data_loader import has_native_second_cadence, parquet_path, pickle_path, validate_and_fill_gaps
 
-_CHUNK_MINUTES = 15   # 900-second windows stay safely under the ~1000-record Breeze API limit
+from app.services.breeze_history import CHUNK_SECONDS
+
+_CHUNK_MINUTES = CHUNK_SECONDS / 60
 _MIN_DAY_ROWS = 20000  # A complete trading day has ~22500 rows; below this triggers re-fetch
 
 logger = logging.getLogger(__name__)
@@ -95,6 +97,8 @@ def _get_breeze_unlocked():
             "breeze-connect is not installed. Run: pip install breeze-connect"
         ) from e
 
+    from app.services.breeze_history import install_history_timeout
+    install_history_timeout()
     breeze = BreezeConnect(api_key=creds["api_key"])
     try:
         result = breeze.generate_session(
@@ -156,7 +160,7 @@ def _breeze_to_dataframe(records: list[dict]) -> pd.DataFrame:
 
 def _fetch_day_paginated(breeze, sym_info: dict, date: str, *, cached=None) -> list[dict]:
     """
-    Fetch a full trading day by issuing 15-minute chunk requests.
+    Fetch a full trading day by issuing 16.5-minute chunk requests.
     The Breeze API caps responses at ~1000 records; chunking prevents truncation.
     """
     from app.services.history_tail import fetch_window
@@ -165,14 +169,18 @@ def _fetch_day_paginated(breeze, sym_info: dict, date: str, *, cached=None) -> l
                 sym_info["breeze_stock_code"], date, from_ts, to_ts, 0 if cached is None else len(cached))
     chunk_delta = pd.Timedelta(minutes=_CHUNK_MINUTES)
 
-    all_records: list[dict] = []
-    chunks = 0
+    windows = []
     current = from_ts
     while current < to_ts:
         chunk_end = min(current + chunk_delta, to_ts)
+        windows.append((current, chunk_end))
+        current = chunk_end
+
+    def fetch_chunk(window, cancelled):
+        current, chunk_end = window
         from app.services.breeze_history import request_history
         response = request_history(breeze,
-            interval="1second",
+            _cancelled=cancelled, interval="1second",
             from_date=current.strftime("%Y-%m-%d %H:%M:%S"),
             to_date=chunk_end.strftime("%Y-%m-%d %H:%M:%S"),
             stock_code=sym_info["breeze_stock_code"],
@@ -195,15 +203,17 @@ def _fetch_day_paginated(breeze, sym_info: dict, date: str, *, cached=None) -> l
                 "Please refresh session_token in data/accesskeys.ini."
             )
 
-        if status not in (200, None) and error:
+        if error or status not in (200, None):
             raise RuntimeError(
                 f"Breeze API error for {sym_info['breeze_stock_code']} "
                 f"{current.strftime('%H:%M')}–{chunk_end.strftime('%H:%M')}: {error}"
             )
 
-        chunks += 1
-        all_records.extend(response.get("Success") or [])
-        current = chunk_end
+        return response.get("Success") or []
+
+    from app.services.breeze_history import fetch_chunks
+    all_records = fetch_chunks(windows, fetch_chunk)
+    chunks = len(windows)
 
     logger.info("breeze_history_download symbol=%s date=%s chunks=%d rows=%d",
                 sym_info["breeze_stock_code"], date, chunks, len(all_records))
@@ -241,7 +251,7 @@ def _fetch_breeze_historical_unlocked(symbol: str, date: str, *, force_refresh: 
     Cache order:
       1. Parquet in ohlcdata/ with >= _MIN_DAY_ROWS rows — return immediately
       2. Legacy pickle in data/ with >= _MIN_DAY_ROWS rows — convert to parquet, return
-      3. Fetch from Breeze API (paginated 15-min chunks) — validate, save as parquet, return
+      3. Fetch from Breeze API (paginated 16.5-min chunks) — validate, save as parquet, return
 
     Raises BreezeTokenError on auth failure, BreezeSymbolError for unknown symbols.
     Today uses a ten-minute TTL; stale/explicit reads merge an overlapping tail.
@@ -313,7 +323,7 @@ def _fetch_breeze_historical_unlocked(symbol: str, date: str, *, force_refresh: 
             logger.warning("Could not read legacy pickle for %s %s: %s", symbol, date, e)
 
     # Fetch from Breeze with pagination
-    logger.info("Fetching %s %s from Breeze (paginated, %d-min chunks)...", symbol, date, _CHUNK_MINUTES)
+    logger.info("Fetching %s %s from Breeze (paginated, %g-min chunks)...", symbol, date, _CHUNK_MINUTES)
     sym_info = SUPPORTED_SYMBOLS[symbol]
     try:
         breeze = _get_breeze()

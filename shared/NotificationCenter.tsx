@@ -15,6 +15,16 @@ export function NotificationHeadline({ onOpenHistory }: {onOpenHistory: (id?: st
   </div>
 }
 
+/** Header-only launcher: no headline, spacer or fixed overlay over charts. */
+export function NotificationIcon({ onOpenHistory }: { onOpenHistory: () => void }) {
+  const state = useSyncExternalStore(subscribeNotifications, getNotifications)
+  const unread = state.records.filter(item => item.unread && (item.level === 'error' || item.level === 'warning')).length
+  return <button type="button" className={`notification-toggle notification-icon-launcher${unread ? ' notification-icon-unread' : ''}`} aria-label={`Message history${unread ? `, ${unread} unread alerts` : ''}`} title="Message history · latest 100 messages" onClick={onOpenHistory}>
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 3L2 21h20L12 3z M12 9v5 M12 17v.1" /></svg>
+    {unread > 0 && <span>{unread}</span>}
+  </button>
+}
+
 const time = (timestamp: number) => new Date(timestamp).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', hour12: false })
 export default function NotificationCenter({ request, onRequestChange, showLauncher=true, source="Website" }: {request?: HistoryRequest | null; onRequestChange?: (request:HistoryRequest|null)=>void; showLauncher?:boolean; source?:string}) {
   const state=useSyncExternalStore(subscribeNotifications,getNotifications)

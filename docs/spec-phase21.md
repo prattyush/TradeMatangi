@@ -1435,3 +1435,169 @@ not rewritten. Any remaining freeze needs the captured evidence for a separate
 focused fix. Backend restart applies quote batching; rebuild clients for the new
 measurements. [PR #662](https://github.com/prattyush/TradeMatangi/pull/662) targets
 dev and awaits review; main merge/deployment remain manual.
+
+## Breeze second-level history optimization and live window probe — 2026-10-14
+
+Implemented and validated on latest dev after PR #662 merged. ICICI's published
+limits remain [100 API calls/minute and 5,000/day](https://api.icicidirect.com/breezeapi/documents/index.html).
+The [official SDK documentation](https://pypi.org/project/breeze-connect/) specifies
+1,000 candles per historical response; installed/latest PyPI SDK is 1.0.69.
+
+The authorized read-only live probe used the DDB Local Breeze token for NIFTY
+2026-10-13, with eight paced historical requests and one SDK authentication. No
+orders, sockets, cache writes or DynamoDB updates were performed. Sanitized evidence
+is retained in `docs/validation/breeze-history-window-2026-10-14.json`; reusable
+probe is `scripts/probe-breeze-history-window.py`. It records counts/timestamps and
+status, not credentials, account details or OHLC rows. Run standalone probes after
+market hours because they authenticate separately from the app's shared client.
+
+| Requested window from 09:15 | Returned rows | Returned timestamps | Result |
+|---|---:|---|---|
+| 15 minutes | 901 | 09:15:00–09:30:00 | Complete |
+| 16m30s | 991 | 09:15:00–09:31:30 | Complete; all reference seconds present |
+| 30 minutes | 1,000 | 09:28:21–09:45:00 | 801 earlier reference seconds missing |
+| One hour | 1,000 | 09:58:21–10:15:00 | 2,601 earlier reference seconds missing |
+| Full day | 1,000 | 14:58:21–15:15:00 | Only the latest 1,000 seconds |
+
+All eight history responses reported API status 200. A successful larger-window
+response does **not** prove complete history: this endpoint silently truncates to
+the latest 1,000 candles. Keep windows below the cap rather than requesting a full
+day and forward/back-filling its missing earlier prices.
+
+Both equity/index and options downloaders now use **990-second windows**, at most
+991 inclusive one-second candles. This reduces a current six-hour day from 24 to
+22 requests, and an older 375-minute day from 25 to 23. Today-cache tail overlap
+uses the same chunk size; previous cached data remains compatible. Existing cache
+coalescing, timestamp convention, observed flags, boundary deduplication and partial
+cache fallback remain unchanged.
+
+HTTP reads overlap on one shared **three-worker** chunk pool. Each download keeps
+at most three chunks submitted; completed results are assembled chronologically.
+One process-wide semaphore also limits other Breeze history readers to three
+in-flight calls. Requests still start no faster than **one/second** (approximately
+60/minute), leaving headroom below the published API ceiling. The pacer rechecks
+actual dispatch time after waking instead of reserving future slots that could
+burst when delayed workers recover. Auth/validation failures stop further chunk
+submission; queued work is cancelled and already-running reads drain before cache
+handling returns. Cancellation interrupts pacing waits. A reported rate limit
+retains the existing shared 60-second cooldown. The same authenticated SDK client
+is reused; no per-worker session generation or SDK upgrade is introduced.
+
+Parallelism hides slow HTTP responses; it does not bypass broker limits. When
+responses are already faster than one second, pacing still dominates, so the main
+benefit is fewer chunks. Daily allowance remains broker-enforced and includes other
+API usage; there is no new persistent quota ledger or multi-process coordinator.
+
+Validation: **242 focused backend tests** pass, covering global concurrency,
+chronological assembly despite reordered completion, failure/cancellation, paced
+starts, cooldown, inclusive row caps and full-day coverage before/after the changed
+market close, live/tail cache policy, snapshot boundaries and startup isolation.
+Final concurrency checks also pass after draining only non-cancelled running work.
+A mock latency benchmark (nine 50 ms responses, 10 ms scaled pacing) measured
+456 ms serial / 175 ms parallel, **2.61×** faster, with peak concurrency three.
+This is controlled overlap evidence, not a promised live speedup. Artifacts:
+`.cache/breeze-history/`. Backend restart applies the downloader change.
+
+## Swing workspace icons and adjacent panel toggles — 2026-10-14
+
+Implemented in the shared website/desktop workspace. Pause/Resume entries, Pop out
+Swing, Create linked window, Execution history, Swing Stats, Manage portfolio and
+Detach now use compact SVG icon buttons with explicit tooltips/accessibility names.
+The Portfolio and Trade ticket controls are also icons: each hide control is inside
+its panel's heading; each show control remains in a narrow strip beside the same
+panel when collapsed. Website now uses the existing saved `rail_open` preference
+as desktop does. Existing ticket/rail state and persistence are reused.
+
+Today/Maximize/Restore controls are icons on both clients. Desktop tool collapse,
+moving-average, Horizontal/Trend/Fibonacci drawing and Delete selected controls use
+icons too. Positions/Orders/Trades tabs and rows, Buy/Sell and confirmations retain
+readable labels. Buttons have fixed 32px hit targets, keyboard focus and stable
+hover geometry; handlers, disabled state and companion-window eligibility are
+preserved. No trading endpoint or order semantics changes.
+
+Validation: **49 website tests**, **219 desktop tests**, both TypeScript checks and
+production builds pass. Updated `scripts/swing-workspace-browser-check.mjs` exercises
+both actual chart renderers, verifying icon-only toolbar actions, labels/tooltips,
+Pop out/linked callbacks, panel-local hit targets, stable hover geometry, keyboard
+collapse/reopen, chart layout/maximize, sizing, Pause/Resume and price-pick flows;
+no page errors. Day/Swing shared drawing browser acceptance also passes after the
+desktop drawing controls changed. Rebuild both clients to apply.
+
+Both follow-ups are delivered in [PR #663](https://github.com/prattyush/TradeMatangi/pull/663),
+which targets dev and awaits review. Main merge and deployment remain manual.
+
+## Desktop Swing layout and chart-safe message history — 2026-10-14
+
+Implemented and added to the same PR #663, pending review into dev. Desktop Swing
+now places Workspace/Analysis/Swing navigation alongside the existing toolbar
+actions rather than reserving a separate row. Linked and popped-out Swing windows
+use the same toolbar placement; navigation remains available while no portfolio
+workspace is loaded.
+
+Funds, original session Capital and P&L move into a compact Portfolio summary in
+the desktop left panel, above Positions/Orders/Trades. Profit is green, loss red,
+and zero or unavailable P&L neutral. Percentage is omitted when capital is zero.
+This reuses existing snapshot values and calculations; website summary placement
+and all trading behavior remain unchanged.
+
+Connected desktop Day, Analysis and Swing headers now contain a small message
+history icon with an unread alert count. The fixed bottom-right launcher and its
+empty headline background no longer cover chart candles or the price scale.
+Clicking the icon opens the existing history with full messages, read state,
+filters and download controls. Login and screen-load failures retain their
+standalone history launcher so diagnostics remain accessible without a header.
+
+Validation: 49 website and 219 desktop tests, TypeScript checks and both production
+builds pass. The existing Swing browser acceptance checks both actual renderers,
+same-row desktop navigation/actions, summary placement, positive/negative/zero
+P&L and zero-capital handling, while preserving website layout and existing
+trading/chart flows. New `scripts/desktop-notification-icon-check.mjs` verifies
+the header-only launcher, an unobstructed chart price scale, unread counts,
+keyboard history access, full messages, download, read state and reload persistence.
+Both browser checks pass without page errors. Artifacts: `.cache/swing-layout/`.
+Rebuild the desktop client to apply these additional layout changes.
+
+## Breeze compatibility review and recovery fixes — 2026-10-14
+
+Review completed; fixes added to PR #663, pending review into dev. The installed
+Breeze SDK 1.0.69 history implementation builds request parameters and headers
+locally and reads the existing authenticated session. Concurrent reads therefore
+keep contract parameters separate without generating extra sessions or changing
+WebSocket callbacks. The existing authentication lock/cache still authenticates
+once for unchanged credentials and replaces the client when credentials change.
+Three-worker overlap, one-second global pacing, cancellation, chronological
+assembly, 990-second candle windows and cache preservation remain in effect.
+
+Two issues were corrected:
+
+- The SDK history GET omitted an HTTP timeout. A stalled connection could hold a
+  worker indefinitely, and three stalled reads could exhaust the shared history
+  pool. A narrow wrapper of the SDK module's transport reference now supplies a
+  **10-second connect / 30-second read timeout** only for the history endpoint.
+  These are connection/read-inactivity limits, not a strict total-request deadline.
+  It retains SDK validation and authenticated headers and leaves login, other HTTP
+  endpoints, global Requests functions and WebSocket calls unchanged. Timeout
+  failures cancel the batch through the existing error path; subsequent downloads
+  can use the workers again. No automatic session regeneration is introduced.
+- Equity history previously accepted some responses carrying an error with status
+  200, or an unsuccessful status without an error field. It now rejects either
+  condition, matching options history, rather than treating the chunk as empty
+  successful data. Existing cache fallback remains available on failed downloads.
+
+Validation: **236 distinct backend tests passed** (235 in the review selection plus the
+additional SDK options case), including eight new tests using
+the installed SDK with mocked HTTP for actual validation/header construction,
+concurrent contract isolation, exact options expiry/strike/right/exchange forwarding,
+timeout propagation and worker recovery, transport
+scope, unchanged-credential authentication reuse and credential replacement, and
+error-response rejection. Existing history pacing/cancellation/coverage, equity
+and options cache, provider isolation, snapshot boundaries and Breeze live-feed
+routing checks also pass. SDK 1.0.54 source (the minimum allowed version) has the
+same endpoint constants and transport call; no dependency upgrade is required.
+No new live broker authentication or streaming interruption was performed during
+this review. The earlier saved live window probe remains the candle-cap evidence.
+Desktop/website code was also reviewed; their previously passing tests and browser
+checks remain applicable because this review changes only backend behavior/docs.
+Test output: `.cache/swing-layout/breeze-review-tests.log` and
+`.cache/swing-layout/breeze-review-sdk-tests.log`. Restart the backend to
+apply these recovery fixes. Main merge and deployment remain manual.

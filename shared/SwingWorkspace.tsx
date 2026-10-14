@@ -1,3 +1,4 @@
+import { SwingIconButton } from "./SwingIcon";
 import { flashError } from "./notifications";
 import { swingMarkerTrades, type SwingMarkerMode } from "./swingMarkers";
 import {
@@ -341,6 +342,7 @@ export default function SwingWorkspace({
   surface,
   workspaceId,
   portfolioControls,
+  navigationControls,
   companion = false,
   onSaveReady,
   onCreateLinked,
@@ -364,6 +366,7 @@ export default function SwingWorkspace({
   surface: "website" | "desktop";
   workspaceId?: string;
   portfolioControls?: ReactNode;
+  navigationControls?: ReactNode;
   companion?: boolean;
   onSaveReady?: (save: (() => Promise<unknown>) | null) => void;
   onCreateLinked?: (portfolioId: string) => void;
@@ -642,6 +645,7 @@ export default function SwingWorkspace({
   return (
     <div className="swing-workspace">
       <div className="swing-workspace-bar">
+        {navigationControls}
         {portfolioControls}
         <strong>
           {snapshot.portfolio.mode === "real"
@@ -649,6 +653,7 @@ export default function SwingWorkspace({
             : "Paper"}{" "}
           Swing
         </strong>
+        {surface !== "desktop" && (
         <span>
           Funds ₹{money(snapshot.wallet_balance)} · Capital ₹
           {money(snapshot.portfolio.session_capital)} · P&amp;L ₹
@@ -657,6 +662,7 @@ export default function SwingWorkspace({
             snapshot.portfolio.session_capital > 0 &&
             ` (${money((snapshot.pnl / snapshot.portfolio.session_capital) * 100)}%)`}
         </span>
+        )}
         <span className={marketOpen ? "swing-live" : "swing-muted"}>
           {marketOpen ? "Market open" : "Market closed"} · {feed}
         </span>
@@ -688,62 +694,29 @@ export default function SwingWorkspace({
             </option>
           ))}
         </select>
-        {surface === "desktop" && (
-          <button
-            type="button"
-            aria-expanded={railOpen}
-            title={railOpen ? "Hide portfolio panel" : "Show portfolio panel"}
-            onClick={() => setRailOpen((v) => !v)}
-          >
-            Portfolio panel
-          </button>
-        )}
-        <button
-          type="button"
-          aria-expanded={ticketOpen}
-          onClick={() => setTicketOpen((v) => !v)}
-        >
-          Trade ticket
-        </button>
-        <button
+        <SwingIconButton
+          label={snapshot.portfolio.entries_paused ? "Resume entries" : "Pause entries"}
+          icon={snapshot.portfolio.entries_paused ? "Play" : "Pause"}
           disabled={busy || snapshot.portfolio.state !== "running"}
           onClick={onPause}
           style={{ display: companion ? "none" : undefined }}
-        >
-          {snapshot.portfolio.entries_paused
-            ? "Resume entries"
-            : "Pause entries"}
-        </button>
-        {!companion && onPopOut && (
-          <button
-            type="button"
-            title="Open Swing in its own window and return to the Day workspace"
-            disabled={busy}
-            onClick={() => onPopOut(prefix)}
-          >
-            Pop out Swing
-          </button>
-        )}
-        {!companion && onCreateLinked && (
-          <button onClick={() => onCreateLinked(prefix)}>
-            Create linked window
-          </button>
-        )}
-        {onHistory && <button onClick={onHistory}>Execution history</button>}
-        {onStats && <button onClick={onStats}>Swing Stats</button>}
-        <button onClick={onManage}>Manage portfolio</button>
-        <button onClick={onDetach}>Detach</button>
+        />
+        {!companion && onPopOut && <SwingIconButton label="Pop out Swing" icon="PopOut" disabled={busy} onClick={() => onPopOut(prefix)} />}
+        {!companion && onCreateLinked && <SwingIconButton label="Create linked window" icon="Link" onClick={() => onCreateLinked(prefix)} />}
+        {onHistory && <SwingIconButton label="Execution history" icon="History" onClick={onHistory} />}
+        {onStats && <SwingIconButton label="Swing Stats" icon="Stats" onClick={onStats} />}
+        <SwingIconButton label="Manage portfolio" icon="Manage" onClick={onManage} />
+        <SwingIconButton label="Detach" icon="Detach" onClick={onDetach} />
       </div>
       {surface === "desktop" && (
         <div className="swing-tools-bar" aria-label="Active chart tools">
-          <button
-            type="button"
+          <SwingIconButton
+            label={toolsCollapsed ? "Show chart tools" : "Hide chart tools"}
+            icon={toolsCollapsed ? "ToolsShow" : "ToolsHide"}
             aria-expanded={!toolsCollapsed}
-            title={toolsCollapsed ? "Show chart tools" : "Hide chart tools"}
             onClick={() => setToolsCollapsed((v) => !v)}
-          >
-            {toolsCollapsed ? "▸" : "▾"} Chart {active + 1} tools
-          </button>
+          />
+          <span>Chart {active + 1} tools</span>
           <select
             aria-label="Active chart markers"
             value={current.marker_mode ?? "open"}
@@ -786,10 +759,29 @@ export default function SwingWorkspace({
         </p>
       )}
       <div className="swing-workspace-body">
+        {!railOpen && <div className="swing-panel-reopen swing-panel-reopen-left">
+          <SwingIconButton label="Show portfolio panel" icon="LeftShow" aria-expanded={false} onClick={() => setRailOpen(true)} />
+        </div>}
         <aside
           className="swing-portfolio-rail"
-          hidden={surface === "desktop" && !railOpen}
+          hidden={!railOpen}
+          aria-label="Portfolio panel"
         >
+          <div className="swing-panel-heading">
+            <strong>Portfolio</strong>
+            <SwingIconButton label="Hide portfolio panel" icon="LeftHide" aria-expanded={true} onClick={() => setRailOpen(false)} />
+          </div>
+          {surface === "desktop" && <section className="swing-funds-info" aria-label="Portfolio summary">
+            <strong>Portfolio summary</strong>
+            <dl>
+              <div><dt>Funds</dt><dd>₹{money(snapshot.wallet_balance)}</dd></div>
+              <div><dt>Capital</dt><dd>₹{money(snapshot.portfolio.session_capital)}</dd></div>
+              <div><dt>P&amp;L</dt><dd className={snapshot.pnl == null || snapshot.pnl === 0 ? "swing-muted" : snapshot.pnl > 0 ? "swing-profit" : "swing-loss"}>
+                ₹{money(snapshot.pnl)}
+                {snapshot.pnl != null && snapshot.portfolio.session_capital > 0 && <small> ({money((snapshot.pnl / snapshot.portfolio.session_capital) * 100)}%)</small>}
+              </dd></div>
+            </dl>
+          </section>}
           <nav>
             {["Positions", "Orders", "Trades"].map((value) => (
               <button
@@ -974,8 +966,9 @@ export default function SwingWorkspace({
                       <option key={interval}>{interval}</option>
                     ))}
                   </select>
-                  <button
-                    title="Use today’s chart"
+                  <SwingIconButton
+                    label="Use today’s chart"
+                    icon="Today"
                     onClick={() =>
                       setPanes((previous) =>
                         previous.map((p, i) =>
@@ -985,19 +978,16 @@ export default function SwingWorkspace({
                         ),
                       )
                     }
-                  >
-                    Today
-                  </button>
-                  <button
-                    title={
+                  />
+                  <SwingIconButton
+                    icon={maximized === index ? "Restore" : "Maximize"}
+                    label={
                       maximized === index ? "Restore chart" : "Maximize chart"
                     }
                     onClick={() =>
                       setMaximized(maximized === index ? null : index)
                     }
-                  >
-                    {maximized === index ? "↙" : "↗"}
-                  </button>
+                  />
                 </div>
                 <PaneChart
                   pane={pane}
@@ -1029,11 +1019,15 @@ export default function SwingWorkspace({
             );
           })}
         </section>
+        {!ticketOpen && <div className="swing-panel-reopen swing-panel-reopen-right">
+          <SwingIconButton label="Show trade ticket" icon="RightShow" aria-expanded={false} onClick={() => setTicketOpen(true)} />
+        </div>}
         {ticketOpen && (
-          <aside className="swing-trade-ticket">
-            <h3>
-              Chart {active + 1} · {current.symbol}
-            </h3>
+          <aside className="swing-trade-ticket" aria-label="Trade ticket">
+            <div className="swing-panel-heading">
+              <h3>Chart {active + 1} · {current.symbol}</h3>
+              <SwingIconButton label="Hide trade ticket" icon="RightHide" aria-expanded={true} onClick={() => setTicketOpen(false)} />
+            </div>
             <SymbolSearch
               value={current.symbol}
               options={symbols}

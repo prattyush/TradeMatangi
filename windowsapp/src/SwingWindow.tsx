@@ -7,6 +7,7 @@ import {
   useRef,
   useState,
   type ComponentType,
+  type ReactNode,
 } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import SwingPortfolioPanel, {
@@ -24,6 +25,7 @@ export default function SwingWindow({
   onDetach,
   onCreateLinked,
   onPopOut,
+  navigationControls,
   registerSave,
   onAnalyse,
   onCloseWindow,
@@ -39,6 +41,7 @@ export default function SwingWindow({
   onDetach: () => void;
   onCreateLinked?: (id: string) => void;
   onPopOut?: (id: string) => void;
+  navigationControls?: ReactNode;
   registerSave: (id: string, save: (() => Promise<unknown>) | null) => void;
   onAnalyse?: (id: string, sid?: string) => void;
   onCloseWindow: () => Promise<void>;
@@ -106,6 +109,7 @@ export default function SwingWindow({
           if (broker === "kotak") setKotakLogin(true);
         }}
         loadSymbols={loadSymbols}
+        navigationControls={navigationControls}
         renderChart={Renderer}
         surface="desktop"
         portfolioId={portfolioId}
