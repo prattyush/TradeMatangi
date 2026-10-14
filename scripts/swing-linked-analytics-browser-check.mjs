@@ -14,13 +14,13 @@ const { chromium } = await import(
 const dir = await mkdtemp(tmpdir() + "/swing-linked-analytics-");
 await build({
   stdin: {
-    contents: `import React,{useCallback} from 'react';import{createRoot}from'react-dom/client';import Panel from '${root}/shared/SwingPortfolioPanel';import Dashboard from '${root}/shared/analysis/PerformanceDashboard';import TradeAnalysis from '${root}/shared/analysis/TradeAnalysis';import{AnalysisProvider}from'${root}/shared/analysis/environment';import Web from '${root}/frontend/src/components/SwingChart';import Native from '${root}/windowsapp/src/SwingChart';import '${root}/windowsapp/src/styles.css';
+    contents: `import{browserSwingSubscribe}from'${root}/shared/swingStream';import React,{useCallback} from 'react';import{createRoot}from'react-dom/client';import Panel from '${root}/shared/SwingPortfolioPanel';import Dashboard from '${root}/shared/analysis/PerformanceDashboard';import TradeAnalysis from '${root}/shared/analysis/TradeAnalysis';import{AnalysisProvider}from'${root}/shared/analysis/environment';import Web from '${root}/frontend/src/components/SwingChart';import Native from '${root}/windowsapp/src/SwingChart';import '${root}/windowsapp/src/styles.css';
 const query=new URLSearchParams(location.search),surface=query.get('surface')??'website',child=query.get('child');window.calls=[];
-const request=async(path,method,body)=>{window.calls.push({path,method,body});const response=await fetch('/fixture',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({path,method,body})});if(!response.ok)throw new Error('Fixture rejected');return response.json()};
+const subscribe=browserSwingSubscribe(location.origin+'/stream',()=>({'X-User-Id':'u'}));const request=async(path,method,body)=>{window.calls.push({path,method,body});const response=await fetch('/fixture',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({path,method,body})});if(!response.ok)throw new Error('Fixture rejected');return response.json()};
 const drawing=async(path,method,body)=>{window.calls.push({path:"drawing:"+path,drawingPath:path,method,body});return path==='chart-settings'?{settings:{}}:{drawings:[]}};const renderer=props=><Native {...props} drawingRequest={drawing}/>;
 const symbols=async()=>[{symbol:'HDFCBANK',display_name:'HDFC Bank',chart_type:'equity',option_eligible:true},{symbol:'RELIND',display_name:'Reliance',chart_type:'equity',option_eligible:true}];
 const summary={session_id:'child',user_id:'u',symbol:'RELIND',date:'2026-10-06',instrument_type:'equity',session_type:'paper',trading_style:'swing',portfolio_id:'portfolio',trade_count:1,round_trip_count:0,net_pnl:0,total_commission:1,session_capital:10000};const environment={swingRequest:request,charts:{SwingChart:surface==='desktop'?renderer:Web},api:{getAnalysisSessions:async()=>[summary],getSessionDetail:async()=>({...summary,trades:[],cycles:[]}),patternGetChartByDate:async()=>{throw new Error('no pattern')},saveLabels:labels=>request('portfolio/labels','POST',labels[0])},performance:{getSwingReport:async filters=>({portfolios:[{portfolio_id:'portfolio',mode:'paper',state:'running'}],report:await request('portfolio/analytics?'+new URLSearchParams(filters),'GET')}),getPerformance:filters=>{window.dayFilters=filters;return Promise.reject(new Error('Day fixture'))},getPerformanceCycles:async()=>({items:[],total:0,next_offset:null}),getPerformanceDetail:async()=>({})},onDirtyChange:value=>{window.dirty=value},onLabelSavingChange:value=>{window.saving=value}};
-function App(){const create=useCallback(()=>{window.open(location.pathname+'?surface='+surface+'&child=child-one','swing-child')},[]);if(query.get('sessions'))return <AnalysisProvider value={environment}><TradeAnalysis initialPortfolioId='portfolio' onClose={()=>{window.detached=true}}/></AnalysisProvider>;if(query.get('global'))return <AnalysisProvider value={environment}><Dashboard defaultTradingStyle='swing' defaultPortfolioId='portfolio' onClose={()=>{window.detached=true}}/></AnalysisProvider>;return <Panel request={request} loadSymbols={symbols} renderChart={surface==='desktop'?renderer:Web} surface={surface} portfolioId={child?'portfolio':undefined} workspaceId={child??undefined} companion={Boolean(child)} onPopOut={surface==='desktop'&&!child?()=>{create();window.mainView='day'}:undefined} onCreateLinked={surface==='desktop'&&!child?create:undefined} onDetach={()=>{window.detached=true}}/>}createRoot(document.getElementById('root')).render(<App/>);`,
+function App(){const create=useCallback(()=>{window.open(location.pathname+'?surface='+surface+'&child=child-one','swing-child')},[]);if(query.get('sessions'))return <AnalysisProvider value={environment}><TradeAnalysis initialPortfolioId='portfolio' onClose={()=>{window.detached=true}}/></AnalysisProvider>;if(query.get('global'))return <AnalysisProvider value={environment}><Dashboard defaultTradingStyle='swing' defaultPortfolioId='portfolio' onClose={()=>{window.detached=true}}/></AnalysisProvider>;return <Panel request={request} subscribe={subscribe} loadSymbols={symbols} renderChart={surface==='desktop'?renderer:Web} surface={surface} portfolioId={child?'portfolio':undefined} workspaceId={child??undefined} companion={Boolean(child)} onPopOut={surface==='desktop'&&!child?()=>{create();window.mainView='day'}:undefined} onCreateLinked={surface==='desktop'&&!child?create:undefined} onDetach={()=>{window.detached=true}}/>}createRoot(document.getElementById('root')).render(<App/>);`,
     resolveDir: root + "/windowsapp",
     loader: "tsx",
   },
@@ -105,8 +105,19 @@ function reset() {
   prefs = {};
   calls = [];
 }
+const streams = new Map();
+const publish = () => { for (const [response, path] of streams) if (!path.includes('/charts/watch/')) response.write('data: '+JSON.stringify({type:'portfolio_snapshot',...book})+'\n\n'); };
 const server = createServer(async (req, res) => {
   try {
+    if (req.url.startsWith('/stream/')) {
+      assert.equal(req.headers['x-user-id'], 'u');
+      res.writeHead(200, {'Content-Type':'text/event-stream','Cache-Control':'no-cache'});
+      streams.set(res, req.url);
+      const initial = req.url.includes('/charts/watch/') ? {type:'chart_quotes',quotes:[],market_open:false,provider:'kite'} : {type:'portfolio_snapshot',...book};
+      res.write('data: '+JSON.stringify(initial)+'\n\n');
+      req.on('close',()=>streams.delete(res));
+      return;
+    }
     if (req.url === "/fixture") {
       let raw = "";
       for await (const chunk of req) raw += chunk;
@@ -155,6 +166,7 @@ const server = createServer(async (req, res) => {
           ],
         };
         value = book;
+        publish();
       } else if (path.endsWith("/execution-history"))
         value = {
           cycles: [cycle],
@@ -391,6 +403,7 @@ try {
         open_orders: [],
         positions: [{ ...book.positions[0], quantity: 11 }],
       };
+      publish();
       await page
         .getByRole("button", { name: "Positions", exact: true })
         .click();

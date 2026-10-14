@@ -1,3 +1,4 @@
+import asyncio
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -270,6 +271,7 @@ def test_future_history_is_rejected_without_fetch(monkeypatch):
 def test_live_ranges_retain_extremes_between_polls_and_ignore_older_ticks():
     viewer = object.__new__(charts.Viewer)
     viewer.quotes, viewer.bars = {}, {}
+    viewer.changed = asyncio.Event()
     item = charts.instrument("HDFCBANK")
     first = stamp("2026-10-12", "09:15:00")
     for offset, price in [(0, 100), (1, 110), (2, 90), (3, 101), (1, 200)]:

@@ -1949,9 +1949,10 @@ async fn start_desktop_stream(
                                     }
                                     let wake = trading_event_wakes_renderer(&stream_key, &payload);
                                     let replay_wake = replay_event_wakes_renderer(&stream_key);
+                                    let swing_wake = stream_key.starts_with("swing:");
                                     stream_host.record_stream(&stream_key, event_id, payload);
-                                    if (wake || replay_wake) && stream_host.owns_stream(&stream_label, &stream_key) {
-                                        let event_name = if replay_wake { "desktop-replay-events-available" } else { "desktop-trading-events-available" };
+                                    if (wake || replay_wake || swing_wake) && stream_host.owns_stream(&stream_label, &stream_key) {
+                                        let event_name = if swing_wake { "desktop-swing-events-available" } else if replay_wake { "desktop-replay-events-available" } else { "desktop-trading-events-available" };
                                         let _ = stream_app.emit_to(stream_label.as_str(), event_name, serde_json::json!({
                                             "key": &stream_key, "event_id": event_id,
                                         }));
@@ -1972,8 +1973,9 @@ async fn start_desktop_stream(
                                             "bytes": snapshot.to_string().len(),
                                         }));
                                         stream_host.record_stream(&stream_key, event_id, snapshot);
-                                        if stream_key.starts_with("paper:") && stream_host.owns_stream(&stream_label, &stream_key) {
-                                            let _ = stream_app.emit_to(stream_label.as_str(), "desktop-trading-events-available", serde_json::json!({
+                                        if (stream_key.starts_with("paper:") || stream_key.starts_with("swing:")) && stream_host.owns_stream(&stream_label, &stream_key) {
+                                            let wake_event = if stream_key.starts_with("swing:") { "desktop-swing-events-available" } else { "desktop-trading-events-available" };
+                                            let _ = stream_app.emit_to(stream_label.as_str(), wake_event, serde_json::json!({
                                                 "key": &stream_key, "event_id": event_id,
                                             }));
                                         }
@@ -1993,6 +1995,10 @@ async fn start_desktop_stream(
                     stream_host.set_stream_connection(&stream_key, "authentication_required");
                 }
                 Ok(response) => {
+                    if stream_key.starts_with("swing:") && response.status().as_u16() == 404 && events_path.contains("/charts/watch/") {
+                        stream_host.record_stream(&stream_key, 0, serde_json::json!({"type":"chart_watch_expired"}));
+                        let _ = stream_app.emit_to(stream_label.as_str(), "desktop-swing-events-available", serde_json::json!({"key": &stream_key}));
+                    }
                     diagnostic_log(&format!("desktop stream connect failed: {}", response.status()));
                     stream_host.set_stream_connection(&stream_key, "offline");
                 }
@@ -2384,6 +2390,33 @@ mod screen_window_tests {
 
     fn opening(host: &HostState, id: &str, token: &str) {
         host.0.lock().unwrap().screen_windows.insert(id.into(), ScreenWindowState { token: token.into(), ready: false });
+    }
+    #[test]
+    fn day_and_swing_streams_keep_independent_buffers_and_cleanup() {
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let _guard = runtime.enter();
+        let host = HostState::default();
+        let day = tokio::spawn(std::future::pending::<()>());
+        let swing = tokio::spawn(std::future::pending::<()>());
+        let chart = tokio::spawn(std::future::pending::<()>());
+        let day_key = "paper:day:session";
+        let swing_key = "swing:swing-primary:portfolio/events";
+        let chart_key = "swing:swing-primary:portfolio/charts/watch/viewer/events";
+        host.start_stream(day_key, day.abort_handle(), "main").unwrap();
+        host.start_stream(swing_key, swing.abort_handle(), "main").unwrap();
+        host.start_stream(chart_key, chart.abort_handle(), "main").unwrap();
+        host.record_stream(day_key, 1, serde_json::json!({"type":"tick", "close":100}));
+        host.record_stream(swing_key, 0, serde_json::json!({"type":"portfolio_snapshot", "pnl":20}));
+        host.record_stream(chart_key, 0, serde_json::json!({"type":"chart_quotes"}));
+        assert_eq!(host.stream_snapshot(day_key, "main").unwrap().latest_payload["close"], 100);
+        assert_eq!(host.stream_snapshot(swing_key, "main").unwrap().latest_payload["pnl"], 20);
+        host.stop_stream(swing_key, "main");
+        host.stop_stream(chart_key, "main");
+        host.record_stream(day_key, 2, serde_json::json!({"type":"tick", "close":110}));
+        assert_eq!(host.stream_snapshot(day_key, "main").unwrap().last_event_id, 2);
+        assert_eq!(host.stream_snapshot(day_key, "main").unwrap().latest_payload["close"], 110);
+        assert!(!host.0.lock().unwrap().streams.contains_key(swing_key));
+        host.stop_stream(day_key, "main");
     }
     #[test]
     fn stream_reports_buffer_loss_once_for_snapshot_recovery() {

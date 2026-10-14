@@ -1,3 +1,4 @@
+import type { SwingSubscribe } from "../../shared/swingStream";
 import KotakLoginDialog from "./KotakLoginDialog";
 import type { AccountRequest } from "./DesktopSettingsModal";
 import { bounded, SAVE_TIMEOUT_MS } from "./windowLifecycle";
@@ -18,6 +19,7 @@ import type { SymbolChoice } from "../../shared/SymbolSearch";
 
 export default function SwingWindow({
   request,
+  subscribe,
   loadSymbols,
   Renderer,
   portfolioId,
@@ -33,6 +35,7 @@ export default function SwingWindow({
   brokerRequest,
 }: {
   request: SwingRequest;
+  subscribe: SwingSubscribe;
   brokerRequest: AccountRequest;
   loadSymbols: () => Promise<SymbolChoice[]>;
   Renderer: ComponentType<SwingChartProps>;
@@ -104,6 +107,7 @@ export default function SwingWindow({
       )}
       <SwingPortfolioPanel
         request={request}
+        subscribe={subscribe}
         brokerRevision={brokerRevision}
         onConnectBroker={(broker) => {
           if (broker === "kotak") setKotakLogin(true);

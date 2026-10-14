@@ -1601,3 +1601,84 @@ checks remain applicable because this review changes only backend behavior/docs.
 Test output: `.cache/swing-layout/breeze-review-tests.log` and
 `.cache/swing-layout/breeze-review-sdk-tests.log`. Restart the backend to
 apply these recovery fixes. Main merge and deployment remain manual.
+
+## Consistent website/desktop Swing Portfolio summary — 2026-10-14
+
+Implemented as a follow-up to PR #663, which is now merged into dev. Website
+Swing moves Funds, Capital and P&L from the top toolbar into the same Portfolio
+summary above the left-panel Positions/Orders/Trades tabs used by desktop.
+Both clients render one shared component: profit is green, loss red, and zero or
+unavailable P&L neutral (`₹—` when unavailable); percentage is omitted for zero
+capital. Collapsing the Portfolio panel hides its summary with the panel, and
+reopening it restores both. Existing snapshot values and wallet calculations
+are unchanged.
+
+Validation: website TypeScript check passes. Updated Swing browser acceptance
+checks both actual renderers for summary placement, removal from the top row,
+profit/loss/zero/unavailable P&L, zero capital and existing panel/chart/trading
+behavior. No backend change or migration is required; rebuild the website to apply.
+Browser output: `.cache/swing-layout/shared-summary-browser.log`.
+
+## Swing SSE delivery and Paper valuation after redeployment — 2026-10-14
+
+Implemented in the same follow-up [PR #664](https://github.com/prattyush/TradeMatangi/pull/664),
+pending review into dev. Website and desktop no longer poll active portfolio
+snapshots or chart quotes every two seconds. The existing owned portfolio SSE
+endpoint delivers positions, orders, wallet/P&L and portfolio changes. One new
+owned chart-watch SSE endpoint delivers quotes/candle ranges for all watched
+panes. Historical candles, initial portfolio discovery and user actions retain
+their ordinary request/response APIs. No timer polls full snapshots while connected.
+
+Connections deliver an initial snapshot and reconnect with backoff; bounded
+portfolio/native-buffer overflow requests an authoritative refresh. Mutations
+publish to other attached windows too. A newer streamed snapshot prevents an
+older HTTP response from overwriting it, without invalidating unrelated user
+operations. Lost chart-watch identities after backend restart are recreated.
+Streams send 15-second keepalive comments while idle and disable proxy buffering.
+Market close stops quote subscriptions; keepalives maintain idle connections
+without repeated snapshot GETs or synthetic ticks. Disconnect/unmount cancels
+the client stream and removes its owned subscribers/watch subscriptions.
+
+Day trading and Swing remain independent. Desktop reuses the existing native
+authenticated SSE reader with separate `swing:<screen>:<path>` identities,
+buffers and renderer wakeups. Swing cleanup cannot stop Day stream keys. Website
+uses authenticated streaming fetch, including current headers on reconnection.
+Swing portfolio updates and all chart panes use two connections per workspace;
+Day uses its existing streams. Broker feeds remain shared through the existing
+market-data hub, with independently releasable Day/Swing/viewer consumers and no
+additional Breeze authentication or broker sessions for UI streams.
+
+The missing Paper P&L after deploying/restarting was caused by restoring execution
+positions while clearing their quote state. Paper Swing now checkpoints compact
+last-known valuation marks in the existing Sessions rows once per minute and at
+graceful shutdown, with storage work off the event loop. Equity, exact option
+contracts (including fractional strikes) and Futures restore their marks alongside
+the execution book. Other session writes retain the marks. Abrupt termination
+can retain prices up to one checkpoint interval old; the UI identifies last-known
+valuation rather than presenting it as live.
+
+Older books without saved marks can reuse the latest price from chart history
+already loaded for today's view, avoiding extra history requests or scans. This
+only changes valuation, never triggers orders, recovery, margin changes or MTM
+settlement, and cannot overwrite newer live marks. Older-date charts and backward
+pagination do not change current valuation. Missing prices or unconfirmed Real
+reconciliation/settlement still remain unavailable; entry-price markers are not
+used to invent current prices. Real execution/recovery rules are unchanged.
+
+Validation: **221 backend tests**, **225 desktop tests**, **49 website tests** and
+**21 native Rust tests** pass. New cases cover Paper equity/options/Futures restart
+valuation, exact contracts, no executions/settlements from restored/history marks,
+SSE ownership and disconnect cleanup, split UTF-8/framing, authenticated reconnect,
+expired watches and native startup/unmount races. Concurrent Day/Swing/viewer
+tests verify one shared broker feed with independent release; native tests verify
+separate event buffers and that stopping Swing leaves Day receiving updates.
+Both clients' TypeScript checks and production builds pass. Actual Swing renderer
+browser acceptance verifies streamed P&L changes, no periodic snapshot/watch GETs,
+and existing panel/chart/trading behavior. Linked desktop-window/website analytics
+acceptance also passes using the actual authenticated browser SSE transport and
+a synthetic streaming server: an order submitted in the linked window and later
+position changes reach the main window without polling; no page errors.
+Artifacts: `.cache/swing-layout/`.
+Restart the backend and rebuild both clients to apply; no migration or SDK upgrade.
+The separate repeating `Real recovery remains pending` warning belongs to Real
+session recovery, not Paper Swing polling, and is unaffected by this change.

@@ -370,6 +370,8 @@ def _upsert_session_to_db(session: SimulationSession, *, strict: bool = False) -
             item["broker_projection_owner"] = getattr(session, "broker_projection_owner", session.session_id)
         if session.current_time is not None:
             item["current_time"] = str(session.current_time)
+        if session.trading_style == "swing" and session.session_type == "paper":
+            item["swing_marks"] = getattr(session, "swing_marks", {})
         if session.last_price:
             item["last_price"] = Decimal(str(session.last_price))
         if session.last_price_ce:

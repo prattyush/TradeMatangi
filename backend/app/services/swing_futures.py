@@ -487,9 +487,8 @@ async def on_quote(current, session, event):
         return
     session.current_time = str(now)
     session.date = datetime.fromtimestamp(now, UTC).date().isoformat()
-    session.last_price = price
-    session.swing_mark_time = now
-    session.swing_quote_seen = True
+    service.update_current_mark(session, event, now)
+    await service.persist_marks(session)
     await settle_pending(session)
     if not swing_market.window(now):
         return

@@ -1,3 +1,4 @@
+import type { SwingSubscribe } from "./swingStream";
 import { flashError } from "./notifications";
 import SwingStats from "./SwingStats";
 import SwingHistory from "./SwingHistory";
@@ -94,6 +95,7 @@ const money = (value?: number | null) =>
 /** Account-owned controls: dismissing this view never stops the portfolio. */
 export default function SwingPortfolioPanel({
   request,
+  subscribe,
   loadSymbols,
   onDetach,
   renderChart,
@@ -112,6 +114,7 @@ export default function SwingPortfolioPanel({
   brokerRevision = 0,
 }: {
   request: SwingRequest;
+  subscribe: SwingSubscribe;
   loadSymbols: () => Promise<SymbolChoice[]>;
   onDetach: () => void;
   renderChart?: ComponentType<SwingChartProps>;
@@ -379,6 +382,7 @@ export default function SwingPortfolioPanel({
   const mounted = useRef(false);
   const mutation = useRef(false);
   const revision = useRef(0);
+  const streamRevision = useRef(0);
   const priorBrokerRevision = useRef(brokerRevision);
   useEffect(() => {
     if (priorBrokerRevision.current !== brokerRevision) {
@@ -389,11 +393,12 @@ export default function SwingPortfolioPanel({
   }, [brokerRevision]);
   const refresh = useCallback(async () => {
     const started = revision.current;
+    const streamed = streamRevision.current;
     const value = await request<Snapshot>(
       portfolioId ?? `active?mode=${mode}&execution_broker=${broker}`,
       "GET",
     );
-    if (mounted.current && !mutation.current && started === revision.current)
+    if (mounted.current && !mutation.current && started === revision.current && streamed === streamRevision.current)
       setSnapshot((previous) =>
         !value.portfolio &&
         previous?.portfolio?.state === "ended" &&
@@ -407,20 +412,17 @@ export default function SwingPortfolioPanel({
     mounted.current = true;
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout>;
-    const poll = async () => {
+    const load = async () => {
       if (cancelled) return;
-      const pollRevision = revision.current;
-      try {
-        await refresh();
-      } catch (reason) {
-        if (mounted.current && pollRevision === revision.current) {
-          if (portfolioId) setSnapshot(null);
+      try { await refresh(); }
+      catch (reason) {
+        if (!cancelled && mounted.current) {
           setError(String(reason));
+          timer = setTimeout(load, 5000);
         }
       }
-      if (!cancelled && mounted.current) timer = setTimeout(poll, 2000);
     };
-    void poll();
+    void load();
     void loadSymbols()
       .then((value) => {
         if (mounted.current) setSymbols(value);
@@ -434,15 +436,28 @@ export default function SwingPortfolioPanel({
       clearTimeout(timer);
     };
   }, [refresh, loadSymbols]);
+  const streamedPortfolio = snapshot?.portfolio?.session_id;
+  useEffect(() => {
+    if (!streamedPortfolio) return;
+    return subscribe(`${streamedPortfolio}/events`, event => {
+      if (event.type === "portfolio_snapshot" && event.portfolio?.session_id === streamedPortfolio) {
+        streamRevision.current++;
+        setSnapshot(event as Snapshot);
+      } else if (event.type === "portfolio_refresh_required") {
+        void refresh().catch(reason => setError(String(reason)));
+      } else if (event.type === "portfolio_error") setError(String(event.message));
+    }, reason => setError(String(reason)));
+  }, [streamedPortfolio, subscribe, refresh]);
   const act = async (path: string, body: Record<string, unknown> = {}) => {
     if (mutation.current) return false;
     mutation.current = true;
-    revision.current++;
+    const actionRevision = ++revision.current;
+    const streamed = streamRevision.current;
     setBusy(true);
     setError("");
     try {
       const value = await request<Snapshot>(path, "POST", body);
-      if (mounted.current) setSnapshot(value);
+      if (mounted.current && revision.current === actionRevision && (streamed === streamRevision.current || value.portfolio?.session_id !== streamedPortfolio)) setSnapshot(value);
       return true;
     } catch (reason) {
       if (mounted.current) setError(String(reason));
@@ -1118,6 +1133,7 @@ export default function SwingPortfolioPanel({
       <SwingWorkspace
         key={`${prefix}:${mode}:${broker}`}
         request={request}
+        subscribe={subscribe}
         snapshot={snapshot}
         symbols={symbols}
         Renderer={renderChart}
