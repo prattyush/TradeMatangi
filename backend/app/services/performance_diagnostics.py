@@ -84,8 +84,11 @@ def sample_sse(event, event_id, scope):
     now = time.monotonic()
     if now - _stream_samples.get(scope, float("-inf")) < 1:
         return event
-    payload = json.loads(event)
-    if payload.get("type") not in ("tick", "candle"):
+    try:
+        payload = json.loads(event)
+    except (ValueError, TypeError):
+        return event
+    if not isinstance(payload, dict) or payload.get("type") not in ("tick", "candle"):
         return event
     if scope not in _stream_samples and len(_stream_samples) >= 128:
         _stream_samples.pop(next(iter(_stream_samples)))

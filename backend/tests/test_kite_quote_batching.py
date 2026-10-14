@@ -170,6 +170,8 @@ def test_diagnostic_metadata_is_sampled_and_does_not_mutate_stored_event(monkeyp
     sampled = diagnostics.sample_sse(event, 42, "website:test")
     assert '"event_id": 42' in sampled
     assert diagnostics.sample_sse(event, 43, "website:test") == event
+    for malformed in ("not-json", "[]", "null"):
+        assert diagnostics.sample_sse(malformed, 43, "malformed") == malformed
     monkeypatch.setattr(diagnostics, "ENABLED", False)
     assert diagnostics.sample_sse(event, 44, "other") == event
 

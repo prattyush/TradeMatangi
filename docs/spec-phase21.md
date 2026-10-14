@@ -1433,4 +1433,5 @@ To investigate the next live occurrence:
 Broker-refresh safety suppression and synchronous submission behavior were measured,
 not rewritten. Any remaining freeze needs the captured evidence for a separate
 focused fix. Backend restart applies quote batching; rebuild clients for the new
-measurements. Delivery PR targets dev; main merge/deployment remain manual.
+measurements. [PR #662](https://github.com/prattyush/TradeMatangi/pull/662) targets
+dev and awaits review; main merge/deployment remain manual.
