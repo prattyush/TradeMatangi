@@ -1810,3 +1810,30 @@ def test_popup_replay_stoploss_http_request_after_filled_market_long(monkeypatch
         assert response.json()["quantity"] == 65
     finally:
         _clear()
+
+
+@pytest.mark.parametrize('mode',['sim','stepwise','paper'])
+def test_target_percent_market_fill_creates_only_the_original_protective_stop(mode,monkeypatch):
+    _clear()
+    session=_session();session.session_type=mode;session.session_capital=100000
+    contract=session.desktop_contracts[0]
+    quote={**contract,'price':100,'timestamp':int(session.current_time),'source':'synthetic'}
+    monkeypatch.setattr(desktop_trading,'_refresh_contract_quotes',lambda _:{contract['contract_key']:quote})
+    monkeypatch.setattr(desktop_trading,'_paper_chart_quote',lambda *a:quote)
+    monkeypatch.setattr('app.routers.orders._wallet_balance_for_session',lambda _:100000)
+    monkeypatch.setattr('app.services.user_settings_service.get_settings',lambda _:dict(target_deviation_pct=.01,stoploss_limit_gap_pct=.015))
+    try:
+        order=asyncio.run(desktop_trading.place_chart_order(session.session_id,
+            desktop_trading.ChartOrderIntent(symbol=session.symbol,side='BUY',intent='market',
+                right='CE',strike=24000,expiry=session.expiry,target_profit_pct=2,
+                sizing_target_price=110,entry_sl_price=90,group_id='target-size-fill'),session.user_id))
+        assert order.status==OrderStatus.FILLED and order.quantity==195 and order.filled_price==100
+        assert order.analytics['sizing_method']=='TARGET_PERCENT'
+        stops=[o for o in order_service.get_open_orders(session.session_id) if o.group_id=='target-size-fill']
+        assert len(stops)==1 and stops[0].is_stoploss
+        assert stops[0].quantity==195 and stops[0].trigger_price==90
+        assert not any(o.order_type==OrderType.TARGET for o in stops)
+        fills=trading_service.get_trades(session.session_id)
+        assert len(fills)==1 and fills[0].analytics['projected_target_profit']==1950
+    finally:
+        _clear()

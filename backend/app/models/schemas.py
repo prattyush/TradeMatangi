@@ -346,6 +346,8 @@ class PlaceOrderRequest(ContractModel):
     limit_price: float | None = None     # required for LIMIT; auto-computed for TARGET
     quantity: int | None = None          # required when funds_ratio_pct is None
     funds_ratio_pct: float | None = None  # 0–1 fraction; backend computes quantity
+    target_profit_pct: float | None = Field(default=None, gt=0, le=100, allow_inf_nan=False)
+    sizing_target_price: float | None = Field(default=None, gt=0, allow_inf_nan=False)
     risk_pct: float | None = None        # percentage points; 2 means 2% of session capital
     risk_ratio_pct: float | None = None  # legacy 0–1 fraction; use risk_pct for new callers
     is_stoploss: bool = False

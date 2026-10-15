@@ -144,6 +144,8 @@ class ChartOrderIntent(ContractModel):
     quantity: int | None = Field(default=None, ge=1)
     funds_ratio_pct: float | None = None
     risk_pct: float | None = None
+    target_profit_pct: float | None = Field(default=None, gt=0, le=100, allow_inf_nan=False)
+    sizing_target_price: float | None = Field(default=None, gt=0, allow_inf_nan=False)
     entry_sl_price: float | None = Field(default=None, gt=0)
     group_id: str | None = None
     target_deviation_pct: float = 0.01
@@ -1490,6 +1492,8 @@ async def place_chart_order(session_id: str, intent: ChartOrderIntent, user_id: 
         quantity=intent.quantity,
         funds_ratio_pct=intent.funds_ratio_pct,
         risk_pct=intent.risk_pct,
+        target_profit_pct=intent.target_profit_pct,
+        sizing_target_price=intent.sizing_target_price,
         entry_sl_price=intent.entry_sl_price,
         group_id=intent.group_id,
         target_deviation_pct=intent.target_deviation_pct,
@@ -1506,6 +1510,10 @@ async def place_chart_order(session_id: str, intent: ChartOrderIntent, user_id: 
         req.expiry = contract["expiry"]
     from app.routers.orders import place_order as web_place_order
     logger.info("desktop_chart_order session_id=%s contract=%s intent=%s side=%s entry_price=%.2f quote_price=%.2f quote_source=%s quote_timestamp=%s", session_id, contract["contract_key"] if contract else session.symbol, intent.intent, intent.side.value, entry_price, quote_price, req.quote_source, req.quote_timestamp)
+    if intent.target_profit_pct is not None and contract and session.session_type == 'paper':
+        # Publish the server-validated chart quote for shared sizing; never use
+        # the legacy active strike's premium for another attached chart.
+        _quote_registry(session)[contract['contract_key']] = quote
     order = await web_place_order(req)
     if session.session_type in ("paper", "sim", "stepwise") and intent.intent == "market":
         # The placement quote is authoritative for this chart order. Restrict the

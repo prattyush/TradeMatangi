@@ -60,6 +60,9 @@ export interface AnalyticsMetadata {
   requested_budget?: number;
   effective_allocation_pct?: number;
   effective_risk_pct?: number;
+  sizing_target_price?: number;
+  projected_target_profit?: number;
+  effective_target_pct?: number;
   budget_exceeded?: boolean;
   strategy_interval_seconds?: number;
   requested_size?: string;

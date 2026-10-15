@@ -2047,3 +2047,55 @@ canvases. The built desktop Swing acceptance flow also passed entry/refund,
 listed options, pause, capital reset, detach/reconnect and close checks.
 Broker traffic in tests is synthetic; live broker execution still requires manual
 acceptance. No live orders or production data were changed by verification.
+
+### Day Trading Target % sizing — 2026-10-15
+
+Status: implemented across website and desktop; verification recorded below.
+This is a Day Trading entry-sizing choice for Paper, Real, Replay and Stepwise;
+Swing and existing Target execution orders retain their existing behavior.
+
+- In the right-click “Use as SL” entry ticket, choose **Target %**, select a saved
+  Risk percentage preset, then click a target price on the same chart. Selecting
+  this choice clears a previously chosen Capital/Risk/fixed size. No independent
+  settings or presets are added. Escape, session stop/change and chart/contract
+  changes cancel the pending pick; duplicate clicks cannot submit it twice.
+- The original right-click price remains the protective SL. The final click sends
+  a market-style entry with that SL and group identity. It does **not** create a
+  take-profit exit or strategy. Target % and ordinary Target are distinct choices.
+- Desired gross profit is `session_capital × percentage / 100`. Divide by
+  `target − current_quote` for BUY or `current_quote − target` for SELL. The
+  backend resolves the exact contract quote; playback cannot use a future quote.
+  Equity leverage affects funding only, never the profit-derived quantity.
+  For ₹1,00,000 capital, ₹100 quote, ₹110 target and 2%, the raw size is 200 units:
+  ₹2,000 projected gross profit, or 2% of session starting capital.
+- Capital sizing and Target sizing share whole-unit/lot rounding and funded
+  minimum behavior. Exact Target lot boundaries use decimal arithmetic. Existing
+  affordable minimum-option-lot behavior applies; equity minimum-share rules and
+  insufficient-funds rejection remain as for Capital sizing. Quantity is not
+  silently reduced to fit funds. Existing guardrails and shorting rules apply.
+- Shared order requests and desktop chart-order intents accept paired optional
+  `target_profit_pct` (percentage points, so 2 means 2%) and `sizing_target_price`.
+  They require market-style LIMIT execution and a protective SL, and reject
+  conflicting quantity/Capital/Risk sizing. No new broker execution enum, database
+  table, migration, feed subscription or quote polling is introduced.
+- Existing order/trade analytics store sizing method `TARGET_PERCENT`, displayed
+  as **Target %**. Market remains the execution method. Stats record requested
+  percentage/profit budget, sizing target/reference quote, quantity and projected
+  target profit/percentage alongside allocation and initial risk. Fill prices and
+  partial-fill grouping update projected profit; metadata normalization preserves
+  it across persistence/reload. Stats filters, sizing comparisons and entry details
+  support the new method. Existing historical entries are unchanged. Projections
+  are before charges and can differ after rounding, market movement and fills.
+
+Validation: 373 focused backend tests and 227 desktop/shared tests passed; both
+production builds passed. Backend coverage includes website/desktop × all four
+Day modes × equity/options, directional sizing, exact lot boundaries, quote and
+session guards, conflicting sizing, insufficient funds, fill projections and stats
+aggregation. Immediate Paper/Replay/Stepwise fill tests verify the protective SL
+and absence of an automatic target exit. Website browser checks verify Target %
+presets, clearing previous sizing, fixed-size-mode compatibility and existing
+entry choices. Built desktop acceptance passes Target % selection, one chart-click
+submission, captured SL/contract, cancellation and the existing order/edit flows
+in Paper, Replay and Stepwise (including multi-chart layouts). Real broker traffic
+is mocked; live execution remains a manual acceptance check. No live orders or
+production trading data were changed by verification.
