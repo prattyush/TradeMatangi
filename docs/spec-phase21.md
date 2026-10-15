@@ -1871,7 +1871,7 @@ They are implemented in the follow-up below.
 
 ## Simple unrestricted Real lifecycle and Trade History Refresh — 2026-10-15
 
-**Implemented; follow-up PR against dev.** Admin restrictions remain disabled by
+**Implemented; [PR #668](https://github.com/prattyush/TradeMatangi/pull/668) open against dev.** Admin restrictions remain disabled by
 default. This supersedes the earlier verified-closure Stop behavior only when
 that setting is off, on both website and desktop.
 
