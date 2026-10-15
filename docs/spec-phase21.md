@@ -2099,3 +2099,21 @@ submission, captured SL/contract, cancellation and the existing order/edit flows
 in Paper, Replay and Stepwise (including multi-chart layouts). Real broker traffic
 is mocked; live execution remains a manual acceptance check. No live orders or
 production trading data were changed by verification.
+
+### Real Day duplicate-session cleanup and DynamoDB backups
+
+Implemented offline maintenance tools to inspect Real Day sessions by user/date,
+list trades and orders, explicitly delete one selected session, and restore its
+verified mandatory backup. Cleanup covers session-owned records and exclusive
+broker projection revisions; shared projections and wallet balances are preserved.
+A separate full-database backup/restore command includes all tables and records.
+Replay cascade deletion now handles pagination, actual primary keys, numeric keys
+and unprocessed batch writes, and propagates storage failures before root removal.
+See [DynamoDB maintenance](ddb-maintenance.md) for commands, recovery and limits.
+
+Validation: 30 focused maintenance, cascade-cleanup and session-restart tests
+passed against mocks/Moto. Coverage includes backup integrity and write failures,
+partial-delete recovery, shared projection ownership, retained sessions/wallets,
+numeric and binary/set values, paginated reads, secondary-index/empty-table
+restoration, conflict refusal and interactive CLI deletion/restoration. Compilation
+and diff checks passed. No local or production trading records were changed.
