@@ -1685,7 +1685,8 @@ session recovery, not Paper Swing polling, and is unaffected by this change.
 
 ## Real Day session-link repair and dated ownership recovery — 2026-10-15
 
-Implemented as a follow-up after PR #664 merged into dev. Settings → Your Real
+Implemented in [PR #665](https://github.com/prattyush/TradeMatangi/pull/665),
+pending review into dev after PR #664 merged. Settings → Your Real
 sessions now offers **Repair session link** beside Reconcile with broker, shared
 by website and desktop. The backend verifies the authenticated broker account,
 session owner and canonical Day ownership row before restoring missing identity
